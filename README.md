@@ -1,0 +1,3 @@
+# openbfme
+
+OpenBFME game project
