@@ -1,0 +1,25 @@
+{
+  "id": "summon",
+  "name": "Summon Goblins",
+  "kind": "summon",
+  "cooldown": 60,
+  "req_rank": 1,
+  "damage": 0,
+  "radius": 12,
+  "range": 8,
+  "heal_frac": 0,
+  "duration": 0,
+  "dmg_mul": 1.0,
+  "knockback": 0,
+  "knockdown": 0,
+  "hotkey": "G",
+  "icon": "icons/summon.png",
+  "summons": [
+    {
+      "typeKey": "goblinwarrior",
+      "count": 1,
+      "lifetime": 30,
+      "spread": 7
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://cw7jmlpxfsqsi"
+path="res://.godot/imported/spiderpit.obj-46e5477239ea477eb9db9da4621f9bcc.mesh"
+
+[deps]
+
+files=["res://.godot/imported/spiderpit.obj-46e5477239ea477eb9db9da4621f9bcc.mesh"]
+
+source_file="res://data/base/assets/models/buildings/spiderpit.obj"
+dest_files=["res://.godot/imported/spiderpit.obj-46e5477239ea477eb9db9da4621f9bcc.mesh", "res://.godot/imported/spiderpit.obj-46e5477239ea477eb9db9da4621f9bcc.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false

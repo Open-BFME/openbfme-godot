@@ -1,0 +1,16 @@
+{
+  "id": "farm",
+  "name": "Farm",
+  "faction": "gondor",
+  "cost": 300,
+  "build_time": 8,
+  "hp": 900,
+  "radius": 9,
+  "vision": 28,
+  "desc": "Generates resources.",
+  "icon": "icons/farm.png",
+  "mesh": "models/buildings/farm",
+  "presentation": "glb_or_obj",
+  "economy": true,
+  "income": 6
+}

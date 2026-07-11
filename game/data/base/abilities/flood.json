@@ -1,0 +1,17 @@
+{
+  "id": "flood",
+  "name": "Flood",
+  "kind": "nova_damage",
+  "cooldown": 90,
+  "req_rank": 1,
+  "damage": 220,
+  "radius": 12,
+  "range": 8,
+  "heal_frac": 0,
+  "duration": 0,
+  "dmg_mul": 1.0,
+  "knockback": 7,
+  "knockdown": 0,
+  "hotkey": null,
+  "icon": "icons/flood.png"
+}

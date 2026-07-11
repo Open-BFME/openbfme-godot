@@ -1,0 +1,16 @@
+{
+  "id": "gspikedgate",
+  "name": "Bone Barricade Gate",
+  "faction": "goblins",
+  "cost": 120,
+  "build_time": 5,
+  "hp": 1000,
+  "radius": 5.5,
+  "vision": 28,
+  "desc": "A crude gate your own troops can pass through.",
+  "icon": "icons/gate.png",
+  "mesh": "models/buildings/gspikedgate",
+  "presentation": "glb_or_obj",
+  "wall": true,
+  "gate": true
+}

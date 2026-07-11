@@ -1,0 +1,24 @@
+{
+  "id": "orcpit",
+  "name": "Orc Pit",
+  "faction": "mordor",
+  "cost": 300,
+  "build_time": 10,
+  "hp": 1300,
+  "radius": 9,
+  "vision": 28,
+  "desc": "Trains orc warriors and archers.",
+  "icon": "icons/orcpit.png",
+  "mesh": "models/buildings/orcpit",
+  "presentation": "glb_or_obj",
+  "trains": [
+    "orc",
+    "orcarcher"
+  ],
+  "research": [
+    "forgedBlades",
+    "heavyArmor",
+    "fireArrows",
+    "rangedArmor"
+  ]
+}

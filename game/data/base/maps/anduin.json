@@ -1,0 +1,15 @@
+{
+  "id": "anduin",
+  "name": "Anduin Vale",
+  "half_size": 140,
+  "seed": 1337,
+  "player_start": [
+    -70,
+    -70
+  ],
+  "enemy_start": [
+    70,
+    70
+  ],
+  "trees": 110
+}

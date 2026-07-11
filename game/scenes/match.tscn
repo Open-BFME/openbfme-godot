@@ -1,0 +1,143 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://src/view/match_controller.gd" id="1"]
+[ext_resource type="Script" path="res://src/ui/hud.gd" id="2"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_ground"]
+size = Vector3(260, 0.2, 260)
+
+[sub_resource type="BoxShape3D" id="BoxShape_ground"]
+size = Vector3(260, 0.2, 260)
+
+[sub_resource type="StandardMaterial3D" id="Mat_ground"]
+albedo_color = Color(0.22, 0.28, 0.18, 1)
+roughness = 0.95
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 1
+background_color = Color(0.42, 0.58, 0.78, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.7, 0.75, 0.85, 1)
+ambient_light_energy = 0.85
+
+[node name="Match" type="Node3D"]
+script = ExtResource("1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866, -0.354, 0.354, 0, 0.707, 0.707, -0.5, -0.612, 0.612, 0, 40, 0)
+shadow_enabled = true
+light_energy = 1.15
+
+[node name="Sky" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="Ground" type="StaticBody3D" parent="."]
+collision_layer = 1
+
+[node name="Mesh" type="MeshInstance3D" parent="Ground"]
+mesh = SubResource("BoxMesh_ground")
+surface_material_override/0 = SubResource("Mat_ground")
+
+[node name="Collision" type="CollisionShape3D" parent="Ground"]
+shape = SubResource("BoxShape_ground")
+
+[node name="Entities" type="Node3D" parent="."]
+
+[node name="CameraRig" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -70, 0, -70)
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 32, 28)
+current = true
+fov = 50.0
+far = 500.0
+
+[node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("2")
+
+[node name="Root" type="Control" parent="HUD"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="TopBar" type="PanelContainer" parent="HUD/Root"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 40.0
+grow_horizontal = 2
+
+[node name="Resources" type="Label" parent="HUD/Root/TopBar"]
+layout_mode = 2
+text = "Gold: 0"
+
+[node name="Toast" type="Label" parent="HUD/Root"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -200.0
+offset_top = 56.0
+offset_right = 200.0
+offset_bottom = 88.0
+grow_horizontal = 2
+horizontal_alignment = 1
+
+[node name="Help" type="Label" parent="HUD/Root"]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = -120.0
+offset_right = 700.0
+offset_bottom = -70.0
+theme_override_colors/font_color = Color(0.85, 0.85, 0.8, 0.85)
+theme_override_font_sizes/font_size = 13
+
+[node name="Bottom" type="VBoxContainer" parent="HUD/Root"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = -200.0
+offset_right = -8.0
+offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_constants/separation = 6
+
+[node name="Powers" type="HBoxContainer" parent="HUD/Root/Bottom"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Row" type="HBoxContainer" parent="HUD/Root/Bottom"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Portrait" type="Label" parent="HUD/Root/Bottom/Row"]
+custom_minimum_size = Vector2(120, 72)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "COMMAND"
+vertical_alignment = 1
+
+[node name="Col" type="VBoxContainer" parent="HUD/Root/Bottom/Row"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Info" type="Label" parent="HUD/Root/Bottom/Row/Col"]
+layout_mode = 2
+text = "Ready"
+
+[node name="Panel" type="GridContainer" parent="HUD/Root/Bottom/Row/Col"]
+layout_mode = 2
+theme_override_constants/h_separation = 4
+theme_override_constants/v_separation = 4
+columns = 6

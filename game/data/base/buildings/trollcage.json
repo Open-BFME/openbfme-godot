@@ -1,0 +1,21 @@
+{
+  "id": "trollcage",
+  "name": "Troll Cage",
+  "faction": "mordor",
+  "cost": 700,
+  "build_time": 14,
+  "hp": 1700,
+  "radius": 10,
+  "vision": 28,
+  "desc": "Trains mountain trolls.",
+  "icon": "icons/trollcage.png",
+  "mesh": "models/buildings/trollcage",
+  "presentation": "glb_or_obj",
+  "trains": [
+    "troll"
+  ],
+  "research": [
+    "forgedBlades",
+    "heavyArmor"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "ent",
+  "name": "Ent",
+  "faction": "elves",
+  "cost": 800,
+  "build_time": 18,
+  "size": 1,
+  "hp": 2400,
+  "dmg": 110,
+  "range": 8,
+  "attack_interval": 2.2,
+  "speed": 5.2,
+  "vision": 42,
+  "ranged": false,
+  "desc": "Walking tree siege monster. x2 melee damage vs buildings.",
+  "icon": "icons/ent.png",
+  "mesh": "models/units/ent",
+  "presentation": "glb_or_obj",
+  "damage_type": "siege",
+  "armor_type": "monster",
+  "monster": true,
+  "siege": true
+}

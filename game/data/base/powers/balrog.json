@@ -1,0 +1,14 @@
+{
+  "id": "balrog",
+  "name": "Balrog",
+  "tier": 3,
+  "cost_pp": 24,
+  "kind": "damage_area",
+  "radius": 12,
+  "damage": 0,
+  "heal_frac": 0.35,
+  "duration": 0,
+  "icon": "icons/balrog.png",
+  "target": "point",
+  "requires_tier_spent": 2
+}

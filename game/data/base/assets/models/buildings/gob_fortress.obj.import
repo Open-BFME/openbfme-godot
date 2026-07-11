@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://5vdrl8c5tmym"
+path="res://.godot/imported/gob_fortress.obj-6464f0606285fb2c38400d5f21efbbd8.mesh"
+
+[deps]
+
+files=["res://.godot/imported/gob_fortress.obj-6464f0606285fb2c38400d5f21efbbd8.mesh"]
+
+source_file="res://data/base/assets/models/buildings/gob_fortress.obj"
+dest_files=["res://.godot/imported/gob_fortress.obj-6464f0606285fb2c38400d5f21efbbd8.mesh", "res://.godot/imported/gob_fortress.obj-6464f0606285fb2c38400d5f21efbbd8.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false

@@ -1,0 +1,23 @@
+{
+  "id": "balrog",
+  "name": "Balrog",
+  "faction": "mordor",
+  "cost": 0,
+  "build_time": 0,
+  "size": 1,
+  "hp": 4200,
+  "dmg": 210,
+  "range": 8,
+  "attack_interval": 1.8,
+  "speed": 9,
+  "vision": 48,
+  "ranged": false,
+  "desc": "Temporary fire demon with brutal knockback attacks and terror that can make nearby troops cower or flee once.",
+  "icon": "icons/balrog.png",
+  "mesh": "models/units/balrog",
+  "presentation": "glb_or_obj",
+  "damage_type": "crush",
+  "armor_type": "monster",
+  "monster": true,
+  "summon": true
+}

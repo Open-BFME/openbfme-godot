@@ -1,0 +1,14 @@
+You are advising on Open BFME: a Godot 4.7 desktop RTS clone of BFME2 skirmish.
+Project path: C:/Users/Jonathan/Desktop/open-bfme/game
+Design bible: browser prototype at C:/Users/Jonathan/Desktop/middle-earth-rts (battalion pooled HP, freeform build, heroes, stances, fear).
+Owner wants: (1) use BFME2 assets from F:/BFME2 freely for private local project, (2) MAXIMUM moddability, (3) implement stages 1-4 now.
+
+Give a crisp opinion on:
+A) Best Godot 4.7 architecture for stages 1-4 (sim tick vs render, battalion model, autoloads) that stays moddable
+B) How to structure data packs so mods can add units/buildings/abilities without engine edits (JSON vs Resource .tres vs both)
+C) How to load BFME2-extracted content later without hardcoding paths into gameplay
+D) Navmesh + walls strategy that will not paint us into a corner in stage 3
+E) Top 5 pitfalls for a BFME-like Godot RTS
+F) Minimal file/module list for stages 1-4
+
+Be concrete and opinionated. No fluff.

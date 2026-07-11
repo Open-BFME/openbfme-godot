@@ -1,0 +1,14 @@
+{
+  "id": "heal",
+  "name": "Heal",
+  "tier": 1,
+  "cost_pp": 6,
+  "kind": "heal_area",
+  "radius": 30,
+  "damage": 0,
+  "heal_frac": 0.35,
+  "duration": 0,
+  "icon": "icons/heal.png",
+  "target": "point",
+  "requires_tier_spent": 0
+}

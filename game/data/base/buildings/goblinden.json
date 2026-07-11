@@ -1,0 +1,24 @@
+{
+  "id": "goblinden",
+  "name": "Goblin Den",
+  "faction": "goblins",
+  "cost": 300,
+  "build_time": 9,
+  "hp": 1200,
+  "radius": 9,
+  "vision": 28,
+  "desc": "Trains goblin warriors and archers.",
+  "icon": "icons/goblinden.png",
+  "mesh": "models/buildings/goblinden",
+  "presentation": "glb_or_obj",
+  "trains": [
+    "goblinwarrior",
+    "goblinarcher"
+  ],
+  "research": [
+    "forgedBlades",
+    "heavyArmor",
+    "fireArrows",
+    "rangedArmor"
+  ]
+}

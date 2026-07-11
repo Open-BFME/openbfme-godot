@@ -1,0 +1,25 @@
+{
+  "id": "calleagles",
+  "name": "Call the Eagles",
+  "kind": "summon",
+  "cooldown": 110,
+  "req_rank": 1,
+  "damage": 0,
+  "radius": 12,
+  "range": 8,
+  "heal_frac": 0,
+  "duration": 0,
+  "dmg_mul": 1.0,
+  "knockback": 0,
+  "knockdown": 0,
+  "hotkey": null,
+  "icon": "icons/calleagles.png",
+  "summons": [
+    {
+      "typeKey": "eagle",
+      "count": 1,
+      "lifetime": 25,
+      "spread": 6
+    }
+  ]
+}

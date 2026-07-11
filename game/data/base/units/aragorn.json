@@ -1,0 +1,29 @@
+{
+  "id": "aragorn",
+  "name": "Aragorn",
+  "faction": "gondor",
+  "cost": 800,
+  "build_time": 12,
+  "size": 1,
+  "hp": 1500,
+  "dmg": 70,
+  "range": 6,
+  "attack_interval": 0.9,
+  "speed": 12,
+  "vision": 38,
+  "ranged": false,
+  "desc": "The returned king cuts through packed foes.",
+  "icon": "icons/aragorn.png",
+  "mesh": "models/units/aragorn",
+  "presentation": "glb_or_obj",
+  "damage_type": "hero",
+  "armor_type": "hero",
+  "hero": true,
+  "abilities": [
+    "blademaster",
+    "athelas",
+    "mount",
+    "anduril",
+    "oathbreakers"
+  ]
+}

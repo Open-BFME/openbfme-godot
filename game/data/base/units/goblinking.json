@@ -1,0 +1,29 @@
+{
+  "id": "goblinking",
+  "name": "Goblin King",
+  "faction": "goblins",
+  "cost": 900,
+  "build_time": 14,
+  "size": 1,
+  "hp": 1500,
+  "dmg": 65,
+  "range": 6,
+  "attack_interval": 0.95,
+  "speed": 12,
+  "vision": 38,
+  "ranged": false,
+  "desc": "Bloated crowned goblin who drives the swarm forward.",
+  "icon": "icons/goblinking.png",
+  "mesh": "models/units/goblinking",
+  "presentation": "glb_or_obj",
+  "damage_type": "hero",
+  "armor_type": "hero",
+  "hero": true,
+  "abilities": [
+    "warcry",
+    "summon",
+    "gluttony",
+    "tantrum",
+    "kingsfeast"
+  ]
+}

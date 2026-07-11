@@ -1,0 +1,17 @@
+{
+  "id": "gluttony",
+  "name": "Gluttony",
+  "kind": "heal_nova",
+  "cooldown": 30,
+  "req_rank": 1,
+  "damage": 0,
+  "radius": 8,
+  "range": 8,
+  "heal_frac": 0.35,
+  "duration": 0,
+  "dmg_mul": 1.0,
+  "knockback": 0,
+  "knockdown": 0,
+  "hotkey": "V",
+  "icon": "icons/gluttony.png"
+}

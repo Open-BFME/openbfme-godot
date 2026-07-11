@@ -1,0 +1,21 @@
+{
+  "id": "workshop",
+  "name": "Siege Works",
+  "faction": "gondor",
+  "cost": 800,
+  "build_time": 14,
+  "hp": 1700,
+  "radius": 10,
+  "vision": 28,
+  "desc": "Builds trebuchets to raze fortifications.",
+  "icon": "icons/workshop.png",
+  "mesh": "models/buildings/workshop",
+  "presentation": "glb_or_obj",
+  "trains": [
+    "trebuchet"
+  ],
+  "research": [
+    "fireArrows",
+    "rangedArmor"
+  ]
+}

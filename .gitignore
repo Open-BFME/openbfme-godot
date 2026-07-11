@@ -1,0 +1,28 @@
+# Godot
+game/.godot/
+game/*.translation
+game/export/
+game/exports/
+game/.import/
+**/*.tmp
+
+# Lane A — never commit
+_bfme2_extract/
+**/_bfme2_extract/
+
+# Raw generation dumps
+_imagine_raw/
+**/_imagine_raw/
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/

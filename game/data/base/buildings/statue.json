@@ -1,0 +1,15 @@
+{
+  "id": "statue",
+  "name": "Statue of Kings",
+  "faction": "gondor",
+  "cost": 350,
+  "build_time": 8,
+  "hp": 800,
+  "radius": 6,
+  "vision": 28,
+  "desc": "Slowly heals nearby battalions.",
+  "icon": "icons/statue.png",
+  "mesh": "models/buildings/statue",
+  "presentation": "glb_or_obj",
+  "aura_radius": 30
+}

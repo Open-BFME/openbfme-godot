@@ -1,0 +1,30 @@
+{
+  "id": "nazgul",
+  "name": "Black Rider",
+  "faction": "mordor",
+  "cost": 800,
+  "build_time": 18,
+  "size": 1,
+  "hp": 1700,
+  "dmg": 80,
+  "range": 6.5,
+  "attack_interval": 1,
+  "speed": 16,
+  "vision": 40,
+  "ranged": false,
+  "desc": "Dread mounted hero. Terror makes nearby troops cower; first contact can make non-hero, non-rank-5 troops flee. Heroes, veterans, statues, and rally buffs counter it.",
+  "icon": "icons/nazgul.png",
+  "mesh": "models/units/nazgul",
+  "presentation": "glb_or_obj",
+  "damage_type": "crush",
+  "armor_type": "hero",
+  "hero": true,
+  "cavalry": true,
+  "abilities": [
+    "dread",
+    "morgulblade",
+    "screech",
+    "darkhaste",
+    "fellshape"
+  ]
+}
