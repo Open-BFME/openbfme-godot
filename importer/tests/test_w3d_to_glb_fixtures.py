@@ -1,0 +1,799 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import types
+import unittest
+
+
+def load_adapter_module():
+    fake_bpy = types.SimpleNamespace()
+    previous = sys.modules.get("bpy")
+    sys.modules["bpy"] = fake_bpy
+    try:
+        path = Path(__file__).parents[1] / "blender" / "w3d_to_glb.py"
+        spec = importlib.util.spec_from_file_location(
+            "openbfme_test_w3d_to_glb_fingerprints", path
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("could not load W3D adapter fixture")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        if previous is None:
+            sys.modules.pop("bpy", None)
+        else:
+            sys.modules["bpy"] = previous
+    return module
+
+
+ADAPTER = load_adapter_module()
+
+
+class FakeProperties:
+    def __init__(self, **properties):
+        self._properties = properties
+
+    def keys(self):
+        return self._properties.keys()
+
+    def __getitem__(self, key):
+        return self._properties[key]
+
+
+class FakeAssignment:
+    def __init__(self, group: int, weight: float):
+        self.group = group
+        self.weight = weight
+
+
+class FakeVertex:
+    def __init__(self, coordinate, group: int = 0, weight: float = 1.0):
+        self.co = tuple(coordinate)
+        self.normal = (0.0, 0.0, 1.0)
+        self.groups = [FakeAssignment(group, weight)]
+
+
+class FakeVertexGroup:
+    def __init__(self, index: int, name: str):
+        self.index = index
+        self.name = name
+        self.lock_weight = False
+
+
+class FakeTriangle:
+    def __init__(self, vertices):
+        self.vertices = tuple(vertices)
+        self.loops = tuple(vertices)
+        self.material_index = 0
+
+
+class FakeMaterial(FakeProperties):
+    def __init__(self, name: str):
+        super().__init__()
+        self.name = name
+        self.diffuse_color = [0.4, 0.5, 0.6, 1.0]
+        self.metallic = 0.2
+        self.roughness = 0.7
+        self.use_nodes = False
+        self.node_tree = None
+
+
+class FakePixels(list):
+    def __init__(self, values, write_transform=None):
+        super().__init__(values)
+        self.write_transform = write_transform
+
+    def foreach_set(self, values):
+        if self.write_transform is None:
+            self[:] = values
+        else:
+            self[:] = [self.write_transform(value) for value in values]
+
+
+class FakeImage:
+    def __init__(self, pixels, *, users: int = 1, write_transform=None):
+        self.pixels = FakePixels(pixels, write_transform=write_transform)
+        self.users = users
+        self.updated = False
+        self.write_transform = write_transform
+
+    def copy(self):
+        return FakeImage(
+            list(self.pixels), users=1, write_transform=self.write_transform
+        )
+
+    def update(self):
+        self.updated = True
+
+
+class FakeSocket:
+    def __init__(self, name: str, node):
+        self.name = name
+        self.node = node
+
+
+class FakeNode:
+    def __init__(self, node_type: str, *, image=None):
+        self.type = node_type
+        self.image = image
+        self.inputs = {}
+        self.outputs = {}
+        if node_type == "TEX_IMAGE":
+            self.outputs = {
+                name: FakeSocket(name, self) for name in ("Color", "Alpha")
+            }
+        elif node_type == "BSDF_PRINCIPLED":
+            self.inputs = {
+                name: FakeSocket(name, self) for name in ("Base Color", "Alpha")
+            }
+
+
+class FakeLink:
+    def __init__(self, from_socket: FakeSocket, to_socket: FakeSocket):
+        self.from_socket = from_socket
+        self.to_socket = to_socket
+        self.from_node = from_socket.node
+        self.to_node = to_socket.node
+
+
+class FakeLinks(list):
+    def new(self, from_socket: FakeSocket, to_socket: FakeSocket):
+        link = FakeLink(from_socket, to_socket)
+        self.append(link)
+        return link
+
+
+class FakeNodeMaterial(FakeProperties):
+    def __init__(self, image: FakeImage, *, shader_properties=None, **properties):
+        super().__init__(**properties)
+        self.name = "fixture_additive_material"
+        self.use_nodes = True
+        if shader_properties is not None:
+            self.shader = types.SimpleNamespace(**shader_properties)
+        self.image_node = FakeNode("TEX_IMAGE", image=image)
+        self.principled = FakeNode("BSDF_PRINCIPLED")
+        links = FakeLinks()
+        links.new(
+            self.image_node.outputs["Color"],
+            self.principled.inputs["Base Color"],
+        )
+        self.node_tree = types.SimpleNamespace(
+            nodes=[self.image_node, self.principled], links=links
+        )
+
+
+class FakeMesh(FakeProperties):
+    def __init__(self, name: str, material: FakeMaterial):
+        super().__init__()
+        self.name = name
+        self.object_type = "MESH"
+        self.vertices = [
+            FakeVertex((0.0, 0.0, 0.0)),
+            FakeVertex((1.0, 0.0, 0.0)),
+            FakeVertex((0.0, 1.0, 0.0)),
+            FakeVertex((0.0, 0.0, 1.0)),
+        ]
+        self.edges = []
+        self.polygons = []
+        self.loop_triangles = [FakeTriangle((0, 1, 2)), FakeTriangle((0, 2, 3))]
+        self.uv_layers = []
+        self.materials = [material]
+
+    def calc_loop_triangles(self):
+        return None
+
+
+class FakeParent:
+    pass
+
+
+class FakeVector:
+    def __init__(self, x: float, y: float, z: float):
+        self.values = (float(x), float(y), float(z))
+
+    def __getitem__(self, index):
+        return self.values[index]
+
+    def __iter__(self):
+        return iter(self.values)
+
+    def copy(self):
+        return FakeVector(*self.values)
+
+    def __add__(self, other):
+        return FakeVector(*(self[index] + other[index] for index in range(3)))
+
+    def __sub__(self, other):
+        return FakeVector(*(self[index] - other[index] for index in range(3)))
+
+    def __mul__(self, value):
+        return FakeVector(*(self[index] * float(value) for index in range(3)))
+
+    def __truediv__(self, value):
+        return FakeVector(*(self[index] / float(value) for index in range(3)))
+
+    @property
+    def length(self):
+        return sum(value * value for value in self.values) ** 0.5
+
+
+class FakeMatrix:
+    def __init__(self, rows):
+        self.rows = tuple(tuple(float(value) for value in row) for row in rows)
+
+    def __iter__(self):
+        return iter(self.rows)
+
+    def __eq__(self, other):
+        return isinstance(other, FakeMatrix) and self.rows == other.rows
+
+    def copy(self):
+        return FakeMatrix(self.rows)
+
+    def to_list(self):
+        return [list(row) for row in self.rows]
+
+    def __matmul__(self, point):
+        x, y, z = (float(point[index]) for index in range(3))
+        source = (x, y, z, 1.0)
+        return FakeVector(
+            *(sum(self.rows[row][column] * source[column] for column in range(4)) for row in range(3))
+        )
+
+
+class FakeBone:
+    def __init__(self, name: str, position):
+        self.name = name
+        self.head_local = FakeVector(*position)
+        self.tail_local = FakeVector(position[0], position[1] + 0.1, position[2])
+
+
+class FakeRig:
+    def __init__(self, bone_specs):
+        bones = []
+        for value in bone_specs:
+            if isinstance(value, tuple):
+                name, position = value
+            else:
+                name = value
+                position = (4.25, 5.25, 6.25)
+            bones.append(FakeBone(name, position))
+        self.data = types.SimpleNamespace(
+            bones=bones
+        )
+        self.matrix_world = FakeMatrix(
+            (
+                (1.0, 0.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+
+
+DEFAULT_PARENT = object()
+
+
+class FakeObject(FakeProperties):
+    def __init__(
+        self, name: str = "fixture_sword", parent=DEFAULT_PARENT, skinned: bool = True
+    ):
+        super().__init__()
+        self.type = "MESH"
+        self.name = name
+        geometry_name = (
+            "fixture_shield_geometry" if "shield" in name else "fixture_weapon_geometry"
+        )
+        self.data = FakeMesh(geometry_name, FakeMaterial("fixture_metal"))
+        # The root-only weights make the parent bone the sole attachment proof.
+        self.vertex_groups = [FakeVertexGroup(0, "B_ROOT")] if skinned else []
+        self.modifiers = (
+            [
+                types.SimpleNamespace(
+                    name="fixture_armature", type="ARMATURE", show_render=True
+                )
+            ]
+            if skinned
+            else []
+        )
+        self.parent = FakeParent() if parent is DEFAULT_PARENT else parent
+        self.parent_type = "BONE" if self.parent is not None else "OBJECT"
+        self.parent_bone = "B_HAND_R" if self.parent is not None else ""
+        self.parent_inverse_round_trip_drift = 0.0
+        self.local_round_trip_drift = 0.0
+        self.matrix_parent_inverse = (
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        )
+        self.matrix_basis = (
+            (1.0, 0.0, 0.0, 0.25),
+            (0.0, 1.0, 0.0, 0.5),
+            (0.0, 0.0, 1.0, 0.75),
+            (0.0, 0.0, 0.0, 1.0),
+        )
+        self.matrix_world = FakeMatrix(
+            (
+                (1.0, 0.0, 0.0, 4.0),
+                (0.0, 1.0, 0.0, 5.0),
+                (0.0, 0.0, 1.0, 6.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+
+    @staticmethod
+    def _with_drift(value, drift: float):
+        rows = [list(row) for row in value]
+        if rows and rows[0]:
+            rows[0][0] = float(rows[0][0]) + drift
+        return tuple(tuple(row) for row in rows)
+
+    @property
+    def matrix_parent_inverse(self):
+        return self._matrix_parent_inverse
+
+    @matrix_parent_inverse.setter
+    def matrix_parent_inverse(self, value):
+        self._matrix_parent_inverse = self._with_drift(
+            value, self.parent_inverse_round_trip_drift
+        )
+
+    @property
+    def matrix_basis(self):
+        return self._matrix_basis
+
+    @matrix_basis.setter
+    def matrix_basis(self, value):
+        self._matrix_basis = self._with_drift(value, self.local_round_trip_drift)
+
+
+def capture_one(item: FakeObject):
+    inventory, equipment = ADAPTER.build_mesh_inventory(
+        [item], ["right-hand-weapon"]
+    )
+    return inventory, equipment, ADAPTER.capture_render_geometry_proof([item])
+
+
+class W3dAdditiveMaterialTests(unittest.TestCase):
+    def test_exact_additive_shader_converts_shared_image_and_connects_alpha(self) -> None:
+        source_pixels = [
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.02,
+            0.01,
+            0.0,
+            1.0,
+            0.8,
+            0.4,
+            0.2,
+            1.0,
+        ]
+        source_image = FakeImage(source_pixels, users=2)
+        material = FakeNodeMaterial(
+            source_image,
+            shader_properties={"src_blend": "1", "dest_blend": "1"},
+        )
+
+        report = ADAPTER.convert_proven_additive_materials([material])
+
+        self.assertEqual(report["converted_materials"], 1)
+        self.assertEqual(report["duplicated_images"], 1)
+        self.assertGreaterEqual(report["changed_alpha_pixels"], 1)
+        self.assertGreaterEqual(report["transparent_pixels"], 1)
+        self.assertEqual(list(source_image.pixels), source_pixels)
+        self.assertIsNot(material.image_node.image, source_image)
+        converted = list(material.image_node.image.pixels)
+        self.assertEqual(converted[0:4], [0.0, 0.0, 0.0, 0.0])
+        self.assertAlmostEqual(converted[4], 1.0)
+        self.assertAlmostEqual(converted[5], 0.5)
+        self.assertAlmostEqual(converted[7], 0.02)
+        self.assertAlmostEqual(converted[8], 1.0)
+        self.assertAlmostEqual(converted[9], 0.5)
+        self.assertAlmostEqual(converted[10], 0.25)
+        self.assertAlmostEqual(converted[11], 0.8)
+        for offset in range(0, len(source_pixels), 4):
+            for channel in range(3):
+                self.assertAlmostEqual(
+                    converted[offset + channel] * converted[offset + 3],
+                    source_pixels[offset + channel] * source_pixels[offset + 3],
+                )
+        alpha_links = [
+            link
+            for link in material.node_tree.links
+            if link.to_socket is material.principled.inputs["Alpha"]
+        ]
+        self.assertEqual(len(alpha_links), 1)
+        self.assertIs(alpha_links[0].from_node, material.image_node)
+
+    def test_unproven_and_non_additive_materials_are_untouched(self) -> None:
+        cases = (
+            None,
+            {"src_blend": "0", "dest_blend": "0"},
+        )
+        for shader_properties in cases:
+            with self.subTest(shader_properties=shader_properties):
+                source_pixels = [0.1, 0.2, 0.3, 1.0]
+                image = FakeImage(source_pixels, users=2)
+                material = FakeNodeMaterial(
+                    image, shader_properties=shader_properties
+                )
+
+                report = ADAPTER.convert_proven_additive_materials([material])
+
+                self.assertEqual(report["converted_materials"], 0)
+                self.assertIs(material.image_node.image, image)
+                self.assertEqual(list(image.pixels), source_pixels)
+                self.assertEqual(len(material.node_tree.links), 1)
+
+    def test_incomplete_or_coerced_shader_proof_fails_closed(self) -> None:
+        cases = (
+            {"src_blend": 1},
+            {"src_blend": "01", "dest_blend": "1"},
+            {"src_blend": 1.0, "dest_blend": "1"},
+            {"src_blend": True, "dest_blend": 1},
+        )
+        for shader_properties in cases:
+            with self.subTest(shader_properties=shader_properties):
+                material = FakeNodeMaterial(
+                    FakeImage([0.0, 0.0, 0.0, 1.0]),
+                    shader_properties=shader_properties,
+                )
+                with self.assertRaises(RuntimeError):
+                    ADAPTER.convert_proven_additive_materials([material])
+
+    def test_one_8bit_step_of_image_round_trip_quantization_is_allowed(self) -> None:
+        quantize_8bit = lambda value: round(float(value) * 255.0) / 255.0
+        image = FakeImage(
+            [0.0, 0.0, 0.0, 1.0, 0.573, 0.218, 0.091, 1.0],
+            write_transform=quantize_8bit,
+        )
+        material = FakeNodeMaterial(
+            image,
+            shader_properties={"src_blend": "1", "dest_blend": "1"},
+        )
+
+        report = ADAPTER.convert_proven_additive_materials([material])
+
+        self.assertEqual(report["converted_materials"], 1)
+        self.assertTrue(image.updated)
+        self.assertLess(image.pixels[3], 1.0)
+        self.assertGreater(image.pixels[7], 0.0)
+
+    def test_image_round_trip_error_beyond_one_8bit_step_fails(self) -> None:
+        exceed_tolerance = lambda value: min(1.0, float(value) + (2.0 / 255.0))
+        image = FakeImage(
+            [0.0, 0.0, 0.0, 1.0, 0.573, 0.218, 0.091, 1.0],
+            write_transform=exceed_tolerance,
+        )
+        material = FakeNodeMaterial(
+            image,
+            shader_properties={"src_blend": "1", "dest_blend": "1"},
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "did not round trip"):
+            ADAPTER.convert_proven_additive_materials([material])
+
+
+class W3dEquipmentRoleProofTests(unittest.TestCase):
+    def test_attachment_label_cannot_invent_weapon_role(self) -> None:
+        item = FakeObject(name="fixture_geometry")
+        item.data.name = "fixture_geometry"
+        item.data.materials[0].name = "fixture_metal"
+        item.parent_bone = "B_SWORD"
+
+        role, attachment, proof_methods = ADAPTER._equipment_classification(item)
+
+        self.assertEqual(role, "character-mesh")
+        self.assertEqual(attachment, "skeletal")
+        self.assertEqual(proof_methods, [])
+
+    def test_mesh_or_material_role_still_requires_matching_hand_attachment(self) -> None:
+        weapon = FakeObject(name="fixture_sword")
+        role, attachment, proofs = ADAPTER._equipment_classification(weapon)
+        self.assertEqual((role, attachment), ("right-hand-weapon", "right-hand"))
+        self.assertIn("mesh-semantic", proofs)
+        self.assertNotIn("attachment-semantic", proofs)
+
+        shield = FakeObject(name="fixture_geometry")
+        shield.data.name = "fixture_geometry"
+        shield.data.materials[0].name = "fixture_shield_metal"
+        shield.parent_bone = "B_HAND_L"
+        role, attachment, proofs = ADAPTER._equipment_classification(shield)
+        self.assertEqual((role, attachment), ("left-hand-shield", "left-hand"))
+        self.assertIn("material-semantic", proofs)
+        self.assertNotIn("attachment-semantic", proofs)
+
+    def test_unproven_weapon_still_fails_with_bounded_sanitized_diagnostics(self) -> None:
+        weapon = FakeObject(name="private_retail_sword", parent=None)
+        weapon.data.name = "private_retail_weapon_geometry"
+        weapon.data.materials[0].name = "private_retail_metal"
+        weapon._properties = {"attachment_private": "secret_retail_socket"}
+
+        with self.assertRaises(RuntimeError) as raised:
+            ADAPTER._equipment_classification(weapon)
+
+        message = str(raised.exception)
+        prefix = "weapon-like render mesh has no proven right-hand attachment: "
+        self.assertTrue(message.startswith(prefix))
+        self.assertLess(len(message), 768)
+        self.assertNotIn("private_retail", message)
+        self.assertNotIn("secret_retail_socket", message)
+        diagnostics = json.loads(message[len(prefix) :])
+        self.assertEqual(
+            set(diagnostics),
+            {
+                "skinned",
+                "vertex_group_count",
+                "parent_right",
+                "parent_left",
+                "dominant_right",
+                "dominant_left",
+                "weighted_right",
+                "weighted_left",
+                "right_hand_weight_share",
+                "left_hand_weight_share",
+                "custom_right",
+                "custom_left",
+                "rig_right_candidate_count",
+                "rig_left_candidate_count",
+                "rest_pose_attachment",
+            },
+        )
+        self.assertFalse(diagnostics["parent_right"])
+        self.assertEqual(diagnostics["right_hand_weight_share"], 0.0)
+        self.assertEqual(diagnostics["rest_pose_attachment"], "ambiguous")
+
+
+class W3dAnimationGeometryProofTests(unittest.TestCase):
+    def test_multiple_left_candidates_choose_materially_nearest_without_world_drift(self) -> None:
+        rig = FakeRig(
+            [
+                ("B_HAND_L", (4.25, 5.25, 6.25)),
+                ("L_HAND", (8.0, 8.0, 8.0)),
+                ("B_HAND_R", (20.0, 20.0, 20.0)),
+            ]
+        )
+        item = FakeObject(name="fixture_shield", parent=None, skinned=False)
+        expected_world = item.matrix_world
+        promoted = ADAPTER.canonicalize_required_rigid_attachments(
+            [item], ["left-hand-shield"], rig
+        )
+
+        self.assertEqual(promoted, 1)
+        self.assertIs(item.parent, rig)
+        self.assertEqual(item.parent_type, "BONE")
+        self.assertEqual(item.parent_bone, "B_HAND_L")
+        self.assertEqual(item.matrix_world, expected_world)
+        inventory, equipment = ADAPTER.build_mesh_inventory(
+            [item], ["left-hand-shield"], rig
+        )
+        self.assertEqual(inventory[0]["attachment"], "left-hand")
+        self.assertIn("parent-bone", inventory[0]["proof_methods"])
+        self.assertEqual(equipment["left-hand-shield"]["mesh_count"], 1)
+
+    def test_unique_explicit_shield_bone_outranks_colocated_generic_hand(self) -> None:
+        rig = FakeRig(
+            [
+                ("B_HAND_L", (4.25, 5.25, 6.25)),
+                ("B_SHIELD", (4.25, 5.25, 6.25)),
+                ("B_HAND_R", (20.0, 20.0, 20.0)),
+            ]
+        )
+        item = FakeObject(name="fixture_shield", parent=None, skinned=False)
+
+        promoted = ADAPTER.canonicalize_required_rigid_attachments(
+            [item], ["left-hand-shield"], rig
+        )
+
+        self.assertEqual(promoted, 1)
+        self.assertIs(item.parent, rig)
+        self.assertEqual(item.parent_bone, "B_SHIELD")
+
+    def test_ambiguous_or_skinned_rest_only_attachment_is_rejected(self) -> None:
+        ambiguous = FakeObject(name="fixture_shield", parent=None, skinned=False)
+        near_tie_rig = FakeRig(
+            [
+                ("B_SHIELD", (4.20, 5.25, 6.25)),
+                ("SHIELDBONE", (4.30, 5.25, 6.25)),
+                ("B_HAND_R", (20.0, 20.0, 20.0)),
+            ]
+        )
+        with self.assertRaisesRegex(RuntimeError, "not materially separated"):
+            ADAPTER.canonicalize_required_rigid_attachments(
+                [ambiguous], ["left-hand-shield"], near_tie_rig
+            )
+        self.assertIsNone(ambiguous.parent)
+
+        skinned = FakeObject(name="fixture_shield", parent=None, skinned=True)
+        unique_rig = FakeRig(
+            [
+                ("B_HAND_L", (4.25, 5.25, 6.25)),
+                ("B_HAND_R", (20.0, 20.0, 20.0)),
+            ]
+        )
+        with self.assertRaisesRegex(RuntimeError, "skinned equipment"):
+            ADAPTER.canonicalize_required_rigid_attachments(
+                [skinned], ["left-hand-shield"], unique_rig
+            )
+        self.assertIsNone(skinned.parent)
+
+    def test_cleared_bone_parent_is_restored_before_semantic_revalidation(self) -> None:
+        item = FakeObject()
+        inventory, equipment, proof = capture_one(item)
+        attachment_proof = ADAPTER.capture_render_attachment_proof([item])
+        expected_parent = item.parent
+        expected_parent_inverse = item.matrix_parent_inverse
+        expected_local_transform = item.matrix_basis
+        repeated = ADAPTER.capture_render_geometry_proof([item])
+        self.assertEqual(proof[0]["fingerprints"], repeated[0]["fingerprints"])
+        self.assertEqual(inventory[0]["semantic_role"], "right-hand-weapon")
+        self.assertEqual(equipment["right-hand-weapon"]["attachment"], "right-hand")
+
+        item.parent = None
+        item.parent_type = "OBJECT"
+        item.parent_bone = ""
+        item.matrix_parent_inverse = ((0.0,),)
+        item.matrix_basis = ((0.0,),)
+
+        with self.assertRaisesRegex(RuntimeError, "no proven right-hand"):
+            ADAPTER.build_mesh_inventory([item], ["right-hand-weapon"])
+        ADAPTER.restore_render_attachments(
+            attachment_proof, [item], [item, expected_parent]
+        )
+        self.assertIs(item.parent, expected_parent)
+        self.assertEqual(item.parent_type, "BONE")
+        self.assertEqual(item.parent_bone, "B_HAND_R")
+        self.assertEqual(item.matrix_parent_inverse, expected_parent_inverse)
+        self.assertEqual(item.matrix_basis, expected_local_transform)
+        ADAPTER.assert_render_geometry_unchanged(proof, [item])
+        ADAPTER.revalidate_restored_inventory(
+            [item],
+            ["right-hand-weapon"],
+            None,
+            inventory,
+            equipment,
+        )
+
+    def test_wrong_or_unavailable_parent_cannot_satisfy_restoration(self) -> None:
+        expected_parent = FakeParent()
+        wrong_parent = FakeParent()
+        item = FakeObject(parent=expected_parent)
+        attachment_proof = ADAPTER.capture_render_attachment_proof([item])
+        item.parent = wrong_parent
+        item.parent_type = "BONE"
+        item.parent_bone = "B_HAND_L"
+
+        with self.assertRaisesRegex(RuntimeError, "parent is unavailable"):
+            ADAPTER.restore_render_attachments(
+                attachment_proof, [item], [item, wrong_parent]
+            )
+        self.assertIs(item.parent, wrong_parent)
+
+    def test_harmless_matrix_round_trip_drift_is_tolerated(self) -> None:
+        item = FakeObject()
+        attachment_proof = ADAPTER.capture_render_attachment_proof([item])
+        expected_parent = item.parent
+        item.parent_inverse_round_trip_drift = 0.5e-6
+        item.local_round_trip_drift = -0.5e-6
+        item.parent = None
+        item.parent_type = "OBJECT"
+        item.parent_bone = ""
+        item.matrix_parent_inverse = ((0.0, 0.0, 0.0, 0.0),) * 4
+        item.matrix_basis = ((0.0, 0.0, 0.0, 0.0),) * 4
+
+        ADAPTER.restore_render_attachments(
+            attachment_proof, [item], [item, expected_parent]
+        )
+        self.assertTrue(
+            ADAPTER._private_transforms_close(
+                item.matrix_parent_inverse,
+                attachment_proof[0]["parent_inverse"],
+            )
+        )
+        self.assertTrue(
+            ADAPTER._private_transforms_close(
+                item.matrix_basis,
+                attachment_proof[0]["local_transform"],
+            )
+        )
+
+    def test_material_matrix_mismatch_fails_with_specific_safe_error(self) -> None:
+        cases = [
+            ("parent-inverse", 2.0e-6, 0.0, "parent-inverse matrix"),
+            ("local", 0.0, -2.0e-6, "local transform"),
+        ]
+        for name, parent_drift, local_drift, message in cases:
+            with self.subTest(name=name):
+                item = FakeObject()
+                attachment_proof = ADAPTER.capture_render_attachment_proof([item])
+                expected_parent = item.parent
+                item.parent_inverse_round_trip_drift = parent_drift
+                item.local_round_trip_drift = local_drift
+                item.parent = None
+                item.parent_type = "OBJECT"
+                item.parent_bone = ""
+                with self.assertRaisesRegex(RuntimeError, message):
+                    ADAPTER.restore_render_attachments(
+                        attachment_proof, [item], [item, expected_parent]
+                    )
+
+    def test_post_restoration_semantic_revalidation_catches_mismatch(self) -> None:
+        item = FakeObject()
+        inventory, equipment, _proof = capture_one(item)
+        attachment_proof = ADAPTER.capture_render_attachment_proof([item])
+        expected_parent = item.parent
+        item.parent = None
+        item.parent_type = "OBJECT"
+        item.parent_bone = ""
+        ADAPTER.restore_render_attachments(
+            attachment_proof, [item], [item, expected_parent]
+        )
+
+        item.parent_bone = "B_HAND_L"
+        with self.assertRaisesRegex(RuntimeError, "semantic revalidation failed"):
+            ADAPTER.revalidate_restored_inventory(
+                [item],
+                ["right-hand-weapon"],
+                None,
+                inventory,
+                equipment,
+            )
+
+    def test_geometry_material_weight_and_object_data_mutations_fail_closed(self) -> None:
+        cases = []
+
+        geometry = FakeObject()
+        _, _, geometry_proof = capture_one(geometry)
+        geometry.data.vertices[0].co = (0.25, 0.0, 0.0)
+        cases.append(("geometry", geometry_proof, geometry, "geometry"))
+
+        material = FakeObject()
+        _, _, material_proof = capture_one(material)
+        material.data.materials[0].diffuse_color[0] = 0.9
+        cases.append(("material", material_proof, material, "materials"))
+
+        weight = FakeObject()
+        _, _, weight_proof = capture_one(weight)
+        weight.data.vertices[0].groups[0].weight = 0.5
+        cases.append(("weight", weight_proof, weight, "weights"))
+
+        object_data = FakeObject()
+        _, _, object_data_proof = capture_one(object_data)
+        object_data.data.name = "mutated_geometry"
+        cases.append(("object-data", object_data_proof, object_data, "object_data"))
+
+        for name, proof, item, message in cases:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    ADAPTER.assert_render_geometry_unchanged(proof, [item])
+
+    def test_object_mesh_data_and_material_replacement_fail_closed(self) -> None:
+        original = FakeObject()
+        _, _, proof = capture_one(original)
+        replacement = FakeObject()
+        replacement.data = original.data
+        with self.assertRaisesRegex(RuntimeError, "added, removed, or replaced"):
+            ADAPTER.assert_render_geometry_unchanged(proof, [replacement])
+
+        data_owner = FakeObject()
+        _, _, data_proof = capture_one(data_owner)
+        old_material = data_owner.data.materials[0]
+        data_owner.data = FakeMesh(data_owner.data.name, old_material)
+        with self.assertRaisesRegex(RuntimeError, "added, removed, or replaced"):
+            ADAPTER.assert_render_geometry_unchanged(data_proof, [data_owner])
+
+        material_owner = FakeObject()
+        _, _, material_proof = capture_one(material_owner)
+        material_owner.data.materials[0] = FakeMaterial("fixture_metal")
+        with self.assertRaisesRegex(RuntimeError, "replaced render material"):
+            ADAPTER.assert_render_geometry_unchanged(material_proof, [material_owner])
+
+
+if __name__ == "__main__":
+    unittest.main()

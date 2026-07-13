@@ -1,0 +1,22 @@
+@echo off
+setlocal
+cd /d "%~dp0"
+if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0.private\retail-work"
+set "PYTHON=%OPENBFME_IMPORT_ROOT%\tools\python-3.12-env\Scripts\python.exe"
+if /I "%~1"=="--print-paths" (
+  echo OPENBFME_IMPORT_ROOT=%OPENBFME_IMPORT_ROOT%
+  echo OPENBFME_IMPORTER_PYTHON=%PYTHON%
+  exit /b 0
+)
+if not "%~1"=="" set "BFME2_INSTALL=%~1"
+if not defined BFME2_INSTALL set "BFME2_INSTALL=F:\BFME2"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools\bootstrap-importer-python.ps1 -StateRoot "%OPENBFME_IMPORT_ROOT%"
+if errorlevel 1 exit /b %errorlevel%
+"%PYTHON%" tools\openbfme_import.py bootstrap-tools
+if errorlevel 1 exit /b %errorlevel%
+"%PYTHON%" tools\openbfme_import.py doctor --install "%BFME2_INSTALL%" --deep
+if errorlevel 1 exit /b %errorlevel%
+"%PYTHON%" tools\openbfme_import.py plan --install "%BFME2_INSTALL%" --profile men-fords-v0
+if errorlevel 1 exit /b %errorlevel%
+"%PYTHON%" tools\openbfme_import.py build --install "%BFME2_INSTALL%" --profile men-fords-v0
+exit /b %errorlevel%

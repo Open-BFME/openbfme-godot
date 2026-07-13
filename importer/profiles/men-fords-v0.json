@@ -1,0 +1,1168 @@
+{
+  "format": 1,
+  "id": "men-fords-v0",
+  "title": "BFME II Men and Fords private vertical-slice pack",
+  "pack": {
+    "id": "bfme2-men-vslice",
+    "version": "1.06-v0",
+    "schema": "openbfme.content-pack",
+    "schemaVersion": 0,
+    "priority": 900,
+    "vertical_slice_complete": false,
+    "capability_maturity": "four-unit-ui-five-intact-structure-plus-fords-material-cook",
+    "dataPolicy": {
+      "externalPathsAllowed": false,
+      "redistributable": false
+    },
+    "files": {
+      "objects": "data/objects.json",
+      "animationCapabilities": "data/animation_capabilities.json",
+      "entryMap": "maps/fords-of-isen-ii/map.json"
+    }
+  },
+  "resources": [
+    {
+      "id": "men-slice-building-definitions",
+      "kind": "data",
+      "converter": "hash-only",
+      "patterns": [
+        "data/ini/object/goodfaction/structures/men/fortress.ini",
+        "data/ini/object/goodfaction/structures/men/farm.ini",
+        "data/ini/object/goodfaction/structures/men/barracks.ini",
+        "data/ini/object/goodfaction/structures/men/archerrange.ini",
+        "data/ini/object/goodfaction/structures/men/stable.ini"
+      ],
+      "limit": 5,
+      "expected_count": 5
+    },
+    {
+      "id": "men-slice-ui-definitions",
+      "kind": "data",
+      "converter": "hash-only",
+      "patterns": [
+        "data/ini/mappedimages/aptimages/buildingradialbuttons.ini",
+        "data/ini/mappedimages/aptimages/strategicimages.ini"
+      ],
+      "limit": 2,
+      "expected_count": 2
+    },
+    {
+      "id": "fords-prop-ptgrass15-model",
+      "kind": "model",
+      "converter": "w3d-static",
+      "output": "assets/models/props/ptgrass15.glb",
+      "patterns": [
+        "art/w3d/pt/ptgrass15.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "ptgrass15.w3d",
+        "inputResourceIds": [
+          "fords-prop-ptgrass15-texture"
+        ]
+      }
+    },
+    {
+      "id": "fords-prop-ptgrass15-texture",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/pt/ptgrass05.dds"
+      ],
+      "limit": 1,
+      "expected_count": 1
+    },
+    {
+      "id": "men-fortress-intact-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-fortress/intact.glb",
+      "patterns": [
+        "art/w3d/gb/gbfortress_a.w3d",
+        "art/w3d/gb/gbfortress_ask.w3d"
+      ],
+      "limit": 2,
+      "expected_count": 2,
+      "options": {
+        "model": "gbfortress_a.w3d",
+        "inputResourceIds": [
+          "men-fortress-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-fortress-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/gb/gbfortress*.*"
+      ],
+      "limit": 11,
+      "expected_count": 11
+    },
+    {
+      "id": "men-farm-intact-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-farm/intact.glb",
+      "patterns": [
+        "art/w3d/gb/gbfarm_a.w3d",
+        "art/w3d/gb/gbfarm_askl.w3d"
+      ],
+      "limit": 2,
+      "expected_count": 2,
+      "options": {
+        "model": "gbfarm_a.w3d",
+        "inputResourceIds": [
+          "men-farm-material-textures",
+          "men-structure-shared-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-farm-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/gb/gbfarm*.*"
+      ],
+      "limit": 7,
+      "expected_count": 7
+    },
+    {
+      "id": "men-barracks-intact-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-barracks/intact.glb",
+      "patterns": [
+        "art/w3d/gb/gbbarracks_a.w3d",
+        "art/w3d/gb/gbbarracks_askl.w3d"
+      ],
+      "limit": 2,
+      "expected_count": 2,
+      "options": {
+        "model": "gbbarracks_a.w3d",
+        "inputResourceIds": [
+          "men-barracks-material-textures",
+          "men-structure-shared-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-barracks-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/gb/gbbarracks*.*"
+      ],
+      "limit": 10,
+      "expected_count": 10
+    },
+    {
+      "id": "men-archery-range-intact-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-archery-range/intact.glb",
+      "patterns": [
+        "art/w3d/gb/gbarcheryn_a.w3d",
+        "art/w3d/gb/gbarcheryn_askl.w3d"
+      ],
+      "limit": 2,
+      "expected_count": 2,
+      "options": {
+        "model": "gbarcheryn_a.w3d",
+        "inputResourceIds": [
+          "men-archery-range-material-textures",
+          "gondor-archer-material-textures",
+          "men-archery-range-extra-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-archery-range-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/gb/gbarcheryn*.*"
+      ],
+      "limit": 10,
+      "expected_count": 10
+    },
+    {
+      "id": "men-stable-intact-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-stable/intact.glb",
+      "patterns": [
+        "art/w3d/gb/gbstable_a.w3d",
+        "art/w3d/gb/gbstable_askl.w3d"
+      ],
+      "limit": 2,
+      "expected_count": 2,
+      "options": {
+        "model": "gbstable_a.w3d",
+        "inputResourceIds": [
+          "men-stable-material-textures",
+          "men-structure-shared-material-textures",
+          "men-stable-extra-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-stable-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/gb/gbstable*.*"
+      ],
+      "limit": 8,
+      "expected_count": 8
+    },
+    {
+      "id": "men-structure-shared-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/pm/pmrailtie.dds"
+      ],
+      "limit": 1,
+      "expected_count": 1
+    },
+    {
+      "id": "men-archery-range-extra-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/gb/gbvet.dds"
+      ],
+      "limit": 1,
+      "expected_count": 1
+    },
+    {
+      "id": "men-stable-extra-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/ru/rufrmhors04.dds"
+      ],
+      "limit": 1,
+      "expected_count": 1
+    },
+    {
+      "id": "gondor-fighter-definitions",
+      "kind": "data",
+      "converter": "hash-only",
+      "patterns": [
+        "data/ini/object/goodfaction/units/men/gondorfighter.ini",
+        "data/ini/object/goodfaction/hordes/men/menhordes.ini",
+        "data/ini/armor.ini",
+        "data/ini/commandset.ini",
+        "data/ini/gamedata.ini",
+        "data/ini/locomotor.ini",
+        "data/ini/music.ini",
+        "data/ini/voice.ini",
+        "data/ini/weapon.ini"
+      ],
+      "limit": 9
+    },
+    {
+      "id": "gondor-fighter-rig-and-core-clips",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/units/gondor-fighter.glb",
+      "patterns": [
+        "art/w3d/gu/gumaarms_skn.w3d",
+        "art/w3d/gu/gumaarms_sknm.w3d",
+        "art/w3d/gu/gumaarms_sknl.w3d",
+        "art/w3d/gu/gumaarms_skl.w3d",
+        "art/w3d/gu/gumanmocap_idlb.w3d",
+        "art/w3d/gu/gumanmocap_idlf.w3d",
+        "art/w3d/gu/gumanmocap_idlg.w3d",
+        "art/w3d/gu/gumanmocap_idlj.w3d",
+        "art/w3d/gu/gumanmocap_idlk.w3d",
+        "art/w3d/gu/gumanmocap_idll.w3d",
+        "art/w3d/gu/gumanmocap_idln.w3d",
+        "art/w3d/gu/gumanmocap_idlo.w3d",
+        "art/w3d/gu/gumanmocap_idlp.w3d",
+        "art/w3d/gu/gumanmocap_runb.w3d",
+        "art/w3d/gu/gumanmocap_runc.w3d",
+        "art/w3d/gu/gumaarms_spca.w3d",
+        "art/w3d/gu/gumanmocap_atka.w3d",
+        "art/w3d/gu/gumanmocap_atra.w3d",
+        "art/w3d/gu/gumanmocap_runa.w3d",
+        "art/w3d/gu/gumanmocap_idla.w3d",
+        "art/w3d/gu/gumanmocap_dieb.w3d",
+        "art/w3d/gu/gumanmocap_diec.w3d",
+        "art/w3d/gu/gumanmocap_died.w3d",
+        "art/w3d/gu/gumanmocap_diee.w3d",
+        "art/w3d/gu/gumanmocap_atna.w3d",
+        "art/w3d/gu/gumanmocap_atnb.w3d",
+        "art/w3d/gu/gumanmocap_atnd.w3d"
+      ],
+      "limit": 27,
+      "options": {
+        "model": "gumaarms_skn.w3d",
+        "inputResourceIds": [
+          "gondor-fighter-material-textures"
+        ],
+        "required_equipment": [
+          "right-hand-weapon",
+          "left-hand-shield"
+        ],
+        "animations": [
+          "gumanmocap_idlb.w3d",
+          "gumanmocap_idlf.w3d",
+          "gumanmocap_idlg.w3d",
+          "gumanmocap_idlj.w3d",
+          "gumanmocap_idlk.w3d",
+          "gumanmocap_idll.w3d",
+          "gumanmocap_idln.w3d",
+          "gumanmocap_idlo.w3d",
+          "gumanmocap_idlp.w3d",
+          "gumanmocap_runb.w3d",
+          "gumanmocap_runc.w3d",
+          "gumaarms_spca.w3d",
+          "gumanmocap_atka.w3d",
+          "gumanmocap_atra.w3d",
+          "gumanmocap_runa.w3d",
+          "gumanmocap_idla.w3d",
+          "gumanmocap_dieb.w3d",
+          "gumanmocap_diec.w3d",
+          "gumanmocap_died.w3d",
+          "gumanmocap_diee.w3d",
+          "gumanmocap_atna.w3d",
+          "gumanmocap_atnb.w3d",
+          "gumanmocap_atnd.w3d"
+        ]
+      }
+    },
+    {
+      "id": "gondor-fighter-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/gu/gumanatarms.dds",
+        "art/compiledtextures/gu/gumanatarms_ha.dds",
+        "art/compiledtextures/gu/gumaarmsshield.dds",
+        "art/compiledtextures/ex/exlnzflar2.dds"
+      ],
+      "limit": 4
+    },
+    {
+      "id": "men-slice-additional-unit-definitions",
+      "kind": "data",
+      "converter": "hash-only",
+      "patterns": [
+        "data/ini/object/goodfaction/units/men/gondorarcher.ini",
+        "data/ini/object/goodfaction/units/men/gondortowershieldguard.ini",
+        "data/ini/object/goodfaction/units/men/gondorcavalry.ini"
+      ],
+      "limit": 3,
+      "expected_count": 3
+    },
+    {
+      "id": "gondor-archer-rig-and-core-clips",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/units/gondor-archer.glb",
+      "patterns": [
+        "art/w3d/gu/guarcher_skn.w3d",
+        "art/w3d/gu/guarcher_sknm.w3d",
+        "art/w3d/gu/guarcher_sknl.w3d",
+        "art/w3d/gu/guarcher_skl.w3d",
+        "art/w3d/gu/guarcher_idla.w3d",
+        "art/w3d/gu/guarcher_runa.w3d",
+        "art/w3d/gu/guarcher_atkd.w3d",
+        "art/w3d/gu/guarcher_diea.w3d"
+      ],
+      "limit": 8,
+      "expected_count": 8,
+      "options": {
+        "model": "guarcher_sknm.w3d",
+        "inputResourceIds": [
+          "gondor-archer-material-textures"
+        ],
+        "animations": [
+          "guarcher_idla.w3d",
+          "guarcher_runa.w3d",
+          "guarcher_atkd.w3d",
+          "guarcher_diea.w3d"
+        ]
+      }
+    },
+    {
+      "id": "gondor-archer-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/gu/guarcher.dds",
+        "art/compiledtextures/gu/guarcher_ha.dds",
+        "art/compiledtextures/ex/exfiretorchseq.dds",
+        "art/compiledtextures/g_/g_arrow.dds"
+      ],
+      "limit": 4,
+      "expected_count": 4
+    },
+    {
+      "id": "gondor-tower-guard-rig-and-core-clips",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/units/gondor-tower-guard.glb",
+      "patterns": [
+        "art/w3d/gu/gutowergrd_skn.w3d",
+        "art/w3d/gu/gutowergrd_sknm.w3d",
+        "art/w3d/gu/gutowergrd_sknl.w3d",
+        "art/w3d/gu/gutowergrd_skl.w3d",
+        "art/w3d/gu/gutowergrd_idla.w3d",
+        "art/w3d/gu/gutowergrd_runa.w3d",
+        "art/w3d/gu/gutowergrd_atka.w3d",
+        "art/w3d/gu/gutowergrd_diea.w3d"
+      ],
+      "limit": 8,
+      "expected_count": 8,
+      "options": {
+        "model": "gutowergrd_skn.w3d",
+        "inputResourceIds": [
+          "gondor-fighter-material-textures",
+          "gondor-tower-guard-material-textures"
+        ],
+        "required_equipment": [
+          "right-hand-weapon"
+        ],
+        "animations": [
+          "gutowergrd_idla.w3d",
+          "gutowergrd_runa.w3d",
+          "gutowergrd_atka.w3d",
+          "gutowergrd_diea.w3d"
+        ]
+      }
+    },
+    {
+      "id": "gondor-tower-guard-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/gu/gutowrgrd.dds",
+        "art/compiledtextures/gu/gutowrgrd_ha.dds",
+        "art/compiledtextures/gu/gutowrgrd_l.dds"
+      ],
+      "limit": 3,
+      "expected_count": 3
+    },
+    {
+      "id": "gondor-knight-rig-and-core-clips",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/units/gondor-knight.glb",
+      "patterns": [
+        "art/w3d/gu/gucavalry_skn.w3d",
+        "art/w3d/gu/gucavalry_sknm.w3d",
+        "art/w3d/gu/gucavalry_sknl.w3d",
+        "art/w3d/gu/gucavalry_skl.w3d",
+        "art/w3d/gu/gucavalry_idla.w3d",
+        "art/w3d/gu/gucavalry_runa.w3d",
+        "art/w3d/gu/gucavalry_atka.w3d",
+        "art/w3d/gu/gucavalry_diea.w3d"
+      ],
+      "limit": 8,
+      "expected_count": 8,
+      "options": {
+        "model": "gucavalry_sknm.w3d",
+        "inputResourceIds": [
+          "gondor-fighter-material-textures",
+          "gondor-knight-material-textures"
+        ],
+        "animations": [
+          "gucavalry_idla.w3d",
+          "gucavalry_runa.w3d",
+          "gucavalry_atka.w3d",
+          "gucavalry_diea.w3d"
+        ]
+      }
+    },
+    {
+      "id": "gondor-knight-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/cu/cuhorse_bnwta.dds"
+      ],
+      "limit": 1,
+      "expected_count": 1
+    },
+    {
+      "id": "gondor-archer-portrait",
+      "kind": "ui",
+      "converter": "texture-crop",
+      "patterns": [
+        "art/compiledtextures/up/upgondor_archer.dds"
+      ],
+      "output": "assets/ui/upgondor-archer.png",
+      "limit": 1,
+      "options": {
+        "crop": [0, 0, 192, 192]
+      }
+    },
+    {
+      "id": "gondor-tower-guard-portrait",
+      "kind": "ui",
+      "converter": "texture-crop",
+      "patterns": [
+        "art/compiledtextures/up/upgondor_towerguard.dds"
+      ],
+      "output": "assets/ui/upgondor-towerguard.png",
+      "limit": 1,
+      "options": {
+        "crop": [0, 0, 192, 192]
+      }
+    },
+    {
+      "id": "gondor-knight-portrait",
+      "kind": "ui",
+      "converter": "texture-crop",
+      "patterns": [
+        "art/compiledtextures/up/upgondor_knight.dds"
+      ],
+      "output": "assets/ui/upgondor-knight.png",
+      "limit": 1,
+      "options": {
+        "crop": [0, 0, 192, 192]
+      }
+    },
+    {
+      "id": "gondor-fighter-portrait",
+      "kind": "ui",
+      "converter": "texture-crop",
+      "patterns": [
+        "art/compiledtextures/up/upgondor_soldier.dds"
+      ],
+      "output": "assets/ui/upgondor-soldier.png",
+      "limit": 1,
+      "options": {
+        "crop": [0, 0, 192, 192]
+      }
+    },
+    {
+      "id": "men-unit-command-icons",
+      "kind": "ui",
+      "converter": "texture-atlas-crops",
+      "patterns": [
+        "art/compiledtextures/st/strategicimages_001.dds"
+      ],
+      "output": "assets/ui",
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "crops": [
+          {
+            "logicalName": "WOR_GondorSoldier",
+            "output": "wor-gondor-soldier.png",
+            "crop": [64, 192, 64, 64]
+          },
+          {
+            "logicalName": "WOR_GondorArcher",
+            "output": "wor-gondor-archer.png",
+            "crop": [192, 128, 64, 64]
+          },
+          {
+            "logicalName": "WOR_GondorTowerGuard",
+            "output": "wor-gondor-tower-guard.png",
+            "crop": [128, 192, 64, 64]
+          },
+          {
+            "logicalName": "WOR_GondorKnights",
+            "output": "wor-gondor-knights.png",
+            "crop": [0, 129, 64, 64]
+          }
+        ]
+      }
+    },
+    {
+      "id": "men-barracks-train-icons",
+      "kind": "ui",
+      "converter": "texture-atlas-crops",
+      "patterns": [
+        "art/compiledtextures/bu/buildingradialbuttons_168.dds"
+      ],
+      "output": "assets/ui",
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "crops": [
+          {
+            "logicalName": "BGBarracks_Soldiers",
+            "output": "bg-barracks-soldiers.png",
+            "crop": [192, 64, 64, 64]
+          },
+          {
+            "logicalName": "BGBarracks_TowerGuard",
+            "output": "bg-barracks-tower-guard.png",
+            "crop": [192, 128, 64, 64]
+          }
+        ]
+      }
+    },
+    {
+      "id": "gondor-archer-train-icon",
+      "kind": "ui",
+      "converter": "texture-crop",
+      "patterns": [
+        "art/compiledtextures/bu/buildingradialbuttons_167.dds"
+      ],
+      "output": "assets/ui/bg-archery-range-archers.png",
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "crop": [192, 64, 64, 64]
+      }
+    },
+    {
+      "id": "gondor-knight-train-icon",
+      "kind": "ui",
+      "converter": "texture-crop",
+      "patterns": [
+        "art/compiledtextures/bu/buildingradialbuttons_187.dds"
+      ],
+      "output": "assets/ui/bg-stables-knights.png",
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "crop": [192, 128, 64, 64]
+      }
+    },
+    {
+      "id": "gondor-fighter-select-voices",
+      "kind": "audio",
+      "converter": "audio",
+      "patterns": [
+        "data/audio/sounds/gusoldg_voisel?.wav"
+      ],
+      "output": "assets/audio/voice/gondor-soldier/{name}",
+      "limit": 9,
+      "expected_count": 9,
+      "options": {
+        "force_pcm": true
+      }
+    },
+    {
+      "id": "gondor-fighter-battle-select-voices",
+      "kind": "audio",
+      "converter": "audio",
+      "patterns": [
+        "data/audio/sounds/gusoldg_voiseb?.wav"
+      ],
+      "output": "assets/audio/voice/gondor-soldier/{name}",
+      "limit": 10,
+      "expected_count": 10,
+      "options": {
+        "force_pcm": true
+      }
+    },
+    {
+      "id": "gondor-fighter-attack-voices",
+      "kind": "audio",
+      "converter": "audio",
+      "patterns": [
+        "data/audio/sounds/gusoldg_voiatt?.wav"
+      ],
+      "output": "assets/audio/voice/gondor-soldier/{name}",
+      "limit": 6,
+      "expected_count": 6,
+      "options": {
+        "force_pcm": true
+      }
+    },
+    {
+      "id": "gondor-fighter-charge-voices",
+      "kind": "audio",
+      "converter": "audio",
+      "patterns": [
+        "data/audio/sounds/gusoldg_voiatc?.wav"
+      ],
+      "output": "assets/audio/voice/gondor-soldier/{name}",
+      "limit": 6,
+      "expected_count": 6,
+      "options": {
+        "force_pcm": true
+      }
+    },
+    {
+      "id": "gondor-fighter-building-attack-voices",
+      "kind": "audio",
+      "converter": "audio",
+      "patterns": [
+        "data/audio/sounds/gusoldg_voiatb?.wav"
+      ],
+      "output": "assets/audio/voice/gondor-soldier/{name}",
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "force_pcm": true
+      }
+    },
+    {
+      "id": "gondor-fighter-additional-select-voice",
+      "kind": "audio",
+      "converter": "audio",
+      "patterns": [
+        "data/audio/sounds/gugoswo_voise2a.wav"
+      ],
+      "output": "assets/audio/voice/gondor-soldier/{name}",
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "force_pcm": true
+      }
+    },
+    {
+      "id": "men-music-explore",
+      "kind": "music",
+      "converter": "copy",
+      "patterns": [
+        "data/audio/tracks/sx_bfme2_ex1good01.mp3"
+      ],
+      "output": "assets/audio/music/explore.mp3",
+      "limit": 1
+    },
+    {
+      "id": "men-music-battle",
+      "kind": "music",
+      "converter": "copy",
+      "patterns": [
+        "data/audio/tracks/sx_bfme2_ac1good01.mp3"
+      ],
+      "output": "assets/audio/music/battle.mp3",
+      "limit": 1
+    },
+    {
+      "id": "men-music-victory",
+      "kind": "music",
+      "converter": "copy",
+      "patterns": [
+        "data/audio/tracks/vsgood01.mp3"
+      ],
+      "output": "assets/audio/music/victory.mp3",
+      "limit": 1
+    },
+    {
+      "id": "men-music-building",
+      "kind": "music",
+      "converter": "copy",
+      "patterns": [
+        "data/audio/tracks/bagood19_f04.mp3"
+      ],
+      "output": "assets/audio/music/building.mp3",
+      "limit": 1
+    },
+    {
+      "id": "men-music-battle-alternate",
+      "kind": "music",
+      "converter": "copy",
+      "patterns": [
+        "data/audio/tracks/r_acneutral105.mp3"
+      ],
+      "output": "assets/audio/music/battle-alternate.mp3",
+      "limit": 1
+    },
+    {
+      "id": "men-music-defeat",
+      "kind": "music",
+      "converter": "copy",
+      "patterns": [
+        "data/audio/tracks/lsevil01.mp3"
+      ],
+      "output": "assets/audio/music/defeat.mp3",
+      "limit": 1
+    },
+    {
+      "id": "fords-map-binary",
+      "kind": "map",
+      "converter": "sage-map",
+      "patterns": [
+        "maps/map mp fords of isen ii/map mp fords of isen ii.map"
+      ],
+      "output": "maps/fords-of-isen-ii",
+      "limit": 1,
+      "options": {
+        "metadata": {
+          "id": "bfme2.map.fords-of-isen-ii",
+          "displayName": "Fords of Isen II",
+          "preview": "assets/ui/maps/fords-of-isen-ii-preview.png",
+          "art": "assets/ui/maps/fords-of-isen-ii-art.png",
+          "terrainMaterials": "materials/terrain-materials.json",
+          "knownEnvironment": {
+            "waterReflectionPlaneZ": 294.0,
+            "requiresTerrain": true,
+            "requiresWater": true,
+            "requiresFog": true
+          }
+        },
+        "expected": {
+          "width": 415,
+          "height": 353,
+          "borderWidth": 20,
+          "impassableCount": 18325,
+          "terrainTextureCount": 66,
+          "standingWaterCount": 4,
+          "riverCount": 8,
+          "objectCount": 1526,
+          "waypointCount": 14,
+          "playerStartNames": ["Player_1_Start", "Player_2_Start"],
+          "scriptListCount": 14,
+          "nonemptyScriptListCount": 0,
+          "triggerCount": 0,
+          "standingWaveCount": 0,
+          "waypointPathCount": 0
+        },
+        "objectBindings": {
+          "logical": [
+            {"typeName": "*Waypoints/Waypoint", "classification": "waypoint"},
+            {"typeName": "AnimalWanderPoint", "classification": "ai-marker"},
+            {"typeName": "Backdoor1", "classification": "ai-route-marker"},
+            {"typeName": "Backdoor2", "classification": "ai-route-marker"},
+            {"typeName": "Center1", "classification": "ai-route-marker"},
+            {"typeName": "Center2", "classification": "ai-route-marker"},
+            {"typeName": "ChokePoint", "classification": "navigation-marker"},
+            {"typeName": "CombatArea01", "classification": "ai-area"},
+            {"typeName": "CombatArea02", "classification": "ai-area"},
+            {"typeName": "CombatArea03", "classification": "ai-area"},
+            {"typeName": "CombatArea04", "classification": "ai-area"},
+            {"typeName": "CombatArea05", "classification": "ai-area"},
+            {"typeName": "CombatArea06", "classification": "ai-area"},
+            {"typeName": "CombatArea07", "classification": "ai-area"},
+            {"typeName": "CombatArea08", "classification": "ai-area"},
+            {"typeName": "CombatArea09", "classification": "ai-area"},
+            {"typeName": "CombatArea10", "classification": "ai-area"},
+            {"typeName": "Flank1", "classification": "ai-route-marker"},
+            {"typeName": "Flank2", "classification": "ai-route-marker"}
+          ],
+          "models": [
+            {
+              "typeName": "PTGrass15",
+              "sourceVirtualModel": "art/w3d/pt/ptgrass15.w3d",
+              "glb": "assets/models/props/ptgrass15.glb",
+              "matchMethod": "exact-type-name"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fords-map-config",
+      "kind": "map",
+      "converter": "hash-only",
+      "patterns": [
+        "maps/map mp fords of isen ii/map.ini"
+      ],
+      "limit": 1
+    },
+    {
+      "id": "fords-terrain-materials",
+      "kind": "texture",
+      "converter": "sage-terrain-materials",
+      "patterns": [
+        "data/ini/terrain.ini",
+        "art/terrain/mblkgt2.tga",
+        "art/terrain/mordirt01.tga",
+        "art/terrain/mordirt02.tga",
+        "art/terrain/mordirt03.tga",
+        "art/terrain/tclif_ise08.tga",
+        "art/terrain/tclif_ith01.tga",
+        "art/terrain/tclif_ith02.tga",
+        "art/terrain/tdirt_ise06.tga",
+        "art/terrain/tdirt_ith11.tga",
+        "art/terrain/tdirt_ith14.tga",
+        "art/terrain/tdirt_mor02.tga",
+        "art/terrain/tdirt_mor13.tga",
+        "art/terrain/tdirt_osg03.tga",
+        "art/terrain/tdirt_rhu01.tga",
+        "art/terrain/tdirt_rhu01a.tga",
+        "art/terrain/tdirt_rhu02.tga",
+        "art/terrain/tdirt_rhu02a.tga",
+        "art/terrain/tdirt_rhu03.tga",
+        "art/terrain/tdirt_rhu03a.tga",
+        "art/terrain/tdirt_roh01.tga",
+        "art/terrain/tdirt_roh05.tga",
+        "art/terrain/tggrass03.tga",
+        "art/terrain/tgras_amo06.tga",
+        "art/terrain/tgras_ise01.tga",
+        "art/terrain/tgras_ise03.tga",
+        "art/terrain/tgras_ise04.tga",
+        "art/terrain/tgras_ise05.tga",
+        "art/terrain/tgras_ise06.tga",
+        "art/terrain/tgras_ise08.tga",
+        "art/terrain/tgras_ise12.tga",
+        "art/terrain/tgras_ise13.tga",
+        "art/terrain/tgras_ise14.tga",
+        "art/terrain/tgras_ise15.tga",
+        "art/terrain/tgras_ise16.tga",
+        "art/terrain/tgras_ise17.tga",
+        "art/terrain/tgras_rhu02.tga",
+        "art/terrain/tgras_roh04.tga",
+        "art/terrain/tmdirt16a.tga",
+        "art/terrain/tmgras11c.tga",
+        "art/terrain/tmgras13b.tga",
+        "art/terrain/tmgras14b.tga",
+        "art/terrain/tmgras38b.tga",
+        "art/terrain/tmgras39.tga",
+        "art/terrain/tmgras40.tga",
+        "art/terrain/tmgras41.tga",
+        "art/terrain/tmgras42.tga",
+        "art/terrain/tmisc_gon02.tga",
+        "art/terrain/tmpelefgras06.tga",
+        "art/terrain/tmpelefgras06b.tga",
+        "art/terrain/tmrohandirt01.tga",
+        "art/terrain/tmsand02b.tga",
+        "art/terrain/todirt01.tga",
+        "art/terrain/todirt02.tga",
+        "art/terrain/trock_dun01.tga",
+        "art/terrain/trock_ise01.tga",
+        "art/terrain/trock_ise02.tga",
+        "art/terrain/trock_ise06.tga",
+        "art/terrain/trock_ise08.tga",
+        "art/terrain/trock_ise09.tga",
+        "art/terrain/trock_ise10.tga",
+        "art/terrain/trock_ith01.tga",
+        "art/terrain/trock_roh04.tga",
+        "art/terrain/trock_roh10.tga",
+        "art/terrain/trock_roh11.tga",
+        "art/terrain/trock_roh12.tga",
+        "art/terrain/txasph01a.tga"
+      ],
+      "output": "maps/fords-of-isen-ii/materials",
+      "limit": 67,
+      "expected_count": 67,
+      "options": {
+        "symbols": [
+          "GrassIsengard06",
+          "RockIsengard06",
+          "RockIsengard08",
+          "RockIsengard09",
+          "RockIsengard10",
+          "GrassIsengard04",
+          "GrassIsengard05",
+          "GrassIsengard08",
+          "GrassIsengard12",
+          "GrassIsengard13",
+          "GrassIsengard14",
+          "GrassIsengard15",
+          "GrassIsengard01",
+          "DirtRohan01",
+          "OsgiliathDirt03",
+          "IthilienCliff01",
+          "MBlkGt2",
+          "GrassMediumType47",
+          "GrassMediumType46",
+          "GrassMediumType44b",
+          "AsphaltType1",
+          "PelanorGrass06b",
+          "DirtRhun03a",
+          "DirtRhun03",
+          "DirtMediumType15",
+          "GrassRohan04",
+          "GrassMediumType10c",
+          "GrassLargeType46",
+          "GrassAmon_Hen06",
+          "GrassMediumType12Leaves",
+          "GrassMediumType48",
+          "GrassMediumType49",
+          "DirtRhun01a",
+          "DirtRhun01",
+          "RockRohan10",
+          "RockRohan11",
+          "RockRohan12",
+          "RockIsengard02",
+          "GrassMediumType13Leaves",
+          "RockRohan04",
+          "DirtMordor02",
+          "DirtRohan05",
+          "GrassIsengard16",
+          "MorDirt02",
+          "MorDirt01",
+          "DirtMordor13",
+          "RockIthilien01",
+          "IsengardDirt06",
+          "RockDunharrow01",
+          "MorDirt03",
+          "PelargirCobblestone02",
+          "RohanDirt01",
+          "CliffIsengard08",
+          "IthilienCliff02",
+          "SandMediumType2b",
+          "OsgiliathDirt02",
+          "DirtRhun02",
+          "DirtRhun02a",
+          "IthilienDirt11",
+          "IthilienDirt14",
+          "OsgiliathDirt01",
+          "GrassRhun02",
+          "GrassIsengard17",
+          "PelanorGrass06",
+          "GrassIsengard03",
+          "RockIsengard01"
+        ]
+      }
+    },
+    {
+      "id": "fords-map-art",
+      "kind": "ui",
+      "converter": "texture",
+      "patterns": [
+        "maps/map mp fords of isen ii/map mp fords of isen ii_art.tga"
+      ],
+      "output": "assets/ui/maps/fords-of-isen-ii-art.png",
+      "limit": 1
+    },
+    {
+      "id": "fords-map-preview",
+      "kind": "ui",
+      "converter": "texture",
+      "patterns": [
+        "maps/map mp fords of isen ii/map mp fords of isen ii_pic.tga"
+      ],
+      "output": "assets/ui/maps/fords-of-isen-ii-preview.png",
+      "limit": 1
+    },
+    {
+      "id": "fords-localization",
+      "kind": "data",
+      "converter": "hash-only",
+      "patterns": [
+        "data/lotr.str"
+      ],
+      "limit": 1
+    }
+  ],
+  "runtime_data": {
+    "data/objects.json": {
+      "schema": "openbfme.objects",
+      "schemaVersion": 0,
+      "objects": [
+        {
+          "id": "bfme2.object.gondor-fighter",
+          "kind": "member",
+          "displayName": "Gondor Soldier",
+          "animationCapabilityId": "bfme2.animation.gondor-fighter",
+          "presentation": {
+            "model": "assets/models/units/gondor-fighter.glb",
+            "icon": "assets/ui/upgondor-soldier.png",
+            "commandIcon": "assets/ui/wor-gondor-soldier.png"
+          },
+          "simulation": {
+            "cost": 200,
+            "buildTimeSeconds": 20,
+            "health": 200,
+            "damagedThreshold": 100,
+            "baseDamage": 40,
+            "forgedBladeDamage": 90,
+            "preAttackMs": 500,
+            "shotIntervalMs": 1000,
+            "firingDurationMs": 1000,
+            "speed": 55,
+            "vision": 175
+          }
+        },
+        {
+          "id": "bfme2.object.gondor-fighter-horde",
+          "kind": "battalion",
+          "displayName": "Gondor Soldiers",
+          "memberObjectId": "bfme2.object.gondor-fighter",
+          "memberCount": 15,
+          "commandPoints": 60,
+          "formations": ["line", "block"]
+        }
+      ]
+    },
+    "data/animation_capabilities.json": {
+      "schema": "openbfme.animation-capabilities",
+      "schemaVersion": 0,
+      "capabilities": [
+        {
+          "id": "bfme2.animation.gondor-fighter",
+          "presentationMode": "skeletal-glb",
+          "conversionProof": "provenance/conversion/gondor-fighter-rig-and-core-clips.json",
+          "skeleton": "GUMAARMS_SKL",
+          "states": {
+            "idle": {
+              "required": true,
+              "clips": ["gumanmocap_idlb", "gumanmocap_idlf", "gumanmocap_idlg", "gumanmocap_idlj", "gumanmocap_idlk", "gumanmocap_idll", "gumanmocap_idln", "gumanmocap_idlo", "gumanmocap_idlp"],
+              "mode": "loop-random"
+            },
+            "move": {
+              "required": true,
+              "clips": ["gumanmocap_runb", "gumanmocap_runc"],
+              "mode": "loop-random",
+              "sourceDistance": 30
+            },
+            "alternateFormationMove": {
+              "required": true,
+              "clips": ["gumaarms_spca"],
+              "mode": "loop",
+              "sourceDistance": 20
+            },
+            "attack": {
+              "required": true,
+              "clips": ["gumanmocap_atka"],
+              "mode": "once",
+              "useWeaponTiming": true
+            },
+            "moveAttack": {
+              "required": true,
+              "clips": ["gumanmocap_atra", "gumanmocap_runa", "gumanmocap_idla"]
+            },
+            "death": {
+              "required": true,
+              "clips": ["gumanmocap_dieb", "gumanmocap_diec", "gumanmocap_died", "gumanmocap_diee"],
+              "mode": "once-random"
+            },
+            "selectionTransition": {
+              "required": true,
+              "clips": ["gumanmocap_atna", "gumanmocap_atnb", "gumanmocap_atnd"]
+            }
+          },
+          "fallbackConditions": [
+            "splat",
+            "burningDeath",
+            "passenger",
+            "thrownProjectile",
+            "freefall",
+            "stunned",
+            "fear",
+            "terror",
+            "backingUp",
+            "panicking",
+            "cinematicUser4"
+          ]
+        }
+      ]
+    },
+    "data/audio_events.json": {
+      "schema": "openbfme.audio-events",
+      "schemaVersion": 0,
+      "events": {
+        "gondorFighter.select": {
+          "directory": "assets/audio/voice/gondor-soldier",
+          "pattern": "gusoldg_voisel*.wav",
+          "additional": ["gugoswo_voise2a.wav"]
+        },
+        "gondorFighter.selectBattle": {
+          "directory": "assets/audio/voice/gondor-soldier",
+          "pattern": "gusoldg_voiseb*.wav"
+        },
+        "gondorFighter.attack": {
+          "directory": "assets/audio/voice/gondor-soldier",
+          "pattern": "gusoldg_voiatt*.wav"
+        },
+        "gondorFighter.attackCharge": {
+          "directory": "assets/audio/voice/gondor-soldier",
+          "pattern": "gusoldg_voiatc*.wav"
+        },
+        "gondorFighter.attackBuilding": {
+          "directory": "assets/audio/voice/gondor-soldier",
+          "pattern": "gusoldg_voiatb*.wav"
+        }
+      }
+    }
+  }
+}

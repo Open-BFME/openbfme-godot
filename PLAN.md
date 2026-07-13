@@ -1,911 +1,674 @@
-# Open BFME — Master Execution Plan
+# OpenBFME — Private Compatibility Build Plan
 
-**Working title:** Open BFME  
-**Engine:** Godot 4.7 (desktop-first: Windows, later Linux/macOS)  
-**Genre:** Single-player skirmish RTS inspired by *The Battle for Middle-earth II*  
-**Predecessor:** `C:\Users\Jonathan\Desktop\middle-earth-rts` (browser prototype / design bible)  
-**Retail reference install:** `F:\BFME2`  
-**Owner intent:** Desktop product that *feels* like BFME2 skirmish, not a web experiment.
+**Status:** active private full-content compatibility build; public release is a later sanitized code-only product
 
-This document is the execution bible. Stages are ordered so each one is **playable**, **demoable**, and **unblocks the next**. Do not start Stage N+2 systems until Stage N exit criteria pass.
+**Date:** 2026-07-13
 
----
+**Reference game:** The Battle for Middle-earth II, patch 1.06
 
-## 0. North star & non-goals
+**Reference install:** `F:\BFME2`
 
-### North star (v1.0 “Skirmish Complete”)
+**First integration proof:** Men-versus-Men on Fords of Isen II
 
-A desktop game where you can:
+**Active private target:** first materialize the complete effective BFME2 1.06 retail
+asset view inside the ignored workspace, then deliver the complete Men faction on Fords of Isen II,
+Rivendell, Mount Doom, Dagorlad, and Mordor, with source-derived UI, audio, terrain,
+navigation, AI, models, animations, materials, FX, lighting, construction, damage,
+collapse, and rubble states measured against the original game
+**Preferred presentation engine:** Godot 4.7 .NET, subject to the Phase 0 language-boundary bakeoff
 
-1. Launch → pick **map + two factions + difficulty**
-2. Freeform-build a base, train **battalions**, fight with **heroes + spellbook**
-3. Use walls/gates/towers, stances, fear, power tree, hero revival
-4. Defeat the enemy fortress against a competent skirmish AI
-5. Look/sound like a modern low-fantasy RTS *in the BFME2 mold* (not a screenshot clone unless legally clean)
+## 1. Decision
 
-### Explicit non-goals for v1
+OpenBFME will be a new, modern, moddable RTS engine. It will not be an OpenSAGE fork,
+a continuation of the SAGE executable, or a Godot wrapper around BFME2 data formats.
 
-| Out of scope | Why |
-|---|---|
-| War of the Ring campaign | Months of content + UI + rules |
-| Online multiplayer | Needs lockstep/rollback redesign |
-| Siege ladders / climb walls | Pathing complexity vs payoff |
-| Full 1:1 ability parity every unit | Content treadmill; do “iconic subset” first |
-| Shipping with EA/Tolkien assets | Legal landmine (see §1) |
-| Browser build | Desktop is the product |
-
-### Name note
-
-GitHub already has [`chipgw/openbfme`](https://github.com/chipgw/openbfme) (SAGE-compatible engine research). Prefer:
-
-- **Project folder / Godot project:** `open-bfme`
-- **Product display name (private builds):** *Open BFME*
-- **Public display name later:** something original (e.g. *Free Peoples Skirmish*, *Anduin Command*) if you ever distribute outside a private machine
-
----
-
-## 1. Legal asset doctrine (read before any extraction)
-
-You own a legal copy of BFME2 at `F:\BFME2`. That does **not** grant rights to redistribute models, textures, music, VO, maps, or UI.
-
-### Three asset lanes (mandatory)
-
-| Lane | Source | Allowed use | Ship / share? |
-|---|---|---|---|
-| **A — Reference only** | Extracted from `F:\BFME2` `.big` packs | Local private playtests, side-by-side comparison, measuring scale/timing/palette | **NO** — never commit to public git, never zip to friends as “the game” |
-| **B — Original / generated** | Grok Imagine, Meshy/Tripo, hand-made, CC0 packs | Default runtime path | **YES** |
-| **C — Licensed third-party** | Explicit commercial/CC licenses you track | Runtime path if license file present | **YES** if license allows |
-
-### Repo hygiene rules
-
-1. Godot project lives in `C:\Users\Jonathan\Desktop\open-bfme\game\` (git-tracked).
-2. Extracted BFME2 content lives in `C:\Users\Jonathan\Desktop\open-bfme\_bfme2_extract\` (**gitignored**, outside `res://` if possible).
-3. Runtime assets only under `game/assets/` and only lanes B/C.
-4. Optional **private** Godot export preset “Dev Reference” can load Lane A via absolute path / user:// symlink — never the default export.
-5. `tools/asset_policy.md` + `.gitignore` enforced from day 1.
-
-**Execution stance for this plan:**  
-Use Lane A aggressively for **design truth** (INI stats, silhouette, camera height, music *mood*). Ship the game on Lane B/C. Grok Imagine is the primary 2D factory; 3D via Meshy/Tripo/Blockbench/Blender, not W3D re-export into a public build.
-
----
-
-## 2. What the retail install actually contains
-
-Discovered layout under `F:\BFME2`:
-
-| Archive / path | ~Size | Contents (modding community knowledge) |
-|---|---|---|
-| `w3d.big` | ~1.0 GB | 3D models (Westwood W3D / SAGE meshes + anims) |
-| `textures0–4.big` | ~1.2 GB total | DDS/TGA textures for units, buildings, UI |
-| `terrain.big` | ~340 MB | Terrain textures / terrain-related art |
-| `music.big` | ~374 MB | Score / adaptive music streams |
-| `audio.big` | ~372 MB | SFX + likely VO banks |
-| `ambientstreams.big` | ~55 MB | Ambient loops |
-| `maps.big` | ~54 MB | Official maps + map assets |
-| `ini.big` | ~23 MB | **Balance & design data** (units, weapons, armor, powers) — gold |
-| `bases.big` | ~2.5 MB | Prefab bases / living-world-ish data |
-| `window.big` / `apt\*.big` | varies | Flash/APT UI packages (command bar, palantir, spellbook, CAH) |
-| `data\movies\` | VP6 | Cinematics (skip for v1) |
-| `data\cursors\` | ANI/CUR | Cursors (easy to remake) |
-| `lang\` | | String tables / localization |
-| `worldbuilder.exe` | | Official map editor (still useful as reference for map scale) |
-
-### Extraction toolchain (Stage 0)
-
-| Tool | Purpose |
-|---|---|
-| **FinalBIG** / FinalBIGv2 | Open `.big`, extract all / by path |
-| **INI browser** (any text editor after extract) | Unit costs, HP, weapon sets, command sets |
-| **W3D viewers / converters** (community: w3d plugins, OpenSAGE-related tools, bfme2-modding-utils) | Inspect meshes; **not** required for Godot if you regenerate art |
-| **ffmpeg** | Convert extracted audio containers → `.ogg` / `.wav` for Godot (Lane A private only) |
-| Custom Python scripts in `tools/` | Catalog manifests, hash files, build CSV of unit names → Godot resource stubs |
-
-### Highest-ROI extracts (do these first, not all 4 GB of textures)
-
-1. **Entire `ini.big`** → design database  
-2. **String / language files** → official unit/building names list  
-3. **UI icons subset** from textures / APT (for side-by-side “does our icon read?”)  
-4. **One faction’s W3D + textures** (Gondor infantry + fortress) for scale reference only  
-5. **Music track list + 2–3 ambient loops** for tempo/mood reference; replace with royalty-free / generated score for ship  
-
-Do **not** start by converting the whole `w3d.big`. That’s a multi-week tar pit with almost no gameplay return.
-
----
-
-## 3. Design inheritance from the browser prototype
-
-Treat `middle-earth-rts` as a **solved design draft**, not code to port line-by-line.
-
-### Keep (mechanics that already felt like BFME2)
-
-- **Battalion** as sim atom (pooled HP, member visuals die as HP drops)
-- Freeform building + fortress win condition
-- Formations: line / column / wedge / loose
-- Stances: aggressive / defensive / hold
-- Veterancy + replenishment + banner carrier concept
-- Terror / fear auras + hero immunity
-- Spellbook tiers + power points from kills
-- Farm efficiency radius
-- Walls / gates / postern / towers / garrison
-- Hero ability rank gates + revival cost scaling
-- Ring / Gollum as optional mid-late spice
-- Custom hero as v1.x garnish
-- Faction data-driven plans for AI
-
-### Re-architect (Godot-native)
-
-| Browser | Godot |
-|---|---|
-| `G` singleton blob | Autoloads split by domain (`GameState`, `SimClock`, `AudioBus`, `Events`) |
-| Three.js meshes on entities | Sim entities pure data; `UnitView` / `BuildingView` scenes bind by id |
-| DOM HUD | Control-based HUD scenes + themes |
-| Steering-only move | NavigationServer3D + avoidance + building collision |
-| Procedural meshes | Imported GLB + MultiMesh for far LOD |
-| `config.js` | `Resource` classes + `.tres` / CSV import |
-| `selftest.js` headless | GUT or custom `--headless` scene tests |
-
-### Balance bootstrap
-
-Port numbers from `middle-earth-rts/src/config.js` first (already tuned for fun), then **diff against extracted INI** for “BFME2 authenticity pass” later (Stage 6+). Fun > authenticity early.
-
----
-
-## 4. Target architecture (Godot 4.7)
-
-```
-open-bfme/
-  PLAN.md                          ← this file
-  docs/                            ← ADRs, art bible, faction sheets
-  tools/                           ← extract, import, imagine batch scripts
-  reference/                       ← notes, screenshots, INI summaries (no binaries)
-  _bfme2_extract/                  ← GITIGNORED Lane A dumps
-  _imagine_raw/                    ← GITIGNORED raw Grok outputs
-  game/                            ← Godot project root
-    project.godot
-    addons/
-    assets/
-      art/                         ← Lane B/C only
-      audio/
-      ui/
-      maps/
-    data/
-      factions/
-      units/
-      buildings/
-      powers/
-      damage_matrix.tres
-    src/
-      core/                        ← time, events, rng, save schema
-      sim/                         ← pure gameplay (no Node3D required)
-        battalion.gd
-        building.gd
-        combat.gd
-        economy.gd
-        orders.gd
-        path_queries.gd
-      view/                        ← 3D presentation
-        battalion_view.tscn
-        building_view.tscn
-        vfx/
-      ai/
-      ui/
-      maps/
-      net/                         ← stub only; unused in v1
-    scenes/
-      boot.tscn
-      main_menu.tscn
-      match.tscn
-      map_editor_lite.tscn         ← optional Stage 8
-    tests/
-```
-
-### Core runtime loop
-
-```
-SimClock (fixed 10–20 Hz logical tick)
-  → AI
-  → Order resolution
-  → Movement (nav agent desired velocity)
-  → Combat / projectiles
-  → Economy / construction / train queues
-  → Powers / auras / status
-  → Victory check
-View (frame rate)
-  → Interpolate transforms
-  → AnimationTree / MultiMesh LOD
-  → HUD bind to GameState snapshots
-```
-
-**Rule:** gameplay correctness never depends on FPS. Browser prototype mixed them; do not repeat that.
-
-### Entity model
-
-```gdscript
-# Conceptual
-class_name Battalion
-var id: int
-var type_id: StringName
-var side: int                 # 0 player, 1 enemy, 2 wild
-var faction_id: StringName
-var hp: float
-var hp_max: float
-var pos: Vector2              # XZ plane; Y from heightmap
-var facing: float
-var stance: Stance
-var order: Order              # move / attack / attack_move / garrison / stop
-var members_alive: int        # visual budget from hp ratio
-var rank: int
-var xp: float
-var statuses: Array           # fear, knockdown, poison, buffs
-```
-
-Members are **not** full agents. One nav agent per battalion (BFME2-like horde control). Optional later: soft member offsets via formation slots.
-
-### Combat matrix (Stage 4+)
-
-Damage types: `slash, pierce, specialist, crush, siege, magic, hero, structural`  
-Armor types: `infantry_light, infantry_heavy, pike, cavalry, monster, hero, building, wall, siege`
-
-Start with a small CSV → `DamageMatrix` resource. Browser had a few multipliers; Open BFME should do a **real matrix** once two factions fight.
-
----
-
-## 5. Asset strategy (BFME2 + Grok Imagine + 3D)
-
-### 5.1 BFME2 pipeline (Lane A)
-
-**Stage 0 deliverables:**
-
-```
-_bfme2_extract/
-  ini/                 # full dump from ini.big
-  catalogs/
-    units.csv          # name, kind, side, key fields parsed from INI
-    buildings.csv
-    weapons.csv
-    powers.csv
-    music_list.txt
-  samples/
-    gondor_soldier/    # optional few w3d+dds for scale
-    fortress_gondor/
-  audio_samples/       # few wav for timing (attack swing length)
-```
-
-**Scripts to write:**
-
-| Script | Job |
-|---|---|
-| `tools/extract_big.ps1` | Wrap FinalBIG CLI/GUI steps; document manual clicks if no CLI |
-| `tools/parse_ini_to_csv.py` | Crawl extracted INI → CSV + JSON for Godot import |
-| `tools/catalog_audio.py` | List music/sfx names from extract |
-| `tools/scale_reference.md` | Human notes: fortress footprint, soldier height vs camera |
-
-**Godot import of Lane A:** only via optional `DevAssetMirror` autoload that is compiled out / feature-tagged `reference_assets`.
-
-### 5.2 Grok Imagine pipeline (Lane B — primary 2D)
-
-Use Imagine for everything orthographic UI and concept:
-
-| Asset class | Aspect | Style prompt anchors |
-|---|---|---|
-| Unit command icons | 1:1 | “BFME2-like fantasy RTS icon, painted, readable at 64px, dark wood frame, no text” |
-| Building icons | 1:1 | same + structure silhouette |
-| Spell / power icons | 1:1 | glow, elemental, readable |
-| Portraits (heroes) | 1:1 or 3:4 | painterly bust, faction color grade |
-| Faction emblems | 1:1 | simple heraldry |
-| Main menu key art | 16:9 | cinematic, not logo-heavy |
-| Loading splash | 16:9 | map painting feel |
-| Cursor sets | 1:1 | select, attack, move, garrison, invalid |
-
-**Folder convention:**
-
-```
-_imagine_raw/
-  2026-07-11_icons_gondor/
-game/assets/ui/icons/
-  soldier.png          # curated, cropped, size-normalized
-```
-
-**Batch workflow (repeatable):**
-
-1. Write `docs/art_bible.md` (palette, outline rules, banned modern/sci-fi).
-2. Generate 4–8 variants per icon via Imagine.
-3. Human pick → crop to 128 / 256 → optional Godot import presets (mipmaps, filter).
-4. Keep prompt + seed notes in `docs/imagine_log.md` for consistency.
-
-**Consistency tricks:**
-
-- Always paste 1–2 **reference icons you already approved** into Imagine edits.
-- Fix a **faction color strip**: Gondor steel/blue-white, Mordor iron/red-black, Elves gold/green, Goblins bone/teal.
-- Generate **icon sheets** (grid) then slice — more consistent than one-offs.
-
-### 5.3 3D art pipeline (Lane B)
-
-Do **not** depend on W3D→GLTF conversion for v1.
-
-| Tier | Use | How |
-|---|---|---|
-| **Placeholder** | Stages 1–3 | Godot CSG / simple capsule+banner MultiMesh |
-| **Hero / fortress** | Stage 4–5 | Meshy/Tripo or Blender hero kit; 1 fortress per faction |
-| **Battalion members** | Stage 5–6 | Low-poly (~1–3k tris) shared skeleton; 3–5 body variants per unit type |
-| **Environment** | Stage 3+ | Modular rocks/trees; terrain textures from CC0 or painted |
-
-**LOD policy (mandatory before large armies):**
-
-- LOD0: skinned mesh near camera  
-- LOD1: static posed mesh  
-- LOD2: MultiMesh impostor / cross billboard beyond N meters  
-
-Browser GLB path taught: skinned + mixer per member dies at scale. Godot must bake that lesson in early.
-
-### 5.4 Audio pipeline
-
-| Layer | v0.5 | v1.0 |
-|---|---|---|
-| UI clicks | procedural or CC0 | custom light foley |
-| Combat | synthesized + free packs | layered swings/impacts per armor class |
-| VO | silent or generic grunts | faction bark sets (ElevenLabs / local TTS / hire) — **not** BFME VO in public builds |
-| Music | 2–3 royalty-free loops + adaptive crossfade | original score or licensed; BFME `music.big` only for private A/B mood tests |
-| Ambient | wind/crows loops | biome sets |
-
-Mirror what worked in the prototype: **throttle + distance gate** combat SFX.
-
-### 5.5 “Download” free asset sources (Lane C)
-
-Track licenses in `docs/THIRD_PARTY.md`:
-
-- Kenney / CC0 UI & nature packs (prototyping)
-- OpenGameArt / itch.io CC0 terrain
-- Godot Terrain3D demo materials (if used)
-- Freesound (verify license per clip)
-
-Never mix Lane A files into these folders.
-
----
-
-## 6. Stage plan (execute in order)
-
-Each stage has: **goal**, **player-visible demo**, **systems**, **assets**, **tests**, **exit criteria**, **est. effort** (solo, part-time-ish).
-
----
-
-### Stage 0 — Project spine & asset vault  
-**Effort:** 2–4 days  
-**Goal:** Empty Godot game that boots, plus legal-safe asset pipelines.
-
-**Work**
-
-1. Create Godot 4.7 project `game/` (Forward Plus, desktop).
-2. Setup git: `.gitignore` for `_bfme2_extract/`, `_imagine_raw/`, `.godot/`, exports.
-3. Autoloads: `Events`, `SimClock`, `Audio`, `Debug`.
-4. Install FinalBIG; extract **`ini.big` only** first; dump to `_bfme2_extract/ini`.
-5. Write `tools/parse_ini_to_csv.py` → unit/building name lists.
-6. Write `docs/art_bible.md` + `docs/legal_assets.md`.
-7. Generate **placeholder** icon set (8 icons) via Grok Imagine → `game/assets/ui/icons/`.
-8. Main menu scene: New Skirmish / Options / Quit (Options = volume only).
-
-**Demo:** Boot to menu with custom icons.  
-**Exit criteria:**
-
-- [ ] Project runs from editor and exported `.exe` smoke test  
-- [ ] INI catalog CSV exists with ≥50 unit/building rows  
-- [ ] Lane A path gitignored and verified `git status` clean of binaries  
-- [ ] Art bible + imagine log started  
-
----
-
-### Stage 1 — Vertical slice: one map, one vs one, battalions move/fight  
-**Effort:** 1.5–2.5 weeks  
-**Goal:** The fun core without economy.
-
-**Systems**
-
-- Map scene: heightmap or flat plane + NavigationRegion3D
-- Camera: RTS rig (edge pan, WASD, zoom, rotate, focus fortress key)
-- Selection: click + box select (battalion level)
-- Orders: move, stop, attack-move, attack target
-- `Battalion` sim + `BattalionView`
-- Melee + simple projectile
-- Two hard-scripted armies spawn (Gondor soldiers vs Orc warriors)
-- Win: destroy enemy fortress dummy (static building with HP)
-
-**Assets**
-
-- Capsule/blockout units + color by side  
-- 2 Imagine portraits  
-- Placeholder SFX  
-
-**Tests**
-
-- Headless: 20 soldiers vs 20 orcs resolves without NaNs  
-- Selection count / order issuance unit tests  
-
-**Demo:** “Battle sandbox” from menu.  
-**Exit criteria:**
-
-- [ ] 50 battalions total still ≥30 FPS on your machine (even as blocks)  
-- [ ] Nav avoids a rock/building obstacle  
-- [ ] Fixed timestep combat deterministic with seeded RNG  
-
----
-
-### Stage 2 — Economy, build menu, train queues  
-**Effort:** 1.5–2 weeks  
-**Goal:** Real skirmish opening.
-
-**Systems**
-
-- Resources (single resource first, like prototype — *not* classic peon gather)
-- Building placement ghost + valid/invalid  
-- Construction timer + HP ramp  
-- Fortress, farm/mill, barracks, archery  
-- Train queue UI + rally point  
-- Population / battalion cap  
-- Farm efficiency radius (from prototype — excellent anti-spam)
-
-**Data**
-
-- Import unit/building costs from prototype `config.js` into `.tres`
-- Cross-check names against INI catalog (do not yet force INI numbers)
-
-**Assets**
-
-- Imagine: full Gondor + Mordor **build/train icon rows**  
-- Blockout buildings with distinct silhouettes  
-- Optional: 1 fortress GLB art pass  
-
-**Demo:** Build a base, train 5 battalions, kill dummy AI base.  
-**Exit criteria:**
-
-- [ ] Cannot place buildings overlapping / off-nav  
-- [ ] Saving build menu layout data-driven (no hardcoded button lists in UI code)  
-- [ ] Resource income readable in HUD  
-
----
-
-### Stage 3 — Walls, gates, towers, fog of war lite  
-**Effort:** 1.5–2 weeks  
-**Goal:** BFME base identity.
-
-**Systems**
-
-- Wall segment placement with snap + rotation  
-- Gate (friendly pass, enemy block) via navigation links / obstacles rebuild  
-- Standalone tower auto-fire  
-- Wall tower upgrade  
-- Building collision baked into navmesh (rebake incremental or tile regions)
-- **Fog of war v1:** exploration grid + vision from units/buildings (CPU grid is fine)
-
-**Assets**
-
-- Wall/gate kits (modular meshes)  
-- Imagine: wall/tower/postern icons  
-- Cursor pack (select/attack/move/build)
-
-**Demo:** Wall off a chokepoint; tower shoots; fog reveals with army.  
-**Exit criteria:**
-
-- [ ] Enemy AI path cannot phase through closed gate  
-- [ ] Friendly units path through open gate  
-- [ ] Nav rebuild < 100ms for local wall edits or staged full rebake acceptable  
-
----
-
-### Stage 4 — Heroes, abilities, veterancy, stances  
-**Effort:** 2 weeks  
-**Goal:** “This is BFME” combat feel.
-
-**Systems**
-
-- Hero unit type (size 1, big HP, ability bar)  
-- Ability framework: instant, target unit, target ground, toggle  
-- Cooldowns + rank gates  
-- Veterancy XP on damage/kills; rank VFX  
-- Replenishment out of combat  
-- Stances (aggressive / defensive / hold)  
-- Fear/terror aura + cower/flee  
-- Knockback on monsters  
-- Hero revival at fortress  
-
-**Content (minimum)**
-
-| Faction | Heroes (v1) | Signature abilities |
-|---|---|---|
-| Gondor | Aragorn, Gandalf | AoE slash, heal; word of power, blast |
-| Mordor | Nazgûl, Mouth | terror, dread; debuff, summon trash |
-
-Port ability numbers from prototype first.
-
-**Assets**
-
-- Imagine: hero portraits + ability icons  
-- Distinct hero meshes (can still be stylized low-poly)  
-- Palantir-style portrait frame UI (original art)
-
-**Demo:** Level Aragorn, cast abilities, fear breaks low-rank orcs.  
-**Exit criteria:**
-
-- [ ] Abilities are data (`AbilityDef` resource), not `match` spaghetti per hero  
-- [ ] Fear respects rank immunity / hero immunity  
-- [ ] Revival cost scales with death count  
-
----
-
-### Stage 5 — Spellbook, powers, weather moments  
-**Effort:** 1–1.5 weeks  
-**Goal:** Power points fantasy.
-
-**Systems**
-
-- PP from kills/buildings  
-- Tier tree UI (spend locks path — simplified 3×3 is enough)  
-- Powers: Heal, Reveal, Reinforce, Sunflare/Darkness, Earthquake, faction summon  
-- Global lighting tween for Darkness / Cloud Break  
-
-**Assets**
-
-- Imagine: full spellbook icons + tree frame  
-- VFX: ground rings, columns, quake shake  
-
-**Demo:** Mid-game spell turns a fight.  
-**Exit criteria:**
-
-- [ ] Powers target modes share one input state machine with buildings placement  
-- [ ] PP economy cannot soft-lock tree  
-
----
-
-### Stage 6 — Second faction pair + real art pass + damage matrix  
-**Effort:** 2–3 weeks  
-**Goal:** Roster breadth without campaign scope.
-
-**Content**
-
-- Finish **Gondor vs Mordor** full skirmish rosters (from prototype list)
-- Add **Elves vs Goblins** as second matchup (prototype already defined)
-- Damage matrix pass using INI inspiration  
-- Upgrades: forged blades, fire arrows, heavy armor, banners  
-
-**Art**
-
-- Replace blockouts for **all trained units** of Gondor/Mordor at LOD0/LOD2  
-- Building GLBs for economy + production  
-- Faction menu emblems (Imagine)  
-- Music: 3-state adaptive (explore / battle / victory) royalty-free or original  
-
-**BFME2 INI authenticity pass (optional side quest)**
-
-- Diff prototype HP/DPS vs INI  
-- Adjust only where fights feel wrong  
-
-**Exit criteria:**
-
-- [ ] All four factions selectable as player/enemy  
-- [ ] No unit uses “missing mesh” placeholder in default skin pack  
-- [ ] 80 battalions + full bases ≥ 40 FPS on target PC with LOD  
-
----
-
-### Stage 7 — Skirmish AI that doesn’t suck  
-**Effort:** 2 weeks  
-**Goal:** Default opponent is fun on Normal/Hard.
-
-**Port AI ideas from `ai.js`**
-
-- Budget split: construction / troops / tech  
-- Build order plan per faction (`aiPlan` resource)  
-- Creep clear → pressure waves → raids  
-- Retreat below HP threshold  
-- Difficulty multipliers  
-
-**New Godot AI requirements**
-
-- Scouting under fog  
-- Wall response (build towers if player walls)  
-- Hero ability usage heuristics  
-- Power spending rules  
-
-**Tests**
-
-- Headless AI vs AI 10-minute smoke  
-- Scripted “player turtling” → AI expands and attacks  
-
-**Exit criteria:**
-
-- [ ] Easy/Normal/Hard distinguishable  
-- [ ] AI never soft-locks (0 income infinite wait)  
-- [ ] Human player can still cheese less than prototype  
-
----
-
-### Stage 8 — Maps, save/load, UX polish, options  
-**Effort:** 2 weeks  
-**Goal:** Feels like a game you launch every evening.
-
-**Systems**
-
-- 4 hand-authored skirmish maps (use Worldbuilder only as **scale reference**, rebuild in Godot)  
-  - Anduin Vale, Misty Foothills, Fangorn Edge, Brown Lands (names from prototype OK if original geometry)  
-- Map metadata: start spots, lairs, resources bias, nav, lighting  
-- Save/load match (`GameState` serializable)  
-- Pause menu, game speed, key rebind  
-- Control groups 1–9  
-- Formations UI  
-- Score screen stats (from prototype)  
-- Help overlay  
-
-**Assets**
-
-- Imagine: map pick thumbnails  
-- Minimap framework  
-- Main menu key art final  
-
-**Exit criteria:**
-
-- [ ] Cold boot → win a Normal skirmish without debug keys  
-- [ ] Save/load mid-combat restores orders & HP  
-- [ ] Options persist  
-
----
-
-### Stage 9 — Juice, audio, custom hero, Ring (optional pack)  
-**Effort:** 2–3 weeks  
-**Goal:** Prototype’s “soul systems” reborn.
-
-**Priority order inside stage**
-
-1. Audio mix + music states + unit barks  
-2. Combat juice: hit flashes, ragdoll-lite knockdown, blood-free fantasy impacts  
-3. Garrison polish + mount/dismount if art allows  
-4. The One Ring + Gollum (prototype design)  
-5. Create-A-Hero lite (class, colors, 2 abilities, stat budget)  
-
-**Assets**
-
-- Imagine: CAH UI panels, ring UI  
-- Extra hero ability icons  
-
-**Exit criteria:**
-
-- [ ] New player understands UI without external readme  
-- [ ] Optional systems can be disabled for “classic skirmish”  
-
----
-
-### Stage 10 — Hardening, performance, release engineering  
-**Effort:** 1–2 weeks  
-**Goal:** v1.0 private “gold” build.
-
-**Work**
-
-- Profiler pass: multimesh, occlusion, shadow distance, fog GPU  
-- Crash hygiene, assert strip, logging  
-- Installer (optional Inno Setup) / portable zip  
-- `README` for you: how to rebuild assets  
-- Verify **zero Lane A files** in export with automated path scan  
-- Balance tournament: AI mirror matches  
-
-**Exit criteria:**
-
-- [ ] Export scanner reports clean  
-- [ ] 30-minute play session no softlock  
-- [ ] Known issues list written  
-
----
-
-## 7. Stage dependency graph
-
-```
-0 Spine/Assets
-  └─1 Fight sandbox
-      └─2 Economy/build
-          └─3 Walls/FoW
-              └─4 Heroes/stances
-                  └─5 Spellbook
-                      ├─6 Roster+art+matrix
-                      │   └─7 AI
-                      │       └─8 Maps/save/UX
-                      │           └─9 Juice/optional systems
-                      │               └─10 Gold
-```
-
-Parallel tracks after Stage 2 (if you use AI agents / split days):
-
-- **Track Code:** systems stages  
-- **Track Art:** Imagine icons → 3D hero/building → LOD  
-- **Track Design:** INI studies → matrix → map layouts  
-
-Never let Track Art block Stage 1–3 code.
-
----
-
-## 8. Grok Imagine production schedule (concrete)
-
-| When | Deliverable | Count (approx) |
-|---|---|---|
-| Stage 0 | Menu + cursor + 8 stub icons | ~15 |
-| Stage 2 | Gondor/Mordor build+train icons | ~40 |
-| Stage 4 | Hero portraits + abilities | ~30 |
-| Stage 5 | Spellbook set | ~20 |
-| Stage 6 | Elves/Goblins icons + emblems | ~50 |
-| Stage 8 | Map thumbs + score/menu art | ~15 |
-| Stage 9 | CAH + ring | ~20 |
-
-**Running total ~190 2D assets** — manageable if batched and icon-sheeted.
-
-Prompt template (store in art bible):
+The intended pipeline is:
 
 ```text
-Fantasy RTS command icon, top-down three-quarter object, painted
-style similar to early-2000s PC strategy UI, thick readable silhouette,
-muted fantasy palette, subtle rim light, square composition, no text,
-no modern elements, no copyrighted logos, dark wooden frame border
+User-owned BFME2 install
+        |
+        v
+Importer coordinator
+  (.NET + Blender Python + pinned format tools)
+        |
+        v
+Versioned OpenBFME content bundle
+        |
+        +------> deterministic game simulation
+        |
+        +------> Godot presentation at 60/120/144/240 Hz
 ```
 
-For Middle-earth *feel* without trademarked names in **public** UI strings, use internal IDs `gondor` but display names you are comfortable with if you ever share builds. Private-only builds can use familiar names.
+The original installation is the authoritative private content source and behavioral
+reference. The importer copies the exact required working set into the ignored
+`.private` workspace in this checkout. The runtime still consumes only converted
+OpenBFME bundles; it must not interpret BIG, W3D, INI, or OpenSAGE types during play.
+A later public-release sanitization process will produce a clean code-only tree and may
+add a legal-safe original/free pack.
 
----
+This private compatibility implementation is approved. Proof gates remain mandatory
+quality evidence and may change an unsafe or incorrect implementation, but they are not
+permission gates that defer full-asset extraction or the authorized Men/five-map work.
 
-## 9. BFME2 extract schedule (concrete)
+## 2. Product boundaries
 
-| Stage | Extract | Purpose |
+### North star
+
+- Render and input presentation suitable for 144/240 Hz displays.
+- Gameplay timing independent of render rate.
+- A deterministic, replayable simulation with measured compatibility behavior.
+- A data-driven content API that supports BFME2 compatibility content and wholly new
+  factions, maps, models, rules, and audiovisual assets.
+- A local retail importer that first materializes the complete effective retail view,
+  then builds dependency-closed private runtime packs under `.private`.
+- A committed legal-safe test pack for CI and engine development.
+- A later playable original/free pack; the test pack alone does not satisfy this goal.
+- No permanent dependency on BFME2 skeletons, filenames, behaviors, factions, or art.
+
+### First vertical slice
+
+- **Map:** Fords of Isen II.
+- **Faction:** Men.
+- **Matchup:** Men versus Men.
+- **Buildings:** Fortress, Farm, Barracks, Archery Range, Stable.
+- **Units:** Gondor Soldier, Gondor Archer, Tower Guard, Gondor Knight.
+- **Loop:** build, gather resources, train, move, attack, and destroy the enemy Fortress.
+- **AI:** one deterministic build plan capable of completing the loop.
+- **Compatibility target:** only the BFME2 1.06 behavior exercised by this slice.
+- **Retail content:** generated locally from a verified user installation and retained
+  only under the git-ignored `.private` development workspace.
+
+All BFME2 1.06 Men heroes, units, powers, upgrades, walls, fortress components, and
+visual lifecycle support used by normal skirmish play are in the active private scope.
+Campaigns, War of the Ring, tutorials, online networking, custom maps, non-Men factions,
+and ROTWK 2.01 gameplay remain outside this milestone.
+
+“1:1” means measured BFME2 1.06 compatibility for the complete Men/five-map oracle
+matrix, including graphical, spatial, audiovisual, simulation, construction, damage,
+collapse, rubble, UI, routing, and AI evidence. Asset presence alone is not parity.
+
+## 3. Non-negotiable architecture
+
+### Importer/runtime firewall
+
+Allowed dependencies:
+
+```text
+Importer coordinator -> pinned donor tools and local conversion processes
+Importer coordinator -> OpenBFME schema
+Simulation           -> OpenBFME schema
+Godot presentation   -> Simulation + OpenBFME schema
+```
+
+Forbidden dependencies:
+
+```text
+Simulation         -X-> BFME2, OpenSAGE, BIG, W3D, Blender, donor types
+Godot presentation -X-> BFME2, OpenSAGE, BIG, W3D, Blender, donor types
+Content schema     -X-> serialized donor classes or mandatory BFME filenames
+```
+
+The importer is a coordinator, not necessarily one executable. It owns a stable CLI,
+manifest, cache, resumability, reports, and process boundaries while invoking the best
+pinned tool for each conversion stage:
+
+- .NET for orchestration, schema validation, INI semantics, dependency closure, and
+  diagnostics.
+- Blender Python in deterministic headless mode for W3D/rig/animation conversion.
+- Audited OpenSAGE and BFME2 modding utilities for format knowledge and isolated parsing.
+- Godot import/cook steps only for runtime-native caches.
+
+Every stage exchanges declared files plus machine-readable manifests. No stage reaches
+into another tool's in-memory types.
+
+### Simulation/presentation firewall
+
+- Authoritative state advances only through an explicit scheduler and tick-stamped
+  commands.
+- The renderer consumes snapshots and events; it owns no health, damage, resources,
+  pathing, cooldown, target, production, AI, or victory truth.
+- Godot interpolates between authoritative snapshots every render frame.
+- Camera, cursor, selection feedback, UI, and audio remain render-rate responsive.
+- Spawns and teleports explicitly reset interpolation.
+- Running at 144 or 240 Hz must not change the outcome of a replay.
+
+### Language choice is conditional
+
+Pure C# remains the leading simulation choice, but Phase 0 must compare it with typed
+GDScript before the repository is reorganized around it. The bakeoff uses the same horde
+scenario and measures:
+
+- deterministic replay behavior;
+- implementation complexity and test ergonomics;
+- snapshot-transfer and garbage-collection cost;
+- 300- and 1,500-member performance;
+- ease of keeping Godot types out of authoritative state;
+- agent reviewability and compiler/static-analysis quality.
+
+C# wins unless the evidence shows material integration cost without a corresponding
+simulation or tooling advantage. Presentation may remain GDScript either way. The
+existing prototype is a presentation and scenario donor, not authoritative simulation.
+
+## 4. Proof foundation and standing evidence work
+
+This work began as a two-week feasibility program and produced the proof stages now in
+the repository. It continues where the full build needs new evidence, but it is no
+longer a calendar or permission gate. Its useful outputs are oracle observations,
+focused fixtures, disposable spikes, performance measurements, and architecture
+decisions that directly constrain production code.
+
+### Workstream A: original-game oracle
+
+INIs describe configuration, not complete runtime behavior. Before claiming parity,
+capture BFME2 1.06 as a black-box oracle on the reference machine.
+
+Create at least these fixtures:
+
+| Area | Scenario | Recorded evidence |
 |---|---|---|
-| 0 | `ini.big` full | Design catalog |
-| 0 | string/lang bits | Naming list |
-| 1 | sample weapon ranges from INI | Tune attack ranges |
-| 3 | map list from `maps.big` metadata if readable | Map size norms |
-| 4 | hero power INIs | Ability inspiration |
-| 5 | spellbook related INI | Power tree inspiration |
-| 6 | armor/weapon set INIs | Damage matrix |
-| any (private) | 1–2 music tracks | Mood reference only |
-| skip | full `w3d.big` conversion | Unless research hobby |
+| Timing | Idle match and timed move | observed logic cadence, distance, duration |
+| Input | Select and issue move/stop/attack | latency and order semantics |
+| Horde | Turn, narrow passage, split obstruction | slots, facing, cohesion, recovery |
+| Combat | Soldier horde versus Soldier horde | acquisition, attack cadence, member deaths |
+| Ranged | Archer target at several distances | range, projectile timing, retarget behavior |
+| Cavalry | Knight move, collision, and attack | locomotion, formation, crush/impact if scoped |
+| Economy | Farm income over time | first payout, interval, modifiers |
+| Production | Build and train scoped objects | costs, timing, spawn behavior |
+| Structures | Placement and destruction | footprint, clearance, rubble/victory timing |
+| Navigation | Static and newly placed blockers | replanning and blocked-order behavior |
+| Map | Fords starts, water, crossings, build plots | coordinates, passability, ownership |
+| AI | One representative match opening | order sequence and required rule surface |
 
----
+Each fixture contains the BFME2 version, map, starting state, exact actions, timestamps,
+video or screenshots where useful, extracted configuration references, observations,
+tolerance, and confidence. Automate capture where reliable; otherwise use a documented
+manual protocol. Retail-derived evidence stays outside distributable artifacts.
 
-## 10. Quality bar (from prototype AGENTS.md, adapted)
+The oracle determines the simulation scheduler. Do not assume that the original uses a
+single global cadence or that 30 Hz is correct. Measure movement, weapons, economy,
+production, AI, and animation-facing behavior. OpenBFME may use a rational multi-rate
+scheduler while presenting at any display refresh rate.
 
-1. Data-driven factions: new faction = data + art, not core combat edits  
-2. One mechanism reused (status system, modifiers, floating text)  
-3. No gameplay `Time.get_ticks_msec()` — use `SimClock.time`  
-4. Balance numbers only in resources  
-5. Views never decide damage  
-6. Every stage leaves a **playable** build  
-7. Automated tests for combat math + save schema  
-8. Performance budget documented on **your** PC  
+### Workstream B: one-asset conversion proof
 
----
+Convert one Gondor Soldier dependency closure:
 
-## 11. Risk register
+- model and subobjects;
+- skeleton and skinning;
+- texture/material assignments;
+- idle, move, primary attack, and death capability graphs;
+- portrait/icon;
+- select and attack audio;
+- provenance and source hashes.
 
-| Risk | Impact | Mitigation |
+Animation mapping is not a four-string dictionary. The proof must represent conditional
+variants, weapon state, mounted/unmounted state where applicable, transitions,
+subobject visibility, loop/root-motion metadata, sound/FX events, and graceful fallback.
+Only capabilities used by the slice need implementation, but the schema must report
+unsupported conditions rather than discard them.
+
+The conversion must be repeatable headlessly, validate without Blender or donor tools
+at runtime, and produce the same manifest/content hashes from unchanged input.
+
+### Workstream C: representative map proof
+
+Import a representative Fords of Isen II region containing terrain variation, water, a
+crossing, props, a start position, buildable and unbuildable ground, and static blockers.
+
+Prove:
+
+- coordinate handedness, origin, rotation, and scale;
+- terrain geometry/material layers and water placement;
+- object transforms and semantic classifications;
+- passability, footprints, terrain costs, and buildability;
+- correspondence with the oracle capture;
+- a deterministic cooked result and visual contact sheet.
+
+Do not invent a permanent `nav.bin` format during the spike. The source bundle stores
+neutral map facts; a versioned cook step may produce Godot caches and an authoritative
+pathing grid. The binary layout is standardized only after the representative proof
+shows what data is actually required.
+
+Audit all Fords scripts/triggers before selecting it permanently. If unsupported map
+logic is essential to a normal skirmish, either implement that small dependency or use
+a simpler map for the first slice. The map name is subordinate to a shippable loop.
+
+### Workstream D: horde, navigation, and language proof
+
+Implement the same small arena twice: pure C# and typed GDScript. Use legal-safe
+primitive assets. One 15-member horde must navigate, turn, encounter an obstruction,
+engage another horde, lose members, and finish with a deterministic state hash.
+
+The candidate horde algorithm is:
+
+1. The horde requests one global path for its anchor and footprint class.
+2. A deterministic formation generator assigns stable member slots by entity ID and
+   rank definition.
+3. Members follow a bounded local corridor toward their slots; they do not own global
+   navigation agents.
+4. Separation examines neighbors in stable ID order and applies capped fixed-point
+   corrections.
+5. Melee engagement allocates a bounded set of contact slots in stable attacker/target
+   order; unallocated members queue or seek another eligible target.
+6. Cohesion has explicit soft and hard radii. Stragglers receive catch-up movement;
+   irrecoverably blocked members trigger a deterministic horde replan, never teleport
+   silently.
+7. Death releases a slot. Remaining slots are reassigned only at declared formation
+   transitions to avoid reshuffling every tick.
+8. Replenishment creates a new member entity and fills the next deterministic vacancy.
+
+The candidate navigation model is:
+
+- versioned fixed-cell authoritative grid derived from neutral terrain facts;
+- deterministic A* or hierarchical A* with specified neighbor order and tie-breaking;
+- footprint classes for hordes and buildings;
+- separate static terrain, temporary occupancy, and dynamic-building blocker layers;
+- deterministic invalidation/replan rules;
+- no authoritative dependency on Godot NavigationServer or physics query ordering;
+- fixed-point positions and costs unless the bakeoff proves another representation is
+  repeatable across supported machines.
+
+Path quality, formation coherence, and cost at 20 hordes/300 members are measured. A
+1,500-member stress case identifies the likely ceiling; it is not a slice requirement.
+
+### Workstream E: renderer and snapshot proof
+
+Render the legal-safe horde through Godot at 60, 120, 144, and 240 Hz while the same
+simulation replay runs underneath it. Prove:
+
+- identical authoritative hashes at every render rate;
+- smooth interpolated transforms with no tick-rate stepping;
+- immediate selection/cursor feedback and defined command scheduling;
+- bounded allocations and snapshot-transfer cost;
+- clean shutdown with no RID, ObjectDB, orphan resource, or error output.
+
+The existing 101 assertions do not pass this gate while Godot reports leaks.
+
+## 5. Standing architecture quality gates
+
+The affected production path is accepted only when its relevant gates pass:
+
+1. **Oracle:** at least 20 repeatable observations cover the scoped loop and produce a
+   documented scheduler recommendation.
+2. **Asset:** one retail unit converts headlessly with usable rig, material, animation,
+   audio, capability, and provenance data.
+3. **Map:** the representative region matches terrain, water, transforms, buildability,
+   and passability closely enough for a controlled scenario.
+4. **Horde:** real members move, form, engage, take damage, and die without per-member
+   global pathfinding.
+5. **Determinism:** repeated runs and all tested render rates produce identical hashes.
+6. **Presentation:** motion is smooth at 144 Hz and has no authoritative render coupling.
+7. **Runtime independence:** the proof runs from the converted bundle with BFME2,
+   Blender, OpenSAGE, and conversion tools unavailable.
+8. **Language:** the C#/typed-GDScript decision is recorded from measurements.
+9. **Clean gate:** one command builds and tests the proof with no hidden Godot errors or
+   leaks.
+10. **Containment:** private retail inputs and derivatives remain under `.private` and
+    the code-only export scan cannot reach them.
+
+Redesign the affected component if asset animation states cannot be expressed cleanly, Fords depends
+on a large unimplemented scripting system, deterministic horde movement requires a
+global path per soldier, cross-language transfer consumes a material frame fraction,
+or donor-specific concepts leak into required runtime types.
+
+A failed Fords gate does not automatically kill OpenBFME. It may change the first map,
+conversion strategy, schema, simulation language, or compatibility ambition. A failed
+runtime-independence or deterministic-horde gate is an architectural failure that
+blocks completion of the affected runtime path, not private asset extraction or
+unrelated evidence work.
+
+## 6. Architecture used by the active build
+
+The expected, but still evidence-dependent, repository shape is:
+
+```text
+engine/
+  OpenBfme.Schema/
+  OpenBfme.Sim/
+    Commands/
+    Scheduler/
+    Horde/
+    Navigation/
+    Movement/
+    Combat/
+    Economy/
+    Production/
+    AI/
+    Replay/
+    Snapshot/
+  OpenBfme.Sim.Tests/
+game/
+  Godot presentation, input, UI, audio, animation, visual tests
+importer/
+  coordinator, adapters, manifests, fixtures, reports
+tools/
+  stable build/import/test/audit/gate entrypoint
+content/
+  openbfme-test only; no retail-derived files
+oracle/
+  legal-safe protocols, schemas, measurements, and comparison tooling
+docs/
+  architecture decisions, provenance, compatibility matrix, legal policy
+```
+
+No replacement for the current large `SimWorld` may become another god object. Systems
+communicate through narrow data contracts and have focused tests.
+
+### Content bundle v0
+
+```text
+pack.json
+data/
+  objects.json
+  weapons.json
+  armor.json
+  locomotion.json
+  behaviors.json
+  animation_capabilities.json
+maps/
+  <map-id>/map.json
+assets/
+  models/
+  textures/
+  audio/
+  ui/
+provenance/
+  manifest.json
+```
+
+Cooked platform/engine caches live in a declared cache section or external cache and
+can be regenerated from the neutral facts. Schema v0 has stable IDs, explicit units and
+coordinate conventions, content hashes, capability requirements, unknown-field
+diagnostics, path containment, size/count limits, and no executable mod scripts.
+
+One validated bundle is the only packaging product in v0. General dependency solving,
+hot reload, executable plugins, marketplaces, and multiple concurrent rulesets wait
+for a second real pack or external mod requirement.
+
+### Retail importer product requirements
+
+After the proof, the coordinator must:
+
+- detect or accept the install directory and verify patch/language;
+- diagnose missing or modified archives;
+- calculate the exact slice dependency closure;
+- resume interrupted work and cache by input/tool/config hashes;
+- sandbox archive paths and enforce decompression size/count limits;
+- emit converted, missing, substituted, unsupported, and provenance reports;
+- keep retail and converted data contained under `.private` inside the local checkout,
+  and exclude it from git and later public/code-only exports;
+- support a dry run and deterministic audit mode;
+- continue after one failed optional asset while failing required capabilities clearly.
+
+The initial conversion order is one Gondor Soldier, one horde, the representative map
+region, full Fords, then the exact four-unit/five-building closure. Converting the full
+installation is not a milestone.
+
+## 7. Compatibility and testing strategy
+
+Maintain a machine-readable compatibility matrix. Each row names a BFME2 behavior or
+scenario and one of: `measured`, `implemented`, `verified`, `partial`, `unsupported`, or
+`not scoped`. “Verified” requires an oracle fixture plus an automated OpenBFME scenario.
+
+The stable repository command should eventually expose:
+
+```text
+openbfme doctor
+openbfme oracle validate
+openbfme import asset <manifest>
+openbfme import map <manifest>
+openbfme audit-assets <pack>
+openbfme run-scenario <fixture>
+openbfme compare-parity <fixture>
+openbfme benchmark <scenario>
+openbfme gate phase0
+openbfme gate vertical-slice
+```
+
+Required merge gates after Phase 0:
+
+- build with warnings as errors;
+- schema and malicious-input validation;
+- focused unit/property tests for authoritative systems;
+- replay hashes across repeat runs and supported configurations;
+- headless Godot boot and named gameplay scenarios;
+- zero Godot error/leak/orphan output;
+- screenshot/contact-sheet comparisons for named scenes;
+- performance and allocation budgets on the reference machine;
+- runtime assembly/reference scan for donor dependencies;
+- proprietary hash/path/provenance scan;
+- clean import reproducibility and cache-invalidation tests.
+
+## 8. Autonomous development harness
+
+There is no missing magical MCP server that makes this project safe to build
+autonomously. Godot/Blender MCPs may improve observation and interaction, but the
+critical capability is a repository-specific, restartable harness.
+
+Use three persistent responsibility lanes under one integration owner:
+
+1. **Importer/content:** formats, conversion, schemas, map facts, provenance.
+2. **Simulation:** scheduler, replay, hordes, navigation, combat, economy, AI.
+3. **Godot:** snapshot bridge, renderer, animation, UI, audio, visual/performance QA.
+
+Hundreds of subagents are a queue of bounded jobs, not hundreds of simultaneous editors.
+Every job declares its ID, lane, allowed paths, immutable inputs, expected outputs,
+acceptance commands, performance budget, prohibited data, dependencies, retry count,
+and escalation condition.
+
+Before unattended operation, add:
+
+- root `AGENTS.md` with legal and architectural boundaries;
+- machine-readable task manifests and decision records;
+- isolated worktrees and one integration queue;
+- stale-lock detection, heartbeat, retry ceiling, and crash/reboot recovery;
+- immutable test ownership or separate test-review approval;
+- artifact/cache directories outside source and automatic cleanup budgets;
+- merge conflict and contract-change escalation to the integration owner;
+- reproducible toolchain lock/report for Godot, .NET, Blender, Java, and donors;
+- logs and status reports that never contain or upload proprietary content.
+
+Godot Forge, a small audited Godot editor/runtime bridge, Blender MCP, and Ralph-style
+task loops are optional conveniences. They are not sources of truth and are not allowed
+to bypass the stable CLI or merge gates.
+
+## 9. Existing code and donor policy
+
+Do not fork an existing public Godot RTS as the foundation. Audited candidates contain
+useful camera, selection, construction-preview, minimap/fog, or spatial-query ideas but
+do not provide the required deterministic simulation, replay boundary, BFME horde
+semantics, importer contract, or automated verification.
+
+The current OpenBFME prototype is already adequate as a presentation donor. Public RTS
+donor spikes are removed from the critical path. Adopt a component only when an actual
+slice requirement appears and a small spike proves it reduces maintained complexity.
+
+OpenSAGE is a research and importer donor, not the runtime. Its parsers and schemas are
+valuable; parser presence is not evidence that a BFME2 behavior is implemented or
+correct. `chipgw/openbfme` is historical research only. Every copied implementation
+requires a pinned source, license, file-level provenance, and compatibility review.
+
+## 10. Active production milestones
+
+There is no remaining calendar-based permission gate. Sequence the work by dependency
+and accept each milestone only with the named evidence:
+
+| Milestone | Acceptance evidence |
+|---|---|
+| Complete effective retail view | Every winning archive entry extracted, hashed, manifested, and repeatable under `.private` |
+| Full Men dependency closure | Every normal-skirmish Men definition and physical leaf resolved or explicitly failed closed |
+| Fords full-match gate | Complete Men-versus-Men loop with retail UI/audio/presentation and oracle comparisons |
+| Five-map private target | Full skirmishes, deterministic navigation/AI, map-specific evidence, performance, and soak gates |
+| Later code-only public source | Sanitized project-authored tree proves no `.private` or retail-derived payload is reachable |
+
+Continuous agents shorten mechanical implementation and test generation. They do not
+remove ambiguity in reverse engineering, animation repair, game-feel comparison, map
+semantics, licensing, integration, or art direction. The schedule is reset whenever an
+oracle or import assumption fails.
+
+Active production sequence:
+
+1. Freeze schema/scheduler/horde/navigation ADRs from Phase 0 evidence.
+2. Build the placeholder economy, construction, production, combat, victory, and AI loop.
+3. Expand the importer to the exact Men dependency closure.
+4. Import and verify full Fords or activate the simpler-map fallback.
+5. Replace placeholder presentation incrementally with imported local content.
+6. Add guided import UX, diagnostics, resumability, cache repair, and uninstall behavior.
+7. Run parity, performance, visual, leak, and 30-minute soak gates.
+8. Ship the engine plus legal-safe test pack; the user creates the retail pack locally.
+9. Begin the original/free pack as a separately staffed content milestone.
+
+## 11. Vertical-slice definition of done
+
+### Gameplay and compatibility
+
+- A Men-versus-Men skirmish starts on the selected Fords-compatible map.
+- The five buildings can be placed, built, damaged, and destroyed.
+- The four unit types can be trained, selected, moved, stopped, and ordered to attack.
+- Members form, navigate, acquire targets, attack, die, and replenish according to the
+  verified slice compatibility matrix.
+- Economy, production, combat, Fortress destruction, and victory match declared oracle
+  tolerances.
+- The deterministic AI can build, train, attack, and win.
+
+### Modern presentation
+
+- Camera and input feedback are responsive at 60/120/144/240 Hz.
+- Unit movement and animation do not visibly step at the simulation cadence.
+- Replays have identical outcomes regardless of render rate.
+- UI has smoke coverage at 1080p, 1440p, 4K, and ultrawide.
+- The reference vertical-slice army targets 144 rendered FPS on the recorded reference
+  machine; performance budgets are finalized from Phase 0 measurements.
+
+### Import, runtime, and modding
+
+- A verified retail install can be selected and converted through one guided flow.
+- Import is resumable, deterministic, cache-correct, and diagnostically useful.
+- The runtime works after removing access to the retail install and all donor tools.
+- No proprietary or converted retail asset exists in git or a public engine
+  distribution; private development builds load only from ignored `.private` packs.
+- Replays reproduce exact hashes and a 30-minute normal match completes without crash,
+  leak, softlock, or unbounded memory growth.
+- A legal-safe sample override changes one unit's model, name, health, and weapon without
+  engine code changes; invalid data produces actionable errors.
+
+## 12. Private content policy and later public release
+
+The current product is a private local compatibility build. Retail extraction and
+conversion inside the ignored `.private` tree are implementation work, not a release
+blocker. Public distribution decisions are deliberately deferred to a separate
+code-only sanitization and review phase.
+
+Before donor code is copied or public builds are distributed:
+
+- choose and add the engine license; GPLv3 is the current candidate, but OpenSAGE's
+  EA-derived files and additional terms need file-level review;
+- maintain `docs/THIRD_PARTY.md` with source, pinned commit, license, copied files, and
+  modifications;
+- distinguish behavior learned from observation/documentation from copied code;
+- export only project-authored code, documentation, and repository-authored fixtures in
+  the later public release;
+- store private generated retail caches only under the ignored `.private` workspace;
+- scan git, releases, logs, screenshots, fixtures, and exports for retail signatures;
+- use an independent public name and branding review;
+- obtain qualified legal advice before public positioning and distribution.
+
+Nothing in this private build policy declares retail material public or redistributable.
+The later public-source process must make its own release and branding decisions after
+the private game works.
+
+## 13. Immediate execution order
+
+1. Extract and hash-manifest the complete effective BFME2 1.06 archive view under
+   `.private\retail-work`; do not materialize superseded duplicate entries by default.
+2. Finish the typed Men dependency graph for objects, inheritance, models, animations,
+   materials, textures, weapons, projectiles, FX, audio, UI, and lifecycle states.
+3. Generate the bounded full-Men conversion profile from that graph and fail closed on
+   every unresolved, ambiguous, or unsupported requirement.
+4. Convert and audit every required Men model, hierarchy, animation, texture, material,
+   effect, sound, UI image, string, and building lifecycle state.
+5. Complete the five maps' terrain, water, object placement, setup, buildability,
+   navigation, routing, triggers, scripts, lighting, and AI inputs.
+6. Bind the converted data to the authoritative simulation and exact retail UI/audio
+   runtime paths without generic private-mode fallbacks.
+7. Capture and compare the BFME2 1.06 oracle matrix for visual, spatial, timing,
+   gameplay, UI, audio, routing, AI, damage, collapse, and rubble parity.
+8. Remove obsolete proof scaffolding only after coverage has moved to the production
+   path, then run the focused checks, retail pipeline gate, Stage 10 gate, rendered
+   validation, and soak test.
+
+## 14. Execution checkpoint (2026-07-12)
+
+This checkpoint records implementation evidence inside the approved private build.
+Language, scheduler, map model, horde algorithm, pathing model, schema, and performance
+budgets remain evidence-driven architecture decisions, not reasons to pause authorized
+content work.
+
+Recorded implementation evidence in the current repository:
+
+- proof Stages 1-10;
+- a deterministic, private retail importer that extracts and converts scoped BFME2
+  content into the ignored `.private` workspace without placing payloads in git or a
+  public export;
+- an exact Fords map-fact cook covering height, passability, terrain, water, objects,
+  and waypoints, with those facts mounted for runtime consumption; and
+- an integrated Godot retail-slice checkpoint through Stage 15. It starts with four
+  imported Gondor Soldier battalions and can create additional Soldier battalions through
+  the bounded production loop described below.
+
+The next map-import milestone is limited to the frozen official BFME2 1.06
+multiplayer/skirmish corpus; it does not add online networking or reopen campaign, WotR,
+tutorial, shell, or custom-map scope. Its named requirements and deletion decisions live
+in `docs/MULTIPLAYER_MAP_CONVERTER.md`. A payload-free corpus census must precede new
+generalized conversion work.
+
+Jonathan subsequently authorized the complete BFME2 1.06 Men dependency closure on the
+five evidence-selected maps as a persistent private compatibility goal. Its exact scope,
+version boundary, dependency census, UI/audio rules, and completion gates live in
+`docs/FULL_MEN_FIVE_MAP_MILESTONE.md`. ROTWK 2.01 evidence remains a separately versioned
+reference/overlay and cannot silently change the BFME2 1.06 target.
+
+The expanded generated-leaf checkpoint is now implemented. The current 57-object
+command graph resolves all 41 upgrades, 38 special powers, and 26 sciences as typed,
+payload-free definition leaves. It resolves 159 mapped images across 78 compiled
+DDS/TGA atlases plus one explicit source-null banner portrait, all 380 requested text
+IDs under an explicit source-order duplicate policy, and 105 audio roots through 115
+events/ten multisounds to 474 exact sample leaves. The generated profile contains 81
+bounded resources selecting 634 exact files with zero missing required inputs, and its
+private pack build passed semantic provenance audit. This is deterministic
+private-workspace census/conversion evidence, not runtime parity: typed
+model/animation/material/FX-list/weapon/projectile/lifecycle leaves, Godot manifest
+consumption, and BFME2 oracle review remain active work.
+
+Stages 11-15 are implementation checkpoints inside the private retail proof, not a new
+completion definition or a replacement for the full Men/five-map gates:
+
+| Stage | Implemented evidence | Deliberate boundary |
 |---|---|---|
-| W3D conversion rabbit hole | Weeks lost | Ban full conversion from critical path |
-| Navmesh wall editing pain | Base building feels broken | Tile-based local rebake; Stage 3 spike early |
-| Army scale FPS death | Can’t do late game | MultiMesh LOD from Stage 1 budget test |
-| Scope creep to campaign/MP | Never ship | Stage gates; written non-goals |
-| Copyright contamination | Can’t share / legal risk | Export scanner; dual lanes |
-| AI too dumb | Empty game | Stage 7 before art perfection |
-| Art inconsistency | Looks amateur | Art bible + reference sheet in every Imagine batch |
-| Name collision OpenBFME | SEO/confusion | Distinct public name if releasing |
+| 11 - control groups | Deterministic groups 1-9 support assign, recall, prune, reset, snapshot, and replay-signature coverage. | Groups contain only living player Gondor Soldier battalions; Archer, Tower Guard, and Knight presentation closures exist in the private pack but are absent from the playable runtime roster. |
+| 12 - order feedback | Authoritative snapshots carry destination, remaining route/cells, ford, and order sequence. Selected battalions present a route line and destination flag; rejected orders preserve the prior valid route and arrival clears it. | Routing is still the bounded static cooked Fords grid, without full building/dynamic-obstacle invalidation or oracle parity coverage. |
+| 13 - equipment and attack timing | W3D conversion fails closed on retained helper/collision/volume or ambiguous box geometry, canonicalizes/restores/revalidates proven equipment attachments, and converts exact source-proven additive equipment materials without touching ordinary textures. The private pack now proves four core presentation clips for Archer, Tower Guard, and Knight in addition to the 23-clip Soldier closure. Runtime attack windup and cadence remain derived from the imported Soldier rules. | The three added units are presentation conversions, not complete animation-state, simulation, production, or combat-parity closures. |
+| 14 - bounded base authority | Each team receives the five scoped structure roles. A Farm pays deterministic resources and a Barracks can queue one supported 15-member Gondor Soldier horde. The private pack now contains intact zero-clip hierarchical GLBs for all five structures. | The models are not yet wired to complete placement, construction, damage, destruction, Archer/Guard/Knight production, or economy parity. |
+| 15 - integrated match loop | The private Godot scene connects the base authority to the HUD, control-group strip, Soldier queue, source-driven minimap, audio settings, simple shared-contract enemy production/attack behavior, Fortress victory/defeat, and outcome splash. | The AI does not execute the full BFME2 Men build plan, and the UI/presentation is not yet accepted against the complete viewport, performance, and oracle matrices. |
 
----
+The retail profile remains explicitly `vertical_slice_complete: false`. The formal
+vertical slice still requires playable runtime integration for imported Gondor Archer,
+Tower Guard, and Knight; complete placement/build/damage lifecycles for all five
+imported intact structures; the full four-unit economy, production, and deterministic AI build plan;
+Godot rendering of the exact cooked map materials, resolution of the remaining object models; buildability and full
+building-aware/dynamic navigation; oracle parity evidence; and the full
+performance/input/viewport matrix. Passing the current proof gates therefore
+demonstrates scoped feasibility; it does not waive the remaining full milestone
+evidence, and no Stage 11-15 implementation may change the profile to a completed state.
 
-## 12. First 14 days (tactical checklist)
+## 15. Final judgment
 
-**Day 1–2**
+This is the right route because it preserves the three things the project actually
+needs: modern presentation, a clean moddable engine, and optional reuse of locally owned
+retail content. It is also the shortest honest route: prove the original behavior,
+asset conversion, map conversion, deterministic horde model, and Godot boundary before
+building the game around them.
 
-- [ ] Godot 4.7 project created under `game/`  
-- [ ] Git + gitignore lanes  
-- [ ] Autoloads + boot → menu  
-- [ ] FinalBIG: extract `ini.big`  
-- [ ] `parse_ini_to_csv.py` v0  
-
-**Day 3–4**
-
-- [ ] Art bible  
-- [ ] Imagine: menu BG + 8 icons  
-- [ ] RTS camera prototype scene  
-- [ ] Click ground → move placeholder unit  
-
-**Day 5–7**
-
-- [ ] Battalion select + box select  
-- [ ] Attack + HP bars  
-- [ ] Two teams + fortress dummies  
-- [ ] Nav obstacle demo  
-
-**Day 8–10**
-
-- [ ] Fixed sim tick  
-- [ ] Projectile  
-- [ ] Headless combat test  
-- [ ] Basic HUD (resources stub, minimap blank)  
-
-**Day 11–14**
-
-- [ ] Start Stage 2: place farm + barracks  
-- [ ] Train soldier battalion  
-- [ ] Income tick  
-- [ ] Tag build `v0.2-economy-wip`  
-
-If day 14 isn’t fun to click around, fix feel before adding factions.
-
----
-
-## 13. Success metrics
-
-| Milestone | Definition of done |
-|---|---|
-| **Alpha** | Stages 0–5: you can win a hero+power skirmish on blockout art |
-| **Beta** | Stages 0–8: four factions, maps, AI Normal, save/load, clean art for Gondor/Mordor |
-| **v1.0** | Stage 10 + Stage 9 must-haves (audio + juice); optional CAH/Ring if time |
-| **Personal fun bar** | You choose Open BFME over BFME2 skirmish for a week of evening games |
-
----
-
-## 14. How this uses the browser project
-
-| From `middle-earth-rts` | Action |
-|---|---|
-| `config.js` numbers | Port to Godot resources Stage 2 |
-| `FEATURES-BFME2.md` | Feature backlog filter (ignore web-only notes) |
-| `ai.js` budgets | Stage 7 AI plans |
-| `behaviors.js` terror/stealth/efficiency | Stage 4–6 systems |
-| Icons under `assets/icons/` | Temporary stand-ins; replace with Imagine set for consistency |
-| GLBs under `assets/models/` | Candidate Lane B imports (already original/AI-gen — better than BFME W3D legally) |
-| Selftest ideas | Recreate as Godot headless tests |
-| Three.js code | Do not port |
-
-**Immediate free win:** copy `assets/icons/*.png` and unit/building GLBs from the browser project into Open BFME as **bootstrap Lane B** while Imagine catches up. Those are already non-EA.
-
----
-
-## 15. Recommended Godot settings (start)
-
-- Renderer: **Forward Plus**  
-- Physics ticks: 30 or 60; **sim tick separate** at 10–20 Hz  
-- 3D physics for projectiles optional — prefer kinematic sim  
-- Use **NavigationServer3D** + `NavigationAgent3D` per battalion  
-- UI scale-aware theme (1080p baseline, 1440p/4K tested)  
-- Input map: mirror prototype (WASD, Q/E, A attack-move, S stop, control groups)  
-
-Plugins to consider later (not day 1):
-
-- Terrain3D (large maps)  
-- GUT (tests)  
-- GodotSteam only if you ever distribute on Steam (far future)
-
----
-
-## 16. Definition of “good clone” for this project
-
-Open BFME succeeds if:
-
-1. **Battalion micro + freeform base + heroes + powers** feel right  
-2. Desktop performance allows real late-game  
-3. Walls and fog make map geometry matter  
-4. Art is cohesive original fantasy RTS (Imagine + GLB), not a legal liability  
-5. Development stages always leave something playable  
-
-It does **not** need:
-
-- Pixel-identical UI  
-- Every BFME2 unit  
-- Campaign  
-- Multiplayer  
-- Retail music/VO  
-
----
-
-## 17. Next action (when you say go)
-
-1. Scaffold `game/` Godot project + gitignore  
-2. Extract `F:\BFME2\ini.big` → `_bfme2_extract/ini`  
-3. Port a minimal `UnitDef` / `BuildingDef` from prototype config  
-4. Implement Stage 1 sandbox  
-
----
-
-*Document version: 1.0 — 2026-07-11*  
-*BFME2 path verified: `F:\BFME2`*  
-*Prototype path: `C:\Users\Jonathan\Desktop\middle-earth-rts`*
+The plan succeeds by keeping every claim evidence-backed. Fords is the first complete
+match gate; the active private product is the full Men faction across the selected five
+maps. The same proven pipeline can then expand to the rest of BFME2-compatible content.

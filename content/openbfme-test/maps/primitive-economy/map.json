@@ -1,0 +1,284 @@
+{
+  "schema": "openbfme.map",
+  "schemaVersion": 0,
+  "id": "test.map.primitive-economy",
+  "displayName": "Primitive Economy Arena",
+  "grid": {
+    "widthCells": 64,
+    "heightCells": 64,
+    "cellSizeSubcells": 1000,
+    "defaultTerrainCost": 10,
+    "neighborOrder": [
+      "north",
+      "east",
+      "south",
+      "west"
+    ]
+  },
+  "terrain": {
+    "source": "repository-authored-neutral-facts",
+    "base": "flat-buildable-ground",
+    "heightSubcells": 0,
+    "buildable": true
+  },
+  "staticBlockers": [
+    {
+      "id": "test.blocker.economy-center-north",
+      "shape": "grid-rectangle",
+      "xCell": 32,
+      "yCell": 0,
+      "widthCells": 1,
+      "heightCells": 27,
+      "presentationShape": "box"
+    },
+    {
+      "id": "test.blocker.economy-center-south",
+      "shape": "grid-rectangle",
+      "xCell": 32,
+      "yCell": 36,
+      "widthCells": 1,
+      "heightCells": 28,
+      "presentationShape": "box"
+    }
+  ],
+  "formation": {
+    "id": "test.formation.three-by-five",
+    "rows": 3,
+    "columns": 5,
+    "rowSpacingSubcells": 650,
+    "columnSpacingSubcells": 650,
+    "slotAssignment": "ascending-member-entity-id",
+    "reassignOnlyOn": [
+      "spawn",
+      "declared-formation-transition"
+    ]
+  },
+  "sides": [
+    {
+      "id": "test.side.blue",
+      "team": 0,
+      "teamColor": "#3b82f6",
+      "fortress": {
+        "entityId": 1,
+        "objectId": "test.object.fortress",
+        "position": {
+          "xSubcells": 4500,
+          "ySubcells": 31500
+        }
+      },
+      "horde": {
+        "entityId": 100,
+        "firstMemberEntityId": 1000,
+        "anchor": {
+          "xSubcells": 12500,
+          "ySubcells": 30500
+        },
+        "formationId": "test.formation.three-by-five",
+        "composition": [
+          {
+            "objectId": "test.object.member.melee",
+            "count": 15
+          }
+        ]
+      }
+    },
+    {
+      "id": "test.side.red",
+      "team": 1,
+      "teamColor": "#ef4444",
+      "fortress": {
+        "entityId": 2,
+        "objectId": "test.object.fortress",
+        "position": {
+          "xSubcells": 59500,
+          "ySubcells": 31500
+        }
+      },
+      "horde": {
+        "entityId": 101,
+        "firstMemberEntityId": 1015,
+        "anchor": {
+          "xSubcells": 51500,
+          "ySubcells": 32500
+        },
+        "formationId": "test.formation.three-by-five",
+        "composition": [
+          {
+            "objectId": "test.object.member.melee",
+            "count": 15
+          }
+        ]
+      }
+    }
+  ],
+  "scenario": {
+    "id": "test.scenario.stage2-proof",
+    "randomSeed": 104729,
+    "simulationTicks": 1500,
+    "commands": [
+      {
+        "executeTick": 0,
+        "sequence": 0,
+        "order": "place-building",
+        "team": 0,
+        "typeCode": 2,
+        "destination": {
+          "xSubcells": 17500,
+          "ySubcells": 23500
+        }
+      },
+      {
+        "executeTick": 1,
+        "sequence": 1,
+        "order": "place-building",
+        "team": 0,
+        "typeCode": 3,
+        "destination": {
+          "xSubcells": 17500,
+          "ySubcells": 38500
+        }
+      },
+      {
+        "executeTick": 2,
+        "sequence": 2,
+        "order": "place-building",
+        "team": 0,
+        "typeCode": 4,
+        "destination": {
+          "xSubcells": 24500,
+          "ySubcells": 38500
+        }
+      },
+      {
+        "executeTick": 590,
+        "sequence": 3,
+        "order": "set-rally",
+        "buildingEntityId": 201,
+        "destination": {
+          "xSubcells": 28500,
+          "ySubcells": 30500
+        }
+      },
+      {
+        "executeTick": 590,
+        "sequence": 4,
+        "order": "set-rally",
+        "buildingEntityId": 202,
+        "destination": {
+          "xSubcells": 28500,
+          "ySubcells": 32500
+        }
+      },
+      {
+        "executeTick": 600,
+        "sequence": 5,
+        "order": "train",
+        "buildingEntityId": 201,
+        "typeCode": 100
+      },
+      {
+        "executeTick": 601,
+        "sequence": 6,
+        "order": "train",
+        "buildingEntityId": 201,
+        "typeCode": 100
+      },
+      {
+        "executeTick": 602,
+        "sequence": 7,
+        "order": "train",
+        "buildingEntityId": 201,
+        "typeCode": 100
+      },
+      {
+        "executeTick": 603,
+        "sequence": 8,
+        "order": "train",
+        "buildingEntityId": 202,
+        "typeCode": 101
+      },
+      {
+        "executeTick": 604,
+        "sequence": 9,
+        "order": "train",
+        "buildingEntityId": 202,
+        "typeCode": 101
+      },
+      {
+        "executeTick": 900,
+        "sequence": 10,
+        "order": "attack-target",
+        "hordeEntityId": 100,
+        "targetEntityId": 2,
+        "destination": {
+          "xSubcells": 59500,
+          "ySubcells": 31500
+        }
+      },
+      {
+        "executeTick": 900,
+        "sequence": 11,
+        "order": "attack-target",
+        "hordeEntityId": 102,
+        "targetEntityId": 2,
+        "destination": {
+          "xSubcells": 59500,
+          "ySubcells": 31500
+        }
+      },
+      {
+        "executeTick": 900,
+        "sequence": 12,
+        "order": "attack-target",
+        "hordeEntityId": 103,
+        "targetEntityId": 2,
+        "destination": {
+          "xSubcells": 59500,
+          "ySubcells": 31500
+        }
+      },
+      {
+        "executeTick": 900,
+        "sequence": 13,
+        "order": "attack-target",
+        "hordeEntityId": 104,
+        "targetEntityId": 2,
+        "destination": {
+          "xSubcells": 59500,
+          "ySubcells": 31500
+        }
+      },
+      {
+        "executeTick": 900,
+        "sequence": 14,
+        "order": "attack-target",
+        "hordeEntityId": 105,
+        "targetEntityId": 2,
+        "destination": {
+          "xSubcells": 59500,
+          "ySubcells": 31500
+        }
+      },
+      {
+        "executeTick": 900,
+        "sequence": 15,
+        "order": "attack-target",
+        "hordeEntityId": 106,
+        "targetEntityId": 2,
+        "destination": {
+          "xSubcells": 59500,
+          "ySubcells": 31500
+        }
+      }
+    ],
+    "requiredObservations": [
+      "invalid-placement-does-not-mutate-state",
+      "construction-health-ramps-on-exact-ticks",
+      "completed-farm-pays-integer-income",
+      "production-is-fifo-and-reserves-population",
+      "five-trained-hordes-spawn-at-rally",
+      "trained-hordes-can-destroy-dummy-fortress",
+      "repeat-runs-have-identical-state-hash"
+    ]
+  }
+}

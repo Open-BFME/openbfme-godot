@@ -1,21 +1,84 @@
 # Open BFME
 
-Desktop BFME2-inspired skirmish RTS in **Godot 4.7**.
+Modern, moddable RTS engine using **Godot 4.7** for presentation. The first
+compatibility slice targets one BFME2 map and the Men faction while keeping the
+runtime independent from BFME2, OpenSAGE, BIG, and W3D. Pure C# is the leading
+authoritative-simulation option, pending the Phase 0 C#/typed-GDScript bakeoff.
 
-**Playability goal:** port depth from `middle-earth-rts` (the browser prototype), not empty stage checklists.
+**Current status:** the existing GDScript game is a broad synthetic prototype and donor
+for camera, UI, scenarios, and presentation work. It is not the planned authoritative
+simulation foundation. See [PLAN.md](PLAN.md) for the approved direction, two-week
+feasibility program, and Day-14 go/no-go gates.
 
-Current pack is generated from that prototype’s `config.js` (**33 units, 42 buildings, 4 factions, 10 powers, 48 hero abilities, 7 upgrades**).
+The current pack is generated from that prototype's `config.js` (**33 units, 42
+buildings, 4 factions, 10 powers, 48 hero abilities, 7 upgrades**). Those counts
+describe prototype breadth, not vertical-slice completion or BFME2 parity.
 
 ## Run
 
 ```bat
-C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64.exe --path C:\Users\Jonathan\Desktop\open-bfme\game
+run_game.bat
 ```
+
+### Stage 1 proof
+
+Stage 1 is implemented as an isolated Phase 0 evidence slice: a playable primitive
+battle arena backed by the same legal-safe bundle in typed GDScript and pure C#.
+Neither candidate reads BFME2 files or donor-engine types at runtime.
+
+```bat
+run_stage1.bat
+run_stage1_tests.bat
+```
+
+The gate validates the bundle and provenance, builds and tests the C# candidate,
+tests the Godot candidate and presentation at 60/120/144/240 Hz, benchmarks 50
+hordes / 750 members, and requires both candidates to finish the shared scenario
+with the same authoritative hash.
+
+### Stage 2–10 proof labs and release gate
+
+Stages 2–9 are playable, neutral, legal-safe proof slices. They extend the evidence
+program without claiming BFME2 parity, completing the Men/Fords vertical slice, or
+choosing the production simulation architecture. Stage 10 hardens and verifies those
+proofs; it is a private gold-candidate gate, not a public-release declaration.
+
+| Stage | Play | Cumulative gate | Authority and verified replay |
+|---|---|---|---|
+| 2 — economy/base | `run_stage2.bat` | `run_stage2_tests.bat` | C# + typed GDScript, exact hash `2D9E7B79`; 7 C#, 30 Godot, 38 visual assertions |
+| 3 — fortifications/fog | `run_stage3.bat` | `run_stage3_tests.bat` | typed-GDScript proof, hash `0F88CA5D`; 73 proof and 41 visual assertions |
+| 4 — champions/abilities | `run_stage4.bat` | `run_stage4_tests.bat` | typed-GDScript proof, hash `D85E4D9B`; 99 proof and 68 visual assertions |
+| 5 — spellbook/weather | `run_stage5.bat` | `run_stage5_tests.bat` | typed-GDScript proof, hash `E3397DC8`; 52 proof and 32 visual assertions |
+| 6 — factions/upgrades/art | `run_stage6.bat` | `run_stage6_tests.bat` | typed-GDScript proof, hash `E383C87F`; 67 proof, 35 visual assertions, four factions and an 80-battalion primitive probe |
+| 7 — deterministic AI | `run_stage7.bat` | `run_stage7_tests.bat` | typed-GDScript proof, hash `8D53B31F`; 85 proof and 32 visual assertions, including three starvation victories/no-softlocks |
+| 8 — maps/save/formations | `run_stage8.bat` | `run_stage8_tests.bat` | typed-GDScript proof, hash `2B228D1F`; 49 proof and 27 visual assertions across four original maps |
+| 9 — relic/audio/juice | `run_stage9.bat` | `run_stage9_tests.bat` | typed-GDScript proof, hash `6B4565C3`; 47 proof and 38 visual assertions with classic-mode disable support |
+| 10 — hardening/gold gate | `run_stage10.bat` | `run_stage10_tests.bat` | full menu plus doctor, export safety, clean boot, legacy regression and deterministic 30-minute soak (`9887356C`) |
+
+Each later gate includes every earlier gate. `run_stage10_tests.bat` therefore checks
+bundle provenance, Stage 1 regression, Stage 2 cross-language parity, the Stage 3
+`<100 ms` local-topology budget, every Stage 4–9 proof and playable scene, the
+101-assertion legacy suite, both boot paths, export safety, and the accelerated
+30-minute AI soak. Stages 3–9 are explicitly marked
+`authority=gdscript-proof`; the non-.NET Godot build cannot supply a C# scene bridge,
+so those labs do not overrule the Phase 0 language bakeoff.
+
+Stage 2 uses the RTS camera and inherited formation controls; its bottom palette builds
+the supply, production, and launcher structures. Stage 3 is a top-down topology lab:
+click the blue scout, right-click to move, use `R` to rotate, multi-click walls and
+press Enter, or select a gate and press Space. Stage 4 is a top-down combat lab:
+click blue to select and red to inspect, use `1`–`5` for data-defined abilities,
+`Q/W/E/D` for stances, `F/T` for fear/terror, and the lifecycle controls for revival.
+Stage 5 presents the four-tier spellbook and shared target-mode state machine. Stage 6
+switches among four primitive factions and exposes live research/matrix results. Stage
+7 steps or runs the data-driven AI on Easy/Normal/Hard. Stage 8 switches maps and
+exercises save slots, control groups, and formations. Stage 9 exposes the Auric Loop
+objective, music/SFX intents, clean combat feedback, and classic-mode toggle.
 
 Headless tests:
 
 ```bat
-C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe --headless --path C:\Users\Jonathan\Desktop\open-bfme\game -s res://tests/cli_runner.gd
+run_tests.bat
 ```
 
 ## Layout
@@ -27,7 +90,14 @@ C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe --headle
 | `game/mods/` | Drop-in mods |
 | `game/src/sim/` | Pure simulation (no rendering) |
 | `game/src/view/` | 3D presentation + input |
-| `game/tests/` | Stage 1–4 self-tests |
+| `game/src/stage1_sim/` | Typed-GDScript Stage 1 simulation candidate |
+| `game/src/proof_stage3/`–`game/src/proof_stage9/` | Isolated deterministic proof systems |
+| `game/src/stage1/`–`game/src/stage9/` | Playable proof-stage presentation and input |
+| `engine/OpenBfme.Stage1/` | Pure C# Stage 1 simulation candidate |
+| `content/openbfme-test/` | Legal-safe shared content bundle |
+| `game/tests/` | Stage 1–10 proof/visual/boot/soak tests plus focused private retail Stage 11–15 runners |
+| `docs/BUILD_AND_RELEASE.md` | Toolchain, rebuild, and private release-gate instructions |
+| `docs/KNOWN_ISSUES.md` | Current proof-stage and product boundaries |
 | `_bfme2_extract/` | Extracted BFME2 INI (local) |
 | `tools/extract_big.py` | BIG4 archive extractor |
 
@@ -39,7 +109,7 @@ C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe --headle
 - **F / G / B** hero abilities  
 - Bottom buttons: place buildings / train units  
 
-## Stages covered (v1 gold)
+## Prototype and proof systems currently covered
 
 1. Battalions move, fight, fortress win  
 2. Economy, placement, train queues, farm efficiency  
@@ -50,7 +120,10 @@ C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe --headle
 7. Skirmish AI (Easy/Normal/Hard) budgets, builds, trains, waves  
 8. 4 maps, save/load (F5/F9), pause, game speed, control groups, victory stats  
 9. Audio (music states + SFX), combat juice hooks, One Ring lite  
-10. Headless suite + boot evidence  
+10. Headless suite + boot evidence
+
+The legacy suite passes 101 assertions and now exits without leaked Godot resources.
+The Stage 1 gate treats leak, warning, or error output as a failure.
 
 ## Art
 
@@ -62,12 +135,67 @@ Default pack resolves **icons + mesh paths** for all train/build roster entities
 run_tests.bat
 ```
 
-Expect: `STAGE TESTS: … passed, 0 failed`
+Expect the cumulative run to finish with `STAGE10_GATE PASS`. Use `run_doctor.bat`
+for the exact Godot, .NET, and Python paths selected on the current machine.
 
-## BFME2 assets
+## Private BFME II retail importer
 
-Optional extract (not required to run):
+The importer builds and selects a private Godot content pack from a user-owned BFME II
+1.06 installation. No retail or converted retail payload is written into this
+repository. The default work/cache is `%LOCALAPPDATA%\OpenBFME\retail-import`; the
+selected runtime bundle is under Godot's per-user `content-packs` directory.
 
 ```bat
-python tools\extract_big.py F:\BFME2\ini.big -o _bfme2_extract
+run_importer.bat F:\BFME2
+run_importer_tests.bat
+run_retail_pack_tests.bat
+run_retail_slice.bat --test
+run_retail_pipeline_tests.bat
 ```
+
+### Retail-slice Stages 11-15
+
+These are bounded implementation checkpoints in the private retail proof. They do not
+extend the formal definition of done or declare the product slice complete.
+
+| Stage | Current private-slice implementation |
+|---|---|
+| 11 | Deterministic control groups 1-9 with assign/recall/prune/reset behavior and snapshot/signature coverage. |
+| 12 | Selected-order route line plus destination flag, backed by authoritative pending route/destination/order-sequence state; rejected orders are transactional. |
+| 13 | Fail-closed W3D helper/box filtering, proven right-hand weapon and left-hand shield roles, and source-derived Soldier pre-attack/cadence timing. |
+| 14 | Five structure roles per team with legal-safe procedural fallback presentation, Farm income, resources/command points, and a Barracks queue for one supported 15-member Gondor Soldier horde. |
+| 15 | Integrated base HUD, group strip, Soldier production, source-driven minimap, audio settings, simple enemy queue/attack behavior, Fortress outcome rules, and victory/defeat splash. |
+
+The current `men-fords-v0` proof contains a skinned Gondor Soldier with its 22-bone
+rig and 23 core clips, deterministic UI art, 35 PCM voice variants, six music states,
+and the exact four-file Fords source closure. Its bounded map cook emits the exact
+`415x353` heightmap, 18,325-cell passability mask, water geometry, 1,526 placements,
+14 waypoints, and empty script/trigger attestations without packaging the retail
+`.map`. Godot uses those cooked facts to build a bounded source-driven battlefield:
+a 2,385-vertex height/passability mesh, cooked standing-water and river geometry,
+exact player-start transforms, the named `ford1`/`ford2`/`ford3` routing gates, and 72
+generic markers sampled from source object placements. The playable four-battalion
+imported Soldier combat slice adds selection, movement, attack/combat/death, adaptive
+audio, HUD, and a minimap using the same source-derived coordinate transform. The
+Stage 14/15 base loop can add more imported Soldier battalions through its one-unit
+Barracks queue.
+
+Launch that private slice with `run_retail_slice.bat`. It is deliberately marked
+`vertical_slice_complete: false`: exact terrain-material blending, buildability,
+dynamic/building-aware navigation, map object models/materials, and complete oracle
+coverage remain. Gondor Archer, Tower Guard, and Knight are absent. The five structure
+roles are currently pre-placed simulation authority and use repository-authored
+procedural/legal-safe visuals whenever their private retail models are unresolved; they
+are not five completed imported building closures. Economy/production supports Farm
+payouts and Gondor Soldiers only, and the enemy behavior queues Soldiers and attacks but
+does not execute the complete Men-versus-Men build plan. Generic placement markers are
+explicitly not claimed as resolved retail models.
+
+The generated bundle is reproducible from unchanged inputs and runs without BFME II,
+Blender, OpenSAGE, FFmpeg, DDS, W3D, BIG, or `.map` files. It is private,
+non-redistributable compatibility content. See
+[docs/RETAIL_IMPORTER.md](docs/RETAIL_IMPORTER.md) for the full workflow and current
+capability boundary.
+
+The older `tools\extract_big.py` remains a research helper only. It is not the safe
+production import boundary.

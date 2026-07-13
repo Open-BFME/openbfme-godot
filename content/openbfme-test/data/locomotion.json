@@ -1,0 +1,38 @@
+{
+  "schema": "openbfme.locomotion",
+  "schemaVersion": 0,
+  "locomotion": [
+    {
+      "id": "test.locomotion.foot",
+      "mode": "ground",
+      "maximumSpeedSubcellsPerTick": 430,
+      "hordeAnchorSpeedSubcellsPerTick": 360,
+      "catchUpSpeedSubcellsPerTick": 430,
+      "maximumTurnMillidegreesPerTick": 18000,
+      "footprintClass": "member-small",
+      "neighborOrder": [
+        "north",
+        "east",
+        "south",
+        "west"
+      ],
+      "pathTieBreakOrder": [
+        "total-cost",
+        "heuristic",
+        "cell-y",
+        "cell-x",
+        "insertion-sequence"
+      ]
+    },
+    {
+      "id": "test.locomotion.immobile",
+      "mode": "none",
+      "maximumSpeedSubcellsPerTick": 0,
+      "catchUpSpeedSubcellsPerTick": 0,
+      "maximumTurnMillidegreesPerTick": 0,
+      "footprintClass": "structure-medium",
+      "neighborOrder": [],
+      "pathTieBreakOrder": []
+    }
+  ]
+}

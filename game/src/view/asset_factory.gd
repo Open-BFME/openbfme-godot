@@ -3,6 +3,7 @@ extends RefCounted
 ## Resolve pack meshes into Node3D. OBJ is parsed into ArrayMesh (never fake BoxMesh stubs).
 
 static var _mesh_cache: Dictionary = {}
+const MAX_MESH_CACHE_ENTRIES := 16
 
 static func make_unit_visual(type_id: String, side: int) -> Node3D:
 	var def: Dictionary = ContentDB.get_unit(type_id)
@@ -19,11 +20,13 @@ static func make_unit_visual(type_id: String, side: int) -> Node3D:
 		if bool(def.get("cavalry", false)):
 			th = 2.6
 		_scale_to_height(loaded, th)
-		_tint_if_needed(loaded, side, bool(def.get("hero", false)))
+		var tinted_surfaces := _tint_if_needed(loaded, side, bool(def.get("hero", false)))
 		root.add_child(loaded)
 		root.set_meta("authored", true)
 		root.set_meta("mesh_path", mesh_path)
 		root.set_meta("mesh_kind", _mesh_kind(loaded))
+		root.set_meta("team_tinted_surfaces", tinted_surfaces)
+		_annotate_rig_and_animation(root, loaded)
 	else:
 		# multi-part kit (cylinders+boxes) — still multi-primitive, not single capsule
 		var kit := _kit_unit_multipart(def, side)
@@ -52,6 +55,7 @@ static func make_building_visual(type_id: String, side: int) -> Node3D:
 		root.set_meta("authored", true)
 		root.set_meta("mesh_path", mesh_path)
 		root.set_meta("mesh_kind", _mesh_kind(loaded))
+		_annotate_rig_and_animation(root, loaded)
 	else:
 		var kit := _kit_building_multipart(def, side)
 		root.add_child(kit)
@@ -59,6 +63,62 @@ static func make_building_visual(type_id: String, side: int) -> Node3D:
 		root.set_meta("mesh_path", "kit_multipart:%s" % type_id)
 		root.set_meta("mesh_kind", "multipart_kit")
 	return root
+
+
+static func make_bundle_object_visual(object_id: String, side: int) -> Node3D:
+	## Presentation bridge for consolidated content-bundle v0 objects. Imported
+	## GLBs keep their Skeleton3D, skins, materials, and AnimationPlayer nodes.
+	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
+	var root := Node3D.new()
+	root.name = "Object_%s" % object_id
+	var mesh_path := ContentDB.resolve_mesh_path(definition)
+	var loaded := _try_load_model(mesh_path)
+	if loaded:
+		var presentation: Variant = definition.get("presentation", {})
+		var target_height := 2.4 if String(definition.get("kind", "")) != "structure" else 7.0
+		if typeof(presentation) == TYPE_DICTIONARY:
+			var millimeters := float((presentation as Dictionary).get("heightMillimeters", 0.0))
+			if millimeters > 0.0:
+				target_height = millimeters / 1000.0
+		_scale_to_height(loaded, target_height)
+		var tinted_surfaces := _tint_if_needed(loaded, side, false)
+		root.add_child(loaded)
+		root.set_meta("authored", true)
+		root.set_meta("mesh_path", mesh_path)
+		root.set_meta("mesh_kind", _mesh_kind(loaded))
+		root.set_meta("content_object_id", object_id)
+		root.set_meta("animation_capability_id", String(definition.get("animationCapabilityId", "")))
+		root.set_meta("team_tinted_surfaces", tinted_surfaces)
+		root.set_meta("team", side)
+		_annotate_rig_and_animation(root, loaded)
+	else:
+		var fallback := _kit_building_multipart(definition, side) if String(definition.get("kind", "")) == "structure" else _kit_unit_multipart(definition, side)
+		root.add_child(fallback)
+		root.set_meta("authored", false)
+		root.set_meta("mesh_path", "")
+		root.set_meta("mesh_kind", "multipart_kit")
+		root.set_meta("content_object_id", object_id)
+	return root
+
+
+static func _annotate_rig_and_animation(root: Node3D, loaded: Node3D) -> void:
+	var animation_names: Array[String] = []
+	var stack: Array[Node] = [loaded]
+	var has_skeleton := false
+	while not stack.is_empty():
+		var node: Node = stack.pop_back() as Node
+		if node is Skeleton3D:
+			has_skeleton = true
+		elif node is AnimationPlayer:
+			for animation_name in (node as AnimationPlayer).get_animation_list():
+				var clip := String(animation_name)
+				if clip != "RESET" and not animation_names.has(clip):
+					animation_names.append(clip)
+		for child in node.get_children():
+			stack.append(child)
+	animation_names.sort()
+	root.set_meta("has_skeleton", has_skeleton)
+	root.set_meta("animation_clips", animation_names)
 
 static func _mesh_kind(node: Node3D) -> String:
 	var mis: Array = []
@@ -95,28 +155,47 @@ static func _try_load_model(path: String) -> Node3D:
 	if path == null or String(path) == "":
 		return null
 	if _mesh_cache.has(path):
-		return (_mesh_cache[path] as Node).duplicate() as Node3D
+		var cached: Node = _mesh_cache[path] as Node
+		if is_instance_valid(cached):
+			return cached.duplicate() as Node3D
+		_mesh_cache.erase(path)
 	var abs_path := path
-	if path.begins_with("res://"):
+	if path.begins_with("res://") or path.begins_with("user://"):
 		abs_path = ProjectSettings.globalize_path(path)
 	if not FileAccess.file_exists(path) and not FileAccess.file_exists(abs_path) and not ResourceLoader.exists(path):
 		return null
 	var node: Node3D = null
-	var use_path := path if FileAccess.file_exists(path) or ResourceLoader.exists(path) else abs_path
-	# Prefer substantial sibling .obj first — many pack GLBs use meshopt/quantization
-	# which Godot cannot load at runtime without extensions.
-	var obj_sibling := use_path.get_basename() + ".obj"
-	if FileAccess.file_exists(obj_sibling):
-		var of := FileAccess.open(obj_sibling, FileAccess.READ)
-		if of and of.get_length() >= 1000:
-			node = _load_obj_arraymesh(obj_sibling)
-	if node == null and (use_path.ends_with(".glb") or use_path.ends_with(".gltf")):
+	var use_path := path if ResourceLoader.exists(path) else abs_path
+	# The resolver already chooses a legacy OBJ when appropriate. An explicit
+	# bundle GLB stays a GLB so its rig, skin, materials, and clips survive.
+	if use_path.ends_with(".glb") or use_path.ends_with(".gltf"):
 		node = _load_gltf(use_path)
-	elif node == null and use_path.ends_with(".obj"):
+	elif use_path.ends_with(".obj"):
 		node = _load_obj_arraymesh(use_path)
 	if node:
-		_mesh_cache[path] = node.duplicate()
+		_cache_model(path, node)
 	return node
+
+
+static func _cache_model(path: String, node: Node3D) -> void:
+	while _mesh_cache.size() >= MAX_MESH_CACHE_ENTRIES:
+		var oldest_key: Variant = _mesh_cache.keys()[0]
+		var oldest: Variant = _mesh_cache.get(oldest_key)
+		_mesh_cache.erase(oldest_key)
+		if oldest is Node and is_instance_valid(oldest):
+			(oldest as Node).free()
+	_mesh_cache[path] = node.duplicate()
+
+
+static func clear_mesh_cache() -> void:
+	for cached in _mesh_cache.values():
+		if cached is Node and is_instance_valid(cached):
+			(cached as Node).free()
+	_mesh_cache.clear()
+
+
+static func mesh_cache_size() -> int:
+	return _mesh_cache.size()
 
 static func _load_gltf(path: String) -> Node3D:
 	if ResourceLoader.exists(path):
@@ -129,6 +208,20 @@ static func _load_gltf(path: String) -> Node3D:
 	if err != OK:
 		return null
 	return doc.generate_scene(state) as Node3D
+
+
+static func load_texture_asset(path: String) -> Texture2D:
+	## Load a contained pack texture even when it lives outside res:// and has no
+	## Godot import sidecar/cache. Intended for portraits, icons, and UI atlases.
+	if not ContentDB.is_resolved_asset_path(path):
+		return null
+	if ResourceLoader.exists(path):
+		return load(path) as Texture2D
+	var absolute := ProjectSettings.globalize_path(path) if path.begins_with("res://") or path.begins_with("user://") else path
+	var image := Image.new()
+	if image.load(absolute) != OK:
+		return null
+	return ImageTexture.create_from_image(image)
 
 static func _load_obj_arraymesh(path: String) -> Node3D:
 	## Real OBJ → ArrayMesh. Rejects empty / tiny geometry.
@@ -215,19 +308,44 @@ static func _aabb_of(node: Node3D) -> AABB:
 			stack.append([c, xf])
 	return acc
 
-static func _tint_if_needed(node: Node3D, side: int, hero: bool) -> void:
-	# light team tint on materials for readability
-	var col := Color(0.45, 0.65, 1.0) if side == 0 else Color(1.0, 0.4, 0.35)
+static func _tint_if_needed(node: Node3D, side: int, hero: bool) -> int:
+	# GLTF materials normally live on ArrayMesh surfaces rather than as a
+	# MeshInstance override. Duplicate the mesh and its material resources so the
+	# immutable cached scene and embedded textures remain untouched while the two
+	# teams are visibly distinct.
+	var col := Color(0.35, 0.62, 1.0) if side == 0 else Color(1.0, 0.42, 0.35)
 	if hero:
 		col = Color(1.0, 0.88, 0.35) if side == 0 else Color(0.7, 0.35, 0.9)
 	var mis: Array = []
 	_collect_meshes(node, mis)
+	var tinted_surfaces := 0
 	for mi in mis:
 		var m: MeshInstance3D = mi
 		if m.material_override is StandardMaterial3D:
-			var mat: StandardMaterial3D = m.material_override.duplicate()
-			mat.albedo_color = mat.albedo_color.lerp(col, 0.35)
+			var mat := _duplicate_tinted_material(m.material_override as StandardMaterial3D, col)
 			m.material_override = mat
+			tinted_surfaces += 1
+			continue
+		if m.mesh == null:
+			continue
+		# Keep ownership explicit. A private mesh plus private material resources
+		# avoids mutating the cache and avoids renderer teardown hazards associated
+		# with dynamic per-surface instance overrides on imported skinned GLTFs.
+		var private_mesh: Mesh = m.mesh.duplicate(false) as Mesh
+		m.mesh = private_mesh
+		for surface in range(private_mesh.get_surface_count()):
+			var source: Material = private_mesh.surface_get_material(surface)
+			if source is StandardMaterial3D:
+				private_mesh.surface_set_material(surface, _duplicate_tinted_material(source as StandardMaterial3D, col))
+				tinted_surfaces += 1
+	return tinted_surfaces
+
+
+static func _duplicate_tinted_material(source: StandardMaterial3D, team_color: Color) -> StandardMaterial3D:
+	var material: StandardMaterial3D = source.duplicate(false) as StandardMaterial3D
+	var target := Color(team_color.r, team_color.g, team_color.b, material.albedo_color.a)
+	material.albedo_color = material.albedo_color.lerp(target, 0.42)
+	return material
 
 static func _kit_unit_multipart(def: Dictionary, side: int) -> Node3D:
 	var root := Node3D.new()

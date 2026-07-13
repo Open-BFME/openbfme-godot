@@ -1,0 +1,30 @@
+{
+  "schema": "openbfme.relic-ring-objective",
+  "schemaVersion": 0,
+  "rulesVersion": 1,
+  "objective": {
+    "displayName": "Auric Loop",
+    "enabledByDefault": true,
+    "spawnCell": [9, 6],
+    "claimRadiusCells": 0,
+    "reclaimDelayTicks": 2,
+    "victoryHoldTicks": 12,
+    "holderSpeedPermille": 800,
+    "holderDamagePermille": 1250,
+    "dropOnHolderDefeat": true,
+    "revealHolder": true
+  },
+  "audioEvents": {
+    "spawn": "objective.relic.spawn",
+    "claim": "objective.relic.claim",
+    "drop": "objective.relic.drop",
+    "reclaim": "objective.relic.reclaim",
+    "victory": "match.relic.victory",
+    "loss": "match.relic.loss",
+    "hit": "combat.clean-impact",
+    "music_explore": "music.explore",
+    "music_contest": "music.contest",
+    "music_victory": "music.victory",
+    "music_defeat": "music.defeat"
+  }
+}

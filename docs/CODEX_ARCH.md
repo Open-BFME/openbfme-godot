@@ -1,48 +1,62 @@
-# Codex architecture opinion (gpt-5.5, xhigh)
+# OpenBFME architecture summary
 
-> Note: `gpt-5.6-sol` required a newer Codex CLI than installed (0.139.0), so this run used `gpt-5.5` at `model_reasoning_effort=xhigh`.
+The executable plan and acceptance gates live in [`../PLAN.md`](../PLAN.md). This
+summary records the expected architecture without pretending that Phase 0 decisions
+have already been proved.
 
-## Summary (aligned with what we implemented)
+## Fixed decisions
 
-### A) Architecture
-- Fixed sim tick independent of FPS (`SimClock` @ 10 Hz)
-- Battalion is the sim atom; members are visual/casualty only
-- Autoloads: ModLoader → ContentDB → GameState; Events bus
-- Nodes display sim state; they do not own HP/orders truth
+- Godot 4.7 owns rendering, UI, input, audio, and desktop integration.
+- Authoritative gameplay is isolated from Godot presentation and render cadence.
+- Godot interpolates simulation snapshots; 60/120/144/240 Hz never changes gameplay.
+- The importer is a process coordinator that may use .NET, Blender Python, and pinned
+  format tools, but it emits only a versioned neutral OpenBFME bundle.
+- Runtime code never references OpenSAGE, BIG, W3D, Blender, donor types, or the retail
+  installation.
+- v0 has one validated bundle format and one active `bfme2_106_slice` target.
+- Hordes own global paths and orders. Members own real health, attacks, death, status,
+  and formation slots; they do not each own a global navigation agent.
+- Authoritative pathfinding has specified deterministic ordering and does not depend on
+  Godot NavigationServer or physics-query ordering.
+- Native C++/GDExtension work is deferred until profiling proves a hotspot.
 
-### B) Data packs
-- Prefer **JSON content packs** for max moddability (what we ship)
-- Optional later: compiled `.tres` cache for editor comfort
-- Later packs override by `id` + `priority`
+## Phase 0 decisions still open
 
-### C) BFME2 assets
-- Never hardcode `F:\BFME2` into gameplay
-- AssetResolver / pack `assets/` + env `OPENBFME_CONTENT`
-- Extracted content is a **content pack**, not engine code
+- Pure C# versus typed GDScript for authoritative simulation.
+- Simulation and subsystem cadences, measured from the BFME2 1.06 oracle rather than
+  assuming a global 30 Hz tick.
+- Exact fixed-point representation and path-grid/cook format.
+- Whether Fords of Isen II can be the first map without a large script dependency.
+- Final animation capability schema after a real Gondor Soldier conversion.
+- Performance budgets and production schedule.
 
-### D) Nav / walls
-- Path **battalion center**, not every soldier
-- Own blocker map for buildings/walls/gates
-- Gates as portals; coarse steer first (stage 3), chunked navmesh later
-- Avoid full global rebake every placement
+## Existing prototype disposition
 
-### E) Pitfalls
-1. Full agent per soldier → dies at scale  
-2. Scene nodes as gameplay truth  
-3. Hardcoded unit behavior in scripts  
-4. Walls as meshes only (need topology)  
-5. Public shipping of licensed retail assets  
+Keep as donors:
 
-### F) Module list
-Codex suggested more split systems (Command/Movement/Combat…). Current code is a **cohesive SimWorld** for stages 1–4 speed; split toward Codex’s system list when SimWorld exceeds ~1.5k lines.
+- Camera and input behavior.
+- Menu/HUD concepts.
+- Content/mod discovery concepts.
+- Scenario ideas and useful assertions.
+- Presentation asset-loading experiments.
 
-## Applied in repo
-| Codex advice | Status |
-|---|---|
-| Fixed sim tick | ✅ `SimClock` |
-| JSON packs + override | ✅ `data/base`, `mods/` |
-| Sim vs view split | ✅ `sim/` + `view/` |
-| Battalion atom | ✅ |
-| Blocker obstacles | ✅ stage 3 lite |
-| NavServer full bake | ⏳ later |
-| System split | ⏳ when needed |
+Replace or prove again:
+
+- Pooled battalion HP as canonical simulation.
+- The 10 Hz tick-bound view synchronization.
+- Loose dictionary data without schema validation.
+- Monolithic `SimWorld` and `MatchController` ownership.
+- Tests that return success while Godot reports leaked resources.
+
+## Quality invariants
+
+- BFME2 compatibility claims require an original-game oracle fixture and automated
+  comparison; INI presence is not proof.
+- One stable command runs build, schema, replay, Godot, leak, screenshot, performance,
+  donor-dependency, and proprietary-asset gates.
+- Passing assertions with `ERROR`, leaked RID/ObjectDB instances, or orphan resources
+  is a failed gate.
+- Every autonomous task declares allowed paths, dependencies, prohibited data, and
+  acceptance commands.
+- One integration owner controls cross-lane contracts and architecture decisions.
+- No donor code is copied before repository licensing and provenance policy are set.

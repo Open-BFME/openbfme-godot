@@ -1,0 +1,24 @@
+{
+  "schema": "openbfme.armor",
+  "schemaVersion": 0,
+  "armor": [
+    {
+      "id": "test.armor.member-padding",
+      "damageMultipliers": {
+        "test-impact": {
+          "numerator": 1,
+          "denominator": 1
+        }
+      }
+    },
+    {
+      "id": "test.armor.objective-shell",
+      "damageMultipliers": {
+        "test-impact": {
+          "numerator": 1,
+          "denominator": 2
+        }
+      }
+    }
+  ]
+}

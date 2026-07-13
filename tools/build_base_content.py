@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ROOT = Path(r"C:\Users\Jonathan\Desktop\open-bfme\game\data\base")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+ROOT = REPO_ROOT / "game" / "data" / "base"
 
 def w(rel: str, data: dict) -> None:
     path = ROOT / rel

@@ -46,6 +46,10 @@ func _run() -> void:
 	gs.enemy_faction = "mordor"
 	gs.map_id = "anduin"
 	gs.difficulty = "normal"
+	var game_audio = root.get_node_or_null("GameAudio")
+	if game_audio != null:
+		game_audio.enabled = false
+		game_audio.music_enabled = false
 	var err := change_scene_to_file("res://scenes/match.tscn")
 	print("BOOT change_scene err=", err)
 	if err != OK:
@@ -85,4 +89,27 @@ func _run() -> void:
 		return
 	print("BOOT_OK match scripts attached and world initialized")
 	print("BOOT_OK zero script load failures for match path")
+	scene.queue_free()
+	await process_frame
+	_cleanup_test_resources(gs, game_audio)
+	await process_frame
 	quit(0)
+
+func _cleanup_test_resources(game_state, game_audio) -> void:
+	if game_state != null:
+		game_state.reset_match()
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	if asset_factory != null:
+		for cached in asset_factory._mesh_cache.values():
+			if cached is Node and is_instance_valid(cached):
+				(cached as Node).free()
+		asset_factory._mesh_cache.clear()
+	if game_audio == null:
+		return
+	if is_instance_valid(game_audio.sfx_player):
+		game_audio.sfx_player.stop()
+		game_audio.sfx_player.stream = null
+	if is_instance_valid(game_audio.music_player):
+		game_audio.music_player.stop()
+		game_audio.music_player.stream = null
+	game_audio._streams.clear()

@@ -1,0 +1,59 @@
+{
+  "schema": "openbfme.defenses",
+  "schemaVersion": 0,
+  "structures": [
+    {
+      "id": "wall",
+      "displayName": "Barrier Segment",
+      "buildMenuSlot": 0,
+      "kind": "wall",
+      "maximumHealth": 900,
+      "cost": 40,
+      "blocksMovement": true,
+      "visionRadiusCells": 1
+    },
+    {
+      "id": "gate",
+      "displayName": "Team Gate",
+      "buildMenuSlot": 1,
+      "kind": "gate",
+      "maximumHealth": 1500,
+      "cost": 160,
+      "blocksMovement": true,
+      "visionRadiusCells": 3
+    },
+    {
+      "id": "tower",
+      "displayName": "Sentinel Tower",
+      "buildMenuSlot": 2,
+      "kind": "tower",
+      "maximumHealth": 1200,
+      "cost": 250,
+      "blocksMovement": true,
+      "canFire": true,
+      "rangeCells": 8,
+      "cooldownTicks": 6,
+      "projectileSpeedCellsPerTick": 2,
+      "damage": 30,
+      "visionRadiusCells": 8
+    },
+    {
+      "id": "wall_tower",
+      "displayName": "Barrier Turret",
+      "buildMenuSlot": 3,
+      "kind": "wall_tower",
+      "maximumHealth": 800,
+      "cost": 180,
+      "attachment": true,
+      "compatibleBaseKinds": [
+        "wall"
+      ],
+      "canFire": true,
+      "rangeCells": 7,
+      "cooldownTicks": 5,
+      "projectileSpeedCellsPerTick": 2,
+      "damage": 24,
+      "visionRadiusCells": 7
+    }
+  ]
+}

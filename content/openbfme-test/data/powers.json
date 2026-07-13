@@ -1,0 +1,119 @@
+{
+  "schema": "openbfme.powers",
+  "schemaVersion": 0,
+  "rulesVersion": 1,
+  "rules": {
+    "teamCount": 2,
+    "startingPowerPoints": 2,
+    "experiencePerPoint": 100,
+    "unitDefeatPowerPoints": 1,
+    "buildingDefeatPowerPoints": 2,
+    "maximumQueuedCommands": 128,
+    "weatherPolicy": "replace"
+  },
+  "tiers": [
+    { "tier": 1, "minimumSpent": 0 },
+    { "tier": 2, "minimumSpent": 2 },
+    { "tier": 3, "minimumSpent": 4 },
+    { "tier": 4, "minimumSpent": 7 }
+  ],
+  "powers": [
+    {
+      "code": 1,
+      "id": "test.power.mending-pulse",
+      "displayName": "Mending Pulse",
+      "tier": 1,
+      "pointCost": 1,
+      "cooldownTicks": 6,
+      "targetMode": "friendly_entity",
+      "prerequisites": [],
+      "effects": [
+        { "type": "heal_entity", "amount": 240 }
+      ]
+    },
+    {
+      "code": 2,
+      "id": "test.power.focused-bolt",
+      "displayName": "Focused Bolt",
+      "tier": 1,
+      "pointCost": 1,
+      "cooldownTicks": 5,
+      "targetMode": "hostile_entity",
+      "prerequisites": [],
+      "effects": [
+        { "type": "damage_entity", "amount": 180 }
+      ]
+    },
+    {
+      "code": 3,
+      "id": "test.power.shock-field",
+      "displayName": "Shock Field",
+      "tier": 2,
+      "pointCost": 2,
+      "cooldownTicks": 8,
+      "targetMode": "position",
+      "prerequisites": [2],
+      "effects": [
+        { "type": "area_damage", "amount": 120, "radiusCells": 2 }
+      ]
+    },
+    {
+      "code": 4,
+      "id": "test.power.repair-field",
+      "displayName": "Repair Field",
+      "tier": 2,
+      "pointCost": 2,
+      "cooldownTicks": 8,
+      "targetMode": "position",
+      "prerequisites": [1],
+      "effects": [
+        { "type": "area_heal", "amount": 150, "buildingAmount": 180, "radiusCells": 2 }
+      ]
+    },
+    {
+      "code": 5,
+      "id": "test.power.tempest-front",
+      "displayName": "Tempest Front",
+      "tier": 3,
+      "pointCost": 3,
+      "cooldownTicks": 12,
+      "targetMode": "global",
+      "prerequisites": [3],
+      "effects": [
+        {
+          "type": "weather",
+          "weatherCode": "tempest",
+          "durationTicks": 4,
+          "unitDamagePerTick": 25,
+          "buildingDamagePerTick": 10
+        }
+      ]
+    },
+    {
+      "code": 6,
+      "id": "test.power.siege-mark",
+      "displayName": "Siege Mark",
+      "tier": 3,
+      "pointCost": 3,
+      "cooldownTicks": 10,
+      "targetMode": "hostile_building",
+      "prerequisites": [2],
+      "effects": [
+        { "type": "damage_building", "amount": 350 }
+      ]
+    },
+    {
+      "code": 7,
+      "id": "test.power.renewal-wave",
+      "displayName": "Renewal Wave",
+      "tier": 4,
+      "pointCost": 4,
+      "cooldownTicks": 16,
+      "targetMode": "global",
+      "prerequisites": [4, 5],
+      "effects": [
+        { "type": "global_heal", "amount": 180, "buildingAmount": 220 }
+      ]
+    }
+  ]
+}

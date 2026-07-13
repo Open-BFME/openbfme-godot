@@ -1,0 +1,118 @@
+{
+  "schema": "openbfme.provenance-manifest",
+  "schemaVersion": 0,
+  "packId": "openbfme-test",
+  "createdUtc": "2026-07-11T00:00:00Z",
+  "origin": {
+    "classification": "repository-authored-original-test-data",
+    "description": "Every fact, name, color, layout, and primitive presentation instruction in this pack was authored for this repository as neutral proof-stage test data.",
+    "containsRetailAssets": false,
+    "containsConvertedRetailAssets": false,
+    "containsDonorAssets": false,
+    "containsThirdPartyAssets": false,
+    "requiresExternalInstallation": false,
+    "referencesRetailPaths": false
+  },
+  "assetInventory": {
+    "models": 0,
+    "textures": 0,
+    "audio": 0,
+    "video": 0,
+    "fonts": 0,
+    "scripts": 0,
+    "note": "Visuals are engine-generated geometric primitives; this bundle contains JSON data only."
+  },
+  "licenseDecision": {
+    "status": "not-selected-by-proof-stages",
+    "note": "This provenance record does not choose or imply an engine or content license for proof Stages 1 through 10."
+  },
+  "hashAlgorithm": "sha256",
+  "hashCanonicalization": "UTF-8 JSON text; optional BOM removed; CRLF and CR normalized to LF",
+  "files": [
+    {
+      "path": "pack.json",
+      "canonicalBytes": 2581,
+      "sha256": "5238660246ad00a7ed04b450c5eb8a29d17c5d16bc83bd4b7e7917ccc48501ae"
+    },
+    {
+      "path": "data/objects.json",
+      "canonicalBytes": 3960,
+      "sha256": "5adc5a6591549c9df718d06abde82beb9e206b2db5df399ed27d32506fb58962"
+    },
+    {
+      "path": "data/weapons.json",
+      "canonicalBytes": 1024,
+      "sha256": "4f3d4bf0ae542347582873ddec03fa636910e27dd738fab5ca94b19fa2c7b7be"
+    },
+    {
+      "path": "data/armor.json",
+      "canonicalBytes": 431,
+      "sha256": "50c923cf2ebd4743a34d4ea81e87413b883d7cdd3e41d8be75978debee438125"
+    },
+    {
+      "path": "data/locomotion.json",
+      "canonicalBytes": 915,
+      "sha256": "86bec3842848665f0220efa9783308b3e91bf2279e2f7db1c23c027695b1c1cc"
+    },
+    {
+      "path": "data/behaviors.json",
+      "canonicalBytes": 1891,
+      "sha256": "3c9f2e6552a558b9aa3bddb929613c7f22e7d2a314b02272089e1df9ed560895"
+    },
+    {
+      "path": "data/animation_capabilities.json",
+      "canonicalBytes": 1158,
+      "sha256": "d277ce60602bcc5d509228067da8f70f823ededd726197adb6246f47e5a810d0"
+    },
+    {
+      "path": "data/economy.json",
+      "canonicalBytes": 2969,
+      "sha256": "ae5135a463a6fe3d7459c120be861b8cb637049a00f7e70cb86e1f5ef8728c4b"
+    },
+    {
+      "path": "data/defenses.json",
+      "canonicalBytes": 1310,
+      "sha256": "f2c14b44c4ac6e3ca8792c083a8ffb1bca7548f172ab9773f31a1168f22e3a8f"
+    },
+    {
+      "path": "data/champions.json",
+      "canonicalBytes": 2804,
+      "sha256": "e51e3a647a274b82418fff5e5db696f026a019522bd8061abe9db45835fdcf46"
+    },
+    {
+      "path": "data/powers.json",
+      "canonicalBytes": 2889,
+      "sha256": "1000c02a5bb13ed7f04af5664461f73d10c2f61f5cc7e8a5a43df65219ad893e"
+    },
+    {
+      "path": "data/faction_rosters.json",
+      "canonicalBytes": 6072,
+      "sha256": "9964b1fc0b32fce1d8e61efb5730bce3f5b955ac12cf3432945692d13fc2c2cb"
+    },
+    {
+      "path": "data/ai_strategies.json",
+      "canonicalBytes": 1476,
+      "sha256": "a443381e2e179367e5232c2d7359c39351f9c4210ae307079ac8b672b885c62f"
+    },
+    {
+      "path": "data/stage8_maps.json",
+      "canonicalBytes": 1538,
+      "sha256": "ddf80c01fe3b27f2640f3bb57d2a02f485e57f7638fa1ae761c369c6a53c5015"
+    },
+    {
+      "path": "data/stage9_ring_rules.json",
+      "canonicalBytes": 838,
+      "sha256": "4cf7d011689282ce41f1ce90431df4d8ead726f78120399e85d5a3ea64b14761"
+    },
+    {
+      "path": "maps/primitive-arena/map.json",
+      "canonicalBytes": 3601,
+      "sha256": "569dd0f6d5df1bf5ce474c07afbadca8a51e42cb0112f8291daf4953f9dc22a7"
+    },
+    {
+      "path": "maps/primitive-economy/map.json",
+      "canonicalBytes": 6515,
+      "sha256": "ae5e558672e82695426468c9482ac479c25cb39a8065d2ff17f02fd45ef7cc67"
+    }
+  ]
+}

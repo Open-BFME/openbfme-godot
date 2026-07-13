@@ -17,29 +17,49 @@ func _ready() -> void:
 	sfx_player = AudioStreamPlayer.new()
 	sfx_player.name = "Sfx"
 	add_child(sfx_player)
+	if not Events.content_reloaded.is_connected(_load_pack_audio):
+		Events.content_reloaded.connect(_load_pack_audio)
 	_load_pack_audio()
 
 func _load_pack_audio() -> void:
+	_streams.clear()
 	for root in ContentDB.asset_roots:
-		for key in ["explore", "battle", "victory"]:
-			var p := root.path_join("audio/music/%s.wav" % key)
-			if FileAccess.file_exists(p):
-				var s: AudioStream = load(p) as AudioStream
+		for key in ["explore", "battle", "victory", "defeat"]:
+			for extension in ["wav", "ogg", "mp3"]:
+				var p := root.path_join("audio/music/%s.%s" % [key, extension])
+				var s := _load_audio_stream(p)
 				if s:
 					_streams["music_%s" % key] = s
+					break
 		var sfx_dir := root.path_join("audio/sfx")
 		var dir := DirAccess.open(sfx_dir)
 		if dir:
 			dir.list_dir_begin()
 			var n := dir.get_next()
 			while n != "":
-				if n.ends_with(".wav") or n.ends_with(".ogg"):
+				if n.ends_with(".wav") or n.ends_with(".ogg") or n.ends_with(".mp3"):
 					var full := sfx_dir.path_join(n)
-					var s2: AudioStream = load(full) as AudioStream
+					var s2 := _load_audio_stream(full)
 					if s2:
 						_streams[n.get_basename()] = s2
 				n = dir.get_next()
 			dir.list_dir_end()
+
+
+func _load_audio_stream(path: String) -> AudioStream:
+	if not FileAccess.file_exists(path) and not ResourceLoader.exists(path):
+		return null
+	if ResourceLoader.exists(path):
+		return load(path) as AudioStream
+	var absolute := ProjectSettings.globalize_path(path) if path.begins_with("res://") or path.begins_with("user://") else path
+	match path.get_extension().to_lower():
+		"wav":
+			return AudioStreamWAV.load_from_file(absolute)
+		"ogg":
+			return AudioStreamOggVorbis.load_from_file(absolute)
+		"mp3":
+			return AudioStreamMP3.load_from_file(absolute)
+	return null
 
 func play_sfx(key: String, pitch: float = 1.0) -> void:
 	if not enabled:

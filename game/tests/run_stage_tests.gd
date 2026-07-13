@@ -1,5 +1,5 @@
 extends RefCounted
-## Headless stage 1–10 regression suite. Calls real shipped APIs.
+## Legacy Stage 1-9 regression suite. Stage 10 wraps this with release gates.
 
 const SimWorldScript = preload("res://src/sim/sim_world.gd")
 const SimTypesScript = preload("res://src/sim/sim_types.gd")

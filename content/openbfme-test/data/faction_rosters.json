@@ -1,0 +1,235 @@
+{
+  "schema": "openbfme.faction-rosters",
+  "schemaVersion": 0,
+  "rulesVersion": 1,
+  "damageTypes": [
+    "kinetic",
+    "piercing",
+    "arcane"
+  ],
+  "armorClasses": [
+    {
+      "id": "cloth",
+      "multipliers": {
+        "kinetic": { "numerator": 1, "denominator": 1 },
+        "piercing": { "numerator": 3, "denominator": 2 },
+        "arcane": { "numerator": 1, "denominator": 1 }
+      }
+    },
+    {
+      "id": "plate",
+      "multipliers": {
+        "kinetic": { "numerator": 1, "denominator": 2 },
+        "piercing": { "numerator": 1, "denominator": 1 },
+        "arcane": { "numerator": 3, "denominator": 2 }
+      }
+    },
+    {
+      "id": "warded",
+      "multipliers": {
+        "kinetic": { "numerator": 5, "denominator": 4 },
+        "piercing": { "numerator": 1, "denominator": 1 },
+        "arcane": { "numerator": 1, "denominator": 2 }
+      }
+    }
+  ],
+  "upgrades": [
+    {
+      "id": "tempered_edges",
+      "displayName": "Tempered Edges",
+      "cost": 120,
+      "researchTicks": 4,
+      "damageType": "kinetic",
+      "damageBonusPermille": 250,
+      "armorBonusPermille": 0
+    },
+    {
+      "id": "trueflight_vanes",
+      "displayName": "Trueflight Vanes",
+      "cost": 110,
+      "researchTicks": 3,
+      "damageType": "piercing",
+      "damageBonusPermille": 300,
+      "armorBonusPermille": 0
+    },
+    {
+      "id": "woven_wards",
+      "displayName": "Woven Wards",
+      "cost": 140,
+      "researchTicks": 5,
+      "damageType": "arcane",
+      "damageBonusPermille": 200,
+      "armorBonusPermille": 250
+    }
+  ],
+  "factions": [
+    {
+      "id": "aurora_compact",
+      "displayName": "Aurora Compact",
+      "teamColor": "#55b8ff",
+      "startingResources": 500,
+      "upgradeIds": [
+        "tempered_edges",
+        "trueflight_vanes"
+      ],
+      "roster": [
+        {
+          "unitId": "aurora_vanguard",
+          "displayName": "Aurora Vanguard",
+          "armorClass": "plate",
+          "damageType": "kinetic",
+          "baseDamage": 48,
+          "maximumHealth": 240,
+          "rangeCells": 1,
+          "cooldownTicks": 3,
+          "art": {
+            "source": "generated-primitive",
+            "shape": "capsule",
+            "material": "team-color-matte"
+          }
+        },
+        {
+          "unitId": "aurora_ranger",
+          "displayName": "Aurora Ranger",
+          "armorClass": "cloth",
+          "damageType": "piercing",
+          "baseDamage": 36,
+          "maximumHealth": 150,
+          "rangeCells": 5,
+          "cooldownTicks": 4,
+          "art": {
+            "source": "generated-primitive",
+            "shape": "cylinder",
+            "material": "team-color-light"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ember_union",
+      "displayName": "Ember Union",
+      "teamColor": "#ff765f",
+      "startingResources": 500,
+      "upgradeIds": [
+        "tempered_edges",
+        "woven_wards"
+      ],
+      "roster": [
+        {
+          "unitId": "ember_breaker",
+          "displayName": "Ember Breaker",
+          "armorClass": "cloth",
+          "damageType": "kinetic",
+          "baseDamage": 56,
+          "maximumHealth": 175,
+          "rangeCells": 1,
+          "cooldownTicks": 4,
+          "art": {
+            "source": "generated-primitive",
+            "shape": "box",
+            "material": "team-color-dark"
+          }
+        },
+        {
+          "unitId": "ember_channeler",
+          "displayName": "Ember Channeler",
+          "armorClass": "warded",
+          "damageType": "arcane",
+          "baseDamage": 42,
+          "maximumHealth": 165,
+          "rangeCells": 4,
+          "cooldownTicks": 5,
+          "art": {
+            "source": "generated-primitive",
+            "shape": "diamond",
+            "material": "team-color-emissive"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dusk_accord",
+      "displayName": "Dusk Accord",
+      "teamColor": "#b58cff",
+      "startingResources": 500,
+      "upgradeIds": [
+        "tempered_edges",
+        "woven_wards"
+      ],
+      "roster": [
+        {
+          "unitId": "dusk_lancer",
+          "displayName": "Dusk Lancer",
+          "armorClass": "plate",
+          "damageType": "kinetic",
+          "baseDamage": 44,
+          "maximumHealth": 225,
+          "rangeCells": 2,
+          "cooldownTicks": 3,
+          "art": {
+            "source": "generated-primitive",
+            "shape": "capsule",
+            "material": "team-color-shadow"
+          }
+        },
+        {
+          "unitId": "dusk_shade",
+          "displayName": "Dusk Shade",
+          "armorClass": "cloth",
+          "damageType": "arcane",
+          "baseDamage": 40,
+          "maximumHealth": 145,
+          "rangeCells": 5,
+          "cooldownTicks": 4,
+          "art": {
+            "source": "generated-primitive",
+            "shape": "diamond",
+            "material": "team-color-emissive"
+          }
+        }
+      ]
+    },
+    {
+      "id": "verdant_league",
+      "displayName": "Verdant League",
+      "teamColor": "#77d48a",
+      "startingResources": 500,
+      "upgradeIds": [
+        "trueflight_vanes",
+        "woven_wards"
+      ],
+      "roster": [
+        {
+          "unitId": "verdant_sentinel",
+          "displayName": "Verdant Sentinel",
+          "armorClass": "warded",
+          "damageType": "piercing",
+          "baseDamage": 38,
+          "maximumHealth": 205,
+          "rangeCells": 4,
+          "cooldownTicks": 4,
+          "art": {
+            "source": "generated-primitive",
+            "shape": "hexagon",
+            "material": "team-color-matte"
+          }
+        },
+        {
+          "unitId": "verdant_golem",
+          "displayName": "Verdant Golem",
+          "armorClass": "plate",
+          "damageType": "arcane",
+          "baseDamage": 46,
+          "maximumHealth": 280,
+          "rangeCells": 2,
+          "cooldownTicks": 5,
+          "art": {
+            "source": "generated-primitive",
+            "shape": "sphere",
+            "material": "team-color-stone"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -4,8 +4,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-SRC = Path(r"C:\Users\Jonathan\Desktop\open-bfme\tools\mert_export\full_config.json")
-BASE = Path(r"C:\Users\Jonathan\Desktop\open-bfme\game\data\base")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC = REPO_ROOT / "tools" / "mert_export" / "full_config.json"
+BASE = REPO_ROOT / "game" / "data" / "base"
 ICONS = BASE / "assets" / "icons"
 
 

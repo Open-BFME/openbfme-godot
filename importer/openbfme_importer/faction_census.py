@@ -1,0 +1,801 @@
+"""Payload-free command-reachable census for the BFME2 1.06 Men faction."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import hashlib
+from pathlib import Path
+import re
+from typing import Any, Iterable
+
+from .big import sha256_file
+from .catalog import CatalogEntry, InstallCatalog
+from .mapped_image import (
+    resolve_mapped_image_texture_paths,
+    resolve_mapped_images_partial,
+)
+from .sage_audio import (
+    parse_sage_audio_definitions,
+    resolve_audio_sample_paths,
+    resolve_sage_audio_closure,
+)
+from .sage_gameplay import resolve_gameplay_definition_closure
+from .sage_ini import IniBlock, MAX_INI_BYTES, parse_flat_named_blocks, parse_object_definitions
+from .sage_string import parse_string_catalog
+
+
+PLAYER_TEMPLATE_PATH = "data/ini/playertemplate.ini"
+COMMAND_SET_PATH = "data/ini/commandset.ini"
+COMMAND_BUTTON_PATH = "data/ini/commandbutton.ini"
+SOUND_EFFECTS_PATH = "data/ini/soundeffects.ini"
+STRING_CATALOG_PATH = "data/lotr.str"
+UPGRADE_PATH = "data/ini/upgrade.ini"
+SCIENCE_PATH = "data/ini/science.ini"
+SPECIAL_POWER_PATH = "data/ini/specialpower.ini"
+MAPPED_IMAGE_PREFIX = "data/ini/mappedimages/"
+MAX_OBJECT_DOCUMENTS = 4_096
+MAX_TOTAL_OBJECT_INI_BYTES = 128 * 1024 * 1024
+MAX_MAPPED_IMAGE_DOCUMENTS = 4_096
+MAX_TOTAL_MAPPED_IMAGE_BYTES = 128 * 1024 * 1024
+
+_IMPLICIT_MEN_ROOTS = (
+    ("MenFortressCenterGeneric", "fortress-composite-center"),
+    ("MenFortressCitadel", "fortress-composite-citadel"),
+    ("MenFortressExpansionPadCorner", "fortress-composite-corner-pad"),
+    ("MenFortressExpansionPadSide", "fortress-composite-side-pad"),
+)
+
+_OBJECT_EDGE_FIELDS = {
+    "initialpayload": "horde-member",
+    "bannercarriersallowed": "horde-banner",
+    "segmenttemplatename": "wall-segment-template",
+    "cliffcaptemplatename": "wall-cliff-cap-template",
+    "gatetemplatename": "wall-gate-template",
+    "posternfronttemplatename": "wall-postern-template",
+    "posternbacktemplatename": "wall-postern-template",
+    "towertemplatename": "wall-tower-template",
+    "trebuchettemplatename": "wall-trebuchet-template",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceDocument:
+    virtual_path: str
+    archive: str
+    size: int
+    sha256: str
+    source: bytes
+
+    def public(self) -> dict[str, Any]:
+        return {
+            "virtualPath": self.virtual_path,
+            "archive": self.archive,
+            "size": self.size,
+            "sha256": self.sha256,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _ObjectDefinition:
+    block: IniBlock
+    source: _SourceDocument
+
+
+def _read_document(catalog: InstallCatalog, virtual_path: str) -> _SourceDocument:
+    entry = catalog.resolve_exact(virtual_path)
+    if entry is None:
+        raise ValueError(f"catalog is missing required faction census input: {virtual_path}")
+    archive = catalog.open_archive_for(entry)
+    source = archive.read_entry(catalog.as_entry(entry), max_bytes=MAX_INI_BYTES)
+    return _SourceDocument(
+        virtual_path=entry.name,
+        archive=entry.archive,
+        size=len(source),
+        sha256=hashlib.sha256(source).hexdigest(),
+        source=source,
+    )
+
+
+def _object_documents(catalog: InstallCatalog) -> list[_SourceDocument]:
+    winners = _effective_entries(catalog)
+    selected = [
+        entry
+        for entry in winners.values()
+        if entry.name.casefold().startswith("data/ini/object/")
+        and entry.name.casefold().endswith((".ini", ".inc"))
+    ]
+    selected.sort(key=lambda item: (item.name.casefold(), item.name))
+    if len(selected) > MAX_OBJECT_DOCUMENTS:
+        raise ValueError("faction census object document count exceeds limit")
+    if sum(entry.size for entry in selected) > MAX_TOTAL_OBJECT_INI_BYTES:
+        raise ValueError("faction census object document bytes exceed limit")
+    return [_read_document(catalog, entry.name) for entry in selected]
+
+
+def _effective_entries(catalog: InstallCatalog) -> dict[str, CatalogEntry]:
+    winners: dict[str, CatalogEntry] = {}
+    for entry in sorted(
+        catalog.entries,
+        key=lambda item: (item.precedence, item.archive.casefold(), item.name.casefold()),
+    ):
+        winners.setdefault(entry.key, entry)
+    return winners
+
+
+def _mapped_image_documents(catalog: InstallCatalog) -> list[_SourceDocument]:
+    selected = [
+        entry
+        for entry in _effective_entries(catalog).values()
+        if entry.name.casefold().startswith(MAPPED_IMAGE_PREFIX)
+        and entry.name.casefold().endswith(".ini")
+    ]
+    selected.sort(key=lambda item: (item.name.casefold(), item.name))
+    if not selected:
+        raise ValueError("catalog is missing mapped-image definition documents")
+    if len(selected) > MAX_MAPPED_IMAGE_DOCUMENTS:
+        raise ValueError("mapped-image document count exceeds limit")
+    if sum(entry.size for entry in selected) > MAX_TOTAL_MAPPED_IMAGE_BYTES:
+        raise ValueError("mapped-image document bytes exceed limit")
+    return [_read_document(catalog, entry.name) for entry in selected]
+
+
+def _definition_tokens(value: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[A-Za-z0-9_][A-Za-z0-9_+.-]*", value))
+
+
+def _block_candidates(blocks: Iterable[IniBlock]) -> dict[str, list[IniBlock]]:
+    result: dict[str, list[IniBlock]] = {}
+    for block in blocks:
+        result.setdefault(block.name.casefold(), []).append(block)
+    return result
+
+
+def _first_identifier(value: str) -> str | None:
+    token = value.split()[0] if value.split() else ""
+    if not token or token.casefold() in {"none", "null", "0"} or token.startswith("$"):
+        return None
+    return token
+
+
+def _identifiers(value: str) -> list[str]:
+    return [
+        token
+        for token in value.split()
+        if token.casefold() not in {"none", "null", "0"} and not token.startswith("$")
+    ]
+
+
+def _set_hash(domain: str, values: Iterable[str]) -> str:
+    digest = hashlib.sha256(domain.encode("ascii") + b"\0")
+    for value in sorted(set(values), key=lambda item: (item.casefold(), item)):
+        encoded = value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(4, "little"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+def _block_values(block: IniBlock, key: str) -> list[str]:
+    return list(block.values(key))
+
+
+def _effective_object_values(
+    definition: _ObjectDefinition,
+    field: str,
+    candidates: dict[str, list[_ObjectDefinition]],
+) -> tuple[list[str], list[_ObjectDefinition], tuple[str, str] | None]:
+    """Resolve one inherited scalar family with child override semantics."""
+
+    current = definition
+    ancestry: list[_ObjectDefinition] = []
+    seen = {current.block.name.casefold()}
+    while True:
+        values = _block_values(current.block, field)
+        if values:
+            return values, ancestry, None
+        parent = current.block.parent
+        if not parent:
+            return [], ancestry, None
+        key = parent.casefold()
+        if key in seen:
+            raise ValueError(f"Object inheritance cycle while resolving {definition.block.name}")
+        seen.add(key)
+        matches = candidates.get(key, [])
+        if not matches:
+            return [], ancestry, ("missing", parent)
+        if len(matches) != 1:
+            return [], ancestry, ("ambiguous", parent)
+        current = matches[0]
+        ancestry.append(current)
+
+
+def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
+    """Return neutral command/UI dependency facts without retail INI bodies."""
+
+    player_doc = _read_document(catalog, PLAYER_TEMPLATE_PATH)
+    command_set_doc = _read_document(catalog, COMMAND_SET_PATH)
+    command_button_doc = _read_document(catalog, COMMAND_BUTTON_PATH)
+    sound_effects_doc = _read_document(catalog, SOUND_EFFECTS_PATH)
+    string_catalog_doc = _read_document(catalog, STRING_CATALOG_PATH)
+    upgrade_doc = _read_document(catalog, UPGRADE_PATH)
+    science_doc = _read_document(catalog, SCIENCE_PATH)
+    special_power_doc = _read_document(catalog, SPECIAL_POWER_PATH)
+    mapped_image_docs = _mapped_image_documents(catalog)
+    audio_definitions = parse_sage_audio_definitions(sound_effects_doc.source)
+    string_catalog = parse_string_catalog(
+        string_catalog_doc.source, duplicate_policy="first-wins"
+    )
+    string_identifier_names = {
+        record.identifier.casefold(): record.identifier for record in string_catalog.records
+    }
+    audio_definition_names = {
+        item.id.casefold(): item.id
+        for item in (*audio_definitions.events, *audio_definitions.multisounds)
+    }
+    player_templates = _block_candidates(
+        parse_flat_named_blocks(player_doc.source, "PlayerTemplate")
+    )
+    command_sets = _block_candidates(
+        parse_flat_named_blocks(command_set_doc.source, "CommandSet")
+    )
+    command_buttons = _block_candidates(
+        parse_flat_named_blocks(command_button_doc.source, "CommandButton")
+    )
+    template_candidates = player_templates.get("factionmen", [])
+    if not template_candidates:
+        raise ValueError("effective PlayerTemplate input has no FactionMen")
+    if len(template_candidates) != 1:
+        raise ValueError("effective PlayerTemplate input has ambiguous FactionMen definitions")
+    template = template_candidates[0]
+    side = _first_identifier(_block_values(template, "Side")[0]) if _block_values(template, "Side") else None
+    if side != "Men":
+        raise ValueError(f"FactionMen Side must be Men, got {side!r}")
+
+    object_docs = _object_documents(catalog)
+    object_candidates: dict[str, list[_ObjectDefinition]] = {}
+    for document in object_docs:
+        for block in parse_object_definitions(document.source):
+            object_candidates.setdefault(block.name.casefold(), []).append(
+                _ObjectDefinition(block, document)
+            )
+
+    roots: list[dict[str, str]] = []
+    object_ids: set[str] = set()
+    command_set_ids: set[str] = set()
+    sciences: set[str] = set()
+    for field, value in template.assignments:
+        folded = field.casefold()
+        starting_unit_suffix = folded.removeprefix("startingunit")
+        if (
+            folded == "startingbuilding"
+            or (folded.startswith("startingunit") and starting_unit_suffix.isdigit())
+        ):
+            identifier = _first_identifier(value)
+            if identifier:
+                object_ids.add(identifier)
+                roots.append({"sourceField": field, "id": identifier, "edgeKind": "object"})
+        elif folded in {
+            "buildableheroesmp",
+            "buildableringheroesmp",
+            "spellbookmp",
+            "ringhero",
+        }:
+            for identifier in _identifiers(value):
+                object_ids.add(identifier)
+                roots.append({"sourceField": field, "id": identifier, "edgeKind": "object"})
+        elif folded == "purchasesciencecommandsetmp":
+            identifier = _first_identifier(value)
+            if identifier:
+                command_set_ids.add(identifier)
+                roots.append({"sourceField": field, "id": identifier, "edgeKind": "command-set"})
+        elif folded == "intrinsicsciencesmp":
+            for identifier in _identifiers(value):
+                if identifier.startswith("SCIENCE_"):
+                    sciences.add(identifier)
+                    roots.append({"sourceField": field, "id": identifier, "edgeKind": "science"})
+    for identifier, reason in _IMPLICIT_MEN_ROOTS:
+        object_ids.add(identifier)
+        roots.append({"sourceField": reason, "id": identifier, "edgeKind": "engine-implicit-object"})
+
+    processed_objects: set[str] = set()
+    processed_command_sets: set[str] = set()
+    processed_buttons: set[str] = set()
+    ambiguous_objects: set[str] = set()
+    missing_objects: set[str] = set()
+    missing_command_sets: set[str] = set()
+    missing_buttons: set[str] = set()
+    ambiguous_command_sets: set[str] = set()
+    ambiguous_buttons: set[str] = set()
+    missing_inheritance_objects: set[str] = set()
+    ambiguous_inheritance_objects: set[str] = set()
+    upgrades: set[str] = set()
+    special_powers: set[str] = set()
+    mapped_images: set[str] = set()
+    nullable_portrait_images: set[str] = set()
+    required_mapped_images: set[str] = set()
+    text_ids: set[str] = set()
+    audio_roots: set[str] = set()
+    object_rows: dict[str, dict[str, Any]] = {}
+    command_set_rows: dict[str, dict[str, Any]] = {}
+    command_button_rows: dict[str, dict[str, Any]] = {}
+
+    while True:
+        changed = False
+        for identifier in sorted(object_ids, key=lambda item: (item.casefold(), item)):
+            key = identifier.casefold()
+            if key in processed_objects:
+                continue
+            processed_objects.add(key)
+            changed = True
+            candidates = object_candidates.get(key, [])
+            if not candidates:
+                missing_objects.add(identifier)
+                continue
+            if len(candidates) != 1:
+                ambiguous_objects.add(identifier)
+                continue
+            definition = candidates[0]
+            block = definition.block
+            edge_rows: list[dict[str, str]] = []
+            if block.parent:
+                edge_rows.append(
+                    {"field": "parent", "targetKind": "object", "targetId": block.parent}
+                )
+            effective_command_sets, ancestry, inheritance_problem = _effective_object_values(
+                definition, "CommandSet", object_candidates
+            )
+            if inheritance_problem:
+                problem, target = inheritance_problem
+                if problem == "missing":
+                    missing_inheritance_objects.add(target)
+                else:
+                    ambiguous_inheritance_objects.add(target)
+            for value in effective_command_sets:
+                target = _first_identifier(value)
+                if target:
+                    command_set_ids.add(target)
+                    edge_rows.append(
+                        {"field": "CommandSet", "targetKind": "command-set", "targetId": target}
+                    )
+            for field, value in block.assignments:
+                folded = field.casefold()
+                if folded in _OBJECT_EDGE_FIELDS:
+                    target = _first_identifier(value)
+                    if target:
+                        object_ids.add(target)
+                        edge_rows.append(
+                            {
+                                "field": field,
+                                "targetKind": _OBJECT_EDGE_FIELDS[folded],
+                                "targetId": target,
+                            }
+                        )
+                if folded in {"selectportrait", "buttonimage"}:
+                    target = _first_identifier(value)
+                    if target:
+                        mapped_images.add(target)
+                        if folded == "selectportrait":
+                            nullable_portrait_images.add(target)
+                        else:
+                            required_mapped_images.add(target)
+                        edge_rows.append(
+                            {
+                                "field": field,
+                                "targetKind": "mapped-image",
+                                "targetId": target,
+                            }
+                        )
+                target = _first_identifier(value)
+                if target:
+                    text_id = string_identifier_names.get(target.casefold())
+                    if text_id is not None:
+                        text_ids.add(text_id)
+                        edge_rows.append(
+                            {
+                                "field": field,
+                                "targetKind": "localized-string",
+                                "targetId": text_id,
+                            }
+                        )
+                for token in _definition_tokens(value):
+                    audio_id = audio_definition_names.get(token.casefold())
+                    if audio_id is not None:
+                        audio_roots.add(audio_id)
+                        edge_rows.append(
+                            {
+                                "field": field,
+                                "targetKind": "audio-definition",
+                                "targetId": audio_id,
+                            }
+                        )
+            edge_rows.sort(key=lambda item: (item["field"].casefold(), item["targetId"].casefold()))
+            object_rows[key] = {
+                "id": block.name,
+                "definitionKind": block.kind,
+                "parentId": block.parent,
+                "source": {
+                    "archive": definition.source.archive,
+                    "virtualPath": definition.source.virtual_path,
+                    "sha256": definition.source.sha256,
+                },
+                "inheritanceSources": [
+                    {
+                        "id": ancestor.block.name,
+                        "archive": ancestor.source.archive,
+                        "virtualPath": ancestor.source.virtual_path,
+                        "sha256": ancestor.source.sha256,
+                    }
+                    for ancestor in ancestry
+                ],
+                "edges": edge_rows,
+            }
+
+        for identifier in sorted(command_set_ids, key=lambda item: (item.casefold(), item)):
+            key = identifier.casefold()
+            if key in processed_command_sets:
+                continue
+            processed_command_sets.add(key)
+            changed = True
+            candidates = command_sets.get(key, [])
+            if not candidates:
+                missing_command_sets.add(identifier)
+                continue
+            if len(candidates) != 1:
+                ambiguous_command_sets.add(identifier)
+                continue
+            block = candidates[0]
+            buttons: list[str] = []
+            for _, value in block.assignments:
+                target = _first_identifier(value)
+                if target and target.startswith("Command_"):
+                    buttons.append(target)
+            command_set_rows[key] = {"id": block.name, "buttons": sorted(set(buttons), key=str.casefold)}
+
+        all_buttons = {
+            button
+            for row in command_set_rows.values()
+            for button in row["buttons"]
+        }
+        for identifier in sorted(all_buttons, key=lambda item: (item.casefold(), item)):
+            key = identifier.casefold()
+            if key in processed_buttons:
+                continue
+            processed_buttons.add(key)
+            changed = True
+            candidates = command_buttons.get(key, [])
+            if not candidates:
+                missing_buttons.add(identifier)
+                continue
+            if len(candidates) != 1:
+                ambiguous_buttons.add(identifier)
+                continue
+            block = candidates[0]
+            selected: dict[str, list[str]] = {}
+            for field in (
+                "Command",
+                "Object",
+                "Upgrade",
+                "SpecialPower",
+                "Science",
+                "ButtonImage",
+                "TextLabel",
+                "DescriptLabel",
+            ):
+                values = _block_values(block, field)
+                if values:
+                    selected[field] = values
+            button_audio_references: set[str] = set()
+            for _, value in block.assignments:
+                for token in _definition_tokens(value):
+                    audio_id = audio_definition_names.get(token.casefold())
+                    if audio_id is not None:
+                        audio_roots.add(audio_id)
+                        button_audio_references.add(audio_id)
+            for value in selected.get("Object", []):
+                target = _first_identifier(value)
+                if target:
+                    object_ids.add(target)
+            for value in selected.get("Upgrade", []):
+                upgrades.update(_identifiers(value))
+            for value in selected.get("SpecialPower", []):
+                special_powers.update(_identifiers(value))
+            for value in selected.get("Science", []):
+                sciences.update(identifier for identifier in _identifiers(value) if identifier.startswith("SCIENCE_"))
+            for value in selected.get("ButtonImage", []):
+                target = _first_identifier(value)
+                if target:
+                    mapped_images.add(target)
+                    required_mapped_images.add(target)
+            for field in ("TextLabel", "DescriptLabel"):
+                for value in selected.get(field, []):
+                    target = _first_identifier(value)
+                    if target:
+                        text_ids.add(target)
+            command_button_rows[key] = {
+                "id": block.name,
+                "fields": selected,
+                "audioReferences": sorted(button_audio_references, key=str.casefold),
+            }
+        if not changed:
+            break
+
+    directly_reachable_sciences = set(sciences)
+    gameplay_closure = resolve_gameplay_definition_closure(
+        upgrade_source=upgrade_doc.source,
+        science_source=science_doc.source,
+        special_power_source=special_power_doc.source,
+        upgrade_roots=upgrades,
+        science_roots=sciences,
+        special_power_roots=special_powers,
+        string_identifiers=string_identifier_names,
+        audio_identifiers=audio_definition_names,
+    )
+    upgrades.update(str(item["id"]) for item in gameplay_closure.upgrades)
+    sciences.update(str(item["id"]) for item in gameplay_closure.sciences)
+    mapped_images.update(gameplay_closure.mapped_images)
+    required_mapped_images.update(gameplay_closure.mapped_images)
+    text_ids.update(gameplay_closure.text_ids)
+    audio_roots.update(gameplay_closure.audio_roots)
+
+    mapped_image_resolution = resolve_mapped_images_partial(
+        (document.source for document in mapped_image_docs),
+        sorted(mapped_images, key=str.casefold),
+    )
+    mapped_image_records = mapped_image_resolution.records
+    missing_mapped_images = set(mapped_image_resolution.missing_ids)
+    source_null_mapped_images = sorted(
+        (missing_mapped_images & nullable_portrait_images) - required_mapped_images,
+        key=str.casefold,
+    )
+    unresolved_mapped_images = missing_mapped_images - set(source_null_mapped_images)
+    effective_entries = _effective_entries(catalog)
+    effective_virtual_paths = [entry.name for entry in effective_entries.values()]
+    mapped_texture_paths = resolve_mapped_image_texture_paths(
+        mapped_image_records, effective_virtual_paths
+    )
+    mapped_texture_paths_by_key = {
+        texture.casefold(): path for texture, path in mapped_texture_paths.items()
+    }
+    mapped_image_rows = []
+    for record in mapped_image_records:
+        row = record.neutral()
+        row["compiledTextureVirtualPath"] = mapped_texture_paths_by_key[
+            record.texture.casefold()
+        ]
+        mapped_image_rows.append(row)
+
+    resolved_text_rows: list[dict[str, Any]] = []
+    missing_text_ids: set[str] = set()
+    for identifier in sorted(text_ids, key=str.casefold):
+        record = string_catalog.record(identifier)
+        if record is None:
+            missing_text_ids.add(identifier)
+            continue
+        encoded_value = record.value.encode("utf-8")
+        resolved_text_rows.append(
+            {
+                "id": record.identifier,
+                "charCount": len(record.value),
+                "utf8Sha256": hashlib.sha256(encoded_value).hexdigest(),
+            }
+        )
+    duplicate_text_keys = {
+        identifier.casefold()
+        for identifier in string_catalog.diagnostics.duplicate_identifiers
+    }
+    conflicting_text_keys = {
+        identifier.casefold()
+        for identifier in string_catalog.diagnostics.conflicting_identifiers
+    }
+    requested_duplicate_text_ids = sorted(
+        (identifier for identifier in text_ids if identifier.casefold() in duplicate_text_keys),
+        key=str.casefold,
+    )
+    requested_conflicting_text_ids = sorted(
+        (identifier for identifier in text_ids if identifier.casefold() in conflicting_text_keys),
+        key=str.casefold,
+    )
+
+    audio_closure = resolve_sage_audio_closure(
+        audio_definitions, sorted(audio_roots, key=str.casefold)
+    )
+    audio_sample_paths = resolve_audio_sample_paths(
+        audio_closure.sample_ids, effective_virtual_paths
+    )
+    audio_row = audio_closure.neutral()
+    audio_row["samplePaths"] = [
+        {"id": identifier, "virtualPath": audio_sample_paths[identifier]}
+        for identifier in audio_closure.sample_ids
+    ]
+
+    source_leaf_roles: dict[str, set[str]] = {}
+    for path in mapped_texture_paths.values():
+        source_leaf_roles.setdefault(path, set()).add("mapped-image-texture")
+    for path in audio_sample_paths.values():
+        source_leaf_roles.setdefault(path, set()).add("audio-sample")
+    source_leaves = []
+    for path in sorted(source_leaf_roles, key=str.casefold):
+        entry = catalog.resolve_exact(path)
+        if entry is None:
+            raise ValueError(f"resolved faction leaf disappeared from catalog: {path}")
+        source_leaves.append(
+            {
+                "virtualPath": entry.name,
+                "archive": entry.archive,
+                "size": entry.size,
+                "roles": sorted(source_leaf_roles[path]),
+            }
+        )
+
+    scanned_documents = [
+        player_doc,
+        command_set_doc,
+        command_button_doc,
+        sound_effects_doc,
+        string_catalog_doc,
+        upgrade_doc,
+        science_doc,
+        special_power_doc,
+        *mapped_image_docs,
+        *object_docs,
+    ]
+    used_archives = sorted(
+        {
+            *(document.archive for document in scanned_documents),
+            *(str(item["archive"]) for item in source_leaves),
+        },
+        key=str.casefold,
+    )
+    archive_by_name = {item.relative_path.casefold(): item for item in catalog.archives}
+    archive_rows = []
+    for relative in used_archives:
+        info = archive_by_name[relative.casefold()]
+        archive_rows.append(
+            {
+                "relativePath": info.relative_path,
+                "sha256": sha256_file(catalog.install_root / Path(info.relative_path)),
+                "directorySha256": info.directory_sha256,
+            }
+        )
+    source_facts = [document.public() for document in scanned_documents]
+    source_facts.sort(key=lambda item: str(item["virtualPath"]).casefold())
+    input_hash = hashlib.sha256()
+    input_hash.update(b"openbfme.men-command-leaf-census-inputs\0")
+    for item in source_facts:
+        input_hash.update(str(item["virtualPath"]).encode("utf-8") + b"\0")
+        input_hash.update(str(item["sha256"]).encode("ascii") + b"\n")
+    for item in source_leaves:
+        input_hash.update(str(item["virtualPath"]).encode("utf-8") + b"\0")
+        input_hash.update(str(item["archive"]).encode("utf-8") + b"\0")
+        input_hash.update(str(item["size"]).encode("ascii") + b"\n")
+
+    object_list = sorted(object_rows.values(), key=lambda item: str(item["id"]).casefold())
+    command_set_list = sorted(command_set_rows.values(), key=lambda item: str(item["id"]).casefold())
+    command_button_list = sorted(command_button_rows.values(), key=lambda item: str(item["id"]).casefold())
+    spellbook_powers = sorted(
+        (identifier for identifier in special_powers if identifier.startswith("SpellBook")),
+        key=str.casefold,
+    )
+    spellbook_sciences = sorted(
+        (
+            identifier
+            for identifier in directly_reachable_sciences
+            if identifier != "SCIENCE_MEN"
+        ),
+        key=str.casefold,
+    )
+    unresolved = {
+        "missingObjects": sorted(missing_objects, key=str.casefold),
+        "ambiguousObjects": sorted(ambiguous_objects, key=str.casefold),
+        "missingCommandSets": sorted(missing_command_sets, key=str.casefold),
+        "ambiguousCommandSets": sorted(ambiguous_command_sets, key=str.casefold),
+        "missingCommandButtons": sorted(missing_buttons, key=str.casefold),
+        "ambiguousCommandButtons": sorted(ambiguous_buttons, key=str.casefold),
+        "missingInheritanceObjects": sorted(missing_inheritance_objects, key=str.casefold),
+        "ambiguousInheritanceObjects": sorted(ambiguous_inheritance_objects, key=str.casefold),
+        "missingTextIds": sorted(missing_text_ids, key=str.casefold),
+        "missingMappedImages": sorted(unresolved_mapped_images, key=str.casefold),
+        "ambiguousMappedImages": list(mapped_image_resolution.ambiguous_ids),
+        "missingUpgrades": list(gameplay_closure.missing_upgrades),
+        "ambiguousUpgrades": list(gameplay_closure.ambiguous_upgrades),
+        "missingSciences": list(gameplay_closure.missing_sciences),
+        "ambiguousSciences": list(gameplay_closure.ambiguous_sciences),
+        "missingSpecialPowers": list(gameplay_closure.missing_special_powers),
+        "ambiguousSpecialPowers": list(gameplay_closure.ambiguous_special_powers),
+    }
+    return {
+        "format": 1,
+        "schema": "openbfme.faction-command-leaf-census",
+        "schemaVersion": 1,
+        "target": {
+            "game": "BFME2",
+            "patch": "1.06",
+            "faction": "Men",
+            "playerTemplate": "FactionMen",
+            "mode": "normal-skirmish-command-reachable",
+        },
+        "closureStatus": "command-ui-localization-audio-gameplay-definition-leaves",
+        "sourceArchives": archive_rows,
+        "sourceDocuments": source_facts,
+        "sourceLeaves": source_leaves,
+        "inputSetSha256": input_hash.hexdigest(),
+        "roots": sorted(roots, key=lambda item: (item["edgeKind"], item["id"].casefold())),
+        "definitions": {
+            "objects": object_list,
+            "commandSets": command_set_list,
+            "commandButtons": command_button_list,
+            "upgrades": list(gameplay_closure.upgrades),
+            "sciences": list(gameplay_closure.sciences),
+            "specialPowers": list(gameplay_closure.special_powers),
+        },
+        "dependencies": {
+            "upgrades": sorted(upgrades, key=str.casefold),
+            "specialPowers": sorted(special_powers, key=str.casefold),
+            "spellbookSpecialPowers": spellbook_powers,
+            "sciences": sorted(sciences, key=str.casefold),
+            "spellbookSciences": spellbook_sciences,
+            "mappedImages": [record.id for record in mapped_image_records],
+            "sourceNullMappedImages": source_null_mapped_images,
+            "textIds": sorted(text_ids, key=str.casefold),
+            "audioRootIds": list(audio_closure.root_ids),
+            "fxLists": list(gameplay_closure.fx_lists),
+        },
+        "resolvedLeaves": {
+            "mappedImages": mapped_image_rows,
+            "localization": {
+                "duplicatePolicy": "source-order-first-wins",
+                "catalogSummary": string_catalog.neutral_summary(),
+                "records": resolved_text_rows,
+                "requestedDuplicateIds": requested_duplicate_text_ids,
+                "requestedConflictingDuplicateIds": requested_conflicting_text_ids,
+                "oracleStatus": (
+                    "first-wins-source-compatible-conflicts-require-visual-review"
+                    if requested_conflicting_text_ids
+                    else "no-requested-conflicts"
+                ),
+            },
+            "audio": audio_row,
+        },
+        "unresolved": unresolved,
+        "summary": {
+            "rootCount": len(roots),
+            "rootIdCount": len({item["id"] for item in roots}),
+            "objectCount": len(object_list),
+            "commandSetCount": len(command_set_list),
+            "commandButtonCount": len(command_button_list),
+            "upgradeCount": len(upgrades),
+            "specialPowerCount": len(special_powers),
+            "spellbookSpecialPowerCount": len(spellbook_powers),
+            "scienceCount": len(sciences),
+            "spellbookScienceCount": len(spellbook_sciences),
+            "mappedImageReferenceCount": len(mapped_images),
+            "mappedImageCount": len(mapped_image_records),
+            "mappedImageResolvedCount": len(mapped_image_records),
+            "mappedImageSourceNullCount": len(source_null_mapped_images),
+            "mappedImageTextureCount": len(mapped_texture_paths),
+            "textIdCount": len(text_ids),
+            "textResolvedCount": len(resolved_text_rows),
+            "requestedTextConflictCount": len(requested_conflicting_text_ids),
+            "audioRootCount": len(audio_closure.root_ids),
+            "audioEventCount": len(audio_closure.events),
+            "audioMultisoundCount": len(audio_closure.multisounds),
+            "audioSampleCount": len(audio_closure.sample_ids),
+            "sourceLeafCount": len(source_leaves),
+            "unresolvedCount": sum(len(items) for items in unresolved.values()),
+            "objectSetSha256": _set_hash("openbfme.men-object-set", (item["id"] for item in object_list)),
+            "upgradeSetSha256": _set_hash("openbfme.men-upgrade-set", upgrades),
+            "specialPowerSetSha256": _set_hash("openbfme.men-special-power-set", special_powers),
+            "resolvedUpgradeDefinitionCount": len(gameplay_closure.upgrades),
+            "resolvedScienceDefinitionCount": len(gameplay_closure.sciences),
+            "resolvedSpecialPowerDefinitionCount": len(gameplay_closure.special_powers),
+            "fxListReferenceCount": len(gameplay_closure.fx_lists),
+        },
+        "limitations": [
+            "Command-reachable upgrade, science, and special-power definitions are resolved as typed identifier edges plus payload-free assignment digests.",
+            "This census does not yet resolve W3D, animation, material, FX-list bodies, weapon/projectile, construction, damage, or destruction leaves.",
+            "Mapped-image, localization, and audio leaves cover the current command-reachable object/button graph, not every future runtime state.",
+            "Authored SelectPortrait references with no MappedImage definition are preserved as explicit source-null images; required ButtonImage gaps remain unresolved.",
+            "Localized duplicate conflicts use BFME2 source order and remain explicit oracle-review evidence.",
+            "Runtime support and oracle parity are not implied by definition reachability.",
+            "ROTWK 2.01 data is a separate future overlay and is not merged into this BFME2 1.06 report.",
+        ],
+    }

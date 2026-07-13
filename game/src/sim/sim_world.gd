@@ -1,6 +1,6 @@
 ﻿class_name SimWorld
 extends RefCounted
-## Pure simulation. No Node3D. Stages 1â€“4 systems live here.
+## Legacy pure simulation. No Node3D. Stage 1-9 shipped sandbox systems live here.
 
 var MAP_HALF: float = 210.0
 const MAX_BATTALIONS_PER_SIDE := 16
