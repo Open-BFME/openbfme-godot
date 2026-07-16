@@ -489,13 +489,40 @@ func _run() -> void:
 		)
 	var ai_roster_sim = SimScript.new()
 	ai_roster_sim.setup(slice.source_map_data.simulation_configuration(), roster_rules)
-	ai_roster_sim.advance(15)
+	var ai_construction_ready := false
+	for _index in range(2000):
+		ai_roster_sim.tick()
+		if _first_event_sequence(ai_roster_sim.events, "construction.completed", SimScript.ENEMY_TEAM) > 0:
+			ai_construction_ready = true
+			break
+	_check("ai_completes_construction_before_roster_queue", ai_construction_ready)
 	var ai_barracks: int = ai_roster_sim.producer_id(1, "barracks")
 	var ai_archery: int = ai_roster_sim.producer_id(1, "archery_range")
 	var ai_stable: int = ai_roster_sim.producer_id(1, "stable")
-	_check("ai_uses_barracks_roster_deterministically", _queued_unit_types(ai_roster_sim, ai_barracks) == [SimScript.SOLDIER_HORDE_ID, SimScript.TOWER_GUARD_OBJECT_ID])
-	_check("ai_uses_archery_range_deterministically", _queued_unit_types(ai_roster_sim, ai_archery) == [SimScript.ARCHER_OBJECT_ID])
-	_check("ai_uses_stable_deterministically", _queued_unit_types(ai_roster_sim, ai_stable) == [SimScript.KNIGHT_OBJECT_ID])
+	for _index in range(2000):
+		if _queued_event_unit_types(ai_roster_sim.events, ai_barracks) == [SimScript.SOLDIER_HORDE_ID, SimScript.TOWER_GUARD_OBJECT_ID] and _queued_event_unit_types(ai_roster_sim.events, ai_archery) == [SimScript.ARCHER_OBJECT_ID] and _queued_event_unit_types(ai_roster_sim.events, ai_stable) == [SimScript.KNIGHT_OBJECT_ID]:
+			break
+		ai_roster_sim.tick()
+	_check("ai_uses_barracks_roster_deterministically", _queued_event_unit_types(ai_roster_sim.events, ai_barracks) == [SimScript.SOLDIER_HORDE_ID, SimScript.TOWER_GUARD_OBJECT_ID])
+	_check("ai_uses_archery_range_deterministically", _queued_event_unit_types(ai_roster_sim.events, ai_archery) == [SimScript.ARCHER_OBJECT_ID])
+	_check("ai_uses_stable_deterministically", _queued_event_unit_types(ai_roster_sim.events, ai_stable) == [SimScript.KNIGHT_OBJECT_ID])
+	var interrupted_ai = SimScript.new()
+	interrupted_ai.setup(slice.source_map_data.simulation_configuration(), roster_rules)
+	for _index in range(2000):
+		if _first_event_sequence(interrupted_ai.events, "construction.started", SimScript.ENEMY_TEAM) > 0:
+			break
+		interrupted_ai.tick()
+	var interrupted_construction := _first_event(interrupted_ai.events, "construction.started", SimScript.ENEMY_TEAM)
+	var interrupted_site_id := int(interrupted_construction.get("target_id", 0))
+	var interrupted_builder: Dictionary = interrupted_ai.entity(104)
+	interrupted_builder["health"] = 0
+	interrupted_builder["member_health"] = [0]
+	for _index in range(1000):
+		if _first_event_sequence(interrupted_ai.events, "production.queued", SimScript.ENEMY_TEAM) > 0:
+			break
+		interrupted_ai.tick()
+	var interrupted_site: Dictionary = interrupted_ai.structure(interrupted_site_id)
+	_check("ai_resumes_production_when_porter_construction_is_interrupted", interrupted_site_id != 0 and int(interrupted_builder.get("construction_id", -1)) == 0 and int(interrupted_site.get("health", -1)) == 0 and int(interrupted_site.get("builder_id", -1)) == 0 and _first_event_sequence(interrupted_ai.events, "structure.destroyed", -1, interrupted_site_id) > 0 and _first_event_sequence(interrupted_ai.events, "production.queued", SimScript.ENEMY_TEAM) > 0)
 	var ai_reached_source_vision := false
 	for _tick in range(1500):
 		if _team_has_target(ai_roster_sim, SimScript.ENEMY_TEAM):
@@ -570,9 +597,27 @@ func _run() -> void:
 	# Let the deterministic enemy play a complete unassisted match. A player loss
 	# must have its own simulation intent and activate the imported defeat track.
 	slice.reset_match()
-	var defeat_finished := _advance_until(slice, func(): return int(slice.simulation.winner) != -1, 36000)
+	slice.simulation.advance(300)
+	var early_construction_event := _first_event(slice.simulation.events, "construction.started", SimScript.ENEMY_TEAM)
+	var early_construction_site: Dictionary = slice.simulation.structure(int(early_construction_event.get("target_id", 0)))
+	var early_builder: Dictionary = slice.simulation.entity(int(early_construction_event.get("entity_id", 0)))
+	_check("enemy_ai_porter_advances_construction", int(early_builder.get("team", -1)) == SimScript.ENEMY_TEAM and String(early_builder.get("object_id", "")) == SimScript.BUILDER_OBJECT_ID and bool(early_builder.get("is_builder", false)) and int(early_construction_site.get("team", -1)) == SimScript.ENEMY_TEAM and String(early_construction_site.get("structure_kind", "")) == "farm" and int(early_construction_site.get("builder_id", 0)) == int(early_builder.get("id", 0)) and float(early_construction_site.get("construction_progress", 0.0)) > 0.0, "builder=%s site=%s" % [str({"state": early_builder.get("state", ""), "position": early_builder.get("position"), "route": Array(early_builder.get("route", [])).size(), "construction_id": early_builder.get("construction_id", -1)}), str({"progress": early_construction_site.get("construction_progress", -1.0), "elapsed": early_construction_site.get("construction_elapsed_ticks", -1), "position": early_construction_site.get("position")})])
+	var defeat_finished := _advance_until(slice, func(): return int(slice.simulation.winner) != -1, 35700)
 	slice._sync_presentation()
 	_check("battle_reaches_defeat", defeat_finished and int(slice.simulation.winner) == SimScript.ENEMY_TEAM, "winner=%d tick=%d state=%s" % [int(slice.simulation.winner), int(slice.simulation.tick_index), _compact_combat_state(slice.simulation)])
+	var player_fortress: int = slice.simulation.fortress_id(SimScript.PLAYER_TEAM)
+	var construction_started := _first_event_sequence(slice.simulation.events, "construction.started", SimScript.ENEMY_TEAM)
+	var construction_event := _first_event(slice.simulation.events, "construction.started", SimScript.ENEMY_TEAM)
+	var construction_target_id := int(construction_event.get("target_id", 0))
+	var construction_completed_event := _first_event(slice.simulation.events, "construction.completed", SimScript.ENEMY_TEAM, construction_target_id)
+	var construction_completed := int(construction_completed_event.get("sequence", 0))
+	var production_completed := _first_event_sequence(slice.simulation.events, "production.complete", SimScript.ENEMY_TEAM)
+	var fortress_hit := _first_event_sequence(slice.simulation.events, "combat.hit_structure", -1, player_fortress)
+	var fortress_destroyed := _first_event_sequence(slice.simulation.events, "structure.destroyed", -1, player_fortress)
+	var defeat_event := _first_event_sequence(slice.simulation.events, "match.defeat")
+	var construction_site: Dictionary = slice.simulation.structure(int(construction_event.get("target_id", 0)))
+	var enemy_builder: Dictionary = slice.simulation.entity(int(construction_event.get("entity_id", 0)))
+	_check("enemy_ai_construction_to_defeat_chain", construction_started > 0 and _event_count(slice.simulation.events, "construction.started", SimScript.ENEMY_TEAM) == 1 and construction_started < construction_completed and _event_count(slice.simulation.events, "construction.completed", SimScript.ENEMY_TEAM) == 1 and int(construction_completed_event.get("entity_id", 0)) == int(construction_event.get("entity_id", -1)) and int(construction_site.get("team", -1)) == SimScript.ENEMY_TEAM and String(construction_site.get("structure_kind", "")) == "farm" and int(construction_site.get("builder_id", 0)) == int(construction_event.get("entity_id", -1)) and is_equal_approx(float(construction_site.get("construction_progress", 0.0)), 1.0) and construction_completed < production_completed and production_completed < fortress_hit and fortress_hit < fortress_destroyed and fortress_destroyed < defeat_event, "sequences=%s builder=%s site=%s" % [str([construction_started, construction_completed, production_completed, fortress_hit, fortress_destroyed, defeat_event]), str({"health": enemy_builder.get("health", -1), "state": enemy_builder.get("state", ""), "position": enemy_builder.get("position"), "route": Array(enemy_builder.get("route", [])).size(), "construction_id": enemy_builder.get("construction_id", -1)}), str({"health": construction_site.get("health", -1), "progress": construction_site.get("construction_progress", -1.0), "position": construction_site.get("position"), "builder_id": construction_site.get("builder_id", -1)})])
 	_check("defeat_event_intent", _event_kind_present(slice.simulation.events, "match.defeat") and _event_kind_present(slice.simulation.events, "music.defeat"))
 	_check("defeat_music_active", String(slice.audio_system.current_music_state) == "defeat", String(slice.audio_system.current_music_state))
 	_check("defeat_splash_visible", bool(slice.hud.outcome_layer.visible) and String(slice.hud.outcome_title.text) == "DEFEAT")
@@ -827,11 +872,14 @@ func _entity_for_unit_type(simulation, team: int, unit_type: String) -> Dictiona
 	return {}
 
 
-func _queued_unit_types(simulation, producer: int) -> Array[String]:
+func _queued_event_unit_types(events: Array[Dictionary], producer: int) -> Array[String]:
 	var result: Array[String] = []
-	for item_value in Array(simulation.structure(producer).get("queue", [])):
-		if typeof(item_value) == TYPE_DICTIONARY:
-			result.append(String((item_value as Dictionary).get("unit_type", "")))
+	for event in events:
+		if String(event.get("kind", "")) != "production.queued" or int(event.get("entity_id", 0)) != producer:
+			continue
+		var unit_type := String(event.get("unit_type", ""))
+		if not result.has(unit_type):
+			result.append(unit_type)
 	return result
 
 
@@ -918,6 +966,30 @@ func _event_kind_present(events: Array[Dictionary], kind: String) -> bool:
 		if String(event.get("kind", "")) == kind:
 			return true
 	return false
+
+
+func _first_event_sequence(events: Array[Dictionary], kind: String, team: int = -1, target_id: int = 0) -> int:
+	return int(_first_event(events, kind, team, target_id).get("sequence", 0))
+
+
+func _first_event(events: Array[Dictionary], kind: String, team: int = -1, target_id: int = 0) -> Dictionary:
+	for event in events:
+		if String(event.get("kind", "")) != kind:
+			continue
+		if team >= 0 and int(event.get("team", -1)) != team:
+			continue
+		if target_id != 0 and int(event.get("target_id", 0)) != target_id:
+			continue
+		return event
+	return {}
+
+
+func _event_count(events: Array[Dictionary], kind: String, team: int = -1) -> int:
+	var result := 0
+	for event in events:
+		if String(event.get("kind", "")) == kind and (team < 0 or int(event.get("team", -1)) == team):
+			result += 1
+	return result
 
 
 func _gate_names(gates: Array[Dictionary]) -> Array[String]:

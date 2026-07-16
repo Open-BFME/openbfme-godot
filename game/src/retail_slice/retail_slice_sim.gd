@@ -137,6 +137,8 @@ var _next_dynamic_structure_id := 3000
 var _next_event_sequence := 1
 var _next_order_sequence := 1
 var _music_state := ""
+var _enemy_ai_construction_attempted := false
+var _enemy_ai_construction_resolved := false
 
 
 func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) -> void:
@@ -155,6 +157,8 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_next_event_sequence = 1
 	_next_order_sequence = 1
 	_music_state = ""
+	_enemy_ai_construction_attempted = false
+	_enemy_ai_construction_resolved = false
 	last_route_rejection = ""
 	team_power_points = {PLAYER_TEAM: 1, ENEMY_TEAM: 1}
 	purchased_powers = {PLAYER_TEAM: [], ENEMY_TEAM: []}
@@ -172,7 +176,8 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 		var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
 		if configured_unit_rules.has(BUILDER_OBJECT_ID):
 			_add_battalion(3, PLAYER_TEAM, Vector2(_spawn_positions[1]) + Vector2(0.0, 4.0), "Builder", BUILDER_OBJECT_ID, BUILDER_OBJECT_ID, 0)
-			_add_battalion(104, ENEMY_TEAM, Vector2(_spawn_positions[101]) + Vector2(0.0, -4.0), "Enemy Builder", BUILDER_OBJECT_ID, BUILDER_OBJECT_ID, 0)
+			var enemy_builder_position := _builder_spawn_position(ENEMY_TEAM) if base_loop_enabled else Vector2(_spawn_positions[101]) + Vector2(0.0, -4.0)
+			_add_battalion(104, ENEMY_TEAM, enemy_builder_position, "Enemy Builder", BUILDER_OBJECT_ID, BUILDER_OBJECT_ID, 0)
 	if base_loop_enabled:
 		_initialize_base_loop()
 	_emit_music("explore")
@@ -312,6 +317,12 @@ func _fallback_structure_position(team: int, index: int) -> Vector2:
 
 func _fallback_rally_position(team: int) -> Vector2:
 	return (Vector2(_spawn_positions[1]) + Vector2(_spawn_positions[2])) * 0.5 if team == PLAYER_TEAM else (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5
+
+
+func _builder_spawn_position(team: int) -> Vector2:
+	var layout := _home_layout if not _home_layout.is_empty() else _derive_home_layout()
+	var team_layout: Dictionary = layout.get(team, layout.get(str(team), {}))
+	return Vector2(team_layout.get("rally", _fallback_rally_position(team)))
 
 
 func _add_battalion(
@@ -1054,7 +1065,11 @@ func _step_entity(id: int) -> void:
 			var site: Dictionary = structures[construction_id]
 			if float(site.get("construction_progress", 1.0)) < 1.0:
 				var site_position := Vector2(site.get("position", row["position"]))
-				if Vector2(row["position"]).distance_to(site_position) <= 2.0:
+				# A successful navigation query may end at the closest walkable
+				# perimeter cell rather than the structure's obstructed center.
+				# Exhausting that accepted route is arrival; requiring another
+				# invented center-distance strands real-map construction sites.
+				if String(row.get("order_kind", "")) == "construct" and ((row["route"] as Array).is_empty() or Vector2(row["position"]).distance_to(site_position) <= 2.0):
 					_clear_pending_route(row, true)
 					row["state"] = "construct"
 					return
@@ -1124,8 +1139,14 @@ func _step_entity(id: int) -> void:
 
 
 func issue_construct(ids: Array[int], structure_kind: String, position: Vector2, dry_run: bool = false) -> Dictionary:
+	return _issue_construct_for_team(PLAYER_TEAM, ids, structure_kind, position, dry_run)
+
+
+func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: String, position: Vector2, dry_run: bool = false) -> Dictionary:
 	if not base_loop_enabled or winner != -1:
 		return {"ok": false, "reason": "match-unavailable"}
+	if team != PLAYER_TEAM and team != ENEMY_TEAM:
+		return {"ok": false, "reason": "invalid-team"}
 	if not STRUCTURE_BUILD_RULES.has(structure_kind):
 		return {"ok": false, "reason": "unsupported-structure"}
 	if playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, playable_outline):
@@ -1135,16 +1156,14 @@ func issue_construct(ids: Array[int], structure_kind: String, position: Vector2,
 		if existing_position.distance_to(position) < 7.0:
 			return {"ok": false, "reason": "site-obstructed"}
 	var builder_id := 0
-	var team := -1
 	for value in ids:
 		var id := int(value)
-		if not _is_commandable(id):
+		if not entities.has(id):
 			continue
 		var row: Dictionary = entities[id]
-		if not bool(row.get("is_builder", false)):
+		if int(row.get("team", -1)) != team or int(row.get("health", 0)) <= 0 or not bool(row.get("is_builder", false)):
 			continue
 		builder_id = id
-		team = int(row.get("team", -1))
 		break
 	if builder_id == 0:
 		return {"ok": false, "reason": "builder-required"}
@@ -1193,7 +1212,7 @@ func issue_construct(ids: Array[int], structure_kind: String, position: Vector2,
 		team_resources[team] = resources_for_team(team) + cost
 		builder["construction_id"] = 0
 		return {"ok": false, "reason": last_route_rejection if last_route_rejection != "" else "route-rejected"}
-	_emit_event("construction.started", builder_id, structure_id, {"structure_kind": structure_kind, "cost": cost, "build_ticks": build_ticks})
+	_emit_event("construction.started", builder_id, structure_id, {"team": team, "structure_kind": structure_kind, "cost": cost, "build_ticks": build_ticks})
 	return {"ok": true, "builder_id": builder_id, "structure_id": structure_id, "cost": cost, "build_ticks": build_ticks}
 
 
@@ -1216,7 +1235,9 @@ func _step_construction() -> void:
 			builder["construction_id"] = 0
 			builder["order_kind"] = ""
 			builder["state"] = "idle"
-			_emit_event("construction.completed", builder_id, structure_id, {"structure_kind": String(site.get("structure_kind", ""))})
+			if int(site.get("team", -1)) == ENEMY_TEAM:
+				_enemy_ai_construction_resolved = true
+			_emit_event("construction.completed", builder_id, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
 func _nearest_attack_move_target(row: Dictionary) -> int:
 	var enemy_team := ENEMY_TEAM if int(row.get("team", PLAYER_TEAM)) == PLAYER_TEAM else PLAYER_TEAM
 	var origin := Vector2(row.get("position", Vector2.ZERO))
@@ -1710,6 +1731,15 @@ func _target_position(target_id: int, target_kind: String) -> Vector2:
 
 
 func _update_enemy_ai() -> void:
+	if base_loop_enabled and not _enemy_ai_construction_attempted:
+		_enemy_ai_construction_attempted = true
+		if not _start_enemy_ai_farm():
+			_enemy_ai_construction_resolved = true
+	if base_loop_enabled and not _enemy_ai_construction_resolved and not _enemy_ai_construction_is_viable():
+		_abandon_enemy_ai_construction()
+		_enemy_ai_construction_resolved = true
+	if base_loop_enabled and not _enemy_ai_construction_resolved:
+		return
 	if base_loop_enabled and tick_index % maxi(15, int(_rules.get("ai_queue_interval_ticks", 60))) == 0:
 		for unit_type in AI_PRODUCTION_PLAN:
 			var production_rule: Dictionary = UNIT_PRODUCTION_RULES[unit_type]
@@ -1726,6 +1756,9 @@ func _update_enemy_ai() -> void:
 		return
 	for id in living_ids(ENEMY_TEAM):
 		var row: Dictionary = entities[id]
+		# MenPorters construct; they are not combat battalions and have no weapon.
+		if bool(row.get("is_builder", false)):
+			continue
 		if int(row["target_id"]) != 0:
 			continue
 		var target_id := 0
@@ -1743,6 +1776,18 @@ func _update_enemy_ai() -> void:
 					closest_distance = distance
 		var target_position := _target_position(target_id, target_kind)
 		var target_distance := Vector2(row["position"]).distance_to(target_position)
+		if target_kind == "structure":
+			# Once no defending battalion remains, the known Fortress is the
+			# strategic objective. Assign it before routing so the target's own
+			# footprint is exempt and melee units can close to weapon range.
+			if _assign_route(row, target_position):
+				row["target_id"] = target_id
+				row["target_kind"] = target_kind
+				row["attack_windup"] = 0
+				row["state"] = "run"
+				_stamp_order_sequence([id])
+				_emit_music("battle")
+			continue
 		var vision_range := maxf(float(row.get("attack_range", 1.15)), float(row.get("vision_range", 17.5)))
 		if target_distance > vision_range:
 			# Strategic AI can advance toward the opposing base, but it does not gain
@@ -1767,6 +1812,54 @@ func _update_enemy_ai() -> void:
 			row["state"] = "run"
 			_stamp_order_sequence([id])
 			_emit_music("battle")
+
+
+func _start_enemy_ai_farm() -> bool:
+	var builder_ids: Array[int] = []
+	for id in living_ids(ENEMY_TEAM):
+		if bool((entities[id] as Dictionary).get("is_builder", false)):
+			builder_ids.append(id)
+	if builder_ids.is_empty():
+		return false
+	var builder_position := Vector2((entities[builder_ids[0]] as Dictionary).get("position", Vector2.ZERO))
+	# A bounded clockwise search is deterministic and uses the same admission,
+	# obstruction, route, cost, and construction path as a player MenPorter.
+	for direction in [Vector2.UP, Vector2.RIGHT, Vector2.DOWN, Vector2.LEFT]:
+		var candidate: Vector2 = builder_position + direction * 10.0
+		var result := _issue_construct_for_team(ENEMY_TEAM, builder_ids, "farm", candidate)
+		if bool(result.get("ok", false)):
+			return true
+	return false
+
+
+func _enemy_ai_construction_is_viable() -> bool:
+	for id in living_ids(ENEMY_TEAM):
+		var builder: Dictionary = entities[id]
+		if not bool(builder.get("is_builder", false)):
+			continue
+		var construction_id := int(builder.get("construction_id", 0))
+		if construction_id != 0 and structures.has(construction_id) and int((structures[construction_id] as Dictionary).get("health", 0)) > 0:
+			return true
+	return false
+
+
+func _abandon_enemy_ai_construction() -> void:
+	for id in entity_ids():
+		var builder: Dictionary = entities[id]
+		if int(builder.get("team", -1)) != ENEMY_TEAM or not bool(builder.get("is_builder", false)) or int(builder.get("construction_id", 0)) == 0:
+			continue
+		var construction_id := int(builder.get("construction_id", 0))
+		if structures.has(construction_id):
+			var site: Dictionary = structures[construction_id]
+			site["builder_id"] = 0
+			if int(site.get("health", 0)) > 0 and float(site.get("construction_progress", 1.0)) < 1.0:
+				site["health"] = 0
+				_emit_event("structure.destroyed", 0, construction_id, {"reason": "construction-builder-unavailable"})
+		builder["construction_id"] = 0
+		builder["order_kind"] = ""
+		_clear_pending_route(builder, true)
+		if int(builder.get("health", 0)) > 0:
+			builder["state"] = "idle"
 
 
 func _build_route(from: Vector2, to: Vector2) -> Array[Vector2]:
