@@ -161,18 +161,22 @@ var _initialization_last_ms := 0
 func _ready() -> void:
 	_initialization_started_ms = Time.get_ticks_msec()
 	_initialization_last_ms = _initialization_started_ms
-	_mark_initialization_phase("ready")
+	if DisplayServer.get_name() != "headless":
+		# Windowed runs load phase-by-phase behind a progress bar; headless
+		# runners keep the original single-pass initialization.
+		_build_loading_overlay()
+	await _mark_initialization_phase("ready")
 	_build_environment()
-	_mark_initialization_phase("environment")
+	await _mark_initialization_phase("environment")
 	_build_hud()
-	_mark_initialization_phase("hud")
+	await _mark_initialization_phase("hud")
 	_initialize_content_and_match()
 
 
 func _initialize_content_and_match() -> void:
 	if not ContentDB.bundle_objects.has(SOLDIER_OBJECT_ID):
 		ContentDB.reload()
-	_mark_initialization_phase("content")
+	await _mark_initialization_phase("content")
 	var member_definition := ContentDB.get_bundle_object(SOLDIER_OBJECT_ID)
 	var horde_definition := ContentDB.get_bundle_object(SOLDIER_HORDE_ID)
 	var soldier_capability_id := String(member_definition.get("animationCapabilityId", ""))
@@ -193,7 +197,7 @@ func _initialize_content_and_match() -> void:
 	if hud_binding_error != "":
 		_fail("Private Men production UI validation failed: %s" % hud_binding_error)
 		return
-	_mark_initialization_phase("retail_command_ui")
+	await _mark_initialization_phase("retail_command_ui")
 	attack_target_indicator = AttackTargetIndicatorScript.new()
 	attack_target_indicator.name = "AttackTargetIndicator"
 	add_child(attack_target_indicator)
@@ -206,7 +210,7 @@ func _initialize_content_and_match() -> void:
 	_source_art_texture = asset_factory.load_texture_asset(art_path)
 	map_preview_loaded = _preview_texture != null
 	map_art_loaded = _source_art_texture != null
-	_mark_initialization_phase("map_art")
+	await _mark_initialization_phase("map_art")
 
 	source_map_data = MapDataScript.new()
 	if not source_map_data.load_from_pack(selected_pack_root, map_definition):
@@ -216,7 +220,7 @@ func _initialize_content_and_match() -> void:
 	if environment_error != "":
 		_fail("Fords source environment failed validation: %s" % environment_error)
 		return
-	_mark_initialization_phase("map_data")
+	await _mark_initialization_phase("map_data")
 	battlefield = BattlefieldScript.new()
 	battlefield.name = "CookedSourceFordsBattlefield"
 	add_child(battlefield)
@@ -226,7 +230,7 @@ func _initialize_content_and_match() -> void:
 	_assign_battlefield_lighting_domains()
 	source_driven_terrain = battlefield.source_driven
 	crossing_count = battlefield.ford_marker_count
-	_mark_initialization_phase("battlefield")
+	await _mark_initialization_phase("battlefield")
 
 	gameplay_rules = _gameplay_rules(member_definition, horde_definition)
 	if gameplay_rules.has("_error"):
@@ -240,15 +244,15 @@ func _initialize_content_and_match() -> void:
 		camera_focus = player_fortress_position
 		_clamp_camera_focus()
 		_apply_camera_transform()
-	_mark_initialization_phase("simulation")
+	await _mark_initialization_phase("simulation")
 	_spawn_all_presentations(int(horde_definition.get("memberCount", 15)))
-	_mark_initialization_phase("presentations")
+	await _mark_initialization_phase("presentations")
 
 	audio_system = AudioScript.new()
 	add_child(audio_system)
 	audio_system.configure(selected_pack_root, DisplayServer.get_name() != "headless")
 	audio_system.set_declared_structure_lifecycle_audio_active(_all_men_structure_contracts_v1())
-	_mark_initialization_phase("audio")
+	await _mark_initialization_phase("audio")
 	hud.configure_minimap(simulation, source_map_data, camera, _preview_texture)
 	var command_costs: Dictionary = {}
 	for unit_type in SimScript.UNIT_PRODUCTION_RULES.keys():
@@ -305,7 +309,62 @@ func _initialize_content_and_match() -> void:
 		return
 	hud.set_feedback("Select a blue battalion to move, or select a production building to train units.")
 	_sync_presentation()
-	_mark_initialization_phase("ready_complete")
+	await _mark_initialization_phase("ready_complete")
+
+
+# Measured phase costs (ms) weight the loading bar so it advances honestly
+# rather than in even steps.
+const LOADING_PHASE_WEIGHTS := {
+	"ready": 1, "environment": 16, "hud": 51, "content": 12,
+	"retail_command_ui": 214, "map_art": 13, "map_data": 1293,
+	"battlefield": 2507, "simulation": 12, "presentations": 962,
+	"audio": 488, "ready_complete": 1,
+}
+var _loading_overlay: CanvasLayer = null
+var _loading_bar: ProgressBar = null
+var _loading_phase_label: Label = null
+var _loading_weight_done := 0.0
+
+
+func _build_loading_overlay() -> void:
+	_loading_overlay = CanvasLayer.new()
+	_loading_overlay.name = "LoadingOverlay"
+	_loading_overlay.layer = 50
+	add_child(_loading_overlay)
+	var backdrop := ColorRect.new()
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0.01, 0.015, 0.02)
+	_loading_overlay.add_child(backdrop)
+	var column := VBoxContainer.new()
+	column.set_anchors_preset(Control.PRESET_CENTER)
+	column.alignment = BoxContainer.ALIGNMENT_CENTER
+	column.add_theme_constant_override("separation", 18)
+	backdrop.add_child(column)
+	var title := Label.new()
+	title.text = "FORDS OF ISEN II"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 44)
+	title.add_theme_color_override("font_color", Color("e9d489"))
+	column.add_child(title)
+	_loading_bar = ProgressBar.new()
+	_loading_bar.custom_minimum_size = Vector2(560, 22)
+	_loading_bar.min_value = 0.0
+	_loading_bar.max_value = 100.0
+	_loading_bar.show_percentage = true
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.05, 0.06, 0.05)
+	bar_bg.border_color = Color(0.55, 0.48, 0.28)
+	bar_bg.set_border_width_all(1)
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = Color(0.72, 0.6, 0.28)
+	_loading_bar.add_theme_stylebox_override("background", bar_bg)
+	_loading_bar.add_theme_stylebox_override("fill", bar_fill)
+	column.add_child(_loading_bar)
+	_loading_phase_label = Label.new()
+	_loading_phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_loading_phase_label.add_theme_font_size_override("font_size", 15)
+	_loading_phase_label.add_theme_color_override("font_color", Color("9fb2a1"))
+	column.add_child(_loading_phase_label)
 
 
 func _mark_initialization_phase(phase: String) -> void:
@@ -314,6 +373,23 @@ func _mark_initialization_phase(phase: String) -> void:
 	if DisplayServer.get_name() == "headless":
 		print("RETAIL_INIT_PHASE name=%s delta_ms=%d total_ms=%d" % [phase, now - _initialization_last_ms, now - _initialization_started_ms])
 	_initialization_last_ms = now
+	if _loading_overlay == null:
+		return
+	_loading_weight_done += float(LOADING_PHASE_WEIGHTS.get(phase, 10))
+	var total := 0.0
+	for weight in LOADING_PHASE_WEIGHTS.values():
+		total += float(weight)
+	_loading_bar.value = clampf(_loading_weight_done / total * 100.0, 0.0, 100.0)
+	_loading_phase_label.text = "Loading %s..." % phase.replace("_", " ")
+	if phase == "ready_complete":
+		var overlay := _loading_overlay
+		_loading_overlay = null
+		var fade := create_tween()
+		fade.tween_interval(0.2)
+		fade.tween_callback(func() -> void: overlay.queue_free())
+	else:
+		# Yield one frame so the bar actually renders between phases.
+		await get_tree().process_frame
 
 
 func _load_required_presentation_definitions() -> String:

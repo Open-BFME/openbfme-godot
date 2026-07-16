@@ -7,6 +7,8 @@ config/name="Open BFME"
 config/description="Desktop BFME2-inspired skirmish RTS (moddable)"
 run/main_scene="res://scenes/boot.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
+boot_splash/show_image=false
+boot_splash/bg_color=Color(0, 0, 0, 1)
 config/icon="res://icon.svg"
 
 [autoload]
