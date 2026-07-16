@@ -156,6 +156,9 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_next_order_sequence = 1
 	_music_state = ""
 	last_route_rejection = ""
+	team_power_points = {PLAYER_TEAM: 1, ENEMY_TEAM: 1}
+	purchased_powers = {PLAYER_TEAM: [], ENEMY_TEAM: []}
+	_kills_toward_power_point = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
 	_apply_gameplay_rules(gameplay_rules if not gameplay_rules.is_empty() else _rules)
 	_next_dynamic_id = {PLAYER_TEAM: 10, ENEMY_TEAM: 110}
 	_next_dynamic_structure_id = 3000
@@ -531,6 +534,86 @@ func _queued_command_points_for_team(team: int) -> int:
 			if typeof(item_value) == TYPE_DICTIONARY:
 				total += int((item_value as Dictionary).get("command_points", 0))
 	return total
+
+
+## --- Powers (provisional economy; exact retail spellbook costs/tree are an
+## --- M3 INI extraction item; magnitudes documented as provisional) ---
+const POWER_POINT_KILLS := 3
+const POWER_CAST_RADIUS := 15.0
+const RALLY_DURATION_TICKS := 300
+var team_power_points := {PLAYER_TEAM: 1, ENEMY_TEAM: 1}
+var purchased_powers := {PLAYER_TEAM: [], ENEMY_TEAM: []}
+var _kills_toward_power_point := {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
+
+
+func power_points(team: int) -> int:
+	return int(team_power_points.get(team, 0))
+
+
+func has_power(team: int, power_id: String) -> bool:
+	return (purchased_powers.get(team, []) as Array).has(power_id)
+
+
+func purchase_power(team: int, power_id: String, cost: int) -> Dictionary:
+	if has_power(team, power_id):
+		return {"ok": false, "reason": "already-purchased"}
+	if power_points(team) < cost:
+		return {"ok": false, "reason": "insufficient-power-points"}
+	team_power_points[team] = power_points(team) - cost
+	(purchased_powers[team] as Array).append(power_id)
+	_emit_event("power.purchased", 0, 0, {"team": team, "power_id": power_id, "cost": cost})
+	return {"ok": true, "reason": ""}
+
+
+func award_power_kill(team: int) -> void:
+	_kills_toward_power_point[team] = int(_kills_toward_power_point.get(team, 0)) + 1
+	if int(_kills_toward_power_point[team]) >= POWER_POINT_KILLS:
+		_kills_toward_power_point[team] = 0
+		team_power_points[team] = power_points(team) + 1
+		_emit_event("power.point_earned", 0, 0, {"team": team, "points": power_points(team)})
+
+
+func cast_heal(team: int, point: Vector2) -> Dictionary:
+	if not has_power(team, "SBGood_Heal"):
+		return {"ok": false, "reason": "power-not-purchased"}
+	var healed := 0
+	for id in living_ids(team):
+		var row: Dictionary = entities[id]
+		if Vector2(row.get("position", Vector2.ZERO)).distance_to(point) > POWER_CAST_RADIUS:
+			continue
+		var maximum_member := int(row.get("member_maximum_health", 1))
+		var health_values: Array = row.get("member_health", [])
+		var restored := 0
+		for member_index in health_values.size():
+			if int(health_values[member_index]) > 0 and int(health_values[member_index]) < maximum_member:
+				restored += maximum_member - int(health_values[member_index])
+				health_values[member_index] = maximum_member
+		if restored > 0:
+			row["member_health"] = health_values
+			row["health"] = 0
+			for value in health_values:
+				row["health"] = int(row["health"]) + int(value)
+			healed += 1
+	if healed == 0:
+		return {"ok": false, "reason": "no-wounded-allies-in-range"}
+	_emit_event("power.cast", 0, 0, {"team": team, "power_id": "SBGood_Heal", "battalions": healed})
+	return {"ok": true, "reason": "", "battalions": healed}
+
+
+func cast_rally(team: int, point: Vector2) -> Dictionary:
+	if not has_power(team, "SBGood_RallyingCall"):
+		return {"ok": false, "reason": "power-not-purchased"}
+	var rallied := 0
+	for id in living_ids(team):
+		var row: Dictionary = entities[id]
+		if Vector2(row.get("position", Vector2.ZERO)).distance_to(point) > POWER_CAST_RADIUS:
+			continue
+		row["rally_until_tick"] = tick_index + RALLY_DURATION_TICKS
+		rallied += 1
+	if rallied == 0:
+		return {"ok": false, "reason": "no-allies-in-range"}
+	_emit_event("power.cast", 0, 0, {"team": team, "power_id": "SBGood_RallyingCall", "battalions": rallied})
+	return {"ok": true, "reason": "", "battalions": rallied}
 
 
 func validate_construct_site(builder_ids: Array[int], structure_kind: String, point: Vector2) -> Dictionary:
@@ -1506,6 +1589,10 @@ func _apply_member_damage(
 	if prior_health <= 0:
 		return
 	var stance_adjusted_amount := maxi(0, roundi(float(amount) * float(_stance_state(target).get("incomingDamageMultiplier", 1.0))))
+	if entities.has(attacker_id) and tick_index < int((entities[attacker_id] as Dictionary).get("rally_until_tick", -1)):
+		# Rallying Call: provisional +50% damage while the buff lasts (exact
+		# retail magnitude is an M3 INI extraction item).
+		stance_adjusted_amount = int(ceil(stance_adjusted_amount * 1.5))
 	health_values[target_member] = maxi(0, prior_health - stance_adjusted_amount)
 	target["member_health"] = health_values
 	var aggregate_health := 0
@@ -1540,6 +1627,8 @@ func _apply_member_damage(
 			var target_team := int(target.get("team", -1))
 			team_command_points[target_team] = maxi(0, command_points_for_team(target_team) - int(target.get("command_points", _rules.get("soldier_command_points", 60))))
 		prune_control_groups()
+		if entities.has(attacker_id):
+			award_power_kill(int((entities[attacker_id] as Dictionary).get("team", -1)))
 		_emit_event("battalion.defeated", attacker_id, target_id)
 
 

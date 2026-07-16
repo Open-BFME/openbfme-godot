@@ -148,6 +148,7 @@ var _selection_band: Control = null
 const DRAG_SELECT_THRESHOLD := 8.0
 var camera_user_yaw := 0.0
 var _camera_orbiting := false
+var power_cast_armed := ""
 # Env-gated presentation profiler (OPENBFME_PROFILE_SYNC=1): accumulates
 # per-section time so soak runs can attribute frame-cost growth exactly.
 var _profile_sync := OS.get_environment("OPENBFME_PROFILE_SYNC") == "1"
@@ -1038,6 +1039,20 @@ func _select_same_type_on_screen(point: Vector2) -> void:
 
 
 func _handle_left_click(point: Vector2, additive: bool) -> void:
+	if power_cast_armed != "":
+		var cast_result: Dictionary = (
+			simulation.cast_heal(0, point) if power_cast_armed == "heal" else simulation.cast_rally(0, point)
+		)
+		if bool(cast_result.get("ok", false)):
+			hud.set_feedback("%s affects %d battalion%s." % [
+				power_cast_armed.capitalize(), int(cast_result.get("battalions", 0)),
+				"" if int(cast_result.get("battalions", 0)) == 1 else "s",
+			])
+			power_cast_armed = ""
+		else:
+			hud.set_feedback("Cannot cast: %s." % String(cast_result.get("reason", "rejected")).replace("-", " "), true)
+		_sync_presentation()
+		return
 	# Retail placement: with a construction command armed, left-click places
 	# the structure and right-click cancels.
 	if construction_kind_armed != "":
@@ -1068,6 +1083,10 @@ func _handle_left_click(point: Vector2, additive: bool) -> void:
 
 
 func _handle_right_click(point: Vector2) -> void:
+	if power_cast_armed != "":
+		power_cast_armed = ""
+		hud.set_feedback("Power cast cancelled.")
+		return
 	if construction_kind_armed != "":
 		# Retail cancels an armed construction command on right-click.
 		construction_kind_armed = ""
@@ -1869,6 +1888,21 @@ func _build_hud() -> void:
 	hud.command_cap_changed.connect(func(value: int) -> void:
 		simulation.command_point_cap = maxi(60, value)
 		hud.set_feedback("Command point cap set to %d." % simulation.command_point_cap)
+	)
+	hud.powers_opened.connect(func() -> void:
+		hud.refresh_powers(simulation.power_points(0), simulation.purchased_powers[0])
+	)
+	hud.power_purchase_requested.connect(func(power_id: String, cost: int) -> void:
+		var result := simulation.purchase_power(0, power_id, cost)
+		if bool(result.get("ok", false)):
+			hud.set_feedback("Power acquired: %s." % power_id.trim_prefix("SBGood_").capitalize())
+		else:
+			hud.set_feedback("Cannot acquire power: %s." % String(result.get("reason", "rejected")).replace("-", " "), true)
+		hud.refresh_powers(simulation.power_points(0), simulation.purchased_powers[0])
+	)
+	hud.power_cast_requested.connect(func(cast_kind: String) -> void:
+		power_cast_armed = cast_kind
+		hud.set_feedback("Choose a target area for %s (right-click cancels)." % cast_kind.capitalize())
 	)
 	hud.weak_fortress_toggled.connect(func(value: bool) -> void:
 		# Testing convenience: cap both fortresses at 1500 HP so matches

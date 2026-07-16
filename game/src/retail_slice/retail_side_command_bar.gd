@@ -35,7 +35,6 @@ var _buttons: Array[Button] = []
 var _socket_texture: Texture2D
 var _shown := false
 var _tween: Tween
-var _group: CanvasGroup
 
 
 func _ready() -> void:
@@ -52,15 +51,11 @@ func _build() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	z_index = 6
 	visible = false
-	# Buttons render through a CanvasGroup so the fade applies to the
-	# composited result; fading stacked children individually lets the dark
-	# socket art bleed through translucent icons (icons read as black during
-	# the fade-in).
-	if _group == null:
-		_group = CanvasGroup.new()
-		_group.name = "SideCommandComposite"
-		add_child(_group)
-	_group.self_modulate.a = 0.0
+	# Buttons are direct children: each is a single CanvasItem (socket art as
+	# the button stylebox + icon), so per-button alpha fades cleanly. The old
+	# CanvasGroup composite blanked icons and blocked GUI input entirely
+	# (Controls under a Node2D never received clicks).
+	modulate.a = 0.0
 
 
 func configure_from_constructs(constructs: Array) -> void:
@@ -99,7 +94,13 @@ func configure_from_constructs(constructs: Array) -> void:
 			button.add_theme_constant_override("icon_max_width", int(BUTTON_DIAMETER) - 12)
 			button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		button.pressed.connect(_on_side_button_pressed.bind(kind))
-		_group.add_child(button)
+		if _socket_texture != null:
+			var socket_box := StyleBoxTexture.new()
+			socket_box.texture = _socket_texture
+			for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+				button.add_theme_stylebox_override(state, socket_box)
+		button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		add_child(button)
 		_buttons.append(button)
 	_layout_buttons()
 
@@ -143,13 +144,13 @@ func set_builder_visible(builder_selected: bool) -> void:
 	if not is_inside_tree():
 		# No tree (headless bind-time / tests): apply the end state immediately.
 		visible = builder_selected
-		_group.self_modulate.a = 1.0 if builder_selected else 0.0
+		modulate.a = 1.0 if builder_selected else 0.0
 		return
 	if _tween != null and _tween.is_valid():
 		_tween.kill()
 	if builder_selected:
 		visible = true
 	_tween = create_tween()
-	_tween.tween_property(_group, "self_modulate:a", 1.0 if builder_selected else 0.0, SIDE_COMMAND_FADE_SECONDS)
+	_tween.tween_property(self, "modulate:a", 1.0 if builder_selected else 0.0, SIDE_COMMAND_FADE_SECONDS)
 	if not builder_selected:
 		_tween.tween_callback(func() -> void: visible = false)

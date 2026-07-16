@@ -16,6 +16,9 @@ signal stop_requested
 signal stance_requested
 signal command_cap_changed(value: int)
 signal weak_fortress_toggled(value: bool)
+signal power_purchase_requested(power_id: String, cost: int)
+signal power_cast_requested(cast_kind: String)
+signal powers_opened
 signal construct_requested(structure_kind: String)
 signal music_volume_changed(value: float)
 signal voice_volume_changed(value: float)
@@ -214,6 +217,8 @@ var command_cap_slider: HSlider
 var weak_fortress_toggle: CheckButton
 var _side_bar_fingerprint := "<unset>"
 var production_queue_buttons: Array[Button] = []
+var power_points_label: Label
+var _powers_connectors: Control
 var fps_overlay: Label
 var _frame_times: PackedFloat32Array = PackedFloat32Array()
 var voice_slider: HSlider
@@ -1277,9 +1282,23 @@ func _build_orb_buttons(dock: Control) -> void:
 			button.add_child(power_orb_label)
 
 
+# Spellbook layout: four tiers as columns, three powers per tier, same-row
+# progression between tiers. Costs and the exact retail tree are provisional
+# until the M3 SpellBook INI extraction; castable powers work today.
+const POWER_TIER_COST := [1, 2, 3, 4]
+const CASTABLE_POWERS := {
+	"SBGood_Heal": "heal",
+	"SBGood_RallyingCall": "rally",
+}
+
+
+func _power_index_tier(index: int) -> int:
+	return index / 3
+
+
 func _build_powers_palette() -> void:
-	# Retail's power selection takes over the whole screen: dimmed backdrop,
-	# centered power grid, click outside (or the evenstar again) to close.
+	# The spellbook is its own screen: solid backdrop, no HUD cluster behind
+	# it, tier columns with progression connectors, live power-point balance.
 	powers_palette = Control.new()
 	powers_palette.name = "RetailPowersPalette"
 	powers_palette.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1287,56 +1306,122 @@ func _build_powers_palette() -> void:
 	powers_palette.mouse_filter = Control.MOUSE_FILTER_STOP
 	powers_palette.z_index = 10
 	add_child(powers_palette)
-	var dim := ColorRect.new()
-	dim.name = "PowersDim"
-	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.01, 0.02, 0.015, 0.78)
-	dim.mouse_filter = Control.MOUSE_FILTER_STOP
-	dim.gui_input.connect(func(event: InputEvent) -> void:
+	var backdrop := ColorRect.new()
+	backdrop.name = "PowersBackdrop"
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0.035, 0.05, 0.04)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	backdrop.gui_input.connect(func(event: InputEvent) -> void:
 		if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
 			_toggle_powers_palette()
 	)
-	powers_palette.add_child(dim)
+	powers_palette.add_child(backdrop)
 	var column := VBoxContainer.new()
 	column.name = "PowersColumn"
 	column.set_anchors_preset(Control.PRESET_CENTER)
 	column.alignment = BoxContainer.ALIGNMENT_CENTER
-	column.add_theme_constant_override("separation", 26)
+	column.add_theme_constant_override("separation", 24)
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	powers_palette.add_child(column)
 	var title := Label.new()
 	title.text = "POWERS OF THE WEST"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 40)
+	title.add_theme_font_size_override("font_size", 42)
 	title.add_theme_color_override("font_color", Color("e9d489"))
 	column.add_child(title)
-	var grid := GridContainer.new()
-	grid.name = "PowersGrid"
-	grid.columns = 4
-	grid.add_theme_constant_override("h_separation", 34)
-	grid.add_theme_constant_override("v_separation", 30)
-	column.add_child(grid)
+	power_points_label = Label.new()
+	power_points_label.name = "PowerPointsLabel"
+	power_points_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	power_points_label.add_theme_font_size_override("font_size", 20)
+	power_points_label.add_theme_color_override("font_color", Color("bfe0f2"))
+	column.add_child(power_points_label)
+	var tree_holder := Control.new()
+	tree_holder.name = "PowersTree"
+	tree_holder.custom_minimum_size = Vector2(4 * 150 + 90, 3 * 132 + 20)
+	column.add_child(tree_holder)
+	_powers_connectors = Control.new()
+	_powers_connectors.name = "PowerConnectors"
+	_powers_connectors.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_powers_connectors.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_powers_connectors.draw.connect(func() -> void:
+		# Progression connectors: same-row link from each tier to the next.
+		for index in power_buttons.size():
+			if _power_index_tier(index) >= 3:
+				continue
+			var from_button := power_buttons[index]
+			var to_button := power_buttons[index + 3]
+			var from_point := from_button.position + Vector2(from_button.size.x, from_button.size.y * 0.5)
+			var to_point := to_button.position + Vector2(0.0, to_button.size.y * 0.5)
+			_powers_connectors.draw_line(from_point, to_point, Color(0.55, 0.48, 0.28, 0.8), 2.0, true)
+	)
+	tree_holder.add_child(_powers_connectors)
 	for index in RETAIL_POWER_IMAGE_IDS.size():
+		var tier := _power_index_tier(index)
+		var row := index % 3
 		var button := Button.new()
 		button.name = "Power%02d" % index
-		button.custom_minimum_size = Vector2(104, 104)
+		button.position = Vector2(tier * 150 + 45, row * 132 + 10)
+		button.size = Vector2(104, 104)
 		button.disabled = true
 		button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		button.expand_icon = true
 		button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		button.set_meta("power_id", RETAIL_POWER_IMAGE_IDS[index])
+		button.set_meta("power_cost", POWER_TIER_COST[tier])
+		button.pressed.connect(_on_power_button_pressed.bind(index))
 		button.mouse_entered.connect(func() -> void:
 			ui_sound_requested.emit("Gui_UpgradeButtonGlow")
 		)
 		for state in ["normal", "hover", "pressed", "disabled"]:
 			button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
-		grid.add_child(button)
+		var cost_badge := Label.new()
+		cost_badge.name = "Cost"
+		cost_badge.text = str(POWER_TIER_COST[tier])
+		cost_badge.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+		cost_badge.offset_left = -26
+		cost_badge.offset_top = -26
+		cost_badge.add_theme_font_size_override("font_size", 17)
+		cost_badge.add_theme_color_override("font_color", Color("f1d06e"))
+		cost_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		button.add_child(cost_badge)
+		tree_holder.add_child(button)
 		power_buttons.append(button)
 	var hint := Label.new()
-	hint.text = "Power purchases unlock with the faction expansion milestone."
+	hint.name = "PowersHint"
+	hint.text = "Earn power points in battle. Heal and Rallying Call are castable; summons unlock with the faction expansion."
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.add_theme_font_size_override("font_size", 16)
+	hint.add_theme_font_size_override("font_size", 15)
 	hint.add_theme_color_override("font_color", Color("9fb2a1"))
 	column.add_child(hint)
+
+
+func refresh_powers(points: int, purchased: Array) -> void:
+	if power_points_label != null:
+		power_points_label.text = "Power points: %d" % points
+	for index in power_buttons.size():
+		var button := power_buttons[index]
+		var power_id := String(button.get_meta("power_id", ""))
+		var cost := int(button.get_meta("power_cost", 1))
+		var tier := _power_index_tier(index)
+		var owned := purchased.has(power_id)
+		var prerequisite_met := tier == 0 or purchased.has(String(power_buttons[index - 3].get_meta("power_id", "")))
+		button.disabled = owned == false and (points < cost or not prerequisite_met)
+		if owned:
+			button.self_modulate = Color(1.15, 1.1, 0.85)
+			button.tooltip_text = "Purchased%s" % (" — click to cast" if CASTABLE_POWERS.has(power_id) else "")
+			button.disabled = not CASTABLE_POWERS.has(power_id)
+		else:
+			button.self_modulate = Color.WHITE if not button.disabled else Color(0.55, 0.55, 0.55)
+
+
+func _on_power_button_pressed(index: int) -> void:
+	var button := power_buttons[index]
+	var power_id := String(button.get_meta("power_id", ""))
+	if button.self_modulate.g > 1.0 and CASTABLE_POWERS.has(power_id):
+		power_cast_requested.emit(String(CASTABLE_POWERS[power_id]))
+		_toggle_powers_palette()
+		return
+	power_purchase_requested.emit(power_id, int(button.get_meta("power_cost", 1)))
 
 
 func _build_score_overlay() -> void:
@@ -1492,8 +1577,8 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 		for index in 5:
 			var queue_button := Button.new()
 			queue_button.name = "QueueSlot%d" % index
-			queue_button.position = Vector2(64 + index * 42, 322)
-			queue_button.size = Vector2(38, 38)
+			queue_button.position = Vector2(60 + index * 40, 344)
+			queue_button.size = Vector2(36, 36)
 			for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 				queue_button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
 			queue_button.expand_icon = true
@@ -1561,6 +1646,19 @@ func _make_retail_icon_only(button: Button) -> void:
 func _toggle_powers_palette() -> void:
 	powers_palette.visible = not powers_palette.visible
 	score_overlay.visible = false
+	# The spellbook is its own screen; the control-bar cluster hides while
+	# it is open so the palantir frame does not bleed through the backdrop.
+	var cluster_visible := not powers_palette.visible
+	if minimap != null and minimap.get_parent() != null:
+		(minimap.get_parent() as CanvasItem).visible = cluster_visible
+	if retail_control_bar_frame != null:
+		retail_control_bar_frame.visible = cluster_visible and retail_control_bar_bound
+	if command_panel != null:
+		command_panel.visible = cluster_visible
+	if retail_side_command_bar != null and not cluster_visible:
+		retail_side_command_bar.visible = false
+	if powers_palette.visible:
+		powers_opened.emit()
 	ui_sound_requested.emit("Gui_PalantirChoosePowerClick" if powers_palette.visible else "Gui_CloseSpellStoreClick")
 
 
