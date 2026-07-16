@@ -9,6 +9,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "proof-gate-common.ps1")
 . (Join-Path $PSScriptRoot "m2-oracle-common.ps1")
+. (Join-Path $PSScriptRoot "m2-reliability-evidence-common.ps1")
 
 $gate = "M2_RELIABILITY"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
@@ -84,18 +85,10 @@ try {
     Assert-ProofTrue ([string]$raw.bundleSha256 -eq $bundleSha256) "Live soak mounted another bundle."
     Assert-ProofTrue ([string]$raw.profileSha256 -eq $profileSha256) "Live soak used another profile."
     Assert-ProofTrue ([string]$raw.gitRevision -eq [string]$identity.revision -and [string]$raw.dirtyStateDigest -eq [string]$identity.dirtyStateDigest) "Live soak identity changed."
-    Assert-ProofTrue ([double]$raw.actualDurationSeconds -ge [double]$DurationSeconds) "Live soak ended before the requested active duration."
-    Assert-ProofTrue ([int]$raw.completedMatches -ge 3 -and [int]$raw.readyStarts -ge 3) "Live soak did not complete three matches/restarts."
-    Assert-ProofTrue (
-        @($raw.restartLoadDurationsMsec).Count -eq [int]$raw.completedMatches -and
-        [int]$raw.maximumRestartLoadMsec -gt 0 -and
-        [int]$raw.maximumRestartLoadMsec -le 5000
-    ) "Live soak restart loading exceeded the unchanged five-second initialization budget or lacks exact evidence."
-    Assert-ProofTrue ([string]$raw.viewport -eq '1920x1080' -and -not [string]::IsNullOrWhiteSpace([string]$raw.renderingDriver) -and -not [string]::IsNullOrWhiteSpace([string]$raw.videoAdapter)) "Live soak renderer evidence is incomplete."
+    Assert-M2ReliabilitySoakEvidence -Soak $raw -MinimumDurationSeconds $DurationSeconds -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes)
     Assert-ProofTrue ([double]$raw.averageFps -ge [double]$thresholds.minimumAverageFps) "Live soak average FPS missed the pre-frozen threshold."
     Assert-ProofTrue ([double]$raw.onePercentLowFps -ge [double]$thresholds.minimumOnePercentLowFps) "Live soak one-percent-low FPS missed the pre-frozen threshold."
     Assert-ProofTrue ([long]$raw.peakMemoryBytes -le [long]$thresholds.maximumPeakMemoryBytes) "Live soak peak memory exceeded the pre-frozen threshold."
-    Assert-ProofTrue ([long]$raw.memoryGrowthBytes -le [long]$thresholds.maximumMemoryGrowthBytes) "Live soak memory growth exceeded the pre-frozen threshold."
 
     $evidence = [ordered]@{
         schema = 'openbfme.m2-men-fords-reliability'

@@ -10,6 +10,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "proof-gate-common.ps1")
 . (Join-Path $PSScriptRoot "m2-oracle-common.ps1")
+. (Join-Path $PSScriptRoot "m2-reliability-evidence-common.ps1")
 
 $gate = "M2_MEN_FORDS_GATE"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
@@ -152,8 +153,7 @@ try {
     Assert-M2 ([int]$reliability.diagnosticCount -eq 0) "Reliability run recorded a forbidden diagnostic."
     Assert-M2 ([string]$reliability.thresholdsFrozenAtUtc -eq [string]$approval.createdAtUtc) "Reliability evidence was not bound to the pre-frozen approval."
     $soak = $reliability.liveSoak
-    Assert-M2 ([double]$soak.actualDurationSeconds -ge 1800.0 -and [int]$soak.completedMatches -ge 3 -and [int]$soak.readyStarts -ge 3) "Live soak did not complete 30 active minutes and three matches/restarts."
-    Assert-M2 ([string]$soak.viewport -eq '1920x1080' -and -not [string]::IsNullOrWhiteSpace([string]$soak.renderingDriver) -and -not [string]::IsNullOrWhiteSpace([string]$soak.videoAdapter)) "Live soak renderer evidence is incomplete."
+    Assert-M2ReliabilitySoakEvidence -Soak $soak -MinimumDurationSeconds 1800 -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes)
     $restarts = @($reliability.restarts)
     Assert-M2 ($restarts.Count -eq 3 -and @($restarts | ForEach-Object { [string]$_.signature } | Select-Object -Unique).Count -eq 1) "Three clean restarts do not share one deterministic signature."
     Assert-M2 (@($restarts | Where-Object { [string]$_.bundleSha256 -ne $bundleSha256 }).Count -eq 0) "A clean restart mounted another bundle."
@@ -165,7 +165,6 @@ try {
     Assert-M2 ([double]$soak.averageFps -ge [double]$thresholds.minimumAverageFps) "Live soak average FPS missed the frozen threshold."
     Assert-M2 ([double]$soak.onePercentLowFps -ge [double]$thresholds.minimumOnePercentLowFps) "Live soak one-percent-low FPS missed the frozen threshold."
     Assert-M2 ([long]$soak.peakMemoryBytes -le [long]$thresholds.maximumPeakMemoryBytes) "Live soak peak memory exceeded the frozen threshold."
-    Assert-M2 ([long]$soak.memoryGrowthBytes -le [long]$thresholds.maximumMemoryGrowthBytes) "Live soak memory growth exceeded the frozen threshold."
 
     $finalIdentity = Get-ProofWorkingTreeIdentity $repoRoot
     Assert-M2 ([string]$finalIdentity.revision -eq [string]$workingTreeIdentity.revision -and [string]$finalIdentity.dirtyStateDigest -eq [string]$workingTreeIdentity.dirtyStateDigest) "Working-tree identity changed during final acceptance."

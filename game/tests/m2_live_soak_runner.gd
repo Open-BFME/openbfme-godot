@@ -5,6 +5,8 @@ const SCENE_PATH := "res://scenes/retail_vertical_slice.tscn"
 const DEFAULT_DURATION_SECONDS := 1800.0
 const SAMPLE_INTERVAL_MSEC := 1000
 const READY_TIMEOUT_MSEC := 120000
+const MULTI_SECOND_STALL_MSEC := 2000.0
+const LATE_MEMORY_WINDOW_SAMPLES := 300
 
 var _failed := false
 
@@ -64,7 +66,7 @@ func _run() -> void:
 	var soak_started := Time.get_ticks_usec()
 	var active_elapsed_usec := 0
 	var previous_frame := soak_started
-	var next_sample := Time.get_ticks_msec()
+	var next_memory_sample_active_usec := 0
 	while float(active_elapsed_usec) / 1000000.0 < duration:
 		await process_frame
 		var now_usec := Time.get_ticks_usec()
@@ -72,9 +74,9 @@ func _run() -> void:
 		frame_msec.append(float(active_frame_usec) / 1000.0)
 		active_elapsed_usec += active_frame_usec
 		previous_frame = now_usec
-		if Time.get_ticks_msec() >= next_sample:
+		while active_elapsed_usec >= next_memory_sample_active_usec:
 			memory_samples.append(int(OS.get_static_memory_usage()))
-			next_sample += SAMPLE_INTERVAL_MSEC
+			next_memory_sample_active_usec += SAMPLE_INTERVAL_MSEC * 1000
 		if int(slice.simulation.winner) == -1:
 			continue
 		match_signatures.append(String(slice.simulation.state_signature()))
@@ -111,9 +113,18 @@ func _run() -> void:
 	var wall_elapsed_seconds := float(Time.get_ticks_usec() - soak_started) / 1000000.0
 	var average_fps := float(frame_msec.size()) / elapsed_seconds if elapsed_seconds > 0.0 else 0.0
 	var one_percent_low_fps := _one_percent_low_fps(frame_msec)
-	var peak_memory := 0
+	var sampled_peak_memory := 0
 	for sample in memory_samples:
-		peak_memory = maxi(peak_memory, sample)
+		sampled_peak_memory = maxi(sampled_peak_memory, sample)
+	var peak_memory := maxi(sampled_peak_memory, int(OS.get_static_memory_peak_usage()))
+	var maximum_frame_msec := 0.0
+	var multi_second_stall_count := 0
+	for sample in frame_msec:
+		maximum_frame_msec = maxf(maximum_frame_msec, sample)
+		if sample >= MULTI_SECOND_STALL_MSEC:
+			multi_second_stall_count += 1
+	var late_memory_start := maxi(0, memory_samples.size() - LATE_MEMORY_WINDOW_SAMPLES)
+	var late_memory_growth := memory_samples[-1] - memory_samples[late_memory_start]
 	var evidence := {
 		"schema": "openbfme.m2-men-fords-live-soak",
 		"schemaVersion": 0,
@@ -132,11 +143,19 @@ func _run() -> void:
 		"frameCount": frame_msec.size(),
 		"averageFps": average_fps,
 		"onePercentLowFps": one_percent_low_fps,
+		"maximumFrameMsec": maximum_frame_msec,
+		"multiSecondStallThresholdMsec": MULTI_SECOND_STALL_MSEC,
+		"multiSecondStallCount": multi_second_stall_count,
+		"memoryMetric": "godot-static-memory-usage",
+		"memorySampleIntervalMsec": SAMPLE_INTERVAL_MSEC,
 		"firstMemoryBytes": memory_samples[0],
 		"finalMemoryBytes": memory_samples[-1],
 		"peakMemoryBytes": peak_memory,
 		"memoryGrowthBytes": memory_samples[-1] - memory_samples[0],
+		"lateWindowMemoryGrowthBytes": late_memory_growth,
+		"lateWindowMemorySampleCount": memory_samples.size() - late_memory_start,
 		"memorySampleCount": memory_samples.size(),
+		"memorySamplesBytes": memory_samples,
 		"completedMatches": completed_matches,
 		"readyStarts": ready_restarts,
 		"matchSignatures": match_signatures,
@@ -153,11 +172,13 @@ func _run() -> void:
 		return
 	file.store_string(JSON.stringify(evidence, "  ", false) + "\n")
 	file.close()
-	print("M2_LIVE_SOAK_RESULT duration=%.3f frames=%d average_fps=%.3f one_percent_low_fps=%.3f peak_memory=%d final_memory=%d matches=%d starts=%d bundle=%s" % [
+	print("M2_LIVE_SOAK_RESULT duration=%.3f frames=%d average_fps=%.3f one_percent_low_fps=%.3f maximum_frame_msec=%.3f stalls=%d peak_memory=%d final_memory=%d matches=%d starts=%d bundle=%s" % [
 		elapsed_seconds,
 		frame_msec.size(),
 		average_fps,
 		one_percent_low_fps,
+		maximum_frame_msec,
+		multi_second_stall_count,
 		peak_memory,
 		memory_samples[-1],
 		completed_matches,

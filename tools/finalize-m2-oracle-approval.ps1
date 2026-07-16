@@ -10,6 +10,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "proof-gate-common.ps1")
 . (Join-Path $PSScriptRoot "m2-oracle-common.ps1")
+. (Join-Path $PSScriptRoot "m2-reliability-evidence-common.ps1")
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $context = Get-M2OracleContext $repoRoot
@@ -56,11 +57,13 @@ Assert-M2OracleTrue (
     [long]$reliabilityThresholds.maximumMemoryGrowthBytes -eq [long]$thresholds.maximumMemoryGrowthBytes
 ) "Reliability evidence threshold snapshot changed."
 $soak = $reliability.liveSoak
-Assert-M2OracleTrue ([double]$soak.actualDurationSeconds -ge 1800 -and [int]$soak.completedMatches -ge 3 -and [int]$soak.readyStarts -ge 3) "Reliability evidence lacks 30 active minutes and three completed matches/restarts."
+Assert-M2ReliabilitySoakEvidence -Soak $soak -MinimumDurationSeconds 1800 -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes)
+$restarts = @($reliability.restarts)
+Assert-M2OracleTrue ($restarts.Count -eq 3 -and @($restarts | ForEach-Object { [string]$_.signature } | Select-Object -Unique).Count -eq 1) "Three clean full-match restarts do not share one deterministic signature."
+Assert-M2OracleTrue (@($restarts | Where-Object { [string]$_.bundleSha256 -ne $context.bundleSha256 }).Count -eq 0) "A clean full-match restart mounted another bundle."
 Assert-M2OracleTrue ([double]$soak.averageFps -ge [double]$thresholds.minimumAverageFps) "Average FPS missed the pre-frozen threshold."
 Assert-M2OracleTrue ([double]$soak.onePercentLowFps -ge [double]$thresholds.minimumOnePercentLowFps) "One-percent-low FPS missed the pre-frozen threshold."
 Assert-M2OracleTrue ([long]$soak.peakMemoryBytes -le [long]$thresholds.maximumPeakMemoryBytes) "Peak memory exceeded the pre-frozen threshold."
-Assert-M2OracleTrue ([long]$soak.memoryGrowthBytes -le [long]$thresholds.maximumMemoryGrowthBytes) "Memory growth exceeded the pre-frozen threshold."
 
 $approval.captureManifestSha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $approval.reliabilityEvidenceSha256 = (Get-FileHash -LiteralPath $reliabilityPath -Algorithm SHA256).Hash.ToLowerInvariant()
