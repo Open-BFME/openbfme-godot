@@ -1301,6 +1301,11 @@ class W3dStaticPipelineTests(unittest.TestCase):
             target.unlink()
             self.assertIsNone(pipeline._copy_w3d_cache_hit(key, target))
             self.assertFalse(target.exists())
+            target.write_bytes(expected)
+            pipeline._populate_w3d_cache(key, target, log)
+            target.unlink()
+            self.assertEqual(pipeline._copy_w3d_cache_hit(key, target), log)
+            self.assertEqual(target.read_bytes(), expected)
 
 
 if __name__ == "__main__":

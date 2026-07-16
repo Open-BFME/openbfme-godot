@@ -809,6 +809,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_refresh_hud()
 				get_viewport().set_input_as_handled()
 				return
+			if key.keycode == KEY_F9:
+				hud.set_fps_overlay_visible(hud.fps_overlay == null or not hud.fps_overlay.visible)
+				get_viewport().set_input_as_handled()
+				return
 			if key.keycode >= KEY_1 and key.keycode <= KEY_9 and ready_ok:
 				var group := int(key.keycode - KEY_0)
 				if key.ctrl_pressed:
@@ -1091,19 +1095,29 @@ func _refresh_hud() -> void:
 		hud.show_outcome(simulation.winner)
 
 
+var _score_cache := {"units_trained": 0, "units_lost": 0, "resources_gathered": 0}
+var _score_event_index := 0
+
+
 func _player_score_values() -> Dictionary:
-	var result := {"units_trained": 0, "units_lost": 0, "resources_gathered": 0}
-	for event in simulation.events:
+	# Incremental: this runs every presentation frame, and the sim event log
+	# only grows. A full scan here degraded linearly with match age (the
+	# 3-8-minute progressive slowdown). Consuming only new events also counts
+	# units_lost while the defeated entity still exists in the corpse window.
+	var events: Array = simulation.events
+	while _score_event_index < events.size():
+		var event: Dictionary = events[_score_event_index]
+		_score_event_index += 1
 		var kind := String(event.get("kind", ""))
 		if kind == "production.complete" and int(event.get("team", -1)) == 0:
-			result.units_trained += 1
+			_score_cache.units_trained += 1
 		elif kind == "economy.payout" and int(event.get("team", -1)) == 0:
-			result.resources_gathered += int(event.get("amount", 0))
+			_score_cache.resources_gathered += int(event.get("amount", 0))
 		elif kind == "battalion.defeated":
 			var defeated: Dictionary = simulation.entities.get(int(event.get("target_id", 0)), {})
 			if int(defeated.get("team", -1)) == 0:
-				result.units_lost += 1
-	return result
+				_score_cache.units_lost += 1
+	return _score_cache
 
 
 func _assign_group(group: int) -> void:
@@ -1297,6 +1311,8 @@ func reset_match() -> void:
 		return
 	simulation.setup(source_map_data.simulation_configuration(), gameplay_rules)
 	simulation_paused = false
+	_score_cache = {"units_trained": 0, "units_lost": 0, "resources_gathered": 0}
+	_score_event_index = 0
 	if is_inside_tree():
 		get_tree().paused = false
 	selected_structure_id = 0

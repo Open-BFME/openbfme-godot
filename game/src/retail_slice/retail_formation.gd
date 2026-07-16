@@ -17,6 +17,7 @@ extends RefCounted
 ## camera, reduced cadence at distance, and not at all off-screen.
 
 const CATCH_UP_FACTOR := 1.35
+const COMBAT_CATCH_UP_FACTOR := 1.9
 const ARRIVE_RADIUS := 1.1
 const SETTLE_DISTANCE := 0.14
 const SEPARATION_RADIUS := 0.42
@@ -55,6 +56,10 @@ func notify_heading(target_yaw: float) -> void:
 	if absf(wrapf(target_yaw - _last_heading_yaw, -PI, PI)) >= REASSIGN_HEADING_RADIANS:
 		_reassign_pending = true
 	_last_heading_yaw = target_yaw
+
+
+func request_reassign() -> void:
+	_reassign_pending = true
 
 
 func slot_index(member_index: int) -> int:
@@ -135,7 +140,9 @@ func _steer_members(delta: float) -> void:
 		var target: Vector3 = battalion.member_presentation_target(slot_index(member_index))
 		var offset := Vector3(target.x - visual.position.x, 0.0, target.z - visual.position.z)
 		var distance := offset.length()
-		var speed_cap := locomotor_speed * CATCH_UP_FACTOR
+		# Combat urgency: members hustle into the attack spread instead of
+		# strolling into position while the enemy waits.
+		var speed_cap := locomotor_speed * (COMBAT_CATCH_UP_FACTOR if state == "attack" else CATCH_UP_FACTOR)
 		var desired_speed := speed_cap
 		if distance < ARRIVE_RADIUS:
 			desired_speed = speed_cap * (distance / ARRIVE_RADIUS)

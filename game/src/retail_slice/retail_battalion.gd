@@ -374,11 +374,20 @@ func _build_markers() -> void:
 
 
 func set_selected(value: bool) -> void:
+	var was_selected := selected
 	selected = value and health_ratio > 0.0
 	if _selection_ring != null:
 		_selection_ring.visible = selected and production_exit_progress >= 1.0
 	if source_selection_decal != null:
 		source_selection_decal.set_selected(selected and production_exit_progress >= 1.0)
+	if selected and not was_selected and current_state == "idle" and String(clip_map.get("selectionTransition", "")) != "":
+		# Retail plays the at-attention acknowledgement when an idle battalion
+		# is selected; members snap to attention one-shot, then return to idle.
+		for member_index in range(member_count):
+			if float(member_health_ratios.get(member_index, 0.0)) <= 0.0:
+				continue
+			if String(member_action_states.get(member_index, "idle")) == "idle":
+				_play_member_state(member_index, "selectionTransition", -1, true)
 	_refresh_member_overlays()
 
 
@@ -709,6 +718,10 @@ func set_action_state(state: String, force: bool = false, action_token: int = -1
 	var token_changed := normalized == "attack" and action_token >= 0 and action_token != _last_action_token
 	if normalized == current_state and not force and not token_changed:
 		return
+	if normalized == "attack" and current_state != "attack":
+		# Entering combat: members claim the nearest slot of the attack spread
+		# immediately instead of finishing a formation walk first.
+		formation.request_reassign()
 	current_state = normalized
 	if action_token >= 0:
 		_last_action_token = action_token
@@ -975,6 +988,16 @@ func _process(_delta: float) -> void:
 		return
 	for member_index in range(member_count):
 		if float(member_health_ratios.get(member_index, 1.0)) <= 0.0:
+			continue
+		if String(member_action_states.get(member_index, "")) == "selectionTransition":
+			# The at-attention acknowledgement is one-shot; settle back to idle.
+			var attention_playing := false
+			for player_value in member_animation_players.get(member_index, []):
+				if (player_value as AnimationPlayer).is_playing():
+					attention_playing = true
+					break
+			if not attention_playing:
+				_play_member_state(member_index, "idle", -1, false)
 			continue
 		var requested := String(member_current_clips.get(member_index, ""))
 		for player_value in member_animation_players.get(member_index, []):

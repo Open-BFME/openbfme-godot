@@ -2162,6 +2162,7 @@ class ImportPipeline:
         self._conversion_cache_lock = threading.Lock()
         self._conversion_key_locks: dict[str, threading.Lock] = {}
         self._w3d_batch_tools: dict[str, Any] | None = None
+        self._w3d_final_attestation: dict[str, Any] | None = None
         self._blender_tree_verified = False
         self._python_runtime_report: dict[str, Any] = {}
 
@@ -3109,16 +3110,25 @@ class ImportPipeline:
             .expanduser()
             .resolve()
         )
-        value = git_revision(plugin)
-        submodule_value = git_revision(plugin, "io_mesh_w3d/blender_addon_updater")
+        final_attestation = getattr(self, "_w3d_final_attestation", None)
+        final_plugin = final_attestation.get("plugin", {}) if final_attestation else {}
+        value = final_plugin.get("commit") or git_revision(plugin)
+        submodule_value = final_plugin.get("submodule_commit") or git_revision(
+            plugin, "io_mesh_w3d/blender_addon_updater"
+        )
         if value:
             from .bootstrap import _reject_python_bytecode
 
-            _reject_python_bytecode(plugin, "OpenSAGE W3D plugin")
+            if final_attestation is None:
+                _reject_python_bytecode(plugin, "OpenSAGE W3D plugin")
             report["opensage_w3d_plugin"] = {
                 "commit": value,
                 "submodule_commit": submodule_value,
-                "worktree_clean": git_worktree_clean(plugin),
+                "worktree_clean": bool(
+                    final_attestation.get("plugin_worktree_clean", False)
+                    if final_attestation is not None
+                    else git_worktree_clean(plugin)
+                ),
                 "python_bytecode_free": True,
             }
         return report
@@ -3706,11 +3716,17 @@ class ImportPipeline:
         plugin = Path(tools["plugin"])
         _reject_tree_links(blender.parent, "Blender portable tree")
         _reject_python_bytecode(blender.parent, "Blender portable tree")
-        _attest_opensage_plugin_checkout(plugin)
+        plugin_attestation = _attest_opensage_plugin_checkout(plugin)
         if directory_tree_sha256(blender.parent) != BLENDER_TREE_SHA256:
             raise RuntimeError("Blender portable tree changed during W3D conversion")
-        if not git_worktree_clean(plugin):
+        plugin_clean = git_worktree_clean(plugin)
+        if not plugin_clean:
             raise RuntimeError("OpenSAGE W3D plugin changed during W3D conversion")
+        self._w3d_final_attestation = {
+            "blender_tree_sha256": BLENDER_TREE_SHA256,
+            "plugin": plugin_attestation,
+            "plugin_worktree_clean": plugin_clean,
+        }
 
     def _convert_w3d_resources(
         self,
@@ -3771,6 +3787,10 @@ class ImportPipeline:
             with self._conversion_cache_lock:
                 self._conversion_cache_stats["misses"] += 1
 
+        def discard_invalid_entry(entry: Path) -> None:
+            if entry.is_dir():
+                shutil.rmtree(entry)
+
         entry = self.converted_cache_root / key
         metadata_path = entry / "metadata.json"
         cached_output = entry / "output.glb"
@@ -3783,6 +3803,7 @@ class ImportPipeline:
                 or metadata.get("output_size") != cached_output.stat().st_size
                 or metadata.get("output_sha256") != sha256_file(cached_output)
             ):
+                discard_invalid_entry(entry)
                 miss()
                 return None
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -3797,6 +3818,7 @@ class ImportPipeline:
                 raise RuntimeError("converted W3D cache copy failed byte verification")
             os.replace(temporary, target)
         except (FileNotFoundError, KeyError, OSError, TypeError, ValueError):
+            discard_invalid_entry(entry)
             miss()
             return None
         with self._conversion_cache_lock:
