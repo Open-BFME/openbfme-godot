@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import fnmatch
 from pathlib import Path
 
 import pytest
@@ -22,12 +23,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _build() -> dict:
+def _build(profile: dict | None = None) -> dict:
     return build_contract(
         ASSETS,
         json.loads(MANIFEST.read_text(encoding="utf-8")),
         json.loads(CATALOG.read_text(encoding="utf-8")),
-        json.loads(PROFILE.read_text(encoding="utf-8")),
+        profile if profile is not None else json.loads(PROFILE.read_text(encoding="utf-8")),
         GAME_DAT,
         opensage_root=OPENSAGE,
     )
@@ -92,3 +93,28 @@ def test_renderer_callbacks_have_exact_apt_and_retail_code_evidence() -> None:
     assert all(row["typedInterface"] and row["dataSource"] for row in callbacks)
     assert all(not row["genericDispatchAllowed"] for row in callbacks)
     assert all(row["eventNames"] == ["unload"] for row in contract["aptCallbackBindings"])
+
+
+def test_integrated_delta_requires_exact_path_coverage_not_only_pattern_count() -> None:
+    contract = _build()
+    delta_paths = contract["profileDeltaProposal"]["newPatterns"]
+    profile = json.loads(PROFILE.read_text(encoding="utf-8"))
+    resource = next(row for row in profile["resources"] if row["id"] == "men-hud-apt-runtime-bundle")
+    integrated = [
+        pattern
+        for pattern in resource["patterns"]
+        if any(fnmatch.fnmatchcase(path.casefold(), pattern.casefold()) for path in delta_paths)
+    ]
+    assert len(integrated) == 10
+    resource["patterns"][resource["patterns"].index(integrated[0])] = "unrelated/replacement.pattern"
+    with pytest.raises(ValueError, match="external-movie closure changed"):
+        _build(profile)
+
+
+def test_integrated_delta_rejects_overlapping_substitute_glob() -> None:
+    profile = json.loads(PROFILE.read_text(encoding="utf-8"))
+    resource = next(row for row in profile["resources"] if row["id"] == "men-hud-apt-runtime-bundle")
+    exact = "art/Textures/apt_InGameHeroSelect_1.tga"
+    resource["patterns"][resource["patterns"].index(exact)] = "art/Textures/apt_InGame*.tga"
+    with pytest.raises(ValueError, match="external-movie closure changed"):
+        _build(profile)

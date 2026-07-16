@@ -8,6 +8,7 @@ when any of the five authored movie loads or five native callbacks changes.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 from pathlib import Path
@@ -29,6 +30,19 @@ from .sage_apt import (
 
 
 SCHEMA = "openbfme.private-hud-external-movies-oracle"
+
+INTEGRATED_DELTA_PATTERNS = (
+    "art/Textures/apt_InGameHeroSelect_1.tga",
+    "art/Textures/apt_InGamePlanningMode_1.tga",
+    "InGameHelpBox.*",
+    "InGameHelpBox_geometry/*.ru",
+    "InGameHeroSelect.*",
+    "InGameHeroSelect_geometry/*.ru",
+    "InGamePlanningMode.*",
+    "InGamePlanningMode_geometry/*.ru",
+    "InGameSpellBook.*",
+    "InGameSpellBook_geometry/*.ru",
+)
 
 MOVIE_LOADS: tuple[dict[str, str], ...] = (
     {"movieId": "InGameSpellBook", "swf": "InGameSpellBook.swf", "target": "SpellBookUI"},
@@ -439,14 +453,43 @@ def build_contract(
         (row for row in profile.get("resources", []) if row.get("id") == "men-hud-apt-runtime-bundle"),
         None,
     )
-    if not isinstance(resource, Mapping) or len(resource.get("patterns", [])) != 189:
+    if not isinstance(resource, Mapping):
         raise ValueError("current sealed HUD resource changed")
+    resource_patterns = list(map(str, resource.get("patterns", [])))
     by_path = {str(row["path"]).casefold(): row for row in manifest.get("files", [])}
     new_patterns = sorted(
         {str(row["path"]) for row in all_delta_rows}, key=lambda value: (value.casefold(), value)
     )
+    integrated_delta_patterns = [
+        pattern
+        for pattern in resource_patterns
+        if any(
+            fnmatch.fnmatchcase(path.casefold(), pattern.casefold())
+            for path in new_patterns
+        )
+    ]
+    integrated_delta_paths = {
+        path.casefold()
+        for path in new_patterns
+        if any(
+            fnmatch.fnmatchcase(path.casefold(), pattern.casefold())
+            for pattern in integrated_delta_patterns
+        )
+    }
+    prior_patterns = [
+        pattern for pattern in resource_patterns if pattern not in integrated_delta_patterns
+    ]
+    if (
+        len(resource_patterns) != 199
+        or len(integrated_delta_patterns) != 10
+        or len(prior_patterns) != 189
+        or {pattern.casefold() for pattern in integrated_delta_patterns}
+        != {pattern.casefold() for pattern in INTEGRATED_DELTA_PATTERNS}
+        or integrated_delta_paths != {path.casefold() for path in new_patterns}
+    ):
+        raise ValueError("current sealed HUD external-movie closure changed")
     prospective_patterns = sorted(
-        set(map(str, resource["patterns"])) | set(new_patterns),
+        set(prior_patterns) | set(new_patterns),
         key=lambda value: (value.casefold(), value),
     )
     inventory = [
