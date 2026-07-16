@@ -24,6 +24,34 @@ const STRUCTURE_BUILD_RULES: Dictionary = {
 	"stable": {"cost": 600, "seconds": 45.0},
 	"fortress": {"cost": 5000, "seconds": 120.0},
 }
+# Pack-configured expansion (typed building-stats extraction): merged over the
+# base tables by configure_structure_rules and re-applied on every setup() so
+# match resets stay deterministic.
+var structure_build_rules: Dictionary = STRUCTURE_BUILD_RULES.duplicate(true)
+var structure_max_health: Dictionary = STRUCTURE_MAX_HEALTH.duplicate(true)
+var _configured_structure_rules: Dictionary = {}
+
+
+## extra: {kind: {"cost": int, "seconds": float, "health": int}} — values come
+## from the selected pack's building-stats document, never invented here.
+func configure_structure_rules(extra: Dictionary) -> void:
+	_configured_structure_rules = extra.duplicate(true)
+	_apply_configured_structure_rules()
+
+
+func _apply_configured_structure_rules() -> void:
+	structure_build_rules = STRUCTURE_BUILD_RULES.duplicate(true)
+	structure_max_health = STRUCTURE_MAX_HEALTH.duplicate(true)
+	for kind_value in _configured_structure_rules:
+		var kind := String(kind_value)
+		var row: Dictionary = _configured_structure_rules[kind_value]
+		var cost := int(row.get("cost", 0))
+		var seconds := float(row.get("seconds", 0.0))
+		var health := int(row.get("health", 0))
+		if cost <= 0 or seconds <= 0.0 or health <= 0:
+			continue
+		structure_build_rules[kind] = {"cost": cost, "seconds": seconds}
+		structure_max_health[kind] = health
 const PLAYER_STRUCTURE_BASE := 1000
 const ENEMY_STRUCTURE_BASE := 2000
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
@@ -156,6 +184,7 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_next_order_sequence = 1
 	_music_state = ""
 	last_route_rejection = ""
+	_apply_configured_structure_rules()
 	team_power_points = {PLAYER_TEAM: 1, ENEMY_TEAM: 1}
 	purchased_powers = {PLAYER_TEAM: [], ENEMY_TEAM: []}
 	_kills_toward_power_point = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
@@ -258,7 +287,7 @@ func _initialize_base_loop() -> void:
 		for index in range(STRUCTURE_KINDS.size()):
 			var kind := STRUCTURE_KINDS[index]
 			var position := Vector2(team_layout.get(kind, _fallback_structure_position(team, index)))
-			var maximum_health := int(STRUCTURE_MAX_HEALTH[kind])
+			var maximum_health := int(structure_max_health[kind])
 			var production: Array[String] = []
 			for unit_type in AI_PRODUCTION_PLAN:
 				var production_rule: Dictionary = UNIT_PRODUCTION_RULES[unit_type]
@@ -1126,7 +1155,7 @@ func _step_entity(id: int) -> void:
 func issue_construct(ids: Array[int], structure_kind: String, position: Vector2, dry_run: bool = false) -> Dictionary:
 	if not base_loop_enabled or winner != -1:
 		return {"ok": false, "reason": "match-unavailable"}
-	if not STRUCTURE_BUILD_RULES.has(structure_kind):
+	if not structure_build_rules.has(structure_kind):
 		return {"ok": false, "reason": "unsupported-structure"}
 	if playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, playable_outline):
 		return {"ok": false, "reason": "outside-playable-area"}
@@ -1148,7 +1177,7 @@ func issue_construct(ids: Array[int], structure_kind: String, position: Vector2,
 		break
 	if builder_id == 0:
 		return {"ok": false, "reason": "builder-required"}
-	var build_rule: Dictionary = STRUCTURE_BUILD_RULES[structure_kind]
+	var build_rule: Dictionary = structure_build_rules[structure_kind]
 	var cost := int(build_rule["cost"])
 	if resources_for_team(team) < cost:
 		return {"ok": false, "reason": "insufficient-resources", "cost": cost}
@@ -1156,7 +1185,7 @@ func issue_construct(ids: Array[int], structure_kind: String, position: Vector2,
 		return {"ok": true, "reason": "", "dry_run": true, "cost": cost}
 	var structure_id := _next_dynamic_structure_id
 	_next_dynamic_structure_id += 1
-	var maximum_health := int(STRUCTURE_MAX_HEALTH[structure_kind])
+	var maximum_health := int(structure_max_health[structure_kind])
 	var production: Array[String] = []
 	for unit_type in AI_PRODUCTION_PLAN:
 		var production_rule: Dictionary = UNIT_PRODUCTION_RULES[unit_type]

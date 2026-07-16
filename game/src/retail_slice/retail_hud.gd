@@ -174,7 +174,19 @@ const RETAIL_UNIT_ACTION_SPECS := [
 	{"action_id": "construct_archery_range", "button_name": "BuildArcheryRange", "image_id": "BGArcheryRange", "label_id": "CONTROLBAR:ConstructMenArcheryRange", "tooltip_id": "CONTROLBAR:ToolTipMenArcheryRange"},
 	{"action_id": "construct_stable", "button_name": "BuildStable", "image_id": "BGStables", "label_id": "CONTROLBAR:ConstructMenStable", "tooltip_id": "CONTROLBAR:ToolTipConstructMenStable"},
 	{"action_id": "construct_fortress", "button_name": "BuildFortress", "image_id": "BGFortress", "label_id": "CONTROLBAR:ConstructMenFortress", "tooltip_id": "CONTROLBAR:ToolTipConstructMenFortress"},
+	# M3 building set. Well and Statue have no retail tooltip string (source
+	# authors none); an empty tooltip_id reuses the label, mirroring retail.
+	{"action_id": "construct_workshop", "button_name": "BuildWorkshop", "image_id": "BGWorkshop", "label_id": "CONTROLBAR:ConstructMenWorkshop", "tooltip_id": "CONTROLBAR:ToolTipConstructMenWorkshop"},
+	{"action_id": "construct_battle_tower", "button_name": "BuildBattleTower", "image_id": "BGBattleTower", "label_id": "CONTROLBAR:ConstructMenSentryTower", "tooltip_id": "CONTROLBAR:ToolTipConstructMenSentryTower"},
+	{"action_id": "construct_well", "button_name": "BuildWell", "image_id": "BGWell", "label_id": "CONTROLBAR:ConstructMenWell", "tooltip_id": ""},
+	{"action_id": "construct_statue", "button_name": "BuildStatue", "image_id": "BGHeroicStatue", "label_id": "CONTROLBAR:ConstructMenStatue", "tooltip_id": ""},
+	{"action_id": "construct_blacksmith", "button_name": "BuildBlacksmith", "image_id": "BGBlacksmith", "label_id": "CONTROLBAR:ConstructMenBlacksmith", "tooltip_id": "CONTROLBAR:ToolTipConstructMenBlacksmith"},
+	{"action_id": "construct_marketplace", "button_name": "BuildMarketplace", "image_id": "BGMarketplace", "label_id": "CONTROLBAR:ConstructMenMarketPlace", "tooltip_id": "CONTROLBAR:ToolTipConstructMenMarketPlace"},
 ]
+# Constructs available before the pack's building-stats data is loaded: the
+# original five slice buildings. The slice extends this once typed stats for
+# the M3 buildings are read from the selected pack.
+const DEFAULT_AVAILABLE_CONSTRUCTS := ["farm", "barracks", "archery_range", "stable", "fortress"]
 const RETAIL_MEMBER_TO_HORDE := {
 	"bfme2.object.gondor-fighter": "bfme2.object.gondor-fighter-horde",
 	"bfme2.object.gondor-tower-guard": "bfme2.object.gondor-tower-guard",
@@ -216,6 +228,17 @@ var fps_toggle: CheckButton
 var command_cap_slider: HSlider
 var weak_fortress_toggle: CheckButton
 var _side_bar_fingerprint := "<unset>"
+var available_construct_kinds: Dictionary = {
+	"farm": true, "barracks": true, "archery_range": true, "stable": true, "fortress": true,
+}
+
+
+func set_available_constructs(kinds: Array) -> void:
+	available_construct_kinds = {}
+	for kind in kinds:
+		available_construct_kinds[String(kind)] = true
+	# Force the side bar to rebuild with the new construct set.
+	_side_bar_fingerprint = "<unset>"
 var production_queue_buttons: Array[Button] = []
 var power_points_label: Label
 var _powers_connectors: Control
@@ -400,7 +423,10 @@ func set_unit_selection_state(selected_ids: Array[int], entities: Dictionary) ->
 		var button := button_value as Button
 		var action_id := String(button.get_meta("action_id", ""))
 		var is_construct := action_id.begins_with("construct_")
-		button.visible = builders_only if is_construct else (has_units and not builders_only)
+		if is_construct:
+			button.visible = builders_only and available_construct_kinds.has(action_id.trim_prefix("construct_"))
+		else:
+			button.visible = has_units and not builders_only
 		button.disabled = not button.visible
 	_layout_command_sockets()
 	_refresh_side_command_bar(builders_only)
@@ -638,9 +664,13 @@ func _validate_retail_command(
 	var label_text := String(content_db.get_retail_string(label_id, _MISSING_RETAIL_STRING))
 	if label_text == _MISSING_RETAIL_STRING:
 		return {"error": "Required localized string '%s' is missing." % label_id}
-	var tooltip_text := String(content_db.get_retail_string(tooltip_id, _MISSING_RETAIL_STRING))
-	if tooltip_text == _MISSING_RETAIL_STRING:
-		return {"error": "Required localized string '%s' is missing." % tooltip_id}
+	# An empty tooltip_id means retail authors no description for this command;
+	# the label doubles as the tooltip (source behavior, not an invention).
+	var tooltip_text := label_text
+	if tooltip_id != "":
+		tooltip_text = String(content_db.get_retail_string(tooltip_id, _MISSING_RETAIL_STRING))
+		if tooltip_text == _MISSING_RETAIL_STRING:
+			return {"error": "Required localized string '%s' is missing." % tooltip_id}
 	image_validation["label"] = label_text
 	image_validation["tooltip"] = tooltip_text
 	return image_validation
@@ -1812,7 +1842,7 @@ func _build_pause_panel() -> void:
 	command_cap_slider = HSlider.new()
 	command_cap_slider.name = "CommandCapSlider"
 	command_cap_slider.min_value = 100
-	command_cap_slider.max_value = 600
+	command_cap_slider.max_value = 1000
 	command_cap_slider.step = 20
 	command_cap_slider.value = 200
 	command_cap_slider.value_changed.connect(func(value: float) -> void:
@@ -2306,6 +2336,8 @@ func _refresh_side_command_bar(builders_only: bool) -> void:
 			if not action_id.begins_with("construct_"):
 				continue
 			var kind := action_id.trim_prefix("construct_")
+			if not available_construct_kinds.has(kind):
+				continue
 			var button: Button = unit_action_buttons.get(action_id)
 			var title := kind.capitalize()
 			var desc := ""
