@@ -240,10 +240,10 @@ func present_authoritative_target_impact(
 func remove_target_impact(impact_event_token: int) -> bool:
 	if not _active_impacts.has(impact_event_token):
 		return false
-	var node := _active_impacts.get(impact_event_token) as Node
+	var node: Variant = _active_impacts.get(impact_event_token)
 	_active_impacts.erase(impact_event_token)
-	if node != null and is_instance_valid(node):
-		node.queue_free()
+	if is_instance_valid(node):
+		(node as Node).queue_free()
 	active_impact_node_count = _active_impacts.size()
 	_set_runtime_metadata()
 	return true
