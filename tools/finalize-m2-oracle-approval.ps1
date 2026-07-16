@@ -24,7 +24,7 @@ Assert-M2OracleTrue (-not [string]::IsNullOrWhiteSpace([string]$approval.created
 Assert-M2OracleTrue ([string]$approval.profileSha256 -eq $context.profileSha256 -and [string]$approval.bundleSha256 -eq $context.bundleSha256) "Approval targets another pack identity."
 Assert-M2OracleTrue ([string]$approval.gitRevision -eq $context.gitRevision -and [string]$approval.dirtyStateDigest -eq $context.dirtyStateDigest) "Approval targets another source identity."
 $thresholds = $approval.performanceThresholds
-Assert-M2OracleTrue ($null -ne $thresholds -and [double]$thresholds.minimumAverageFps -gt 0 -and [double]$thresholds.minimumOnePercentLowFps -gt 0 -and [long]$thresholds.maximumPeakMemoryBytes -gt 0 -and [long]$thresholds.maximumMemoryGrowthBytes -ge 0) "Frozen performance thresholds are invalid."
+Assert-M2OracleTrue ($null -ne $thresholds -and [double]$thresholds.minimumAverageFps -gt 0 -and [double]$thresholds.minimumOnePercentLowFps -gt 0 -and [long]$thresholds.maximumPeakMemoryBytes -gt 0 -and [long]$thresholds.maximumMemoryGrowthBytes -ge 0 -and [long]$thresholds.maximumLateWindowMemoryGrowthBytes -ge 0 -and [long]$thresholds.maximumLateWindowMemoryGrowthBytes -le [long]$thresholds.maximumMemoryGrowthBytes) "Frozen performance thresholds are invalid."
 
 $manifestPath = Assert-M2OracleContainedPath (Join-Path (Split-Path -Parent $approvalPath) ([string]$approval.captureManifest)) $context.oracleRoot
 Assert-M2OracleTrue (Test-Path -LiteralPath $manifestPath -PathType Leaf) "Capture manifest is missing."
@@ -54,10 +54,11 @@ Assert-M2OracleTrue (
     [double]$reliabilityThresholds.minimumAverageFps -eq [double]$thresholds.minimumAverageFps -and
     [double]$reliabilityThresholds.minimumOnePercentLowFps -eq [double]$thresholds.minimumOnePercentLowFps -and
     [long]$reliabilityThresholds.maximumPeakMemoryBytes -eq [long]$thresholds.maximumPeakMemoryBytes -and
-    [long]$reliabilityThresholds.maximumMemoryGrowthBytes -eq [long]$thresholds.maximumMemoryGrowthBytes
+    [long]$reliabilityThresholds.maximumMemoryGrowthBytes -eq [long]$thresholds.maximumMemoryGrowthBytes -and
+    [long]$reliabilityThresholds.maximumLateWindowMemoryGrowthBytes -eq [long]$thresholds.maximumLateWindowMemoryGrowthBytes
 ) "Reliability evidence threshold snapshot changed."
 $soak = $reliability.liveSoak
-Assert-M2ReliabilitySoakEvidence -Soak $soak -MinimumDurationSeconds 1800 -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes)
+Assert-M2ReliabilitySoakEvidence -Soak $soak -MinimumDurationSeconds 1800 -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes) -MaximumLateWindowMemoryGrowthBytes ([long]$thresholds.maximumLateWindowMemoryGrowthBytes)
 $restarts = @($reliability.restarts)
 Assert-M2OracleTrue ($restarts.Count -eq 3 -and @($restarts | ForEach-Object { [string]$_.signature } | Select-Object -Unique).Count -eq 1) "Three clean full-match restarts do not share one deterministic signature."
 Assert-M2OracleTrue (@($restarts | Where-Object { [string]$_.bundleSha256 -ne $context.bundleSha256 }).Count -eq 0) "A clean full-match restart mounted another bundle."

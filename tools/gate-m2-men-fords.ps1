@@ -152,16 +152,16 @@ try {
     Assert-M2 ([string]$reliability.gitRevision -eq [string]$workingTreeIdentity.revision -and [string]$reliability.dirtyStateDigest -eq [string]$workingTreeIdentity.dirtyStateDigest) "Reliability evidence targets another source identity."
     Assert-M2 ([int]$reliability.diagnosticCount -eq 0) "Reliability run recorded a forbidden diagnostic."
     Assert-M2 ([string]$reliability.thresholdsFrozenAtUtc -eq [string]$approval.createdAtUtc) "Reliability evidence was not bound to the pre-frozen approval."
+    $thresholds = $approval.performanceThresholds
+    Assert-M2 ($null -ne $thresholds) "Oracle approval has no frozen performance thresholds."
+    Assert-M2 ([double]$thresholds.minimumAverageFps -gt 0.0 -and [double]$thresholds.minimumOnePercentLowFps -gt 0.0 -and [long]$thresholds.maximumPeakMemoryBytes -gt 0 -and [long]$thresholds.maximumMemoryGrowthBytes -ge 0 -and [long]$thresholds.maximumLateWindowMemoryGrowthBytes -ge 0 -and [long]$thresholds.maximumLateWindowMemoryGrowthBytes -le [long]$thresholds.maximumMemoryGrowthBytes) "Oracle approval performance thresholds are invalid."
     $soak = $reliability.liveSoak
-    Assert-M2ReliabilitySoakEvidence -Soak $soak -MinimumDurationSeconds 1800 -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes)
+    Assert-M2ReliabilitySoakEvidence -Soak $soak -MinimumDurationSeconds 1800 -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes) -MaximumLateWindowMemoryGrowthBytes ([long]$thresholds.maximumLateWindowMemoryGrowthBytes)
     $restarts = @($reliability.restarts)
     Assert-M2 ($restarts.Count -eq 3 -and @($restarts | ForEach-Object { [string]$_.signature } | Select-Object -Unique).Count -eq 1) "Three clean restarts do not share one deterministic signature."
     Assert-M2 (@($restarts | Where-Object { [string]$_.bundleSha256 -ne $bundleSha256 }).Count -eq 0) "A clean restart mounted another bundle."
-    $thresholds = $approval.performanceThresholds
-    Assert-M2 ($null -ne $thresholds) "Oracle approval has no frozen performance thresholds."
-    Assert-M2 ([double]$thresholds.minimumAverageFps -gt 0.0 -and [double]$thresholds.minimumOnePercentLowFps -gt 0.0 -and [long]$thresholds.maximumPeakMemoryBytes -gt 0 -and [long]$thresholds.maximumMemoryGrowthBytes -ge 0) "Oracle approval performance thresholds are invalid."
     $reliabilityThresholds = $reliability.performanceThresholds
-    Assert-M2 ([double]$reliabilityThresholds.minimumAverageFps -eq [double]$thresholds.minimumAverageFps -and [double]$reliabilityThresholds.minimumOnePercentLowFps -eq [double]$thresholds.minimumOnePercentLowFps -and [long]$reliabilityThresholds.maximumPeakMemoryBytes -eq [long]$thresholds.maximumPeakMemoryBytes -and [long]$reliabilityThresholds.maximumMemoryGrowthBytes -eq [long]$thresholds.maximumMemoryGrowthBytes) "Reliability threshold snapshot changed."
+    Assert-M2 ([double]$reliabilityThresholds.minimumAverageFps -eq [double]$thresholds.minimumAverageFps -and [double]$reliabilityThresholds.minimumOnePercentLowFps -eq [double]$thresholds.minimumOnePercentLowFps -and [long]$reliabilityThresholds.maximumPeakMemoryBytes -eq [long]$thresholds.maximumPeakMemoryBytes -and [long]$reliabilityThresholds.maximumMemoryGrowthBytes -eq [long]$thresholds.maximumMemoryGrowthBytes -and [long]$reliabilityThresholds.maximumLateWindowMemoryGrowthBytes -eq [long]$thresholds.maximumLateWindowMemoryGrowthBytes) "Reliability threshold snapshot changed."
     Assert-M2 ([double]$soak.averageFps -ge [double]$thresholds.minimumAverageFps) "Live soak average FPS missed the frozen threshold."
     Assert-M2 ([double]$soak.onePercentLowFps -ge [double]$thresholds.minimumOnePercentLowFps) "Live soak one-percent-low FPS missed the frozen threshold."
     Assert-M2 ([long]$soak.peakMemoryBytes -le [long]$thresholds.maximumPeakMemoryBytes) "Live soak peak memory exceeded the frozen threshold."

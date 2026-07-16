@@ -12,6 +12,9 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateRange(0, [long]::MaxValue)]
     [long]$MaximumMemoryGrowthBytes,
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, [long]::MaxValue)]
+    [long]$MaximumLateWindowMemoryGrowthBytes,
     [string]$ApprovalPath = "",
     [string]$ManifestPath = "",
     [string]$ReliabilityPath = ""
@@ -58,6 +61,7 @@ $approval = [ordered]@{
         minimumOnePercentLowFps = $MinimumOnePercentLowFps
         maximumPeakMemoryBytes = $MaximumPeakMemoryBytes
         maximumMemoryGrowthBytes = $MaximumMemoryGrowthBytes
+        maximumLateWindowMemoryGrowthBytes = $MaximumLateWindowMemoryGrowthBytes
     }
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $approvalPath) | Out-Null

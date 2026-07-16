@@ -7,7 +7,9 @@ function Assert-M2ReliabilitySoakEvidence {
         [Parameter(Mandatory = $true)]
         [double]$MinimumDurationSeconds,
         [Parameter(Mandatory = $true)]
-        [long]$MaximumMemoryGrowthBytes
+        [long]$MaximumMemoryGrowthBytes,
+        [Parameter(Mandatory = $true)]
+        [long]$MaximumLateWindowMemoryGrowthBytes
     )
 
     function Assert-SoakEvidence {
@@ -78,5 +80,5 @@ function Assert-M2ReliabilitySoakEvidence {
     $lateMemoryGrowthBytes = $finalMemoryBytes - $sampleValues[$lateStartIndex]
     Assert-SoakEvidence ([long]$Soak.lateWindowMemoryGrowthBytes -eq $lateMemoryGrowthBytes) "Live soak late-window memory growth does not match its samples."
     Assert-SoakEvidence ($memoryGrowthBytes -le $MaximumMemoryGrowthBytes) "Live soak memory growth exceeded the pre-frozen threshold."
-    Assert-SoakEvidence ($lateMemoryGrowthBytes -le $MaximumMemoryGrowthBytes) "Live soak late-window memory growth exceeded the pre-frozen threshold."
+    Assert-SoakEvidence ($lateMemoryGrowthBytes -le $MaximumLateWindowMemoryGrowthBytes) "Live soak late-window memory growth exceeded the separately frozen stabilization threshold."
 }

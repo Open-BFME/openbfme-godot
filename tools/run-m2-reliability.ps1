@@ -52,7 +52,9 @@ try {
         [double]$thresholds.minimumAverageFps -gt 0.0 -and
         [double]$thresholds.minimumOnePercentLowFps -gt 0.0 -and
         [long]$thresholds.maximumPeakMemoryBytes -gt 0 -and
-        [long]$thresholds.maximumMemoryGrowthBytes -ge 0
+        [long]$thresholds.maximumMemoryGrowthBytes -ge 0 -and
+        [long]$thresholds.maximumLateWindowMemoryGrowthBytes -ge 0 -and
+        [long]$thresholds.maximumLateWindowMemoryGrowthBytes -le [long]$thresholds.maximumMemoryGrowthBytes
     ) "Pending oracle approval has invalid frozen performance thresholds."
     $godot = Resolve-ProofGodot $GodotPath $repoRoot
     $env:OPENBFME_CONTENT = $packRoot
@@ -85,7 +87,7 @@ try {
     Assert-ProofTrue ([string]$raw.bundleSha256 -eq $bundleSha256) "Live soak mounted another bundle."
     Assert-ProofTrue ([string]$raw.profileSha256 -eq $profileSha256) "Live soak used another profile."
     Assert-ProofTrue ([string]$raw.gitRevision -eq [string]$identity.revision -and [string]$raw.dirtyStateDigest -eq [string]$identity.dirtyStateDigest) "Live soak identity changed."
-    Assert-M2ReliabilitySoakEvidence -Soak $raw -MinimumDurationSeconds $DurationSeconds -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes)
+    Assert-M2ReliabilitySoakEvidence -Soak $raw -MinimumDurationSeconds $DurationSeconds -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes) -MaximumLateWindowMemoryGrowthBytes ([long]$thresholds.maximumLateWindowMemoryGrowthBytes)
     Assert-ProofTrue ([double]$raw.averageFps -ge [double]$thresholds.minimumAverageFps) "Live soak average FPS missed the pre-frozen threshold."
     Assert-ProofTrue ([double]$raw.onePercentLowFps -ge [double]$thresholds.minimumOnePercentLowFps) "Live soak one-percent-low FPS missed the pre-frozen threshold."
     Assert-ProofTrue ([long]$raw.peakMemoryBytes -le [long]$thresholds.maximumPeakMemoryBytes) "Live soak peak memory exceeded the pre-frozen threshold."
