@@ -132,6 +132,7 @@ func _build_clip_map(capability: Dictionary) -> void:
 		"death": _clips(states.get("death", {})),
 		"construct": _clips(states.get("construct", {})),
 		"victory": _clips(states.get("idle", {})),
+		"selectionTransition": _clips(states.get("selectionTransition", {})),
 	}
 	clip_modes.clear()
 	for state_name in ["idle", "move", "attack", "death"]:
@@ -793,6 +794,16 @@ func member_presentation_target(member_index: int, state: String = "") -> Vector
 		return base_slot
 	var forward := target_local / target_distance
 	var tangent := Vector2(-forward.y, forward.x)
+	if target is RetailStructure:
+		# Melee vs buildings: members surround the footprint along the facing
+		# arc instead of stacking into one face, deterministically by member
+		# index. Swing timing is already staggered by the sim's attack ticks.
+		var ring_radius := maxf(1.2, float(target.pick_radius) * 0.8)
+		var span := PI * 1.3
+		var fraction := (float(member_index) + 0.5) / float(maxi(1, member_count)) - 0.5
+		var around := forward.rotated(fraction * span)
+		var surround := target_local - around * ring_radius
+		return Vector3(surround.x, base_slot.y, surround.y)
 	var lane := base_slot.x
 	# Alternating the back two ranks prevents the engagement target from
 	# collapsing into three perfectly overlapping files while remaining fully

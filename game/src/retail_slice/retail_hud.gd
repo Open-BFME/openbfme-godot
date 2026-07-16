@@ -14,6 +14,8 @@ signal cancel_production_requested(queue_index: int)
 signal attack_move_requested
 signal stop_requested
 signal stance_requested
+signal command_cap_changed(value: int)
+signal weak_fortress_toggled(value: bool)
 signal construct_requested(structure_kind: String)
 signal music_volume_changed(value: float)
 signal voice_volume_changed(value: float)
@@ -208,6 +210,8 @@ var diagnostics_label: Label
 var music_slider: HSlider
 var match_clock_label: Label
 var fps_toggle: CheckButton
+var command_cap_slider: HSlider
+var weak_fortress_toggle: CheckButton
 var fps_overlay: Label
 var _frame_times: PackedFloat32Array = PackedFloat32Array()
 var voice_slider: HSlider
@@ -1580,6 +1584,27 @@ func _build_pause_panel() -> void:
 	fps_toggle.text = "Show FPS / frametime"
 	fps_toggle.toggled.connect(set_fps_overlay_visible)
 	column.add_child(fps_toggle)
+	var cap_label := Label.new()
+	cap_label.name = "CommandCapLabel"
+	cap_label.text = "Command point cap: 200"
+	cap_label.add_theme_color_override("font_color", Color("c8dbe4"))
+	column.add_child(cap_label)
+	command_cap_slider = HSlider.new()
+	command_cap_slider.name = "CommandCapSlider"
+	command_cap_slider.min_value = 100
+	command_cap_slider.max_value = 600
+	command_cap_slider.step = 20
+	command_cap_slider.value = 200
+	command_cap_slider.value_changed.connect(func(value: float) -> void:
+		cap_label.text = "Command point cap: %d" % int(value)
+		command_cap_changed.emit(int(value))
+	)
+	column.add_child(command_cap_slider)
+	weak_fortress_toggle = CheckButton.new()
+	weak_fortress_toggle.name = "WeakFortressToggle"
+	weak_fortress_toggle.text = "Testing: weak fortresses (1500 HP)"
+	weak_fortress_toggle.toggled.connect(func(value: bool) -> void: weak_fortress_toggled.emit(value))
+	column.add_child(weak_fortress_toggle)
 	_add_action_button(column, "Resume", func() -> void: pause_requested.emit())
 	_add_action_button(column, "Restart Battle", func() -> void: restart_requested.emit())
 	_add_action_button(column, "Return to Main Menu", func() -> void: main_menu_requested.emit())
@@ -1616,7 +1641,38 @@ func set_fps_overlay_visible(value: bool) -> void:
 	set_process(value or is_processing())
 
 
+var input_debug_label: Label
+
+
+func set_input_debug_visible(value: bool) -> void:
+	# Live input inspector (F8): shows which Control the mouse is actually
+	# over, so "dead button" reports can name the click-swallower directly.
+	if input_debug_label == null:
+		input_debug_label = Label.new()
+		input_debug_label.name = "InputDebug"
+		input_debug_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		input_debug_label.offset_left = -520
+		input_debug_label.offset_top = 80
+		input_debug_label.offset_right = -10
+		input_debug_label.offset_bottom = 130
+		input_debug_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		input_debug_label.add_theme_font_size_override("font_size", 14)
+		input_debug_label.add_theme_color_override("font_color", Color("ffd27a"))
+		input_debug_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		input_debug_label.z_index = 30
+		input_debug_label.process_mode = Node.PROCESS_MODE_ALWAYS
+		add_child(input_debug_label)
+	input_debug_label.visible = value
+	set_process(true)
+
+
 func _process(delta: float) -> void:
+	if input_debug_label != null and input_debug_label.visible:
+		var hovered := get_viewport().gui_get_hovered_control()
+		input_debug_label.text = "mouse %s\nhovered: %s" % [
+			get_viewport().get_mouse_position(),
+			str(hovered.get_path()) if hovered != null else "<world>",
+		]
 	if fps_overlay == null or not fps_overlay.visible:
 		return
 	_frame_times.append(delta * 1000.0)

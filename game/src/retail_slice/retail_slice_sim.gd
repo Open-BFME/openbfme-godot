@@ -1412,6 +1412,27 @@ func _living_member_count(row: Dictionary) -> int:
 	return result
 
 
+const STRUCTURE_BLOCK_RADIUS := {"fortress": 7.5, "farm": 4.5, "barracks": 4.5, "archery_range": 4.5, "stable": 4.5}
+
+
+func _deflect_around_structures(position: Vector2, attack_target_id: int) -> Vector2:
+	# Battalions slide around building footprints instead of clipping through
+	# them. The battalion's own attack target is exempt so melee can close in.
+	for structure_id in structure_ids():
+		if structure_id == attack_target_id:
+			continue
+		var structure_row: Dictionary = structures[structure_id]
+		if int(structure_row.get("health", 0)) <= 0:
+			continue
+		var radius := float(STRUCTURE_BLOCK_RADIUS.get(String(structure_row.get("structure_kind", "")), 4.5))
+		var center := Vector2(structure_row.get("position", Vector2.ZERO))
+		var offset := position - center
+		var distance := offset.length()
+		if distance < radius and distance > 0.001:
+			position = center + offset / distance * radius
+	return position
+
+
 func _step_route(row: Dictionary) -> void:
 	var route: Array = row["route"]
 	if route.is_empty():
@@ -1427,6 +1448,7 @@ func _step_route(row: Dictionary) -> void:
 		route.pop_front()
 	else:
 		position += position.direction_to(waypoint) * step_distance
+	position = _deflect_around_structures(position, int(row.get("target_id", 0)))
 	row["position"] = position
 	row["route"] = route
 	if route.is_empty():

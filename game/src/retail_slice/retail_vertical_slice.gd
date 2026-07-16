@@ -822,6 +822,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				hud.set_fps_overlay_visible(hud.fps_overlay == null or not hud.fps_overlay.visible)
 				get_viewport().set_input_as_handled()
 				return
+			if key.keycode == KEY_F8:
+				hud.set_input_debug_visible(hud.input_debug_label == null or not hud.input_debug_label.visible)
+				get_viewport().set_input_as_handled()
+				return
 			if key.keycode >= KEY_1 and key.keycode <= KEY_9 and ready_ok:
 				var group := int(key.keycode - KEY_0)
 				if key.ctrl_pressed:
@@ -1764,6 +1768,26 @@ func _build_hud() -> void:
 	hud.attack_move_requested.connect(_arm_attack_move)
 	hud.stop_requested.connect(_stop_selected_units)
 	hud.stance_requested.connect(_toggle_selected_stance)
+	hud.command_cap_changed.connect(func(value: int) -> void:
+		simulation.command_point_cap = maxi(60, value)
+		hud.set_feedback("Command point cap set to %d." % simulation.command_point_cap)
+	)
+	hud.weak_fortress_toggled.connect(func(value: bool) -> void:
+		# Testing convenience: cap both fortresses at 1500 HP so matches
+		# conclude quickly; unchecking restores full retail maximums.
+		for team in [0, 1]:
+			var fortress_id: int = simulation.fortress_id(team)
+			if fortress_id == 0:
+				continue
+			var fortress: Dictionary = simulation.structure(fortress_id)
+			var retail_maximum := int(fortress.get("retail_maximum_health", fortress.get("maximum_health", 5000)))
+			fortress["retail_maximum_health"] = retail_maximum
+			var new_maximum := 1500 if value else retail_maximum
+			fortress["maximum_health"] = new_maximum
+			fortress["health"] = mini(int(fortress.get("health", new_maximum)), new_maximum)
+		hud.set_feedback("Weak fortresses %s." % ("enabled" if value else "disabled"))
+		_sync_presentation()
+	)
 	hud.construct_requested.connect(_arm_construction)
 	hud.music_volume_changed.connect(func(value: float) -> void:
 		if audio_system != null: audio_system.set_music_volume(value, true)

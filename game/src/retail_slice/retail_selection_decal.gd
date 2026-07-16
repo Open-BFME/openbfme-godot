@@ -231,10 +231,18 @@ func _build_decal() -> void:
 		add_child(_decal)
 
 
+# Presentation calibration: the contract's 50-source-unit radius is the
+# horde-level decal value; drawing it per member merges into an oversized
+# blob. The rendered per-member radius is tightened while the source contract
+# values stay untouched; final parity is a capture-pair oracle item.
+const MEMBER_RADIUS_PRESENTATION_SCALE := 0.45
+
+
 func _build_merged_texture() -> void:
 	if _decal == null or _source_textures.size() != 2:
 		return
-	var radius_pixels := ceili(source_min_radius * PIXELS_PER_SOURCE_UNIT)
+	var member_radius := source_min_radius * MEMBER_RADIUS_PRESENTATION_SCALE
+	var radius_pixels := ceili(member_radius * PIXELS_PER_SOURCE_UNIT)
 	var diameter_pixels := radius_pixels * 2
 	var source_centers: Array[Vector2] = []
 	var minimum := Vector2(INF, INF)
@@ -245,8 +253,8 @@ func _build_merged_texture() -> void:
 		var position := _member_positions[index]
 		var center := Vector2(position.x, position.z) / _local_scale
 		source_centers.append(center)
-		minimum = minimum.min(center - Vector2.ONE * source_min_radius)
-		maximum = maximum.max(center + Vector2.ONE * source_min_radius)
+		minimum = minimum.min(center - Vector2.ONE * member_radius)
+		maximum = maximum.max(center + Vector2.ONE * member_radius)
 	if source_centers.is_empty():
 		_decal.texture_albedo = null
 		merged_texture_size = Vector2i.ZERO
