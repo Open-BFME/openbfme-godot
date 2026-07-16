@@ -12,6 +12,8 @@
 | [blender-addon-updater](https://github.com/OpenSAGE/blender-addon-updater) | Required plugin submodule | GPL-3.0; commit `981aa2984117a1c686b7fa40d086794ce1c7665e`; external tool cache only |
 | FFmpeg 8.1.1 essentials build | Legacy WAVE to deterministic PCM16 WAV | GPLv3 build; external tool cache; executable SHA-256 `228D7A8556258DE907FDB55F36850078EBC7680B84EC30D84EA02E99BEC1D1EB` |
 | [Pillow](https://python-pillow.github.io/) 12.2.0 | Deterministic DDS/TGA to PNG conversion/cropping | MIT-CMU; Python environment dependency; no Pillow code copied |
+| [fontTools](https://github.com/fonttools/fonttools) 4.61.1 | Authoritative TTF/OTF table and checksum validation | MIT; Python environment dependency; no fontTools code copied |
+| [defusedxml](https://github.com/tiran/defusedxml) 0.7.1 | External-resolution-free XML validation | PSFL; Python environment dependency; no defusedxml code copied |
 
 Default `data/base` pack loads without `F:\BFME2`.
 

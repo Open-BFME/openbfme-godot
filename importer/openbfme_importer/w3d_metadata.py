@@ -103,6 +103,16 @@ _CHUNK_NAMES: dict[int, str] = {
     0x00000440: "points",
     0x00000460: "light",
     0x00000500: "emitter",
+    0x00000501: "emitter-header",
+    0x00000502: "emitter-user-data",
+    0x00000503: "emitter-info",
+    0x00000504: "emitter-info-v2",
+    0x00000505: "emitter-properties",
+    0x00000509: "emitter-line-properties",
+    0x0000050A: "emitter-rotation-keyframes",
+    0x0000050B: "emitter-frame-keyframes",
+    0x0000050C: "emitter-blur-time-keyframes",
+    0x0000050D: "emitter-extra-info",
     0x00000600: "aggregate",
     0x00000700: "hlod",
     0x00000701: "hlod-header",
@@ -141,6 +151,7 @@ _CONTAINER_CHUNKS = frozenset(
         0x00000100,
         0x00000200,
         0x00000280,
+        0x00000500,
         0x00000700,
         0x00000702,
         0x00000705,
@@ -159,7 +170,6 @@ _UNSUPPORTED_CHUNKS = frozenset(
         0x00000420,
         0x00000440,
         0x00000460,
-        0x00000500,
         0x00000600,
         0x00000750,
         0x00000800,
@@ -706,12 +716,30 @@ class W3DMetadata:
         )
 
     def file_headers(self) -> W3DFileHeaders:
-        """Return exact logical header IDs for :func:`build_w3d_index`."""
+        """Return exact logical IDs for :func:`build_w3d_index`.
+
+        SAGE animation references occur in both raw ``AnimationName`` form and
+        ``Hierarchy.AnimationName`` form.  Both components are authored in the
+        W3D animation header, so expose both deterministic spellings rather
+        than making a later pass guess from physical filenames.
+        """
+
+        animation_ids: list[str] = []
+        for header in self.animation_headers:
+            animation_ids.append(header.identifier)
+            hierarchy = header.hierarchy_identifier
+            if (
+                hierarchy
+                and not header.identifier.casefold().startswith(
+                    hierarchy.casefold() + "."
+                )
+            ):
+                animation_ids.append(f"{hierarchy}.{header.identifier}")
 
         return W3DFileHeaders(
             virtual_path=self.virtual_path,
             model_ids=self.model_ids,
-            animation_ids=self.animation_ids,
+            animation_ids=tuple(animation_ids),
             hierarchy_ids=self.hierarchy_ids,
         )
 
@@ -981,11 +1009,16 @@ class _Scanner:
                 parent_header_offset,
                 parent_chunk_id,
             )
-            known_container = chunk_id in _CONTAINER_CHUNKS
+            # Retail emitter roots are containers only when the W3D
+            # subchunk flag says their payload is partitioned.  Preserve the
+            # historical unsupported diagnosis for unflagged opaque 0x500
+            # payloads instead of recursively interpreting arbitrary bytes.
+            opaque_emitter = chunk_id == 0x00000500 and not has_subchunks
+            known_container = chunk_id in _CONTAINER_CHUNKS and not opaque_emitter
             scan_children = known_container or has_subchunks
             if chunk_id in _METADATA_CHUNKS:
                 classification = "metadata"
-            elif chunk_id in _UNSUPPORTED_CHUNKS:
+            elif chunk_id in _UNSUPPORTED_CHUNKS or opaque_emitter:
                 classification = "unsupported"
             elif chunk_id in _CHUNK_NAMES:
                 classification = "container" if scan_children else "known-data"

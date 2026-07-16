@@ -13,7 +13,17 @@ from .catalog import CatalogEntry, InstallCatalog
 from .paths import safe_relative_parts
 
 
-ALLOWED_KINDS = {"data", "map", "model", "skeleton", "animation", "texture", "ui", "music", "audio"}
+ALLOWED_KINDS = {
+    "data",
+    "map",
+    "model",
+    "skeleton",
+    "animation",
+    "texture",
+    "ui",
+    "music",
+    "audio",
+}
 ALLOWED_CONVERTERS = {
     "copy",
     "hash-only",
@@ -29,11 +39,19 @@ ALLOWED_CONVERTERS = {
     "w3d-static",
     "map",
     "sage-map",
+    "sage-apt-runtime",
+    "retail-unit-rules",
+    "sage-particle-definition",
     "sage-terrain-materials",
 }
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 MAX_PROFILE_BYTES = 2 * 1024 * 1024
-MAX_RESOURCES = 256
+# The exact Fords closure alone is now larger than the original provisional
+# 256-rule ceiling once neutral lifecycles and particle definitions are kept as
+# independent, auditable resources.  Keep a hard bound, but size it for one
+# complete retail map/faction slice instead of forcing unrelated leaves into
+# ambiguous wildcard owners.
+MAX_RESOURCES = 512
 MAX_PATTERNS_PER_RESOURCE = 256
 MAX_PATH_LENGTH = 512
 W3D_DEPENDENCY_CONVERTERS = {
@@ -43,19 +61,25 @@ W3D_DEPENDENCY_CONVERTERS = {
 }
 W3D_INPUT_RESOURCE_IDS_OPTION = "inputResourceIds"
 W3D_EXCLUDED_OPTIONAL_MESHES_OPTION = "excludedOptionalMeshes"
+W3D_PROVEN_ROOT_RIGID_BAKE_OPTION = "provenRootRigidBake"
+W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION = "provenNoMotionAnimations"
+W3D_TEXTURE_OVERRIDES_OPTION = "textureOverrides"
+W3D_SOURCE_VARIANT_OF_OPTION = "sourceVariantOf"
 MAX_W3D_OPTIONAL_MESH_EXCLUSIONS = 64
+MAX_W3D_TEXTURE_OVERRIDES = 16
+MAX_W3D_NO_MOTION_ANIMATIONS = 16
 W3D_CLEAN_MESH_IDENTIFIER_PATTERN = re.compile(
     r"^[a-z0-9](?:[a-z0-9_]{0,126}[a-z0-9])?$"
 )
+W3D_TEXTURE_BASENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+W3D_TEXTURE_SUFFIXES = {".bmp", ".dds", ".jpeg", ".jpg", ".png", ".tga"}
 MAX_TERRAIN_MATERIAL_SYMBOLS = 4_096
 TERRAIN_MATERIAL_SYMBOL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 MAX_TEXTURE_ATLAS_CROPS = 64
-TEXTURE_ATLAS_LOGICAL_NAME_PATTERN = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-)
-TEXTURE_ATLAS_OUTPUT_PART_PATTERN = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-)
+TEXTURE_ATLAS_LOGICAL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+TEXTURE_ATLAS_OUTPUT_PART_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+PARTICLE_DEFINITION_KINDS = frozenset({"ParticleSystem", "FXParticleSystem"})
+PARTICLE_DEFINITION_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.+:-]{0,255}$")
 
 
 def _reject_json_constant(value: str) -> None:
@@ -83,6 +107,164 @@ def normalize_excluded_optional_meshes(value: Any) -> list[str]:
                 f"identifier: {identifier!r}"
             )
     return sorted(value)
+
+
+def normalize_w3d_texture_overrides(value: Any) -> list[dict[str, str]]:
+    """Validate exact job-local W3D texture aliases and return canonical records."""
+
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_W3D_TEXTURE_OVERRIDES:
+        raise ValueError(
+            f"{W3D_TEXTURE_OVERRIDES_OPTION} must be an array of 1.."
+            f"{MAX_W3D_TEXTURE_OVERRIDES} records"
+        )
+
+    normalized: list[dict[str, str]] = []
+    for record in value:
+        if not isinstance(record, dict) or set(record) != {
+            "authored",
+            "target",
+            "source",
+        }:
+            raise ValueError(
+                f"{W3D_TEXTURE_OVERRIDES_OPTION} records must contain exactly "
+                "authored, target, and source"
+            )
+        canonical: dict[str, str] = {}
+        for field in ("authored", "target", "source"):
+            basename = record[field]
+            try:
+                basename_parts = (
+                    safe_relative_parts(basename) if isinstance(basename, str) else ()
+                )
+            except ValueError:
+                basename_parts = ()
+            if (
+                not isinstance(basename, str)
+                or not W3D_TEXTURE_BASENAME_PATTERN.fullmatch(basename)
+                or len(basename_parts) != 1
+                or Path(basename).suffix.casefold() not in W3D_TEXTURE_SUFFIXES
+            ):
+                raise ValueError(
+                    f"{W3D_TEXTURE_OVERRIDES_OPTION} {field} must be a safe "
+                    "supported texture basename"
+                )
+            canonical[field] = basename.casefold()
+
+        if Path(canonical["authored"]).stem != Path(canonical["target"]).stem:
+            raise ValueError(
+                f"{W3D_TEXTURE_OVERRIDES_OPTION} authored and target stems must match"
+            )
+        if Path(canonical["target"]).suffix != Path(canonical["source"]).suffix:
+            raise ValueError(
+                f"{W3D_TEXTURE_OVERRIDES_OPTION} target and source suffixes must match"
+            )
+        if canonical["target"] == canonical["source"]:
+            raise ValueError(
+                f"{W3D_TEXTURE_OVERRIDES_OPTION} target and source must be distinct"
+            )
+        normalized.append(canonical)
+
+    normalized.sort(key=lambda item: (item["target"], item["source"], item["authored"]))
+    authored = [item["authored"] for item in normalized]
+    targets = [item["target"] for item in normalized]
+    sources = [item["source"] for item in normalized]
+    if len(set(authored)) != len(authored) or len(set(targets)) != len(targets):
+        raise ValueError(
+            f"{W3D_TEXTURE_OVERRIDES_OPTION} contains duplicate authored or target names"
+        )
+    if set(targets) & set(sources):
+        raise ValueError(
+            f"{W3D_TEXTURE_OVERRIDES_OPTION} cannot chain target and source names"
+        )
+    return normalized
+
+
+def normalize_w3d_no_motion_animations(value: Any) -> list[dict[str, Any]]:
+    """Validate exact header-only animation declarations and canonicalize order."""
+
+    if (
+        not isinstance(value, list)
+        or not 1 <= len(value) <= MAX_W3D_NO_MOTION_ANIMATIONS
+    ):
+        raise ValueError(
+            f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION} must be an array of 1.."
+            f"{MAX_W3D_NO_MOTION_ANIMATIONS} records"
+        )
+
+    normalized: list[dict[str, Any]] = []
+    folded_ids: set[str] = set()
+    required = {
+        "identifier",
+        "hierarchyIdentifier",
+        "frameCount",
+        "frameRate",
+        "compressed",
+        "modelIdentifier",
+    }
+    for record in value:
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION} records must be objects"
+            )
+        fields = set(record)
+        if fields not in (required, required | {"flavor"}):
+            raise ValueError(
+                f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION} records have unsupported fields"
+            )
+        canonical: dict[str, Any] = {}
+        for field in ("identifier", "hierarchyIdentifier", "modelIdentifier"):
+            identifier = record[field]
+            if not isinstance(identifier, str) or not identifier or "\0" in identifier:
+                raise ValueError(
+                    f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION}.{field} is invalid"
+                )
+            try:
+                encoded = identifier.encode("cp1252")
+            except UnicodeEncodeError as exc:
+                raise ValueError(
+                    f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION}.{field} is not CP1252"
+                ) from exc
+            if len(encoded) > 16:
+                raise ValueError(
+                    f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION}.{field} exceeds 16 bytes"
+                )
+            canonical[field] = identifier
+        key = canonical["identifier"].casefold()
+        if key in folded_ids:
+            raise ValueError(
+                f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION} contains duplicate identifiers"
+            )
+        folded_ids.add(key)
+        for field in ("frameCount", "frameRate"):
+            number = record[field]
+            if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+                raise ValueError(
+                    f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION}.{field} must be a positive integer"
+                )
+            canonical[field] = number
+        compressed = record["compressed"]
+        if type(compressed) is not bool:
+            raise ValueError(
+                f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION}.compressed must be a boolean"
+            )
+        canonical["compressed"] = compressed
+        if compressed:
+            flavor = record.get("flavor")
+            if (
+                isinstance(flavor, bool)
+                or not isinstance(flavor, int)
+                or not 0 <= flavor <= 0xFFFF
+            ):
+                raise ValueError(
+                    f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION}.flavor must be a 16-bit integer"
+                )
+            canonical["flavor"] = flavor
+        elif "flavor" in record:
+            raise ValueError(
+                f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION}.flavor is valid only for compressed headers"
+            )
+        normalized.append(canonical)
+    return sorted(normalized, key=lambda item: item["identifier"])
 
 
 def _validate_w3d_input_dependencies(resources: list["ResourceRule"]) -> None:
@@ -145,6 +327,58 @@ def _validate_w3d_input_dependencies(resources: list["ResourceRule"]) -> None:
         visit(resource_id)
 
 
+def _validate_w3d_source_variants(resources: list["ResourceRule"]) -> None:
+    """Allow one source to cook into distinct, explicitly proven W3D outputs."""
+
+    by_id = {resource.id: resource for resource in resources}
+    for resource in resources:
+        if W3D_SOURCE_VARIANT_OF_OPTION not in resource.options:
+            continue
+        owner_id = resource.options[W3D_SOURCE_VARIANT_OF_OPTION]
+        if not isinstance(owner_id, str) or not SLUG_PATTERN.fullmatch(owner_id):
+            raise ValueError(
+                f"resource {resource.id!r} has an invalid "
+                f"{W3D_SOURCE_VARIANT_OF_OPTION} resource id"
+            )
+        if resource.converter not in W3D_DEPENDENCY_CONVERTERS:
+            raise ValueError(
+                f"resource {resource.id!r} uses {W3D_SOURCE_VARIANT_OF_OPTION} "
+                "without a W3D bundle converter"
+            )
+        owner = by_id.get(owner_id)
+        if owner is None or owner is resource:
+            raise ValueError(
+                f"resource {resource.id!r} references an unknown or self "
+                f"{W3D_SOURCE_VARIANT_OF_OPTION}: {owner_id!r}"
+            )
+        if W3D_SOURCE_VARIANT_OF_OPTION in owner.options:
+            raise ValueError("W3D source variants cannot form chains")
+        if (
+            owner.kind != resource.kind
+            or owner.converter != resource.converter
+            or owner.patterns != resource.patterns
+            or owner.options.get("model") != resource.options.get("model")
+        ):
+            raise ValueError(
+                f"resource {resource.id!r} does not exactly share its W3D "
+                f"source contract with {owner_id!r}"
+            )
+        if (
+            owner.output is None
+            or resource.output is None
+            or owner.output.casefold() == resource.output.casefold()
+        ):
+            raise ValueError(
+                f"resource {resource.id!r} W3D source variant must have a "
+                "distinct concrete output"
+            )
+        if W3D_TEXTURE_OVERRIDES_OPTION not in resource.options:
+            raise ValueError(
+                f"resource {resource.id!r} W3D source variant has no proven "
+                f"{W3D_TEXTURE_OVERRIDES_OPTION} transformation"
+            )
+
+
 def _validate_terrain_material_options(resource: "ResourceRule") -> None:
     if resource.converter != "sage-terrain-materials":
         return
@@ -182,6 +416,46 @@ def _validate_terrain_material_options(resource: "ResourceRule") -> None:
         folded.add(key)
 
 
+def _validate_particle_definition_options(resource: "ResourceRule") -> None:
+    if resource.converter != "sage-particle-definition":
+        return
+    if (
+        len(resource.patterns) != 1
+        or resource.limit != 1
+        or resource.expected_count != 1
+    ):
+        raise ValueError(
+            f"resource {resource.id!r} sage-particle-definition requires exactly "
+            "one pattern with limit=1 and expected_count=1"
+        )
+    if (
+        resource.output is None
+        or Path(resource.output).suffix.casefold() != ".json"
+        or "{" in resource.output
+        or "}" in resource.output
+    ):
+        raise ValueError(
+            f"resource {resource.id!r} sage-particle-definition requires a .json output"
+        )
+    if set(resource.options) != {"kind", "name"}:
+        raise ValueError(
+            f"resource {resource.id!r} sage-particle-definition options must contain "
+            "exactly kind and name"
+        )
+    kind = resource.options["kind"]
+    name = resource.options["name"]
+    if kind not in PARTICLE_DEFINITION_KINDS:
+        raise ValueError(
+            f"resource {resource.id!r} has an unsupported particle definition kind"
+        )
+    if not isinstance(name, str) or not PARTICLE_DEFINITION_NAME_PATTERN.fullmatch(
+        name
+    ):
+        raise ValueError(
+            f"resource {resource.id!r} has an unsafe particle definition name"
+        )
+
+
 def normalize_texture_atlas_crops(
     crops: Any,
     output_directory: str,
@@ -210,13 +484,10 @@ def normalize_texture_atlas_crops(
                 "contain exactly logicalName, output, and crop"
             )
         logical_name = crop_record["logicalName"]
-        if (
-            not isinstance(logical_name, str)
-            or not TEXTURE_ATLAS_LOGICAL_NAME_PATTERN.fullmatch(logical_name)
-        ):
-            raise ValueError(
-                f"{context} has an unsafe texture atlas logicalName"
-            )
+        if not isinstance(
+            logical_name, str
+        ) or not TEXTURE_ATLAS_LOGICAL_NAME_PATTERN.fullmatch(logical_name):
+            raise ValueError(f"{context} has an unsafe texture atlas logicalName")
         logical_key = logical_name.casefold()
         if logical_key in logical_names:
             raise ValueError(
@@ -226,9 +497,7 @@ def normalize_texture_atlas_crops(
 
         output_name = crop_record["output"]
         if not isinstance(output_name, str) or len(output_name) > MAX_PATH_LENGTH:
-            raise ValueError(
-                f"{context} has an unsafe texture atlas crop output"
-            )
+            raise ValueError(f"{context} has an unsafe texture atlas crop output")
         try:
             output_parts = safe_relative_parts(output_name)
         except ValueError as exc:
@@ -243,14 +512,10 @@ def normalize_texture_atlas_crops(
             or not output_name.casefold().endswith(".png")
             or len(output_directory.rstrip("/\\") + "/" + output_name) > MAX_PATH_LENGTH
         ):
-            raise ValueError(
-                f"{context} has an unsafe texture atlas crop output"
-            )
+            raise ValueError(f"{context} has an unsafe texture atlas crop output")
         output_key = "/".join(part.casefold() for part in output_parts)
         if output_key in output_names:
-            raise ValueError(
-                f"{context} has duplicate texture atlas crop outputs"
-            )
+            raise ValueError(f"{context} has duplicate texture atlas crop outputs")
         output_names.add(output_key)
 
         crop = crop_record["crop"]
@@ -315,6 +580,22 @@ def _validate_texture_atlas_crop_options(resource: "ResourceRule") -> None:
 
 
 def _validate_hierarchical_w3d_options(resource: "ResourceRule") -> None:
+    if (
+        W3D_PROVEN_ROOT_RIGID_BAKE_OPTION in resource.options
+        and resource.converter != "w3d-hierarchical"
+    ):
+        raise ValueError(
+            f"resource {resource.id!r} uses "
+            f"{W3D_PROVEN_ROOT_RIGID_BAKE_OPTION} without w3d-hierarchical"
+        )
+    if (
+        W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION in resource.options
+        and resource.converter != "w3d-hierarchical"
+    ):
+        raise ValueError(
+            f"resource {resource.id!r} uses "
+            f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION} without w3d-hierarchical"
+        )
     if resource.converter != "w3d-hierarchical":
         return
     model = resource.options.get("model")
@@ -331,6 +612,18 @@ def _validate_hierarchical_w3d_options(resource: "ResourceRule") -> None:
     if required_equipment != []:
         raise ValueError(
             f"resource {resource.id!r} w3d-hierarchical forbids required equipment"
+        )
+    root_rigid_bake = resource.options.get(W3D_PROVEN_ROOT_RIGID_BAKE_OPTION, False)
+    if not isinstance(root_rigid_bake, bool):
+        raise ValueError(
+            f"resource {resource.id!r} w3d-hierarchical "
+            f"{W3D_PROVEN_ROOT_RIGID_BAKE_OPTION} must be a boolean"
+        )
+    if W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION in resource.options:
+        resource.options[W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION] = (
+            normalize_w3d_no_motion_animations(
+                resource.options[W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION]
+            )
         )
 
 
@@ -362,10 +655,14 @@ class ImportProfile:
     def load(cls, path: Path | str) -> "ImportProfile":
         source = Path(path).expanduser().resolve()
         if source.stat().st_size > MAX_PROFILE_BYTES:
-            raise ValueError(f"profile exceeds {MAX_PROFILE_BYTES} byte limit: {source}")
+            raise ValueError(
+                f"profile exceeds {MAX_PROFILE_BYTES} byte limit: {source}"
+            )
         payload = source.read_bytes()
         try:
-            value = json.loads(payload.decode("utf-8"), parse_constant=_reject_json_constant)
+            value = json.loads(
+                payload.decode("utf-8"), parse_constant=_reject_json_constant
+            )
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError(f"invalid profile JSON in {source}: {exc}") from exc
         if not isinstance(value, dict):
@@ -373,7 +670,10 @@ class ImportProfile:
         if value.get("format") != 1:
             raise ValueError(f"unsupported profile format in {source}")
         raw_resources = value.get("resources", [])
-        if not isinstance(raw_resources, list) or not 1 <= len(raw_resources) <= MAX_RESOURCES:
+        if (
+            not isinstance(raw_resources, list)
+            or not 1 <= len(raw_resources) <= MAX_RESOURCES
+        ):
             raise ValueError(f"profile must contain 1..{MAX_RESOURCES} resources")
         pack_value = value.get("pack")
         if not isinstance(pack_value, dict):
@@ -388,7 +688,9 @@ class ImportProfile:
                 raise ValueError("profile resource must be an object")
             resource_id = str(item["id"])
             if not SLUG_PATTERN.fullmatch(resource_id):
-                raise ValueError(f"resource id must be a bounded lowercase slug: {resource_id!r}")
+                raise ValueError(
+                    f"resource id must be a bounded lowercase slug: {resource_id!r}"
+                )
             if resource_id in ids:
                 raise ValueError(f"duplicate resource id: {resource_id}")
             ids.add(resource_id)
@@ -399,11 +701,16 @@ class ImportProfile:
             if converter not in ALLOWED_CONVERTERS:
                 raise ValueError(f"unsupported converter {converter!r}")
             raw_patterns = item.get("patterns", [])
-            if not isinstance(raw_patterns, list) or len(raw_patterns) > MAX_PATTERNS_PER_RESOURCE:
+            if (
+                not isinstance(raw_patterns, list)
+                or len(raw_patterns) > MAX_PATTERNS_PER_RESOURCE
+            ):
                 raise ValueError(
                     f"resource {resource_id!r} patterns must be an array of at most {MAX_PATTERNS_PER_RESOURCE}"
                 )
-            patterns = tuple(str(pattern).replace("\\", "/") for pattern in raw_patterns)
+            patterns = tuple(
+                str(pattern).replace("\\", "/") for pattern in raw_patterns
+            )
             if not patterns:
                 raise ValueError(f"resource {resource_id!r} has no patterns")
             if len({pattern.casefold() for pattern in patterns}) != len(patterns):
@@ -433,8 +740,12 @@ class ImportProfile:
                 )
             output = str(item["output"]) if item.get("output") else None
             if output is not None:
-                if len(output) > MAX_PATH_LENGTH or any(character in output for character in '<>"|?*'):
-                    raise ValueError(f"resource {resource_id!r} has an unsafe output path")
+                if len(output) > MAX_PATH_LENGTH or any(
+                    character in output for character in '<>"|?*'
+                ):
+                    raise ValueError(
+                        f"resource {resource_id!r} has an unsafe output path"
+                    )
                 safe_relative_parts(output)
             options = item.get("options", {})
             if not isinstance(options, dict):
@@ -451,6 +762,21 @@ class ImportProfile:
                         options[W3D_EXCLUDED_OPTIONAL_MESHES_OPTION]
                     )
                 )
+            if W3D_TEXTURE_OVERRIDES_OPTION in options:
+                if converter not in W3D_DEPENDENCY_CONVERTERS:
+                    raise ValueError(
+                        f"resource {resource_id!r} uses "
+                        f"{W3D_TEXTURE_OVERRIDES_OPTION} without a W3D bundle converter"
+                    )
+                if W3D_INPUT_RESOURCE_IDS_OPTION not in options:
+                    raise ValueError(
+                        f"resource {resource_id!r} uses "
+                        f"{W3D_TEXTURE_OVERRIDES_OPTION} without an explicit "
+                        f"{W3D_INPUT_RESOURCE_IDS_OPTION} closure"
+                    )
+                options[W3D_TEXTURE_OVERRIDES_OPTION] = normalize_w3d_texture_overrides(
+                    options[W3D_TEXTURE_OVERRIDES_OPTION]
+                )
             resources.append(
                 ResourceRule(
                     id=resource_id,
@@ -465,14 +791,18 @@ class ImportProfile:
                 )
             )
         _validate_w3d_input_dependencies(resources)
+        _validate_w3d_source_variants(resources)
         for resource in resources:
             _validate_hierarchical_w3d_options(resource)
+            _validate_particle_definition_options(resource)
             _validate_terrain_material_options(resource)
             _validate_texture_atlas_crop_options(resource)
         profile_id = str(value["id"])
         pack_id = str(pack_value["id"])
         if not SLUG_PATTERN.fullmatch(profile_id):
-            raise ValueError(f"profile id must be a bounded lowercase slug: {profile_id!r}")
+            raise ValueError(
+                f"profile id must be a bounded lowercase slug: {profile_id!r}"
+            )
         if not SLUG_PATTERN.fullmatch(pack_id):
             raise ValueError(f"pack id must be a bounded lowercase slug: {pack_id!r}")
         return cls(
@@ -506,7 +836,11 @@ class ResolvedProfile:
             item.rule.id
             for item in self.resources
             if item.rule.required
-            and (not item.entries or item.missing_patterns or item.count_error is not None)
+            and (
+                not item.entries
+                or item.missing_patterns
+                or item.count_error is not None
+            )
         )
 
     @property
@@ -515,7 +849,12 @@ class ResolvedProfile:
         for resource in self.resources:
             for entry in resource.entries:
                 unique[(entry.archive.casefold(), entry.name.casefold())] = entry
-        return tuple(sorted(unique.values(), key=lambda item: (item.archive.casefold(), item.name.casefold())))
+        return tuple(
+            sorted(
+                unique.values(),
+                key=lambda item: (item.archive.casefold(), item.name.casefold()),
+            )
+        )
 
 
 def resolve_profile(profile: ImportProfile, catalog: InstallCatalog) -> ResolvedProfile:
@@ -533,10 +872,15 @@ def resolve_profile(profile: ImportProfile, catalog: InstallCatalog) -> Resolved
                 missing_patterns.append(pattern)
             for entry in found:
                 matches[(entry.archive.casefold(), entry.name.casefold())] = entry
-        ordered = sorted(matches.values(), key=lambda item: (item.name.casefold(), item.archive.casefold()))
+        ordered = sorted(
+            matches.values(),
+            key=lambda item: (item.name.casefold(), item.archive.casefold()),
+        )
         count_error = None
         if rule.expected_count and len(ordered) != rule.expected_count:
-            count_error = f"expected {rule.expected_count} matches, found {len(ordered)}"
+            count_error = (
+                f"expected {rule.expected_count} matches, found {len(ordered)}"
+            )
         resources.append(
             ResolvedResource(
                 rule,

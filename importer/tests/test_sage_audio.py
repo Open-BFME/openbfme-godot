@@ -36,6 +36,35 @@ End
 
 
 class SageAudioTests(unittest.TestCase):
+    def test_soundeffects_and_voice_documents_form_one_exact_namespace(self) -> None:
+        soundeffects = b"""
+AudioEvent UnitSelect
+  Sounds = unit_select_a unit_select_b
+End
+AudioEvent HumanVoiceDie
+  Sounds = human_die
+End
+"""
+        voice = b"""
+Multisound UnitVoiceSelect
+  Subsounds = UnitSelect
+End
+"""
+        definitions = parse_sage_audio_definitions(soundeffects + b"\n" + voice)
+        closure = resolve_sage_audio_closure(
+            definitions, ["UnitVoiceSelect", "HumanVoiceDie"]
+        )
+        self.assertEqual(closure.root_ids, ("HumanVoiceDie", "UnitVoiceSelect"))
+        self.assertEqual(
+            tuple(item.id for item in closure.events), ("HumanVoiceDie", "UnitSelect")
+        )
+        self.assertEqual(
+            tuple(item.id for item in closure.multisounds), ("UnitVoiceSelect",)
+        )
+        self.assertEqual(
+            closure.sample_ids, ("human_die", "unit_select_a", "unit_select_b")
+        )
+
     def test_parse_and_resolve_typed_closure_deterministically(self) -> None:
         definitions = parse_sage_audio_definitions(SOURCE)
         closure = resolve_sage_audio_closure(definitions, ["soldierselectorattack"])

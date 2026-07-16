@@ -140,10 +140,12 @@ for the exact Godot, .NET, and Python paths selected on the current machine.
 
 ## Private BFME II retail importer
 
-The importer builds and selects a private Godot content pack from a user-owned BFME II
-1.06 installation. No retail or converted retail payload is written into this
-repository. The default work/cache is `%LOCALAPPDATA%\OpenBFME\retail-import`; the
-selected runtime bundle is under Godot's per-user `content-packs` directory.
+The importer builds and selects private Godot content packs from a user-owned BFME II
+1.06 installation. The checkout is private-first: the complete extracted effective
+view, conversion cache, and selected packs live inside this repository's ignored
+`.private` tree (`.private\retail-work` and `.private\content-packs`). Public release
+work is deferred until the private game works; that later export is code-only and
+excludes `.private` completely.
 
 ```bat
 run_importer.bat F:\BFME2
@@ -153,43 +155,20 @@ run_retail_slice.bat --test
 run_retail_pipeline_tests.bat
 ```
 
-### Retail-slice Stages 11-15
+### Current private conversion gate
 
-These are bounded implementation checkpoints in the private retail proof. They do not
-extend the formal definition of done or declare the product slice complete.
+The complete winning retail corpus has been extracted under `.private`; conversion is
+being made executable in one bounded gate first: Men versus Men on Fords of Isen II.
+That profile includes exact terrain, roads, map props, neutral structures, five Men
+building lifecycles, Soldier/Archer/Tower Guard/Knight presentation, particles,
+ambient audio, projectile evidence, and the APT/TGA Palantir closure. Unsupported
+engine semantics remain explicit blockers and private parity mode fails closed instead
+of substituting generic art.
 
-| Stage | Current private-slice implementation |
-|---|---|
-| 11 | Deterministic control groups 1-9 with assign/recall/prune/reset behavior and snapshot/signature coverage. |
-| 12 | Selected-order route line plus destination flag, backed by authoritative pending route/destination/order-sequence state; rejected orders are transactional. |
-| 13 | Fail-closed W3D helper/box filtering, proven right-hand weapon and left-hand shield roles, and source-derived Soldier pre-attack/cadence timing. |
-| 14 | Five structure roles per team with legal-safe procedural fallback presentation, Farm income, resources/command points, and a Barracks queue for one supported 15-member Gondor Soldier horde. |
-| 15 | Integrated base HUD, group strip, Soldier production, source-driven minimap, audio settings, simple enemy queue/attack behavior, Fortress outcome rules, and victory/defeat splash. |
-
-The current `men-fords-v0` proof contains a skinned Gondor Soldier with its 22-bone
-rig and 23 core clips, deterministic UI art, 35 PCM voice variants, six music states,
-and the exact four-file Fords source closure. Its bounded map cook emits the exact
-`415x353` heightmap, 18,325-cell passability mask, water geometry, 1,526 placements,
-14 waypoints, and empty script/trigger attestations without packaging the retail
-`.map`. Godot uses those cooked facts to build a bounded source-driven battlefield:
-a 2,385-vertex height/passability mesh, cooked standing-water and river geometry,
-exact player-start transforms, the named `ford1`/`ford2`/`ford3` routing gates, and 72
-generic markers sampled from source object placements. The playable four-battalion
-imported Soldier combat slice adds selection, movement, attack/combat/death, adaptive
-audio, HUD, and a minimap using the same source-derived coordinate transform. The
-Stage 14/15 base loop can add more imported Soldier battalions through its one-unit
-Barracks queue.
-
-Launch that private slice with `run_retail_slice.bat`. It is deliberately marked
-`vertical_slice_complete: false`: exact terrain-material blending, buildability,
-dynamic/building-aware navigation, map object models/materials, and complete oracle
-coverage remain. Gondor Archer, Tower Guard, and Knight are absent. The five structure
-roles are currently pre-placed simulation authority and use repository-authored
-procedural/legal-safe visuals whenever their private retail models are unresolved; they
-are not five completed imported building closures. Economy/production supports Farm
-payouts and Gondor Soldiers only, and the enemy behavior queues Soldiers and attacks but
-does not execute the complete Men-versus-Men build plan. Generic placement markers are
-explicitly not claimed as resolved retail models.
+Launch the currently selected private slice with `run_retail_slice.bat`. It remains
+`vertical_slice_complete: false` until the checklist in [DIRECTION.md](DIRECTION.md)
+passes on a freshly built pack and rendered Godot run. After that gate, the same
+deterministic converters expand across every base-game faction and multiplayer map.
 
 The generated bundle is reproducible from unchanged inputs and runs without BFME II,
 Blender, OpenSAGE, FFmpeg, DDS, W3D, BIG, or `.map` files. It is private,

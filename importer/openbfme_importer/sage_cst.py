@@ -321,7 +321,9 @@ _STATE_BLOCK_KEYS = frozenset(
         "animationstate",
         "armorset",
         "conditionstate",
+        "lodoptions",
         "locomotorset",
+        "meleebehavior",
         "modelconditionstate",
         "transitionstate",
         "weaponset",
@@ -331,6 +333,10 @@ _BARE_BLOCK_KINDS = frozenset(
     {
         "defaultmodelconditionstate",
         "idleanimationstate",
+        # Retail files contain LocomotorSet blocks without ``=`` and some use
+        # inconsistent mixed tab/space indentation, so indentation inference
+        # alone cannot safely identify their terminating End.
+        "locomotorset",
     }
 )
 
@@ -616,7 +622,11 @@ def _assignment_is_block(
     tokens: tuple[str, ...],
 ) -> bool:
     folded = key.casefold()
-    return folded in _STATE_BLOCK_KEYS or _looks_like_module(key, tokens)
+    return (
+        folded in _STATE_BLOCK_KEYS
+        or (folded == "addemotion" and bool(tokens) and tokens[0].casefold() == "override")
+        or _looks_like_module(key, tokens)
+    )
 
 
 def _bare_is_block(tokens: tuple[str, ...], line: _Line, following: _Line | None) -> bool:
@@ -694,6 +704,7 @@ def _parse_scope(
     budget: _Budget,
     owner: str,
     require_end: bool = True,
+    allow_includes: bool = False,
 ) -> tuple[tuple[SageBodyItem, ...], int]:
     if depth > budget.limits.max_depth:
         raise SageCstLimitError(f"SAGE nesting depth exceeds {budget.limits.max_depth} limit")
@@ -746,6 +757,11 @@ def _parse_scope(
             )
         include_match = _INCLUDE_DIRECTIVE.fullmatch(line.text)
         if include_match:
+            if not allow_includes:
+                raise SageCstSyntaxError(
+                    f"include directive inside object scope at "
+                    f"{virtual_path}:{line.number}"
+                )
             items.append(
                 _make_include_ref(
                     include_match.group(1),
@@ -776,6 +792,7 @@ def _parse_scope(
                     depth=depth + 1,
                     budget=budget,
                     owner=f"{kind} block",
+                    allow_includes=allow_includes,
                 )
                 items.append(
                     SageBlock(
@@ -825,6 +842,7 @@ def _parse_scope(
                 depth=depth + 1,
                 budget=budget,
                 owner=f"{kind} block",
+                allow_includes=allow_includes,
             )
             items.append(
                 SageBlock(
@@ -929,6 +947,7 @@ def parse_sage_document(
                 depth=1,
                 budget=budget,
                 owner=f"{kind} {name}",
+                allow_includes=True,
             )
             items.append(
                 SageObject(
@@ -983,6 +1002,7 @@ def parse_sage_body_fragment(
         budget=budget,
         owner="body fragment",
         require_end=False,
+        allow_includes=True,
     )
     if index != len(lines):
         raise SageCstSyntaxError(
@@ -1010,6 +1030,9 @@ def resolve_sage_documents(
     normalized virtual-root path.  If both identify different documents the
     include is rejected as ambiguous.  Matching is case-insensitive, while two
     supplied paths that differ only in case are rejected whenever referenced.
+    Includes encountered inside an object or nested block are parsed as body
+    fragments, retained as resolved evidence, and expanded inline without any
+    filesystem access by this API.
     """
 
     pairs = _document_pairs(documents)
@@ -1047,7 +1070,9 @@ def resolve_sage_documents(
 
     budget = _Budget(limits)
     parsed: dict[str, SageDocument] = {}
+    parsed_fragments: dict[str, SageBodyFragment] = {}
     documents_in_order: list[SageDocument] = []
+    fragments_in_order: list[SageBodyFragment] = []
     expanded_objects: list[SageObject] = []
     expanded_includes: list[SageIncludeRef] = []
     stack: list[str] = []
@@ -1063,7 +1088,18 @@ def resolve_sage_documents(
         documents_in_order.append(document)
         return document
 
-    def visit(path: str) -> None:
+    def parse_fragment(path: str) -> SageBodyFragment:
+        cached = parsed_fragments.get(path)
+        if cached is not None:
+            return cached
+        fragment = parse_sage_body_fragment(
+            normalized_sources[path], path, limits=limits, _budget=budget
+        )
+        parsed_fragments[path] = fragment
+        fragments_in_order.append(fragment)
+        return fragment
+
+    def push_include(path: str) -> None:
         if len(stack) >= limits.max_include_depth:
             raise SageCstLimitError(
                 f"SAGE include depth exceeds {limits.max_include_depth} limit"
@@ -1073,44 +1109,107 @@ def resolve_sage_documents(
             cycle = " -> ".join((*stack, path))
             raise SageIncludeError(f"include cycle detected: {cycle}")
         stack.append(path)
-        document = parse(path)
-        for item in document.items:
-            if isinstance(item, SageObject):
-                expanded_objects.append(item)
-                continue
 
-            relative = lookup(item.relative_virtual_path, context=item.raw_ref)
-            root = lookup(item.normalized_ref, context=item.raw_ref)
-            candidates = tuple(dict.fromkeys(value for value in (relative, root) if value is not None))
-            if not candidates:
-                raise SageIncludeError(
-                    f"missing include {item.raw_ref!r} from {item.source_virtual_path}:{item.line}"
-                )
-            if len(candidates) > 1:
-                raise SageIncludeError(
-                    f"ambiguous relative/root include {item.raw_ref!r} from "
-                    f"{item.source_virtual_path}:{item.line}"
-                )
-            resolved_path = candidates[0]
-            resolved_ref = SageIncludeRef(
-                raw_ref=item.raw_ref,
-                normalized_ref=item.normalized_ref,
-                relative_virtual_path=item.relative_virtual_path,
-                ordinal=item.ordinal,
-                source_virtual_path=item.source_virtual_path,
-                line=item.line,
-                resolved_virtual_path=resolved_path,
+    def resolve_include(item: SageIncludeRef) -> tuple[SageIncludeRef, str]:
+        relative = lookup(item.relative_virtual_path, context=item.raw_ref)
+        root = lookup(item.normalized_ref, context=item.raw_ref)
+        candidates = tuple(
+            dict.fromkeys(value for value in (relative, root) if value is not None)
+        )
+        if not candidates:
+            raise SageIncludeError(
+                f"missing include {item.raw_ref!r} from "
+                f"{item.source_virtual_path}:{item.line}"
             )
-            expanded_includes.append(resolved_ref)
-            visit(resolved_path)
-        stack.pop()
+        if len(candidates) > 1:
+            raise SageIncludeError(
+                f"ambiguous relative/root include {item.raw_ref!r} from "
+                f"{item.source_virtual_path}:{item.line}"
+            )
+        resolved_path = candidates[0]
+        resolved_ref = replace(item, resolved_virtual_path=resolved_path)
+        expanded_includes.append(resolved_ref)
+        return resolved_ref, resolved_path
 
-    visit(entry)
+    def reindex_scope(items: list[SageBodyItem]) -> tuple[SageBodyItem, ...]:
+        """Restore containing-scope ordinals after inline fragment splicing."""
+
+        indexed: list[SageBodyItem] = []
+        assignment_ordinal = 0
+        include_ordinal = 0
+        key_ordinals: dict[str, int] = {}
+        for item_ordinal, item in enumerate(items):
+            if isinstance(item, SageAssignment):
+                folded = item.key.casefold()
+                key_ordinal = key_ordinals.get(folded, 0)
+                key_ordinals[folded] = key_ordinal + 1
+                indexed.append(
+                    replace(
+                        item,
+                        ordinal=assignment_ordinal,
+                        key_ordinal=key_ordinal,
+                        item_ordinal=item_ordinal,
+                    )
+                )
+                assignment_ordinal += 1
+            elif isinstance(item, SageBlock):
+                indexed.append(replace(item, item_ordinal=item_ordinal))
+            elif isinstance(item, SageScript):
+                indexed.append(replace(item, item_ordinal=item_ordinal))
+            elif isinstance(item, SageIncludeRef):
+                indexed.append(replace(item, ordinal=include_ordinal))
+                include_ordinal += 1
+            else:  # pragma: no cover - the closed union makes this defensive.
+                raise TypeError(f"unexpected SAGE body item: {type(item).__name__}")
+        return tuple(indexed)
+
+    def expand_fragment(path: str) -> tuple[SageBodyItem, ...]:
+        push_include(path)
+        try:
+            return expand_body_items(parse_fragment(path).items)
+        finally:
+            stack.pop()
+
+    def expand_body_items(items: tuple[SageBodyItem, ...]) -> tuple[SageBodyItem, ...]:
+        expanded: list[SageBodyItem] = []
+        for item in items:
+            if isinstance(item, (SageAssignment, SageScript)):
+                expanded.append(item)
+            elif isinstance(item, SageBlock):
+                expanded.append(replace(item, items=expand_body_items(item.items)))
+            elif isinstance(item, SageIncludeRef):
+                resolved_ref, resolved_path = resolve_include(item)
+                # Keep the directive as evidence at its original position, then
+                # splice the caller-supplied fragment immediately after it.
+                expanded.append(resolved_ref)
+                expanded.extend(expand_fragment(resolved_path))
+            else:  # pragma: no cover - the closed union makes this defensive.
+                raise TypeError(f"unexpected SAGE body item: {type(item).__name__}")
+        return reindex_scope(expanded)
+
+    def visit_document(path: str) -> None:
+        push_include(path)
+        try:
+            document = parse(path)
+            for item in document.items:
+                if isinstance(item, SageObject):
+                    expanded_objects.append(
+                        replace(item, items=expand_body_items(item.items))
+                    )
+                    continue
+
+                _, resolved_path = resolve_include(item)
+                visit_document(resolved_path)
+        finally:
+            stack.pop()
+
+    visit_document(entry)
     return ResolvedSageCst(
         entry_virtual_path=entry,
         documents=tuple(documents_in_order),
         objects=tuple(expanded_objects),
         includes=tuple(expanded_includes),
+        fragments=tuple(fragments_in_order),
     )
 
 

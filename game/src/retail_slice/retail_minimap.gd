@@ -9,6 +9,11 @@ var source_map_data: RefCounted
 var map_bounds := Rect2(Vector2(-60.0, -45.0), Vector2(120.0, 90.0))
 var mapping_mode := "unconfigured"
 var uses_source_preview_as_background := false
+var source_preview: Texture2D
+var retail_parchment: Texture2D
+var private_parity_mode := false
+var parchment_base := Color.WHITE
+var parchment_ink := Color.BLACK
 var source_geometry_loaded := false
 var world_camera: Camera3D
 var camera_center := Vector2.ZERO
@@ -20,9 +25,34 @@ var last_center_request := Vector2.ZERO
 signal center_requested(world_position: Vector2)
 
 
-func configure(sim: RefCounted, map_data: RefCounted = null) -> void:
+func bind_retail_parchment(texture: Texture2D) -> bool:
+	retail_parchment = texture
+	private_parity_mode = texture != null
+	if texture != null:
+		var image := texture.get_image()
+		if image != null and not image.is_empty():
+			var lightest := Color.BLACK
+			var darkest := Color.WHITE
+			for y in range(0, image.get_height(), maxi(1, int(image.get_height() / 24.0))):
+				for x in range(0, image.get_width(), maxi(1, int(image.get_width() / 24.0))):
+					var sample := image.get_pixel(x, y)
+					if sample.a < 0.5:
+						continue
+					if sample.get_luminance() > lightest.get_luminance():
+						lightest = sample
+					if sample.get_luminance() < darkest.get_luminance():
+						darkest = sample
+			parchment_base = lightest
+			parchment_ink = darkest
+	queue_redraw()
+	return private_parity_mode
+
+
+func configure(sim: RefCounted, map_data: RefCounted = null, preview: Texture2D = null) -> void:
 	simulation = sim
 	source_map_data = map_data
+	source_preview = preview
+	uses_source_preview_as_background = false
 	if source_map_data != null and bool(source_map_data.ready):
 		map_bounds = source_map_data.local_bounds
 		mapping_mode = "source-derived-local-transform"
@@ -30,6 +60,7 @@ func configure(sim: RefCounted, map_data: RefCounted = null) -> void:
 	else:
 		mapping_mode = "fallback-schematic"
 		source_geometry_loaded = false
+		uses_source_preview_as_background = source_preview != null
 	camera_center = map_bounds.get_center()
 	queue_redraw()
 
@@ -73,12 +104,18 @@ func _draw() -> void:
 	var rect := Rect2(Vector2.ZERO, size)
 	var center := rect.get_center()
 	var radius := minf(rect.size.x, rect.size.y) * 0.47
-	draw_circle(center, radius, Color("0a1118"))
-	var arena := rect.grow(-14.0)
+	# The retail parchment disk carries its own edge falloff, so it fills the
+	# radar circle; the synthetic path keeps the historical inset.
+	var arena := rect.grow(-2.0) if retail_parchment != null else rect.grow(-14.0)
+	if retail_parchment != null:
+		draw_texture_rect(retail_parchment, arena, false, Color.WHITE)
+	elif uses_source_preview_as_background:
+		draw_texture_rect(source_preview, arena, false, Color.WHITE)
 	if source_geometry_loaded:
 		_draw_source_geometry(arena)
 	else:
-		draw_circle(center, maxf(1.0, radius - 8.0), Color("4f7339"))
+		if not private_parity_mode:
+			draw_circle(center, maxf(1.0, radius - 8.0), Color("4f7339"))
 	if simulation != null:
 		for id in simulation.entity_ids():
 			var entity: Dictionary = simulation.entity(id)
@@ -88,24 +125,38 @@ func _draw() -> void:
 			var color := Color("56b5ff") if int(entity["team"]) == 0 else Color("ff6259")
 			draw_circle(point, 4.5, Color("081018"))
 			draw_circle(point, 3.2, color)
+		for id in simulation.structure_ids():
+			var structure: Dictionary = simulation.structure(id)
+			if int(structure.get("health", 0)) <= 0:
+				continue
+			var point := _world_to_canvas(Vector2(structure["position"]), arena)
+			var color := Color("56b5ff") if int(structure["team"]) == 0 else Color("ff6259")
+			draw_rect(Rect2(point - Vector2(3.5, 3.5), Vector2(7.0, 7.0)), Color("081018"), true)
+			draw_rect(Rect2(point - Vector2(2.5, 2.5), Vector2(5.0, 5.0)), color, true)
 	_draw_camera_footprint(arena)
-	draw_arc(center, radius, 0.0, TAU, 96, Color("d5ba6a"), 2.0, true)
-	draw_arc(center, radius - 5.0, 0.0, TAU, 96, Color("625637"), 3.0, true)
+	if not private_parity_mode:
+		draw_arc(center, radius, 0.0, TAU, 96, Color("d5ba6a"), 2.0, true)
+		draw_arc(center, radius - 5.0, 0.0, TAU, 96, Color("625637"), 3.0, true)
 
 
 func _draw_source_geometry(arena: Rect2) -> void:
+	var land_color := parchment_base if private_parity_mode else Color("4f7339")
+	var ink_color := parchment_ink if private_parity_mode else Color("2d7998")
+	if private_parity_mode:
+		land_color.a = 0.0
+		ink_color.a = 0.48
 	var outline := PackedVector2Array()
 	for point in source_map_data.map_outline:
 		outline.append(_world_to_canvas(point, arena))
 	if outline.size() >= 3:
-		draw_colored_polygon(outline, Color("4f7339"))
+		draw_colored_polygon(outline, land_color)
 	for polygon_value in source_map_data.standing_water_polygons:
 		var source_polygon: PackedVector3Array = polygon_value
 		var polygon := PackedVector2Array()
 		for point in source_polygon:
 			polygon.append(_world_to_canvas(Vector2(point.x, point.z), arena))
 		if polygon.size() >= 3:
-			draw_colored_polygon(polygon, Color("2d7998"))
+			draw_colored_polygon(polygon, ink_color)
 	for river in source_map_data.river_strips:
 		var sections: Array = river.get("sections", [])
 		for index in range(sections.size() - 1):
@@ -117,14 +168,14 @@ func _draw_source_geometry(arena: Rect2) -> void:
 				_world_to_canvas(Vector2(second[1].x, second[1].z), arena),
 				_world_to_canvas(Vector2(first[1].x, first[1].z), arena),
 			])
-			draw_colored_polygon(strip, Color("2f7e9b"))
+			draw_colored_polygon(strip, ink_color)
 	for gate in source_map_data.ford_gates:
 		var edge_a := _world_to_canvas(Vector2(gate.get("edge_a", Vector2.ZERO)), arena)
 		var edge_b := _world_to_canvas(Vector2(gate.get("edge_b", Vector2.ZERO)), arena)
-		draw_line(edge_a, edge_b, Color("d0b875"), 4.0, true)
+		draw_line(edge_a, edge_b, parchment_base if private_parity_mode else Color("d0b875"), 4.0, true)
 	if outline.size() >= 3:
 		for index in range(outline.size()):
-			draw_line(outline[index], outline[(index + 1) % outline.size()], Color("779257"), 1.0, true)
+			draw_line(outline[index], outline[(index + 1) % outline.size()], parchment_ink if private_parity_mode else Color("779257"), 1.0, true)
 
 
 func _world_to_canvas(world: Vector2, arena: Rect2) -> Vector2:
@@ -162,6 +213,26 @@ func _visible_bounds() -> Rect2:
 
 func _draw_camera_footprint(arena: Rect2) -> void:
 	var center := _world_to_canvas(camera_center, arena)
+	if world_camera != null and is_instance_valid(world_camera):
+		var viewport_rect := world_camera.get_viewport().get_visible_rect()
+		var screen_corners := [
+			viewport_rect.position,
+			Vector2(viewport_rect.end.x, viewport_rect.position.y),
+			viewport_rect.end,
+			Vector2(viewport_rect.position.x, viewport_rect.end.y),
+		]
+		var projected := PackedVector2Array()
+		for screen_corner in screen_corners:
+			var origin := world_camera.project_ray_origin(screen_corner)
+			var direction := world_camera.project_ray_normal(screen_corner)
+			var hit: Variant = Plane(Vector3.UP, 0.35).intersects_ray(origin, direction)
+			if hit != null:
+				projected.append(_world_to_canvas(Vector2((hit as Vector3).x, (hit as Vector3).z), arena))
+		if projected.size() == 4:
+			projected.append(projected[0])
+			draw_polyline(projected, Color(0.92, 0.84, 0.55, 0.9), 1.6, true)
+			draw_circle(center, 1.8, Color("f0d47c"))
+			return
 	var visible_bounds := _visible_bounds()
 	var footprint_world := Vector2(visible_bounds.size.x * 0.17, visible_bounds.size.y * 0.14)
 	var half := footprint_world * 0.5

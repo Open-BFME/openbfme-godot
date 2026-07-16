@@ -455,6 +455,87 @@ End
         ):
             resolve_typed_visual_graph(cst, ["Marked"], _index())
 
+    def test_resolved_include_evidence_is_retained_but_spliced_visuals_are_traversed(self) -> None:
+        documents = {
+            "entry.ini": b'Object IncludedVisual\n #include "draw.inc"\nEnd\n',
+            "draw.inc": b'Draw = W3DScriptedModelDraw ModuleTag_Main\n #include "state.inc"\nEnd\n',
+            "state.inc": b'DefaultModelConditionState\n BeginScript\n  CurDrawableHideSubObject("BOW")\n EndScript\n #include "model.inc"\nEnd\n',
+            "model.inc": b"Model = BaseModel\n",
+        }
+
+        graph = resolve_typed_visual_documents(
+            "entry.ini", documents, ["IncludedVisual"], _index()
+        )
+
+        self.assertTrue(graph.complete)
+        self.assertEqual(len(graph.objects[0].draw_modules), 1)
+        self.assertEqual(
+            [reference.identifier for reference in graph.references],
+            ["BaseModel"],
+        )
+        self.assertEqual(graph.references[0].status, "resolved")
+
+    def test_authored_tga_resolves_only_to_unique_compiled_dds_stem(self) -> None:
+        documents = {
+            "entry.ini": b"""
+Object CompiledTexture
+  Draw = W3DScriptedModelDraw ModuleTag_Main
+    DefaultModelConditionState
+      Model = BaseModel
+      Texture = CompiledOnly.tga
+    End
+  End
+End
+"""
+        }
+        graph = resolve_typed_visual_documents(
+            "entry.ini",
+            documents,
+            ["CompiledTexture"],
+            _index(),
+            ["art/compiled/compiledonly.dds"],
+        )
+
+        self.assertTrue(graph.complete)
+        texture = next(reference for reference in graph.references if reference.kind == "texture")
+        self.assertEqual(texture.identifier, "CompiledOnly.tga")
+        self.assertEqual(
+            texture.physical_virtual_paths,
+            ("art/compiled/compiledonly.dds",),
+        )
+        self.assertIn(
+            "sage-compiled-texture:exact-tga-stem-to-dds",
+            texture.evidence,
+        )
+
+        ambiguous = resolve_typed_visual_documents(
+            "entry.ini",
+            documents,
+            ["CompiledTexture"],
+            _index(),
+            ["a/compiledonly.dds", "b/compiledonly.dds"],
+        )
+        unresolved = next(
+            reference for reference in ambiguous.unresolved if reference.kind == "texture"
+        )
+        self.assertEqual(unresolved.status, "ambiguous")
+        self.assertEqual(
+            unresolved.candidates,
+            ("a/compiledonly.dds", "b/compiledonly.dds"),
+        )
+
+        wrong_representation = resolve_typed_visual_documents(
+            "entry.ini",
+            documents,
+            ["CompiledTexture"],
+            _index(),
+            ["art/compiled/compiledonly.png"],
+        )
+        self.assertEqual(
+            next(reference for reference in wrong_representation.unresolved if reference.kind == "texture").status,
+            "missing",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

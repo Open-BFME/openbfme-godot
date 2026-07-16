@@ -6,6 +6,8 @@ from openbfme_importer.sage_cst import (
     SageAssignment,
     SageBlock,
     SageCstLimits,
+    SageIncludeRef,
+    SageScript,
     normalize_virtual_path,
     parse_sage_document,
     resolve_sage_documents,
@@ -97,6 +99,151 @@ End
         self.assertEqual(item.values("DisplayName"), ("Café",))
         self.assertEqual(item.values("Empty"), ("",))
 
+    def test_assignment_shaped_scalars_do_not_become_blocks_from_indentation(self) -> None:
+        # Retail files freely mix spaces and tabs at one semantic level.  A
+        # CommandSet followed by a tab-indented WeaponSet must remain a scalar;
+        # only explicit module/state grammar may turn an assignment into a block.
+        source = (
+            "Object GondorBarracks\n"
+            "  CommandSet = GondorBarracksCommandSet\n"
+            "\tWeaponSet\n"
+            "\t\tConditions = None\n"
+            "\tEnd\n"
+            "End\n"
+        ).encode("cp1252")
+
+        root = parse_sage_document(source, "data/object/barracks.ini").objects[0]
+        self.assertEqual([type(item) for item in root.items], [SageAssignment, SageBlock])
+        self.assertEqual(root.assignments[0].key, "CommandSet")
+        self.assertEqual(root.assignments[0].value, "GondorBarracksCommandSet")
+        self.assertEqual(root.blocks[0].kind, "WeaponSet")
+        self.assertEqual(root.blocks[0].values("Conditions"), ("None",))
+
+    def test_retail_melee_behavior_is_an_explicit_end_terminated_block(self) -> None:
+        source = (
+            "Object GondorFighterHorde\n"
+            "  Behavior = HordeContain ModuleTag_HordeContain\n"
+            "    MeleeBehavior = Amoeba\n"
+            "    End\n"
+            "    InitialPayload = GondorFighter 15\n"
+            "  End\n"
+            "  Behavior = PhysicsBehavior ModuleTag_PhysicsBehavior\n"
+            "    GravityMult = 1.0\n"
+            "  End\n"
+            "End\n"
+        ).encode("cp1252")
+
+        root = parse_sage_document(source, "data/object/menhordes.ini").objects[0]
+        self.assertEqual([block.kind for block in root.blocks], ["HordeContain", "PhysicsBehavior"])
+        contain = root.blocks[0]
+        self.assertEqual([block.kind for block in contain.blocks], ["MeleeBehavior"])
+        self.assertEqual(contain.blocks[0].header_tokens, ("Amoeba",))
+        self.assertEqual(contain.values("InitialPayload"), ("GondorFighter 15",))
+
+    def test_retail_override_emotion_is_a_block_but_plain_emotions_are_scalars(self) -> None:
+        source = (
+            "Object GondorHorde\n"
+            "  Behavior = EmotionTrackerUpdate Module_EmotionTracker\n"
+            "    AddEmotion = Terror_Base\n"
+            "    AddEmotion = OVERRIDE Taunt_Base\n"
+            "      AttributeModifier = GondorFighterTaunt\n"
+            "    End\n"
+            "    AddEmotion = Alert_Base\n"
+            "  End\n"
+            "End\n"
+        ).encode("cp1252")
+
+        root = parse_sage_document(source, "data/object/menhordes.ini").objects[0]
+        tracker = root.blocks[0]
+        self.assertEqual(tracker.values("AddEmotion"), ("Terror_Base", "Alert_Base"))
+        self.assertEqual([block.kind for block in tracker.blocks], ["AddEmotion"])
+        self.assertEqual(tracker.blocks[0].header_tokens, ("OVERRIDE", "Taunt_Base"))
+        self.assertEqual(
+            tracker.blocks[0].values("AttributeModifier"),
+            ("GondorFighterTaunt",),
+        )
+
+    def test_retail_lod_options_are_explicit_end_terminated_blocks(self) -> None:
+        source = (
+            "Object GondorArcher\n"
+            "  Draw = W3DHordeModelDraw ModuleTag_01\n"
+            "    LodOptions = LOW\n"
+            "      AllowMultipleModels = ALLOW_MULTIPLE_MODELS_LOW\n"
+            "    End\n"
+            "    LodOptions = HIGH\n"
+            "      MaxRandomTextures = MAX_RANDOM_TEXTURES_HIGH\n"
+            "    End\n"
+            "  End\n"
+            "End\n"
+        ).encode("cp1252")
+
+        root = parse_sage_document(source, "data/object/gondorarcher.ini").objects[0]
+        draw = root.blocks[0]
+        self.assertEqual([block.kind for block in draw.blocks], ["LodOptions", "LodOptions"])
+        self.assertEqual([block.header_tokens for block in draw.blocks], [("LOW",), ("HIGH",)])
+
+    def test_retail_bare_locomotor_set_survives_inconsistent_indentation(self) -> None:
+        source = (
+            "Object Civilian\n"
+            "  LocomotorSet\n"
+            "  Locomotor = GondorCivilianLocomotor\n"
+            "  Condition = SET_PANIC\n"
+            " End\n"
+            "End\n"
+        ).encode("cp1252")
+
+        root = parse_sage_document(source, "data/object/civilian.ini").objects[0]
+        self.assertEqual([block.kind for block in root.blocks], ["LocomotorSet"])
+        self.assertEqual(root.blocks[0].values("Condition"), ("SET_PANIC",))
+
+    def test_begin_script_body_is_opaque_bounded_and_provenanced(self) -> None:
+        source = b"""
+Object Scripted
+  AnimationState = BUILD_PLACEMENT_CURSOR
+    BeginScript
+      CurDrawableHideSubObject(\"N_Window\")
+      #include \"not-an-include-inside-script.inc\"
+      End
+    EndScript
+    StateName = Cursor
+  End
+End
+"""
+        root = parse_sage_document(source, "data/object/scripted.ini").objects[0]
+        state = root.blocks[0]
+        self.assertEqual([type(item) for item in state.items], [SageScript, SageAssignment])
+        script = state.scripts[0]
+        self.assertEqual(
+            [line.text for line in script.lines],
+            [
+                'CurDrawableHideSubObject("N_Window")',
+                '#include "not-an-include-inside-script.inc"',
+                "End",
+            ],
+        )
+        self.assertEqual([line.ordinal for line in script.lines], [0, 1, 2])
+        self.assertEqual(script.source_virtual_path, "data/object/scripted.ini")
+        self.assertEqual(script.lines[0].source_virtual_path, script.source_virtual_path)
+        self.assertLess(script.line, script.end_line)
+
+        with self.assertRaisesRegex(ValueError, "node count"):
+            parse_sage_document(
+                source,
+                "data/object/scripted.ini",
+                limits=SageCstLimits(max_nodes=4),
+            )
+
+    def test_script_delimiter_failures_are_explicit(self) -> None:
+        failures = (
+            (b"EndScript\n", "stray script delimiter"),
+            (b"Object O\n EndScript\nEnd\n", "stray EndScript"),
+            (b"Object O\n BeginScript\n  BeginScript\n EndScript\nEnd\n", "nested BeginScript"),
+            (b"Object O\n BeginScript\n  Statement\nEnd\n", "unterminated BeginScript"),
+        )
+        for source, message in failures:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                parse_sage_document(source, "scripts.ini")
+
     def test_include_resolution_is_inline_relative_root_safe_and_case_insensitive(self) -> None:
         documents = {
             "Data/entry.ini": b"""
@@ -141,6 +288,128 @@ End
         }
         result = resolve_sage_documents("data/object/main.ini", documents)
         self.assertEqual([item.name for item in result.objects], ["Shared", "Main"])
+
+    def test_body_includes_are_retained_and_fragments_are_spliced_with_provenance(self) -> None:
+        documents = {
+            "Data/Object/Men/barracks.ini": b"""
+Object GondorBarracks
+  Value = host-before
+  #include "..\\..\\Includes\\building.inc"
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    #include "../../../Shared/draw.inc"
+  End
+  Value = host-after
+End
+""",
+            "data/includes/BUILDING.INC": b"""
+Value = fragment
+#include "nested.inc"
+Behavior = ActiveBody ModuleTag_Body
+  MaxHealth = 1000
+End
+""",
+            "Data/Includes/nested.inc": b"Value = nested\n",
+            "Shared/draw.inc": b"""
+ModelConditionState = DAMAGED
+  Model = GBBarracks_D1
+End
+""",
+        }
+
+        unresolved = parse_sage_document(
+            documents["Data/Object/Men/barracks.ini"],
+            "Data/Object/Men/barracks.ini",
+        ).objects[0]
+        self.assertEqual(len(unresolved.includes), 1)
+        self.assertIsNone(unresolved.includes[0].resolved_virtual_path)
+
+        result = resolve_sage_documents("data/object/men/BARRACKS.INI", documents)
+        root = result.objects[0]
+        self.assertEqual(
+            root.values("Value"),
+            ("host-before", "fragment", "nested", "host-after"),
+        )
+        self.assertEqual(
+            [item.source_virtual_path for item in root.assignments if item.key == "Value"],
+            [
+                "Data/Object/Men/barracks.ini",
+                "data/includes/BUILDING.INC",
+                "Data/Includes/nested.inc",
+                "Data/Object/Men/barracks.ini",
+            ],
+        )
+        self.assertEqual([item.ordinal for item in root.assignments], [0, 1, 2, 3])
+        self.assertEqual([item.key_ordinal for item in root.assignments], [0, 1, 2, 3])
+        self.assertIsInstance(root.items[1], SageIncludeRef)
+        self.assertEqual(root.items[1].resolved_virtual_path, "data/includes/BUILDING.INC")
+
+        draw = next(block for block in root.blocks if block.header_key == "Draw")
+        self.assertIsInstance(draw.items[0], SageIncludeRef)
+        self.assertEqual(draw.blocks[0].source_virtual_path, "Shared/draw.inc")
+        self.assertEqual(draw.blocks[0].values("Model"), ("GBBarracks_D1",))
+        self.assertEqual(
+            [item.resolved_virtual_path for item in result.includes],
+            [
+                "data/includes/BUILDING.INC",
+                "Data/Includes/nested.inc",
+                "Shared/draw.inc",
+            ],
+        )
+        self.assertEqual(
+            [item.virtual_path for item in result.fragments],
+            [
+                "data/includes/BUILDING.INC",
+                "Data/Includes/nested.inc",
+                "Shared/draw.inc",
+            ],
+        )
+
+    def test_inline_include_failures_use_the_same_safe_graph_rules(self) -> None:
+        with self.assertRaisesRegex(ValueError, "missing include"):
+            resolve_sage_documents(
+                "entry.ini",
+                {"entry.ini": b'Object O\n #include "missing.inc"\nEnd\n'},
+            )
+
+        with self.assertRaisesRegex(ValueError, "include cycle"):
+            resolve_sage_documents(
+                "entry.ini",
+                {
+                    "entry.ini": b'Object O\n #include "a.inc"\nEnd\n',
+                    "a.inc": b'#include "b.inc"\n',
+                    "b.inc": b'#include "a.inc"\n',
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "case-ambiguous include"):
+            resolve_sage_documents(
+                "entry.ini",
+                {
+                    "entry.ini": b'Object O\n #include "shared.inc"\nEnd\n',
+                    "Shared.inc": b"Value = One\n",
+                    "shared.inc": b"Value = Two\n",
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "ambiguous relative/root include"):
+            resolve_sage_documents(
+                "dir/entry.ini",
+                {
+                    "dir/entry.ini": b'Object O\n #include "shared.inc"\nEnd\n',
+                    "dir/shared.inc": b"Value = Relative\n",
+                    "shared.inc": b"Value = Root\n",
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "include depth"):
+            resolve_sage_documents(
+                "entry.ini",
+                {
+                    "entry.ini": b'Object O\n #include "one.inc"\nEnd\n',
+                    "one.inc": b"Value = One\n",
+                },
+                limits=SageCstLimits(max_include_depth=1),
+            )
 
     def test_include_failures_are_explicit(self) -> None:
         with self.assertRaisesRegex(ValueError, "missing include"):
@@ -231,10 +500,11 @@ End
             parse_sage_document(b"End", "stray.ini")
         with self.assertRaisesRegex(ValueError, "ambiguous bare statement"):
             parse_sage_document(b"Object Ambiguous\n EmptyThing\nEnd", "ambiguous.ini")
-        with self.assertRaisesRegex(ValueError, "inside object scope"):
-            parse_sage_document(
-                b'Object BadInclude\n #include "body.ini"\nEnd', "inside.ini"
-            )
+        parsed_include = parse_sage_document(
+            b'Object HasInclude\n #include "body.ini"\nEnd', "inside.ini"
+        ).objects[0].includes[0]
+        self.assertEqual(parsed_include.virtual_path, "body.ini")
+        self.assertIsNone(parsed_include.resolved_virtual_path)
 
     def test_header_parent_contract_is_validated(self) -> None:
         with self.assertRaisesRegex(ValueError, "unexpected parent"):
@@ -245,4 +515,3 @@ End
 
 if __name__ == "__main__":
     unittest.main()
-

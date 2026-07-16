@@ -21,6 +21,7 @@ from .faction_census import (
     SPECIAL_POWER_PATH,
     STRING_CATALOG_PATH,
     UPGRADE_PATH,
+    VOICE_PATH,
     census_men_faction,
 )
 from .paths import safe_relative_parts
@@ -44,6 +45,7 @@ _FIXED_SEMANTIC_DOCUMENTS = {
     "data/ini/commandset.ini",
     "data/ini/commandbutton.ini",
     "data/ini/soundeffects.ini",
+    VOICE_PATH,
     STRING_CATALOG_PATH,
     UPGRADE_PATH,
     SCIENCE_PATH,

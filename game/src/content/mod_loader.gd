@@ -23,29 +23,40 @@ func list_pack_roots() -> Array[String]:
 	_ensure_dir(USER_MODS)
 	_collect_packs(USER_MODS, roots)
 
-	# A generated retail bundle is opt-in. Only the selected bundle is mounted so
-	# two rulesets cannot accidentally merge merely because both are cached.
-	_ensure_dir(user_pack_cache_root())
-	var selected := selected_user_pack_root()
-	if selected != "":
-		roots.append(selected)
-
 	# Developer/CI override. This remains ephemeral; normal installs use the
-	# durable selection file under user://content-packs.
 	var external := OS.get_environment("OPENBFME_CONTENT")
+	var external_selected := ""
 	if external != "":
 		if DirAccess.dir_exists_absolute(external):
-			# A private workspace mirrors the normal immutable cache layout:
-			# selection.json points through <pack-id>/<bundle-hash>, while
-			# immediate child packs may provide audited supplements.
-			var external_selection := external.path_join("selection.json")
-			if FileAccess.file_exists(external_selection):
-				var external_selected := selected_user_pack_root(external, external_selection)
-				if external_selected != "":
-					roots.append(external_selected)
-			_collect_packs(external, roots)
+			if is_valid_pack_root(external):
+				# An explicit immutable bundle root is a complete selection, not
+				# a supplement directory. It must suppress the durable user pack.
+				external_selected = external
+				roots.append(external_selected)
+			else:
+				# A private workspace mirrors the normal immutable cache layout:
+				# selection.json points through <pack-id>/<bundle-hash>, while
+				# immediate child packs may provide audited supplements. A strict
+				# completion build is already a composed closure, so loading sibling
+				# packs would let stale leaves override the selected bundle.
+				var external_selection := external.path_join("selection.json")
+				if FileAccess.file_exists(external_selection):
+					external_selected = selected_user_pack_root(external, external_selection)
+					if external_selected != "":
+						roots.append(external_selected)
+				if external_selected == "" or not _is_strict_completion_pack(external_selected):
+					_collect_packs(external, roots)
 		else:
 			_diagnose("OPENBFME_CONTENT does not exist: %s" % external)
+
+	# A generated retail bundle is opt-in. The explicit developer/CI selection
+	# replaces the durable user selection so two versions of the same ruleset
+	# cannot merge merely because both caches exist.
+	_ensure_dir(user_pack_cache_root())
+	if external_selected == "":
+		var selected := selected_user_pack_root()
+		if selected != "":
+			roots.append(selected)
 
 	var unique: Array[String] = []
 	var seen: Dictionary = {}
@@ -239,6 +250,15 @@ func _pack_priority(pack_root: String) -> int:
 	if typeof(data) == TYPE_DICTIONARY:
 		return int((data as Dictionary).get("priority", 100))
 	return 100
+
+
+func _is_strict_completion_pack(pack_root: String) -> bool:
+	var path := resolve_pack_path(pack_root, "pack.json")
+	var data: Variant = _read_json(path)
+	return (
+		typeof(data) == TYPE_DICTIONARY
+		and bool((data as Dictionary).get("profile_build_complete", false))
+	)
 
 
 func _read_json(path: String) -> Variant:

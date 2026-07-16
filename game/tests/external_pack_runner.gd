@@ -12,6 +12,8 @@ var _had_selection_setting: bool = false
 var _escape_link: String = ""
 var _outside_root: String = ""
 var _external_content_root: String = ""
+var _startup_had_environment := false
+var _startup_environment := ""
 
 
 func _initialize() -> void:
@@ -19,6 +21,8 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	_startup_had_environment = OS.has_environment("OPENBFME_CONTENT")
+	_startup_environment = OS.get_environment("OPENBFME_CONTENT")
 	var mod_loader = root.get_node_or_null("ModLoader")
 	var content_db = root.get_node_or_null("ContentDB")
 	var game_audio = root.get_node_or_null("GameAudio")
@@ -62,6 +66,7 @@ func _run() -> void:
 	_old_selection_setting = ProjectSettings.get_setting(mod_loader.PACK_SELECTION_SETTING) if _had_selection_setting else null
 	ProjectSettings.set_setting(mod_loader.PACK_CACHE_SETTING, _cache_root)
 	ProjectSettings.set_setting(mod_loader.PACK_SELECTION_SETTING, _selection_path)
+	OS.unset_environment("OPENBFME_CONTENT")
 	content_db.reload()
 
 	_check("selected_pack_mounted", content_db.pack_roots.has(pack_root))
@@ -167,6 +172,10 @@ func _run() -> void:
 	_test_external_selection_with_supplement(mod_loader)
 
 	_restore_settings()
+	if _startup_had_environment:
+		OS.set_environment("OPENBFME_CONTENT", _startup_environment)
+	else:
+		OS.unset_environment("OPENBFME_CONTENT")
 	content_db.reload()
 	game_audio.music_player.stop()
 	game_audio.music_player.stream = null
@@ -412,22 +421,39 @@ func _test_external_selection_with_supplement(mod_loader: Node) -> void:
 	OS.set_environment("OPENBFME_CONTENT", _external_content_root)
 	var roots: Array[String] = mod_loader.list_pack_roots()
 	_check("external_selection_nested_pack_discovered", roots.has(selected_root))
-	_check("external_immediate_supplement_discovered", roots.has(supplement_root))
+	var supplement_discovered := roots.has(supplement_root)
+	OS.set_environment("OPENBFME_CONTENT", selected_root)
+	var direct_roots: Array[String] = mod_loader.list_pack_roots()
+	_check(
+		"external_immediate_supplement_discovered",
+		supplement_discovered and direct_roots.has(selected_root) and not direct_roots.has(supplement_root)
+	)
+
+	_write_minimal_pack(selected_root, "external-selected-test", 901, true)
+	OS.set_environment("OPENBFME_CONTENT", _external_content_root)
+	var completion_roots: Array[String] = mod_loader.list_pack_roots()
+	_check(
+		"external_completion_selection_suppresses_sibling_packs",
+		completion_roots.has(selected_root) and not completion_roots.has(supplement_root)
+	)
 	if had_environment:
 		OS.set_environment("OPENBFME_CONTENT", old_environment)
 	else:
 		OS.unset_environment("OPENBFME_CONTENT")
 
 
-func _write_minimal_pack(pack_root: String, id: String, priority: int) -> void:
-	_write_json(pack_root.path_join("pack.json"), {
+func _write_minimal_pack(pack_root: String, id: String, priority: int, profile_build_complete := false) -> void:
+	var document := {
 		"schema": "openbfme.content-pack",
 		"schemaVersion": 0,
 		"id": id,
 		"priority": priority,
 		"dataPolicy": {"externalPathsAllowed": false},
 		"files": {},
-	})
+	}
+	if profile_build_complete:
+		document["profile_build_complete"] = true
+	_write_json(pack_root.path_join("pack.json"), document)
 
 
 func _write_json(path: String, value: Variant) -> void:

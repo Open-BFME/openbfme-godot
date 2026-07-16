@@ -4,7 +4,10 @@
 
 **This week:** playable Men-versus-Men Fords of Isen II slice with **1:1 graphical/audiovisual fidelity** for that roster/map, using converted retail packs under `.private` only. See `DIRECTION.md`.
 
-Longer horizon: expand the same pipeline to full BFME2 1.06 skirmish (all factions/maps). Do not skip the Fords Men visual+play gate.
+Longer horizon: extract and convert the complete useful BFME2 1.06 retail asset
+closure into `.private`, then expand the same pipeline to full skirmish (all
+factions and multiplayer maps). Public release is a later code-only scrub; it
+does not block private conversion. Do not skip the Fords Men visual+play gate.
 
 ## Forbidden unless the integration owner explicitly unblocks
 
@@ -31,11 +34,19 @@ Longer horizon: expand the same pipeline to full BFME2 1.06 skirmish (all factio
 
 MCP is optional observation only. It cannot bypass CLI, provenance, containment, or retail gates.
 
-Before handoff of retail-slice work:
+Before final integration handoff of retail-slice work, the integration owner
+runs:
 
 ```bat
 run_retail_pipeline_tests.bat
 ```
+
+Workers must not run this broad gate for bounded oracle/converter handoffs.
+The current script still targets the handwritten base profile and can publish
+the wrong selection after its long importer suite. Workers run only their
+assigned focused acceptance commands; the integration owner runs the broad
+gate after its profile target/assertions are updated and the strict completion
+pack is ready.
 
 Use the smallest focused test first. Never weaken an assertion merely to pass.
 

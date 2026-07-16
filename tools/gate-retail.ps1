@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$Install = "F:\BFME2",
-    [string]$GodotPath = ""
+    [string]$GodotPath = "",
+    [switch]$IntegrationOwnerPublish
 )
 
 Set-StrictMode -Version Latest
@@ -13,14 +14,22 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $gameRoot = Join-Path $repoRoot "game"
 $cli = Join-Path $repoRoot "tools\openbfme_import.py"
 $pythonBootstrap = Join-Path $PSScriptRoot "bootstrap-importer-python.ps1"
+$profilePath = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\retail-work\profiles\men-fords-v0-complete.generated.json"))
+$expectedProfileId = "men-fords-v0-complete-generated"
+$expectedProfileSha256 = "0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d"
+$expectedPackId = "bfme2-men-vslice"
+$expectedResourceCount = 380
+$expectedSelectedFileCount = 2555
+$expectedProvenanceEntryCount = 2589
+$expectedSourceArchiveCount = 24
+$publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\content-packs"))
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
 } else {
     [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\retail-work"))
 }
 $env:OPENBFME_IMPORT_ROOT = $stateRoot
-& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $pythonBootstrap -StateRoot $stateRoot
-if ($LASTEXITCODE -ne 0) { throw "Importer Python bootstrap failed." }
+$expectedBuildPackPath = [IO.Path]::GetFullPath((Join-Path $stateRoot "packs\$expectedPackId"))
 $python = Join-Path $stateRoot "tools\python-3.12-env\Scripts\python.exe"
 $env:PYTHONPATH = Join-Path $repoRoot "importer"
 $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)?|ObjectDB instances|RID allocations|resources still in use)\b'
@@ -35,54 +44,136 @@ function Invoke-ImporterJson {
 }
 
 try {
-    foreach ($path in @($cli, (Join-Path $repoRoot "importer\profiles\men-fords-v0.json"))) {
+    foreach ($path in @($cli, $profilePath)) {
         Assert-ProofTrue (Test-Path -LiteralPath $path -PathType Leaf) "Missing retail gate dependency: $path"
     }
+    $profileBytes = [IO.File]::ReadAllBytes($profilePath)
+    $profileSha256 = (Get-FileHash -LiteralPath $profilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-ProofTrue ($profileSha256 -eq $expectedProfileSha256) "Generated completion profile hash changed; integration-owner review is required."
+    $profileDocument = ([Text.Encoding]::UTF8.GetString($profileBytes) | ConvertFrom-Json)
+    Assert-ProofTrue (
+        [int]$profileDocument.format -eq 1 -and
+        [string]$profileDocument.id -eq $expectedProfileId -and
+        [string]$profileDocument.pack.id -eq $expectedPackId -and
+        [string]$profileDocument.pack.schema -eq 'openbfme.content-pack' -and
+        $profileDocument.pack.vertical_slice_complete -is [bool] -and
+        -not [bool]$profileDocument.pack.vertical_slice_complete
+    ) "Generated completion profile identity/readiness marker changed; vertical_slice_complete must remain false until the final rendered checklist passes."
 
-    $importerTestOutput = Invoke-ProofChecked $gate "importer_tests" $python @("-m", "unittest", "discover", "-s", (Join-Path $repoRoot "importer\tests"), "-v") '(?m)^OK\s*$'
-    Assert-ProofTrue ($importerTestOutput -match '(?m)^Ran 203 tests in ') "Importer suite did not execute exactly 203 tests."
+    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $pythonBootstrap -StateRoot $stateRoot
+    if ($LASTEXITCODE -ne 0) { throw "Importer Python bootstrap failed." }
+    $importerTestOutput = Invoke-ProofChecked $gate "importer_tests" $python @("-m", "unittest", "discover", "-s", (Join-Path $repoRoot "importer\tests"), "-v") '(?m)^OK \(skipped=5\)\s*$'
+    Assert-ProofTrue ($importerTestOutput -match '(?m)^Ran 999 tests in ') "Importer suite did not execute exactly 999 tests."
 
     $bootstrap = Invoke-ImporterJson "bootstrap" @("bootstrap-tools")
     Assert-ProofTrue ([bool]$bootstrap.ready) "Pinned external tools are not ready."
     $doctor = Invoke-ImporterJson "doctor" @("doctor", "--install", $Install, "--deep")
     Assert-ProofTrue ([bool]$doctor.ready) "Retail install doctor is not ready."
-    $plan = Invoke-ImporterJson "plan" @("plan", "--install", $Install, "--profile", "men-fords-v0")
+    $plan = Invoke-ImporterJson "plan" @("plan", "--install", $Install, "--profile", $profilePath)
     Assert-ProofTrue (
         [bool]$plan.ready -and
-        [int]$plan.resource_count -eq 53 -and
-        [int]$plan.selected_file_count -eq 264 -and
-        $plan.profile_sha256 -match '^[0-9a-f]{64}$' -and
+        @($plan.missing_required).Count -eq 0 -and
+        [string]$plan.profile -eq $expectedProfileId -and
+        [string]$plan.pack -eq $expectedPackId -and
+        [int]$plan.resource_count -eq $expectedResourceCount -and
+        [int]$plan.selected_file_count -eq $expectedSelectedFileCount -and
+        [int](($plan.resources | ForEach-Object { @($_.matches).Count } | Measure-Object -Sum).Sum) -eq $expectedProvenanceEntryCount -and
+        [string]$plan.profile_sha256 -eq $expectedProfileSha256 -and
         $plan.importer_recipe_sha256 -match '^[0-9a-f]{64}$'
-    ) "Exact retail profile/recipe did not resolve its pinned 53-resource, 264-file closure."
+    ) "Exact generated completion profile did not resolve its pinned ready closure."
+    Assert-ProofTrue (((Get-FileHash -LiteralPath $profilePath -Algorithm SHA256).Hash.ToLowerInvariant()) -eq $expectedProfileSha256) "Generated completion profile changed during planning."
 
-    $first = Invoke-ImporterJson "build_a" @("build", "--install", $Install, "--profile", "men-fords-v0", "--force")
-    $second = Invoke-ImporterJson "build_b" @("build", "--install", $Install, "--profile", "men-fords-v0", "--force")
+    $buildArguments = @("build", "--install", $Install, "--profile", $profilePath, "--force")
+    if ($IntegrationOwnerPublish) {
+        $buildArguments += @("--godot-content-root", $publishRoot)
+        Write-Host "$gate integration-owner publish explicitly enabled target=$publishRoot"
+    } else {
+        $buildArguments += "--no-publish"
+        Write-Host "$gate proof builds are non-publishing"
+    }
+    $first = Invoke-ImporterJson "build_a" $buildArguments
+    $second = Invoke-ImporterJson "build_b" $buildArguments
     Assert-ProofTrue ([bool]$first.valid -and [bool]$second.valid -and [bool]$first.semantic_provenance -and [bool]$second.semantic_provenance) "A retail build failed its semantic provenance audit."
     Assert-ProofTrue ($first.bundle_sha256 -match '^[0-9a-f]{64}$' -and $first.bundle_sha256 -eq $second.bundle_sha256) "Repeat builds were not byte-reproducible."
+    Assert-ProofTrue (
+        [string]$first.profile -eq $expectedProfileId -and
+        [string]$second.profile -eq $expectedProfileId -and
+        [string]$first.profile_sha256 -eq $expectedProfileSha256 -and
+        [string]$second.profile_sha256 -eq $expectedProfileSha256 -and
+        [IO.Path]::GetFullPath([string]$first.pack) -eq $expectedBuildPackPath -and
+        [IO.Path]::GetFullPath([string]$second.pack) -eq $expectedBuildPackPath
+    ) "A proof build changed the selected completion profile."
+    if ($IntegrationOwnerPublish) {
+        $expectedPublishedPack = [IO.Path]::GetFullPath((Join-Path $publishRoot "$expectedPackId\$($second.bundle_sha256)"))
+        $expectedSelection = [IO.Path]::GetFullPath((Join-Path $publishRoot "selection.json"))
+        $expectedActivePack = "$expectedPackId/$($second.bundle_sha256)"
+        Assert-ProofTrue (
+            [IO.Path]::GetFullPath([string]$first.published_pack) -eq $expectedPublishedPack -and
+            [IO.Path]::GetFullPath([string]$second.published_pack) -eq $expectedPublishedPack -and
+            [IO.Path]::GetFullPath([string]$first.selection) -eq $expectedSelection -and
+            [IO.Path]::GetFullPath([string]$second.selection) -eq $expectedSelection -and
+            [string]$first.active_pack -eq $expectedActivePack -and
+            [string]$second.active_pack -eq $expectedActivePack
+        ) "Integration-owner publication changed the expected release or selection path."
+    } else {
+        Assert-ProofTrue (
+            $first.PSObject.Properties.Name -notcontains 'published_pack' -and
+            $second.PSObject.Properties.Name -notcontains 'published_pack'
+        ) "A proof-only build unexpectedly published or selected a pack."
+    }
     Write-Host "$gate reproducibility PASS bundle_sha256=$($first.bundle_sha256)"
+
+    $builtPackDocument = (Get-Content -Raw -LiteralPath (Join-Path $expectedBuildPackPath "pack.json") | ConvertFrom-Json)
+    $builtProvenanceDocument = (Get-Content -Raw -LiteralPath (Join-Path $expectedBuildPackPath "provenance\manifest.json") | ConvertFrom-Json)
+    Assert-ProofTrue (
+        $builtPackDocument.profile_build_complete -is [bool] -and
+        [bool]$builtPackDocument.profile_build_complete -and
+        @($builtProvenanceDocument.incomplete).Count -eq 0
+    ) "Strict completion build retained incomplete conversion reasons."
 
     $audit = Invoke-ImporterJson "audit" @("audit", [string]$second.pack)
     Assert-ProofTrue (
         [bool]$audit.valid -and
         [bool]$audit.semantic_provenance -and
         $audit.provenance_contract -eq 'openbfme.retail-import-provenance-v1' -and
-        $audit.profile -eq 'men-fords-v0' -and
-        $audit.profile_sha256 -eq $plan.profile_sha256 -and
+        $audit.profile -eq $expectedProfileId -and
+        $audit.profile_sha256 -eq $expectedProfileSha256 -and
         $audit.importer_recipe_sha256 -eq $plan.importer_recipe_sha256 -and
-        [int]$audit.source_archive_count -eq 12 -and
-        [int]$audit.provenance_entry_count -eq 264 -and
+        [int]$audit.source_archive_count -eq $expectedSourceArchiveCount -and
+        [int]$audit.provenance_entry_count -eq $expectedProvenanceEntryCount -and
         [int]$audit.tool_attestation_count -ge 5 -and
-        [int]$audit.checked_files -eq 162 -and
-        [int]$audit.checked_outputs -eq 158
+        [int]$audit.checked_files -ge 162 -and
+        [int]$audit.checked_outputs -ge 158 -and
+        [int]$audit.checked_files -ge [int]$audit.checked_outputs -and
+        [int]$audit.source_archive_count -eq [int]$first.source_archive_count -and
+        [int]$audit.source_archive_count -eq [int]$second.source_archive_count -and
+        [int]$audit.provenance_entry_count -eq [int]$first.provenance_entry_count -and
+        [int]$audit.provenance_entry_count -eq [int]$second.provenance_entry_count -and
+        [int]$audit.checked_files -eq [int]$first.checked_files -and
+        [int]$audit.checked_files -eq [int]$second.checked_files -and
+        [int]$audit.checked_outputs -eq [int]$first.checked_outputs -and
+        [int]$audit.checked_outputs -eq [int]$second.checked_outputs
     ) "Pack semantic provenance audit failed."
+    Assert-ProofTrue (((Get-FileHash -LiteralPath $profilePath -Algorithm SHA256).Hash.ToLowerInvariant()) -eq $expectedProfileSha256) "Generated completion profile changed during proof builds."
 
+    # Runtime acceptance must exercise the pack produced by this exact proof
+    # run. Falling through to the durable user:// selection can silently test
+    # an older bundle after Build A/B have succeeded. Publishing mode validates
+    # the immutable published copy; proof-only mode validates the private build
+    # root without mutating selection.json.
+    if ($IntegrationOwnerPublish) {
+        $env:OPENBFME_CONTENT = $expectedPublishedPack
+    } else {
+        $env:OPENBFME_CONTENT = $expectedBuildPackPath
+    }
+    Write-Host "$gate runtime pack explicitly selected root=$($env:OPENBFME_CONTENT)"
     $godot = Resolve-ProofGodot $GodotPath $repoRoot
     [void](Invoke-ProofChecked $gate "stage11_12_groups_and_routes" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/stage11_12_runner.gd") '(?m)^STAGE 11/12 TESTS: 26 passed, 0 failed\s*$' $forbiddenDiagnostics)
     [void](Invoke-ProofChecked $gate "stage14_15_base_loop" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/stage14_15_sim_runner.gd") '(?m)^STAGE 14/15 SIM TESTS: 31 passed, 0 failed\s*$' $forbiddenDiagnostics)
     [void](Invoke-ProofChecked $gate "stage15_menu_and_audio" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/stage15_menu_runner.gd") '(?m)^STAGE15_MENU_RESULT passed=25 failed=0\s*$' $forbiddenDiagnostics)
-    [void](Invoke-ProofChecked $gate "retail_pack_runtime" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/retail_pack_runner.gd") '(?m)^RETAIL_PACK_RESULT passed=84 failed=0\s*$' $forbiddenDiagnostics)
-    [void](Invoke-ProofChecked $gate "playable_retail_slice" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/retail_slice_runner.gd") '(?m)^RETAIL_SLICE_RESULT passed=142 failed=0\s*$' $forbiddenDiagnostics)
-    [void](Invoke-ProofChecked $gate "external_pack_security" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/external_pack_runner.gd") '(?m)^EXTERNAL_PACK_RESULT passed=63 failed=0\s*$' $forbiddenDiagnostics)
+    [void](Invoke-ProofChecked $gate "retail_pack_runtime" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/retail_pack_runner.gd") '(?m)^RETAIL_PACK_RESULT passed=175 failed=0\s*$' $forbiddenDiagnostics)
+    [void](Invoke-ProofChecked $gate "playable_retail_slice" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/retail_slice_runner.gd") '(?m)^RETAIL_SLICE_RESULT passed=208 failed=0\s*$' $forbiddenDiagnostics)
+    [void](Invoke-ProofChecked $gate "external_pack_security" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/external_pack_runner.gd") '(?m)^EXTERNAL_PACK_RESULT passed=64 failed=0\s*$' $forbiddenDiagnostics)
     [void](Invoke-ProofChecked $gate "legacy_regression" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/cli_runner.gd") '(?m)^STAGE TESTS: 101 passed, 0 failed\s*$' $forbiddenDiagnostics)
     [void](Invoke-ProofChecked $gate "export_firewall_self_test" "powershell.exe" @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "test-export-scan.ps1")) '(?m)^EXPORT_SCAN_SELF_TEST PASS ')
     [void](Invoke-ProofChecked $gate "export_firewall" "powershell.exe" @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "export-scan.ps1"), "-Root", $gameRoot) '(?m)^EXPORT_SCAN PASS ')

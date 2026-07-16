@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import struct
 import sys
+import tempfile
 import types
 import unittest
 
@@ -42,6 +45,9 @@ class FakeProperties:
     def __getitem__(self, key):
         return self._properties[key]
 
+    def __setitem__(self, key, value):
+        self._properties[key] = value
+
 
 class FakeAssignment:
     def __init__(self, group: int, weight: float):
@@ -79,6 +85,14 @@ class FakeMaterial(FakeProperties):
         self.roughness = 0.7
         self.use_nodes = False
         self.node_tree = None
+        self.blend_method = "OPAQUE"
+
+
+class FakeShaderProperty:
+    def __init__(self, name: str, value, *, property_type: int = 7):
+        self.name = name
+        self.value = value
+        self.type = property_type
 
 
 class FakePixels(list):
@@ -110,9 +124,34 @@ class FakeImage:
 
 
 class FakeSocket:
-    def __init__(self, name: str, node):
+    _next_pointer = 1
+
+    def __init__(self, name: str, node, *, pointer: int | None = None):
         self.name = name
         self.node = node
+        self.default_value = 0.0
+        if pointer is None:
+            pointer = FakeSocket._next_pointer
+            FakeSocket._next_pointer += 1
+        self._pointer = pointer
+
+    def as_pointer(self):
+        return self._pointer
+
+    def wrapper(self):
+        return FakeSocket(self.name, self.node, pointer=self._pointer)
+
+
+class FakeSocketCollection(dict):
+    def __init__(self, *args, wrapped_get: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.wrapped_get = wrapped_get
+
+    def get(self, key, default=None):
+        value = super().get(key, default)
+        if self.wrapped_get and isinstance(value, FakeSocket):
+            return value.wrapper()
+        return value
 
 
 class FakeNode:
@@ -122,13 +161,13 @@ class FakeNode:
         self.inputs = {}
         self.outputs = {}
         if node_type == "TEX_IMAGE":
-            self.outputs = {
-                name: FakeSocket(name, self) for name in ("Color", "Alpha")
-            }
+            self.outputs = FakeSocketCollection(
+                {name: FakeSocket(name, self) for name in ("Color", "Alpha")}
+            )
         elif node_type == "BSDF_PRINCIPLED":
-            self.inputs = {
-                name: FakeSocket(name, self) for name in ("Base Color", "Alpha")
-            }
+            self.inputs = FakeSocketCollection(
+                {name: FakeSocket(name, self) for name in ("Base Color", "Alpha")}
+            )
 
 
 class FakeLink:
@@ -240,7 +279,10 @@ class FakeMatrix:
         x, y, z = (float(point[index]) for index in range(3))
         source = (x, y, z, 1.0)
         return FakeVector(
-            *(sum(self.rows[row][column] * source[column] for column in range(4)) for row in range(3))
+            *(
+                sum(self.rows[row][column] * source[column] for column in range(4))
+                for row in range(3)
+            )
         )
 
 
@@ -261,9 +303,7 @@ class FakeRig:
                 name = value
                 position = (4.25, 5.25, 6.25)
             bones.append(FakeBone(name, position))
-        self.data = types.SimpleNamespace(
-            bones=bones
-        )
+        self.data = types.SimpleNamespace(bones=bones)
         self.matrix_world = FakeMatrix(
             (
                 (1.0, 0.0, 0.0, 0.0),
@@ -352,14 +392,46 @@ class FakeObject(FakeProperties):
 
 
 def capture_one(item: FakeObject):
-    inventory, equipment = ADAPTER.build_mesh_inventory(
-        [item], ["right-hand-weapon"]
-    )
+    inventory, equipment = ADAPTER.build_mesh_inventory([item], ["right-hand-weapon"])
     return inventory, equipment, ADAPTER.capture_render_geometry_proof([item])
 
 
 class W3dAdditiveMaterialTests(unittest.TestCase):
-    def test_exact_additive_shader_converts_shared_image_and_connects_alpha(self) -> None:
+    def test_zero_source_alpha_does_not_erase_proven_additive_rgb(self) -> None:
+        source_pixels = [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.8,
+            0.4,
+            0.2,
+            0.0,
+        ]
+        image = FakeImage(source_pixels)
+        material = FakeNodeMaterial(
+            image,
+            shader_properties={"src_blend": "1", "dest_blend": "1"},
+        )
+
+        report = ADAPTER.convert_proven_additive_materials([material])
+
+        self.assertEqual(report["converted_materials"], 1)
+        converted = list(material.image_node.image.pixels)
+        self.assertEqual(converted[:4], [0.0, 0.0, 0.0, 0.0])
+        self.assertAlmostEqual(converted[4], 1.0)
+        self.assertAlmostEqual(converted[5], 0.5)
+        self.assertAlmostEqual(converted[6], 0.25)
+        self.assertAlmostEqual(converted[7], 0.8)
+        for channel in range(3):
+            self.assertAlmostEqual(
+                converted[4 + channel] * converted[7],
+                source_pixels[4 + channel],
+            )
+
+    def test_exact_additive_shader_converts_shared_image_and_connects_alpha(
+        self,
+    ) -> None:
         source_pixels = [
             0.0,
             0.0,
@@ -420,9 +492,7 @@ class W3dAdditiveMaterialTests(unittest.TestCase):
             with self.subTest(shader_properties=shader_properties):
                 source_pixels = [0.1, 0.2, 0.3, 1.0]
                 image = FakeImage(source_pixels, users=2)
-                material = FakeNodeMaterial(
-                    image, shader_properties=shader_properties
-                )
+                material = FakeNodeMaterial(image, shader_properties=shader_properties)
 
                 report = ADAPTER.convert_proven_additive_materials([material])
 
@@ -448,7 +518,9 @@ class W3dAdditiveMaterialTests(unittest.TestCase):
                     ADAPTER.convert_proven_additive_materials([material])
 
     def test_one_8bit_step_of_image_round_trip_quantization_is_allowed(self) -> None:
-        quantize_8bit = lambda value: round(float(value) * 255.0) / 255.0
+        def quantize_8bit(value):
+            return round(float(value) * 255.0) / 255.0
+
         image = FakeImage(
             [0.0, 0.0, 0.0, 1.0, 0.573, 0.218, 0.091, 1.0],
             write_transform=quantize_8bit,
@@ -466,7 +538,9 @@ class W3dAdditiveMaterialTests(unittest.TestCase):
         self.assertGreater(image.pixels[7], 0.0)
 
     def test_image_round_trip_error_beyond_one_8bit_step_fails(self) -> None:
-        exceed_tolerance = lambda value: min(1.0, float(value) + (2.0 / 255.0))
+        def exceed_tolerance(value):
+            return min(1.0, float(value) + (2.0 / 255.0))
+
         image = FakeImage(
             [0.0, 0.0, 0.0, 1.0, 0.573, 0.218, 0.091, 1.0],
             write_transform=exceed_tolerance,
@@ -478,6 +552,208 @@ class W3dAdditiveMaterialTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "did not round trip"):
             ADAPTER.convert_proven_additive_materials([material])
+
+    def test_direct_image_link_uses_blender_pointer_identity(self) -> None:
+        source = FakeImage([0.2, 0.1, 0.0, 1.0])
+        material = FakeNodeMaterial(
+            source,
+            shader_properties={"src_blend": "1", "dest_blend": "1"},
+        )
+        distractor = FakeNode("TEX_IMAGE", image=FakeImage([0.9, 0.8, 0.7, 1.0]))
+        material.node_tree.nodes.insert(0, distractor)
+        material.principled.inputs.wrapped_get = True
+        material.image_node.outputs.wrapped_get = True
+
+        report = ADAPTER.convert_proven_additive_materials([material])
+
+        self.assertEqual(report["converted_materials"], 1)
+        self.assertIs(material.node_tree.nodes[0], distractor)
+        self.assertEqual(list(distractor.image.pixels), [0.9, 0.8, 0.7, 1.0])
+        alpha_links = [
+            link
+            for link in material.node_tree.links
+            if ADAPTER._same_runtime_identity(
+                link.to_socket, material.principled.inputs["Alpha"]
+            )
+        ]
+        self.assertEqual(len(alpha_links), 1)
+        self.assertTrue(
+            ADAPTER._same_runtime_identity(
+                alpha_links[0].from_socket,
+                material.image_node.outputs["Alpha"],
+            )
+        )
+
+    def test_multiple_images_without_a_direct_color_link_fail_closed(self) -> None:
+        material = FakeNodeMaterial(
+            FakeImage([0.2, 0.1, 0.0, 1.0]),
+            shader_properties={"src_blend": "1", "dest_blend": "1"},
+        )
+        material.node_tree.nodes.insert(
+            0, FakeNode("TEX_IMAGE", image=FakeImage([0.9, 0.8, 0.7, 1.0]))
+        )
+        material.node_tree.links.clear()
+
+        with self.assertRaisesRegex(RuntimeError, "ambiguous color image"):
+            ADAPTER.convert_proven_additive_materials([material])
+
+
+class W3dOpaqueMaterialNormalizationTests(unittest.TestCase):
+    @staticmethod
+    def _material(source: str, destination: str, alpha_test: str = "0"):
+        material = FakeNodeMaterial(
+            FakeImage([0.2, 0.4, 0.6, 0.5]),
+            shader_properties={
+                "src_blend": source,
+                "dest_blend": destination,
+                "alpha_test": alpha_test,
+            },
+        )
+        material.node_tree.links.new(
+            material.image_node.outputs["Alpha"],
+            material.principled.inputs["Alpha"],
+        )
+        material.blend_method = "CLIP"
+        return material
+
+    def test_exact_one_zero_state_disconnects_texture_alpha(self) -> None:
+        material = self._material("1", "0")
+
+        report = ADAPTER.normalize_proven_opaque_materials([material])
+
+        self.assertEqual(report["normalized_material_count"], 1)
+        self.assertEqual(report["removed_alpha_link_count"], 1)
+        self.assertTrue(report["source_blend_state_preserved"])
+        self.assertEqual(material.blend_method, "OPAQUE")
+        self.assertEqual(material.principled.inputs["Alpha"].default_value, 1.0)
+        self.assertEqual(
+            [
+                link
+                for link in material.node_tree.links
+                if ADAPTER._same_runtime_identity(
+                    link.to_socket, material.principled.inputs["Alpha"]
+                )
+            ],
+            [],
+        )
+
+    def test_additive_and_alpha_blended_states_remain_connected(self) -> None:
+        additive = self._material("1", "1")
+        alpha_blended = self._material("2", "5")
+
+        report = ADAPTER.normalize_proven_opaque_materials(
+            [alpha_blended, additive]
+        )
+
+        self.assertEqual(report["normalized_material_count"], 0)
+        self.assertEqual(len(additive.node_tree.links), 2)
+        self.assertEqual(len(alpha_blended.node_tree.links), 2)
+        self.assertEqual(additive.blend_method, "CLIP")
+        self.assertEqual(alpha_blended.blend_method, "CLIP")
+
+    def test_alpha_tested_one_zero_state_remains_connected(self) -> None:
+        material = self._material("1", "0", "1")
+
+        report = ADAPTER.normalize_proven_opaque_materials([material])
+
+        self.assertEqual(report["normalized_material_count"], 0)
+        self.assertEqual(len(material.node_tree.links), 2)
+
+    def test_incomplete_source_blend_state_fails_closed(self) -> None:
+        material = self._material("1", "0")
+        del material.shader.dest_blend
+
+        with self.assertRaisesRegex(RuntimeError, "blend proof is incomplete"):
+            ADAPTER.normalize_proven_opaque_materials([material])
+
+
+class W3dShaderMaterialCompatibilityTests(unittest.TestCase):
+    @staticmethod
+    def _invoke(properties):
+        seen = []
+        material = FakeMaterial("fixture_shader")
+        principled = object()
+
+        def original(_context, _name, shader_material):
+            seen.extend(prop.name for prop in shader_material.properties)
+            return material, principled
+
+        wrapped = ADAPTER._shader_material_compatibility_importer(original)
+        result = wrapped(
+            object(), "fixture", types.SimpleNamespace(properties=properties)
+        )
+        return seen, material, principled, result
+
+    def test_exact_flags_are_mapped_and_preserved_in_canonical_proof(self) -> None:
+        seen, material, principled, result = self._invoke(
+            [
+                FakeShaderProperty("AlphaBlendingEnable", True),
+                FakeShaderProperty("DiffuseTexture", "fixture.dds", property_type=1),
+                FakeShaderProperty("FogEnable", False),
+            ]
+        )
+
+        self.assertEqual(seen, ["DiffuseTexture"])
+        self.assertEqual(result, (material, principled))
+        self.assertIs(material["openbfme_w3d_alpha_blending_enable"], True)
+        self.assertIs(material["openbfme_w3d_fog_enable"], False)
+        self.assertEqual(material.blend_method, "BLEND")
+        self.assertEqual(
+            ADAPTER.collect_shader_material_compatibility([material]),
+            {
+                "mapped_materials": [
+                    {
+                        "material": "fixture_shader",
+                        "properties": {
+                            "AlphaBlendingEnable": True,
+                            "FogEnable": False,
+                        },
+                    }
+                ],
+                "mapped_material_count": 1,
+                "mapped_property_count": 2,
+                "alpha_blending_enable_count": 1,
+                "fog_enable_count": 1,
+                "source_flags_preserved": True,
+            },
+        )
+
+    def test_false_alpha_flag_maps_to_opaque(self) -> None:
+        _seen, material, _principled, _result = self._invoke(
+            [FakeShaderProperty("AlphaBlendingEnable", False)]
+        )
+
+        self.assertEqual(material.blend_method, "OPAQUE")
+        self.assertIs(material["openbfme_w3d_alpha_blending_enable"], False)
+
+    def test_duplicate_or_non_boolean_compatibility_flags_fail_closed(self) -> None:
+        cases = (
+            [
+                FakeShaderProperty("FogEnable", True),
+                FakeShaderProperty("FogEnable", False),
+            ],
+            [FakeShaderProperty("FogEnable", 1)],
+            [FakeShaderProperty("FogEnable", True, property_type=6)],
+        )
+        for properties in cases:
+            with self.subTest(properties=properties):
+                with self.assertRaises(RuntimeError):
+                    self._invoke(properties)
+
+    def test_unknown_shader_property_reaches_the_pinned_importer(self) -> None:
+        unknown = FakeShaderProperty("FutureRetailProperty", 3, property_type=6)
+
+        def original(_context, _name, shader_material):
+            self.assertEqual(shader_material.properties, [unknown])
+            raise RuntimeError("pinned importer rejected unknown property")
+
+        wrapped = ADAPTER._shader_material_compatibility_importer(original)
+        with self.assertRaisesRegex(RuntimeError, "rejected unknown property"):
+            wrapped(
+                object(),
+                "fixture",
+                types.SimpleNamespace(properties=[unknown]),
+            )
 
 
 class W3dEquipmentRoleProofTests(unittest.TestCase):
@@ -493,7 +769,9 @@ class W3dEquipmentRoleProofTests(unittest.TestCase):
         self.assertEqual(attachment, "skeletal")
         self.assertEqual(proof_methods, [])
 
-    def test_mesh_or_material_role_still_requires_matching_hand_attachment(self) -> None:
+    def test_mesh_or_material_role_still_requires_matching_hand_attachment(
+        self,
+    ) -> None:
         weapon = FakeObject(name="fixture_sword")
         role, attachment, proofs = ADAPTER._equipment_classification(weapon)
         self.assertEqual((role, attachment), ("right-hand-weapon", "right-hand"))
@@ -509,7 +787,56 @@ class W3dEquipmentRoleProofTests(unittest.TestCase):
         self.assertIn("material-semantic", proofs)
         self.assertNotIn("attachment-semantic", proofs)
 
-    def test_unproven_weapon_still_fails_with_bounded_sanitized_diagnostics(self) -> None:
+    def test_authored_equipment_pivot_proves_attachment_without_inventing_role(
+        self,
+    ) -> None:
+        weapon = FakeObject(name="forged_blade")
+        weapon.parent_bone = "FORGED_BLADE"
+        role, attachment, proofs = ADAPTER._equipment_classification(weapon)
+        self.assertEqual((role, attachment), ("right-hand-weapon", "right-hand"))
+        self.assertIn("source-equipment-pivot", proofs)
+        self.assertNotIn("parent-bone", proofs)
+
+        shield = FakeObject(name="bat_shield")
+        shield.parent_bone = "BAT_SHIELD"
+        role, attachment, proofs = ADAPTER._equipment_classification(shield)
+        self.assertEqual((role, attachment), ("left-hand-shield", "left-hand"))
+        self.assertIn("source-equipment-pivot", proofs)
+        self.assertNotIn("parent-bone", proofs)
+
+        untyped = FakeObject(name="fixture_geometry")
+        untyped.data.name = "fixture_geometry"
+        untyped.data.materials[0].name = "fixture_metal"
+        untyped.parent_bone = "BAT_SHIELD"
+        role, attachment, proofs = ADAPTER._equipment_classification(untyped)
+        self.assertEqual((role, attachment), ("character-mesh", "skeletal"))
+        self.assertEqual(proofs, [])
+
+    def test_authored_equipment_pivot_is_not_reparented_to_a_nearby_hand(self) -> None:
+        rig = FakeRig(
+            [
+                ("B_HAND_L", (4.25, 5.25, 6.25)),
+                ("BAT_SHIELD", (4.25, 5.25, 6.25)),
+                ("B_HAND_R", (20.0, 20.0, 20.0)),
+            ]
+        )
+        shield = FakeObject(name="bat_shield", parent=rig, skinned=False)
+        shield.parent_bone = "BAT_SHIELD"
+        expected_parent = shield.parent
+        expected_world = shield.matrix_world
+
+        promoted = ADAPTER.canonicalize_required_rigid_attachments(
+            [shield], ["left-hand-shield"], rig
+        )
+
+        self.assertEqual(promoted, 0)
+        self.assertIs(shield.parent, expected_parent)
+        self.assertEqual(shield.parent_bone, "BAT_SHIELD")
+        self.assertEqual(shield.matrix_world, expected_world)
+
+    def test_unproven_weapon_still_fails_with_bounded_sanitized_diagnostics(
+        self,
+    ) -> None:
         weapon = FakeObject(name="private_retail_sword", parent=None)
         weapon.data.name = "private_retail_weapon_geometry"
         weapon.data.materials[0].name = "private_retail_metal"
@@ -550,8 +877,326 @@ class W3dEquipmentRoleProofTests(unittest.TestCase):
         self.assertEqual(diagnostics["rest_pose_attachment"], "ambiguous")
 
 
+class W3dAnimationImportOutputTests(unittest.TestCase):
+    @staticmethod
+    def _capture_os_output(
+        operation,
+        *,
+        replay_failure: bool = False,
+        phase_checkpoint=None,
+        operation_phase: str = "animation-import",
+        max_bytes: int = ADAPTER.MAX_ANIMATION_IMPORT_CAPTURE_BYTES,
+    ):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            stdout_path = root / "stdout.bin"
+            stderr_path = root / "stderr.bin"
+            binary_flag = getattr(os, "O_BINARY", 0)
+            stdout_fd = os.open(
+                stdout_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | binary_flag,
+                0o600,
+            )
+            stderr_fd = os.open(
+                stderr_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | binary_flag,
+                0o600,
+            )
+            saved_stdout = os.dup(1)
+            saved_stderr = os.dup(2)
+            ledger = None
+            try:
+                ADAPTER._flush_process_output()
+                os.dup2(stdout_fd, 1)
+                os.dup2(stderr_fd, 2)
+                os.close(stdout_fd)
+                os.close(stderr_fd)
+                stdout_fd = -1
+                stderr_fd = -1
+
+                ledger = ADAPTER.AnimationImportOutputLedger(
+                    temp_dir=root,
+                    max_bytes=max_bytes,
+                )
+                result = ledger.capture(
+                    operation,
+                    operation_phase=operation_phase,
+                    phase_checkpoint=phase_checkpoint,
+                )
+                if replay_failure:
+                    ledger.replay_failure()
+                    suppressed = None
+                else:
+                    suppressed = ledger.replay_success()
+            finally:
+                if ledger is not None and not ledger._finished:
+                    ledger.replay_failure()
+                ADAPTER._flush_process_output()
+                os.dup2(saved_stdout, 1)
+                os.dup2(saved_stderr, 2)
+                os.close(saved_stdout)
+                os.close(saved_stderr)
+                if stdout_fd >= 0:
+                    os.close(stdout_fd)
+                if stderr_fd >= 0:
+                    os.close(stderr_fd)
+            return (
+                result,
+                suppressed,
+                stdout_path.read_bytes(),
+                stderr_path.read_bytes(),
+            )
+
+    def test_exact_warning_lines_are_the_only_matches(self) -> None:
+        warning = ADAPTER.REDUNDANT_KEYFRAME_WARNING
+        payload = b"before\n" + warning + b"\n" + warning + b"\r\nafter\n"
+
+        filtered, suppressed = ADAPTER.filter_redundant_keyframe_warning_bytes(payload)
+
+        self.assertEqual(filtered, b"before\nafter\n")
+        self.assertEqual(suppressed, 2)
+
+    def test_near_matches_and_other_blender_warnings_are_preserved(self) -> None:
+        warning = ADAPTER.REDUNDANT_KEYFRAME_WARNING
+        gltf_warning = (
+            b"WARNING: Baking animation because the number of keyframes is not "
+            b"equal for all channel tracks"
+        )
+        payload = b"".join(
+            (
+                b" " + warning + b"\n",
+                warning + b" \n",
+                warning.replace(b"1 keyframe", b"2 keyframe") + b"\n",
+                gltf_warning + b"\n",
+                warning,
+            )
+        )
+
+        filtered, suppressed = ADAPTER.filter_redundant_keyframe_warning_bytes(payload)
+
+        self.assertEqual(filtered, payload)
+        self.assertEqual(suppressed, 0)
+
+    def test_success_filters_os_descriptor_output_and_reports_count(self) -> None:
+        warning = ADAPTER.REDUNDANT_KEYFRAME_WARNING
+        gltf_warning = (
+            b"WARNING: Baking animation because the number of keyframes is not "
+            b"equal for all channel tracks\n"
+        )
+
+        def operation():
+            os.write(1, b"stdout-before\n" + warning + b"\n" + gltf_warning)
+            os.write(2, warning + b"\r\nstderr-after\n")
+            return {"FINISHED"}
+
+        result, suppressed, stdout, stderr = self._capture_os_output(operation)
+
+        self.assertEqual(result, {"FINISHED"})
+        self.assertEqual(suppressed, 2)
+        self.assertEqual(stdout, b"stdout-before\n" + gltf_warning)
+        self.assertEqual(stderr, b"stderr-after\n")
+
+    def test_capture_checkpoints_cover_success_and_accounting_failure(self) -> None:
+        class Checkpoint:
+            def __init__(self) -> None:
+                self.phases: list[str] = []
+
+            def set(self, phase: str) -> None:
+                self.phases.append(phase)
+
+        success = Checkpoint()
+        result, _suppressed, _stdout, _stderr = self._capture_os_output(
+            lambda: {"FINISHED"},
+            phase_checkpoint=success,
+        )
+        self.assertEqual(result, {"FINISHED"})
+        self.assertEqual(
+            success.phases,
+            [
+                "animation-output-capture-setup",
+                "animation-import",
+                "animation-output-capture-restore",
+                "animation-output-capture-accounting",
+            ],
+        )
+
+        accounting_failure = Checkpoint()
+        with self.assertRaisesRegex(RuntimeError, "bounded job capture"):
+            self._capture_os_output(
+                lambda: os.write(1, b"too large"),
+                phase_checkpoint=accounting_failure,
+                max_bytes=1,
+            )
+        self.assertEqual(
+            accounting_failure.phases[-1],
+            "animation-output-capture-accounting",
+        )
+
+    def test_capture_does_not_overwrite_operation_failure_phase(self) -> None:
+        class Checkpoint:
+            def __init__(self) -> None:
+                self.phases: list[str] = []
+
+            def set(self, phase: str) -> None:
+                self.phases.append(phase)
+
+        checkpoint = Checkpoint()
+        secret = "PRIVATE_CAPTURE_OPERATION_FAILURE"
+
+        def operation():
+            checkpoint.set("model-animation-keyframe-write")
+            raise RuntimeError(secret)
+
+        with self.assertRaisesRegex(RuntimeError, secret):
+            self._capture_os_output(
+                operation,
+                phase_checkpoint=checkpoint,
+            )
+        self.assertEqual(
+            checkpoint.phases,
+            [
+                "animation-output-capture-setup",
+                "animation-import",
+                "model-animation-keyframe-write",
+            ],
+        )
+
+    def test_later_adapter_failure_replays_every_raw_warning_byte(self) -> None:
+        warning = ADAPTER.REDUNDANT_KEYFRAME_WARNING
+        expected_stdout = b"stdout-before\n" + warning + b"\nstdout-after\n"
+        expected_stderr = warning + b"\r\nstderr-after\n"
+
+        def operation():
+            os.write(1, expected_stdout)
+            os.write(2, expected_stderr)
+            return {"FINISHED"}
+
+        result, suppressed, stdout, stderr = self._capture_os_output(
+            operation, replay_failure=True
+        )
+
+        self.assertEqual(result, {"FINISHED"})
+        self.assertIsNone(suppressed)
+        self.assertEqual(stdout, expected_stdout)
+        self.assertEqual(stderr, expected_stderr)
+
+
 class W3dAnimationGeometryProofTests(unittest.TestCase):
-    def test_multiple_left_candidates_choose_materially_nearest_without_world_drift(self) -> None:
+    @staticmethod
+    def _fake_action(name: str, key_count: int = 1):
+        points = [
+            types.SimpleNamespace(
+                co=(float(index), float(index)),
+                interpolation="LINEAR",
+            )
+            for index in range(key_count)
+        ]
+        curve = types.SimpleNamespace(
+            array_index=0,
+            data_path="location",
+            keyframe_points=points,
+        )
+        return types.SimpleNamespace(name=name, fcurves=[curve], use_fake_user=False)
+
+    def test_embedded_model_animation_requires_exact_active_split_pair(self) -> None:
+        object_action = self._fake_action("door")
+        data_action = self._fake_action("doorAction.001", 2)
+        rig = types.SimpleNamespace(
+            animation_data=types.SimpleNamespace(action=object_action),
+            data=types.SimpleNamespace(
+                animation_data=types.SimpleNamespace(action=data_action)
+            ),
+        )
+
+        captured = ADAPTER.capture_split_w3d_animation_actions(
+            rig, [data_action, object_action]
+        )
+
+        self.assertEqual(captured, [object_action, data_action])
+        self.assertTrue(object_action.use_fake_user)
+        self.assertTrue(data_action.use_fake_user)
+
+        rig.data.animation_data.action = None
+        with self.assertRaisesRegex(RuntimeError, "outside its proven owner set"):
+            ADAPTER.capture_split_w3d_animation_actions(
+                rig, [object_action, data_action]
+            )
+
+        rig.data.animation_data.action = data_action
+        with self.assertRaisesRegex(RuntimeError, "outside its proven owner set"):
+            ADAPTER.capture_split_w3d_animation_actions(
+                rig, [object_action, data_action, self._fake_action("extra")]
+            )
+
+        empty_action = self._fake_action("empty", 0)
+        rig.data.animation_data.action = empty_action
+        with self.assertRaisesRegex(RuntimeError, "no keyed curves"):
+            ADAPTER.capture_split_w3d_animation_actions(
+                rig, [object_action, empty_action]
+            )
+        rig.data.animation_data.action = object_action
+        with self.assertRaisesRegex(RuntimeError, "not distinct"):
+            ADAPTER.capture_split_w3d_animation_actions(
+                rig, [object_action, object_action]
+            )
+
+    def test_embedded_animation_glb_proof_requires_one_named_nonempty_clip(
+        self,
+    ) -> None:
+        document = {
+            "asset": {"version": "2.0"},
+            "nodes": [{"mesh": 0, "skin": 0}],
+            "skins": [{"joints": [0]}],
+            "animations": [
+                {
+                    "name": "GBFDOOR_DRC",
+                    "channels": [
+                        {
+                            "sampler": 0,
+                            "target": {"node": 0, "path": "rotation"},
+                        }
+                    ],
+                    "samplers": [{"input": 0, "output": 1}],
+                }
+            ],
+        }
+
+        def glb_bytes(value):
+            payload = json.dumps(value, separators=(",", ":")).encode("utf-8")
+            payload += b" " * ((-len(payload)) % 4)
+            total = 12 + 8 + len(payload)
+            return (
+                struct.pack("<4sII", b"glTF", 2, total)
+                + struct.pack("<II", len(payload), 0x4E4F534A)
+                + payload
+            )
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "door.glb"
+            path.write_bytes(glb_bytes(document))
+            report = ADAPTER.validate_embedded_animation_glb(path, "gbfdoor_drc")
+            self.assertEqual(
+                report,
+                {
+                    "animations": 1,
+                    "channels": 1,
+                    "samplers": 1,
+                    "skins": 1,
+                    "skeletal_meshes": 1,
+                    "visibility_channels": 0,
+                    "visibility_keys": 0,
+                    "visibility_only_animations": 0,
+                },
+            )
+
+            document["animations"][0]["name"] = "wrong"
+            path.write_bytes(glb_bytes(document))
+            with self.assertRaisesRegex(RuntimeError, "name changed"):
+                ADAPTER.validate_embedded_animation_glb(path, "gbfdoor_drc")
+
+    def test_multiple_left_candidates_choose_materially_nearest_without_world_drift(
+        self,
+    ) -> None:
         rig = FakeRig(
             [
                 ("B_HAND_L", (4.25, 5.25, 6.25)),
@@ -594,6 +1239,34 @@ class W3dAnimationGeometryProofTests(unittest.TestCase):
         self.assertEqual(promoted, 1)
         self.assertIs(item.parent, rig)
         self.assertEqual(item.parent_bone, "B_SHIELD")
+
+        # A source-named required rigid shield with no parent, weight, custom,
+        # or rest-pose attachment proof may still use the one canonical left
+        # hand bone. The post-promotion inventory must prove the exact parent.
+        midpoint_rig = FakeRig(
+            [
+                ("B_SHIELD", (0.0, 0.0, 0.0)),
+                ("B_HAND_R", (8.5, 10.5, 12.5)),
+            ]
+        )
+        midpoint_item = FakeObject(name="fixture_shield", parent=None, skinned=False)
+        midpoint_world = midpoint_item.matrix_world
+        self.assertEqual(
+            ADAPTER._rest_pose_hand_attachment(midpoint_item, midpoint_rig), ""
+        )
+        self.assertEqual(
+            ADAPTER.canonicalize_required_rigid_attachments(
+                [midpoint_item], ["left-hand-shield"], midpoint_rig
+            ),
+            1,
+        )
+        self.assertEqual(midpoint_item.parent_bone, "B_SHIELD")
+        self.assertEqual(midpoint_item.matrix_world, midpoint_world)
+        midpoint_inventory, midpoint_equipment = ADAPTER.build_mesh_inventory(
+            [midpoint_item], ["left-hand-shield"], midpoint_rig
+        )
+        self.assertIn("parent-bone", midpoint_inventory[0]["proof_methods"])
+        self.assertEqual(midpoint_equipment["left-hand-shield"]["mesh_count"], 1)
 
     def test_ambiguous_or_skinned_rest_only_attachment_is_rejected(self) -> None:
         ambiguous = FakeObject(name="fixture_shield", parent=None, skinned=False)
@@ -745,7 +1418,9 @@ class W3dAnimationGeometryProofTests(unittest.TestCase):
                 equipment,
             )
 
-    def test_geometry_material_weight_and_object_data_mutations_fail_closed(self) -> None:
+    def test_geometry_material_weight_and_object_data_mutations_fail_closed(
+        self,
+    ) -> None:
         cases = []
 
         geometry = FakeObject()

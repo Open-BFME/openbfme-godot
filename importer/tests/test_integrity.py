@@ -161,6 +161,13 @@ class IntegrityTests(unittest.TestCase):
                     "outputs": [],
                 }
             )
+        # Retail inputs may intentionally fan out into multiple resource
+        # conversions. Exercise both distinguishing identity components while
+        # keeping the fixed Fords source-entry count unchanged.
+        entries[1]["source"] = json.loads(json.dumps(entries[0]["source"]))
+        entries[2]["source"] = json.loads(json.dumps(entries[0]["source"]))
+        entries[2]["resource_id"] = entries[0]["resource_id"]
+        entries[2]["converter"] = "text"
         manifest = {
             "format": 1,
             "contract": RETAIL_PROVENANCE_CONTRACT,
@@ -215,6 +222,42 @@ class IntegrityTests(unittest.TestCase):
         self.assertEqual(
             summary["provenance_entry_count"], MEN_FORDS_SOURCE_ENTRY_COUNT
         )
+
+        duplicate_conversion = json.loads(json.dumps(manifest))
+        duplicate_conversion["entries"][2]["converter"] = entries[0]["converter"]
+        errors = []
+        self.assertFalse(
+            _audit_retail_provenance(duplicate_conversion, pack, errors)[
+                "semantic_provenance"
+            ]
+        )
+        self.assertTrue(
+            any("duplicate retail provenance conversion entry" in error for error in errors)
+        )
+
+        malformed_source = json.loads(json.dumps(manifest))
+        malformed_source["entries"][3]["source"]["virtual_path"] = "../tampered.bin"
+        errors = []
+        self.assertFalse(
+            _audit_retail_provenance(malformed_source, pack, errors)[
+                "semantic_provenance"
+            ]
+        )
+        self.assertTrue(
+            any("invalid retail provenance source path" in error for error in errors)
+        )
+
+        for identity_field in ("resource_id", "converter"):
+            with self.subTest(identity_field=identity_field):
+                malformed_identity = json.loads(json.dumps(manifest))
+                malformed_identity["entries"][3][identity_field] = ""
+                errors = []
+                self.assertFalse(
+                    _audit_retail_provenance(malformed_identity, pack, errors)[
+                        "semantic_provenance"
+                    ]
+                )
+                self.assertIn("invalid retail provenance source entry", errors)
 
         tampered = json.loads(json.dumps(manifest))
         tampered["tools"]["python"]["tree_sha256"] = "0" * 64

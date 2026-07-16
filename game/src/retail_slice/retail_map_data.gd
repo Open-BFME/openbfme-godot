@@ -9,10 +9,24 @@ extends RefCounted
 
 const MAX_DOCUMENT_BYTES := 2 * 1024 * 1024
 const MAX_TERRAIN_CELLS := 1_000_000
+const MAX_TERRAIN_BINARY_BYTES := MAX_TERRAIN_CELLS * 4
+const MAX_TERRAIN_TEXTURES := 256
+const MAX_TERRAIN_TEXTURE_DIMENSION := 4096
+const MAX_TERRAIN_TEXTURE_BYTES := 16 * 1024 * 1024
+const MAX_TERRAIN_TEXTURE_TOTAL_BYTES := 128 * 1024 * 1024
+const BLEND_DESCRIPTION_RECORD_BYTES := 18
+const CLIFF_MAPPING_RECORD_BYTES := 38
 const MAX_MAP_OBJECTS := 5000
 const MAX_WATER_VERTICES := 4096
 const MAX_WAYPOINTS := 256
 const MAX_GENERIC_PROPS := 72
+const MAX_OBJECT_BINDING_RECORDS := 512
+const MAX_BOUND_MODEL_BYTES := 256 * 1024 * 1024
+const MAX_ROAD_MATERIALS := 256
+const MAX_ROAD_TEXTURE_DIMENSION := 4096
+const MAX_ROAD_TEXTURE_BYTES := 16 * 1024 * 1024
+const MAX_ROAD_TEXTURE_TOTAL_BYTES := 64 * 1024 * 1024
+const MAX_PROVENANCE_BUNDLE_FILES := 20_000
 const LOCAL_START_SEPARATION := 76.0
 const FORD_CORRIDOR_DILATION_CELLS := 5
 const MAX_ROUTE_CELLS := 1024
@@ -28,6 +42,21 @@ var heightmap_bytes := 0
 var passability_bytes := 0
 var impassable_count := 0
 var terrain_texture_count := 0
+var terrain_texture_width := 0
+var terrain_texture_height := 0
+var terrain_texture_array_dimension := 0
+var terrain_material_catalog: Array[Dictionary] = []
+var terrain_tile_indices := PackedInt32Array()
+var terrain_blend_cells := PackedInt32Array()
+var terrain_three_way_blend_cells := PackedInt32Array()
+var terrain_cliff_cells := PackedInt32Array()
+var terrain_blend_descriptions: Array[Dictionary] = []
+var terrain_cliff_mappings: Array[Dictionary] = []
+var terrain_nonzero_blend_cell_count := 0
+var terrain_nonzero_three_way_blend_cell_count := 0
+var terrain_nonzero_cliff_cell_count := 0
+var terrain_source_layer_sha256: Dictionary = {}
+var _terrain_cell_texture_indices := PackedInt32Array()
 var border_width := 0
 var playable_world_extent := Vector2.ZERO
 var playable_grid_min := Vector2i.ZERO
@@ -40,6 +69,25 @@ var computed_impassable_count := 0
 var heightmap_sha256 := ""
 var passability_sha256 := ""
 var object_count := 0
+var nonroad_object_count := 0
+var road_type_count := 0
+var road_control_point_count := 0
+var road_segment_count := 0
+var road_unresolved_control_point_count := 0
+var road_unique_endpoint_count := 0
+var road_shared_node_count := 0
+var road_curve_candidate_node_count := 0
+var road_crossing_candidate_node_count := 0
+var road_modifier_flags_or := 0
+var road_type_ids: Array[String] = []
+var road_control_points: Array[Dictionary] = []
+var road_segments: Array[Dictionary] = []
+var roads_path := ""
+var road_material_count := 0
+var road_material_catalog: Array[Dictionary] = []
+var road_materials_path := ""
+var road_source_report_aggregate_sha256 := ""
+var provenance_manifest_path := ""
 var waypoint_count := 0
 var player_start_count := 0
 var standing_water_count := 0
@@ -62,6 +110,20 @@ var standing_water_polygons: Array = []
 var river_strips: Array[Dictionary] = []
 var ford_gates: Array[Dictionary] = []
 var generic_prop_placements: Array[Dictionary] = []
+var bound_prop_placements: Array[Dictionary] = []
+var bound_structure_placements: Array[Dictionary] = []
+var bound_prop_type_ids: Array[String] = []
+var bound_structure_type_ids: Array[String] = []
+var logical_prop_type_ids: Array[String] = []
+var unresolved_prop_type_ids: Array[String] = []
+var bound_prop_placement_count := 0
+var bound_structure_placement_count := 0
+var logical_prop_placement_count := 0
+var unresolved_prop_placement_count := 0
+var object_binding_record_count := 0
+var object_binding_resolution_status := ""
+var object_bindings_path := ""
+var _object_binding_by_type: Dictionary = {}
 var map_outline := PackedVector2Array()
 var navigation_ready := false
 var navigation_walkable_count := 0
@@ -75,6 +137,8 @@ var _ford_corridor_cells: Dictionary = {}
 
 
 func load_from_pack(selected_pack_root: String, map_definition: Dictionary) -> bool:
+	var profile_init := OS.get_environment("OPENBFME_PROFILE_INIT") == "1"
+	var profile_last_ms := Time.get_ticks_msec()
 	_reset()
 	pack_root = selected_pack_root
 	var source_path := String(map_definition.get("_source", ""))
@@ -87,35 +151,67 @@ func load_from_pack(selected_pack_root: String, map_definition: Dictionary) -> b
 
 	var terrain := _read_document(String(map_definition.get("terrain", "")), "terrain")
 	var objects := _read_document(String(map_definition.get("objects", "")), "objects")
+	var roads := _read_document(String(map_definition.get("roads", "")), "roads")
+	var road_materials := _read_document(String(map_definition.get("roadMaterials", "")), "road materials")
+	var object_bindings := _read_document(String(map_definition.get("objectBindings", "")), "object bindings")
 	var waypoints := _read_document(String(map_definition.get("waypoints", "")), "waypoints")
 	var water := _read_document(String(map_definition.get("water", "")), "water")
-	if terrain.is_empty() or objects.is_empty() or waypoints.is_empty() or water.is_empty():
+	if profile_init:
+		print("RETAIL_MAP_DATA_PHASE name=documents delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
+		profile_last_ms = Time.get_ticks_msec()
+	if terrain.is_empty() or objects.is_empty() or roads.is_empty() or road_materials.is_empty() or object_bindings.is_empty() or waypoints.is_empty() or water.is_empty():
 		return false
 	if String(terrain.get("schema", "")) != "openbfme.sage-terrain" or int(terrain.get("schemaVersion", -1)) != 0:
 		return _fail("unexpected cooked terrain schema")
 	if String(objects.get("schema", "")) != "openbfme.sage-map-objects" or int(objects.get("schemaVersion", -1)) != 0:
 		return _fail("unexpected cooked object schema")
+	if String(roads.get("schema", "")) != "openbfme.sage-roads" or int(roads.get("schemaVersion", -1)) != 0:
+		return _fail("unexpected cooked roads schema")
+	if String(object_bindings.get("schema", "")) != "openbfme.sage-object-bindings" or int(object_bindings.get("schemaVersion", -1)) != 0:
+		return _fail("unexpected cooked object-binding schema")
 	if String(waypoints.get("schema", "")) != "openbfme.sage-waypoints" or int(waypoints.get("schemaVersion", -1)) != 0:
 		return _fail("unexpected cooked waypoint schema")
 	if String(water.get("schema", "")) != "openbfme.sage-water" or int(water.get("schemaVersion", -1)) != 0:
 		return _fail("unexpected cooked water schema")
 
-	if not _load_terrain(terrain):
+	if not _load_terrain(terrain, String(map_definition.get("terrainMaterials", ""))):
 		return false
+	if profile_init:
+		print("RETAIL_MAP_DATA_PHASE name=terrain delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
+		profile_last_ms = Time.get_ticks_msec()
 	if not _load_waypoints(waypoints):
 		return false
 	if not _load_water(water):
 		return false
-	if not _load_objects(objects):
+	if profile_init:
+		print("RETAIL_MAP_DATA_PHASE name=waypoints_water delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
+		profile_last_ms = Time.get_ticks_msec()
+	object_bindings_path = _resolve(String(map_definition.get("objectBindings", "")))
+	if object_bindings_path == "":
+		return _fail("object-binding document escaped the selected map")
+	roads_path = _resolve(String(map_definition.get("roads", "")))
+	if roads_path == "":
+		return _fail("roads document escaped the selected map")
+	road_materials_path = _resolve(String(map_definition.get("roadMaterials", "")))
+	if road_materials_path == "":
+		return _fail("road-material document escaped the selected map")
+	if not _load_objects(objects, roads, object_bindings, _dictionary(map_definition.get("roadSummary", {}))):
 		return false
+	if not _load_road_materials(road_materials):
+		return false
+	if profile_init:
+		print("RETAIL_MAP_DATA_PHASE name=objects_roads delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
+		profile_last_ms = Time.get_ticks_msec()
 	_build_map_outline()
 	if not _build_navigation():
 		return false
+	if profile_init:
+		print("RETAIL_MAP_DATA_PHASE name=navigation delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
 	ready = true
 	return true
 
 
-func _load_terrain(terrain: Dictionary) -> bool:
+func _load_terrain(terrain: Dictionary, terrain_materials_relative: String) -> bool:
 	var height_data := _dictionary(terrain.get("height", {}))
 	var height_file := _dictionary(height_data.get("heightmap", {}))
 	var passability := _dictionary(terrain.get("passability", {}))
@@ -129,9 +225,12 @@ func _load_terrain(terrain: Dictionary) -> bool:
 	raw_elevation_min = int(height_data.get("rawElevationMin", -1))
 	raw_elevation_max = int(height_data.get("rawElevationMax", -1))
 	impassable_count = int(grid_stats.get("impassable", -1))
-	terrain_texture_count = _array(blend.get("textures", [])).size()
+	var blend_textures := _array(blend.get("textures", []))
+	terrain_texture_count = blend_textures.size()
 	if width <= 1 or height <= 1 or width * height > MAX_TERRAIN_CELLS:
 		return _fail("invalid or unbounded cooked heightmap dimensions")
+	if terrain_texture_count <= 0 or terrain_texture_count > MAX_TERRAIN_TEXTURES:
+		return _fail("invalid or unbounded cooked terrain texture count")
 	if not _finite_positive(horizontal_scale) or not _finite_positive(vertical_scale):
 		return _fail("invalid cooked terrain scale")
 	if String(height_file.get("encoding", "")) != "uint16" or String(height_file.get("endianness", "")) != "little" or String(height_file.get("order", "")) != "row-major-y-then-x":
@@ -181,7 +280,256 @@ func _load_terrain(terrain: Dictionary) -> bool:
 		return _fail("passability popcount does not match its metadata")
 	heightmap_sha256 = _sha256(height_samples)
 	passability_sha256 = _sha256(passability_bits)
+	if not _load_terrain_material_catalog(terrain_materials_relative, blend, blend_textures):
+		return false
+	if not _load_terrain_source_layers(terrain, blend):
+		return false
 	return true
+
+
+func _load_terrain_material_catalog(relative: String, blend: Dictionary, blend_textures: Array) -> bool:
+	if relative == "":
+		return _fail("cooked map does not declare terrain materials")
+	var manifest_path := _resolve(relative)
+	if manifest_path == "":
+		return _fail("terrain material manifest escaped the selected map")
+	var manifest := _read_document(relative, "terrain material")
+	if manifest.is_empty():
+		return false
+	if String(manifest.get("schema", "")) != "openbfme.sage-terrain-materials" or int(manifest.get("schemaVersion", -1)) != 0:
+		return _fail("unexpected cooked terrain material schema")
+	var materials := _array(manifest.get("materials", []))
+	var texture_rows := _array(manifest.get("textures", []))
+	if int(manifest.get("symbolCount", -1)) != terrain_texture_count or int(manifest.get("textureCount", -1)) != terrain_texture_count:
+		return _fail("terrain material manifest count does not match the terrain table")
+	if materials.size() != terrain_texture_count or texture_rows.size() != terrain_texture_count or blend_textures.size() != terrain_texture_count:
+		return _fail("terrain material catalog is incomplete")
+
+	var material_root := manifest_path.get_base_dir()
+	var expected_cell_start := 0
+	var total_png_bytes := 0
+	var seen_symbols: Dictionary = {}
+	terrain_texture_array_dimension = 0
+	for index in range(terrain_texture_count):
+		var blend_row := _dictionary(blend_textures[index])
+		var material_row := _dictionary(materials[index])
+		var texture_row := _dictionary(texture_rows[index])
+		var symbol := String(material_row.get("symbol", ""))
+		var definition_symbol := String(material_row.get("definitionSymbol", ""))
+		var blend_symbol := String(blend_row.get("name", ""))
+		var table_index := int(material_row.get("tableIndex", -1))
+		var cell_start := int(blend_row.get("cellStart", -1))
+		var cell_count := int(blend_row.get("cellCount", -1))
+		var cell_size := int(blend_row.get("cellSize", -1))
+		if symbol == "" or definition_symbol != symbol or blend_symbol != symbol or table_index != index or seen_symbols.has(symbol):
+			return _fail("terrain material table order or symbol identity is invalid")
+		if cell_size <= 0 or cell_size > 64 or cell_count != cell_size * cell_size or cell_start != expected_cell_start:
+			return _fail("terrain material cell table is invalid")
+
+		var png_relative := String(material_row.get("png", ""))
+		var png_sha256 := String(material_row.get("pngSha256", "")).to_lower()
+		var texture_png_relative := String(texture_row.get("png", ""))
+		var texture_png_sha256 := String(texture_row.get("pngSha256", "")).to_lower()
+		var image_width := int(material_row.get("width", 0))
+		var image_height := int(material_row.get("height", 0))
+		if png_relative == "" or png_relative.get_extension().to_lower() != "png" or png_sha256.length() != 64:
+			return _fail("terrain material PNG declaration is invalid")
+		if texture_png_relative != png_relative or texture_png_sha256 != png_sha256 or int(texture_row.get("width", 0)) != image_width or int(texture_row.get("height", 0)) != image_height:
+			return _fail("terrain material manifest rows disagree")
+		if image_width <= 0 or image_width > MAX_TERRAIN_TEXTURE_DIMENSION or image_height != image_width or image_width != cell_size * 64:
+			return _fail("terrain material dimensions do not match the SAGE cell table")
+		var png_path := _resolve_from(material_root, png_relative)
+		if png_path == "":
+			return _fail("terrain material PNG escaped the selected map")
+		var png_bytes := _read_bounded_bytes(png_path, MAX_TERRAIN_TEXTURE_BYTES, "terrain material PNG")
+		if png_bytes.is_empty():
+			return false
+		if not _has_png_signature(png_bytes) or _sha256(png_bytes).to_lower() != png_sha256:
+			return _fail("terrain material PNG failed signature or digest validation")
+		total_png_bytes += png_bytes.size()
+		if total_png_bytes > MAX_TERRAIN_TEXTURE_TOTAL_BYTES:
+			return _fail("terrain material PNG payload exceeds the bounded runtime budget")
+
+		seen_symbols[symbol] = true
+		terrain_texture_array_dimension = maxi(terrain_texture_array_dimension, image_width)
+		terrain_material_catalog.append({
+			"symbol": symbol,
+			"definition_symbol": definition_symbol,
+			"source_texture": String(material_row.get("sourceTexture", "")),
+			"table_index": table_index,
+			"png_relative": png_relative,
+			"png_path": png_path,
+			"png_sha256": png_sha256,
+			"png_byte_length": png_bytes.size(),
+			"width": image_width,
+			"height": image_height,
+			"cell_start": cell_start,
+			"cell_count": cell_count,
+			"cell_size": cell_size,
+			"uv_divisor": cell_size * 2,
+		})
+		for _cell in range(cell_count):
+			_terrain_cell_texture_indices.append(index)
+		expected_cell_start += cell_count
+
+	if expected_cell_start != int(blend.get("textureCellCount", -1)) or _terrain_cell_texture_indices.size() != expected_cell_start:
+		return _fail("terrain material cell coverage does not match cooked metadata")
+	terrain_texture_width = terrain_texture_array_dimension
+	terrain_texture_height = terrain_texture_array_dimension
+	return terrain_texture_array_dimension > 0
+
+
+func _load_terrain_source_layers(terrain: Dictionary, blend: Dictionary) -> bool:
+	var source_layers := _dictionary(terrain.get("sourceLayers", {}))
+	if String(source_layers.get("schema", "")) != "openbfme.sage-terrain-source-layers" or int(source_layers.get("schemaVersion", -1)) != 0:
+		return _fail("unexpected cooked terrain source-layer schema")
+	var cell_count := width * height
+	if int(source_layers.get("gridWidth", -1)) != width or int(source_layers.get("gridHeight", -1)) != height or int(source_layers.get("cellCount", -1)) != cell_count:
+		return _fail("terrain source-layer grid does not match the heightmap")
+	var layer_descriptors := _dictionary(source_layers.get("layers", {}))
+	var table_descriptors := _dictionary(source_layers.get("descriptionTables", {}))
+	terrain_source_layer_sha256.clear()
+	var tile_bytes := _read_terrain_grid_layer(layer_descriptors, "tileIndices", 2, "uint16", "terrain tile indices")
+	var blend_bytes := _read_terrain_grid_layer(layer_descriptors, "blendCells", 4, "opaque-uint32", "terrain blend cells")
+	var three_way_bytes := _read_terrain_grid_layer(layer_descriptors, "threeWayBlendCells", 4, "opaque-uint32", "terrain three-way blend cells")
+	var cliff_bytes := _read_terrain_grid_layer(layer_descriptors, "cliffCells", 4, "opaque-uint32", "terrain cliff cells")
+	var blend_description_count := int(blend.get("blendDescriptionCount", -1))
+	var cliff_mapping_count := int(blend.get("cliffMappingCount", -1))
+	if blend_description_count <= 0 or blend_description_count > cell_count or cliff_mapping_count <= 0 or cliff_mapping_count > cell_count:
+		return _fail("terrain description-table counts are invalid")
+	if int(blend.get("rawBlendCount", -1)) != blend_description_count + 1 or int(blend.get("rawCliffCount", -1)) != cliff_mapping_count + 1:
+		return _fail("terrain description-table reserved-entry counts are invalid")
+	var blend_description_bytes := _read_terrain_description_table(table_descriptors, "blendDescriptions", blend_description_count, BLEND_DESCRIPTION_RECORD_BYTES, "terrain blend descriptions")
+	var cliff_mapping_bytes := _read_terrain_description_table(table_descriptors, "cliffMappings", cliff_mapping_count, CLIFF_MAPPING_RECORD_BYTES, "terrain cliff mappings")
+	if error != "" or tile_bytes.is_empty() or blend_bytes.is_empty() or three_way_bytes.is_empty() or cliff_bytes.is_empty() or blend_description_bytes.is_empty() or cliff_mapping_bytes.is_empty():
+		return false
+
+	terrain_tile_indices.resize(cell_count)
+	var computed_max_tile := -1
+	for index in range(cell_count):
+		var tile_value := int(tile_bytes.decode_u16(index * 2))
+		if terrain_texture_index_for_tile_value(tile_value) < 0:
+			return _fail("terrain tile index escaped the material cell table")
+		terrain_tile_indices[index] = tile_value
+		computed_max_tile = maxi(computed_max_tile, tile_value)
+	if computed_max_tile != int(blend.get("maxTileValue", -1)):
+		return _fail("terrain tile-index maximum does not match cooked metadata")
+
+	for index in range(blend_description_count):
+		var offset := index * BLEND_DESCRIPTION_RECORD_BYTES
+		var secondary_tile := int(blend_description_bytes.decode_u32(offset))
+		var direction := 0
+		for direction_index in range(4):
+			var direction_byte := int(blend_description_bytes[offset + 4 + direction_index])
+			if direction_byte != 0 and direction_byte != 1:
+				return _fail("terrain blend direction contains a non-boolean component")
+			if direction_byte != 0:
+				direction |= 1 << direction_index
+		var source_flags := int(blend_description_bytes[offset + 8])
+		var two_sided_byte := int(blend_description_bytes[offset + 9])
+		var magic_one := int(blend_description_bytes.decode_u32(offset + 10))
+		var magic_two := int(blend_description_bytes.decode_u32(offset + 14))
+		var secondary_texture_index := terrain_texture_index_for_tile_value(secondary_tile)
+		if secondary_texture_index < 0 or direction not in [1, 2, 4, 8] or (source_flags & ~3) != 0 or two_sided_byte not in [0, 1]:
+			return _fail("terrain blend description contains an invalid source reference or flag")
+		if magic_one not in [0xFFFFFFFF, 24] or magic_two != 0x7ADA0000:
+			return _fail("terrain blend description magic does not match the supported SAGE record")
+		terrain_blend_descriptions.append({
+			"source_index": index + 1,
+			"secondary_texture_tile": secondary_tile,
+			"secondary_texture_index": secondary_texture_index,
+			"blend_direction": direction,
+			"source_flags": source_flags,
+			"flipped": (source_flags & 1) != 0,
+			"two_sided": two_sided_byte != 0,
+			"magic_one": magic_one,
+		})
+
+	for index in range(cliff_mapping_count):
+		var offset := index * CLIFF_MAPPING_RECORD_BYTES
+		var texture_tile := int(cliff_mapping_bytes.decode_u32(offset))
+		var bottom_left := Vector2(cliff_mapping_bytes.decode_float(offset + 4), cliff_mapping_bytes.decode_float(offset + 8))
+		var bottom_right := Vector2(cliff_mapping_bytes.decode_float(offset + 12), cliff_mapping_bytes.decode_float(offset + 16))
+		var top_right := Vector2(cliff_mapping_bytes.decode_float(offset + 20), cliff_mapping_bytes.decode_float(offset + 24))
+		var top_left := Vector2(cliff_mapping_bytes.decode_float(offset + 28), cliff_mapping_bytes.decode_float(offset + 32))
+		if terrain_texture_index_for_tile_value(texture_tile) < 0 or not _finite_vector2(bottom_left) or not _finite_vector2(bottom_right) or not _finite_vector2(top_right) or not _finite_vector2(top_left):
+			return _fail("terrain cliff mapping contains an invalid source reference or coordinate")
+		terrain_cliff_mappings.append({
+			"source_index": index + 1,
+			"texture_tile": texture_tile,
+			"texture_index": terrain_texture_index_for_tile_value(texture_tile),
+			"bottom_left": bottom_left,
+			"bottom_right": bottom_right,
+			"top_right": top_right,
+			"top_left": top_left,
+			"unknown": int(cliff_mapping_bytes.decode_u16(offset + 36)),
+		})
+
+	terrain_blend_cells.resize(cell_count)
+	terrain_three_way_blend_cells.resize(cell_count)
+	terrain_cliff_cells.resize(cell_count)
+	terrain_nonzero_blend_cell_count = 0
+	terrain_nonzero_three_way_blend_cell_count = 0
+	terrain_nonzero_cliff_cell_count = 0
+	for index in range(cell_count):
+		var blend_index := int(blend_bytes.decode_u32(index * 4))
+		var three_way_index := int(three_way_bytes.decode_u32(index * 4))
+		var cliff_index := int(cliff_bytes.decode_u32(index * 4))
+		if blend_index < 0 or blend_index > blend_description_count or three_way_index < 0 or three_way_index > blend_description_count or cliff_index < 0 or cliff_index > cliff_mapping_count:
+			return _fail("terrain cell references an out-of-range description")
+		terrain_blend_cells[index] = blend_index
+		terrain_three_way_blend_cells[index] = three_way_index
+		terrain_cliff_cells[index] = cliff_index
+		if blend_index != 0:
+			terrain_nonzero_blend_cell_count += 1
+		if three_way_index != 0:
+			terrain_nonzero_three_way_blend_cell_count += 1
+		if cliff_index != 0:
+			terrain_nonzero_cliff_cell_count += 1
+	if terrain_nonzero_blend_cell_count != int(blend.get("nonzeroBlendCells", -1)) or terrain_nonzero_three_way_blend_cell_count != int(blend.get("nonzeroThreeWayBlendCells", -1)) or terrain_nonzero_cliff_cell_count != int(blend.get("nonzeroCliffCells", -1)):
+		return _fail("terrain source-layer nonzero counts do not match cooked metadata")
+	return true
+
+
+func _read_terrain_grid_layer(descriptors: Dictionary, key: String, cell_size: int, encoding: String, label: String) -> PackedByteArray:
+	var descriptor := _dictionary(descriptors.get(key, {}))
+	var expected_size := width * height * cell_size
+	if int(descriptor.get("cellCount", -1)) != width * height or int(descriptor.get("cellSizeBytes", -1)) != cell_size or int(descriptor.get("byteLength", -1)) != expected_size:
+		_fail("%s descriptor size does not match the terrain grid" % label)
+		return PackedByteArray()
+	if String(descriptor.get("encoding", "")) != encoding or String(descriptor.get("endianness", "")) != "little" or String(descriptor.get("order", "")) != "row-major-y-then-x" or not bool(descriptor.get("sourceExact", false)):
+		_fail("%s descriptor encoding is unsupported" % label)
+		return PackedByteArray()
+	return _read_verified_terrain_bytes(descriptor, expected_size, key, label)
+
+
+func _read_terrain_description_table(descriptors: Dictionary, key: String, record_count: int, record_size: int, label: String) -> PackedByteArray:
+	var descriptor := _dictionary(descriptors.get(key, {}))
+	var expected_size := record_count * record_size
+	if int(descriptor.get("recordCount", -1)) != record_count or int(descriptor.get("recordSizeBytes", -1)) != record_size or int(descriptor.get("byteLength", -1)) != expected_size:
+		_fail("%s descriptor size does not match its record table" % label)
+		return PackedByteArray()
+	if int(descriptor.get("sourceCount", -1)) != record_count + 1 or String(descriptor.get("encoding", "")) != "opaque-fixed-records" or not bool(descriptor.get("reservedZeroEntryExcluded", false)) or not bool(descriptor.get("sourceExact", false)):
+		_fail("%s descriptor semantics are unsupported" % label)
+		return PackedByteArray()
+	return _read_verified_terrain_bytes(descriptor, expected_size, key, label)
+
+
+func _read_verified_terrain_bytes(descriptor: Dictionary, expected_size: int, key: String, label: String) -> PackedByteArray:
+	var declared_sha256 := String(descriptor.get("sha256", "")).to_lower()
+	var path := _resolve(String(descriptor.get("path", "")))
+	if path == "" or declared_sha256.length() != 64:
+		_fail("%s path or digest is invalid" % label)
+		return PackedByteArray()
+	var bytes := _read_bytes(path, expected_size, label)
+	if bytes.is_empty():
+		return PackedByteArray()
+	var actual_sha256 := _sha256(bytes).to_lower()
+	if actual_sha256 != declared_sha256:
+		_fail("%s digest does not match its descriptor" % label)
+		return PackedByteArray()
+	terrain_source_layer_sha256[key] = actual_sha256
+	return bytes
 
 
 func _load_waypoints(document: Dictionary) -> bool:
@@ -301,19 +649,90 @@ func _derive_ford_gates() -> bool:
 	return ford_gates.size() == 3
 
 
-func _load_objects(document: Dictionary) -> bool:
+func _load_objects(document: Dictionary, road_document: Dictionary, binding_document: Dictionary, declared_road_summary: Dictionary) -> bool:
 	var objects := _array(document.get("objects", []))
 	object_count = objects.size()
 	if object_count != int(document.get("count", -1)) or object_count > MAX_MAP_OBJECTS:
 		return _fail("cooked map object count does not match its metadata")
-	var vegetation: Array[Dictionary] = []
-	var rocks: Array[Dictionary] = []
+	var normalized_objects: Array[Dictionary] = []
+	var source_roads: Dictionary = {}
+	var source_type_counts: Dictionary = {}
+	var source_indices: Dictionary = {}
 	for object_value in objects:
 		var object := _dictionary(object_value)
 		var type_name := String(object.get("typeName", ""))
+		var source_index := int(object.get("index", -1))
 		var source_position := _vector3(object.get("godotPosition", []))
-		if object.is_empty() or type_name == "" or type_name.length() > 128 or source_position == Vector3.INF:
+		var sage_position := _vector3(object.get("sagePosition", []))
+		var yaw := float(object.get("godotYawRadians", NAN))
+		var road_type_value: Variant = object.get("roadType", null)
+		if object.is_empty() or type_name == "" or type_name.length() > 128 or source_index < 0 or source_index >= object_count or source_indices.has(source_index) or source_position == Vector3.INF or sage_position == Vector3.INF or not _finite_number(yaw) or not _exact_integer(road_type_value):
 			return _fail("invalid cooked object placement")
+		var road_type := int(road_type_value)
+		if road_type < 0 or road_type > 0xFFFFFFFF:
+			return _fail("invalid cooked object road wire type")
+		source_indices[source_index] = true
+		if road_type != 0:
+			source_roads[source_index] = {
+				"road_id": type_name,
+				"wire_type": road_type,
+				"sage_position": sage_position,
+				"godot_position": source_position,
+			}
+			continue
+		source_type_counts[type_name] = int(source_type_counts.get(type_name, 0)) + 1
+		normalized_objects.append({
+			"source_type": type_name,
+			"source_index": source_index,
+			"source_position": source_position,
+			"position": source_to_local(source_position),
+			"source_yaw": yaw,
+			"yaw": yaw,
+			"scale": Vector3.ONE,
+		})
+	nonroad_object_count = normalized_objects.size()
+	if not _load_roads(road_document, source_roads, declared_road_summary):
+		return false
+	if not _load_object_bindings(binding_document, source_type_counts):
+		return false
+	return _route_normalized_object_placements(normalized_objects)
+
+
+func _route_normalized_object_placements(normalized_objects: Array[Dictionary]) -> bool:
+	generic_prop_placements.clear()
+	bound_prop_placements.clear()
+	bound_structure_placements.clear()
+	var vegetation: Array[Dictionary] = []
+	var rocks: Array[Dictionary] = []
+	var observed_bound_props := 0
+	var observed_bound_structures := 0
+	var observed_logical := 0
+	var observed_unresolved := 0
+	for placement_value in normalized_objects:
+		var placement: Dictionary = placement_value
+		var type_name := String(placement["source_type"])
+		var binding: Dictionary = _object_binding_by_type.get(type_name, {})
+		var status := String(binding.get("status", ""))
+		if status == "bound":
+			placement["binding_status"] = "bound"
+			placement["classification"] = String(binding.get("classification", ""))
+			placement["glb_relative"] = String(binding.get("glb_relative", ""))
+			placement["glb_path"] = String(binding.get("glb_path", ""))
+			if String(binding.get("classification", "")) == "lifecycle-structure":
+				placement["source_virtual_model"] = String(binding.get("source_virtual_model", ""))
+				placement["object_id"] = String(binding.get("object_id", ""))
+				bound_structure_placements.append(placement)
+				observed_bound_structures += 1
+			else:
+				bound_prop_placements.append(placement)
+				observed_bound_props += 1
+			continue
+		if status == "logical":
+			observed_logical += 1
+			continue
+		if status != "unresolved":
+			return _fail("cooked object placement has no explicit binding status")
+		observed_unresolved += 1
 		var lowered := type_name.to_lower()
 		var kind := ""
 		if lowered.contains("tree") or lowered.contains("shrub") or lowered.contains("bush"):
@@ -322,24 +741,516 @@ func _load_objects(document: Dictionary) -> bool:
 			kind = "rock"
 		if kind == "":
 			continue
-		var placement := {
-			"kind": kind,
-			"source_type": type_name,
-			"source_index": int(object.get("index", -1)),
-			"position": source_to_local(source_position),
-			"yaw": float(object.get("godotYawRadians", 0.0)),
-		}
-		if not _finite_number(float(placement["yaw"])):
-			return _fail("invalid cooked object rotation")
+		placement["kind"] = kind
+		placement["binding_status"] = "unresolved"
 		if kind == "vegetation":
 			vegetation.append(placement)
 		else:
 			rocks.append(placement)
+	if (
+		observed_bound_props != bound_prop_placement_count
+		or observed_bound_structures != bound_structure_placement_count
+		or observed_logical != logical_prop_placement_count
+		or observed_unresolved != unresolved_prop_placement_count
+	):
+		return _fail("object-binding placement totals disagree with cooked objects")
 	generic_prop_placements.append_array(_even_sample(vegetation, 48))
 	generic_prop_placements.append_array(_even_sample(rocks, 24))
 	if generic_prop_placements.size() > MAX_GENERIC_PROPS:
-		return _fail("generic source-placement preview exceeded its bound")
+		return _fail("unresolved source-placement preview exceeded its bound")
+	for marker in generic_prop_placements:
+		if (
+			String(marker.get("binding_status", "")) != "unresolved"
+			or bound_prop_type_ids.has(String(marker.get("source_type", "")))
+			or bound_structure_type_ids.has(String(marker.get("source_type", "")))
+		):
+			return _fail("bound retail placement leaked into unresolved markers")
 	return true
+
+
+func _load_roads(document: Dictionary, source_roads: Dictionary, declared_summary: Dictionary = {}) -> bool:
+	road_type_count = 0
+	road_control_point_count = 0
+	road_segment_count = 0
+	road_unresolved_control_point_count = 0
+	road_unique_endpoint_count = 0
+	road_shared_node_count = 0
+	road_curve_candidate_node_count = 0
+	road_crossing_candidate_node_count = 0
+	road_modifier_flags_or = 0
+	road_type_ids.clear()
+	road_control_points.clear()
+	road_segments.clear()
+	if (
+		String(document.get("schema", "")) != "openbfme.sage-roads"
+		or int(document.get("schemaVersion", -1)) != 0
+		or String(document.get("coordinateTransform", "")) != "godot=(sage.x,sage.z,-sage.y)"
+		or String(document.get("pairingPolicy", "")) != "source-order-exact-wire-2-then-4-same-road-id"
+		or String(document.get("curveReconstruction", "")) != "not-attempted"
+	):
+		return _fail("invalid cooked roads contract")
+	if (
+		typeof(document.get("roadIds", null)) != TYPE_ARRAY
+		or typeof(document.get("controlPoints", null)) != TYPE_ARRAY
+		or typeof(document.get("segments", null)) != TYPE_ARRAY
+		or typeof(document.get("unresolvedDiagnostics", null)) != TYPE_ARRAY
+		or typeof(document.get("summary", null)) != TYPE_DICTIONARY
+	):
+		return _fail("invalid cooked roads inventory")
+	var raw_road_ids := _array(document.get("roadIds", []))
+	var control_points := _array(document.get("controlPoints", []))
+	var segments := _array(document.get("segments", []))
+	var diagnostics := _array(document.get("unresolvedDiagnostics", []))
+	var summary := _dictionary(document.get("summary", {}))
+	if declared_summary.is_empty() or declared_summary != summary:
+		return _fail("map road summary disagrees with its roads document")
+	if control_points.size() > MAX_MAP_OBJECTS or segments.size() > MAX_MAP_OBJECTS or diagnostics.size() > MAX_MAP_OBJECTS:
+		return _fail("cooked roads inventory exceeds its runtime bound")
+	if control_points.size() != source_roads.size():
+		return _fail("cooked roads do not exactly cover source road control points")
+
+	var parsed_road_ids: Array[String] = []
+	for road_id_value in raw_road_ids:
+		if typeof(road_id_value) != TYPE_STRING:
+			return _fail("invalid cooked road ID")
+		var road_id := String(road_id_value)
+		if road_id == "" or road_id.length() > 128 or parsed_road_ids.has(road_id):
+			return _fail("invalid or duplicate cooked road ID")
+		parsed_road_ids.append(road_id)
+	var sorted_road_ids: Array[String] = parsed_road_ids.duplicate()
+	sorted_road_ids.sort()
+	if parsed_road_ids != sorted_road_ids:
+		return _fail("cooked road IDs are not deterministic")
+
+	var observed_road_ids: Dictionary = {}
+	var observed_source_indices: Dictionary = {}
+	var previous_source_index := -1
+	var normalized_points: Array[Dictionary] = []
+	var observed_unresolved := 0
+	for sequence in range(control_points.size()):
+		var point := _dictionary(control_points[sequence])
+		var sequence_value: Variant = point.get("sequence", null)
+		var source_index_value: Variant = point.get("sourceIndex", null)
+		var wire_type_value: Variant = point.get("wireType", null)
+		var segment_index_value: Variant = point.get("segmentIndex", null)
+		var road_id := String(point.get("roadId", ""))
+		var sage_position := _vector3(point.get("sagePosition", []))
+		var godot_position := _vector3(point.get("godotPosition", []))
+		if point.is_empty() or not _exact_integer(sequence_value) or int(sequence_value) != sequence or not _exact_integer(source_index_value) or not _exact_integer(wire_type_value) or road_id == "" or not parsed_road_ids.has(road_id) or sage_position == Vector3.INF or godot_position == Vector3.INF:
+			return _fail("invalid cooked road control point")
+		var source_index := int(source_index_value)
+		var wire_type := int(wire_type_value)
+		if source_index <= previous_source_index or observed_source_indices.has(source_index) or not source_roads.has(source_index):
+			return _fail("road control points do not preserve unique source order")
+		var source: Dictionary = source_roads[source_index]
+		if road_id != String(source.get("road_id", "")) or wire_type != int(source.get("wire_type", -1)) or sage_position != Vector3(source.get("sage_position", Vector3.INF)) or godot_position != Vector3(source.get("godot_position", Vector3.INF)):
+			return _fail("road control point disagrees with its exact source object")
+		var expected_role := "segment-start" if wire_type == 2 else ("segment-end" if wire_type == 4 else "unresolved")
+		if String(point.get("role", "")) != expected_role:
+			return _fail("road control point role disagrees with its wire type")
+		var status := String(point.get("status", ""))
+		if status == "unresolved":
+			if typeof(segment_index_value) != TYPE_NIL:
+				return _fail("unresolved road control point claims a segment")
+			observed_unresolved += 1
+		elif status == "paired":
+			if not _exact_integer(segment_index_value) or int(segment_index_value) < 0:
+				return _fail("paired road control point lacks a segment index")
+		else:
+			return _fail("road control point has an unknown status")
+		previous_source_index = source_index
+		observed_source_indices[source_index] = true
+		observed_road_ids[road_id] = true
+		normalized_points.append({
+			"sequence": sequence,
+			"source_index": source_index,
+			"road_id": road_id,
+			"wire_type": wire_type,
+			"role": expected_role,
+			"segment_index": int(segment_index_value) if _exact_integer(segment_index_value) else -1,
+			"sage_position": sage_position,
+			"godot_position": godot_position,
+		})
+
+	var observed_ids: Array[String] = []
+	for road_id_value in observed_road_ids.keys():
+		observed_ids.append(String(road_id_value))
+	observed_ids.sort()
+	if observed_ids != parsed_road_ids:
+		return _fail("road ID inventory disagrees with its control points")
+	var summary_status := String(summary.get("status", ""))
+	var expected_status := "empty" if control_points.is_empty() else ("exact-paired-control-points" if observed_unresolved == 0 else "unresolved-control-points")
+	if (
+		summary_status != expected_status
+		or int(summary.get("roadIdCount", -1)) != parsed_road_ids.size()
+		or int(summary.get("controlPointCount", -1)) != control_points.size()
+		or int(summary.get("pairedControlPointCount", -1)) != control_points.size() - observed_unresolved
+		or int(summary.get("unresolvedControlPointCount", -1)) != observed_unresolved
+		or int(summary.get("segmentCount", -1)) != segments.size()
+		or int(summary.get("unresolvedDiagnosticCount", -1)) != diagnostics.size()
+	):
+		return _fail("cooked road summary disagrees with its exact records")
+	if diagnostics.size() != observed_unresolved:
+		return _fail("unresolved road diagnostics do not cover unresolved control points")
+	if observed_unresolved != 0:
+		return _fail("cooked roads contain unresolved or unpaired control points")
+	if not diagnostics.is_empty() or control_points.size() % 2 != 0 or segments.size() * 2 != control_points.size():
+		return _fail("cooked roads are not exact 2-to-4 control-point pairs")
+
+	for segment_index in range(segments.size()):
+		var start: Dictionary = normalized_points[segment_index * 2]
+		var finish: Dictionary = normalized_points[segment_index * 2 + 1]
+		if int(start["wire_type"]) != 2 or int(finish["wire_type"]) != 4 or String(start["road_id"]) != String(finish["road_id"]) or int(start["segment_index"]) != segment_index or int(finish["segment_index"]) != segment_index:
+			return _fail("cooked roads contain an unpaired or mismatched control-point sequence")
+		var segment := _dictionary(segments[segment_index])
+		var sage_start := _vector3(segment.get("sageStart", []))
+		var sage_end := _vector3(segment.get("sageEnd", []))
+		var godot_start := _vector3(segment.get("godotStart", []))
+		var godot_end := _vector3(segment.get("godotEnd", []))
+		if (
+			int(segment.get("index", -1)) != segment_index
+			or String(segment.get("roadId", "")) != String(start["road_id"])
+			or int(segment.get("startSourceIndex", -1)) != int(start["source_index"])
+			or int(segment.get("endSourceIndex", -1)) != int(finish["source_index"])
+			or sage_start != Vector3(start["sage_position"])
+			or sage_end != Vector3(finish["sage_position"])
+			or godot_start != Vector3(start["godot_position"])
+			or godot_end != Vector3(finish["godot_position"])
+		):
+			return _fail("cooked road segment does not preserve its exact source endpoints")
+		road_segments.append({
+			"index": segment_index,
+			"road_id": String(start["road_id"]),
+			"start_source_index": int(start["source_index"]),
+			"end_source_index": int(finish["source_index"]),
+			"sage_start": sage_start,
+			"sage_end": sage_end,
+			"godot_start": godot_start,
+			"godot_end": godot_end,
+			"start_wire_type": int(start["wire_type"]),
+			"end_wire_type": int(finish["wire_type"]),
+		})
+		road_modifier_flags_or |= int(start["wire_type"]) & ~6
+		road_modifier_flags_or |= int(finish["wire_type"]) & ~6
+
+	road_type_ids.assign(parsed_road_ids)
+	road_control_points.assign(normalized_points)
+	road_type_count = road_type_ids.size()
+	road_control_point_count = road_control_points.size()
+	road_segment_count = road_segments.size()
+	road_unresolved_control_point_count = observed_unresolved
+	var endpoint_roads: Dictionary = {}
+	for segment in road_segments:
+		for endpoint_key in ["godot_start", "godot_end"]:
+			var endpoint := Vector3(segment.get(endpoint_key, Vector3.INF))
+			if not endpoint_roads.has(endpoint):
+				endpoint_roads[endpoint] = []
+			var endpoint_ids: Array = endpoint_roads[endpoint]
+			endpoint_ids.append(String(segment.get("road_id", "")))
+	road_unique_endpoint_count = endpoint_roads.size()
+	for endpoint_ids_value in endpoint_roads.values():
+		var endpoint_ids: Array = endpoint_ids_value
+		if endpoint_ids.size() > 1:
+			road_shared_node_count += 1
+		var per_id: Dictionary = {}
+		for road_id_value in endpoint_ids:
+			var road_id := String(road_id_value)
+			per_id[road_id] = int(per_id.get(road_id, 0)) + 1
+		for same_type_count_value in per_id.values():
+			var same_type_count := int(same_type_count_value)
+			if same_type_count == 2:
+				road_curve_candidate_node_count += 1
+			elif same_type_count == 3 or same_type_count == 4:
+				road_crossing_candidate_node_count += 1
+			elif same_type_count > 4:
+				return _fail("cooked road topology exceeds supported crossing degree")
+	return true
+
+
+func _load_road_materials(document: Dictionary) -> bool:
+	road_material_count = 0
+	road_material_catalog.clear()
+	road_source_report_aggregate_sha256 = ""
+	if (
+		String(document.get("schema", "")) != "openbfme.sage-road-materials"
+		or int(document.get("schemaVersion", -1)) != 0
+		or typeof(document.get("roads", null)) != TYPE_ARRAY
+	):
+		return _fail("invalid cooked road-material contract")
+	var rows := _array(document.get("roads", []))
+	if rows.is_empty() or rows.size() > MAX_ROAD_MATERIALS or int(document.get("roadCount", -1)) != rows.size():
+		return _fail("invalid cooked road-material inventory")
+	if rows.size() != road_type_count or road_type_ids.size() != road_type_count:
+		return _fail("road-material inventory does not cover the exact map road IDs")
+	var source_aggregate := String(document.get("sourceReportAggregateSha256", "")).to_lower()
+	if not _is_sha256(source_aggregate):
+		return _fail("road-material source aggregate is invalid")
+
+	var provenance := _read_pack_document("provenance/manifest.json", "retail provenance")
+	if provenance.is_empty():
+		return false
+	if String(provenance.get("contract", "")) != "openbfme.retail-import-provenance-v1" or typeof(provenance.get("bundle_files", null)) != TYPE_ARRAY:
+		return _fail("invalid retail provenance contract for road materials")
+	var bundle_rows := _array(provenance.get("bundle_files", []))
+	if bundle_rows.is_empty() or bundle_rows.size() > MAX_PROVENANCE_BUNDLE_FILES:
+		return _fail("invalid or unbounded retail provenance bundle inventory")
+	var bundle_by_path: Dictionary = {}
+	for bundle_value in bundle_rows:
+		var bundle := _dictionary(bundle_value)
+		var relative := String(bundle.get("path", "")).replace("\\", "/")
+		var digest := String(bundle.get("sha256", "")).to_lower()
+		var size_value: Variant = bundle.get("size", null)
+		if bundle.is_empty() or not ModLoader.is_safe_relative_path(relative) or bundle_by_path.has(relative) or not _is_sha256(digest) or not _exact_integer(size_value) or int(size_value) < 0:
+			return _fail("invalid retail provenance bundle-file record")
+		bundle_by_path[relative] = {
+			"sha256": digest,
+			"size": int(size_value),
+		}
+
+	var parsed_ids: Array[String] = []
+	var total_png_bytes := 0
+	for row_value in rows:
+		var row := _dictionary(row_value)
+		var road_id := String(row.get("id", ""))
+		var road_width := _parse_positive_decimal(row.get("RoadWidth", null), 1_000_000.0)
+		var width_in_texture := _parse_positive_decimal(row.get("RoadWidthInTexture", null), 1.0)
+		var texture_identifier := String(row.get("textureIdentifier", ""))
+		var texture_relative := String(row.get("texturePng", "")).replace("\\", "/")
+		var source_relative := String(row.get("sourceVirtualPath", "")).replace("\\", "/")
+		var source_digest := String(row.get("sourceSha256", "")).to_lower()
+		var source_length_value: Variant = row.get("sourceByteLength", null)
+		if (
+			row.is_empty()
+			or road_id == ""
+			or road_id.length() > 128
+			or parsed_ids.has(road_id)
+			or road_id != String(road_type_ids[parsed_ids.size()])
+			or not _finite_positive(road_width)
+			or not _finite_positive(width_in_texture)
+			or texture_identifier == ""
+			or texture_identifier.length() > 256
+			or not texture_identifier.to_lower().ends_with(".tga")
+			or not ModLoader.is_safe_relative_path(texture_relative)
+			or texture_relative.get_extension().to_lower() != "png"
+			or not ModLoader.is_safe_relative_path(source_relative)
+			or source_relative.get_extension().to_lower() != "dds"
+			or not _is_sha256(source_digest)
+			or not _exact_integer(source_length_value)
+			or int(source_length_value) <= 0
+		):
+			return _fail("invalid exact road-material record")
+		var texture_path := _resolve_pack_asset(texture_relative)
+		if texture_path == "" or not ModLoader.path_is_within(map_root, texture_path):
+			return _fail("road-material PNG escaped the selected retail map")
+		if not bundle_by_path.has(texture_relative):
+			return _fail("road-material PNG is absent from retail provenance")
+		var bundle: Dictionary = bundle_by_path[texture_relative]
+		var png_bytes := _read_bounded_bytes(texture_path, MAX_ROAD_TEXTURE_BYTES, "road-material PNG")
+		if png_bytes.is_empty():
+			return false
+		var png_digest := _sha256(png_bytes).to_lower()
+		if not _has_png_signature(png_bytes) or png_bytes.size() != int(bundle.get("size", -1)) or png_digest != String(bundle.get("sha256", "")):
+			return _fail("road-material PNG failed provenance signature or digest validation")
+		var image := Image.new()
+		if image.load_png_from_buffer(png_bytes) != OK or image.is_empty() or image.get_width() <= 0 or image.get_width() > MAX_ROAD_TEXTURE_DIMENSION or image.get_height() <= 0 or image.get_height() > MAX_ROAD_TEXTURE_DIMENSION:
+			return _fail("road-material PNG could not be decoded within runtime bounds")
+		total_png_bytes += png_bytes.size()
+		if total_png_bytes > MAX_ROAD_TEXTURE_TOTAL_BYTES:
+			return _fail("road-material PNG payload exceeds the bounded runtime budget")
+		parsed_ids.append(road_id)
+		road_material_catalog.append({
+			"id": road_id,
+			"road_width": road_width,
+			"road_width_in_texture": width_in_texture,
+			"road_width_authored": String(row.get("RoadWidth", "")),
+			"road_width_in_texture_authored": String(row.get("RoadWidthInTexture", "")),
+			"texture_identifier": texture_identifier,
+			"texture_relative": texture_relative,
+			"texture_path": texture_path,
+			"texture_sha256": png_digest,
+			"texture_byte_length": png_bytes.size(),
+			"texture_width": image.get_width(),
+			"texture_height": image.get_height(),
+			"source_virtual_path": source_relative,
+			"source_sha256": source_digest,
+			"source_byte_length": int(source_length_value),
+		})
+	if parsed_ids != road_type_ids or road_material_catalog.size() != road_type_count:
+		return _fail("road-material IDs do not exactly match the cooked map")
+	road_material_count = road_material_catalog.size()
+	road_source_report_aggregate_sha256 = source_aggregate
+	return true
+
+
+func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary) -> bool:
+	bound_prop_type_ids.clear()
+	bound_structure_type_ids.clear()
+	logical_prop_type_ids.clear()
+	unresolved_prop_type_ids.clear()
+	bound_prop_placement_count = 0
+	bound_structure_placement_count = 0
+	logical_prop_placement_count = 0
+	unresolved_prop_placement_count = 0
+	object_binding_record_count = 0
+	object_binding_resolution_status = ""
+	_object_binding_by_type.clear()
+	if String(document.get("schema", "")) != "openbfme.sage-object-bindings" or int(document.get("schemaVersion", -1)) != 0 or String(document.get("matchPolicy", "")) != "explicit-exact-type-name-only":
+		return _fail("invalid object-binding contract")
+	var records := _array(document.get("records", []))
+	var summary := _dictionary(document.get("summary", {}))
+	if records.is_empty() or records.size() > MAX_OBJECT_BINDING_RECORDS or records.size() != source_type_counts.size() or summary.is_empty():
+		return _fail("invalid or incomplete object-binding record table")
+	var bound_types := 0
+	var logical_types := 0
+	var unresolved_types := 0
+	for record_value in records:
+		var record := _dictionary(record_value)
+		var type_name := String(record.get("typeName", ""))
+		var status := String(record.get("status", ""))
+		var classification := String(record.get("classification", ""))
+		var match_method := String(record.get("matchMethod", ""))
+		var placement_count := int(record.get("placementCount", -1))
+		var glb_value: Variant = record.get("glb", "")
+		var glb_relative := String(glb_value) if typeof(glb_value) == TYPE_STRING else ""
+		var source_model_value: Variant = record.get("sourceVirtualModel", "")
+		var source_virtual_model := String(source_model_value) if typeof(source_model_value) == TYPE_STRING else ""
+		var object_id_value: Variant = record.get("objectId", "")
+		var object_id := String(object_id_value) if typeof(object_id_value) == TYPE_STRING else ""
+		if record.is_empty() or type_name == "" or type_name.length() > 128 or _object_binding_by_type.has(type_name) or not source_type_counts.has(type_name) or placement_count <= 0 or placement_count != int(source_type_counts[type_name]):
+			return _fail("object-binding record does not exactly cover its source type")
+		var normalized := {
+			"type_name": type_name,
+			"status": status,
+			"classification": classification,
+			"match_method": match_method,
+			"placement_count": placement_count,
+			"glb_relative": "",
+			"glb_path": "",
+			"source_virtual_model": "",
+			"object_id": "",
+		}
+		match status:
+			"bound":
+				if match_method != "exact-type-name" or glb_relative == "" or glb_relative.get_extension().to_lower() != "glb":
+					return _fail(
+						"bound object record lacks an exact renderable GLB"
+						if classification == "renderable"
+						else "bound lifecycle structure record lacks an exact GLB binding"
+					)
+				var glb_path := _resolve_pack_asset(glb_relative)
+				if glb_path == "":
+					return _fail("bound object GLB escaped the selected pack")
+				if not _validate_bound_glb(glb_path):
+					return _fail("bound object GLB is missing or invalid")
+				normalized["glb_relative"] = glb_relative
+				normalized["glb_path"] = glb_path
+				if classification == "renderable":
+					if object_id != "":
+						return _fail("renderable object record claims lifecycle structure fields")
+					if source_virtual_model != "":
+						if not _safe_source_virtual_model(source_virtual_model):
+							return _fail("renderable object source model is unsafe")
+						normalized["source_virtual_model"] = source_virtual_model
+					bound_prop_type_ids.append(type_name)
+					bound_prop_placement_count += placement_count
+				elif classification == "lifecycle-structure":
+					if not _safe_source_virtual_model(source_virtual_model) or not _safe_content_object_id(object_id):
+						return _fail("lifecycle structure binding is unsafe or incomplete")
+					normalized["source_virtual_model"] = source_virtual_model
+					normalized["object_id"] = object_id
+					bound_structure_type_ids.append(type_name)
+					bound_structure_placement_count += placement_count
+				else:
+					return _fail("bound object record has an unsupported classification")
+				bound_types += 1
+			"logical":
+				if match_method != "exact-type-name" or glb_relative != "" or classification == "" or classification == "renderable" or classification == "unknown":
+					return _fail("logical object record has invalid presentation semantics")
+				logical_prop_type_ids.append(type_name)
+				logical_prop_placement_count += placement_count
+				logical_types += 1
+			"unresolved":
+				if classification != "unknown" or match_method != "none" or glb_relative != "":
+					return _fail("unresolved object record claims a presentation binding")
+				unresolved_prop_type_ids.append(type_name)
+				unresolved_prop_placement_count += placement_count
+				unresolved_types += 1
+			_:
+				return _fail("object-binding record has an unknown status")
+		_object_binding_by_type[type_name] = normalized
+	bound_prop_type_ids.sort()
+	bound_structure_type_ids.sort()
+	logical_prop_type_ids.sort()
+	unresolved_prop_type_ids.sort()
+	object_binding_record_count = records.size()
+	var resolved_types := bound_types + logical_types
+	var bound_placement_count := bound_prop_placement_count + bound_structure_placement_count
+	var resolved_placements := bound_placement_count + logical_prop_placement_count
+	var all_placements := bound_placement_count + logical_prop_placement_count + unresolved_prop_placement_count
+	var source_placement_count := 0
+	for source_count_value in source_type_counts.values():
+		source_placement_count += int(source_count_value)
+	var expected_resolution_status := "complete" if unresolved_types == 0 else ("partial" if resolved_types > 0 else "unresolved")
+	object_binding_resolution_status = String(summary.get("resolutionStatus", ""))
+	if (
+		int(summary.get("typeCount", -1)) != records.size()
+		or int(summary.get("placementCount", -1)) != all_placements
+		or int(summary.get("boundTypeCount", -1)) != bound_types
+		or int(summary.get("boundPlacementCount", -1)) != bound_placement_count
+		or int(summary.get("logicalTypeCount", -1)) != logical_types
+		or int(summary.get("logicalPlacementCount", -1)) != logical_prop_placement_count
+		or int(summary.get("resolvedTypeCount", -1)) != resolved_types
+		or int(summary.get("resolvedPlacementCount", -1)) != resolved_placements
+		or int(summary.get("unresolvedTypeCount", -1)) != unresolved_types
+		or int(summary.get("unresolvedPlacementCount", -1)) != unresolved_prop_placement_count
+		or all_placements != source_placement_count
+		or object_binding_resolution_status != expected_resolution_status
+	):
+		return _fail("object-binding summary disagrees with its exact records")
+	return true
+
+
+func _safe_source_virtual_model(value: String) -> bool:
+	var normalized := value.replace("\\", "/")
+	return (
+		value == normalized
+		and normalized.begins_with("art/w3d/")
+		and normalized.get_extension().to_lower() == "w3d"
+		and ModLoader.is_safe_relative_path(normalized)
+	)
+
+
+func _safe_content_object_id(value: String) -> bool:
+	if value.length() < 3 or value.length() > 128 or not value.begins_with("bfme2.object."):
+		return false
+	for index in range(value.length()):
+		var codepoint := value.unicode_at(index)
+		if not (codepoint >= 97 and codepoint <= 122) and not (codepoint >= 48 and codepoint <= 57) and codepoint not in [45, 46]:
+			return false
+	return not value.contains("..") and not value.ends_with(".") and not value.ends_with("-")
+
+
+func _resolve_pack_asset(relative: String) -> String:
+	var resolved := ModLoader.resolve_pack_path(pack_root, relative)
+	if resolved == "" or not ModLoader.path_is_within(pack_root, resolved):
+		return ""
+	return resolved
+
+
+func _validate_bound_glb(path: String) -> bool:
+	if path == "" or path.get_extension().to_lower() != "glb" or not FileAccess.file_exists(path) or not ModLoader.path_is_within(pack_root, path):
+		return false
+	var byte_count := _file_size(path)
+	if byte_count < 20 or byte_count > MAX_BOUND_MODEL_BYTES:
+		return false
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null or file.get_length() != byte_count:
+		if file != null:
+			file.close()
+		return false
+	var header := file.get_buffer(12)
+	file.close()
+	return header.size() == 12 and int(header.decode_u32(0)) == 0x46546C67 and int(header.decode_u32(4)) == 2 and int(header.decode_u32(8)) == byte_count
 
 
 func _build_map_outline() -> void:
@@ -681,6 +1592,50 @@ func terrain_local_at(grid_x: int, grid_y: int) -> Vector3:
 	return source_to_local(source)
 
 
+func terrain_tile_index_at(grid_x: int, grid_y: int) -> int:
+	var index := _terrain_cell_index(grid_x, grid_y)
+	return int(terrain_tile_indices[index]) if index >= 0 and index < terrain_tile_indices.size() else -1
+
+
+func terrain_base_texture_index_at(grid_x: int, grid_y: int) -> int:
+	return terrain_texture_index_for_tile_value(terrain_tile_index_at(grid_x, grid_y))
+
+
+func terrain_primary_blend_index_at(grid_x: int, grid_y: int) -> int:
+	var index := _terrain_cell_index(grid_x, grid_y)
+	return int(terrain_blend_cells[index]) if index >= 0 and index < terrain_blend_cells.size() else -1
+
+
+func terrain_three_way_blend_index_at(grid_x: int, grid_y: int) -> int:
+	var index := _terrain_cell_index(grid_x, grid_y)
+	return int(terrain_three_way_blend_cells[index]) if index >= 0 and index < terrain_three_way_blend_cells.size() else -1
+
+
+func terrain_cliff_mapping_index_at(grid_x: int, grid_y: int) -> int:
+	var index := _terrain_cell_index(grid_x, grid_y)
+	return int(terrain_cliff_cells[index]) if index >= 0 and index < terrain_cliff_cells.size() else -1
+
+
+func terrain_texture_index_for_tile_value(tile_value: int) -> int:
+	if tile_value < 0:
+		return -1
+	var source_cell := tile_value >> 2
+	if source_cell < 0 or source_cell >= _terrain_cell_texture_indices.size():
+		return -1
+	return int(_terrain_cell_texture_indices[source_cell])
+
+
+func terrain_tile_orientation_at(grid_x: int, grid_y: int) -> int:
+	var tile_value := terrain_tile_index_at(grid_x, grid_y)
+	return tile_value & 3 if tile_value >= 0 else -1
+
+
+func _terrain_cell_index(grid_x: int, grid_y: int) -> int:
+	if grid_x < 0 or grid_x >= width or grid_y < 0 or grid_y >= height:
+		return -1
+	return grid_y * width + grid_x
+
+
 func height_raw_at(grid_x: int, grid_y: int) -> int:
 	if grid_x < 0 or grid_x >= width or grid_y < 0 or grid_y >= height:
 		return 0
@@ -780,8 +1735,25 @@ func _read_document(relative: String, label: String) -> Dictionary:
 	return value as Dictionary
 
 
+func _read_pack_document(relative: String, label: String) -> Dictionary:
+	var path := _resolve_pack_asset(relative)
+	if path == "" or not FileAccess.file_exists(path):
+		_fail("missing or unsafe %s document" % label)
+		return {}
+	var byte_count := _file_size(path)
+	if byte_count <= 0 or byte_count > MAX_DOCUMENT_BYTES:
+		_fail("invalid or unbounded %s document" % label)
+		return {}
+	var value: Variant = ModLoader._read_json(path)
+	if typeof(value) != TYPE_DICTIONARY:
+		_fail("invalid %s document" % label)
+		return {}
+	provenance_manifest_path = path if relative == "provenance/manifest.json" else provenance_manifest_path
+	return value as Dictionary
+
+
 func _read_bytes(path: String, expected_size: int, label: String) -> PackedByteArray:
-	if expected_size <= 0 or expected_size > MAX_TERRAIN_CELLS * 2:
+	if expected_size <= 0 or expected_size > MAX_TERRAIN_BINARY_BYTES:
 		_fail("invalid %s size" % label)
 		return PackedByteArray()
 	var file := FileAccess.open(path, FileAccess.READ)
@@ -795,11 +1767,39 @@ func _read_bytes(path: String, expected_size: int, label: String) -> PackedByteA
 	return bytes
 
 
+func _read_bounded_bytes(path: String, maximum_size: int, label: String) -> PackedByteArray:
+	var byte_count := _file_size(path)
+	if byte_count <= 0 or byte_count > maximum_size:
+		_fail("invalid or unbounded %s size" % label)
+		return PackedByteArray()
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null or file.get_length() != byte_count:
+		if file != null:
+			file.close()
+		_fail("%s could not be opened at its validated path" % label)
+		return PackedByteArray()
+	var bytes := file.get_buffer(byte_count)
+	file.close()
+	if bytes.size() != byte_count:
+		_fail("%s read was truncated" % label)
+		return PackedByteArray()
+	return bytes
+
+
 func _resolve(relative: String) -> String:
 	if relative == "":
 		return ""
 	var resolved := ModLoader.resolve_pack_path(map_root, relative)
 	if resolved == "" or not ModLoader.path_is_within(map_root, resolved) or not ModLoader.path_is_within(pack_root, resolved):
+		return ""
+	return resolved
+
+
+func _resolve_from(base_root: String, relative: String) -> String:
+	if base_root == "" or relative == "":
+		return ""
+	var resolved := ModLoader.resolve_pack_path(base_root, relative)
+	if resolved == "" or not ModLoader.path_is_within(base_root, resolved) or not ModLoader.path_is_within(map_root, resolved) or not ModLoader.path_is_within(pack_root, resolved):
 		return ""
 	return resolved
 
@@ -820,6 +1820,44 @@ func _sha256(bytes: PackedByteArray) -> String:
 	if context.update(bytes) != OK:
 		return ""
 	return context.finish().hex_encode()
+
+
+func _has_png_signature(bytes: PackedByteArray) -> bool:
+	return bytes.size() >= 8 and int(bytes[0]) == 137 and int(bytes[1]) == 80 and int(bytes[2]) == 78 and int(bytes[3]) == 71 and int(bytes[4]) == 13 and int(bytes[5]) == 10 and int(bytes[6]) == 26 and int(bytes[7]) == 10
+
+
+func _parse_positive_decimal(value: Variant, maximum: float) -> float:
+	if typeof(value) != TYPE_STRING or not _finite_positive(maximum):
+		return NAN
+	var text := String(value)
+	if text == "" or text != text.strip_edges() or text.ends_with("."):
+		return NAN
+	var decimal_count := 0
+	var digit_count := 0
+	for index in range(text.length()):
+		var code := text.unicode_at(index)
+		if code == 46:
+			decimal_count += 1
+			if decimal_count > 1:
+				return NAN
+		elif code >= 48 and code <= 57:
+			digit_count += 1
+		else:
+			return NAN
+	if digit_count == 0 or text.begins_with(".") or (text.length() > 1 and text.begins_with("0") and not text.begins_with("0.")):
+		return NAN
+	var parsed := text.to_float()
+	return parsed if _finite_positive(parsed) and parsed <= maximum else NAN
+
+
+func _is_sha256(value: String) -> bool:
+	if value.length() != 64:
+		return false
+	for index in range(value.length()):
+		var code := value.unicode_at(index)
+		if not ((code >= 48 and code <= 57) or (code >= 97 and code <= 102)):
+			return false
+	return true
 
 
 func _vector3(value: Variant) -> Vector3:
@@ -854,6 +1892,19 @@ func _finite_number(value: float) -> bool:
 	return not is_nan(value) and not is_inf(value)
 
 
+func _exact_integer(value: Variant) -> bool:
+	if typeof(value) == TYPE_INT:
+		return true
+	if typeof(value) != TYPE_FLOAT:
+		return false
+	var numeric := float(value)
+	return _finite_number(numeric) and numeric == floor(numeric) and absf(numeric) <= 9007199254740991.0
+
+
+func _finite_vector2(value: Vector2) -> bool:
+	return _finite_number(value.x) and _finite_number(value.y)
+
+
 func _dictionary(value: Variant) -> Dictionary:
 	return value as Dictionary if typeof(value) == TYPE_DICTIONARY else {}
 
@@ -867,12 +1918,61 @@ func _reset() -> void:
 	error = ""
 	height_samples = PackedByteArray()
 	passability_bits = PackedByteArray()
+	terrain_texture_count = 0
+	terrain_texture_width = 0
+	terrain_texture_height = 0
+	terrain_texture_array_dimension = 0
+	terrain_material_catalog.clear()
+	terrain_tile_indices = PackedInt32Array()
+	terrain_blend_cells = PackedInt32Array()
+	terrain_three_way_blend_cells = PackedInt32Array()
+	terrain_cliff_cells = PackedInt32Array()
+	terrain_blend_descriptions.clear()
+	terrain_cliff_mappings.clear()
+	terrain_nonzero_blend_cell_count = 0
+	terrain_nonzero_three_way_blend_cell_count = 0
+	terrain_nonzero_cliff_cell_count = 0
+	terrain_source_layer_sha256.clear()
+	_terrain_cell_texture_indices = PackedInt32Array()
 	player_starts.clear()
 	local_player_starts.clear()
 	standing_water_polygons.clear()
 	river_strips.clear()
 	ford_gates.clear()
 	generic_prop_placements.clear()
+	bound_prop_placements.clear()
+	bound_structure_placements.clear()
+	bound_prop_type_ids.clear()
+	bound_structure_type_ids.clear()
+	logical_prop_type_ids.clear()
+	unresolved_prop_type_ids.clear()
+	bound_prop_placement_count = 0
+	bound_structure_placement_count = 0
+	logical_prop_placement_count = 0
+	unresolved_prop_placement_count = 0
+	nonroad_object_count = 0
+	road_type_count = 0
+	road_control_point_count = 0
+	road_segment_count = 0
+	road_unresolved_control_point_count = 0
+	road_unique_endpoint_count = 0
+	road_shared_node_count = 0
+	road_curve_candidate_node_count = 0
+	road_crossing_candidate_node_count = 0
+	road_modifier_flags_or = 0
+	road_type_ids.clear()
+	road_control_points.clear()
+	road_segments.clear()
+	roads_path = ""
+	road_material_count = 0
+	road_material_catalog.clear()
+	road_materials_path = ""
+	road_source_report_aggregate_sha256 = ""
+	provenance_manifest_path = ""
+	object_binding_record_count = 0
+	object_binding_resolution_status = ""
+	object_bindings_path = ""
+	_object_binding_by_type.clear()
 	map_outline = PackedVector2Array()
 	navigation_ready = false
 	navigation_walkable_count = 0

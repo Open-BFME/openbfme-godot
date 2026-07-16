@@ -17,6 +17,7 @@ var powers: Dictionary = {}
 var research: Dictionary = {}
 var maps: Dictionary = {}
 var bundle_objects: Dictionary = {}
+var retail_unit_rules: Dictionary = {}
 var animation_capabilities: Dictionary = {}
 var bundle_maps: Dictionary = {}
 var retail_ui_images: Dictionary = {}
@@ -48,6 +49,7 @@ func reload() -> void:
 	research.clear()
 	maps.clear()
 	bundle_objects.clear()
+	retail_unit_rules.clear()
 	animation_capabilities.clear()
 	bundle_maps.clear()
 	retail_ui_images.clear()
@@ -135,6 +137,7 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 		return
 	var declared := files as Dictionary
 	_load_declared_rows(root, String(declared.get("objects", "")), "objects", bundle_objects)
+	_load_retail_unit_rules(root, String(declared.get("unitRules", "")))
 	_load_declared_rows(root, String(declared.get("animationCapabilities", "")), "capabilities", animation_capabilities)
 	_load_retail_ui_manifest(root, String(declared.get("uiManifest", "")))
 	_load_retail_strings(root, String(declared.get("strings", "")))
@@ -229,6 +232,29 @@ func _load_declared_rows(root: String, relative: String, collection_key: String,
 			table[id] = merged
 		else:
 			table[id] = row
+
+
+func _load_retail_unit_rules(root: String, relative: String) -> void:
+	var document := _read_declared_document(root, relative)
+	if String(document.get("schema", "")) != "openbfme.retail-unit-rules" or int(document.get("schemaVersion", -1)) != 0:
+		return
+	var values: Variant = document.get("units", [])
+	if typeof(values) != TYPE_ARRAY or (values as Array).size() != 4:
+		return
+	var pending: Dictionary = {}
+	for value in values as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			return
+		var row := (value as Dictionary).duplicate(true)
+		var id := String(row.get("id", ""))
+		var horde_id := String(row.get("hordeId", ""))
+		if id == "" or horde_id == "" or pending.has(id):
+			return
+		row["_source"] = ModLoader.resolve_pack_path(root, relative)
+		row["_pack_root"] = root
+		pending[id] = row
+	for id in pending:
+		retail_unit_rules[id] = pending[id]
 
 
 func _read_declared_document(root: String, relative: String) -> Dictionary:
@@ -351,6 +377,9 @@ func get_map(id: String) -> Dictionary:
 
 func get_bundle_object(id: String) -> Dictionary:
 	return bundle_objects.get(id, {})
+
+func get_retail_unit_rules(id: String) -> Dictionary:
+	return retail_unit_rules.get(id, {})
 
 func get_animation_capability(id: String) -> Dictionary:
 	return animation_capabilities.get(id, {})

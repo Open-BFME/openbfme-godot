@@ -3,6 +3,7 @@ extends RefCounted
 ## Resolve pack meshes into Node3D. OBJ is parsed into ArrayMesh (never fake BoxMesh stubs).
 
 static var _mesh_cache: Dictionary = {}
+static var _private_retail_pack_cache: Dictionary = {}
 const MAX_MESH_CACHE_ENTRIES := 16
 
 static func make_unit_visual(type_id: String, side: int) -> Node3D:
@@ -65,7 +66,7 @@ static func make_building_visual(type_id: String, side: int) -> Node3D:
 	return root
 
 
-static func make_bundle_object_visual(object_id: String, side: int) -> Node3D:
+static func make_bundle_object_visual(object_id: String, side: int, source_unit_scale: float = 0.0) -> Node3D:
 	## Presentation bridge for consolidated content-bundle v0 objects. Imported
 	## GLBs keep their Skeleton3D, skins, materials, and AnimationPlayer nodes.
 	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
@@ -74,14 +75,21 @@ static func make_bundle_object_visual(object_id: String, side: int) -> Node3D:
 	var mesh_path := ContentDB.resolve_mesh_path(definition)
 	var loaded := _try_load_model(mesh_path)
 	if loaded:
-		var presentation: Variant = definition.get("presentation", {})
-		var target_height := 2.4 if String(definition.get("kind", "")) != "structure" else 7.0
-		if typeof(presentation) == TYPE_DICTIONARY:
-			var millimeters := float((presentation as Dictionary).get("heightMillimeters", 0.0))
-			if millimeters > 0.0:
-				target_height = millimeters / 1000.0
-		_scale_to_height(loaded, target_height)
-		var tinted_surfaces := _tint_if_needed(loaded, side, false)
+		if is_finite(source_unit_scale) and source_unit_scale > 0.0:
+			# Retail W3D geometry and the cooked map share SAGE world units. The
+			# selected-map runtime therefore applies its single validated source-to-
+			# local scale instead of independently normalizing every model by height.
+			loaded.scale = Vector3.ONE * source_unit_scale
+		else:
+			var presentation: Variant = definition.get("presentation", {})
+			var target_height := 2.4 if String(definition.get("kind", "")) != "structure" else 7.0
+			if typeof(presentation) == TYPE_DICTIONARY:
+				var millimeters := float((presentation as Dictionary).get("heightMillimeters", 0.0))
+				if millimeters > 0.0:
+					target_height = millimeters / 1000.0
+			_scale_to_height(loaded, target_height)
+		var private_retail := _is_private_retail_definition(definition)
+		var tinted_surfaces := 0 if private_retail else _tint_if_needed(loaded, side, false)
 		root.add_child(loaded)
 		root.set_meta("authored", true)
 		root.set_meta("mesh_path", mesh_path)
@@ -89,7 +97,9 @@ static func make_bundle_object_visual(object_id: String, side: int) -> Node3D:
 		root.set_meta("content_object_id", object_id)
 		root.set_meta("animation_capability_id", String(definition.get("animationCapabilityId", "")))
 		root.set_meta("team_tinted_surfaces", tinted_surfaces)
+		root.set_meta("team_color_status", "source-OkToChangeModelColor-awaiting-exact-house-color-no-invented-tint" if private_retail else "fallback-team-tint")
 		root.set_meta("team", side)
+		root.set_meta("source_unit_scale", source_unit_scale if source_unit_scale > 0.0 else 0.0)
 		_annotate_rig_and_animation(root, loaded)
 	else:
 		var fallback := _kit_building_multipart(definition, side) if String(definition.get("kind", "")) == "structure" else _kit_unit_multipart(definition, side)
@@ -99,6 +109,76 @@ static func make_bundle_object_visual(object_id: String, side: int) -> Node3D:
 		root.set_meta("mesh_kind", "multipart_kit")
 		root.set_meta("content_object_id", object_id)
 	return root
+
+
+static func preflight_explicit_model_path(resolved_model_path: String, pack_root: String = "") -> String:
+	## Validate a resolved, contained GLB without instantiating its full scene.
+	## Lifecycle consumers use this for every phase before lazily loading any
+	## phase other than the intact scale reference and the initially active one.
+	var normalized := resolved_model_path.replace("\\", "/")
+	if normalized == "":
+		return "resolved model path is empty"
+	if pack_root != "" and not ModLoader.path_is_within(pack_root, normalized):
+		return "resolved model path escapes the selected pack"
+	if not ContentDB.is_resolved_asset_path(normalized):
+		return "resolved model path is not a contained pack asset"
+	if normalized.get_extension().to_lower() != "glb":
+		return "explicit lifecycle model is not a GLB"
+	var file := FileAccess.open(normalized, FileAccess.READ)
+	if file == null:
+		return "explicit lifecycle GLB cannot be opened"
+	var file_length := file.get_length()
+	if file_length < 12:
+		return "explicit lifecycle GLB is shorter than its header"
+	var header := file.get_buffer(12)
+	if header.size() != 12 or header.slice(0, 4).get_string_from_ascii() != "glTF":
+		return "explicit lifecycle GLB has an invalid magic header"
+	if header.decode_u32(4) != 2:
+		return "explicit lifecycle GLB is not version 2"
+	if int(header.decode_u32(8)) != file_length:
+		return "explicit lifecycle GLB length header does not match the file"
+	return ""
+
+
+static func make_explicit_model_visual(
+	resolved_model_path: String,
+	side: int,
+	content_object_id: String = ""
+) -> Node3D:
+	## Fail-closed bridge for an already-resolved authored GLB. Unlike the
+	## generic bundle bridge, this helper never normalizes each model and never
+	## creates a procedural fallback. The lifecycle owner applies one transform
+	## derived from the intact body's AABB to every phase/component.
+	if preflight_explicit_model_path(resolved_model_path) != "":
+		return null
+	var loaded := _try_load_model(resolved_model_path)
+	if loaded == null:
+		return null
+	var root := Node3D.new()
+	root.name = "ExplicitModel_%s" % resolved_model_path.get_file().get_basename()
+	var definition: Dictionary = ContentDB.get_bundle_object(content_object_id) if content_object_id != "" else {}
+	var private_retail := _is_private_retail_definition(definition)
+	var tinted_surfaces := 0 if private_retail else _tint_if_needed(loaded, side, false)
+	root.add_child(loaded)
+	root.set_meta("authored", true)
+	root.set_meta("mesh_path", resolved_model_path)
+	root.set_meta("mesh_kind", _mesh_kind(loaded))
+	root.set_meta("content_object_id", content_object_id)
+	root.set_meta("team_tinted_surfaces", tinted_surfaces)
+	root.set_meta("team_color_status", "source-OkToChangeModelColor-awaiting-exact-house-color-no-invented-tint" if private_retail else "fallback-team-tint")
+	root.set_meta("team", side)
+	_annotate_rig_and_animation(root, loaded)
+	return root
+
+
+static func model_aabb(node: Node3D) -> AABB:
+	## Public read-only geometry query used to establish a shared lifecycle
+	## transform from the intact body only.
+	var meshes: Array = []
+	_collect_meshes(node, meshes)
+	if meshes.is_empty():
+		return AABB(Vector3.ZERO, Vector3.ZERO)
+	return _aabb_of(node)
 
 
 static func _annotate_rig_and_animation(root: Node3D, loaded: Node3D) -> void:
@@ -346,6 +426,19 @@ static func _duplicate_tinted_material(source: StandardMaterial3D, team_color: C
 	var target := Color(team_color.r, team_color.g, team_color.b, material.albedo_color.a)
 	material.albedo_color = material.albedo_color.lerp(target, 0.42)
 	return material
+
+
+static func _is_private_retail_definition(definition: Dictionary) -> bool:
+	var pack_root := String(definition.get("_pack_root", ""))
+	if pack_root == "" or pack_root.begins_with("res://"):
+		return false
+	if _private_retail_pack_cache.has(pack_root):
+		return bool(_private_retail_pack_cache[pack_root])
+	var pack_path := ModLoader.resolve_pack_path(pack_root, "pack.json")
+	var pack_value: Variant = ModLoader._read_json(pack_path)
+	var result := typeof(pack_value) == TYPE_DICTIONARY and String((pack_value as Dictionary).get("id", "")) == "bfme2-men-vslice"
+	_private_retail_pack_cache[pack_root] = result
+	return result
 
 static func _kit_unit_multipart(def: Dictionary, side: int) -> Node3D:
 	var root := Node3D.new()

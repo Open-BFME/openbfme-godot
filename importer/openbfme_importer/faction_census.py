@@ -28,6 +28,7 @@ PLAYER_TEMPLATE_PATH = "data/ini/playertemplate.ini"
 COMMAND_SET_PATH = "data/ini/commandset.ini"
 COMMAND_BUTTON_PATH = "data/ini/commandbutton.ini"
 SOUND_EFFECTS_PATH = "data/ini/soundeffects.ini"
+VOICE_PATH = "data/ini/voice.ini"
 STRING_CATALOG_PATH = "data/lotr.str"
 UPGRADE_PATH = "data/ini/upgrade.ini"
 SCIENCE_PATH = "data/ini/science.ini"
@@ -215,12 +216,20 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
     command_set_doc = _read_document(catalog, COMMAND_SET_PATH)
     command_button_doc = _read_document(catalog, COMMAND_BUTTON_PATH)
     sound_effects_doc = _read_document(catalog, SOUND_EFFECTS_PATH)
+    voice_doc = _read_document(catalog, VOICE_PATH)
     string_catalog_doc = _read_document(catalog, STRING_CATALOG_PATH)
     upgrade_doc = _read_document(catalog, UPGRADE_PATH)
     science_doc = _read_document(catalog, SCIENCE_PATH)
     special_power_doc = _read_document(catalog, SPECIAL_POWER_PATH)
     mapped_image_docs = _mapped_image_documents(catalog)
-    audio_definitions = parse_sage_audio_definitions(sound_effects_doc.source)
+    # Object Voice* fields resolve through voice.ini while impacts, footsteps,
+    # construction sounds, and other world SFX resolve through
+    # soundeffects.ini. Treat the two retail definition documents as one
+    # namespace so cross-document Multisound edges stay exact and duplicate
+    # identifiers fail closed in the shared parser.
+    audio_definitions = parse_sage_audio_definitions(
+        sound_effects_doc.source + b"\n" + voice_doc.source
+    )
     string_catalog = parse_string_catalog(
         string_catalog_doc.source, duplicate_policy="first-wins"
     )
@@ -631,6 +640,7 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
         command_set_doc,
         command_button_doc,
         sound_effects_doc,
+        voice_doc,
         string_catalog_doc,
         upgrade_doc,
         science_doc,

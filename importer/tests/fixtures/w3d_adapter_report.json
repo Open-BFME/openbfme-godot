@@ -34,7 +34,7 @@
       "proof_methods": [
         "attachment-semantic",
         "material-semantic",
-        "parent-bone"
+        "source-equipment-pivot"
       ],
       "vertices": 16,
       "triangles": 12,
@@ -54,7 +54,7 @@
       "proof_methods": [
         "attachment-semantic",
         "material-semantic",
-        "parent-bone"
+        "source-equipment-pivot"
       ]
     },
     "right-hand-weapon": {
@@ -78,6 +78,22 @@
   "materials": 4,
   "images": 4,
   "generated_images": 0,
+  "shader_material_compatibility": {
+    "mapped_materials": [],
+    "mapped_material_count": 0,
+    "mapped_property_count": 0,
+    "alpha_blending_enable_count": 0,
+    "fog_enable_count": 0,
+    "source_flags_preserved": true
+  },
+  "root_rigid_bake": {
+    "requested": false,
+    "applied": false,
+    "removed_carriers": 0,
+    "baked_meshes": 0,
+    "world_transforms_preserved": false,
+    "deform_ambiguity_absent": false
+  },
   "filtered_non_render_geometry": {
     "count": 2,
     "object_types": [

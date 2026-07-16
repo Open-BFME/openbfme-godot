@@ -1,5 +1,11 @@
 # Private retail workspace and later code-only export
 
+This document is an operating containment policy, not a legal-status finding.
+The current project is a private local compatibility build: complete extraction,
+conversion, and use of the owner's retail install are in scope now. Legal/public
+release review is deferred until the game works, at which point the deliverable
+is rebuilt as code-only with every `.private` payload removed.
+
 ## Lane A — BFME2 install (`F:\BFME2`)
 
 - **Active private scope:** complete effective-view extraction, conversion, private

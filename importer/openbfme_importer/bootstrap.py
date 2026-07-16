@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -35,12 +36,19 @@ FFMPEG_VERSION = "8.1.1"
 FFMPEG_EXE_SHA256 = "228d7a8556258de907fdb55f36850078ebc7680b84ec30d84ea02e99bec1d1eb"
 FFPROBE_EXE_SHA256 = "0fde260f5abd35c9cafd96f594cc76365a780c1b73a90e35b6a3409ea1db1bf0"
 PILLOW_TREE_SHA256 = "18c02c91b31a5b2619eb1542144f0ef1f7ac4065eab7c5924f2640b3010fd7b0"
+FONTTOOLS_VERSION = "4.61.1"
+FONTTOOLS_TREE_SHA256 = "7903daa0e6e9be7c6d7bed6e39eed52fe2ba0f17107f4e398cd806f54dafecc3"
+DEFUSEDXML_VERSION = "0.7.1"
+DEFUSEDXML_TREE_SHA256 = "4a5bc129bad371fd21f6bb07621d2d331a1d2b192fef9b2bf78656b928c7738d"
 PYTHON_VERSION = "3.12.10"
 PYTHON_LAUNCHER_SHA256 = "0b471133e110cfb53a061cad528ce8e517d7b9ac41a0a396c39ad795a487fc14"
 PYTHON_BASE_DLL_SHA256 = "9a0e3435aaa680d868150f87ab3e388ad2eebc22f87e036155c7b4eda8cd2120"
 PYTHON_RUNTIME_TREE_SHA256 = "98348e31da2e14c684372bf02fee52b71984d28d8a91b82dbe0fe9aa2f6561d7"
 PYTHON_RUNTIME_MAX_FILES = 20_000
 PYTHON_RUNTIME_MAX_BYTES = 512 * 1024 * 1024
+BLENDER_CACHE_PURGE_MAX_FILES = 10_000
+BLENDER_CACHE_PURGE_MAX_DIRECTORIES = 2_000
+BLENDER_CACHE_PURGE_MAX_BYTES = 512 * 1024 * 1024
 PYTHON_RUNTIME_EXCLUDED_STDLIB = {
     "ensurepip",
     "idlelib",
@@ -54,10 +62,39 @@ PYTHON_RUNTIME_EXCLUDED_STDLIB = {
 
 
 def _reject_tree_links(root: Path, label: str) -> None:
-    for path in root.rglob("*"):
-        is_junction = getattr(path, "is_junction", None)
-        if path.is_symlink() or bool(is_junction and is_junction()):
-            raise RuntimeError(f"{label} contains a link or junction: {path}")
+    requested_root = Path(root).expanduser()
+    if _is_link_or_junction(requested_root):
+        raise RuntimeError(f"{label} root is a link or junction: {requested_root}")
+    try:
+        resolved_root = requested_root.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError(f"{label} root is unavailable: {requested_root}") from exc
+    pending = [resolved_root]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as entries:
+                children = sorted(entries, key=lambda item: item.name.casefold())
+        except OSError as exc:
+            raise RuntimeError(f"{label} tree scan failed: {directory}") from exc
+        for child in children:
+            path = Path(child.path)
+            try:
+                metadata = child.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise RuntimeError(f"{label} tree scan failed: {path}") from exc
+            if _is_link_or_junction(path):
+                raise RuntimeError(f"{label} contains a link or junction: {path}")
+            try:
+                path.relative_to(resolved_root)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"{label} path escaped its pinned root: {path}"
+                ) from exc
+            if stat.S_ISDIR(metadata.st_mode):
+                pending.append(path)
+            elif not stat.S_ISREG(metadata.st_mode):
+                raise RuntimeError(f"{label} contains an unsupported path: {path}")
 
 
 def _reject_python_bytecode(root: Path, label: str) -> None:
@@ -71,13 +108,264 @@ def _reject_python_bytecode(root: Path, label: str) -> None:
             raise RuntimeError(f"{label} contains generated Python bytecode: {path}")
 
 
+def _is_link_or_junction(path: Path) -> bool:
+    """Reject links, junctions, and any other Windows reparse point."""
+
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    file_attributes = getattr(metadata, "st_file_attributes", 0)
+    return stat.S_ISLNK(metadata.st_mode) or bool(file_attributes & reparse_flag)
+
+
+def _contained_tool_path(path: Path, root: Path, label: str) -> Path:
+    """Resolve a non-link tool path and prove that it remains below ``root``."""
+
+    try:
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"{label} path escaped its pinned root: {path}") from exc
+    return resolved
+
+
+def _purge_python_caches(root: Path, label: str) -> dict[str, int]:
+    """Remove only bounded generated Python caches from a pinned tool tree.
+
+    Blender's bundled Python can materialize bytecode in its portable directory
+    even when no pinned source changed.  Those bytes must be removed *before*
+    the full-tree hash is checked or Blender is executed.  The walk is
+    deliberately two phase: every removal candidate and every traversed path
+    is first proven to be an ordinary contained path, so a cache-shaped link or
+    junction can never redirect deletion outside the pinned tree.
+    """
+
+    requested_root = Path(root).expanduser()
+    if _is_link_or_junction(requested_root):
+        raise RuntimeError(f"{label} root is a link or junction: {requested_root}")
+    try:
+        resolved_root = requested_root.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError(f"{label} root is unavailable: {requested_root}") from exc
+    if not resolved_root.is_dir():
+        raise RuntimeError(f"{label} root is not a directory: {resolved_root}")
+
+    cache_roots: list[Path] = []
+    standalone_cache_files: list[Path] = []
+    pending = [resolved_root]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as entries:
+                children = sorted(entries, key=lambda item: item.name.casefold())
+        except OSError as exc:
+            raise RuntimeError(f"{label} cache scan failed: {directory}") from exc
+        for child in children:
+            path = Path(child.path)
+            try:
+                metadata = child.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise RuntimeError(f"{label} cache scan failed: {path}") from exc
+            if _is_link_or_junction(path):
+                raise RuntimeError(f"{label} contains a link or junction: {path}")
+            _contained_tool_path(path, resolved_root, label)
+            if stat.S_ISDIR(metadata.st_mode):
+                if child.name.casefold() == "__pycache__":
+                    cache_roots.append(path)
+                else:
+                    pending.append(path)
+            elif stat.S_ISREG(metadata.st_mode):
+                if path.suffix.casefold() in {".pyc", ".pyo"}:
+                    standalone_cache_files.append(path)
+            else:
+                raise RuntimeError(f"{label} contains an unsupported path: {path}")
+
+    cache_files = list(standalone_cache_files)
+    cache_directories: list[Path] = []
+    for cache_root in cache_roots:
+        cache_pending = [cache_root]
+        while cache_pending:
+            directory = cache_pending.pop()
+            cache_directories.append(directory)
+            try:
+                with os.scandir(directory) as entries:
+                    children = sorted(entries, key=lambda item: item.name.casefold())
+            except OSError as exc:
+                raise RuntimeError(f"{label} cache scan failed: {directory}") from exc
+            for child in children:
+                path = Path(child.path)
+                try:
+                    metadata = child.stat(follow_symlinks=False)
+                except OSError as exc:
+                    raise RuntimeError(f"{label} cache scan failed: {path}") from exc
+                if _is_link_or_junction(path):
+                    raise RuntimeError(f"{label} contains a link or junction: {path}")
+                _contained_tool_path(path, resolved_root, label)
+                if stat.S_ISDIR(metadata.st_mode):
+                    cache_pending.append(path)
+                elif stat.S_ISREG(metadata.st_mode):
+                    cache_files.append(path)
+                else:
+                    raise RuntimeError(f"{label} contains an unsupported cache path: {path}")
+
+    unique_files = sorted(
+        set(cache_files), key=lambda path: path.relative_to(resolved_root).as_posix().casefold()
+    )
+    unique_directories = sorted(
+        set(cache_directories),
+        key=lambda path: (
+            -len(path.relative_to(resolved_root).parts),
+            path.relative_to(resolved_root).as_posix().casefold(),
+        ),
+    )
+    byte_count = 0
+    for path in unique_files:
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise RuntimeError(f"{label} cache scan failed: {path}") from exc
+        if _is_link_or_junction(path) or not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError(f"{label} cache changed into an unsafe path: {path}")
+        byte_count += metadata.st_size
+    if (
+        len(unique_files) > BLENDER_CACHE_PURGE_MAX_FILES
+        or len(unique_directories) > BLENDER_CACHE_PURGE_MAX_DIRECTORIES
+        or byte_count > BLENDER_CACHE_PURGE_MAX_BYTES
+    ):
+        raise RuntimeError(
+            f"{label} generated cache exceeds the bounded purge: "
+            f"files={len(unique_files)}, directories={len(unique_directories)}, "
+            f"bytes={byte_count}"
+        )
+
+    for path in unique_files:
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise RuntimeError(f"{label} cache file became unavailable: {path}") from exc
+        if _is_link_or_junction(path) or not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError(f"{label} cache changed into an unsafe path: {path}")
+        _contained_tool_path(path, resolved_root, label)
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise RuntimeError(f"{label} cache file could not be removed: {path}") from exc
+    for path in unique_directories:
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise RuntimeError(
+                f"{label} cache directory became unavailable: {path}"
+            ) from exc
+        if _is_link_or_junction(path) or not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeError(f"{label} cache changed into an unsafe path: {path}")
+        _contained_tool_path(path, resolved_root, label)
+        try:
+            path.rmdir()
+        except OSError as exc:
+            raise RuntimeError(f"{label} cache directory could not be removed: {path}") from exc
+    return {
+        "removed_files": len(unique_files),
+        "removed_directories": len(unique_directories),
+        "removed_bytes": byte_count,
+    }
+
+
+def _purge_blender_python_caches(root: Path, label: str) -> dict[str, int]:
+    """Backward-compatible name for the shared pinned-tool cache purge."""
+
+    return _purge_python_caches(root, label)
+
+
+def _attest_blender_portable_tree(executable: Path) -> str:
+    """Read-only attestation of the exact pinned Blender bytes."""
+
+    blender = Path(executable).expanduser()
+    root = blender.parent
+    _require_hash(blender, BLENDER_EXE_SHA256, "Blender executable")
+    _reject_tree_links(root, "Blender portable tree")
+    tree_digest = directory_tree_sha256(root)
+    if tree_digest != BLENDER_TREE_SHA256:
+        raise RuntimeError(
+            "Blender portable tree differs from the pinned 4.2.0 distribution"
+        )
+    return tree_digest
+
+
+def prepare_blender_portable_tree(
+    state_root: Path,
+    executable: Path | None = None,
+) -> str:
+    """Recover caches only in the state root's pinned tree, then attest it.
+
+    An ``OPENBFME_BLENDER`` override is still attested before execution, but is
+    never modified unless it resolves to this exact state-root-owned pin.
+    """
+
+    resolved_state_root = Path(state_root).expanduser().resolve()
+    pinned = (
+        resolved_state_root
+        / "tools"
+        / "blender-4.2.0-windows-x64"
+        / "blender.exe"
+    )
+    selected = Path(executable or pinned).expanduser().resolve(strict=True)
+    if selected == pinned:
+        _purge_python_caches(selected.parent, "Blender portable tree")
+    return _attest_blender_portable_tree(selected)
+
+
+def _attest_opensage_plugin_checkout(plugin: Path) -> dict[str, str]:
+    """Read-only attestation of the Git-pinned OpenSAGE plugin checkout."""
+
+    checkout = Path(plugin).expanduser().resolve(strict=True)
+    git = shutil.which("git")
+    if not git:
+        raise FileNotFoundError("git is required to attest the OpenSAGE W3D plugin")
+    if not (checkout / ".git").exists():
+        raise RuntimeError(f"OpenSAGE W3D plugin is not a Git checkout: {checkout}")
+    _reject_tree_links(checkout, "OpenSAGE W3D plugin")
+    commit = _run([git, "rev-parse", "HEAD"], cwd=checkout)
+    submodule_commit = _run(
+        [git, "-C", "io_mesh_w3d/blender_addon_updater", "rev-parse", "HEAD"],
+        cwd=checkout,
+    )
+    if commit.casefold() != PLUGIN_COMMIT or submodule_commit.casefold() != PLUGIN_SUBMODULE_COMMIT:
+        raise RuntimeError(
+            "OpenSAGE W3D plugin or required updater submodule does not match "
+            "the pinned commit"
+        )
+    _reject_python_bytecode(checkout, "OpenSAGE W3D plugin")
+    if _run([git, "status", "--porcelain", "--untracked-files=all"], cwd=checkout):
+        raise RuntimeError(
+            "OpenSAGE W3D plugin worktree is dirty; conversion is not reproducible"
+        )
+    return {"commit": commit, "submodule_commit": submodule_commit}
+
+
+def prepare_opensage_plugin_checkout(
+    state_root: Path,
+    plugin: Path | None = None,
+) -> dict[str, str]:
+    """Recover caches only in the state root's pinned plugin, then attest Git."""
+
+    resolved_state_root = Path(state_root).expanduser().resolve()
+    pinned = resolved_state_root / "tools" / "OpenSAGE.BlenderPlugin"
+    selected = Path(plugin or pinned).expanduser().resolve(strict=True)
+    if selected == pinned:
+        _purge_python_caches(selected, "OpenSAGE W3D plugin")
+    return _attest_opensage_plugin_checkout(selected)
+
+
 def python_runtime_attestation() -> dict[str, Any]:
     """Hash the executable runtime surface used by the importer venv.
 
     The base interpreter DLL, stdlib sources, and extension modules live outside
     a Windows venv.  Hashing only ``Scripts/python.exe`` therefore does not bind
-    the code that actually executes the importer.  Site packages are excluded:
-    Pillow is pinned independently and no other package is part of the contract.
+    the code that actually executes the importer.  Site packages are excluded
+    here because Pillow, fontTools, and defusedxml are attested independently.
     Reproducible bytecode caches are excluded in favor of their source modules.
     """
 
@@ -184,14 +472,7 @@ def _download_blender(tools_root: Path) -> tuple[Path, str]:
     destination = tools_root / "blender-4.2.0-windows-x64"
     executable = destination / "blender.exe"
     if executable.is_file():
-        _require_hash(executable, BLENDER_EXE_SHA256, "Blender executable")
-        _reject_tree_links(destination, "Blender portable tree")
-        tree_digest = directory_tree_sha256(destination)
-        if tree_digest != BLENDER_TREE_SHA256:
-            raise RuntimeError(
-                "Blender portable tree differs from the pinned 4.2.0 distribution; "
-                "remove the external tool directory and bootstrap it again"
-            )
+        tree_digest = prepare_blender_portable_tree(tools_root.parent, executable)
         return executable, tree_digest
     if zip_path.is_file():
         _require_hash(zip_path, BLENDER_ZIP_SHA256, "Blender archive")
@@ -222,11 +503,7 @@ def _download_blender(tools_root: Path) -> tuple[Path, str]:
                     raise RuntimeError(f"Blender ZIP contains an unsafe path: {name}") from exc
             archive.extractall(staging_root)
         extracted = staging_root / "blender-4.2.0-windows-x64"
-        _require_hash(extracted / "blender.exe", BLENDER_EXE_SHA256, "Blender executable")
-        _reject_tree_links(extracted, "Blender portable tree")
-        tree_digest = directory_tree_sha256(extracted)
-        if tree_digest != BLENDER_TREE_SHA256:
-            raise RuntimeError("extracted Blender portable tree hash mismatch")
+        tree_digest = _attest_blender_portable_tree(extracted / "blender.exe")
         os.replace(extracted, destination)
     return executable, tree_digest
 
@@ -237,38 +514,14 @@ def _checkout_plugin(tools_root: Path) -> Path:
     if not git:
         raise FileNotFoundError("git is required to provision the OpenSAGE W3D plugin")
     if (destination / ".git").exists():
-        try:
-            current = _run([git, "rev-parse", "HEAD"], cwd=destination)
-            current_submodule = _run(
-                [git, "-C", "io_mesh_w3d/blender_addon_updater", "rev-parse", "HEAD"],
-                cwd=destination,
-            )
-            if current.casefold() == PLUGIN_COMMIT and current_submodule.casefold() == PLUGIN_SUBMODULE_COMMIT:
-                _reject_python_bytecode(destination, "OpenSAGE W3D plugin")
-                if _run([git, "status", "--porcelain", "--untracked-files=all"], cwd=destination):
-                    raise RuntimeError(
-                        "OpenSAGE W3D plugin cache is dirty; repair or remove it before bootstrap"
-                    )
-                return destination
-        except RuntimeError:
-            pass
+        prepare_opensage_plugin_checkout(tools_root.parent, destination)
+        return destination
     if not (destination / ".git").exists():
         _run([git, "clone", "--no-checkout", PLUGIN_REPOSITORY, str(destination)])
     _run([git, "fetch", "--depth", "1", "origin", PLUGIN_COMMIT], cwd=destination)
     _run([git, "checkout", "--detach", PLUGIN_COMMIT], cwd=destination)
     _run([git, "submodule", "update", "--init", "--depth", "1"], cwd=destination)
-    actual = _run([git, "rev-parse", "HEAD"], cwd=destination)
-    if actual.casefold() != PLUGIN_COMMIT:
-        raise RuntimeError(f"OpenSAGE plugin commit mismatch: {actual}")
-    submodule = _run(
-        [git, "-C", "io_mesh_w3d/blender_addon_updater", "rev-parse", "HEAD"],
-        cwd=destination,
-    )
-    if submodule.casefold() != PLUGIN_SUBMODULE_COMMIT:
-        raise RuntimeError(f"OpenSAGE updater submodule mismatch: {submodule}")
-    _reject_python_bytecode(destination, "OpenSAGE W3D plugin")
-    if _run([git, "status", "--porcelain", "--untracked-files=all"], cwd=destination):
-        raise RuntimeError("OpenSAGE W3D plugin cache is dirty after checkout")
+    _attest_opensage_plugin_checkout(destination)
     return destination
 
 
@@ -326,14 +579,27 @@ def bootstrap_tools(state_root: Path, ffmpeg_source: Path | None = None) -> dict
     ffmpeg, ffprobe = _pin_ffmpeg(tools_root, ffmpeg_source)
     try:
         import PIL
+        import defusedxml
+        import fontTools
     except ImportError as exc:
         raise FileNotFoundError(
-            "Pillow 12.2.0 is missing; run tools/bootstrap-importer-python.ps1"
+            "a pinned importer Python dependency is missing; "
+            "run tools/bootstrap-importer-python.ps1"
         ) from exc
-    if sys.version.split()[0] != PYTHON_VERSION or PIL.__version__ != "12.2.0":
+    dependency_versions = (
+        PIL.__version__,
+        fontTools.__version__,
+        defusedxml.__version__,
+    )
+    if sys.version.split()[0] != PYTHON_VERSION or dependency_versions != (
+        "12.2.0",
+        FONTTOOLS_VERSION,
+        DEFUSEDXML_VERSION,
+    ):
         raise RuntimeError(
-            f"expected Python {PYTHON_VERSION} + Pillow 12.2.0, "
-            f"found {sys.version.split()[0]} + {PIL.__version__}"
+            f"expected Python {PYTHON_VERSION}, Pillow 12.2.0, "
+            f"fontTools {FONTTOOLS_VERSION}, and defusedxml {DEFUSEDXML_VERSION}; "
+            f"found {sys.version.split()[0]}, {', '.join(dependency_versions)}"
         )
     python_runtime = python_runtime_attestation()
     if (
@@ -354,6 +620,28 @@ def bootstrap_tools(state_root: Path, ffmpeg_source: Path | None = None) -> dict
     if pillow_tree_sha256 != PILLOW_TREE_SHA256:
         raise RuntimeError(
             "Pillow package tree differs from the pinned 12.2.0 wheel; "
+            "recreate the external importer Python environment"
+        )
+    fonttools_root = Path(fontTools.__file__).resolve().parent
+    defusedxml_root = Path(defusedxml.__file__).resolve().parent
+    _reject_tree_links(fonttools_root, "fontTools package tree")
+    _reject_tree_links(defusedxml_root, "defusedxml package tree")
+    fonttools_tree_sha256 = directory_tree_sha256(
+        fonttools_root,
+        ignore_python_cache=True,
+    )
+    defusedxml_tree_sha256 = directory_tree_sha256(
+        defusedxml_root,
+        ignore_python_cache=True,
+    )
+    if fonttools_tree_sha256 != FONTTOOLS_TREE_SHA256:
+        raise RuntimeError(
+            f"fontTools package tree differs from the pinned {FONTTOOLS_VERSION} wheel; "
+            "recreate the external importer Python environment"
+        )
+    if defusedxml_tree_sha256 != DEFUSEDXML_TREE_SHA256:
+        raise RuntimeError(
+            f"defusedxml package tree differs from the pinned {DEFUSEDXML_VERSION} wheel; "
             "recreate the external importer Python environment"
         )
     manifest = {
@@ -398,6 +686,16 @@ def bootstrap_tools(state_root: Path, ffmpeg_source: Path | None = None) -> dict
                 "tree_sha256": pillow_tree_sha256,
                 "license": "MIT-CMU",
             },
+            "fonttools": {
+                "version": fontTools.__version__,
+                "tree_sha256": fonttools_tree_sha256,
+                "license": "MIT",
+            },
+            "defusedxml": {
+                "version": defusedxml.__version__,
+                "tree_sha256": defusedxml_tree_sha256,
+                "license": "PSFL",
+            },
         },
     }
     manifest_path = tools_root / "tool-manifest.json"
@@ -405,7 +703,9 @@ def bootstrap_tools(state_root: Path, ffmpeg_source: Path | None = None) -> dict
     return {"ready": True, "manifest": str(manifest_path), **manifest}
 
 
-def tool_status(state_root: Path) -> dict[str, Any]:
+def tool_status(
+    state_root: Path, *, skip_w3d_attestation: bool = False
+) -> dict[str, Any]:
     tools_root = state_root.expanduser().resolve() / "tools"
     blender = tools_root / "blender-4.2.0-windows-x64" / "blender.exe"
     plugin = tools_root / "OpenSAGE.BlenderPlugin"
@@ -413,7 +713,7 @@ def tool_status(state_root: Path) -> dict[str, Any]:
     git = shutil.which("git")
     plugin_commit = ""
     submodule_commit = ""
-    if git and (plugin / ".git").exists():
+    if not skip_w3d_attestation and git and (plugin / ".git").exists():
         try:
             plugin_commit = _run([git, "rev-parse", "HEAD"], cwd=plugin)
             submodule_commit = _run(
@@ -439,6 +739,32 @@ def tool_status(state_root: Path) -> dict[str, Any]:
         pillow_ready = False
         pillow_tree_ready = False
     try:
+        import fontTools
+
+        fonttools_root = Path(fontTools.__file__).resolve().parent
+        _reject_tree_links(fonttools_root, "fontTools package tree")
+        fonttools_ready = fontTools.__version__ == FONTTOOLS_VERSION
+        fonttools_tree_ready = (
+            directory_tree_sha256(fonttools_root, ignore_python_cache=True)
+            == FONTTOOLS_TREE_SHA256
+        )
+    except (ImportError, OSError, RuntimeError):
+        fonttools_ready = False
+        fonttools_tree_ready = False
+    try:
+        import defusedxml
+
+        defusedxml_root = Path(defusedxml.__file__).resolve().parent
+        _reject_tree_links(defusedxml_root, "defusedxml package tree")
+        defusedxml_ready = defusedxml.__version__ == DEFUSEDXML_VERSION
+        defusedxml_tree_ready = (
+            directory_tree_sha256(defusedxml_root, ignore_python_cache=True)
+            == DEFUSEDXML_TREE_SHA256
+        )
+    except (ImportError, OSError, RuntimeError):
+        defusedxml_ready = False
+        defusedxml_tree_ready = False
+    try:
         python_runtime = python_runtime_attestation()
         python_runtime_ready = (
             python_runtime["version"] == PYTHON_VERSION
@@ -450,8 +776,9 @@ def tool_status(state_root: Path) -> dict[str, Any]:
         python_runtime = {}
         python_runtime_ready = False
     plugin_clean = False
-    if git and (plugin / ".git").exists():
+    if not skip_w3d_attestation and git and (plugin / ".git").exists():
         try:
+            _reject_tree_links(plugin, "OpenSAGE W3D plugin")
             _reject_python_bytecode(plugin, "OpenSAGE W3D plugin")
             plugin_clean = not bool(
                 _run([git, "status", "--porcelain", "--untracked-files=all"], cwd=plugin)
@@ -459,7 +786,7 @@ def tool_status(state_root: Path) -> dict[str, Any]:
         except RuntimeError:
             plugin_clean = False
     blender_tree_ready = False
-    if blender.is_file():
+    if not skip_w3d_attestation and blender.is_file():
         try:
             _reject_tree_links(blender.parent, "Blender portable tree")
             blender_tree_ready = directory_tree_sha256(blender.parent) == BLENDER_TREE_SHA256
@@ -480,6 +807,10 @@ def tool_status(state_root: Path) -> dict[str, Any]:
         "python_runtime": python_runtime_ready,
         "pillow": pillow_ready,
         "pillow_tree": pillow_tree_ready,
+        "fonttools": fonttools_ready,
+        "fonttools_tree": fonttools_tree_ready,
+        "defusedxml": defusedxml_ready,
+        "defusedxml_tree": defusedxml_tree_ready,
     }
     return {
         "ready": all(checks.values()),

@@ -84,7 +84,8 @@ class FakeMesh(FakeProperties):
         self.object_type = object_type
         if coordinates is None:
             self.vertices = [
-                FakeVertex([FakeAssignment(group_index, 1.0)]) for _ in range(vertex_count)
+                FakeVertex([FakeAssignment(group_index, 1.0)])
+                for _ in range(vertex_count)
             ]
         else:
             self.vertices = [
@@ -151,8 +152,38 @@ class W3dPresentationFixtureTests(unittest.TestCase):
         )
         self.assertNotIn("opaque_square", str(report))
 
+    def test_disabled_proxy_words_in_retail_user_text_do_not_delete_render_mesh(
+        self,
+    ) -> None:
+        waterfall_mesh = FakeMesh(
+            "PMWIDEWTRFALL01",
+            object_type="MESH",
+            vertex_count=152,
+            triangle_count=206,
+            userText=(
+                "Simulation_Geometry = 2\r\n"
+                "Proxy_Geometry = <none>\r\n"
+                "Use_Display_Proxy = 0\r\n"
+                "Disable_Collisions = 0\r\n"
+            ),
+        )
+        waterfall = FakeObject("PMWIDEWTRFALL01", waterfall_mesh, skinned=False)
+        FAKE_BPY.data = types.SimpleNamespace(
+            objects=FakeCollection([waterfall]),
+            meshes=FakeCollection([waterfall_mesh]),
+            materials=FakeCollection([]),
+        )
+
+        report = ADAPTER.remove_non_render_geometry()
+
+        self.assertEqual(list(FAKE_BPY.data.objects), [waterfall])
+        self.assertEqual(report["count"], 0)
+        self.assertEqual(report["reasons"], [])
+
     def test_inventory_distinguishes_right_weapon_and_left_shield(self) -> None:
-        body = FakeObject("fighter_body", FakeMesh("fighter_geometry"), group_name="B_ROOT")
+        body = FakeObject(
+            "fighter_body", FakeMesh("fighter_geometry"), group_name="B_ROOT"
+        )
         sword = FakeObject(
             "long_sword",
             FakeMesh("weapon_geometry", vertex_count=8, triangle_count=12),
@@ -194,12 +225,9 @@ class W3dPresentationFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "no proven left-hand"):
             ADAPTER.build_mesh_inventory([unproven_shield], ["left-hand-shield"])
 
-    def test_unmarked_box_geometry_cannot_survive_as_a_weapon_prop(self) -> None:
+    def test_source_typed_render_cube_survives_as_a_weapon_prop(self) -> None:
         coordinates = [
-            (x, y, z)
-            for x in (-1.0, 1.0)
-            for y in (-0.1, 0.1)
-            for z in (-0.1, 0.1)
+            (x, y, z) for x in (-1.0, 1.0) for y in (-0.1, 0.1) for z in (-0.1, 0.1)
         ]
         square_weapon = FakeObject(
             "sword",
@@ -212,8 +240,30 @@ class W3dPresentationFixtureTests(unittest.TestCase):
             group_name="B_HAND_R",
         )
 
-        with self.assertRaisesRegex(RuntimeError, "box-shaped render mesh"):
-            ADAPTER.build_mesh_inventory([square_weapon], ["right-hand-weapon"])
+        inventory, equipment = ADAPTER.build_mesh_inventory(
+            [square_weapon], ["right-hand-weapon"]
+        )
+
+        self.assertEqual(inventory[0]["semantic_role"], "right-hand-weapon")
+        self.assertEqual(equipment["right-hand-weapon"]["mesh_count"], 1)
+
+    def test_preserve_all_does_not_infer_optional_equipment(self) -> None:
+        ambiguous = FakeObject(
+            "sword_shield",
+            FakeMesh("weapon_shield_geometry"),
+            group_name="B_ROOT",
+            skinned=False,
+        )
+
+        inventory, equipment = ADAPTER.build_mesh_inventory([ambiguous], [])
+
+        self.assertEqual(inventory[0]["semantic_role"], "character-mesh")
+        self.assertEqual(inventory[0]["attachment"], "scene")
+        self.assertEqual(equipment, {})
+        self.assertEqual(
+            ADAPTER.canonicalize_required_rigid_attachments([ambiguous], [], object()),
+            0,
+        )
 
     def test_exact_optional_mesh_exclusion_is_fingerprinted_and_removed(self) -> None:
         body_mesh = FakeMesh("fighter_geometry")
@@ -241,17 +291,15 @@ class W3dPresentationFixtureTests(unittest.TestCase):
         self.assertEqual(report[0]["identifier"], "upgrade_banner")
         self.assertEqual(report[0]["vertices"], 6)
         self.assertEqual(report[0]["triangles"], 4)
-        self.assertEqual(
-            report[0]["geometry_sha256"], expected_geometry_sha256
-        )
-        self.assertEqual(
-            report[0]["materials_sha256"], expected_materials_sha256
-        )
+        self.assertEqual(report[0]["geometry_sha256"], expected_geometry_sha256)
+        self.assertEqual(report[0]["materials_sha256"], expected_materials_sha256)
         self.assertEqual(
             ADAPTER.exclude_optional_render_meshes([body], [], [], None), []
         )
 
-    def test_optional_mesh_exclusions_fail_closed_without_semantic_weakening(self) -> None:
+    def test_optional_mesh_exclusions_fail_closed_without_semantic_weakening(
+        self,
+    ) -> None:
         def install(*items: FakeObject) -> None:
             FAKE_BPY.data = types.SimpleNamespace(
                 objects=FakeCollection(items),
@@ -262,9 +310,7 @@ class W3dPresentationFixtureTests(unittest.TestCase):
         body = FakeObject("fighter_body", FakeMesh("fighter_geometry"))
         install(body)
         with self.assertRaisesRegex(RuntimeError, "matched 0"):
-            ADAPTER.exclude_optional_render_meshes(
-                [body], ["fighter"], [], None
-            )
+            ADAPTER.exclude_optional_render_meshes([body], ["fighter"], [], None)
 
         first = FakeObject("upgrade-banner", FakeMesh("first_upgrade_geometry"))
         second = FakeObject("upgrade banner", FakeMesh("second_upgrade_geometry"))
@@ -299,15 +345,10 @@ class W3dPresentationFixtureTests(unittest.TestCase):
 
         install(body)
         with self.assertRaisesRegex(RuntimeError, "last character mesh"):
-            ADAPTER.exclude_optional_render_meshes(
-                [body], ["fighter_body"], [], None
-            )
+            ADAPTER.exclude_optional_render_meshes([body], ["fighter_body"], [], None)
 
         coordinates = [
-            (x, y, z)
-            for x in (-1.0, 1.0)
-            for y in (-1.0, 1.0)
-            for z in (-1.0, 1.0)
+            (x, y, z) for x in (-1.0, 1.0) for y in (-1.0, 1.0) for z in (-1.0, 1.0)
         ]
         ambiguous_box = FakeObject(
             "upgrade_box",
@@ -318,10 +359,11 @@ class W3dPresentationFixtureTests(unittest.TestCase):
             ),
         )
         install(body, ambiguous_box)
-        with self.assertRaisesRegex(RuntimeError, "box-shaped render mesh"):
-            ADAPTER.exclude_optional_render_meshes(
-                [body, ambiguous_box], ["upgrade_box"], [], None
-            )
+        report = ADAPTER.exclude_optional_render_meshes(
+            [body, ambiguous_box], ["upgrade_box"], [], None
+        )
+        self.assertEqual(list(FAKE_BPY.data.objects), [body])
+        self.assertEqual(report[0]["identifier"], "upgrade_box")
 
     def test_armature_free_static_mesh_keeps_scene_attachment(self) -> None:
         structure = FakeObject(
@@ -355,6 +397,9 @@ class W3dPresentationFixtureTests(unittest.TestCase):
 
     def test_hierarchical_request_and_rig_contract_fail_closed(self) -> None:
         ADAPTER.validate_asset_kind_request("hierarchical", [], [])
+        ADAPTER.validate_asset_kind_request(
+            "hierarchical", [], [], proven_root_rigid_bake=True
+        )
         with self.assertRaisesRegex(ValueError, "does not accept animations"):
             ADAPTER.validate_asset_kind_request(
                 "hierarchical", [Path("accidental.w3d")], []
@@ -362,6 +407,10 @@ class W3dPresentationFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not accept required equipment"):
             ADAPTER.validate_asset_kind_request(
                 "hierarchical", [], ["right-hand-weapon"]
+            )
+        with self.assertRaisesRegex(ValueError, "only for hierarchical"):
+            ADAPTER.validate_asset_kind_request(
+                "static", [], [], proven_root_rigid_bake=True
             )
 
         FAKE_BPY.data = types.SimpleNamespace(objects=[])
@@ -376,6 +425,144 @@ class W3dPresentationFixtureTests(unittest.TestCase):
 
         FAKE_BPY.data.objects = [first]
         self.assertIs(ADAPTER.find_single_rig(), first)
+
+    def test_proven_root_rigid_bake_preserves_world_transform_and_removes_carrier(
+        self,
+    ) -> None:
+        matrix = [
+            [1.0, 0.0, 0.0, 7.0],
+            [0.0, 1.0, 0.0, 8.0],
+            [0.0, 0.0, 1.0, 9.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+        rig = types.SimpleNamespace(
+            type="ARMATURE",
+            data=types.SimpleNamespace(bones=[], animation_data=None),
+            parent=None,
+            parent_type="OBJECT",
+            parent_bone="",
+            modifiers=[],
+            constraints=[],
+            animation_data=None,
+        )
+        mesh = types.SimpleNamespace(
+            type="MESH",
+            data=types.SimpleNamespace(animation_data=None),
+            parent=rig,
+            parent_type="ARMATURE",
+            parent_bone="",
+            modifiers=[],
+            vertex_groups=[],
+            matrix_world=[row[:] for row in matrix],
+            animation_data=None,
+        )
+        objects = FakeCollection([mesh, rig])
+        FAKE_BPY.data = types.SimpleNamespace(objects=objects, actions=[])
+
+        report = ADAPTER.bake_proven_root_rigid_hierarchy(
+            "hierarchical", True, rig, [mesh], objects
+        )
+
+        self.assertEqual(list(objects), [mesh])
+        self.assertIsNone(mesh.parent)
+        self.assertEqual(mesh.parent_type, "OBJECT")
+        self.assertEqual(mesh.matrix_world, matrix)
+        self.assertEqual(
+            report,
+            {
+                "requested": True,
+                "applied": True,
+                "removed_carriers": 1,
+                "baked_meshes": 1,
+                "world_transforms_preserved": True,
+                "deform_ambiguity_absent": True,
+            },
+        )
+
+    def test_proven_root_rigid_bake_rejects_missing_opt_in_and_malformed_scene(
+        self,
+    ) -> None:
+        def scene():
+            rig = types.SimpleNamespace(
+                type="ARMATURE",
+                data=types.SimpleNamespace(bones=[], animation_data=None),
+                parent=None,
+                parent_type="OBJECT",
+                parent_bone="",
+                modifiers=[],
+                constraints=[],
+                animation_data=None,
+            )
+            mesh = types.SimpleNamespace(
+                type="MESH",
+                data=types.SimpleNamespace(animation_data=None),
+                parent=rig,
+                parent_type="ARMATURE",
+                parent_bone="",
+                modifiers=[],
+                vertex_groups=[],
+                matrix_world=[
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                animation_data=None,
+            )
+            objects = FakeCollection([mesh, rig])
+            FAKE_BPY.data = types.SimpleNamespace(objects=objects, actions=[])
+            return rig, mesh, objects
+
+        rig, mesh, objects = scene()
+        with self.assertRaisesRegex(RuntimeError, "explicit proven root-rigid"):
+            ADAPTER.bake_proven_root_rigid_hierarchy(
+                "hierarchical", False, rig, [mesh], objects
+            )
+
+        malformed_cases = (
+            (
+                "parent",
+                lambda rig, mesh, objects: setattr(mesh, "parent", None),
+                "rigidly parented",
+            ),
+            (
+                "parent-type",
+                lambda rig, mesh, objects: setattr(mesh, "parent_type", "OBJECT"),
+                "rigidly parented",
+            ),
+            (
+                "vertex-groups",
+                lambda rig, mesh, objects: setattr(mesh, "vertex_groups", [object()]),
+                "ambiguous deformation",
+            ),
+            (
+                "modifier",
+                lambda rig, mesh, objects: setattr(
+                    mesh, "modifiers", [types.SimpleNamespace(type="ARMATURE")]
+                ),
+                "ambiguous deformation",
+            ),
+            (
+                "non-root-hierarchy",
+                lambda rig, mesh, objects: rig.data.bones.append(object()),
+                "carrier is not empty",
+            ),
+        )
+        for name, mutate, message in malformed_cases:
+            with self.subTest(name=name):
+                rig, mesh, objects = scene()
+                mutate(rig, mesh, objects)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    ADAPTER.bake_proven_root_rigid_hierarchy(
+                        "hierarchical", True, rig, [mesh], objects
+                    )
+
+        rig, mesh, objects = scene()
+        FAKE_BPY.data.actions = [object()]
+        with self.assertRaisesRegex(RuntimeError, "contains animation actions"):
+            ADAPTER.bake_proven_root_rigid_hierarchy(
+                "hierarchical", True, rig, [mesh], objects
+            )
 
     def test_hierarchical_scene_rejects_accidental_actions(self) -> None:
         FAKE_BPY.data = types.SimpleNamespace(objects=[], actions=[object()])

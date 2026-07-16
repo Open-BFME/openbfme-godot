@@ -14,11 +14,15 @@ from typing import Any, Iterable
 
 from .big import BigArchive, BigEntry
 from .big import sha256_file
+from .game import RETAIL_GAMES, retail_game
 from .paths import safe_relative_parts
 from .util import read_json, write_json_atomic
 
 
-PATCH_ARCHIVES = ("_patch106.big", "_patch105.big", "_patch104.big", "_patch103.big", "_patch102.big", "_patch101.big")
+PATCH_ARCHIVES = (
+    *RETAIL_GAMES["rotwk"].patch_archives,
+    *RETAIL_GAMES["bfme2"].patch_archives,
+)
 CORE_ARCHIVES = (
     "ini.big",
     "w3d.big",
@@ -369,7 +373,13 @@ def _windows_version_info(path: Path) -> dict[str, str]:
         return {}
 
 
-def doctor_install(install_root: Path | str, *, deep: bool = False) -> dict[str, Any]:
+def doctor_install(
+    install_root: Path | str,
+    *,
+    deep: bool = False,
+    game: str = "bfme2",
+) -> dict[str, Any]:
+    definition = retail_game(game)
     root = Path(install_root).expanduser().resolve()
     archive_status = []
     for name in CORE_ARCHIVES:
@@ -377,7 +387,7 @@ def doctor_install(install_root: Path | str, *, deep: bool = False) -> dict[str,
         archive_status.append(
             {"name": name, "present": path.is_file(), "size": path.stat().st_size if path.is_file() else 0}
         )
-    patches = [name for name in PATCH_ARCHIVES if (root / name).is_file()]
+    patches = [name for name in definition.patch_archives if (root / name).is_file()]
     languages = sorted(path.name for path in (root / "lang").glob("*Audio.big")) if (root / "lang").is_dir() else []
     missing_required = [item["name"] for item in archive_status[:3] if not item["present"]]
     patch_document = root / "patch.doc"
@@ -386,12 +396,34 @@ def doctor_install(install_root: Path | str, *, deep: bool = False) -> dict[str,
     version_info = _windows_version_info(game_binary)
     company_name = str(version_info.get("CompanyName", ""))
     modified_marker = "DEV!ANCE" in company_name.upper()
+    executable = next(
+        (root / name for name in definition.executable_names if (root / name).is_file()),
+        root / definition.executable_names[0],
+    )
+    declared_patch = next(
+        (marker for marker in definition.patch_markers if marker in patch_text),
+        "unknown",
+    )
+    if declared_patch == "unknown":
+        declared_patch = next(
+            (
+                marker
+                for archive, marker in zip(
+                    definition.patch_archives, definition.patch_markers
+                )
+                if archive in patches
+            ),
+            "unknown",
+        )
     result = {
+        "game": definition.id,
+        "game_name": definition.display_name,
         "install_root": str(root),
         "install_present": root.is_dir(),
-        "executable_present": (root / "lotrbfme2.exe").is_file(),
+        "executable": executable.name,
+        "executable_present": executable.is_file(),
         "patch_archives": patches,
-        "declared_patch": "1.06" if "1.06" in patch_text else "unknown",
+        "declared_patch": declared_patch,
         "languages": languages,
         "executable_attestation": {
             "trusted": False,
@@ -402,10 +434,10 @@ def doctor_install(install_root: Path | str, *, deep: bool = False) -> dict[str,
             "note": "archive hashes, not executable metadata, attest importer inputs",
         },
         "archives": archive_status,
-        "ready": root.is_dir() and (root / "lotrbfme2.exe").is_file() and not missing_required,
+        "ready": root.is_dir() and executable.is_file() and not missing_required,
         "missing_required": missing_required,
     }
-    if deep:
+    if deep and definition.id == "bfme2":
         attestations: list[dict[str, Any]] = []
         modified: list[str] = []
         for relative, expected in KNOWN_SLICE_ARCHIVE_SHA256.items():
@@ -426,4 +458,12 @@ def doctor_install(install_root: Path | str, *, deep: bool = False) -> dict[str,
         result["archive_attestation"] = attestations
         result["modified_or_missing_slice_archives"] = modified
         result["ready"] = bool(result["ready"] and not modified)
+    elif deep:
+        # ROTWK reference archive hashes are not pinned yet. Catalog and pack
+        # manifests still bind every selected archive directory and payload.
+        result["archive_attestation"] = []
+        result["modified_or_missing_slice_archives"] = []
+        result["deep_attestation_note"] = (
+            "no fixed ROTWK archive reference hashes are configured"
+        )
     return result

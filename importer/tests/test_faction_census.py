@@ -94,6 +94,9 @@ Object Soldier
   VoiceSelect = SoldierVoice
   SelectPortrait = UPSoldier
   DisplayName = OBJECT:Soldier
+  Behavior = SlowDeathBehavior ModuleTag_Death
+    Sound = INITIAL HumanVoiceDie
+  End
 End
 Object MenBanner
   SelectPortrait = MissingBannerPortrait
@@ -149,6 +152,15 @@ AudioEvent SoldierSelect
   Sounds = soldier_a soldier_b:50
   Type = world player
 End
+AudioEvent HumanVoiceDie
+  Sounds = human_die
+  Type = world player
+End
+"""
+
+
+def _voice() -> bytes:
+    return b"""
 Multisound SoldierVoice
   Subsounds = SoldierSelect
 End
@@ -212,6 +224,7 @@ def _catalog(root: Path, *, side: str = "Men", duplicate_porter: bool = False) -
             ),
             "data/ini/mappedimages/aptimages/fixture.ini": _mapped_images(),
             "data/ini/soundeffects.ini": _sound_effects(),
+            "data/ini/voice.ini": _voice(),
             "data/lotr.str": _strings(),
             "data/ini/upgrade.ini": _upgrades(),
             "data/ini/science.ini": _sciences(),
@@ -222,6 +235,7 @@ def _catalog(root: Path, *, side: str = "Men", duplicate_porter: bool = False) -
             "art/compiledtextures/un/unitportrait.dds": b"texture-portrait",
             "data/audio/sounds/soldier_a.wav": b"sample-a",
             "data/audio/sounds/soldier_b.wav": b"sample-b",
+            "data/audio/sounds/human_die.wav": b"sample-death",
         },
     )
     return InstallCatalog.build(root)
@@ -269,22 +283,33 @@ class FactionCensusTests(unittest.TestCase):
             ["MissingBannerPortrait"],
         )
         self.assertEqual(first["summary"]["textResolvedCount"], 3)
-        self.assertEqual(first["summary"]["audioRootCount"], 1)
-        self.assertEqual(first["summary"]["audioEventCount"], 1)
+        self.assertEqual(first["summary"]["audioRootCount"], 2)
+        self.assertEqual(first["summary"]["audioEventCount"], 2)
         self.assertEqual(first["summary"]["audioMultisoundCount"], 1)
-        self.assertEqual(first["summary"]["audioSampleCount"], 2)
+        self.assertEqual(first["summary"]["audioSampleCount"], 3)
         self.assertEqual(first["summary"]["resolvedUpgradeDefinitionCount"], 2)
         self.assertEqual(first["summary"]["resolvedScienceDefinitionCount"], 2)
         self.assertEqual(first["summary"]["resolvedSpecialPowerDefinitionCount"], 1)
         self.assertEqual(first["dependencies"]["fxLists"], ["FX_MenTraining"])
         self.assertEqual(
-            first["dependencies"]["audioRootIds"], ["SoldierVoice"]
+            first["dependencies"]["audioRootIds"], ["HumanVoiceDie", "SoldierVoice"]
+        )
+        soldier = next(
+            item for item in first["definitions"]["objects"] if item["id"] == "Soldier"
+        )
+        self.assertIn(
+            {
+                "field": "Sound",
+                "targetKind": "audio-definition",
+                "targetId": "HumanVoiceDie",
+            },
+            soldier["edges"],
         )
         self.assertEqual(
             len(first["resolvedLeaves"]["localization"]["records"]), 3
         )
         self.assertEqual(
-            len(first["resolvedLeaves"]["audio"]["samplePaths"]), 2
+            len(first["resolvedLeaves"]["audio"]["samplePaths"]), 3
         )
         serialized = json.dumps(first)
         self.assertNotIn("DOZER_CONSTRUCT\n", serialized)

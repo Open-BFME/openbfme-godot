@@ -15,13 +15,16 @@ or retained as an explicit diagnostic with its source location.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Iterable, Literal, Mapping
 
 from .sage_cst import (
     ResolvedSageCst,
     SageAssignment,
     SageBlock,
+    SageIncludeRef,
     SageObject,
+    SageScript,
     SageSourceLocation,
     resolve_sage_documents,
 )
@@ -509,6 +512,24 @@ def _unexpected_body_item(item: object, owner: str) -> TypeError:
     )
 
 
+def _is_nonphysical_cst_evidence(item: object) -> bool:
+    """Recognize CST evidence that cannot name an external visual leaf.
+
+    ``resolve_sage_documents`` deliberately leaves the directive beside the
+    spliced assignments/blocks so provenance is auditable.  It is not itself a
+    visual statement, but an unresolved directive must never disappear here.
+    Opaque drawable scripts can alter subobjects/transitions, yet the CST keeps
+    their exact source and they cannot add a model, texture, or animation file
+    dependency without a parsed assignment.
+    """
+
+    return (
+        isinstance(item, SageScript)
+        or isinstance(item, SageIncludeRef)
+        and item.resolved_virtual_path is not None
+    )
+
+
 def _provenance(
     defining_object: SageObject,
     source: SageAssignment | SageBlock,
@@ -666,6 +687,8 @@ def _walk_assignments(
                 lifecycle_phases,
             )
             continue
+        if _is_nonphysical_cst_evidence(item):
+            continue
         if not isinstance(item, SageBlock):
             raise _unexpected_body_item(item, "Draw traversal")
         if stop_at_states and item.kind.casefold() in _STATE_KINDS:
@@ -695,6 +718,8 @@ def _collect_states(
     states: list[_PendingState] = []
     for item in block.items:
         if isinstance(item, SageAssignment):
+            continue
+        if _is_nonphysical_cst_evidence(item):
             continue
         if not isinstance(item, SageBlock):
             raise _unexpected_body_item(item, f"{block.kind} state traversal")
@@ -780,6 +805,8 @@ def _effective_draws(
         local_tags: set[str] = set()
         for body_item in item.items:
             if isinstance(body_item, SageAssignment):
+                continue
+            if _is_nonphysical_cst_evidence(body_item):
                 continue
             if not isinstance(body_item, SageBlock):
                 raise _unexpected_body_item(
@@ -911,24 +938,50 @@ def _resolve_pending(
     w3d: W3DIndex,
     visual_catalog_virtual_paths: Iterable[str],
 ) -> tuple[TypedAssetReference, ...]:
-    visual_positions: list[int] = []
+    visual_primary_indexes: dict[int, int] = {}
+    visual_compiled_indexes: dict[int, int] = {}
     visual_requests: list[VisualLeafRequest] = []
     for position, item in enumerate(pending):
         if item.resolver == "visual":
-            visual_positions.append(position)
+            visual_primary_indexes[position] = len(visual_requests)
             visual_requests.append(VisualLeafRequest(item.identifier, item.kind))
+            pure = PurePosixPath(item.identifier)
+            if (
+                item.kind in {"texture", "shadow"}
+                and pure.suffix.casefold() == ".tga"
+            ):
+                # Retail BIGs normally carry the compiled DDS leaf while the
+                # Object INI retains its authored TGA identifier.  Probe the
+                # exact extensionless stem as separate evidence; it is accepted
+                # below only when it identifies one DDS and the authored TGA
+                # itself was absent.
+                visual_compiled_indexes[position] = len(visual_requests)
+                visual_requests.append(
+                    VisualLeafRequest(pure.with_suffix("").as_posix(), item.kind)
+                )
     visual_batch = diagnose_visual_leaves(
         visual_catalog_virtual_paths, visual_requests
     )
     visual_diagnostics = {
         item.request_index: item for item in visual_batch.diagnostics
     }
-    visual_results = {
-        position: (resolution, visual_diagnostics.get(request_index))
-        for request_index, (position, resolution) in enumerate(
-            zip(visual_positions, visual_batch.resolutions)
+    visual_results = {}
+    for position, request_index in visual_primary_indexes.items():
+        compiled_index = visual_compiled_indexes.get(position)
+        visual_results[position] = (
+            visual_batch.resolutions[request_index],
+            visual_diagnostics.get(request_index),
+            (
+                visual_batch.resolutions[compiled_index]
+                if compiled_index is not None
+                else None
+            ),
+            (
+                visual_diagnostics.get(compiled_index)
+                if compiled_index is not None
+                else None
+            ),
         )
-    }
 
     results: list[TypedAssetReference] = []
     for position, item in enumerate(pending):
@@ -962,7 +1015,39 @@ def _resolve_pending(
             )
             continue
         if item.resolver == "visual":
-            resolution, diagnostic = visual_results[position]
+            resolution, diagnostic, compiled_resolution, compiled_diagnostic = (
+                visual_results[position]
+            )
+            compiled_evidence: tuple[str, ...] = ()
+            if (
+                resolution is None
+                and diagnostic is not None
+                and diagnostic.status == "missing"
+            ):
+                compiled_paths = (
+                    tuple(leaf.virtual_path for leaf in compiled_resolution.leaves)
+                    if compiled_resolution is not None
+                    else ()
+                )
+                if (
+                    len(compiled_paths) == 1
+                    and PurePosixPath(compiled_paths[0]).suffix.casefold() == ".dds"
+                ):
+                    resolution = compiled_resolution
+                    diagnostic = None
+                    compiled_evidence = (
+                        "sage-compiled-texture:exact-tga-stem-to-dds",
+                    )
+                elif (
+                    compiled_diagnostic is not None
+                    and compiled_diagnostic.status == "ambiguous"
+                    and compiled_diagnostic.candidates
+                    and all(
+                        PurePosixPath(candidate).suffix.casefold() == ".dds"
+                        for candidate in compiled_diagnostic.candidates
+                    )
+                ):
+                    diagnostic = compiled_diagnostic
             if resolution is not None:
                 results.append(
                     TypedAssetReference(
@@ -976,7 +1061,7 @@ def _resolve_pending(
                         physical_virtual_paths=tuple(
                             leaf.virtual_path for leaf in resolution.leaves
                         ),
-                        evidence=tuple(
+                        evidence=compiled_evidence + tuple(
                             f"{leaf.role}:{leaf.evidence}" for leaf in resolution.leaves
                         ),
                     )

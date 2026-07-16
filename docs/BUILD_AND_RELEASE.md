@@ -20,8 +20,9 @@ soak, and the Lane A export scan. A successful run ends with `STAGE10_GATE PASS`
   additionally bind the venv launcher, base interpreter DLL, and bounded standard
   library/runtime tree rather than trusting the version string alone.
 - For private retail import only: portable Blender 4.2.0, the pinned OpenSAGE W3D
-  plugin, FFmpeg 8.1.1, and Pillow. `openbfme-import bootstrap-tools` provisions or
-  verifies the external pins; none is a runtime dependency.
+  plugin, FFmpeg 8.1.1, Pillow, fontTools, and defusedxml. `openbfme-import
+  bootstrap-tools` provisions or verifies the external pins; none is a runtime
+  dependency.
 
 Run `run_doctor.bat` for exact detected versions and executable paths.
 

@@ -123,6 +123,8 @@ install, BIG/W3D/DDS/map files, Blender, OpenSAGE, FFmpeg, or the importer cache
 | Python runtime | 3.12.10; venv launcher SHA-256 `0B471133E110CFB53A061CAD528CE8E517D7B9AC41A0A396C39AD795A487FC14`; base DLL SHA-256 `9A0E3435AAA680D868150F87AB3E388AD2EEBC22F87E036155C7B4EDA8CD2120`; bounded 576-file runtime-tree SHA-256 `98348E31DA2E14C684372BF02FEE52B71984D28D8A91B82DBE0FE9AA2F6561D7` |
 | Pillow | 12.2.0 in the selected Python environment |
 | Pillow package tree | SHA-256 `18C02C91B31A5B2619EB1542144F0EF1F7AC4065EAB7C5924F2640B3010FD7B0` (bytecode caches excluded) |
+| fontTools | 4.61.1; package-tree SHA-256 `7903DAA0E6E9BE7C6D7BED6E39EED52FE2BA0F17107F4E398CD806F54DAFECC3` (bytecode caches excluded) |
+| defusedxml | 0.7.1; package-tree SHA-256 `4A5BC129BAD371FD21F6BB07621D2D331A1D2B192FEF9B2BF78656B928C7738D` (bytecode caches excluded) |
 
 `bootstrap-tools` verifies existing pins. On a new machine it downloads official
 Blender and OpenSAGE sources. Pass

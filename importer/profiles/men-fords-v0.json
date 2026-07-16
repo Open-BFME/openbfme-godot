@@ -9,13 +9,14 @@
     "schemaVersion": 0,
     "priority": 900,
     "vertical_slice_complete": false,
-    "capability_maturity": "four-unit-ui-five-intact-structure-plus-fords-material-cook",
+    "capability_maturity": "four-unit-ui-five-building-lifecycle-contract-plus-fords-material-cook",
     "dataPolicy": {
       "externalPathsAllowed": false,
       "redistributable": false
     },
     "files": {
       "objects": "data/objects.json",
+      "unitRules": "data/retail_unit_rules.json",
       "animationCapabilities": "data/animation_capabilities.json",
       "entryMap": "maps/fords-of-isen-ii/map.json"
     }
@@ -74,18 +75,185 @@
       "expected_count": 1
     },
     {
+      "id": "men-fortress-construction-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-fortress/construction.glb",
+      "patterns": [
+        "art/w3d/gb/gbfortress_a.w3d",
+        "art/w3d/gb/gbfortress_ask.w3d",
+        "art/w3d/gb/gbfortress_abl.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbfortress_a.w3d",
+        "inputResourceIds": [
+          "men-fortress-material-textures"
+        ],
+        "animations": [
+          "gbfortress_abl.w3d"
+        ]
+      }
+    },
+    {
       "id": "men-fortress-intact-model",
       "kind": "model",
       "converter": "w3d-hierarchical",
       "output": "assets/models/structures/men-fortress/intact.glb",
       "patterns": [
-        "art/w3d/gb/gbfortress_a.w3d",
-        "art/w3d/gb/gbfortress_ask.w3d"
+        "art/w3d/gb/gbfortress.w3d"
       ],
-      "limit": 2,
-      "expected_count": 2,
+      "limit": 1,
+      "expected_count": 1,
       "options": {
-        "model": "gbfortress_a.w3d",
+        "model": "gbfortress.w3d",
+        "inputResourceIds": [
+          "men-fortress-material-textures",
+          "men-structure-shared-material-textures",
+          "gondor-archer-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-fortress-damaged-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-fortress/damaged.glb",
+      "patterns": [
+        "art/w3d/gb/gbfortress.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbfortress.w3d",
+        "sourceVariantOf": "men-fortress-intact-model",
+        "inputResourceIds": [
+          "men-fortress-material-textures",
+          "men-structure-shared-material-textures",
+          "gondor-archer-material-textures"
+        ],
+        "textureOverrides": [
+          {
+            "authored": "gbfortress1.tga",
+            "target": "gbfortress1.dds",
+            "source": "gbfortress1d.dds"
+          }
+        ]
+      }
+    },
+    {
+      "id": "men-fortress-really-damaged-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-fortress/really-damaged.glb",
+      "patterns": [
+        "art/w3d/gb/gbfortress_d2.w3d",
+        "art/w3d/gb/gbfortress_d2sk.w3d",
+        "art/w3d/gb/gbfortress_d2an.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbfortress_d2.w3d",
+        "inputResourceIds": [
+          "men-fortress-material-textures",
+          "men-structure-shared-material-textures",
+          "gondor-archer-material-textures"
+        ],
+        "animations": [
+          "gbfortress_d2an.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-fortress-rubble-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-fortress/rubble.glb",
+      "patterns": [
+        "art/w3d/gb/gbfortress_d3.w3d",
+        "art/w3d/gb/gbfortress_d3sk.w3d",
+        "art/w3d/gb/gbfortress_d3an.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbfortress_d3.w3d",
+        "inputResourceIds": [
+          "men-fortress-material-textures"
+        ],
+        "animations": [
+          "gbfortress_d3an.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-fortress-bib-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-fortress/bib.glb",
+      "patterns": [
+        "art/w3d/gb/gbfortress_bib.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbfortress_bib.w3d",
+        "inputResourceIds": [
+          "men-fortress-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-fortress-door-closed-source",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "patterns": [
+        "art/w3d/gb/gbfdoor_drc.w3d"
+      ],
+      "output": "assets/models/structures/men-fortress/door-closed.glb",
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbfdoor_drc.w3d",
+        "animations": ["gbfdoor_drc.w3d"],
+        "inputResourceIds": [
+          "men-fortress-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-fortress-door-construction-source",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "patterns": [
+        "art/w3d/gb/gbfdoor_a.w3d"
+      ],
+      "output": "assets/models/structures/men-fortress/door-construction.glb",
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbfdoor_a.w3d",
+        "animations": ["gbfdoor_a.w3d"],
+        "inputResourceIds": [
+          "men-fortress-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-fortress-door-rubble-source",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "patterns": [
+        "art/w3d/gb/gbfdoor_d3.w3d"
+      ],
+      "output": "assets/models/structures/men-fortress/door-rubble.glb",
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbfdoor_d3.w3d",
+        "animations": ["gbfdoor_d3.w3d"],
         "inputResourceIds": [
           "men-fortress-material-textures"
         ]
@@ -96,27 +264,137 @@
       "kind": "texture",
       "converter": "hash-only",
       "patterns": [
-        "art/compiledtextures/gb/gbfortress*.*"
+        "art/compiledtextures/gb/gbfortress1.dds",
+        "art/compiledtextures/gb/gbfortress1_nrm.tga",
+        "art/compiledtextures/gb/gbfortress1d.dds",
+        "art/compiledtextures/gb/gbwall_bib.dds"
       ],
-      "limit": 11,
-      "expected_count": 11
+      "limit": 4,
+      "expected_count": 4
     },
     {
-      "id": "men-farm-intact-model",
+      "id": "men-farm-construction-model",
       "kind": "model",
-      "converter": "w3d-hierarchical",
-      "output": "assets/models/structures/men-farm/intact.glb",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-farm/construction.glb",
       "patterns": [
         "art/w3d/gb/gbfarm_a.w3d",
-        "art/w3d/gb/gbfarm_askl.w3d"
+        "art/w3d/gb/gbfarm_askl.w3d",
+        "art/w3d/gb/gbfarm_abld.w3d"
       ],
-      "limit": 2,
-      "expected_count": 2,
+      "limit": 3,
+      "expected_count": 3,
       "options": {
         "model": "gbfarm_a.w3d",
         "inputResourceIds": [
           "men-farm-material-textures",
           "men-structure-shared-material-textures"
+        ],
+        "animations": [
+          "gbfarm_abld.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-farm-intact-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-farm/intact.glb",
+      "patterns": [
+        "art/w3d/gb/gbfarm_skn.w3d",
+        "art/w3d/gb/gbfarm_skl.w3d",
+        "art/w3d/gb/gbfarm_idla.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbfarm_skn.w3d",
+        "inputResourceIds": [
+          "men-farm-material-textures",
+          "men-structure-shared-material-textures"
+        ],
+        "animations": [
+          "gbfarm_idla.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-farm-damaged-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-farm/damaged.glb",
+      "patterns": [
+        "art/w3d/gb/gbfarm_d1.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbfarm_d1.w3d",
+        "inputResourceIds": [
+          "men-farm-material-textures",
+          "men-structure-shared-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-farm-really-damaged-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-farm/really-damaged.glb",
+      "patterns": [
+        "art/w3d/gb/gbfarm_d2.w3d",
+        "art/w3d/gb/gbfarm_d2sk.w3d",
+        "art/w3d/gb/gbfarm_d2an.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbfarm_d2.w3d",
+        "inputResourceIds": [
+          "men-farm-material-textures"
+        ],
+        "animations": [
+          "gbfarm_d2an.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-farm-rubble-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-farm/rubble.glb",
+      "patterns": [
+        "art/w3d/gb/gbfarm_d3.w3d",
+        "art/w3d/gb/gbfarm_d3sk.w3d",
+        "art/w3d/gb/gbfarm_d3an.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbfarm_d3.w3d",
+        "inputResourceIds": [
+          "men-farm-material-textures"
+        ],
+        "animations": [
+          "gbfarm_d3an.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-farm-bib-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-farm/bib.glb",
+      "patterns": [
+        "art/w3d/gb/gbfarm_bib.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbfarm_bib.w3d",
+        "provenRootRigidBake": true,
+        "inputResourceIds": [
+          "men-farm-material-textures"
         ]
       }
     },
@@ -125,27 +403,143 @@
       "kind": "texture",
       "converter": "hash-only",
       "patterns": [
-        "art/compiledtextures/gb/gbfarm*.*"
+        "art/compiledtextures/gb/gbfarm.dds",
+        "art/compiledtextures/gb/gbfarm_d.dds",
+        "art/compiledtextures/gb/gbfarm_nrm.tga",
+        "art/compiledtextures/gb/gbfarmt.dds"
       ],
-      "limit": 7,
-      "expected_count": 7
+      "limit": 4,
+      "expected_count": 4
     },
     {
-      "id": "men-barracks-intact-model",
+      "id": "men-barracks-construction-model",
       "kind": "model",
-      "converter": "w3d-hierarchical",
-      "output": "assets/models/structures/men-barracks/intact.glb",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-barracks/construction.glb",
       "patterns": [
         "art/w3d/gb/gbbarracks_a.w3d",
-        "art/w3d/gb/gbbarracks_askl.w3d"
+        "art/w3d/gb/gbbarracks_askl.w3d",
+        "art/w3d/gb/gbbarracks_abld.w3d"
       ],
-      "limit": 2,
-      "expected_count": 2,
+      "limit": 3,
+      "expected_count": 3,
       "options": {
         "model": "gbbarracks_a.w3d",
         "inputResourceIds": [
           "men-barracks-material-textures",
           "men-structure-shared-material-textures"
+        ],
+        "animations": [
+          "gbbarracks_abld.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-barracks-intact-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-barracks/intact.glb",
+      "patterns": [
+        "art/w3d/gb/gbbarracks_skn.w3d",
+        "art/w3d/gb/gbbarracks_2skl.w3d",
+        "art/w3d/gb/gbbarracks_2ida.w3d",
+        "art/w3d/gb/gbbarracks_2idb.w3d"
+      ],
+      "limit": 4,
+      "expected_count": 4,
+      "options": {
+        "model": "gbbarracks_skn.w3d",
+        "inputResourceIds": [
+          "men-barracks-material-textures",
+          "men-structure-shared-material-textures",
+          "men-archery-range-extra-textures",
+          "gondor-fighter-material-textures"
+        ],
+        "animations": [
+          "gbbarracks_2ida.w3d",
+          "gbbarracks_2idb.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-barracks-damaged-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-barracks/damaged.glb",
+      "patterns": [
+        "art/w3d/gb/gbbarracks_d1.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbbarracks_d1.w3d",
+        "inputResourceIds": [
+          "men-barracks-material-textures",
+          "men-structure-shared-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-barracks-really-damaged-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-barracks/really-damaged.glb",
+      "patterns": [
+        "art/w3d/gb/gbbarracks_d2.w3d",
+        "art/w3d/gb/gbbarracks_d2sk.w3d",
+        "art/w3d/gb/gbbarracks_d2an.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbbarracks_d2.w3d",
+        "inputResourceIds": [
+          "men-barracks-material-textures",
+          "men-structure-shared-material-textures"
+        ],
+        "animations": [
+          "gbbarracks_d2an.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-barracks-rubble-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-barracks/rubble.glb",
+      "patterns": [
+        "art/w3d/gb/gbbarracks_d3.w3d",
+        "art/w3d/gb/gbbarracks_d3sk.w3d",
+        "art/w3d/gb/gbbarracks_d3an.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbbarracks_d3.w3d",
+        "inputResourceIds": [
+          "men-barracks-material-textures",
+          "men-structure-shared-material-textures"
+        ],
+        "animations": [
+          "gbbarracks_d3an.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-barracks-bib-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-barracks/bib.glb",
+      "patterns": [
+        "art/w3d/gb/gbbarracks_bib.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbbarracks_bib.w3d",
+        "provenRootRigidBake": true,
+        "inputResourceIds": [
+          "men-barracks-material-textures"
         ]
       }
     },
@@ -154,28 +548,143 @@
       "kind": "texture",
       "converter": "hash-only",
       "patterns": [
-        "art/compiledtextures/gb/gbbarracks*.*"
+        "art/compiledtextures/gb/gbbarracks_bib.dds",
+        "art/compiledtextures/gb/gbbarracks_new.dds",
+        "art/compiledtextures/gb/gbbarracks_new_nrm.tga",
+        "art/compiledtextures/gb/gbbarracks_newd.dds"
       ],
-      "limit": 10,
-      "expected_count": 10
+      "limit": 4,
+      "expected_count": 4
     },
     {
-      "id": "men-archery-range-intact-model",
+      "id": "men-archery-range-construction-model",
       "kind": "model",
-      "converter": "w3d-hierarchical",
-      "output": "assets/models/structures/men-archery-range/intact.glb",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-archery-range/construction.glb",
       "patterns": [
         "art/w3d/gb/gbarcheryn_a.w3d",
-        "art/w3d/gb/gbarcheryn_askl.w3d"
+        "art/w3d/gb/gbarcheryn_askl.w3d",
+        "art/w3d/gb/gbarcheryn_abld.w3d"
       ],
-      "limit": 2,
-      "expected_count": 2,
+      "limit": 3,
+      "expected_count": 3,
       "options": {
         "model": "gbarcheryn_a.w3d",
         "inputResourceIds": [
           "men-archery-range-material-textures",
+          "men-archery-range-extra-textures",
+          "gondor-archer-material-textures"
+        ],
+        "animations": [
+          "gbarcheryn_abld.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-archery-range-intact-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-archery-range/intact.glb",
+      "patterns": [
+        "art/w3d/gb/gbarcheryn_skn.w3d",
+        "art/w3d/gb/gbarcheryn_skl.w3d",
+        "art/w3d/gb/gbarcheryn_idla.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbarcheryn_skn.w3d",
+        "inputResourceIds": [
+          "men-archery-range-material-textures",
+          "men-structure-shared-material-textures",
+          "men-archery-range-extra-textures",
           "gondor-archer-material-textures",
-          "men-archery-range-extra-textures"
+          "gondor-fighter-material-textures"
+        ],
+        "animations": [
+          "gbarcheryn_idla.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-archery-range-damaged-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-archery-range/damaged.glb",
+      "patterns": [
+        "art/w3d/gb/gbarcheryn_d1.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbarcheryn_d1.w3d",
+        "inputResourceIds": [
+          "men-archery-range-material-textures",
+          "men-structure-shared-material-textures",
+          "gondor-archer-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-archery-range-really-damaged-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-archery-range/really-damaged.glb",
+      "patterns": [
+        "art/w3d/gb/gbarcheryn_d2.w3d",
+        "art/w3d/gb/gbarcheryn_d2sk.w3d",
+        "art/w3d/gb/gbarcheryn_d2an.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbarcheryn_d2.w3d",
+        "inputResourceIds": [
+          "men-archery-range-material-textures",
+          "men-structure-shared-material-textures"
+        ],
+        "animations": [
+          "gbarcheryn_d2an.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-archery-range-rubble-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-archery-range/rubble.glb",
+      "patterns": [
+        "art/w3d/gb/gbarcheryn_d3.w3d",
+        "art/w3d/gb/gbarcheryn_d3sk.w3d",
+        "art/w3d/gb/gbarcheryn_d3an.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbarcheryn_d3.w3d",
+        "inputResourceIds": [
+          "men-archery-range-material-textures",
+          "men-structure-shared-material-textures"
+        ],
+        "animations": [
+          "gbarcheryn_d3an.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-archery-range-bib-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-archery-range/bib.glb",
+      "patterns": [
+        "art/w3d/gb/gbarcheryn_bib.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbarcheryn_bib.w3d",
+        "inputResourceIds": [
+          "men-archery-range-material-textures"
         ]
       }
     },
@@ -184,28 +693,144 @@
       "kind": "texture",
       "converter": "hash-only",
       "patterns": [
-        "art/compiledtextures/gb/gbarcheryn*.*"
+        "art/compiledtextures/gb/gbarcheryn_a.dds",
+        "art/compiledtextures/gb/gbarcheryn_a_nrm.tga",
+        "art/compiledtextures/gb/gbarcheryn_ad.dds",
+        "art/compiledtextures/gb/gbarcheryn_bib.dds",
+        "art/compiledtextures/gb/gbarcheryn_l.dds",
+        "art/compiledtextures/gb/gbarcheryn_l_nrm.tga",
+        "art/compiledtextures/gb/gbarcheryn_ld.dds"
       ],
-      "limit": 10,
-      "expected_count": 10
+      "limit": 7,
+      "expected_count": 7
     },
     {
-      "id": "men-stable-intact-model",
+      "id": "men-stable-construction-model",
       "kind": "model",
-      "converter": "w3d-hierarchical",
-      "output": "assets/models/structures/men-stable/intact.glb",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-stable/construction.glb",
       "patterns": [
         "art/w3d/gb/gbstable_a.w3d",
-        "art/w3d/gb/gbstable_askl.w3d"
+        "art/w3d/gb/gbstable_askl.w3d",
+        "art/w3d/gb/gbstable_abld.w3d"
       ],
-      "limit": 2,
-      "expected_count": 2,
+      "limit": 3,
+      "expected_count": 3,
       "options": {
         "model": "gbstable_a.w3d",
         "inputResourceIds": [
           "men-stable-material-textures",
           "men-structure-shared-material-textures",
           "men-stable-extra-textures"
+        ],
+        "animations": [
+          "gbstable_abld.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-stable-intact-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-stable/intact.glb",
+      "patterns": [
+        "art/w3d/gb/gbstable_skn.w3d",
+        "art/w3d/gb/gbstable_skl.w3d",
+        "art/w3d/gb/gbstable_idla.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbstable_skn.w3d",
+        "inputResourceIds": [
+          "men-stable-material-textures",
+          "men-structure-shared-material-textures",
+          "men-archery-range-extra-textures",
+          "men-stable-extra-textures"
+        ],
+        "animations": [
+          "gbstable_idla.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-stable-damaged-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-stable/damaged.glb",
+      "patterns": [
+        "art/w3d/gb/gbstable_d1.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbstable_d1.w3d",
+        "inputResourceIds": [
+          "men-stable-material-textures",
+          "men-structure-shared-material-textures"
+        ]
+      }
+    },
+    {
+      "id": "men-stable-really-damaged-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-stable/really-damaged.glb",
+      "patterns": [
+        "art/w3d/gb/gbstable_d2.w3d",
+        "art/w3d/gb/gbstable_d2sk.w3d",
+        "art/w3d/gb/gbstable_d2an.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbstable_d2.w3d",
+        "inputResourceIds": [
+          "men-stable-material-textures",
+          "men-structure-shared-material-textures"
+        ],
+        "animations": [
+          "gbstable_d2an.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-stable-rubble-model",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/structures/men-stable/rubble.glb",
+      "patterns": [
+        "art/w3d/gb/gbstable_d3.w3d",
+        "art/w3d/gb/gbstable_d3sk.w3d",
+        "art/w3d/gb/gbstable_d3an.w3d"
+      ],
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "model": "gbstable_d3.w3d",
+        "inputResourceIds": [
+          "men-stable-material-textures",
+          "men-structure-shared-material-textures"
+        ],
+        "animations": [
+          "gbstable_d3an.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-stable-bib-model",
+      "kind": "model",
+      "converter": "w3d-hierarchical",
+      "output": "assets/models/structures/men-stable/bib.glb",
+      "patterns": [
+        "art/w3d/gb/gbstable_bib.w3d"
+      ],
+      "limit": 1,
+      "expected_count": 1,
+      "options": {
+        "model": "gbstable_bib.w3d",
+        "inputResourceIds": [
+          "men-stable-material-textures"
         ]
       }
     },
@@ -214,20 +839,36 @@
       "kind": "texture",
       "converter": "hash-only",
       "patterns": [
-        "art/compiledtextures/gb/gbstable*.*"
+        "art/compiledtextures/gb/gbstable.dds",
+        "art/compiledtextures/gb/gbstable_d.dds",
+        "art/compiledtextures/gb/gbstable_nrm.tga",
+        "art/compiledtextures/gb/gbstablehorses.dds",
+        "art/compiledtextures/gb/gbstablet.dds"
       ],
-      "limit": 8,
-      "expected_count": 8
+      "limit": 5,
+      "expected_count": 5
     },
     {
       "id": "men-structure-shared-material-textures",
       "kind": "texture",
       "converter": "hash-only",
       "patterns": [
-        "art/compiledtextures/pm/pmrailtie.dds"
+        "art/compiledtextures/ex/exgflagseq.dds",
+        "art/compiledtextures/gb/gbbarracks_n.dds",
+        "art/compiledtextures/gb/gbnight.dds",
+        "art/compiledtextures/gb/gbnight2.dds",
+        "art/compiledtextures/gb/gbnightwindows.dds",
+        "art/compiledtextures/gb/gbvet_nrm.tga",
+        "art/compiledtextures/gb/gbvetd.dds",
+        "art/compiledtextures/gu/gubanner.dds",
+        "art/compiledtextures/pg/pg02.dds",
+        "art/compiledtextures/pm/pmrailtie.dds",
+        "art/compiledtextures/pt/ptgrass04.dds",
+        "art/compiledtextures/rh/rhfarmtools.dds",
+        "art/compiledtextures/ru/rupeasant03_alt.dds"
       ],
-      "limit": 1,
-      "expected_count": 1
+      "limit": 13,
+      "expected_count": 13
     },
     {
       "id": "men-archery-range-extra-textures",
@@ -252,11 +893,14 @@
     {
       "id": "gondor-fighter-definitions",
       "kind": "data",
-      "converter": "hash-only",
+      "converter": "retail-unit-rules",
+      "output": "data/retail_unit_rules.json",
       "patterns": [
         "data/ini/object/goodfaction/units/men/gondorfighter.ini",
         "data/ini/object/goodfaction/hordes/men/menhordes.ini",
         "data/ini/armor.ini",
+        "data/ini/attributemodifier.ini",
+        "data/ini/commandbutton.ini",
         "data/ini/commandset.ini",
         "data/ini/gamedata.ini",
         "data/ini/locomotor.ini",
@@ -264,7 +908,7 @@
         "data/ini/voice.ini",
         "data/ini/weapon.ini"
       ],
-      "limit": 9
+      "limit": 11
     },
     {
       "id": "gondor-fighter-rig-and-core-clips",
@@ -350,16 +994,61 @@
       "limit": 4
     },
     {
+      "id": "men-porter-rig-and-core-clips",
+      "kind": "model",
+      "converter": "w3d-bundle",
+      "output": "assets/models/units/men-porter.glb",
+      "patterns": [
+        "art/w3d/gu/guporter_skn.w3d",
+        "art/w3d/gu/guporter_sknm.w3d",
+        "art/w3d/gu/guporter_sknl.w3d",
+        "art/w3d/gu/guporter_skl.w3d",
+        "art/w3d/gu/guporter_idla.w3d",
+        "art/w3d/gu/guporter_runa.w3d",
+        "art/w3d/gu/guporter_diea.w3d",
+        "art/w3d/gu/guporter_wrka.w3d",
+        "art/w3d/gu/guporter_wrkb.w3d",
+        "art/w3d/gu/guporter_wrkc.w3d"
+      ],
+      "limit": 10,
+      "expected_count": 10,
+      "options": {
+        "model": "guporter_skn.w3d",
+        "inputResourceIds": ["men-porter-material-textures"],
+        "animations": [
+          "guporter_idla.w3d",
+          "guporter_runa.w3d",
+          "guporter_diea.w3d",
+          "guporter_wrka.w3d",
+          "guporter_wrkb.w3d",
+          "guporter_wrkc.w3d"
+        ]
+      }
+    },
+    {
+      "id": "men-porter-material-textures",
+      "kind": "texture",
+      "converter": "hash-only",
+      "patterns": [
+        "art/compiledtextures/gu/guporter.dds",
+        "art/compiledtextures/gu/guporter_build.dds",
+        "art/compiledtextures/gu/guporter_cart.dds"
+      ],
+      "limit": 3,
+      "expected_count": 3
+    },
+    {
       "id": "men-slice-additional-unit-definitions",
       "kind": "data",
       "converter": "hash-only",
       "patterns": [
         "data/ini/object/goodfaction/units/men/gondorarcher.ini",
         "data/ini/object/goodfaction/units/men/gondortowershieldguard.ini",
-        "data/ini/object/goodfaction/units/men/gondorcavalry.ini"
+        "data/ini/object/goodfaction/units/men/gondorcavalry.ini",
+        "data/ini/object/goodfaction/units/men/porter.ini"
       ],
-      "limit": 3,
-      "expected_count": 3
+      "limit": 4,
+      "expected_count": 4
     },
     {
       "id": "gondor-archer-rig-and-core-clips",
@@ -374,10 +1063,13 @@
         "art/w3d/gu/guarcher_idla.w3d",
         "art/w3d/gu/guarcher_runa.w3d",
         "art/w3d/gu/guarcher_atkd.w3d",
+        "art/w3d/gu/guarcher_atkf1.w3d",
+        "art/w3d/gu/guarcher_atkf2.w3d",
+        "art/w3d/gu/guarcher_runb.w3d",
         "art/w3d/gu/guarcher_diea.w3d"
       ],
-      "limit": 8,
-      "expected_count": 8,
+      "limit": 11,
+      "expected_count": 11,
       "options": {
         "model": "guarcher_sknm.w3d",
         "inputResourceIds": [
@@ -387,6 +1079,9 @@
           "guarcher_idla.w3d",
           "guarcher_runa.w3d",
           "guarcher_atkd.w3d",
+          "guarcher_atkf1.w3d",
+          "guarcher_atkf2.w3d",
+          "guarcher_runb.w3d",
           "guarcher_diea.w3d"
         ]
       }
@@ -818,6 +1513,13 @@
         "objectBindings": {
           "logical": [
             {"typeName": "*Waypoints/Waypoint", "classification": "waypoint"},
+            {"typeName": "Amb_BirdsAmonHen1", "classification": "ambient-audio-emitter"},
+            {"typeName": "Amb_BirdsAmonHen2", "classification": "ambient-audio-emitter"},
+            {"typeName": "Amb_BirdsIthilien1Loop", "classification": "ambient-audio-emitter"},
+            {"typeName": "Amb_BirdsIthilien2Loop", "classification": "ambient-audio-emitter"},
+            {"typeName": "Amb_CritterDesert1", "classification": "ambient-audio-emitter"},
+            {"typeName": "Amb_WaterRiver1Loop", "classification": "ambient-audio-emitter"},
+            {"typeName": "AmbStream_AmonHenForest1", "classification": "ambient-audio-emitter"},
             {"typeName": "AnimalWanderPoint", "classification": "ai-marker"},
             {"typeName": "Backdoor1", "classification": "ai-route-marker"},
             {"typeName": "Backdoor2", "classification": "ai-route-marker"},
@@ -1064,6 +1766,58 @@
           }
         },
         {
+          "id": "bfme2.object.gondor-archer",
+          "kind": "member",
+          "displayName": "Gondor Archer",
+          "animationCapabilityId": "bfme2.animation.gondor-archer",
+          "presentation": {
+            "model": "assets/models/units/gondor-archer.glb",
+            "icon": "assets/ui/upgondor-archer.png",
+            "commandIcon": "assets/ui/wor-gondor-archer.png"
+          }
+        },
+        {
+          "id": "bfme2.object.gondor-tower-guard",
+          "kind": "member",
+          "displayName": "Tower Guard",
+          "animationCapabilityId": "bfme2.animation.gondor-tower-guard",
+          "presentation": {
+            "model": "assets/models/units/gondor-tower-guard.glb",
+            "icon": "assets/ui/upgondor-towerguard.png",
+            "commandIcon": "assets/ui/wor-gondor-tower-guard.png"
+          }
+        },
+        {
+          "id": "bfme2.object.gondor-knight",
+          "kind": "member",
+          "displayName": "Gondor Knight",
+          "animationCapabilityId": "bfme2.animation.gondor-knight",
+          "presentation": {
+            "model": "assets/models/units/gondor-knight.glb",
+            "icon": "assets/ui/upgondor-knight.png",
+            "commandIcon": "assets/ui/wor-gondor-knights.png"
+          }
+        },
+        {
+          "id": "bfme2.object.men-porter",
+          "kind": "builder",
+          "displayName": "Builder",
+          "animationCapabilityId": "bfme2.animation.men-porter",
+          "presentation": {
+            "model": "assets/models/units/men-porter.glb"
+          },
+          "simulation": {
+            "cost": 500,
+            "buildTimeSeconds": 30,
+            "health": 500,
+            "damagedThreshold": 250,
+            "speed": 60,
+            "vision": 25,
+            "shroudClearingRange": 100,
+            "repairHealthPercentPerSecond": 2
+          }
+        },
+        {
           "id": "bfme2.object.gondor-fighter-horde",
           "kind": "battalion",
           "displayName": "Gondor Soldiers",
@@ -1071,6 +1825,273 @@
           "memberCount": 15,
           "commandPoints": 60,
           "formations": ["line", "block"]
+        },
+        {
+          "id": "bfme2.object.men-fortress",
+          "kind": "structure",
+          "displayName": "Men Fortress",
+          "presentation": {
+            "model": "assets/models/structures/men-fortress/intact.glb",
+            "buildingLifecycle": {
+              "schema": "openbfme.building-lifecycle-presentation",
+              "schemaVersion": 0,
+              "maxHealth": 7500,
+              "damagedHealth": 2500,
+              "reallyDamagedHealth": 1250,
+              "paths": {
+                "construction": "assets/models/structures/men-fortress/construction.glb",
+                "intact": "assets/models/structures/men-fortress/intact.glb",
+                "damaged": "assets/models/structures/men-fortress/damaged.glb",
+                "reallyDamaged": "assets/models/structures/men-fortress/really-damaged.glb",
+                "rubble": "assets/models/structures/men-fortress/rubble.glb",
+                "bib": "assets/models/structures/men-fortress/bib.glb"
+              },
+              "bibDuringConstruction": false,
+              "clips": {
+                "construction": {
+                  "names": ["gbfortress_abl"],
+                  "mode": "manual-progress"
+                },
+                "intact": {
+                  "names": [],
+                  "mode": "none"
+                },
+                "reallyDamaged": {
+                  "names": ["gbfortress_d2an"],
+                  "mode": "once"
+                },
+                "rubble": {
+                  "names": ["gbfortress_d3an"],
+                  "mode": "once"
+                }
+              },
+              "components": {
+                "door": {
+                  "closed": {
+                    "source": "art/w3d/gb/gbfdoor_drc.w3d",
+                    "resourceId": "men-fortress-door-closed-source",
+                    "path": "assets/models/structures/men-fortress/door-closed.glb",
+                    "status": "ready"
+                  },
+                  "construction": {
+                    "source": "art/w3d/gb/gbfdoor_a.w3d",
+                    "resourceId": "men-fortress-door-construction-source",
+                    "path": "assets/models/structures/men-fortress/door-construction.glb",
+                    "status": "ready"
+                  },
+                  "rubble": {
+                    "source": "art/w3d/gb/gbfdoor_d3.w3d",
+                    "resourceId": "men-fortress-door-rubble-source",
+                    "path": "assets/models/structures/men-fortress/door-rubble.glb",
+                    "status": "ready"
+                  }
+                }
+              },
+              "unresolved": [
+                {
+                  "code": "post-rubble-and-state-effects-unbound",
+                  "status": "unresolved",
+                  "reason": "Authored post-rubble removal, state FX, particles, and opaque draw scripts remain outside this base asset contract."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "bfme2.object.men-farm",
+          "kind": "structure",
+          "displayName": "Men Farm",
+          "presentation": {
+            "model": "assets/models/structures/men-farm/intact.glb",
+            "buildingLifecycle": {
+              "schema": "openbfme.building-lifecycle-presentation",
+              "schemaVersion": 0,
+              "maxHealth": 2000,
+              "damagedHealth": 1333,
+              "reallyDamagedHealth": 667,
+              "paths": {
+                "construction": "assets/models/structures/men-farm/construction.glb",
+                "intact": "assets/models/structures/men-farm/intact.glb",
+                "damaged": "assets/models/structures/men-farm/damaged.glb",
+                "reallyDamaged": "assets/models/structures/men-farm/really-damaged.glb",
+                "rubble": "assets/models/structures/men-farm/rubble.glb",
+                "bib": "assets/models/structures/men-farm/bib.glb"
+              },
+              "bibDuringConstruction": false,
+              "clips": {
+                "construction": {
+                  "names": ["gbfarm_abld"],
+                  "mode": "manual-progress"
+                },
+                "intact": {
+                  "names": ["gbfarm_idla"],
+                  "mode": "loop-random"
+                },
+                "reallyDamaged": {
+                  "names": ["gbfarm_d2an"],
+                  "mode": "once"
+                },
+                "rubble": {
+                  "names": ["gbfarm_d3an"],
+                  "mode": "once"
+                }
+              },
+              "unresolved": [
+                {
+                  "code": "post-rubble-and-state-effects-unbound",
+                  "status": "unresolved",
+                  "reason": "Authored post-rubble removal, state FX, particles, and opaque draw scripts remain outside this base asset contract."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "bfme2.object.men-barracks",
+          "kind": "structure",
+          "displayName": "Men Barracks",
+          "presentation": {
+            "model": "assets/models/structures/men-barracks/intact.glb",
+            "buildingLifecycle": {
+              "schema": "openbfme.building-lifecycle-presentation",
+              "schemaVersion": 0,
+              "maxHealth": 3000,
+              "damagedHealth": 2000,
+              "reallyDamagedHealth": 1000,
+              "paths": {
+                "construction": "assets/models/structures/men-barracks/construction.glb",
+                "intact": "assets/models/structures/men-barracks/intact.glb",
+                "damaged": "assets/models/structures/men-barracks/damaged.glb",
+                "reallyDamaged": "assets/models/structures/men-barracks/really-damaged.glb",
+                "rubble": "assets/models/structures/men-barracks/rubble.glb",
+                "bib": "assets/models/structures/men-barracks/bib.glb"
+              },
+              "bibDuringConstruction": false,
+              "clips": {
+                "construction": {
+                  "names": ["gbbarracks_abld"],
+                  "mode": "manual-progress"
+                },
+                "intact": {
+                  "names": ["gbbarracks_2ida", "gbbarracks_2idb"],
+                  "mode": "loop-random"
+                },
+                "reallyDamaged": {
+                  "names": ["gbbarracks_d2an"],
+                  "mode": "once"
+                },
+                "rubble": {
+                  "names": ["gbbarracks_d3an"],
+                  "mode": "once"
+                }
+              },
+              "unresolved": [
+                {
+                  "code": "post-rubble-and-state-effects-unbound",
+                  "status": "unresolved",
+                  "reason": "Authored post-rubble removal, state FX, particles, and opaque draw scripts remain outside this base asset contract."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "bfme2.object.men-archery-range",
+          "kind": "structure",
+          "displayName": "Men Archery Range",
+          "presentation": {
+            "model": "assets/models/structures/men-archery-range/intact.glb",
+            "buildingLifecycle": {
+              "schema": "openbfme.building-lifecycle-presentation",
+              "schemaVersion": 0,
+              "maxHealth": 3000,
+              "damagedHealth": 2000,
+              "reallyDamagedHealth": 1000,
+              "paths": {
+                "construction": "assets/models/structures/men-archery-range/construction.glb",
+                "intact": "assets/models/structures/men-archery-range/intact.glb",
+                "damaged": "assets/models/structures/men-archery-range/damaged.glb",
+                "reallyDamaged": "assets/models/structures/men-archery-range/really-damaged.glb",
+                "rubble": "assets/models/structures/men-archery-range/rubble.glb",
+                "bib": "assets/models/structures/men-archery-range/bib.glb"
+              },
+              "bibDuringConstruction": false,
+              "clips": {
+                "construction": {
+                  "names": ["gbarcheryn_abld"],
+                  "mode": "manual-progress"
+                },
+                "intact": {
+                  "names": ["gbarcheryn_idla"],
+                  "mode": "loop-random"
+                },
+                "reallyDamaged": {
+                  "names": ["gbarcheryn_d2an"],
+                  "mode": "once"
+                },
+                "rubble": {
+                  "names": ["gbarcheryn_d3an"],
+                  "mode": "once"
+                }
+              },
+              "unresolved": [
+                {
+                  "code": "post-rubble-and-state-effects-unbound",
+                  "status": "unresolved",
+                  "reason": "Authored post-rubble removal, state FX, particles, and opaque draw scripts remain outside this base asset contract."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "bfme2.object.men-stable",
+          "kind": "structure",
+          "displayName": "Men Stable",
+          "presentation": {
+            "model": "assets/models/structures/men-stable/intact.glb",
+            "buildingLifecycle": {
+              "schema": "openbfme.building-lifecycle-presentation",
+              "schemaVersion": 0,
+              "maxHealth": 3000,
+              "damagedHealth": 2000,
+              "reallyDamagedHealth": 1000,
+              "paths": {
+                "construction": "assets/models/structures/men-stable/construction.glb",
+                "intact": "assets/models/structures/men-stable/intact.glb",
+                "damaged": "assets/models/structures/men-stable/damaged.glb",
+                "reallyDamaged": "assets/models/structures/men-stable/really-damaged.glb",
+                "rubble": "assets/models/structures/men-stable/rubble.glb",
+                "bib": "assets/models/structures/men-stable/bib.glb"
+              },
+              "bibDuringConstruction": false,
+              "clips": {
+                "construction": {
+                  "names": ["gbstable_abld"],
+                  "mode": "manual-progress"
+                },
+                "intact": {
+                  "names": ["gbstable_idla"],
+                  "mode": "loop-random"
+                },
+                "reallyDamaged": {
+                  "names": ["gbstable_d2an"],
+                  "mode": "once"
+                },
+                "rubble": {
+                  "names": ["gbstable_d3an"],
+                  "mode": "once"
+                }
+              },
+              "unresolved": [
+                {
+                  "code": "post-rubble-and-state-effects-unbound",
+                  "status": "unresolved",
+                  "reason": "Authored post-rubble removal, state FX, particles, and opaque draw scripts remain outside this base asset contract."
+                }
+              ]
+            }
+          }
         }
       ]
     },
@@ -1134,6 +2155,124 @@
             "panicking",
             "cinematicUser4"
           ]
+        },
+        {
+          "id": "bfme2.animation.gondor-archer",
+          "presentationMode": "skeletal-glb",
+          "conversionProof": "provenance/conversion/gondor-archer-rig-and-core-clips.json",
+          "skeleton": "GUARCHER_SKL",
+          "states": {
+            "idle": {
+              "required": true,
+              "clips": ["guarcher_idla"],
+              "mode": "loop"
+            },
+            "move": {
+              "required": true,
+              "clips": ["guarcher_runa"],
+              "mode": "loop"
+            },
+            "attack": {
+              "required": true,
+              "clips": ["guarcher_atkd"],
+              "mode": "once",
+              "useWeaponTiming": true
+            },
+            "attackMelee": {
+              "required": true,
+              "clips": ["guarcher_atkd"],
+              "mode": "once",
+              "useWeaponTiming": true
+            },
+            "attackRangedPre": {
+              "required": true,
+              "clips": ["guarcher_atkf1"],
+              "mode": "once",
+              "useWeaponTiming": true
+            },
+            "attackRangedFire": {
+              "required": true,
+              "clips": ["guarcher_atkf2"],
+              "mode": "once",
+              "useWeaponTiming": true
+            },
+            "death": {
+              "required": true,
+              "clips": ["guarcher_diea"],
+              "mode": "once"
+            }
+          }
+        },
+        {
+          "id": "bfme2.animation.men-porter",
+          "presentationMode": "skeletal-glb",
+          "conversionProof": "provenance/conversion/men-porter-rig-and-core-clips.json",
+          "skeleton": "GUPORTER_SKL",
+          "states": {
+            "idle": {"required": true, "clips": ["guporter_idla"], "mode": "loop"},
+            "move": {"required": true, "clips": ["guporter_runa"], "mode": "loop"},
+            "constructTransition": {"required": true, "clips": ["guporter_wrka"], "mode": "once"},
+            "construct": {"required": true, "clips": ["guporter_wrkb", "guporter_wrkc"], "mode": "loop-random"},
+            "death": {"required": true, "clips": ["guporter_diea"], "mode": "once"}
+          }
+        },
+        {
+          "id": "bfme2.animation.gondor-tower-guard",
+          "presentationMode": "skeletal-glb",
+          "conversionProof": "provenance/conversion/gondor-tower-guard-rig-and-core-clips.json",
+          "skeleton": "GUTOWERGRD_SKL",
+          "states": {
+            "idle": {
+              "required": true,
+              "clips": ["gutowergrd_idla"],
+              "mode": "loop"
+            },
+            "move": {
+              "required": true,
+              "clips": ["gutowergrd_runa"],
+              "mode": "loop"
+            },
+            "attack": {
+              "required": true,
+              "clips": ["gutowergrd_atka"],
+              "mode": "once",
+              "useWeaponTiming": true
+            },
+            "death": {
+              "required": true,
+              "clips": ["gutowergrd_diea"],
+              "mode": "once"
+            }
+          }
+        },
+        {
+          "id": "bfme2.animation.gondor-knight",
+          "presentationMode": "skeletal-glb",
+          "conversionProof": "provenance/conversion/gondor-knight-rig-and-core-clips.json",
+          "skeleton": "GUCAVALRY_SKL",
+          "states": {
+            "idle": {
+              "required": true,
+              "clips": ["gucavalry_idla"],
+              "mode": "loop"
+            },
+            "move": {
+              "required": true,
+              "clips": ["gucavalry_runa"],
+              "mode": "loop"
+            },
+            "attack": {
+              "required": true,
+              "clips": ["gucavalry_atka"],
+              "mode": "once",
+              "useWeaponTiming": true
+            },
+            "death": {
+              "required": true,
+              "clips": ["gucavalry_diea"],
+              "mode": "once"
+            }
+          }
         }
       ]
     },

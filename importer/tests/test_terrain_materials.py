@@ -11,6 +11,7 @@ from unittest import mock
 from PIL import Image
 
 from openbfme_importer.catalog import CatalogEntry
+from openbfme_importer.game import retail_game
 from openbfme_importer.pipeline import ImportPipeline
 from openbfme_importer.profile import (
     ImportProfile,
@@ -397,6 +398,7 @@ End
             }
 
             pipeline = object.__new__(ImportPipeline)
+            pipeline.game = retail_game("bfme2")
             pipeline.packs_root = root / "packs"
             with (
                 mock.patch.object(pipeline, "_attest_source_archives", return_value=[]),

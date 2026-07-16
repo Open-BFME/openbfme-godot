@@ -52,6 +52,33 @@ function Resolve-ProofGodot {
     throw "Godot 4.7 was not found. Set OPENBFME_GODOT or pass -GodotPath."
 }
 
+function Get-ProofWorkingTreeIdentity {
+    param([string]$RepoRoot)
+    $revision = (& git -C $RepoRoot rev-parse HEAD).Trim()
+    Assert-ProofTrue ($LASTEXITCODE -eq 0 -and $revision -match '^[0-9a-f]{40}$') "Git revision could not be resolved."
+    $temporary = Join-Path $RepoRoot ".private\scratch\proof-working-tree.diff"
+    New-Item -ItemType Directory -Force (Split-Path -Parent $temporary) | Out-Null
+    & git -c core.safecrlf=false -C $RepoRoot diff --binary HEAD --output=$temporary -- . 2>$null
+    Assert-ProofTrue ($LASTEXITCODE -eq 0) "Git working-tree diff could not be captured."
+    $diffSha = (Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash.ToLowerInvariant()
+    $untracked = @(& git -C $RepoRoot ls-files --others --exclude-standard)
+    Assert-ProofTrue ($LASTEXITCODE -eq 0) "Git untracked-file list could not be captured."
+    $rows = [Collections.Generic.List[string]]::new()
+    $rows.Add("diff=$diffSha")
+    foreach ($relative in @($untracked | Sort-Object)) {
+        $path = Join-Path $RepoRoot $relative
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $rows.Add("untracked=$relative`0$sha")
+        }
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($rows -join "`n"))
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $digest = ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant() }
+    finally { $hasher.Dispose() }
+    return [pscustomobject]@{ revision = $revision; dirtyStateDigest = $digest }
+}
+
 function Invoke-ProofChecked {
     param(
         [string]$Gate,

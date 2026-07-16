@@ -86,6 +86,9 @@ Object SoldierHorde
 End
 Object Soldier
   VoiceSelect = SoldierVoice
+  Behavior = SlowDeathBehavior ModuleTag_Death
+    Sound = INITIAL HumanVoiceDie
+  End
 End
 Object MenBanner
 End
@@ -128,10 +131,19 @@ AudioEvent SoldierSelect
   Sounds = {samples}
   Type = world player
 End
+AudioEvent HumanVoiceDie
+  Sounds = sample000
+  Type = world player
+End
+""".encode("cp1252")
+
+
+def _voice() -> bytes:
+    return b"""
 Multisound SoldierVoice
   Subsounds = SoldierSelect
 End
-""".encode("cp1252")
+"""
 
 
 def _catalog(root: Path) -> InstallCatalog:
@@ -142,6 +154,7 @@ def _catalog(root: Path) -> InstallCatalog:
         "data/ini/object/goodfaction/men.ini": _objects(),
         "data/ini/mappedimages/aptimages/fixture.ini": _mapped_images(),
         "data/ini/soundeffects.ini": _sound_effects(),
+        "data/ini/voice.ini": _voice(),
         "data/ini/upgrade.ini": b"",
         "data/ini/science.ini": b"Science SCIENCE_MEN\n  IsGrantable = No\nEnd\n",
         "data/ini/specialpower.ini": b"",
@@ -198,6 +211,7 @@ class FactionProfileTests(unittest.TestCase):
             }
             self.assertIn("data/lotr.str", semantic_paths)
             self.assertIn("data/ini/commandbutton.ini", semantic_paths)
+            self.assertIn("data/ini/voice.ini", semantic_paths)
             self.assertTrue(
                 all(len(resource["patterns"]) <= 256 for resource in semantic)
             )
@@ -244,7 +258,8 @@ class FactionProfileTests(unittest.TestCase):
             self.assertEqual(strings["strings"], {"CONTROLBAR:Build": "Build me"})
             self.assertEqual(audio["schema"], "openbfme.audio-events")
             self.assertEqual(audio["schemaVersion"], 1)
-            self.assertEqual(audio["rootIds"], ["SoldierVoice"])
+            self.assertEqual(audio["rootIds"], ["HumanVoiceDie", "SoldierVoice"])
+            self.assertIn("HumanVoiceDie", audio["events"])
             self.assertIn("SoldierSelect", audio["events"])
             self.assertIn("SoldierVoice", audio["multisounds"])
             self.assertEqual(len(audio["samples"]), SAMPLE_COUNT)
@@ -291,6 +306,14 @@ class FactionProfileTests(unittest.TestCase):
                 if item["virtualPath"].casefold() != "data/lotr.str"
             ]
             cases.append(("missing-lotr", missing_strings, "missing required semantic"))
+
+            missing_voice = copy.deepcopy(report)
+            missing_voice["sourceDocuments"] = [
+                item
+                for item in missing_voice["sourceDocuments"]
+                if item["virtualPath"].casefold() != "data/ini/voice.ini"
+            ]
+            cases.append(("missing-voice", missing_voice, "missing required semantic"))
 
             wrong_text_digest = copy.deepcopy(report)
             wrong_text_digest["resolvedLeaves"]["localization"]["records"][0][

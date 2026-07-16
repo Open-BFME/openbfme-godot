@@ -216,7 +216,12 @@ class W3DMetadataTests(unittest.TestCase):
             {
                 "virtualPath": "Art/W3D/GUHero.w3d",
                 "modelIds": ["GUHero.BODY", "GUHero"],
-                "animationIds": ["GUHero_IDLE", "GUHero_RUN"],
+                "animationIds": [
+                    "GUHero_IDLE",
+                    "GUHero_SKL.GUHero_IDLE",
+                    "GUHero_RUN",
+                    "GUHero_SKL.GUHero_RUN",
+                ],
                 "hierarchyIds": ["GUHero_SKL"],
             },
         )
@@ -294,7 +299,18 @@ class W3DMetadataTests(unittest.TestCase):
             )
             + _chunk(0x102, pivot),
         )
-        source = hierarchy + _chunk(0x500, b"opaque") + _chunk(0xDEADBEEF, b"raw") + b"\x01\x02\x03"
+        emitter = _chunk(
+            0x500,
+            _chunk(0x50D, b"\0" * 40),
+            children=True,
+        )
+        source = (
+            hierarchy
+            + emitter
+            + _chunk(0x600, b"opaque")
+            + _chunk(0xDEADBEEF, b"raw")
+            + b"\x01\x02\x03"
+        )
         metadata = scan_w3d_metadata(source, "warnings.w3d")
         codes = [item.code for item in metadata.warnings]
 
@@ -313,6 +329,43 @@ class W3DMetadataTests(unittest.TestCase):
         self.assertIn("truncated-chunk-payload", truncated_codes)
         self.assertIn("truncated-metadata-record", truncated_codes)
         self.assertFalse(truncated.hierarchy_headers)
+
+    def test_emitter_is_a_real_container_with_exact_child_classifications(self) -> None:
+        child_ids = (0x501, 0x502, 0x503, 0x504, 0x505, 0x509, 0x50A, 0x50B, 0x50C, 0x50D)
+        source = _chunk(
+            0x500,
+            b"".join(_chunk(chunk_id, b"") for chunk_id in child_ids),
+            children=True,
+        )
+        metadata = scan_w3d_metadata(source, "emitter.w3d")
+
+        root = metadata.chunks[0]
+        self.assertEqual((root.chunk_name, root.classification), ("emitter", "container"))
+        self.assertTrue(root.scanned_as_container)
+        children = {item.chunk_id: item for item in metadata.chunks[1:]}
+        self.assertEqual(
+            {chunk_id: children[chunk_id].classification for chunk_id in child_ids},
+            {
+                0x501: "known-data",
+                0x502: "known-data",
+                0x503: "known-data",
+                0x504: "known-data",
+                0x505: "known-data",
+                0x509: "known-data",
+                0x50A: "known-data",
+                0x50B: "known-data",
+                0x50C: "known-data",
+                0x50D: "known-data",
+            },
+        )
+        self.assertEqual(
+            children[0x50D].chunk_name,
+            "emitter-extra-info",
+        )
+        self.assertEqual(
+            [item.code for item in metadata.warnings],
+            [],
+        )
 
     def test_shader_property_damage_is_retained_without_fabricated_values(self) -> None:
         bad_type = struct.pack("<ii", 99, 5) + b"Name\0" + b"unparsed"

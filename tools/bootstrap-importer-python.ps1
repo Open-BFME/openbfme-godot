@@ -38,15 +38,18 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
 
 $oldPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-$pillow = @(& $python -c "import PIL; print(PIL.__version__)" 2>$null)
-$pillowExit = $LASTEXITCODE
+$expectedDependencies = '12.2.0|4.61.1|0.7.1|9.1.1|0.4.6|2.3.0|26.2|1.6.0|2.20.0'
+$dependencyProbe = "import PIL,fontTools,defusedxml,pytest,colorama,iniconfig,packaging,pluggy,pygments; from importlib.metadata import version; print('|'.join(version(name) for name in ('Pillow','fonttools','defusedxml','pytest','colorama','iniconfig','packaging','pluggy','Pygments')))"
+$dependencyVersions = @(& $python -c $dependencyProbe 2>$null)
+$dependencyExit = $LASTEXITCODE
 $ErrorActionPreference = $oldPreference
-if ($pillowExit -ne 0 -or ($pillow | Select-Object -First 1) -ne '12.2.0') {
+if ($dependencyExit -ne 0 -or ($dependencyVersions | Select-Object -First 1) -ne $expectedDependencies) {
     & $python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r (Join-Path $repoRoot "importer\requirements-win.txt")
     if ($LASTEXITCODE -ne 0) { throw "Could not install the hash-pinned importer Python requirements." }
 }
 
-$verified = (& $python -c "import sys,PIL; assert sys.version_info[:2]==(3,12); assert PIL.__version__=='12.2.0'; print(PIL.__version__)").Trim()
-if ($LASTEXITCODE -ne 0 -or $verified -ne '12.2.0') { throw "Importer Python environment verification failed." }
+$verified = (& $python -c "import sys; assert sys.version_info[:2]==(3,12); $dependencyProbe").Trim()
+if ($LASTEXITCODE -ne 0 -or $verified -ne $expectedDependencies) { throw "Importer Python environment verification failed." }
 Write-Host "OPENBFME_IMPORTER_PYTHON=$python"
-Write-Host "OPENBFME_IMPORTER_PYTHON_READY version=$version pillow=$verified"
+$verifiedParts = $verified.Split('|')
+Write-Host "OPENBFME_IMPORTER_PYTHON_READY version=$version pillow=$($verifiedParts[0]) fonttools=$($verifiedParts[1]) defusedxml=$($verifiedParts[2]) pytest=$($verifiedParts[3])"

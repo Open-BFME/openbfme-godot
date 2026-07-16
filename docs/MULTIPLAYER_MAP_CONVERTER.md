@@ -14,9 +14,9 @@ automate only the resulting proven process.
 | `MPMAP-P4` | Jonathan, project owner | Apply question/delete/simplify/accelerate/automate in that order. | No generalized converter subsystem is built until the census proves the corpus requires it. |
 
 Repository safety and architecture constraints remain mandatory, but their source files
-do not name a human owner. This document does not invent one. Retail bytes remain
-external, the runtime remains independent of donor formats/tools, and the focused plus
-retail plus Stage 10 gates remain authoritative.
+do not name a human owner. This document does not invent one. Retail bytes remain under
+the ignored in-repository `.private` firewall, the runtime remains independent of donor
+formats/tools, and the focused retail gates remain authoritative.
 
 ## Deleted or deferred scope
 
@@ -25,12 +25,15 @@ The current milestone excludes:
 - online networking;
 - campaign, tutorial, shell, custom-map, and War of the Ring mode behavior;
 - a universal SAGE parser or universal map-script virtual machine;
-- full-install extraction and conversion;
 - one handwritten profile per map;
-- conversion of assets not reachable from the selected corpus;
 - lifecycle animation for decorative scenery unless the census proves it interactive;
 - guided installer/repair UX, performance optimization, and mass conversion before the
   census closes.
+
+Complete retail extraction is shared infrastructure and is already in scope. Conversion
+outside the first multiplayer/faction gate is sequenced after Men/Fords rather than
+deleted; it must reuse the same deterministic converters instead of creating per-map
+special cases.
 
 Standard skirmish scripts or `map wor` payloads are not excluded merely because of their
 filename. Registry membership decides scope.
@@ -57,14 +60,14 @@ conversion failures because there are no source bytes to convert.
 Invoke the census directly without Blender, Godot, extraction caches, or conversion:
 
 ```powershell
-%LOCALAPPDATA%\OpenBFME\retail-import\tools\python-3.12-env\Scripts\python.exe `
+.private\retail-work\tools\python-3.12-env\Scripts\python.exe `
   tools\openbfme_import.py --json census-maps --install F:\BFME2
 ```
 
-The report is written outside the repository at:
+The report is written inside the ignored private workspace at:
 
 ```text
-%LOCALAPPDATA%\OpenBFME\retail-import\reports\multiplayer-map-census.json
+.private\retail-work\reports\multiplayer-map-census.json
 ```
 
 It contains only neutral bounded facts: registry evidence, virtual paths, source hashes,
