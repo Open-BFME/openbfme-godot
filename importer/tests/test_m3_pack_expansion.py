@@ -6,13 +6,18 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import openbfme_importer.m3_pack_expansion as m3_module
 
 from openbfme_importer.m3_pack_expansion import (
     BUILDINGS,
+    BUILDING_RUNTIME_PATH,
+    BUILDING_RUNTIME_REQUESTED_IDS,
     RUNTIME_PATHS,
     UNITS,
     UPGRADES,
+    attach_building_runtime_gap_contract,
     build_upgrade_manifest,
+    build_building_runtime_gap_contract,
     build_m3_visual_resources,
     candidate_pack_state,
     declarative_visual_resources,
@@ -24,6 +29,7 @@ from openbfme_importer.m3_pack_expansion import (
     validated_private_output_path,
 )
 from openbfme_importer.profile import ImportProfile
+from openbfme_importer.util import write_json_atomic
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -154,6 +160,187 @@ def test_declarative_visual_rules_are_deterministic_and_runtime_contract_is_comp
 
     assert RUNTIME_PATHS["models"] == "data/m3/model-census.json"
     assert set(load_recipe()["pack"]["m3Recipe"]["runtimeOutputs"].values()) == set(RUNTIME_PATHS.values())
+
+
+def test_initial_building_runtime_contract_is_hash_sealed_and_gap_only() -> None:
+    recipe = load_recipe()
+    base_profile_sha = hashlib.sha256(b"fixture base profile\n").hexdigest()
+    recipe_sha = hashlib.sha256(PROFILE_PATH.read_bytes()).hexdigest()
+    building_stats = {"schema": "openbfme.building-stats", "buildings": []}
+    model_census = {"schema": "openbfme.m3-model-census", "models": []}
+
+    document, descriptor = build_building_runtime_gap_contract(
+        recipe, base_profile_sha, recipe_sha, building_stats, model_census
+    )
+    repeated, repeated_descriptor = build_building_runtime_gap_contract(
+        recipe, base_profile_sha, recipe_sha, building_stats, model_census
+    )
+
+    assert document == repeated
+    assert descriptor == repeated_descriptor
+    assert descriptor == {
+        "path": BUILDING_RUNTIME_PATH,
+        "schema": "openbfme.building-runtime-capabilities",
+        "schemaVersion": 0,
+        "sha256": hashlib.sha256(
+            (json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode(
+                "utf-8"
+            )
+        ).hexdigest(),
+    }
+    assert document["scope"] == {
+        "id": "bfme2-106-men-ordinary-buildings-v0",
+        "requestedIds": list(BUILDING_RUNTIME_REQUESTED_IDS),
+    }
+    assert document["capabilities"] == []
+    assert [row["sourceObjectId"] for row in document["gaps"]] == list(
+        BUILDING_RUNTIME_REQUESTED_IDS
+    )
+    assert all(row["evidenceIds"] == [] and row["reasons"] for row in document["gaps"])
+    assert set(document["provenance"]) == {
+        "baseProfileInputSha256",
+        "recipeSha256",
+        "buildingStatsSha256",
+        "modelCensusSha256",
+    }
+    assert document["provenance"]["baseProfileInputSha256"] == base_profile_sha
+    assert document["provenance"]["recipeSha256"] == recipe_sha
+    assert "complete" not in json.dumps(document).casefold()
+
+
+def test_building_runtime_contract_attaches_to_composed_profile_once(tmp_path: Path) -> None:
+    recipe = load_recipe()
+    base_profile_sha = hashlib.sha256(b"fixture base profile\n").hexdigest()
+    recipe_sha = hashlib.sha256(PROFILE_PATH.read_bytes()).hexdigest()
+    profile = load_recipe()
+    profile["pack"]["files"] = {"objects": "data/objects.json"}
+    profile["runtime_data"] = {
+        RUNTIME_PATHS["buildingStats"]: {
+            "schema": "openbfme.building-stats",
+            "buildings": [],
+        },
+        RUNTIME_PATHS["models"]: {
+            "schema": "openbfme.m3-model-census",
+            "models": [],
+        },
+    }
+
+    document, descriptor = attach_building_runtime_gap_contract(
+        profile, recipe, base_profile_sha, recipe_sha
+    )
+
+    assert profile["runtime_data"][BUILDING_RUNTIME_PATH] is document
+    assert profile["pack"]["files"] == {
+        "objects": "data/objects.json",
+        "buildingRuntime": descriptor,
+    }
+    assert descriptor["sha256"] == hashlib.sha256(
+        (json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    assert document["capabilities"] == []
+    assert len(document["gaps"]) == len(BUILDING_RUNTIME_REQUESTED_IDS)
+
+    profile_path = tmp_path / "composed-profile.json"
+    write_json_atomic(profile_path, profile)
+    loaded = ImportProfile.load(profile_path)
+    assert loaded.pack_metadata["files"]["buildingRuntime"] == descriptor
+    runtime_path = tmp_path / BUILDING_RUNTIME_PATH
+    write_json_atomic(runtime_path, loaded.runtime_data[BUILDING_RUNTIME_PATH])
+    assert hashlib.sha256(runtime_path.read_bytes()).hexdigest() == descriptor["sha256"]
+    for runtime_key, provenance_key in (
+        (RUNTIME_PATHS["buildingStats"], "buildingStatsSha256"),
+        (RUNTIME_PATHS["models"], "modelCensusSha256"),
+    ):
+        artifact_path = tmp_path / runtime_key
+        write_json_atomic(artifact_path, loaded.runtime_data[runtime_key])
+        assert hashlib.sha256(artifact_path.read_bytes()).hexdigest() == document[
+            "provenance"
+        ][provenance_key]
+
+    with pytest.raises(ValueError, match="already attached"):
+        attach_building_runtime_gap_contract(
+            profile, recipe, base_profile_sha, recipe_sha
+        )
+
+
+def test_path_composer_binds_parsed_inputs_to_the_same_raw_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_root = tmp_path / ".private"
+    private_root.mkdir()
+    recipe_path = tmp_path / "recipe.json"
+    base_path = tmp_path / "base.json"
+    recipe_bytes = b'{\n  "pack": {"id": "fixture", "version": "1"}\n}\n'
+    base_bytes = b'{"id":"base", "spacing": "is significant to the digest"}\n'
+    recipe_path.write_bytes(recipe_bytes)
+    base_path.write_bytes(base_bytes)
+    other_paths = []
+    for name in ("census.json", "visual.json", "manifest.json"):
+        path = tmp_path / name
+        path.write_text("{}\n", encoding="utf-8", newline="\n")
+        other_paths.append(path)
+    assets_root = tmp_path / "assets"
+    assets_root.mkdir()
+    output_path = private_root / "scratch" / "candidate.json"
+    output_path.parent.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_compose(*args: object) -> dict[str, object]:
+        captured["recipe"] = args[0]
+        captured["base"] = args[1]
+        captured["provenance"] = args[6]
+        return {"fixture": True}
+
+    monkeypatch.setattr(m3_module, "compose_private_profile", fake_compose)
+    m3_module.compose_profile_from_paths(
+        recipe_path,
+        base_path,
+        other_paths[0],
+        other_paths[1],
+        assets_root,
+        other_paths[2],
+        output_path,
+        private_root,
+    )
+
+    assert captured["recipe"] == json.loads(recipe_bytes)
+    assert captured["base"] == json.loads(base_bytes)
+    assert captured["provenance"] == {
+        "baseProfileInputSha256": hashlib.sha256(base_bytes).hexdigest(),
+        "recipeSha256": hashlib.sha256(recipe_bytes).hexdigest(),
+    }
+
+
+def test_json_digest_loader_never_reads_more_than_limit_plus_one() -> None:
+    requests: list[int] = []
+
+    class Stream:
+        def __enter__(self) -> "Stream":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, size: int) -> bytes:
+            requests.append(size)
+            return b"x" * size
+
+    class FakePath:
+        def is_file(self) -> bool:
+            return True
+
+        def stat(self) -> object:
+            return type("Stat", (), {"st_size": 0})()
+
+        def open(self, mode: str) -> Stream:
+            assert mode == "rb"
+            return Stream()
+
+    with pytest.raises(ValueError, match="exceeds 7 byte limit"):
+        m3_module._load_json_with_sha256(FakePath(), "fixture", maximum=7)
+    assert requests == [8]
 
 
 def test_m3_visual_composer_never_claims_root_rigid_bake_from_a_model_name() -> None:

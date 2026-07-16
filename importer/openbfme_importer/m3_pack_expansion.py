@@ -75,6 +75,17 @@ RUNTIME_PATHS = {
     "selectionTransitions": "data/m3/selection-transitions.json",
     "models": "data/m3/model-census.json",
 }
+BUILDING_RUNTIME_PATH = "data/m3/building-runtime.json"
+BUILDING_RUNTIME_SCHEMA = "openbfme.building-runtime-capabilities"
+BUILDING_RUNTIME_SCOPE = "bfme2-106-men-ordinary-buildings-v0"
+BUILDING_RUNTIME_REQUESTED_IDS = (
+    "GondorWorkshop",
+    "GondorBattleTower",
+    "GondorWell",
+    "GondorStatue",
+    "GondorForge",
+    "GondorMarketPlace",
+)
 BUILDING_COMMAND_OWNERS = {"MenFortress": "MenFortressCitadel"}
 PORTER_CONSTRUCT_TARGETS = {
     "GondorCastleWallHub": ("MenWallHubSmallOuter", "MenWallHubSmall"),
@@ -1564,6 +1575,90 @@ def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def build_building_runtime_gap_contract(
+    recipe: Mapping[str, Any],
+    base_profile_input_sha256: str,
+    recipe_sha256: str,
+    building_stats: Mapping[str, Any],
+    model_census: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build the initial fail-closed M3 building contract and manifest descriptor."""
+
+    pack = _obj(recipe.get("pack"), "recipe pack")
+    pack_id = _id(pack.get("id"), "recipe pack id")
+    pack_version = _text(pack.get("version"), "recipe pack version")
+    base_profile_input_sha256 = _text(
+        base_profile_input_sha256, "base profile input sha", 64
+    ).casefold()
+    recipe_sha256 = _text(recipe_sha256, "recipe sha", 64).casefold()
+    if _SHA.fullmatch(base_profile_input_sha256) is None or _SHA.fullmatch(recipe_sha256) is None:
+        raise ValueError("building runtime input provenance is not SHA-256")
+    reason = (
+        "No approved lifecycle, route, and behavior evidence was supplied for "
+        "capability promotion."
+    )
+    document = {
+        "schema": BUILDING_RUNTIME_SCHEMA,
+        "schemaVersion": 0,
+        "pack": {"id": pack_id, "version": pack_version},
+        "scope": {
+            "id": BUILDING_RUNTIME_SCOPE,
+            "requestedIds": list(BUILDING_RUNTIME_REQUESTED_IDS),
+        },
+        "provenance": {
+            "baseProfileInputSha256": base_profile_input_sha256,
+            "recipeSha256": recipe_sha256,
+            "buildingStatsSha256": hashlib.sha256(
+                _canonical_bytes(building_stats)
+            ).hexdigest(),
+            "modelCensusSha256": hashlib.sha256(
+                _canonical_bytes(model_census)
+            ).hexdigest(),
+        },
+        "capabilities": [],
+        "gaps": [
+            {
+                "sourceObjectId": source_id,
+                "evidenceIds": [],
+                "reasons": [reason],
+            }
+            for source_id in BUILDING_RUNTIME_REQUESTED_IDS
+        ],
+    }
+    descriptor = {
+        "path": BUILDING_RUNTIME_PATH,
+        "schema": BUILDING_RUNTIME_SCHEMA,
+        "schemaVersion": 0,
+        "sha256": hashlib.sha256(_canonical_bytes(document)).hexdigest(),
+    }
+    return document, descriptor
+
+
+def attach_building_runtime_gap_contract(
+    profile: dict[str, Any],
+    recipe: Mapping[str, Any],
+    base_profile_input_sha256: str,
+    recipe_sha256: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Attach the gap-only document through the same seam used by composition."""
+
+    runtime = _obj(profile.setdefault("runtime_data", {}), "composed runtime_data")
+    pack = _obj(profile.get("pack"), "composed pack")
+    files = _obj(pack.setdefault("files", {}), "composed pack files")
+    if BUILDING_RUNTIME_PATH in runtime or "buildingRuntime" in files:
+        raise ValueError("building runtime contract is already attached")
+    document, descriptor = build_building_runtime_gap_contract(
+        recipe,
+        base_profile_input_sha256,
+        recipe_sha256,
+        _obj(runtime.get(RUNTIME_PATHS["buildingStats"]), "composed building stats"),
+        _obj(runtime.get(RUNTIME_PATHS["models"]), "composed model census"),
+    )
+    runtime[BUILDING_RUNTIME_PATH] = document
+    files["buildingRuntime"] = descriptor
+    return document, descriptor
+
+
 def candidate_pack_state() -> dict[str, Any]:
     """Return the public maturity contract for the incomplete M3 census output."""
 
@@ -1601,6 +1696,7 @@ def compose_private_profile(
     visual_closure: Mapping[str, Any],
     assets_root: Path,
     effective_manifest: Mapping[str, Any],
+    input_provenance: Mapping[str, str],
 ) -> dict[str, Any]:
     metadata = validate_recipe(recipe)
     encoded_base = _canonical_bytes(base_profile)
@@ -1715,16 +1811,32 @@ def compose_private_profile(
     result["resources"] = resources
     runtime = result.setdefault("runtime_data", {})
     runtime.update(deepcopy(runtime_documents))
+    attach_building_runtime_gap_contract(
+        result,
+        recipe,
+        _text(input_provenance.get("baseProfileInputSha256"), "base profile input sha", 64),
+        _text(input_provenance.get("recipeSha256"), "recipe sha", 64),
+    )
     return result
 
 
-def _load_json(path: Path, label: str, maximum: int = 64 * 1024 * 1024) -> Mapping[str, Any]:
+def _load_json_with_sha256(
+    path: Path, label: str, maximum: int = 64 * 1024 * 1024
+) -> tuple[Mapping[str, Any], str]:
     if not path.is_file():
         raise FileNotFoundError(f"{label} not found: {path}")
     if path.stat().st_size > maximum:
         raise ValueError(f"{label} exceeds {maximum} byte limit")
-    value = json.loads(path.read_text(encoding="utf-8"))
-    return _obj(value, label)
+    with path.open("rb") as stream:
+        payload = stream.read(maximum + 1)
+    if len(payload) > maximum:
+        raise ValueError(f"{label} exceeds {maximum} byte limit")
+    value = json.loads(payload.decode("utf-8"))
+    return _obj(value, label), hashlib.sha256(payload).hexdigest()
+
+
+def _load_json(path: Path, label: str, maximum: int = 64 * 1024 * 1024) -> Mapping[str, Any]:
+    return _load_json_with_sha256(path, label, maximum)[0]
 
 
 def validated_private_output_path(output_path: Path, private_root: Path) -> Path:
@@ -1755,13 +1867,21 @@ def compose_profile_from_paths(
     private_root: Path,
 ) -> dict[str, Any]:
     output_path = validated_private_output_path(output_path, private_root)
+    recipe, recipe_sha256 = _load_json_with_sha256(recipe_path, "M3 recipe")
+    base_profile, base_profile_sha256 = _load_json_with_sha256(
+        base_profile_path, "M3 base profile"
+    )
     profile = compose_private_profile(
-        _load_json(recipe_path, "M3 recipe"),
-        _load_json(base_profile_path, "M3 base profile"),
+        recipe,
+        base_profile,
         _load_json(census_path, "M3 Men census"),
         _load_json(visual_closure_path, "M3 visual closure"),
         assets_root.resolve(),
         _load_json(effective_manifest_path, "effective-assets manifest"),
+        {
+            "baseProfileInputSha256": base_profile_sha256,
+            "recipeSha256": recipe_sha256,
+        },
     )
     write_json_atomic(output_path, profile)
     return profile
@@ -1942,7 +2062,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["BUILDINGS", "CP_FIELDS", "RUNTIME_PATHS", "SELECTION_TRANSITIONS", "UNITS", "UPGRADES", "build_house_color_from_assets", "build_house_color_manifest", "build_icon_census", "build_m3_visual_resources", "build_upgrade_manifest", "candidate_pack_state", "compose_private_profile", "compose_profile_from_paths", "declarative_visual_resources", "extend_selection_transitions", "extract_building_stats", "extract_command_points", "extract_spellbook", "house_color_mask_resources", "parse_house_colors", "validated_private_output_path", "validate_candidate_pack_state", "validate_recipe", "validate_tooltip_closure", "write_m3_expansion_report"]
+__all__ = ["BUILDINGS", "BUILDING_RUNTIME_PATH", "BUILDING_RUNTIME_REQUESTED_IDS", "CP_FIELDS", "RUNTIME_PATHS", "SELECTION_TRANSITIONS", "UNITS", "UPGRADES", "attach_building_runtime_gap_contract", "build_building_runtime_gap_contract", "build_house_color_from_assets", "build_house_color_manifest", "build_icon_census", "build_m3_visual_resources", "build_upgrade_manifest", "candidate_pack_state", "compose_private_profile", "compose_profile_from_paths", "declarative_visual_resources", "extend_selection_transitions", "extract_building_stats", "extract_command_points", "extract_spellbook", "house_color_mask_resources", "parse_house_colors", "validated_private_output_path", "validate_candidate_pack_state", "validate_recipe", "validate_tooltip_closure", "write_m3_expansion_report"]
 
 
 if __name__ == "__main__":
