@@ -69,11 +69,51 @@ func _test_structure(spec: Dictionary) -> void:
 	var requests: Array[Dictionary] = []
 	var structure = structure_script.new()
 	structure.lifecycle_route_requested.connect(func(request: Dictionary) -> void: requests.append(request.duplicate(true)))
-	root.add_child(structure)
 	var entity := _entity(spec)
+	var stages_detached_route := String(spec.kind) == "farm"
+	if stages_detached_route:
+		entity.health = int(spec.damaged)
 	structure.configure_fixture(entity, lifecycle, fixtures, 8000.0)
+	if stages_detached_route:
+		structure.set_authoritative_lifecycle_phase("really-damaged")
+	var route_was_deferred := requests.is_empty()
+	var staged_position := Vector3(7.0, 0.0, 11.0)
+	structure.position = staged_position
+	root.add_child(structure)
+	var staged_route_ok := true
+	if stages_detached_route:
+		staged_route_ok = (
+			route_was_deferred
+			and requests.size() == 1
+			and _route_request_matches(requests[0], structure, entity, lifecycle, "really-damaged", staged_position)
+		)
+		requests.clear()
+		root.remove_child(structure)
+		structure.set_authoritative_lifecycle_phase("damaged")
+		structure.set_authoritative_lifecycle_phase("intact")
+		structure.position = Vector3(9.0, 0.0, 13.0)
+		root.add_child(structure)
+		staged_route_ok = staged_route_ok and requests.is_empty()
+		root.remove_child(structure)
+		structure.set_authoritative_lifecycle_phase("damaged")
+		structure.set_authoritative_lifecycle_phase("really-damaged")
+		var reentry_position := Vector3(13.0, 0.0, 17.0)
+		structure.position = reentry_position
+		root.add_child(structure)
+		staged_route_ok = (
+			staged_route_ok
+			and requests.size() == 1
+			and _route_request_matches(requests[0], structure, entity, lifecycle, "really-damaged", reentry_position)
+		)
+		structure.set_authoritative_lifecycle_phase("damaged")
+		staged_route_ok = (
+			staged_route_ok
+			and requests.size() == 2
+			and _route_request_matches(requests[1], structure, entity, lifecycle, "damaged", reentry_position)
+		)
+		requests.clear()
 	var label := String(spec.kind)
-	_check("%s_v1_contract_loads" % label, structure.contract_error == "" and structure.current_lifecycle_phase == "intact")
+	_check("%s_v1_contract_loads" % label, structure.contract_error == "" and structure.current_lifecycle_phase == ("damaged" if stages_detached_route else "intact") and staged_route_ok)
 	_check("%s_exact_thresholds" % label, int(lifecycle.simulationFacts.maximumHealth) == int(spec.maximum) and int(lifecycle.simulationFacts.damageStateRule.damagedThreshold) == int(spec.damaged) and int(lifecycle.simulationFacts.damageStateRule.reallyDamagedThreshold) == int(spec.really))
 
 	entity.health = int(spec.damaged) + 1
@@ -111,6 +151,25 @@ func _test_structure(spec: Dictionary) -> void:
 	_check("%s_route_requests_are_contract_only" % label, _requests_are_contract_only(requests))
 	structure.free()
 	_free_fixtures(fixtures)
+
+
+func _route_request_matches(
+	request: Dictionary,
+	structure: Node,
+	entity: Dictionary,
+	lifecycle: Dictionary,
+	phase: String,
+	expected_position: Vector3
+) -> bool:
+	return (
+		String(request.get("phase", "")) == phase
+		and int(request.get("entityId", -1)) == int(entity.id)
+		and String(request.get("objectId", "")) == "fixture.%s" % String(entity.structure_kind)
+		and String(request.get("enteringFx", "")) == String(lifecycle.effects.enteringStateFx.get(phase, ""))
+		and String(request.get("audioEvent", "")) == String(structure.active_audio_event)
+		and request.get("particleSystemIds", []) == structure.active_particle_system_ids
+		and (request.get("worldPosition", Vector3.INF) as Vector3).is_equal_approx(expected_position)
+	)
 
 
 func _route_registry() -> Dictionary:

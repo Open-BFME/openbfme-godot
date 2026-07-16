@@ -109,6 +109,12 @@ var _active_door: Node3D
 var _rebuild_hole_visual: Node3D
 var _runtime_route_registry: Dictionary = {}
 var _source_unit_scale := 0.0
+var _pending_route_phase := ""
+
+
+func _enter_tree() -> void:
+	if _pending_route_phase != "":
+		_publish_v1_route_request(_pending_route_phase)
 
 
 func configure(entity: Dictionary, bundle_object_id: String = "", source_unit_scale: float = 0.0) -> void:
@@ -1486,10 +1492,15 @@ func _bind_v1_phase_routes(row: Dictionary) -> void:
 
 func _publish_v1_route_request(phase: String) -> void:
 	if active_entering_fx == "" and active_audio_event == "" and active_particle_system_ids.is_empty():
+		_pending_route_phase = ""
 		last_route_request.clear()
 		route_dispatch_error = ""
 		last_route_dispatch.clear()
 		return
+	if not is_inside_tree():
+		_pending_route_phase = phase
+		return
+	_pending_route_phase = ""
 	var active_blockers: Array[Dictionary] = []
 	for blocker in route_blockers:
 		var identifier := String(blocker.get("identifier", ""))
