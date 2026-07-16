@@ -212,6 +212,7 @@ var match_clock_label: Label
 var fps_toggle: CheckButton
 var command_cap_slider: HSlider
 var weak_fortress_toggle: CheckButton
+var _side_bar_fingerprint := "<unset>"
 var fps_overlay: Label
 var _frame_times: PackedFloat32Array = PackedFloat32Array()
 var voice_slider: HSlider
@@ -1994,14 +1995,23 @@ func _refresh_side_command_bar(builders_only: bool) -> void:
 				"title": title,
 				"description": desc,
 			})
-		retail_side_command_bar.configure_from_constructs(constructs)
-		for side_button in retail_side_command_bar.side_buttons():
-			side_button.set_meta("tooltip_group", "side_build")
-			var kind := String(side_button.get_meta("construct_kind", ""))
-			for entry_value in constructs:
-				var entry: Dictionary = entry_value
-				if String(entry.get("kind", "")) == kind:
-					side_button.set_meta("tooltip_title", String(entry.get("title", "")))
-					side_button.set_meta("tooltip_desc", String(entry.get("description", "")))
-			_register_button_tooltip(side_button)
+		# This runs every presentation frame; rebuilding the buttons each call
+		# destroyed and recreated them faster than clicks could land (hover
+		# flickered, presses died between generations). Rebuild only when the
+		# construct set actually changes.
+		var fingerprint := ""
+		for entry_value in constructs:
+			fingerprint += String((entry_value as Dictionary).get("kind", "")) + ";"
+		if fingerprint != _side_bar_fingerprint:
+			_side_bar_fingerprint = fingerprint
+			retail_side_command_bar.configure_from_constructs(constructs)
+			for side_button in retail_side_command_bar.side_buttons():
+				side_button.set_meta("tooltip_group", "side_build")
+				var kind := String(side_button.get_meta("construct_kind", ""))
+				for entry_value in constructs:
+					var entry: Dictionary = entry_value
+					if String(entry.get("kind", "")) == kind:
+						side_button.set_meta("tooltip_title", String(entry.get("title", "")))
+						side_button.set_meta("tooltip_desc", String(entry.get("description", "")))
+				_register_button_tooltip(side_button)
 	retail_side_command_bar.set_builder_visible(builders_only)
