@@ -477,7 +477,12 @@ def _validate_sim_selection_sources(repo_root: Path) -> dict[str, Any]:
     )
     sim = sim_path.read_bytes()
     vertical = slice_path.read_bytes()
-    if _sha(sim) != SIM_SHA256 or _sha(vertical) != SLICE_SHA256:
+    # Git may materialize tracked text as CRLF on Windows. Bind the oracle to
+    # canonical LF source bytes so identical content has one cross-platform
+    # identity while any non-line-ending source change still fails closed.
+    sim_sha = _sha(sim.replace(b"\r\n", b"\n"))
+    vertical_sha = _sha(vertical.replace(b"\r\n", b"\n"))
+    if sim_sha != SIM_SHA256 or vertical_sha != SLICE_SHA256:
         raise ValueError("existing Men/Fords selection source changed")
     sim_text = sim.decode("utf-8")
     slice_text = vertical.decode("utf-8")
