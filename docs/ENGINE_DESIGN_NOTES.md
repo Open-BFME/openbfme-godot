@@ -1,5 +1,8 @@
 # Engine design notes — scaling Open-BFME to a full port
 
+> **Superseded:** accepted boundaries live in `docs/ARCHITECTURE.md` and
+> `docs/SIMULATION_PROTOCOL.md`. These notes are not an implementation plan.
+
 **Updated:** 2026-07-16
 **Scope:** architecture and performance doctrine for growing the Men/Fords
 vertical slice into a full multi-faction BFME2 port. These are standing

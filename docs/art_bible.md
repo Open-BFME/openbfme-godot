@@ -1,5 +1,8 @@
 # Open BFME — Art Bible (v0)
 
+> **Excluded from private retail-parity authority:** required presentation is
+> derived from retail evidence and the selected pack, not synthetic style guidance.
+
 ## Pillars
 
 1. **Readable at RTS scale** — silhouette first, detail second

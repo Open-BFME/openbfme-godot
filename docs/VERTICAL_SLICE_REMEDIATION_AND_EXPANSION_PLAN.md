@@ -1,5 +1,8 @@
 # Men/Fords vertical-slice remediation and BFME2 expansion plan
 
+> **Superseded:** use `docs/MILESTONE_CURRENT.md`, `PLAN.md`, and generated
+> compatibility coverage. This mixed remediation/expansion plan cannot assign work.
+
 **Date:** 2026-07-15  
 **Scope authority:** `DIRECTION.md` and `docs/M2_MEN_FORDS_DOD.md`  
 **Milestone:** private BFME2 1.06, Men versus Men, Fords of Isen II

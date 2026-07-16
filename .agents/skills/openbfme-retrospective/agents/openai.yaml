@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenBFME Retrospective"
+  short_description: "Review completed packets and propose loop repairs"
+  default_prompt: "Use $openbfme-retrospective to review this completed OpenBFME packet and propose evidence-backed lessons without editing persistent guidance."

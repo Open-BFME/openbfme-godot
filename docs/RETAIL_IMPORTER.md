@@ -1,5 +1,9 @@
 # Private BFME II retail importer
 
+> **Superseded as authority:** use `docs/CONTENT_PIPELINE.md` and
+> `docs/MILESTONE_CURRENT.md`. Retained source-backed details are migration
+> evidence only until represented by a contract, test, or generated report.
+
 The importer converts BFME II 1.06 dependency closures into runtime-native private
 Godot content packs. It never modifies the retail install. During private development,
 all extracted and converted payloads are contained under the checkout's git-ignored

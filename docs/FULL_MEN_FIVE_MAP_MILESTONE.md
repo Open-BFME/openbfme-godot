@@ -1,5 +1,8 @@
 # Full Men and five-map private compatibility milestone
 
+> **Deferred and superseded as a milestone:** the active DoD is
+> `docs/MILESTONE_CURRENT.md`; broader content sequencing lives in `PLAN.md`.
+
 This is the active long-running implementation objective requested by Jonathan,
 project owner. It expands the existing proof slice without redefining partial evidence
 as completion.

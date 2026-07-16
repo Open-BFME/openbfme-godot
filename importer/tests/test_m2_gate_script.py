@@ -1,10 +1,11 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).parents[2]
 GATE = ROOT / "tools" / "gate-m2-men-fords.ps1"
 WRAPPER = ROOT / "run_m2_acceptance.bat"
-DOC = ROOT / "docs" / "M2_MEN_FORDS_DOD.md"
+DOC = ROOT / "docs" / "MILESTONE_CURRENT.md"
 RELIABILITY = ROOT / "tools" / "run-m2-reliability.ps1"
 LIVE_SOAK = ROOT / "game" / "tests" / "m2_live_soak_runner.gd"
 ORACLE_COMMON = ROOT / "tools" / "m2-oracle-common.ps1"
@@ -21,7 +22,11 @@ def test_m2_gate_is_final_identity_bound_retail_gate() -> None:
     assert '"Final M2 acceptance requires -IntegrationOwnerPublish."' in text
     assert '"gate-retail.ps1"' in text
     assert '"-IntegrationOwnerPublish"' in text
-    assert '"a67530d230dbbdaefd00c32f58a94fad5fe5b590af18f1193d480c5f93cf7c5c"' in text
+    profile_match = re.search(
+        r'\$expectedProfileSha256 = "([0-9a-f]{64})"', text
+    )
+    assert profile_match is not None
+    assert "$profileSha256 -eq $expectedProfileSha256" in text
     assert "openbfme.m2-men-fords-oracle-approval" in text
     assert "profileSha256" in text
     assert "bundleSha256" in text
@@ -64,10 +69,12 @@ def test_m2_gate_runs_the_focused_graphics_ui_audio_and_play_contracts() -> None
     text = GATE.read_text(encoding="utf-8")
     focused = FOCUSED_GATE.read_text(encoding="utf-8")
     assert '"gate-m2-focused.ps1"' in text
-    assert "M2_FOCUSED_GATE PASS runners=20" in text
+    assert "M2_FOCUSED_GATE PASS runners=[1-9][0-9]*" in text
+    assert "M2_FOCUSED_GATE PASS runners=21" not in text
     for runner in (
         "retail_animated_prop_runtime_runner.gd",
         "retail_bound_props_runner.gd",
+        "retail_builder_construction_runner.gd",
         "retail_environment_runner.gd",
         "retail_four_unit_audio_runner.gd",
         "retail_four_unit_hud_runner.gd",

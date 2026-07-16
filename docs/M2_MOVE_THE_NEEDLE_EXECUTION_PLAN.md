@@ -1,5 +1,8 @@
 # M2 move-the-needle execution plan
 
+> **Superseded:** current M2 acceptance is `docs/MILESTONE_CURRENT.md`; bounded
+> work is assigned only through `docs/AGENT_WORKFLOW.md` task packets.
+
 **Date:** 2026-07-15  
 **Authority:** `DIRECTION.md`, `docs/M2_MEN_FORDS_DOD.md`, retail BFME2 1.06 effective source tree  
 **Scope:** private Men versus Men on Fords of Isen II only

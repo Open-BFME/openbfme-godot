@@ -1,60 +1,60 @@
 # OpenBFME agent guardrails
 
-## End goal (active)
+Owner: Integration owner
+Owns: Enforceable repository-wide agent constraints and authority boundaries.
+Does not own: Product scope, current status, architecture, or task-specific acceptance.
+Last verified commit: `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
+Update trigger: A repeated, approved repository-wide failure needs a durable rule, or a stale rule can be deleted.
+Validation: Compare this file with `docs/AGENT_WORKFLOW.md` and validate the applicable task packet before work begins.
 
-**This week:** playable Men-versus-Men Fords of Isen II slice with **1:1 graphical/audiovisual fidelity** for that roster/map, using converted retail packs under `.private` only. See `DIRECTION.md`.
+## Active objective
 
-Longer horizon: extract and convert the complete useful BFME2 1.06 retail asset
-closure into `.private`, then expand the same pipeline to full skirmish (all
-factions and multiplayer maps). Public release is a later code-only scrub; it
-does not block private conversion. Do not skip the Fords Men visual+play gate.
+Complete the private BFME2 1.06 Men-versus-Men Fords of Isen II milestone in
+`docs/MILESTONE_CURRENT.md`. `DIRECTION.md` owns product scope; `STATUS.md` owns
+current evidence. Do not substitute obsolete proof-stage documents.
 
-## Forbidden unless the integration owner explicitly unblocks
+## Required workflow
 
-- New or expanded synthetic proof stages 1–10 product work
-- Claiming vertical slice complete without `DIRECTION.md` checklist
-- Silent generic/procedural art in private parity mode when retail conversion is required
-- Writing retail payloads outside `.private`
-- Open-ended refactors, architecture debates, or “polish” that does not move the scoreboard
-- Editing shared Codex user config from workers
+Follow `docs/AGENT_WORKFLOW.md`.
 
-## Orchestration
+- One integration owner controls queue state, path locks, publication, final
+  gates, and persistent workflow changes.
+- Every implementation task must name its source/oracle, exact allowed and
+  forbidden paths, non-goals, base commit, smallest acceptance command, and
+  reviewer count.
+- Use a unique `.private/scratch/jobs/<task-id>` root.
+- Begin with one implementer. Do not exceed two implementation worktrees.
+- Preserve user changes. Stop on overlapping paths or changed base identity.
+- Workers do not publish canonical packs or run broad/final gates.
+- Reviewers are read-only and do not expand scope.
 
-- One integration owner keeps the plan, path locks, and final gates.
-- Delegate only bounded tasks with:
-  - allowed paths
-  - forbidden paths
-  - expected output
-  - acceptance command
-- Concurrent workers must use non-overlapping path locks.
-- Do not run MCP smoke tests against pinned importer tool trees during an importer build. Use `.private\scratch` copies.
-- Preserve user changes; stop on overlapping edits.
+## Forbidden without integration-owner authority
 
-## Sources of truth
+- Writing retail payloads outside `.private`.
+- Editing `.private/content-packs/selection.json` or canonical build/profile
+  state from a worker task.
+- New or expanded synthetic Stage 1–10 product work.
+- Silent generic/procedural fallback in private parity mode.
+- Weakening or deleting an assertion to make a gate pass.
+- Stubs, invented parity behavior, destructive Git commands, open-ended
+  refactors, or unmeasured optimization.
+- Editing shared Codex user configuration, memories, skills, hooks, queue, or
+  workflow instructions from an implementation or retrospective task.
 
-MCP is optional observation only. It cannot bypass CLI, provenance, containment, or retail gates.
+## Verification
 
-Before final integration handoff of retail-slice work, the integration owner
-runs:
+- Run the smallest focused check first.
+- Any warning, error, leak, orphan, escaped retail path, or unbounded fallback
+  on a required path is a failure.
+- `run_m2_acceptance.bat -IntegrationOwnerPublish` is the only final M2 entry
+  point and is run only by the integration owner after identity-bound human
+  oracle approval.
 
-```bat
-run_retail_pipeline_tests.bat
-```
+## Private workspace
 
-Workers must not run this broad gate for bounded oracle/converter handoffs.
-The current script still targets the handwritten base profile and can publish
-the wrong selection after its long importer suite. Workers run only their
-assigned focused acceptance commands; the integration owner runs the broad
-gate after its profile target/assertions are updated and the strict completion
-pack is ready.
+- Retail work: `.private/retail-work`
+- Converted packs: `.private/content-packs`
+- Job roots: `.private/scratch/jobs`
+- Queue/locks/metrics: `.private/orchestration`
 
-Use the smallest focused test first. Never weaken an assertion merely to pass.
-
-## Private retail workspace
-
-Retail and converted retail live only under:
-
-- `.private\retail-work`
-- `.private\content-packs`
-
-`.private` stays gitignored. Never commit, log, or export retail payloads. Public/legal-safe fixtures remain repository-authored only.
+Never commit or export retail payloads. Public fixtures must be repository-authored.

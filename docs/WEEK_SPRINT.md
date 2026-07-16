@@ -1,5 +1,8 @@
 # Week sprint — Men/Fords 1:1 graphical playable slice
 
+> **Superseded:** `STATUS.md` owns current progress and
+> `docs/MILESTONE_CURRENT.md` owns the active completion contract.
+
 ## Path locks (active)
 
 | Worker | Lock | Goal |

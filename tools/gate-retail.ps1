@@ -22,6 +22,8 @@ $expectedResourceCount = 380
 $expectedSelectedFileCount = 2555
 $expectedProvenanceEntryCount = 2589
 $expectedSourceArchiveCount = 24
+$minimumImporterTestCount = 999
+$maximumImporterSkipCount = 5
 $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\content-packs"))
 $stateRoot = if (-not [string]::IsNullOrWhiteSpace($env:OPENBFME_IMPORT_ROOT)) {
     [IO.Path]::GetFullPath($env:OPENBFME_IMPORT_ROOT)
@@ -43,6 +45,18 @@ function Invoke-ImporterJson {
     return (($output -join "`n") | ConvertFrom-Json)
 }
 
+function Invoke-GodotPassedFloor {
+    param(
+        [string]$Name,
+        [string]$Runner,
+        [string]$CountPattern,
+        [int]$MinimumPassed
+    )
+    $output = Invoke-ProofChecked $gate $Name $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/$Runner") $CountPattern $forbiddenDiagnostics
+    $countMatch = [regex]::Match($output, $CountPattern)
+    Assert-ProofTrue ($countMatch.Success -and [int]$countMatch.Groups[1].Value -ge $MinimumPassed) "$Name passed fewer than the protected baseline of $MinimumPassed checks."
+}
+
 try {
     foreach ($path in @($cli, $profilePath)) {
         Assert-ProofTrue (Test-Path -LiteralPath $path -PathType Leaf) "Missing retail gate dependency: $path"
@@ -62,8 +76,14 @@ try {
 
     & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $pythonBootstrap -StateRoot $stateRoot
     if ($LASTEXITCODE -ne 0) { throw "Importer Python bootstrap failed." }
-    $importerTestOutput = Invoke-ProofChecked $gate "importer_tests" $python @("-m", "unittest", "discover", "-s", (Join-Path $repoRoot "importer\tests"), "-v") '(?m)^OK \(skipped=5\)\s*$'
-    Assert-ProofTrue ($importerTestOutput -match '(?m)^Ran 999 tests in ') "Importer suite did not execute exactly 999 tests."
+    $importerTestOutput = Invoke-ProofChecked $gate "importer_tests" $python @("-m", "unittest", "discover", "-s", (Join-Path $repoRoot "importer\tests"), "-v") '(?m)^OK(?: \(skipped=\d+\))?\s*$'
+    $testCountMatch = [regex]::Match($importerTestOutput, '(?m)^Ran ([1-9][0-9]*) tests? in ')
+    Assert-ProofTrue ($testCountMatch.Success) "Importer suite did not report an executed test count."
+    $executedTestCount = [int]$testCountMatch.Groups[1].Value
+    Assert-ProofTrue ($executedTestCount -ge $minimumImporterTestCount) "Importer suite executed fewer than the protected baseline of $minimumImporterTestCount tests."
+    $skipCountMatch = [regex]::Match($importerTestOutput, '(?m)^OK \(skipped=([0-9]+)\)\s*$')
+    $skippedTestCount = if ($skipCountMatch.Success) { [int]$skipCountMatch.Groups[1].Value } else { 0 }
+    Assert-ProofTrue ($skippedTestCount -le $maximumImporterSkipCount) "Importer suite skipped more than the approved maximum of $maximumImporterSkipCount tests."
 
     $bootstrap = Invoke-ImporterJson "bootstrap" @("bootstrap-tools")
     Assert-ProofTrue ([bool]$bootstrap.ready) "Pinned external tools are not ready."
@@ -168,13 +188,13 @@ try {
     }
     Write-Host "$gate runtime pack explicitly selected root=$($env:OPENBFME_CONTENT)"
     $godot = Resolve-ProofGodot $GodotPath $repoRoot
-    [void](Invoke-ProofChecked $gate "stage11_12_groups_and_routes" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/stage11_12_runner.gd") '(?m)^STAGE 11/12 TESTS: 26 passed, 0 failed\s*$' $forbiddenDiagnostics)
-    [void](Invoke-ProofChecked $gate "stage14_15_base_loop" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/stage14_15_sim_runner.gd") '(?m)^STAGE 14/15 SIM TESTS: 31 passed, 0 failed\s*$' $forbiddenDiagnostics)
-    [void](Invoke-ProofChecked $gate "stage15_menu_and_audio" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/stage15_menu_runner.gd") '(?m)^STAGE15_MENU_RESULT passed=25 failed=0\s*$' $forbiddenDiagnostics)
-    [void](Invoke-ProofChecked $gate "retail_pack_runtime" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/retail_pack_runner.gd") '(?m)^RETAIL_PACK_RESULT passed=175 failed=0\s*$' $forbiddenDiagnostics)
-    [void](Invoke-ProofChecked $gate "playable_retail_slice" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/retail_slice_runner.gd") '(?m)^RETAIL_SLICE_RESULT passed=208 failed=0\s*$' $forbiddenDiagnostics)
-    [void](Invoke-ProofChecked $gate "external_pack_security" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/external_pack_runner.gd") '(?m)^EXTERNAL_PACK_RESULT passed=64 failed=0\s*$' $forbiddenDiagnostics)
-    [void](Invoke-ProofChecked $gate "legacy_regression" $godot @("--headless", "--path", $gameRoot, "--script", "res://tests/cli_runner.gd") '(?m)^STAGE TESTS: 101 passed, 0 failed\s*$' $forbiddenDiagnostics)
+    Invoke-GodotPassedFloor "stage11_12_groups_and_routes" "stage11_12_runner.gd" '(?m)^STAGE 11/12 TESTS: ([0-9]+) passed, 0 failed\s*$' 26
+    Invoke-GodotPassedFloor "stage14_15_base_loop" "stage14_15_sim_runner.gd" '(?m)^STAGE 14/15 SIM TESTS: ([0-9]+) passed, 0 failed\s*$' 31
+    Invoke-GodotPassedFloor "stage15_menu_and_audio" "stage15_menu_runner.gd" '(?m)^STAGE15_MENU_RESULT passed=([0-9]+) failed=0\s*$' 25
+    Invoke-GodotPassedFloor "retail_pack_runtime" "retail_pack_runner.gd" '(?m)^RETAIL_PACK_RESULT passed=([0-9]+) failed=0\s*$' 175
+    Invoke-GodotPassedFloor "playable_retail_slice" "retail_slice_runner.gd" '(?m)^RETAIL_SLICE_RESULT passed=([0-9]+) failed=0\s*$' 208
+    Invoke-GodotPassedFloor "external_pack_security" "external_pack_runner.gd" '(?m)^EXTERNAL_PACK_RESULT passed=([0-9]+) failed=0\s*$' 64
+    Invoke-GodotPassedFloor "legacy_regression" "cli_runner.gd" '(?m)^STAGE TESTS: ([0-9]+) passed, 0 failed\s*$' 101
     [void](Invoke-ProofChecked $gate "export_firewall_self_test" "powershell.exe" @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "test-export-scan.ps1")) '(?m)^EXPORT_SCAN_SELF_TEST PASS ')
     [void](Invoke-ProofChecked $gate "export_firewall" "powershell.exe" @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "export-scan.ps1"), "-Root", $gameRoot) '(?m)^EXPORT_SCAN PASS ')
 

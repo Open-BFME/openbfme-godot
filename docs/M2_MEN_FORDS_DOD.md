@@ -1,5 +1,8 @@
 # M2 Men/Fords strict definition of done
 
+> **Superseded:** `docs/MILESTONE_CURRENT.md` is the only active M2 DoD. This
+> file is retained temporarily for migration review and must not direct work.
+
 This document is the binary completion contract for the private BFME2 1.06
 Men-versus-Men Fords of Isen II vertical slice. `DIRECTION.md` defines the
 product target; this document defines the evidence required to mark that target

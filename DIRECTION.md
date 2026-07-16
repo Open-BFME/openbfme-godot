@@ -1,145 +1,66 @@
-# OpenBFME — Active direction (integration owner)
+# OpenBFME product direction
 
-**Updated:** 2026-07-15
-**Owner:** integration orchestrator (this session)
-**Authority:** overrides exploratory stage work when they conflict
+**Owner:** Jonathan, project owner
+**Owns:** stable target, scope ladder, parity definition, and non-goals
+**Does not own:** current hashes, gate results, task queue, or implementation detail
+**Last verified commit:** `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
+**Update trigger:** the product target or scope changes
+**Validation:** `contracts/bfme2-106-product-scope.json`
 
 ## North star
 
-Private **BFME2 1.06** playable skirmish port in **Godot 4.7**, using retail assets from a user-owned install, converted into private packs under `.private` only.
+Create a modern, independently distributed and easily moddable RTS engine in
+Godot that reproduces BFME2 1.06 through measured retail/original-game evidence.
 
-## Private-project operating assumption
+The compatibility build uses locally converted content from a user-owned retail
+installation. Retail and converted retail payloads stay under `.private`. A later
+public distribution contains project-authored code and legal-safe fixtures only.
 
-- Local extraction, conversion, integration, and playtesting of the user-owned
-  retail install are active project work; they are not blocked on a separate
-  legal-review or public-release process.
-- `.private` is the in-repository working area for the complete retail and
-  converted-retail payload. Its containment is a technical release firewall,
-  not a claim that the private compatibility build must use replacement art.
-- After the private game works, any public release is a distinct code-only
-  cleanup: exclude `.private`, scan the export, and publish only our engine,
-  importer, tests, and legal-safe fixtures.
-- After the Men/Fords gate, expand the same deterministic conversion path to
-  the rest of the BFME2 base-game factions, units, structures, effects, UI,
-  audio, and multiplayer maps. Do not replace that closure with synthetic art.
+## Scope ladder
 
-## Retail corpus state
+1. Complete and freeze Men versus Men on Fords of Isen II.
+2. Complete the full Men faction, including every BFME2 1.06 Men hero, on the
+   selected five-map oracle set.
+3. Complete all six BFME2 factions, Ring mechanics, naval gameplay, neutral
+   objects, and official skirmish/multiplayer maps.
+4. Ship self-hosted local, listen, and dedicated-server play for up to eight
+   players using deterministic lockstep.
+5. Complete the Good and Evil campaigns, War of the Ring, Create-a-Hero, shell,
+   saves, replays, observers, and custom-map/scenario tooling.
+6. Add modern accessibility, HD presentation packs, mod management, safe mode,
+   diagnostics, and rollback updates without changing the parity profile.
 
-- Complete effective-view extraction is done under `.private`: 40,129 winning
-  files / 4,200,142,436 bytes, independently hashed twice with zero missing,
-  extra, corrupt, unclassified, unstable, metadata, link, or case-collision
-  anomalies.
-- The retail registry resolves 46 shipped official multiplayer maps. Five
-  additional multiplayer registry records have no payload in the retail
-  archives and are tracked as stale source records, not converter failures.
-- Extraction completeness is not conversion or runtime completeness. Every
-  format still needs a deterministic converter, Godot binding, and rendered or
-  behavioral acceptance gate before it is counted as working.
-- The first full-corpus coverage ledger reconciles all 40,129 winners as 1,607
-  currently converted, 15,329 with a proven converter, 23,147 evidence-only,
-  40 not yet supported, and 6 not needed at runtime. These are source-file
-  states, not gameplay-completion percentages.
-- All 46 multiplayer map sources pass the strict structural cook, but none yet
-  has a corpus-level Godot navmesh/routing proof and all still contain
-  unclassified map chunk families. Only 28 of 12,751 W3D sources currently
-  have attested pack outputs. These are the next expansion bottlenecks after
-  the Men/Fords rendered gate.
+RotWK is a separate future overlay and cannot change BFME2 1.06 evidence.
 
-## This week’s definition of done (M2 visual slice)
+## Meaning of parity
 
-The binary integration and evidence contract is
-[`docs/M2_MEN_FORDS_DOD.md`](docs/M2_MEN_FORDS_DOD.md).
+"Near 1:1" means every included capability is discovered from the effective
+BFME2 1.06 source corpus and has the required source, conversion, runtime,
+simulation, presentation, oracle, and reliability evidence.
 
-A human can launch the retail path and play **Men vs Men on Fords of Isen II** where:
+INI presence and converted-asset counts are not parity. Unknown, ambiguous,
+unsupported, substituted, or unclassified requirements fail closed.
 
-### Graphical / audiovisual fidelity (primary)
-- All four Men units use imported retail models/materials/anims (Soldier, Archer, Tower Guard, Knight)
-- All five structures use imported retail models (no procedural masonry fallback when pack GLBs exist)
-- Fords terrain uses cooked retail terrain textures with Godot blending (not flat gray/decimated-only look)
-- High-count map props resolve to converted retail meshes where conversion succeeds; unresolved types are listed, not silently faked as “done”
-- Unit portraits, command buttons, and control-bar art come from converted retail UI leaves
-- Music + unit VO + SFX for the slice roster route from the private pack
+## Permanent product constraints
 
-### Playable loop (required, rules may be approximate)
-- Select / move / attack / death with imported presentation
-- Farm income + train all four units from production buildings
-- Place or use the five structure roles; damage/destroy enemy Fortress → win/lose
-- Enemy AI completes a basic build/train/attack loop
+- Eight players maximum.
+- Godot owns presentation, input, UI, audio, and desktop integration.
+- Pure C# owns deterministic authoritative simulation.
+- Production simulation targets 30 Hz; presentation remains render-rate independent.
+- Multiplayer is server-refereed deterministic lockstep and self-hostable.
+- No Steam, ranked-service, or mandatory-account dependency.
+- Gameplay and presentation mods are versioned and hashed separately.
+- Private parity never silently uses synthetic or generic replacement art.
 
-### Explicit non-goals this week
-- New synthetic proof stages 1–10 features
-- Campaign / WotR / multiplayer
-- Full oracle micro-parity for every weapon timing
-- Declaring `vertical_slice_complete: true` without the checklist above
-- Writing retail bytes outside `.private`
-- Silent generic props presented as retail fidelity
+## Active milestone
 
-## Architecture (unchanged)
-```
-F:\BFME2 → importer → .private content pack → Godot runtime (no BIG/W3D/INI/map at play)
-```
+The binary active contract is [docs/MILESTONE_CURRENT.md](docs/MILESTONE_CURRENT.md).
+Current evidence and blockers live only in [STATUS.md](STATUS.md).
 
-## Scoreboard (daily)
-1. Visual: terrain blend, props resolved %, structures retail-bound, 4 units on field
-2. UI/audio: retail command art + strings + events wired
-3. Play: four-unit production, fortress victory, AI finishes a match
-4. Gates: focused retail tests green; do not weaken assertions
+## Non-goals before M2 acceptance
 
-### Current integration snapshot (2026-07-15)
-
-- The completion profile plans cleanly from `F:\BFME2` with zero missing
-  required inputs and 2,559 unique selected files. Its SHA-256 is
-  `0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d`.
-- Independent strict Build A and Build B runs produced the same immutable
-  bundle byte-for-byte:
-  `69fd5efe0dfd77a9475250a102c52691044dff0b7d8216b873d725dd22de4cc1`.
-  The selected publication contains 2,253 checked files, 2,240 declared
-  outputs, and 2,593 semantic-provenance records with no incomplete conversion
-  reason and a valid audit. No `.building` transaction remains. This bundle
-  adds the retail-exact per-unit gameplay rules (locomotor speed, attack
-  range, weapon timing, horde formation), the MenPorter builder loop, and the
-  four retail HUD UI-sound leaves with their six audio-registry events.
-- The selected pack is the only authority for the slice. Its terrain, roads,
-  water, fog, static and animated props, particles, four Men battalions, five
-  structure roles, Archer projectile and impact presentation, audio, and
-  APT/WND HUD compose in one live Forward+ scene.
-- Battalion movement remains squad-authoritative while health, damage, attack
-  tokens, attack/death presentation, and health bars are per member. Selection
-  now uses one source-textured merged formation outline rather than invented
-  per-member rings or an opaque fill. Archer attacks use the exact selected-pack
-  streak, impact model, weapon/impact leaves, and independently timed member
-  poses.
-- Unit selection now exposes the converted retail portrait plus source-cropped
-  Attack Move and Stop commands. Ground movement uses the retail
-  `MoveHint -> SCMoveHint` W3D and its three authored textures; no procedural
-  route ribbon or destination flag is used in private parity mode.
-- All 239 playable-slice assertions pass (retail_slice_runner), plus 175
-  pack-runner and 12 builder-construction assertions, both with and without
-  the `OPENBFME_CONTENT` override. The 21-runner focused gate
-  (`tools/gate-m2-focused.ps1`) passes against the same profile and bundle.
-  Scripted-battle budgets reflect retail movement speeds (victory by tick
-  ~12,058 within a 14,000 budget; unassisted defeat by ~31,576 within
-  36,000).
-- A fresh 1920x1080 Forward+ capture on the NVIDIA RTX 4090 proves the composed
-  selected Archer attack, merged selection decal, per-member health, terrain,
-  structures, fog, HUD, and projectile path. This diagnostic render is not a
-  retail-parity approval.
-- Source work is ready to freeze for the canonical oracle. Completion still
-  requires all 47 identity-bound retail/Godot capture pairs to receive human
-  approval with zero severity-0/1 differences, followed by the pre-thresholded
-  1,800-second live soak with three restarts/matches and the final integration-
-  owner acceptance entry point. Original-game capture also requires the
-  operator to approve one Windows elevation prompt; automation cannot approve
-  that security boundary.
-- Known fidelity questions remain deliberately open until the oracle answers
-  them: exact selection color/opacity/throb, roster/material lighting, sky,
-  shadows and water, structure construction/damage/rubble and production-door
-  clips, HUD raster/compositor details, and exact animation/projectile timing.
-  None may be waived or replaced with synthetic presentation.
-
-## Worker law
-- One integration owner merges and re-issues contracts
-- Every Codex/subagent task names allowed paths, forbidden paths, acceptance command
-- No open-ended “improve the engine” briefs
-- Fail closed in private parity mode
-- Path locks: concurrent workers must not edit the same files
+- New synthetic proof-stage features.
+- Campaign, WotR, multiplayer, or RotWK implementation.
+- Broad importer, presentation, or architecture refactors.
+- Public-release automation beyond containment checks.
+- Declaring completion without the identity-bound oracle and reliability gate.

@@ -1,5 +1,8 @@
 # Private retail workspace and later code-only export
 
+> **Superseded:** `docs/RELEASE_POLICY.md` and `docs/THIRD_PARTY.md` own current
+> containment, distribution, donor, and license policy.
+
 This document is an operating containment policy, not a legal-status finding.
 The current project is a private local compatibility build: complete extraction,
 conversion, and use of the owner's retail install are in scope now. Legal/public

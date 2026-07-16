@@ -1,5 +1,8 @@
 # Build and release proof
 
+> **Superseded:** use `docs/VERIFICATION.md` and `docs/RELEASE_POLICY.md`.
+> Stage-era commands below are retained only until their useful checks migrate.
+
 OpenBFME currently ships proof-stage source, not a public retail-content build. The
 Stage 10 gate is the authoritative local hardening command:
 

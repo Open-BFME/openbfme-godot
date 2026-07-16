@@ -1,5 +1,8 @@
 # Known issues and product boundaries
 
+> **Superseded:** current capabilities, blockers, identities, and gate results
+> belong only in `STATUS.md`. This snapshot must not direct new work.
+
 - Stages 3 through 9 are deterministic typed-GDScript proof labs. They establish
   mechanics, data contracts, replay hashes, and presentation behavior; they are not a
   declaration of complete BFME2 1.06 compatibility.

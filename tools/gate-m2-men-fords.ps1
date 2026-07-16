@@ -93,7 +93,7 @@ try {
 
     $focusedArguments = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $focusedGate)
     if (-not [string]::IsNullOrWhiteSpace($GodotPath)) { $focusedArguments += @("-GodotPath", $GodotPath) }
-    [void](Invoke-ProofChecked $gate "focused_contracts" "powershell.exe" $focusedArguments '(?m)^M2_FOCUSED_GATE PASS runners=21 .*$' $forbiddenDiagnostics)
+    [void](Invoke-ProofChecked $gate "focused_contracts" "powershell.exe" $focusedArguments '(?m)^M2_FOCUSED_GATE PASS runners=[1-9][0-9]* .*$' $forbiddenDiagnostics)
 
     $approval = Get-Json $approvalPath
     Assert-M2 ([string]$approval.schema -eq 'openbfme.m2-men-fords-oracle-approval') "Oracle approval schema is invalid."

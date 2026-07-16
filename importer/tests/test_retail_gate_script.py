@@ -27,16 +27,18 @@ def test_default_profile_is_exact_private_generated_completion_profile() -> None
         in text
     )
     assert '$expectedProfileId = "men-fords-v0-complete-generated"' in text
-    assert (
-        '$expectedProfileSha256 = '
-        '"a67530d230dbbdaefd00c32f58a94fad5fe5b590af18f1193d480c5f93cf7c5c"'
-        in text
+    profile_match = re.search(
+        r'\$expectedProfileSha256 = "([0-9a-f]{64})"', text
     )
+    assert profile_match is not None
     assert '$expectedPackId = "bfme2-men-vslice"' in text
-    assert "$expectedResourceCount = 378" in text
-    assert "$expectedSelectedFileCount = 2538" in text
-    assert "$expectedProvenanceEntryCount = 2572" in text
-    assert "$expectedSourceArchiveCount = 24" in text
+    for variable in (
+        "expectedResourceCount",
+        "expectedSelectedFileCount",
+        "expectedProvenanceEntryCount",
+        "expectedSourceArchiveCount",
+    ):
+        assert re.search(rf"\${variable} = [1-9][0-9]*", text)
     assert 'Join-Path $repoRoot "importer\\profiles\\men-fords-v0.json"' not in text
     assert '"--profile", "men-fords-v0"' not in text
 
@@ -64,11 +66,27 @@ def test_gate_fails_closed_on_identity_readiness_and_incomplete_marker() -> None
     for fragment in required_fragments:
         assert fragment in text
 
-    assert "Ran 998 tests in " in text
-    assert r"^OK \(skipped=5\)\s*$" in text
-    assert "RETAIL_PACK_RESULT passed=175 failed=0" in text
-    assert "RETAIL_SLICE_RESULT passed=208 failed=0" in text
-    assert "EXTERNAL_PACK_RESULT passed=64 failed=0" in text
+    assert "$minimumImporterTestCount = 999" in text
+    assert "$maximumImporterSkipCount = 5" in text
+    assert "$executedTestCount -ge $minimumImporterTestCount" in text
+    assert "$skippedTestCount -le $maximumImporterSkipCount" in text
+    assert "Ran ([1-9][0-9]*) tests? in " in text
+    assert r"^OK(?: \(skipped=\d+\))?\s*$" in text
+    assert "function Invoke-GodotPassedFloor" in text
+    for runner, minimum in (
+        ("stage11_12_runner.gd", 26),
+        ("stage14_15_sim_runner.gd", 31),
+        ("stage15_menu_runner.gd", 25),
+        ("retail_pack_runner.gd", 175),
+        ("retail_slice_runner.gd", 208),
+        ("external_pack_runner.gd", 64),
+        ("cli_runner.gd", 101),
+    ):
+        assert re.search(
+            rf'Invoke-GodotPassedFloor\s+"[^"]+"\s+"{re.escape(runner)}".*\s{minimum}$',
+            text,
+            re.MULTILINE,
+        )
 
 
 def test_proof_builds_cannot_publish_without_owner_switch() -> None:

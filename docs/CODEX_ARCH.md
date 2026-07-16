@@ -1,5 +1,8 @@
 # OpenBFME architecture summary
 
+> **Superseded:** `docs/ARCHITECTURE.md` and `docs/AGENT_WORKFLOW.md` own the
+> current architecture and agent operating model.
+
 The executable plan and acceptance gates live in [`../PLAN.md`](../PLAN.md). This
 summary records the expected architecture without pretending that Phase 0 decisions
 have already been proved.
