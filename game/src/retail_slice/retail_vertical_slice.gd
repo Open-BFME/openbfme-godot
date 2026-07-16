@@ -142,6 +142,15 @@ var _last_presented_winner := -1
 var attack_move_armed := false
 var construction_kind_armed := ""
 var construction_ghost: Decal = null
+var _drag_select_origin := Vector2.INF
+var _drag_selecting := false
+var _selection_band: Control = null
+const DRAG_SELECT_THRESHOLD := 8.0
+# Env-gated presentation profiler (OPENBFME_PROFILE_SYNC=1): accumulates
+# per-section time so soak runs can attribute frame-cost growth exactly.
+var _profile_sync := OS.get_environment("OPENBFME_PROFILE_SYNC") == "1"
+var _profile_mark := 0
+var presentation_profile: Dictionary = {}
 var initialization_metrics_ms: Dictionary = {}
 var _initialization_started_ms := 0
 var _initialization_last_ms := 0
@@ -823,8 +832,25 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 	if not ready_ok or simulation_paused or simulation.winner != -1:
 		return
-	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+	if event is InputEventMouseMotion and _drag_select_origin != Vector2.INF:
+		var motion := event as InputEventMouseMotion
+		if _drag_selecting or motion.position.distance_to(_drag_select_origin) > DRAG_SELECT_THRESHOLD:
+			_drag_selecting = true
+			_update_selection_band(motion.position)
+		return
+	if event is InputEventMouseButton:
 		var mouse := event as InputEventMouseButton
+		if mouse.button_index == MOUSE_BUTTON_LEFT and not mouse.pressed:
+			# Left release: finish a drag box, otherwise it was a click handled
+			# on press.
+			if _drag_selecting:
+				_finish_box_selection(mouse.position, mouse.shift_pressed)
+			_drag_select_origin = Vector2.INF
+			_drag_selecting = false
+			_hide_selection_band()
+			return
+		if not mouse.pressed:
+			return
 		if mouse.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_nudge_camera_zoom(-1)
 			return
@@ -836,9 +862,89 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		var point := Vector2((world as Vector3).x, (world as Vector3).z)
 		if mouse.button_index == MOUSE_BUTTON_LEFT:
+			if mouse.double_click:
+				_select_same_type_on_screen(point)
+				_drag_select_origin = Vector2.INF
+				return
+			_drag_select_origin = mouse.position
+			_drag_selecting = false
 			_handle_left_click(point, mouse.shift_pressed)
 		elif mouse.button_index == MOUSE_BUTTON_RIGHT and not simulation.selected_ids.is_empty():
 			_handle_right_click(point)
+
+
+func _update_selection_band(current: Vector2) -> void:
+	if _selection_band == null:
+		_selection_band = Panel.new()
+		_selection_band.name = "SelectionBand"
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.85, 0.78, 0.45, 0.08)
+		style.border_color = Color(0.87, 0.76, 0.42, 0.9)
+		style.set_border_width_all(1)
+		_selection_band.add_theme_stylebox_override("panel", style)
+		_selection_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_selection_band.z_index = 20
+		hud_root.add_child(_selection_band)
+	var rect := Rect2(_drag_select_origin, Vector2.ZERO).expand(current).abs()
+	_selection_band.position = rect.position
+	_selection_band.size = rect.size
+	_selection_band.visible = true
+
+
+func _hide_selection_band() -> void:
+	if _selection_band != null:
+		_selection_band.visible = false
+
+
+func _finish_box_selection(release_position: Vector2, additive: bool) -> void:
+	var rect := Rect2(_drag_select_origin, Vector2.ZERO).expand(release_position).abs()
+	var picked: Array[int] = []
+	if additive:
+		for existing in simulation.selected_ids:
+			picked.append(int(existing))
+	for id_value in battalion_nodes.keys():
+		var id := int(id_value)
+		var entity: Dictionary = simulation.entity(id)
+		if entity.is_empty() or int(entity.get("team", -1)) != 0 or int(entity.get("health", 0)) <= 0:
+			continue
+		var battalion := battalion_nodes[id] as Node3D
+		var screen := camera.unproject_position(battalion.global_position)
+		if not camera.is_position_behind(battalion.global_position) and rect.has_point(screen):
+			if not picked.has(id):
+				picked.append(id)
+	if picked.is_empty():
+		return
+	selected_structure_id = 0
+	var count := int(simulation.select_many(picked))
+	hud.set_feedback("Selected %d battalion%s." % [count, "" if count == 1 else "s"])
+	_sync_presentation()
+
+
+func _select_same_type_on_screen(point: Vector2) -> void:
+	# Retail double-click: select every on-screen battalion of the same type.
+	var anchor_id := _closest_battalion(point, 0, 6.0)
+	if anchor_id == 0:
+		return
+	var anchor_type := String(simulation.entity(anchor_id).get("object_id", ""))
+	var viewport_rect := Rect2(Vector2.ZERO, get_viewport().get_visible_rect().size)
+	var picked: Array[int] = []
+	for id_value in battalion_nodes.keys():
+		var id := int(id_value)
+		var entity: Dictionary = simulation.entity(id)
+		if entity.is_empty() or int(entity.get("team", -1)) != 0 or int(entity.get("health", 0)) <= 0:
+			continue
+		if String(entity.get("object_id", "")) != anchor_type:
+			continue
+		var battalion := battalion_nodes[id] as Node3D
+		var screen := camera.unproject_position(battalion.global_position)
+		if not camera.is_position_behind(battalion.global_position) and viewport_rect.has_point(screen):
+			picked.append(id)
+	if picked.is_empty():
+		return
+	selected_structure_id = 0
+	var count := int(simulation.select_many(picked))
+	hud.set_feedback("Selected %d %s battalion%s." % [count, String(simulation.entity(anchor_id).get("name", "")), "" if count == 1 else "s"])
+	_sync_presentation()
 
 
 func _handle_left_click(point: Vector2, additive: bool) -> void:
@@ -930,6 +1036,8 @@ func _closest_structure(point: Vector2, team: int) -> int:
 func _sync_presentation() -> void:
 	if simulation == null:
 		return
+	if _profile_sync:
+		_profile_mark = Time.get_ticks_usec()
 	for id in simulation.entity_ids():
 		if not battalion_nodes.has(id):
 			_spawn_battalion(id, int(gameplay_rules.get("member_count", 15)))
@@ -982,16 +1090,27 @@ func _sync_presentation() -> void:
 	for id in removed_battalions:
 		battalion_nodes.erase(id)
 		order_indicators.erase(id)
+	if _profile_sync:
+		presentation_profile["battalions_us"] = presentation_profile.get("battalions_us", 0) + (Time.get_ticks_usec() - _profile_mark)
+		_profile_mark = Time.get_ticks_usec()
 	for id in simulation.structure_ids():
 		if not structure_nodes.has(id):
 			_spawn_structure(id)
 		var structure: RetailStructure = structure_nodes[id]
 		structure.set_selected(selected_structure_id == id)
 		structure.sync_state(simulation.structure(id))
+	if _profile_sync:
+		presentation_profile["structures_us"] = presentation_profile.get("structures_us", 0) + (Time.get_ticks_usec() - _profile_mark)
+		_profile_mark = Time.get_ticks_usec()
 	if audio_system != null:
 		audio_system.sync_events(simulation.events)
+	if _profile_sync:
+		presentation_profile["audio_us"] = presentation_profile.get("audio_us", 0) + (Time.get_ticks_usec() - _profile_mark)
+		_profile_mark = Time.get_ticks_usec()
 	_sync_selected_attack_target_indicator()
 	_refresh_hud()
+	if _profile_sync:
+		presentation_profile["hud_us"] = presentation_profile.get("hud_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 
 
 func _entity_facing(entity: Dictionary) -> Vector2:
@@ -1081,15 +1200,22 @@ func _refresh_hud() -> void:
 		return
 	hud.set_objective("DESTROY THE ENEMY FORTRESS" if simulation.winner == -1 else ("VICTORY" if simulation.winner == 0 else "DEFEAT"))
 	minimap.camera_center = camera_focus
-	var diagnostics := "TICK %05d  HASH %s  MUSIC %s\nBLUE %d  RED %d  ROUTES %d  F10 hides diagnostics" % [
-		simulation.tick_index,
-		simulation.state_signature(),
-		audio_system.current_music_state.to_upper() if audio_system != null else "OFF",
-		simulation.living_ids(0).size(),
-		simulation.living_ids(1).size(),
-		source_map_data.route_query_count if source_map_data != null else 0,
-	]
-	hud.show_diagnostics(diagnostics, diagnostics_visible)
+	if diagnostics_visible:
+		# state_signature() deep-copies and serializes the whole sim snapshot
+		# including the ever-growing event log — O(match age). Computing it
+		# every frame regardless of visibility was the progressive slowdown
+		# (6 fps by minute 7). It is diagnostics-only; pay for it only on F10.
+		var diagnostics := "TICK %05d  HASH %s  MUSIC %s\nBLUE %d  RED %d  ROUTES %d  F10 hides diagnostics" % [
+			simulation.tick_index,
+			simulation.state_signature(),
+			audio_system.current_music_state.to_upper() if audio_system != null else "OFF",
+			simulation.living_ids(0).size(),
+			simulation.living_ids(1).size(),
+			source_map_data.route_query_count if source_map_data != null else 0,
+		]
+		hud.show_diagnostics(diagnostics, true)
+	else:
+		hud.show_diagnostics("", false)
 	if simulation.winner != -1 and simulation.winner != _last_presented_winner:
 		_last_presented_winner = simulation.winner
 		hud.show_outcome(simulation.winner)

@@ -660,6 +660,20 @@ func select_only(id: int) -> bool:
 	return true
 
 
+func select_many(ids: Array[int]) -> int:
+	# Multi-select (box selection / same-type selection): keeps only
+	# commandable player battalions; one select voice line for the group.
+	var accepted: Array[int] = []
+	for id in ids:
+		if _is_commandable(id) and not accepted.has(id):
+			accepted.append(id)
+	if accepted.is_empty():
+		return 0
+	selected_ids.assign(accepted)
+	_emit_event("voice.select", accepted[0], 0)
+	return accepted.size()
+
+
 func toggle_selection(id: int) -> bool:
 	if not _is_commandable(id):
 		return false
