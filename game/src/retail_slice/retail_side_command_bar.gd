@@ -78,15 +78,10 @@ func configure_from_constructs(constructs: Array) -> void:
 		button.set_meta("construct_kind", kind)
 		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 			button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
-		if _socket_texture != null:
-			var socket := TextureRect.new()
-			socket.name = "Socket"
-			socket.texture = _socket_texture
-			socket.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-			socket.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			socket.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			socket.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			button.add_child(socket)
+		# Socket art lives ONLY in the button stylebox below. A TextureRect child
+		# here draws ABOVE the button icon, so at full opacity the opaque socket
+		# center covered the icon — icons visibly "faded to black" as the bar's
+		# fade-in finished.
 		var icon: Texture2D = entry.get("icon")
 		if icon != null:
 			button.icon = icon
@@ -138,6 +133,8 @@ func _on_side_button_pressed(kind: String) -> void:
 func set_builder_visible(builder_selected: bool) -> void:
 	if _shown == builder_selected and (visible == builder_selected):
 		return
+	if OS.get_environment("OPENBFME_UI_PROBE") == "1":
+		print("[sidebar] set_builder_visible ", builder_selected, " (was shown=", _shown, " visible=", visible, " alpha=", modulate.a, ")")
 	_shown = builder_selected
 	if builder_selected:
 		_layout_buttons()

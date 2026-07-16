@@ -3,6 +3,8 @@ config_version=5
 
 [application]
 
+run/flush_stdout_on_print=true
+
 config/name="Open BFME"
 config/description="Desktop BFME2-inspired skirmish RTS (moddable)"
 run/main_scene="res://scenes/boot.tscn"

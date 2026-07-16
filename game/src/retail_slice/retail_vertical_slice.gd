@@ -311,6 +311,163 @@ func _initialize_content_and_match() -> void:
 	hud.set_feedback("Select a blue battalion to move, or select a production building to train units.")
 	_sync_presentation()
 	await _mark_initialization_phase("ready_complete")
+	if OS.get_environment("OPENBFME_UI_PROBE") == "1":
+		_run_ui_probe()
+
+
+# Env-gated live-GUI diagnostic (OPENBFME_UI_PROBE=1): reproduces the reported
+# side-bar and cancel-training flows in a real window using synthesized OS-path
+# input events, printing what the GUI actually does. Headless --script runs
+# cannot hit-test layered GUI, so this is the only automated way to observe it.
+func _run_ui_probe() -> void:
+	_probe_log(["probe armed, waiting 2s"])
+	await get_tree().create_timer(2.0).timeout
+	hud.cancel_production_requested.connect(func(index: int) -> void:
+		_probe_log(["SIGNAL cancel_production_requested index=", index])
+	)
+	var builder_id := 0
+	for id in simulation.entities:
+		var row: Dictionary = simulation.entities[id]
+		if bool(row.get("is_builder", false)) and int(row.get("team", -1)) == 0:
+			builder_id = id
+			break
+	_probe_log(["builder_id=", builder_id])
+	selected_structure_id = 0
+	simulation.select_only(builder_id)
+	_sync_presentation()
+	for i in 12:
+		await get_tree().process_frame
+	var bar := hud.retail_side_command_bar
+	_probe_log(["bar visible=", bar.visible, " alpha=", bar.modulate.a, " shown=", bar.builder_bar_shown(), " buttons=", bar.side_buttons().size()])
+	for button in bar.side_buttons():
+		_probe_log(["side btn ", button.name, " icon=", button.icon != null, " rect=", button.get_global_rect(), " disabled=", button.disabled])
+	await get_tree().create_timer(1.5).timeout
+	_probe_log(["after 1.5s: bar visible=", bar.visible, " alpha=", bar.modulate.a, " shown=", bar.builder_bar_shown()])
+	if not bar.side_buttons().is_empty():
+		var target: Vector2 = bar.side_buttons()[0].get_global_rect().get_center()
+		_probe_log(["clicking side button 0 at ", target, " hovered_before=", await _probe_hovered(target)])
+		await _probe_click(target)
+	# Cancel-training flow: select the barracks, queue two units via real GUI
+	# clicks on the train socket, then click the blue cancel button and a queue chip.
+	var barracks := 0
+	for id in simulation.structures:
+		var structure_row: Dictionary = simulation.structures[id]
+		if int(structure_row.get("team", -1)) == 0 and not Array(structure_row.get("production", [])).is_empty():
+			barracks = id
+			break
+	_probe_log(["barracks=", barracks])
+	simulation.clear_selection()
+	selected_structure_id = barracks
+	_sync_presentation()
+	for i in 6:
+		await get_tree().process_frame
+	var train_button: Button = null
+	for button_value in hud.train_buttons.values():
+		if (button_value as Button).visible and not (button_value as Button).disabled:
+			train_button = button_value
+			break
+	if train_button != null:
+		var train_point: Vector2 = train_button.get_global_rect().get_center()
+		_probe_controls_at(train_point, "train")
+		_probe_log(["clicking train at ", train_point, " hovered=", await _probe_hovered(train_point)])
+		await _probe_click(train_point)
+		await _probe_click(train_point)
+	for i in 6:
+		await get_tree().process_frame
+	var queue_size := Array((simulation.structures[barracks] as Dictionary).get("queue", [])).size()
+	_probe_log(["queue after training clicks=", queue_size])
+	if queue_size == 0 and train_button != null:
+		# GUI clicks did not land; queue via the signal path so the cancel
+		# affordances become visible for the overlap scan below.
+		var probe_unit_id := String(hud.train_buttons.find_key(train_button))
+		_queue_selected_producer(probe_unit_id)
+		_queue_selected_producer(probe_unit_id)
+		_refresh_hud()
+		for i in 6:
+			await get_tree().process_frame
+		_probe_log(["queue after direct queue=", Array((simulation.structures[barracks] as Dictionary).get("queue", [])).size()])
+	var cancel_button: Button = hud.cancel_production_button
+	_probe_log(["cancel btn visible=", cancel_button.visible, " disabled=", cancel_button.disabled, " rect=", cancel_button.get_global_rect()])
+	var cancel_point: Vector2 = cancel_button.get_global_rect().get_center()
+	_probe_controls_at(cancel_point, "cancel")
+	_probe_log(["clicking cancel at ", cancel_point, " hovered=", await _probe_hovered(cancel_point)])
+	await _probe_click(cancel_point)
+	for i in 6:
+		await get_tree().process_frame
+	_probe_log(["queue after cancel click=", Array((simulation.structures[barracks] as Dictionary).get("queue", [])).size()])
+	for chip in hud.production_queue_buttons:
+		if (chip as Button).visible:
+			var chip_point: Vector2 = (chip as Button).get_global_rect().get_center()
+			_probe_controls_at(chip_point, "chip")
+			_probe_log(["clicking queue chip at ", chip_point, " hovered=", await _probe_hovered(chip_point)])
+			await _probe_click(chip_point)
+			break
+	for i in 6:
+		await get_tree().process_frame
+	_probe_log(["queue after chip click=", Array((simulation.structures[barracks] as Dictionary).get("queue", [])).size()])
+	_probe_log(["DONE"])
+	await get_tree().process_frame
+	get_tree().quit()
+
+
+## Lists every visible, input-receiving Control whose global rect contains the
+## point, in the reverse-tree order the GUI would consider them (later siblings
+## first) — the first entry is what a click would hit.
+func _probe_controls_at(point: Vector2, tag: String) -> void:
+	var hits: Array = []
+	_probe_scan_control(get_viewport().gui_get_canvas_root() if get_viewport().has_method("gui_get_canvas_root") else get_tree().root, point, hits)
+	_probe_log(["controls under ", tag, " point ", point, ":"])
+	for hit in hits:
+		_probe_log(["   ", hit])
+
+
+func _probe_scan_control(node: Node, point: Vector2, hits: Array) -> void:
+	# Children in reverse order first: matches GUI input picking priority.
+	for index in range(node.get_child_count() - 1, -1, -1):
+		_probe_scan_control(node.get_child(index), point, hits)
+	var control := node as Control
+	if control == null or not control.is_visible_in_tree():
+		return
+	if control.mouse_filter == Control.MOUSE_FILTER_IGNORE:
+		return
+	if control.get_global_rect().has_point(point):
+		hits.append("%s filter=%d z=%d rect=%s" % [control.get_path(), control.mouse_filter, control.z_index, control.get_global_rect()])
+
+
+var _probe_log_file: FileAccess = null
+
+
+func _probe_log(parts: Array) -> void:
+	var msg := "[probe] "
+	for part in parts:
+		msg += str(part)
+	print(msg)
+	if _probe_log_file == null:
+		_probe_log_file = FileAccess.open("user://ui_probe.log", FileAccess.WRITE)
+	if _probe_log_file != null:
+		_probe_log_file.store_line(msg)
+		_probe_log_file.flush()
+
+
+func _probe_hovered(point: Vector2) -> String:
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	motion.global_position = point
+	Input.parse_input_event(motion)
+	await get_tree().process_frame
+	var hovered := get_viewport().gui_get_hovered_control()
+	return str(get_path_to(hovered)) if hovered != null else "<none>"
+
+
+func _probe_click(point: Vector2) -> void:
+	for pressed in [true, false]:
+		var click := InputEventMouseButton.new()
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.pressed = pressed
+		click.position = point
+		click.global_position = point
+		Input.parse_input_event(click)
+		await get_tree().process_frame
 
 
 # Measured phase costs (ms) weight the loading bar so it advances honestly

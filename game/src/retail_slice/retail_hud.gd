@@ -219,6 +219,8 @@ var _side_bar_fingerprint := "<unset>"
 var production_queue_buttons: Array[Button] = []
 var power_points_label: Label
 var _powers_connectors: Control
+var powers_dock: Control
+var powers_dock_buttons: Dictionary = {}
 var fps_overlay: Label
 var _frame_times: PackedFloat32Array = PackedFloat32Array()
 var voice_slider: HSlider
@@ -281,6 +283,7 @@ func build() -> void:
 	_build_outcome_layer()
 	_build_failure_panel()
 	_build_side_command_bar()
+	_build_powers_dock()
 	_build_retail_tooltip()
 	_wire_retail_tooltips()
 
@@ -1151,6 +1154,11 @@ func _build_command_panel() -> void:
 	command_grid = Control.new()
 	command_grid.name = "CommandGrid"
 	command_grid.custom_minimum_size = Vector2(216, 250)
+	# The grid spans the whole command panel; with the default STOP filter it
+	# swallowed every click aimed at column widgets it overlaps (the Cancel
+	# training button most visibly). Buttons inside the grid still receive
+	# input — IGNORE only exempts the grid itself.
+	command_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(command_grid)
 	var slot_index := 0
 	for spec_value in RETAIL_COMMAND_SPECS:
@@ -1412,6 +1420,7 @@ func refresh_powers(points: int, purchased: Array) -> void:
 			button.disabled = not CASTABLE_POWERS.has(power_id)
 		else:
 			button.self_modulate = Color.WHITE if not button.disabled else Color(0.55, 0.55, 0.55)
+	_refresh_powers_dock(purchased)
 
 
 func _on_power_button_pressed(index: int) -> void:
@@ -1657,6 +1666,8 @@ func _toggle_powers_palette() -> void:
 		command_panel.visible = cluster_visible
 	if retail_side_command_bar != null and not cluster_visible:
 		retail_side_command_bar.visible = false
+	if powers_dock != null:
+		powers_dock.visible = cluster_visible
 	if powers_palette.visible:
 		powers_opened.emit()
 	ui_sound_requested.emit("Gui_PalantirChoosePowerClick" if powers_palette.visible else "Gui_CloseSpellStoreClick")
@@ -2034,6 +2045,67 @@ func _build_side_command_bar() -> void:
 	retail_side_command_bar._build()
 	retail_side_command_bar.construct_requested.connect(_emit_construct_requested)
 	add_child(retail_side_command_bar)
+
+
+func _build_powers_dock() -> void:
+	# Retail docks purchased powers on the right screen edge (above the side
+	# command bar's builder column) so casts do not require reopening the
+	# spellbook. Buttons appear here as powers are purchased.
+	powers_dock = Control.new()
+	powers_dock.name = "RetailPowersDock"
+	powers_dock.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	powers_dock.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	powers_dock.z_index = 6
+	add_child(powers_dock)
+
+
+func _refresh_powers_dock(purchased: Array) -> void:
+	if powers_dock == null:
+		return
+	var castable: Array = []
+	for power_id in purchased:
+		if CASTABLE_POWERS.has(String(power_id)):
+			castable.append(String(power_id))
+	# Drop buttons for powers no longer owned (match reset) before adding new.
+	for existing_id in powers_dock_buttons.keys().duplicate():
+		if not castable.has(existing_id):
+			(powers_dock_buttons[existing_id] as Button).queue_free()
+			powers_dock_buttons.erase(existing_id)
+	var viewport := powers_dock.get_viewport_rect().size
+	if viewport.x <= 0.0 or viewport.y <= 0.0:
+		viewport = Vector2(1024.0, 768.0)
+	var column_x := viewport.x - 60.0 - 14.0
+	var start_y := 120.0 / 768.0 * viewport.y
+	for order in castable.size():
+		var power_id: String = castable[order]
+		var button: Button = powers_dock_buttons.get(power_id)
+		if button == null:
+			button = Button.new()
+			button.name = "PowerDock_%s" % power_id
+			button.size = Vector2(60, 60)
+			button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+			button.expand_icon = true
+			button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			button.add_theme_constant_override("icon_max_width", 44)
+			# Reuse the spellbook button's already-validated icon + socket art.
+			for index in power_buttons.size():
+				if String(power_buttons[index].get_meta("power_id", "")) != power_id:
+					continue
+				button.icon = power_buttons[index].icon
+				for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+					button.add_theme_stylebox_override(state, power_buttons[index].get_theme_stylebox(state))
+				break
+			button.tooltip_text = "Cast — click, then left-click the battlefield (right-click cancels)"
+			var cast_kind := String(CASTABLE_POWERS[power_id])
+			button.pressed.connect(func() -> void:
+				power_cast_requested.emit(cast_kind)
+				ui_sound_requested.emit("Gui_PalantirChoosePowerClick")
+			)
+			_wire_button_feel(button)
+			powers_dock.add_child(button)
+			powers_dock_buttons[power_id] = button
+		button.position = Vector2(column_x, start_y + float(order) * 70.0)
 
 
 func _build_retail_tooltip() -> void:
