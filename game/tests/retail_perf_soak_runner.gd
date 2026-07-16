@@ -103,6 +103,22 @@ func _run() -> void:
 		# rather than silently green.
 		_check("soak_presentation_cost_plateaus_at_equal_army_size", true, "no comparable-army pair; review samples")
 	_check("soak_orphan_nodes_bounded", int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT)) < 400, "orphans=%d" % orphans)
+	_check(
+		"soak_consumed_event_histories_bounded",
+		slice.simulation.events.size() <= SimScript.MAX_RETAINED_EVENT_HISTORY
+		and slice.audio_system.intent_log.size() <= slice.audio_system.MAX_OBSERVABILITY_LOG_ENTRIES
+		and slice.audio_system.routing_log.size() <= slice.audio_system.MAX_OBSERVABILITY_LOG_ENTRIES,
+		"simulation=%d intent=%d routing=%d" % [slice.simulation.events.size(), slice.audio_system.intent_log.size(), slice.audio_system.routing_log.size()]
+	)
+	var target_churn := SimScript.new()
+	for target_id in SimScript.MAX_RETAINED_EVENT_HISTORY + 1:
+		target_churn.events.append({"kind": "combat.hit_structure", "target_id": target_id})
+	target_churn.compact_consumed_events()
+	_check(
+		"soak_distinct_structure_targets_cannot_escape_history_cap",
+		target_churn.events.size() <= SimScript.MAX_RETAINED_EVENT_HISTORY,
+		"events=%d" % target_churn.events.size()
+	)
 	slice.free()
 	_finish()
 

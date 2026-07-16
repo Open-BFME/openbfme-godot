@@ -1,5 +1,9 @@
 class_name RetailSliceSim
 extends RefCounted
+
+const MAX_RETAINED_EVENT_HISTORY := 2048
+const MAX_RETAINED_EVENTS_PER_KIND := 32
+const MAX_RETAINED_STRUCTURE_TARGETS_PER_KIND := 256
 ## Deterministic battalion-level gameplay used by the private retail slice.
 ## Positions are X/Z world coordinates stored as Vector2 values.
 
@@ -117,6 +121,7 @@ var ai_enabled := true
 var selected_ids: Array[int] = []
 var control_groups: Dictionary = {}
 var events: Array[Dictionary] = []
+var _event_digest := 0x811C9DC5
 var entities: Dictionary = {}
 var structures: Dictionary = {}
 var team_resources: Dictionary = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
@@ -152,6 +157,7 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	selected_ids.clear()
 	reset_control_groups()
 	events.clear()
+	_event_digest = 0x811C9DC5
 	entities.clear()
 	structures.clear()
 	_next_event_sequence = 1
@@ -1988,7 +1994,38 @@ func _emit_event(kind: String, entity_id: int, target_id: int, data: Dictionary 
 		if not event.has(key):
 			event[key] = data[key]
 	events.append(event)
+	for byte in JSON.stringify(event).to_utf8_buffer():
+		_event_digest = ((_event_digest ^ int(byte)) * 16777619) & 0xFFFFFFFF
 	_next_event_sequence += 1
+
+
+func compact_consumed_events() -> int:
+	if events.size() <= MAX_RETAINED_EVENT_HISTORY:
+		return 0
+	var retained: Array[Dictionary] = []
+	var retained_by_kind: Dictionary = {}
+	var retained_structure_targets: Dictionary = {}
+	for event in events:
+		var kind := String(event.get("kind", ""))
+		var retention_key := kind
+		var retention_limit := MAX_RETAINED_EVENTS_PER_KIND
+		if kind == "combat.hit_structure" or kind == "structure.destroyed":
+			if int(retained_structure_targets.get(kind, 0)) >= MAX_RETAINED_STRUCTURE_TARGETS_PER_KIND:
+				continue
+			retention_key = "%s:%d" % [kind, int(event.get("target_id", 0))]
+			retention_limit = 1
+		var retained_count := int(retained_by_kind.get(retention_key, 0))
+		if retained_count >= retention_limit:
+			continue
+		retained.append(event)
+		retained_by_kind[retention_key] = retained_count + 1
+		if kind == "combat.hit_structure" or kind == "structure.destroyed":
+			retained_structure_targets[kind] = int(retained_structure_targets.get(kind, 0)) + 1
+		if retained.size() >= MAX_RETAINED_EVENT_HISTORY:
+			break
+	var removed := events.size() - retained.size()
+	events = retained
+	return removed
 
 
 func state_snapshot() -> Dictionary:
@@ -2094,7 +2131,8 @@ func state_snapshot() -> Dictionary:
 		"ford_gates": gate_rows,
 		"entities": rows,
 		"structures": structure_rows,
-		"events": events.duplicate(true),
+		"next_event_sequence": _next_event_sequence,
+		"event_digest": _event_digest,
 	}
 
 

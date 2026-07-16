@@ -1375,6 +1375,11 @@ func _sync_presentation() -> void:
 		_profile_mark = Time.get_ticks_usec()
 	_sync_selected_attack_target_indicator()
 	_refresh_hud()
+	var compacted_events := simulation.compact_consumed_events()
+	if compacted_events > 0:
+		_score_event_index = simulation.events.size()
+		if audio_system != null:
+			audio_system.acknowledge_event_history_compaction(simulation.events.size())
 	if _profile_sync:
 		presentation_profile["hud_us"] = presentation_profile.get("hud_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 

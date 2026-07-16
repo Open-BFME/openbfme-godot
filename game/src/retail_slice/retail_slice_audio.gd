@@ -1,5 +1,8 @@
 class_name RetailSliceAudio
 extends Node
+
+const MAX_OBSERVABILITY_LOG_ENTRIES := 2048
+const OBSERVABILITY_LOG_TRIM_COUNT := 512
 ## Routes deterministic simulation intents through contained retail audio
 ## manifests. Logical SAGE event IDs, not filename guesses, select the leaves.
 
@@ -813,6 +816,10 @@ func sync_events(events: Array[Dictionary]) -> void:
 		_next_event_index += 1
 
 
+func acknowledge_event_history_compaction(retained_count: int) -> void:
+	_next_event_index = retained_count
+
+
 func set_declared_structure_lifecycle_audio_active(active: bool) -> void:
 	declared_structure_lifecycle_audio_active = active
 
@@ -848,7 +855,7 @@ func _consume_event(event: Dictionary) -> void:
 		if not declared_structure_lifecycle_audio_active:
 			_play_routed(route_audio_event("BuildingHeavyDamageStone", sequence), sfx_player)
 			_play_routed(route_audio_event("BuildingSink", sequence), sfx_player)
-	intent_log.append(event.duplicate(true))
+	_append_bounded_observability(intent_log, event.duplicate(true))
 
 
 func _object_id_for_event(event: Dictionary, entity_id: int) -> String:
@@ -883,7 +890,7 @@ func play_ui_event(event_id: String) -> Dictionary:
 	var result := route_audio_event(event_id, sequence)
 	if bool(result.get("ok", false)):
 		_play_routed(result, sfx_player)
-	intent_log.append({
+	_append_bounded_observability(intent_log, {
 		"kind": "ui.sound",
 		"sequence": sequence,
 		"event_id": event_id,
@@ -904,7 +911,7 @@ func play_declared_structure_event(event_id: String, sequence: int, structure_id
 	result["phase"] = phase
 	if bool(result.get("ok", false)):
 		_play_routed(result, sfx_player)
-	intent_log.append({
+	_append_bounded_observability(intent_log, {
 		"kind": "structure.lifecycle.audio",
 		"sequence": sequence,
 		"entity_id": structure_id,
@@ -963,7 +970,7 @@ func _route_definition(route: Dictionary, sequence: int, object_id: String, kind
 		"source": String(route.get("source", "")),
 	}
 	last_route_result = result.duplicate()
-	routing_log.append(_observable_route_result(result))
+	_append_bounded_observability(routing_log, _observable_route_result(result))
 	return result
 
 
@@ -989,7 +996,7 @@ func _rejection(reason: String, event_id: String, object_id: String, kind: Strin
 		"sequence": sequence,
 	}
 	last_route_result = result.duplicate()
-	routing_log.append(result.duplicate())
+	_append_bounded_observability(routing_log, result.duplicate())
 	return result
 
 
@@ -1190,6 +1197,15 @@ func count_roster_voice_kind(object_id: String, kind: String) -> int:
 	var by_kind: Dictionary = roster_voice_routes.get(object_id, {})
 	var route: Dictionary = by_kind.get(kind, {})
 	return Array(route.get("leaves", [])).size()
+
+
+func _append_bounded_observability(log: Array[Dictionary], row: Dictionary) -> void:
+	log.append(row)
+	if log.size() <= MAX_OBSERVABILITY_LOG_ENTRIES:
+		return
+	var retained := log.slice(OBSERVABILITY_LOG_TRIM_COUNT)
+	log.clear()
+	log.append_array(retained)
 
 
 func stop_all() -> void:
