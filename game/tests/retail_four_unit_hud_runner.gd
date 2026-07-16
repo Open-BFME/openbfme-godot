@@ -407,15 +407,22 @@ func _check_complete_binding(prefix: String, hud, content, pack_root: String) ->
 				and button.text == ""
 				and button.tooltip_text == String(content.get_retail_string(tooltip_id, ""))
 		)
+		# The frame must be either empty or the retail empty-socket art (the
+		# unified socket-button system uses the atlas region as the button
+		# background); any other stylebox is a synthetic frame.
+		var frame_box := button.get_theme_stylebox("normal")
+		var retail_socket_frame := frame_box is StyleBoxTexture and (frame_box as StyleBoxTexture).texture is AtlasTexture
 		_check(
 			"%s_%s_no_synthetic_button_frame" % [prefix, button.name],
-			button.get_theme_stylebox("normal") is StyleBoxEmpty
+			frame_box is StyleBoxEmpty or retail_socket_frame
 		)
 	for spec_value in HudScript.RETAIL_UNIT_ACTION_SPECS:
 		var spec: Dictionary = spec_value
 		var action_id := String(spec["action_id"])
 		var button: Button = hud.unit_action_buttons.get(action_id)
 		var expected_path := String(content.resolve_retail_ui_image_path(String(spec["image_id"])))
+		var action_frame := button.get_theme_stylebox("normal") if button != null else null
+		var action_retail_frame := action_frame is StyleBoxTexture and (action_frame as StyleBoxTexture).texture is AtlasTexture
 		_check(
 			"%s_%s_exact_retail_action" % [prefix, action_id],
 			button != null
@@ -423,7 +430,7 @@ func _check_complete_binding(prefix: String, hud, content, pack_root: String) ->
 				and button.text == ""
 				and String(button.get_meta("retail_icon_path", "")) == expected_path
 				and String(button.get_meta("retail_label", "")) == String(content.get_retail_string(String(spec["label_id"]), ""))
-				and button.get_theme_stylebox("normal") is StyleBoxEmpty
+				and (action_frame is StyleBoxEmpty or action_retail_frame)
 		)
 	for portrait_value in HudScript.RETAIL_PORTRAIT_SPECS:
 		var portrait_spec: Dictionary = portrait_value

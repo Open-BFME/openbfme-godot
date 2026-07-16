@@ -146,6 +146,8 @@ var _drag_select_origin := Vector2.INF
 var _drag_selecting := false
 var _selection_band: Control = null
 const DRAG_SELECT_THRESHOLD := 8.0
+var camera_user_yaw := 0.0
+var _camera_orbiting := false
 # Env-gated presentation profiler (OPENBFME_PROFILE_SYNC=1): accumulates
 # per-section time so soak runs can attribute frame-cost growth exactly.
 var _profile_sync := OS.get_environment("OPENBFME_PROFILE_SYNC") == "1"
@@ -835,6 +837,14 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				return
 	if not ready_ok or simulation_paused or simulation.winner != -1:
+		return
+	if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_MIDDLE:
+		# Retail middle-mouse orbit; release keeps the chosen angle.
+		_camera_orbiting = (event as InputEventMouseButton).pressed
+		return
+	if event is InputEventMouseMotion and _camera_orbiting:
+		camera_user_yaw = wrapf(camera_user_yaw + (event as InputEventMouseMotion).relative.x * 0.006, -PI, PI)
+		_apply_camera_transform()
 		return
 	if event is InputEventMouseMotion and _drag_select_origin != Vector2.INF:
 		var motion := event as InputEventMouseMotion
@@ -1876,7 +1886,9 @@ func _apply_camera_transform() -> void:
 	# offset_y = -(offset_z / tan(CameraPitch)). CameraPitch is therefore the
 	# optical-axis elevation above the horizontal plane, not an off-top-down angle.
 	var source_depth := source_height / tan(deg_to_rad(FORDS_CAMERA_PITCH_ABOVE_HORIZONTAL_DEGREES))
-	var yaw := deg_to_rad(FORDS_CAMERA_YAW_DEGREES)
+	# The source yaw stays exact; camera_user_yaw is the player's retail-style
+	# middle-mouse orbit on top of it (zero until the player rotates).
+	var yaw := deg_to_rad(FORDS_CAMERA_YAW_DEGREES) + camera_user_yaw
 	# At SAGE yaw zero the camera is south of its target and looks toward +Y.
 	# Convert that exact Z-up offset through the map's established local basis.
 	var source_offset := Vector3(sin(yaw) * source_depth, -cos(yaw) * source_depth, source_height)

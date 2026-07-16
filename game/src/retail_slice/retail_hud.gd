@@ -45,7 +45,7 @@ const RETAIL_EMPTY_SOCKET_REGION := Rect2(558, 23, 56, 53)
 const RETAIL_ORB_REGIONS := {
 	"options": Rect2(701, 133, 36, 36),
 	"powers": Rect2(487, 188, 36, 36),
-	"score": Rect2(779, 161, 36, 36),
+	"score": Rect2(627, 217, 38, 38),
 }
 # Bottom-left cluster geometry measured against the retail 1.06 reference
 # capture (bfme2-ref-120s/135s.png, 1440p, scaled to the 1080p dock). The
@@ -376,6 +376,7 @@ func set_production_state(production: Array, enabled: bool, queue_count: int = 0
 			button.text = String(_retail_train_labels[unit_id])
 	for button_value in unit_action_buttons.values():
 		(button_value as Button).visible = false
+	_layout_command_sockets()
 	_update_production_queue(queue_state, not production.is_empty())
 	_update_retail_selection_portrait(production)
 
@@ -391,8 +392,9 @@ func set_unit_selection_state(selected_ids: Array[int], entities: Dictionary) ->
 		var button := button_value as Button
 		var action_id := String(button.get_meta("action_id", ""))
 		var is_construct := action_id.begins_with("construct_")
-		button.visible = builders_only if is_construct else has_units
+		button.visible = builders_only if is_construct else (has_units and not builders_only)
 		button.disabled = not button.visible
+	_layout_command_sockets()
 	_refresh_side_command_bar(builders_only)
 	if not has_units:
 		_update_retail_selection_portrait([])
@@ -1180,10 +1182,7 @@ func _build_command_panel() -> void:
 			button.pressed.connect(func() -> void: stance_requested.emit())
 		elif action_id.begins_with("construct_"):
 			button.pressed.connect(_emit_construct_requested.bind(action_id.trim_prefix("construct_")))
-		var action_slot := RETAIL_UNIT_ACTION_SPECS.find(spec_value)
-		if action_id.begins_with("construct_"):
-			action_slot -= 3
-		_place_command_button(button, action_slot)
+		_place_command_button(button, 0)
 		unit_action_buttons[action_id] = button
 	train_button = train_buttons[String(RETAIL_COMMAND_SPECS[0]["unit_id"])]
 	production_queue_label = Label.new()
@@ -1215,6 +1214,28 @@ func _place_command_button(button: Button, slot: int) -> void:
 	button.position = RETAIL_COMMAND_SLOT_SOURCE[slot]
 	button.size = RETAIL_COMMAND_SLOT_SIZE
 	command_grid.add_child(button)
+
+
+func _layout_command_sockets() -> void:
+	# Single placement authority: whatever commands are visible for the
+	# current selection occupy the six dish sockets in declaration order.
+	# Icons render inside the socket art itself, so nothing can drift off the
+	# ring the way the old static per-creation slots did.
+	var occupants: Array[Button] = []
+	for spec_value in RETAIL_COMMAND_SPECS:
+		var train_button_row: Button = train_buttons.get(String((spec_value as Dictionary)["unit_id"]))
+		if train_button_row != null and train_button_row.visible:
+			occupants.append(train_button_row)
+	for spec_value in RETAIL_UNIT_ACTION_SPECS:
+		var action_button: Button = unit_action_buttons.get(String((spec_value as Dictionary)["action_id"]))
+		if action_button != null and action_button.visible:
+			occupants.append(action_button)
+	for index in occupants.size():
+		if index >= RETAIL_COMMAND_SLOT_SOURCE.size():
+			occupants[index].visible = false
+			continue
+		occupants[index].position = RETAIL_COMMAND_SLOT_SOURCE[index]
+		occupants[index].size = RETAIL_COMMAND_SLOT_SIZE
 
 
 func _build_orb_buttons(dock: Control) -> void:
@@ -1257,28 +1278,65 @@ func _build_orb_buttons(dock: Control) -> void:
 
 
 func _build_powers_palette() -> void:
+	# Retail's power selection takes over the whole screen: dimmed backdrop,
+	# centered power grid, click outside (or the evenstar again) to close.
 	powers_palette = Control.new()
 	powers_palette.name = "RetailPowersPalette"
-	powers_palette.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	powers_palette.position = Vector2(585, -360)
-	powers_palette.size = Vector2(350, 350)
+	powers_palette.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	powers_palette.visible = false
 	powers_palette.mouse_filter = Control.MOUSE_FILTER_STOP
 	powers_palette.z_index = 10
 	add_child(powers_palette)
+	var dim := ColorRect.new()
+	dim.name = "PowersDim"
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.01, 0.02, 0.015, 0.78)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+			_toggle_powers_palette()
+	)
+	powers_palette.add_child(dim)
+	var column := VBoxContainer.new()
+	column.name = "PowersColumn"
+	column.set_anchors_preset(Control.PRESET_CENTER)
+	column.alignment = BoxContainer.ALIGNMENT_CENTER
+	column.add_theme_constant_override("separation", 26)
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	powers_palette.add_child(column)
+	var title := Label.new()
+	title.text = "POWERS OF THE WEST"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 40)
+	title.add_theme_color_override("font_color", Color("e9d489"))
+	column.add_child(title)
+	var grid := GridContainer.new()
+	grid.name = "PowersGrid"
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 34)
+	grid.add_theme_constant_override("v_separation", 30)
+	column.add_child(grid)
 	for index in RETAIL_POWER_IMAGE_IDS.size():
 		var button := Button.new()
 		button.name = "Power%02d" % index
-		button.position = Vector2((index % 4) * 78, (index / 4) * 78)
-		button.size = Vector2(64, 64)
+		button.custom_minimum_size = Vector2(104, 104)
 		button.disabled = true
+		button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		button.expand_icon = true
+		button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		button.mouse_entered.connect(func() -> void:
 			ui_sound_requested.emit("Gui_UpgradeButtonGlow")
 		)
 		for state in ["normal", "hover", "pressed", "disabled"]:
 			button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
-		powers_palette.add_child(button)
+		grid.add_child(button)
 		power_buttons.append(button)
+	var hint := Label.new()
+	hint.text = "Power purchases unlock with the faction expansion milestone."
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 16)
+	hint.add_theme_color_override("font_color", Color("9fb2a1"))
+	column.add_child(hint)
 
 
 func _build_score_overlay() -> void:
@@ -1364,11 +1422,17 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 		var orb := orb_buttons[id] as Button
 		orb.icon = _atlas_region(_retail_palantir_atlas, RETAIL_ORB_REGIONS[id])
 		orb.expand_icon = true
+		orb.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	command_points_label.add_theme_color_override("font_color", Color("f1d06e"))
+	var power_socket := StyleBoxTexture.new()
+	power_socket.texture = _atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION)
 	for index in RETAIL_POWER_IMAGE_IDS.size():
 		var validation := _validate_retail_image(content_db, expected_pack_root, RETAIL_POWER_IMAGE_IDS[index], Vector2i(64, 64))
 		if String(validation.get("error", "")) == "":
 			power_buttons[index].icon = validation["texture"]
+			for state in ["normal", "hover", "pressed", "disabled"]:
+				power_buttons[index].add_theme_stylebox_override(state, power_socket)
+			power_buttons[index].add_theme_constant_override("icon_max_width", 76)
 	var shell := _atlas_region(retail_apt_runtime.exact_atlas_texture(RETAIL_PALANTIR_FRAME_ATLAS), Rect2(Vector2.ZERO, RETAIL_PALANTIR_FRAME_SOURCE_SIZE))
 	var palette_shell := TextureRect.new()
 	palette_shell.name = "RetailPowersFrame"
@@ -1446,14 +1510,16 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	resource_strip.add_child(resource_label)
 	resource_strip.add_child(command_points_label)
 	resource_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	resource_label.position = Vector2(40, 4)
-	resource_label.size = Vector2(120, 28)
-	resource_label.add_theme_font_size_override("font_size", 21)
+	resource_label.position = Vector2(44, 0)
+	resource_label.size = Vector2(120, 36)
+	resource_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	resource_label.add_theme_font_size_override("font_size", 20)
 	command_points_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	command_points_label.position = Vector2(160, 4)
-	command_points_label.size = Vector2(130, 28)
+	command_points_label.position = Vector2(150, 0)
+	command_points_label.size = Vector2(136, 36)
+	command_points_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	command_points_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	command_points_label.add_theme_font_size_override("font_size", 21)
+	command_points_label.add_theme_font_size_override("font_size", 20)
 	resource_row.visible = false
 	for child in command_panel.find_children("*", "Label", true, false):
 		(child as Label).visible = false
@@ -1474,8 +1540,16 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 
 func _make_retail_icon_only(button: Button) -> void:
 	button.text = ""
+	# The socket art is the button's own background, so icon and socket can
+	# never drift apart; icons scale smoothly instead of pixelating.
+	var socket_box := StyleBoxTexture.new()
+	socket_box.texture = _atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION)
 	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-		button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+		button.add_theme_stylebox_override(state, socket_box)
+	button.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	button.expand_icon = true
+	button.add_theme_constant_override("icon_max_width", int(RETAIL_COMMAND_SLOT_SIZE.x) - 16)
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	button.mouse_entered.connect(func() -> void:
 		ui_sound_requested.emit("Gui_UpgradeButtonGlow")
 	)
