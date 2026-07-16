@@ -1424,6 +1424,10 @@ func _deflect_around_structures(position: Vector2, attack_target_id: int) -> Vec
 		var structure_row: Dictionary = structures[structure_id]
 		if int(structure_row.get("health", 0)) <= 0:
 			continue
+		# Construction sites do not block movement: builders must reach their
+		# own site, and scaffolding is passable until the structure completes.
+		if float(structure_row.get("construction_progress", 1.0)) < 1.0:
+			continue
 		var radius := float(STRUCTURE_BLOCK_RADIUS.get(String(structure_row.get("structure_kind", "")), 4.5))
 		var center := Vector2(structure_row.get("position", Vector2.ZERO))
 		var offset := position - center

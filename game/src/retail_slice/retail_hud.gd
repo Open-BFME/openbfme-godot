@@ -213,6 +213,7 @@ var fps_toggle: CheckButton
 var command_cap_slider: HSlider
 var weak_fortress_toggle: CheckButton
 var _side_bar_fingerprint := "<unset>"
+var production_queue_buttons: Array[Button] = []
 var fps_overlay: Label
 var _frame_times: PackedFloat32Array = PackedFloat32Array()
 var voice_slider: HSlider
@@ -403,6 +404,16 @@ func set_unit_selection_state(selected_ids: Array[int], entities: Dictionary) ->
 
 
 func _update_production_queue(queue_state: Array, producer_selected: bool) -> void:
+	for index in production_queue_buttons.size():
+		var queue_button := production_queue_buttons[index]
+		if not producer_selected or index >= queue_state.size():
+			queue_button.visible = false
+			continue
+		var row: Dictionary = queue_state[index]
+		var unit_type := String(row.get("unit_type", ""))
+		var train_button := train_buttons.get(unit_type) as Button
+		queue_button.icon = train_button.icon if train_button != null else null
+		queue_button.visible = queue_button.icon != null
 	if production_queue_label == null or production_progress == null or cancel_production_button == null:
 		return
 	production_queue_label.visible = producer_selected
@@ -1411,6 +1422,23 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	selection_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	selection_portrait.stretch_mode = TextureRect.STRETCH_SCALE
 	_circle_masked(selection_portrait)
+	# Retail-style production queue: up to five clickable slots under the
+	# palantir dish; clicking a queued item cancels it (retail behavior).
+	if production_queue_buttons.is_empty():
+		for index in 5:
+			var queue_button := Button.new()
+			queue_button.name = "QueueSlot%d" % index
+			queue_button.position = Vector2(64 + index * 42, 322)
+			queue_button.size = Vector2(38, 38)
+			for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+				queue_button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+			queue_button.expand_icon = true
+			queue_button.visible = false
+			queue_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			queue_button.tooltip_text = "Click to cancel"
+			queue_button.pressed.connect(func() -> void: cancel_production_requested.emit(index))
+			command_grid.add_child(queue_button)
+			production_queue_buttons.append(queue_button)
 	resource_strip.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	var resource_row := resource_label.get_parent()
 	resource_row.remove_child(resource_label)
@@ -2001,7 +2029,11 @@ func _refresh_side_command_bar(builders_only: bool) -> void:
 		# construct set actually changes.
 		var fingerprint := ""
 		for entry_value in constructs:
-			fingerprint += String((entry_value as Dictionary).get("kind", "")) + ";"
+			var entry_row: Dictionary = entry_value
+			# Icon availability is part of the fingerprint: the first call can
+			# happen before retail icons bind, and caching that iconless
+			# generation left the side bar black.
+			fingerprint += "%s:%s;" % [String(entry_row.get("kind", "")), entry_row.get("icon") != null]
 		if fingerprint != _side_bar_fingerprint:
 			_side_bar_fingerprint = fingerprint
 			retail_side_command_bar.configure_from_constructs(constructs)

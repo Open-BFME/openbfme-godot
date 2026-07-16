@@ -141,7 +141,7 @@ var _source_art_texture: Texture2D
 var _last_presented_winner := -1
 var attack_move_armed := false
 var construction_kind_armed := ""
-var construction_ghost: Decal = null
+var construction_ghost: MeshInstance3D = null
 var _drag_select_origin := Vector2.INF
 var _drag_selecting := false
 var _selection_band: Control = null
@@ -1319,10 +1319,21 @@ func _arm_construction(structure_kind: String) -> void:
 
 func _spawn_construction_ghost() -> void:
 	_clear_construction_ghost()
-	# Gameplay placement cursor (site footprint + validity tint). The retail
-	# translucent building-model ghost is an M3 parity item.
-	construction_ghost = preload("res://src/retail_slice/retail_shadow_decal.gd").create(Vector2(14.0, 14.0), 8.0)
+	# Gameplay placement cursor: a flat ground quad showing the site footprint
+	# with validity tint (a Decal projected a visible volume through the fog).
+	# The retail translucent building-model ghost is an M3 parity item.
+	construction_ghost = MeshInstance3D.new()
 	construction_ghost.name = "ConstructionPlacementGhost"
+	var quad := PlaneMesh.new()
+	quad.size = Vector2(14.0, 14.0)
+	construction_ghost.mesh = quad
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.albedo_texture = preload("res://src/retail_slice/retail_shadow_decal.gd")._shared_texture()
+	material.albedo_color = Color(0.20, 0.85, 0.30, 0.4)
+	material.no_depth_test = false
+	construction_ghost.material_override = material
 	construction_ghost.set_meta("legal_safe_gameplay_overlay", true)
 	construction_ghost.visible = false
 	add_child(construction_ghost)
@@ -1347,12 +1358,13 @@ func _update_construction_ghost() -> void:
 		return
 	var ground := world as Vector3
 	construction_ghost.visible = true
-	construction_ghost.global_position = Vector3(ground.x, ground.y + 1.0, ground.z)
+	construction_ghost.global_position = Vector3(ground.x, ground.y + 0.15, ground.z)
 	var probe := simulation.validate_construct_site(
 		simulation.selected_ids.duplicate(), construction_kind_armed, Vector2(ground.x, ground.z)
 	)
-	construction_ghost.modulate = (
-		Color(0.20, 0.85, 0.30, 0.5) if bool(probe.get("ok", false)) else Color(0.90, 0.18, 0.14, 0.5)
+	var material := construction_ghost.material_override as StandardMaterial3D
+	material.albedo_color = (
+		Color(0.20, 0.85, 0.30, 0.4) if bool(probe.get("ok", false)) else Color(0.90, 0.18, 0.14, 0.4)
 	)
 
 
