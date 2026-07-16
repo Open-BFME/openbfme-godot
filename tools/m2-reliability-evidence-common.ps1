@@ -18,6 +18,7 @@ function Assert-M2ReliabilitySoakEvidence {
     $actualDurationSeconds = [double]$Soak.actualDurationSeconds
     $sampleIntervalMsec = [int]$Soak.memorySampleIntervalMsec
     $samples = @($Soak.memorySamplesBytes)
+    $frameSamplesMsec = [double[]]@($Soak.frameSamplesMsec | ForEach-Object { [double]$_ })
 
     Assert-SoakEvidence ($actualDurationSeconds -ge $MinimumDurationSeconds) "Live soak ended before the requested active duration."
     Assert-SoakEvidence (
@@ -27,9 +28,29 @@ function Assert-M2ReliabilitySoakEvidence {
     ) "Live soak renderer evidence is incomplete."
     Assert-SoakEvidence (
         [double]$Soak.multiSecondStallThresholdMsec -eq 2000.0 -and
-        [int]$Soak.multiSecondStallCount -eq 0 -and
-        [double]$Soak.maximumFrameMsec -lt 2000.0
+        [int]$Soak.multiSecondStallCount -eq 0
     ) "Live soak recorded a multi-second gameplay stall."
+    Assert-SoakEvidence ($frameSamplesMsec.Count -eq [int]$Soak.frameCount -and $frameSamplesMsec.Count -gt 0) "Live soak frame sample count is inconsistent."
+    Assert-SoakEvidence (@($frameSamplesMsec | Where-Object { $_ -le 0.0 }).Count -eq 0) "Live soak contains a non-positive frame sample."
+
+    $maximumFrameMsec = [double](($frameSamplesMsec | Measure-Object -Maximum).Maximum)
+    $frameDurationMsec = [double](($frameSamplesMsec | Measure-Object -Sum).Sum)
+    $multiSecondStallCount = @($frameSamplesMsec | Where-Object { $_ -ge 2000.0 }).Count
+    $averageFps = [double]$frameSamplesMsec.Count / $actualDurationSeconds
+    $orderedFrameMsec = [double[]]$frameSamplesMsec.Clone()
+    [Array]::Sort($orderedFrameMsec)
+    [Array]::Reverse($orderedFrameMsec)
+    $worstOnePercentCount = [Math]::Max(1, [int][Math]::Ceiling([double]$orderedFrameMsec.Count * 0.01))
+    $worstOnePercentTotalMsec = 0.0
+    for ($index = 0; $index -lt $worstOnePercentCount; $index++) {
+        $worstOnePercentTotalMsec += $orderedFrameMsec[$index]
+    }
+    $onePercentLowFps = 1000.0 / ($worstOnePercentTotalMsec / [double]$worstOnePercentCount)
+    Assert-SoakEvidence ([Math]::Abs([double]$Soak.maximumFrameMsec - $maximumFrameMsec) -le 0.000001) "Live soak maximum-frame value does not match its samples."
+    Assert-SoakEvidence ([Math]::Abs(($actualDurationSeconds * 1000.0) - $frameDurationMsec) -le 0.001) "Live soak frame samples do not cover its declared active duration."
+    Assert-SoakEvidence ([int]$Soak.multiSecondStallCount -eq $multiSecondStallCount) "Live soak stall count does not match its samples."
+    Assert-SoakEvidence ([Math]::Abs([double]$Soak.averageFps - $averageFps) -le 0.000001) "Live soak average FPS does not match its frame count and duration."
+    Assert-SoakEvidence ([Math]::Abs([double]$Soak.onePercentLowFps - $onePercentLowFps) -le 0.000001) "Live soak one-percent-low FPS does not match its samples."
     Assert-SoakEvidence ([string]$Soak.memoryMetric -eq 'godot-static-memory-usage' -and $sampleIntervalMsec -eq 1000) "Live soak memory metric or cadence changed."
     Assert-SoakEvidence ($samples.Count -eq [int]$Soak.memorySampleCount -and $samples.Count -gt 0) "Live soak memory sample count is inconsistent."
 

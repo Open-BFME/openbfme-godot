@@ -141,6 +141,7 @@ func _run() -> void:
 		"renderingDriver": RenderingServer.get_current_rendering_driver_name(),
 		"videoAdapter": RenderingServer.get_video_adapter_name(),
 		"frameCount": frame_msec.size(),
+		"frameSamplesMsec": frame_msec,
 		"averageFps": average_fps,
 		"onePercentLowFps": one_percent_low_fps,
 		"maximumFrameMsec": maximum_frame_msec,
