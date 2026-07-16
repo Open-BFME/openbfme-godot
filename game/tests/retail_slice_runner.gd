@@ -316,12 +316,26 @@ func _run() -> void:
 	var red_materials := _member_textured_materials(enemy_exemplar)
 	var blue_house_materials := _member_house_color_materials(exemplar)
 	var red_house_materials := _member_house_color_materials(enemy_exemplar)
-	# Invented whole-material tints stay suppressed; exact mask-driven house
-	# color (retail HouseColor textures from the M3 pack) is now applied, so the
-	# status reports masked recoloring and at least one surface per team uses it.
-	_check("invented_team_tint_is_suppressed_in_private_parity", exemplar != null and enemy_exemplar != null and int(exemplar.team_tinted_surface_count) == 0 and int(enemy_exemplar.team_tinted_surface_count) == 0 and int(exemplar.house_color_surface_count) > 0 and int(enemy_exemplar.house_color_surface_count) > 0 and String(exemplar.team_color_status).contains("retail-house-color-masked"), "blue=%s/%s red=%s/%s status=%s" % [str(exemplar.team_tinted_surface_count if exemplar != null else -1), str(exemplar.house_color_surface_count if exemplar != null else -1), str(enemy_exemplar.team_tinted_surface_count if enemy_exemplar != null else -1), str(enemy_exemplar.house_color_surface_count if enemy_exemplar != null else -1), String(exemplar.team_color_status if exemplar != null else "missing")])
-	_check("retail_textures_survive_without_invented_tint", blue_materials.size() == 15 and red_materials.size() == 15 and blue_house_materials.size() == 15 and red_house_materials.size() == 15 and (blue_materials[0] as StandardMaterial3D).albedo_texture != null and (red_materials[0] as StandardMaterial3D).albedo_texture != null, "blue=%d/%d red=%d/%d" % [blue_materials.size(), blue_house_materials.size(), red_materials.size(), red_house_materials.size()])
-	if not blue_house_materials.is_empty() and not red_house_materials.is_empty():
+	var mod_loader = root.get_node("ModLoader")
+	var selected_pack_document: Variant = mod_loader._read_json(String(slice.selected_pack_root).path_join("pack.json"))
+	var selected_pack_files: Dictionary = {}
+	var selected_pack_document_valid := typeof(selected_pack_document) == TYPE_DICTIONARY
+	var selected_pack_files_valid := selected_pack_document_valid and typeof((selected_pack_document as Dictionary).get("files", null)) == TYPE_DICTIONARY
+	if selected_pack_files_valid:
+		selected_pack_files = (selected_pack_document as Dictionary).get("files", {})
+	var house_color_declared := selected_pack_files.has("houseColor")
+	var house_color_relative := String(selected_pack_files.get("houseColor", ""))
+	var house_color_contract_valid := selected_pack_files_valid and (not house_color_declared or (house_color_relative == "data/house-color.json" and FileAccess.file_exists(String(slice.selected_pack_root).path_join(house_color_relative))))
+	_check("house_color_pack_contract_resolves", house_color_contract_valid, "declared=%s path=%s" % [str(house_color_declared), house_color_relative])
+	# Whole-material tint is always forbidden. Masked recoloring is required only
+	# when the selected pack explicitly declares the exact house-color contract.
+	var house_color_surface_contract := false
+	if exemplar != null and enemy_exemplar != null:
+		house_color_surface_contract = int(exemplar.house_color_surface_count) > 0 and int(enemy_exemplar.house_color_surface_count) > 0 and String(exemplar.team_color_status).contains("retail-house-color-masked") if house_color_declared else int(exemplar.house_color_surface_count) == 0 and int(enemy_exemplar.house_color_surface_count) == 0 and String(exemplar.team_color_status).contains("awaiting-exact-house-color")
+	_check("invented_team_tint_is_suppressed_in_private_parity", exemplar != null and enemy_exemplar != null and int(exemplar.team_tinted_surface_count) == 0 and int(enemy_exemplar.team_tinted_surface_count) == 0 and house_color_surface_contract, "declared=%s blue=%s/%s red=%s/%s status=%s" % [str(house_color_declared), str(exemplar.team_tinted_surface_count if exemplar != null else -1), str(exemplar.house_color_surface_count if exemplar != null else -1), str(enemy_exemplar.team_tinted_surface_count if enemy_exemplar != null else -1), str(enemy_exemplar.house_color_surface_count if enemy_exemplar != null else -1), String(exemplar.team_color_status if exemplar != null else "missing")])
+	var house_color_material_contract := blue_house_materials.size() == 15 and red_house_materials.size() == 15 if house_color_declared else blue_house_materials.is_empty() and red_house_materials.is_empty()
+	_check("retail_textures_survive_without_invented_tint", blue_materials.size() == 15 and red_materials.size() == 15 and house_color_material_contract and (blue_materials[0] as StandardMaterial3D).albedo_texture != null and (red_materials[0] as StandardMaterial3D).albedo_texture != null, "declared=%s blue=%d/%d red=%d/%d" % [str(house_color_declared), blue_materials.size(), blue_house_materials.size(), red_materials.size(), red_house_materials.size()])
+	if house_color_declared and not blue_house_materials.is_empty() and not red_house_materials.is_empty():
 		var blue_team_param := Color((blue_house_materials[0] as ShaderMaterial).get_shader_parameter("team_color"))
 		var red_team_param := Color((red_house_materials[0] as ShaderMaterial).get_shader_parameter("team_color"))
 		_check("house_color_teams_differ", not blue_team_param.is_equal_approx(red_team_param) and blue_team_param.b > blue_team_param.r and red_team_param.r > red_team_param.b, "blue=%s red=%s" % [str(blue_team_param), str(red_team_param)])
