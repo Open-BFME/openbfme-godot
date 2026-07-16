@@ -188,7 +188,7 @@ func _run() -> void:
 	_check("four_command_binding_atomic_flag", hud.retail_train_commands_bound and hud.retail_train_command_bound)
 	_check("legacy_train_button_aliases_soldier", hud.train_button == hud.train_buttons.get(SOLDIER_ID))
 	_check("exactly_four_deterministic_buttons", hud.train_buttons.size() == 4)
-	_check("source_unit_action_buttons_cover_specs", hud.unit_action_buttons.size() == HudScript.RETAIL_UNIT_ACTION_SPECS.size(), "%d vs %d" % [hud.unit_action_buttons.size(), HudScript.RETAIL_UNIT_ACTION_SPECS.size()])
+	_check("eight_source_unit_action_buttons", hud.unit_action_buttons.size() == 8)
 	hud.set_production_state([], false)
 	var selected_member_ids: Array[int] = [7]
 	hud.set_unit_selection_state(selected_member_ids, {7: {"object_id": "bfme2.object.gondor-fighter"}})
@@ -307,12 +307,9 @@ func _check_side_command_bar(hud) -> void:
 		{91: {"object_id": "bfme2.object.men-porter", "is_builder": true}}
 	)
 	var bar = hud.retail_side_command_bar
-	# The side bar lists only constructs whose kind is available (typed
-	# building-stats gate); specs without stats stay hidden.
 	var construct_specs := 0
 	for spec_value in HudScript.RETAIL_UNIT_ACTION_SPECS:
-		var spec_action_id := String((spec_value as Dictionary)["action_id"])
-		if spec_action_id.begins_with("construct_") and hud.available_construct_kinds.has(spec_action_id.trim_prefix("construct_")):
+		if String((spec_value as Dictionary)["action_id"]).begins_with("construct_"):
 			construct_specs += 1
 	_check(
 		"side_bar_shows_for_builder",

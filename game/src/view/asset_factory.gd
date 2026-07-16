@@ -153,8 +153,7 @@ static func preflight_explicit_model_path(resolved_model_path: String, pack_root
 static func make_explicit_model_visual(
 	resolved_model_path: String,
 	side: int,
-	content_object_id: String = "",
-	pack_root_hint: String = ""
+	content_object_id: String = ""
 ) -> Node3D:
 	## Fail-closed bridge for an already-resolved authored GLB. Unlike the
 	## generic bundle bridge, this helper never normalizes each model and never
@@ -168,11 +167,6 @@ static func make_explicit_model_visual(
 	var root := Node3D.new()
 	root.name = "ExplicitModel_%s" % resolved_model_path.get_file().get_basename()
 	var definition: Dictionary = ContentDB.get_bundle_object(content_object_id) if content_object_id != "" else {}
-	# A caller with no bundle object (M3 per-phase structure GLBs) supplies the
-	# pack root directly so parity rules (no invented tint, exact house color)
-	# still apply to retail geometry.
-	if definition.is_empty() and pack_root_hint != "":
-		definition = {"_pack_root": pack_root_hint}
 	var private_retail := _is_private_retail_definition(definition)
 	var tinted_surfaces := 0 if private_retail else _tint_if_needed(loaded, side, false)
 	var house_colored := 0

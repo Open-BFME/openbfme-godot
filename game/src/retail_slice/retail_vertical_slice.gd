@@ -6,7 +6,6 @@ extends Node3D
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const BattalionScript = preload("res://src/retail_slice/retail_battalion.gd")
 const StructureScript = preload("res://src/retail_slice/retail_structure.gd")
-const SimpleStructureScript = preload("res://src/retail_slice/retail_simple_structure.gd")
 const OrderIndicatorScript = preload("res://src/retail_slice/retail_order_indicator.gd")
 const AttackTargetIndicatorScript = preload("res://src/retail_slice/retail_attack_target_indicator.gd")
 const AudioScript = preload("res://src/retail_slice/retail_slice_audio.gd")
@@ -240,7 +239,6 @@ func _initialize_content_and_match() -> void:
 		return
 	simulation = SimScript.new()
 	simulation.setup(source_map_data.simulation_configuration(), gameplay_rules)
-	_load_m3_building_expansion()
 	var player_fortress_id := simulation.fortress_id(0)
 	if player_fortress_id != 0:
 		var player_fortress_position := Vector2(simulation.structure(player_fortress_id).get("position", Vector2.ZERO))
@@ -260,8 +258,8 @@ func _initialize_content_and_match() -> void:
 	var command_costs: Dictionary = {}
 	for unit_type in SimScript.UNIT_PRODUCTION_RULES.keys():
 		command_costs[unit_type] = simulation._production_rule_value(String(unit_type), "cost_rule", "default_cost")
-	for structure_kind in simulation.structure_build_rules.keys():
-		command_costs[structure_kind] = int((simulation.structure_build_rules[structure_kind] as Dictionary).get("cost", 0))
+	for structure_kind in SimScript.STRUCTURE_BUILD_RULES.keys():
+		command_costs[structure_kind] = int((SimScript.STRUCTURE_BUILD_RULES[structure_kind] as Dictionary).get("cost", 0))
 	hud.set_command_costs(command_costs)
 	hud.apply_audio_values(audio_system.get_music_volume(), audio_system.get_voice_sfx_volume(), audio_system.is_muted())
 	audio_system.sync_events(simulation.events)
@@ -891,85 +889,6 @@ func _retail_rule_number(value: Variant) -> float:
 	return float(number_value) if typeof(number_value) in [TYPE_INT, TYPE_FLOAT] else NAN
 
 
-# M3 building expansion: census building id -> sim structure kind. Only kinds
-# with BOTH typed stats (data/building-stats.json) and a converted intact model
-# (data/m3/model-census.json) become constructible — fail-closed on either gap.
-const M3_BUILDING_KINDS := {
-	"GondorWorkshop": "workshop",
-	"GondorBattleTower": "battle_tower",
-	"GondorWell": "well",
-	"GondorStatue": "statue",
-	"GondorForge": "blacksmith",
-	"GondorMarketPlace": "marketplace",
-}
-var m3_structure_models: Dictionary = {}
-
-
-func _load_m3_building_expansion() -> void:
-	m3_structure_models = {}
-	var census_value: Variant = ModLoader._read_json(selected_pack_root.path_join("data/m3/model-census.json"))
-	if typeof(census_value) == TYPE_DICTIONARY:
-		for row_value in (census_value as Dictionary).get("buildings", []):
-			if typeof(row_value) != TYPE_DICTIONARY:
-				continue
-			var row := row_value as Dictionary
-			var kind := String(M3_BUILDING_KINDS.get(String(row.get("id", "")), ""))
-			if kind == "":
-				continue
-			var models: Dictionary = {}
-			for state_value in row.get("states", []):
-				if typeof(state_value) != TYPE_DICTIONARY:
-					continue
-				var state := state_value as Dictionary
-				var output := String(state.get("output", ""))
-				if output == "":
-					continue
-				# The *hc* W3D variants are retail's separate house-color overlay
-				# meshes; the main geometry is the non-hc file.
-				var source_w3d := String(state.get("sourceW3d", "")).get_file()
-				var is_hc_overlay := source_w3d.begins_with("gbhc") or source_w3d.begins_with("gphc") or source_w3d.begins_with("guhc")
-				for phase_value in state.get("phases", []):
-					var phase := String(phase_value)
-					if not models.has(phase) or (bool(models[phase]["hc"]) and not is_hc_overlay):
-						models[phase] = {"path": selected_pack_root.path_join(output), "hc": is_hc_overlay}
-			var flattened: Dictionary = {}
-			for phase in models:
-				flattened[phase] = String((models[phase] as Dictionary)["path"])
-			if flattened.has("intact"):
-				m3_structure_models[kind] = flattened
-	var game_data_value: Variant = ModLoader._read_json(selected_pack_root.path_join("data/game-data.json"))
-	if typeof(game_data_value) == TYPE_DICTIONARY:
-		# Retail GameData command points for a two-player match:
-		# GoodCommandPointsMP2 = [start, cap]. The in-game settings slider can
-		# still override the cap afterwards.
-		var command_points: Dictionary = (game_data_value as Dictionary).get("commandPoints", {})
-		var mp2: Array = command_points.get("GoodCommandPointsMP2", [])
-		if mp2.size() == 2 and int(mp2[1]) > 0:
-			simulation.command_point_cap = int(mp2[1])
-	var stats_value: Variant = ModLoader._read_json(selected_pack_root.path_join("data/building-stats.json"))
-	if typeof(stats_value) != TYPE_DICTIONARY:
-		# Typed stats not in this pack build yet: expansion buildings stay
-		# unavailable rather than shipping invented costs.
-		return
-	var extra_rules: Dictionary = {}
-	for record_value in (stats_value as Dictionary).get("buildings", []):
-		if typeof(record_value) != TYPE_DICTIONARY:
-			continue
-		var record := record_value as Dictionary
-		var kind := String(M3_BUILDING_KINDS.get(String(record.get("id", "")), ""))
-		if kind == "" or not m3_structure_models.has(kind):
-			continue
-		extra_rules[kind] = {
-			"cost": int(record.get("buildCost", 0)),
-			"seconds": float(record.get("buildTimeSeconds", record.get("buildTime", 0.0))),
-			"health": int(record.get("maxHealth", 0)),
-		}
-	if extra_rules.is_empty():
-		return
-	simulation.configure_structure_rules(extra_rules)
-	hud.set_available_constructs(simulation.structure_build_rules.keys())
-
-
 func _spawn_all_presentations(expected_members: int) -> void:
 	_clear_presentations()
 	for id in simulation.entity_ids():
@@ -1015,18 +934,8 @@ func _spawn_structure(id: int) -> void:
 	if structure_nodes.has(id):
 		return
 	var entity: Dictionary = simulation.structure(id)
-	var kind := String(entity.get("structure_kind", ""))
-	if not BUILDING_OBJECT_IDS.has(kind) and m3_structure_models.has(kind):
-		# M3-expansion building: per-phase converted GLBs, lean lifecycle.
-		var simple := SimpleStructureScript.new()
-		simple.configure(entity, m3_structure_models[kind], selected_pack_root, source_map_data.local_transform_scale)
-		var simple_position := Vector2(entity["position"])
-		simple.position = Vector3(simple_position.x, _presentation_height(simple_position) - 0.35, simple_position.y)
-		add_child(simple)
-		_assign_geometry_light_layer(simple, OBJECT_LIGHT_LAYER)
-		structure_nodes[id] = simple
-		return
 	var structure: RetailStructure = StructureScript.new()
+	var kind := String(entity.get("structure_kind", ""))
 	structure.lifecycle_route_requested.connect(
 		Callable(self, "_on_structure_lifecycle_route_requested").bind(structure)
 	)
@@ -1453,7 +1362,7 @@ func _sync_presentation() -> void:
 	for id in simulation.structure_ids():
 		if not structure_nodes.has(id):
 			_spawn_structure(id)
-		var structure = structure_nodes[id]
+		var structure: RetailStructure = structure_nodes[id]
 		structure.set_selected(selected_structure_id == id)
 		structure.sync_state(simulation.structure(id))
 	if _profile_sync:
@@ -1660,13 +1569,13 @@ func _arm_attack_move() -> void:
 
 
 func _arm_construction(structure_kind: String) -> void:
-	if simulation == null or simulation.selected_ids.is_empty() or not simulation.structure_build_rules.has(structure_kind):
+	if simulation == null or simulation.selected_ids.is_empty() or not SimScript.STRUCTURE_BUILD_RULES.has(structure_kind):
 		hud.set_feedback("Builder construction command rejected.", true)
 		return
 	construction_kind_armed = structure_kind
 	attack_move_armed = false
 	_spawn_construction_ghost()
-	var rule: Dictionary = simulation.structure_build_rules[structure_kind]
+	var rule: Dictionary = SimScript.STRUCTURE_BUILD_RULES[structure_kind]
 	hud.set_feedback("Place %s: left-click a clear site (right-click cancels). Cost %d." % [structure_kind.replace("_", " ").capitalize(), int(rule["cost"])])
 
 
