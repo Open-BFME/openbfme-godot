@@ -1,0 +1,114 @@
+{
+  "format": 1,
+  "id": "men-fords-v1",
+  "title": "BFME II 1.06 Men source-census candidate recipe",
+  "pack": {
+    "id": "bfme2-men-vslice",
+    "version": "1.06-men-v1",
+    "schema": "openbfme.content-pack",
+    "schemaVersion": 0,
+    "priority": 1000,
+    "vertical_slice_complete": false,
+    "full_faction_complete": false,
+    "asset_conversion_complete": false,
+    "oracle_parity_complete": false,
+    "capability_maturity": "m3-private-composer-recipe",
+    "m3ScopeKind": "bounded-explicit-targets",
+    "m3CoverageDenominatorComplete": false,
+    "dataPolicy": {
+      "externalPathsAllowed": false,
+      "redistributable": false
+    },
+    "m3Recipe": {
+      "schema": "openbfme.m3-men-pack-recipe",
+      "schemaVersion": 0,
+      "baseProfile": {
+        "id": "men-fords-v0-complete-generated",
+        "sha256": "0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d"
+      },
+      "censusInputSha256": "b12b7aecbc216fb8d87abf33191d769f46c249a81724edd262a783dcf16a1fbe",
+      "targets": {
+        "buildings": [
+          "MenFortress",
+          "GondorFarm",
+          "GondorBarracks",
+          "GondorArcherRange",
+          "GondorStable",
+          "GondorWorkshop",
+          "GondorBattleTower",
+          "GondorWell",
+          "GondorStatue",
+          "GondorForge",
+          "GondorMarketPlace",
+          "GondorCastleWallHub"
+        ],
+        "units": [
+          "GondorTrebuchet",
+          "GondorCavalry",
+          "GondorTowerShieldGuard",
+          "GondorRanger"
+        ],
+        "upgrades": [
+          "Upgrade_GondorHeavyArmor",
+          "Upgrade_GondorFireArrows",
+          "Upgrade_GondorForgedBlades",
+          "Upgrade_GondorBasicTraining"
+        ],
+        "selectionTransitions": {
+          "GondorFighter": ["GUManMocap_ATNA", "GUManMocap_ATNB", "GUManMocap_ATND"],
+          "GondorArcher": ["GUArcher_ATNA", "GUArcher_ATNB", "GUArcher_ATNC"]
+        }
+      },
+      "runtimeOutputs": {
+        "buildingStats": "data/building-stats.json",
+        "icons": "data/m3/icon-census.json",
+        "upgrades": "data/m3/upgrades.json",
+        "spellbook": "data/spellbook.json",
+        "gameData": "data/game-data.json",
+        "houseColor": "data/house-color.json",
+        "selectionTransitions": "data/m3/selection-transitions.json",
+        "models": "data/m3/model-census.json"
+      },
+      "sourceNull": [
+        {
+          "id": "MenBatteringRam",
+          "reason": "BFME2 1.06 authors no Men battering-ram Object or Men production command; other-faction substitution is forbidden."
+        },
+        {
+          "id": "GBWallrampart.GBWallrampart",
+          "reason": "GondorCastleWallHub references this animation, but no matching W3D header exists in the effective retail cache."
+        },
+        {
+          "id": "GUCavalry_ATRA",
+          "reason": "GondorCavalry references this animation, but no matching W3D header exists in the effective retail cache."
+        },
+        {
+          "id": "BFME2Logo",
+          "reason": "No clean BFME2 logo-named raster leaf was found in the bounded retail cache census."
+        }
+      ]
+    }
+  },
+  "resources": [
+    {
+      "id": "m3-men-semantic-sources",
+      "kind": "data",
+      "converter": "hash-only",
+      "patterns": [
+        "data/ini/commandbutton.ini",
+        "data/ini/commandset.ini",
+        "data/ini/gamedata.ini",
+        "data/ini/housecolor.ini",
+        "data/ini/playertemplate.ini",
+        "data/ini/science.ini",
+        "data/ini/specialpower.ini",
+        "data/ini/upgrade.ini",
+        "data/lotr.str"
+      ],
+      "required": true,
+      "limit": 9,
+      "expected_count": 9
+    }
+  ],
+  "runtime_data": {}
+}
