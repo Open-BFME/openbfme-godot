@@ -15,8 +15,9 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $gameRoot = Join-Path $repoRoot "game"
 $contentRoot = Join-Path $repoRoot ".private\content-packs"
 $selectionPath = Join-Path $contentRoot "selection.json"
-$profilePath = Join-Path $repoRoot ".private\retail-work\profiles\men-fords-v1.generated.json"
-$expectedProfileSha256 = "365c11634473c3cd553a8bb64109371edbc07501a9d7654589c2befdd3138a53"
+$profilePath = Join-Path $repoRoot ".private\retail-work\profiles\men-fords-v0-complete.generated.json"
+$expectedProfileSha256 = "0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d"
+$minimumRetailSliceChecks = 208
 $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)?|ObjectDB instances|RID allocations|resources still in use|SCRIPT ERROR)\b'
 
 try {
@@ -57,7 +58,9 @@ try {
 
     $restartRows = [Collections.Generic.List[object]]::new()
     for ($index = 1; $index -le 3; $index++) {
-        $restartOutput = Invoke-ProofChecked $gate "restart_$index" $godot @("--headless", "--audio-driver", "WASAPI", "--path", $gameRoot, "--script", "res://tests/retail_slice_runner.gd") '(?m)^RETAIL_SLICE_RESULT passed=208 failed=0\s*$' $forbiddenDiagnostics
+        $restartOutput = Invoke-ProofChecked $gate "restart_$index" $godot @("--headless", "--audio-driver", "WASAPI", "--path", $gameRoot, "--script", "res://tests/retail_slice_runner.gd") '(?m)^RETAIL_SLICE_RESULT passed=([0-9]+) failed=0\s*$' $forbiddenDiagnostics
+        $passedMatch = [regex]::Match($restartOutput, '(?m)^RETAIL_SLICE_RESULT passed=([0-9]+) failed=0\s*$')
+        Assert-ProofTrue ($passedMatch.Success -and [int]$passedMatch.Groups[1].Value -ge $minimumRetailSliceChecks) "Restart $index passed fewer than the protected retail-slice baseline."
         $signatureMatch = [regex]::Match($restartOutput, '(?m)^RETAIL_SLICE_SIGNATURE ([0-9A-F]{8})\s*$')
         Assert-ProofTrue $signatureMatch.Success "Restart $index did not emit a deterministic signature."
         $restartRows.Add([ordered]@{ index = $index; bundleSha256 = $bundleSha256; signature = $signatureMatch.Groups[1].Value })

@@ -103,6 +103,9 @@ def test_m2_reliability_is_real_time_rendered_and_identity_bound() -> None:
     script = RELIABILITY.read_text(encoding="utf-8")
     runner = LIVE_SOAK.read_text(encoding="utf-8")
     assert "DurationSeconds = 1800" in script
+    assert "$minimumRetailSliceChecks = 208" in script
+    assert "$passedMatch.Groups[1].Value -ge $minimumRetailSliceChecks" in script
+    assert "RETAIL_SLICE_RESULT passed=208 failed=0" not in script
     assert "for ($index = 1; $index -le 3; $index++)" in script
     assert "RETAIL_SLICE_SIGNATURE" in script
     assert "Get-ProofWorkingTreeIdentity" in script

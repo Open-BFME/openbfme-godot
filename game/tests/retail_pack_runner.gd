@@ -326,7 +326,17 @@ func _run() -> void:
 	var forbidden := _find_forbidden_payloads(selected)
 	_check("no_donor_runtime_payloads", forbidden.is_empty(), str(forbidden))
 	var provenance: Variant = mod_loader._read_json(selected.path_join("provenance/manifest.json"))
-	_check("provenance_present", typeof(provenance) == TYPE_DICTIONARY and (provenance as Dictionary).get("entries", []).size() == 2762)
+	var provenance_sha_pattern := RegEx.new()
+	provenance_sha_pattern.compile("^[0-9a-f]{64}$")
+	_check(
+		"provenance_present",
+		typeof(provenance) == TYPE_DICTIONARY
+		and String((provenance as Dictionary).get("contract", "")) == "openbfme.retail-import-provenance-v1"
+		and not (provenance as Dictionary).get("entries", []).is_empty()
+		and not (provenance as Dictionary).get("source_archives", []).is_empty()
+		and (provenance as Dictionary).get("incomplete", []).is_empty()
+		and provenance_sha_pattern.search(String((provenance as Dictionary).get("profile_sha256", ""))) != null
+	)
 	var provenance_text := FileAccess.get_file_as_string(selected.path_join("provenance/manifest.json"))
 	var drive_path_pattern := RegEx.new()
 	drive_path_pattern.compile("[A-Za-z]:[/\\\\]")

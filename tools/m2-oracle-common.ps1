@@ -24,13 +24,13 @@ function Assert-M2OracleTrue {
 function Get-M2OracleContext {
     param([string]$RepoRoot)
     $root = [IO.Path]::GetFullPath($RepoRoot)
-    $profilePath = Join-Path $root ".private\retail-work\profiles\men-fords-v1.generated.json"
+    $profilePath = Join-Path $root ".private\retail-work\profiles\men-fords-v0-complete.generated.json"
     $contentRoot = [IO.Path]::GetFullPath((Join-Path $root ".private\content-packs"))
     $selectionPath = Join-Path $contentRoot "selection.json"
     Assert-M2OracleTrue (Test-Path -LiteralPath $profilePath -PathType Leaf) "Missing strict completion profile: $profilePath"
     Assert-M2OracleTrue (Test-Path -LiteralPath $selectionPath -PathType Leaf) "Missing private pack selection: $selectionPath"
     $profileSha256 = (Get-FileHash -LiteralPath $profilePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    Assert-M2OracleTrue ($profileSha256 -eq "365c11634473c3cd553a8bb64109371edbc07501a9d7654589c2befdd3138a53") "The strict completion profile hash changed."
+    Assert-M2OracleTrue ($profileSha256 -eq "0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d") "The strict completion profile hash changed."
     $selection = Get-Content -Raw -LiteralPath $selectionPath -Encoding UTF8 | ConvertFrom-Json
     $activePack = [string]$selection.activePack
     Assert-M2OracleTrue ($activePack -match '^bfme2-men-vslice/[0-9a-f]{64}$') "Selection does not name an immutable Men/Fords bundle."
@@ -50,7 +50,7 @@ function Get-M2OracleContext {
     ) "Selected immutable bundle is not the strict pending Men/Fords completion pack."
     Assert-M2OracleTrue (
         [string]$provenance.contract -eq "openbfme.retail-import-provenance-v1" -and
-        [string]$provenance.profile -eq "men-fords-v1" -and
+        [string]$provenance.profile -eq "men-fords-v0-complete-generated" -and
         [string]$provenance.profile_sha256 -eq $profileSha256 -and
         @($provenance.incomplete).Count -eq 0
     ) "Selected immutable bundle provenance targets another profile or remains incomplete."

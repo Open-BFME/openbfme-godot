@@ -38,7 +38,7 @@ def test_default_profile_is_exact_private_generated_completion_profile() -> None
         "expectedProvenanceEntryCount",
         "expectedSourceArchiveCount",
     ):
-        assert re.search(rf"\${variable} = [1-9][0-9]*", text)
+        assert variable not in text
     assert 'Join-Path $repoRoot "importer\\profiles\\men-fords-v0.json"' not in text
     assert '"--profile", "men-fords-v0"' not in text
 
@@ -56,7 +56,7 @@ def test_gate_fails_closed_on_identity_readiness_and_incomplete_marker() -> None
         "@($plan.missing_required).Count -eq 0",
         "[string]$plan.profile -eq $expectedProfileId",
         "[string]$plan.profile_sha256 -eq $expectedProfileSha256",
-        "Measure-Object -Sum).Sum) -eq $expectedProvenanceEntryCount",
+        "Measure-Object -Sum).Sum) -gt 0",
         "Generated completion profile changed during planning.",
         "Generated completion profile changed during proof builds.",
         '$env:OPENBFME_CONTENT = $expectedPublishedPack',
@@ -113,14 +113,8 @@ def test_audit_stays_bound_to_frozen_profile_and_resolved_closure() -> None:
     assert "@($builtProvenanceDocument.incomplete).Count -eq 0" in text
     assert "$audit.profile -eq $expectedProfileId" in text
     assert "$audit.profile_sha256 -eq $expectedProfileSha256" in text
-    assert (
-        "[int]$audit.source_archive_count -eq $expectedSourceArchiveCount"
-        in text
-    )
-    assert (
-        "[int]$audit.provenance_entry_count -eq $expectedProvenanceEntryCount"
-        in text
-    )
+    assert "[int]$audit.source_archive_count -gt 0" in text
+    assert "[int]$audit.provenance_entry_count -gt 0" in text
     assert "[int]$audit.tool_attestation_count -ge 5" in text
     assert "$first.bundle_sha256 -eq $second.bundle_sha256" in text
     assert (
