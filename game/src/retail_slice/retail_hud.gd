@@ -1460,8 +1460,16 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 	selection_portrait.visible = false
 	for button_value in train_buttons.values():
 		_make_retail_icon_only(button_value as Button)
+		_wire_button_feel(button_value as Button)
 	for button_value in unit_action_buttons.values():
 		_make_retail_icon_only(button_value as Button)
+		_wire_button_feel(button_value as Button)
+	for orb_value in orb_buttons.values():
+		_wire_button_feel(orb_value as Button)
+	for power_button in power_buttons:
+		_wire_button_feel(power_button)
+	for queue_button in production_queue_buttons:
+		_wire_button_feel(queue_button)
 
 
 func _make_retail_icon_only(button: Button) -> void:
@@ -1745,11 +1753,33 @@ func _add_slider(parent: VBoxContainer, title: String, callback: Callable) -> HS
 	return slider
 
 
+func _menu_glass_box(background: Color, border: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = background
+	style.border_color = border
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(3)
+	style.content_margin_left = 14.0
+	style.content_margin_right = 14.0
+	style.content_margin_top = 6.0
+	style.content_margin_bottom = 6.0
+	return style
+
+
 func _add_action_button(parent: VBoxContainer, text: String, callback: Callable) -> void:
+	# Retail menu buttons are green glass with a gold rim and pale-gold text;
+	# hybrid equivalent from the retail palette rather than APT execution.
 	var button := Button.new()
 	button.text = text
 	button.custom_minimum_size.y = 42
-	_style_button(button)
+	button.add_theme_stylebox_override("normal", _menu_glass_box(Color(0.086, 0.184, 0.118), Color(0.42, 0.5, 0.3)))
+	button.add_theme_stylebox_override("hover", _menu_glass_box(Color(0.13, 0.27, 0.16), Color(0.72, 0.66, 0.38)))
+	button.add_theme_stylebox_override("pressed", _menu_glass_box(Color(0.055, 0.12, 0.08), Color(0.72, 0.66, 0.38)))
+	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	button.add_theme_color_override("font_color", Color(0.85, 0.9, 0.78))
+	button.add_theme_color_override("font_hover_color", Color(0.96, 0.9, 0.62))
+	button.add_theme_color_override("font_pressed_color", Color(0.7, 0.72, 0.58))
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.pressed.connect(callback)
 	parent.add_child(button)
 
@@ -1880,6 +1910,27 @@ func _wire_retail_tooltips() -> void:
 		power.set_meta("tooltip_group", "power")
 		power.set_meta("tooltip_power_id", String(RETAIL_POWER_IMAGE_IDS[index]))
 		_register_button_tooltip(power)
+
+
+func _wire_button_feel(button: Button) -> void:
+	# Hybrid interaction feel: retail-style warm glow on hover and a press
+	# dip, applied by modulation so the authored icon art stays untouched.
+	if button.has_meta("feel_wired"):
+		return
+	button.set_meta("feel_wired", true)
+	button.mouse_entered.connect(func() -> void:
+		if not button.disabled:
+			button.self_modulate = Color(1.22, 1.16, 1.02)
+	)
+	button.mouse_exited.connect(func() -> void:
+		button.self_modulate = Color.WHITE
+	)
+	button.button_down.connect(func() -> void:
+		button.self_modulate = Color(0.82, 0.78, 0.7)
+	)
+	button.button_up.connect(func() -> void:
+		button.self_modulate = Color(1.22, 1.16, 1.02) if button.is_hovered() else Color.WHITE
+	)
 
 
 func _register_button_tooltip(button: Button) -> void:
@@ -2046,4 +2097,5 @@ func _refresh_side_command_bar(builders_only: bool) -> void:
 						side_button.set_meta("tooltip_title", String(entry.get("title", "")))
 						side_button.set_meta("tooltip_desc", String(entry.get("description", "")))
 				_register_button_tooltip(side_button)
+				_wire_button_feel(side_button)
 	retail_side_command_bar.set_builder_visible(builders_only)

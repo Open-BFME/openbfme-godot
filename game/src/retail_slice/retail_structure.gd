@@ -1433,6 +1433,14 @@ func _apply_declared_phase_animation(node: Node3D, phase: String, progress: floa
 		var clip := _first_declared_available_clip(player, declared_names)
 		if clip == "":
 			continue
+		if mode == "loop":
+			# Source GLB clips preserve their one-shot metadata; the declared
+			# loop mode must be enforced or idle animations (banners, doors)
+			# play once at activation and freeze — which is why long-standing
+			# preplaced structures looked static while fresh builds animated.
+			var looped := player.get_animation(clip)
+			if looped != null:
+				looped.loop_mode = Animation.LOOP_LINEAR
 		player.play(clip)
 		if mode == "manual-progress":
 			player.pause()
