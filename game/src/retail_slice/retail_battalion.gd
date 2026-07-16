@@ -34,6 +34,7 @@ var retail_visual_count := 0
 var rigged_member_count := 0
 var animation_player_count := 0
 var team_tinted_surface_count := 0
+var house_color_surface_count := 0
 var team_color_status := ""
 var member_overlay_status := ""
 var clip_map: Dictionary = {}
@@ -215,6 +216,7 @@ func _build_members(expected_members: int, formation_positions: Array) -> void:
 		if bool(visual.get_meta("has_skeleton", false)):
 			rigged_member_count += 1
 		team_tinted_surface_count += int(visual.get_meta("team_tinted_surfaces", 0))
+		house_color_surface_count += int(visual.get_meta("house_color_surfaces", 0))
 		if team_color_status == "":
 			team_color_status = String(visual.get_meta("team_color_status", ""))
 		member_animation_players[member_index] = []

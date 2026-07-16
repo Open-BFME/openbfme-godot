@@ -2,6 +2,8 @@ class_name AssetFactory
 extends RefCounted
 ## Resolve pack meshes into Node3D. OBJ is parsed into ArrayMesh (never fake BoxMesh stubs).
 
+const RetailHouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
+
 static var _mesh_cache: Dictionary = {}
 static var _private_retail_pack_cache: Dictionary = {}
 const MAX_MESH_CACHE_ENTRIES := 16
@@ -90,6 +92,12 @@ static func make_bundle_object_visual(object_id: String, side: int, source_unit_
 			_scale_to_height(loaded, target_height)
 		var private_retail := _is_private_retail_definition(definition)
 		var tinted_surfaces := 0 if private_retail else _tint_if_needed(loaded, side, false)
+		var house_colored := 0
+		if private_retail:
+			# Exact retail house color: recolor only mask-marked pixels using the
+			# pack's converted HouseColor masks. Invented whole-material tints
+			# stay suppressed in private parity mode.
+			house_colored = RetailHouseColorScript.apply(loaded, side, String(definition.get("_pack_root", "")))
 		root.add_child(loaded)
 		root.set_meta("authored", true)
 		root.set_meta("mesh_path", mesh_path)
@@ -97,7 +105,9 @@ static func make_bundle_object_visual(object_id: String, side: int, source_unit_
 		root.set_meta("content_object_id", object_id)
 		root.set_meta("animation_capability_id", String(definition.get("animationCapabilityId", "")))
 		root.set_meta("team_tinted_surfaces", tinted_surfaces)
-		root.set_meta("team_color_status", "source-OkToChangeModelColor-awaiting-exact-house-color-no-invented-tint" if private_retail else "fallback-team-tint")
+		root.set_meta("house_color_surfaces", house_colored)
+		var retail_color_status := "retail-house-color-masked" if house_colored > 0 else "source-OkToChangeModelColor-awaiting-exact-house-color-no-invented-tint"
+		root.set_meta("team_color_status", retail_color_status if private_retail else "fallback-team-tint")
 		root.set_meta("team", side)
 		root.set_meta("source_unit_scale", source_unit_scale if source_unit_scale > 0.0 else 0.0)
 		_annotate_rig_and_animation(root, loaded)
@@ -159,13 +169,17 @@ static func make_explicit_model_visual(
 	var definition: Dictionary = ContentDB.get_bundle_object(content_object_id) if content_object_id != "" else {}
 	var private_retail := _is_private_retail_definition(definition)
 	var tinted_surfaces := 0 if private_retail else _tint_if_needed(loaded, side, false)
+	var house_colored := 0
+	if private_retail:
+		house_colored = RetailHouseColorScript.apply(loaded, side, String(definition.get("_pack_root", "")))
 	root.add_child(loaded)
 	root.set_meta("authored", true)
 	root.set_meta("mesh_path", resolved_model_path)
 	root.set_meta("mesh_kind", _mesh_kind(loaded))
 	root.set_meta("content_object_id", content_object_id)
 	root.set_meta("team_tinted_surfaces", tinted_surfaces)
-	root.set_meta("team_color_status", "source-OkToChangeModelColor-awaiting-exact-house-color-no-invented-tint" if private_retail else "fallback-team-tint")
+	root.set_meta("house_color_surfaces", house_colored)
+	root.set_meta("team_color_status", ("retail-house-color-masked" if house_colored > 0 else "source-OkToChangeModelColor-awaiting-exact-house-color-no-invented-tint") if private_retail else "fallback-team-tint")
 	root.set_meta("team", side)
 	_annotate_rig_and_animation(root, loaded)
 	return root

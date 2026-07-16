@@ -314,8 +314,17 @@ func _run() -> void:
 
 	var blue_materials := _member_textured_materials(exemplar)
 	var red_materials := _member_textured_materials(enemy_exemplar)
-	_check("invented_team_tint_is_suppressed_in_private_parity", exemplar != null and enemy_exemplar != null and int(exemplar.team_tinted_surface_count) == 0 and int(enemy_exemplar.team_tinted_surface_count) == 0 and String(exemplar.team_color_status).contains("awaiting-exact-house-color"), "blue=%s red=%s status=%s" % [str(exemplar.team_tinted_surface_count if exemplar != null else -1), str(enemy_exemplar.team_tinted_surface_count if enemy_exemplar != null else -1), String(exemplar.team_color_status if exemplar != null else "missing")])
-	_check("retail_textures_survive_without_invented_tint", blue_materials.size() == 15 and red_materials.size() == 15 and (blue_materials[0] as StandardMaterial3D).albedo_texture != null and (red_materials[0] as StandardMaterial3D).albedo_texture != null, "blue=%d red=%d" % [blue_materials.size(), red_materials.size()])
+	var blue_house_materials := _member_house_color_materials(exemplar)
+	var red_house_materials := _member_house_color_materials(enemy_exemplar)
+	# Invented whole-material tints stay suppressed; exact mask-driven house
+	# color (retail HouseColor textures from the M3 pack) is now applied, so the
+	# status reports masked recoloring and at least one surface per team uses it.
+	_check("invented_team_tint_is_suppressed_in_private_parity", exemplar != null and enemy_exemplar != null and int(exemplar.team_tinted_surface_count) == 0 and int(enemy_exemplar.team_tinted_surface_count) == 0 and int(exemplar.house_color_surface_count) > 0 and int(enemy_exemplar.house_color_surface_count) > 0 and String(exemplar.team_color_status).contains("retail-house-color-masked"), "blue=%s/%s red=%s/%s status=%s" % [str(exemplar.team_tinted_surface_count if exemplar != null else -1), str(exemplar.house_color_surface_count if exemplar != null else -1), str(enemy_exemplar.team_tinted_surface_count if enemy_exemplar != null else -1), str(enemy_exemplar.house_color_surface_count if enemy_exemplar != null else -1), String(exemplar.team_color_status if exemplar != null else "missing")])
+	_check("retail_textures_survive_without_invented_tint", blue_materials.size() == 15 and red_materials.size() == 15 and blue_house_materials.size() == 15 and red_house_materials.size() == 15 and (blue_materials[0] as StandardMaterial3D).albedo_texture != null and (red_materials[0] as StandardMaterial3D).albedo_texture != null, "blue=%d/%d red=%d/%d" % [blue_materials.size(), blue_house_materials.size(), red_materials.size(), red_house_materials.size()])
+	if not blue_house_materials.is_empty() and not red_house_materials.is_empty():
+		var blue_team_param := Color((blue_house_materials[0] as ShaderMaterial).get_shader_parameter("team_color"))
+		var red_team_param := Color((red_house_materials[0] as ShaderMaterial).get_shader_parameter("team_color"))
+		_check("house_color_teams_differ", not blue_team_param.is_equal_approx(red_team_param) and blue_team_param.b > blue_team_param.r and red_team_param.r > red_team_param.b, "blue=%s red=%s" % [str(blue_team_param), str(red_team_param)])
 	if not blue_materials.is_empty() and not red_materials.is_empty():
 		var blue_color := (blue_materials[0] as StandardMaterial3D).albedo_color
 		var red_color := (red_materials[0] as StandardMaterial3D).albedo_color
@@ -829,6 +838,34 @@ func _member_textured_materials(battalion) -> Array[StandardMaterial3D]:
 		var material := _first_textured_material(child)
 		if material != null:
 			result.append(material)
+	return result
+
+
+## One entry per member: the first house-color ShaderMaterial found on its
+## visual (mask-driven exact recolor applied by AssetFactory in parity mode).
+func _member_house_color_materials(battalion) -> Array[ShaderMaterial]:
+	var result: Array[ShaderMaterial] = []
+	if battalion == null:
+		return result
+	for child in battalion.get_children():
+		if not child.has_meta("content_object_id"):
+			continue
+		var stack: Array[Node] = [child]
+		while not stack.is_empty():
+			var current: Node = stack.pop_back()
+			if current is MeshInstance3D and (current as MeshInstance3D).mesh != null:
+				var mesh: Mesh = (current as MeshInstance3D).mesh
+				var found: ShaderMaterial = null
+				for surface in range(mesh.get_surface_count()):
+					var material := mesh.surface_get_material(surface)
+					if material is ShaderMaterial and (material as ShaderMaterial).get_shader_parameter("mask_texture") != null:
+						found = material
+						break
+				if found != null:
+					result.append(found)
+					break
+			for grandchild in current.get_children():
+				stack.append(grandchild)
 	return result
 
 
