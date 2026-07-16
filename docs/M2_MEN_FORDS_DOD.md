@@ -27,9 +27,9 @@ git revision + dirty-state digest + profile SHA-256 + bundle SHA-256
 
 ## Gate 1: exact reproducible pack
 
-- Profile ID is `men-fords-v0-complete-generated`.
+- Profile ID is `men-fords-v1`.
 - Profile SHA-256 is
-  `0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d`.
+  `365c11634473c3cd553a8bb64109371edbc07501a9d7654589c2befdd3138a53`.
 - The plan resolves 378 resources, 2,572 source-entry projections, and 2,538
   unique selected files with zero missing required inputs.
 - Build A and Build B are byte-identical.

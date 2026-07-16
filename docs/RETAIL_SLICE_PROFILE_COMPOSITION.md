@@ -199,7 +199,7 @@ sealed full profile without reopening its earlier decisions:
 The current deterministic result is 376 resources, 2,568 selected-entry
 references, 2,534 unique retail files, 34 intentional projections, and zero
 missing required inputs. The profile SHA-256 is
-`0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d`.
+`365c11634473c3cd553a8bb64109371edbc07501a9d7654589c2befdd3138a53`.
 Two independent generations were byte-identical. Unsupported renderer/gameplay
 semantics remain named blockers and `vertical_slice_complete` remains false.
 
@@ -222,6 +222,6 @@ $python = '.private\retail-work\tools\python-3.12-env\Scripts\python.exe'
   --men-damage-audio-contract .private\scratch\men-damage-audio\contract-a.json `
   --men-damage-effects-contract .private\scratch\men-damage-effects\contract-a.json `
   --catalog .private\retail-work\catalog\bfme2.json `
-  --output .private\retail-work\profiles\men-fords-v0-complete.generated.json `
+  --output .private\retail-work\profiles\men-fords-v1.generated.json `
   --report .private\retail-work\reports\men-fords-v0-complete-composition.generated.json
 ```

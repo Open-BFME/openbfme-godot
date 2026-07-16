@@ -7,7 +7,10 @@ extends RefCounted
 ## this class validates those files and exposes a small source-derived runtime
 ## view to the private retail slice.
 
-const MAX_DOCUMENT_BYTES := 2 * 1024 * 1024
+# 8 MiB: the provenance manifest scales with pack file count (the M3 full-Men
+# pack's 2,362-file inventory is ~2.2 MiB); keep the bound fail-closed but
+# leave headroom for the remaining faction growth.
+const MAX_DOCUMENT_BYTES := 8 * 1024 * 1024
 const MAX_TERRAIN_CELLS := 1_000_000
 const MAX_TERRAIN_BINARY_BYTES := MAX_TERRAIN_CELLS * 4
 const MAX_TERRAIN_TEXTURES := 256

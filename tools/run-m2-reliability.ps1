@@ -15,8 +15,8 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $gameRoot = Join-Path $repoRoot "game"
 $contentRoot = Join-Path $repoRoot ".private\content-packs"
 $selectionPath = Join-Path $contentRoot "selection.json"
-$profilePath = Join-Path $repoRoot ".private\retail-work\profiles\men-fords-v0-complete.generated.json"
-$expectedProfileSha256 = "0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d"
+$profilePath = Join-Path $repoRoot ".private\retail-work\profiles\men-fords-v1.generated.json"
+$expectedProfileSha256 = "365c11634473c3cd553a8bb64109371edbc07501a9d7654589c2befdd3138a53"
 $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)?|ObjectDB instances|RID allocations|resources still in use|SCRIPT ERROR)\b'
 
 try {

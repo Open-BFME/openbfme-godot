@@ -13,12 +13,12 @@ $ErrorActionPreference = "Stop"
 
 $gate = "M2_MEN_FORDS_GATE"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$profilePath = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\retail-work\profiles\men-fords-v0-complete.generated.json"))
+$profilePath = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\retail-work\profiles\men-fords-v1.generated.json"))
 $contentRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\content-packs"))
 $selectionPath = Join-Path $contentRoot "selection.json"
 $retailGate = Join-Path $PSScriptRoot "gate-retail.ps1"
 $focusedGate = Join-Path $PSScriptRoot "gate-m2-focused.ps1"
-$expectedProfileSha256 = "0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d"
+$expectedProfileSha256 = "365c11634473c3cd553a8bb64109371edbc07501a9d7654589c2befdd3138a53"
 $expectedPackId = "bfme2-men-vslice"
 $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)?|ObjectDB instances|RID allocations|resources still in use|SCRIPT ERROR)\b'
 $requiredCaptureIds = $script:M2OracleCaptureIds

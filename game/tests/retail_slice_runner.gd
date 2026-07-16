@@ -74,9 +74,15 @@ func _run() -> void:
 		_check("cooked_binary_digests_exact", String(slice.source_map_data.heightmap_sha256).to_upper() == "449D7B4BADA8549B5ED3EC8E908186922D05256D6F728B433018A6F381EDA7FB" and String(slice.source_map_data.passability_sha256).to_upper() == "11E911C6BA50A0D8DCF7FC3A71242B013B5DFDCE1169AE86C939D2DDD5E654B9")
 		_check("representative_height_samples_exact", _source_height_samples_match(slice.source_map_data))
 		_check("declared_playable_inset_exact", int(slice.source_map_data.border_width) == 20 and Vector2(slice.source_map_data.playable_world_extent).is_equal_approx(Vector2(3750.0, 3130.0)) and Vector2i(slice.source_map_data.playable_grid_min) == Vector2i(20, 20) and Vector2i(slice.source_map_data.playable_grid_max) == Vector2i(395, 333))
-		var playable_source_min: Vector2 = slice.source_map_data.local_to_source_horizontal(slice.source_map_data.map_outline[0])
-		var playable_source_max: Vector2 = slice.source_map_data.local_to_source_horizontal(slice.source_map_data.map_outline[2])
-		_check("playable_polygon_uses_declared_border", playable_source_min.is_equal_approx(Vector2(200.0, -200.0)) and playable_source_max.is_equal_approx(Vector2(3950.0, -3330.0)), "%s / %s" % [str(playable_source_min), str(playable_source_max)])
+		if slice.source_map_data.map_outline.size() >= 3:
+			var playable_source_min: Vector2 = slice.source_map_data.local_to_source_horizontal(slice.source_map_data.map_outline[0])
+			var playable_source_max: Vector2 = slice.source_map_data.local_to_source_horizontal(slice.source_map_data.map_outline[2])
+			_check("playable_polygon_uses_declared_border", playable_source_min.is_equal_approx(Vector2(200.0, -200.0)) and playable_source_max.is_equal_approx(Vector2(3950.0, -3330.0)), "%s / %s" % [str(playable_source_min), str(playable_source_max)])
+		else:
+			# Empty outline means map configure() failed earlier; report it as a
+			# failed check instead of crashing _run (a crash here left the
+			# headless runner alive forever with no result line).
+			_check("playable_polygon_uses_declared_border", false, "map_outline empty (map load failed)")
 		_check("bounded_navigation_built_once", bool(slice.source_map_data.navigation_ready) and int(slice.source_map_data.navigation_build_count) == 1 and int(slice.source_map_data.navigation_walkable_count) > 80000 and int(slice.source_map_data.navigation_water_blocked_count) > 0 and int(slice.source_map_data.navigation_ford_corridor_count) > 0, "walkable=%d water_blocked=%d corridors=%d builds=%d" % [slice.source_map_data.navigation_walkable_count, slice.source_map_data.navigation_water_blocked_count, slice.source_map_data.navigation_ford_corridor_count, slice.source_map_data.navigation_build_count])
 		_check("reviewed_ford2_cell_stays_blocked", slice.source_map_data.is_impassable_at(208, 142) and not slice.source_map_data.is_navigation_walkable(Vector2i(208, 142)))
 	if not bool(slice.ready_ok) or slice.source_map_data == null or not bool(slice.source_map_data.ready) or slice.simulation == null:
