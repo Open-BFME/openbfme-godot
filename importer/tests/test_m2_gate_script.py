@@ -253,11 +253,23 @@ def test_m2_oracle_tools_fail_closed_and_revoke_stale_review() -> None:
     assert "[string]$provenance.profile_sha256 -eq $profileSha256" in common
     assert "@($provenance.incomplete).Count -eq 0" in common
     assert 'approved = $false' in workspace
+    assert 'schemaVersion = 1' in workspace
+    assert 'retailCameraState = ""' in workspace
+    assert 'godotCameraState = ""' in workspace
     assert 'ValidateSet("Retail", "Godot")' in capture
     assert '"-f", "gdigrab"' in capture
     assert "Captured viewport is" in capture
     assert '$capture.approved = $false' in capture
+    assert '$cameraStateProperty = "${sideName}CameraState"' in capture
+    assert '$capture.PSObject.Properties[$cameraStateProperty].Value = $CameraState' in capture
+    assert '$capture.PSObject.Properties[$cameraStateProperty].Value -eq $CameraState -or $Replace' in capture
+    assert 'The pair already uses another camera state' not in capture
     assert '$capture.approved = ($UnresolvedSeverity0 -eq 0' in review
+    assert 'Capture pair lacks $side camera state.' in review
+    assert "[int]$Manifest.schemaVersion -eq 1" in common
+    assert "[int]$captureManifest.schemaVersion -eq 1" in GATE.read_text(encoding="utf-8")
+    assert "Capture '$([string]$capture.id)' lacks $side camera state." in finalize
+    assert "Capture $([string]$capture.id) has no $side camera state." in GATE.read_text(encoding="utf-8")
     assert "Performance thresholds are frozen and cannot be overwritten" in freeze
     assert "Assert-M2ReliabilitySoakEvidence" in finalize
     assert "-MinimumDurationSeconds 1800" in finalize

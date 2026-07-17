@@ -34,6 +34,7 @@ foreach ($capture in @($manifest.captures)) {
     Assert-M2OracleTrue ([bool]$capture.approved -and [int]$capture.unresolvedSeverity0 -eq 0 -and [int]$capture.unresolvedSeverity1 -eq 0) "Capture '$([string]$capture.id)' is not approved with zero severity-0/1 differences."
     Assert-M2OracleTrue (-not [string]::IsNullOrWhiteSpace([string]$capture.approvedBy) -and -not [string]::IsNullOrWhiteSpace([string]$capture.approvedAtUtc)) "Capture '$([string]$capture.id)' lacks reviewer evidence."
     foreach ($side in @("retail", "godot")) {
+        Assert-M2OracleTrue (-not [string]::IsNullOrWhiteSpace([string]$capture.("${side}CameraState"))) "Capture '$([string]$capture.id)' lacks $side camera state."
         $path = Assert-M2OracleContainedPath (Join-Path (Split-Path -Parent $manifestPath) ([string]$capture.("${side}Path"))) $context.oracleRoot
         Assert-M2OracleTrue (Test-Path -LiteralPath $path -PathType Leaf) "Capture '$([string]$capture.id)' lacks $side image."
         $actualSha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()

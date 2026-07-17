@@ -87,7 +87,7 @@ function Get-M2OracleRelativePath {
 
 function Assert-M2OracleManifestIdentity {
     param([object]$Manifest, [object]$Context)
-    Assert-M2OracleTrue ([string]$Manifest.schema -eq "openbfme.m2-men-fords-oracle-captures" -and [int]$Manifest.schemaVersion -eq 0) "Capture manifest schema is invalid."
+    Assert-M2OracleTrue ([string]$Manifest.schema -eq "openbfme.m2-men-fords-oracle-captures" -and [int]$Manifest.schemaVersion -eq 1) "Capture manifest schema is invalid."
     Assert-M2OracleTrue ([string]$Manifest.profileSha256 -eq [string]$Context.profileSha256) "Capture manifest targets another profile."
     Assert-M2OracleTrue ([string]$Manifest.bundleSha256 -eq [string]$Context.bundleSha256) "Capture manifest targets another bundle."
     Assert-M2OracleTrue ([string]$Manifest.gitRevision -eq [string]$Context.gitRevision -and [string]$Manifest.dirtyStateDigest -eq [string]$Context.dirtyStateDigest) "Capture manifest targets another source identity. Start a new oracle workspace after source changes."

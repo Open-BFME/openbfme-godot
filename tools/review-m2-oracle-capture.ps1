@@ -33,10 +33,12 @@ Assert-M2OracleManifestIdentity $manifest $context
 $row = @($manifest.captures | Where-Object { [string]$_.id -ceq $CaptureId })
 Assert-M2OracleTrue ($row.Count -eq 1) "Capture row '$CaptureId' is not unique."
 $capture = $row[0]
-Assert-M2OracleTrue (-not [string]::IsNullOrWhiteSpace([string]$capture.viewport) -and -not [string]::IsNullOrWhiteSpace([string]$capture.cameraState)) "Capture pair lacks viewport or camera state."
+Assert-M2OracleTrue (-not [string]::IsNullOrWhiteSpace([string]$capture.viewport)) "Capture pair lacks a viewport."
 foreach ($side in @("retail", "godot")) {
+    $cameraState = [string]$capture.("${side}CameraState")
     $relative = [string]$capture.("${side}Path")
     $expectedSha = [string]$capture.("${side}Sha256")
+    Assert-M2OracleTrue (-not [string]::IsNullOrWhiteSpace($cameraState)) "Capture pair lacks $side camera state."
     Assert-M2OracleTrue (-not [string]::IsNullOrWhiteSpace($relative) -and $expectedSha -match '^[0-9a-f]{64}$') "Capture pair lacks $side evidence."
     $path = Assert-M2OracleContainedPath (Join-Path (Split-Path -Parent $manifestPath) $relative) $context.oracleRoot
     Assert-M2OracleTrue (Test-Path -LiteralPath $path -PathType Leaf) "$side image is missing."

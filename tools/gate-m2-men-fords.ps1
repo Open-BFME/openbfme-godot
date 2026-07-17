@@ -112,7 +112,7 @@ try {
     $captureManifestSha256 = (Get-FileHash -LiteralPath $captureManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-M2 ($captureManifestSha256 -eq [string]$approval.captureManifestSha256) "Capture manifest hash disagrees with approval."
     $captureManifest = Get-Json $captureManifestPath
-    Assert-M2 ([string]$captureManifest.schema -eq 'openbfme.m2-men-fords-oracle-captures' -and [int]$captureManifest.schemaVersion -eq 0) "Capture manifest schema is invalid."
+    Assert-M2 ([string]$captureManifest.schema -eq 'openbfme.m2-men-fords-oracle-captures' -and [int]$captureManifest.schemaVersion -eq 1) "Capture manifest schema is invalid."
     Assert-M2 ([string]$captureManifest.profileSha256 -eq $profileSha256) "Capture manifest targets another profile."
     Assert-M2 ([string]$captureManifest.bundleSha256 -eq $bundleSha256) "Capture manifest targets another bundle."
     Assert-M2 ([string]$captureManifest.gitRevision -eq [string]$workingTreeIdentity.revision -and [string]$captureManifest.dirtyStateDigest -eq [string]$workingTreeIdentity.dirtyStateDigest) "Capture manifest targets another source identity."
@@ -128,11 +128,11 @@ try {
         Assert-M2 ([string]$capture.profileSha256 -eq $profileSha256 -and [string]$capture.bundleSha256 -eq $bundleSha256) "Capture $([string]$capture.id) targets another pack identity."
         Assert-M2 ([string]$capture.gitRevision -eq [string]$workingTreeIdentity.revision -and [string]$capture.dirtyStateDigest -eq [string]$workingTreeIdentity.dirtyStateDigest) "Capture $([string]$capture.id) targets another source identity."
         Assert-M2 (-not [string]::IsNullOrWhiteSpace([string]$capture.viewport)) "Capture $([string]$capture.id) has no viewport."
-        Assert-M2 (-not [string]::IsNullOrWhiteSpace([string]$capture.cameraState)) "Capture $([string]$capture.id) has no camera state."
         Assert-M2 ($null -ne $capture.notes) "Capture $([string]$capture.id) has no notes field."
         Assert-M2 ([int]$capture.unresolvedSeverity0 -eq 0 -and [int]$capture.unresolvedSeverity1 -eq 0) "Capture $([string]$capture.id) retains a severity-0/1 difference."
         Assert-M2 (-not [string]::IsNullOrWhiteSpace([string]$capture.approvedBy) -and -not [string]::IsNullOrWhiteSpace([string]$capture.approvedAtUtc)) "Capture $([string]$capture.id) lacks reviewer evidence."
         foreach ($side in @('retail', 'godot')) {
+            Assert-M2 (-not [string]::IsNullOrWhiteSpace([string]$capture.("${side}CameraState"))) "Capture $([string]$capture.id) has no $side camera state."
             $property = "${side}Path"
             Assert-M2 ($null -ne $capture.PSObject.Properties[$property] -and -not [string]::IsNullOrWhiteSpace([string]$capture.$property)) "Capture $([string]$capture.id) has no $property."
             $imagePath = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $captureManifestPath) ([string]$capture.$property)))

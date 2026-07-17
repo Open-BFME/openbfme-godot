@@ -175,14 +175,16 @@ Assert-M2OracleManifestIdentity $manifest $context
 $row = @($manifest.captures | Where-Object { [string]$_.id -ceq $CaptureId })
 Assert-M2OracleTrue ($row.Count -eq 1) "Capture row '$CaptureId' is not unique."
 $capture = $row[0]
+$sideName = $Side.ToLowerInvariant()
+$cameraStateProperty = "${sideName}CameraState"
+Assert-M2OracleTrue ($null -ne $capture.PSObject.Properties[$cameraStateProperty]) "Capture manifest lacks the $sideName camera-state field."
 if (-not [string]::IsNullOrWhiteSpace([string]$capture.viewport)) {
     Assert-M2OracleTrue ([string]$capture.viewport -eq $Viewport) "The pair already uses viewport '$($capture.viewport)'. Reinitialize the pair deliberately instead of mixing viewports."
 }
-if (-not [string]::IsNullOrWhiteSpace([string]$capture.cameraState)) {
-    Assert-M2OracleTrue ([string]$capture.cameraState -eq $CameraState) "The pair already uses another camera state. Reinitialize the pair deliberately instead of mixing states."
+if (-not [string]::IsNullOrWhiteSpace([string]$capture.PSObject.Properties[$cameraStateProperty].Value)) {
+    Assert-M2OracleTrue ([string]$capture.PSObject.Properties[$cameraStateProperty].Value -eq $CameraState -or $Replace) "The $sideName capture already uses another camera state. Use -Replace or reinitialize that side deliberately instead of mixing states."
 }
 
-$sideName = $Side.ToLowerInvariant()
 $manifestRoot = Split-Path -Parent $manifestPath
 $outputPath = Assert-M2OracleContainedPath (Join-Path $manifestRoot "captures\$sideName\$CaptureId.png") $context.oracleRoot
 $outputPath = Assert-M2PhysicalOutputPath $outputPath $context.oracleRoot
@@ -271,7 +273,7 @@ try {
 
     $relativePath = Get-M2OracleRelativePath $manifestRoot $outputPath
     $capture.viewport = $Viewport
-    $capture.cameraState = $CameraState
+    $capture.PSObject.Properties[$cameraStateProperty].Value = $CameraState
     $capture.PSObject.Properties["${sideName}Path"].Value = $relativePath
     $capture.PSObject.Properties["${sideName}Sha256"].Value = $sha256
     if (-not [string]::IsNullOrWhiteSpace($Notes)) { $capture.notes = $Notes }
@@ -332,7 +334,7 @@ try {
     $publishedManifest = Get-Content -Raw -LiteralPath $manifestPath -Encoding UTF8 | ConvertFrom-Json
     Assert-M2OracleManifestIdentity $publishedManifest $context
     $publishedRow = @($publishedManifest.captures | Where-Object { [string]$_.id -ceq $CaptureId })[0]
-    Assert-M2OracleTrue ([string]$publishedRow.PSObject.Properties["${sideName}Path"].Value -eq $relativePath -and [string]$publishedRow.PSObject.Properties["${sideName}Sha256"].Value -eq $sha256 -and -not [bool]$publishedRow.approved) "Published manifest row does not match staged capture evidence."
+    Assert-M2OracleTrue ([string]$publishedRow.PSObject.Properties[$cameraStateProperty].Value -eq $CameraState -and [string]$publishedRow.PSObject.Properties["${sideName}Path"].Value -eq $relativePath -and [string]$publishedRow.PSObject.Properties["${sideName}Sha256"].Value -eq $sha256 -and -not [bool]$publishedRow.approved) "Published manifest row does not match staged capture evidence."
     $publishedIdentity = Get-ProofWorkingTreeIdentity $repoRoot
     Assert-M2OracleTrue ([string]$publishedIdentity.revision -eq $context.gitRevision -and [string]$publishedIdentity.dirtyStateDigest -eq $context.dirtyStateDigest) "Source identity changed while publishing capture evidence."
 }
