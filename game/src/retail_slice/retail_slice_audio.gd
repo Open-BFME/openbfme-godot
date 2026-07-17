@@ -845,6 +845,8 @@ func _consume_event(event: Dictionary) -> void:
 		var defeated_object_id := _object_id_for_event(event, target_id)
 		_play_routed(route_roster_voice(defeated_object_id, "death", sequence), voice_player)
 		_play_routed(route_audio_event("ImpactHorse" if defeated_object_id == KNIGHT_OBJECT_ID else "BodyFallSoldier", sequence), sfx_player)
+		if not INITIAL_ENTITY_OBJECT_IDS.has(target_id):
+			_entity_object_ids.erase(target_id)
 	elif kind == "combat.swing":
 		var attacker_object_id := _object_id_for_event(event, entity_id)
 		_play_routed(route_audio_event("ArrowDrawBow" if attacker_object_id == ARCHER_OBJECT_ID else "SwordShingClean1ForHordes", sequence), sfx_player)

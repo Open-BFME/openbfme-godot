@@ -146,15 +146,18 @@ func _run() -> void:
 		{"sequence": 11, "kind": "structure.destroyed", "entity_id": 1, "target_id": 2001},
 		{"sequence": 12, "kind": "production.complete", "entity_id": 1003, "target_id": 10, "object_id": AudioScript.KNIGHT_OBJECT_ID},
 		{"sequence": 13, "kind": "voice.select", "entity_id": 10, "target_id": 0},
+		{"sequence": 14, "kind": "battalion.defeated", "entity_id": 101, "target_id": 10},
 	])
 	audio._next_event_index = 4
+	var horse_impacts_before_intents := _routing_log_count(audio.routing_log, "ImpactHorse", true)
 	audio.sync_events(intent_events)
+	var routed_horse_impacts := _routing_log_count(audio.routing_log, "ImpactHorse", true) - horse_impacts_before_intents
 	_check("archer_swing_routes_bow_sfx", _routing_log_has(audio.routing_log, "ArrowDrawBow", true))
 	_check("building_hit_routes_stone_sfx", _routing_log_has(audio.routing_log, "BuildingLightDamageStone", true))
-	_check("knight_defeat_routes_horse_impact", _routing_log_has(audio.routing_log, "ImpactHorse", true))
+	_check("knight_defeat_routes_horse_impact", routed_horse_impacts == 2 and String(audio._entity_object_ids.get(103, "")) == AudioScript.KNIGHT_OBJECT_ID, "routed_impacts=%d fixed_103=%s" % [routed_horse_impacts, String(audio._entity_object_ids.get(103, ""))])
 	_check("structure_destroy_routes_heavy_stone_sfx", _routing_log_has(audio.routing_log, "BuildingHeavyDamageStone", true))
 	_check("structure_destroy_routes_sink_sfx", _routing_log_has(audio.routing_log, "BuildingSink", true))
-	_check("dynamic_production_tracks_exact_object_id", String(audio.last_route_result.get("object_id", "")) == AudioScript.KNIGHT_OBJECT_ID and String(audio.last_route_result.get("event_id", "")) == "GondorKnightVoiceSelectMS")
+	_check("dynamic_production_tracks_exact_object_id", _routing_log_has(audio.routing_log, "GondorKnightVoiceSelectMS", true) and not audio._entity_object_ids.has(10))
 	_check("enabled_voice_and_sfx_players_received_real_pack_streams", audio.voice_player.playing and audio.voice_player.stream is AudioStreamWAV and audio.sfx_player.playing and audio.sfx_player.stream is AudioStreamWAV)
 
 	audio.dispose()
@@ -211,6 +214,14 @@ func _routing_log_has(log: Array[Dictionary], event_id: String, expected_ok: boo
 		if String(row.get("event_id", "")) == event_id and bool(row.get("ok", false)) == expected_ok:
 			return true
 	return false
+
+
+func _routing_log_count(log: Array[Dictionary], event_id: String, expected_ok: bool) -> int:
+	var count := 0
+	for row in log:
+		if String(row.get("event_id", "")) == event_id and bool(row.get("ok", false)) == expected_ok:
+			count += 1
+	return count
 
 
 func _diagnostics_have_prefix(diagnostics: Array[String], prefix: String) -> bool:
