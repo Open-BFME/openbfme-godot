@@ -1,0 +1,17 @@
+{
+  "name": "openbfme-launcher-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bounded MCP control surface for the locally installed BFME All In One Launcher.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.26.0"
+  }
+}

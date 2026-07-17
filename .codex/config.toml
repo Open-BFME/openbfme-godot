@@ -1,0 +1,12 @@
+[mcp_servers.openbfme_launcher]
+command = "C:\\Program Files\\nodejs\\node.exe"
+args = ["C:\\Users\\Jonathan\\Desktop\\open-bfme\\tools\\bfme-launcher-mcp\\src\\server.mjs"]
+cwd = "C:\\Users\\Jonathan\\Desktop\\open-bfme"
+startup_timeout_sec = 10
+tool_timeout_sec = 15
+enabled = true
+required = false
+default_tools_approval_mode = "writes"
+
+[mcp_servers.openbfme_launcher.tools.get_launcher_status]
+approval_mode = "auto"
