@@ -82,6 +82,9 @@ const MUSIC_CROSSFADE_SECONDS := 1.5
 
 var pack_root := ""
 var playback_enabled := true
+# Intent and routing histories exist for focused diagnostics only. Production
+# keeps the latest route status but does not retain per-event dictionary copies.
+var observability_enabled := false
 # music_player always references the currently active (audible / most recently
 # selected) player; _music_player_alt holds the other side of the crossfade pair.
 var music_player: AudioStreamPlayer
@@ -1202,6 +1205,8 @@ func count_roster_voice_kind(object_id: String, kind: String) -> int:
 
 
 func _append_bounded_observability(log: Array[Dictionary], row: Dictionary) -> void:
+	if not observability_enabled:
+		return
 	log.append(row)
 	if log.size() <= MAX_OBSERVABILITY_LOG_ENTRIES:
 		return

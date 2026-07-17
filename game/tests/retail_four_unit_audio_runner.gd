@@ -31,7 +31,16 @@ func _run() -> void:
 	var audio = AudioScript.new()
 	root.add_child(audio)
 	var compatibility_ready: bool = audio.configure(selected_pack_root, true)
-	_check("legacy_soldier_music_compatibility_ready", compatibility_ready)
+	var production_default_route: Dictionary = audio.route_audio_event("ArrowDrawBow", 1)
+	var production_default_observability_ok: bool = (
+		not audio.observability_enabled
+		and bool(production_default_route.get("ok", false))
+		and String(audio.last_route_result.get("event_id", "")) == "ArrowDrawBow"
+		and audio.intent_log.is_empty()
+		and audio.routing_log.is_empty()
+	)
+	audio.observability_enabled = true
+	_check("legacy_soldier_music_compatibility_and_production_observability_ready", compatibility_ready and production_default_observability_ok)
 	_check("retail_playback_is_enabled", audio.playback_enabled)
 	_check("non_spatial_players_use_real_godot_players", audio.music_player is AudioStreamPlayer and audio.voice_player is AudioStreamPlayer and audio.sfx_player is AudioStreamPlayer)
 	_check("strict_four_unit_roster_audio_ready", audio.has_complete_roster_audio_closure())
