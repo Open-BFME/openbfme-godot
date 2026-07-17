@@ -1,7 +1,7 @@
 Owner: Integration owner
 Owns: Volatile repository state, selected private-pack identity, active blockers, and latest verified gate results.
 Does not own: Product scope, architecture, milestone definitions, or historical evidence.
-Last verified commit: `8d42ffb027b7645ac7656690ff9527c2efba7a51`
+Last verified commit: `b517aaebce61a37a836172a3ee77eecc6862062f`
 Update trigger: Selection, worktree state, blocker, capability, or gate result changes.
 Validation: Compare this file with the current commit, private selection and oracle metadata, and the named focused reports.
 
@@ -10,10 +10,10 @@ Validation: Compare this file with the current commit, private selection and ora
 ## Current identity
 
 - Active target: BFME2 1.06 Men-versus-Men on Fords of Isen II.
-- Clean code/oracle baseline before this status-only update: `8d42ffb027b7645ac7656690ff9527c2efba7a51`; clean dirty-state digest: `3d0d02f93695a6b4b6e73bb892cf153c90e5c48ef25b25ac64aa22b7144ebecb`. Because this tracked status edit changes the source revision, the still-empty oracle workspace must be rebound once more after this edit is committed and before capture registration begins.
+- Clean code/oracle baseline before this status-only update: `b517aaebce61a37a836172a3ee77eecc6862062f`; clean dirty-state digest: `3d0d02f93695a6b4b6e73bb892cf153c90e5c48ef25b25ac64aa22b7144ebecb`. Because this tracked status edit changes the source revision, the schema-v1 oracle workspace and its five Godot sides must be rebound once more after this edit is committed and before retail capture registration begins.
 - Selected private pack: `bfme2-men-vslice/69fd5efe0dfd77a9475250a102c52691044dff0b7d8216b873d725dd22de4cc1`.
 - Strict completion profile SHA-256: `0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d`.
-- The current pending oracle workspace contains exactly 47 ordered rows, with 0 populated, 0 paired, and 0 approved. Its predecessor is retained hash-for-hash, and it will be rebound after this status-only commit. Frozen thresholds remain 60 average FPS, 15 one-percent-low FPS, 1 GiB peak memory, 128 MiB total growth, and 16 MiB final-five-minute growth.
+- The current pending schema-v1 oracle workspace contains exactly 47 ordered rows: 5 Godot sides, 0 retail sides, 0 pairs, and 0 approvals. The preceding schema-v0 authority is retained hash-for-hash under the private archive. Frozen thresholds remain 60 average FPS, 15 one-percent-low FPS, 1 GiB peak memory, 128 MiB total growth, and 16 MiB final-five-minute growth.
 
 ## Verified now
 
@@ -25,10 +25,12 @@ Validation: Compare this file with the current commit, private selection and ora
 - Private retail and converted payloads remain below `.private`; the public export boundary remains mandatory.
 - Commit `1da72a484f634f7e9dd0bcdcabd1aaf0100ec005` added bounded 2560x1440 capture recipes for `hud-default`, `hud-unit-selected`, `unit-soldier-idle`, `unit-soldier-move`, and `unit-soldier-attack`. Their retained runs are explicitly unapproved scenario evidence, not retail-parity evidence.
 - Commit `8d42ffb027b7645ac7656690ff9527c2efba7a51` added byte-exact private-frame import and recoverable oracle replacement. Focused acceptance covered same-handle import, stable-handle live capture, approval revocation, exact rollback, containment, native argument transport, and failure-injection confinement; two final adversarial reviews reported no P0/P1/P2 defect.
+- Commit `b517aaebce61a37a836172a3ee77eecc6862062f` replaced the false shared cross-engine camera-state field with independent source-backed `retailCameraState` and `godotCameraState` receipts. Real-script acceptance covered distinct side receipts, deliberate selected-side replacement, approval revocation, opposite-side preservation, exact injected-failure rollback, missing-receipt rejection, and schema-v0 rejection; three final adversarial reviews reported no P0/P1/P2 defect.
+- Three adversarial reviews rejected all five retained BFME2 frame candidates as canonical counterparts. The retained video remains useful behavioral evidence, but it lacks source-backed camera receipts; the selected, movement, and attack samples also differ in battalion count or combat target. The correct mapping result is `accepted=0 recapture=5`.
 
 ## Not complete
 
-- M2 is not complete. No canonical capture side or retail/Godot pair is populated or human-approved; all 47 audiovisual oracle rows remain open. The five supported Godot scenarios must be recaptured at the final post-status clean identity, registered unapproved, and paired only with exact BFME2 1.06 counterparts.
+- M2 is not complete. The pre-status schema-v1 authority has five unapproved Godot sides but no retail side, pair, or approval; all 47 audiovisual oracle rows remain open. After this status commit, those five Godot scenarios must be regenerated for the final clean identity and paired only with newly captured exact BFME2 1.06 counterparts.
 - Reliability is not complete. The last retained 300-second diagnostic recorded 10,119,014 bytes across its late window with a +29,439.71-byte/second linear trend. It remains historical diagnostic evidence rather than accepted current-identity reliability evidence: two adversarial reviewers found that it did not demonstrate an improvement over the prior curve, exercised zero match completions, and did not retain wrapper stdout/stderr.
 - The rejected 1,800-second `3dd886a` artifact remains archived as failure evidence. Its wrapper-level pass must not be finalized or reused.
 - The last clean product identity has no accepted 1,800-second reliability artifact. The authoritative run is deferred until oracle/content identity freezes, then judged against the already-frozen thresholds. A correction packet is warranted only if that run violates them.
@@ -37,11 +39,12 @@ Validation: Compare this file with the current commit, private selection and ora
 
 ## Next bounded work
 
-1. Populate and human-review all 47 retail/Godot oracle pairs for the current identity, beginning with a bounded deterministic capture-scenario tranche backed by retained BFME2 1.06 evidence.
-2. Correct only reproducible severity-0 or severity-1 audiovisual differences exposed by those comparisons; every implementation packet receives adversarial review.
-3. Freeze the approved content identity.
-4. Run the 1,800-second authoritative reliability packet once against that frozen identity and retain complete process output.
-5. Run `run_m2_acceptance.bat -IntegrationOwnerPublish` and tag the M2 baseline before Phase C cleanup or any M3 expansion.
+1. Commit this status refresh, archive the now-stale private authority, create a final schema-v1 workspace for that clean commit, and regenerate the five supported Godot sides.
+2. Recapture the exact five BFME2 1.06 retail counterparts with source-backed retail camera/action receipts; register no retained approximate frame as a substitute.
+3. Human-review those five pairs, correct only reproducible severity-0/1 differences, then repeat bounded capture/review tranches for the remaining 42 rows.
+4. Freeze the identity only after all 47 rows are paired and approved.
+5. Run the 1,800-second authoritative reliability packet once against that frozen identity and retain complete process output.
+6. Run `run_m2_acceptance.bat -IntegrationOwnerPublish` and tag the M2 baseline before Phase C cleanup or any M3 expansion.
 
 ## Status discipline
 
