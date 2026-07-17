@@ -22,7 +22,7 @@ $minimumRetailSliceChecks = 208
 $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)?|ObjectDB instances|RID allocations|resources still in use|SCRIPT ERROR)\b'
 
 try {
-    foreach ($path in @($selectionPath, $profilePath, (Join-Path $gameRoot "tests\m2_live_soak_runner.gd"))) {
+    foreach ($path in @($selectionPath, $profilePath, (Join-Path $gameRoot "tests\m2_match_lifecycle_runner.gd"), (Join-Path $gameRoot "tests\m2_live_soak_runner.gd"))) {
         Assert-ProofTrue (Test-Path -LiteralPath $path -PathType Leaf) "Missing reliability dependency: $path"
     }
     $context = Get-M2OracleContext $repoRoot
@@ -58,6 +58,15 @@ try {
     ) "Pending oracle approval has invalid frozen performance thresholds."
     $godot = Resolve-ProofGodot $GodotPath $repoRoot
     $env:OPENBFME_CONTENT = $packRoot
+    $env:OPENBFME_M2_PROFILE_SHA256 = $profileSha256
+    $env:OPENBFME_M2_GIT_REVISION = [string]$identity.revision
+    $env:OPENBFME_M2_DIRTY_STATE_DIGEST = [string]$identity.dirtyStateDigest
+
+    $lifecycleRawOutput = Join-Path $repoRoot ".private\scratch\m2-match-lifecycle-raw.json"
+    $env:OPENBFME_M2_LIFECYCLE_OUTPUT = $lifecycleRawOutput
+    [void](Invoke-ProofChecked $gate "match_lifecycle" $godot @("--headless", "--audio-driver", "WASAPI", "--path", $gameRoot, "--script", "res://tests/m2_match_lifecycle_runner.gd") '(?m)^M2_MATCH_LIFECYCLE_RESULT matches=3 starts=3 teardowns=3 signature=[0-9A-F]{8} bundle=[0-9a-f]{64}\s*$' $forbiddenDiagnostics)
+    $matchLifecycle = Read-ProofJson $lifecycleRawOutput
+    Assert-M2MatchLifecycleEvidence -Lifecycle $matchLifecycle -ExpectedProfileSha256 $profileSha256 -ExpectedBundleSha256 $bundleSha256 -ExpectedGitRevision ([string]$identity.revision) -ExpectedDirtyStateDigest ([string]$identity.dirtyStateDigest)
 
     $restartRows = [Collections.Generic.List[object]]::new()
     for ($index = 1; $index -le 3; $index++) {
@@ -79,9 +88,6 @@ try {
     $rawOutput = Join-Path $repoRoot ".private\scratch\m2-live-soak-raw.json"
     $env:OPENBFME_M2_SOAK_OUTPUT = $rawOutput
     $env:OPENBFME_M2_SOAK_SECONDS = [string]$DurationSeconds
-    $env:OPENBFME_M2_PROFILE_SHA256 = $profileSha256
-    $env:OPENBFME_M2_GIT_REVISION = [string]$identity.revision
-    $env:OPENBFME_M2_DIRTY_STATE_DIGEST = [string]$identity.dirtyStateDigest
     $soakOutput = Invoke-ProofChecked $gate "live_soak" $godot @("--audio-driver", "WASAPI", "--path", $gameRoot, "--script", "res://tests/m2_live_soak_runner.gd") '(?m)^M2_LIVE_SOAK_RESULT ' $forbiddenDiagnostics
     $raw = Read-ProofJson $rawOutput
     Assert-ProofTrue ([string]$raw.bundleSha256 -eq $bundleSha256) "Live soak mounted another bundle."
@@ -94,11 +100,12 @@ try {
 
     $evidence = [ordered]@{
         schema = 'openbfme.m2-men-fords-reliability'
-        schemaVersion = 0
+        schemaVersion = 1
         profileSha256 = $profileSha256
         bundleSha256 = $bundleSha256
         gitRevision = [string]$identity.revision
         dirtyStateDigest = [string]$identity.dirtyStateDigest
+        matchLifecycle = $matchLifecycle
         liveSoak = $raw
         restarts = @($restartRows)
         deterministicRestartSignature = $signatures[0]

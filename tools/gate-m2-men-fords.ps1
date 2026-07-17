@@ -147,7 +147,7 @@ try {
     $reliabilitySha256 = (Get-FileHash -LiteralPath $reliabilityPath -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-M2 ($reliabilitySha256 -eq [string]$approval.reliabilityEvidenceSha256) "Reliability evidence hash disagrees with approval."
     $reliability = Get-Json $reliabilityPath
-    Assert-M2 ([string]$reliability.schema -eq 'openbfme.m2-men-fords-reliability' -and [int]$reliability.schemaVersion -eq 0) "Reliability evidence schema is invalid."
+    Assert-M2 ([string]$reliability.schema -eq 'openbfme.m2-men-fords-reliability' -and [int]$reliability.schemaVersion -eq 1) "Reliability evidence schema is invalid."
     Assert-M2 ([string]$reliability.profileSha256 -eq $profileSha256 -and [string]$reliability.bundleSha256 -eq $bundleSha256) "Reliability evidence targets another pack identity."
     Assert-M2 ([string]$reliability.gitRevision -eq [string]$workingTreeIdentity.revision -and [string]$reliability.dirtyStateDigest -eq [string]$workingTreeIdentity.dirtyStateDigest) "Reliability evidence targets another source identity."
     Assert-M2 ([int]$reliability.diagnosticCount -eq 0) "Reliability run recorded a forbidden diagnostic."
@@ -156,6 +156,7 @@ try {
     Assert-M2 ($null -ne $thresholds) "Oracle approval has no frozen performance thresholds."
     Assert-M2 ([double]$thresholds.minimumAverageFps -gt 0.0 -and [double]$thresholds.minimumOnePercentLowFps -gt 0.0 -and [long]$thresholds.maximumPeakMemoryBytes -gt 0 -and [long]$thresholds.maximumMemoryGrowthBytes -ge 0 -and [long]$thresholds.maximumLateWindowMemoryGrowthBytes -ge 0 -and [long]$thresholds.maximumLateWindowMemoryGrowthBytes -le [long]$thresholds.maximumMemoryGrowthBytes) "Oracle approval performance thresholds are invalid."
     $soak = $reliability.liveSoak
+    Assert-M2MatchLifecycleEvidence -Lifecycle $reliability.matchLifecycle -ExpectedProfileSha256 $profileSha256 -ExpectedBundleSha256 $bundleSha256 -ExpectedGitRevision ([string]$workingTreeIdentity.revision) -ExpectedDirtyStateDigest ([string]$workingTreeIdentity.dirtyStateDigest)
     Assert-M2ReliabilitySoakEvidence -Soak $soak -MinimumDurationSeconds 1800 -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes) -MaximumLateWindowMemoryGrowthBytes ([long]$thresholds.maximumLateWindowMemoryGrowthBytes)
     $restarts = @($reliability.restarts)
     Assert-M2 ($restarts.Count -eq 3 -and @($restarts | ForEach-Object { [string]$_.signature } | Select-Object -Unique).Count -eq 1) "Three clean restarts do not share one deterministic signature."

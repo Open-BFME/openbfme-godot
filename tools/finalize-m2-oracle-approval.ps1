@@ -44,7 +44,7 @@ foreach ($capture in @($manifest.captures)) {
 $reliabilityPath = Assert-M2OracleContainedPath (Join-Path (Split-Path -Parent $approvalPath) ([string]$approval.reliabilityEvidence)) $context.oracleRoot
 Assert-M2OracleTrue (Test-Path -LiteralPath $reliabilityPath -PathType Leaf) "Final reliability evidence is missing."
 $reliability = Get-Content -Raw -LiteralPath $reliabilityPath -Encoding UTF8 | ConvertFrom-Json
-Assert-M2OracleTrue ([string]$reliability.schema -eq "openbfme.m2-men-fords-reliability" -and [int]$reliability.schemaVersion -eq 0) "Reliability schema is invalid."
+Assert-M2OracleTrue ([string]$reliability.schema -eq "openbfme.m2-men-fords-reliability" -and [int]$reliability.schemaVersion -eq 1) "Reliability schema is invalid."
 Assert-M2OracleTrue ([string]$reliability.profileSha256 -eq $context.profileSha256 -and [string]$reliability.bundleSha256 -eq $context.bundleSha256) "Reliability evidence targets another pack identity."
 Assert-M2OracleTrue ([string]$reliability.gitRevision -eq $context.gitRevision -and [string]$reliability.dirtyStateDigest -eq $context.dirtyStateDigest) "Reliability evidence targets another source identity."
 Assert-M2OracleTrue ([int]$reliability.diagnosticCount -eq 0) "Reliability evidence contains forbidden diagnostics."
@@ -58,6 +58,7 @@ Assert-M2OracleTrue (
     [long]$reliabilityThresholds.maximumLateWindowMemoryGrowthBytes -eq [long]$thresholds.maximumLateWindowMemoryGrowthBytes
 ) "Reliability evidence threshold snapshot changed."
 $soak = $reliability.liveSoak
+Assert-M2MatchLifecycleEvidence -Lifecycle $reliability.matchLifecycle -ExpectedProfileSha256 $context.profileSha256 -ExpectedBundleSha256 $context.bundleSha256 -ExpectedGitRevision $context.gitRevision -ExpectedDirtyStateDigest $context.dirtyStateDigest
 Assert-M2ReliabilitySoakEvidence -Soak $soak -MinimumDurationSeconds 1800 -MaximumMemoryGrowthBytes ([long]$thresholds.maximumMemoryGrowthBytes) -MaximumLateWindowMemoryGrowthBytes ([long]$thresholds.maximumLateWindowMemoryGrowthBytes)
 $restarts = @($reliability.restarts)
 Assert-M2OracleTrue ($restarts.Count -eq 3 -and @($restarts | ForEach-Object { [string]$_.signature } | Select-Object -Unique).Count -eq 1) "Three clean full-match restarts do not share one deterministic signature."

@@ -82,3 +82,80 @@ function Assert-M2ReliabilitySoakEvidence {
     Assert-SoakEvidence ($memoryGrowthBytes -le $MaximumMemoryGrowthBytes) "Live soak memory growth exceeded the pre-frozen threshold."
     Assert-SoakEvidence ($lateMemoryGrowthBytes -le $MaximumLateWindowMemoryGrowthBytes) "Live soak late-window memory growth exceeded the separately frozen stabilization threshold."
 }
+
+function Assert-M2MatchLifecycleEvidence {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Lifecycle,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedProfileSha256,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedBundleSha256,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedGitRevision,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedDirtyStateDigest
+    )
+
+    function Assert-LifecycleEvidence {
+        param([bool]$Condition, [string]$Message)
+        if (-not $Condition) { throw $Message }
+    }
+
+    Assert-LifecycleEvidence (
+        [string]$Lifecycle.schema -eq 'openbfme.m2-match-lifecycle' -and
+        [int]$Lifecycle.schemaVersion -eq 0
+    ) 'Match lifecycle evidence schema is invalid.'
+    Assert-LifecycleEvidence (
+        [string]$Lifecycle.profileSha256 -eq $ExpectedProfileSha256 -and
+        [string]$Lifecycle.bundleSha256 -eq $ExpectedBundleSha256 -and
+        [string]$Lifecycle.gitRevision -eq $ExpectedGitRevision -and
+        [string]$Lifecycle.dirtyStateDigest -eq $ExpectedDirtyStateDigest
+    ) 'Match lifecycle evidence targets another identity.'
+    Assert-LifecycleEvidence ([int]$Lifecycle.expectedMatches -eq 3) 'Match lifecycle expected-match count changed.'
+    Assert-LifecycleEvidence (
+        [int]$Lifecycle.completedMatches -eq 3 -and
+        [int]$Lifecycle.readyStarts -eq 3 -and
+        [int]$Lifecycle.teardownsConfirmed -eq 3
+    ) 'Match lifecycle did not complete three starts, matches, and teardowns.'
+    Assert-LifecycleEvidence ([int]$Lifecycle.diagnosticCount -eq 0) 'Match lifecycle recorded a forbidden diagnostic.'
+    $rows = @($Lifecycle.matches)
+    Assert-LifecycleEvidence ($rows.Count -eq 3) 'Match lifecycle does not contain exactly three match rows.'
+    $signatures = @($rows | ForEach-Object { [string]$_.stateSignature } | Select-Object -Unique)
+    Assert-LifecycleEvidence (
+        $signatures.Count -eq 1 -and
+        $signatures[0] -match '^[0-9A-F]{8}$' -and
+        [string]$Lifecycle.deterministicSignature -eq $signatures[0]
+    ) 'Match lifecycle signatures are absent or non-deterministic.'
+    for ($index = 0; $index -lt $rows.Count; $index++) {
+        $row = $rows[$index]
+        Assert-LifecycleEvidence ([int]$row.index -eq $index + 1) "Match lifecycle row $($index + 1) is out of order."
+        Assert-LifecycleEvidence ([string]$row.bundleSha256 -eq $ExpectedBundleSha256) "Match lifecycle row $($index + 1) mounted another bundle."
+        Assert-LifecycleEvidence (
+            [int]$row.winner -eq 1 -and
+            [int]$row.terminalTick -gt 0 -and
+            [int]$row.playerFortressHealth -le 0
+        ) "Match lifecycle row $($index + 1) is not a causal enemy victory."
+        Assert-LifecycleEvidence (
+            [int]$row.constructionStartedSequence -gt 0 -and
+            [int]$row.constructionCompletedSequence -gt [int]$row.constructionStartedSequence -and
+            [int]$row.productionCompletedSequence -gt [int]$row.constructionCompletedSequence -and
+            [int]$row.fortressHitSequence -gt [int]$row.productionCompletedSequence -and
+            [int]$row.fortressDestroyedSequence -gt [int]$row.fortressHitSequence -and
+            [int]$row.defeatSequence -gt [int]$row.fortressDestroyedSequence -and
+            [int]$row.defeatEventCount -eq 1
+        ) "Match lifecycle row $($index + 1) lacks construction-to-production-to-attack-to-defeat evidence."
+        Assert-LifecycleEvidence (
+            $row.outcomePresented -is [bool] -and
+            $row.outcomePresented -eq $true -and
+            [string]$row.musicState -eq 'defeat'
+        ) "Match lifecycle row $($index + 1) lacks the imported defeat presentation."
+        Assert-LifecycleEvidence (
+            $row.sceneFreed -is [bool] -and
+            $row.sceneFreed -eq $true -and
+            $row.meshCacheCleared -is [bool] -and
+            $row.meshCacheCleared -eq $true -and
+            [int]$row.readyDurationMsec -gt 0
+        ) "Match lifecycle row $($index + 1) did not prove teardown and reload readiness."
+    }
+}
