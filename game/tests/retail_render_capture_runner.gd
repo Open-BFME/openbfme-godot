@@ -2,7 +2,8 @@ extends SceneTree
 ## Non-headless private capture gate for the composed Men/Fords retail slice.
 
 const SCENE_PATH := "res://scenes/retail_vertical_slice.tscn"
-const REQUIRED_PRIVATE_FRAGMENT := "/.private/scratch/rendered-qa/"
+const PRIVATE_SCRATCH_PATH := "res://../.private/scratch"
+const DEFAULT_VIEWPORT := Vector2i(1920, 1080)
 const MAX_READY_FRAMES := 600
 const SETTLE_FRAMES := 12
 
@@ -16,13 +17,23 @@ func _run() -> void:
 	if DisplayServer.get_name() == "headless":
 		_fail("render capture requires a non-headless Forward+ window")
 		return
-	var output := OS.get_environment("OPENBFME_CAPTURE_PATH").replace("\\", "/")
-	if output == "" or not output.contains(REQUIRED_PRIVATE_FRAGMENT) or output.get_extension().to_lower() != "png":
-		_fail("OPENBFME_CAPTURE_PATH must be a PNG below .private/scratch/rendered-qa")
+	var output := ProjectSettings.globalize_path(OS.get_environment("OPENBFME_CAPTURE_PATH")).simplify_path().replace("\\", "/")
+	var private_scratch_root := ProjectSettings.globalize_path(PRIVATE_SCRATCH_PATH).simplify_path().replace("\\", "/")
+	if output == "" or output.get_extension().to_lower() != "png" or not _path_is_within(private_scratch_root, output):
+		_fail("OPENBFME_CAPTURE_PATH must be a contained PNG below the repository .private/scratch root")
+		return
+	if FileAccess.file_exists(output) or DirAccess.dir_exists_absolute(output):
+		_fail("OPENBFME_CAPTURE_PATH must not already exist")
+		return
+	if _path_has_link_component(private_scratch_root, output):
+		_fail("OPENBFME_CAPTURE_PATH crosses a link, junction, or unreadable directory")
+		return
+	var viewport_size := _capture_viewport()
+	if viewport_size == Vector2i.ZERO:
 		return
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-	DisplayServer.window_set_size(Vector2i(1920, 1080))
-	root.size = Vector2i(1920, 1080)
+	DisplayServer.window_set_size(viewport_size)
+	root.size = viewport_size
 	await process_frame
 	await process_frame
 	var packed := load(SCENE_PATH) as PackedScene
@@ -38,6 +49,10 @@ func _run() -> void:
 	if not bool(slice.ready_ok):
 		_fail("retail slice did not become ready: %s" % String(slice.failure_reason))
 		return
+	var scenario_mode := OS.get_environment("OPENBFME_CAPTURE_SCENARIO_MODE") == "1"
+	if scenario_mode:
+		slice.simulation_paused = true
+		slice.simulation.ai_enabled = false
 	var focus_text := OS.get_environment("OPENBFME_CAPTURE_CAMERA_FOCUS")
 	var focus_battalion_text := OS.get_environment("OPENBFME_CAPTURE_FOCUS_BATTALION")
 	if focus_battalion_text != "":
@@ -90,8 +105,20 @@ func _run() -> void:
 		slice.camera_focus = selected_position.lerp(destination, 0.5)
 		slice._clamp_camera_focus()
 		slice._apply_camera_transform()
+		var move_advance_ticks := 0
+		if scenario_mode:
+			move_advance_ticks = _capture_advance_ticks(1)
+			if move_advance_ticks < 0:
+				return
+			slice.simulation.advance(move_advance_ticks)
 		slice._sync_presentation()
-		print("RETAIL_RENDER_MOVE_HINT battalion=%s destination=%s" % [selected_text, destination])
+		var moved_entity: Dictionary = slice.simulation.entity(int(selected_text))
+		print("RETAIL_RENDER_MOVE_HINT battalion=%s destination=%s advance_ticks=%d state=%s" % [
+			selected_text,
+			destination,
+			move_advance_ticks,
+			String(moved_entity.get("state", "")),
+		])
 	var attack_pair_text := OS.get_environment("OPENBFME_CAPTURE_ATTACK_PAIR").strip_edges()
 	if attack_pair_text != "" and not _pose_attack_pair(slice, attack_pair_text):
 		return
@@ -138,9 +165,37 @@ func _run() -> void:
 	for _index in settle_frames:
 		await process_frame
 	await RenderingServer.frame_post_draw
+	if scenario_mode:
+		var scenario_id := OS.get_environment("OPENBFME_CAPTURE_SCENARIO_ID")
+		var scenario_state := ""
+		if scenario_id in ["hud-unit-selected", "unit-soldier-idle", "unit-soldier-move", "unit-soldier-attack"]:
+			scenario_state = String(slice.simulation.entity(1).get("state", ""))
+		print("RETAIL_RENDER_SCENARIO_STATE id=%s state=%s paused=%s" % [
+			scenario_id,
+			scenario_state,
+			"true" if bool(slice.simulation_paused) else "false",
+		])
+		if scenario_id == "unit-soldier-attack":
+			for participant_id in [1, 101]:
+				var participant_node: Node3D = slice.battalion_nodes.get(participant_id) as Node3D
+				print("RETAIL_RENDER_SCENARIO_ACTOR id=%d world=%s screen=%s behind=%s visible=%s" % [
+					participant_id,
+					participant_node.global_position,
+					slice.camera.unproject_position(participant_node.global_position),
+					"true" if slice.camera.is_position_behind(participant_node.global_position) else "false",
+					"true" if participant_node.is_visible_in_tree() else "false",
+				])
+				var member_visuals: Dictionary = participant_node.get("member_visuals") as Dictionary
+				var member_zero: Node3D = member_visuals.get(0) as Node3D
+				print("RETAIL_RENDER_SCENARIO_MEMBER battalion=%d member=0 world=%s screen=%s visible=%s" % [
+					participant_id,
+					member_zero.global_position,
+					slice.camera.unproject_position(member_zero.global_position),
+					"true" if member_zero.is_visible_in_tree() else "false",
+				])
 	var image := root.get_texture().get_image()
-	if image == null or image.is_empty() or image.get_width() != 1920 or image.get_height() != 1080:
-		_fail("rendered viewport capture has dimensions %dx%d instead of 1920x1080" % [image.get_width() if image != null else -1, image.get_height() if image != null else -1])
+	if image == null or image.is_empty() or image.get_width() != viewport_size.x or image.get_height() != viewport_size.y:
+		_fail("rendered viewport capture has dimensions %dx%d instead of %dx%d" % [image.get_width() if image != null else -1, image.get_height() if image != null else -1, viewport_size.x, viewport_size.y])
 		return
 	var parent := output.get_base_dir()
 	if DirAccess.make_dir_recursive_absolute(parent) != OK:
@@ -169,10 +224,12 @@ func _run() -> void:
 	])
 	print("RETAIL_RENDER_CAMERA_GEOMETRY %s" % JSON.stringify(geometry_diagnostics))
 	print("RETAIL_RENDER_FLAT_PROP_TYPES %s" % JSON.stringify(prop_type_diagnostics))
-	print("RETAIL_RENDER_CAPTURE_OK path=%s width=%d height=%d pack=%s fog_dispatches=%d" % [
+	print("RETAIL_RENDER_CAPTURE_OK path=%s width=%d height=%d viewport=%dx%d pack=%s fog_dispatches=%d" % [
 		output,
 		image.get_width(),
 		image.get_height(),
+		viewport_size.x,
+		viewport_size.y,
 		String(slice.selected_pack_root),
 		int(slice.linear_fog.execution_metrics().get("dispatch_count", 0)) if slice.linear_fog != null else 0,
 	])
@@ -196,10 +253,25 @@ func _pose_attack_pair(slice: Node, pair_text: String) -> bool:
 	if attacker_row == null or target_row == null:
 		_fail("OPENBFME_CAPTURE_ATTACK_PAIR entities are unavailable")
 		return false
+	var scenario_mode := OS.get_environment("OPENBFME_CAPTURE_SCENARIO_MODE") == "1"
 	var attacker_position := attacker_row.get("position", Vector2.ZERO) as Vector2
+	if scenario_mode:
+		# Stage the pair at the central ford, outside either starting army's
+		# acquisition radius. The authoritative attack command below still owns
+		# approach, range entry, attack timing, and member presentation.
+		attacker_position = Vector2(-1.5, 0.0)
+		attacker_row["position"] = attacker_position
+		attacker_row["destination"] = attacker_position
+		attacker_row["route"] = []
+		attacker_row["route_cells"] = []
+		attacker_row["route_cursor"] = 0
 	var target_position := attacker_position + Vector2(3.0, 0.0)
 	target_row["position"] = target_position
 	target_row["destination"] = target_position
+	if scenario_mode:
+		# A Hold Ground defender remains at the retail-authored staging point
+		# until the approaching attacker enters weapon range.
+		target_row["stance"] = "HoldGround"
 	target_row["route"] = []
 	target_row["route_cells"] = []
 	target_row["route_cursor"] = 0
@@ -207,20 +279,135 @@ func _pose_attack_pair(slice: Node, pair_text: String) -> bool:
 	if not bool(slice.simulation.select_only(attacker_id)) or int(slice.simulation.issue_attack(attacker_ids, target_id)) != 1:
 		_fail("OPENBFME_CAPTURE_ATTACK_PAIR could not issue the authoritative attack")
 		return false
-	var advance_ticks := 1
-	var advance_text := OS.get_environment("OPENBFME_CAPTURE_ADVANCE_TICKS").strip_edges()
-	if advance_text != "":
-		if not advance_text.is_valid_int() or int(advance_text) < 1 or int(advance_text) > 120:
-			_fail("OPENBFME_CAPTURE_ADVANCE_TICKS must be in 1..120")
+	var requested_ticks := _capture_advance_ticks(1)
+	if requested_ticks < 0:
+		return false
+	var advance_ticks := 0
+	if scenario_mode:
+		for _index in requested_ticks:
+			slice.simulation.advance(1)
+			advance_ticks += 1
+			if String(slice.simulation.entity(attacker_id).get("state", "")) == "attack":
+				break
+		if String(slice.simulation.entity(attacker_id).get("state", "")) != "attack":
+			var attacker_after: Dictionary = slice.simulation.entity(attacker_id)
+			var target_after: Dictionary = slice.simulation.entity(target_id)
+			_fail("OPENBFME_CAPTURE_ATTACK_PAIR did not reach attack within %d ticks: attacker_state=%s attacker_position=%s target_state=%s target_position=%s distance=%s attack_range=%s route_points=%d" % [
+				requested_ticks,
+				String(attacker_after.get("state", "")),
+				Vector2(attacker_after.get("position", Vector2.ZERO)),
+				String(target_after.get("state", "")),
+				Vector2(target_after.get("position", Vector2.ZERO)),
+				Vector2(attacker_after.get("position", Vector2.ZERO)).distance_to(Vector2(target_after.get("position", Vector2.ZERO))),
+				float(attacker_after.get("attack_range", 0.0)),
+				Array(attacker_after.get("route", [])).size(),
+			])
 			return false
-		advance_ticks = int(advance_text)
-	slice.simulation.advance(advance_ticks)
+	else:
+		slice.simulation.advance(requested_ticks)
+		advance_ticks = requested_ticks
 	slice.camera_focus = attacker_position.lerp(target_position, 0.5)
 	slice._clamp_camera_focus()
 	slice._apply_camera_transform()
+	var attacker_after: Dictionary = slice.simulation.entity(attacker_id)
+	var target_after: Dictionary = slice.simulation.entity(target_id)
+	if scenario_mode:
+		# The recipe deliberately relocates the pair before issuing commands.
+		# Snap only that setup discontinuity; subsequent member motion and attack
+		# presentation still settle through the normal runtime path.
+		for participant_id in [attacker_id, target_id]:
+			var participant: Dictionary = slice.simulation.entity(participant_id)
+			var participant_position := Vector2(participant.get("position", Vector2.ZERO))
+			var battalion: Node3D = slice.battalion_nodes.get(participant_id) as Node3D
+			_snap_staged_battalion(battalion, Vector3(
+				participant_position.x,
+				slice._presentation_height(participant_position),
+				participant_position.y,
+			))
 	slice._sync_presentation()
-	print("RETAIL_RENDER_ATTACK_POSE attacker=%d target=%d advance_ticks=%d" % [attacker_id, target_id, advance_ticks])
+	print("RETAIL_RENDER_ATTACK_POSE attacker=%d target=%d advance_ticks=%d state=%s distance=%s" % [
+		attacker_id,
+		target_id,
+		advance_ticks,
+		String(attacker_after.get("state", "")),
+		Vector2(attacker_after.get("position", Vector2.ZERO)).distance_to(Vector2(target_after.get("position", Vector2.ZERO))),
+	])
 	return true
+
+
+func _snap_staged_battalion(battalion: Node3D, world_position: Vector3) -> void:
+	# The formation engine normally compensates root motion to keep individual
+	# soldiers world-stable. A capture recipe's one-time staging teleport is not
+	# gameplay motion, so reset members to their authored slots and restart the
+	# tracker before normal presentation frames resume.
+	battalion.call("set_authoritative_position", world_position, true)
+	var member_visuals: Dictionary = battalion.get("member_visuals") as Dictionary
+	for member_index_value in member_visuals.keys():
+		var member_index := int(member_index_value)
+		var member: Node3D = member_visuals.get(member_index) as Node3D
+		member.position = battalion.call("member_formation_slot", member_index) as Vector3
+	var formation: RefCounted = battalion.get("formation") as RefCounted
+	formation.set("_root_tracking_ready", false)
+
+
+func _capture_viewport() -> Vector2i:
+	var text := OS.get_environment("OPENBFME_CAPTURE_VIEWPORT").strip_edges().to_lower()
+	if text == "":
+		return DEFAULT_VIEWPORT
+	var parts := text.split("x", false)
+	if parts.size() != 2 or not String(parts[0]).is_valid_int() or not String(parts[1]).is_valid_int():
+		_fail("OPENBFME_CAPTURE_VIEWPORT must be WIDTHxHEIGHT")
+		return Vector2i.ZERO
+	var result := Vector2i(int(parts[0]), int(parts[1]))
+	if result.x < 640 or result.y < 480 or result.x > 3840 or result.y > 2160:
+		_fail("OPENBFME_CAPTURE_VIEWPORT must be within 640x480..3840x2160")
+		return Vector2i.ZERO
+	return result
+
+
+func _capture_advance_ticks(default_value: int) -> int:
+	var text := OS.get_environment("OPENBFME_CAPTURE_ADVANCE_TICKS").strip_edges()
+	if text == "":
+		return default_value
+	if not text.is_valid_int() or int(text) < 1 or int(text) > 120:
+		_fail("OPENBFME_CAPTURE_ADVANCE_TICKS must be in 1..120")
+		return -1
+	return int(text)
+
+
+func _path_is_within(root_path: String, candidate_path: String) -> bool:
+	var root_path_normalized := _comparison_path(root_path).trim_suffix("/")
+	var candidate_normalized := _comparison_path(candidate_path)
+	return candidate_normalized.begins_with(root_path_normalized + "/")
+
+
+func _path_has_link_component(root_path: String, candidate_path: String) -> bool:
+	var root_path_normalized := _comparison_path(root_path).trim_suffix("/")
+	var candidate_normalized := _comparison_path(candidate_path)
+	if not _path_is_within(root_path_normalized, candidate_normalized) and candidate_normalized != root_path_normalized:
+		return true
+	var root_name := root_path_normalized.get_file()
+	if root_name != "" and _link_status(root_path_normalized.get_base_dir(), root_name) != 0:
+		return true
+	var relative := candidate_normalized.substr(root_path_normalized.length()).trim_prefix("/")
+	var current := root_path_normalized
+	for segment in relative.split("/", false):
+		if _link_status(current, segment) != 0:
+			return true
+		current = current.path_join(segment)
+	return false
+
+
+func _link_status(parent_path: String, child_name: String) -> int:
+	var parent := DirAccess.open(parent_path)
+	if parent == null:
+		return -1
+	return 1 if parent.is_link(child_name) else 0
+
+
+func _comparison_path(path: String) -> String:
+	var normalized := path.replace("\\", "/").simplify_path()
+	return normalized.to_lower() if OS.get_name() == "Windows" else normalized
 
 
 func _light_diagnostics(slice: Node) -> Array[Dictionary]:
