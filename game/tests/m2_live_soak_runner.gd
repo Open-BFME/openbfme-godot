@@ -7,6 +7,8 @@ const SAMPLE_INTERVAL_MSEC := 1000
 const READY_TIMEOUT_MSEC := 120000
 const MULTI_SECOND_STALL_MSEC := 2000.0
 const LATE_MEMORY_WINDOW_SAMPLES := 300
+const MAXIMUM_DURATION_SECONDS := 3600.0
+const PREALLOCATED_FRAME_SAMPLES_PER_SECOND := 1000
 
 var _failed := false
 
@@ -30,6 +32,9 @@ func _run() -> void:
 			_fail("OPENBFME_M2_SOAK_SECONDS must be at least five seconds")
 			return
 		duration = float(duration_text)
+	if duration > MAXIMUM_DURATION_SECONDS:
+		_fail("OPENBFME_M2_SOAK_SECONDS exceeds the bounded evidence-storage duration")
+		return
 
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 	DisplayServer.window_set_size(Vector2i(1920, 1080))
@@ -39,8 +44,16 @@ func _run() -> void:
 		_fail("retail vertical-slice scene did not load")
 		return
 
-	var frame_msec: Array[float] = []
-	var memory_samples: Array[int] = []
+	# Allocate the complete measurement buffers before the first memory baseline.
+	# The game-memory trend must not include growth from its own evidence arrays.
+	var frame_sample_capacity := ceili(duration * PREALLOCATED_FRAME_SAMPLES_PER_SECOND) + 1
+	var frame_sample_storage := PackedFloat64Array()
+	frame_sample_storage.resize(frame_sample_capacity)
+	var frame_sample_count := 0
+	var memory_sample_capacity := ceili(duration * 1000.0 / SAMPLE_INTERVAL_MSEC) + 3
+	var memory_sample_storage := PackedInt64Array()
+	memory_sample_storage.resize(memory_sample_capacity)
+	var memory_sample_count := 0
 	var match_signatures: Array[String] = []
 	var restart_load_durations_msec: Array[int] = []
 	var bundle_sha256 := ""
@@ -71,11 +84,19 @@ func _run() -> void:
 		await process_frame
 		var now_usec := Time.get_ticks_usec()
 		var active_frame_usec := now_usec - previous_frame
-		frame_msec.append(float(active_frame_usec) / 1000.0)
+		if frame_sample_count >= frame_sample_capacity:
+			_fail("render rate exceeded the preallocated exact-frame evidence capacity")
+			return
+		frame_sample_storage[frame_sample_count] = float(active_frame_usec) / 1000.0
+		frame_sample_count += 1
 		active_elapsed_usec += active_frame_usec
 		previous_frame = now_usec
 		while active_elapsed_usec >= next_memory_sample_active_usec:
-			memory_samples.append(int(OS.get_static_memory_usage()))
+			if memory_sample_count >= memory_sample_capacity:
+				_fail("memory sampling exceeded its preallocated evidence capacity")
+				return
+			memory_sample_storage[memory_sample_count] = int(OS.get_static_memory_usage())
+			memory_sample_count += 1
 			next_memory_sample_active_usec += SAMPLE_INTERVAL_MSEC * 1000
 		if int(slice.simulation.winner) == -1:
 			continue
@@ -107,8 +128,11 @@ func _run() -> void:
 		# after the replacement match is ready.
 		previous_frame = Time.get_ticks_usec()
 
-	if memory_samples.is_empty():
-		memory_samples.append(int(OS.get_static_memory_usage()))
+	if memory_sample_count == 0:
+		memory_sample_storage[0] = int(OS.get_static_memory_usage())
+		memory_sample_count = 1
+	var frame_msec := frame_sample_storage.slice(0, frame_sample_count)
+	var memory_samples := memory_sample_storage.slice(0, memory_sample_count)
 	var elapsed_seconds := float(active_elapsed_usec) / 1000000.0
 	var wall_elapsed_seconds := float(Time.get_ticks_usec() - soak_started) / 1000000.0
 	var average_fps := float(frame_msec.size()) / elapsed_seconds if elapsed_seconds > 0.0 else 0.0
@@ -127,7 +151,7 @@ func _run() -> void:
 	var late_memory_growth := memory_samples[-1] - memory_samples[late_memory_start]
 	var evidence := {
 		"schema": "openbfme.m2-men-fords-live-soak",
-		"schemaVersion": 0,
+		"schemaVersion": 1,
 		"profileSha256": OS.get_environment("OPENBFME_M2_PROFILE_SHA256"),
 		"bundleSha256": bundle_sha256,
 		"gitRevision": OS.get_environment("OPENBFME_M2_GIT_REVISION"),
@@ -141,7 +165,14 @@ func _run() -> void:
 		"renderingDriver": RenderingServer.get_current_rendering_driver_name(),
 		"videoAdapter": RenderingServer.get_video_adapter_name(),
 		"frameCount": frame_msec.size(),
-		"frameSamplesMsec": frame_msec,
+		"frameSamplesMsec": Array(frame_msec),
+		"frameSampleStorage": {
+			"format": "packed-float64-preallocated",
+			"capacity": frame_sample_capacity,
+			"usedCount": frame_sample_count,
+			"maximumFramesPerSecond": PREALLOCATED_FRAME_SAMPLES_PER_SECOND,
+			"allocationCompleteBeforeMemoryBaseline": true,
+		},
 		"averageFps": average_fps,
 		"onePercentLowFps": one_percent_low_fps,
 		"maximumFrameMsec": maximum_frame_msec,
@@ -156,7 +187,13 @@ func _run() -> void:
 		"lateWindowMemoryGrowthBytes": late_memory_growth,
 		"lateWindowMemorySampleCount": memory_samples.size() - late_memory_start,
 		"memorySampleCount": memory_samples.size(),
-		"memorySamplesBytes": memory_samples,
+		"memorySamplesBytes": Array(memory_samples),
+		"memorySampleStorage": {
+			"format": "packed-int64-preallocated",
+			"capacity": memory_sample_capacity,
+			"usedCount": memory_sample_count,
+			"allocationCompleteBeforeMemoryBaseline": true,
+		},
 		"completedMatches": completed_matches,
 		"readyStarts": ready_restarts,
 		"matchSignatures": match_signatures,
@@ -191,7 +228,7 @@ func _run() -> void:
 	quit(0)
 
 
-func _one_percent_low_fps(samples: Array[float]) -> float:
+func _one_percent_low_fps(samples: PackedFloat64Array) -> float:
 	if samples.is_empty():
 		return 0.0
 	var ordered := samples.duplicate()

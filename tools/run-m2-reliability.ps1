@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$GodotPath = "",
-    [ValidateRange(5, 86400)][int]$DurationSeconds = 1800,
+    [ValidateRange(5, 3600)][int]$DurationSeconds = 1800,
     [string]$Output = ""
 )
 

@@ -131,6 +131,17 @@ def test_m2_reliability_is_real_time_rendered_and_identity_bound() -> None:
     assert "onePercentLowFps" in runner
     assert "peakMemoryBytes" in runner
     assert "memoryGrowthBytes" in runner
+    assert "MAXIMUM_DURATION_SECONDS := 3600.0" in runner
+    assert "PackedFloat64Array" in runner
+    assert "PackedInt64Array" in runner
+    assert "frame_sample_storage.resize(frame_sample_capacity)" in runner
+    assert "memory_sample_storage.resize(memory_sample_capacity)" in runner
+    assert runner.index("frame_sample_storage.resize") < runner.index("soak_started")
+    assert runner.index("memory_sample_storage.resize") < runner.index("soak_started")
+    assert '"schemaVersion": 1' in runner
+    assert '"packed-float64-preallocated"' in runner
+    assert '"packed-int64-preallocated"' in runner
+    assert "frame_msec.append" not in runner
     assert "EXPECTED_MATCHES := 3" in lifecycle
     assert "slice.step_for_test" in lifecycle
     assert "simulation.winner =" not in lifecycle

@@ -18,9 +18,35 @@ function Assert-M2ReliabilitySoakEvidence {
     }
 
     $actualDurationSeconds = [double]$Soak.actualDurationSeconds
+    $requestedDurationSeconds = [double]$Soak.requestedDurationSeconds
     $sampleIntervalMsec = [int]$Soak.memorySampleIntervalMsec
     $samples = @($Soak.memorySamplesBytes)
     $frameSamplesMsec = [double[]]@($Soak.frameSamplesMsec | ForEach-Object { [double]$_ })
+
+    Assert-SoakEvidence (
+        [string]$Soak.schema -eq 'openbfme.m2-men-fords-live-soak' -and
+        [int]$Soak.schemaVersion -eq 1
+    ) "Live soak evidence schema is invalid."
+    Assert-SoakEvidence ($requestedDurationSeconds -ge 5.0 -and $requestedDurationSeconds -le 3600.0) "Live soak requested duration escaped the bounded evidence-storage contract."
+    $frameStorage = $Soak.frameSampleStorage
+    $expectedFrameCapacity = [int][Math]::Ceiling($requestedDurationSeconds * 1000.0) + 1
+    Assert-SoakEvidence (
+        [string]$frameStorage.format -eq 'packed-float64-preallocated' -and
+        [int]$frameStorage.maximumFramesPerSecond -eq 1000 -and
+        [int]$frameStorage.capacity -eq $expectedFrameCapacity -and
+        [int]$frameStorage.usedCount -eq [int]$Soak.frameCount -and
+        $frameStorage.allocationCompleteBeforeMemoryBaseline -is [bool] -and
+        $frameStorage.allocationCompleteBeforeMemoryBaseline -eq $true
+    ) "Live soak frame evidence storage was not fully allocated before the memory baseline."
+    $memoryStorage = $Soak.memorySampleStorage
+    $expectedMemoryCapacity = [int][Math]::Ceiling($requestedDurationSeconds * 1000.0 / [double]$sampleIntervalMsec) + 3
+    Assert-SoakEvidence (
+        [string]$memoryStorage.format -eq 'packed-int64-preallocated' -and
+        [int]$memoryStorage.capacity -eq $expectedMemoryCapacity -and
+        [int]$memoryStorage.usedCount -eq [int]$Soak.memorySampleCount -and
+        $memoryStorage.allocationCompleteBeforeMemoryBaseline -is [bool] -and
+        $memoryStorage.allocationCompleteBeforeMemoryBaseline -eq $true
+    ) "Live soak memory evidence storage was not fully allocated before the memory baseline."
 
     Assert-SoakEvidence ($actualDurationSeconds -ge $MinimumDurationSeconds) "Live soak ended before the requested active duration."
     Assert-SoakEvidence (
