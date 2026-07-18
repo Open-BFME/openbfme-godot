@@ -65,10 +65,6 @@ CONVERSION_SOURCE_GAPS = {
         "Retail GondorTrebuchet model and core clips exist, but the existing animated "
         "W3D converter fails bounded animation-output capture accounting."
     ),
-    "m3-gondorranger-rig-and-core-clips": (
-        "Retail GondorRanger model and core clips exist, but two fresh pinned-tool "
-        "builds emitted no Ranger GLB; conversion must be corrected and reproved."
-    ),
 }
 UPGRADES = (
     "Upgrade_GondorHeavyArmor", "Upgrade_GondorFireArrows",
