@@ -10,6 +10,7 @@ const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
 const PRESENTATION_TICK_SECONDS := 0.1
 const DEFAULT_TURN_RATE_DEGREES_PER_SECOND := 720.0
 const ARCHER_LAUNCH_BONE := "ARROWNOCK"
+const RANGER_LAUNCH_BONE := "ARROW"
 const ARCHER_CURVE_HEIGHT_SOURCE := 9.0
 const MELEE_ADVANCE_LIMIT := 3.8
 const MELEE_LANE_SPACING := 1.05
@@ -95,6 +96,7 @@ var _selection_layout_state := ""
 var _next_archer_presentation_token := 1
 var archer_projectiles_presented := 0
 var archer_impacts_presented := 0
+var weapon_launch_bone := ARCHER_LAUNCH_BONE
 
 
 func configure(
@@ -112,6 +114,9 @@ func configure(
 	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
 	var presentation: Dictionary = definition.get("presentation", {}) as Dictionary
 	retail_model_filename = String(presentation.get("model", "")).get_file()
+	weapon_launch_bone = String(presentation.get("weaponLaunchBone", ARCHER_LAUNCH_BONE))
+	if object_id == RANGER_OBJECT_ID and weapon_launch_bone != RANGER_LAUNCH_BONE:
+		weapon_launch_bone = ""
 	private_parity_mode_active = _is_private_retail_pack(definition)
 	_source_unit_scale = source_unit_scale if is_finite(source_unit_scale) and source_unit_scale > 0.0 else 0.0
 	_configure_combat_visual_contract(definition)
@@ -586,7 +591,7 @@ func _present_archer_member_attack(member_index: int) -> void:
 		return
 	projectile.set_meta("authoritative_member_index", member_index)
 	projectile.set_meta("presentation_authority", "simulation-member-attack-token")
-	projectile.set_meta("launch_bone", ARCHER_LAUNCH_BONE)
+	projectile.set_meta("launch_bone", weapon_launch_bone)
 	projectile.set_meta("launch_global", start_global)
 	archer_projectiles_presented += 1
 	var target_ref: WeakRef = weakref(target)
@@ -622,7 +627,7 @@ func _update_archer_projectile(weight: float, event_token: int, start_local: Vec
 func _archer_launch_global(member: Node3D) -> Vector3:
 	var skeleton := _first_skeleton(member)
 	if skeleton != null:
-		var bone_index := skeleton.find_bone(ARCHER_LAUNCH_BONE)
+		var bone_index := skeleton.find_bone(weapon_launch_bone)
 		if bone_index >= 0:
 			return skeleton.to_global(skeleton.get_bone_global_pose(bone_index).origin)
 	return to_global(member.position + Vector3(0.0, attack_presentation_height(), 0.0))
@@ -920,6 +925,9 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 	exact_impact_effect_node_count = 0
 	combat_visual_contract_error = ""
 	if not private_parity_mode_active or object_id not in [ARCHER_OBJECT_ID, RANGER_OBJECT_ID]:
+		return
+	if object_id == RANGER_OBJECT_ID and weapon_launch_bone != RANGER_LAUNCH_BONE:
+		combat_visual_contract_error = "Ranger primary launch bone is not ARROW"
 		return
 	var pack_root := String(definition.get("_pack_root", ""))
 	if object_id == RANGER_OBJECT_ID:

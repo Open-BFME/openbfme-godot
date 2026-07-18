@@ -451,6 +451,21 @@ def test_effective_ranger_runtime_contract_is_exact_and_incomplete() -> None:
     assert result["audioRouteKinds"]["select"] == "multisound"
     assert result["presentation"]["trainButtonImage"]["id"] == "BGArcheryRange_Rangers"
     assert result["presentation"]["portraitImage"]["id"] == "UPGondor_Ranger"
+    assert result["presentation"]["primaryLaunchBone"]["slot"] == "PRIMARY"
+    assert result["presentation"]["primaryLaunchBone"]["bone"] == "ARROW"
+    assert result["unitRule"]["member"]["weapon"]["clip"] == {
+        "size": 1,
+        "reloadTimeMs": 1366,
+        "autoReloads": True,
+        "continuousFireOne": 2,
+        "continuousFireCoastMs": 2000,
+        "continuousFireRatePercent": 225,
+        "source": {
+            "ini": "data/ini/weapon.ini",
+            "kind": "Weapon",
+            "id": "GondorRangerBow",
+        },
+    }
     assert all(
         binding["source"]["ini"].startswith("data/ini/")
         for binding in result["audioRoutes"].values()
@@ -483,6 +498,7 @@ def test_effective_ranger_runtime_contract_is_exact_and_incomplete() -> None:
     assert objects["bfme2.object.gondor-ranger"]["presentation"]["model"] == (
         "assets/models/m3/units/gondorranger.glb"
     )
+    assert objects["bfme2.object.gondor-ranger"]["presentation"]["weaponLaunchBone"] == "ARROW"
     assert objects["bfme2.object.gondor-ranger-horde"]["memberCount"] == 10
     assert objects["bfme2.object.gondor-ranger-horde"]["commandPoints"] == 70
     assert capabilities["bfme2.animation.gondor-ranger"]["states"] == {

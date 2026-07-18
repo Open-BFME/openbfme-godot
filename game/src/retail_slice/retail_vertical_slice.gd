@@ -598,6 +598,15 @@ func _validate_retail_object_model(object_id: String, expected_kind: String, exp
 		var overlay_pack: Dictionary = ModLoader._read_json(definition_root.path_join("pack.json")) as Dictionary
 		if String(overlay_pack.get("id", "")) != "bfme2-men-ranger-overlay":
 			return "%s is not registered by the bounded Ranger overlay" % object_id
+		var horde := ContentDB.get_bundle_object(RANGER_HORDE_ID)
+		var capability := ContentDB.get_animation_capability(String(definition.get("animationCapabilityId", "")))
+		if (
+			String(ranger_runtime.get("_pack_root", "")) != definition_root
+			or String(horde.get("_pack_root", "")) != definition_root
+			or String(capability.get("_pack_root", "")) != definition_root
+			or String(ranger_runtime.get("_reviewed_content_sha256", "")) == ""
+		):
+			return "%s overlay content is not one reviewed coherent pack" % object_id
 	if String(definition.get("kind", "")) != expected_kind:
 		return "%s has kind %s instead of %s" % [object_id, String(definition.get("kind", "")), expected_kind]
 	var presentation: Dictionary = definition.get("presentation", {}) as Dictionary
@@ -702,6 +711,7 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 			# The converted core bundle proves bow presentation only. Keep the
 			# source sword rule in provenance, but never activate it until its
 			# authored transition/attack clips are converted and bound.
+			converted["unsupported_close_weapon"] = String(converted.get("close_weapon_mode", "")) != ""
 			converted["close_weapon_mode"] = ""
 		unit_rules[object_id] = converted
 	var builder_definition := ContentDB.get_bundle_object(BUILDER_OBJECT_ID)
@@ -825,10 +835,6 @@ func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dict
 			0.0,
 			(position.x - center.x) * source_map_data.local_transform_scale
 		))
-	# OpenSAGE advances PreAttack -> Firing -> BetweenShots as separate fixed
-	# durations (WeaponStates/WeaponStateMachine.cs:35-57), so the existing
-	# volley cooldown uses their parsed sum while the hit remains on PreAttack.
-	var attack_period_ms := pre_attack_ms + firing_duration_ms + delay_ms
 	var weapon_modes := {
 		"default": _convert_retail_weapon_mode(weapon, tick_ms),
 	}
@@ -851,6 +857,7 @@ func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dict
 	for mode_value in weapon_modes.values():
 		if typeof(mode_value) != TYPE_DICTIONARY or (mode_value as Dictionary).has("_error"):
 			return {"_error": "invalid retail weapon mode"}
+	var default_mode: Dictionary = weapon_modes["default"] as Dictionary
 	var switch_distance_source := 0.0
 	var switch_value: Variant = member.get("dualWeaponSwitchDistance", {})
 	if typeof(switch_value) == TYPE_DICTIONARY and bool((switch_value as Dictionary).get("defined", true)):
@@ -877,7 +884,12 @@ func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dict
 		"firing_duration_ms": firing_duration_ms,
 		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / tick_ms)),
 		"firing_duration_ticks": maxi(0, roundi(firing_duration_ms / tick_ms)),
-		"attack_period_ticks": maxi(1, roundi(attack_period_ms / tick_ms)),
+		"attack_period_ticks": int(default_mode.get("attack_period_ticks", 1)),
+		"clip_size": int(default_mode.get("clip_size", 0)),
+		"clip_reload_time_ms": float(default_mode.get("clip_reload_time_ms", 0.0)),
+		"continuous_fire_one": int(default_mode.get("continuous_fire_one", 0)),
+		"continuous_fire_coast_ticks": int(default_mode.get("continuous_fire_coast_ticks", 0)),
+		"continuous_fire_rate_multiplier": float(default_mode.get("continuous_fire_rate_multiplier", 1.0)),
 		"member_damage": maxi(1, roundi(damage)),
 		"weapon_modes": weapon_modes,
 		"default_weapon_mode": default_weapon_mode,
@@ -904,7 +916,20 @@ func _convert_retail_weapon_mode(weapon: Dictionary, tick_ms: float) -> Dictiona
 	for value in [range_source, minimum_source, delay_ms, pre_attack_ms, firing_ms, damage]:
 		if not is_finite(float(value)) or float(value) < 0.0:
 			return {"_error": "non-finite or negative retail weapon field"}
-	var period_ms := pre_attack_ms + firing_ms + delay_ms
+	var clip: Dictionary = weapon.get("clip", {}) as Dictionary
+	var clip_size := int(clip.get("size", 0))
+	var clip_reload_ms := float(clip.get("reloadTimeMs", 0.0))
+	var continuous_fire_one := int(clip.get("continuousFireOne", 0))
+	var continuous_fire_coast_ms := float(clip.get("continuousFireCoastMs", 0.0))
+	var continuous_fire_rate_percent := float(clip.get("continuousFireRatePercent", 100.0))
+	if (
+		clip_size < 0 or clip_reload_ms < 0.0 or continuous_fire_one < 0
+		or continuous_fire_coast_ms < 0.0 or continuous_fire_rate_percent < 100.0
+	):
+		return {"_error": "invalid retail weapon clip field"}
+	# A one-round clip reloads before the next PreAttack. DelayBetweenShots is
+	# only the transition used while rounds remain in the same clip.
+	var period_ms := pre_attack_ms + firing_ms + (clip_reload_ms if clip_size == 1 else delay_ms)
 	return {
 		"name": String(weapon.get("name", "")),
 		"attack_range": range_source * source_map_data.local_transform_scale,
@@ -917,6 +942,11 @@ func _convert_retail_weapon_mode(weapon: Dictionary, tick_ms: float) -> Dictiona
 		"attack_period_ticks": maxi(1, roundi(period_ms / tick_ms)),
 		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / tick_ms)),
 		"firing_duration_ticks": maxi(0, roundi(firing_ms / tick_ms)),
+		"clip_size": clip_size,
+		"clip_reload_time_ms": clip_reload_ms,
+		"continuous_fire_one": continuous_fire_one,
+		"continuous_fire_coast_ticks": maxi(0, roundi(continuous_fire_coast_ms / tick_ms)),
+		"continuous_fire_rate_multiplier": continuous_fire_rate_percent / 100.0,
 		"member_damage": maxi(1, roundi(damage)),
 		"provenance": weapon.duplicate(true),
 	}

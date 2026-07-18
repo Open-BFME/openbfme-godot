@@ -109,6 +109,7 @@ COMMAND_SET_PATH = "data/ini/commandset.ini"
 GAMEDATA_PATH = "data/ini/gamedata.ini"
 UPGRADE_PATH = "data/ini/upgrade.ini"
 ARCHERY_RANGE_PATH = "data/ini/object/goodfaction/structures/men/archerrange.ini"
+WEAPON_PATH = "data/ini/weapon.ini"
 SELECTION_TRANSITIONS = {
     "GondorFighter": ("GUManMocap_ATNA", "GUManMocap_ATNB", "GUManMocap_ATND"),
     "GondorArcher": ("GUArcher_ATNA", "GUArcher_ATNB", "GUArcher_ATNC"),
@@ -1081,6 +1082,77 @@ def build_ranger_runtime_contract(
     if len(ranger_members) != 1 or len(ranger_hordes) != 1:
         raise ValueError("effective Ranger member/horde source is ambiguous")
 
+    ranger_bow = _unambiguous_block(
+        _block_groups(source_payloads[WEAPON_PATH], "Weapon"),
+        "GondorRangerBow",
+        "Weapon",
+    )
+    clip_size = int(_one(ranger_bow, "ClipSize", True) or "0")
+    clip_reload_ms = int(_one(ranger_bow, "ClipReloadTime", True) or "0")
+    continuous_fire_one = int(_one(ranger_bow, "ContinuousFireOne", True) or "0")
+    coast_expression = _one(ranger_bow, "ContinuousFireCoast", True) or ""
+    continuous_fire_coast_ms = constants.get(coast_expression.casefold())
+    weapon_bonus = (_one(ranger_bow, "WeaponBonus", True) or "").split()
+    if (
+        clip_size != 1
+        or clip_reload_ms != 1366
+        or (_one(ranger_bow, "AutoReloadsClip", True) or "").casefold() != "yes"
+        or continuous_fire_one != 2
+        or continuous_fire_coast_ms != 2000
+        or weapon_bonus != ["CONTINUOUS_FIRE_MEAN", "RATE_OF_FIRE", "225%"]
+    ):
+        raise ValueError("effective GondorRangerBow cadence contract changed")
+
+    default_states: list[SageBlock] = []
+
+    def collect_default_states(block: SageBlock) -> None:
+        if block.kind.casefold() == "defaultmodelconditionstate":
+            default_states.append(block)
+        for child in block.blocks:
+            collect_default_states(child)
+
+    for block in ranger_members[0].blocks:
+        collect_default_states(block)
+    if len(default_states) != 1:
+        raise ValueError("effective Ranger default model state is ambiguous")
+    launch_bones = [
+        assignment
+        for assignment in default_states[0].assignments
+        if assignment.key.casefold() == "weaponlaunchbone"
+        and assignment.value.split()[:1] == ["PRIMARY"]
+    ]
+    if len(launch_bones) != 1 or launch_bones[0].value.split() != ["PRIMARY", "ARROW"]:
+        raise ValueError("effective Ranger primary launch bone changed")
+    launch_bone_binding = {
+        "slot": "PRIMARY",
+        "bone": "ARROW",
+        "source": {
+            "ini": launch_bones[0].source_virtual_path,
+            "kind": "DefaultModelConditionState",
+            "id": "GondorRanger",
+            "field": launch_bones[0].key,
+            "line": launch_bones[0].line,
+        },
+    }
+    clip_contract = {
+        "size": clip_size,
+        "reloadTimeMs": clip_reload_ms,
+        "autoReloads": True,
+        "continuousFireOne": continuous_fire_one,
+        "continuousFireCoastMs": continuous_fire_coast_ms,
+        "continuousFireRatePercent": 225,
+        "source": {"ini": WEAPON_PATH, "kind": "Weapon", "id": "GondorRangerBow"},
+    }
+    ranger_rule["member"]["weapon"]["clip"] = deepcopy(clip_contract)
+    default_weapon_sets = [
+        row
+        for row in ranger_rule["member"]["weaponSets"]
+        if [str(value).casefold() for value in row.get("conditions", [])] == ["none"]
+    ]
+    if len(default_weapon_sets) != 1:
+        raise ValueError("effective Ranger default weapon set is ambiguous")
+    default_weapon_sets[0]["slots"]["primary"]["clip"] = deepcopy(clip_contract)
+
     def source_binding(obj: SageObject, field: str) -> dict[str, Any]:
         assignments = [
             assignment
@@ -1178,6 +1250,7 @@ def build_ranger_runtime_contract(
         "presentation": {
             "trainButtonImage": train_image_binding,
             "portraitImage": portrait_binding,
+            "primaryLaunchBone": launch_bone_binding,
         },
         "audioRoutes": audio_bindings,
         "audioRouteKinds": audio_route_kinds,
@@ -1276,6 +1349,10 @@ def attach_ranger_playable_bindings(
         or member_health != 300
     ):
         raise ValueError("Ranger playable binding values changed")
+    presentation = _obj(ranger_runtime.get("presentation"), "Ranger presentation")
+    launch_bone = _obj(presentation.get("primaryLaunchBone"), "Ranger primary launch bone")
+    if (launch_bone.get("slot"), launch_bone.get("bone")) != ("PRIMARY", "ARROW"):
+        raise ValueError("Ranger primary launch bone contract changed")
 
     objects.extend(
         [
@@ -1289,6 +1366,7 @@ def attach_ranger_playable_bindings(
                     "model": model_output,
                     "icon": image_paths["UPGondor_Ranger"],
                     "commandIcon": image_paths["BGArcheryRange_Rangers"],
+                    "weaponLaunchBone": "ARROW",
                 },
             },
             {
@@ -1320,7 +1398,6 @@ def attach_ranger_playable_bindings(
             },
         }
     )
-    presentation = _obj(ranger_runtime.get("presentation"), "Ranger presentation")
     presentation.update(
         {
             "memberObjectId": "bfme2.object.gondor-ranger",

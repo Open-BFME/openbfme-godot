@@ -39,6 +39,7 @@ func _run() -> void:
 	var member_root := String(member.get("_pack_root", ""))
 	var mod_loader = root.get_node("/root/ModLoader")
 	var overlay_meta: Dictionary = mod_loader._read_json(member_root.path_join("pack.json")) as Dictionary
+	var reviewed_overlay_sha := OS.get_environment("OPENBFME_REVIEWED_RANGER_OVERLAY_SHA256").to_lower()
 	_check(
 		"overlay_registers_typed_ranger_content",
 		String(runtime.get("schema", "")) == "openbfme.ranger-runtime-contract"
@@ -46,6 +47,11 @@ func _run() -> void:
 			and String(horde.get("kind", "")) == "battalion"
 			and String(member.get("animationCapabilityId", "")) == RANGER_CAPABILITY_ID
 			and String(overlay_meta.get("id", "")) == "bfme2-men-ranger-overlay"
+			and reviewed_overlay_sha.length() == 64
+			and String(runtime.get("_reviewed_content_sha256", "")) == reviewed_overlay_sha
+			and String(runtime.get("_pack_root", "")) == member_root
+			and String(horde.get("_pack_root", "")) == member_root
+			and String(capability.get("_pack_root", "")) == member_root
 	)
 	var states: Dictionary = capability.get("states", {}) as Dictionary
 	_check(
@@ -121,6 +127,12 @@ func _run() -> void:
 			and int(ranger.get("command_points", 0)) == 70
 			and int(ranger.get("member_damage", 0)) == 65
 			and is_equal_approx(float(ranger.get("attack_range_source", 0.0)), 400.0)
+			and int(ranger.get("clip_size", 0)) == 1
+			and is_equal_approx(float(ranger.get("clip_reload_time_ms", 0.0)), 1366.0)
+			and int(ranger.get("attack_period_ticks", 0)) == 18
+			and int(ranger.get("continuous_fire_one", 0)) == 2
+			and int(ranger.get("continuous_fire_coast_ticks", 0)) == 20
+			and is_equal_approx(float(ranger.get("continuous_fire_rate_multiplier", 0.0)), 2.25)
 			and sim.command_points_for_team(0) == 190,
 		str(ranger)
 	)
@@ -137,10 +149,17 @@ func _run() -> void:
 			and int(battalion.member_count) == 10
 			and int(battalion.retail_visual_count) == 10
 			and int(battalion.rigged_member_count) == 10
+			and String(battalion.weapon_launch_bone) == "ARROW"
+			and battalion._first_skeleton(battalion).find_bone("ARROW") >= 0
+			and battalion._first_skeleton(battalion).find_bone("ARROWNOCK_2") >= 0
 			and bool(battalion.combat_visual_source_closure_present)
 			and battalion.source_selection_decal != null
 			and bool(battalion.source_selection_decal.contract_ready),
-		String(battalion.member_overlay_status if battalion != null else "missing")
+		str({
+			"overlay": battalion.member_overlay_status if battalion != null else "missing",
+			"launch_bone": battalion.weapon_launch_bone if battalion != null else "missing",
+			"bones": _skeleton_bones(battalion._first_skeleton(battalion)) if battalion != null else [],
+		})
 	)
 	if battalion == null:
 		slice.queue_free()
@@ -166,7 +185,24 @@ func _run() -> void:
 	)
 
 	var enemy_id := 101
-	(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(sim.entity(ranger_id).get("position", start)) + Vector2(4.0, 0.0)
+	(sim.entities[enemy_id] as Dictionary)["speed"] = 0.0
+	(sim.entities[enemy_id] as Dictionary)["acceleration"] = 0.0
+	var ranger_position := Vector2(sim.entity(ranger_id).get("position", start))
+	var switch_distance := float(ranger.get("close_weapon_switch_distance", 0.0))
+	var enemy_health_before := int(sim.entity(enemy_id).get("health", 0))
+	(sim.entities[enemy_id] as Dictionary)["position"] = ranger_position + Vector2(switch_distance - 0.01, 0.0)
+	sim.issue_attack(ranger_ids, enemy_id)
+	sim.advance(5)
+	(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(sim.entity(ranger_id).get("position", start)) + Vector2(switch_distance, 0.0)
+	sim.advance(3)
+	_check(
+		"deferred_sword_path_fails_closed_at_and_inside_source_boundary",
+		is_equal_approx(float(ranger.get("close_weapon_switch_distance_source", 0.0)), 24.0)
+			and int(sim.entity(enemy_id).get("health", 0)) == enemy_health_before
+			and not _has_event(sim.events, "combat.member_fire", ranger_id)
+			and not _has_event(sim.events, "combat.hit", ranger_id)
+	)
+	(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(sim.entity(ranger_id).get("position", start)) + Vector2(switch_distance + 1.6, 0.0)
 	var attack_count: int = sim.issue_attack(ranger_ids, enemy_id)
 	sim.advance(8)
 	var fired := _has_event(sim.events, "combat.swing", ranger_id)
@@ -177,6 +213,16 @@ func _run() -> void:
 		"ranger_attack_uses_bow_presentation",
 		String(battalion.current_state) == "attack"
 			and int(battalion.archer_projectiles_presented) > 0
+			and _active_projectiles_use_launch_bone(battalion.archer_projectile_controller, "ARROW")
+	)
+	sim.advance(30)
+	var swing_ticks := _event_ticks(sim.events, "combat.swing", ranger_id)
+	_check(
+		"ranger_clip_reload_and_continuous_fire_drive_cadence",
+		swing_ticks.size() >= 3
+			and swing_ticks[1] - swing_ticks[0] == 18
+			and swing_ticks[2] - swing_ticks[1] == 8,
+		str(swing_ticks)
 	)
 
 	var routes_ok := true
@@ -248,6 +294,36 @@ func _count_dead_members(entity: Dictionary) -> int:
 	for health in Array(entity.get("member_health", [])):
 		count += int(int(health) <= 0)
 	return count
+
+
+func _event_ticks(values: Array, kind: String, entity_id: int) -> Array[int]:
+	var result: Array[int] = []
+	for value in values:
+		var event: Dictionary = value as Dictionary
+		if String(event.get("kind", "")) == kind and int(event.get("entity_id", 0)) == entity_id:
+			result.append(int(event.get("tick", -1)))
+	return result
+
+
+func _active_projectiles_use_launch_bone(controller: Node, expected: String) -> bool:
+	if controller == null:
+		return false
+	var found := false
+	for child in controller.get_children():
+		if child.has_meta("launch_bone"):
+			found = true
+			if String(child.get_meta("launch_bone")) != expected:
+				return false
+	return found
+
+
+func _skeleton_bones(skeleton: Skeleton3D) -> Array[String]:
+	var result: Array[String] = []
+	if skeleton == null:
+		return result
+	for index in range(skeleton.get_bone_count()):
+		result.append(skeleton.get_bone_name(index))
+	return result
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:

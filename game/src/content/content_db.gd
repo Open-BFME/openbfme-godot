@@ -270,9 +270,57 @@ func _load_ranger_runtime(root: String, relative: String) -> void:
 		or String(document.get("capabilityStatus", "")) != "rules-and-prerequisite-ready"
 	):
 		return
+	var pack: Dictionary = ModLoader._read_json(ModLoader.resolve_pack_path(root, "pack.json")) as Dictionary
+	if String(pack.get("id", "")) == "bfme2-men-ranger-overlay":
+		var expected := OS.get_environment("OPENBFME_REVIEWED_RANGER_OVERLAY_SHA256").to_lower()
+		var actual := _pack_tree_sha256(root)
+		if expected.length() != 64 or not expected.is_valid_hex_number(false) or actual != expected:
+			return
+		document["_reviewed_content_sha256"] = actual
 	document["_source"] = ModLoader.resolve_pack_path(root, relative)
 	document["_pack_root"] = root
 	ranger_runtime = document
+
+
+func _pack_tree_sha256(root: String) -> String:
+	var files: Array[String] = []
+	if not _collect_pack_files(root, "", files):
+		return ""
+	files.sort()
+	var context := HashingContext.new()
+	if context.start(HashingContext.HASH_SHA256) != OK:
+		return ""
+	for relative in files:
+		var path := ModLoader.resolve_pack_path(root, relative)
+		var digest := FileAccess.get_sha256(path).to_lower()
+		if digest.length() != 64:
+			return ""
+		if context.update((relative + "\n" + digest + "\n").to_utf8_buffer()) != OK:
+			return ""
+	return context.finish().hex_encode()
+
+
+func _collect_pack_files(root: String, relative: String, output: Array[String]) -> bool:
+	var path := root if relative == "" else ModLoader.resolve_pack_path(root, relative)
+	var directory := DirAccess.open(path)
+	if directory == null:
+		return false
+	directory.list_dir_begin()
+	var name := directory.get_next()
+	while name != "":
+		if directory.is_link(name):
+			directory.list_dir_end()
+			return false
+		var child_relative := name if relative == "" else relative.path_join(name)
+		if directory.current_is_dir():
+			if not _collect_pack_files(root, child_relative, output):
+				directory.list_dir_end()
+				return false
+		else:
+			output.append(child_relative.replace("\\", "/"))
+		name = directory.get_next()
+	directory.list_dir_end()
+	return true
 
 
 func _read_declared_document(root: String, relative: String) -> Dictionary:

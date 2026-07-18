@@ -315,6 +315,8 @@ func _configure_ranger_runtime_contract() -> void:
 		"minimum_attack_range_source", "vision_range", "vision_range_source",
 		"delay_between_shots_ms", "pre_attack_delay_ms", "firing_duration_ms",
 		"attack_period_ticks", "pre_attack_ticks", "firing_duration_ticks",
+		"clip_size", "clip_reload_time_ms", "continuous_fire_one",
+		"continuous_fire_coast_ticks", "continuous_fire_rate_multiplier",
 		"formation_positions", "provenance",
 	]
 	for field in required_unit_rule_fields:
@@ -583,6 +585,8 @@ func _add_battalion(
 		"attack_cooldown": 0,
 		"attack_windup": 0,
 		"attack_sequence": 0,
+		"continuous_fire_count": 0,
+		"last_attack_tick": -1,
 		"member_attack_tokens": member_attack_tokens,
 		"member_attack_start_ticks": member_attack_start_ticks,
 		"member_attack_hit_ticks": member_attack_hit_ticks,
@@ -596,6 +600,12 @@ func _add_battalion(
 		"close_weapon_mode": String(unit_rule.get("close_weapon_mode", "")),
 		"close_weapon_switch_distance": float(unit_rule.get("close_weapon_switch_distance", 0.0)),
 		"close_weapon_switch_distance_source": float(unit_rule.get("close_weapon_switch_distance_source", 0.0)),
+		"unsupported_close_weapon": bool(unit_rule.get("unsupported_close_weapon", false)),
+		"clip_size": int(unit_rule.get("clip_size", 0)),
+		"clip_reload_time_ms": float(unit_rule.get("clip_reload_time_ms", 0.0)),
+		"continuous_fire_one": int(unit_rule.get("continuous_fire_one", 0)),
+		"continuous_fire_coast_ticks": int(unit_rule.get("continuous_fire_coast_ticks", 0)),
+		"continuous_fire_rate_multiplier": float(unit_rule.get("continuous_fire_rate_multiplier", 1.0)),
 		"active_weapon_mode": String(unit_rule.get("default_weapon_mode", "default")),
 		"stance": String((unit_rule.get("stances", {}) as Dictionary).get("default", "Battle")),
 		"stance_contract": (unit_rule.get("stances", {}) as Dictionary).duplicate(true),
@@ -1369,6 +1379,12 @@ func _step_entity(id: int) -> void:
 		# object's bounding radius.
 		var distance := Vector2(row["position"]).distance_to(target_position)
 		var selected_weapon_mode := _weapon_mode_for_distance(row, distance)
+		if selected_weapon_mode == "unsupported-close":
+			row["state"] = "idle"
+			row["attack_windup"] = 0
+			_clear_pending_route(row, true)
+			_clear_member_attack_schedule(row)
+			return
 		_apply_weapon_mode(row, selected_weapon_mode)
 		var minimum_range := float(row.get("minimum_attack_range", 0.0))
 		if distance <= float(row["attack_range"]) and (minimum_range <= 0.0 or distance >= minimum_range):
@@ -1595,7 +1611,13 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 	if int(row.get("attack_cooldown", 0)) == 0:
 		var pre_attack_ticks := maxi(0, int(row.get("pre_attack_ticks", 0)))
 		var maximum_stagger := maxi(0, MEMBER_ATTACK_STAGGER_WINDOW_TICKS - 1)
+		var coast_ticks := maxi(0, int(row.get("continuous_fire_coast_ticks", 0)))
+		var prior_attack_tick := int(row.get("last_attack_tick", -1))
+		if prior_attack_tick < 0 or (coast_ticks > 0 and tick_index - prior_attack_tick > coast_ticks):
+			row["continuous_fire_count"] = 0
 		row["attack_sequence"] = int(row.get("attack_sequence", 0)) + 1
+		row["continuous_fire_count"] = int(row.get("continuous_fire_count", 0)) + 1
+		row["last_attack_tick"] = tick_index
 		var attack_sequence := int(row["attack_sequence"])
 		for member_index in range(member_health_values.size()):
 			if int(member_health_values[member_index]) <= 0:
@@ -1608,8 +1630,13 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 			# Every member owns its attack boundary. This avoids the old whole-
 			# horde structure impact while preserving deterministic replay.
 			hit_ticks[member_index] = tick_index + stagger + pre_attack_ticks
+		var cadence_ticks := maxi(1, int(row.get("attack_period_ticks", 1)))
+		var continuous_threshold := maxi(0, int(row.get("continuous_fire_one", 0)))
+		var rate_multiplier := maxf(1.0, float(row.get("continuous_fire_rate_multiplier", 1.0)))
+		if continuous_threshold > 0 and int(row["continuous_fire_count"]) >= continuous_threshold:
+			cadence_ticks = maxi(1, roundi(float(cadence_ticks) / rate_multiplier))
 		row["attack_cooldown"] = maxi(
-			int(row.get("attack_period_ticks", 1)),
+			cadence_ticks,
 			pre_attack_ticks + maximum_stagger + 1
 		)
 		row["attack_windup"] = pre_attack_ticks + maximum_stagger
@@ -1681,6 +1708,8 @@ func _clear_member_targets(row: Dictionary) -> void:
 func _weapon_mode_for_distance(row: Dictionary, distance: float) -> String:
 	var close_mode := String(row.get("close_weapon_mode", ""))
 	var switch_distance := float(row.get("close_weapon_switch_distance", 0.0))
+	if bool(row.get("unsupported_close_weapon", false)) and switch_distance > 0.0 and distance <= switch_distance:
+		return "unsupported-close"
 	if close_mode != "" and switch_distance > 0.0 and distance <= switch_distance:
 		return close_mode
 	return String(row.get("default_weapon_mode", "default"))
@@ -1712,7 +1741,9 @@ func _apply_weapon_mode(row: Dictionary, mode: String) -> void:
 		"attack_range", "attack_range_source", "minimum_attack_range",
 		"minimum_attack_range_source", "delay_between_shots_ms",
 		"pre_attack_delay_ms", "firing_duration_ms", "attack_period_ticks",
-		"pre_attack_ticks", "firing_duration_ticks", "member_damage",
+		"pre_attack_ticks", "firing_duration_ticks", "member_damage", "clip_size",
+		"clip_reload_time_ms", "continuous_fire_one", "continuous_fire_coast_ticks",
+		"continuous_fire_rate_multiplier",
 	]:
 		if selected.has(field):
 			row[field] = selected[field]
