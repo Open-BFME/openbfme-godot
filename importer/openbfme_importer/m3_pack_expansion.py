@@ -20,6 +20,11 @@ from .paths import safe_relative_parts
 from .profile import MAX_PATTERNS_PER_RESOURCE, MAX_RESOURCES
 from .sage_cst import SageAssignment, SageBlock, SageObject, parse_sage_document
 from .sage_ini import IniBlock, parse_flat_named_blocks
+from .retail_unit_rules import (
+    RANGER_UNIT_SPEC,
+    extract_retail_unit_rules,
+    retail_unit_rule_source_paths,
+)
 from .util import write_json_atomic
 from .w3d_metadata import scan_w3d_metadata
 
@@ -60,6 +65,10 @@ CONVERSION_SOURCE_GAPS = {
         "Retail GondorTrebuchet model and core clips exist, but the existing animated "
         "W3D converter fails bounded animation-output capture accounting."
     ),
+    "m3-gondorranger-rig-and-core-clips": (
+        "Retail GondorRanger model and core clips exist, but two fresh pinned-tool "
+        "builds emitted no Ranger GLB; conversion must be corrected and reproved."
+    ),
 }
 UPGRADES = (
     "Upgrade_GondorHeavyArmor", "Upgrade_GondorFireArrows",
@@ -74,7 +83,10 @@ RUNTIME_PATHS = {
     "houseColor": "data/house-color.json",
     "selectionTransitions": "data/m3/selection-transitions.json",
     "models": "data/m3/model-census.json",
+    "rangerRuntime": "data/m3/ranger-runtime.json",
 }
+RANGER_RUNTIME_PATH = RUNTIME_PATHS["rangerRuntime"]
+RANGER_RUNTIME_SCHEMA = "openbfme.ranger-runtime-contract"
 BUILDING_RUNTIME_PATH = "data/m3/building-runtime.json"
 BUILDING_RUNTIME_SCHEMA = "openbfme.building-runtime-capabilities"
 BUILDING_RUNTIME_SCOPE = "bfme2-106-men-ordinary-buildings-v0"
@@ -99,6 +111,8 @@ PORTER_CONSTRUCT_COMMAND_TARGETS = {
 COMMAND_BUTTON_PATH = "data/ini/commandbutton.ini"
 COMMAND_SET_PATH = "data/ini/commandset.ini"
 GAMEDATA_PATH = "data/ini/gamedata.ini"
+UPGRADE_PATH = "data/ini/upgrade.ini"
+ARCHERY_RANGE_PATH = "data/ini/object/goodfaction/structures/men/archerrange.ini"
 SELECTION_TRANSITIONS = {
     "GondorFighter": ("GUManMocap_ATNA", "GUManMocap_ATNB", "GUManMocap_ATND"),
     "GondorArcher": ("GUArcher_ATNA", "GUArcher_ATNB", "GUArcher_ATNC"),
@@ -903,6 +917,295 @@ def extract_building_stats(
     }
 
 
+def build_ranger_runtime_contract(
+    assets_root: Path,
+    effective_manifest: Mapping[str, Any],
+    profile: Mapping[str, Any],
+    building_stats: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build the bounded Ranger and Archery Range prerequisite contract."""
+
+    attested_paths = _profile_attested_paths(profile)
+    manifest = _effective_manifest_index(effective_manifest)
+    source_payloads: dict[str, bytes] = {}
+
+    def read_source(path: str) -> bytes:
+        payload = _read_attested_ini(assets_root, path, manifest, attested_paths)
+        source_payloads[path] = payload
+        return payload
+
+    rule_paths = retail_unit_rule_source_paths((RANGER_UNIT_SPEC,))
+    rule_sources: dict[str, Path] = {}
+    for path in sorted(rule_paths):
+        read_source(path)
+        rule_sources[path] = assets_root.joinpath(*safe_relative_parts(path))
+    rule_document = extract_retail_unit_rules(
+        rule_sources,
+        unit_specs=(RANGER_UNIT_SPEC,),
+    )
+    if len(rule_document["units"]) != 1:
+        raise ValueError("Ranger unit-rule extraction did not return one unit")
+    ranger_rule = deepcopy(rule_document["units"][0])
+
+    trainables = [
+        _obj(row, "Ranger trainable")
+        for row in _list(building_stats.get("trainables"), "building trainables")
+        if str(_obj(row, "trainable").get("id", "")).casefold()
+        == "gondorrangerhorde".casefold()
+    ]
+    if len(trainables) != 1:
+        raise ValueError("building stats must contain one GondorRangerHorde")
+    production = deepcopy(dict(trainables[0]))
+    if (
+        production.get("buildCost"),
+        production.get("buildTime"),
+        production.get("commandPoints"),
+    ) != (600, 30, 70):
+        raise ValueError("effective Ranger production values changed")
+
+    upgrade_source = read_source(UPGRADE_PATH)
+    gamedata_source = read_source(GAMEDATA_PATH)
+    constants = _numeric_defines(gamedata_source)
+    upgrade = _unambiguous_block(
+        _block_groups(upgrade_source, "Upgrade"),
+        "Upgrade_GondorArcheryRangeLevel2",
+        "Upgrade",
+    )
+    upgrade_type = _one(upgrade, "Type", True)
+    cost_expression = _one(upgrade, "BuildCost", True)
+    time_expression = _one(upgrade, "BuildTime", True)
+    assert upgrade_type is not None and cost_expression is not None and time_expression is not None
+    cost = constants.get(cost_expression.casefold())
+    build_time = constants.get(time_expression.casefold())
+    if upgrade_type.casefold() != "object" or (cost, build_time) != (500, 30):
+        raise ValueError("Archery Range level-2 Upgrade contract changed")
+
+    command_buttons = _block_groups(read_source(COMMAND_BUTTON_PATH), "CommandButton")
+    upgrade_button = _unambiguous_block(
+        command_buttons,
+        "Command_PurchaseUpgradeGondorArcheryRangeLevel2",
+        "CommandButton",
+    )
+    ranger_button = _unambiguous_block(
+        command_buttons,
+        "Command_ConstructGondorRangerHorde",
+        "CommandButton",
+    )
+    if (
+        _one(upgrade_button, "Command", True),
+        _one(upgrade_button, "Upgrade", True),
+        _one(upgrade_button, "Options", True),
+    ) != (
+        "OBJECT_UPGRADE",
+        "Upgrade_GondorArcheryRangeLevel2",
+        "CANCELABLE",
+    ):
+        raise ValueError("Archery Range level-2 command button changed")
+    if (
+        _one(ranger_button, "Command", True),
+        _one(ranger_button, "Object", True),
+        set((_one(ranger_button, "Options", True) or "").split()),
+        _one(ranger_button, "NeededUpgrade", True),
+        _one(ranger_button, "NeededUpgradeAny", True),
+    ) != (
+        "UNIT_BUILD",
+        "GondorRangerHorde",
+        {"NEED_UPGRADE", "CANCELABLE"},
+        "Upgrade_GondorArcheryRangeLevel2",
+        "Yes",
+    ):
+        raise ValueError("Ranger production prerequisite changed")
+
+    command_sets = _block_groups(read_source(COMMAND_SET_PATH), "CommandSet")
+    command_set_rows: list[dict[str, Any]] = []
+    for command_set_id in ("GondorArcheryCommandSet", "GondorArcheryCommandSetLevel2"):
+        row = _unambiguous_block(command_sets, command_set_id, "CommandSet")
+        slots = _command_slots(row)
+        slot_map = {item["slot"]: item["id"] for item in slots}
+        if slot_map.get(2) != "Command_ConstructGondorRangerHorde":
+            raise ValueError(f"{command_set_id} no longer exposes Ranger in slot 2")
+        if command_set_id == "GondorArcheryCommandSet" and slot_map.get(4) != (
+            "Command_PurchaseUpgradeGondorArcheryRangeLevel2"
+        ):
+            raise ValueError("base Archery Range no longer buys level 2 from slot 4")
+        command_set_rows.append({"id": command_set_id, "commands": slots})
+
+    archery_document = parse_sage_document(read_source(ARCHERY_RANGE_PATH), ARCHERY_RANGE_PATH)
+    archery_objects = [
+        item for item in archery_document.objects if item.name.casefold() == "gondorarcherrange"
+    ]
+    if len(archery_objects) != 1:
+        raise ValueError("Archery Range source must contain one GondorArcherRange")
+    transition_blocks = [
+        block
+        for block in archery_objects[0].blocks
+        if block.kind.casefold() == "commandsetupgrade"
+        and "upgrade_gondorarcheryrangelevel2".casefold()
+        in {value.casefold() for value in block.values("TriggeredBy")}
+    ]
+    if len(transition_blocks) != 1:
+        raise ValueError("Archery Range level-2 command-set transition is ambiguous")
+    transition = transition_blocks[0]
+    if (
+        transition.values("CommandSet"),
+        transition.values("ConflictsWith"),
+    ) != (
+        ("GondorArcheryCommandSetLevel2",),
+        ("Upgrade_GondorArcheryRangeLevel3",),
+    ):
+        raise ValueError("Archery Range level-2 command-set transition changed")
+
+    level_up_blocks = [
+        block
+        for block in archery_objects[0].blocks
+        if block.kind.casefold() == "levelupupgrade"
+        and "upgrade_gondorarcheryrangelevel2".casefold()
+        in {value.casefold() for value in block.values("TriggeredBy")}
+    ]
+    if len(level_up_blocks) != 1:
+        raise ValueError("Archery Range level-2 building-level transition is ambiguous")
+    level_up = level_up_blocks[0]
+    if (level_up.values("LevelsToGain"), level_up.values("LevelCap")) != (("1",), ("3",)):
+        raise ValueError("Archery Range level-2 building-level transition changed")
+
+    ranger_member_source = source_payloads[RANGER_UNIT_SPEC[4]]
+    ranger_member_document = parse_sage_document(ranger_member_source, RANGER_UNIT_SPEC[4])
+    ranger_members = [
+        item
+        for item in ranger_member_document.objects
+        if item.kind.casefold() == "object" and item.name.casefold() == "gondorranger"
+    ]
+    horde_path = "data/ini/object/goodfaction/hordes/men/menhordes.ini"
+    ranger_horde_document = parse_sage_document(source_payloads[horde_path], horde_path)
+    ranger_hordes = [
+        item
+        for item in ranger_horde_document.objects
+        if item.kind.casefold() == "object" and item.name.casefold() == "gondorrangerhorde"
+    ]
+    if len(ranger_members) != 1 or len(ranger_hordes) != 1:
+        raise ValueError("effective Ranger member/horde source is ambiguous")
+
+    def source_binding(obj: SageObject, field: str) -> dict[str, Any]:
+        assignments = [
+            assignment
+            for assignment in obj.assignments
+            if assignment.key.casefold() == field.casefold()
+        ]
+        if len(assignments) != 1:
+            raise ValueError(f"{obj.name} has invalid {field} binding")
+        assignment = assignments[0]
+        return {
+            "id": assignment.value,
+            "source": {
+                "ini": assignment.source_virtual_path,
+                "kind": obj.kind,
+                "id": obj.name,
+                "field": assignment.key,
+                "line": assignment.line,
+            },
+        }
+
+    member_bindings = {
+        "created": source_binding(ranger_members[0], "VoiceCreated"),
+        "select": source_binding(ranger_members[0], "VoiceSelect"),
+        "move": source_binding(ranger_members[0], "VoiceMove"),
+        "attack": source_binding(ranger_members[0], "VoiceAttack"),
+    }
+    portrait_binding = source_binding(ranger_hordes[0], "SelectPortrait")
+    purchase_sound = _one(ranger_button, "UnitSpecificSound", True)
+    train_image = _one(ranger_button, "ButtonImage", True)
+    assert purchase_sound is not None and train_image is not None
+    purchase_binding = {
+        "id": purchase_sound,
+        "source": {
+            "ini": COMMAND_BUTTON_PATH,
+            "kind": "CommandButton",
+            "id": ranger_button.name,
+            "field": "UnitSpecificSound",
+        },
+    }
+    train_image_binding = {
+        "id": train_image,
+        "source": {
+            "ini": COMMAND_BUTTON_PATH,
+            "kind": "CommandButton",
+            "id": ranger_button.name,
+            "field": "ButtonImage",
+        },
+    }
+
+    runtime = _obj(profile.get("runtime_data"), "profile runtime_data")
+    audio_document = _obj(runtime.get("data/audio_events.json"), "audio events")
+    audio = _obj(audio_document.get("events"), "audio event definitions")
+    multisounds = _obj(audio_document.get("multisounds"), "audio multisounds")
+    audio_bindings = {"purchase": purchase_binding, **member_bindings}
+    audio_route_kinds: dict[str, str] = {}
+    for route, binding in audio_bindings.items():
+        event_id = str(binding["id"])
+        kind = "multisound" if event_id in multisounds else "event"
+        definitions = audio if kind == "event" else multisounds
+        if event_id not in definitions:
+            raise ValueError(f"Ranger audio {route} {kind} is absent: {event_id}")
+        audio_route_kinds[route] = kind
+    ui = _obj(runtime.get("data/ui_manifest.json"), "UI manifest")
+    images = {
+        str(_obj(row, "UI image").get("id", "")).casefold()
+        for row in _list(ui.get("images"), "UI images")
+    }
+    for image_id in (train_image_binding["id"], portrait_binding["id"]):
+        if image_id.casefold() not in images:
+            raise ValueError(f"Ranger UI image is absent: {image_id}")
+
+    return {
+        "schema": RANGER_RUNTIME_SCHEMA,
+        "schemaVersion": 0,
+        "capabilityStatus": "rules-and-prerequisite-ready",
+        "unitRule": ranger_rule,
+        "production": production,
+        "prerequisite": {
+            "upgradeId": "Upgrade_GondorArcheryRangeLevel2",
+            "type": "OBJECT",
+            "cost": cost,
+            "buildTimeSeconds": build_time,
+            "commandId": "Command_PurchaseUpgradeGondorArcheryRangeLevel2",
+            "options": ["CANCELABLE"],
+            "fromCommandSet": "GondorArcheryCommandSet",
+            "toCommandSet": "GondorArcheryCommandSetLevel2",
+            "conflictsWith": ["Upgrade_GondorArcheryRangeLevel3"],
+            "levelsToGain": 1,
+            "levelCap": 3,
+            "purchaseCommandSlot": 4,
+            "trainCommandId": "Command_ConstructGondorRangerHorde",
+            "trainCommandOptions": ["NEED_UPGRADE", "CANCELABLE"],
+        },
+        "commandSets": command_set_rows,
+        "presentation": {
+            "trainButtonImage": train_image_binding,
+            "portraitImage": portrait_binding,
+        },
+        "audioRoutes": audio_bindings,
+        "audioRouteKinds": audio_route_kinds,
+        "deferredCapabilities": [
+            "model-and-animation-conversion",
+            "close-range-sword-and-transition-presentation",
+            "camouflage",
+            "fire-arrows",
+            "long-shot",
+            "bombard",
+            "veterancy-and-banner",
+            "full-animation-and-audiovisual-oracle",
+        ],
+        "sources": [
+            {
+                "ini": path,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "byteCount": len(payload),
+            }
+            for path, payload in sorted(source_payloads.items())
+        ],
+    }
+
+
 def extract_spellbook(report: Mapping[str, Any], science_source: bytes, power_source: bytes, gamedata_source: bytes | None = None) -> dict[str, Any]:
     dependencies = _obj(report.get("dependencies"), "dependencies")
     science_ids = _unique(dependencies.get("spellbookSciences"), "spellbookSciences")
@@ -1444,12 +1747,12 @@ def build_m3_visual_resources(
             if path.casefold() not in scanned:
                 raise ValueError(f"M3 unit recipe selects absent W3D: {path}")
         texture_paths = _texture_paths_for_w3d(closure, selected)
-        texture_rules, texture_ids = _texture_resources(target, texture_paths)
-        resources.extend(texture_rules)
         patterns = sorted(selected, key=str.casefold)
         output = f"assets/models/m3/units/{_slug(target)}.glb"
         resource_id = f"m3-{_slug(target)}-rig-and-core-clips"
         if resource_id not in CONVERSION_SOURCE_GAPS:
+            texture_rules, texture_ids = _texture_resources(target, texture_paths)
+            resources.extend(texture_rules)
             resources.append(
                 {
                     "id": resource_id,
@@ -1723,6 +2026,33 @@ def compose_private_profile(
     result = deepcopy(dict(base_profile))
     result["id"] = recipe["id"]
     result["title"] = recipe["title"]
+    base_resources = list(_list(result.get("resources"), "base resources"))
+    recipe_resources = deepcopy(_list(recipe.get("resources"), "recipe resources"))
+    base_resource_ids = {
+        _id(_obj(row, "base resource").get("id"), "base resource id").casefold()
+        for row in base_resources
+    }
+    base_patterns = {
+        str(pattern).replace("\\", "/").casefold()
+        for row in base_resources
+        for pattern in _list(_obj(row, "base resource").get("patterns"), "base resource patterns")
+    }
+    for row in recipe_resources:
+        resource = _obj(row, "recipe resource")
+        identifier = _id(resource.get("id"), "recipe resource id")
+        if identifier.casefold() in base_resource_ids:
+            raise ValueError(f"recipe resource collides with base profile: {identifier}")
+        duplicate_patterns = sorted(
+            str(pattern).replace("\\", "/")
+            for pattern in _list(resource.get("patterns"), "recipe resource patterns")
+            if str(pattern).replace("\\", "/").casefold() in base_patterns
+        )
+        if duplicate_patterns:
+            raise ValueError(
+                f"recipe resource duplicates base ownership: {identifier}: "
+                + ", ".join(duplicate_patterns)
+            )
+    result["resources"] = [*base_resources, *recipe_resources]
     selection_transitions = extend_selection_transitions(result, visual_closure)
     visual_resources, model_census = build_m3_visual_resources(visual_closure, result)
     house_color = build_house_color_from_assets(
@@ -1745,10 +2075,14 @@ def compose_private_profile(
         for row in spellbook[family]:
             if not row["icons"] or any(icon.casefold() not in resolved_images for icon in row["icons"]):
                 raise ValueError(f"spellbook row has unresolved icon: {row['id']}")
+    building_stats = extract_building_stats(
+        census_report, assets_root, effective_manifest, result
+    )
+    ranger_runtime = build_ranger_runtime_contract(
+        assets_root, effective_manifest, result, building_stats
+    )
     runtime_documents = {
-        RUNTIME_PATHS["buildingStats"]: extract_building_stats(
-            census_report, assets_root, effective_manifest, base_profile
-        ),
+        RUNTIME_PATHS["buildingStats"]: building_stats,
         RUNTIME_PATHS["icons"]: build_icon_census(census_report),
         RUNTIME_PATHS["upgrades"]: build_upgrade_manifest(census_report),
         RUNTIME_PATHS["spellbook"]: spellbook,
@@ -1758,6 +2092,7 @@ def compose_private_profile(
         RUNTIME_PATHS["houseColor"]: house_color,
         RUNTIME_PATHS["selectionTransitions"]: selection_transitions,
         RUNTIME_PATHS["models"]: model_census,
+        RUNTIME_PATHS["rangerRuntime"]: ranger_runtime,
     }
     if set(runtime_documents) != set(RUNTIME_PATHS.values()):
         raise ValueError("M3 runtime document set is incomplete")
@@ -2062,7 +2397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["BUILDINGS", "BUILDING_RUNTIME_PATH", "BUILDING_RUNTIME_REQUESTED_IDS", "CP_FIELDS", "RUNTIME_PATHS", "SELECTION_TRANSITIONS", "UNITS", "UPGRADES", "attach_building_runtime_gap_contract", "build_building_runtime_gap_contract", "build_house_color_from_assets", "build_house_color_manifest", "build_icon_census", "build_m3_visual_resources", "build_upgrade_manifest", "candidate_pack_state", "compose_private_profile", "compose_profile_from_paths", "declarative_visual_resources", "extend_selection_transitions", "extract_building_stats", "extract_command_points", "extract_spellbook", "house_color_mask_resources", "parse_house_colors", "validated_private_output_path", "validate_candidate_pack_state", "validate_recipe", "validate_tooltip_closure", "write_m3_expansion_report"]
+__all__ = ["BUILDINGS", "BUILDING_RUNTIME_PATH", "BUILDING_RUNTIME_REQUESTED_IDS", "CP_FIELDS", "RANGER_RUNTIME_PATH", "RANGER_RUNTIME_SCHEMA", "RUNTIME_PATHS", "SELECTION_TRANSITIONS", "UNITS", "UPGRADES", "attach_building_runtime_gap_contract", "build_building_runtime_gap_contract", "build_house_color_from_assets", "build_house_color_manifest", "build_icon_census", "build_m3_visual_resources", "build_ranger_runtime_contract", "build_upgrade_manifest", "candidate_pack_state", "compose_private_profile", "compose_profile_from_paths", "declarative_visual_resources", "extend_selection_transitions", "extract_building_stats", "extract_command_points", "extract_spellbook", "house_color_mask_resources", "parse_house_colors", "validated_private_output_path", "validate_candidate_pack_state", "validate_recipe", "validate_tooltip_closure", "write_m3_expansion_report"]
 
 
 if __name__ == "__main__":

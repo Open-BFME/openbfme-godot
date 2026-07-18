@@ -12,6 +12,8 @@ from openbfme_importer.m3_pack_expansion import (
     BUILDINGS,
     BUILDING_RUNTIME_PATH,
     BUILDING_RUNTIME_REQUESTED_IDS,
+    RANGER_RUNTIME_PATH,
+    RANGER_RUNTIME_SCHEMA,
     RUNTIME_PATHS,
     UNITS,
     UPGRADES,
@@ -19,6 +21,7 @@ from openbfme_importer.m3_pack_expansion import (
     build_upgrade_manifest,
     build_building_runtime_gap_contract,
     build_m3_visual_resources,
+    build_ranger_runtime_contract,
     candidate_pack_state,
     declarative_visual_resources,
     extract_building_stats,
@@ -82,6 +85,12 @@ def test_tracked_v1_is_payload_free_bounded_and_source_gap_honest() -> None:
     assert "GoodCommandPointLimit\"" not in serialized
     assert "SciencePurchasePointCost" not in serialized
     assert "CONTROLBAR:" not in serialized
+    semantic = next(
+        row for row in recipe["resources"] if row["id"] == "m3-men-semantic-sources"
+    )
+    assert semantic["patterns"] == [
+        "data/ini/housecolor.ini",
+    ]
 
 
 def test_candidate_pack_contract_never_promotes_known_gaps_to_completion() -> None:
@@ -352,6 +361,91 @@ def test_required_upgrade_definitions_are_hash_bound_and_icon_complete() -> None
     assert manifest["count"] == 4
     assert [row["id"] for row in manifest["upgrades"]] == list(UPGRADES)
     assert all(row["icons"] and len(row["definitionSha256"]) == 64 for row in manifest["upgrades"])
+
+
+def test_effective_ranger_runtime_contract_is_exact_and_incomplete() -> None:
+    effective = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
+    generated_path = (
+        ROOT / ".private" / "retail-work" / "profiles" / "men-fords-v1.generated.json"
+    )
+    manifest_path = effective / ".openbfme" / "manifest.json"
+    if not generated_path.is_file() or not manifest_path.is_file():
+        pytest.skip("private M3 generated profile/effective manifest is not present")
+    profile = json.loads(generated_path.read_text(encoding="utf-8"))
+    profile["resources"].append(
+        {
+            "id": "ranger-contract-test-sources",
+            "patterns": [
+                "data/ini/attributemodifier.ini",
+                "data/ini/commandbutton.ini",
+                "data/ini/commandset.ini",
+                "data/ini/gamedata.ini",
+                "data/ini/locomotor.ini",
+                "data/ini/object/goodfaction/hordes/men/menhordes.ini",
+                "data/ini/object/goodfaction/structures/men/archerrange.ini",
+                "data/ini/object/goodfaction/units/men/gondorranger.ini",
+                "data/ini/object/goodfaction/units/men/gondorrangeranims.inc",
+                "data/ini/upgrade.ini",
+                "data/ini/weapon.ini",
+            ],
+        }
+    )
+    building_stats = profile["runtime_data"]["data/building-stats.json"]
+    result = build_ranger_runtime_contract(
+        effective,
+        json.loads(manifest_path.read_text(encoding="utf-8")),
+        profile,
+        building_stats,
+    )
+    assert RANGER_RUNTIME_PATH == "data/m3/ranger-runtime.json"
+    assert result["schema"] == RANGER_RUNTIME_SCHEMA
+    assert result["schemaVersion"] == 0
+    assert result["capabilityStatus"] == "rules-and-prerequisite-ready"
+    assert result["unitRule"]["member"]["health"]["value"] == 300
+    assert result["unitRule"]["horde"]["formation"]["memberCount"] == 10
+    assert result["production"]["buildCost"] == 600
+    assert result["production"]["buildTime"] == 30
+    assert result["production"]["commandPoints"] == 70
+    assert result["prerequisite"] == {
+        "upgradeId": "Upgrade_GondorArcheryRangeLevel2",
+        "type": "OBJECT",
+        "cost": 500,
+        "buildTimeSeconds": 30,
+        "commandId": "Command_PurchaseUpgradeGondorArcheryRangeLevel2",
+        "options": ["CANCELABLE"],
+        "fromCommandSet": "GondorArcheryCommandSet",
+        "toCommandSet": "GondorArcheryCommandSetLevel2",
+        "conflictsWith": ["Upgrade_GondorArcheryRangeLevel3"],
+        "levelsToGain": 1,
+        "levelCap": 3,
+        "purchaseCommandSlot": 4,
+        "trainCommandId": "Command_ConstructGondorRangerHorde",
+        "trainCommandOptions": ["NEED_UPGRADE", "CANCELABLE"],
+    }
+    assert result["audioRoutes"]["purchase"]["id"] == "GondorArcherVoiceBuy"
+    assert result["audioRoutes"]["created"]["id"] == "RangerVoiceSalute"
+    assert result["audioRoutes"]["select"]["id"] == "RangerVoiceSelectMS"
+    assert result["audioRouteKinds"]["select"] == "multisound"
+    assert result["presentation"]["trainButtonImage"]["id"] == "BGArcheryRange_Rangers"
+    assert result["presentation"]["portraitImage"]["id"] == "UPGondor_Ranger"
+    assert all(
+        binding["source"]["ini"].startswith("data/ini/")
+        for binding in result["audioRoutes"].values()
+    )
+    assert "modelStatus" not in result["presentation"]
+    assert "output" not in result["presentation"]
+    assert "coverage" not in result["presentation"]
+    assert set(result["deferredCapabilities"]) == {
+        "model-and-animation-conversion",
+        "close-range-sword-and-transition-presentation",
+        "camouflage",
+        "fire-arrows",
+        "long-shot",
+        "bombard",
+        "veterancy-and-banner",
+        "full-animation-and-audiovisual-oracle",
+    }
+    assert "complete" not in json.dumps(result).casefold()
 
 
 def test_building_stats_schema_has_every_m3_building_and_source_attested_trainables(

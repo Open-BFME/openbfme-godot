@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 
 from openbfme_importer.profile import ImportProfile
-from openbfme_importer.retail_unit_rules import OUTPUT_PATH, extract_retail_unit_rules
+from openbfme_importer.retail_unit_rules import (
+    OUTPUT_PATH,
+    RANGER_UNIT_SPEC,
+    extract_retail_unit_rules,
+    retail_unit_rule_source_paths,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -123,3 +128,51 @@ def test_effective_bfme2_106_rules_are_exact_and_provenanced() -> None:
     assert archer_stances["states"]["Aggressive"]["damageMultiplier"] == 1.1
     assert archer_stances["states"]["HoldGround"]["damageMultiplier"] == 0.7
     assert archer_stances["states"]["HoldGround"]["speedMultiplier"] == 0.4
+    assert all(unit["member"]["health"]["value"] > 0 for unit in document["units"])
+
+
+def test_effective_ranger_rules_preserve_core_combat_and_defer_long_shot() -> None:
+    paths = retail_unit_rule_source_paths((RANGER_UNIT_SPEC,))
+    if not all((EFFECTIVE / path).is_file() for path in paths):
+        pytest.skip("private effective BFME II 1.06 Ranger corpus is not present")
+    document = extract_retail_unit_rules(
+        {path: EFFECTIVE / path for path in paths},
+        unit_specs=(RANGER_UNIT_SPEC,),
+    )
+    assert len(document["sources"]) == 7
+    assert len(document["units"]) == 1
+    ranger = document["units"][0]
+    assert ranger["id"] == "bfme2.object.gondor-ranger"
+    assert ranger["hordeId"] == "bfme2.object.gondor-ranger-horde"
+    assert ranger["member"]["health"]["value"] == 300
+    assert ranger["horde"]["locomotorSet"]["speed"]["value"] == 50
+    assert ranger["horde"]["visionRange"]["value"] == 470
+    assert ranger["horde"]["formation"]["memberCount"] == 10
+    assert ranger["member"]["dualWeaponSwitchDistance"]["value"] == 24
+    base, close = ranger["member"]["weaponSets"]
+    assert base["conditions"] == ["None"]
+    assert set(base["slots"]) == {"primary", "tertiary", "quinary"}
+    assert close["conditions"] == ["CLOSE_RANGE", "CONTESTING_BUILDING"]
+    assert set(close["slots"]) == {"primary", "secondary", "tertiary", "quinary"}
+    bow = base["slots"]["primary"]
+    sword = close["slots"]["secondary"]
+    assert (
+        bow["name"],
+        bow["attackRange"]["value"],
+        bow["damage"]["value"],
+        bow["preAttackDelayMs"]["value"],
+    ) == ("GondorRangerBow", 400, 65, 400)
+    assert (
+        sword["name"],
+        sword["attackRange"]["value"],
+        sword["damage"]["value"],
+        sword["delayBetweenShotsMs"]["value"],
+        sword["preAttackDelayMs"]["value"],
+        sword["firingDurationMs"]["value"],
+    ) == ("GondorRangerSword", 11.5, 20, 800, 700, 800)
+    for weapon_set in (base, close):
+        assert weapon_set["slots"]["quinary"] == {
+            "name": "MenLongShotFakeWeapon",
+            "deferredSpecialAbility": True,
+            "source": weapon_set["slots"]["quinary"]["source"],
+        }

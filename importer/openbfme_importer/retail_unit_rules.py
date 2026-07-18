@@ -59,17 +59,28 @@ _UNIT_SPECS = (
     ),
 )
 
-_REQUIRED_PATHS = frozenset(
-    {
-        GAMEDATA_PATH,
-        LOCOMOTOR_PATH,
-        WEAPON_PATH,
-        HORDE_PATH,
-        ATTRIBUTE_MODIFIER_PATH,
-        COMMAND_BUTTON_PATH,
-    }
-    | {item[4] for item in _UNIT_SPECS}
+RANGER_UNIT_SPEC = (
+    "bfme2.object.gondor-ranger",
+    "bfme2.object.gondor-ranger-horde",
+    "GondorRanger",
+    "GondorRangerHorde",
+    "data/ini/object/goodfaction/units/men/gondorranger.ini",
 )
+
+def retail_unit_rule_source_paths(
+    unit_specs: tuple[tuple[str, str, str, str, str], ...] = _UNIT_SPECS,
+) -> frozenset[str]:
+    return frozenset(
+        {
+            GAMEDATA_PATH,
+            LOCOMOTOR_PATH,
+            WEAPON_PATH,
+            HORDE_PATH,
+            ATTRIBUTE_MODIFIER_PATH,
+            COMMAND_BUTTON_PATH,
+        }
+        | {item[4] for item in unit_specs}
+    )
 _DEFINE_RE = re.compile(r"^[ \t]*#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+(.+?)\s*$")
 _HEADER_RE = re.compile(
     r"^(Locomotor|Weapon|ModifierList|CommandButton)\s+(\S+)\s*$",
@@ -133,13 +144,17 @@ def _strip_comment(raw: str) -> str:
     return (raw[: min(indexes)] if indexes else raw).strip()
 
 
-def _load_sources(sources: Mapping[str, Path | str]) -> dict[str, _Source]:
+def _load_sources(
+    sources: Mapping[str, Path | str],
+    unit_specs: tuple[tuple[str, str, str, str, str], ...],
+) -> dict[str, _Source]:
+    required_paths = retail_unit_rule_source_paths(unit_specs)
     normalized = {str(key).replace("\\", "/").casefold(): Path(value) for key, value in sources.items()}
-    missing = sorted(path for path in _REQUIRED_PATHS if path.casefold() not in normalized)
+    missing = sorted(path for path in required_paths if path.casefold() not in normalized)
     if missing:
         raise ValueError("retail unit-rule sources are missing: " + ", ".join(missing))
     result: dict[str, _Source] = {}
-    for path in sorted(_REQUIRED_PATHS):
+    for path in sorted(required_paths):
         source_path = normalized[path.casefold()]
         if not source_path.is_file():
             raise ValueError(f"retail unit-rule source is not a file: {path}")
@@ -349,16 +364,32 @@ def _weapon_sets(
                     f"{obj.name} WeaponSet has malformed Weapon assignment at line {assignment.line}"
                 )
             slot = tokens[0].casefold()
-            if slot not in {"primary", "secondary", "tertiary"}:
+            if slot not in {"primary", "secondary", "tertiary", "quinary"}:
                 raise ValueError(f"{obj.name} WeaponSet has unsupported slot {tokens[0]!r}")
             if slot in slots:
                 raise ValueError(f"{obj.name} WeaponSet repeats {tokens[0]} weapon")
-            slots[slot] = _weapon_rules(
-                tokens[1],
-                weapon_source,
-                defines,
-                member_weapon=True,
-            )
+            if slot == "quinary":
+                # BFME2 uses Ranger's quinary slot only as the Long Shot
+                # special-power range/timing carrier. It has no damage nugget
+                # and must not be misrepresented as an ordinary attack mode.
+                slots[slot] = {
+                    "name": tokens[1],
+                    "deferredSpecialAbility": True,
+                    "source": _source_record(
+                        source,
+                        "Object",
+                        obj.name,
+                        assignment.key,
+                        assignment.line,
+                    ),
+                }
+            else:
+                slots[slot] = _weapon_rules(
+                    tokens[1],
+                    weapon_source,
+                    defines,
+                    member_weapon=True,
+                )
         if "primary" not in slots:
             raise ValueError(f"{obj.name} WeaponSet has no primary weapon")
         result.append(
@@ -785,6 +816,31 @@ def _object_rules(
         result["formation"] = _horde_formation(obj, source, defines)
         result["stances"] = _stance_rules(obj, source, modifier_source)
     else:
+        body_blocks = [
+            block
+            for block in obj.blocks
+            if (block.header_key or "").casefold() == "body"
+        ]
+        health_assignments = [
+            assignment
+            for block in body_blocks
+            for assignment in block.assignments
+            if assignment.key.casefold() == "maxhealth"
+        ]
+        if len(health_assignments) != 1:
+            raise ValueError(
+                f"Object {obj.name} must have exactly one authored Body MaxHealth"
+            )
+        health = health_assignments[0]
+        result["health"] = _number(
+            health.value,
+            source,
+            "Object",
+            obj.name,
+            health.key,
+            health.line,
+            defines,
+        )
         result["weaponSets"] = _weapon_sets(
             obj,
             source,
@@ -799,10 +855,16 @@ def _object_rules(
     return result
 
 
-def extract_retail_unit_rules(sources: Mapping[str, Path | str]) -> dict[str, Any]:
-    """Return the canonical runtime document for the four Men/Fords hordes."""
+def extract_retail_unit_rules(
+    sources: Mapping[str, Path | str],
+    *,
+    unit_specs: tuple[tuple[str, str, str, str, str], ...] = _UNIT_SPECS,
+) -> dict[str, Any]:
+    """Return source-backed runtime rules for the requested Men hordes."""
 
-    loaded = _load_sources(sources)
+    if not unit_specs:
+        raise ValueError("at least one retail unit spec is required")
+    loaded = _load_sources(sources, unit_specs)
     _SOURCE_CONTEXT.clear()
     _SOURCE_CONTEXT.update(loaded)
     try:
@@ -812,7 +874,7 @@ def extract_retail_unit_rules(sources: Mapping[str, Path | str]) -> dict[str, An
         weapon_source = loaded[WEAPON_PATH]
         modifier_source = loaded[ATTRIBUTE_MODIFIER_PATH]
         units: list[dict[str, Any]] = []
-        for member_id, horde_id, member_name, horde_name, member_path in _UNIT_SPECS:
+        for member_id, horde_id, member_name, horde_name, member_path in unit_specs:
             member_source = loaded[member_path]
             units.append(
                 {
@@ -864,4 +926,11 @@ def extract_retail_unit_rules(sources: Mapping[str, Path | str]) -> dict[str, An
         _SOURCE_CONTEXT.clear()
 
 
-__all__ = ["OUTPUT_PATH", "SCHEMA", "SCHEMA_VERSION", "extract_retail_unit_rules"]
+__all__ = [
+    "OUTPUT_PATH",
+    "RANGER_UNIT_SPEC",
+    "SCHEMA",
+    "SCHEMA_VERSION",
+    "extract_retail_unit_rules",
+    "retail_unit_rule_source_paths",
+]

@@ -67,7 +67,8 @@
         "gameData": "data/game-data.json",
         "houseColor": "data/house-color.json",
         "selectionTransitions": "data/m3/selection-transitions.json",
-        "models": "data/m3/model-census.json"
+        "models": "data/m3/model-census.json",
+        "rangerRuntime": "data/m3/ranger-runtime.json"
       },
       "sourceNull": [
         {
@@ -95,19 +96,11 @@
       "kind": "data",
       "converter": "hash-only",
       "patterns": [
-        "data/ini/commandbutton.ini",
-        "data/ini/commandset.ini",
-        "data/ini/gamedata.ini",
-        "data/ini/housecolor.ini",
-        "data/ini/playertemplate.ini",
-        "data/ini/science.ini",
-        "data/ini/specialpower.ini",
-        "data/ini/upgrade.ini",
-        "data/lotr.str"
+        "data/ini/housecolor.ini"
       ],
       "required": true,
-      "limit": 9,
-      "expected_count": 9
+      "limit": 1,
+      "expected_count": 1
     }
   ],
   "runtime_data": {}
