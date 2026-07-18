@@ -95,6 +95,7 @@ var particle_provisional_selection_count := 0
 var particle_unresolved_family_selection_count := 0
 var particle_emitter_count := 0
 var particle_diagnostics: Array[Dictionary] = []
+var observability_enabled := false
 var structure_damage_route_log: Array[Dictionary] = []
 var last_structure_damage_route: Dictionary = {}
 var unresolved_prop_placement_count := 0
@@ -1191,9 +1192,16 @@ func route_structure_damage_effects(request: Dictionary) -> Dictionary:
 
 func _record_structure_damage_route(result: Dictionary) -> Dictionary:
 	last_structure_damage_route = result.duplicate(true)
-	structure_damage_route_log.append(last_structure_damage_route.duplicate(true))
 	set_meta("last_structure_damage_route", last_structure_damage_route.duplicate(true))
-	set_meta("structure_damage_route_log", structure_damage_route_log.duplicate(true))
+	if observability_enabled:
+		structure_damage_route_log.append(last_structure_damage_route.duplicate(true))
+		if structure_damage_route_log.size() > 128:
+			structure_damage_route_log = structure_damage_route_log.slice(64)
+		set_meta("structure_damage_route_log", structure_damage_route_log.duplicate(true))
+	else:
+		structure_damage_route_log.clear()
+		if has_meta("structure_damage_route_log"):
+			remove_meta("structure_damage_route_log")
 	return result
 
 

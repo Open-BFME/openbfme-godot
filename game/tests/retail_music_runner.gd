@@ -39,6 +39,17 @@ func _run() -> void:
 	var audio = AudioScript.new()
 	root.add_child(audio)
 	audio.configure(selected_pack_root, true)
+	_check("production_observability_disabled", not audio.observability_enabled)
+	audio._set_music("explore")
+	_check(
+		"production_transition_keeps_state_without_history",
+		audio.current_music_state == "explore"
+		and audio.current_music_track_index == 0
+		and audio.music_player.playing
+		and audio.music_transition_log.is_empty()
+	)
+	audio.observability_enabled = true
+	audio._set_music("battle")
 
 	# -- Playlist construction from the selected pack --------------------------
 	for state in AudioScript.MUSIC_STATES:
@@ -148,6 +159,7 @@ func _run() -> void:
 	var silent_audio = AudioScript.new()
 	root.add_child(silent_audio)
 	silent_audio.configure(selected_pack_root, false)
+	silent_audio.observability_enabled = true
 	_check("disabled_engine_still_builds_playlists", silent_audio.music_playlists.has("battle") and (silent_audio.music_playlists["battle"] as Array).size() == 2)
 	silent_audio._set_music("battle")
 	_check("disabled_state_change_tracks_index", silent_audio.current_music_state == "battle" and silent_audio.current_music_track_index == 0)

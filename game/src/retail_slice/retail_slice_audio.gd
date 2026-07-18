@@ -99,8 +99,8 @@ var music_streams: Dictionary = {}
 var music_playlists: Dictionary = {}
 var music_playlist_paths: Dictionary = {}
 # Deterministic playlist bookkeeping. current_music_track_index tracks the leaf
-# playing for current_music_state; music_transition_log records every advance so
-# headless runners can audit playlist behaviour without audio output.
+# playing for current_music_state. Focused verification may opt into the bounded
+# transition history; production retains current state/index instead.
 var current_music_track_index := -1
 var music_transition_log: Array[Dictionary] = []
 var _music_active_index := -1
@@ -1052,7 +1052,7 @@ func _transition_music(state: String, target_index: int, reason: String) -> void
 	music_player = fade_in
 	_music_player_alt = fade_out
 	music_player.stream = target_stream
-	music_transition_log.append({
+	_append_bounded_observability(music_transition_log, {
 		"state": state,
 		"from_index": _music_last_index,
 		"to_index": index,
