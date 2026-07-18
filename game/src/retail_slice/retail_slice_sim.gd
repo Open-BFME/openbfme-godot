@@ -1615,6 +1615,16 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 		var expiration_tick := int(row.get("continuous_fire_expiration_tick", -1))
 		if expiration_tick < 0 or tick_index >= expiration_tick:
 			row["continuous_fire_count"] = 0
+		var continuous_threshold := maxi(0, int(row.get("continuous_fire_one", 0)))
+		var rate_multiplier := maxf(1.0, float(row.get("continuous_fire_rate_multiplier", 1.0)))
+		var base_reload_or_delay_ms := float(row.get("delay_between_shots_ms", 0.0))
+		if int(row.get("clip_size", 0)) == 1:
+			base_reload_or_delay_ms = float(row.get("clip_reload_time_ms", base_reload_or_delay_ms))
+		# SAGE captures the possible-next-shot frame before FiringTracker promotes
+		# the shot count into the next continuous-fire tier.
+		var coast_anchor_ms := base_reload_or_delay_ms
+		if continuous_threshold > 0 and int(row.get("continuous_fire_count", 0)) > continuous_threshold:
+			coast_anchor_ms = floorf(coast_anchor_ms / rate_multiplier)
 		row["attack_sequence"] = int(row.get("attack_sequence", 0)) + 1
 		row["continuous_fire_count"] = int(row.get("continuous_fire_count", 0)) + 1
 		var attack_sequence := int(row["attack_sequence"])
@@ -1629,11 +1639,7 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 			# Every member owns its attack boundary. This avoids the old whole-
 			# horde structure impact while preserving deterministic replay.
 			hit_ticks[member_index] = tick_index + stagger + pre_attack_ticks
-		var continuous_threshold := maxi(0, int(row.get("continuous_fire_one", 0)))
-		var rate_multiplier := maxf(1.0, float(row.get("continuous_fire_rate_multiplier", 1.0)))
-		var reload_or_delay_ms := float(row.get("delay_between_shots_ms", 0.0))
-		if int(row.get("clip_size", 0)) == 1:
-			reload_or_delay_ms = float(row.get("clip_reload_time_ms", reload_or_delay_ms))
+		var reload_or_delay_ms := base_reload_or_delay_ms
 		if continuous_threshold > 0 and int(row["continuous_fire_count"]) > continuous_threshold:
 			reload_or_delay_ms = floorf(reload_or_delay_ms / rate_multiplier)
 		var cadence_ms := (
@@ -1642,7 +1648,8 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 			+ reload_or_delay_ms
 		)
 		var cadence_ticks := maxi(1, roundi(cadence_ms / (TICK_SECONDS * 1000.0)))
-		row["continuous_fire_expiration_tick"] = tick_index + cadence_ticks + coast_ticks
+		var coast_anchor_ticks := maxi(1, roundi(coast_anchor_ms / (TICK_SECONDS * 1000.0)))
+		row["continuous_fire_expiration_tick"] = tick_index + coast_anchor_ticks + coast_ticks
 		row["attack_cooldown"] = maxi(
 			cadence_ticks,
 			pre_attack_ticks + maximum_stagger + 1
@@ -2354,8 +2361,11 @@ func state_snapshot() -> Dictionary:
 			"health": int(entity_row["health"]),
 			"member_maximum_health": int(entity_row.get("member_maximum_health", 0)),
 			"member_health": Array(entity_row.get("member_health", [])).duplicate(),
+			"attack_cooldown": int(entity_row.get("attack_cooldown", 0)),
 			"attack_windup": int(entity_row.get("attack_windup", 0)),
 			"attack_sequence": int(entity_row.get("attack_sequence", 0)),
+			"continuous_fire_count": int(entity_row.get("continuous_fire_count", 0)),
+			"continuous_fire_expiration_tick": int(entity_row.get("continuous_fire_expiration_tick", -1)),
 			"member_attack_tokens": Array(entity_row.get("member_attack_tokens", [])).duplicate(),
 			"member_attack_start_ticks": Array(entity_row.get("member_attack_start_ticks", [])).duplicate(),
 			"member_attack_hit_ticks": Array(entity_row.get("member_attack_hit_ticks", [])).duplicate(),

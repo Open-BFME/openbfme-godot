@@ -187,6 +187,11 @@ func _run() -> void:
 	var enemy_id := 101
 	(sim.entities[enemy_id] as Dictionary)["speed"] = 0.0
 	(sim.entities[enemy_id] as Dictionary)["acceleration"] = 0.0
+	var durable_enemy_health: Array = []
+	for _member_health in Array((sim.entities[enemy_id] as Dictionary).get("member_health", [])):
+		durable_enemy_health.append(100000)
+	(sim.entities[enemy_id] as Dictionary)["member_health"] = durable_enemy_health
+	(sim.entities[enemy_id] as Dictionary)["health"] = durable_enemy_health.size() * 100000
 	var ranger_position := Vector2(sim.entity(ranger_id).get("position", start))
 	var switch_distance := float(ranger.get("close_weapon_switch_distance", 0.0))
 	var enemy_health_before := int(sim.entity(enemy_id).get("health", 0))
@@ -226,6 +231,23 @@ func _run() -> void:
 		str(swing_ticks)
 	)
 	var ranger_row := sim.entities[ranger_id] as Dictionary
+	var signature_before_cadence_mutation: String = String(sim.state_signature())
+	var saved_cooldown := int(ranger_row.get("attack_cooldown", 0))
+	var saved_fire_count := int(ranger_row.get("continuous_fire_count", 0))
+	var saved_expiration := int(ranger_row.get("continuous_fire_expiration_tick", -1))
+	ranger_row["attack_cooldown"] = saved_cooldown + 1
+	var cooldown_signature_changed: bool = String(sim.state_signature()) != signature_before_cadence_mutation
+	ranger_row["attack_cooldown"] = saved_cooldown
+	ranger_row["continuous_fire_count"] = saved_fire_count + 1
+	var count_signature_changed: bool = String(sim.state_signature()) != signature_before_cadence_mutation
+	ranger_row["continuous_fire_count"] = saved_fire_count
+	ranger_row["continuous_fire_expiration_tick"] = saved_expiration + 1
+	var expiration_signature_changed: bool = String(sim.state_signature()) != signature_before_cadence_mutation
+	ranger_row["continuous_fire_expiration_tick"] = saved_expiration
+	_check(
+		"ranger_authoritative_cadence_state_changes_signature",
+		cooldown_signature_changed and count_signature_changed and expiration_signature_changed
+	)
 	var swing_count_before_pause := swing_ticks.size()
 	(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(ranger_row.get("position", start)) + Vector2(switch_distance, 0.0)
 	sim.advance(35)
@@ -236,6 +258,30 @@ func _run() -> void:
 		"ranger_continuous_fire_coast_resets_from_possible_next_shot",
 		swing_ticks_after_pause.size() == swing_count_before_pause + 1
 			and int(ranger_row.get("continuous_fire_count", 0)) == 1
+			and int(ranger_row.get("attack_cooldown", 0)) == 18,
+		str(ranger_row)
+	)
+	# Build a fresh three-shot sequence, pause after the transition shot, and
+	# resume inside its source coast. The third shot captures the normal reload
+	# frame before it promotes ContinuousFireOne to the fast tier.
+	sim.advance(36)
+	(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(ranger_row.get("position", start)) + Vector2(switch_distance, 0.0)
+	sim.advance(31)
+	(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(ranger_row.get("position", start)) + Vector2(switch_distance + 1.6, 0.0)
+	sim.advance(1)
+	_check(
+		"ranger_transition_shot_coast_uses_pre_transition_reload_frame",
+		int(ranger_row.get("continuous_fire_count", 0)) == 4
+			and int(ranger_row.get("attack_cooldown", 0)) == 10,
+		str(ranger_row)
+	)
+	(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(ranger_row.get("position", start)) + Vector2(switch_distance, 0.0)
+	sim.advance(27)
+	(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(ranger_row.get("position", start)) + Vector2(switch_distance + 1.6, 0.0)
+	sim.advance(1)
+	_check(
+		"ranger_fast_tier_coast_expires_from_possible_next_shot",
+		int(ranger_row.get("continuous_fire_count", 0)) == 1
 			and int(ranger_row.get("attack_cooldown", 0)) == 18,
 		str(ranger_row)
 	)
