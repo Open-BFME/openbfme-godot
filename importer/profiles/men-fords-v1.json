@@ -68,7 +68,8 @@
         "houseColor": "data/house-color.json",
         "selectionTransitions": "data/m3/selection-transitions.json",
         "models": "data/m3/model-census.json",
-        "rangerRuntime": "data/m3/ranger-runtime.json"
+        "rangerRuntime": "data/m3/ranger-runtime.json",
+        "trebuchetRuntime": "data/m3/trebuchet-runtime.json"
       },
       "sourceNull": [
         {

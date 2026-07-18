@@ -201,6 +201,7 @@ def test_trebuchet_resources_do_not_attribute_death_source_to_intact_glb(
         "art/w3d/gu/gusiegtreb_wlka.w3d",
         "art/w3d/gu/gusiegtreb_atak.w3d",
         "art/w3d/gu/gusiegtreb_diea.w3d",
+        "art/w3d/gu/gusiegtrerk.w3d",
     )
     scanned = []
     for path in source_paths:
@@ -226,7 +227,15 @@ def test_trebuchet_resources_do_not_attribute_death_source_to_intact_glb(
         ],
         "exactLeaves": [],
         "scannedW3d": scanned,
-        "w3dDependencyClosure": {"embeddedTextures": []},
+        "w3dDependencyClosure": {
+            "embeddedTextures": [
+                {
+                    "sourceW3dVirtualPath": "art/w3d/gu/gusiegtrerk.w3d",
+                    "status": "resolved",
+                    "physicalVirtualPaths": ["art/compiledtextures/gb/gbbricks.dds"],
+                }
+            ]
+        },
     }
 
     resources, census = build_m3_visual_resources(closure, {"resources": []})
@@ -242,6 +251,32 @@ def test_trebuchet_resources_do_not_attribute_death_source_to_intact_glb(
     )
     assert intact["patterns"] == sorted(source_paths[:5], key=str.casefold)
     assert death["patterns"] == [source_paths[5]]
+    projectile = next(
+        row for row in resources if row["id"] == "m3-gondortrebuchet-rock-projectile"
+    )
+    assert projectile == {
+        "id": "m3-gondortrebuchet-rock-projectile",
+        "kind": "model",
+        "converter": "w3d-bundle",
+        "patterns": [source_paths[6]],
+        "output": "assets/models/m3/projectiles/gondor-trebuchet-rock.glb",
+        "options": {
+            "model": "gusiegtrerk.w3d",
+            "animations": ["gusiegtrerk.w3d"],
+            "inputResourceIds": [
+                "m3-gondortrebuchetrockprojectile-material-textures-000"
+            ],
+        },
+        "required": True,
+        "limit": 1,
+        "expected_count": 1,
+    }
+    projectile_texture = next(
+        row
+        for row in resources
+        if row["id"] == "m3-gondortrebuchetrockprojectile-material-textures-000"
+    )
+    assert projectile_texture["patterns"] == ["art/compiledtextures/gb/gbbricks.dds"]
 
     trebuchet = next(row for row in census["units"] if row["id"] == "GondorTrebuchet")
     assert trebuchet["embeddedDrawables"] == {
@@ -249,6 +284,11 @@ def test_trebuchet_resources_do_not_attribute_death_source_to_intact_glb(
             "sourceW3d": source_paths[5],
             "output": "assets/models/m3/units/gondortrebuchet-death.glb",
         }
+    }
+    assert trebuchet["projectile"] == {
+        "sourceW3d": source_paths[6],
+        "output": "assets/models/m3/projectiles/gondor-trebuchet-rock.glb",
+        "embeddedAnimation": True,
     }
 
 

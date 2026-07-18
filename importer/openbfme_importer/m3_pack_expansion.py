@@ -76,9 +76,12 @@ RUNTIME_PATHS = {
     "selectionTransitions": "data/m3/selection-transitions.json",
     "models": "data/m3/model-census.json",
     "rangerRuntime": "data/m3/ranger-runtime.json",
+    "trebuchetRuntime": "data/m3/trebuchet-runtime.json",
 }
 RANGER_RUNTIME_PATH = RUNTIME_PATHS["rangerRuntime"]
 RANGER_RUNTIME_SCHEMA = "openbfme.ranger-runtime-contract"
+TREBUCHET_RUNTIME_PATH = RUNTIME_PATHS["trebuchetRuntime"]
+TREBUCHET_RUNTIME_SCHEMA = "openbfme.trebuchet-runtime-contract"
 BUILDING_RUNTIME_PATH = "data/m3/building-runtime.json"
 BUILDING_RUNTIME_SCHEMA = "openbfme.building-runtime-capabilities"
 BUILDING_RUNTIME_SCOPE = "bfme2-106-men-ordinary-buildings-v0"
@@ -106,6 +109,11 @@ GAMEDATA_PATH = "data/ini/gamedata.ini"
 UPGRADE_PATH = "data/ini/upgrade.ini"
 ARCHERY_RANGE_PATH = "data/ini/object/goodfaction/structures/men/archerrange.ini"
 WEAPON_PATH = "data/ini/weapon.ini"
+WORKSHOP_PATH = "data/ini/object/goodfaction/structures/men/workshop.ini"
+TREBUCHET_PATH = "data/ini/object/goodfaction/units/men/trebuchet.ini"
+GOOD_SUBOBJECTS_PATH = "data/ini/object/goodfaction/goodfactionsubobjects.ini"
+TREBUCHET_PROJECTILE_W3D = "art/w3d/gu/gusiegtrerk.w3d"
+TREBUCHET_PROJECTILE_OUTPUT = "assets/models/m3/projectiles/gondor-trebuchet-rock.glb"
 SELECTION_TRANSITIONS = {
     "GondorFighter": ("GUManMocap_ATNA", "GUManMocap_ATNB", "GUManMocap_ATND"),
     "GondorArcher": ("GUArcher_ATNA", "GUArcher_ATNB", "GUArcher_ATNC"),
@@ -1413,6 +1421,340 @@ def attach_ranger_playable_bindings(
     deferred.remove("model-and-animation-conversion")
 
 
+def build_trebuchet_runtime_contract(
+    assets_root: Path,
+    effective_manifest: Mapping[str, Any],
+    profile: Mapping[str, Any],
+    building_stats: Mapping[str, Any],
+    model_census: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Extract the bounded Workshop/Trebuchet direct-attack contract."""
+
+    paths = (
+        GAMEDATA_PATH,
+        COMMAND_BUTTON_PATH,
+        COMMAND_SET_PATH,
+        WEAPON_PATH,
+        WORKSHOP_PATH,
+        TREBUCHET_PATH,
+        GOOD_SUBOBJECTS_PATH,
+    )
+    attested = _profile_attested_paths(profile)
+    manifest = _effective_manifest_index(effective_manifest)
+    sources = {
+        path: _read_attested_ini(assets_root, path, manifest, attested) for path in paths
+    }
+    constants = _numeric_defines(sources[GAMEDATA_PATH])
+
+    def number(raw: str, label: str) -> int | float:
+        value = raw.strip()
+        if re.fullmatch(r"-?[0-9]+", value):
+            return int(value)
+        if re.fullmatch(r"-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", value):
+            return float(value)
+        resolved = constants.get(value.casefold())
+        if resolved is None:
+            raise ValueError(f"{label} has unresolved value: {value}")
+        return resolved
+
+    def one_object(path: str, identifier: str) -> SageObject:
+        rows = [
+            row
+            for row in parse_sage_document(sources[path], path).objects
+            if row.name.casefold() == identifier.casefold()
+        ]
+        if len(rows) != 1:
+            raise ValueError(f"{path} must contain one Object {identifier}")
+        return rows[0]
+
+    def assignment(obj: SageObject, field: str) -> SageAssignment:
+        rows = [row for row in obj.assignments if row.key.casefold() == field.casefold()]
+        if len(rows) != 1:
+            raise ValueError(f"Object {obj.name} has invalid {field}")
+        return rows[0]
+
+    def block(obj: SageObject, kind: str) -> SageBlock:
+        rows = [row for row in obj.blocks if row.kind.casefold() == kind.casefold()]
+        if len(rows) != 1:
+            raise ValueError(f"Object {obj.name} has invalid {kind}")
+        return rows[0]
+
+    def block_value(source: IniBlock, field: str) -> str:
+        value = _one(source, field, True)
+        assert value is not None
+        return value
+
+    buildings = [
+        _obj(row, "Workshop building stats")
+        for row in _list(building_stats.get("buildings"), "building stats")
+        if str(_obj(row, "building stats row").get("id", "")).casefold()
+        == "gondorworkshop"
+    ]
+    trainables = [
+        _obj(row, "Trebuchet trainable stats")
+        for row in _list(building_stats.get("trainables"), "trainable stats")
+        if str(_obj(row, "trainable stats row").get("id", "")).casefold()
+        == "gondortrebuchet"
+    ]
+    if len(buildings) != 1 or len(trainables) != 1:
+        raise ValueError("Workshop/Trebuchet production stats are incomplete")
+    workshop_stats, production = deepcopy(dict(buildings[0])), deepcopy(dict(trainables[0]))
+    if (
+        workshop_stats.get("buildCost"),
+        workshop_stats.get("buildTime"),
+        workshop_stats.get("maxHealth"),
+    ) != (500, 45, 3000):
+        raise ValueError("effective Workshop values changed")
+    if (
+        production.get("buildCost"),
+        production.get("buildTime"),
+        production.get("commandPoints"),
+    ) != (700, 30, 25):
+        raise ValueError("effective Trebuchet production values changed")
+
+    buttons = _block_groups(sources[COMMAND_BUTTON_PATH], "CommandButton")
+    train_button = _unambiguous_block(
+        buttons, "Command_ConstructGondorTrebuchet", "CommandButton"
+    )
+    build_button = _unambiguous_block(
+        buttons, "Command_PorterConstructMenWorkshop", "CommandButton"
+    )
+    if (
+        block_value(train_button, "Command"),
+        block_value(train_button, "Object"),
+        block_value(train_button, "Options"),
+    ) != ("UNIT_BUILD", "GondorTrebuchet", "CANCELABLE"):
+        raise ValueError("Trebuchet production command changed")
+    command_set = _unambiguous_block(
+        _block_groups(sources[COMMAND_SET_PATH], "CommandSet"),
+        "GondorWorkshopCommandSet",
+        "CommandSet",
+    )
+    slots = _command_slots(command_set)
+    if {row["slot"]: row["id"] for row in slots}.get(1) != train_button.name:
+        raise ValueError("Workshop no longer trains Trebuchet from slot 1")
+
+    trebuchet = one_object(TREBUCHET_PATH, "GondorTrebuchet")
+    locomotor = block(trebuchet, "LocomotorSet")
+    locomotor_fields = {row.key.casefold(): row for row in locomotor.assignments}
+    if set(("locomotor", "speed")) - set(locomotor_fields):
+        raise ValueError("Trebuchet locomotor binding is incomplete")
+    body = block(trebuchet, "ActiveBody")
+    health_rows = [row for row in body.assignments if row.key.casefold() == "maxhealth"]
+    if len(health_rows) != 1:
+        raise ValueError("Trebuchet health binding is ambiguous")
+    weapon_sets = [row for row in trebuchet.blocks if row.kind.casefold() == "weaponset"]
+    if not weapon_sets:
+        raise ValueError("Trebuchet has no WeaponSet")
+    primary_rows = [
+        row
+        for row in weapon_sets[0].assignments
+        if row.key.casefold() == "weapon" and row.value.split()[:1] == ["PRIMARY"]
+    ]
+    if len(primary_rows) != 1 or primary_rows[0].value.split()[1:] != ["GondorTrebuchetRock"]:
+        raise ValueError("Trebuchet primary weapon changed")
+
+    weapon = _unambiguous_block(
+        _block_groups(sources[WEAPON_PATH], "Weapon"),
+        "GondorTrebuchetRock",
+        "Weapon",
+    )
+    warhead_name = block_value(weapon, "WarheadTemplateName")
+    warhead = _unambiguous_block(
+        _block_groups(sources[WEAPON_PATH], "Weapon"), warhead_name, "Weapon"
+    )
+    combat = {
+        "weaponId": weapon.name,
+        "attackRange": number(block_value(weapon, "AttackRange"), "attack range"),
+        "minimumAttackRange": number(
+            block_value(weapon, "MinimumAttackRange"), "minimum attack range"
+        ),
+        "projectileSpeed": number(block_value(weapon, "WeaponSpeed"), "projectile speed"),
+        "delayBetweenShotsMs": number(
+            block_value(weapon, "DelayBetweenShots"), "delay between shots"
+        ),
+        "preAttackDelayMs": number(
+            block_value(weapon, "PreAttackDelay"), "preattack delay"
+        ),
+        "firingDurationMs": number(
+            block_value(weapon, "FiringDuration"), "firing duration"
+        ),
+        "clipSize": int(block_value(weapon, "ClipSize")),
+        "projectileObjectId": block_value(weapon, "ProjectileTemplateName"),
+        "damage": number(block_value(warhead, "Damage"), "warhead damage"),
+        "damageType": block_value(warhead, "DamageType"),
+        "scope": "direct-structure-first-slice",
+        "source": {"ini": WEAPON_PATH, "weapon": weapon.name, "warhead": warhead.name},
+    }
+    if tuple(combat[key] for key in (
+        "attackRange", "minimumAttackRange", "projectileSpeed",
+        "delayBetweenShotsMs", "preAttackDelayMs", "firingDurationMs",
+        "clipSize", "damage", "damageType",
+    )) != (500, 300, 321, 8000, 1200, 5400, 8, 390, "SIEGE"):
+        raise ValueError("effective Trebuchet direct-combat values changed")
+
+    projectile = one_object(GOOD_SUBOBJECTS_PATH, "GondorTrebuchetRockProjectile")
+    bezier = block(projectile, "BezierProjectileBehavior")
+    bezier_values = {row.key: row.value for row in bezier.assignments}
+    projectile_contract = {
+        "objectId": projectile.name,
+        "model": TREBUCHET_PROJECTILE_OUTPUT,
+        "sourceW3d": TREBUCHET_PROJECTILE_W3D,
+        "embeddedAnimation": True,
+        "flightAudio": assignment(projectile, "SoundAmbient").value,
+        "firstHeight": number(bezier_values["FirstHeight"], "first height"),
+        "secondHeight": number(bezier_values["SecondHeight"], "second height"),
+        "firstPercentIndent": bezier_values["FirstPercentIndent"],
+        "secondPercentIndent": bezier_values["SecondPercentIndent"],
+        "preLandingStateTimeMs": number(
+            bezier_values["PreLandingStateTime"], "prelanding time"
+        ),
+        "preLandingEmotionRadius": number(
+            bezier_values["PreLandingEmotionRadius"], "prelanding radius"
+        ),
+        "source": {"ini": GOOD_SUBOBJECTS_PATH, "object": projectile.name},
+    }
+
+    models = _list(model_census.get("units"), "model units")
+    unit_models = [
+        _obj(row, "Trebuchet model")
+        for row in models
+        if str(_obj(row, "model row").get("id", "")).casefold() == "gondortrebuchet"
+    ]
+    workshop_models = [
+        _obj(row, "Workshop model")
+        for row in _list(model_census.get("buildings"), "model buildings")
+        if str(_obj(row, "model row").get("id", "")).casefold() == "gondorworkshop"
+    ]
+    if len(unit_models) != 1 or len(workshop_models) != 1:
+        raise ValueError("Workshop/Trebuchet model census is incomplete")
+
+    runtime = _obj(profile.get("runtime_data"), "profile runtime_data")
+    ui = _obj(runtime.get("data/ui_manifest.json"), "UI manifest")
+    image_ids = {
+        str(_obj(row, "UI image").get("id", "")).casefold()
+        for row in _list(ui.get("images"), "UI images")
+    }
+    required_images = {
+        block_value(build_button, "ButtonImage"),
+        block_value(train_button, "ButtonImage"),
+        assignment(trebuchet, "SelectPortrait").value,
+    }
+    if any(value.casefold() not in image_ids for value in required_images):
+        raise ValueError("Workshop/Trebuchet UI image closure is incomplete")
+    audio_document = _obj(runtime.get("data/audio_events.json"), "audio events")
+    audio_ids = set(_obj(audio_document.get("events"), "audio definitions")) | set(
+        _obj(audio_document.get("multisounds"), "audio multisounds")
+    )
+    audio_routes = {
+        "select": assignment(trebuchet, "VoiceSelect").value,
+        "move": assignment(trebuchet, "VoiceMove").value,
+        "attack": assignment(trebuchet, "VoiceAttack").value,
+        "death": assignment(trebuchet, "SoundImpact").value,
+    }
+    if any(value not in audio_ids for value in audio_routes.values()):
+        raise ValueError("Trebuchet audio closure is incomplete")
+
+    return {
+        "schema": TREBUCHET_RUNTIME_SCHEMA,
+        "schemaVersion": 0,
+        "capabilityStatus": "bounded-direct-structure-ready",
+        "workshop": {
+            "stats": workshop_stats,
+            "constructCommandId": build_button.name,
+            "commandSetId": command_set.name,
+            "trainCommandId": train_button.name,
+            "trainCommandSlot": 1,
+            "models": deepcopy(workshop_models[0]),
+        },
+        "production": production,
+        "unit": {
+            "objectId": trebuchet.name,
+            "maximumHealth": number(health_rows[0].value, "Trebuchet health"),
+            "visionRange": number(assignment(trebuchet, "VisionRange").value, "vision"),
+            "movement": {
+                "mode": "existing-generic-unit-path",
+                "speed": number(locomotor_fields["speed"].value, "Trebuchet speed"),
+                "sourceTemplate": locomotor_fields["locomotor"].value.split()[0],
+            },
+            "models": deepcopy(unit_models[0]),
+        },
+        "combat": combat,
+        "projectile": projectile_contract,
+        "presentation": {
+            "workshopButtonImage": block_value(build_button, "ButtonImage"),
+            "trainButtonImage": block_value(train_button, "ButtonImage"),
+            "portraitImage": assignment(trebuchet, "SelectPortrait").value,
+        },
+        "audioRoutes": audio_routes,
+        "unboundSourceAudio": {
+            "flight": projectile_contract["flightAudio"],
+            "status": "definition-and-sample-closure-deferred",
+        },
+        "deferredCapabilities": [
+            "projectile-flight-audio-definition-sample-closure",
+            "siege-particle-fx-closure",
+            "catapult-locomotor-vehicle-handling",
+            "area-scatter-shroud-combat",
+            "workshop-footprint-create-rally-geometry",
+        ],
+        "sources": [
+            {"ini": path, "sha256": hashlib.sha256(payload).hexdigest(), "byteCount": len(payload)}
+            for path, payload in sorted(sources.items())
+        ],
+    }
+
+
+def attach_trebuchet_playable_bindings(
+    profile: dict[str, Any], contract: Mapping[str, Any]
+) -> None:
+    """Attach the converted first-slice objects without adding gameplay policy."""
+
+    runtime = _obj(profile.get("runtime_data"), "profile runtime_data")
+    objects = _list(
+        _obj(runtime.get("data/objects.json"), "objects document").get("objects"),
+        "objects",
+    )
+    existing = {
+        str(_obj(row, "object row").get("id", "")).casefold() for row in objects
+    }
+    ids = {"bfme2.object.gondor-workshop", "bfme2.object.gondor-trebuchet"}
+    if existing.intersection(ids):
+        raise ValueError("Workshop/Trebuchet object binding already exists")
+    workshop = _obj(contract.get("workshop"), "Workshop contract")
+    workshop_stats = _obj(workshop.get("stats"), "Workshop stats")
+    workshop_models = _obj(workshop.get("models"), "Workshop models")
+    unit = _obj(contract.get("unit"), "Trebuchet unit")
+    unit_models = _obj(unit.get("models"), "Trebuchet models")
+    death = _obj(
+        _obj(unit_models.get("embeddedDrawables"), "Trebuchet embedded models").get("death"),
+        "Trebuchet death model",
+    )
+    objects.extend(
+        [
+            {
+                "id": "bfme2.object.gondor-workshop",
+                "kind": "structure",
+                "displayName": "Gondor Workshop",
+                "simulation": {"health": workshop_stats["maxHealth"]},
+                "presentation": {"modelStates": deepcopy(workshop_models["states"])},
+            },
+            {
+                "id": "bfme2.object.gondor-trebuchet",
+                "kind": "member",
+                "displayName": "Gondor Trebuchet",
+                "simulation": {"health": unit["maximumHealth"]},
+                "presentation": {
+                    "model": unit_models["output"],
+                    "deathModel": death["output"],
+                    "projectileModel": _obj(contract.get("projectile"), "projectile")["model"],
+                    "iconId": _obj(contract.get("presentation"), "presentation")["portraitImage"],
+                },
+            },
+        ]
+    )
+
+
 def extract_spellbook(report: Mapping[str, Any], science_source: bytes, power_source: bytes, gamedata_source: bytes | None = None) -> dict[str, Any]:
     dependencies = _obj(report.get("dependencies"), "dependencies")
     science_ids = _unique(dependencies.get("spellbookSciences"), "spellbookSciences")
@@ -2015,6 +2357,33 @@ def build_m3_visual_resources(
                         "expected_count": 1,
                     }
                 )
+            if target == "GondorTrebuchet":
+                # The semantic projectile Object is outside the unit-drawable
+                # target closure. Its exact W3D/texture pair is independently
+                # proven by the strict effective catalog and the production
+                # converter; do not misclassify it as a Trebuchet body clip.
+                projectile_textures = ("art/compiledtextures/gb/gbbricks.dds",)
+                projectile_texture_rules, projectile_texture_ids = _texture_resources(
+                    "GondorTrebuchetRockProjectile", projectile_textures
+                )
+                resources.extend(projectile_texture_rules)
+                resources.append(
+                    {
+                        "id": "m3-gondortrebuchet-rock-projectile",
+                        "kind": "model",
+                        "converter": "w3d-bundle",
+                        "patterns": [TREBUCHET_PROJECTILE_W3D],
+                        "output": TREBUCHET_PROJECTILE_OUTPUT,
+                        "options": {
+                            "model": PurePosixPath(TREBUCHET_PROJECTILE_W3D).name,
+                            "animations": [PurePosixPath(TREBUCHET_PROJECTILE_W3D).name],
+                            "inputResourceIds": projectile_texture_ids,
+                        },
+                        "required": True,
+                        "limit": 1,
+                        "expected_count": 1,
+                    }
+                )
         unit_row = {
             "id": target,
             "coverage": (
@@ -2027,6 +2396,12 @@ def build_m3_visual_resources(
             unit_row["sourceGapId"] = resource_id
         else:
             unit_row["output"] = output
+            if target == "GondorTrebuchet":
+                unit_row["projectile"] = {
+                    "sourceW3d": TREBUCHET_PROJECTILE_W3D,
+                    "output": TREBUCHET_PROJECTILE_OUTPUT,
+                    "embeddedAnimation": True,
+                }
             if embedded_models:
                 unit_row["embeddedDrawables"] = {
                     role: {
@@ -2368,6 +2743,10 @@ def compose_private_profile(
         assets_root, effective_manifest, result, building_stats
     )
     attach_ranger_playable_bindings(result, ranger_runtime, model_census)
+    trebuchet_runtime = build_trebuchet_runtime_contract(
+        assets_root, effective_manifest, result, building_stats, model_census
+    )
+    attach_trebuchet_playable_bindings(result, trebuchet_runtime)
     runtime_documents = {
         RUNTIME_PATHS["buildingStats"]: building_stats,
         RUNTIME_PATHS["icons"]: build_icon_census(census_report),
@@ -2380,6 +2759,7 @@ def compose_private_profile(
         RUNTIME_PATHS["selectionTransitions"]: selection_transitions,
         RUNTIME_PATHS["models"]: model_census,
         RUNTIME_PATHS["rangerRuntime"]: ranger_runtime,
+        RUNTIME_PATHS["trebuchetRuntime"]: trebuchet_runtime,
     }
     if set(runtime_documents) != set(RUNTIME_PATHS.values()):
         raise ValueError("M3 runtime document set is incomplete")
@@ -2695,7 +3075,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["BUILDINGS", "BUILDING_RUNTIME_PATH", "BUILDING_RUNTIME_REQUESTED_IDS", "CP_FIELDS", "RANGER_RUNTIME_PATH", "RANGER_RUNTIME_SCHEMA", "RUNTIME_PATHS", "SELECTION_TRANSITIONS", "UNITS", "UPGRADES", "attach_building_runtime_gap_contract", "attach_ranger_playable_bindings", "build_building_runtime_gap_contract", "build_house_color_from_assets", "build_house_color_manifest", "build_icon_census", "build_m3_visual_resources", "build_ranger_runtime_contract", "build_upgrade_manifest", "candidate_pack_state", "compose_private_profile", "compose_profile_from_paths", "declarative_visual_resources", "extend_selection_transitions", "extract_building_stats", "extract_command_points", "extract_spellbook", "house_color_mask_resources", "parse_house_colors", "validated_private_output_path", "validate_candidate_pack_state", "validate_recipe", "validate_tooltip_closure", "write_m3_expansion_report"]
+__all__ = ["BUILDINGS", "BUILDING_RUNTIME_PATH", "BUILDING_RUNTIME_REQUESTED_IDS", "CP_FIELDS", "RANGER_RUNTIME_PATH", "RANGER_RUNTIME_SCHEMA", "TREBUCHET_RUNTIME_PATH", "TREBUCHET_RUNTIME_SCHEMA", "RUNTIME_PATHS", "SELECTION_TRANSITIONS", "UNITS", "UPGRADES", "attach_building_runtime_gap_contract", "attach_ranger_playable_bindings", "attach_trebuchet_playable_bindings", "build_building_runtime_gap_contract", "build_house_color_from_assets", "build_house_color_manifest", "build_icon_census", "build_m3_visual_resources", "build_ranger_runtime_contract", "build_trebuchet_runtime_contract", "build_upgrade_manifest", "candidate_pack_state", "compose_private_profile", "compose_profile_from_paths", "declarative_visual_resources", "extend_selection_transitions", "extract_building_stats", "extract_command_points", "extract_spellbook", "house_color_mask_resources", "parse_house_colors", "validated_private_output_path", "validate_candidate_pack_state", "validate_recipe", "validate_tooltip_closure", "write_m3_expansion_report"]
 
 
 if __name__ == "__main__":
