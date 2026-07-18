@@ -246,9 +246,15 @@ def resolve_sage_audio_closure(
     selected_multisound_list = sorted(
         selected_multisounds.values(), key=lambda item: (item.id.casefold(), item.id)
     )
+    samples_by_key: dict[str, str] = {}
+    for item in selected_event_list:
+        for reference in item.sounds:
+            # SAGE identifiers and the Windows retail filesystem are
+            # case-insensitive.  Retail 1.06 contains authored case variants
+            # of the same Uruk sample across different AudioEvents.
+            samples_by_key.setdefault(reference.id.casefold(), reference.id)
     samples = sorted(
-        {reference.id for item in selected_event_list for reference in item.sounds},
-        key=lambda item: (item.casefold(), item),
+        samples_by_key.values(), key=lambda item: (item.casefold(), item)
     )
     return SageAudioClosure(
         tuple(sorted(canonical_roots, key=str.casefold)),

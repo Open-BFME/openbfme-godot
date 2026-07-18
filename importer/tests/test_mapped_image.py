@@ -8,6 +8,7 @@ try:
         MappedImageRecord,
         parse_mapped_images,
         resolve_mapped_image_texture_paths,
+        resolve_mapped_image_texture_paths_partial,
         resolve_mapped_images,
         resolve_mapped_images_partial,
     )
@@ -19,6 +20,7 @@ except ModuleNotFoundError as exc:
         MappedImageRecord,
         parse_mapped_images,
         resolve_mapped_image_texture_paths,
+        resolve_mapped_image_texture_paths_partial,
         resolve_mapped_images,
         resolve_mapped_images_partial,
     )
@@ -147,6 +149,19 @@ class MappedImageTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "unresolved MappedImage compiled texture"):
             resolve_mapped_image_texture_paths(records, [])
+        partial, missing = resolve_mapped_image_texture_paths_partial(
+            records,
+            ["art/compiledtextures/st/StrategicImages_001.dds"],
+        )
+        self.assertEqual(
+            partial,
+            {
+                "StrategicImages_001.tga": (
+                    "art/compiledtextures/st/StrategicImages_001.dds"
+                )
+            },
+        )
+        self.assertEqual(missing, ("BuildingRadialButtons_168.tga",))
 
         authored = parse_mapped_images(_block("Strategic", texture="AptComponents_005.tga"))
         self.assertEqual(

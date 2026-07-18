@@ -83,6 +83,23 @@ End
         self.assertNotIn("AudioEvent SoldierSelect", serialized)
         self.assertNotIn("C:\\", serialized)
 
+    def test_closure_collapses_retail_case_variants_of_one_sample(self) -> None:
+        definitions = parse_sage_audio_definitions(
+            b"AudioEvent Move\n Sounds = EUUruPi_voimovb\nEnd\n"
+            b"AudioEvent Formation\n Sounds = EUUruPi_voiMovb\nEnd\n"
+        )
+        closure = resolve_sage_audio_closure(
+            definitions, ["Move", "Formation"]
+        )
+        self.assertEqual(closure.sample_ids, ("EUUruPi_voiMovb",))
+        self.assertEqual(
+            resolve_audio_sample_paths(
+                closure.sample_ids,
+                ["data/audio/sounds/euurupi_voimovb.wav"],
+            ),
+            {"EUUruPi_voiMovb": "data/audio/sounds/euurupi_voimovb.wav"},
+        )
+
     def test_sample_resolution_is_exact_and_path_safe(self) -> None:
         resolved = resolve_audio_sample_paths(
             ["voice_a", "voice_b"],

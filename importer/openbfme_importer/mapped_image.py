@@ -376,6 +376,22 @@ def resolve_mapped_image_texture_paths(
     convention is required.  No basename search or extension guessing occurs.
     """
 
+    result, missing = resolve_mapped_image_texture_paths_partial(records, virtual_paths)
+    if missing:
+        raise ValueError(f"unresolved MappedImage compiled texture: {missing[0]!r}")
+    return result
+
+
+def resolve_mapped_image_texture_paths_partial(
+    records: Iterable[MappedImageRecord], virtual_paths: Iterable[str]
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    """Resolve available atlas leaves in one pass and retain exact gaps.
+
+    Ambiguous or structurally invalid leaves still fail closed.  The partial
+    result exists for censuses which must report all source-owned gaps instead
+    of aborting at the first absent retail atlas.
+    """
+
     requested: dict[str, str] = {}
     for record in records:
         key = record.texture.casefold()
@@ -392,6 +408,7 @@ def resolve_mapped_image_texture_paths(
         catalog_paths.setdefault(normalized.casefold(), set()).add(normalized)
 
     result: dict[str, str] = {}
+    missing: list[str] = []
     for key in sorted(requested):
         texture = requested[key]
         stem = texture.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
@@ -414,8 +431,9 @@ def resolve_mapped_image_texture_paths(
             key=lambda item: (item.casefold(), item),
         )
         if not matches:
-            raise ValueError(f"unresolved MappedImage compiled texture: {texture!r}")
+            missing.append(texture)
+            continue
         if len(matches) != 1:
             raise ValueError(f"ambiguous MappedImage compiled texture: {texture!r}")
         result[texture] = matches[0]
-    return result
+    return result, tuple(sorted(missing, key=lambda item: (item.casefold(), item)))

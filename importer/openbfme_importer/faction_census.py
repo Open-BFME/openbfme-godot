@@ -1,4 +1,4 @@
-"""Payload-free command-reachable census for the BFME2 1.06 Men faction."""
+"""Payload-free command-reachable census for BFME2 1.06 playable factions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any, Iterable
 from .big import sha256_file
 from .catalog import CatalogEntry, InstallCatalog
 from .mapped_image import (
-    resolve_mapped_image_texture_paths,
+    resolve_mapped_image_texture_paths_partial,
     resolve_mapped_images_partial,
 )
 from .sage_audio import (
@@ -147,7 +147,12 @@ def _definition_tokens(value: str) -> tuple[str, ...]:
 def _block_candidates(blocks: Iterable[IniBlock]) -> dict[str, list[IniBlock]]:
     result: dict[str, list[IniBlock]] = {}
     for block in blocks:
-        result.setdefault(block.name.casefold(), []).append(block)
+        candidates = result.setdefault(block.name.casefold(), [])
+        # Retail 1.06 contains at least one byte-for-byte semantic duplicate
+        # CommandButton.  It is one effective definition, not an ambiguity;
+        # conflicting duplicates must still fail closed below.
+        if block not in candidates:
+            candidates.append(block)
     return result
 
 
@@ -175,42 +180,100 @@ def _set_hash(domain: str, values: Iterable[str]) -> str:
     return digest.hexdigest()
 
 
+def _casefold_unique(values: Iterable[str]) -> tuple[str, ...]:
+    """Return one deterministic authored spelling per SAGE identifier."""
+
+    result: dict[str, str] = {}
+    for value in sorted(set(values), key=lambda item: (item.casefold(), item)):
+        result.setdefault(value.casefold(), value)
+    return tuple(result.values())
+
+
 def _block_values(block: IniBlock, key: str) -> list[str]:
     return list(block.values(key))
 
 
-def _effective_object_values(
+def _effective_object_assignments(
     definition: _ObjectDefinition,
-    field: str,
     candidates: dict[str, list[_ObjectDefinition]],
-) -> tuple[list[str], list[_ObjectDefinition], tuple[str, str] | None]:
-    """Resolve one inherited scalar family with child override semantics."""
+) -> tuple[
+    list[tuple[str, str, _ObjectDefinition]],
+    list[_ObjectDefinition],
+    tuple[str, str] | None,
+]:
+    """Resolve all inherited assignment families with child override semantics."""
 
     current = definition
     ancestry: list[_ObjectDefinition] = []
     seen = {current.block.name.casefold()}
+    selected_fields: set[str] = set()
+    effective: list[tuple[str, str, _ObjectDefinition]] = []
     while True:
-        values = _block_values(current.block, field)
-        if values:
-            return values, ancestry, None
+        assignments_by_field: dict[str, list[tuple[str, str]]] = {}
+        for field, value in current.block.assignments:
+            assignments_by_field.setdefault(field.casefold(), []).append((field, value))
+        for folded, assignments in assignments_by_field.items():
+            if folded in selected_fields:
+                continue
+            selected_fields.add(folded)
+            effective.extend(
+                (field, value, current) for field, value in assignments
+            )
         parent = current.block.parent
         if not parent:
-            return [], ancestry, None
+            return effective, ancestry, None
         key = parent.casefold()
         if key in seen:
             raise ValueError(f"Object inheritance cycle while resolving {definition.block.name}")
         seen.add(key)
         matches = candidates.get(key, [])
         if not matches:
-            return [], ancestry, ("missing", parent)
+            return effective, ancestry, ("missing", parent)
         if len(matches) != 1:
-            return [], ancestry, ("ambiguous", parent)
+            return effective, ancestry, ("ambiguous", parent)
         current = matches[0]
         ancestry.append(current)
 
 
-def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
-    """Return neutral command/UI dependency facts without retail INI bodies."""
+def _census_playable_faction(
+    catalog: InstallCatalog,
+    *,
+    player_template: str,
+    expected_side: str | None = None,
+    implicit_object_roots: Iterable[tuple[str, str]] = (),
+    _legacy_men_identity: bool = False,
+) -> dict[str, Any]:
+    """Return neutral command/UI dependency facts without retail INI bodies.
+
+    ``implicit_object_roots`` is deliberately caller-owned policy.  These are
+    engine-created composite objects which cannot be discovered from command
+    buttons; guessing them from a faction name would silently hide graph gaps.
+    """
+
+    if not re.fullmatch(r"[A-Za-z0-9_+.-]+", player_template):
+        raise ValueError(f"invalid PlayerTemplate identifier: {player_template!r}")
+    implicit_roots_by_key: dict[str, tuple[str, str]] = {}
+    for raw_identifier, raw_reason in implicit_object_roots:
+        identifier, reason = str(raw_identifier), str(raw_reason)
+        if not re.fullmatch(r"[A-Za-z0-9_+.-]+", identifier):
+            raise ValueError(f"invalid implicit object root: {identifier!r}")
+        if not reason or any(character in reason for character in "\r\n"):
+            raise ValueError(f"invalid implicit object root reason: {reason!r}")
+        key = identifier.casefold()
+        candidate = (identifier, reason)
+        previous = implicit_roots_by_key.get(key)
+        if previous is not None and previous != candidate:
+            raise ValueError(
+                "case-colliding implicit object roots: "
+                f"{previous[0]!r} and {identifier!r}"
+            )
+        implicit_roots_by_key[key] = candidate
+    normalized_implicit_roots = tuple(
+        sorted(
+            implicit_roots_by_key.values(),
+            key=lambda item: (item[0].casefold(), item[0], item[1]),
+        )
+    )
 
     player_doc = _read_document(catalog, PLAYER_TEMPLATE_PATH)
     command_set_doc = _read_document(catalog, COMMAND_SET_PATH)
@@ -249,15 +312,23 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
     command_buttons = _block_candidates(
         parse_flat_named_blocks(command_button_doc.source, "CommandButton")
     )
-    template_candidates = player_templates.get("factionmen", [])
+    template_candidates = player_templates.get(player_template.casefold(), [])
     if not template_candidates:
-        raise ValueError("effective PlayerTemplate input has no FactionMen")
+        raise ValueError(
+            f"effective PlayerTemplate input has no {player_template}"
+        )
     if len(template_candidates) != 1:
-        raise ValueError("effective PlayerTemplate input has ambiguous FactionMen definitions")
+        raise ValueError(
+            f"effective PlayerTemplate input has ambiguous {player_template} definitions"
+        )
     template = template_candidates[0]
     side = _first_identifier(_block_values(template, "Side")[0]) if _block_values(template, "Side") else None
-    if side != "Men":
-        raise ValueError(f"FactionMen Side must be Men, got {side!r}")
+    if side is None:
+        raise ValueError(f"{player_template} has no valid Side")
+    if expected_side is not None and side != expected_side:
+        raise ValueError(
+            f"{player_template} Side must be {expected_side}, got {side!r}"
+        )
 
     object_docs = _object_documents(catalog)
     object_candidates: dict[str, list[_ObjectDefinition]] = {}
@@ -268,10 +339,13 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
             )
 
     roots: list[dict[str, str]] = []
+    roster_entries: list[dict[str, Any]] = []
+    roster_ordinals: dict[str, int] = {}
     object_ids: set[str] = set()
     command_set_ids: set[str] = set()
     sciences: set[str] = set()
-    for field, value in template.assignments:
+    intrinsic_sciences: set[str] = set()
+    for assignment_ordinal, (field, value) in enumerate(template.assignments):
         folded = field.casefold()
         starting_unit_suffix = folded.removeprefix("startingunit")
         if (
@@ -288,9 +362,25 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
             "spellbookmp",
             "ringhero",
         }:
-            for identifier in _identifiers(value):
+            for token_ordinal, identifier in enumerate(_identifiers(value)):
                 object_ids.add(identifier)
                 roots.append({"sourceField": field, "id": identifier, "edgeKind": "object"})
+                if folded in {
+                    "buildableheroesmp",
+                    "buildableringheroesmp",
+                    "ringhero",
+                }:
+                    roster_ordinal = roster_ordinals.get(folded, 0)
+                    roster_entries.append(
+                        {
+                            "sourceField": field,
+                            "assignmentOrdinal": assignment_ordinal,
+                            "tokenOrdinal": token_ordinal,
+                            "rosterOrdinal": roster_ordinal,
+                            "id": identifier,
+                        }
+                    )
+                    roster_ordinals[folded] = roster_ordinal + 1
         elif folded == "purchasesciencecommandsetmp":
             identifier = _first_identifier(value)
             if identifier:
@@ -300,8 +390,9 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
             for identifier in _identifiers(value):
                 if identifier.startswith("SCIENCE_"):
                     sciences.add(identifier)
+                    intrinsic_sciences.add(identifier)
                     roots.append({"sourceField": field, "id": identifier, "edgeKind": "science"})
-    for identifier, reason in _IMPLICIT_MEN_ROOTS:
+    for identifier, reason in normalized_implicit_roots:
         object_ids.add(identifier)
         roots.append({"sourceField": reason, "id": identifier, "edgeKind": "engine-implicit-object"})
 
@@ -349,8 +440,8 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
                 edge_rows.append(
                     {"field": "parent", "targetKind": "object", "targetId": block.parent}
                 )
-            effective_command_sets, ancestry, inheritance_problem = _effective_object_values(
-                definition, "CommandSet", object_candidates
+            effective_assignments, ancestry, inheritance_problem = (
+                _effective_object_assignments(definition, object_candidates)
             )
             if inheritance_problem:
                 problem, target = inheritance_problem
@@ -358,26 +449,33 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
                     missing_inheritance_objects.add(target)
                 else:
                     ambiguous_inheritance_objects.add(target)
-            for value in effective_command_sets:
-                target = _first_identifier(value)
-                if target:
-                    command_set_ids.add(target)
-                    edge_rows.append(
-                        {"field": "CommandSet", "targetKind": "command-set", "targetId": target}
-                    )
-            for field, value in block.assignments:
+            for field, value, supplier in effective_assignments:
                 folded = field.casefold()
+                inherited = supplier.block.name.casefold() != block.name.casefold()
+                if folded == "commandset":
+                    target = _first_identifier(value)
+                    if target:
+                        command_set_ids.add(target)
+                        edge = {
+                            "field": field,
+                            "targetKind": "command-set",
+                            "targetId": target,
+                        }
+                        if inherited:
+                            edge["sourceObjectId"] = supplier.block.name
+                        edge_rows.append(edge)
                 if folded in _OBJECT_EDGE_FIELDS:
                     target = _first_identifier(value)
                     if target:
                         object_ids.add(target)
-                        edge_rows.append(
-                            {
+                        edge = {
                                 "field": field,
                                 "targetKind": _OBJECT_EDGE_FIELDS[folded],
                                 "targetId": target,
                             }
-                        )
+                        if inherited:
+                            edge["sourceObjectId"] = supplier.block.name
+                        edge_rows.append(edge)
                 if folded in {"selectportrait", "buttonimage"}:
                     target = _first_identifier(value)
                     if target:
@@ -386,37 +484,46 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
                             nullable_portrait_images.add(target)
                         else:
                             required_mapped_images.add(target)
-                        edge_rows.append(
-                            {
+                        edge = {
                                 "field": field,
                                 "targetKind": "mapped-image",
                                 "targetId": target,
                             }
-                        )
+                        if inherited:
+                            edge["sourceObjectId"] = supplier.block.name
+                        edge_rows.append(edge)
                 target = _first_identifier(value)
                 if target:
                     text_id = string_identifier_names.get(target.casefold())
                     if text_id is not None:
                         text_ids.add(text_id)
-                        edge_rows.append(
-                            {
+                        edge = {
                                 "field": field,
                                 "targetKind": "localized-string",
                                 "targetId": text_id,
                             }
-                        )
+                        if inherited:
+                            edge["sourceObjectId"] = supplier.block.name
+                        edge_rows.append(edge)
                 for token in _definition_tokens(value):
                     audio_id = audio_definition_names.get(token.casefold())
                     if audio_id is not None:
                         audio_roots.add(audio_id)
-                        edge_rows.append(
-                            {
+                        edge = {
                                 "field": field,
                                 "targetKind": "audio-definition",
                                 "targetId": audio_id,
                             }
-                        )
-            edge_rows.sort(key=lambda item: (item["field"].casefold(), item["targetId"].casefold()))
+                        if inherited:
+                            edge["sourceObjectId"] = supplier.block.name
+                        edge_rows.append(edge)
+            edge_rows.sort(
+                key=lambda item: (
+                    item["field"].casefold(),
+                    item["targetId"].casefold(),
+                    item.get("sourceObjectId", "").casefold(),
+                )
+            )
             object_rows[key] = {
                 "id": block.name,
                 "definitionKind": block.kind,
@@ -532,9 +639,9 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
         upgrade_source=upgrade_doc.source,
         science_source=science_doc.source,
         special_power_source=special_power_doc.source,
-        upgrade_roots=upgrades,
-        science_roots=sciences,
-        special_power_roots=special_powers,
+        upgrade_roots=_casefold_unique(upgrades),
+        science_roots=_casefold_unique(sciences),
+        special_power_roots=_casefold_unique(special_powers),
         string_identifiers=string_identifier_names,
         audio_identifiers=audio_definition_names,
     )
@@ -545,21 +652,39 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
     text_ids.update(gameplay_closure.text_ids)
     audio_roots.update(gameplay_closure.audio_roots)
 
+    upgrades = set(_casefold_unique(upgrades))
+    sciences = set(_casefold_unique(sciences))
+    special_powers = set(_casefold_unique(special_powers))
+    mapped_images = set(_casefold_unique(mapped_images))
+    text_ids = set(_casefold_unique(text_ids))
+    audio_roots = set(_casefold_unique(audio_roots))
     mapped_image_resolution = resolve_mapped_images_partial(
         (document.source for document in mapped_image_docs),
-        sorted(mapped_images, key=str.casefold),
+        _casefold_unique(mapped_images),
     )
     mapped_image_records = mapped_image_resolution.records
     missing_mapped_images = set(mapped_image_resolution.missing_ids)
+    nullable_portrait_keys = {item.casefold() for item in nullable_portrait_images}
+    required_mapped_image_keys = {item.casefold() for item in required_mapped_images}
     source_null_mapped_images = sorted(
-        (missing_mapped_images & nullable_portrait_images) - required_mapped_images,
+        (
+            item
+            for item in missing_mapped_images
+            if item.casefold() in nullable_portrait_keys
+            and item.casefold() not in required_mapped_image_keys
+        ),
         key=str.casefold,
     )
-    unresolved_mapped_images = missing_mapped_images - set(source_null_mapped_images)
+    source_null_keys = {item.casefold() for item in source_null_mapped_images}
+    unresolved_mapped_images = {
+        item for item in missing_mapped_images if item.casefold() not in source_null_keys
+    }
     effective_entries = _effective_entries(catalog)
     effective_virtual_paths = [entry.name for entry in effective_entries.values()]
-    mapped_texture_paths = resolve_mapped_image_texture_paths(
-        mapped_image_records, effective_virtual_paths
+    mapped_texture_paths, missing_mapped_image_textures = (
+        resolve_mapped_image_texture_paths_partial(
+            mapped_image_records, effective_virtual_paths
+        )
     )
     mapped_texture_paths_by_key = {
         texture.casefold(): path for texture, path in mapped_texture_paths.items()
@@ -567,9 +692,11 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
     mapped_image_rows = []
     for record in mapped_image_records:
         row = record.neutral()
-        row["compiledTextureVirtualPath"] = mapped_texture_paths_by_key[
-            record.texture.casefold()
-        ]
+        compiled_texture = mapped_texture_paths_by_key.get(record.texture.casefold())
+        if compiled_texture is not None:
+            row["compiledTextureVirtualPath"] = compiled_texture
+        else:
+            row["compiledTextureResolution"] = "missing"
         mapped_image_rows.append(row)
 
     resolved_text_rows: list[dict[str, Any]] = []
@@ -605,7 +732,7 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
     )
 
     audio_closure = resolve_sage_audio_closure(
-        audio_definitions, sorted(audio_roots, key=str.casefold)
+        audio_definitions, _casefold_unique(audio_roots)
     )
     audio_sample_paths = resolve_audio_sample_paths(
         audio_closure.sample_ids, effective_virtual_paths
@@ -669,7 +796,20 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
     source_facts = [document.public() for document in scanned_documents]
     source_facts.sort(key=lambda item: str(item["virtualPath"]).casefold())
     input_hash = hashlib.sha256()
-    input_hash.update(b"openbfme.men-command-leaf-census-inputs\0")
+    if _legacy_men_identity:
+        identity_namespace = "openbfme.men"
+        input_hash.update(b"openbfme.men-command-leaf-census-inputs\0")
+    else:
+        identity_namespace = f"openbfme.faction.{player_template.casefold()}"
+        input_hash.update(b"openbfme.faction-command-leaf-census-inputs\0")
+        input_hash.update(player_template.encode("utf-8") + b"\0")
+        input_hash.update(side.encode("utf-8") + b"\0")
+        for identifier, reason in sorted(
+            normalized_implicit_roots,
+            key=lambda item: (item[0].casefold(), item[0], item[1]),
+        ):
+            input_hash.update(identifier.encode("utf-8") + b"\0")
+            input_hash.update(reason.encode("utf-8") + b"\n")
     for item in source_facts:
         input_hash.update(str(item["virtualPath"]).encode("utf-8") + b"\0")
         input_hash.update(str(item["sha256"]).encode("ascii") + b"\n")
@@ -689,7 +829,8 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
         (
             identifier
             for identifier in directly_reachable_sciences
-            if identifier != "SCIENCE_MEN"
+            if identifier.casefold()
+            not in {item.casefold() for item in intrinsic_sciences}
         ),
         key=str.casefold,
     )
@@ -712,15 +853,19 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
         "missingSpecialPowers": list(gameplay_closure.missing_special_powers),
         "ambiguousSpecialPowers": list(gameplay_closure.ambiguous_special_powers),
     }
-    return {
+    if missing_mapped_image_textures:
+        unresolved["missingMappedImageTextures"] = sorted(
+            missing_mapped_image_textures, key=str.casefold
+        )
+    report = {
         "format": 1,
         "schema": "openbfme.faction-command-leaf-census",
         "schemaVersion": 1,
         "target": {
             "game": "BFME2",
             "patch": "1.06",
-            "faction": "Men",
-            "playerTemplate": "FactionMen",
+            "faction": side,
+            "playerTemplate": player_template,
             "mode": "normal-skirmish-command-reachable",
         },
         "closureStatus": "command-ui-localization-audio-gameplay-definition-leaves",
@@ -728,7 +873,16 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
         "sourceDocuments": source_facts,
         "sourceLeaves": source_leaves,
         "inputSetSha256": input_hash.hexdigest(),
-        "roots": sorted(roots, key=lambda item: (item["edgeKind"], item["id"].casefold())),
+        "roots": sorted(
+            roots,
+            key=lambda item: (
+                item["edgeKind"],
+                item["id"].casefold(),
+                item["id"],
+                item["sourceField"].casefold(),
+                item["sourceField"],
+            ),
+        ),
         "definitions": {
             "objects": object_list,
             "commandSets": command_set_list,
@@ -791,9 +945,9 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
             "audioSampleCount": len(audio_closure.sample_ids),
             "sourceLeafCount": len(source_leaves),
             "unresolvedCount": sum(len(items) for items in unresolved.values()),
-            "objectSetSha256": _set_hash("openbfme.men-object-set", (item["id"] for item in object_list)),
-            "upgradeSetSha256": _set_hash("openbfme.men-upgrade-set", upgrades),
-            "specialPowerSetSha256": _set_hash("openbfme.men-special-power-set", special_powers),
+            "objectSetSha256": _set_hash(f"{identity_namespace}-object-set", (item["id"] for item in object_list)),
+            "upgradeSetSha256": _set_hash(f"{identity_namespace}-upgrade-set", upgrades),
+            "specialPowerSetSha256": _set_hash(f"{identity_namespace}-special-power-set", special_powers),
             "resolvedUpgradeDefinitionCount": len(gameplay_closure.upgrades),
             "resolvedScienceDefinitionCount": len(gameplay_closure.sciences),
             "resolvedSpecialPowerDefinitionCount": len(gameplay_closure.special_powers),
@@ -809,3 +963,38 @@ def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
             "ROTWK 2.01 data is a separate future overlay and is not merged into this BFME2 1.06 report.",
         ],
     }
+    if not _legacy_men_identity:
+        report["playerTemplateRosters"] = {
+            "entries": roster_entries,
+        }
+    return report
+
+
+def census_playable_faction(
+    catalog: InstallCatalog,
+    *,
+    player_template: str,
+    expected_side: str | None = None,
+    implicit_object_roots: Iterable[tuple[str, str]] = (),
+) -> dict[str, Any]:
+    """Return one generic playable-faction census with identity-bound policy."""
+
+    return _census_playable_faction(
+        catalog,
+        player_template=player_template,
+        expected_side=expected_side,
+        implicit_object_roots=implicit_object_roots,
+        _legacy_men_identity=False,
+    )
+
+
+def census_men_faction(catalog: InstallCatalog) -> dict[str, Any]:
+    """Compatibility entry point for the established Men census identity."""
+
+    return _census_playable_faction(
+        catalog,
+        player_template="FactionMen",
+        expected_side="Men",
+        implicit_object_roots=_IMPLICIT_MEN_ROOTS,
+        _legacy_men_identity=True,
+    )

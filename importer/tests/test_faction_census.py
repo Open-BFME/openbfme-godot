@@ -6,19 +6,27 @@ import tempfile
 import unittest
 
 from openbfme_importer.catalog import InstallCatalog
-from openbfme_importer.faction_census import census_men_faction
+from openbfme_importer.faction_census import (
+    census_men_faction,
+    census_playable_faction,
+)
 
 from importer.tests.test_big import make_big
 
 
-def _player_template(*, side: str = "Men") -> bytes:
+def _player_template(
+    *,
+    side: str = "Men",
+    player_template: str = "FactionMen",
+    heroes: str = "HeroA",
+) -> bytes:
     return f"""
-PlayerTemplate FactionMen
+PlayerTemplate {player_template}
   Side = {side}
   StartingUnit0 = MenPorter
   StartingUnit1 = MenPorter
   StartingBuilding = MenFortress
-  BuildableHeroesMP = HeroA
+  BuildableHeroesMP = {heroes}
   SpellBookMp = MenSpellBook
   PurchaseScienceCommandSetMP = MenSpellStoreCommandSet
   IntrinsicSciencesMP = SCIENCE_MEN
@@ -46,8 +54,27 @@ End
 """
 
 
-def _command_buttons() -> bytes:
-    return b"""
+def _command_buttons(
+    *,
+    duplicate_soldier: bool = False,
+    conflicting_soldier: bool = False,
+    case_variant_image: bool = False,
+) -> bytes:
+    duplicate = (
+        b"""
+CommandButton Command_TrainSoldiers
+  Command = UNIT_BUILD
+  Object = SoldierHorde
+  Upgrade = Upgrade_MenTraining
+  ButtonImage = TrainSoldierImage
+End
+"""
+        if duplicate_soldier
+        else b""
+    )
+    if conflicting_soldier:
+        duplicate = duplicate.replace(b"Object = SoldierHorde", b"Object = HeroA")
+    source = b"""
 CommandButton Command_BuildBarracks
   Command = DOZER_CONSTRUCT
   Object = MenBarracks
@@ -72,6 +99,12 @@ CommandButton Command_Heal
   DescriptLabel = CONTROLBAR:HealDescription
 End
 """
+    if case_variant_image:
+        source = source.replace(
+            b"ButtonImage = HealImage",
+            b"ButtonImage = HealImage\n  ButtonImage = healimage",
+        )
+    return source + duplicate
 
 
 def _objects(*, duplicate_porter: bool = False) -> bytes:
@@ -101,7 +134,12 @@ End
 Object MenBanner
   SelectPortrait = MissingBannerPortrait
 End
-Object HeroA
+Object HeroBase
+  VoiceSelect = SoldierVoice
+  SelectPortrait = UPSoldier
+End
+ChildObject HeroA HeroBase
+  SelectPortrait = HealImage
 End
 Object MenSpellBook
   CommandSet = MenSpellBookCommandSet
@@ -117,8 +155,9 @@ End
 """ + duplicate
 
 
-def _mapped_images() -> bytes:
-    return b"""
+def _mapped_images(*, missing_train_texture: bool = False) -> bytes:
+    train_texture = "AbsentTrainAtlas.tga" if missing_train_texture else "TrainAtlas.tga"
+    return f"""
 MappedImage BuildBarracksImage
   Texture = BuildAtlas.tga
   TextureWidth = 64
@@ -126,7 +165,7 @@ MappedImage BuildBarracksImage
   Coords = Left:0 Top:0 Right:32 Bottom:32
 End
 MappedImage TrainSoldierImage
-  Texture = TrainAtlas.tga
+  Texture = {train_texture}
   TextureWidth = 64
   TextureHeight = 64
   Coords = Left:0 Top:0 Right:32 Bottom:32
@@ -143,7 +182,7 @@ MappedImage UPSoldier
   TextureHeight = 64
   Coords = Left:0 Top:0 Right:32 Bottom:32
 End
-"""
+""".encode("cp1252")
 
 
 def _sound_effects() -> bytes:
@@ -212,17 +251,36 @@ End
 """
 
 
-def _catalog(root: Path, *, side: str = "Men", duplicate_porter: bool = False) -> InstallCatalog:
+def _catalog(
+    root: Path,
+    *,
+    side: str = "Men",
+    player_template: str = "FactionMen",
+    duplicate_porter: bool = False,
+    duplicate_soldier_button: bool = False,
+    conflicting_soldier_button: bool = False,
+    missing_train_texture: bool = False,
+    case_variant_image: bool = False,
+    heroes: str = "HeroA",
+) -> InstallCatalog:
     make_big(
         root / "ini.big",
         {
-            "data/ini/playertemplate.ini": _player_template(side=side),
+            "data/ini/playertemplate.ini": _player_template(
+                side=side, player_template=player_template, heroes=heroes
+            ),
             "data/ini/commandset.ini": _command_sets(),
-            "data/ini/commandbutton.ini": _command_buttons(),
+            "data/ini/commandbutton.ini": _command_buttons(
+                duplicate_soldier=duplicate_soldier_button,
+                conflicting_soldier=conflicting_soldier_button,
+                case_variant_image=case_variant_image,
+            ),
             "data/ini/object/goodfaction/men.ini": _objects(
                 duplicate_porter=duplicate_porter
             ),
-            "data/ini/mappedimages/aptimages/fixture.ini": _mapped_images(),
+            "data/ini/mappedimages/aptimages/fixture.ini": _mapped_images(
+                missing_train_texture=missing_train_texture
+            ),
             "data/ini/soundeffects.ini": _sound_effects(),
             "data/ini/voice.ini": _voice(),
             "data/lotr.str": _strings(),
@@ -325,10 +383,207 @@ class FactionCensusTests(unittest.TestCase):
         self.assertIn("MenPorter", report["unresolved"]["ambiguousObjects"])
         self.assertGreater(report["summary"]["unresolvedCount"], 0)
 
+    def test_semantically_identical_command_button_duplicate_is_one_definition(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            report = census_men_faction(
+                _catalog(Path(raw), duplicate_soldier_button=True)
+            )
+        self.assertEqual(report["summary"]["unresolvedCount"], 0)
+        self.assertEqual(
+            sum(
+                item["id"] == "Command_TrainSoldiers"
+                for item in report["definitions"]["commandButtons"]
+            ),
+            1,
+        )
+
+    def test_conflicting_command_button_duplicate_remains_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            report = census_men_faction(
+                _catalog(
+                    Path(raw),
+                    duplicate_soldier_button=True,
+                    conflicting_soldier_button=True,
+                )
+            )
+        self.assertEqual(
+            report["unresolved"]["ambiguousCommandButtons"],
+            ["Command_TrainSoldiers"],
+        )
+
+    def test_missing_retail_ui_atlas_is_an_explicit_graph_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            report = census_men_faction(
+                _catalog(Path(raw), missing_train_texture=True)
+            )
+        self.assertEqual(
+            report["unresolved"]["missingMappedImageTextures"],
+            ["AbsentTrainAtlas.tga"],
+        )
+        image = next(
+            item
+            for item in report["resolvedLeaves"]["mappedImages"]
+            if item["id"] == "TrainSoldierImage"
+        )
+        self.assertEqual(image["compiledTextureResolution"], "missing")
+        self.assertNotIn("compiledTextureVirtualPath", image)
+
+    def test_case_variant_mapped_image_references_share_one_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            report = census_men_faction(
+                _catalog(Path(raw), case_variant_image=True)
+            )
+        self.assertEqual(report["summary"]["unresolvedCount"], 0)
+        self.assertEqual(
+            sum(
+                item["id"].casefold() == "healimage"
+                for item in report["resolvedLeaves"]["mappedImages"]
+            ),
+            1,
+        )
+
     def test_wrong_player_template_side_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             with self.assertRaisesRegex(ValueError, "Side must be Men"):
                 census_men_faction(_catalog(Path(raw), side="Elves"))
+
+    def test_non_men_template_uses_source_side_and_intrinsic_science(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            catalog = _catalog(
+                Path(raw), side="Elves", player_template="FactionElves"
+            )
+            report = census_playable_faction(
+                catalog,
+                player_template="FactionElves",
+                expected_side="Elves",
+            )
+        self.assertEqual(report["target"]["faction"], "Elves")
+        self.assertEqual(report["target"]["playerTemplate"], "FactionElves")
+        self.assertNotIn("SCIENCE_MEN", report["dependencies"]["spellbookSciences"])
+        self.assertFalse(
+            any(
+                root["edgeKind"] == "engine-implicit-object"
+                for root in report["roots"]
+            )
+        )
+        self.assertEqual(
+            report["playerTemplateRosters"]["entries"],
+            [
+                {
+                    "sourceField": "BuildableHeroesMP",
+                    "assignmentOrdinal": 4,
+                    "tokenOrdinal": 0,
+                    "rosterOrdinal": 0,
+                    "id": "HeroA",
+                }
+            ],
+        )
+        hero = next(
+            item for item in report["definitions"]["objects"] if item["id"] == "HeroA"
+        )
+        self.assertIn(
+            {
+                "field": "VoiceSelect",
+                "targetKind": "audio-definition",
+                "targetId": "SoldierVoice",
+                "sourceObjectId": "HeroBase",
+            },
+            hero["edges"],
+        )
+        self.assertIn(
+            {
+                "field": "SelectPortrait",
+                "targetKind": "mapped-image",
+                "targetId": "HealImage",
+            },
+            hero["edges"],
+        )
+        self.assertFalse(
+            any(
+                edge["field"].casefold() == "selectportrait"
+                and edge["targetId"] == "UPSoldier"
+                for edge in hero["edges"]
+            )
+        )
+
+    def test_generic_identity_binds_template_and_explicit_implicit_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            catalog = _catalog(
+                Path(raw), side="Elves", player_template="FactionElves"
+            )
+            plain = census_playable_faction(
+                catalog, player_template="FactionElves"
+            )
+            rooted = census_playable_faction(
+                catalog,
+                player_template="FactionElves",
+                implicit_object_roots=(("MenFortressCenterGeneric", "fixture-root"),),
+            )
+        with tempfile.TemporaryDirectory() as men_raw:
+            legacy_men = census_men_faction(_catalog(Path(men_raw), side="Men"))
+        self.assertNotEqual(plain["inputSetSha256"], rooted["inputSetSha256"])
+        self.assertNotEqual(
+            plain["summary"]["objectSetSha256"],
+            legacy_men["summary"]["objectSetSha256"],
+        )
+        self.assertIn(
+            {
+                "sourceField": "fixture-root",
+                "id": "MenFortressCenterGeneric",
+                "edgeKind": "engine-implicit-object",
+            },
+            rooted["roots"],
+        )
+
+    def test_implicit_root_order_is_stable_and_case_collisions_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            catalog = _catalog(
+                Path(raw), side="Elves", player_template="FactionElves"
+            )
+            forward = census_playable_faction(
+                catalog,
+                player_template="FactionElves",
+                implicit_object_roots=(
+                    ("MenFortressCitadel", "second"),
+                    ("MenFortressCenterGeneric", "first"),
+                ),
+            )
+            reverse = census_playable_faction(
+                catalog,
+                player_template="FactionElves",
+                implicit_object_roots=(
+                    ("MenFortressCenterGeneric", "first"),
+                    ("MenFortressCitadel", "second"),
+                ),
+            )
+            with self.assertRaisesRegex(
+                ValueError, "case-colliding implicit object roots"
+            ):
+                census_playable_faction(
+                    catalog,
+                    player_template="FactionElves",
+                    implicit_object_roots=(
+                        ("MenFortressCitadel", "first"),
+                        ("menfortresscitadel", "second"),
+                    ),
+                )
+        self.assertEqual(forward, reverse)
+
+    def test_generic_hero_roster_preserves_authored_order_and_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            report = census_playable_faction(
+                _catalog(
+                    Path(raw),
+                    side="Elves",
+                    player_template="FactionElves",
+                    heroes="MenPorter HeroA MenPorter",
+                ),
+                player_template="FactionElves",
+            )
+        entries = report["playerTemplateRosters"]["entries"]
+        self.assertEqual([item["id"] for item in entries], ["MenPorter", "HeroA", "MenPorter"])
+        self.assertEqual([item["tokenOrdinal"] for item in entries], [0, 1, 2])
+        self.assertEqual([item["rosterOrdinal"] for item in entries], [0, 1, 2])
 
 
 if __name__ == "__main__":
