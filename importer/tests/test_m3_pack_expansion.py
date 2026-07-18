@@ -14,6 +14,8 @@ from openbfme_importer.m3_pack_expansion import (
     BUILDING_RUNTIME_REQUESTED_IDS,
     RANGER_RUNTIME_PATH,
     RANGER_RUNTIME_SCHEMA,
+    TREBUCHET_RUNTIME_PATH,
+    TREBUCHET_RUNTIME_SCHEMA,
     RUNTIME_PATHS,
     UNITS,
     UPGRADES,
@@ -24,6 +26,7 @@ from openbfme_importer.m3_pack_expansion import (
     build_m3_visual_resources,
     build_ranger_runtime_contract,
     candidate_pack_state,
+    compose_private_profile,
     declarative_visual_resources,
     extract_building_stats,
     extend_selection_transitions,
@@ -634,6 +637,65 @@ def test_effective_ranger_runtime_contract_is_exact_and_incomplete() -> None:
     }
     assert result["presentation"]["coreClipStatus"] == "source-converted"
     assert "model-and-animation-conversion" not in result["deferredCapabilities"]
+
+
+def test_effective_trebuchet_contract_and_object_bindings_are_source_complete() -> None:
+    effective = (
+        ROOT
+        / ".private"
+        / "scratch"
+        / "jobs"
+        / "bfme2-106-policy-bound-catalog"
+        / "state"
+        / "cache"
+        / "effective-assets"
+    )
+    base_path = ROOT / ".private/retail-work/profiles/men-fords-v0-complete.generated.json"
+    census_path = ROOT / ".private/retail-work/reports/men-faction-leaf-census.json"
+    closure_path = ROOT / ".private/retail-work/reports/retail-visual-closure-b48e2bd09a6789b6.json"
+    manifest_path = effective / ".openbfme/manifest.json"
+    required = (base_path, census_path, closure_path, manifest_path)
+    if not all(path.is_file() for path in required):
+        pytest.skip("strict private M3 source inputs are not present")
+    recipe = load_recipe()
+    base = json.loads(base_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    profile = compose_private_profile(
+        recipe,
+        base,
+        json.loads(census_path.read_text(encoding="utf-8")),
+        json.loads(closure_path.read_text(encoding="utf-8")),
+        effective,
+        manifest,
+        {
+            "baseProfileInputSha256": hashlib.sha256(base_path.read_bytes()).hexdigest(),
+            "recipeSha256": hashlib.sha256(PROFILE_PATH.read_bytes()).hexdigest(),
+            "expectedCatalogIdentitySha256": manifest["catalog"]["identity_sha256"],
+        },
+    )
+    contract = profile["runtime_data"][TREBUCHET_RUNTIME_PATH]
+    assert contract["schema"] == TREBUCHET_RUNTIME_SCHEMA
+    assert contract["audioRoutes"]["death"] == "TrebuchetDie"
+    assert contract["audioRoutes"]["impact"] == "ImpactHorse"
+    assert contract["audioRoutes"]["workshopSelect"] == "GondorWorkshopSelect"
+    assert contract["presentation"]["primaryLaunchBone"] == {
+        "weaponSlot": "PRIMARY",
+        "bone": "Projectile",
+    }
+    assert contract["presentation"]["text"] == {
+        "workshopLabel": "CONTROLBAR:ConstructMenWorkshop",
+        "workshopTooltip": "CONTROLBAR:ToolTipConstructMenWorkshop",
+        "trainLabel": "CONTROLBAR:ConstructGondorTrebuchet",
+        "trainTooltip": "CONTROLBAR:ToolTipBuildGondorTrebuchet",
+    }
+    assert contract["projectile"]["sourceModelId"] == "GUSiegTreRk"
+    assert contract["projectile"]["sourceAnimationId"] == "GUSiegTreRk.GUSiegTreRk"
+    objects = profile["runtime_data"]["data/objects.json"]["objects"]
+    workshop = [row for row in objects if row["id"] == "bfme2.object.gondor-workshop"]
+    trebuchet = [row for row in objects if row["id"] == "bfme2.object.gondor-trebuchet"]
+    assert len(workshop) == len(trebuchet) == 1
+    assert workshop[0]["presentation"]["lifecycleStatus"].startswith("deferred-")
+    assert trebuchet[0]["presentation"]["weaponLaunchBone"] == "Projectile"
 
 
 def test_building_stats_schema_has_every_m3_building_and_source_attested_trainables(

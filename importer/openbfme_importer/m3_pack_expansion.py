@@ -1535,6 +1535,7 @@ def build_trebuchet_runtime_contract(
         raise ValueError("Workshop no longer trains Trebuchet from slot 1")
 
     trebuchet = one_object(TREBUCHET_PATH, "GondorTrebuchet")
+    workshop_object = one_object(WORKSHOP_PATH, "GondorWorkshop")
     locomotor = block(trebuchet, "LocomotorSet")
     locomotor_fields = {row.key.casefold(): row for row in locomotor.assignments}
     if set(("locomotor", "speed")) - set(locomotor_fields):
@@ -1553,6 +1554,18 @@ def build_trebuchet_runtime_contract(
     ]
     if len(primary_rows) != 1 or primary_rows[0].value.split()[1:] != ["GondorTrebuchetRock"]:
         raise ValueError("Trebuchet primary weapon changed")
+    launch_bones = [
+        row
+        for draw in trebuchet.blocks
+        if draw.kind.casefold().endswith("draw")
+        for state in draw.blocks
+        if state.kind.casefold() in {"defaultmodelconditionstate", "modelconditionstate"}
+        for row in state.assignments
+        if row.key.casefold() == "weaponlaunchbone"
+        and row.value.split()[:1] == ["PRIMARY"]
+    ]
+    if not launch_bones or any(row.value.split() != ["PRIMARY", "Projectile"] for row in launch_bones):
+        raise ValueError("Trebuchet primary launch-bone binding changed")
 
     weapon = _unambiguous_block(
         _block_groups(sources[WEAPON_PATH], "Weapon"),
@@ -1594,12 +1607,39 @@ def build_trebuchet_runtime_contract(
         raise ValueError("effective Trebuchet direct-combat values changed")
 
     projectile = one_object(GOOD_SUBOBJECTS_PATH, "GondorTrebuchetRockProjectile")
+    projectile_draws = [
+        row for row in projectile.blocks if row.kind.casefold() == "w3dscriptedmodeldraw"
+    ]
+    if len(projectile_draws) != 1:
+        raise ValueError("Trebuchet projectile Draw binding is ambiguous")
+    projectile_models = [
+        row.value
+        for state in projectile_draws[0].blocks
+        if state.kind.casefold() == "defaultmodelconditionstate"
+        for row in state.assignments
+        if row.key.casefold() == "model"
+    ]
+    projectile_animations = [
+        row.value
+        for state in projectile_draws[0].blocks
+        if state.kind.casefold() == "idleanimationstate"
+        for animation in state.blocks
+        if animation.kind.casefold() == "animation"
+        for row in animation.assignments
+        if row.key.casefold() == "animationname"
+    ]
+    if projectile_models != ["GUSiegTreRk"] or projectile_animations != [
+        "GUSiegTreRk.GUSiegTreRk"
+    ]:
+        raise ValueError("Trebuchet projectile model/animation binding changed")
     bezier = block(projectile, "BezierProjectileBehavior")
     bezier_values = {row.key: row.value for row in bezier.assignments}
     projectile_contract = {
         "objectId": projectile.name,
         "model": TREBUCHET_PROJECTILE_OUTPUT,
         "sourceW3d": TREBUCHET_PROJECTILE_W3D,
+        "sourceModelId": projectile_models[0],
+        "sourceAnimationId": projectile_animations[0],
         "embeddedAnimation": True,
         "flightAudio": assignment(projectile, "SoundAmbient").value,
         "firstHeight": number(bezier_values["FirstHeight"], "first height"),
@@ -1639,6 +1679,7 @@ def build_trebuchet_runtime_contract(
         block_value(build_button, "ButtonImage"),
         block_value(train_button, "ButtonImage"),
         assignment(trebuchet, "SelectPortrait").value,
+        assignment(workshop_object, "SelectPortrait").value,
     }
     if any(value.casefold() not in image_ids for value in required_images):
         raise ValueError("Workshop/Trebuchet UI image closure is incomplete")
@@ -1646,14 +1687,40 @@ def build_trebuchet_runtime_contract(
     audio_ids = set(_obj(audio_document.get("events"), "audio definitions")) | set(
         _obj(audio_document.get("multisounds"), "audio multisounds")
     )
+    death_sounds = {
+        row.value.split()[1]
+        for behavior in trebuchet.blocks
+        if behavior.kind.casefold() == "slowdeathbehavior"
+        for row in behavior.assignments
+        if row.key.casefold() == "sound"
+        and len(row.value.split()) == 2
+        and row.value.split()[0] == "INITIAL"
+    }
+    if death_sounds != {"TrebuchetDie"}:
+        raise ValueError("Trebuchet death audio binding changed")
     audio_routes = {
+        "workshopSelect": assignment(workshop_object, "VoiceSelect").value,
         "select": assignment(trebuchet, "VoiceSelect").value,
         "move": assignment(trebuchet, "VoiceMove").value,
         "attack": assignment(trebuchet, "VoiceAttack").value,
-        "death": assignment(trebuchet, "SoundImpact").value,
+        "death": next(iter(death_sounds)),
+        "impact": assignment(trebuchet, "SoundImpact").value,
     }
     if any(value not in audio_ids for value in audio_routes.values()):
         raise ValueError("Trebuchet audio closure is incomplete")
+
+    strings = _obj(
+        _obj(runtime.get("data/strings.json"), "strings document").get("strings"),
+        "strings",
+    )
+    text_bindings = {
+        "workshopLabel": block_value(build_button, "TextLabel"),
+        "workshopTooltip": block_value(build_button, "DescriptLabel"),
+        "trainLabel": block_value(train_button, "TextLabel"),
+        "trainTooltip": block_value(train_button, "DescriptLabel"),
+    }
+    if any(value not in strings for value in text_bindings.values()):
+        raise ValueError("Workshop/Trebuchet string closure is incomplete")
 
     return {
         "schema": TREBUCHET_RUNTIME_SCHEMA,
@@ -1683,8 +1750,11 @@ def build_trebuchet_runtime_contract(
         "projectile": projectile_contract,
         "presentation": {
             "workshopButtonImage": block_value(build_button, "ButtonImage"),
+            "workshopPortraitImage": assignment(workshop_object, "SelectPortrait").value,
             "trainButtonImage": block_value(train_button, "ButtonImage"),
             "portraitImage": assignment(trebuchet, "SelectPortrait").value,
+            "primaryLaunchBone": {"weaponSlot": "PRIMARY", "bone": "Projectile"},
+            "text": text_bindings,
         },
         "audioRoutes": audio_routes,
         "unboundSourceAudio": {
@@ -1737,7 +1807,10 @@ def attach_trebuchet_playable_bindings(
                 "kind": "structure",
                 "displayName": "Gondor Workshop",
                 "simulation": {"health": workshop_stats["maxHealth"]},
-                "presentation": {"modelStates": deepcopy(workshop_models["states"])},
+                "presentation": {
+                    "modelStateEvidence": deepcopy(workshop_models["states"]),
+                    "lifecycleStatus": "deferred-composite-role-and-runtime-binding",
+                },
             },
             {
                 "id": "bfme2.object.gondor-trebuchet",
@@ -1749,6 +1822,10 @@ def attach_trebuchet_playable_bindings(
                     "deathModel": death["output"],
                     "projectileModel": _obj(contract.get("projectile"), "projectile")["model"],
                     "iconId": _obj(contract.get("presentation"), "presentation")["portraitImage"],
+                    "weaponLaunchBone": _obj(
+                        _obj(contract.get("presentation"), "presentation").get("primaryLaunchBone"),
+                        "primary launch bone",
+                    )["bone"],
                 },
             },
         ]
