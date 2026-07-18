@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
+from copy import deepcopy
 import hashlib
 import json
 import re
@@ -802,7 +803,7 @@ def compile_playable_unit_descriptor(
     documents: Mapping[str, bytes],
     *,
     converted_visuals: Mapping[str, Mapping[str, object]] | None = None,
-    resolved_images: Mapping[str, str] | None = None,
+    resolved_images: Mapping[str, Mapping[str, object]] | None = None,
     resolved_audio: Mapping[str, Sequence[str]] | None = None,
     faction_graph: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
@@ -1031,7 +1032,12 @@ def compile_playable_unit_descriptor(
             },
             "unresolvedVisualRoots": unresolved_visuals,
             "ui": _ui_binding(producers, command_buttons, target_lineage, member_lineage),
-            "resolvedImages": dict(sorted((resolved_images or {}).items())),
+            "resolvedImages": {
+                key: deepcopy(value)
+                for key, value in sorted(
+                    (resolved_images or {}).items(), key=lambda item: item[0].casefold()
+                )
+            },
             "audioRoutes": {
                 "container": _audio_routes(target_lineage),
                 "primaryMember": _audio_routes(member_lineage),
@@ -1297,14 +1303,39 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         for item in presentation["unresolvedVisualRoots"]
     ):
         raise PlayableUnitCompilerError("playable-unit unresolved visual roots are invalid")
-    if any(
-        not isinstance(key, str)
-        or not key
-        or not isinstance(path, str)
-        or not path
-        for key, path in presentation["resolvedImages"].items()
-    ):
-        raise PlayableUnitCompilerError("playable-unit resolved images are invalid")
+    for key, image in presentation["resolvedImages"].items():
+        if not isinstance(key, str) or not key or not isinstance(image, Mapping):
+            raise PlayableUnitCompilerError("playable-unit resolved images are invalid")
+        coords = image.get("coords")
+        width = image.get("textureWidth")
+        height = image.get("textureHeight")
+        if (
+            not isinstance(image.get("id"), str)
+            or str(image["id"]).casefold() != key.casefold()
+            or not isinstance(image.get("texture"), str)
+            or not image.get("texture")
+            or not isinstance(image.get("compiledTextureVirtualPath"), str)
+            or not image.get("compiledTextureVirtualPath")
+            or not isinstance(width, int)
+            or isinstance(width, bool)
+            or not isinstance(height, int)
+            or isinstance(height, bool)
+            or width <= 0
+            or height <= 0
+            or not isinstance(coords, Mapping)
+        ):
+            raise PlayableUnitCompilerError("playable-unit mapped image is invalid")
+        values = [coords.get(name) for name in ("left", "top", "right", "bottom")]
+        if (
+            any(not isinstance(value, int) or isinstance(value, bool) for value in values)
+            or values[0] < 0
+            or values[1] < 0
+            or values[2] <= values[0]
+            or values[3] <= values[1]
+            or values[2] > width
+            or values[3] > height
+        ):
+            raise PlayableUnitCompilerError("playable-unit mapped image crop is invalid")
     for key, paths in presentation["resolvedAudio"].items():
         if (
             not isinstance(key, str)

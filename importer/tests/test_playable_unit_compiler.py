@@ -505,3 +505,45 @@ def test_validation_cross_checks_module_evidence_fields() -> None:
         PlayableUnitCompilerError, match="runtime modules disagree"
     ):
         validate_playable_unit_descriptor(corrupted)
+
+
+def test_descriptor_preserves_exact_mapped_image_crop_contract() -> None:
+    image = {
+        "id": "BIHeroUnit",
+        "texture": "FixtureAtlas.tga",
+        "textureWidth": 256,
+        "textureHeight": 128,
+        "coords": {"left": 16, "top": 32, "right": 80, "bottom": 96},
+        "compiledTextureVirtualPath": "art/compiledtextures/fi/fixtureatlas.dds",
+    }
+    descriptor = compile_playable_unit_descriptor(
+        "HeroUnit", _documents(), resolved_images={"BIHeroUnit": image}
+    )
+    validate_playable_unit_descriptor(descriptor)
+    assert descriptor["presentation"]["resolvedImages"]["BIHeroUnit"] == image
+
+
+def test_validator_rejects_mapped_image_crop_outside_atlas() -> None:
+    image = {
+        "id": "BIHeroUnit",
+        "texture": "FixtureAtlas.tga",
+        "textureWidth": 32,
+        "textureHeight": 32,
+        "coords": {"left": 0, "top": 0, "right": 64, "bottom": 32},
+        "compiledTextureVirtualPath": "art/compiledtextures/fi/fixtureatlas.dds",
+    }
+    descriptor = compile_playable_unit_descriptor("HeroUnit", _documents())
+    descriptor["presentation"]["resolvedImages"] = {"BIHeroUnit": image}
+    unsigned = dict(descriptor)
+    unsigned.pop("descriptorSha256")
+    descriptor["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(PlayableUnitCompilerError, match="mapped image crop"):
+        validate_playable_unit_descriptor(descriptor)
