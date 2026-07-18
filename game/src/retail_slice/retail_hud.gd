@@ -10,6 +10,7 @@ signal quit_requested
 signal group_recall_requested(group: int)
 signal group_assign_requested(group: int)
 signal train_requested(unit_id: String)
+signal structure_upgrade_requested(upgrade_id: String)
 signal cancel_production_requested(queue_index: int)
 signal attack_move_requested
 signal stop_requested
@@ -146,6 +147,26 @@ const RETAIL_PORTRAIT_SPECS := [
 		"image_id": "UPGondor_Porter",
 	},
 ]
+const RANGER_COMMAND_SPEC := {
+	"unit_id": "bfme2.object.gondor-ranger-horde",
+	"button_name": "TrainRangers",
+	"fallback_label": "Train Ithilien Rangers",
+	"fallback_tooltip": "Requires a level 2 Archery Range",
+	"image_id": "BGArcheryRange_Rangers",
+	"label_id": "CONTROLBAR:ConstructGondorRangerHorde",
+	"tooltip_id": "CONTROLBAR:ToolTipBuildGondorRangerHorde",
+}
+const RANGER_PORTRAIT_SPEC := {
+	"unit_id": "bfme2.object.gondor-ranger-horde",
+	"image_id": "UPGondor_Ranger",
+}
+const ARCHERY_LEVEL_TWO_ACTION_SPEC := {
+	"action_id": "upgrade_archery_range_level2",
+	"button_name": "UpgradeArcheryRangeLevel2",
+	"image_id": "UCCommon_UpgradeStructureNew",
+	"label_id": "CONTROLBAR:ConstructGondorArcheryRangeLevel2Upgrade",
+	"tooltip_id": "CONTROLBAR:ToolTipBuildGondorArcheryRangeLevel2Upgrade",
+}
 const RETAIL_PORTRAIT_SOURCE_SIZE := Vector2i(191, 191)
 const RETAIL_UNIT_ACTION_SPECS := [
 	{
@@ -180,6 +201,7 @@ const RETAIL_MEMBER_TO_HORDE := {
 	"bfme2.object.gondor-tower-guard": "bfme2.object.gondor-tower-guard",
 	"bfme2.object.gondor-archer": "bfme2.object.gondor-archer",
 	"bfme2.object.gondor-knight": "bfme2.object.gondor-knight",
+	"bfme2.object.gondor-ranger": "bfme2.object.gondor-ranger-horde",
 	"bfme2.object.men-porter": "bfme2.object.men-porter",
 }
 const MAX_RETAIL_COMMAND_ICON_BYTES := 16 * 1024 * 1024
@@ -258,6 +280,31 @@ var retail_tooltip: RetailTooltip
 var retail_side_command_bar: RetailSideCommandBar
 var _retail_command_costs: Dictionary = {}
 var _tooltip_hover_button: Button = null
+var _retail_command_specs: Array = RETAIL_COMMAND_SPECS.duplicate(true)
+var _retail_portrait_specs: Array = RETAIL_PORTRAIT_SPECS.duplicate(true)
+var _retail_action_specs: Array = RETAIL_UNIT_ACTION_SPECS.duplicate(true)
+var _ranger_content_enabled := false
+
+
+func enable_ranger_content(contract: Dictionary) -> String:
+	if _built:
+		return "Ranger HUD content must be enabled before build."
+	if contract.is_empty():
+		return ""
+	var presentation: Dictionary = contract.get("presentation", {}) as Dictionary
+	var train_image: Dictionary = presentation.get("trainButtonImage", {}) as Dictionary
+	var portrait_image: Dictionary = presentation.get("portraitImage", {}) as Dictionary
+	if (
+		String(presentation.get("hordeObjectId", "")) != String(RANGER_COMMAND_SPEC["unit_id"])
+		or String(train_image.get("id", "")) != String(RANGER_COMMAND_SPEC["image_id"])
+		or String(portrait_image.get("id", "")) != String(RANGER_PORTRAIT_SPEC["image_id"])
+	):
+		return "Ranger HUD contract identity is invalid."
+	_retail_command_specs.append(RANGER_COMMAND_SPEC.duplicate(true))
+	_retail_portrait_specs.append(RANGER_PORTRAIT_SPEC.duplicate(true))
+	_retail_action_specs.append(ARCHERY_LEVEL_TWO_ACTION_SPEC.duplicate(true))
+	_ranger_content_enabled = true
+	return ""
 
 
 func _ready() -> void:
@@ -367,10 +414,18 @@ func set_train_state(enabled: bool, label: String = "Train Gondor Soldiers") -> 
 	train_button.text = _retail_train_label if retail_train_command_bound else label
 
 
-func set_production_state(production: Array, enabled: bool, queue_count: int = 0, queue_state: Array = []) -> void:
+func set_production_state(
+	production: Array,
+	enabled: bool,
+	queue_count: int = 0,
+	queue_state: Array = [],
+	locked_units: Array = [],
+	completed_upgrades: Array = [],
+	upgrade_queue: Array = []
+) -> void:
 	## Only commands authored by the selected producer are exposed. Labels stay
 	## source-derived in private parity mode; queue state is metadata, not copy.
-	for spec_value in RETAIL_COMMAND_SPECS:
+	for spec_value in _retail_command_specs:
 		var spec: Dictionary = spec_value
 		var unit_id := String(spec["unit_id"])
 		var button: Button = train_buttons.get(unit_id)
@@ -378,12 +433,22 @@ func set_production_state(production: Array, enabled: bool, queue_count: int = 0
 			continue
 		var supported := production.has(unit_id)
 		button.visible = supported
-		button.disabled = not enabled or not supported
+		button.disabled = not enabled or not supported or locked_units.has(unit_id)
 		button.set_meta("producer_queue_count", maxi(0, queue_count))
 		if _retail_train_labels.has(unit_id) and not private_parity_mode_active:
 			button.text = String(_retail_train_labels[unit_id])
-	for button_value in unit_action_buttons.values():
-		(button_value as Button).visible = false
+	for action_id_value in unit_action_buttons.keys():
+		var action_id := String(action_id_value)
+		var action_button := unit_action_buttons[action_id] as Button
+		if action_id == "upgrade_archery_range_level2":
+			action_button.visible = (
+				_ranger_content_enabled
+				and production.has(String(RANGER_COMMAND_SPEC["unit_id"]))
+				and not completed_upgrades.has("Upgrade_GondorArcheryRangeLevel2")
+			)
+			action_button.disabled = not enabled or not upgrade_queue.is_empty()
+		else:
+			action_button.visible = false
 	_layout_command_sockets()
 	_update_production_queue(queue_state, not production.is_empty())
 	_update_retail_selection_portrait(production)
@@ -399,6 +464,8 @@ func set_unit_selection_state(selected_ids: Array[int], entities: Dictionary) ->
 	for button_value in unit_action_buttons.values():
 		var button := button_value as Button
 		var action_id := String(button.get_meta("action_id", ""))
+		if action_id.begins_with("upgrade_"):
+			continue
 		var is_construct := action_id.begins_with("construct_")
 		button.visible = builders_only if is_construct else (has_units and not builders_only)
 		button.disabled = not button.visible
@@ -476,7 +543,7 @@ func bind_retail_train_command(content_db, expected_pack_root: String, private_p
 		return "ContentDB is unavailable; cannot bind the private Barracks command UI."
 	if not _built or train_button == null:
 		return "The Barracks command button has not been built."
-	var spec: Dictionary = RETAIL_COMMAND_SPECS[0]
+	var spec: Dictionary = _retail_command_specs[0]
 	var validation := _validate_retail_command(content_db, expected_pack_root, spec, Vector2i.ZERO)
 	var error := String(validation.get("error", ""))
 	if error != "":
@@ -498,7 +565,7 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		return ""
 	if content_db == null:
 		return "ContentDB is unavailable; cannot bind the private Men production UI."
-	if not _built or train_buttons.size() != RETAIL_COMMAND_SPECS.size():
+	if not _built or train_buttons.size() != _retail_command_specs.size():
 		return "The Men production command buttons have not been built."
 	if retail_apt_runtime == null:
 		return "The retail Palantir APT runtime has not been built."
@@ -517,7 +584,7 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		return "Private retail HUD APT rejected its deterministic live values: %s" % retail_apt_runtime.error
 	var validated: Dictionary = {}
 	var validation_errors: Array[String] = []
-	for spec_value in RETAIL_COMMAND_SPECS:
+	for spec_value in _retail_command_specs:
 		var spec: Dictionary = spec_value
 		var validation := _validate_retail_command(content_db, expected_pack_root, spec)
 		var error := String(validation.get("error", ""))
@@ -526,7 +593,7 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		else:
 			validated[String(spec["unit_id"])] = validation
 	var action_validated: Dictionary = {}
-	for spec_value in RETAIL_UNIT_ACTION_SPECS:
+	for spec_value in _retail_action_specs:
 		var spec: Dictionary = spec_value
 		var action_id := String(spec["action_id"])
 		var source_size := Vector2i(64, 64) if action_id.begins_with("construct_") else Vector2i(63, 63)
@@ -537,7 +604,7 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 		else:
 			action_validated[action_id] = validation
 	var portrait_validated: Dictionary = {}
-	for spec_value in RETAIL_PORTRAIT_SPECS:
+	for spec_value in _retail_portrait_specs:
 		var spec: Dictionary = spec_value
 		var validation := _validate_retail_image(
 			content_db,
@@ -563,18 +630,18 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 			validation_errors.append(control_bar_error)
 	if not validation_errors.is_empty():
 		return "Private retail HUD is incomplete: %s" % "; ".join(validation_errors)
-	for spec_value in RETAIL_COMMAND_SPECS:
+	for spec_value in _retail_command_specs:
 		var spec: Dictionary = spec_value
 		_apply_retail_command(spec, validated[String(spec["unit_id"])])
-	for spec_value in RETAIL_UNIT_ACTION_SPECS:
+	for spec_value in _retail_action_specs:
 		var spec: Dictionary = spec_value
 		_apply_retail_action(spec, action_validated[String(spec["action_id"])])
-	for spec_value in RETAIL_PORTRAIT_SPECS:
+	for spec_value in _retail_portrait_specs:
 		var spec: Dictionary = spec_value
 		var unit_id := String(spec["unit_id"])
 		_retail_portrait_textures[unit_id] = portrait_validated[unit_id]["texture"]
 	var portrait_bindings: Dictionary = {}
-	for spec_value in RETAIL_PORTRAIT_SPECS:
+	for spec_value in _retail_portrait_specs:
 		var spec: Dictionary = spec_value
 		var unit_id := String(spec["unit_id"])
 		portrait_bindings[unit_id] = {
@@ -617,7 +684,7 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 	retail_train_commands_bound = true
 	retail_train_command_bound = true
 	retail_presentation_bound = retail_train_commands_bound and retail_portraits_bound and retail_control_bar_bound
-	_retail_train_label = String(_retail_train_labels[String(RETAIL_COMMAND_SPECS[0]["unit_id"])])
+	_retail_train_label = String(_retail_train_labels[String(_retail_command_specs[0]["unit_id"])])
 	retail_train_icon_aspect_ratio = float(train_button.get_meta("retail_icon_aspect_ratio", 0.0))
 	return "" if retail_presentation_bound else "Private retail HUD failed to apply its validated presentation atomically."
 
@@ -787,7 +854,7 @@ func _clear_retail_command_bindings(hide_commands: bool) -> void:
 		_apply_private_fail_closed_presentation()
 	else:
 		_restore_public_presentation()
-	for spec_value in RETAIL_COMMAND_SPECS:
+	for spec_value in _retail_command_specs:
 		var spec: Dictionary = spec_value
 		var button: Button = train_buttons.get(String(spec["unit_id"]))
 		if button == null:
@@ -807,7 +874,7 @@ func _clear_retail_command_bindings(hide_commands: bool) -> void:
 		]:
 			if button.has_meta(metadata_key):
 				button.remove_meta(metadata_key)
-	for spec_value in RETAIL_UNIT_ACTION_SPECS:
+	for spec_value in _retail_action_specs:
 		var spec: Dictionary = spec_value
 		var button: Button = unit_action_buttons.get(String(spec["action_id"]))
 		if button == null:
@@ -878,7 +945,7 @@ func _update_retail_selection_portrait(production: Array) -> void:
 		return
 	selection_portrait.texture = null
 	selection_portrait.visible = false
-	for spec_value in RETAIL_PORTRAIT_SPECS:
+	for spec_value in _retail_portrait_specs:
 		var unit_id := String((spec_value as Dictionary)["unit_id"])
 		if production.has(unit_id) and _retail_portrait_textures.has(unit_id):
 			_show_retail_portrait(unit_id)
@@ -1161,7 +1228,7 @@ func _build_command_panel() -> void:
 	command_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(command_grid)
 	var slot_index := 0
-	for spec_value in RETAIL_COMMAND_SPECS:
+	for spec_value in _retail_command_specs:
 		var spec: Dictionary = spec_value
 		var unit_id := String(spec["unit_id"])
 		var button := Button.new()
@@ -1176,7 +1243,7 @@ func _build_command_panel() -> void:
 		_place_command_button(button, slot_index)
 		slot_index += 1
 		train_buttons[unit_id] = button
-	for spec_value in RETAIL_UNIT_ACTION_SPECS:
+	for spec_value in _retail_action_specs:
 		var spec: Dictionary = spec_value
 		var action_id := String(spec["action_id"])
 		var button := Button.new()
@@ -1195,9 +1262,11 @@ func _build_command_panel() -> void:
 			button.pressed.connect(func() -> void: stance_requested.emit())
 		elif action_id.begins_with("construct_"):
 			button.pressed.connect(_emit_construct_requested.bind(action_id.trim_prefix("construct_")))
+		elif action_id == "upgrade_archery_range_level2":
+			button.pressed.connect(func() -> void: structure_upgrade_requested.emit("Upgrade_GondorArcheryRangeLevel2"))
 		_place_command_button(button, 0)
 		unit_action_buttons[action_id] = button
-	train_button = train_buttons[String(RETAIL_COMMAND_SPECS[0]["unit_id"])]
+	train_button = train_buttons[String(_retail_command_specs[0]["unit_id"])]
 	production_queue_label = Label.new()
 	production_queue_label.name = "ProductionQueueLabel"
 	production_queue_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1235,11 +1304,11 @@ func _layout_command_sockets() -> void:
 	# Icons render inside the socket art itself, so nothing can drift off the
 	# ring the way the old static per-creation slots did.
 	var occupants: Array[Button] = []
-	for spec_value in RETAIL_COMMAND_SPECS:
+	for spec_value in _retail_command_specs:
 		var train_button_row: Button = train_buttons.get(String((spec_value as Dictionary)["unit_id"]))
 		if train_button_row != null and train_button_row.visible:
 			occupants.append(train_button_row)
-	for spec_value in RETAIL_UNIT_ACTION_SPECS:
+	for spec_value in _retail_action_specs:
 		var action_button: Button = unit_action_buttons.get(String((spec_value as Dictionary)["action_id"]))
 		if action_button != null and action_button.visible:
 			occupants.append(action_button)
@@ -2123,7 +2192,7 @@ func set_command_costs(costs: Dictionary) -> void:
 
 
 func _wire_retail_tooltips() -> void:
-	for spec_value in RETAIL_COMMAND_SPECS:
+	for spec_value in _retail_command_specs:
 		var spec: Dictionary = spec_value
 		var unit_id := String(spec["unit_id"])
 		var button: Button = train_buttons.get(unit_id)
@@ -2134,7 +2203,7 @@ func _wire_retail_tooltips() -> void:
 		button.set_meta("tooltip_fallback_label", String(spec["fallback_label"]))
 		button.set_meta("tooltip_fallback_desc", String(spec["fallback_tooltip"]))
 		_register_button_tooltip(button)
-	for spec_value in RETAIL_UNIT_ACTION_SPECS:
+	for spec_value in _retail_action_specs:
 		var spec: Dictionary = spec_value
 		var action_id := String(spec["action_id"])
 		var button: Button = unit_action_buttons.get(action_id)
@@ -2247,6 +2316,8 @@ func _resolve_tooltip_content(button: Button) -> Dictionary:
 			var cost := -1
 			if action_id.begins_with("construct_"):
 				cost = int(_retail_command_costs.get(action_id.trim_prefix("construct_"), -1))
+			elif action_id == "upgrade_archery_range_level2":
+				cost = int(_retail_command_costs.get("Upgrade_GondorArcheryRangeLevel2", -1))
 			return {
 				"title": title,
 				"cost": cost,
@@ -2300,7 +2371,7 @@ func _refresh_side_command_bar(builders_only: bool) -> void:
 		return
 	if builders_only:
 		var constructs: Array = []
-		for spec_value in RETAIL_UNIT_ACTION_SPECS:
+		for spec_value in _retail_action_specs:
 			var spec: Dictionary = spec_value
 			var action_id := String(spec["action_id"])
 			if not action_id.begins_with("construct_"):

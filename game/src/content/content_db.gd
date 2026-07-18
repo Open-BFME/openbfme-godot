@@ -18,6 +18,7 @@ var research: Dictionary = {}
 var maps: Dictionary = {}
 var bundle_objects: Dictionary = {}
 var retail_unit_rules: Dictionary = {}
+var ranger_runtime: Dictionary = {}
 var animation_capabilities: Dictionary = {}
 var bundle_maps: Dictionary = {}
 var retail_ui_images: Dictionary = {}
@@ -50,6 +51,7 @@ func reload() -> void:
 	maps.clear()
 	bundle_objects.clear()
 	retail_unit_rules.clear()
+	ranger_runtime.clear()
 	animation_capabilities.clear()
 	bundle_maps.clear()
 	retail_ui_images.clear()
@@ -138,6 +140,7 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	var declared := files as Dictionary
 	_load_declared_rows(root, String(declared.get("objects", "")), "objects", bundle_objects)
 	_load_retail_unit_rules(root, String(declared.get("unitRules", "")))
+	_load_ranger_runtime(root, String(declared.get("rangerRuntime", "")))
 	_load_declared_rows(root, String(declared.get("animationCapabilities", "")), "capabilities", animation_capabilities)
 	_load_retail_ui_manifest(root, String(declared.get("uiManifest", "")))
 	_load_retail_strings(root, String(declared.get("strings", "")))
@@ -255,6 +258,21 @@ func _load_retail_unit_rules(root: String, relative: String) -> void:
 		pending[id] = row
 	for id in pending:
 		retail_unit_rules[id] = pending[id]
+
+
+func _load_ranger_runtime(root: String, relative: String) -> void:
+	if relative == "":
+		return
+	var document := _read_declared_document(root, relative)
+	if (
+		String(document.get("schema", "")) != "openbfme.ranger-runtime-contract"
+		or int(document.get("schemaVersion", -1)) != 0
+		or String(document.get("capabilityStatus", "")) != "rules-and-prerequisite-ready"
+	):
+		return
+	document["_source"] = ModLoader.resolve_pack_path(root, relative)
+	document["_pack_root"] = root
+	ranger_runtime = document
 
 
 func _read_declared_document(root: String, relative: String) -> Dictionary:
@@ -380,6 +398,10 @@ func get_bundle_object(id: String) -> Dictionary:
 
 func get_retail_unit_rules(id: String) -> Dictionary:
 	return retail_unit_rules.get(id, {})
+
+
+func get_ranger_runtime() -> Dictionary:
+	return ranger_runtime.duplicate(true)
 
 func get_animation_capability(id: String) -> Dictionary:
 	return animation_capabilities.get(id, {})

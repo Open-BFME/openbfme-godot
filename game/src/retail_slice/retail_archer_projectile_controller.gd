@@ -113,7 +113,8 @@ func present_authoritative_projectile(
 	attack_event_token: int,
 	authoritative_pose: Transform3D,
 	use_snow_texture: bool,
-	authoritative_fire_audio_leaf_index: int
+	authoritative_fire_audio_leaf_index: int,
+	play_embedded_audio: bool = true
 ) -> Node3D:
 	## Create one source-textured W3DStreakDraw presentation snapshot.
 	## The caller owns movement/timing and must call remove_projectile().
@@ -121,10 +122,12 @@ func present_authoritative_projectile(
 		return null
 	if not _finite_transform(authoritative_pose):
 		return null
-	if authoritative_fire_audio_leaf_index < 0 or authoritative_fire_audio_leaf_index >= _fire_audio_paths.size():
+	if play_embedded_audio and (authoritative_fire_audio_leaf_index < 0 or authoritative_fire_audio_leaf_index >= _fire_audio_paths.size()):
 		return null
-	var fire_stream := _load_wav(_fire_audio_paths[authoritative_fire_audio_leaf_index])
-	if fire_stream == null:
+	var fire_stream: AudioStream = null
+	if play_embedded_audio:
+		fire_stream = _load_wav(_fire_audio_paths[authoritative_fire_audio_leaf_index])
+	if play_embedded_audio and fire_stream == null:
 		return null
 	var texture := _snow_streak_texture if use_snow_texture else _normal_streak_texture
 	if texture == null:
@@ -159,7 +162,8 @@ func present_authoritative_projectile(
 	streak.rotation.x = PI * 0.5
 	streak.position.z = quad.size.y * 0.5
 	root.add_child(streak)
-	_add_audio_player(root, fire_stream, "ExactArcherWeaponLeaf")
+	if fire_stream != null:
+		_add_audio_player(root, fire_stream, "ExactArcherWeaponLeaf")
 	add_child(root)
 	_active_projectiles[attack_event_token] = root
 	active_projectile_node_count = _active_projectiles.size()
@@ -196,7 +200,8 @@ func present_authoritative_target_impact(
 	target_parent: Node3D,
 	authoritative_attachment_transform: Transform3D,
 	authoritative_damage_fx_set_id: String,
-	authoritative_impact_audio_leaf_index: int
+	authoritative_impact_audio_leaf_index: int,
+	play_embedded_audio: bool = true
 ) -> Node3D:
 	## Attach exact g_arrow and one explicitly selected ImpactArrow leaf.
 	## The caller owns orientation, lifetime, animation policy, and removal.
@@ -207,12 +212,14 @@ func present_authoritative_target_impact(
 		or _active_impacts.has(impact_event_token)
 		or not EXPECTED_DAMAGE_FX_SETS.has(authoritative_damage_fx_set_id)
 		or not _finite_transform(authoritative_attachment_transform)
-		or authoritative_impact_audio_leaf_index < 0
-		or authoritative_impact_audio_leaf_index >= _impact_audio_paths.size()
+		or (play_embedded_audio and authoritative_impact_audio_leaf_index < 0)
+		or (play_embedded_audio and authoritative_impact_audio_leaf_index >= _impact_audio_paths.size())
 	):
 		return null
-	var impact_stream := _load_wav(_impact_audio_paths[authoritative_impact_audio_leaf_index])
-	if impact_stream == null:
+	var impact_stream: AudioStream = null
+	if play_embedded_audio:
+		impact_stream = _load_wav(_impact_audio_paths[authoritative_impact_audio_leaf_index])
+	if play_embedded_audio and impact_stream == null:
 		return null
 	var model := _instantiate_glb(_impact_model_path)
 	if model == null:
@@ -229,7 +236,8 @@ func present_authoritative_target_impact(
 	model.name = "ExactGArrowAttachedModel"
 	model.scale = Vector3.ONE * _presentation_scale
 	root.add_child(model)
-	_add_audio_player(root, impact_stream, "ExactImpactArrowLeaf")
+	if impact_stream != null:
+		_add_audio_player(root, impact_stream, "ExactImpactArrowLeaf")
 	target_parent.add_child(root)
 	_active_impacts[impact_event_token] = root
 	active_impact_node_count = _active_impacts.size()

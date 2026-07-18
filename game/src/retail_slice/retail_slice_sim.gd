@@ -343,7 +343,7 @@ func _configure_ranger_runtime_contract() -> void:
 		or ranger_cost < 0
 		or ranger_ticks <= 0
 		or ranger_command_points <= 0
-		or String(unit_rule.get("horde_id", "")) != "GondorRangerHorde"
+		or String(unit_rule.get("horde_id", "")) != RANGER_HORDE_ID
 		or int(unit_rule.get("member_count", 0)) != 10
 	):
 		configuration_error = "Ranger runtime contract values are invalid"
@@ -694,6 +694,10 @@ func _production_rule_value(unit_type: String, rule_key: String, default_key: St
 
 func production_rule_ids() -> Array[String]:
 	return _production_unit_order.duplicate()
+
+
+func required_upgrade_for_unit(unit_type: String) -> String:
+	return String(_unit_prerequisites.get(unit_type, ""))
 
 
 func queue_structure_upgrade(team: int, structure_id: int, upgrade_id: String) -> Dictionary:

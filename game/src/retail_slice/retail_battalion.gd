@@ -6,6 +6,7 @@ const ShadowDecalScript = preload("res://src/retail_slice/retail_shadow_decal.gd
 const FormationScript = preload("res://src/retail_slice/retail_formation.gd")
 const DEFAULT_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
+const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
 const PRESENTATION_TICK_SECONDS := 0.1
 const DEFAULT_TURN_RATE_DEGREES_PER_SECOND := 720.0
 const ARCHER_LAUNCH_BONE := "ARROWNOCK"
@@ -18,6 +19,7 @@ const SOURCE_HEALTH_GEOMETRY_HEIGHT := {
 	"bfme2.object.gondor-archer": 19.2,
 	"bfme2.object.gondor-tower-guard": 19.2,
 	"bfme2.object.gondor-knight": 20.0,
+	"bfme2.object.gondor-ranger": 19.2,
 }
 const SOURCE_HEALTH_HEIGHT_OFFSET := 10.0
 const ArcherProjectileControllerScript = preload("res://src/retail_slice/retail_archer_projectile_controller.gd")
@@ -550,7 +552,7 @@ func member_attack_global_position(member_index: int) -> Vector3:
 
 
 func _present_archer_member_attack(member_index: int) -> void:
-	if object_id != ARCHER_OBJECT_ID or archer_projectile_controller == null or not archer_projectile_controller.contract_ready:
+	if object_id not in [ARCHER_OBJECT_ID, RANGER_OBJECT_ID] or archer_projectile_controller == null or not archer_projectile_controller.contract_ready:
 		return
 	if _attack_target_ref == null:
 		return
@@ -573,7 +575,13 @@ func _present_archer_member_attack(member_index: int) -> void:
 		return
 	var pose := Transform3D(Basis.looking_at(direction.normalized(), Vector3.UP), start_local)
 	var fire_leaf := posmod(event_token, archer_projectile_controller.validated_fire_audio_leaf_count)
-	var projectile := archer_projectile_controller.present_authoritative_projectile(event_token, pose, false, fire_leaf)
+	var projectile := archer_projectile_controller.present_authoritative_projectile(
+		event_token,
+		pose,
+		false,
+		fire_leaf,
+		object_id == ARCHER_OBJECT_ID
+	)
 	if projectile == null:
 		return
 	projectile.set_meta("authoritative_member_index", member_index)
@@ -650,7 +658,14 @@ func _finish_archer_projectile(event_token: int, target_ref: WeakRef, target_glo
 	var global_pose := Transform3D(Basis.looking_at(direction, Vector3.UP), target_global)
 	var local_pose := target.global_transform.affine_inverse() * global_pose
 	var impact_leaf := posmod(event_token, archer_projectile_controller.validated_impact_audio_leaf_count)
-	var impact := archer_projectile_controller.present_authoritative_target_impact(event_token, target, local_pose, "NormalDamageFX", impact_leaf)
+	var impact := archer_projectile_controller.present_authoritative_target_impact(
+		event_token,
+		target,
+		local_pose,
+		"NormalDamageFX",
+		impact_leaf,
+		object_id == ARCHER_OBJECT_ID
+	)
 	if impact == null:
 		return
 	impact.set_meta("presentation_authority", "simulation-member-attack-token")
@@ -784,7 +799,7 @@ func member_formation_slot(member_index: int) -> Vector3:
 func member_presentation_target(member_index: int, state: String = "") -> Vector3:
 	var normalized_state := state if state != "" else current_state
 	var base_slot := member_formation_slot(member_index)
-	if normalized_state != "attack" or object_id == ARCHER_OBJECT_ID or _attack_target_ref == null:
+	if normalized_state != "attack" or object_id in [ARCHER_OBJECT_ID, RANGER_OBJECT_ID] or _attack_target_ref == null:
 		return base_slot
 	var target := _attack_target_ref.get_ref() as Node3D
 	if target == null or not is_inside_tree() or not target.is_inside_tree():
@@ -893,7 +908,10 @@ func _is_private_retail_pack(definition: Dictionary) -> bool:
 		return false
 	var pack_path := ModLoader.resolve_pack_path(pack_root, "pack.json")
 	var pack_value: Variant = ModLoader._read_json(pack_path)
-	return typeof(pack_value) == TYPE_DICTIONARY and String((pack_value as Dictionary).get("id", "")) == "bfme2-men-vslice"
+	return (
+		typeof(pack_value) == TYPE_DICTIONARY
+		and String((pack_value as Dictionary).get("id", "")) in ["bfme2-men-vslice", "bfme2-men-ranger-overlay"]
+	)
 
 
 func _configure_combat_visual_contract(definition: Dictionary) -> void:
@@ -901,9 +919,11 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 	exact_projectile_node_count = 0
 	exact_impact_effect_node_count = 0
 	combat_visual_contract_error = ""
-	if not private_parity_mode_active or object_id != "bfme2.object.gondor-archer":
+	if not private_parity_mode_active or object_id not in [ARCHER_OBJECT_ID, RANGER_OBJECT_ID]:
 		return
 	var pack_root := String(definition.get("_pack_root", ""))
+	if object_id == RANGER_OBJECT_ID:
+		pack_root = String(ContentDB.get_bundle_object(ARCHER_OBJECT_ID).get("_pack_root", ""))
 	archer_projectile_controller = ArcherProjectileControllerScript.new()
 	archer_projectile_controller.name = "RetailArcherProjectileController"
 	add_child(archer_projectile_controller)
@@ -940,6 +960,10 @@ func _configure_source_selection_decal(definition: Dictionary) -> void:
 	source_selection_decal.name = "RetailMenSelectionDecal"
 	add_child(source_selection_decal)
 	var pack_root := String(definition.get("_pack_root", ""))
+	if object_id == RANGER_OBJECT_ID:
+		# The bounded Ranger overlay owns the unit model and rules only. Reuse the
+		# selected retail Men pack's shared selection-decal contract explicitly.
+		pack_root = String(ContentDB.get_bundle_object(ARCHER_OBJECT_ID).get("_pack_root", ""))
 	var selection_error := source_selection_decal.configure(pack_root, _source_unit_scale, positions)
 	if selection_error == "":
 		member_overlay_status = "source-health-canvas-and-source-selection-merge-decal-bound-oracle-color-throb-pending"
@@ -1086,7 +1110,7 @@ func _update_legal_safe_member_overlays() -> void:
 func _sync_selection_layout(state: String, force: bool = false) -> void:
 	if source_selection_decal == null or not source_selection_decal.contract_ready:
 		return
-	var layout_state := "attack" if state == "attack" and object_id != ARCHER_OBJECT_ID else "formation"
+	var layout_state := "attack" if state == "attack" and object_id not in [ARCHER_OBJECT_ID, RANGER_OBJECT_ID] else "formation"
 	if not force and layout_state == _selection_layout_state:
 		return
 	var positions: Array[Vector3] = []

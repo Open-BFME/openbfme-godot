@@ -1202,6 +1202,140 @@ def build_ranger_runtime_contract(
     }
 
 
+def attach_ranger_playable_bindings(
+    profile: dict[str, Any],
+    ranger_runtime: dict[str, Any],
+    model_census: Mapping[str, Any],
+) -> None:
+    """Register the converted Ranger as a bounded member/horde presentation.
+
+    The source contract owns gameplay values.  This bridge only binds the
+    already-converted model, its four proven clips, and the two source UI
+    images into the base pack documents consumed by Godot.
+    """
+
+    runtime = _obj(profile.get("runtime_data"), "profile runtime_data")
+    objects_document = _obj(runtime.get("data/objects.json"), "objects document")
+    capabilities_document = _obj(
+        runtime.get("data/animation_capabilities.json"),
+        "animation capabilities document",
+    )
+    ui_document = _obj(runtime.get("data/ui_manifest.json"), "UI manifest")
+    objects = _list(objects_document.get("objects"), "objects")
+    capabilities = _list(capabilities_document.get("capabilities"), "capabilities")
+    existing_object_ids = {
+        _id(_obj(row, "object row").get("id"), "object id").casefold()
+        for row in objects
+    }
+    existing_capability_ids = {
+        _id(_obj(row, "capability row").get("id"), "capability id").casefold()
+        for row in capabilities
+    }
+    required_object_ids = {
+        "bfme2.object.gondor-ranger",
+        "bfme2.object.gondor-ranger-horde",
+    }
+    if existing_object_ids.intersection(required_object_ids):
+        raise ValueError("Ranger object binding already exists")
+    if "bfme2.animation.gondor-ranger" in existing_capability_ids:
+        raise ValueError("Ranger animation binding already exists")
+
+    ranger_models = [
+        _obj(row, "Ranger model row")
+        for row in _list(model_census.get("units"), "model units")
+        if str(_obj(row, "model row").get("id", "")).casefold()
+        == "gondorranger".casefold()
+    ]
+    if len(ranger_models) != 1:
+        raise ValueError("model census must contain one GondorRanger")
+    model = ranger_models[0]
+    if model.get("coverage") != "m3-converted":
+        raise ValueError("GondorRanger model is not converted")
+    model_output = _text(model.get("output"), "Ranger model output")
+    if model_output != "assets/models/m3/units/gondorranger.glb":
+        raise ValueError("GondorRanger model output changed")
+
+    image_paths: dict[str, str] = {}
+    for row in _list(ui_document.get("images"), "UI images"):
+        image = _obj(row, "UI image")
+        image_id = str(image.get("id", ""))
+        if image_id in {"BGArcheryRange_Rangers", "UPGondor_Ranger"}:
+            image_paths[image_id] = _text(image.get("path"), f"{image_id} path")
+    if set(image_paths) != {"BGArcheryRange_Rangers", "UPGondor_Ranger"}:
+        raise ValueError("Ranger UI bindings are incomplete")
+
+    production = _obj(ranger_runtime.get("production"), "Ranger production")
+    member_rule = _obj(
+        _obj(ranger_runtime.get("unitRule"), "Ranger unit rule").get("member"),
+        "Ranger member rule",
+    )
+    member_health = int(_obj(member_rule.get("health"), "Ranger health").get("value", 0))
+    if (
+        int(production.get("commandPoints", 0)) != 70
+        or int(production.get("buildCost", 0)) != 600
+        or member_health != 300
+    ):
+        raise ValueError("Ranger playable binding values changed")
+
+    objects.extend(
+        [
+            {
+                "id": "bfme2.object.gondor-ranger",
+                "kind": "member",
+                "displayName": "Ithilien Ranger",
+                "animationCapabilityId": "bfme2.animation.gondor-ranger",
+                "simulation": {"health": member_health},
+                "presentation": {
+                    "model": model_output,
+                    "icon": image_paths["UPGondor_Ranger"],
+                    "commandIcon": image_paths["BGArcheryRange_Rangers"],
+                },
+            },
+            {
+                "id": "bfme2.object.gondor-ranger-horde",
+                "kind": "battalion",
+                "displayName": "Ithilien Rangers",
+                "memberObjectId": "bfme2.object.gondor-ranger",
+                "memberCount": 10,
+                "commandPoints": 70,
+                "formations": ["source-authored"],
+            },
+        ]
+    )
+    capabilities.append(
+        {
+            "id": "bfme2.animation.gondor-ranger",
+            "presentationMode": "skeletal-glb",
+            "conversionProof": "provenance/conversion/m3-gondorranger-rig-and-core-clips.json",
+            "states": {
+                "idle": {"clips": ["guranger_idla"], "mode": "loop", "required": True},
+                "move": {"clips": ["guranger_runa"], "mode": "loop", "required": True},
+                "attack": {
+                    "clips": ["guranger_atkd1"],
+                    "mode": "once",
+                    "required": True,
+                    "useWeaponTiming": True,
+                },
+                "death": {"clips": ["guranger_diea"], "mode": "once", "required": True},
+            },
+        }
+    )
+    presentation = _obj(ranger_runtime.get("presentation"), "Ranger presentation")
+    presentation.update(
+        {
+            "memberObjectId": "bfme2.object.gondor-ranger",
+            "hordeObjectId": "bfme2.object.gondor-ranger-horde",
+            "animationCapabilityId": "bfme2.animation.gondor-ranger",
+            "model": model_output,
+            "coreClipStatus": "source-converted",
+        }
+    )
+    deferred = _list(ranger_runtime.get("deferredCapabilities"), "Ranger deferred capabilities")
+    if "model-and-animation-conversion" not in deferred:
+        raise ValueError("Ranger conversion deferral was already removed")
+    deferred.remove("model-and-animation-conversion")
+
+
 def extract_spellbook(report: Mapping[str, Any], science_source: bytes, power_source: bytes, gamedata_source: bytes | None = None) -> dict[str, Any]:
     dependencies = _obj(report.get("dependencies"), "dependencies")
     science_ids = _unique(dependencies.get("spellbookSciences"), "spellbookSciences")
@@ -2107,6 +2241,7 @@ def compose_private_profile(
     ranger_runtime = build_ranger_runtime_contract(
         assets_root, effective_manifest, result, building_stats
     )
+    attach_ranger_playable_bindings(result, ranger_runtime, model_census)
     runtime_documents = {
         RUNTIME_PATHS["buildingStats"]: building_stats,
         RUNTIME_PATHS["icons"]: build_icon_census(census_report),
@@ -2434,7 +2569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["BUILDINGS", "BUILDING_RUNTIME_PATH", "BUILDING_RUNTIME_REQUESTED_IDS", "CP_FIELDS", "RANGER_RUNTIME_PATH", "RANGER_RUNTIME_SCHEMA", "RUNTIME_PATHS", "SELECTION_TRANSITIONS", "UNITS", "UPGRADES", "attach_building_runtime_gap_contract", "build_building_runtime_gap_contract", "build_house_color_from_assets", "build_house_color_manifest", "build_icon_census", "build_m3_visual_resources", "build_ranger_runtime_contract", "build_upgrade_manifest", "candidate_pack_state", "compose_private_profile", "compose_profile_from_paths", "declarative_visual_resources", "extend_selection_transitions", "extract_building_stats", "extract_command_points", "extract_spellbook", "house_color_mask_resources", "parse_house_colors", "validated_private_output_path", "validate_candidate_pack_state", "validate_recipe", "validate_tooltip_closure", "write_m3_expansion_report"]
+__all__ = ["BUILDINGS", "BUILDING_RUNTIME_PATH", "BUILDING_RUNTIME_REQUESTED_IDS", "CP_FIELDS", "RANGER_RUNTIME_PATH", "RANGER_RUNTIME_SCHEMA", "RUNTIME_PATHS", "SELECTION_TRANSITIONS", "UNITS", "UPGRADES", "attach_building_runtime_gap_contract", "attach_ranger_playable_bindings", "build_building_runtime_gap_contract", "build_house_color_from_assets", "build_house_color_manifest", "build_icon_census", "build_m3_visual_resources", "build_ranger_runtime_contract", "build_upgrade_manifest", "candidate_pack_state", "compose_private_profile", "compose_profile_from_paths", "declarative_visual_resources", "extend_selection_transitions", "extract_building_stats", "extract_command_points", "extract_spellbook", "house_color_mask_resources", "parse_house_colors", "validated_private_output_path", "validate_candidate_pack_state", "validate_recipe", "validate_tooltip_closure", "write_m3_expansion_report"]
 
 
 if __name__ == "__main__":

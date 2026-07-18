@@ -140,7 +140,7 @@ func _run_complete_flow(contract: Dictionary) -> Dictionary:
 		"ranger_completes_with_typed_identity_and_members",
 		String(ranger.get("object_id", "")) == SimScript.RANGER_OBJECT_ID
 			and String(ranger.get("unit_type", "")) == SimScript.RANGER_HORDE_ID
-			and String(ranger.get("horde_id", "")) == "GondorRangerHorde"
+			and String(ranger.get("horde_id", "")) == SimScript.RANGER_HORDE_ID
 			and int(ranger.get("member_count", 0)) == 10
 			and int(ranger.get("member_maximum_health", 0)) == 300
 			and int(ranger.get("command_points", 0)) == 70
@@ -171,7 +171,7 @@ func _gameplay_rules(contract: Dictionary) -> Dictionary:
 		var member: Dictionary = ((contract.get("unitRule", {}) as Dictionary).get("member", {}) as Dictionary)
 		var health := int((member.get("health", {}) as Dictionary).get("value", 0))
 		rules["ranger_runtime"] = contract.duplicate(true)
-		rules["ranger_unit_rule"] = _unit_rule("GondorRangerHorde", 10, health, 45, 40.0)
+		rules["ranger_unit_rule"] = _unit_rule(SimScript.RANGER_HORDE_ID, 10, health, 45, 40.0)
 	return rules
 
 

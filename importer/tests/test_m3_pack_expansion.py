@@ -18,6 +18,7 @@ from openbfme_importer.m3_pack_expansion import (
     UNITS,
     UPGRADES,
     attach_building_runtime_gap_contract,
+    attach_ranger_playable_bindings,
     build_upgrade_manifest,
     build_building_runtime_gap_contract,
     build_m3_visual_resources,
@@ -468,6 +469,35 @@ def test_effective_ranger_runtime_contract_is_exact_and_incomplete() -> None:
         "full-animation-and-audiovisual-oracle",
     }
     assert "complete" not in json.dumps(result).casefold()
+
+    model_census = profile["runtime_data"]["data/m3/model-census.json"]
+    attach_ranger_playable_bindings(profile, result, model_census)
+    objects = {
+        row["id"]: row
+        for row in profile["runtime_data"]["data/objects.json"]["objects"]
+    }
+    capabilities = {
+        row["id"]: row
+        for row in profile["runtime_data"]["data/animation_capabilities.json"]["capabilities"]
+    }
+    assert objects["bfme2.object.gondor-ranger"]["presentation"]["model"] == (
+        "assets/models/m3/units/gondorranger.glb"
+    )
+    assert objects["bfme2.object.gondor-ranger-horde"]["memberCount"] == 10
+    assert objects["bfme2.object.gondor-ranger-horde"]["commandPoints"] == 70
+    assert capabilities["bfme2.animation.gondor-ranger"]["states"] == {
+        "idle": {"clips": ["guranger_idla"], "mode": "loop", "required": True},
+        "move": {"clips": ["guranger_runa"], "mode": "loop", "required": True},
+        "attack": {
+            "clips": ["guranger_atkd1"],
+            "mode": "once",
+            "required": True,
+            "useWeaponTiming": True,
+        },
+        "death": {"clips": ["guranger_diea"], "mode": "once", "required": True},
+    }
+    assert result["presentation"]["coreClipStatus"] == "source-converted"
+    assert "model-and-animation-conversion" not in result["deferredCapabilities"]
 
 
 def test_building_stats_schema_has_every_m3_building_and_source_attested_trainables(

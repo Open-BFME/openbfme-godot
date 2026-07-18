@@ -16,6 +16,8 @@ const LinearFogScript = preload("res://src/retail_slice/fords_linear_fog.gd")
 const MemberHealthOverlayScript = preload("res://src/retail_slice/retail_member_health_overlay.gd")
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const SOLDIER_HORDE_ID := "bfme2.object.gondor-fighter-horde"
+const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
+const RANGER_HORDE_ID := "bfme2.object.gondor-ranger-horde"
 const BUILDER_OBJECT_ID := "bfme2.object.men-porter"
 const MAP_ID := "bfme2.map.fords-of-isen-ii"
 const UNIT_OBJECT_IDS: Array[String] = [
@@ -29,6 +31,7 @@ const UNIT_MODEL_PATHS := {
 	"bfme2.object.gondor-archer": "assets/models/units/gondor-archer.glb",
 	"bfme2.object.gondor-tower-guard": "assets/models/units/gondor-tower-guard.glb",
 	"bfme2.object.gondor-knight": "assets/models/units/gondor-knight.glb",
+	RANGER_OBJECT_ID: "assets/models/m3/units/gondorranger.glb",
 	"bfme2.object.men-porter": "assets/models/units/men-porter.glb",
 }
 const PRESENTATION_UNIT_OBJECT_IDS: Array[String] = [
@@ -43,6 +46,7 @@ const UNIT_QUEUE_NAMES := {
 	"bfme2.object.gondor-tower-guard": "Gondor Tower Guards",
 	"bfme2.object.gondor-archer": "Gondor Archers",
 	"bfme2.object.gondor-knight": "Gondor Knights",
+	RANGER_HORDE_ID: "Ithilien Rangers",
 }
 const BUILDING_OBJECT_IDS := {
 	"fortress": "bfme2.object.men-fortress",
@@ -102,6 +106,8 @@ var audio_system: RetailSliceAudio
 var source_map_data: RetailMapData
 var selected_pack_root := ""
 var gameplay_rules: Dictionary = {}
+var ranger_runtime: Dictionary = {}
+var ranger_hud_configuration_error := ""
 var validated_battalion_capabilities: Dictionary = {}
 var ready_ok := false
 var failure_reason := ""
@@ -177,6 +183,10 @@ func _ready() -> void:
 func _initialize_content_and_match() -> void:
 	if not ContentDB.bundle_objects.has(SOLDIER_OBJECT_ID):
 		ContentDB.reload()
+	ranger_runtime = ContentDB.get_ranger_runtime()
+	if ranger_hud_configuration_error != "":
+		_fail("Ranger HUD configuration failed: %s" % ranger_hud_configuration_error)
+		return
 	await _mark_initialization_phase("content")
 	var member_definition := ContentDB.get_bundle_object(SOLDIER_OBJECT_ID)
 	var horde_definition := ContentDB.get_bundle_object(SOLDIER_HORDE_ID)
@@ -256,8 +266,10 @@ func _initialize_content_and_match() -> void:
 	await _mark_initialization_phase("audio")
 	hud.configure_minimap(simulation, source_map_data, camera, _preview_texture)
 	var command_costs: Dictionary = {}
-	for unit_type in SimScript.UNIT_PRODUCTION_RULES.keys():
+	for unit_type in simulation.production_rule_ids():
 		command_costs[unit_type] = simulation._production_rule_value(String(unit_type), "cost_rule", "default_cost")
+	if not ranger_runtime.is_empty():
+		command_costs["Upgrade_GondorArcheryRangeLevel2"] = int((ranger_runtime.get("prerequisite", {}) as Dictionary).get("cost", 0))
 	for structure_kind in SimScript.STRUCTURE_BUILD_RULES.keys():
 		command_costs[structure_kind] = int((SimScript.STRUCTURE_BUILD_RULES[structure_kind] as Dictionary).get("cost", 0))
 	hud.set_command_costs(command_costs)
@@ -553,7 +565,10 @@ func _mark_initialization_phase(phase: String) -> void:
 func _load_required_presentation_definitions() -> String:
 	validated_battalion_capabilities.clear()
 	equipment_proof_loaded = false
-	for object_id in PRESENTATION_UNIT_OBJECT_IDS:
+	var presentation_ids: Array[String] = PRESENTATION_UNIT_OBJECT_IDS.duplicate()
+	if not ranger_runtime.is_empty():
+		presentation_ids.append(RANGER_OBJECT_ID)
+	for object_id in presentation_ids:
 		var expected_kind := "builder" if object_id == BUILDER_OBJECT_ID else "member"
 		var model_error := _validate_retail_object_model(object_id, expected_kind, String(UNIT_MODEL_PATHS[object_id]))
 		if model_error != "":
@@ -561,7 +576,7 @@ func _load_required_presentation_definitions() -> String:
 		var definition: Dictionary = ContentDB.get_bundle_object(object_id)
 		var capability_id := String(definition.get("animationCapabilityId", ""))
 		var capability: Dictionary = ContentDB.get_animation_capability(capability_id)
-		if capability_id == "" or capability.is_empty() or String(capability.get("_pack_root", "")) != selected_pack_root:
+		if capability_id == "" or capability.is_empty() or String(capability.get("_pack_root", "")) != String(definition.get("_pack_root", "")):
 			return "%s has no selected-pack animation capability" % object_id
 		validated_battalion_capabilities[object_id] = _attach_equipment_proof(capability) if object_id == SOLDIER_OBJECT_ID else capability.duplicate(true)
 	for kind in ["fortress", "farm", "barracks", "archery_range", "stable"]:
@@ -574,8 +589,15 @@ func _load_required_presentation_definitions() -> String:
 
 func _validate_retail_object_model(object_id: String, expected_kind: String, expected_model: String) -> String:
 	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
-	if definition.is_empty() or String(definition.get("_pack_root", "")) != selected_pack_root:
+	var definition_root := String(definition.get("_pack_root", ""))
+	if definition.is_empty() or definition_root == "":
 		return "%s is not registered by the selected pack" % object_id
+	if object_id != RANGER_OBJECT_ID and definition_root != selected_pack_root:
+		return "%s escaped the selected Men pack" % object_id
+	if object_id == RANGER_OBJECT_ID:
+		var overlay_pack: Dictionary = ModLoader._read_json(definition_root.path_join("pack.json")) as Dictionary
+		if String(overlay_pack.get("id", "")) != "bfme2-men-ranger-overlay":
+			return "%s is not registered by the bounded Ranger overlay" % object_id
 	if String(definition.get("kind", "")) != expected_kind:
 		return "%s has kind %s instead of %s" % [object_id, String(definition.get("kind", "")), expected_kind]
 	var presentation: Dictionary = definition.get("presentation", {}) as Dictionary
@@ -662,11 +684,25 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	var member_count := maxi(1, int(horde_definition.get("memberCount", 15)))
 	var tick_ms := SimScript.TICK_SECONDS * 1000.0
 	var unit_rules: Dictionary = {}
-	for object_id in UNIT_OBJECT_IDS:
-		var source_rules := ContentDB.get_retail_unit_rules(object_id)
+	var gameplay_unit_ids: Array[String] = UNIT_OBJECT_IDS.duplicate()
+	if not ranger_runtime.is_empty():
+		gameplay_unit_ids.append(RANGER_OBJECT_ID)
+	for object_id in gameplay_unit_ids:
+		var source_rules := (
+			(ranger_runtime.get("unitRule", {}) as Dictionary)
+			if object_id == RANGER_OBJECT_ID
+			else ContentDB.get_retail_unit_rules(object_id)
+		)
 		var converted := _convert_retail_unit_rule(source_rules, tick_ms)
 		if converted.has("_error"):
 			return {"_error": "%s: %s" % [object_id, String(converted["_error"])]}
+		if object_id == RANGER_OBJECT_ID:
+			var ranger_member: Dictionary = (source_rules.get("member", {}) as Dictionary)
+			converted["member_health"] = int((ranger_member.get("health", {}) as Dictionary).get("value", 0))
+			# The converted core bundle proves bow presentation only. Keep the
+			# source sword rule in provenance, but never activate it until its
+			# authored transition/attack clips are converted and bound.
+			converted["close_weapon_mode"] = ""
 		unit_rules[object_id] = converted
 	var builder_definition := ContentDB.get_bundle_object(BUILDER_OBJECT_ID)
 	var builder_simulation: Dictionary = builder_definition.get("simulation", {}) as Dictionary
@@ -701,7 +737,7 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		"is_builder": true,
 		"provenance": {"source": "data/ini/object/goodfaction/units/men/porter.ini", "constants": "data/ini/gamedata.ini"},
 	}
-	return {
+	var rules := {
 		"enable_base_loop": true,
 		"starting_resources": 1200,
 		"command_point_cap": 200,
@@ -717,6 +753,10 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		"ai_queue_interval_ticks": 60,
 		"ai_attack_delay_ticks": 300,
 	}
+	if not ranger_runtime.is_empty():
+		rules["ranger_runtime"] = ranger_runtime.duplicate(true)
+		rules["ranger_unit_rule"] = (unit_rules[RANGER_OBJECT_ID] as Dictionary).duplicate(true)
+	return rules
 
 
 func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dictionary:
@@ -1449,7 +1489,22 @@ func _refresh_hud() -> void:
 		var can_train := int(structure.get("team", -1)) == 0 and int(structure.get("health", 0)) > 0 and not production.is_empty()
 		var queue_count := Array(structure.get("queue", [])).size()
 		var queue_state := simulation.production_queue_state(selected_structure_id)
-		hud.set_production_state(production, can_train, queue_count, queue_state)
+		var completed_upgrades: Array = structure.get("completed_upgrades", [])
+		var locked_units: Array[String] = []
+		for unit_type_value in production:
+			var unit_type := String(unit_type_value)
+			var required_upgrade := simulation.required_upgrade_for_unit(unit_type)
+			if required_upgrade != "" and not completed_upgrades.has(required_upgrade):
+				locked_units.append(unit_type)
+		hud.set_production_state(
+			production,
+			can_train,
+			queue_count,
+			queue_state,
+			locked_units,
+			completed_upgrades,
+			simulation.structure_upgrade_queue_state(selected_structure_id)
+		)
 		hud.set_unit_selection_state([], simulation.entities)
 	else:
 		var names: Array[String] = []
@@ -1550,6 +1605,22 @@ func _queue_selected_producer(unit_id: String) -> void:
 	hud.set_feedback(feedback, not accepted)
 	if not accepted and reason == "command-point-cap":
 		hud.flash_command_points()
+	_refresh_hud()
+
+
+func _upgrade_selected_structure(upgrade_id: String) -> void:
+	if selected_structure_id == 0:
+		hud.set_feedback("Cannot upgrade: select the Archery Range.", true)
+		_refresh_hud()
+		return
+	var result := simulation.queue_structure_upgrade(0, selected_structure_id, upgrade_id)
+	var accepted := bool(result.get("ok", false))
+	hud.set_feedback(
+		"Archery Range level 2 upgrade started."
+		if accepted
+		else "Cannot upgrade Archery Range: %s." % String(result.get("reason", "rejected")).replace("-", " "),
+		not accepted
+	)
 	_refresh_hud()
 
 
@@ -2020,6 +2091,7 @@ func _build_hud() -> void:
 	member_health_overlay.configure(self, camera, battalion_nodes)
 	hud = HudScript.new()
 	hud_root = hud
+	ranger_hud_configuration_error = hud.enable_ranger_content(ContentDB.get_ranger_runtime())
 	layer.add_child(hud)
 	hud.build()
 	var viewport := get_viewport()
@@ -2043,6 +2115,7 @@ func _build_hud() -> void:
 	hud.group_assign_requested.connect(_assign_group)
 	hud.group_recall_requested.connect(_recall_group)
 	hud.train_requested.connect(_queue_selected_producer)
+	hud.structure_upgrade_requested.connect(_upgrade_selected_structure)
 	hud.cancel_production_requested.connect(_cancel_selected_production)
 	hud.attack_move_requested.connect(_arm_attack_move)
 	hud.stop_requested.connect(_stop_selected_units)
