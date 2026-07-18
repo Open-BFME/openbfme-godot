@@ -586,7 +586,7 @@ func _add_battalion(
 		"attack_windup": 0,
 		"attack_sequence": 0,
 		"continuous_fire_count": 0,
-		"last_attack_tick": -1,
+		"continuous_fire_expiration_tick": -1,
 		"member_attack_tokens": member_attack_tokens,
 		"member_attack_start_ticks": member_attack_start_ticks,
 		"member_attack_hit_ticks": member_attack_hit_ticks,
@@ -1612,12 +1612,11 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 		var pre_attack_ticks := maxi(0, int(row.get("pre_attack_ticks", 0)))
 		var maximum_stagger := maxi(0, MEMBER_ATTACK_STAGGER_WINDOW_TICKS - 1)
 		var coast_ticks := maxi(0, int(row.get("continuous_fire_coast_ticks", 0)))
-		var prior_attack_tick := int(row.get("last_attack_tick", -1))
-		if prior_attack_tick < 0 or (coast_ticks > 0 and tick_index - prior_attack_tick > coast_ticks):
+		var expiration_tick := int(row.get("continuous_fire_expiration_tick", -1))
+		if expiration_tick < 0 or tick_index >= expiration_tick:
 			row["continuous_fire_count"] = 0
 		row["attack_sequence"] = int(row.get("attack_sequence", 0)) + 1
 		row["continuous_fire_count"] = int(row.get("continuous_fire_count", 0)) + 1
-		row["last_attack_tick"] = tick_index
 		var attack_sequence := int(row["attack_sequence"])
 		for member_index in range(member_health_values.size()):
 			if int(member_health_values[member_index]) <= 0:
@@ -1630,11 +1629,20 @@ func _step_member_attacks(attacker_id: int, row: Dictionary, target_id: int, tar
 			# Every member owns its attack boundary. This avoids the old whole-
 			# horde structure impact while preserving deterministic replay.
 			hit_ticks[member_index] = tick_index + stagger + pre_attack_ticks
-		var cadence_ticks := maxi(1, int(row.get("attack_period_ticks", 1)))
 		var continuous_threshold := maxi(0, int(row.get("continuous_fire_one", 0)))
 		var rate_multiplier := maxf(1.0, float(row.get("continuous_fire_rate_multiplier", 1.0)))
-		if continuous_threshold > 0 and int(row["continuous_fire_count"]) >= continuous_threshold:
-			cadence_ticks = maxi(1, roundi(float(cadence_ticks) / rate_multiplier))
+		var reload_or_delay_ms := float(row.get("delay_between_shots_ms", 0.0))
+		if int(row.get("clip_size", 0)) == 1:
+			reload_or_delay_ms = float(row.get("clip_reload_time_ms", reload_or_delay_ms))
+		if continuous_threshold > 0 and int(row["continuous_fire_count"]) > continuous_threshold:
+			reload_or_delay_ms = floorf(reload_or_delay_ms / rate_multiplier)
+		var cadence_ms := (
+			float(row.get("pre_attack_delay_ms", 0.0))
+			+ float(row.get("firing_duration_ms", 0.0))
+			+ reload_or_delay_ms
+		)
+		var cadence_ticks := maxi(1, roundi(cadence_ms / (TICK_SECONDS * 1000.0)))
+		row["continuous_fire_expiration_tick"] = tick_index + cadence_ticks + coast_ticks
 		row["attack_cooldown"] = maxi(
 			cadence_ticks,
 			pre_attack_ticks + maximum_stagger + 1

@@ -215,14 +215,29 @@ func _run() -> void:
 			and int(battalion.archer_projectiles_presented) > 0
 			and _active_projectiles_use_launch_bone(battalion.archer_projectile_controller, "ARROW")
 	)
-	sim.advance(30)
+	sim.advance(50)
 	var swing_ticks := _event_ticks(sim.events, "combat.swing", ranger_id)
 	_check(
 		"ranger_clip_reload_and_continuous_fire_drive_cadence",
-		swing_ticks.size() >= 3
+		swing_ticks.size() >= 4
 			and swing_ticks[1] - swing_ticks[0] == 18
-			and swing_ticks[2] - swing_ticks[1] == 8,
+			and swing_ticks[2] - swing_ticks[1] == 18
+			and swing_ticks[3] - swing_ticks[2] == 10,
 		str(swing_ticks)
+	)
+	var ranger_row := sim.entities[ranger_id] as Dictionary
+	var swing_count_before_pause := swing_ticks.size()
+	(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(ranger_row.get("position", start)) + Vector2(switch_distance, 0.0)
+	sim.advance(35)
+	(sim.entities[enemy_id] as Dictionary)["position"] = Vector2(ranger_row.get("position", start)) + Vector2(switch_distance + 1.6, 0.0)
+	sim.advance(1)
+	var swing_ticks_after_pause := _event_ticks(sim.events, "combat.swing", ranger_id)
+	_check(
+		"ranger_continuous_fire_coast_resets_from_possible_next_shot",
+		swing_ticks_after_pause.size() == swing_count_before_pause + 1
+			and int(ranger_row.get("continuous_fire_count", 0)) == 1
+			and int(ranger_row.get("attack_cooldown", 0)) == 18,
+		str(ranger_row)
 	)
 
 	var routes_ok := true
