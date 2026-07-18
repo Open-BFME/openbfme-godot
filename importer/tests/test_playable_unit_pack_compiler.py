@@ -49,14 +49,16 @@ def _descriptor(target: str) -> dict[str, object]:
             }
             for index, identifier in enumerate(sorted(image_ids, key=str.casefold))
         },
-        resolved_audio={identifier: [f"audio/{identifier}.wav"] for identifier in audio_ids},
+        resolved_audio={
+            identifier: [f"audio/{identifier}.wav"] for identifier in audio_ids
+        },
     )
     capability_ids = {row["id"] for row in descriptor["capabilities"]}
     for identifier in ("move", "attack", "death"):
-        if identifier not in capability_ids and not (
-            identifier == "attack" and "ranged-attack" in capability_ids
-        ) and not (
-            identifier == "death" and "member-death" in capability_ids
+        if (
+            identifier not in capability_ids
+            and not (identifier == "attack" and "ranged-attack" in capability_ids)
+            and not (identifier == "death" and "member-death" in capability_ids)
         ):
             descriptor["capabilities"].append(
                 {"id": identifier, "evidence": "fixture runtime capability"}
@@ -109,7 +111,9 @@ def _leaf(
     }
 
 
-def _closure(descriptor: dict[str, object], *, conditional_death: bool = False) -> dict[str, object]:
+def _closure(
+    descriptor: dict[str, object], *, conditional_death: bool = False
+) -> dict[str, object]:
     member = descriptor["composition"]["primaryMemberObjectId"]
     container = descriptor["composition"]["containerObjectId"]
     slug = str(member).casefold()
@@ -130,10 +134,38 @@ def _closure(descriptor: dict[str, object], *, conditional_death: bool = False) 
     primary_visual = visual_ids[0]
     leaves = [
         _leaf(member, primary_visual, "model", model, [], "DefaultModelConditionState"),
-        _leaf(member, f"{member}_IDLA", "animation", paths["idle"], [], "IdleAnimationState"),
-        _leaf(member, f"{member}_RUNA", "animation", paths["move"], ["MOVING"], "AnimationState MOVING"),
-        _leaf(member, f"{member}_ATAKA", "animation", paths["attack"], ["FIRING_A"], "AnimationState FIRING_A"),
-        _leaf(member, f"{member}_DIEA", "animation", paths["death"], ["DYING", "DEATH_1"], "AnimationState DYING DEATH_1"),
+        _leaf(
+            member,
+            f"{member}_IDLA",
+            "animation",
+            paths["idle"],
+            [],
+            "IdleAnimationState",
+        ),
+        _leaf(
+            member,
+            f"{member}_RUNA",
+            "animation",
+            paths["move"],
+            ["MOVING"],
+            "AnimationState MOVING",
+        ),
+        _leaf(
+            member,
+            f"{member}_ATAKA",
+            "animation",
+            paths["attack"],
+            ["FIRING_A"],
+            "AnimationState FIRING_A",
+        ),
+        _leaf(
+            member,
+            f"{member}_DIEA",
+            "animation",
+            paths["death"],
+            ["DYING", "DEATH_1"],
+            "AnimationState DYING DEATH_1",
+        ),
     ]
     for index, identifier in enumerate(visual_ids[1:], start=1):
         auxiliary_path = f"art/w3d/fi/{slug}_aux{index}.w3d"
@@ -184,7 +216,9 @@ def _closure(descriptor: dict[str, object], *, conditional_death: bool = False) 
                 "sha256": hashlib.sha256(path.encode()).hexdigest(),
                 "headerIds": {
                     "virtualPath": path,
-                    "modelIds": [f"{member}_DIE_MODEL"] if conditional_death and state == "death" else [],
+                    "modelIds": [f"{member}_DIE_MODEL"]
+                    if conditional_death and state == "death"
+                    else [],
                     "hierarchyIds": [],
                     "animationIds": [f"{hierarchy}.{member}_{state.upper()}"],
                 },
@@ -306,7 +340,9 @@ def _rehash_closure(closure: dict[str, object]) -> None:
         ("MonsterUnit", "monster"),
     ],
 )
-def test_same_compiler_emits_complete_category_recipes(target: str, category: str) -> None:
+def test_same_compiler_emits_complete_category_recipes(
+    target: str, category: str
+) -> None:
     descriptor = _descriptor(target)
     recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
     validate_playable_unit_pack_recipe(recipe)
@@ -321,7 +357,9 @@ def test_same_compiler_emits_complete_category_recipes(target: str, category: st
     assert recipe["runtimeRegistration"]["production"] == descriptor["production"]
     assert recipe["runtimeRegistration"]["composition"] == descriptor["composition"]
     converters = {row["converter"] for row in recipe["resources"]}
-    assert {"hash-only", "texture-atlas-crops", "audio", "w3d-bundle"}.issubset(converters)
+    assert {"hash-only", "texture-atlas-crops", "audio", "w3d-bundle"}.issubset(
+        converters
+    )
     assert converters.issubset(
         {
             "copy",
@@ -385,6 +423,42 @@ def test_unresolved_selected_texture_fails_closed() -> None:
         compile_playable_unit_pack_recipe(descriptor, closure)
 
 
+def test_authored_silent_command_audio_has_an_explicit_empty_binding() -> None:
+    descriptor = _descriptor("InfantryHorde")
+    command = descriptor["presentation"]["ui"]["commands"][0]
+    command["audioRoutes"] = [
+        {
+            "field": "UnitSpecificSound",
+            "id": "SilentPurchaseEvent",
+            "tokenOrdinal": 0,
+            "resolution": "resolved",
+            "sourceIni": "data/ini/commandbutton.ini",
+        }
+    ]
+    descriptor["presentation"]["resolvedAudio"]["SilentPurchaseEvent"] = []
+    _rehash_descriptor(descriptor)
+    recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
+    assert recipe["runtimeRegistration"]["audioBindings"]["SilentPurchaseEvent"] == []
+    assert (
+        recipe["runtimeRegistration"]["audioResolution"]["SilentPurchaseEvent"]
+        == "authored-silent"
+    )
+    validate_playable_unit_pack_recipe(recipe)
+
+    invented = deepcopy(recipe)
+    invented["runtimeRegistration"]["audioBindings"]["InventedSilent"] = []
+    invented["runtimeRegistration"]["audioResolution"]["InventedSilent"] = (
+        "authored-silent"
+    )
+    unsigned = dict(invented)
+    unsigned.pop("recipeSha256")
+    invented["recipeSha256"] = hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    with pytest.raises(PlayableUnitPackCompilerError, match="audio binding"):
+        validate_playable_unit_pack_recipe(invented)
+
+
 def test_tampered_recipe_digest_is_rejected() -> None:
     descriptor = _descriptor("InfantryHorde")
     recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
@@ -409,7 +483,9 @@ def test_missing_scanned_hierarchy_is_never_invented() -> None:
     for row in closure["scannedW3d"]:
         row["headerIds"]["hierarchyIds"] = []
     _rehash_closure(closure)
-    with pytest.raises(PlayableUnitPackCompilerError, match="not backed by a scanned W3D"):
+    with pytest.raises(
+        PlayableUnitPackCompilerError, match="not backed by a scanned W3D"
+    ):
         compile_playable_unit_pack_recipe(descriptor, closure)
 
 
@@ -467,8 +543,12 @@ def test_mixed_member_horde_fails_until_per_member_presentation_exists() -> None
         {"objectId": "SecondMember", "count": 1}
     )
     _rehash_descriptor(descriptor)
-    with pytest.raises(PlayableUnitPackCompilerError, match="secondary member presentation"):
-        compile_playable_unit_pack_recipe(descriptor, _closure(_descriptor("InfantryHorde")))
+    with pytest.raises(
+        PlayableUnitPackCompilerError, match="secondary member presentation"
+    ):
+        compile_playable_unit_pack_recipe(
+            descriptor, _closure(_descriptor("InfantryHorde"))
+        )
 
 
 def test_rehashed_unsafe_or_dangling_recipe_is_rejected() -> None:
@@ -510,6 +590,23 @@ def test_audio_outputs_are_executable_pcm_wav_rules() -> None:
     assert audio
     assert all(row["output"].endswith(".wav") for row in audio)
     assert all(row["options"] == {"force_pcm": True} for row in audio)
+
+
+def test_shared_audio_sample_is_converted_once_across_routes() -> None:
+    descriptor = _descriptor("HeroUnit")
+    resolved = descriptor["presentation"]["resolvedAudio"]
+    identifiers = sorted(resolved, key=str.casefold)
+    assert len(identifiers) >= 2
+    resolved[identifiers[1]] = list(resolved[identifiers[0]])
+    _rehash_descriptor(descriptor)
+    recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
+    audio = [row for row in recipe["resources"] if row["converter"] == "audio"]
+    unique_sources = {
+        source.casefold() for values in resolved.values() for source in values
+    }
+    assert len(audio) == len(unique_sources)
+    bindings = recipe["runtimeRegistration"]["audioBindings"]
+    assert bindings[identifiers[0]] == bindings[identifiers[1]]
 
 
 def test_shared_ui_atlas_is_one_exact_crop_resource() -> None:
@@ -585,7 +682,9 @@ def test_auxiliary_visual_leaf_is_converted_and_registered() -> None:
     leaf = recipe["runtimeRegistration"]["visual"]["authoredVisualLeaves"][0]
     assert leaf["source"] == source
     assert leaf["runtimeSupport"] == "converted-unbound"
-    resource = next(row for row in recipe["resources"] if row["id"] == leaf["resourceId"])
+    resource = next(
+        row for row in recipe["resources"] if row["id"] == leaf["resourceId"]
+    )
     assert resource["converter"] == "texture"
     assert resource["patterns"] == [source]
 

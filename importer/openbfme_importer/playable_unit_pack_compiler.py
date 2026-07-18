@@ -7,7 +7,7 @@ import hashlib
 import json
 from pathlib import PurePosixPath
 import re
-from typing import Any, Iterable, Mapping
+from typing import Iterable, Mapping
 
 from .paths import safe_relative_parts
 from .playable_unit_compiler import validate_playable_unit_descriptor
@@ -82,14 +82,20 @@ def _safe_path(value: object, label: str) -> str:
 
 
 def _rows(value: object, label: str) -> list[Mapping[str, object]]:
-    if not isinstance(value, list) or any(not isinstance(row, Mapping) for row in value):
+    if not isinstance(value, list) or any(
+        not isinstance(row, Mapping) for row in value
+    ):
         raise PlayableUnitPackCompilerError(f"{label} is invalid")
     return list(value)
 
 
 def _paths(row: Mapping[str, object], label: str) -> tuple[str, ...]:
     raw = row.get("physicalVirtualPaths")
-    if not isinstance(raw, list) or not raw or any(not isinstance(path, str) or not path for path in raw):
+    if (
+        not isinstance(raw, list)
+        or not raw
+        or any(not isinstance(path, str) or not path for path in raw)
+    ):
         raise PlayableUnitPackCompilerError(f"{label} has invalid physical paths")
     normalized = [_safe_path(path, f"{label} path") for path in raw]
     if len({item.casefold() for item in normalized}) != len(normalized):
@@ -110,7 +116,9 @@ def _draw_key(row: Mapping[str, object]) -> tuple[str, str]:
 
 def _state(row: Mapping[str, object]) -> str | None:
     raw_conditions = row.get("conditions", [])
-    if not isinstance(raw_conditions, list) or any(not isinstance(item, str) for item in raw_conditions):
+    if not isinstance(raw_conditions, list) or any(
+        not isinstance(item, str) for item in raw_conditions
+    ):
         raise PlayableUnitPackCompilerError("visual conditions are invalid")
     conditions = {item.upper() for item in raw_conditions}
     provenance = row.get("provenance", {})
@@ -166,7 +174,9 @@ def _hierarchy_dependencies(
             raise PlayableUnitPackCompilerError(f"animation is not scanned: {path}")
         headers = row.get("headerIds")
         if not isinstance(headers, Mapping):
-            raise PlayableUnitPackCompilerError(f"animation headers are invalid: {path}")
+            raise PlayableUnitPackCompilerError(
+                f"animation headers are invalid: {path}"
+            )
         ids = headers.get("animationIds", [])
         if not isinstance(ids, list):
             raise PlayableUnitPackCompilerError(f"animation ids are invalid: {path}")
@@ -181,9 +191,7 @@ def _hierarchy_dependencies(
         headers = row.get("headerIds")
         if not isinstance(headers, Mapping):
             continue
-        authored = {
-            str(value).casefold() for value in headers.get("hierarchyIds", [])
-        }
+        authored = {str(value).casefold() for value in headers.get("hierarchyIds", [])}
         matches = authored & hierarchy_ids
         if matches:
             path = row.get("virtualPath")
@@ -245,9 +253,8 @@ def _validate_dependency_closure(
         summary.get("fileCount") != len(scanned)
         or summary.get("embeddedTextureReferenceCount") != len(embedded)
         or read_boundary.get("uniqueReadCount") != len(scanned)
-        or read_boundary.get("uniqueVirtualPaths") != sorted(
-            scanned_paths, key=lambda item: (item.casefold(), item)
-        )
+        or read_boundary.get("uniqueVirtualPaths")
+        != sorted(scanned_paths, key=lambda item: (item.casefold(), item))
     ):
         raise PlayableUnitPackCompilerError("W3D dependency closure counts drifted")
     statuses = [str(row.get("status", "")) for row in embedded]
@@ -267,7 +274,10 @@ def _validate_resource_values(resources: list[Mapping[str, object]]) -> None:
         identifier = row.get("id")
         kind = row.get("kind")
         converter = row.get("converter")
-        if not isinstance(identifier, str) or SLUG_PATTERN.fullmatch(identifier) is None:
+        if (
+            not isinstance(identifier, str)
+            or SLUG_PATTERN.fullmatch(identifier) is None
+        ):
             raise PlayableUnitPackCompilerError("resource id is invalid")
         if identifier in ids:
             raise PlayableUnitPackCompilerError("resource ids are duplicated")
@@ -321,9 +331,8 @@ def _validate_resource_values(resources: list[Mapping[str, object]]) -> None:
                 or not output.casefold().endswith(".glb")
                 or not isinstance(model, str)
                 or not model
-                or model.casefold() not in {
-                    PurePosixPath(path).name.casefold() for path in normalized
-                }
+                or model.casefold()
+                not in {PurePosixPath(path).name.casefold() for path in normalized}
                 or not isinstance(animations, list)
                 or any(
                     not isinstance(value, str)
@@ -342,10 +351,14 @@ def _validate_resource_values(resources: list[Mapping[str, object]]) -> None:
                 or not output.casefold().endswith(".png")
                 or options
             ):
-                raise PlayableUnitPackCompilerError("texture resource contract is invalid")
+                raise PlayableUnitPackCompilerError(
+                    "texture resource contract is invalid"
+                )
         elif converter == "texture-atlas-crops":
             if len(normalized) != 1 or not isinstance(output, str):
-                raise PlayableUnitPackCompilerError("UI atlas resource contract is invalid")
+                raise PlayableUnitPackCompilerError(
+                    "UI atlas resource contract is invalid"
+                )
             try:
                 normalize_texture_atlas_crops(
                     options.get("crops"), output, context="playable-unit UI atlas"
@@ -363,7 +376,9 @@ def _validate_resource_values(resources: list[Mapping[str, object]]) -> None:
                 or not output.casefold().endswith(".wav")
                 or dict(options) != {"force_pcm": True}
             ):
-                raise PlayableUnitPackCompilerError("audio resource contract is invalid")
+                raise PlayableUnitPackCompilerError(
+                    "audio resource contract is invalid"
+                )
         elif converter == "copy":
             if (
                 len(normalized) != 1
@@ -373,7 +388,9 @@ def _validate_resource_values(resources: list[Mapping[str, object]]) -> None:
             ):
                 raise PlayableUnitPackCompilerError("copy resource contract is invalid")
         elif converter == "hash-only" and (output is not None or options):
-            raise PlayableUnitPackCompilerError("hash-only resource contract is invalid")
+            raise PlayableUnitPackCompilerError(
+                "hash-only resource contract is invalid"
+            )
     for row in resources:
         dependencies = row.get("options", {}).get("inputResourceIds", [])
         if any(value not in ids for value in dependencies):
@@ -393,7 +410,9 @@ def compile_playable_unit_pack_recipe(
         raise PlayableUnitPackCompilerError("visual closure identity is invalid")
     closure_unsigned = dict(visual_closure)
     closure_digest = closure_unsigned.pop("aggregateSha256", None)
-    if not isinstance(closure_digest, str) or closure_digest != _digest(closure_unsigned):
+    if not isinstance(closure_digest, str) or closure_digest != _digest(
+        closure_unsigned
+    ):
         raise PlayableUnitPackCompilerError("visual closure digest is invalid")
     summary = visual_closure.get("summary")
     if not isinstance(summary, Mapping) or summary.get("ready") is not True:
@@ -410,7 +429,8 @@ def compile_playable_unit_pack_recipe(
             "secondary member presentation contract is not available"
         )
     relevant_targets = {
-        container_id.casefold(), *(identifier.casefold() for identifier in member_ids)
+        container_id.casefold(),
+        *(identifier.casefold() for identifier in member_ids),
     }
     scanned = _rows(visual_closure.get("scannedW3d"), "scanned W3D")
     _validate_dependency_closure(visual_closure, scanned)
@@ -443,7 +463,11 @@ def compile_playable_unit_pack_recipe(
     }
     exact_ids = {str(row.get("identifier", "")).casefold() for row in exact}
     missing_visual_ids = sorted(
-        (identifier for identifier in required_visual_ids if identifier.casefold() not in exact_ids),
+        (
+            identifier
+            for identifier in required_visual_ids
+            if identifier.casefold() not in exact_ids
+        ),
         key=str.casefold,
     )
     if missing_visual_ids:
@@ -490,7 +514,9 @@ def compile_playable_unit_pack_recipe(
             raise PlayableUnitPackCompilerError("model conditions are invalid")
         draw_key = _draw_key(row)
         for path in _paths(row, "model"):
-            model_conditions.setdefault(path, set()).update(str(item) for item in conditions)
+            model_conditions.setdefault(path, set()).update(
+                str(item) for item in conditions
+            )
             model_has_unconditional[path] = (
                 model_has_unconditional.get(path, False) or not conditions
             )
@@ -505,7 +531,9 @@ def compile_playable_unit_pack_recipe(
             model_owners.setdefault(path, str(row.get("targetObject", "")))
             previous_key = model_draw_keys.setdefault(path, draw_key)
             if previous_key != draw_key:
-                raise PlayableUnitPackCompilerError("model belongs to multiple draw modules")
+                raise PlayableUnitPackCompilerError(
+                    "model belongs to multiple draw modules"
+                )
             group_models.setdefault(draw_key, set()).add(path)
     group_defaults: dict[tuple[str, str], str] = {}
     for draw_key, paths in group_models.items():
@@ -517,7 +545,9 @@ def compile_playable_unit_pack_recipe(
         if defaults:
             group_defaults[draw_key] = defaults[0]
 
-    state_rows: dict[str, list[Mapping[str, object]]] = {state: [] for state in _CORE_ORDER}
+    state_rows: dict[str, list[Mapping[str, object]]] = {
+        state: [] for state in _CORE_ORDER
+    }
     for row in animation_rows:
         state = _state(row)
         if state is not None:
@@ -529,7 +559,9 @@ def compile_playable_unit_pack_recipe(
             "unit has no resolved core animations: " + ", ".join(missing_states)
         )
 
-    animations_by_model: dict[str, set[str]] = {path: set() for path in model_conditions}
+    animations_by_model: dict[str, set[str]] = {
+        path: set() for path in model_conditions
+    }
     state_bindings: dict[str, list[dict[str, object]]] = {
         state: [] for state in required_states
     }
@@ -552,7 +584,9 @@ def compile_playable_unit_pack_recipe(
             and {item.casefold() for item in model_conditions[path]} & condition_keys
         ]
         if len(conditional_owners) > 1:
-            raise PlayableUnitPackCompilerError("animation model ownership is ambiguous")
+            raise PlayableUnitPackCompilerError(
+                "animation model ownership is ambiguous"
+            )
         if conditional_owners:
             owner = conditional_owners[0]
         else:
@@ -577,7 +611,9 @@ def compile_playable_unit_pack_recipe(
                     **binding,
                     "semanticState": semantic_state,
                     "runtimeSupport": (
-                        "generic-core" if semantic_state in required_states else "packaged-unimplemented"
+                        "generic-core"
+                        if semantic_state in required_states
+                        else "packaged-unimplemented"
                     ),
                 }
             )
@@ -628,10 +664,14 @@ def compile_playable_unit_pack_recipe(
         )
     components: list[dict[str, object]] = []
     for index, model_path in enumerate(
-        sorted(model_conditions, key=lambda item: (item != default_model, item.casefold(), item))
+        sorted(
+            model_conditions,
+            key=lambda item: (item != default_model, item.casefold(), item),
+        )
     ):
         animations = sorted(
-            animations_by_model.get(model_path, set()), key=lambda item: (item.casefold(), item)
+            animations_by_model.get(model_path, set()),
+            key=lambda item: (item.casefold(), item),
         )
         component_hierarchies = sorted(
             set(_hierarchy_dependencies(animations, scanned)), key=str.casefold
@@ -670,10 +710,13 @@ def compile_playable_unit_pack_recipe(
                     model_occurrences[model_path],
                     key=lambda row: _canonical_bytes(row),
                 ),
-                "default": model_has_unconditional[model_path] and model_path == default_model,
+                "default": model_has_unconditional[model_path]
+                and model_path == default_model,
                 "ownerObjectId": model_owners[model_path],
                 "drawModule": model_draw_keys[model_path][1],
-                "role": "primary-member" if model_path == default_model else "auxiliary-or-conditional",
+                "role": "primary-member"
+                if model_path == default_model
+                else "auxiliary-or-conditional",
             }
         )
 
@@ -685,14 +728,18 @@ def compile_playable_unit_pack_recipe(
         if not isinstance(conditions, list) or any(
             not isinstance(value, str) for value in conditions
         ):
-            raise PlayableUnitPackCompilerError("auxiliary visual conditions are invalid")
+            raise PlayableUnitPackCompilerError(
+                "auxiliary visual conditions are invalid"
+            )
         for source in _paths(row, f"auxiliary visual {kind}"):
             suffix = PurePosixPath(source).suffix.casefold()
             is_texture = suffix in {".dds", ".tga", ".jpg", ".png"}
             resource_key = (source.casefold(), "texture" if is_texture else "source")
             resource = auxiliary_resources.get(resource_key)
             if resource is None:
-                fingerprint = hashlib.sha256(source.casefold().encode()).hexdigest()[:12]
+                fingerprint = hashlib.sha256(source.casefold().encode()).hexdigest()[
+                    :12
+                ]
                 resource_id = _resource_id("unit", slug, "visual-leaf", fingerprint)
                 if is_texture:
                     output = f"assets/visual/units/{slug}/{fingerprint}.png"
@@ -829,8 +876,12 @@ def compile_playable_unit_pack_recipe(
                 if str(value).casefold() not in {"", "none"}:
                     required_image_ids.add(str(value))
     image_keys = {str(key).casefold() for key in images}
-    if any(identifier.casefold() not in image_keys for identifier in required_image_ids):
-        raise PlayableUnitPackCompilerError("descriptor has unresolved UI image bindings")
+    if any(
+        identifier.casefold() not in image_keys for identifier in required_image_ids
+    ):
+        raise PlayableUnitPackCompilerError(
+            "descriptor has unresolved UI image bindings"
+        )
     required_audio_ids = {
         str(row.get("id", ""))
         for owner in audio_routes.values()
@@ -840,8 +891,17 @@ def compile_playable_unit_pack_recipe(
         for row in rows
         if isinstance(row, Mapping) and row.get("id")
     }
+    required_audio_ids.update(
+        str(route.get("id", ""))
+        for command in ui.get("commands", [])
+        if isinstance(command, Mapping)
+        for route in command.get("audioRoutes", [])
+        if isinstance(route, Mapping) and route.get("id")
+    )
     audio_keys = {str(key).casefold() for key in audio}
-    if any(identifier.casefold() not in audio_keys for identifier in required_audio_ids):
+    if any(
+        identifier.casefold() not in audio_keys for identifier in required_audio_ids
+    ):
         raise PlayableUnitPackCompilerError("descriptor has unresolved audio bindings")
     mapped_by_atlas: dict[str, list[tuple[str, Mapping[str, object]]]] = {}
     for identifier, image in images.items():
@@ -856,16 +916,25 @@ def compile_playable_unit_pack_recipe(
         sorted(mapped_by_atlas.items(), key=lambda item: item[0].casefold())
     ):
         atlas_digest = hashlib.sha256(source.casefold().encode()).hexdigest()[:12]
-        resource_id = _resource_id("unit", slug, "ui-atlas", str(atlas_index), atlas_digest)
+        resource_id = _resource_id(
+            "unit", slug, "ui-atlas", str(atlas_index), atlas_digest
+        )
         output_directory = f"assets/ui/units/{slug}/{atlas_digest}"
         crops: list[dict[str, object]] = []
         for identifier, image in sorted(records, key=lambda item: item[0].casefold()):
             coords = image.get("coords")
             if not isinstance(coords, Mapping):
-                raise PlayableUnitPackCompilerError(f"UI image crop is invalid: {identifier}")
+                raise PlayableUnitPackCompilerError(
+                    f"UI image crop is invalid: {identifier}"
+                )
             values = [coords.get(name) for name in ("left", "top", "right", "bottom")]
-            if any(not isinstance(value, int) or isinstance(value, bool) for value in values):
-                raise PlayableUnitPackCompilerError(f"UI image crop is invalid: {identifier}")
+            if any(
+                not isinstance(value, int) or isinstance(value, bool)
+                for value in values
+            ):
+                raise PlayableUnitPackCompilerError(
+                    f"UI image crop is invalid: {identifier}"
+                )
             output_name = f"{_slug(identifier)}-{hashlib.sha256(identifier.casefold().encode()).hexdigest()[:8]}.png"
             crops.append(
                 {
@@ -894,29 +963,42 @@ def compile_playable_unit_pack_recipe(
             }
         )
     audio_bindings: dict[str, list[str]] = {}
-    for identifier, source_values in sorted(audio.items(), key=lambda item: str(item[0]).casefold()):
-        if not isinstance(source_values, list) or not source_values:
-            raise PlayableUnitPackCompilerError(f"audio binding {identifier} is invalid")
-        outputs: list[str] = []
-        for index, source_value in enumerate(source_values):
-            source = _safe_path(source_value, f"audio sample {identifier}")
-            resource_id = _resource_id("unit", slug, "audio", str(identifier), str(index))
-            output = f"assets/audio/units/{slug}/{_slug(str(identifier))}-{index:03d}.wav"
-            resources.append(
-                {
-                    "id": resource_id,
-                    "kind": "audio",
-                    "converter": "audio",
-                    "patterns": [source],
-                    "output": output,
-                    "options": {"force_pcm": True},
-                    "required": True,
-                    "limit": 1,
-                    "expected_count": 1,
-                }
+    audio_resources_by_source: dict[str, str] = {}
+    for identifier, source_values in sorted(
+        audio.items(), key=lambda item: str(item[0]).casefold()
+    ):
+        if not isinstance(source_values, list):
+            raise PlayableUnitPackCompilerError(
+                f"audio binding {identifier} is invalid"
             )
+        if not source_values:
+            audio_bindings[str(identifier)] = []
+            continue
+        outputs: list[str] = []
+        for source_value in source_values:
+            source = _safe_path(source_value, f"audio sample {identifier}")
+            source_key = source.casefold()
+            output = audio_resources_by_source.get(source_key, "")
+            if not output:
+                fingerprint = hashlib.sha256(source_key.encode()).hexdigest()[:16]
+                resource_id = _resource_id("unit", slug, "audio", fingerprint)
+                output = f"assets/audio/units/{slug}/{fingerprint}.wav"
+                resources.append(
+                    {
+                        "id": resource_id,
+                        "kind": "audio",
+                        "converter": "audio",
+                        "patterns": [source],
+                        "output": output,
+                        "options": {"force_pcm": True},
+                        "required": True,
+                        "limit": 1,
+                        "expected_count": 1,
+                    }
+                )
+                audio_resources_by_source[source_key] = output
             outputs.append(output)
-        audio_bindings[str(identifier)] = outputs
+        audio_bindings[str(identifier)] = sorted(set(outputs), key=str.casefold)
     _validate_resource_values(resources)
 
     recipe: dict[str, object] = {
@@ -944,6 +1026,12 @@ def compile_playable_unit_pack_recipe(
             "imageBindings": image_bindings,
             "audioRoutes": deepcopy(audio_routes),
             "audioBindings": audio_bindings,
+            "audioResolution": {
+                identifier: ("samples" if paths else "authored-silent")
+                for identifier, paths in sorted(
+                    audio_bindings.items(), key=lambda item: item[0].casefold()
+                )
+            },
             "unsupportedCapabilities": deepcopy(descriptor["unsupportedCapabilities"]),
         },
     }
@@ -981,16 +1069,26 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             or not isinstance(source, str)
             or not isinstance(output, str)
         ):
-            raise PlayableUnitPackCompilerError("runtime component reference is invalid")
+            raise PlayableUnitPackCompilerError(
+                "runtime component reference is invalid"
+            )
         resource = resources_by_id[resource_id]
-        if resource.get("output") != output or source not in resource.get("patterns", []):
-            raise PlayableUnitPackCompilerError("runtime component disagrees with resource")
+        if resource.get("output") != output or source not in resource.get(
+            "patterns", []
+        ):
+            raise PlayableUnitPackCompilerError(
+                "runtime component disagrees with resource"
+            )
         if source in component_by_model:
             raise PlayableUnitPackCompilerError("runtime component model is duplicated")
         component_by_model[source] = component
     core = visual.get("coreAnimations")
-    if not isinstance(core, Mapping) or any(not isinstance(rows, list) or not rows for rows in core.values()):
-        raise PlayableUnitPackCompilerError("runtime core animation bindings are invalid")
+    if not isinstance(core, Mapping) or any(
+        not isinstance(rows, list) or not rows for rows in core.values()
+    ):
+        raise PlayableUnitPackCompilerError(
+            "runtime core animation bindings are invalid"
+        )
     authored = _rows(visual.get("authoredAnimationStates"), "authored animation states")
     authored_keys = {
         (str(row.get("sourceW3d", "")), str(row.get("identifier", "")))
@@ -1007,7 +1105,10 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             if component is None:
                 raise PlayableUnitPackCompilerError("animation owner is dangling")
             resource = resources_by_id[str(component["resourceId"])]
-            if source not in resource.get("patterns", []) or (source, identifier) not in authored_keys:
+            if (
+                source not in resource.get("patterns", [])
+                or (source, identifier) not in authored_keys
+            ):
                 raise PlayableUnitPackCompilerError("animation binding is not packaged")
     visual_leaves = _rows(visual.get("authoredVisualLeaves"), "authored visual leaves")
     for leaf in visual_leaves:
@@ -1020,9 +1121,13 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             or not isinstance(source, str)
             or not isinstance(output, str)
         ):
-            raise PlayableUnitPackCompilerError("authored visual leaf reference is invalid")
+            raise PlayableUnitPackCompilerError(
+                "authored visual leaf reference is invalid"
+            )
         resource = resources_by_id[resource_id]
-        if source not in resource.get("patterns", []) or output != resource.get("output"):
+        if source not in resource.get("patterns", []) or output != resource.get(
+            "output"
+        ):
             raise PlayableUnitPackCompilerError("authored visual leaf is not packaged")
     semantics = _rows(
         visual.get("authoredVisualSemantics"), "authored visual semantics"
@@ -1047,7 +1152,9 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             or not isinstance(semantic.get("usage"), str)
             or not semantic.get("usage")
             or not isinstance(semantic.get("conditions"), list)
-            or any(not isinstance(value, str) for value in semantic.get("conditions", []))
+            or any(
+                not isinstance(value, str) for value in semantic.get("conditions", [])
+            )
             or not isinstance(semantic.get("lifecyclePhases"), list)
             or any(
                 not isinstance(value, str)
@@ -1087,15 +1194,41 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
                 declared_outputs.add(f"{directory}/{crop['output']}")
     image_bindings = runtime.get("imageBindings")
     audio_bindings = runtime.get("audioBindings")
+    audio_resolution = runtime.get("audioResolution")
     if not isinstance(image_bindings, Mapping) or any(
         value not in declared_outputs for value in image_bindings.values()
     ):
         raise PlayableUnitPackCompilerError("UI binding output is dangling")
-    if not isinstance(audio_bindings, Mapping) or any(
-        not isinstance(values, list)
-        or not values
-        or any(value not in declared_outputs for value in values)
-        for values in audio_bindings.values()
+    declared_audio_ids = {
+        str(row.get("id", ""))
+        for owner in runtime.get("audioRoutes", {}).values()
+        if isinstance(owner, Mapping)
+        for rows in owner.values()
+        if isinstance(rows, list)
+        for row in rows
+        if isinstance(row, Mapping) and row.get("id")
+    }
+    ui = runtime.get("ui", {})
+    if isinstance(ui, Mapping):
+        declared_audio_ids.update(
+            str(route.get("id", ""))
+            for command in ui.get("commands", [])
+            if isinstance(command, Mapping)
+            for route in command.get("audioRoutes", [])
+            if isinstance(route, Mapping) and route.get("id")
+        )
+    if (
+        not isinstance(audio_bindings, Mapping)
+        or not isinstance(audio_resolution, Mapping)
+        or set(audio_bindings) != declared_audio_ids
+        or set(audio_resolution) != declared_audio_ids
+        or any(
+            not isinstance(values, list)
+            or audio_resolution.get(identifier)
+            != ("samples" if values else "authored-silent")
+            or any(value not in declared_outputs for value in values)
+            for identifier, values in audio_bindings.items()
+        )
     ):
         raise PlayableUnitPackCompilerError("audio binding output is dangling")
 

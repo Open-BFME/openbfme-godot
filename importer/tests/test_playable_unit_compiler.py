@@ -32,9 +32,7 @@ def _object(
         else ""
     )
     special_block = (
-        "  Behavior = RespawnUpdate ModuleTag_Respawn\n"
-        "    DeathAnim = DYING\n"
-        "  End\n"
+        "  Behavior = RespawnUpdate ModuleTag_Respawn\n    DeathAnim = DYING\n  End\n"
         if special
         else ""
     )
@@ -47,6 +45,7 @@ Object {name}
   VisionRange = 300
   SelectPortrait = UP{name}
   VoiceSelect = {name}VoiceSelect
+  VoicePriority = 43
   VoiceMove = {name}VoiceMove
   VoiceAttack = {name}VoiceAttack
   Draw = W3DScriptedModelDraw ModuleTag_Draw
@@ -83,7 +82,10 @@ End
 """
     objects += _object("InfantryMember", "INFANTRY", "InfantryModel")
     objects += _object(
-        "InfantryHorde", "HORDE", "InfantryHordeModel", payload="InfantryMember #MULTIPLY( GOOD_HORDE_SIZE 1 )"
+        "InfantryHorde",
+        "HORDE",
+        "InfantryHordeModel",
+        payload="InfantryMember #MULTIPLY( GOOD_HORDE_SIZE 1 )",
     )
     objects += _object("RangedMember", "INFANTRY ARCHER", "RangedModel")
     objects += _object(
@@ -141,7 +143,9 @@ End
         ("Command_BuildChildHorde", "ChildHorde"),
         ("Command_BuildInfantryAlternate", "InfantryHorde"),
     ):
-        image = "BIInfantryAlternate" if command.endswith("Alternate") else f"BI{target}"
+        image = (
+            "BIInfantryAlternate" if command.endswith("Alternate") else f"BI{target}"
+        )
         commands.append(
             f"""
 CommandButton {command}
@@ -186,7 +190,9 @@ def test_compiles_categories_without_object_specific_rules(
 ) -> None:
     documents = _documents()
     result = compile_playable_unit_descriptor(target, documents)
-    repeated = compile_playable_unit_descriptor(target, dict(reversed(documents.items())))
+    repeated = compile_playable_unit_descriptor(
+        target, dict(reversed(documents.items()))
+    )
 
     validate_playable_unit_descriptor(result)
     assert result == repeated
@@ -255,6 +261,84 @@ def test_each_production_route_retains_its_own_ui() -> None:
     assert bindings["Command_BuildInfantry"]["ButtonImage"] == ["BIInfantryHorde"]
     assert bindings["Command_BuildInfantryAlternate"]["ButtonImage"] == [
         "BIInfantryAlternate"
+    ]
+
+
+def test_faction_graph_audio_edges_reject_numeric_lookalikes() -> None:
+    documents = _documents()
+    documents["data/ini/playertemplate.ini"] = b"""
+PlayerTemplate FactionMen
+  Side = Men
+  StartingBuilding = UniversalFactory
+  BuildableHeroesMP = HeroUnit
+End
+"""
+    object_ids = (
+        "UniversalFactory",
+        "AlternateFactory",
+        "InfantryHorde",
+        "InfantryMember",
+    )
+    graph = {
+        "target": {"playerTemplate": "FactionMen"},
+        "definitions": {
+            "objects": [
+                {
+                    "id": identifier,
+                    "edges": (
+                        [
+                            {
+                                "field": field,
+                                "targetId": f"{identifier}{suffix}",
+                                "targetKind": "audio-definition",
+                            }
+                            for field, suffix in (
+                                ("VoiceSelect", "VoiceSelect"),
+                                ("VoiceMove", "VoiceMove"),
+                                ("VoiceAttack", "VoiceAttack"),
+                            )
+                        ]
+                        if identifier in {"InfantryHorde", "InfantryMember"}
+                        else []
+                    ),
+                }
+                for identifier in object_ids
+            ],
+            "commandButtons": [
+                {
+                    "id": "Command_BuildInfantry",
+                    "audioRoutes": [
+                        {
+                            "field": "UnitSpecificSound",
+                            "targetId": "InfantryVoicePurchase",
+                            "tokenOrdinal": 0,
+                            "resolution": "resolved",
+                        },
+                        {
+                            "field": "UnitSpecificSound",
+                            "targetId": "InfantryVoiceFormation",
+                            "tokenOrdinal": 1,
+                            "resolution": "resolved",
+                        },
+                    ],
+                }
+            ],
+        },
+    }
+    result = compile_playable_unit_descriptor(
+        "InfantryHorde", documents, faction_graph=graph
+    )
+    routes = result["presentation"]["audioRoutes"]
+    assert "VoicePriority" not in routes["container"]
+    assert "VoicePriority" not in routes["primaryMember"]
+    assert routes["primaryMember"]["VoiceMove"][0]["id"] == ("InfantryMemberVoiceMove")
+    commands = result["presentation"]["ui"]["commands"]
+    purchase = next(
+        row for row in commands if row["commandId"] == "Command_BuildInfantry"
+    )
+    assert [row["id"] for row in purchase["audioRoutes"]] == [
+        "InfantryVoicePurchase",
+        "InfantryVoiceFormation",
     ]
 
 
@@ -334,8 +418,9 @@ def test_traversed_behavior_semantics_change_identity() -> None:
     changed = compile_playable_unit_descriptor("MonsterUnit", documents)
 
     assert changed["descriptorSha256"] != baseline["descriptorSha256"]
-    assert changed["runtimeModuleEvidence"][0]["semanticSha256"] != (
-        baseline["runtimeModuleEvidence"][0]["semanticSha256"]
+    assert (
+        changed["runtimeModuleEvidence"][0]["semanticSha256"]
+        != (baseline["runtimeModuleEvidence"][0]["semanticSha256"])
     )
 
 
@@ -444,7 +529,9 @@ def test_validation_rejects_rehashed_structural_corruption() -> None:
         ),
     ),
 )
-def test_validation_rejects_other_rehashed_missing_subtrees(mutation, message: str) -> None:
+def test_validation_rejects_other_rehashed_missing_subtrees(
+    mutation, message: str
+) -> None:
     corrupted = compile_playable_unit_descriptor("HeroUnit", _documents())
     mutation(corrupted)
     unsigned = dict(corrupted)
@@ -478,9 +565,7 @@ def test_validation_rejects_rehashed_malformed_nested_reference() -> None:
         ).encode("utf-8")
     ).hexdigest()
 
-    with pytest.raises(
-        PlayableUnitCompilerError, match="reference collection"
-    ):
+    with pytest.raises(PlayableUnitCompilerError, match="reference collection"):
         validate_playable_unit_descriptor(corrupted)
 
 
@@ -501,9 +586,7 @@ def test_validation_cross_checks_module_evidence_fields() -> None:
         ).encode("utf-8")
     ).hexdigest()
 
-    with pytest.raises(
-        PlayableUnitCompilerError, match="runtime modules disagree"
-    ):
+    with pytest.raises(PlayableUnitCompilerError, match="runtime modules disagree"):
         validate_playable_unit_descriptor(corrupted)
 
 

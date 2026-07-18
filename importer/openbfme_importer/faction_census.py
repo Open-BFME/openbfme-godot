@@ -20,7 +20,12 @@ from .sage_audio import (
     resolve_sage_audio_closure,
 )
 from .sage_gameplay import resolve_gameplay_definition_closure
-from .sage_ini import IniBlock, MAX_INI_BYTES, parse_flat_named_blocks, parse_object_definitions
+from .sage_ini import (
+    IniBlock,
+    MAX_INI_BYTES,
+    parse_flat_named_blocks,
+    parse_object_definitions,
+)
 from .sage_string import parse_string_catalog
 
 
@@ -85,7 +90,9 @@ class _ObjectDefinition:
 def _read_document(catalog: InstallCatalog, virtual_path: str) -> _SourceDocument:
     entry = catalog.resolve_exact(virtual_path)
     if entry is None:
-        raise ValueError(f"catalog is missing required faction census input: {virtual_path}")
+        raise ValueError(
+            f"catalog is missing required faction census input: {virtual_path}"
+        )
     archive = catalog.open_archive_for(entry)
     source = archive.read_entry(catalog.as_entry(entry), max_bytes=MAX_INI_BYTES)
     return _SourceDocument(
@@ -117,7 +124,11 @@ def _effective_entries(catalog: InstallCatalog) -> dict[str, CatalogEntry]:
     winners: dict[str, CatalogEntry] = {}
     for entry in sorted(
         catalog.entries,
-        key=lambda item: (item.precedence, item.archive.casefold(), item.name.casefold()),
+        key=lambda item: (
+            item.precedence,
+            item.archive.casefold(),
+            item.name.casefold(),
+        ),
     ):
         winners.setdefault(entry.key, entry)
     return winners
@@ -193,6 +204,72 @@ def _block_values(block: IniBlock, key: str) -> list[str]:
     return list(block.values(key))
 
 
+_OBJECT_AUDIO_VALUE_FIELDS = frozenset(
+    value.casefold()
+    for value in (
+        "ActiveLoopSound",
+        "BeingBuiltSound",
+        "EnterSound",
+        "ExitSound",
+        "InitiateSound",
+        "SelfBuildingLoop",
+        "SelfRepairFromDamageLoop",
+        "SelfRepairFromRubbleLoop",
+        "SoundAmbient",
+        "SoundAmbientDamaged",
+        "SoundAmbientReallyDamaged",
+        "SoundClosingGateLoop",
+        "SoundCreated",
+        "SoundCrushing",
+        "SoundDeploy",
+        "SoundFinishedClosingGate",
+        "SoundFinishedOpeningGate",
+        "SoundImpact",
+        "SoundMoveLoop",
+        "SoundMoveStart",
+        "SoundOnDamaged",
+        "SoundOnReallyDamaged",
+        "SoundOpeningGateLoop",
+        "SoundStealthOff",
+        "SoundStealthOn",
+        "SoundToPlay",
+        "SoundUndeploy",
+        "SpeedBonusAudioLoop",
+        "TriggerSound",
+    )
+)
+_COMMAND_AUDIO_VALUE_FIELDS = frozenset(
+    {"setautoabilityunitsound", "unitspecificsound"}
+)
+_AUDIO_SENTINELS = frozenset({"none", "null", "nosound", "0"})
+
+
+def _object_audio_reference_ordinals(field: str) -> tuple[int, ...]:
+    """Return token positions defined by the BFME2 Object audio field schema."""
+
+    folded = field.casefold()
+    if folded == "initiatevoice":
+        return (0,)
+    if folded.startswith("voice") and folded != "voicepriority":
+        return (0,)
+    if folded == "animationsound":
+        return (1,)  # ``Sound: Event Animation: ...``
+    if folded == "sound":
+        return (1,)  # ``Sound = INITIAL Event``
+    if folded in _OBJECT_AUDIO_VALUE_FIELDS:
+        return (0,)
+    return ()
+
+
+def _command_audio_reference_ordinals(
+    field: str, tokens: tuple[str, ...]
+) -> tuple[int, ...]:
+    folded = field.casefold()
+    if folded == "unitspecificsound":
+        return tuple(range(len(tokens)))
+    return (0,) if folded in _COMMAND_AUDIO_VALUE_FIELDS else ()
+
+
 def _effective_object_assignments(
     definition: _ObjectDefinition,
     candidates: dict[str, list[_ObjectDefinition]],
@@ -216,15 +293,15 @@ def _effective_object_assignments(
             if folded in selected_fields:
                 continue
             selected_fields.add(folded)
-            effective.extend(
-                (field, value, current) for field, value in assignments
-            )
+            effective.extend((field, value, current) for field, value in assignments)
         parent = current.block.parent
         if not parent:
             return effective, ancestry, None
         key = parent.casefold()
         if key in seen:
-            raise ValueError(f"Object inheritance cycle while resolving {definition.block.name}")
+            raise ValueError(
+                f"Object inheritance cycle while resolving {definition.block.name}"
+            )
         seen.add(key)
         matches = candidates.get(key, [])
         if not matches:
@@ -297,7 +374,8 @@ def _census_playable_faction(
         string_catalog_doc.source, duplicate_policy="first-wins"
     )
     string_identifier_names = {
-        record.identifier.casefold(): record.identifier for record in string_catalog.records
+        record.identifier.casefold(): record.identifier
+        for record in string_catalog.records
     }
     audio_definition_names = {
         item.id.casefold(): item.id
@@ -314,15 +392,17 @@ def _census_playable_faction(
     )
     template_candidates = player_templates.get(player_template.casefold(), [])
     if not template_candidates:
-        raise ValueError(
-            f"effective PlayerTemplate input has no {player_template}"
-        )
+        raise ValueError(f"effective PlayerTemplate input has no {player_template}")
     if len(template_candidates) != 1:
         raise ValueError(
             f"effective PlayerTemplate input has ambiguous {player_template} definitions"
         )
     template = template_candidates[0]
-    side = _first_identifier(_block_values(template, "Side")[0]) if _block_values(template, "Side") else None
+    side = (
+        _first_identifier(_block_values(template, "Side")[0])
+        if _block_values(template, "Side")
+        else None
+    )
     if side is None:
         raise ValueError(f"{player_template} has no valid Side")
     if expected_side is not None and side != expected_side:
@@ -343,19 +423,21 @@ def _census_playable_faction(
     roster_ordinals: dict[str, int] = {}
     object_ids: set[str] = set()
     command_set_ids: set[str] = set()
+    missing_audio_definitions: set[str] = set()
     sciences: set[str] = set()
     intrinsic_sciences: set[str] = set()
     for assignment_ordinal, (field, value) in enumerate(template.assignments):
         folded = field.casefold()
         starting_unit_suffix = folded.removeprefix("startingunit")
-        if (
-            folded == "startingbuilding"
-            or (folded.startswith("startingunit") and starting_unit_suffix.isdigit())
+        if folded == "startingbuilding" or (
+            folded.startswith("startingunit") and starting_unit_suffix.isdigit()
         ):
             identifier = _first_identifier(value)
             if identifier:
                 object_ids.add(identifier)
-                roots.append({"sourceField": field, "id": identifier, "edgeKind": "object"})
+                roots.append(
+                    {"sourceField": field, "id": identifier, "edgeKind": "object"}
+                )
         elif folded in {
             "buildableheroesmp",
             "buildableringheroesmp",
@@ -364,7 +446,9 @@ def _census_playable_faction(
         }:
             for token_ordinal, identifier in enumerate(_identifiers(value)):
                 object_ids.add(identifier)
-                roots.append({"sourceField": field, "id": identifier, "edgeKind": "object"})
+                roots.append(
+                    {"sourceField": field, "id": identifier, "edgeKind": "object"}
+                )
                 if folded in {
                     "buildableheroesmp",
                     "buildableringheroesmp",
@@ -385,16 +469,26 @@ def _census_playable_faction(
             identifier = _first_identifier(value)
             if identifier:
                 command_set_ids.add(identifier)
-                roots.append({"sourceField": field, "id": identifier, "edgeKind": "command-set"})
+                roots.append(
+                    {"sourceField": field, "id": identifier, "edgeKind": "command-set"}
+                )
         elif folded == "intrinsicsciencesmp":
             for identifier in _identifiers(value):
                 if identifier.startswith("SCIENCE_"):
                     sciences.add(identifier)
                     intrinsic_sciences.add(identifier)
-                    roots.append({"sourceField": field, "id": identifier, "edgeKind": "science"})
+                    roots.append(
+                        {"sourceField": field, "id": identifier, "edgeKind": "science"}
+                    )
     for identifier, reason in normalized_implicit_roots:
         object_ids.add(identifier)
-        roots.append({"sourceField": reason, "id": identifier, "edgeKind": "engine-implicit-object"})
+        roots.append(
+            {
+                "sourceField": reason,
+                "id": identifier,
+                "edgeKind": "engine-implicit-object",
+            }
+        )
 
     processed_objects: set[str] = set()
     processed_command_sets: set[str] = set()
@@ -438,7 +532,11 @@ def _census_playable_faction(
             edge_rows: list[dict[str, str]] = []
             if block.parent:
                 edge_rows.append(
-                    {"field": "parent", "targetKind": "object", "targetId": block.parent}
+                    {
+                        "field": "parent",
+                        "targetKind": "object",
+                        "targetId": block.parent,
+                    }
                 )
             effective_assignments, ancestry, inheritance_problem = (
                 _effective_object_assignments(definition, object_candidates)
@@ -469,10 +567,10 @@ def _census_playable_faction(
                     if target:
                         object_ids.add(target)
                         edge = {
-                                "field": field,
-                                "targetKind": _OBJECT_EDGE_FIELDS[folded],
-                                "targetId": target,
-                            }
+                            "field": field,
+                            "targetKind": _OBJECT_EDGE_FIELDS[folded],
+                            "targetId": target,
+                        }
                         if inherited:
                             edge["sourceObjectId"] = supplier.block.name
                         edge_rows.append(edge)
@@ -485,10 +583,10 @@ def _census_playable_faction(
                         else:
                             required_mapped_images.add(target)
                         edge = {
-                                "field": field,
-                                "targetKind": "mapped-image",
-                                "targetId": target,
-                            }
+                            "field": field,
+                            "targetKind": "mapped-image",
+                            "targetId": target,
+                        }
                         if inherited:
                             edge["sourceObjectId"] = supplier.block.name
                         edge_rows.append(edge)
@@ -498,25 +596,40 @@ def _census_playable_faction(
                     if text_id is not None:
                         text_ids.add(text_id)
                         edge = {
-                                "field": field,
-                                "targetKind": "localized-string",
-                                "targetId": text_id,
-                            }
+                            "field": field,
+                            "targetKind": "localized-string",
+                            "targetId": text_id,
+                        }
                         if inherited:
                             edge["sourceObjectId"] = supplier.block.name
                         edge_rows.append(edge)
-                for token in _definition_tokens(value):
+                tokens = _definition_tokens(value)
+                for ordinal in _object_audio_reference_ordinals(field):
+                    if value.lstrip().casefold().startswith("eva:"):
+                        continue
+                    if ordinal >= len(tokens):
+                        continue
+                    token = tokens[ordinal]
+                    if token.casefold() in _AUDIO_SENTINELS:
+                        continue
                     audio_id = audio_definition_names.get(token.casefold())
                     if audio_id is not None:
                         audio_roots.add(audio_id)
-                        edge = {
-                                "field": field,
-                                "targetKind": "audio-definition",
-                                "targetId": audio_id,
-                            }
-                        if inherited:
-                            edge["sourceObjectId"] = supplier.block.name
-                        edge_rows.append(edge)
+                        target_id = audio_id
+                        resolution = "resolved"
+                    else:
+                        target_id = token
+                        resolution = "unresolved"
+                        missing_audio_definitions.add(token)
+                    edge = {
+                        "field": field,
+                        "targetKind": "audio-definition",
+                        "targetId": target_id,
+                        "resolution": resolution,
+                    }
+                    if inherited:
+                        edge["sourceObjectId"] = supplier.block.name
+                    edge_rows.append(edge)
             edge_rows.sort(
                 key=lambda item: (
                     item["field"].casefold(),
@@ -545,7 +658,9 @@ def _census_playable_faction(
                 "edges": edge_rows,
             }
 
-        for identifier in sorted(command_set_ids, key=lambda item: (item.casefold(), item)):
+        for identifier in sorted(
+            command_set_ids, key=lambda item: (item.casefold(), item)
+        ):
             key = identifier.casefold()
             if key in processed_command_sets:
                 continue
@@ -564,12 +679,13 @@ def _census_playable_faction(
                 target = _first_identifier(value)
                 if target and target.startswith("Command_"):
                     buttons.append(target)
-            command_set_rows[key] = {"id": block.name, "buttons": sorted(set(buttons), key=str.casefold)}
+            command_set_rows[key] = {
+                "id": block.name,
+                "buttons": sorted(set(buttons), key=str.casefold),
+            }
 
         all_buttons = {
-            button
-            for row in command_set_rows.values()
-            for button in row["buttons"]
+            button for row in command_set_rows.values() for button in row["buttons"]
         }
         for identifier in sorted(all_buttons, key=lambda item: (item.casefold(), item)):
             key = identifier.casefold()
@@ -600,12 +716,33 @@ def _census_playable_faction(
                 if values:
                     selected[field] = values
             button_audio_references: set[str] = set()
-            for _, value in block.assignments:
-                for token in _definition_tokens(value):
+            button_audio_routes: list[dict[str, object]] = []
+            for field, value in block.assignments:
+                tokens = _definition_tokens(value)
+                for ordinal in _command_audio_reference_ordinals(field, tokens):
+                    if ordinal >= len(tokens):
+                        continue
+                    token = tokens[ordinal]
+                    if token.casefold() in _AUDIO_SENTINELS:
+                        continue
                     audio_id = audio_definition_names.get(token.casefold())
                     if audio_id is not None:
                         audio_roots.add(audio_id)
                         button_audio_references.add(audio_id)
+                        target_id = audio_id
+                        resolution = "resolved"
+                    else:
+                        target_id = token
+                        resolution = "unresolved"
+                        missing_audio_definitions.add(token)
+                    button_audio_routes.append(
+                        {
+                            "field": field,
+                            "targetId": target_id,
+                            "tokenOrdinal": ordinal,
+                            "resolution": resolution,
+                        }
+                    )
             for value in selected.get("Object", []):
                 target = _first_identifier(value)
                 if target:
@@ -615,7 +752,11 @@ def _census_playable_faction(
             for value in selected.get("SpecialPower", []):
                 special_powers.update(_identifiers(value))
             for value in selected.get("Science", []):
-                sciences.update(identifier for identifier in _identifiers(value) if identifier.startswith("SCIENCE_"))
+                sciences.update(
+                    identifier
+                    for identifier in _identifiers(value)
+                    if identifier.startswith("SCIENCE_")
+                )
             for value in selected.get("ButtonImage", []):
                 target = _first_identifier(value)
                 if target:
@@ -630,6 +771,8 @@ def _census_playable_faction(
                 "id": block.name,
                 "fields": selected,
                 "audioReferences": sorted(button_audio_references, key=str.casefold),
+                "audioRoutes": button_audio_routes,
+                "source": command_button_doc.public(),
             }
         if not changed:
             break
@@ -677,7 +820,9 @@ def _census_playable_faction(
     )
     source_null_keys = {item.casefold() for item in source_null_mapped_images}
     unresolved_mapped_images = {
-        item for item in missing_mapped_images if item.casefold() not in source_null_keys
+        item
+        for item in missing_mapped_images
+        if item.casefold() not in source_null_keys
     }
     effective_entries = _effective_entries(catalog)
     effective_virtual_paths = [entry.name for entry in effective_entries.values()]
@@ -723,11 +868,19 @@ def _census_playable_faction(
         for identifier in string_catalog.diagnostics.conflicting_identifiers
     }
     requested_duplicate_text_ids = sorted(
-        (identifier for identifier in text_ids if identifier.casefold() in duplicate_text_keys),
+        (
+            identifier
+            for identifier in text_ids
+            if identifier.casefold() in duplicate_text_keys
+        ),
         key=str.casefold,
     )
     requested_conflicting_text_ids = sorted(
-        (identifier for identifier in text_ids if identifier.casefold() in conflicting_text_keys),
+        (
+            identifier
+            for identifier in text_ids
+            if identifier.casefold() in conflicting_text_keys
+        ),
         key=str.casefold,
     )
 
@@ -818,11 +971,21 @@ def _census_playable_faction(
         input_hash.update(str(item["archive"]).encode("utf-8") + b"\0")
         input_hash.update(str(item["size"]).encode("ascii") + b"\n")
 
-    object_list = sorted(object_rows.values(), key=lambda item: str(item["id"]).casefold())
-    command_set_list = sorted(command_set_rows.values(), key=lambda item: str(item["id"]).casefold())
-    command_button_list = sorted(command_button_rows.values(), key=lambda item: str(item["id"]).casefold())
+    object_list = sorted(
+        object_rows.values(), key=lambda item: str(item["id"]).casefold()
+    )
+    command_set_list = sorted(
+        command_set_rows.values(), key=lambda item: str(item["id"]).casefold()
+    )
+    command_button_list = sorted(
+        command_button_rows.values(), key=lambda item: str(item["id"]).casefold()
+    )
     spellbook_powers = sorted(
-        (identifier for identifier in special_powers if identifier.startswith("SpellBook")),
+        (
+            identifier
+            for identifier in special_powers
+            if identifier.startswith("SpellBook")
+        ),
         key=str.casefold,
     )
     spellbook_sciences = sorted(
@@ -841,10 +1004,15 @@ def _census_playable_faction(
         "ambiguousCommandSets": sorted(ambiguous_command_sets, key=str.casefold),
         "missingCommandButtons": sorted(missing_buttons, key=str.casefold),
         "ambiguousCommandButtons": sorted(ambiguous_buttons, key=str.casefold),
-        "missingInheritanceObjects": sorted(missing_inheritance_objects, key=str.casefold),
-        "ambiguousInheritanceObjects": sorted(ambiguous_inheritance_objects, key=str.casefold),
+        "missingInheritanceObjects": sorted(
+            missing_inheritance_objects, key=str.casefold
+        ),
+        "ambiguousInheritanceObjects": sorted(
+            ambiguous_inheritance_objects, key=str.casefold
+        ),
         "missingTextIds": sorted(missing_text_ids, key=str.casefold),
         "missingMappedImages": sorted(unresolved_mapped_images, key=str.casefold),
+        "missingAudioDefinitions": sorted(missing_audio_definitions, key=str.casefold),
         "ambiguousMappedImages": list(mapped_image_resolution.ambiguous_ids),
         "missingUpgrades": list(gameplay_closure.missing_upgrades),
         "ambiguousUpgrades": list(gameplay_closure.ambiguous_upgrades),
@@ -945,9 +1113,15 @@ def _census_playable_faction(
             "audioSampleCount": len(audio_closure.sample_ids),
             "sourceLeafCount": len(source_leaves),
             "unresolvedCount": sum(len(items) for items in unresolved.values()),
-            "objectSetSha256": _set_hash(f"{identity_namespace}-object-set", (item["id"] for item in object_list)),
-            "upgradeSetSha256": _set_hash(f"{identity_namespace}-upgrade-set", upgrades),
-            "specialPowerSetSha256": _set_hash(f"{identity_namespace}-special-power-set", special_powers),
+            "objectSetSha256": _set_hash(
+                f"{identity_namespace}-object-set", (item["id"] for item in object_list)
+            ),
+            "upgradeSetSha256": _set_hash(
+                f"{identity_namespace}-upgrade-set", upgrades
+            ),
+            "specialPowerSetSha256": _set_hash(
+                f"{identity_namespace}-special-power-set", special_powers
+            ),
             "resolvedUpgradeDefinitionCount": len(gameplay_closure.upgrades),
             "resolvedScienceDefinitionCount": len(gameplay_closure.sciences),
             "resolvedSpecialPowerDefinitionCount": len(gameplay_closure.special_powers),

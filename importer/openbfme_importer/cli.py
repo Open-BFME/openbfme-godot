@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
@@ -26,6 +25,7 @@ from .paths import (
     repo_root_from_module,
 )
 from .pipeline import ImportPipeline, audit_pack, bundle_digest
+from .playable_unit_import import import_playable_unit
 from .faction_census import census_men_faction
 from .faction_profile import build_men_leaf_profile
 from .map_profile import build_five_map_profile
@@ -36,7 +36,6 @@ from .retail_visual_closure import (
     default_visual_closure_report_name,
 )
 from .sage_roads import build_road_closure, default_road_closure_report_name
-from .tools import inspect_tool
 from .util import write_json_atomic
 from .version import __version__
 
@@ -122,15 +121,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    bootstrap = sub.add_parser("bootstrap-tools", help="provision and hash-pin private conversion tools")
-    bootstrap.add_argument("--ffmpeg", type=Path, default=None, help="path to the pinned FFmpeg 8.1.1 executable")
+    bootstrap = sub.add_parser(
+        "bootstrap-tools", help="provision and hash-pin private conversion tools"
+    )
+    bootstrap.add_argument(
+        "--ffmpeg",
+        type=Path,
+        default=None,
+        help="path to the pinned FFmpeg 8.1.1 executable",
+    )
 
     doctor = sub.add_parser("doctor", help="diagnose an install and conversion tools")
     doctor.add_argument("--install", required=True)
     _add_game_argument(doctor)
-    doctor.add_argument("--deep", action="store_true", help="hash-attest every archive used by the profile")
+    doctor.add_argument(
+        "--deep",
+        action="store_true",
+        help="hash-attest every archive used by the profile",
+    )
 
-    index = sub.add_parser("index", help="stream archive directories into a reusable catalog")
+    index = sub.add_parser(
+        "index", help="stream archive directories into a reusable catalog"
+    )
     index.add_argument("--install", required=True)
     _add_game_argument(index)
     index.add_argument("--reindex", action="store_true")
@@ -225,6 +237,39 @@ def build_parser() -> argparse.ArgumentParser:
     _add_game_argument(map_profile)
     map_profile.add_argument("--reindex", action="store_true")
 
+    import_unit = sub.add_parser(
+        "import-unit",
+        help="discover, convert, install, and select one BFME2 playable unit",
+    )
+    import_unit.add_argument("--install", required=True)
+    _add_game_argument(import_unit)
+    import_unit.add_argument(
+        "--object", required=True, help="retail Object or horde id"
+    )
+    import_unit.add_argument(
+        "--faction",
+        default="auto",
+        help="auto, Men, Elves, Dwarves, Isengard, Mordor, or Wild",
+    )
+    import_unit.add_argument("--base-profile", type=Path, default=None)
+    import_unit.add_argument(
+        "--bootstrap-selection",
+        action="store_true",
+        help="allow creation of the first selected pack only when no selected base exists",
+    )
+    import_unit.add_argument("--reindex", action="store_true")
+    import_unit.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="generate and validate the exact profile delta without converting or publishing",
+    )
+    import_unit.add_argument("--conversion-jobs", type=int, default=None, metavar="N")
+    import_unit.add_argument(
+        "--godot-content-root",
+        type=Path,
+        default=default_godot_content_root(),
+    )
+
     for name, help_text in (
         ("plan", "resolve a profile without extracting retail bytes"),
         ("extract", "extract the exact resolved closure into the private cache"),
@@ -239,7 +284,11 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--force", action="store_true")
         if name == "build":
             command.add_argument("--allow-incomplete", action="store_true")
-            command.add_argument("--no-publish", action="store_true", help="build without selecting the pack in Godot")
+            command.add_argument(
+                "--no-publish",
+                action="store_true",
+                help="build without selecting the pack in Godot",
+            )
             command.add_argument(
                 "--no-conversion-cache",
                 action="store_true",
@@ -259,7 +308,9 @@ def build_parser() -> argparse.ArgumentParser:
                 help="private Godot content-packs directory",
             )
 
-    audit = sub.add_parser("audit", help="verify every converted output against provenance hashes")
+    audit = sub.add_parser(
+        "audit", help="verify every converted output against provenance hashes"
+    )
     audit.add_argument("pack", type=Path)
     return parser
 
@@ -305,9 +356,7 @@ def main(argv: list[str] | None = None) -> int:
                 "target_count": int(summary["targetCount"]),
                 "exact_leaf_count": int(summary["exactLeafCount"]),
                 "semantic_leaf_count": int(summary["semanticLeafCount"]),
-                "unresolved_reference_count": int(
-                    summary["unresolvedReferenceCount"]
-                ),
+                "unresolved_reference_count": int(summary["unresolvedReferenceCount"]),
                 "scanned_w3d_count": int(summary["scannedW3dCount"]),
             }
             _render(value, args.json)
@@ -338,6 +387,25 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if value["ready"] else 6
 
         catalog = _load_or_build_catalog(args)
+        if args.command == "import-unit":
+            if args.game != "bfme2":
+                raise ValueError("import-unit currently supports BFME2 1.06 only")
+            canonical_profile = args.base_profile or (
+                _workspace_root(args) / "profiles" / "men-fords-v1.generated.json"
+            )
+            value = import_playable_unit(
+                catalog,
+                _state_root(args),
+                args.object,
+                faction=args.faction,
+                canonical_profile=canonical_profile,
+                content_root=args.godot_content_root,
+                publish=not args.plan_only,
+                bootstrap_selection=args.bootstrap_selection,
+                conversion_jobs=args.conversion_jobs,
+            )
+            _render(value, args.json)
+            return 0
         if args.command == "index":
             value = {
                 "catalog": str(_catalog_path(args)),
@@ -393,7 +461,9 @@ def main(argv: list[str] | None = None) -> int:
                 / f"{args.game}-multiplayer-map-census.json"
             )
             write_json_atomic(report_path, report)
-            payload = json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+            payload = (
+                json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+            )
             value = {
                 "ready": True,
                 "report": str(report_path),
@@ -412,9 +482,13 @@ def main(argv: list[str] | None = None) -> int:
             if args.game != "bfme2":
                 raise ValueError("census-faction currently supports BFME2 only")
             report = census_men_faction(catalog)
-            report_path = _workspace_root(args) / "reports" / "men-faction-leaf-census.json"
+            report_path = (
+                _workspace_root(args) / "reports" / "men-faction-leaf-census.json"
+            )
             write_json_atomic(report_path, report)
-            payload = json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+            payload = (
+                json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+            )
             value = {
                 "ready": int(report["summary"]["unresolvedCount"]) == 0,
                 "report": str(report_path),
@@ -424,7 +498,9 @@ def main(argv: list[str] | None = None) -> int:
                 "command_button_count": int(report["summary"]["commandButtonCount"]),
                 "upgrade_count": int(report["summary"]["upgradeCount"]),
                 "special_power_count": int(report["summary"]["specialPowerCount"]),
-                "mapped_image_count": int(report["summary"]["mappedImageResolvedCount"]),
+                "mapped_image_count": int(
+                    report["summary"]["mappedImageResolvedCount"]
+                ),
                 "localized_text_count": int(report["summary"]["textResolvedCount"]),
                 "audio_sample_count": int(report["summary"]["audioSampleCount"]),
                 "unresolved_count": int(report["summary"]["unresolvedCount"]),
@@ -434,17 +510,16 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "generate-faction-profile":
             if args.game != "bfme2":
-                raise ValueError("generate-faction-profile currently supports BFME2 only")
+                raise ValueError(
+                    "generate-faction-profile currently supports BFME2 only"
+                )
             profile = build_men_leaf_profile(catalog)
             profile_path = (
-                _workspace_root(args)
-                / "profiles"
-                / "men-command-leaves.generated.json"
+                _workspace_root(args) / "profiles" / "men-command-leaves.generated.json"
             )
             write_json_atomic(profile_path, profile)
             payload = (
-                json.dumps(profile, indent=2, sort_keys=True, ensure_ascii=False)
-                + "\n"
+                json.dumps(profile, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
             )
             value = {
                 "ready": True,
@@ -464,8 +539,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             write_json_atomic(generated_path, profile)
             payload = (
-                json.dumps(profile, indent=2, sort_keys=True, ensure_ascii=False)
-                + "\n"
+                json.dumps(profile, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
             )
             value = {
                 "ready": True,
@@ -476,7 +550,6 @@ def main(argv: list[str] | None = None) -> int:
             }
             _render(value, args.json)
             return 0
-
 
         resolved = _resolved(args, catalog)
         pipeline = ImportPipeline(

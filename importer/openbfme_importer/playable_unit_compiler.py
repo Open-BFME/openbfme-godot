@@ -14,7 +14,6 @@ from copy import deepcopy
 import hashlib
 import json
 import re
-from typing import Any
 
 from .sage_cst import (
     SageAssignment,
@@ -152,7 +151,9 @@ def _object_index(documents: Mapping[str, bytes]) -> dict[str, SageObject]:
     return result
 
 
-def _ancestry(index: Mapping[str, SageObject], target: SageObject) -> tuple[SageObject, ...]:
+def _ancestry(
+    index: Mapping[str, SageObject], target: SageObject
+) -> tuple[SageObject, ...]:
     result = [target]
     seen = {target.name.casefold()}
     current = target
@@ -171,7 +172,9 @@ def _ancestry(index: Mapping[str, SageObject], target: SageObject) -> tuple[Sage
     return tuple(reversed(result))
 
 
-def _effective_values(ancestry: Sequence[SageObject], key: str) -> tuple[SageAssignment, ...]:
+def _effective_values(
+    ancestry: Sequence[SageObject], key: str
+) -> tuple[SageAssignment, ...]:
     selected: tuple[SageAssignment, ...] = ()
     folded = key.casefold()
     for item in ancestry:
@@ -328,7 +331,11 @@ def _producer_bindings(
     train_commands: dict[str, dict[str, object]] = {}
     for button in command_buttons.values():
         commands = {value.casefold() for value in _block_values(button, "Command")}
-        targets = tuple(filter(None, (_first((value,)) for value in _block_values(button, "Object"))))
+        targets = tuple(
+            filter(
+                None, (_first((value,)) for value in _block_values(button, "Object"))
+            )
+        )
         if commands in ({"unit_build"}, {"hero_build"}) and any(
             value.casefold() == target_id.casefold() for value in targets
         ):
@@ -365,8 +372,7 @@ def _producer_bindings(
         direct_sets = {
             value.casefold(): value
             for value in (
-                _first((row.value,))
-                for row in _effective_values(lineage, "CommandSet")
+                _first((row.value,)) for row in _effective_values(lineage, "CommandSet")
             )
             if value
         }
@@ -481,8 +487,10 @@ def _member_rows(
             if not tokens:
                 continue
             count_expression = assignment.value.strip()[len(tokens[0]) :].strip()
-            count = 1 if not count_expression else _resolve_integer_expression(
-                count_expression, constants
+            count = (
+                1
+                if not count_expression
+                else _resolve_integer_expression(count_expression, constants)
             )
             if count < 1:
                 raise PlayableUnitCompilerError(
@@ -529,9 +537,7 @@ def _resolve_integer_expression(expression: str, constants: Mapping[str, int]) -
         return constant
     match = re.fullmatch(r"#(MULTIPLY|DIVIDE|ADD|SUBTRACT)\s*\((.*)\)", token, re.I)
     if match is None:
-        raise PlayableUnitCompilerError(
-            f"unresolved integer expression: {expression}"
-        )
+        raise PlayableUnitCompilerError(f"unresolved integer expression: {expression}")
     arguments = _tokens(match.group(2))
     if len(arguments) != 2:
         raise PlayableUnitCompilerError(
@@ -547,13 +553,13 @@ def _resolve_integer_expression(expression: str, constants: Mapping[str, int]) -
     if operation == "SUBTRACT":
         return left - right
     if right == 0 or left % right != 0:
-        raise PlayableUnitCompilerError(
-            f"integer division is not exact: {expression}"
-        )
+        raise PlayableUnitCompilerError(f"integer division is not exact: {expression}")
     return left // right
 
 
-def _horde_containers(member_id: str, objects: Mapping[str, SageObject]) -> tuple[SageObject, ...]:
+def _horde_containers(
+    member_id: str, objects: Mapping[str, SageObject]
+) -> tuple[SageObject, ...]:
     result: list[SageObject] = []
     for candidate in objects.values():
         for assignment in _recursive_assignments((candidate,)):
@@ -568,10 +574,14 @@ def _horde_containers(member_id: str, objects: Mapping[str, SageObject]) -> tupl
 
 def _kind_of(ancestry: Sequence[SageObject]) -> tuple[str, ...]:
     values = _effective_values(ancestry, "KindOf")
-    return tuple(sorted({token.upper() for row in values for token in _tokens(row.value)}))
+    return tuple(
+        sorted({token.upper() for row in values for token in _tokens(row.value)})
+    )
 
 
-def _category(target_kinds: Sequence[str], member_kinds: Sequence[str], has_horde: bool) -> str:
+def _category(
+    target_kinds: Sequence[str], member_kinds: Sequence[str], has_horde: bool
+) -> str:
     kinds = set(target_kinds) | set(member_kinds)
     if kinds & {"SHIP", "NAVAL_UNIT", "TRANSPORT"}:
         return "naval"
@@ -684,11 +694,20 @@ def _scalar_fields(ancestry: Sequence[SageObject]) -> dict[str, dict[str, object
     return result
 
 
-def _nested_references(ancestry: Sequence[SageObject]) -> dict[str, list[dict[str, object]]]:
+def _nested_references(
+    ancestry: Sequence[SageObject],
+) -> dict[str, list[dict[str, object]]]:
     result: dict[str, list[dict[str, object]]] = defaultdict(list)
     for assignment in _effective_recursive_assignments(ancestry):
         folded = assignment.key.casefold()
-        if folded in {"model", "skeleton", "projectileobject", "weapon", "locomotor", "armor"}:
+        if folded in {
+            "model",
+            "skeleton",
+            "projectileobject",
+            "weapon",
+            "locomotor",
+            "armor",
+        }:
             tokens = _tokens(assignment.value)
             if not tokens:
                 continue
@@ -714,14 +733,30 @@ def _nested_references(ancestry: Sequence[SageObject]) -> dict[str, list[dict[st
     }
 
 
-def _audio_routes(ancestry: Sequence[SageObject]) -> dict[str, list[dict[str, object]]]:
+def _audio_routes(
+    ancestry: Sequence[SageObject],
+    authored_edges: frozenset[tuple[str, str]] | None = None,
+) -> dict[str, list[dict[str, object]]]:
     result: dict[str, list[dict[str, object]]] = defaultdict(list)
     for assignment in _effective_recursive_assignments(ancestry):
         folded = assignment.key.casefold()
-        if not folded.startswith(("voice", "sound", "eva")):
-            continue
-        identifier = _first((assignment.value,))
-        if identifier:
+        if authored_edges is None:
+            if not folded.startswith(("voice", "sound", "eva")):
+                continue
+            identifiers = [_first((assignment.value,))]
+        else:
+            tokens = {token.casefold() for token in _tokens(assignment.value)}
+            identifiers = sorted(
+                {
+                    target
+                    for field, target in authored_edges
+                    if field == folded and target.casefold() in tokens
+                },
+                key=str.casefold,
+            )
+        for identifier in identifiers:
+            if not identifier:
+                continue
             result[assignment.key].append(
                 {
                     "id": identifier,
@@ -729,7 +764,10 @@ def _audio_routes(ancestry: Sequence[SageObject]) -> dict[str, list[dict[str, ob
                     "line": assignment.line,
                 }
             )
-    return {key: rows for key, rows in sorted(result.items(), key=lambda item: item[0].casefold())}
+    return {
+        key: rows
+        for key, rows in sorted(result.items(), key=lambda item: item[0].casefold())
+    }
 
 
 def _runtime_module_evidence(
@@ -752,7 +790,9 @@ def _runtime_module_evidence(
                 (block.instance_tag or "").casefold(),
                 block.kind.casefold(),
             )
-            consumes_horde = role == "container" and identity in consumed_container_modules
+            consumes_horde = (
+                role == "container" and identity in consumed_container_modules
+            )
             result.append(
                 {
                     "ownerRole": role,
@@ -781,16 +821,29 @@ def _ui_binding(
     command_buttons: Mapping[str, IniBlock],
     target_lineage: Sequence[SageObject],
     member_lineage: Sequence[SageObject],
+    command_audio: Mapping[str, Sequence[Mapping[str, object]]],
 ) -> dict[str, object]:
     portraits: list[str] = []
     for lineage in (target_lineage, member_lineage):
         for key in ("SelectPortrait", "ButtonImage"):
-            portraits.extend(row.value.strip() for row in _effective_values(lineage, key))
+            portraits.extend(
+                row.value.strip() for row in _effective_values(lineage, key)
+            )
     return {
         "commands": [
             {
                 "commandId": str(row["commandId"]),
                 "fields": dict(row.get("ui", {})),
+                "audioRoutes": [
+                    {
+                        "field": str(route["field"]),
+                        "id": str(route["targetId"]),
+                        "tokenOrdinal": int(route["tokenOrdinal"]),
+                        "resolution": str(route["resolution"]),
+                        "sourceIni": COMMAND_BUTTON_PATH,
+                    }
+                    for route in command_audio.get(str(row["commandId"]).casefold(), ())
+                ],
             }
             for row in producers
         ],
@@ -822,6 +875,8 @@ def compile_playable_unit_descriptor(
         _required_document(documents, COMMAND_BUTTON_PATH), "CommandButton"
     )
     reachable_object_ids: frozenset[str] | None = None
+    audio_edges_by_object: dict[str, frozenset[tuple[str, str]]] | None = None
+    command_audio: dict[str, tuple[Mapping[str, object], ...]] = {}
     hero_roster: list[str] = []
     starting_building = ""
     player_template_id = ""
@@ -837,6 +892,51 @@ def compile_playable_unit_descriptor(
             for row in rows
             if isinstance(row, Mapping) and row.get("id")
         )
+        audio_edges_by_object = {}
+        for row in rows:
+            if not isinstance(row, Mapping) or not row.get("id"):
+                continue
+            raw_edges = row.get("edges", [])
+            if not isinstance(raw_edges, list):
+                raise PlayableUnitCompilerError(
+                    "faction graph Object edges are invalid"
+                )
+            audio_edges_by_object[str(row["id"]).casefold()] = frozenset(
+                (
+                    str(edge.get("field", "")).casefold(),
+                    str(edge.get("targetId", "")),
+                )
+                for edge in raw_edges
+                if isinstance(edge, Mapping)
+                and edge.get("targetKind") == "audio-definition"
+                and edge.get("field")
+                and edge.get("targetId")
+            )
+        raw_command_rows = definitions.get("commandButtons", [])
+        if not isinstance(raw_command_rows, list):
+            raise PlayableUnitCompilerError(
+                "faction graph CommandButton rows are invalid"
+            )
+        for row in raw_command_rows:
+            if not isinstance(row, Mapping) or not row.get("id"):
+                continue
+            routes = row.get("audioRoutes", [])
+            if not isinstance(routes, list) or any(
+                not isinstance(route, Mapping)
+                or not isinstance(route.get("field"), str)
+                or not route.get("field")
+                or not isinstance(route.get("targetId"), str)
+                or not route.get("targetId")
+                or not isinstance(route.get("tokenOrdinal"), int)
+                or isinstance(route.get("tokenOrdinal"), bool)
+                or int(route["tokenOrdinal"]) < 0
+                or route.get("resolution") not in {"resolved", "unresolved"}
+                for route in routes
+            ):
+                raise PlayableUnitCompilerError(
+                    "faction graph CommandButton audio routes are invalid"
+                )
+            command_audio[str(row["id"]).casefold()] = tuple(routes)
         hero_roster, starting_building, player_template_id = _player_template_context(
             documents, faction_graph
         )
@@ -900,9 +1000,31 @@ def compile_playable_unit_descriptor(
         target, target_lineage, objects, _numeric_defines(documents)
     )
     member_lineage = _ancestry(objects, primary_member)
+    container_audio_edges = (
+        frozenset().union(
+            *(
+                audio_edges_by_object.get(item.name.casefold(), frozenset())
+                for item in target_lineage
+            )
+        )
+        if audio_edges_by_object is not None
+        else None
+    )
+    member_audio_edges = (
+        frozenset().union(
+            *(
+                audio_edges_by_object.get(item.name.casefold(), frozenset())
+                for item in member_lineage
+            )
+        )
+        if audio_edges_by_object is not None
+        else None
+    )
     target_kinds = _kind_of(target_lineage)
     member_kinds = _kind_of(member_lineage)
-    category = _category(target_kinds, member_kinds, bool(members[0]["objectId"] != target.name))
+    category = _category(
+        target_kinds, member_kinds, bool(members[0]["objectId"] != target.name)
+    )
     visual_refs = _nested_references(member_lineage)
     if primary_member is not target:
         target_refs = _nested_references(target_lineage)
@@ -1028,10 +1150,18 @@ def compile_playable_unit_descriptor(
             "visualRoots": visual_refs.get("model", []),
             "convertedVisuals": {
                 key: dict(value)
-                for key, value in sorted(visual_bindings.items(), key=lambda item: item[0].casefold())
+                for key, value in sorted(
+                    visual_bindings.items(), key=lambda item: item[0].casefold()
+                )
             },
             "unresolvedVisualRoots": unresolved_visuals,
-            "ui": _ui_binding(producers, command_buttons, target_lineage, member_lineage),
+            "ui": _ui_binding(
+                producers,
+                command_buttons,
+                target_lineage,
+                member_lineage,
+                command_audio,
+            ),
             "resolvedImages": {
                 key: deepcopy(value)
                 for key, value in sorted(
@@ -1039,12 +1169,14 @@ def compile_playable_unit_descriptor(
                 )
             },
             "audioRoutes": {
-                "container": _audio_routes(target_lineage),
-                "primaryMember": _audio_routes(member_lineage),
+                "container": _audio_routes(target_lineage, container_audio_edges),
+                "primaryMember": _audio_routes(member_lineage, member_audio_edges),
             },
             "resolvedAudio": {
                 key: list(value)
-                for key, value in sorted((resolved_audio or {}).items(), key=lambda item: item[0].casefold())
+                for key, value in sorted(
+                    (resolved_audio or {}).items(), key=lambda item: item[0].casefold()
+                )
             },
         },
         "runtimeModules": runtime_modules,
@@ -1077,11 +1209,15 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
     expected = dict(value)
     digest = expected.pop("descriptorSha256", None)
     if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-        raise PlayableUnitCompilerError("playable-unit descriptor digest format is invalid")
+        raise PlayableUnitCompilerError(
+            "playable-unit descriptor digest format is invalid"
+        )
     if digest != _digest(expected):
         raise PlayableUnitCompilerError("playable-unit descriptor digest is invalid")
     traits = value.get("traits")
-    if not isinstance(traits, list) or any(not isinstance(item, str) for item in traits):
+    if not isinstance(traits, list) or any(
+        not isinstance(item, str) for item in traits
+    ):
         raise PlayableUnitCompilerError("playable-unit traits are invalid")
     capabilities = value.get("capabilities")
     if not isinstance(capabilities, list):
@@ -1097,7 +1233,9 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         ):
             raise PlayableUnitCompilerError("playable-unit capability row is invalid")
         if str(row["id"]) in capability_ids:
-            raise PlayableUnitCompilerError("playable-unit capability ids are duplicated")
+            raise PlayableUnitCompilerError(
+                "playable-unit capability ids are duplicated"
+            )
         capability_ids.add(str(row["id"]))
     production = value.get("production")
     if not isinstance(production, list) or not production:
@@ -1113,9 +1251,7 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         slot = row.get("slot")
         roster_ordinal = row.get("rosterOrdinal")
         if not (
-            isinstance(slot, int)
-            and not isinstance(slot, bool)
-            and slot > 0
+            isinstance(slot, int) and not isinstance(slot, bool) and slot > 0
         ) and not (
             isinstance(roster_ordinal, int)
             and not isinstance(roster_ordinal, bool)
@@ -1233,7 +1369,9 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
     ui = presentation.get("ui")
     audio_routes = presentation.get("audioRoutes")
     if not isinstance(ui, Mapping) or not isinstance(audio_routes, Mapping):
-        raise PlayableUnitCompilerError("playable-unit UI/audio presentation is invalid")
+        raise PlayableUnitCompilerError(
+            "playable-unit UI/audio presentation is invalid"
+        )
     commands = ui.get("commands")
     portraits = ui.get("portraitImageIds")
     if (
@@ -1253,12 +1391,31 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         ):
             raise PlayableUnitCompilerError("playable-unit UI command row is invalid")
         ui_command_ids.append(str(command["commandId"]))
+        command_routes = command.get("audioRoutes")
+        if not isinstance(command_routes, list) or any(
+            not isinstance(route, Mapping)
+            or not isinstance(route.get("field"), str)
+            or not route.get("field")
+            or not isinstance(route.get("id"), str)
+            or not route.get("id")
+            or not isinstance(route.get("tokenOrdinal"), int)
+            or isinstance(route.get("tokenOrdinal"), bool)
+            or int(route["tokenOrdinal"]) < 0
+            or route.get("resolution") not in {"resolved", "unresolved"}
+            or route.get("sourceIni") != COMMAND_BUTTON_PATH
+            for route in command_routes
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit UI command audio routes are invalid"
+            )
     if ui_command_ids != production_command_ids:
         raise PlayableUnitCompilerError(
             "playable-unit UI commands disagree with production routes"
         )
     if not portraits and not any(command.get("fields") for command in commands):
-        raise PlayableUnitCompilerError("playable-unit UI has no authored image/text binding")
+        raise PlayableUnitCompilerError(
+            "playable-unit UI has no authored image/text binding"
+        )
     for owner in ("container", "primaryMember"):
         routes = audio_routes.get(owner)
         if not isinstance(routes, Mapping):
@@ -1274,7 +1431,9 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
                 or not isinstance(row.get("line"), int)
                 for row in rows
             ):
-                raise PlayableUnitCompilerError("playable-unit audio route row is invalid")
+                raise PlayableUnitCompilerError(
+                    "playable-unit audio route row is invalid"
+                )
     for field, expected_type in (
         ("visualRoots", list),
         ("convertedVisuals", Mapping),
@@ -1297,12 +1456,16 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             raise PlayableUnitCompilerError("playable-unit visual-root row is invalid")
     for key, row in presentation["convertedVisuals"].items():
         if not isinstance(key, str) or not key or not isinstance(row, Mapping):
-            raise PlayableUnitCompilerError("playable-unit converted visual row is invalid")
+            raise PlayableUnitCompilerError(
+                "playable-unit converted visual row is invalid"
+            )
     if any(
         not isinstance(item, str) or not item
         for item in presentation["unresolvedVisualRoots"]
     ):
-        raise PlayableUnitCompilerError("playable-unit unresolved visual roots are invalid")
+        raise PlayableUnitCompilerError(
+            "playable-unit unresolved visual roots are invalid"
+        )
     for key, image in presentation["resolvedImages"].items():
         if not isinstance(key, str) or not key or not isinstance(image, Mapping):
             raise PlayableUnitCompilerError("playable-unit resolved images are invalid")
@@ -1327,7 +1490,10 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             raise PlayableUnitCompilerError("playable-unit mapped image is invalid")
         values = [coords.get(name) for name in ("left", "top", "right", "bottom")]
         if (
-            any(not isinstance(value, int) or isinstance(value, bool) for value in values)
+            any(
+                not isinstance(value, int) or isinstance(value, bool)
+                for value in values
+            )
             or values[0] < 0
             or values[1] < 0
             or values[2] <= values[0]
@@ -1335,7 +1501,9 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             or values[2] > width
             or values[3] > height
         ):
-            raise PlayableUnitCompilerError("playable-unit mapped image crop is invalid")
+            raise PlayableUnitCompilerError(
+                "playable-unit mapped image crop is invalid"
+            )
     for key, paths in presentation["resolvedAudio"].items():
         if (
             not isinstance(key, str)
@@ -1351,9 +1519,13 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         not isinstance(runtime_modules, list)
         or not isinstance(module_evidence, list)
         or not isinstance(special, list)
-        or any(not isinstance(item, str) or not item for item in runtime_modules + special)
+        or any(
+            not isinstance(item, str) or not item for item in runtime_modules + special
+        )
     ):
-        raise PlayableUnitCompilerError("playable-unit runtime module lists are invalid")
+        raise PlayableUnitCompilerError(
+            "playable-unit runtime module lists are invalid"
+        )
     for row in module_evidence:
         if (
             not isinstance(row, Mapping)
@@ -1400,10 +1572,7 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         for row in module_evidence
         if row["consumed"] is False
     ]
-    if (
-        unsupported_modules != set(special)
-        or unsupported != expected_unsupported
-    ):
+    if unsupported_modules != set(special) or unsupported != expected_unsupported:
         raise PlayableUnitCompilerError(
             "playable-unit unsupported modules disagree with special capabilities"
         )
@@ -1415,7 +1584,8 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         if (
             not isinstance(source, Mapping)
             or not isinstance(source.get("virtualPath"), str)
-            or re.fullmatch(r"[0-9a-f]{64}", str(source.get("semanticSha256", ""))) is None
+            or re.fullmatch(r"[0-9a-f]{64}", str(source.get("semanticSha256", "")))
+            is None
         ):
             raise PlayableUnitCompilerError("playable-unit source row is invalid")
         path = str(source["virtualPath"])

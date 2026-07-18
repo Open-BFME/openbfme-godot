@@ -45,13 +45,13 @@ ALLOWED_CONVERTERS = {
     "sage-terrain-materials",
 }
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-MAX_PROFILE_BYTES = 2 * 1024 * 1024
+MAX_PROFILE_BYTES = 16 * 1024 * 1024
 # The exact Fords closure alone is now larger than the original provisional
 # 256-rule ceiling once neutral lifecycles and particle definitions are kept as
 # independent, auditable resources.  Keep a hard bound, but size it for one
-# complete retail map/faction slice instead of forcing unrelated leaves into
-# ambiguous wildcard owners.
-MAX_RESOURCES = 512
+# complete retail map/faction expansion instead of forcing unrelated leaves
+# into ambiguous wildcard owners. The byte bound remains independent.
+MAX_RESOURCES = 4_096
 MAX_PATTERNS_PER_RESOURCE = 256
 MAX_PATH_LENGTH = 512
 W3D_DEPENDENCY_CONVERTERS = {
