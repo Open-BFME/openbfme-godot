@@ -1962,12 +1962,13 @@ def build_m3_visual_resources(
             model,
             *animations,
             *_hierarchy_dependencies(animations, scanned),
-            *embedded_models.values(),
         }
         for path in authored:
             if path.casefold() not in scanned:
                 raise ValueError(f"M3 unit recipe selects absent W3D: {path}")
-        texture_paths = _texture_paths_for_w3d(closure, selected)
+        texture_paths = _texture_paths_for_w3d(
+            closure, {*selected, *embedded_models.values()}
+        )
         patterns = sorted(selected, key=str.casefold)
         output = f"assets/models/m3/units/{_slug(target)}.glb"
         resource_id = f"m3-{_slug(target)}-rig-and-core-clips"
@@ -2027,8 +2028,14 @@ def build_m3_visual_resources(
         else:
             unit_row["output"] = output
             if embedded_models:
-                unit_row["embeddedOutputs"] = {
-                    role: f"assets/models/m3/units/{_slug(target)}-{_slug(role)}.glb"
+                unit_row["embeddedDrawables"] = {
+                    role: {
+                        "sourceW3d": embedded_models[role],
+                        "output": (
+                            f"assets/models/m3/units/{_slug(target)}-"
+                            f"{_slug(role)}.glb"
+                        ),
+                    }
                     for role in sorted(embedded_models, key=str.casefold)
                 }
         unit_rows.append(unit_row)

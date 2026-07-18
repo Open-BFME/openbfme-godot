@@ -188,6 +188,70 @@ def test_trebuchet_recipe_preserves_retail_embedded_death_drawable() -> None:
     )
 
 
+def test_trebuchet_resources_do_not_attribute_death_source_to_intact_glb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(m3_module, "NEW_BUILDINGS", ())
+    monkeypatch.setattr(m3_module, "NEW_UNITS", ("GondorTrebuchet",))
+    hierarchy = "gusiegtreb_skl"
+    source_paths = (
+        "art/w3d/gu/gusiegtreb_skn.w3d",
+        "art/w3d/gu/gusiegtreb_skl.w3d",
+        "art/w3d/gu/gusiegtreb_idla.w3d",
+        "art/w3d/gu/gusiegtreb_wlka.w3d",
+        "art/w3d/gu/gusiegtreb_atak.w3d",
+        "art/w3d/gu/gusiegtreb_diea.w3d",
+    )
+    scanned = []
+    for path in source_paths:
+        stem = Path(path).stem
+        scanned.append(
+            {
+                "virtualPath": path,
+                "headerIds": {
+                    "hierarchyIds": [hierarchy] if stem == hierarchy else [],
+                    "animationIds": (
+                        [f"{hierarchy}.{stem}"]
+                        if stem in {"gusiegtreb_idla", "gusiegtreb_wlka", "gusiegtreb_atak"}
+                        else []
+                    ),
+                },
+            }
+        )
+    closure = {
+        "schema": "openbfme.retail-visual-closure",
+        "targets": [
+            {"name": target, "status": "resolved"}
+            for target in (*BUILDINGS, *UNITS, *SELECTION_TRANSITIONS)
+        ],
+        "exactLeaves": [],
+        "scannedW3d": scanned,
+        "w3dDependencyClosure": {"embeddedTextures": []},
+    }
+
+    resources, census = build_m3_visual_resources(closure, {"resources": []})
+    intact = next(
+        row
+        for row in resources
+        if row["id"] == "m3-gondortrebuchet-rig-and-core-clips"
+    )
+    death = next(
+        row
+        for row in resources
+        if row["id"] == "m3-gondortrebuchet-death-embedded"
+    )
+    assert intact["patterns"] == sorted(source_paths[:5], key=str.casefold)
+    assert death["patterns"] == [source_paths[5]]
+
+    trebuchet = next(row for row in census["units"] if row["id"] == "GondorTrebuchet")
+    assert trebuchet["embeddedDrawables"] == {
+        "death": {
+            "sourceW3d": source_paths[5],
+            "output": "assets/models/m3/units/gondortrebuchet-death.glb",
+        }
+    }
+
+
 def test_initial_building_runtime_contract_is_hash_sealed_and_gap_only() -> None:
     recipe = load_recipe()
     base_profile_sha = hashlib.sha256(b"fixture base profile\n").hexdigest()
