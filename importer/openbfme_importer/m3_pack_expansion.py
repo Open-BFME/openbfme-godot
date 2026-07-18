@@ -1992,6 +1992,28 @@ def _effective_manifest_paths(manifest: Mapping[str, Any]) -> tuple[str, ...]:
     return _dedupe(paths, "effective manifest paths")
 
 
+def _require_effective_catalog_identity(
+    manifest: Mapping[str, Any], expected_identity: str
+) -> str:
+    if (
+        not isinstance(expected_identity, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_identity)
+    ):
+        raise ValueError("expected catalog identity is invalid")
+    catalog = _obj(manifest.get("catalog"), "effective manifest catalog")
+    actual_identity = catalog.get("identity_sha256")
+    if (
+        not isinstance(actual_identity, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", actual_identity)
+    ):
+        raise ValueError("effective manifest catalog identity is invalid")
+    if actual_identity != expected_identity:
+        raise ValueError(
+            "effective manifest catalog identity does not match the current catalog"
+        )
+    return actual_identity
+
+
 def compose_private_profile(
     recipe: Mapping[str, Any],
     base_profile: Mapping[str, Any],
@@ -2002,6 +2024,14 @@ def compose_private_profile(
     input_provenance: Mapping[str, str],
 ) -> dict[str, Any]:
     metadata = validate_recipe(recipe)
+    source_catalog_identity = _require_effective_catalog_identity(
+        effective_manifest,
+        _text(
+            input_provenance.get("expectedCatalogIdentitySha256"),
+            "expected catalog identity",
+            64,
+        ),
+    )
     encoded_base = _canonical_bytes(base_profile)
     expected = _obj(metadata.get("baseProfile"), "baseProfile")
     if base_profile.get("id") != expected.get("id") or hashlib.sha256(encoded_base).hexdigest() != expected.get("sha256"): raise ValueError("private base profile identity changed")
@@ -2102,6 +2132,7 @@ def compose_private_profile(
     pack.update(
         {
             "version": recipe["pack"]["version"],
+            "sourceCatalogIdentitySha256": source_catalog_identity,
             **candidate_pack_state(),
             "m3Recipe": deepcopy(metadata),
             "m3VisualClosureSha256": hashlib.sha256(_canonical_bytes(visual_closure)).hexdigest(),
@@ -2198,6 +2229,7 @@ def compose_profile_from_paths(
     visual_closure_path: Path,
     assets_root: Path,
     effective_manifest_path: Path,
+    expected_catalog_identity_sha256: str,
     output_path: Path,
     private_root: Path,
 ) -> dict[str, Any]:
@@ -2206,16 +2238,23 @@ def compose_profile_from_paths(
     base_profile, base_profile_sha256 = _load_json_with_sha256(
         base_profile_path, "M3 base profile"
     )
+    effective_manifest = _load_json(
+        effective_manifest_path, "effective-assets manifest"
+    )
+    _require_effective_catalog_identity(
+        effective_manifest, expected_catalog_identity_sha256
+    )
     profile = compose_private_profile(
         recipe,
         base_profile,
         _load_json(census_path, "M3 Men census"),
         _load_json(visual_closure_path, "M3 visual closure"),
         assets_root.resolve(),
-        _load_json(effective_manifest_path, "effective-assets manifest"),
+        effective_manifest,
         {
             "baseProfileInputSha256": base_profile_sha256,
             "recipeSha256": recipe_sha256,
+            "expectedCatalogIdentitySha256": expected_catalog_identity_sha256,
         },
     )
     write_json_atomic(output_path, profile)
@@ -2353,6 +2392,7 @@ def _parser() -> argparse.ArgumentParser:
     compose.add_argument("--visual-closure", type=Path, required=True)
     compose.add_argument("--assets-root", type=Path, required=True)
     compose.add_argument("--effective-manifest", type=Path, required=True)
+    compose.add_argument("--expected-catalog-identity", required=True)
     compose.add_argument("--output", type=Path, required=True)
     compose.add_argument("--private-root", type=Path, required=True)
     report = sub.add_parser("report")
@@ -2375,6 +2415,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.visual_closure,
             args.assets_root,
             args.effective_manifest,
+            args.expected_catalog_identity,
             args.output,
             args.private_root,
         )

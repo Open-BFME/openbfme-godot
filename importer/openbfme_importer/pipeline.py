@@ -1867,30 +1867,7 @@ def _catalog_identities(catalog: InstallCatalog) -> tuple[str, str]:
             ]
         }
     )
-    entries = [
-        asdict(item)
-        for item in sorted(
-            catalog.entries,
-            key=lambda item: (
-                item.precedence,
-                item.archive.casefold(),
-                item.archive,
-                item.name.casefold(),
-                item.name,
-                item.offset,
-                item.size,
-            ),
-        )
-    ]
-    catalog_identity = _canonical_value_sha256(
-        {
-            "format": InstallCatalog.FORMAT,
-            "install_root": str(catalog.install_root),
-            "archives": archives,
-            "entries": entries,
-        }
-    )
-    return catalog_identity, install_identity
+    return catalog.identity_sha256(), install_identity
 
 
 def _validate_effective_catalog(
@@ -2175,13 +2152,43 @@ class ImportPipeline:
                 **self._conversion_cache_stats,
             }
 
+    def _validate_source_catalog_binding(self, resolved: ResolvedProfile) -> str:
+        profile = resolved.profile
+        pack = profile.pack_metadata
+        requires_binding = (
+            profile.id == "men-fords-v1"
+            or "m3Recipe" in pack
+            or any(
+                path.replace("\\", "/").casefold().startswith("data/m3/")
+                for path in profile.runtime_data
+            )
+            or any(rule.id.startswith("m3-") for rule in profile.resources)
+        )
+        expected = pack.get("sourceCatalogIdentitySha256")
+        if requires_binding and expected is None:
+            raise ValueError("M3 profile is missing its source catalog identity")
+        if expected is not None and (
+            not isinstance(expected, str)
+            or len(expected) != 64
+            or any(character not in "0123456789abcdef" for character in expected)
+        ):
+            raise ValueError("profile source catalog identity is invalid")
+        actual = self.catalog.identity_sha256()
+        if expected is not None and expected != actual:
+            raise ValueError(
+                "profile source catalog identity does not match the current catalog"
+            )
+        return actual
+
     def plan_report(self, resolved: ResolvedProfile) -> dict[str, Any]:
+        catalog_identity = self._validate_source_catalog_binding(resolved)
         recipe = _importer_recipe_report()
         return {
             "format": 1,
             "profile": resolved.profile.id,
             "profile_sha256": resolved.profile.source_sha256,
             "importer_recipe_sha256": recipe["tree_sha256"],
+            "catalog_identity_sha256": catalog_identity,
             "pack": resolved.profile.pack_id,
             "install_root": str(self.catalog.install_root),
             "ready": not resolved.missing_required,
@@ -2586,6 +2593,7 @@ class ImportPipeline:
         max_files: int = 10_000,
         max_bytes: int = 4 * 1024 * 1024 * 1024,
     ) -> dict[tuple[str, str], dict[str, Any]]:
+        self._validate_source_catalog_binding(resolved)
         entries = resolved.selected_entries
         if len(entries) > max_files:
             raise RuntimeError(
@@ -2633,6 +2641,7 @@ class ImportPipeline:
         force: bool = False,
         allow_incomplete: bool = False,
     ) -> Path:
+        self._validate_source_catalog_binding(resolved)
         if resolved.missing_required and not allow_incomplete:
             missing = ", ".join(resolved.missing_required)
             raise RuntimeError(f"required profile resources did not resolve: {missing}")

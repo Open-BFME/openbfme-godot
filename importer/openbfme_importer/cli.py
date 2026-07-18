@@ -10,7 +10,12 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from .catalog import InstallCatalog, doctor_install
+from .catalog import (
+    ArchivePolicy,
+    DEFAULT_BFME2_ARCHIVE_POLICY,
+    InstallCatalog,
+    doctor_install,
+)
 from .bootstrap import bootstrap_tools, tool_status
 from .asset_census import census_assets
 from .game import RETAIL_GAME_IDS, workspace_root
@@ -77,14 +82,23 @@ def _add_game_argument(command: argparse.ArgumentParser) -> None:
 def _load_or_build_catalog(args: argparse.Namespace) -> InstallCatalog:
     path = _catalog_path(args)
     install = Path(args.install).expanduser().resolve()
+    source_policy = (
+        ArchivePolicy.load(DEFAULT_BFME2_ARCHIVE_POLICY)
+        if args.game == "bfme2"
+        else None
+    )
     if path.is_file() and not args.reindex:
         try:
             catalog = InstallCatalog.load(path)
-            if catalog.install_root == install and not catalog.stale_reasons():
+            if (
+                catalog.install_root == install
+                and catalog.source_policy == source_policy
+                and not catalog.stale_reasons()
+            ):
                 return catalog
         except (OSError, ValueError, KeyError, TypeError):
             pass
-    catalog = InstallCatalog.build(install)
+    catalog = InstallCatalog.build(install, source_policy=source_policy)
     catalog.save(path)
     return catalog
 
@@ -329,7 +343,9 @@ def main(argv: list[str] | None = None) -> int:
                 "catalog": str(_catalog_path(args)),
                 "archives": len(catalog.archives),
                 "entries": len(catalog.entries),
-                "stale": catalog.stale_reasons(),
+                # _load_or_build_catalog already validated a reused catalog or
+                # built this catalog directly from the current install.
+                "stale": [],
             }
             _render(value, args.json)
             return 0

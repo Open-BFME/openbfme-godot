@@ -286,10 +286,17 @@ def test_path_composer_binds_parsed_inputs_to_the_same_raw_bytes(
     recipe_path.write_bytes(recipe_bytes)
     base_path.write_bytes(base_bytes)
     other_paths = []
-    for name in ("census.json", "visual.json", "manifest.json"):
+    expected_catalog_identity = "a" * 64
+    for name in ("census.json", "visual.json"):
         path = tmp_path / name
         path.write_text("{}\n", encoding="utf-8", newline="\n")
         other_paths.append(path)
+    manifest_path = tmp_path / "manifest.json"
+    write_json_atomic(
+        manifest_path,
+        {"catalog": {"identity_sha256": expected_catalog_identity}},
+    )
+    other_paths.append(manifest_path)
     assets_root = tmp_path / "assets"
     assets_root.mkdir()
     output_path = private_root / "scratch" / "candidate.json"
@@ -310,6 +317,7 @@ def test_path_composer_binds_parsed_inputs_to_the_same_raw_bytes(
         other_paths[1],
         assets_root,
         other_paths[2],
+        expected_catalog_identity,
         output_path,
         private_root,
     )
@@ -318,8 +326,22 @@ def test_path_composer_binds_parsed_inputs_to_the_same_raw_bytes(
     assert captured["base"] == json.loads(base_bytes)
     assert captured["provenance"] == {
         "baseProfileInputSha256": hashlib.sha256(base_bytes).hexdigest(),
+        "expectedCatalogIdentitySha256": expected_catalog_identity,
         "recipeSha256": hashlib.sha256(recipe_bytes).hexdigest(),
     }
+
+    with pytest.raises(ValueError, match="does not match the current catalog"):
+        m3_module.compose_profile_from_paths(
+            recipe_path,
+            base_path,
+            other_paths[0],
+            other_paths[1],
+            assets_root,
+            other_paths[2],
+            "b" * 64,
+            output_path,
+            private_root,
+        )
 
 
 def test_json_digest_loader_never_reads_more_than_limit_plus_one() -> None:

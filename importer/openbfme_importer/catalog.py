@@ -10,7 +10,7 @@ import json
 import os
 import re
 import subprocess
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from .big import BigArchive, BigEntry
 from .big import sha256_file
@@ -53,6 +53,180 @@ KNOWN_SLICE_ARCHIVE_SHA256 = {
     "music.big": "6cc8cf58ad6b1e37ea36b4f49cae4ef3b8f6698be1b9e08614763c6dedb9ac5b",
     "lang/englishpatch105.big": "ffdc7e390e9c3f3196b105d60ec067546844a946917d2b021e616bb75ad75e56",
 }
+
+ARCHIVE_POLICY_SCHEMA = "openbfme.retail-archive-policy"
+ARCHIVE_POLICY_VERSION = 1
+DEFAULT_BFME2_ARCHIVE_POLICY = (
+    Path(__file__).resolve().parents[2]
+    / "contracts"
+    / "bfme2-106-english-archives.json"
+)
+
+
+def _md5_file(path: Path) -> str:
+    digest = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as stream:
+        while block := stream.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ArchivePolicyMember:
+    path: str
+    md5: str
+    size: int
+    language: str
+
+
+@dataclass(frozen=True, slots=True)
+class ArchivePolicy:
+    game: str
+    patch: str
+    package_guid: str
+    package_name: str
+    package_version: str
+    receipt_sha256: str
+    language: str
+    policy_sha256: str
+    archives: tuple[ArchivePolicyMember, ...]
+
+    @classmethod
+    def _from_value(
+        cls, value: Mapping[str, Any], *, label: str
+    ) -> "ArchivePolicy":
+        if not isinstance(value, dict) or set(value) != {
+            "schema",
+            "schemaVersion",
+            "game",
+            "patch",
+            "package",
+            "language",
+            "policySha256",
+            "archives",
+        }:
+            raise ValueError(f"{label} root is invalid")
+        if (
+            value.get("schema") != ARCHIVE_POLICY_SCHEMA
+            or value.get("schemaVersion") != ARCHIVE_POLICY_VERSION
+        ):
+            raise ValueError(f"{label} schema is unsupported")
+        package = value.get("package")
+        if not isinstance(package, dict) or set(package) != {
+            "guid",
+            "name",
+            "version",
+            "receiptSha256",
+        }:
+            raise ValueError(f"{label} package identity is invalid")
+        raw_archives = value.get("archives")
+        if not isinstance(raw_archives, list) or not raw_archives:
+            raise ValueError(f"{label} must contain archive members")
+        members: list[ArchivePolicyMember] = []
+        keys: set[str] = set()
+        for index, raw in enumerate(raw_archives):
+            if not isinstance(raw, dict) or set(raw) != {
+                "path",
+                "md5",
+                "size",
+                "language",
+            }:
+                raise ValueError(f"{label} member {index} is invalid")
+            member_path = raw.get("path")
+            member_md5 = raw.get("md5")
+            member_size = raw.get("size")
+            member_language = raw.get("language")
+            if not isinstance(member_path, str):
+                raise ValueError(f"{label} member {index} path is invalid")
+            canonical = "/".join(safe_relative_parts(member_path))
+            if canonical != member_path or not canonical.casefold().endswith(".big"):
+                raise ValueError(f"{label} member path is not canonical: {member_path!r}")
+            key = canonical.casefold()
+            if key in keys:
+                raise ValueError(f"duplicate {label} member: {member_path}")
+            keys.add(key)
+            if (
+                not isinstance(member_md5, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", member_md5)
+                or isinstance(member_size, bool)
+                or not isinstance(member_size, int)
+                or member_size < 16
+                or not isinstance(member_language, str)
+                or not member_language
+            ):
+                raise ValueError(f"{label} member metadata is invalid: {member_path}")
+            members.append(
+                ArchivePolicyMember(canonical, member_md5, member_size, member_language)
+            )
+        members.sort(key=lambda item: item.path.casefold())
+        policy_sha256 = value.get("policySha256")
+        canonical_rows = "".join(
+            f"{item.path}|{item.md5}|{item.size}|{item.language}\n" for item in members
+        )
+        actual_policy_sha256 = hashlib.sha256(canonical_rows.encode("utf-8")).hexdigest()
+        if policy_sha256 != actual_policy_sha256:
+            raise ValueError(f"{label} digest does not match its members")
+        receipt_sha256 = package.get("receiptSha256")
+        strings = {
+            "game": value.get("game"),
+            "patch": value.get("patch"),
+            "package_guid": package.get("guid"),
+            "package_name": package.get("name"),
+            "package_version": package.get("version"),
+            "receipt_sha256": receipt_sha256,
+            "language": value.get("language"),
+        }
+        if any(not isinstance(item, str) or not item for item in strings.values()):
+            raise ValueError(f"{label} identity fields are invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(receipt_sha256)):
+            raise ValueError(f"{label} receipt digest is invalid")
+        return cls(
+            **strings,
+            policy_sha256=actual_policy_sha256,
+            archives=tuple(members),
+        )
+
+    @classmethod
+    def load(cls, path: Path | str) -> "ArchivePolicy":
+        value = read_json(Path(path))
+        if not isinstance(value, dict):
+            raise ValueError("archive policy root is invalid")
+        return cls._from_value(value, label="archive policy")
+
+    def identity_record(self) -> dict[str, Any]:
+        return {
+            "schema": ARCHIVE_POLICY_SCHEMA,
+            "schema_version": ARCHIVE_POLICY_VERSION,
+            "game": self.game,
+            "patch": self.patch,
+            "package_guid": self.package_guid,
+            "package_name": self.package_name,
+            "package_version": self.package_version,
+            "receipt_sha256": self.receipt_sha256,
+            "language": self.language,
+            "policy_sha256": self.policy_sha256,
+        }
+
+    def serialized(self) -> dict[str, Any]:
+        return {
+            "schema": ARCHIVE_POLICY_SCHEMA,
+            "schemaVersion": ARCHIVE_POLICY_VERSION,
+            "game": self.game,
+            "patch": self.patch,
+            "package": {
+                "guid": self.package_guid,
+                "name": self.package_name,
+                "version": self.package_version,
+                "receiptSha256": self.receipt_sha256,
+            },
+            "language": self.language,
+            "policySha256": self.policy_sha256,
+            "archives": [asdict(item) for item in self.archives],
+        }
+
+    @classmethod
+    def from_serialized(cls, value: Mapping[str, Any]) -> "ArchivePolicy":
+        return cls._from_value(value, label="serialized archive policy")
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,10 +325,12 @@ class InstallCatalog:
         install_root: Path,
         archives: tuple[ArchiveInfo, ...],
         entries: tuple[CatalogEntry, ...],
+        source_policy: ArchivePolicy | None = None,
     ) -> None:
         self.install_root = install_root.resolve()
         self.archives = archives
         self.entries = entries
+        self.source_policy = source_policy
         by_key: dict[str, list[CatalogEntry]] = {}
         for entry in entries:
             by_key.setdefault(entry.key, []).append(entry)
@@ -169,11 +345,37 @@ class InstallCatalog:
         install_root: Path | str,
         *,
         archive_names: Iterable[str] | None = None,
+        source_policy: ArchivePolicy | None = None,
     ) -> "InstallCatalog":
         root = Path(install_root).expanduser().resolve()
         if not root.is_dir():
             raise FileNotFoundError(f"BFME II install directory not found: {root}")
-        if archive_names is None:
+        if archive_names is not None and source_policy is not None:
+            raise ValueError("archive_names and source_policy are mutually exclusive")
+        if source_policy is not None:
+            discovered: dict[str, list[Path]] = {}
+            for path in root.rglob("*.big"):
+                relative = path.relative_to(root).as_posix()
+                key = relative.casefold()
+                discovered.setdefault(key, []).append(path)
+            archive_paths = []
+            for member in source_policy.archives:
+                matches = discovered.get(member.path.casefold(), [])
+                if not matches:
+                    raise FileNotFoundError(
+                        f"archive policy member is missing: {member.path}"
+                    )
+                if len(matches) != 1:
+                    raise ValueError(
+                        f"case-colliding archive policy member: {member.path}"
+                    )
+                path = matches[0]
+                if path.stat().st_size != member.size:
+                    raise ValueError(f"archive policy member size changed: {member.path}")
+                if _md5_file(path) != member.md5:
+                    raise ValueError(f"archive policy member digest changed: {member.path}")
+                archive_paths.append(path)
+        elif archive_names is None:
             archive_paths = sorted(root.rglob("*.big"), key=lambda path: str(path).casefold())
         else:
             archive_paths = []
@@ -212,7 +414,7 @@ class InstallCatalog:
                 CatalogEntry(relative, item.name, item.offset, item.size, precedence)
                 for item in parsed.entries
             )
-        return cls(root, tuple(archives), tuple(entries))
+        return cls(root, tuple(archives), tuple(entries), source_policy)
 
     @classmethod
     def load(cls, path: Path | str) -> "InstallCatalog":
@@ -253,7 +455,19 @@ class InstallCatalog:
                     "catalog entry precedence does not match canonical archive order: "
                     f"{entry.archive}:{entry.name}"
                 )
-        return cls(Path(value["install_root"]), archives, entries)
+        raw_policy = value.get("source_policy")
+        source_policy = None
+        if raw_policy is not None:
+            if not isinstance(raw_policy, dict):
+                raise ValueError("catalog source policy is invalid")
+            source_policy = ArchivePolicy.from_serialized(raw_policy)
+        catalog = cls(Path(value["install_root"]), archives, entries, source_policy)
+        if source_policy is not None:
+            expected = {item.path.casefold() for item in source_policy.archives}
+            actual = {item.relative_path.casefold() for item in archives}
+            if actual != expected:
+                raise ValueError("catalog archive membership does not match source policy")
+        return catalog
 
     def save(self, path: Path | str) -> None:
         value = {
@@ -263,6 +477,8 @@ class InstallCatalog:
             "archives": [asdict(item) for item in self.archives],
             "entries": [asdict(item) for item in self.entries],
         }
+        if self.source_policy is not None:
+            value["source_policy"] = self.source_policy.serialized()
         write_json_atomic(Path(path), value)
 
     def stale_reasons(self) -> list[str]:
@@ -274,12 +490,15 @@ class InstallCatalog:
             )
         }
         indexed = {archive.relative_path.casefold() for archive in self.archives}
-        current = {
-            path.relative_to(self.install_root).as_posix().casefold()
-            for path in self.install_root.rglob("*.big")
-        }
-        for relative in sorted(current - indexed):
-            reasons.append(f"new archive: {relative}")
+        if self.source_policy is None:
+            current = {
+                path.relative_to(self.install_root).as_posix().casefold()
+                for path in self.install_root.rglob("*.big")
+            }
+            for relative in sorted(current - indexed):
+                reasons.append(f"new archive: {relative}")
+        else:
+            current = indexed
         for relative in sorted(indexed - current):
             reasons.append(f"missing archive: {relative}")
         for archive in self.archives:
@@ -303,6 +522,17 @@ class InstallCatalog:
             if current_directory != archive.directory_sha256:
                 reasons.append(f"changed archive directory: {archive.relative_path}")
                 continue
+            if self.source_policy is not None:
+                members = {
+                    item.path.casefold(): item for item in self.source_policy.archives
+                }
+                member = members.get(archive.relative_path.casefold())
+                if member is None:
+                    reasons.append(f"archive is outside source policy: {archive.relative_path}")
+                    continue
+                if _md5_file(path) != member.md5:
+                    reasons.append(f"changed archive payload: {archive.relative_path}")
+                    continue
             catalog_entries = tuple(
                 entry
                 for entry in self.entries
@@ -321,6 +551,52 @@ class InstallCatalog:
             ):
                 reasons.append(f"catalog directory mismatch: {archive.relative_path}")
         return reasons
+
+    @property
+    def source_policy_sha256(self) -> str | None:
+        return self.source_policy.policy_sha256 if self.source_policy is not None else None
+
+    def identity_sha256(self) -> str:
+        archives = [
+            {
+                "relative_path": item.relative_path,
+                "size": item.size,
+                "magic": item.magic,
+                "header_size": item.header_size,
+                "entry_count": item.entry_count,
+                "directory_sha256": item.directory_sha256,
+            }
+            for item in sorted(
+                self.archives,
+                key=lambda item: (item.relative_path.casefold(), item.relative_path),
+            )
+        ]
+        entries = [
+            asdict(item)
+            for item in sorted(
+                self.entries,
+                key=lambda item: (
+                    item.precedence,
+                    item.archive.casefold(),
+                    item.archive,
+                    item.name.casefold(),
+                    item.name,
+                    item.offset,
+                    item.size,
+                ),
+            )
+        ]
+        payload = {
+            "format": self.FORMAT,
+            "archives": archives,
+            "entries": entries,
+        }
+        if self.source_policy is not None:
+            payload["source_policy"] = self.source_policy.identity_record()
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def resolve_exact(self, virtual_path: str) -> CatalogEntry | None:
         values = self._by_key.get(virtual_path.replace("\\", "/").casefold(), ())

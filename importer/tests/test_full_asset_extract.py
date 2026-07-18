@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -42,6 +42,62 @@ def _make_install(root: Path) -> InstallCatalog:
 
 
 class FullAssetExtractTests(unittest.TestCase):
+    def test_plan_report_retains_catalog_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            catalog = _make_install(root)
+            profile = Mock(
+                id="fixture-profile",
+                source_sha256="a" * 64,
+                pack_id="fixture-pack",
+                pack_metadata={},
+                runtime_data={},
+                resources=(),
+            )
+            resolved = Mock(
+                profile=profile,
+                missing_required=(),
+                resources=(),
+                selected_entries=(),
+            )
+            report = ImportPipeline(catalog, root / "state").plan_report(resolved)
+            self.assertEqual(
+                report["catalog_identity_sha256"], catalog.identity_sha256()
+            )
+
+    def test_core_plan_extract_and_build_reject_m3_catalog_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            catalog = _make_install(root)
+            profile = Mock(
+                id="men-fords-v1",
+                source_sha256="a" * 64,
+                pack_id="fixture-pack",
+                pack_metadata={"sourceCatalogIdentitySha256": "0" * 64},
+                runtime_data={"data/m3/ranger-runtime.json": {}},
+                resources=(),
+            )
+            resolved = Mock(
+                profile=profile,
+                missing_required=(),
+                resources=(),
+                selected_entries=(),
+            )
+            pipeline = ImportPipeline(catalog, root / "state")
+            for operation in (
+                lambda: pipeline.plan_report(resolved),
+                lambda: pipeline.extract_sources(resolved),
+                lambda: pipeline.build(resolved),
+            ):
+                with self.subTest(operation=operation), self.assertRaisesRegex(
+                    ValueError, "does not match the current catalog"
+                ):
+                    operation()
+
+            profile.pack_metadata = {}
+            with self.assertRaisesRegex(ValueError, "missing its source catalog identity"):
+                pipeline.plan_report(resolved)
+
     def test_extracts_canonical_effective_tree_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -200,7 +256,9 @@ class FullAssetExtractTests(unittest.TestCase):
             catalog = _make_install(root)
             state = root / "state"
             stdout = io.StringIO()
-            with redirect_stdout(stdout):
+            with patch(
+                "openbfme_importer.cli.ArchivePolicy.load", return_value=None
+            ), redirect_stdout(stdout):
                 result = main(
                     [
                         "--json",

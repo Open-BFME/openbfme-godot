@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import struct
 import tempfile
 from pathlib import Path
 import unittest
 
-from openbfme_importer.catalog import InstallCatalog
+from openbfme_importer.catalog import (
+    ArchivePolicy,
+    DEFAULT_BFME2_ARCHIVE_POLICY,
+    InstallCatalog,
+)
 from openbfme_importer.pipeline import _render_output_template
 from openbfme_importer.profile import ImportProfile, resolve_profile
 from openbfme_importer.util import write_json_atomic
@@ -27,6 +33,121 @@ def make_big(path: Path, files: dict[str, bytes]) -> None:
 
 
 class CatalogProfileTests(unittest.TestCase):
+    def test_tracked_bfme2_106_policy_has_receipt_bound_107_archive_set(self) -> None:
+        policy = ArchivePolicy.load(DEFAULT_BFME2_ARCHIVE_POLICY)
+        self.assertEqual(policy.game, "bfme2")
+        self.assertEqual(policy.patch, "1.06")
+        self.assertEqual(policy.package_guid, "original-BFME2")
+        self.assertEqual(policy.language, "EN")
+        self.assertEqual(len(policy.archives), 107)
+        self.assertEqual(
+            policy.policy_sha256,
+            "98707c52862f378ec22a02ad0572cb131faa56fbfd34ff5f1f0845fd33931d47",
+        )
+
+    def test_policy_catalog_ignores_extras_and_rejects_member_payload_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            base = root / "INI.big"
+            make_big(base, {"data/ranger.ini": b"retail"})
+            make_big(root / "###mod.big", {"data/ranger.ini": b"modded"})
+            member_path = "ini.big"
+            member_md5 = hashlib.md5(base.read_bytes()).hexdigest()
+            canonical_rows = f"{member_path}|{member_md5}|{base.stat().st_size}|ALL\n"
+            policy_path = root / "policy.json"
+            write_json_atomic(
+                policy_path,
+                {
+                    "schema": "openbfme.retail-archive-policy",
+                    "schemaVersion": 1,
+                    "game": "bfme2",
+                    "patch": "1.06",
+                    "package": {
+                        "guid": "original-BFME2",
+                        "name": "Vanilla (1.06)",
+                        "version": "1.0.0",
+                        "receiptSha256": "1" * 64,
+                    },
+                    "language": "EN",
+                    "policySha256": hashlib.sha256(
+                        canonical_rows.encode("utf-8")
+                    ).hexdigest(),
+                    "archives": [
+                        {
+                            "path": member_path,
+                            "md5": member_md5,
+                            "size": base.stat().st_size,
+                            "language": "ALL",
+                        }
+                    ],
+                },
+            )
+            policy = ArchivePolicy.load(policy_path)
+            catalog = InstallCatalog.build(root, source_policy=policy)
+            winner = catalog.resolve_exact("data/ranger.ini")
+            self.assertIsNotNone(winner)
+            self.assertEqual(winner.archive, "INI.big")
+            self.assertEqual(len(catalog.archives), 1)
+            self.assertEqual(catalog.stale_reasons(), [])
+
+            saved = root / "catalog.json"
+            catalog.save(saved)
+            loaded = InstallCatalog.load(saved)
+            self.assertEqual(loaded.identity_sha256(), catalog.identity_sha256())
+            self.assertEqual(loaded.source_policy_sha256, policy.policy_sha256)
+
+            original_stat = base.stat()
+            payload = bytearray(base.read_bytes())
+            payload[-1] ^= 1
+            base.write_bytes(payload)
+            os.utime(base, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+            self.assertIn("changed archive payload: INI.big", catalog.stale_reasons())
+            with self.assertRaisesRegex(ValueError, "digest changed"):
+                InstallCatalog.build(root, source_policy=policy)
+
+    def test_policy_catalog_identity_is_portable_across_install_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            installs = [root / "windows-copy", root / "linux-copy"]
+            for install in installs:
+                install.mkdir()
+                make_big(install / "INI.big", {"data/source.ini": b"retail"})
+            archive = installs[0] / "INI.big"
+            md5 = hashlib.md5(archive.read_bytes()).hexdigest()
+            row = f"ini.big|{md5}|{archive.stat().st_size}|ALL\n"
+            policy_path = root / "policy.json"
+            write_json_atomic(
+                policy_path,
+                {
+                    "schema": "openbfme.retail-archive-policy",
+                    "schemaVersion": 1,
+                    "game": "bfme2",
+                    "patch": "1.06",
+                    "package": {
+                        "guid": "original-BFME2",
+                        "name": "Vanilla (1.06)",
+                        "version": "1.0.0",
+                        "receiptSha256": "2" * 64,
+                    },
+                    "language": "EN",
+                    "policySha256": hashlib.sha256(row.encode("utf-8")).hexdigest(),
+                    "archives": [
+                        {
+                            "path": "ini.big",
+                            "md5": md5,
+                            "size": archive.stat().st_size,
+                            "language": "ALL",
+                        }
+                    ],
+                },
+            )
+            policy = ArchivePolicy.load(policy_path)
+            identities = [
+                InstallCatalog.build(install, source_policy=policy).identity_sha256()
+                for install in installs
+            ]
+            self.assertEqual(identities[0], identities[1])
+
     def test_men_fords_w3d_contract_requires_equipment_without_expanding_closure(self) -> None:
         profile = ImportProfile.load(
             Path(__file__).parents[1] / "profiles" / "men-fords-v0.json"
@@ -145,8 +266,6 @@ class CatalogProfileTests(unittest.TestCase):
             payload[name_offset : name_offset + len(b"data/one.ini")] = b"data/two.ini"
             base.write_bytes(payload)
             base.touch()
-            import os
-
             os.utime(base, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
             self.assertEqual(base.stat().st_size, original_stat.st_size)
             self.assertTrue(
