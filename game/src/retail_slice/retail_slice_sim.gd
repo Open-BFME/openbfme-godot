@@ -34,6 +34,8 @@ const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
 const TOWER_GUARD_OBJECT_ID := "bfme2.object.gondor-tower-guard"
 const KNIGHT_OBJECT_ID := "bfme2.object.gondor-knight"
+const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
+const RANGER_HORDE_ID := "bfme2.object.gondor-ranger-horde"
 const BUILDER_OBJECT_ID := "bfme2.object.men-porter"
 const SOLDIER_HORDE_ID := "bfme2.object.gondor-fighter-horde"
 const PRODUCTION_DOOR_INSET_RADIUS := 0.9
@@ -43,6 +45,7 @@ const UNIT_DAMAGE_TYPES: Dictionary = {
 	SOLDIER_OBJECT_ID: "slash",
 	TOWER_GUARD_OBJECT_ID: "specialist",
 	ARCHER_OBJECT_ID: "pierce",
+	RANGER_OBJECT_ID: "pierce",
 	KNIGHT_OBJECT_ID: "cavalry",
 }
 # BFME2 1.06 FortressArmor keeps the source 7,500 hit points but applies
@@ -137,6 +140,11 @@ var last_route_rejection := ""
 var _spawn_positions: Dictionary = {}
 var _home_layout: Dictionary = {}
 var _rules: Dictionary = {}
+var configuration_error := ""
+var _unit_production_rules: Dictionary = {}
+var _production_unit_order: Array[String] = []
+var _unit_prerequisites: Dictionary = {}
+var _structure_upgrade_contracts: Dictionary = {}
 var _next_dynamic_id: Dictionary = {PLAYER_TEAM: 10, ENEMY_TEAM: 110}
 var _next_dynamic_structure_id := 3000
 var _next_event_sequence := 1
@@ -251,6 +259,12 @@ func _apply_fallback_configuration() -> void:
 
 func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	_rules = gameplay_rules.duplicate(true)
+	configuration_error = ""
+	_unit_production_rules = UNIT_PRODUCTION_RULES.duplicate(true)
+	_production_unit_order.assign(AI_PRODUCTION_PLAN)
+	_unit_prerequisites.clear()
+	_structure_upgrade_contracts.clear()
+	_configure_ranger_runtime_contract()
 	base_loop_enabled = bool(_rules.get("enable_base_loop", false))
 	command_point_cap = maxi(60, int(_rules.get("command_point_cap", 200)))
 	team_resources = {
@@ -258,6 +272,137 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 		ENEMY_TEAM: maxi(0, int(_rules.get("starting_resources", 1200 if base_loop_enabled else 0))),
 	}
 	team_command_points = {PLAYER_TEAM: 120, ENEMY_TEAM: 120}
+
+
+func _configure_ranger_runtime_contract() -> void:
+	var value: Variant = _rules.get("ranger_runtime", {})
+	if typeof(value) != TYPE_DICTIONARY:
+		configuration_error = "Ranger runtime contract is not a dictionary"
+		return
+	var contract := value as Dictionary
+	if contract.is_empty():
+		return
+	if (
+		String(contract.get("schema", "")) != "openbfme.ranger-runtime-contract"
+		or int(contract.get("schemaVersion", -1)) != 0
+		or String(contract.get("capabilityStatus", "")) != "rules-and-prerequisite-ready"
+	):
+		configuration_error = "Ranger runtime contract identity is invalid"
+		return
+	var production_value: Variant = contract.get("production")
+	var prerequisite_value: Variant = contract.get("prerequisite")
+	var unit_rule_value: Variant = _rules.get("ranger_unit_rule")
+	if typeof(production_value) != TYPE_DICTIONARY or typeof(prerequisite_value) != TYPE_DICTIONARY or typeof(unit_rule_value) != TYPE_DICTIONARY:
+		configuration_error = "Ranger runtime contract is missing production, prerequisite, or normalized unit rule"
+		return
+	var production := production_value as Dictionary
+	var prerequisite := prerequisite_value as Dictionary
+	var unit_rule := unit_rule_value as Dictionary
+	var command_sets_value: Variant = contract.get("commandSets")
+	var train_options_value: Variant = prerequisite.get("trainCommandOptions")
+	var upgrade_options_value: Variant = prerequisite.get("options")
+	if typeof(command_sets_value) != TYPE_ARRAY or typeof(train_options_value) != TYPE_ARRAY or typeof(upgrade_options_value) != TYPE_ARRAY:
+		configuration_error = "Ranger runtime contract options are invalid"
+		return
+	if not _ranger_command_sets_are_valid(command_sets_value as Array):
+		configuration_error = "Ranger runtime command-set transition is invalid"
+		return
+	var required_unit_rule_fields: Array[String] = [
+		"horde_id", "member_count", "member_health", "member_damage",
+		"speed", "speed_source", "acceleration", "acceleration_source",
+		"turn_rate_degrees_per_second", "braking", "braking_source",
+		"attack_range", "attack_range_source", "minimum_attack_range",
+		"minimum_attack_range_source", "vision_range", "vision_range_source",
+		"delay_between_shots_ms", "pre_attack_delay_ms", "firing_duration_ms",
+		"attack_period_ticks", "pre_attack_ticks", "firing_duration_ticks",
+		"formation_positions", "provenance",
+	]
+	for field in required_unit_rule_fields:
+		if not unit_rule.has(field):
+			configuration_error = "Ranger normalized unit rule is missing %s" % field
+			return
+	var upgrade_id := String(prerequisite.get("upgradeId", ""))
+	var upgrade_cost := int(prerequisite.get("cost", -1))
+	var upgrade_ticks := roundi(float(prerequisite.get("buildTimeSeconds", -1.0)) / TICK_SECONDS)
+	var ranger_cost := int(production.get("buildCost", -1))
+	var ranger_ticks := roundi(float(production.get("buildTime", -1.0)) / TICK_SECONDS)
+	var ranger_command_points := int(production.get("commandPoints", -1))
+	if (
+		String(production.get("id", "")) != "GondorRangerHorde"
+		or String(prerequisite.get("trainCommandId", "")) != "Command_ConstructGondorRangerHorde"
+		or not (train_options_value as Array).has("NEED_UPGRADE")
+		or upgrade_id != "Upgrade_GondorArcheryRangeLevel2"
+		or String(prerequisite.get("type", "")) != "OBJECT"
+		or not (upgrade_options_value as Array).has("CANCELABLE")
+		or int(prerequisite.get("levelsToGain", 0)) != 1
+		or int(prerequisite.get("levelCap", 0)) != 3
+		or String(prerequisite.get("fromCommandSet", "")) != "GondorArcheryCommandSet"
+		or String(prerequisite.get("toCommandSet", "")) != "GondorArcheryCommandSetLevel2"
+		or upgrade_cost < 0
+		or upgrade_ticks <= 0
+		or ranger_cost < 0
+		or ranger_ticks <= 0
+		or ranger_command_points <= 0
+		or String(unit_rule.get("horde_id", "")) != "GondorRangerHorde"
+		or int(unit_rule.get("member_count", 0)) != 10
+	):
+		configuration_error = "Ranger runtime contract values are invalid"
+		return
+	var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
+	configured_unit_rules[RANGER_OBJECT_ID] = unit_rule.duplicate(true)
+	_rules["unit_rules"] = configured_unit_rules
+	_unit_production_rules[RANGER_HORDE_ID] = {
+		"producer_kind": "archery_range",
+		"object_id": RANGER_OBJECT_ID,
+		"display_name": "Ithilien Rangers",
+		"default_cost": ranger_cost,
+		"default_build_ticks": ranger_ticks,
+		"default_command_points": ranger_command_points,
+	}
+	_production_unit_order.append(RANGER_HORDE_ID)
+	_unit_prerequisites[RANGER_HORDE_ID] = upgrade_id
+	_structure_upgrade_contracts[upgrade_id] = {
+		"structure_kind": "archery_range",
+		"cost": upgrade_cost,
+		"duration_ticks": upgrade_ticks,
+		"levels_to_gain": 1,
+		"level_cap": 3,
+		"cancelable": true,
+		"from_command_set": String(prerequisite.get("fromCommandSet", "")),
+		"to_command_set": String(prerequisite.get("toCommandSet", "")),
+	}
+
+
+func _ranger_command_sets_are_valid(command_sets: Array) -> bool:
+	var expected := {
+		"GondorArcheryCommandSet": "Command_PurchaseUpgradeGondorArcheryRangeLevel2",
+		"GondorArcheryCommandSetLevel2": "Command_PurchaseUpgradeGondorArcheryRangeLevel3",
+	}
+	var matched: Dictionary = {}
+	for command_set_value in command_sets:
+		if typeof(command_set_value) != TYPE_DICTIONARY:
+			return false
+		var command_set := command_set_value as Dictionary
+		var command_set_id := String(command_set.get("id", ""))
+		if not expected.has(command_set_id):
+			continue
+		var commands_value: Variant = command_set.get("commands")
+		if typeof(commands_value) != TYPE_ARRAY:
+			return false
+		var has_ranger := false
+		var has_upgrade := false
+		for command_value in commands_value as Array:
+			if typeof(command_value) != TYPE_DICTIONARY:
+				return false
+			var command := command_value as Dictionary
+			var command_id := String(command.get("id", ""))
+			var slot := int(command.get("slot", 0))
+			has_ranger = has_ranger or (command_id == "Command_ConstructGondorRangerHorde" and slot == 2)
+			has_upgrade = has_upgrade or (command_id == String(expected[command_set_id]) and slot == 4)
+		if not has_ranger or not has_upgrade:
+			return false
+		matched[command_set_id] = true
+	return matched.size() == expected.size()
 
 
 func _initialize_base_loop() -> void:
@@ -271,8 +416,8 @@ func _initialize_base_loop() -> void:
 			var position := Vector2(team_layout.get(kind, _fallback_structure_position(team, index)))
 			var maximum_health := int(STRUCTURE_MAX_HEALTH[kind])
 			var production: Array[String] = []
-			for unit_type in AI_PRODUCTION_PLAN:
-				var production_rule: Dictionary = UNIT_PRODUCTION_RULES[unit_type]
+			for unit_type in _production_unit_order:
+				var production_rule: Dictionary = _unit_production_rules[unit_type]
 				if String(production_rule.get("producer_kind", "")) == kind:
 					production.append(unit_type)
 			structures[base_id + index + 1] = {
@@ -286,6 +431,9 @@ func _initialize_base_loop() -> void:
 				"health": maximum_health,
 				"maximum_health": maximum_health,
 				"construction_progress": 1.0,
+				"level": 1,
+				"completed_upgrades": [],
+				"upgrade_queue": [],
 				"production": production,
 				"queue": [],
 				"damage_remainders": {},
@@ -537,11 +685,71 @@ func command_points_for_team(team: int) -> int:
 
 
 func _production_rule_value(unit_type: String, rule_key: String, default_key: String) -> int:
-	var production_rule: Dictionary = UNIT_PRODUCTION_RULES.get(unit_type, {})
+	var production_rule: Dictionary = _unit_production_rules.get(unit_type, {})
 	if production_rule.is_empty():
 		return 0
 	var gameplay_rule := String(production_rule.get(rule_key, ""))
 	return int(_rules.get(gameplay_rule, int(production_rule.get(default_key, 0))))
+
+
+func production_rule_ids() -> Array[String]:
+	return _production_unit_order.duplicate()
+
+
+func queue_structure_upgrade(team: int, structure_id: int, upgrade_id: String) -> Dictionary:
+	if not base_loop_enabled or winner != -1:
+		return {"ok": false, "reason": "match-unavailable"}
+	if not structures.has(structure_id):
+		return {"ok": false, "reason": "unknown-structure"}
+	var building: Dictionary = structures[structure_id]
+	if int(building.get("team", -1)) != team:
+		return {"ok": false, "reason": "wrong-owner"}
+	if int(building.get("health", 0)) <= 0 or float(building.get("construction_progress", 0.0)) < 1.0:
+		return {"ok": false, "reason": "structure-unavailable"}
+	var contract: Dictionary = _structure_upgrade_contracts.get(upgrade_id, {})
+	if contract.is_empty() or String(contract.get("structure_kind", "")) != String(building.get("structure_kind", "")):
+		return {"ok": false, "reason": "unsupported-upgrade"}
+	if Array(building.get("completed_upgrades", [])).has(upgrade_id):
+		return {"ok": false, "reason": "already-completed"}
+	var queue: Array = building.get("upgrade_queue", [])
+	if not queue.is_empty():
+		return {"ok": false, "reason": "upgrade-in-progress"}
+	if int(building.get("level", 1)) >= int(contract.get("level_cap", 1)):
+		return {"ok": false, "reason": "level-cap"}
+	var cost := maxi(0, int(contract.get("cost", 0)))
+	if resources_for_team(team) < cost:
+		return {"ok": false, "reason": "insufficient-resources", "cost": cost}
+	var duration_ticks := maxi(1, int(contract.get("duration_ticks", 1)))
+	var item := {
+		"upgrade_id": upgrade_id,
+		"cost": cost,
+		"queued_tick": tick_index,
+		"duration_ticks": duration_ticks,
+		"complete_tick": tick_index + duration_ticks,
+		"cancelable": bool(contract.get("cancelable", false)),
+	}
+	queue.append(item)
+	building["upgrade_queue"] = queue
+	team_resources[team] = resources_for_team(team) - cost
+	_emit_event("upgrade.queued", structure_id, 0, {"team": team, "upgrade_id": upgrade_id, "complete_tick": int(item["complete_tick"])})
+	return {"ok": true, "reason": "", "structure_id": structure_id, "item": item.duplicate(true)}
+
+
+func structure_upgrade_queue_state(structure_id: int) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if not structures.has(structure_id):
+		return result
+	for item_value in Array((structures[structure_id] as Dictionary).get("upgrade_queue", [])):
+		if typeof(item_value) != TYPE_DICTIONARY:
+			continue
+		var item := item_value as Dictionary
+		var duration_ticks := maxi(1, int(item.get("duration_ticks", 1)))
+		var elapsed_ticks := clampi(tick_index - int(item.get("queued_tick", tick_index)), 0, duration_ticks)
+		var row := item.duplicate(true)
+		row["elapsed_ticks"] = elapsed_ticks
+		row["progress"] = float(elapsed_ticks) / float(duration_ticks)
+		result.append(row)
+	return result
 
 
 func _queued_command_points_for_team(team: int) -> int:
@@ -651,9 +859,12 @@ func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) 
 		return {"ok": false, "reason": "producer-unavailable"}
 	if not Array(building.get("production", [])).has(unit_type):
 		return {"ok": false, "reason": "unsupported-unit"}
-	var production_rule: Dictionary = UNIT_PRODUCTION_RULES.get(unit_type, {})
+	var production_rule: Dictionary = _unit_production_rules.get(unit_type, {})
 	if production_rule.is_empty():
 		return {"ok": false, "reason": "unsupported-unit"}
+	var required_upgrade := String(_unit_prerequisites.get(unit_type, ""))
+	if required_upgrade != "" and not Array(building.get("completed_upgrades", [])).has(required_upgrade):
+		return {"ok": false, "reason": "missing-upgrade", "required_upgrade": required_upgrade}
 	var queue: Array = building.get("queue", [])
 	if queue.size() >= maxi(1, int(_rules.get("maximum_queue", 5))):
 		return {"ok": false, "reason": "queue-full"}
@@ -979,6 +1190,7 @@ func tick() -> void:
 	tick_index += 1
 	if base_loop_enabled:
 		_step_economy()
+		_step_structure_upgrades()
 		_step_production()
 	if ai_enabled and tick_index % 15 == 0:
 		_update_enemy_ai()
@@ -1001,6 +1213,41 @@ func _step_economy() -> void:
 		var team := int(row.get("team", -1))
 		team_resources[team] = resources_for_team(team) + income
 		_emit_event("economy.payout", id, 0, {"team": team, "amount": income})
+
+
+func _step_structure_upgrades() -> void:
+	for structure_id in structure_ids():
+		var building: Dictionary = structures[structure_id]
+		if int(building.get("health", 0)) <= 0:
+			continue
+		var queue: Array = building.get("upgrade_queue", [])
+		if queue.is_empty():
+			continue
+		var item: Dictionary = queue[0]
+		if tick_index < int(item.get("complete_tick", tick_index + 1)):
+			continue
+		var upgrade_id := String(item.get("upgrade_id", ""))
+		var contract: Dictionary = _structure_upgrade_contracts.get(upgrade_id, {})
+		if contract.is_empty():
+			configuration_error = "queued structure upgrade lost its contract"
+			continue
+		queue.pop_front()
+		building["upgrade_queue"] = queue
+		var completed: Array = building.get("completed_upgrades", [])
+		if not completed.has(upgrade_id):
+			completed.append(upgrade_id)
+		building["completed_upgrades"] = completed
+		building["level"] = mini(
+			int(contract.get("level_cap", 1)),
+			int(building.get("level", 1)) + int(contract.get("levels_to_gain", 0))
+		)
+		building["command_set"] = String(contract.get("to_command_set", ""))
+		_emit_event("upgrade.completed", structure_id, 0, {
+			"team": int(building.get("team", -1)),
+			"upgrade_id": upgrade_id,
+			"level": int(building["level"]),
+			"command_set": String(building["command_set"]),
+		})
 
 
 func _step_production() -> void:
@@ -1027,7 +1274,7 @@ func _step_production() -> void:
 		var door_point := production_origin + exit_direction * PRODUCTION_DOOR_INSET_RADIUS
 		var create_point := production_origin + exit_direction * PRODUCTION_EXIT_RADIUS
 		var unit_type := String(item.get("unit_type", SOLDIER_HORDE_ID))
-		var production_rule: Dictionary = UNIT_PRODUCTION_RULES.get(unit_type, UNIT_PRODUCTION_RULES[SOLDIER_HORDE_ID])
+		var production_rule: Dictionary = _unit_production_rules.get(unit_type, _unit_production_rules[SOLDIER_HORDE_ID])
 		var object_id := String(production_rule.get("object_id", SOLDIER_OBJECT_ID))
 		var display_name := String(production_rule.get("display_name", "Gondor Soldiers"))
 		var committed_command_points := int(item.get("command_points", 60))
@@ -1183,8 +1430,8 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 	_next_dynamic_structure_id += 1
 	var maximum_health := int(STRUCTURE_MAX_HEALTH[structure_kind])
 	var production: Array[String] = []
-	for unit_type in AI_PRODUCTION_PLAN:
-		var production_rule: Dictionary = UNIT_PRODUCTION_RULES[unit_type]
+	for unit_type in _production_unit_order:
+		var production_rule: Dictionary = _unit_production_rules[unit_type]
 		if String(production_rule.get("producer_kind", "")) == structure_kind:
 			production.append(unit_type)
 	var build_ticks := maxi(1, roundi(float(build_rule["seconds"]) / TICK_SECONDS))
@@ -1199,6 +1446,9 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		"health": maximum_health,
 		"maximum_health": maximum_health,
 		"construction_progress": 0.0,
+		"level": 1,
+		"completed_upgrades": [],
+		"upgrade_queue": [],
 		"construction_build_ticks": build_ticks,
 		"construction_elapsed_ticks": 0,
 		"builder_id": builder_id,
@@ -1722,6 +1972,9 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int) -> v
 		# Queued costs stay spent, matching the deterministic no-refund contract.
 		queue.clear()
 		target["queue"] = queue
+		var upgrade_queue: Array = target.get("upgrade_queue", [])
+		upgrade_queue.clear()
+		target["upgrade_queue"] = upgrade_queue
 		_emit_event("structure.destroyed", attacker_id, target_id)
 
 
@@ -1748,7 +2001,7 @@ func _update_enemy_ai() -> void:
 		return
 	if base_loop_enabled and tick_index % maxi(15, int(_rules.get("ai_queue_interval_ticks", 60))) == 0:
 		for unit_type in AI_PRODUCTION_PLAN:
-			var production_rule: Dictionary = UNIT_PRODUCTION_RULES[unit_type]
+			var production_rule: Dictionary = _unit_production_rules[unit_type]
 			var producer := producer_id(ENEMY_TEAM, String(production_rule.get("producer_kind", "")))
 			if producer != 0:
 				queue_unit(ENEMY_TEAM, producer, unit_type)
@@ -2094,6 +2347,19 @@ func state_snapshot() -> Dictionary:
 				"duration_ticks": int(item.get("duration_ticks", 0)),
 				"complete_tick": int(item.get("complete_tick", 0)),
 			})
+		var upgrade_queue_rows: Array[Dictionary] = []
+		for item_value in Array(structure_row.get("upgrade_queue", [])):
+			if typeof(item_value) != TYPE_DICTIONARY:
+				continue
+			var item: Dictionary = item_value
+			upgrade_queue_rows.append({
+				"upgrade_id": String(item.get("upgrade_id", "")),
+				"cost": int(item.get("cost", 0)),
+				"queued_tick": int(item.get("queued_tick", 0)),
+				"duration_ticks": int(item.get("duration_ticks", 0)),
+				"complete_tick": int(item.get("complete_tick", 0)),
+				"cancelable": bool(item.get("cancelable", false)),
+			})
 		structure_rows.append({
 			"id": id,
 			"team": int(structure_row.get("team", -1)),
@@ -2103,8 +2369,11 @@ func state_snapshot() -> Dictionary:
 			"health": int(structure_row.get("health", 0)),
 			"maximum_health": int(structure_row.get("maximum_health", 0)),
 			"construction_progress": snappedf(float(structure_row.get("construction_progress", 0.0)), 0.001),
+			"level": int(structure_row.get("level", 1)),
+			"completed_upgrades": Array(structure_row.get("completed_upgrades", [])).duplicate(),
 			"damage_remainders": (structure_row.get("damage_remainders", {}) as Dictionary).duplicate(true),
 			"queue": queue_rows,
+			"upgrade_queue": upgrade_queue_rows,
 		})
 	var gate_rows: Array[Dictionary] = []
 	for gate in ford_gates:
