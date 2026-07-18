@@ -172,6 +172,22 @@ def test_declarative_visual_rules_are_deterministic_and_runtime_contract_is_comp
     assert set(load_recipe()["pack"]["m3Recipe"]["runtimeOutputs"].values()) == set(RUNTIME_PATHS.values())
 
 
+def test_trebuchet_recipe_preserves_retail_embedded_death_drawable() -> None:
+    recipe = m3_module.UNIT_MODEL_RECIPES["GondorTrebuchet"]
+    assert recipe["model"] == "art/w3d/gu/gusiegtreb_skn.w3d"
+    assert recipe["animations"] == (
+        "art/w3d/gu/gusiegtreb_idla.w3d",
+        "art/w3d/gu/gusiegtreb_wlka.w3d",
+        "art/w3d/gu/gusiegtreb_atak.w3d",
+    )
+    assert recipe["embedded_models"] == {
+        "death": "art/w3d/gu/gusiegtreb_diea.w3d",
+    }
+    assert "m3-gondortrebuchet-rig-and-core-clips" not in (
+        m3_module.CONVERSION_SOURCE_GAPS
+    )
+
+
 def test_initial_building_runtime_contract_is_hash_sealed_and_gap_only() -> None:
     recipe = load_recipe()
     base_profile_sha = hashlib.sha256(b"fixture base profile\n").hexdigest()

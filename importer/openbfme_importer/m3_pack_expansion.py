@@ -61,10 +61,6 @@ CONVERSION_SOURCE_GAPS = {
         "Retail GBMARKET_D1 exists, but the existing hierarchical W3D converter "
         "fails its source-backed skin-validation proof."
     ),
-    "m3-gondortrebuchet-rig-and-core-clips": (
-        "Retail GondorTrebuchet model and core clips exist, but the existing animated "
-        "W3D converter fails bounded animation-output capture accounting."
-    ),
 }
 UPGRADES = (
     "Upgrade_GondorHeavyArmor", "Upgrade_GondorFireArrows",
@@ -121,8 +117,12 @@ UNIT_MODEL_RECIPES = {
             "art/w3d/gu/gusiegtreb_idla.w3d",
             "art/w3d/gu/gusiegtreb_wlka.w3d",
             "art/w3d/gu/gusiegtreb_atak.w3d",
-            "art/w3d/gu/gusiegtreb_diea.w3d",
         ),
+        # Retail changes the DYING drawable itself. DIEA owns a separate
+        # hierarchy and embeds its animation; it is not a clip for SKL.
+        "embedded_models": {
+            "death": "art/w3d/gu/gusiegtreb_diea.w3d",
+        },
     },
     "GondorRanger": {
         "model": "art/w3d/gu/guranger_skn.w3d",
@@ -1948,8 +1948,22 @@ def build_m3_visual_resources(
         recipe = _obj(UNIT_MODEL_RECIPES[target], f"unit recipe {target}")
         model = _text(recipe.get("model"), f"unit recipe {target} model")
         animations = tuple(recipe.get("animations", ()))
-        authored = {model, *animations}
-        selected = {model, *animations, *_hierarchy_dependencies(animations, scanned)}
+        embedded_models = {
+            _text(role, f"unit recipe {target} embedded role"): _text(
+                path, f"unit recipe {target} embedded {role}"
+            )
+            for role, path in _obj(
+                recipe.get("embedded_models", {}),
+                f"unit recipe {target} embedded models",
+            ).items()
+        }
+        authored = {model, *animations, *embedded_models.values()}
+        selected = {
+            model,
+            *animations,
+            *_hierarchy_dependencies(animations, scanned),
+            *embedded_models.values(),
+        }
         for path in authored:
             if path.casefold() not in scanned:
                 raise ValueError(f"M3 unit recipe selects absent W3D: {path}")
@@ -1977,6 +1991,29 @@ def build_m3_visual_resources(
                     "expected_count": len(patterns),
                 }
             )
+            for role, embedded_model in sorted(
+                embedded_models.items(), key=lambda item: item[0].casefold()
+            ):
+                embedded_output = (
+                    f"assets/models/m3/units/{_slug(target)}-{_slug(role)}.glb"
+                )
+                resources.append(
+                    {
+                        "id": f"m3-{_slug(target)}-{_slug(role)}-embedded",
+                        "kind": "model",
+                        "converter": "w3d-bundle",
+                        "patterns": [embedded_model],
+                        "output": embedded_output,
+                        "options": {
+                            "model": PurePosixPath(embedded_model).name,
+                            "animations": [PurePosixPath(embedded_model).name],
+                            "inputResourceIds": texture_ids,
+                        },
+                        "required": True,
+                        "limit": 1,
+                        "expected_count": 1,
+                    }
+                )
         unit_row = {
             "id": target,
             "coverage": (
@@ -1989,6 +2026,11 @@ def build_m3_visual_resources(
             unit_row["sourceGapId"] = resource_id
         else:
             unit_row["output"] = output
+            if embedded_models:
+                unit_row["embeddedOutputs"] = {
+                    role: f"assets/models/m3/units/{_slug(target)}-{_slug(role)}.glb"
+                    for role in sorted(embedded_models, key=str.casefold)
+                }
         unit_rows.append(unit_row)
 
     resource_ids = [str(row["id"]) for row in resources]
