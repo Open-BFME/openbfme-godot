@@ -10,6 +10,14 @@ const MAX_MAP_ID_LENGTH := 256
 const MAX_MAP_PATH_LENGTH := 1024
 const MAX_PLAYABLE_UNIT_RUNTIME_BYTES := 4 * 1024 * 1024
 const MAX_PLAYABLE_UNIT_RUNTIMES_PER_PACK := 512
+const MAX_PLAYABLE_STRUCTURE_RUNTIME_BYTES := 4 * 1024 * 1024
+const MAX_PLAYABLE_STRUCTURE_RUNTIMES_PER_PACK := 256
+const PLAYABLE_STRUCTURE_LIFECYCLE_PHASES: Array[String] = [
+	"construction", "intact", "damaged", "really-damaged", "rubble", "post-rubble",
+]
+const PLAYABLE_STRUCTURE_PRODUCTION_EVIDENCE: Array[String] = [
+	"authored-construct-command", "engine-spawned-composite", "wall-template",
+]
 
 var units: Dictionary = {}
 var buildings: Dictionary = {}
@@ -23,6 +31,7 @@ var retail_unit_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
 var trebuchet_runtime: Dictionary = {}
 var playable_unit_runtimes: Dictionary = {}
+var playable_structure_runtimes: Dictionary = {}
 var animation_capabilities: Dictionary = {}
 var bundle_maps: Dictionary = {}
 var retail_ui_images: Dictionary = {}
@@ -58,6 +67,7 @@ func reload() -> void:
 	ranger_runtime.clear()
 	trebuchet_runtime.clear()
 	playable_unit_runtimes.clear()
+	playable_structure_runtimes.clear()
 	animation_capabilities.clear()
 	bundle_maps.clear()
 	retail_ui_images.clear()
@@ -149,6 +159,7 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	_load_ranger_runtime(root, String(declared.get("rangerRuntime", "")))
 	_load_trebuchet_runtime(root, String(declared.get("trebuchetRuntime", "")))
 	_load_playable_unit_runtimes(root, declared)
+	_load_playable_structure_runtimes(root, declared)
 	_load_declared_rows(root, String(declared.get("animationCapabilities", "")), "capabilities", animation_capabilities)
 	_load_retail_ui_manifest(root, String(declared.get("uiManifest", "")))
 	_load_retail_strings(root, String(declared.get("strings", "")))
@@ -589,6 +600,268 @@ func _playable_runtime_id(source_id: String) -> String:
 	return "bfme2.object." + output.trim_suffix("-")
 
 
+func _load_playable_structure_runtimes(root: String, declared: Dictionary) -> bool:
+	## Generic playable structures are an atomic per-pack registry mirroring the
+	## playable-unit loader. A malformed or colliding declaration rejects this
+	## pack's entire playable-structure delta so a half-loaded faction base can
+	## never leak into the slice's base loop or construction surfaces.
+	var keys: Array[String] = []
+	for value in declared.keys():
+		var key := String(value)
+		if key.begins_with("playableStructure."):
+			keys.append(key)
+	keys.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	if keys.size() > MAX_PLAYABLE_STRUCTURE_RUNTIMES_PER_PACK:
+		return false
+	var pending: Dictionary = {}
+	var pending_folded: Dictionary = {}
+	for key in keys:
+		var relative := String(declared.get(key, ""))
+		if relative == "" or not ModLoader.is_safe_relative_path(relative):
+			return false
+		var document := _read_declared_document_bounded(root, relative, MAX_PLAYABLE_STRUCTURE_RUNTIME_BYTES)
+		if not _validate_playable_structure_runtime(root, document):
+			return false
+		var object_id := String(document["objectId"])
+		var folded := object_id.to_lower()
+		if pending_folded.has(folded):
+			return false
+		for existing_id_value in playable_structure_runtimes.keys():
+			if String(existing_id_value).to_lower() == folded and String(existing_id_value) != object_id:
+				return false
+		document["_source"] = ModLoader.resolve_pack_path(root, relative)
+		document["_pack_root"] = root
+		document["_pack_file_key"] = key
+		pending[object_id] = document
+		pending_folded[folded] = object_id
+	for object_id_value in pending.keys():
+		playable_structure_runtimes[String(object_id_value)] = pending[object_id_value]
+	return true
+
+
+func _validate_playable_structure_runtime(root: String, document: Dictionary) -> bool:
+	var object_id := String(document.get("objectId", ""))
+	if (
+		String(document.get("schema", "")) != "openbfme.playable-structure-runtime"
+		or int(document.get("schemaVersion", -1)) != 0
+		or object_id.strip_edges() == ""
+		or object_id.length() > 256
+		or String(document.get("slug", "")) == ""
+		or String(document.get("slug", "")) != _playable_structure_slug(object_id)
+		or not _is_sha256(String(document.get("descriptorSha256", "")))
+		or not _is_sha256(String(document.get("recipeSha256", "")))
+		or not _is_sha256(String(document.get("runtimeSha256", "")))
+	):
+		return false
+	var registration_value: Variant = document.get("registration")
+	if typeof(registration_value) != TYPE_DICTIONARY:
+		return false
+	var registration := registration_value as Dictionary
+	for required in ["production", "gameplay", "presentation", "unsupportedVisualReferences"]:
+		if not registration.has(required):
+			return false
+	if typeof(registration.unsupportedVisualReferences) != TYPE_ARRAY:
+		return false
+	if not _validate_playable_structure_production(registration.get("production")):
+		return false
+	var gameplay_value: Variant = registration.get("gameplay")
+	if typeof(gameplay_value) != TYPE_DICTIONARY:
+		return false
+	var gameplay := gameplay_value as Dictionary
+	var maximum_health := _validate_playable_structure_gameplay(gameplay)
+	if maximum_health <= 0:
+		return false
+	var presentation_value: Variant = registration.get("presentation")
+	if typeof(presentation_value) != TYPE_DICTIONARY:
+		return false
+	var presentation := presentation_value as Dictionary
+	if typeof(presentation.get("ui")) != TYPE_DICTIONARY or typeof(presentation.get("audioRoutes")) != TYPE_DICTIONARY:
+		return false
+	return _validate_playable_structure_lifecycle(root, presentation.get("buildingLifecycle"), gameplay, maximum_health)
+
+
+func _validate_playable_structure_production(value: Variant) -> bool:
+	if typeof(value) != TYPE_DICTIONARY:
+		return false
+	var production := value as Dictionary
+	var evidence := String(production.get("evidence", ""))
+	var routes_value: Variant = production.get("routes")
+	if evidence not in PLAYABLE_STRUCTURE_PRODUCTION_EVIDENCE or typeof(routes_value) != TYPE_ARRAY:
+		return false
+	var routes := routes_value as Array
+	if evidence == "authored-construct-command" and routes.is_empty():
+		return false
+	if evidence != "authored-construct-command" and not routes.is_empty():
+		return false
+	for route_value in routes:
+		if typeof(route_value) != TYPE_DICTIONARY:
+			return false
+		var route := route_value as Dictionary
+		if (
+			String(route.get("surface", "")) != "construct"
+			or String(route.get("builderObjectId", "")).strip_edges() == ""
+			or String(route.get("commandSetId", "")).strip_edges() == ""
+			or String(route.get("commandId", "")).strip_edges() == ""
+			or String(route.get("commandKind", "")).strip_edges() == ""
+			or int(route.get("slot", 0)) < 1
+			or typeof(route.get("prerequisites")) != TYPE_ARRAY
+		):
+			return false
+		for prerequisite_value in route.get("prerequisites") as Array:
+			if typeof(prerequisite_value) != TYPE_STRING or String(prerequisite_value).strip_edges() == "":
+				return false
+	return true
+
+
+func _validate_playable_structure_gameplay(gameplay: Dictionary) -> int:
+	## Returns the proven MaxHealth, or 0 when the gameplay contract is invalid.
+	## Foundation-only structures (health null) never reach runtime documents.
+	for required in ["health", "trainedCommandSets", "scalarFields"]:
+		if not gameplay.has(required):
+			return 0
+	if typeof(gameplay.get("scalarFields")) != TYPE_DICTIONARY:
+		return 0
+	var trained_value: Variant = gameplay.get("trainedCommandSets")
+	if typeof(trained_value) != TYPE_ARRAY:
+		return 0
+	for trained_row_value in trained_value as Array:
+		if typeof(trained_row_value) != TYPE_DICTIONARY:
+			return 0
+		var trained_row := trained_row_value as Dictionary
+		if (
+			String(trained_row.get("id", "")).strip_edges() == ""
+			or String(trained_row.get("kind", "")) not in ["direct", "upgraded"]
+			or typeof(trained_row.get("slots")) != TYPE_ARRAY
+		):
+			return 0
+		for slot_value in trained_row.get("slots") as Array:
+			if typeof(slot_value) != TYPE_DICTIONARY:
+				return 0
+			var slot_row := slot_value as Dictionary
+			if int(slot_row.get("slot", 0)) < 1 or String(slot_row.get("commandId", "")).strip_edges() == "":
+				return 0
+	var health_value: Variant = gameplay.get("health")
+	if typeof(health_value) != TYPE_DICTIONARY:
+		return 0
+	var primary_value: Variant = (health_value as Dictionary).get("primary")
+	if typeof(primary_value) != TYPE_DICTIONARY:
+		return 0
+	return _playable_structure_health_number((primary_value as Dictionary).get("maxHealth"))
+
+
+func _playable_structure_health_number(value: Variant) -> int:
+	if typeof(value) != TYPE_DICTIONARY:
+		return 0
+	var number: Variant = (value as Dictionary).get("value")
+	if typeof(number) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(number)) or float(number) != float(int(number)):
+		return 0
+	return int(number) if int(number) > 0 else 0
+
+
+func _validate_playable_structure_lifecycle(root: String, value: Variant, gameplay: Dictionary, maximum_health: int) -> bool:
+	if typeof(value) != TYPE_DICTIONARY:
+		return false
+	var lifecycle := value as Dictionary
+	if (
+		String(lifecycle.get("schema", "")) != "openbfme.building-lifecycle-presentation"
+		or int(lifecycle.get("schemaVersion", -1)) != 1
+		or typeof(lifecycle.get("phases")) != TYPE_ARRAY
+		or typeof(lifecycle.get("phaseCoverage")) != TYPE_DICTIONARY
+		or typeof(lifecycle.get("simulationFacts")) != TYPE_DICTIONARY
+	):
+		return false
+	var phases := lifecycle.get("phases") as Array
+	if phases.is_empty():
+		return false
+	var covered: Array[String] = []
+	var previous_order := -1
+	for index in phases.size():
+		if typeof(phases[index]) != TYPE_DICTIONARY:
+			return false
+		var row := phases[index] as Dictionary
+		var phase := String(row.get("phase", ""))
+		var order := PLAYABLE_STRUCTURE_LIFECYCLE_PHASES.find(phase)
+		if order <= previous_order:
+			return false
+		previous_order = order
+		var visual := String(row.get("visual", ""))
+		if (
+			visual == ""
+			or visual.get_extension().to_lower() != "glb"
+			or not ModLoader.is_safe_relative_path(visual)
+			or resolve_asset(visual, root) == ""
+			or String(row.get("resourceId", "")).strip_edges() == ""
+			or typeof(row.get("animations")) != TYPE_ARRAY
+		):
+			return false
+		for animation_value in row.get("animations") as Array:
+			if typeof(animation_value) != TYPE_STRING or String(animation_value).strip_edges() == "":
+				return false
+		var next_phase: Variant = row.get("nextPhase")
+		if index + 1 < phases.size():
+			var following := phases[index + 1] as Dictionary if typeof(phases[index + 1]) == TYPE_DICTIONARY else {}
+			if typeof(next_phase) != TYPE_STRING or String(next_phase) != String(following.get("phase", "")):
+				return false
+		elif next_phase != null:
+			return false
+		covered.append(phase)
+	var coverage := lifecycle.get("phaseCoverage") as Dictionary
+	var declared_covered: Variant = coverage.get("covered")
+	var declared_missing: Variant = coverage.get("missing")
+	if typeof(declared_covered) != TYPE_ARRAY or typeof(declared_missing) != TYPE_ARRAY:
+		return false
+	var expected_missing: Array[String] = []
+	for phase in PLAYABLE_STRUCTURE_LIFECYCLE_PHASES:
+		if not covered.has(phase):
+			expected_missing.append(phase)
+	if Array(declared_covered) != Array(covered) or Array(declared_missing) != Array(expected_missing):
+		return false
+	var facts := lifecycle.get("simulationFacts") as Dictionary
+	if _playable_structure_health_number({"value": facts.get("maxHealth")}) != maximum_health:
+		return false
+	var health := gameplay.get("health") as Dictionary
+	var primary := health.get("primary") as Dictionary
+	var damaged := _playable_structure_health_number(primary.get("maxHealthDamaged"))
+	var really_damaged := _playable_structure_health_number(primary.get("maxHealthReallyDamaged"))
+	var rule_value: Variant = facts.get("damageStateRule")
+	if damaged > 0 and really_damaged > 0:
+		if typeof(rule_value) != TYPE_DICTIONARY:
+			return false
+		var rule := rule_value as Dictionary
+		var rule_damaged := _playable_structure_health_number({"value": rule.get("damagedThreshold")})
+		var rule_really_damaged := _playable_structure_health_number({"value": rule.get("reallyDamagedThreshold")})
+		if (
+			rule_damaged != damaged
+			or rule_really_damaged != really_damaged
+			or really_damaged >= damaged
+			or damaged >= maximum_health
+		):
+			return false
+	elif rule_value != null:
+		return false
+	return true
+
+
+func _playable_structure_slug(value: String) -> String:
+	## Mirrors the importer's slug rule exactly: casefold, collapse every
+	## non-alphanumeric run to one dash, and strip edge dashes. Unlike the
+	## camel-splitting runtime ids, authored capitalization is not a separator.
+	var output := ""
+	var previous_dash := false
+	var folded := value.to_lower()
+	for index in folded.length():
+		var code := folded.unicode_at(index)
+		var is_lower := code >= 97 and code <= 122
+		var is_digit := code >= 48 and code <= 57
+		if is_lower or is_digit:
+			output += String.chr(code)
+			previous_dash = false
+		elif not previous_dash and output != "":
+			output += "-"
+			previous_dash = true
+	return output.trim_suffix("-")
+
+
 func _is_sha256(value: String) -> bool:
 	return value.length() == 64 and value.is_valid_hex_number(false)
 
@@ -773,6 +1046,14 @@ func get_playable_unit_runtime(object_id: String) -> Dictionary:
 
 func get_playable_unit_runtimes() -> Dictionary:
 	return playable_unit_runtimes.duplicate(true)
+
+
+func get_playable_structure_runtime(object_id: String) -> Dictionary:
+	return (playable_structure_runtimes.get(object_id, {}) as Dictionary).duplicate(true)
+
+
+func get_playable_structure_runtimes() -> Dictionary:
+	return playable_structure_runtimes.duplicate(true)
 
 
 func resolve_playable_unit_image_path(object_id: String, image_id: String) -> String:
