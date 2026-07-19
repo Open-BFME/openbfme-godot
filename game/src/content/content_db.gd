@@ -15,6 +15,12 @@ const MAX_PLAYABLE_STRUCTURE_RUNTIMES_PER_PACK := 256
 const PLAYABLE_STRUCTURE_LIFECYCLE_PHASES: Array[String] = [
 	"construction", "intact", "damaged", "really-damaged", "rubble", "post-rubble",
 ]
+const PLAYABLE_STRUCTURE_PRESENTED_PHASES: Array[String] = [
+	"construction", "intact", "damaged", "really-damaged", "collapsing", "rubble", "post-rubble", "post-collapse",
+]
+const PLAYABLE_STRUCTURE_ANIMATION_MODES: Array[String] = [
+	"none", "manual-progress", "loop", "loop-random", "once",
+]
 const PLAYABLE_STRUCTURE_PRODUCTION_EVIDENCE: Array[String] = [
 	"authored-construct-command", "engine-spawned-composite", "wall-template",
 ]
@@ -677,7 +683,7 @@ func _validate_playable_structure_runtime(root: String, document: Dictionary) ->
 	var presentation := presentation_value as Dictionary
 	if typeof(presentation.get("ui")) != TYPE_DICTIONARY or typeof(presentation.get("audioRoutes")) != TYPE_DICTIONARY:
 		return false
-	return _validate_playable_structure_lifecycle(root, presentation.get("buildingLifecycle"), gameplay, maximum_health)
+	return _validate_playable_structure_lifecycle(root, presentation.get("buildingLifecycle"), gameplay, maximum_health, object_id)
 
 
 func _validate_playable_structure_production(value: Variant) -> bool:
@@ -758,86 +764,129 @@ func _playable_structure_health_number(value: Variant) -> int:
 	return int(number) if int(number) > 0 else 0
 
 
-func _validate_playable_structure_lifecycle(root: String, value: Variant, gameplay: Dictionary, maximum_health: int) -> bool:
+func _validate_playable_structure_lifecycle(root: String, value: Variant, gameplay: Dictionary, maximum_health: int, source_object_id: String) -> bool:
+	## Validates the composed presenter-grade version-1 lifecycle presentation
+	## document (the exact shape RetailStructure's generic v1 branch consumes).
 	if typeof(value) != TYPE_DICTIONARY:
 		return false
 	var lifecycle := value as Dictionary
 	if (
 		String(lifecycle.get("schema", "")) != "openbfme.building-lifecycle-presentation"
 		or int(lifecycle.get("schemaVersion", -1)) != 1
+		or String(lifecycle.get("evidenceProfile", "")) != "composed-structure-runtime"
+		or String(lifecycle.get("objectId", "")) != _playable_runtime_id(source_object_id)
+		or String(lifecycle.get("initialPhase", "")) != "intact"
 		or typeof(lifecycle.get("phases")) != TYPE_ARRAY
 		or typeof(lifecycle.get("phaseCoverage")) != TYPE_DICTIONARY
 		or typeof(lifecycle.get("simulationFacts")) != TYPE_DICTIONARY
 	):
 		return false
 	var phases := lifecycle.get("phases") as Array
-	if phases.is_empty():
+	if phases.size() != PLAYABLE_STRUCTURE_PRESENTED_PHASES.size():
 		return false
-	var covered: Array[String] = []
-	var previous_order := -1
 	for index in phases.size():
 		if typeof(phases[index]) != TYPE_DICTIONARY:
 			return false
 		var row := phases[index] as Dictionary
 		var phase := String(row.get("phase", ""))
-		var order := PLAYABLE_STRUCTURE_LIFECYCLE_PHASES.find(phase)
-		if order <= previous_order:
+		if phase != PLAYABLE_STRUCTURE_PRESENTED_PHASES[index]:
 			return false
-		previous_order = order
-		var visual := String(row.get("visual", ""))
-		if (
-			visual == ""
-			or visual.get_extension().to_lower() != "glb"
-			or not ModLoader.is_safe_relative_path(visual)
-			or resolve_asset(visual, root) == ""
-			or String(row.get("resourceId", "")).strip_edges() == ""
-			or typeof(row.get("animations")) != TYPE_ARRAY
-		):
+		if not _validate_playable_structure_phase_row(root, row, phase not in ["post-rubble", "post-collapse"]):
 			return false
-		for animation_value in row.get("animations") as Array:
-			if typeof(animation_value) != TYPE_STRING or String(animation_value).strip_edges() == "":
-				return false
-		var next_phase: Variant = row.get("nextPhase")
-		if index + 1 < phases.size():
-			var following := phases[index + 1] as Dictionary if typeof(phases[index + 1]) == TYPE_DICTIONARY else {}
-			if typeof(next_phase) != TYPE_STRING or String(next_phase) != String(following.get("phase", "")):
-				return false
-		elif next_phase != null:
-			return false
-		covered.append(phase)
 	var coverage := lifecycle.get("phaseCoverage") as Dictionary
 	var declared_covered: Variant = coverage.get("covered")
 	var declared_missing: Variant = coverage.get("missing")
 	if typeof(declared_covered) != TYPE_ARRAY or typeof(declared_missing) != TYPE_ARRAY:
 		return false
-	var expected_missing: Array[String] = []
-	for phase in PLAYABLE_STRUCTURE_LIFECYCLE_PHASES:
-		if not covered.has(phase):
-			expected_missing.append(phase)
-	if Array(declared_covered) != Array(covered) or Array(declared_missing) != Array(expected_missing):
+	var partition: Array = []
+	partition.append_array(declared_covered)
+	partition.append_array(declared_missing)
+	partition.sort()
+	var expected_partition: Array = Array(PLAYABLE_STRUCTURE_LIFECYCLE_PHASES.duplicate())
+	expected_partition.sort()
+	if partition != expected_partition:
+		return false
+	if not Array(declared_covered).has("intact") or not Array(declared_covered).has("construction"):
+		return false
+	var bib_value: Variant = lifecycle.get("bib")
+	if typeof(bib_value) == TYPE_DICTIONARY:
+		var bib := bib_value as Dictionary
+		var bib_visual: Dictionary = bib.get("visual", {}) as Dictionary
+		var bib_path := String(bib_visual.get("glb", ""))
+		if (
+			typeof(bib.get("duringConstruction")) != TYPE_BOOL
+			or String(bib_visual.get("mode", "")) != "glb"
+			or bib_path.get_extension().to_lower() != "glb"
+			or not ModLoader.is_safe_relative_path(bib_path)
+			or resolve_asset(bib_path, root) == ""
+		):
+			return false
+	elif bib_value != null:
 		return false
 	var facts := lifecycle.get("simulationFacts") as Dictionary
-	if _playable_structure_health_number({"value": facts.get("maxHealth")}) != maximum_health:
+	if _playable_structure_health_number({"value": facts.get("maximumHealth")}) != maximum_health:
 		return false
 	var health := gameplay.get("health") as Dictionary
 	var primary := health.get("primary") as Dictionary
 	var damaged := _playable_structure_health_number(primary.get("maxHealthDamaged"))
 	var really_damaged := _playable_structure_health_number(primary.get("maxHealthReallyDamaged"))
 	var rule_value: Variant = facts.get("damageStateRule")
-	if damaged > 0 and really_damaged > 0:
-		if typeof(rule_value) != TYPE_DICTIONARY:
-			return false
-		var rule := rule_value as Dictionary
-		var rule_damaged := _playable_structure_health_number({"value": rule.get("damagedThreshold")})
-		var rule_really_damaged := _playable_structure_health_number({"value": rule.get("reallyDamagedThreshold")})
+	if typeof(rule_value) != TYPE_DICTIONARY:
+		return false
+	var rule := rule_value as Dictionary
+	var rule_damaged := _playable_structure_health_number({"value": rule.get("damagedThreshold")})
+	var rule_really_damaged := _playable_structure_health_number({"value": rule.get("reallyDamagedThreshold")})
+	if (
+		rule_damaged != damaged
+		or rule_really_damaged != really_damaged
+		or really_damaged >= damaged
+		or damaged >= maximum_health
+	):
+		return false
+	return true
+
+
+func _validate_playable_structure_phase_row(root: String, row: Dictionary, has_next: bool) -> bool:
+	if typeof(row.get("visual")) != TYPE_DICTIONARY or typeof(row.get("animation")) != TYPE_DICTIONARY:
+		return false
+	if typeof(row.get("sourceConditionSets")) != TYPE_ARRAY:
+		return false
+	if String(row.get("transitionAuthority", "")) != "deterministic-simulation":
+		return false
+	var visual := row.get("visual") as Dictionary
+	var visual_mode := String(visual.get("mode", ""))
+	if visual_mode == "glb":
+		var path := String(visual.get("glb", ""))
 		if (
-			rule_damaged != damaged
-			or rule_really_damaged != really_damaged
-			or really_damaged >= damaged
-			or damaged >= maximum_health
+			path == ""
+			or path.get_extension().to_lower() != "glb"
+			or not ModLoader.is_safe_relative_path(path)
+			or resolve_asset(path, root) == ""
 		):
 			return false
-	elif rule_value != null:
+	elif visual_mode == "no-render":
+		if String(visual.get("sourceIdentifier", "")).strip_edges() == "":
+			return false
+	else:
+		return false
+	var animation := row.get("animation") as Dictionary
+	var mode := String(animation.get("mode", ""))
+	if mode not in PLAYABLE_STRUCTURE_ANIMATION_MODES:
+		return false
+	var clip: Variant = animation.get("clip")
+	if mode == "none":
+		if clip != null:
+			return false
+	elif typeof(clip) != TYPE_STRING or String(clip).strip_edges() == "" or visual_mode != "glb":
+		return false
+	if String(row.get("phase", "")) == "construction" and mode != "manual-progress":
+		return false
+	var next_phase: Variant = row.get("nextPhase")
+	if has_next:
+		var order := PLAYABLE_STRUCTURE_PRESENTED_PHASES.find(String(row.get("phase", "")))
+		if typeof(next_phase) != TYPE_STRING or String(next_phase) != PLAYABLE_STRUCTURE_PRESENTED_PHASES[order + 1]:
+			return false
+	elif next_phase != null:
 		return false
 	return true
 

@@ -109,9 +109,9 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		if structure_kinds.has(kind):
 			return {"_error": "faction '%s' structures '%s' and '%s' collapse to the same kind '%s'" % [slug, structure_source_by_kind.get(kind, ""), object_id, kind]}
 		var lifecycle: Dictionary = ((registration.get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary)
-		var maximum_health := int((lifecycle.get("simulationFacts", {}) as Dictionary).get("maxHealth", 0))
+		var maximum_health := int((lifecycle.get("simulationFacts", {}) as Dictionary).get("maximumHealth", 0))
 		if maximum_health <= 0:
-			return {"_error": "structure '%s' has no proven simulationFacts.maxHealth" % object_id}
+			return {"_error": "structure '%s' has no proven simulationFacts.maximumHealth" % object_id}
 		var scalar_fields: Dictionary = (registration.get("gameplay", {}) as Dictionary).get("scalarFields", {}) as Dictionary
 		var cost := _scalar_number(scalar_fields, "BuildCost")
 		var seconds := _scalar_number(scalar_fields, "BuildTime")
@@ -296,7 +296,11 @@ static func _scalar_number(scalar_fields: Dictionary, field: String) -> float:
 	var row_value: Variant = scalar_fields.get(field)
 	if typeof(row_value) != TYPE_DICTIONARY:
 		return -1.0
-	var expression := String((row_value as Dictionary).get("expression", "")).strip_edges()
+	var row := row_value as Dictionary
+	var resolved: Variant = row.get("value")
+	if typeof(resolved) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(resolved)):
+		return float(resolved)
+	var expression := String(row.get("expression", "")).strip_edges()
 	if expression == "" or not expression.is_valid_float():
 		return -1.0
 	var value := expression.to_float()

@@ -35,7 +35,14 @@ func _run() -> void:
 	_check(String(document.get("_pack_file_key", "")) == "playableStructure.fixturemonsterpen", "pack declaration identity retained")
 	_check(String(document.get("_pack_root", "")) == pack_root, "pack root identity retained")
 	var lifecycle: Dictionary = ((document.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
-	_check(int((lifecycle.get("simulationFacts", {}) as Dictionary).get("maxHealth", 0)) == 3000, "simulation facts survive the load")
+	_check(int((lifecycle.get("simulationFacts", {}) as Dictionary).get("maximumHealth", 0)) == 3000, "simulation facts survive the load")
+	# retail_structure.gd resolves autoload identifiers, so it must be loaded
+	# after the autoload registration instead of via a bootstrap preload.
+	var structure_script: GDScript = load("res://src/retail_slice/retail_structure.gd")
+	var presenter_error: String = structure_script.validate_lifecycle_contract(
+		lifecycle, "monsterpen", "", 3000, _runtime_id("FixtureMonsterPen")
+	)
+	_check(presenter_error == "", "loaded composed lifecycle passes the RetailStructure v1 contract: %s" % presenter_error)
 
 	# Atomicity: one malformed doc rejects the pack's whole structure delta.
 	var malformed := _fixture_document("BrokenPen", "brokenpen")
@@ -62,26 +69,25 @@ func _run() -> void:
 		broken["slug"] = "fixture-monster-pen")
 	_check_rejected_variant(content_db, pack_root, "missing_visual_asset", func(broken: Dictionary) -> void:
 		var phases: Array = _lifecycle_of(broken).get("phases", [])
-		(phases[0] as Dictionary)["visual"] = "assets/models/structures/fixturemonsterpen/absent.glb")
+		((phases[0] as Dictionary).get("visual", {}) as Dictionary)["glb"] = "assets/models/structures/variantpen/absent.glb")
 	_check_rejected_variant(content_db, pack_root, "phase_order", func(broken: Dictionary) -> void:
-		var broken_lifecycle := _lifecycle_of(broken)
-		var phases: Array = broken_lifecycle.get("phases", [])
-		phases.reverse()
-		(phases[0] as Dictionary)["nextPhase"] = "intact"
-		var last := phases[phases.size() - 1] as Dictionary
-		last.erase("nextPhase")
-		broken_lifecycle["phaseCoverage"] = {
-			"covered": ["damaged", "intact"],
-			"missing": ["construction", "really-damaged", "rubble", "post-rubble"],
-		})
+		var phases: Array = _lifecycle_of(broken).get("phases", [])
+		phases.reverse())
 	_check_rejected_variant(content_db, pack_root, "coverage_mismatch", func(broken: Dictionary) -> void:
 		_lifecycle_of(broken)["phaseCoverage"] = {"covered": ["intact"], "missing": []})
 	_check_rejected_variant(content_db, pack_root, "facts_health_drift", func(broken: Dictionary) -> void:
-		(_lifecycle_of(broken).get("simulationFacts", {}) as Dictionary)["maxHealth"] = 4000)
+		(_lifecycle_of(broken).get("simulationFacts", {}) as Dictionary)["maximumHealth"] = 4000)
 	_check_rejected_variant(content_db, pack_root, "construct_evidence_without_routes", func(broken: Dictionary) -> void:
 		((broken.get("registration", {}) as Dictionary).get("production", {}) as Dictionary)["routes"] = [])
 	_check_rejected_variant(content_db, pack_root, "damage_rule_drift", func(broken: Dictionary) -> void:
 		((_lifecycle_of(broken).get("simulationFacts", {}) as Dictionary).get("damageStateRule", {}) as Dictionary)["damagedThreshold"] = 2500)
+	_check_rejected_variant(content_db, pack_root, "wrong_lifecycle_object_id", func(broken: Dictionary) -> void:
+		_lifecycle_of(broken)["objectId"] = "bfme2.object.someone-else")
+	_check_rejected_variant(content_db, pack_root, "construction_not_manual", func(broken: Dictionary) -> void:
+		var phases: Array = _lifecycle_of(broken).get("phases", [])
+		((phases[0] as Dictionary).get("animation", {}) as Dictionary)["mode"] = "loop")
+	_check_rejected_variant(content_db, pack_root, "evidence_profile_drift", func(broken: Dictionary) -> void:
+		_lifecycle_of(broken).erase("evidenceProfile"))
 
 	_run_faction_manifest_checks()
 	_finish()
@@ -248,23 +254,62 @@ func _check_rejected_variant(content_db, pack_root: String, label: String, mutat
 
 func _build_fixture(pack_root: String) -> void:
 	DirAccess.make_dir_recursive_absolute(pack_root.path_join("data/playable-structures"))
-	DirAccess.make_dir_recursive_absolute(pack_root.path_join("assets/models/structures/fixturemonsterpen"))
-	DirAccess.make_dir_recursive_absolute(pack_root.path_join("assets/models/structures/variantpen"))
-	for relative in [
-		"assets/models/structures/fixturemonsterpen/intact.glb",
-		"assets/models/structures/fixturemonsterpen/damaged.glb",
-		"assets/models/structures/variantpen/intact.glb",
-		"assets/models/structures/variantpen/damaged.glb",
-	]:
-		_write_bytes(pack_root.path_join(relative), PackedByteArray([7, 8, 9]))
+	for model_slug in ["fixturemonsterpen", "variantpen"]:
+		DirAccess.make_dir_recursive_absolute(pack_root.path_join("assets/models/structures/%s" % model_slug))
+		for stem in ["construction", "intact", "damaged", "rubble", "bib"]:
+			_write_bytes(
+				pack_root.path_join("assets/models/structures/%s/%s.glb" % [model_slug, stem]),
+				PackedByteArray([7, 8, 9])
+			)
 	_write_json(pack_root.path_join("data/playable-structures/fixturemonsterpen.json"), _fixture_document("FixtureMonsterPen", "fixturemonsterpen"))
 	_write_json(pack_root.path_join("data/playable-structures/fixturemonsterpen2.json"), _fixture_document("SecondPen", "secondpen", "fixturemonsterpen"))
+
+
+func _runtime_id(source_id: String) -> String:
+	## Mirrors ContentDB._playable_runtime_id (camel-splitting bundle id rule).
+	var output := ""
+	var previous_dash := false
+	for index in source_id.length():
+		var code := source_id.unicode_at(index)
+		var is_upper := code >= 65 and code <= 90
+		var is_lower := code >= 97 and code <= 122
+		var is_digit := code >= 48 and code <= 57
+		if is_upper and index > 0 and not previous_dash:
+			var previous := source_id.unicode_at(index - 1)
+			if (previous >= 97 and previous <= 122) or (previous >= 48 and previous <= 57):
+				output += "-"
+		if is_upper or is_lower or is_digit:
+			output += String.chr(code).to_lower()
+			previous_dash = false
+		elif not previous_dash and output != "":
+			output += "-"
+			previous_dash = true
+	return "bfme2.object." + output.trim_suffix("-")
+
+
+func _fixture_phase(phase: String, visual: Dictionary, animation: Dictionary, next_phase: Variant, conditions: Array) -> Dictionary:
+	return {
+		"phase": phase,
+		"sourceConditionSets": conditions,
+		"transitionAuthority": "deterministic-simulation",
+		"visual": visual,
+		"animation": animation,
+		"nextPhase": next_phase,
+	}
 
 
 func _fixture_document(object_id: String, slug: String, asset_slug: String = "", maximum_health: int = 3000) -> Dictionary:
 	var model_slug := asset_slug if asset_slug != "" else ("variantpen" if slug == "variantpen" else "fixturemonsterpen")
 	var damaged := maximum_health - 1000
 	var really_damaged := maximum_health - 2000
+	var glb := func(stem: String) -> Dictionary:
+		return {
+			"mode": "glb",
+			"glb": "assets/models/structures/%s/%s.glb" % [model_slug, stem],
+			"modelResourceId": "structure-%s-%s" % [slug, stem],
+		}
+	var none_animation := {"clip": null, "mode": "none"}
+	var no_render := {"mode": "no-render", "sourceIdentifier": "None"}
 	return {
 		"schema": "openbfme.playable-structure-runtime",
 		"schemaVersion": 0,
@@ -273,6 +318,7 @@ func _fixture_document(object_id: String, slug: String, asset_slug: String = "",
 		"descriptorSha256": "1".repeat(64),
 		"recipeSha256": "2".repeat(64),
 		"runtimeSha256": "3".repeat(64),
+		"lifecycleEvidenceSha256": "4".repeat(64),
 		"registration": {
 			"production": {
 				"evidence": "authored-construct-command",
@@ -312,29 +358,50 @@ func _fixture_document(object_id: String, slug: String, asset_slug: String = "",
 				"buildingLifecycle": {
 					"schema": "openbfme.building-lifecycle-presentation",
 					"schemaVersion": 1,
+					"evidenceProfile": "composed-structure-runtime",
+					"objectId": _runtime_id(object_id),
+					"initialPhase": "intact",
 					"phases": [
-						{
-							"phase": "intact",
-							"visual": "assets/models/structures/%s/intact.glb" % model_slug,
-							"resourceId": "structure:%s:intact" % slug,
-							"animations": [],
-							"nextPhase": "damaged",
-						},
-						{
-							"phase": "damaged",
-							"visual": "assets/models/structures/%s/damaged.glb" % model_slug,
-							"resourceId": "structure:%s:damaged" % slug,
-							"animations": ["fixture_dmg.w3d"],
-						},
+						_fixture_phase("construction", glb.call("construction"), {"clip": "fixture_abld", "mode": "manual-progress"}, "intact", [["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"]]),
+						_fixture_phase("intact", glb.call("intact"), none_animation.duplicate(), "damaged", [[]]),
+						_fixture_phase("damaged", glb.call("damaged"), none_animation.duplicate(), "really-damaged", [["DAMAGED"]]),
+						_fixture_phase("really-damaged", glb.call("damaged"), none_animation.duplicate(), "collapsing", [["REALLYDAMAGED"]]),
+						_fixture_phase("collapsing", glb.call("rubble"), {"clip": "fixture_dies", "mode": "once"}, "rubble", [["COLLAPSING"]]),
+						_fixture_phase("rubble", glb.call("rubble"), none_animation.duplicate(), "post-rubble", [["RUBBLE"]]),
+						_fixture_phase("post-rubble", no_render.duplicate(), none_animation.duplicate(), null, [["POST_RUBBLE"]]),
+						_fixture_phase("post-collapse", no_render.duplicate(), none_animation.duplicate(), null, [["POST_COLLAPSE"]]),
 					],
 					"phaseCoverage": {
-						"covered": ["intact", "damaged"],
-						"missing": ["construction", "really-damaged", "rubble", "post-rubble"],
+						"covered": ["construction", "intact", "damaged", "rubble"],
+						"missing": ["really-damaged", "post-rubble"],
+					},
+					"bib": {
+						"drawModule": "W3DFloorDraw",
+						"duringConstruction": false,
+						"hideIfModelConditions": ["AWAITING_CONSTRUCTION", "PARTIALLY_CONSTRUCTED"],
+						"sourceConditions": [],
+						"startHiddenAuthored": false,
+						"visibility": "condition-driven-authored-floor-draw",
+						"visual": glb.call("bib"),
+					},
+					"audioEvents": {"collapse": null, "construction": null},
+					"audioBindings": [],
+					"effects": {
+						"collapseUpdateFx": {},
+						"definitionTranslationStatus": "requires-exact-definition-runtime-binding",
+						"enteringStateFx": {},
+						"enteringStateBindings": [],
+						"particleAttachments": [],
 					},
 					"simulationFacts": {
-						"maxHealth": maximum_health,
+						"maximumHealth": maximum_health,
 						"damageStateRule": {"damagedThreshold": damaged, "reallyDamagedThreshold": really_damaged},
+						"construction": {"buildTimeSeconds": 30.0, "animationMode": "MANUAL", "animation": "fixture_abld"},
+						"collapse": {"module": null, "status": "no-authored-structure-collapse-update"},
+						"postRubble": {"terminalDuration": "retained-until-explicit-destruction"},
 					},
+					"rebuildHole": null,
+					"compositionExclusions": [],
 				},
 				"ui": {"DisplayName": {"expression": "OBJECT:%s" % object_id, "sourceIni": "data/ini/object/fixture.ini", "line": 2}},
 				"audioRoutes": {},

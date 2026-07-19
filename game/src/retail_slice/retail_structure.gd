@@ -8,6 +8,7 @@ const ShadowDecalScript = preload("res://src/retail_slice/retail_shadow_decal.gd
 const LIFECYCLE_SCHEMA := "openbfme.building-lifecycle-presentation"
 const LIFECYCLE_SCHEMA_VERSION := 0
 const LIFECYCLE_SCHEMA_VERSION_V1 := 1
+const COMPOSED_EVIDENCE_PROFILE := "composed-structure-runtime"
 const MEN_LIFECYCLE_OBJECT_IDS := {
 	"bfme2.object.men-fortress": true,
 	"bfme2.object.men-farm": true,
@@ -513,11 +514,14 @@ static func _validate_v1_lifecycle_contract(
 		return "buildingLifecycle simulation health thresholds are not strictly ordered"
 	if expected_maximum_health > 0 and maximum != expected_maximum_health:
 		return "buildingLifecycle maximum health %d does not equal expected %d" % [maximum, expected_maximum_health]
-	var facts_error := (
-		_validate_v1_men_simulation_facts(facts)
-		if MEN_LIFECYCLE_OBJECT_IDS.has(object_id)
-		else _validate_v1_simulation_facts(facts, maximum)
-	)
+	var composed := String(lifecycle.get("evidenceProfile", "")) == COMPOSED_EVIDENCE_PROFILE
+	var facts_error := ""
+	if MEN_LIFECYCLE_OBJECT_IDS.has(object_id):
+		facts_error = _validate_v1_men_simulation_facts(facts)
+	elif composed:
+		facts_error = _validate_v1_composed_simulation_facts(facts)
+	else:
+		facts_error = _validate_v1_simulation_facts(facts, maximum)
 	if facts_error != "":
 		return facts_error
 
@@ -538,20 +542,24 @@ static func _validate_v1_lifecycle_contract(
 			return phase_error
 
 	if typeof(lifecycle.get("bib")) != TYPE_DICTIONARY:
-		return "buildingLifecycle.bib is not an object"
-	var bib: Dictionary = lifecycle["bib"]
-	if typeof(bib.get("duringConstruction")) != TYPE_BOOL:
-		return "buildingLifecycle.bib.duringConstruction is not a bool"
-	if typeof(bib.get("sourceConditions")) != TYPE_ARRAY:
-		return "buildingLifecycle.bib.sourceConditions is not a list"
-	if typeof(bib.get("visual")) != TYPE_DICTIONARY:
-		return "buildingLifecycle.bib.visual is not an object"
-	var bib_visual: Dictionary = bib["visual"]
-	if String(bib_visual.get("mode", "")) != "glb":
-		return "buildingLifecycle.bib.visual is not a GLB phase"
-	var bib_error := _validate_relative_glb_path(bib_visual.get("glb"), "buildingLifecycle.bib.visual.glb")
-	if bib_error != "":
-		return bib_error
+		# A composed structure without an authored W3DFloorDraw has a proven
+		# null bib; every other evidence lane requires the bib closure.
+		if not composed or lifecycle.get("bib") != null:
+			return "buildingLifecycle.bib is not an object"
+	else:
+		var bib: Dictionary = lifecycle["bib"]
+		if typeof(bib.get("duringConstruction")) != TYPE_BOOL:
+			return "buildingLifecycle.bib.duringConstruction is not a bool"
+		if typeof(bib.get("sourceConditions")) != TYPE_ARRAY:
+			return "buildingLifecycle.bib.sourceConditions is not a list"
+		if typeof(bib.get("visual")) != TYPE_DICTIONARY:
+			return "buildingLifecycle.bib.visual is not an object"
+		var bib_visual: Dictionary = bib["visual"]
+		if String(bib_visual.get("mode", "")) != "glb":
+			return "buildingLifecycle.bib.visual is not a GLB phase"
+		var bib_error := _validate_relative_glb_path(bib_visual.get("glb"), "buildingLifecycle.bib.visual.glb")
+		if bib_error != "":
+			return bib_error
 
 	var intact_path := _intact_visual_path(lifecycle)
 	var normalized_model := declared_model.replace("\\", "/")
@@ -645,6 +653,65 @@ static func _validate_v1_men_simulation_facts(facts: Dictionary) -> String:
 	for fx_value in (fx_lists as Dictionary).values():
 		if not _safe_runtime_identifier(String(fx_value)):
 			return "Men buildingLifecycle collapse FX identifier is unsafe"
+	return ""
+
+
+static func _validate_v1_composed_simulation_facts(facts: Dictionary) -> String:
+	## Composed structure runtimes are porter-built, never map-placed: the
+	## importer proves construction scrub, collapse-module, and terminal facts
+	## from the source Object instead of map placement evidence.
+	for field in ["construction", "collapse", "postRubble"]:
+		if typeof(facts.get(field)) != TYPE_DICTIONARY:
+			return "buildingLifecycle.simulationFacts.%s is not an object" % field
+	var construction: Dictionary = facts["construction"]
+	if (
+		not _finite_positive_variant(construction.get("buildTimeSeconds"))
+		or String(construction.get("animationMode", "")) != "MANUAL"
+		or String(construction.get("animation", "")).strip_edges() == ""
+	):
+		return "buildingLifecycle construction facts are incomplete"
+	var collapse: Dictionary = facts["collapse"]
+	if collapse.get("module") == null:
+		if String(collapse.get("status", "")) != "no-authored-structure-collapse-update":
+			return "buildingLifecycle collapse absence is not explicit"
+	else:
+		if (
+			String(collapse.get("module", "")) != "StructureCollapseUpdate"
+			or String(collapse.get("sourceObject", "")).strip_edges() == ""
+			or String(collapse.get("exactTotalTimingStatus", "")).strip_edges() == ""
+		):
+			return "buildingLifecycle collapse identity is incomplete"
+		# Only authored fields are present: an unauthored field is honest
+		# absence (engine default), never an invented number.
+		if collapse.has("destroyObjectWhenDone") and typeof(collapse.get("destroyObjectWhenDone")) != TYPE_BOOL:
+			return "buildingLifecycle collapse destroyObjectWhenDone is not a bool"
+		for field in [
+			"minCollapseDelayMilliseconds",
+			"maxCollapseDelayMilliseconds",
+			"minBurstDelayMilliseconds",
+			"maxBurstDelayMilliseconds",
+			"bigBurstFrequency",
+			"collapseHeight",
+		]:
+			if not collapse.has(field):
+				continue
+			var value: Variant = collapse.get(field)
+			if not _is_exact_integer(value) or int(value) < 0:
+				return "buildingLifecycle collapse %s is not a nonnegative exact integer" % field
+		for field in ["collapseDamping", "maxShudder"]:
+			if not collapse.has(field):
+				continue
+			var value: Variant = collapse.get(field)
+			if typeof(value) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(value)) or float(value) < 0.0:
+				return "buildingLifecycle collapse %s is not finite and nonnegative" % field
+		if typeof(collapse.get("fxLists")) != TYPE_DICTIONARY:
+			return "buildingLifecycle collapse FX lists are absent"
+		for fx_value in (collapse.get("fxLists") as Dictionary).values():
+			if not _safe_runtime_identifier(String(fx_value)):
+				return "buildingLifecycle collapse FX identifier is unsafe"
+	var post_rubble: Dictionary = facts["postRubble"]
+	if String(post_rubble.get("terminalDuration", "")).strip_edges() == "":
+		return "buildingLifecycle post-rubble terminal duration is missing"
 	return ""
 
 
@@ -744,7 +811,8 @@ static func _validate_v1_routes(lifecycle: Dictionary, object_id: String = "") -
 		return "buildingLifecycle.audioEvents is not an object"
 	var audio: Dictionary = lifecycle["audioEvents"]
 	var men_contract := MEN_LIFECYCLE_OBJECT_IDS.has(object_id)
-	var audio_roles := ["collapse", "construction"] if men_contract else ["ambient", "collapse", "constructionSelect", "damaged", "reallyDamaged", "select"]
+	var composed := String(lifecycle.get("evidenceProfile", "")) == COMPOSED_EVIDENCE_PROFILE
+	var audio_roles := ["collapse", "construction"] if men_contract or composed else ["ambient", "collapse", "constructionSelect", "damaged", "reallyDamaged", "select"]
 	if audio.size() != audio_roles.size():
 		return "buildingLifecycle.audioEvents does not contain the exact route set"
 	for role in audio_roles:
@@ -766,13 +834,23 @@ static func _validate_v1_routes(lifecycle: Dictionary, object_id: String = "") -
 	var entering: Dictionary = effects["enteringStateFx"]
 	var entering_keys: Array = entering.keys()
 	entering_keys.sort()
-	if entering_keys != ["collapsing", "damaged", "really-damaged"]:
+	if composed:
+		# Composed evidence declares only source-proven EnteringStateFX routes;
+		# an unauthored route is honest absence, never an invented default.
+		for key_value in entering_keys:
+			if String(key_value) not in ["collapsing", "damaged", "really-damaged"]:
+				return "buildingLifecycle.effects.enteringStateFx has an unsupported phase route"
+	elif entering_keys != ["collapsing", "damaged", "really-damaged"]:
 		return "buildingLifecycle.effects.enteringStateFx does not contain the exact phase routes"
 	var collapse_update: Dictionary = effects["collapseUpdateFx"]
 	var collapse_keys: Array = collapse_update.keys()
 	collapse_keys.sort()
 	var expected_men_collapse_keys := ["initial"] if object_id == "bfme2.object.men-fortress" else ["almost-final", "initial"]
-	if (
+	if composed:
+		for key_value in collapse_keys:
+			if String(key_value) not in ["almost-final", "initial"]:
+				return "buildingLifecycle.effects.collapseUpdateFx is incomplete"
+	elif (
 		men_contract and collapse_keys != expected_men_collapse_keys
 		or not men_contract and not collapse_keys.is_empty() and collapse_keys != ["almost-final", "initial"]
 	):
@@ -937,9 +1015,10 @@ static func _required_path_entries(lifecycle: Dictionary, structure_kind_value: 
 			var visual: Dictionary = row.get("visual", {}) as Dictionary
 			if String(visual.get("mode", "")) == "glb":
 				entries["phases.%s.visual.glb" % String(row.get("phase", ""))] = String(visual.get("glb", ""))
-		var bib: Dictionary = lifecycle.get("bib", {}) as Dictionary
-		var bib_visual: Dictionary = bib.get("visual", {}) as Dictionary
-		entries["bib.visual.glb"] = String(bib_visual.get("glb", ""))
+		var bib_value: Variant = lifecycle.get("bib", {})
+		if typeof(bib_value) == TYPE_DICTIONARY:
+			var bib_visual: Dictionary = (bib_value as Dictionary).get("visual", {}) as Dictionary
+			entries["bib.visual.glb"] = String(bib_visual.get("glb", ""))
 		if structure_kind_value == "fortress":
 			var components: Dictionary = lifecycle.get("components", {}) as Dictionary
 			var door: Dictionary = components.get("door", {}) as Dictionary
@@ -1412,9 +1491,12 @@ func _activate_v1_phase(phase: String) -> void:
 		_set_contract_error("%s lifecycle visual mode is unsupported" % phase)
 		return
 
-	var bib_contract: Dictionary = _lifecycle.get("bib", {}) as Dictionary
-	var show_bib := phase in ["intact", "damaged", "really-damaged"] or (
-		phase == "construction" and bool(bib_contract.get("duringConstruction", false))
+	var bib_value: Variant = _lifecycle.get("bib", {})
+	var bib_contract: Dictionary = bib_value if typeof(bib_value) == TYPE_DICTIONARY else {}
+	var show_bib := not bib_contract.is_empty() and (
+		phase in ["intact", "damaged", "really-damaged"] or (
+			phase == "construction" and bool(bib_contract.get("duringConstruction", false))
+		)
 	)
 	var bib_path := ""
 	var bib: Node3D
