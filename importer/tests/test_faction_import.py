@@ -221,6 +221,10 @@ def _unit_conversion_patches() -> tuple[mock._patch, ...]:
             "openbfme_importer.faction_import.compile_playable_unit_pack_recipe",
             return_value={"recipeSha256": "9" * 64, "resources": [{}]},
         ),
+        mock.patch(
+            "openbfme_importer.faction_import._resolved_media",
+            return_value=({}, {}),
+        ),
     )
 
 
@@ -230,9 +234,9 @@ def test_conversion_converts_units_and_structures_and_is_deterministic() -> None
     artifacts: list[tuple[str, str]] = []
     unit_patches = _unit_conversion_patches()
     structure_patches = _structure_success_patches()
-    with unit_patches[0], unit_patches[1], structure_patches[0], (
-        structure_patches[1]
-    ), structure_patches[2]:
+    with unit_patches[0], unit_patches[1], unit_patches[2], (
+        structure_patches[0]
+    ), structure_patches[1], structure_patches[2]:
         for _ in range(2):
             results.append(
                 build_faction_conversion(
@@ -264,7 +268,7 @@ def test_conversion_converts_units_and_structures_and_is_deterministic() -> None
 def test_conversion_records_per_object_failures_and_continues() -> None:
     documents, graph = _fixture()
     unit_patches = _unit_conversion_patches()
-    with unit_patches[0], unit_patches[1]:
+    with unit_patches[0], unit_patches[1], unit_patches[2]:
         coverage = build_faction_conversion(
             graph,
             documents,
@@ -294,7 +298,7 @@ End
     ).encode("utf-8")
     graph["definitions"]["objects"].append({"id": "TestSpellBook", "edges": []})
     unit_patches = _unit_conversion_patches()
-    with unit_patches[0], unit_patches[1]:
+    with unit_patches[0], unit_patches[1], unit_patches[2]:
         coverage = build_faction_conversion(
             graph,
             documents,
@@ -323,6 +327,7 @@ def test_foundation_without_visuals_is_excluded_with_descriptor_evidence() -> No
     with (
         unit_patches[0],
         unit_patches[1],
+        unit_patches[2],
         mock.patch(
             "openbfme_importer.faction_import."
             "compile_playable_structure_descriptor",

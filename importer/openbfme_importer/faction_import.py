@@ -19,7 +19,12 @@ from .playable_structure_pack_compiler import (
     compile_structure_visual_recipe,
     compose_structure_runtime_document,
 )
-from .playable_unit_import import FACTIONS, _source_documents
+from .playable_unit_import import (
+    FACTIONS,
+    _resolved_media,
+    _resolved_strings,
+    _source_documents,
+)
 from .playable_unit_compiler import (
     PlayableUnitCompilerError,
     compile_playable_unit_descriptor,
@@ -305,6 +310,7 @@ def build_faction_conversion(
     *,
     catalog_identity_sha256: str,
     artifact_writer: Callable[[str, str, Mapping[str, object]], None] | None = None,
+    catalog: InstallCatalog | None = None,
 ) -> dict[str, object]:
     """Convert every supported plan row and account for the rest, fail-closed.
 
@@ -334,10 +340,25 @@ def build_faction_conversion(
         row: dict[str, object] = {"id": object_id, "family": family}
         if status == "descriptor-ready":
             try:
+                draft = compile_playable_unit_descriptor(
+                    object_id,
+                    documents,
+                    faction_graph=faction_graph,
+                    prepared=prepared,
+                )
+                images, audio = _resolved_media(faction_graph, draft)
+                strings = (
+                    _resolved_strings(catalog, draft)
+                    if catalog is not None
+                    else None
+                )
                 descriptor = compile_playable_unit_descriptor(
                     object_id,
                     documents,
                     faction_graph=faction_graph,
+                    resolved_images=images,
+                    resolved_audio=audio,
+                    resolved_strings=strings,
                     prepared=prepared,
                 )
                 composition = descriptor["composition"]
@@ -496,6 +517,7 @@ def convert_faction_import(
         effective_root,
         catalog_identity_sha256=catalog.identity_sha256(),
         artifact_writer=artifact_writer,
+        catalog=catalog,
     )
 
 
