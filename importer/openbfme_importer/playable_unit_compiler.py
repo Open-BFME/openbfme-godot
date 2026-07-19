@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 import hashlib
 import json
 import re
@@ -38,6 +39,19 @@ _CATEGORIES = frozenset(
 
 class PlayableUnitCompilerError(ValueError):
     """The requested descriptor cannot be derived without guessing."""
+
+
+@dataclass(frozen=True, slots=True)
+class PlayableUnitCompilerInputs:
+    """Parsed effective inputs shared by a bounded batch compilation."""
+
+    documents: Mapping[str, bytes]
+    objects: Mapping[str, SageObject]
+    command_sets: Mapping[str, IniBlock]
+    command_buttons: Mapping[str, IniBlock]
+    player_templates: Mapping[str, IniBlock]
+    numeric_defines: Mapping[str, int | float]
+    object_parse_errors: Mapping[str, str]
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -120,7 +134,9 @@ def _ini_block_semantic(kind: str, value: IniBlock) -> dict[str, object]:
     }
 
 
-def _object_index(documents: Mapping[str, bytes]) -> dict[str, SageObject]:
+def _object_index(
+    documents: Mapping[str, bytes], parse_errors: dict[str, str] | None = None
+) -> dict[str, SageObject]:
     result: dict[str, SageObject] = {}
     for path, source in sorted(
         documents.items(), key=lambda item: (item[0].casefold(), item[0])
@@ -132,13 +148,31 @@ def _object_index(documents: Mapping[str, bytes]) -> dict[str, SageObject]:
             continue
         try:
             parsed = parse_sage_document(source, normalized).objects
-        except SageCstError:
-            # The effective tree contains cinematic/include-fragment dialects
-            # outside the normal command-reachable object grammar.  They are
-            # not part of this requested closure unless the target or a
-            # producer resolves only there; that later fails as an unresolved
-            # Object instead of making all unrelated fragments global inputs.
-            continue
+        except SageCstError as document_error:
+            if parse_errors is not None:
+                parse_errors[normalized.casefold()] = str(document_error)
+            # A malformed unrelated retail Object must not erase every valid
+            # sibling in a large document. Parse bounded top-level slices and
+            # retain only slices which are independently well formed.
+            lines = source.splitlines(keepends=True)
+            starts = [
+                index
+                for index, line in enumerate(lines)
+                if re.match(rb"^(?:Object|ChildObject)\s+", line.lstrip())
+            ]
+            recovered: list[SageObject] = []
+            for ordinal, start in enumerate(starts):
+                stop = starts[ordinal + 1] if ordinal + 1 < len(starts) else len(lines)
+                try:
+                    fragment = parse_sage_document(
+                        (b"\n" * start) + b"".join(lines[start:stop]),
+                        normalized,
+                    ).objects
+                except SageCstError:
+                    continue
+                if len(fragment) == 1:
+                    recovered.append(fragment[0])
+            parsed = tuple(recovered)
         for item in parsed:
             key = item.name.casefold()
             if key in result:
@@ -752,8 +786,41 @@ def _required_document(documents: Mapping[str, bytes], path: str) -> bytes:
     raise PlayableUnitCompilerError(f"required effective source is missing: {path}")
 
 
+def prepare_playable_unit_compiler(
+    documents: Mapping[str, bytes],
+) -> PlayableUnitCompilerInputs:
+    """Parse the large shared corpus once for deterministic faction batches."""
+
+    try:
+        player_template_source = _required_document(documents, PLAYER_TEMPLATE_PATH)
+    except PlayableUnitCompilerError:
+        # PlayerTemplate data is only required when a faction graph asks the
+        # compiler to validate hero-roster and starting-building semantics.
+        player_templates: Mapping[str, IniBlock] = {}
+    else:
+        player_templates = _named_blocks(player_template_source, "PlayerTemplate")
+
+    object_parse_errors: dict[str, str] = {}
+    objects = _object_index(documents, object_parse_errors)
+    return PlayableUnitCompilerInputs(
+        documents=documents,
+        objects=objects,
+        command_sets=_named_blocks(
+            _required_document(documents, COMMAND_SET_PATH), "CommandSet"
+        ),
+        command_buttons=_named_blocks(
+            _required_document(documents, COMMAND_BUTTON_PATH), "CommandButton"
+        ),
+        player_templates=player_templates,
+        numeric_defines=_numeric_defines(documents),
+        object_parse_errors=object_parse_errors,
+    )
+
+
 def _player_template_context(
-    documents: Mapping[str, bytes], faction_graph: Mapping[str, object]
+    documents: Mapping[str, bytes],
+    faction_graph: Mapping[str, object],
+    templates: Mapping[str, IniBlock] | None = None,
 ) -> tuple[list[str], str, str]:
     target = faction_graph.get("target", {})
     if not isinstance(target, Mapping):
@@ -761,9 +828,10 @@ def _player_template_context(
     template_id = str(target.get("playerTemplate", ""))
     if not template_id:
         raise PlayableUnitCompilerError("faction graph has no playerTemplate identity")
-    templates = _named_blocks(
-        _required_document(documents, PLAYER_TEMPLATE_PATH), "PlayerTemplate"
-    )
+    if templates is None:
+        templates = _named_blocks(
+            _required_document(documents, PLAYER_TEMPLATE_PATH), "PlayerTemplate"
+        )
     template = templates.get(template_id.casefold())
     if template is None:
         raise PlayableUnitCompilerError(
@@ -775,14 +843,6 @@ def _player_template_context(
             f"PlayerTemplate {template_id} must author one BuildableHeroesMP roster"
         )
     roster = list(_tokens(roster_values[0]))
-    folded_roster: set[str] = set()
-    for object_id in roster:
-        folded = object_id.casefold()
-        if folded in folded_roster:
-            raise PlayableUnitCompilerError(
-                f"PlayerTemplate {template_id} has duplicate BuildableHeroesMP hero: {object_id}"
-            )
-        folded_roster.add(folded)
     starting_values = _block_values(template, "StartingBuilding")
     starting_building = _first(starting_values) or ""
     return roster, starting_building, template_id
@@ -1062,10 +1122,34 @@ def _horde_containers(
 
 
 def _kind_of(ancestry: Sequence[SageObject]) -> tuple[str, ...]:
-    values = _effective_values(ancestry, "KindOf")
-    return tuple(
-        sorted({token.upper() for row in values for token in _tokens(row.value)})
-    )
+    kinds: set[str] = set()
+    for item in ancestry:
+        for row in item.assignments:
+            if row.key.casefold() != "kindof":
+                continue
+            tokens = tuple(token.upper() for token in _tokens(row.value))
+            if any(token.startswith(("+", "-")) for token in tokens):
+                for token in tokens:
+                    if token.startswith("+") and len(token) > 1:
+                        kinds.add(token[1:])
+                    elif token.startswith("-") and len(token) > 1:
+                        kinds.discard(token[1:])
+                    else:
+                        kinds.add(token)
+            else:
+                kinds = set(tokens)
+    return tuple(sorted(kinds))
+
+
+def playable_object_kind_of(
+    prepared: PlayableUnitCompilerInputs, object_id: str
+) -> tuple[str, ...]:
+    """Return the effective authored KindOf tokens for one prepared Object."""
+
+    target = prepared.objects.get(object_id.casefold())
+    if target is None:
+        raise PlayableUnitCompilerError(f"effective Object is missing: {object_id}")
+    return _kind_of(_ancestry(prepared.objects, target))
 
 
 def _category(
@@ -1350,21 +1434,24 @@ def compile_playable_unit_descriptor(
     resolved_audio: Mapping[str, Sequence[str]] | None = None,
     resolved_strings: Mapping[str, str] | None = None,
     faction_graph: Mapping[str, object] | None = None,
+    prepared: PlayableUnitCompilerInputs | None = None,
 ) -> dict[str, object]:
     """Compile one source-backed descriptor or fail on an unresolved core edge."""
 
     if not target_id or len(target_id) > 256:
         raise PlayableUnitCompilerError("target Object id is invalid")
-    objects = _object_index(documents)
+    if prepared is None:
+        prepared = prepare_playable_unit_compiler(documents)
+    elif prepared.documents is not documents:
+        raise PlayableUnitCompilerError(
+            "prepared compiler inputs belong to a different document mapping"
+        )
+    objects = prepared.objects
     requested_target = objects.get(target_id.casefold())
     if requested_target is None:
         raise PlayableUnitCompilerError(f"effective Object is missing: {target_id}")
-    command_sets = _named_blocks(
-        _required_document(documents, COMMAND_SET_PATH), "CommandSet"
-    )
-    command_buttons = _named_blocks(
-        _required_document(documents, COMMAND_BUTTON_PATH), "CommandButton"
-    )
+    command_sets = prepared.command_sets
+    command_buttons = prepared.command_buttons
     reachable_object_ids: frozenset[str] | None = None
     audio_edges_by_object: dict[str, frozenset[tuple[str, str]]] | None = None
     command_audio: dict[str, tuple[Mapping[str, object], ...]] = {}
@@ -1429,7 +1516,7 @@ def compile_playable_unit_descriptor(
                 )
             command_audio[str(row["id"]).casefold()] = tuple(routes)
         hero_roster, starting_building, player_template_id = _player_template_context(
-            documents, faction_graph
+            documents, faction_graph, prepared.player_templates
         )
     target = requested_target
     is_roster_hero = target.name.casefold() in {
@@ -1444,6 +1531,15 @@ def compile_playable_unit_descriptor(
     except PlayableUnitCompilerError as error:
         direct_error = error
     if is_roster_hero:
+        roster_matches = [
+            index + 1
+            for index, value in enumerate(hero_roster)
+            if value.casefold() == target.name.casefold()
+        ]
+        if len(roster_matches) != 1:
+            raise PlayableUnitCompilerError(
+                f"PlayerTemplate {player_template_id} has duplicate BuildableHeroesMP hero: {target.name}"
+            )
         if direct_producers:
             raise PlayableUnitCompilerError(
                 f"hero {target.name} has conflicting hero-roster and command-socket routes"
@@ -1457,11 +1553,7 @@ def compile_playable_unit_descriptor(
             raise PlayableUnitCompilerError(
                 f"hero {target.name} has no reachable starting-fortress producer"
             )
-        roster_ordinal = next(
-            index + 1
-            for index, value in enumerate(hero_roster)
-            if value.casefold() == target.name.casefold()
-        )
+        roster_ordinal = roster_matches[0]
         producers = (
             {
                 "producerObjectId": objects[starting_building.casefold()].name,
@@ -1504,7 +1596,7 @@ def compile_playable_unit_descriptor(
             raise direct_error
     target_lineage = _ancestry(objects, target)
     members, primary_member, consumed_container_modules = _member_rows(
-        target, target_lineage, objects, _numeric_defines(documents)
+        target, target_lineage, objects, prepared.numeric_defines
     )
     member_lineage = _ancestry(objects, primary_member)
     container_audio_edges = (
@@ -1581,7 +1673,7 @@ def compile_playable_unit_descriptor(
         member_fields,
         member_lineage,
         members,
-        _numeric_defines(documents),
+        prepared.numeric_defines,
         documents,
         target_lineage,
     )
@@ -1643,9 +1735,7 @@ def compile_playable_unit_descriptor(
                 _ini_block_semantic("CommandButton", command_button)
             )
     if player_template_id:
-        template = _named_blocks(
-            _required_document(documents, PLAYER_TEMPLATE_PATH), "PlayerTemplate"
-        )[player_template_id.casefold()]
+        template = prepared.player_templates[player_template_id.casefold()]
         semantic_scopes[PLAYER_TEMPLATE_PATH].append(
             _ini_block_semantic("PlayerTemplate", template)
         )
@@ -2157,9 +2247,12 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
 __all__ = [
     "COMMAND_BUTTON_PATH",
     "COMMAND_SET_PATH",
+    "PlayableUnitCompilerInputs",
     "PlayableUnitCompilerError",
     "SCHEMA",
     "SCHEMA_VERSION",
     "compile_playable_unit_descriptor",
+    "prepare_playable_unit_compiler",
+    "playable_object_kind_of",
     "validate_playable_unit_descriptor",
 ]

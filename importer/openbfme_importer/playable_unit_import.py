@@ -14,6 +14,7 @@ from typing import Any, Mapping
 
 from .catalog import InstallCatalog
 from .faction_census import census_playable_faction
+from .faction_policy import implicit_object_roots
 from .pipeline import ImportPipeline, audit_pack, bundle_digest
 from .playable_unit_compiler import (
     PlayableUnitCompilerError,
@@ -101,7 +102,10 @@ def _select_faction_graph(
     matches: list[tuple[dict[str, Any], dict[str, object]]] = []
     for _short, template, side in candidates:
         graph = census_playable_faction(
-            catalog, player_template=template, expected_side=side
+            catalog,
+            player_template=template,
+            expected_side=side,
+            implicit_object_roots=implicit_object_roots(template),
         )
         try:
             descriptor = compile_playable_unit_descriptor(

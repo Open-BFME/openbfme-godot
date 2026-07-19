@@ -26,7 +26,9 @@ from .paths import (
 )
 from .pipeline import ImportPipeline, audit_pack, bundle_digest
 from .playable_unit_import import import_playable_unit
-from .faction_census import census_men_faction
+from .faction_census import census_playable_faction
+from .faction_import import plan_faction_import
+from .faction_policy import implicit_object_roots
 from .faction_profile import build_men_leaf_profile
 from .map_profile import build_five_map_profile
 from .map_census import census_multiplayer_maps
@@ -214,12 +216,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     faction_census = sub.add_parser(
         "census-faction",
-        help="inventory the BFME2 1.06 Men command-reachable dependency roots",
+        help="inventory BFME2 1.06 faction command-reachable dependency roots",
     )
     faction_census.add_argument("--install", required=True)
     _add_game_argument(faction_census)
-    faction_census.add_argument("--faction", default="men", choices=("men",))
+    faction_census.add_argument(
+        "--faction",
+        default="men",
+        choices=("men", "elves", "dwarves", "isengard", "mordor", "wild"),
+    )
     faction_census.add_argument("--reindex", action="store_true")
+
+    import_faction = sub.add_parser(
+        "import-faction",
+        help="plan a complete BFME2 faction import and expose every converter gap",
+    )
+    import_faction.add_argument("--install", required=True)
+    _add_game_argument(import_faction)
+    import_faction.add_argument(
+        "--faction",
+        required=True,
+        choices=("men", "elves", "dwarves", "isengard", "mordor", "wild"),
+    )
+    import_faction.add_argument("--reindex", action="store_true")
+    import_faction.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="required until every reported converter family has a pack compiler",
+    )
 
     faction_profile = sub.add_parser(
         "generate-faction-profile",
@@ -387,6 +411,42 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if value["ready"] else 6
 
         catalog = _load_or_build_catalog(args)
+        if args.command == "import-faction":
+            if args.game != "bfme2":
+                raise ValueError("import-faction currently supports BFME2 1.06 only")
+            if not args.plan_only:
+                raise ValueError(
+                    "full faction publication is not enabled; rerun with --plan-only"
+                )
+            pipeline = ImportPipeline(catalog, _state_root(args), game="bfme2")
+            effective_root, manifest_path, _staging, _backup = (
+                pipeline._effective_asset_paths()
+            )
+            if not manifest_path.is_file():
+                pipeline.extract_all_assets(force=False)
+            value = plan_faction_import(catalog, effective_root, args.faction)
+            report_path = (
+                _state_root(args)
+                / "reports"
+                / "faction-import"
+                / f"{args.faction}-plan.json"
+            )
+            write_json_atomic(report_path, value)
+            summary = value["summary"]
+            _render(
+                {
+                    "ready": summary["ready"],
+                    "report": str(report_path),
+                    "aggregate_sha256": value["aggregateSha256"],
+                    "object_count": summary["objectCount"],
+                    "descriptor_ready_count": summary["descriptorReadyCount"],
+                    "converter_gap_count": summary["converterGapCount"],
+                    "unresolved_leaf_count": summary["unresolvedLeafCount"],
+                    "unsupported_families": summary["unsupportedFamilies"],
+                },
+                args.json,
+            )
+            return 0 if bool(summary["ready"]) else 6
         if args.command == "import-unit":
             if args.game != "bfme2":
                 raise ValueError("import-unit currently supports BFME2 1.06 only")
@@ -481,9 +541,25 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "census-faction":
             if args.game != "bfme2":
                 raise ValueError("census-faction currently supports BFME2 only")
-            report = census_men_faction(catalog)
+            faction_specs = {
+                "men": ("FactionMen", "Men"),
+                "elves": ("FactionElves", "Elves"),
+                "dwarves": ("FactionDwarves", "Dwarves"),
+                "isengard": ("FactionIsengard", "Isengard"),
+                "mordor": ("FactionMordor", "Mordor"),
+                "wild": ("FactionWild", "Wild"),
+            }
+            template, side = faction_specs[args.faction]
+            report = census_playable_faction(
+                catalog,
+                player_template=template,
+                expected_side=side,
+                implicit_object_roots=implicit_object_roots(template),
+            )
             report_path = (
-                _workspace_root(args) / "reports" / "men-faction-leaf-census.json"
+                _workspace_root(args)
+                / "reports"
+                / f"{args.faction}-faction-leaf-census.json"
             )
             write_json_atomic(report_path, report)
             payload = (

@@ -9,6 +9,8 @@ import pytest
 from openbfme_importer.playable_unit_compiler import (
     PlayableUnitCompilerError,
     compile_playable_unit_descriptor,
+    playable_object_kind_of,
+    prepare_playable_unit_compiler,
     validate_playable_unit_descriptor,
 )
 
@@ -203,6 +205,68 @@ def test_compiles_categories_without_object_specific_rules(
     assert result["presentation"]["audioRoutes"]["container"]["VoiceSelect"]
     assert result["presentation"]["audioRoutes"]["primaryMember"]["VoiceSelect"]
     assert len(result["descriptorSha256"]) == 64
+
+
+def test_prepared_inputs_preserve_descriptor_identity() -> None:
+    documents = _documents()
+    expected = compile_playable_unit_descriptor("InfantryHorde", documents)
+    prepared = prepare_playable_unit_compiler(documents)
+
+    actual = compile_playable_unit_descriptor(
+        "InfantryHorde", documents, prepared=prepared
+    )
+
+    assert actual == expected
+
+
+def test_prepared_inputs_reject_a_different_document_mapping() -> None:
+    documents = _documents()
+    prepared = prepare_playable_unit_compiler(documents)
+
+    with pytest.raises(PlayableUnitCompilerError, match="different document mapping"):
+        compile_playable_unit_descriptor(
+            "InfantryHorde", dict(documents), prepared=prepared
+        )
+
+
+def test_malformed_sibling_does_not_erase_valid_retail_object() -> None:
+    documents = _documents()
+    documents["data/ini/object/civilian/large.ini"] = b"""
+Object BrokenSibling
+  KindOf = STRUCTURE
+Object RecoveredBase
+  KindOf = STRUCTURE IMMOBILE
+End
+"""
+
+    prepared = prepare_playable_unit_compiler(documents)
+
+    assert "brokensibling" not in prepared.objects
+    assert playable_object_kind_of(prepared, "RecoveredBase") == (
+        "IMMOBILE",
+        "STRUCTURE",
+    )
+    assert prepared.objects["recoveredbase"].line == 4
+    assert "data/ini/object/civilian/large.ini" in prepared.object_parse_errors
+
+
+def test_kind_of_additive_modifier_preserves_parent_capabilities() -> None:
+    documents = _documents()
+    documents["data/ini/object/civilian/inheritance.ini"] = b"""
+Object StructureBase
+  KindOf = STRUCTURE IMMOBILE
+End
+ChildObject EconomyChild StructureBase
+  KindOf = +ECONOMY_STRUCTURE -IMMOBILE
+End
+"""
+
+    prepared = prepare_playable_unit_compiler(documents)
+
+    assert playable_object_kind_of(prepared, "EconomyChild") == (
+        "ECONOMY_STRUCTURE",
+        "STRUCTURE",
+    )
 
 
 def test_discovers_upgraded_command_set_prerequisite() -> None:

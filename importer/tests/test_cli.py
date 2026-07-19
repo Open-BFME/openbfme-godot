@@ -13,6 +13,117 @@ from openbfme_importer import cli
 
 
 class CliTests(unittest.TestCase):
+    def test_bootstrap_tools_returns_success_without_faction_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with mock.patch.object(
+                cli, "bootstrap_tools", return_value={"ready": True}
+            ):
+                result = cli.main(
+                    ["--state-root", raw, "bootstrap-tools"]
+                )
+        self.assertEqual(result, 0)
+
+    def test_incomplete_faction_plan_writes_report_and_returns_six(self) -> None:
+        plan = {
+            "aggregateSha256": "a" * 64,
+            "summary": {
+                "ready": False,
+                "objectCount": 1,
+                "descriptorReadyCount": 0,
+                "converterGapCount": 1,
+                "unresolvedLeafCount": 0,
+                "unsupportedFamilies": ["structure"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            state_root = Path(raw) / "state"
+            effective_root = state_root / "cache" / "effective-assets"
+            manifest = effective_root / "manifest.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text("{}", encoding="utf-8")
+            pipeline = mock.Mock()
+            pipeline._effective_asset_paths.return_value = (
+                effective_root,
+                manifest,
+                Path(raw) / "staging",
+                Path(raw) / "backup",
+            )
+            with (
+                mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
+                mock.patch.object(cli, "ImportPipeline", return_value=pipeline),
+                mock.patch.object(cli, "plan_faction_import", return_value=plan),
+            ):
+                result = cli.main(
+                    [
+                        "--state-root",
+                        str(state_root),
+                        "import-faction",
+                        "--install",
+                        "C:/BFME2",
+                        "--faction",
+                        "men",
+                        "--plan-only",
+                    ]
+                )
+
+            self.assertEqual(result, 6)
+            self.assertTrue(
+                (state_root / "reports" / "faction-import" / "men-plan.json").is_file()
+            )
+
+    def test_import_faction_parser_accepts_all_six_factions(self) -> None:
+        parser = cli.build_parser()
+        for faction in ("men", "elves", "dwarves", "isengard", "mordor", "wild"):
+            args = parser.parse_args(
+                [
+                    "import-faction",
+                    "--install",
+                    "C:/BFME2",
+                    "--faction",
+                    faction,
+                    "--plan-only",
+                ]
+            )
+            self.assertEqual(args.faction, faction)
+            self.assertTrue(args.plan_only)
+
+    def test_non_men_census_uses_the_curated_faction_roots(self) -> None:
+        report = {
+            "summary": {
+                "unresolvedCount": 0,
+                "objectCount": 1,
+                "commandSetCount": 1,
+                "commandButtonCount": 1,
+                "upgradeCount": 0,
+                "specialPowerCount": 0,
+                "mappedImageResolvedCount": 0,
+                "textResolvedCount": 0,
+                "audioSampleCount": 0,
+            }
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            with (
+                mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
+                mock.patch.object(
+                    cli, "census_playable_faction", return_value=report
+                ) as census,
+            ):
+                result = cli.main(
+                    [
+                        "--state-root",
+                        raw,
+                        "census-faction",
+                        "--install",
+                        "C:/BFME2",
+                        "--faction",
+                        "elves",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(census.call_args.kwargs["player_template"], "FactionElves")
+        self.assertTrue(census.call_args.kwargs["implicit_object_roots"])
+
     def test_generate_faction_profile_parser_requires_install(self) -> None:
         parser = cli.build_parser()
         args = parser.parse_args(
