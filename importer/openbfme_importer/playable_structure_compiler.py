@@ -1,10 +1,11 @@
 """Compile BFME2 retail references into one playable-structure descriptor.
 
 Structures share the playable-unit corpus preparation but classify by the
-STRUCTURE KindOf family, produce through authored construct commands instead of
-UNIT_BUILD sockets, and carry lifecycle health facts instead of unit core
-animation states.  This module is object-name agnostic; engine-spawned fortress
-composites are admitted only through the caller-owned implicit-root policy.
+STRUCTURE KindOf family, produce through authored construct or wall-upgrade
+commands instead of UNIT_BUILD sockets, and carry lifecycle health facts
+instead of unit core animation states.  This module is object-name agnostic;
+engine-spawned fortress composites are admitted only through the caller-owned
+implicit-root policy.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ _CONSTRUCT_COMMANDS = (
     {"porter_construct"},
     {"foundation_construct"},
 )
+_WALL_UPGRADE_COMMAND = "object_upgrade"
 _HEALTH_FIELDS = ("MaxHealth", "MaxHealthDamaged", "MaxHealthReallyDamaged")
 
 
@@ -160,6 +162,106 @@ def _construct_routes(
     return routes
 
 
+def _wall_upgrade_routes(
+    target_id: str,
+    objects: Mapping[str, SageObject],
+    command_sets: Mapping[str, object],
+    command_buttons: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """Bind OBJECT_UPGRADE buttons which morph a wall hub into the target.
+
+    Retail wall gates, towers, trebuchets, and postern gates are not porter
+    constructs: an authored ``OBJECT_UPGRADE`` command on the wall hub's
+    CommandSet replaces the hub segment with the target Object.  The target
+    evidence is the button's ``Object`` field plus the hub which authors the
+    CommandSet holding the button.
+    """
+
+    upgrade_commands: dict[str, dict[str, object]] = {}
+    for button in command_buttons.values():
+        commands = {value.casefold() for value in _block_values(button, "Command")}
+        if commands != {_WALL_UPGRADE_COMMAND}:
+            continue
+        targets = tuple(
+            filter(
+                None, (_first((value,)) for value in _block_values(button, "Object"))
+            )
+        )
+        if any(value.casefold() == target_id.casefold() for value in targets):
+            upgrade_commands[button.name.casefold()] = {
+                "id": button.name,
+                "button": button,
+            }
+    if not upgrade_commands:
+        return []
+
+    set_bindings: list[tuple[object, int, dict[str, object]]] = []
+    for command_set in command_sets.values():
+        for slot, command_id in _command_slots(command_set):
+            command = upgrade_commands.get(command_id.casefold())
+            if command is not None:
+                set_bindings.append((command_set, slot, command))
+
+    routes: list[dict[str, object]] = []
+    for hub in objects.values():
+        try:
+            lineage = _ancestry(objects, hub)
+        except ValueError:
+            continue
+        direct_sets = {
+            value.casefold()
+            for value in (
+                _first((row.value,))
+                for row in _effective_values(lineage, "CommandSet")
+            )
+            if value
+        }
+        for command_set, slot, command in set_bindings:
+            if command_set.name.casefold() not in direct_sets:
+                continue
+            button = command["button"]
+            upgrades = sorted(
+                {
+                    token
+                    for value in _block_values(button, "Upgrade")
+                    for token in _tokens(value)
+                    if token.startswith("Upgrade_")
+                },
+                key=str.casefold,
+            )
+            prerequisites = sorted(
+                {
+                    token
+                    for field in ("NeededUpgrade", "Options")
+                    for value in _block_values(button, field)
+                    for token in _tokens(value)
+                    if token.startswith(("Upgrade_", "SCIENCE_"))
+                },
+                key=str.casefold,
+            )
+            routes.append(
+                {
+                    "surface": "wall-upgrade",
+                    "commandId": str(command["id"]),
+                    "commandKind": _WALL_UPGRADE_COMMAND,
+                    "builderObjectId": hub.name,
+                    "commandSetId": command_set.name,
+                    "slot": slot,
+                    "upgrade": upgrades,
+                    "prerequisites": prerequisites,
+                }
+            )
+    routes.sort(
+        key=lambda row: (
+            str(row["builderObjectId"]).casefold(),
+            str(row["commandSetId"]).casefold(),
+            int(row["slot"]),
+            str(row["commandId"]).casefold(),
+        )
+    )
+    return routes
+
+
 def _health_contract(
     lineage: Sequence[SageObject],
     defines: Mapping[str, int | float],
@@ -204,8 +306,10 @@ def _trained_command_sets(
     lineage: Sequence[SageObject],
     command_sets: Mapping[str, object],
     target_id: str,
-) -> list[dict[str, object]]:
+    source_null_command_sets: frozenset[str] = frozenset(),
+) -> tuple[list[dict[str, object]], list[str]]:
     result: list[dict[str, object]] = []
+    source_null: set[str] = set()
     seen: set[tuple[str, str]] = set()
     direct = [
         value
@@ -240,6 +344,12 @@ def _trained_command_sets(
             seen.add(key)
             command_set = command_sets.get(set_id.casefold())
             if command_set is None:
+                if set_id.casefold() in source_null_command_sets:
+                    # Caller-declared retail source-null reference (for
+                    # example the Isengard side-pad CommandSet): recorded
+                    # explicitly, never silently dropped or invented.
+                    source_null.add(set_id)
+                    continue
                 raise PlayableStructureCompilerError(
                     f"structure references a missing CommandSet: {set_id}"
                 )
@@ -255,7 +365,7 @@ def _trained_command_sets(
                 row["triggeredBy"] = triggers
             result.append(row)
     result.sort(key=lambda row: (str(row["kind"]), str(row["id"]).casefold()))
-    return result
+    return result, sorted(source_null, key=str.casefold)
 
 
 def _module_evidence(
@@ -287,6 +397,7 @@ def compile_playable_structure_descriptor(
     prepared: PlayableUnitCompilerInputs | None = None,
     engine_spawned_roots: Iterable[str] = (),
     wall_template_roots: Iterable[str] = (),
+    source_null_command_sets: Iterable[str] = (),
 ) -> dict[str, object]:
     """Compile one source-backed structure descriptor or fail closed."""
 
@@ -313,10 +424,17 @@ def compile_playable_structure_descriptor(
     production = _construct_routes(
         target_id, prepared.objects, prepared.command_sets, prepared.command_buttons
     )
+    upgrade_routes = _wall_upgrade_routes(
+        target_id, prepared.objects, prepared.command_sets, prepared.command_buttons
+    )
     spawned_keys = {value.casefold() for value in engine_spawned_roots}
     wall_keys = {value.casefold() for value in wall_template_roots}
     if production:
         production_evidence = "authored-construct-command"
+        production = [*production, *upgrade_routes]
+    elif upgrade_routes:
+        production_evidence = "authored-wall-upgrade-command"
+        production = upgrade_routes
     elif target.name.casefold() in spawned_keys:
         production_evidence = "engine-spawned-composite"
     elif target.name.casefold() in wall_keys:
@@ -324,8 +442,8 @@ def compile_playable_structure_descriptor(
     else:
         raise PlayableStructureCompilerError(
             f"Object {target_id} is not targeted by an authored construct "
-            "command and is not a declared engine-spawned or wall-template "
-            "composite"
+            "command or wall-upgrade command and is not a declared "
+            "engine-spawned or wall-template composite"
         )
 
     scalars = _scalar_fields(lineage)
@@ -334,8 +452,11 @@ def compile_playable_structure_descriptor(
         raise PlayableStructureCompilerError(
             f"structure has no authored body health: {target_id}"
         )
-    trained = _trained_command_sets(
-        lineage, prepared.command_sets, target_id
+    trained, source_null_sets = _trained_command_sets(
+        lineage,
+        prepared.command_sets,
+        target_id,
+        frozenset(value.casefold() for value in source_null_command_sets),
     )
     audio = {
         key: value
@@ -385,6 +506,7 @@ def compile_playable_structure_descriptor(
         "gameplay": {
             "health": health,
             "trainedCommandSets": trained,
+            "sourceNullCommandSets": source_null_sets,
             "scalarFields": {
                 key: value
                 for key, value in sorted(scalars.items())
@@ -447,19 +569,24 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
     evidence = production.get("evidence")
     if not isinstance(routes, list) or evidence not in {
         "authored-construct-command",
+        "authored-wall-upgrade-command",
         "engine-spawned-composite",
         "wall-template",
     }:
         raise PlayableStructureCompilerError(
             "structure descriptor production evidence is invalid"
         )
-    if evidence == "authored-construct-command" and not routes:
+    authored = evidence in {
+        "authored-construct-command",
+        "authored-wall-upgrade-command",
+    }
+    if authored and not routes:
         raise PlayableStructureCompilerError(
-            "structure descriptor claims construct evidence without routes"
+            "structure descriptor claims authored production evidence without routes"
         )
-    if evidence != "authored-construct-command" and routes:
+    if not authored and routes:
         raise PlayableStructureCompilerError(
-            "structure descriptor claims non-construct evidence with routes"
+            "structure descriptor claims non-authored evidence with routes"
         )
     gameplay = value.get("gameplay")
     if not isinstance(gameplay, Mapping):

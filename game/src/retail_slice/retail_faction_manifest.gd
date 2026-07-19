@@ -16,6 +16,14 @@ const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtim
 
 const DEFAULT_FACTION := "men"
 const DEFAULT_PACK_ID := "bfme2-men-vslice"
+const FACTION_OBJECT_PREFIXES := {
+	"men": ["men", "gondor"],
+	"elves": ["elven", "eregion"],
+	"dwarves": ["dwarven", "dwarf"],
+	"isengard": ["isengard"],
+	"mordor": ["mordor"],
+	"wild": ["wild", "goblin"],
+}
 # Moved verbatim from RetailVerticalSlice.BUILDING_OBJECT_IDS.
 const DEFAULT_STRUCTURE_OBJECT_IDS := {
 	"fortress": "bfme2.object.men-fortress",
@@ -66,10 +74,11 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	if slug == "" or slug == DEFAULT_FACTION:
 		return default_manifest()
 
-	var structure_ids := _matching_ids(structure_runtimes, slug)
+	var prefixes: Array = FACTION_OBJECT_PREFIXES.get(slug, [slug]) as Array
+	var structure_ids := _matching_ids(structure_runtimes, prefixes)
 	if structure_ids.is_empty():
 		return {"_error": "faction '%s' has no loaded playableStructure.* runtime documents" % slug}
-	var unit_ids := _matching_ids(unit_runtimes, slug)
+	var unit_ids := _matching_ids(unit_runtimes, prefixes)
 	if unit_ids.is_empty():
 		return {"_error": "faction '%s' has no loaded playableUnit.* runtime documents" % slug}
 
@@ -85,7 +94,13 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	for object_id in structure_ids:
 		var document: Dictionary = structure_runtimes[object_id] as Dictionary
 		var registration: Dictionary = document.get("registration", {}) as Dictionary
-		var kind := _structure_kind_for(String(document.get("slug", "")), slug)
+		var production: Dictionary = registration.get("production", {}) as Dictionary
+		# Citadels, expansion pads, and wall templates are lifecycle resources
+		# owned by their authored parent/construct route. They are loaded by the
+		# presenter but must not become independent base structures or producers.
+		if String(production.get("evidence", "")) != "authored-construct-command":
+			continue
+		var kind := _structure_kind_for(String(document.get("slug", "")), prefixes)
 		if kind.contains("fortress"):
 			if fortress_kind != "":
 				return {"_error": "faction '%s' declares more than one fortress structure (%s and %s)" % [slug, structure_source_by_kind.get(fortress_kind, ""), object_id]}
@@ -111,10 +126,8 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		structure_build_rules[kind] = {"cost": int(cost), "seconds": seconds}
 		producer_kind_registry[object_id] = kind
 		pack_roots[String(document.get("_pack_root", ""))] = true
-		var production: Dictionary = registration.get("production", {}) as Dictionary
-		if String(production.get("evidence", "")) == "authored-construct-command":
-			for route_value in production.get("routes", []) as Array:
-				builder_sources[String((route_value as Dictionary).get("builderObjectId", ""))] = true
+		for route_value in production.get("routes", []) as Array:
+			builder_sources[String((route_value as Dictionary).get("builderObjectId", ""))] = true
 	if fortress_kind == "":
 		return {"_error": "faction '%s' has no fortress structure runtime; the starting base cannot be seeded" % slug}
 	# Deterministic base order: the fortress leads, remaining kinds keep the
@@ -126,10 +139,17 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	builder_names.sort_custom(func(a, b) -> bool: return String(a).naturalnocasecmp_to(String(b)) < 0)
 	if builder_names.is_empty():
 		return {"_error": "faction '%s' structures declare no authored construct routes, so no builder unit is provable" % slug}
-	var builder_source := String(builder_names[0])
-	var builder_document := _unit_document_for(unit_runtimes, builder_source)
+	var builder_source := ""
+	var builder_document: Dictionary = {}
+	for candidate_value in builder_names:
+		var candidate := String(candidate_value)
+		var candidate_document := _unit_document_for(unit_runtimes, candidate)
+		if not candidate_document.is_empty():
+			builder_source = candidate
+			builder_document = candidate_document
+			break
 	if builder_document.is_empty():
-		return {"_error": "faction '%s' builder unit '%s' has no playableUnit.* runtime document (convert the faction porter)" % [slug, builder_source]}
+		return {"_error": "faction '%s' builder candidates [%s] have no playableUnit.* runtime document (convert the faction porter)" % [slug, ", ".join(builder_names)]}
 	var builder_member_id := PlayableUnitAdapter.runtime_member_id(builder_document)
 
 	# Every matching unit must resolve against this faction's producers.
@@ -238,12 +258,16 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	}
 
 
-static func _matching_ids(registry: Dictionary, slug: String) -> Array:
+static func _matching_ids(registry: Dictionary, prefixes: Array) -> Array:
 	var result: Array = []
 	for object_id_value in registry.keys():
 		var object_id := String(object_id_value)
-		if typeof(registry[object_id_value]) == TYPE_DICTIONARY and object_id.to_lower().begins_with(slug):
-			result.append(object_id)
+		if typeof(registry[object_id_value]) != TYPE_DICTIONARY:
+			continue
+		for prefix_value in prefixes:
+			if object_id.to_lower().begins_with(String(prefix_value)):
+				result.append(object_id)
+				break
 	result.sort_custom(func(a, b) -> bool: return String(a).naturalnocasecmp_to(String(b)) < 0)
 	return result
 
@@ -255,10 +279,13 @@ static func _unit_document_for(unit_runtimes: Dictionary, source_object_id: Stri
 	return {}
 
 
-static func _structure_kind_for(document_slug: String, faction_slug: String) -> String:
+static func _structure_kind_for(document_slug: String, prefixes: Array) -> String:
 	var kind := document_slug
-	if kind.to_lower().begins_with(faction_slug):
-		kind = kind.substr(faction_slug.length())
+	for prefix_value in prefixes:
+		var prefix := String(prefix_value)
+		if kind.to_lower().begins_with(prefix):
+			kind = kind.substr(prefix.length())
+			break
 	kind = kind.trim_prefix("-")
 	if kind == "":
 		kind = document_slug

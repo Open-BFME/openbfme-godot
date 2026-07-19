@@ -175,6 +175,16 @@ End
     return source + duplicate
 
 
+def _additive_voice_objects() -> bytes:
+    return _objects().replace(
+        b"  VoiceSelect = SoldierVoice\n  VoicePriority = 43",
+        b"  VoiceSelect = SoldierVoice\n"
+        b"  VoiceCreated = NoSound\n"
+        b"  VoiceCreated = +SOUND:SoldierSelect\n"
+        b"  VoicePriority = 43",
+    )
+
+
 def _mapped_images(*, missing_train_texture: bool = False) -> bytes:
     train_texture = (
         "AbsentTrainAtlas.tga" if missing_train_texture else "TrainAtlas.tga"
@@ -286,24 +296,37 @@ def _catalog(
     heroes: str = "HeroA",
     missing_soldier_voice: bool = False,
     missing_secondary_sound: bool = False,
+    additive_voice: bool = False,
+    missing_barracks_command_set: bool = False,
 ) -> InstallCatalog:
+    object_source = (
+        _additive_voice_objects()
+        if additive_voice
+        else _objects(
+            duplicate_porter=duplicate_porter,
+            missing_soldier_voice=missing_soldier_voice,
+        )
+    )
+    command_set_source = _command_sets()
+    if missing_barracks_command_set:
+        command_set_source = command_set_source.replace(
+            b"CommandSet MenBarracksCommandSet\n  1 = Command_TrainSoldiers\nEnd\n",
+            b"",
+        )
     make_big(
         root / "ini.big",
         {
             "data/ini/playertemplate.ini": _player_template(
                 side=side, player_template=player_template, heroes=heroes
             ),
-            "data/ini/commandset.ini": _command_sets(),
+            "data/ini/commandset.ini": command_set_source,
             "data/ini/commandbutton.ini": _command_buttons(
                 duplicate_soldier=duplicate_soldier_button,
                 conflicting_soldier=conflicting_soldier_button,
                 case_variant_image=case_variant_image,
                 missing_secondary_sound=missing_secondary_sound,
             ),
-            "data/ini/object/goodfaction/men.ini": _objects(
-                duplicate_porter=duplicate_porter,
-                missing_soldier_voice=missing_soldier_voice,
-            ),
+            "data/ini/object/goodfaction/men.ini": object_source,
             "data/ini/mappedimages/aptimages/fixture.ini": _mapped_images(
                 missing_train_texture=missing_train_texture
             ),
@@ -681,6 +704,120 @@ class FactionCensusTests(unittest.TestCase):
         )
         self.assertEqual([item["tokenOrdinal"] for item in entries], [0, 1, 2])
         self.assertEqual([item["rosterOrdinal"] for item in entries], [0, 1, 2])
+
+    def test_additive_sound_prefix_resolves_the_namespaced_identifier(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            report = census_men_faction(_catalog(Path(raw), additive_voice=True))
+        self.assertEqual(report["summary"]["unresolvedCount"], 0)
+        soldier = next(
+            item for item in report["definitions"]["objects"] if item["id"] == "Soldier"
+        )
+        self.assertIn(
+            {
+                "field": "VoiceCreated",
+                "targetKind": "audio-definition",
+                "targetId": "SoldierSelect",
+                "resolution": "resolved",
+            },
+            soldier["edges"],
+        )
+        self.assertFalse(
+            any(
+                edge["targetId"] in {"SOUND", "+SOUND", "NoSound"}
+                for item in report["definitions"]["objects"]
+                for edge in item["edges"]
+                if edge["targetKind"] == "audio-definition"
+            )
+        )
+
+    def test_source_null_texture_policy_covers_only_declared_retail_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            catalog = _catalog(Path(raw), missing_train_texture=True)
+            report = census_playable_faction(
+                catalog,
+                player_template="FactionMen",
+                expected_side="Men",
+                source_null_mapped_image_textures=(
+                    ("AbsentTrainAtlas.tga", "retail placeholder atlas"),
+                ),
+            )
+        self.assertEqual(report["summary"]["unresolvedCount"], 0)
+        self.assertNotIn("missingMappedImageTextures", report["unresolved"])
+        self.assertEqual(
+            report["dependencies"]["sourceNullMappedImageTextures"],
+            [
+                {
+                    "texture": "AbsentTrainAtlas.tga",
+                    "reason": "retail placeholder atlas",
+                    "mappedImages": ["TrainSoldierImage"],
+                }
+            ],
+        )
+        self.assertEqual(report["summary"]["mappedImageTextureSourceNullCount"], 1)
+        image = next(
+            item
+            for item in report["resolvedLeaves"]["mappedImages"]
+            if item["id"] == "TrainSoldierImage"
+        )
+        self.assertEqual(image["compiledTextureResolution"], "source-null")
+
+    def test_resolved_texture_declared_source_null_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ValueError, "source-null MappedImage texture"):
+                census_playable_faction(
+                    _catalog(Path(raw)),
+                    player_template="FactionMen",
+                    expected_side="Men",
+                    source_null_mapped_image_textures=(
+                        ("TrainAtlas.tga", "stale policy entry"),
+                    ),
+                )
+
+    def test_source_null_command_set_policy_covers_only_declared_retail_gaps(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            catalog = _catalog(Path(raw), missing_barracks_command_set=True)
+            uncovered = census_playable_faction(
+                catalog,
+                player_template="FactionMen",
+                expected_side="Men",
+            )
+            self.assertEqual(
+                uncovered["unresolved"]["missingCommandSets"],
+                ["MenBarracksCommandSet"],
+            )
+            covered = census_playable_faction(
+                catalog,
+                player_template="FactionMen",
+                expected_side="Men",
+                source_null_command_sets=(
+                    ("MenBarracksCommandSet", "retail placeholder command set"),
+                ),
+            )
+        self.assertEqual(covered["summary"]["unresolvedCount"], 0)
+        self.assertEqual(
+            covered["dependencies"]["sourceNullCommandSets"],
+            [
+                {
+                    "id": "MenBarracksCommandSet",
+                    "reason": "retail placeholder command set",
+                }
+            ],
+        )
+        self.assertEqual(covered["summary"]["commandSetSourceNullCount"], 1)
+
+    def test_resolved_command_set_declared_source_null_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ValueError, "source-null CommandSet"):
+                census_playable_faction(
+                    _catalog(Path(raw)),
+                    player_template="FactionMen",
+                    expected_side="Men",
+                    source_null_command_sets=(
+                        ("MenBarracksCommandSet", "stale policy entry"),
+                    ),
+                )
 
 
 if __name__ == "__main__":

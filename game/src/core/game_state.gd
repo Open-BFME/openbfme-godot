@@ -18,6 +18,12 @@ var enemy_faction: String = "mordor"
 var map_id: String = "anduin"
 var difficulty: String = "normal"
 
+## Retail vertical slice skirmish selection, written by the main menu's
+## skirmish setup. The slice reads these only when OPENBFME_SLICE_FACTION is
+## unset; the environment variable always wins for headless runners.
+var retail_player_faction: String = "men"
+var retail_enemy_faction: String = "men"
+
 var resources: Dictionary = {0: 1500.0, 1: 1500.0, 2: 0.0}
 var power_points: Dictionary = {0: 0.0, 1: 0.0}
 var power_spent_tiers: Dictionary = {0: 0, 1: 0} # count of powers purchased for tier unlock

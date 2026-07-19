@@ -9,7 +9,11 @@ from typing import Callable, Mapping
 
 from .catalog import InstallCatalog
 from .faction_census import census_playable_faction
-from .faction_policy import implicit_object_roots
+from .faction_policy import (
+    implicit_object_roots,
+    source_null_command_sets,
+    source_null_mapped_image_textures,
+)
 from .playable_structure_compiler import (
     PlayableStructureCompilerError,
     compile_playable_structure_descriptor,
@@ -48,6 +52,15 @@ _EXCLUDED_FAMILY_REASONS = {
     "projectile": "projectiles convert inside their firing unit recipes",
     "spellbook": "spell book surfaces are outside the vertical-slice scope",
     "object-inheritance": "inheritance-only base objects are not standalone content",
+    "create-a-hero": "create-a-hero slots are engine-managed by the CAH editor flow",
+}
+
+# Plan-time exclusions are the families whose content is accounted for inside
+# another row's descriptor.  Spell book and retail-object-parser rows stay
+# explicit converter gaps until their owning lanes land.
+_PLAN_EXCLUDED_FAMILY_REASONS = {
+    key: _EXCLUDED_FAMILY_REASONS[key]
+    for key in ("banner-member", "projectile", "object-inheritance", "create-a-hero")
 }
 
 
@@ -59,6 +72,8 @@ def _canonical_bytes(value: object) -> bytes:
 
 def _family(kinds: tuple[str, ...]) -> str:
     values = set(kinds)
+    if "CREATE_A_HERO" in values:
+        return "create-a-hero"
     if values & {"STRUCTURE", "BASE_FOUNDATION", "FS_BASE_DEFENSE"}:
         return "structure"
     if values & {"SPELL_BOOK", "SIDEBAR_DISPLAY"}:
@@ -150,6 +165,29 @@ def build_faction_import_plan(
     )
 
     prepared = prepare_playable_unit_compiler(documents)
+    roots = faction_graph.get("roots", [])
+    if not isinstance(roots, list):
+        raise ValueError("faction graph roots are invalid")
+    engine_spawned_roots = tuple(
+        str(row["id"])
+        for row in roots
+        if isinstance(row, Mapping)
+        and row.get("edgeKind") == "engine-implicit-object"
+        and isinstance(row.get("id"), str)
+        and row["id"]
+    )
+    wall_template_roots = _wall_template_roots(faction_graph)
+    source_null_command_set_ids = _source_null_command_set_ids(faction_graph)
+    horde_banner_targets = {
+        str(edge["targetId"]).casefold()
+        for row in rows
+        if isinstance(row, Mapping)
+        for edge in row.get("edges", [])
+        if isinstance(edge, Mapping)
+        and edge.get("targetKind") == "horde-banner"
+        and isinstance(edge.get("targetId"), str)
+        and edge["targetId"]
+    }
     objects: list[dict[str, object]] = []
     for object_id in sorted(object_ids, key=lambda value: (value.casefold(), value)):
         kinds: tuple[str, ...] = ()
@@ -157,13 +195,8 @@ def build_faction_import_plan(
         parse_error: str | None = None
         try:
             kinds = playable_object_kind_of(prepared, object_id)
-            descriptor = compile_playable_unit_descriptor(
-                object_id, documents, faction_graph=faction_graph, prepared=prepared
-            )
         except PlayableUnitCompilerError as exc:
-            if kinds:
-                family = _family(kinds)
-            elif object_id.casefold() in prepared.objects:
+            if object_id.casefold() in prepared.objects:
                 family = "object-inheritance"
             else:
                 graph_row = graph_rows[object_id.casefold()]
@@ -175,25 +208,98 @@ def build_faction_import_plan(
                 )
                 parse_error = prepared.object_parse_errors.get(source_path.casefold())
                 family = "retail-object-parser" if parse_error else "missing-object"
-            objects.append(
-                {
-                    "id": object_id,
-                    "family": family,
-                    "kindOf": list(kinds),
-                    "status": "converter-gap",
-                    "reason": str(exc),
-                    **(
-                        {
-                            "sourceVirtualPath": source_path,
-                            "parserError": parse_error,
-                        }
-                        if not kinds
-                        and object_id.casefold() not in prepared.objects
-                        and parse_error
-                        else {}
-                    ),
-                }
+            if family in _PLAN_EXCLUDED_FAMILY_REASONS:
+                objects.append(
+                    {
+                        "id": object_id,
+                        "family": family,
+                        "kindOf": [],
+                        "status": "excluded",
+                        "reason": _PLAN_EXCLUDED_FAMILY_REASONS[family],
+                    }
+                )
+            else:
+                objects.append(
+                    {
+                        "id": object_id,
+                        "family": family,
+                        "kindOf": [],
+                        "status": "converter-gap",
+                        "reason": str(exc),
+                        **(
+                            {
+                                "sourceVirtualPath": source_path,
+                                "parserError": parse_error,
+                            }
+                            if parse_error
+                            else {}
+                        ),
+                    }
+                )
+            continue
+        family = _family(kinds)
+        if family == "structure":
+            try:
+                structure_descriptor = compile_playable_structure_descriptor(
+                    object_id,
+                    documents,
+                    prepared=prepared,
+                    engine_spawned_roots=engine_spawned_roots,
+                    wall_template_roots=wall_template_roots,
+                    source_null_command_sets=source_null_command_set_ids,
+                )
+            except PlayableStructureCompilerError as exc:
+                objects.append(
+                    {
+                        "id": object_id,
+                        "family": family,
+                        "kindOf": list(kinds),
+                        "status": "converter-gap",
+                        "reason": str(exc),
+                    }
+                )
+            else:
+                objects.append(
+                    {
+                        "id": object_id,
+                        "family": family,
+                        "category": "structure",
+                        "kindOf": list(kinds),
+                        "status": "descriptor-ready",
+                        "descriptorSha256": structure_descriptor["descriptorSha256"],
+                    }
+                )
+            continue
+        try:
+            descriptor = compile_playable_unit_descriptor(
+                object_id, documents, faction_graph=faction_graph, prepared=prepared
             )
+        except PlayableUnitCompilerError as exc:
+            if family == "banner-member" or object_id.casefold() in horde_banner_targets:
+                # Banner carriers — including ObjectReskin banners without a
+                # BANNER KindOf — are accounted for inside their parent horde
+                # recipes, never as standalone converter gaps.
+                family = "banner-member"
+            if family in _PLAN_EXCLUDED_FAMILY_REASONS:
+                objects.append(
+                    {
+                        "id": object_id,
+                        "family": family,
+                        "kindOf": list(kinds),
+                        "status": "excluded",
+                        "reason": _PLAN_EXCLUDED_FAMILY_REASONS[family],
+                    }
+                )
+            else:
+                objects.append(
+                    {
+                        "id": object_id,
+                        "family": family,
+                        "kindOf": list(kinds),
+                        "status": "converter-gap",
+                        "reason": str(exc),
+                    }
+                )
         else:
             objects.append(
                 {
@@ -207,10 +313,11 @@ def build_faction_import_plan(
             )
 
     ready_count = sum(row["status"] == "descriptor-ready" for row in objects)
-    gaps = len(objects) - ready_count
+    excluded_count = sum(row["status"] == "excluded" for row in objects)
+    gaps = len(objects) - ready_count - excluded_count
     descriptor_coverage_complete = unresolved == 0 and gaps == 0
     families = sorted(
-        {str(row["family"]) for row in objects if row["status"] != "descriptor-ready"}
+        {str(row["family"]) for row in objects if row["status"] == "converter-gap"}
     )
     plan: dict[str, object] = {
         "schema": SCHEMA,
@@ -233,6 +340,7 @@ def build_faction_import_plan(
             "descriptorCoverageComplete": descriptor_coverage_complete,
             "objectCount": len(objects),
             "descriptorReadyCount": ready_count,
+            "excludedCount": excluded_count,
             "converterGapCount": gaps,
             "unresolvedLeafCount": unresolved,
             "unsupportedFamilies": families,
@@ -277,6 +385,8 @@ def plan_faction_import(
         player_template=spec[1],
         expected_side=spec[2],
         implicit_object_roots=implicit_object_roots(spec[1]),
+        source_null_mapped_image_textures=source_null_mapped_image_textures(spec[1]),
+        source_null_command_sets=source_null_command_sets(spec[1]),
     )
     return build_faction_import_plan(
         graph,
@@ -301,6 +411,22 @@ def _wall_template_roots(faction_graph: Mapping[str, object]) -> tuple[str, ...]
             if kind.startswith("wall-") and kind.endswith("-template") and target:
                 targets.add(target)
     return tuple(sorted(targets, key=lambda value: (value.casefold(), value)))
+
+
+def _source_null_command_set_ids(faction_graph: Mapping[str, object]) -> tuple[str, ...]:
+    """Return census-recorded retail-absent CommandSet ids, if the graph has them."""
+
+    dependencies = faction_graph.get("dependencies")
+    if not isinstance(dependencies, Mapping):
+        return ()
+    rows = dependencies.get("sourceNullCommandSets")
+    if not isinstance(rows, list):
+        return ()
+    return tuple(
+        str(row["id"])
+        for row in rows
+        if isinstance(row, Mapping) and isinstance(row.get("id"), str) and row["id"]
+    )
 
 
 def build_faction_conversion(
@@ -330,6 +456,7 @@ def build_faction_conversion(
         object_id for object_id, _reason in implicit_object_roots(template)
     )
     wall_templates = _wall_template_roots(faction_graph)
+    source_null_sets = _source_null_command_set_ids(faction_graph)
 
     rows: list[dict[str, object]] = []
     for plan_row in plan["objects"]:
@@ -338,7 +465,62 @@ def build_faction_conversion(
         family = str(plan_row["family"])
         status = str(plan_row["status"])
         row: dict[str, object] = {"id": object_id, "family": family}
-        if status == "descriptor-ready":
+        if family == "structure":
+            descriptor = None
+            try:
+                descriptor = compile_playable_structure_descriptor(
+                    object_id,
+                    documents,
+                    prepared=prepared,
+                    engine_spawned_roots=spawned,
+                    wall_template_roots=wall_templates,
+                    source_null_command_sets=source_null_sets,
+                )
+                closure = build_retail_visual_closure(effective_root, [object_id])
+                recipe = compile_structure_visual_recipe(object_id, closure)
+                runtime = compose_structure_runtime_document(descriptor, recipe)
+            except (
+                PlayableStructureCompilerError,
+                PlayableStructurePackCompilerError,
+                ValueError,
+            ) as exc:
+                if (
+                    isinstance(descriptor, Mapping)
+                    and "no resolved lifecycle model" in str(exc)
+                    and "BASE_FOUNDATION" in descriptor.get("kindOf", [])
+                ):
+                    row.update(
+                        {
+                            "status": "excluded",
+                            "reason": (
+                                "foundation composite authors no lifecycle "
+                                "visuals"
+                            ),
+                            "descriptorSha256": descriptor["descriptorSha256"],
+                        }
+                    )
+                else:
+                    row.update({"status": "converter-gap", "reason": str(exc)})
+            else:
+                if artifact_writer is not None:
+                    artifact_writer(object_id, "descriptor", descriptor)
+                    artifact_writer(object_id, "pack-recipe", recipe)
+                    artifact_writer(object_id, "runtime", runtime)
+                row.update(
+                    {
+                        "status": "converted",
+                        "converter": "playable-structure",
+                        "category": "structure",
+                        "productionEvidence": str(
+                            descriptor["production"]["evidence"]
+                        ),
+                        "descriptorSha256": descriptor["descriptorSha256"],
+                        "recipeSha256": recipe["recipeSha256"],
+                        "runtimeSha256": runtime["runtimeSha256"],
+                        "resourceCount": len(recipe["resources"]),
+                    }
+                )
+        elif status == "descriptor-ready":
             try:
                 draft = compile_playable_unit_descriptor(
                     object_id,
@@ -388,60 +570,6 @@ def build_faction_conversion(
                         "category": str(descriptor["category"]),
                         "descriptorSha256": descriptor["descriptorSha256"],
                         "recipeSha256": recipe["recipeSha256"],
-                        "resourceCount": len(recipe["resources"]),
-                    }
-                )
-        elif family == "structure":
-            descriptor = None
-            try:
-                descriptor = compile_playable_structure_descriptor(
-                    object_id,
-                    documents,
-                    prepared=prepared,
-                    engine_spawned_roots=spawned,
-                    wall_template_roots=wall_templates,
-                )
-                closure = build_retail_visual_closure(effective_root, [object_id])
-                recipe = compile_structure_visual_recipe(object_id, closure)
-                runtime = compose_structure_runtime_document(descriptor, recipe)
-            except (
-                PlayableStructureCompilerError,
-                PlayableStructurePackCompilerError,
-                ValueError,
-            ) as exc:
-                if (
-                    isinstance(descriptor, Mapping)
-                    and "no resolved lifecycle model" in str(exc)
-                    and "BASE_FOUNDATION" in descriptor.get("kindOf", [])
-                ):
-                    row.update(
-                        {
-                            "status": "excluded",
-                            "reason": (
-                                "foundation composite authors no lifecycle "
-                                "visuals"
-                            ),
-                            "descriptorSha256": descriptor["descriptorSha256"],
-                        }
-                    )
-                else:
-                    row.update({"status": "converter-gap", "reason": str(exc)})
-            else:
-                if artifact_writer is not None:
-                    artifact_writer(object_id, "descriptor", descriptor)
-                    artifact_writer(object_id, "pack-recipe", recipe)
-                    artifact_writer(object_id, "runtime", runtime)
-                row.update(
-                    {
-                        "status": "converted",
-                        "converter": "playable-structure",
-                        "category": "structure",
-                        "productionEvidence": str(
-                            descriptor["production"]["evidence"]
-                        ),
-                        "descriptorSha256": descriptor["descriptorSha256"],
-                        "recipeSha256": recipe["recipeSha256"],
-                        "runtimeSha256": runtime["runtimeSha256"],
                         "resourceCount": len(recipe["resources"]),
                     }
                 )
@@ -510,6 +638,8 @@ def convert_faction_import(
         player_template=spec[1],
         expected_side=spec[2],
         implicit_object_roots=implicit_object_roots(spec[1]),
+        source_null_mapped_image_textures=source_null_mapped_image_textures(spec[1]),
+        source_null_command_sets=source_null_command_sets(spec[1]),
     )
     return build_faction_conversion(
         graph,

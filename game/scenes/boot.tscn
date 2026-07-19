@@ -137,7 +137,7 @@ anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 28.0
-offset_top = -724.0
+offset_top = -790.0
 offset_right = 566.0
 offset_bottom = -154.0
 grow_vertical = 0
@@ -300,14 +300,59 @@ anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 62.0
-offset_top = -693.0
+offset_top = -766.0
 offset_right = 532.0
-offset_bottom = -647.0
+offset_bottom = -720.0
 grow_vertical = 0
 theme_override_colors/font_color = Color(0.89, 0.79, 0.52, 1)
 theme_override_font_sizes/font_size = 27
-text = "SOLO PLAY"
+text = "SKIRMISH"
 horizontal_alignment = 1
+
+[node name="SkirmishGrid" type="GridContainer" parent="Center"]
+visible = false
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 62.0
+offset_top = -708.0
+offset_right = 532.0
+offset_bottom = -586.0
+grow_vertical = 0
+theme_override_constants/h_separation = 12
+theme_override_constants/v_separation = 4
+columns = 2
+
+[node name="PlayerLabel" type="Label" parent="Center/SkirmishGrid"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Player"
+
+[node name="Player" type="OptionButton" parent="Center/SkirmishGrid"]
+custom_minimum_size = Vector2(310, 38)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="EnemyLabel" type="Label" parent="Center/SkirmishGrid"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Enemy"
+
+[node name="Enemy" type="OptionButton" parent="Center/SkirmishGrid"]
+custom_minimum_size = Vector2(310, 38)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="MapLabel" type="Label" parent="Center/SkirmishGrid"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Map"
+
+[node name="Map" type="OptionButton" parent="Center/SkirmishGrid"]
+custom_minimum_size = Vector2(310, 38)
+layout_mode = 2
+size_flags_horizontal = 3
 
 [node name="Retail" type="Button" parent="Center"]
 visible = false
@@ -316,12 +361,12 @@ anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 62.0
-offset_top = -635.0
+offset_top = -537.0
 offset_right = 532.0
-offset_bottom = -565.0
+offset_bottom = -483.0
 grow_vertical = 0
 theme_type_variation = "PrimaryButton"
-text = "FORDS OF ISEN II - MEN VS MEN"
+text = "LAUNCH SKIRMISH"
 
 [node name="RetailHint" type="Label" parent="Center"]
 visible = false
@@ -330,13 +375,13 @@ anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 62.0
-offset_top = -558.0
+offset_top = -578.0
 offset_right = 532.0
-offset_bottom = -527.0
+offset_bottom = -547.0
 grow_vertical = 0
 theme_override_colors/font_color = Color(0.58, 0.72, 0.78, 1)
 theme_override_font_sizes/font_size = 15
-text = "PRIMARY VERTICAL SLICE"
+text = "RESOLVING FACTION PACKS"
 horizontal_alignment = 1
 
 [node name="LegacyGrid" type="GridContainer" parent="Center"]
@@ -346,9 +391,9 @@ anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 62.0
-offset_top = -516.0
+offset_top = -473.0
 offset_right = 532.0
-offset_bottom = -319.0
+offset_bottom = -309.0
 grow_vertical = 0
 theme_override_constants/h_separation = 12
 theme_override_constants/v_separation = 4
@@ -401,9 +446,9 @@ anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 62.0
-offset_top = -300.0
+offset_top = -299.0
 offset_right = 532.0
-offset_bottom = -242.0
+offset_bottom = -251.0
 grow_vertical = 0
 text = "LEGACY PROTOTYPE SKIRMISH"
 
@@ -414,9 +459,9 @@ anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 62.0
-offset_top = -226.0
+offset_top = -241.0
 offset_right = 532.0
-offset_bottom = -174.0
+offset_bottom = -193.0
 grow_vertical = 0
 text = "CLOSE"
 

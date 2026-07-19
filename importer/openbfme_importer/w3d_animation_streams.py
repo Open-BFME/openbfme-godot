@@ -1079,7 +1079,13 @@ def _decode_motion_time_coded(
     time_end = 8 + key_count * 2
     value_offset = time_end + padding_length
     _require_length(source, value_offset + key_count * vector_width * 4, kind)
-    frames = _strict_times(struct.unpack_from(f"<{key_count}h", source, 8), kind)
+    # Each on-disk time code is an unsigned 16-bit value whose high bit is
+    # Westwood's W3D_TIMECODED_BINARY_MOVEMENT_FLAG (the 16-bit analog of the
+    # 0x80000000 flag masked out of the uint32 time-coded channel times).  The
+    # ordered frame value is the low 15 bits; retail motion channels set the
+    # flag on step-transition keys.
+    encoded = struct.unpack_from(f"<{key_count}H", source, 8)
+    frames = _strict_times((value & 0x7FFF for value in encoded), kind)
     keys: list[AnimationKey] = []
     offset = value_offset
     for index, frame in enumerate(frames):

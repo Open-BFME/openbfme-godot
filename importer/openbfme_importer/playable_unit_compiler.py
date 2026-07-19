@@ -821,7 +821,7 @@ def _player_template_context(
     documents: Mapping[str, bytes],
     faction_graph: Mapping[str, object],
     templates: Mapping[str, IniBlock] | None = None,
-) -> tuple[list[str], str, str]:
+) -> tuple[list[str], list[str], str, str]:
     target = faction_graph.get("target", {})
     if not isinstance(target, Mapping):
         raise PlayableUnitCompilerError("faction graph target is invalid")
@@ -843,9 +843,16 @@ def _player_template_context(
             f"PlayerTemplate {template_id} must author one BuildableHeroesMP roster"
         )
     roster = list(_tokens(roster_values[0]))
+    ring_roster_values = _block_values(template, "BuildableRingHeroesMP")
+    if len(ring_roster_values) > 1:
+        raise PlayableUnitCompilerError(
+            f"PlayerTemplate {template_id} must author at most one "
+            "BuildableRingHeroesMP roster"
+        )
+    ring_roster = list(_tokens(ring_roster_values[0])) if ring_roster_values else []
     starting_values = _block_values(template, "StartingBuilding")
     starting_building = _first(starting_values) or ""
-    return roster, starting_building, template_id
+    return roster, ring_roster, starting_building, template_id
 
 
 def _block_values(block: IniBlock, key: str) -> tuple[str, ...]:
@@ -1111,11 +1118,22 @@ def _horde_containers(
 ) -> tuple[SageObject, ...]:
     result: list[SageObject] = []
     for candidate in objects.values():
-        for assignment in _recursive_assignments((candidate,)):
-            if assignment.key.casefold() != "initialpayload":
-                continue
-            target = _first((assignment.value,))
-            if target and target.casefold() == member_id.casefold():
+        try:
+            lineage = _ancestry(objects, candidate)
+        except PlayableUnitCompilerError:
+            # An unrelated broken inheritance family must not hide the intact
+            # containers of the requested member.
+            continue
+        for block in _effective_top_blocks(lineage):
+            assignments = list(block.assignments)
+            for nested in _walk_blocks(block.blocks):
+                assignments.extend(nested.assignments)
+            if any(
+                assignment.key.casefold() == "initialpayload"
+                and (target := _first((assignment.value,)))
+                and target.casefold() == member_id.casefold()
+                for assignment in assignments
+            ):
                 result.append(candidate)
                 break
     return tuple(sorted(result, key=lambda item: item.name.casefold()))
@@ -1456,6 +1474,7 @@ def compile_playable_unit_descriptor(
     audio_edges_by_object: dict[str, frozenset[tuple[str, str]]] | None = None
     command_audio: dict[str, tuple[Mapping[str, object], ...]] = {}
     hero_roster: list[str] = []
+    ring_roster: list[str] = []
     starting_building = ""
     player_template_id = ""
     if faction_graph is not None:
@@ -1515,13 +1534,21 @@ def compile_playable_unit_descriptor(
                     "faction graph CommandButton audio routes are invalid"
                 )
             command_audio[str(row["id"]).casefold()] = tuple(routes)
-        hero_roster, starting_building, player_template_id = _player_template_context(
-            documents, faction_graph, prepared.player_templates
+        hero_roster, ring_roster, starting_building, player_template_id = (
+            _player_template_context(
+                documents, faction_graph, prepared.player_templates
+            )
         )
     target = requested_target
     is_roster_hero = target.name.casefold() in {
         value.casefold() for value in hero_roster
     }
+    ring_matches = [
+        index + 1
+        for index, value in enumerate(ring_roster)
+        if value.casefold() == target.name.casefold()
+    ]
+    is_ring_hero = bool(ring_matches) and not is_roster_hero
     direct_error: PlayableUnitCompilerError | None = None
     direct_producers: tuple[dict[str, object], ...] = ()
     try:
@@ -1530,15 +1557,16 @@ def compile_playable_unit_descriptor(
         )
     except PlayableUnitCompilerError as error:
         direct_error = error
-    if is_roster_hero:
-        roster_matches = [
-            index + 1
-            for index, value in enumerate(hero_roster)
-            if value.casefold() == target.name.casefold()
-        ]
-        if len(roster_matches) != 1:
+    if is_roster_hero and is_ring_hero:
+        raise PlayableUnitCompilerError(
+            f"hero {target.name} has conflicting BuildableHeroesMP and "
+            "BuildableRingHeroesMP roster routes"
+        )
+    if is_roster_hero or is_ring_hero:
+        if is_ring_hero and len(ring_matches) != 1:
             raise PlayableUnitCompilerError(
-                f"PlayerTemplate {player_template_id} has duplicate BuildableHeroesMP hero: {target.name}"
+                f"PlayerTemplate {player_template_id} has duplicate "
+                f"BuildableRingHeroesMP hero: {target.name}"
             )
         if direct_producers:
             raise PlayableUnitCompilerError(
@@ -1553,20 +1581,39 @@ def compile_playable_unit_descriptor(
             raise PlayableUnitCompilerError(
                 f"hero {target.name} has no reachable starting-fortress producer"
             )
-        roster_ordinal = roster_matches[0]
-        producers = (
+        if is_ring_hero:
+            # The ring hero revives at the fortress after the regular hero
+            # roster slots, so its engine ordinal continues that sequence.
+            roster_ordinals = (len(hero_roster) + ring_matches[0],)
+            command_set_id = "__engine__/BuildableRingHeroesMP"
+            command_id = f"__engine__/RING_HERO_BUILD/{target.name}"
+            source_field = "BuildableRingHeroesMP"
+        else:
+            # Retail authors duplicate roster slots for heroes recruitable in
+            # several independent fortress slots (for example three Nazgul);
+            # each authored slot remains its own producer route.
+            roster_ordinals = tuple(
+                index + 1
+                for index, value in enumerate(hero_roster)
+                if value.casefold() == target.name.casefold()
+            )
+            command_set_id = "__engine__/BuildableHeroesMP"
+            command_id = f"__engine__/HERO_BUILD/{target.name}"
+            source_field = "BuildableHeroesMP"
+        producers = tuple(
             {
                 "producerObjectId": objects[starting_building.casefold()].name,
-                "commandSetId": "__engine__/BuildableHeroesMP",
-                "commandId": f"__engine__/HERO_BUILD/{target.name}",
+                "commandSetId": command_set_id,
+                "commandId": command_id,
                 "surface": "hero-roster",
                 "rosterOrdinal": roster_ordinal,
                 "prerequisites": [],
                 "commandSetTransition": [],
-                "sourceField": "BuildableHeroesMP",
+                "sourceField": source_field,
                 "sourcePlayerTemplate": player_template_id,
                 "ui": {},
-            },
+            }
+            for roster_ordinal in roster_ordinals
         )
     elif direct_producers:
         producers = direct_producers
@@ -1588,8 +1635,29 @@ def compile_playable_unit_descriptor(
                         ),
                     )
                 )
-            except PlayableUnitCompilerError:
                 continue
+            except PlayableUnitCompilerError:
+                pass
+            # A horde which is itself only fielded as another produced horde's
+            # payload still brings its own payload into play through that
+            # ancestor's authored production route.  Bind the direct container
+            # to the ancestor's routes; ambiguity stays fail-closed below.
+            for ancestor in _horde_containers(container.name, objects):
+                try:
+                    reachable.append(
+                        (
+                            container,
+                            _producer_bindings(
+                                ancestor.name,
+                                objects,
+                                command_sets,
+                                command_buttons,
+                                reachable_object_ids,
+                            ),
+                        )
+                    )
+                except PlayableUnitCompilerError:
+                    continue
         if len(reachable) == 1:
             target, producers = reachable[0]
         else:
@@ -1654,12 +1722,40 @@ def compile_playable_unit_descriptor(
     container_fields = _scalar_fields(target_lineage)
     member_fields = _scalar_fields(member_lineage)
     for producer in producers:
-        if not str(producer.get("commandId", "")).startswith("__engine__/HERO_BUILD/"):
+        command_id = str(producer.get("commandId", ""))
+        if not command_id.startswith(
+            ("__engine__/HERO_BUILD/", "__engine__/RING_HERO_BUILD/")
+        ):
             continue
         button = container_fields.get("ButtonImage")
         label = container_fields.get("DisplayName")
         tooltip = container_fields.get("DescriptionStrategic")
-        if button is None or label is None or tooltip is None:
+        if button is None or label is None:
+            raise PlayableUnitCompilerError(
+                f"hero {target.name} has unresolved required retail UI values"
+            )
+        if command_id.startswith("__engine__/RING_HERO_BUILD/"):
+            # Ring heroes recruit through the fortress generic revive slot, so
+            # retail authors no per-hero tooltip for them; the slot's authored
+            # generic labels are the only source-backed UI text.
+            slot_button = command_buttons.get("command_ringheroreviveslot")
+            if slot_button is None:
+                raise PlayableUnitCompilerError(
+                    "ring hero route has no authored Command_RingHeroReviveSlot"
+                )
+            slot_labels = _block_values(slot_button, "TextLabel")
+            slot_tooltips = _block_values(slot_button, "DescriptLabel")
+            if not slot_labels or not slot_tooltips:
+                raise PlayableUnitCompilerError(
+                    "Command_RingHeroReviveSlot has unresolved retail UI values"
+                )
+            producer["ui"] = {
+                "ButtonImage": [str(button["expression"])],
+                "TextLabel": list(slot_labels),
+                "DescriptLabel": list(slot_tooltips),
+            }
+            continue
+        if tooltip is None:
             raise PlayableUnitCompilerError(
                 f"hero {target.name} has unresolved required retail UI values"
             )

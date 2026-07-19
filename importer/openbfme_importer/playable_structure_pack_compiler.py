@@ -280,13 +280,27 @@ def compile_structure_visual_recipe(
             {model_path, *animations, *hierarchy_patterns},
             key=lambda item: (item.casefold(), item),
         )
-        converter = "w3d-bundle" if animations else "w3d-hierarchical"
+        # A lifecycle model with no animation binding is not automatically a
+        # skinned hierarchy. A model-authored hierarchy is a rigid carrier and
+        # must use the adapter's explicit, validated root-rigid bake; a model
+        # without one is a static mesh. Calling both shapes merely
+        # ``w3d-hierarchical`` deferred the distinction until Blender and made
+        # real bib models fail at skin validation.
+        converter = (
+            "w3d-bundle"
+            if animations
+            else "w3d-hierarchical"
+            if own_hierarchies
+            else "w3d-static"
+        )
         resource_id = _resource_id("structure", slug, PurePosixPath(model_path).stem)
         options: dict[str, object] = {"model": PurePosixPath(model_path).name}
         if animations:
             options["animations"] = [
                 PurePosixPath(path).name for path in animations
             ]
+        elif own_hierarchies:
+            options["provenRootRigidBake"] = True
         selected_w3d.update(patterns)
         resources.append(
             {

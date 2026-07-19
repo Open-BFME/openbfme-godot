@@ -155,6 +155,23 @@ def _definition_tokens(value: str) -> tuple[str, ...]:
     return tuple(re.findall(r"[A-Za-z0-9_][A-Za-z0-9_+.-]*", value))
 
 
+_ADDITIVE_SOUND_PREFIX = re.compile(r"^\+\s*sound:(?P<identifier>.+)$", re.IGNORECASE)
+
+
+def _audio_reference_tokens(value: str) -> tuple[str, ...]:
+    """Tokenize one audio field, honoring the additive SOUND namespace prefix.
+
+    Retail voice fields author additive routes as ``+SOUND:EventId``; the
+    prefix selects the sound-effects namespace and is not part of the
+    definition identifier.  Every other value keeps its plain token stream.
+    """
+
+    match = _ADDITIVE_SOUND_PREFIX.match(value.strip())
+    if match:
+        return (match.group("identifier").strip(),)
+    return _definition_tokens(value)
+
+
 def _block_candidates(blocks: Iterable[IniBlock]) -> dict[str, list[IniBlock]]:
     result: dict[str, list[IniBlock]] = {}
     for block in blocks:
@@ -318,6 +335,8 @@ def _census_playable_faction(
     player_template: str,
     expected_side: str | None = None,
     implicit_object_roots: Iterable[tuple[str, str]] = (),
+    source_null_mapped_image_textures: Iterable[tuple[str, str]] = (),
+    source_null_command_sets: Iterable[tuple[str, str]] = (),
     _legacy_men_identity: bool = False,
 ) -> dict[str, Any]:
     """Return neutral command/UI dependency facts without retail INI bodies.
@@ -325,10 +344,39 @@ def _census_playable_faction(
     ``implicit_object_roots`` is deliberately caller-owned policy.  These are
     engine-created composite objects which cannot be discovered from command
     buttons; guessing them from a faction name would silently hide graph gaps.
+
+    ``source_null_mapped_image_textures`` and ``source_null_command_sets``
+    are equally caller-owned: retail 1.06 authors references to a UI atlas or
+    CommandSet it never ships (placeholder button art, the Isengard side-pad
+    CommandSet).  Each policy entry must name the exact authored identifier
+    and is only consumed when the reference is genuinely absent from the
+    effective catalog; a policy entry which suddenly resolves fails closed.
     """
 
     if not re.fullmatch(r"[A-Za-z0-9_+.-]+", player_template):
         raise ValueError(f"invalid PlayerTemplate identifier: {player_template!r}")
+
+    def _policy_entries(
+        entries: Iterable[tuple[str, str]], label: str
+    ) -> dict[str, tuple[str, str]]:
+        by_key: dict[str, tuple[str, str]] = {}
+        for raw_identifier, raw_reason in entries:
+            identifier, reason = str(raw_identifier), str(raw_reason)
+            if not re.fullmatch(r"[A-Za-z0-9_+.-]+", identifier):
+                raise ValueError(f"invalid {label} identifier: {identifier!r}")
+            if not reason or any(character in reason for character in "\r\n"):
+                raise ValueError(f"invalid {label} reason: {reason!r}")
+            key = identifier.casefold()
+            candidate = (identifier, reason)
+            previous = by_key.get(key)
+            if previous is not None and previous != candidate:
+                raise ValueError(
+                    f"case-colliding {label} policy entries: "
+                    f"{previous[0]!r} and {identifier!r}"
+                )
+            by_key[key] = candidate
+        return by_key
+
     implicit_roots_by_key: dict[str, tuple[str, str]] = {}
     for raw_identifier, raw_reason in implicit_object_roots:
         identifier, reason = str(raw_identifier), str(raw_reason)
@@ -350,6 +398,12 @@ def _census_playable_faction(
             implicit_roots_by_key.values(),
             key=lambda item: (item[0].casefold(), item[0], item[1]),
         )
+    )
+    source_null_texture_policy = _policy_entries(
+        source_null_mapped_image_textures, "source-null MappedImage texture"
+    )
+    source_null_command_set_policy = _policy_entries(
+        source_null_command_sets, "source-null CommandSet"
     )
 
     player_doc = _read_document(catalog, PLAYER_TEMPLATE_PATH)
@@ -501,6 +555,7 @@ def _census_playable_faction(
     ambiguous_buttons: set[str] = set()
     missing_inheritance_objects: set[str] = set()
     ambiguous_inheritance_objects: set[str] = set()
+    consumed_source_null_command_sets: set[str] = set()
     upgrades: set[str] = set()
     special_powers: set[str] = set()
     mapped_images: set[str] = set()
@@ -603,7 +658,7 @@ def _census_playable_faction(
                         if inherited:
                             edge["sourceObjectId"] = supplier.block.name
                         edge_rows.append(edge)
-                tokens = _definition_tokens(value)
+                tokens = _audio_reference_tokens(value)
                 for ordinal in _object_audio_reference_ordinals(field):
                     if value.lstrip().casefold().startswith("eva:"):
                         continue
@@ -668,6 +723,9 @@ def _census_playable_faction(
             changed = True
             candidates = command_sets.get(key, [])
             if not candidates:
+                if key in source_null_command_set_policy:
+                    consumed_source_null_command_sets.add(key)
+                    continue
                 missing_command_sets.add(identifier)
                 continue
             if len(candidates) != 1:
@@ -718,7 +776,7 @@ def _census_playable_faction(
             button_audio_references: set[str] = set()
             button_audio_routes: list[dict[str, object]] = []
             for field, value in block.assignments:
-                tokens = _definition_tokens(value)
+                tokens = _audio_reference_tokens(value)
                 for ordinal in _command_audio_reference_ordinals(field, tokens):
                     if ordinal >= len(tokens):
                         continue
@@ -831,6 +889,23 @@ def _census_playable_faction(
             mapped_image_records, effective_virtual_paths
         )
     )
+    source_null_texture_keys = {
+        texture.casefold()
+        for texture in missing_mapped_image_textures
+        if texture.casefold() in source_null_texture_policy
+    }
+    unresolved_mapped_image_textures = tuple(
+        texture
+        for texture in missing_mapped_image_textures
+        if texture.casefold() not in source_null_texture_keys
+    )
+    source_null_texture_images: dict[str, list[str]] = {
+        key: [] for key in source_null_texture_keys
+    }
+    for record in mapped_image_records:
+        key = record.texture.casefold()
+        if key in source_null_texture_images:
+            source_null_texture_images[key].append(record.id)
     mapped_texture_paths_by_key = {
         texture.casefold(): path for texture, path in mapped_texture_paths.items()
     }
@@ -840,9 +915,48 @@ def _census_playable_faction(
         compiled_texture = mapped_texture_paths_by_key.get(record.texture.casefold())
         if compiled_texture is not None:
             row["compiledTextureVirtualPath"] = compiled_texture
+        elif record.texture.casefold() in source_null_texture_keys:
+            row["compiledTextureResolution"] = "source-null"
         else:
             row["compiledTextureResolution"] = "missing"
         mapped_image_rows.append(row)
+    source_null_mapped_image_texture_rows = [
+        {
+            "texture": source_null_texture_policy[key][0],
+            "reason": source_null_texture_policy[key][1],
+            "mappedImages": sorted(
+                source_null_texture_images[key], key=str.casefold
+            ),
+        }
+        for key in sorted(source_null_texture_keys)
+    ]
+    resolved_but_declared_null = sorted(
+        source_null_command_set_policy[key][0]
+        for key in command_set_rows
+        if key in source_null_command_set_policy
+    )
+    if resolved_but_declared_null:
+        raise ValueError(
+            "source-null CommandSet policy entries resolved in the effective "
+            f"catalog: {resolved_but_declared_null}"
+        )
+    resolved_null_textures = sorted(
+        source_null_texture_policy[key][0]
+        for key in mapped_texture_paths_by_key
+        if key in source_null_texture_policy
+    )
+    if resolved_null_textures:
+        raise ValueError(
+            "source-null MappedImage texture policy entries resolved in the "
+            f"effective catalog: {resolved_null_textures}"
+        )
+    source_null_command_set_rows = [
+        {
+            "id": source_null_command_set_policy[key][0],
+            "reason": source_null_command_set_policy[key][1],
+        }
+        for key in sorted(consumed_source_null_command_sets)
+    ]
 
     resolved_text_rows: list[dict[str, Any]] = []
     missing_text_ids: set[str] = set()
@@ -963,6 +1077,15 @@ def _census_playable_faction(
         ):
             input_hash.update(identifier.encode("utf-8") + b"\0")
             input_hash.update(reason.encode("utf-8") + b"\n")
+        for policy_domain, policy in (
+            ("source-null-texture", source_null_texture_policy),
+            ("source-null-command-set", source_null_command_set_policy),
+        ):
+            for key in sorted(policy):
+                identifier, reason = policy[key]
+                input_hash.update(policy_domain.encode("ascii") + b"\0")
+                input_hash.update(identifier.encode("utf-8") + b"\0")
+                input_hash.update(reason.encode("utf-8") + b"\n")
     for item in source_facts:
         input_hash.update(str(item["virtualPath"]).encode("utf-8") + b"\0")
         input_hash.update(str(item["sha256"]).encode("ascii") + b"\n")
@@ -1021,9 +1144,9 @@ def _census_playable_faction(
         "missingSpecialPowers": list(gameplay_closure.missing_special_powers),
         "ambiguousSpecialPowers": list(gameplay_closure.ambiguous_special_powers),
     }
-    if missing_mapped_image_textures:
+    if unresolved_mapped_image_textures:
         unresolved["missingMappedImageTextures"] = sorted(
-            missing_mapped_image_textures, key=str.casefold
+            unresolved_mapped_image_textures, key=str.casefold
         )
     report = {
         "format": 1,
@@ -1067,6 +1190,8 @@ def _census_playable_faction(
             "spellbookSciences": spellbook_sciences,
             "mappedImages": [record.id for record in mapped_image_records],
             "sourceNullMappedImages": source_null_mapped_images,
+            "sourceNullMappedImageTextures": source_null_mapped_image_texture_rows,
+            "sourceNullCommandSets": source_null_command_set_rows,
             "textIds": sorted(text_ids, key=str.casefold),
             "audioRootIds": list(audio_closure.root_ids),
             "fxLists": list(gameplay_closure.fx_lists),
@@ -1104,6 +1229,10 @@ def _census_playable_faction(
             "mappedImageResolvedCount": len(mapped_image_records),
             "mappedImageSourceNullCount": len(source_null_mapped_images),
             "mappedImageTextureCount": len(mapped_texture_paths),
+            "mappedImageTextureSourceNullCount": len(
+                source_null_mapped_image_texture_rows
+            ),
+            "commandSetSourceNullCount": len(source_null_command_set_rows),
             "textIdCount": len(text_ids),
             "textResolvedCount": len(resolved_text_rows),
             "requestedTextConflictCount": len(requested_conflicting_text_ids),
@@ -1132,6 +1261,7 @@ def _census_playable_faction(
             "This census does not yet resolve W3D, animation, material, FX-list bodies, weapon/projectile, construction, damage, or destruction leaves.",
             "Mapped-image, localization, and audio leaves cover the current command-reachable object/button graph, not every future runtime state.",
             "Authored SelectPortrait references with no MappedImage definition are preserved as explicit source-null images; required ButtonImage gaps remain unresolved.",
+            "Caller-declared source-null policy covers only retail-authored references absent from every effective archive (placeholder button atlas textures, the Isengard side-pad CommandSet); every other missing leaf remains unresolved.",
             "Localized duplicate conflicts use BFME2 source order and remain explicit oracle-review evidence.",
             "Runtime support and oracle parity are not implied by definition reachability.",
             "ROTWK 2.01 data is a separate future overlay and is not merged into this BFME2 1.06 report.",
@@ -1150,6 +1280,8 @@ def census_playable_faction(
     player_template: str,
     expected_side: str | None = None,
     implicit_object_roots: Iterable[tuple[str, str]] = (),
+    source_null_mapped_image_textures: Iterable[tuple[str, str]] = (),
+    source_null_command_sets: Iterable[tuple[str, str]] = (),
 ) -> dict[str, Any]:
     """Return one generic playable-faction census with identity-bound policy."""
 
@@ -1158,6 +1290,8 @@ def census_playable_faction(
         player_template=player_template,
         expected_side=expected_side,
         implicit_object_roots=implicit_object_roots,
+        source_null_mapped_image_textures=source_null_mapped_image_textures,
+        source_null_command_sets=source_null_command_sets,
         _legacy_men_identity=False,
     )
 

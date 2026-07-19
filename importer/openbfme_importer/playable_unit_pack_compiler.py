@@ -228,6 +228,66 @@ def _hierarchy_dependencies(
     return tuple(sorted(result, key=lambda item: (item.casefold(), item)))
 
 
+def _is_separate_death_rig(
+    scanned_by_path: Mapping[str, Mapping[str, object]],
+    animation_path: str,
+    model_path: str,
+) -> bool:
+    """A death W3D that ships its own hierarchy is a model swap, not a clip."""
+
+    animation_row = scanned_by_path.get(animation_path.casefold())
+    if animation_row is None:
+        raise PlayableUnitPackCompilerError(
+            f"animation is not scanned: {animation_path}"
+        )
+    headers = animation_row.get("headerIds")
+    if not isinstance(headers, Mapping):
+        raise PlayableUnitPackCompilerError(
+            f"animation headers are invalid: {animation_path}"
+        )
+    hierarchy_ids = headers.get("hierarchyIds", [])
+    if not isinstance(hierarchy_ids, list) or any(
+        not isinstance(value, str) for value in hierarchy_ids
+    ):
+        raise PlayableUnitPackCompilerError(
+            f"animation hierarchy ids are invalid: {animation_path}"
+        )
+    if any(value for value in hierarchy_ids):
+        return True
+    animation_ids = headers.get("animationIds", [])
+    if not isinstance(animation_ids, list):
+        raise PlayableUnitPackCompilerError(
+            f"animation ids are invalid: {animation_path}"
+        )
+    animation_families = {
+        family
+        for identifier in animation_ids
+        if isinstance(identifier, str) and "." in identifier
+        for family in [_w3d_rig_family(identifier.split(".", 1)[0])]
+        if family
+    }
+    model_row = scanned_by_path.get(model_path.casefold())
+    model_headers = (
+        model_row.get("headerIds") if isinstance(model_row, Mapping) else None
+    )
+    model_families = {
+        family
+        for value in (
+            model_headers.get("hierarchyIds", [])
+            if isinstance(model_headers, Mapping)
+            else []
+        )
+        if isinstance(value, str)
+        for family in [_w3d_rig_family(value)]
+        if family
+    }
+    return (
+        bool(animation_families)
+        and bool(model_families)
+        and animation_families.isdisjoint(model_families)
+    )
+
+
 def _texture_paths(
     closure: Mapping[str, object], selected_w3d: set[str]
 ) -> tuple[str, ...]:
@@ -767,6 +827,12 @@ def compile_playable_unit_pack_recipe(
         state: [] for state in required_states
     }
     authored_animation_states: list[dict[str, object]] = []
+    scanned_by_path: dict[str, Mapping[str, object]] = {
+        str(row.get("virtualPath", "")).casefold(): row
+        for row in scanned
+        if isinstance(row.get("virtualPath"), str)
+    }
+    death_swap_sources: set[str] = set()
     for row in animation_rows:
         draw_key = _draw_key(row)
         candidates = group_models.get(draw_key, set())
@@ -813,7 +879,16 @@ def compile_playable_unit_pack_recipe(
                 )
         semantic_state = _state(row)
         for path in _paths(row, "authored animation"):
-            animations_by_model[owner].add(path)
+            separate_death = (
+                semantic_state == "death"
+                and str(row.get("targetObject", "")).casefold()
+                == member_id.casefold()
+                and _is_separate_death_rig(scanned_by_path, path, owner)
+            )
+            if separate_death:
+                death_swap_sources.add(path)
+            else:
+                animations_by_model[owner].add(path)
             binding = {
                 "sourceW3d": path,
                 "identifier": str(row.get("identifier", "")),
@@ -834,12 +909,26 @@ def compile_playable_unit_pack_recipe(
                 }
             )
             if (
-                semantic_state in required_states
+                not separate_death
+                and semantic_state in required_states
                 and str(row.get("targetObject", "")).casefold() == member_id.casefold()
             ):
                 state_bindings[semantic_state].append(binding)
+    death_swap_paths = sorted(
+        death_swap_sources, key=lambda item: (item.casefold(), item)
+    )
+    if death_swap_paths and state_bindings.get("death"):
+        raise PlayableUnitPackCompilerError(
+            "death state mixes skeleton clips and a separate-model swap"
+        )
+    if len(death_swap_paths) > 1:
+        raise PlayableUnitPackCompilerError(
+            "separate-model death binding is ambiguous"
+        )
     for state in required_states:
         if not state_bindings[state]:
+            if state == "death" and death_swap_paths:
+                continue
             raise PlayableUnitPackCompilerError(
                 f"unit has no primary-member core animation binding: {state}"
             )
@@ -859,7 +948,15 @@ def compile_playable_unit_pack_recipe(
     )
     all_animations = {path for paths in animations_by_model.values() for path in paths}
     hierarchies = set(_hierarchy_dependencies(all_animations, scanned))
-    selected_w3d = set(model_conditions) | all_animations | hierarchies
+    death_swap_w3d: set[str] = set()
+    if death_swap_paths:
+        death_swap_w3d = {
+            death_swap_paths[0],
+            *_hierarchy_dependencies([death_swap_paths[0]], scanned),
+        }
+    selected_w3d = (
+        set(model_conditions) | all_animations | hierarchies | death_swap_w3d
+    )
     textures = _texture_paths(visual_closure, selected_w3d)
     slug = _slug(str(descriptor["objectId"]))
     texture_ids: list[str] = []
@@ -935,6 +1032,37 @@ def compile_playable_unit_pack_recipe(
                 else "auxiliary-or-conditional",
             }
         )
+
+    death_swap_binding: dict[str, object] | None = None
+    if death_swap_paths:
+        death_path = death_swap_paths[0]
+        death_name = PurePosixPath(death_path).name
+        death_patterns = sorted(death_swap_w3d, key=str.casefold)
+        death_resource_id = _resource_id("unit", slug, "death-model")
+        death_output = f"assets/models/units/{slug}/death.glb"
+        resources.append(
+            {
+                "id": death_resource_id,
+                "kind": "model",
+                "converter": "w3d-bundle",
+                "patterns": death_patterns,
+                "output": death_output,
+                "options": {
+                    "model": death_name,
+                    "inputResourceIds": texture_ids,
+                    "animations": [death_name],
+                },
+                "required": True,
+                "limit": len(death_patterns),
+                "expected_count": len(death_patterns),
+            }
+        )
+        death_swap_binding = {
+            "binding": "separate-model",
+            "resourceId": death_resource_id,
+            "sourceW3d": death_path,
+            "output": death_output,
+        }
 
     authored_visual_leaves: list[dict[str, object]] = []
     auxiliary_resources: dict[tuple[str, str], dict[str, object]] = {}
@@ -1222,6 +1350,10 @@ def compile_playable_unit_pack_recipe(
         audio_bindings[str(identifier)] = sorted(set(outputs), key=str.casefold)
     _validate_resource_values(resources)
 
+    core_animations: dict[str, object] = dict(state_bindings)
+    if death_swap_binding is not None and "death" in core_animations:
+        core_animations["death"] = death_swap_binding
+
     recipe: dict[str, object] = {
         "schema": SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
@@ -1239,7 +1371,7 @@ def compile_playable_unit_pack_recipe(
             "capabilities": deepcopy(descriptor["capabilities"]),
             "visual": {
                 "components": components,
-                "coreAnimations": state_bindings,
+                "coreAnimations": core_animations,
                 "authoredAnimationStates": authored_animation_states,
                 "authoredVisualLeaves": authored_visual_leaves,
                 "authoredVisualSemantics": authored_visual_semantics,
@@ -1360,9 +1492,7 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             raise PlayableUnitPackCompilerError("runtime component model is duplicated")
         component_by_model[source] = component
     core = visual.get("coreAnimations")
-    if not isinstance(core, Mapping) or any(
-        not isinstance(rows, list) or not rows for rows in core.values()
-    ):
+    if not isinstance(core, Mapping):
         raise PlayableUnitPackCompilerError(
             "runtime core animation bindings are invalid"
         )
@@ -1371,7 +1501,43 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
         (str(row.get("sourceW3d", "")), str(row.get("identifier", "")))
         for row in authored
     }
-    for rows in core.values():
+    authored_sources = {source for source, _ in authored_keys}
+    for state, rows in core.items():
+        if isinstance(rows, Mapping):
+            resource_id = rows.get("resourceId")
+            source = rows.get("sourceW3d")
+            output = rows.get("output")
+            if (
+                state != "death"
+                or rows.get("binding") != "separate-model"
+                or set(rows) != {"binding", "resourceId", "sourceW3d", "output"}
+                or not isinstance(resource_id, str)
+                or resource_id not in resources_by_id
+                or not isinstance(source, str)
+                or not isinstance(output, str)
+            ):
+                raise PlayableUnitPackCompilerError(
+                    "separate-model death binding is invalid"
+                )
+            resource = resources_by_id[resource_id]
+            options = resource.get("options", {})
+            if (
+                resource.get("converter") != "w3d-bundle"
+                or resource.get("output") != output
+                or source not in resource.get("patterns", [])
+                or not isinstance(options, Mapping)
+                or options.get("model") != PurePosixPath(source).name
+                or options.get("animations") != [PurePosixPath(source).name]
+                or source not in authored_sources
+            ):
+                raise PlayableUnitPackCompilerError(
+                    "separate-model death binding is not packaged"
+                )
+            continue
+        if not isinstance(rows, list) or not rows:
+            raise PlayableUnitPackCompilerError(
+                "runtime core animation bindings are invalid"
+            )
         for binding in rows:
             if not isinstance(binding, Mapping):
                 raise PlayableUnitPackCompilerError("core animation binding is invalid")

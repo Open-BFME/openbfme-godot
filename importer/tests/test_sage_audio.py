@@ -163,6 +163,68 @@ End
         with self.assertRaisesRegex(ValueError, "duplicate audio sample"):
             resolve_audio_sample_paths(["one", "ONE"], [])
 
+    def test_music_tracks_resolve_through_multisounds_to_track_samples(self) -> None:
+        definitions = parse_sage_audio_definitions(
+            b"MusicTrack BattleGood01\n Filename = bagood01_t05.mp3\n Volume = 58\nEnd\n"
+            b"MusicTrack BattleGood02\n Filename = BaGood02_F12.mp3\nEnd\n"
+            b"MusicTrack Silence\n Type = FAKE\nEnd\n"
+            b"Multisound ShellMusic\n Subsounds = BattleGood01:2000 BattleGood02 Silence\nEnd\n"
+        )
+        closure = resolve_sage_audio_closure(definitions, ["shellmusic"])
+        self.assertEqual(closure.root_ids, ("ShellMusic",))
+        self.assertEqual(
+            tuple(item.id for item in closure.tracks),
+            ("BattleGood01", "BattleGood02", "Silence"),
+        )
+        self.assertEqual(
+            closure.sample_ids, ("bagood01_t05", "BaGood02_F12")
+        )
+        self.assertEqual(
+            closure.tracks[2].neutral()["filename"], None
+        )
+        self.assertEqual(
+            resolve_audio_sample_paths(
+                closure.sample_ids,
+                [
+                    "data/audio/tracks/bagood01_t05.mp3",
+                    "data/audio/tracks/bagood02_f12.mp3",
+                ],
+            ),
+            {
+                "bagood01_t05": "data/audio/tracks/bagood01_t05.mp3",
+                "BaGood02_F12": "data/audio/tracks/bagood02_f12.mp3",
+            },
+        )
+        direct = resolve_sage_audio_closure(definitions, ["BattleGood01"])
+        self.assertEqual(direct.root_ids, ("BattleGood01",))
+        self.assertEqual(direct.sample_ids, ("bagood01_t05",))
+
+    def test_rejects_ambiguous_unsafe_and_duplicate_music_tracks(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ambiguous audio definition kind"):
+            parse_sage_audio_definitions(
+                b"AudioEvent Same\n Sounds = a\nEnd\n"
+                b"MusicTrack same\n Filename = same.mp3\nEnd\n"
+            )
+        with self.assertRaisesRegex(ValueError, "ambiguous audio definition kind"):
+            parse_sage_audio_definitions(
+                b"Multisound Same\n Subsounds = Other\nEnd\n"
+                b"MusicTrack SAME\n Filename = same.mp3\nEnd\n"
+            )
+        with self.assertRaisesRegex(ValueError, "duplicate MusicTrack definition"):
+            parse_sage_audio_definitions(
+                b"MusicTrack A\n Filename = a.mp3\nEnd\n"
+                b"MusicTrack a\n Filename = b.mp3\nEnd\n"
+            )
+        with self.assertRaisesRegex(ValueError, "multiple Filename values"):
+            parse_sage_audio_definitions(
+                b"MusicTrack A\n Filename = a.mp3\n Filename = b.mp3\nEnd\n"
+            )
+        for unsafe in (b"../escape.mp3", b"dir/nested.mp3", b"noextension", b"bad.aif"):
+            with self.assertRaisesRegex(ValueError, "unsafe MusicTrack"):
+                parse_sage_audio_definitions(
+                    b"MusicTrack A\n Filename = " + unsafe + b"\nEnd\n"
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

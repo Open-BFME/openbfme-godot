@@ -10,6 +10,12 @@ Only ``Object``, ``ChildObject`` and ``ObjectReskin`` top-level definitions are
 materialized.  Their bodies retain assignments and nested blocks in source
 order.  Assignment ``ordinal`` values are zero-based within their containing
 scope; ``key_ordinal`` is the zero-based occurrence of that case-insensitive key.
+
+Retail data occasionally declares an empty module or state block with no body
+and no terminating ``End``.  Such headers are only syntactically
+indistinguishable from real block openers, so when an enclosing scope fails to
+close, the most recent syntactically-guessed block is demoted back to a plain
+assignment and parsing resumes; name-known block kinds still fail closed.
 """
 
 from __future__ import annotations
@@ -325,6 +331,9 @@ _STATE_BLOCK_KEYS = frozenset(
         "locomotorset",
         "meleebehavior",
         "modelconditionstate",
+        # Retail UpgradeSoundSelectorClientBehavior modules nest End-terminated
+        # SoundUpgrade blocks (voice overrides gated on an upgrade).
+        "soundupgrade",
         "soundstate",
         "transitionstate",
         "weaponset",
@@ -631,7 +640,7 @@ def _assignment_is_block(
 
 
 def _bare_is_block(tokens: tuple[str, ...], line: _Line, following: _Line | None) -> bool:
-    if tokens and tokens[0].casefold() in _BARE_BLOCK_KINDS:
+    if tokens and tokens[0].casefold() in (_BARE_BLOCK_KINDS | _STATE_BLOCK_KEYS):
         return True
     return following is not None and following.text.casefold() != "end" and following.indent > line.indent
 
@@ -715,7 +724,51 @@ def _parse_scope(
     include_ordinal = 0
     key_ordinals: dict[str, int] = {}
     index = start
-    while index < len(lines):
+    # Retail objects occasionally declare an empty module or state block with
+    # no body and no terminating End (for example
+    # ``Draw = W3DScriptedModelDraw ModuleTag_DRAW`` in the BFME2 1.06
+    # create-a-hero object).  Such a header is syntactically indistinguishable
+    # from a real block opener until the enclosing scope fails to find its own
+    # End.  ``last_flippable`` records the most recent block that was opened on
+    # syntactic evidence alone so a scope failure can demote that header to a
+    # plain assignment and resume, instead of misreporting the whole object.
+    last_flippable: tuple[int, int, tuple[int, int, int], str, str, _Line, bool] | None = None
+
+    def try_flip() -> bool:
+        nonlocal index, assignment_ordinal, last_flippable
+        if last_flippable is None or last_flippable[0] != len(items) - 1:
+            return False
+        _, header_index, snapshot, key, value, header_line, has_equals = last_flippable
+        budget.nodes, budget.assignments, budget.includes = snapshot
+        items.pop()
+        folded = key.casefold()
+        key_ordinal = key_ordinals.get(folded, 0)
+        key_ordinals[folded] = key_ordinal + 1
+        budget.add_assignment()
+        items.append(
+            SageAssignment(
+                key=key,
+                value=value,
+                ordinal=assignment_ordinal,
+                key_ordinal=key_ordinal,
+                item_ordinal=len(items),
+                source_virtual_path=virtual_path,
+                line=header_line.number,
+                has_equals=has_equals,
+            )
+        )
+        assignment_ordinal += 1
+        index = header_index + 1
+        last_flippable = None
+        return True
+
+    while True:
+        if index >= len(lines):
+            if not require_end:
+                return tuple(items), index
+            if try_flip():
+                continue
+            raise SageCstSyntaxError(f"unterminated {owner} at end of {virtual_path}")
         line = lines[index]
         if line.text.casefold() == "end":
             if require_end:
@@ -753,6 +806,8 @@ def _parse_scope(
                     f"unexpected object header in {owner} at "
                     f"{virtual_path}:{line.number}"
                 )
+            if try_flip():
+                continue
             raise SageCstSyntaxError(
                 f"unterminated {owner} before object header at {virtual_path}:{line.number}"
             )
@@ -785,31 +840,43 @@ def _parse_scope(
                 kind, instance_tag, header_key, header_tokens, conditions = _make_block_header(
                     line.text, virtual_path=virtual_path, line=line.number
                 )
+                snapshot = (budget.nodes, budget.assignments, budget.includes)
                 budget.add_node()
-                nested, index = _parse_scope(
-                    lines,
-                    index + 1,
-                    virtual_path=virtual_path,
-                    depth=depth + 1,
-                    budget=budget,
-                    owner=f"{kind} block",
-                    allow_includes=allow_includes,
-                )
-                items.append(
-                    SageBlock(
-                        kind=kind,
-                        instance_tag=instance_tag,
-                        header_key=header_key,
-                        header_tokens=header_tokens,
-                        model_condition_tokens=conditions,
-                        items=nested,
-                        item_ordinal=len(items),
-                        source_virtual_path=virtual_path,
-                        line=line.number,
-                        raw_header=line.text,
+                try:
+                    nested, next_index = _parse_scope(
+                        lines,
+                        index + 1,
+                        virtual_path=virtual_path,
+                        depth=depth + 1,
+                        budget=budget,
+                        owner=f"{kind} block",
+                        allow_includes=allow_includes,
                     )
-                )
-                continue
+                except SageCstSyntaxError:
+                    # The block can never close before its enclosing scope ends
+                    # (an End-less empty module declaration), so retain the
+                    # header as a plain assignment.
+                    budget.nodes, budget.assignments, budget.includes = snapshot
+                else:
+                    last_flippable = (
+                        len(items), index, snapshot, key, value, line, True
+                    )
+                    items.append(
+                        SageBlock(
+                            kind=kind,
+                            instance_tag=instance_tag,
+                            header_key=header_key,
+                            header_tokens=header_tokens,
+                            model_condition_tokens=conditions,
+                            items=nested,
+                            item_ordinal=len(items),
+                            source_virtual_path=virtual_path,
+                            line=line.number,
+                            raw_header=line.text,
+                        )
+                    )
+                    index = next_index
+                    continue
 
             folded = key.casefold()
             key_ordinal = key_ordinals.get(folded, 0)
@@ -831,12 +898,16 @@ def _parse_scope(
             continue
 
         tokens = _split_header_tokens(line.text, virtual_path=virtual_path, line=line.number)
+        bare_named_block = bool(tokens) and tokens[0].casefold() in (
+            _BARE_BLOCK_KINDS | _STATE_BLOCK_KEYS
+        )
         if _bare_is_block(tokens, line, following):
             kind, instance_tag, header_key, header_tokens, conditions = _make_block_header(
                 line.text, virtual_path=virtual_path, line=line.number
             )
+            snapshot = (budget.nodes, budget.assignments, budget.includes)
             budget.add_node()
-            nested, index = _parse_scope(
+            nested, next_index = _parse_scope(
                 lines,
                 index + 1,
                 virtual_path=virtual_path,
@@ -845,6 +916,12 @@ def _parse_scope(
                 owner=f"{kind} block",
                 allow_includes=allow_includes,
             )
+            if not bare_named_block:
+                # An indentation-inferred block kind is a guess; allow a scope
+                # failure to demote it.  Name-known kinds must fail loudly.
+                last_flippable = (
+                    len(items), index, snapshot, tokens[0], " ".join(tokens[1:]), line, False
+                )
             items.append(
                 SageBlock(
                     kind=kind,
@@ -859,6 +936,7 @@ def _parse_scope(
                     raw_header=line.text,
                 )
             )
+            index = next_index
             continue
 
         if following is not None and following.text.casefold() == "end" and len(tokens) == 1:
@@ -886,10 +964,6 @@ def _parse_scope(
         )
         assignment_ordinal += 1
         index += 1
-
-    if not require_end:
-        return tuple(items), index
-    raise SageCstSyntaxError(f"unterminated {owner} at end of {virtual_path}")
 
 
 def parse_sage_document(

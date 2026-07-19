@@ -267,3 +267,97 @@ def test_tampered_descriptor_digest_is_rejected() -> None:
         PlayableStructureCompilerError, match="digest is invalid"
     ):
         validate_playable_structure_descriptor(descriptor)
+
+
+def test_wall_upgrade_command_is_authored_production_evidence() -> None:
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path].decode("utf-8")
+        + """
+Object TestWallHub
+  CommandSet = TestWallHubCommandSet
+  KindOf = SELECTABLE STRUCTURE
+  Body = StructureBody ModuleTag_Body
+    MaxHealth = 900
+  End
+End
+
+Object TestWallGate
+  KindOf = SELECTABLE STRUCTURE
+  Body = StructureBody ModuleTag_Body
+    MaxHealth = 1200
+  End
+End
+"""
+    ).encode("utf-8")
+    documents["data/ini/commandset.ini"] = (
+        documents["data/ini/commandset.ini"].decode("utf-8")
+        + """
+CommandSet TestWallHubCommandSet
+  2 = Command_WallUpgradeToGate
+End
+"""
+    ).encode("utf-8")
+    documents["data/ini/commandbutton.ini"] = (
+        documents["data/ini/commandbutton.ini"].decode("utf-8")
+        + """
+CommandButton Command_WallUpgradeToGate
+  Command = OBJECT_UPGRADE
+  Options = CANCELABLE NOT_QUEUEABLE
+  Object = TestWallGate
+  Upgrade = Upgrade_TestWallGate
+End
+"""
+    ).encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestWallGate", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    assert descriptor["production"]["evidence"] == "authored-wall-upgrade-command"
+    route = descriptor["production"]["routes"][0]
+    assert route["surface"] == "wall-upgrade"
+    assert route["commandKind"] == "object_upgrade"
+    assert route["builderObjectId"] == "TestWallHub"
+    assert route["commandSetId"] == "TestWallHubCommandSet"
+    assert route["slot"] == 2
+    assert route["upgrade"] == ["Upgrade_TestWallGate"]
+
+
+def test_construct_route_wins_over_wall_upgrade_for_one_structure() -> None:
+    documents = _structure_documents()
+    documents["data/ini/commandbutton.ini"] = (
+        documents["data/ini/commandbutton.ini"].decode("utf-8")
+        + """
+CommandButton Command_WallUpgradeToKeep
+  Command = OBJECT_UPGRADE
+  Object = TestKeep
+  Upgrade = Upgrade_TestKeep
+End
+"""
+    ).encode("utf-8")
+    documents["data/ini/commandset.ini"] = (
+        documents["data/ini/commandset.ini"].decode("utf-8")
+        + """
+CommandSet TestWallUpgradeCommandSet
+  1 = Command_WallUpgradeToKeep
+End
+"""
+    ).encode("utf-8")
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path].decode("utf-8")
+        + """
+Object TestWallUpgradeHub
+  CommandSet = TestWallUpgradeCommandSet
+  KindOf = STRUCTURE
+End
+"""
+    ).encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    assert descriptor["production"]["evidence"] == "authored-construct-command"
+    surfaces = {route["surface"] for route in descriptor["production"]["routes"]}
+    assert surfaces == {"construct", "wall-upgrade"}

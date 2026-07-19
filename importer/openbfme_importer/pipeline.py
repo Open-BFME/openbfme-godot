@@ -2173,7 +2173,14 @@ class ImportPipeline:
             or any(character not in "0123456789abcdef" for character in expected)
         ):
             raise ValueError("profile source catalog identity is invalid")
-        actual = self.catalog.identity_sha256()
+        catalog = getattr(self, "catalog", None)
+        if catalog is None:
+            if expected is not None:
+                raise ValueError(
+                    "profile source catalog identity cannot be verified without a catalog"
+                )
+            return ""
+        actual = catalog.identity_sha256()
         if expected is not None and expected != actual:
             raise ValueError(
                 "profile source catalog identity does not match the current catalog"

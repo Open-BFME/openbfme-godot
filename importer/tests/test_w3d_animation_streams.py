@@ -607,7 +607,7 @@ class CompressedBitAndMotionTests(unittest.TestCase):
         self.assertEqual([key.value for key in result.channel.keys], [-2.0, 0.5, 7.0])
 
     def test_motion_time_codes_outside_owner_range_remain_attested(self) -> None:
-        payload = struct.pack("<4Bhh2h2f", 0, 0, 1, 0, 2, 0, -2, 5, 1.0, 2.0)
+        payload = struct.pack("<4Bhh2h2f", 0, 0, 1, 0, 2, 0, 300, 400, 1.0, 2.0)
 
         result = decode_motion_animation_channel(
             payload,
@@ -615,14 +615,51 @@ class CompressedBitAndMotionTests(unittest.TestCase):
             pivot_count=1,
         )
 
-        self.assertEqual([key.frame for key in result.channel.keys], [-2, 5])
+        self.assertEqual([key.frame for key in result.channel.keys], [300, 400])
         self.assertEqual(result.attestation.out_of_owner_frame_count, 2)
-        self.assertEqual(result.attestation.out_of_owner_frame_minimum, -2)
-        self.assertEqual(result.attestation.out_of_owner_frame_maximum, 5)
+        self.assertEqual(result.attestation.out_of_owner_frame_minimum, 300)
+        self.assertEqual(result.attestation.out_of_owner_frame_maximum, 400)
         self.assertEqual(
             result.attestation.neutral()["outOfOwnerFrameRange"],
-            {"minimum": -2, "maximum": 5},
+            {"minimum": 300, "maximum": 400},
         )
+
+    def test_motion_time_codes_mask_binary_movement_flag(self) -> None:
+        # Retail motion channels set the high bit of a 16-bit time code for
+        # step transitions (W3D_TIMECODED_BINARY_MOVEMENT_FLAG).  The ordered
+        # frame is the low 15 bits, so a flagged key must not read as a
+        # negative or far-future frame.
+        header = struct.pack("<4Bhh", 0, 0, 1, 15, 5, 1)
+        payload = header + struct.pack("<5H", 0, 19, 0x8000 | 20, 21, 64)
+        payload += b"\x00\x00"
+        payload += struct.pack("<5f", 0.0, 0.25, 0.5, 0.75, 1.0)
+
+        result = decode_motion_animation_channel(
+            payload,
+            animation_frame_count=65,
+            pivot_count=2,
+        )
+
+        self.assertEqual(
+            [key.frame for key in result.channel.keys], [0, 19, 20, 21, 64]
+        )
+        self.assertTrue(all(key.interpolated for key in result.channel.keys))
+        self.assertEqual(
+            [key.value for key in result.channel.keys], [0.0, 0.25, 0.5, 0.75, 1.0]
+        )
+        self.assertEqual(result.attestation.out_of_owner_frame_count, 0)
+        self.assertEqual(result.channel.last_frame, 64)
+
+    def test_motion_time_codes_reject_unordered_masked_frames(self) -> None:
+        header = struct.pack("<4Bhh", 0, 0, 1, 0, 2, 0)
+        payload = header + struct.pack("<2H2f", 30, 0x8000 | 29, 1.0, 2.0)
+
+        with self.assertRaisesRegex(W3DAnimationStreamDecodeError, "increasing"):
+            decode_motion_animation_channel(
+                payload,
+                animation_frame_count=64,
+                pivot_count=1,
+            )
 
     def test_motion_eight_bit_adaptive_layout_is_distinct_and_bounded(self) -> None:
         header = struct.pack("<4Bhhf", 0, 2, 1, 0, 2, 0, 0.25)

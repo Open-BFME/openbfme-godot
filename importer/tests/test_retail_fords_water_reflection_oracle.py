@@ -226,7 +226,7 @@ class FordsWaterReflectionOraclePrivateIntegrationTests(unittest.TestCase):
         ).encode("utf-8")
         self.assertEqual(declared, hashlib.sha256(canonical).hexdigest())
         self.assertEqual(
-            "9c70403da8aa2a4dbe9915b5855f056526ec7719b280df079f6464bafeccdfa2",
+            "c8e5df5a1e8f19817e639300bd977bfbf7ab5eeda8b63eedc634baa4c8d0b22a",
             declared,
         )
         with tempfile.TemporaryDirectory() as raw:

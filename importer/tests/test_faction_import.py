@@ -41,6 +41,7 @@ def test_plan_accounts_for_each_object_once_and_is_deterministic() -> None:
         "descriptorCoverageComplete": False,
         "objectCount": 3,
         "descriptorReadyCount": 2,
+        "excludedCount": 0,
         "converterGapCount": 1,
         "unresolvedLeafCount": 0,
         "unsupportedFamilies": ["structure"],
@@ -351,3 +352,76 @@ def test_foundation_without_visuals_is_excluded_with_descriptor_evidence() -> No
     assert row["status"] == "excluded"
     assert "foundation composite" in row["reason"]
     assert row["descriptorSha256"] == "5" * 64
+
+
+def _construct_fixture() -> tuple[dict[str, bytes], dict[str, object]]:
+    documents, graph = _fixture()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] += b"""
+Object ConstructKeep
+  KindOf = PRELOAD SELECTABLE STRUCTURE
+  Body = StructureBody ModuleTag_Body
+    MaxHealth = 1500
+  End
+End
+
+Object ConstructPorter
+  KindOf = PRELOAD SELECTABLE INFANTRY DOZER
+  CommandSet = ConstructPorterCommandSet
+End
+
+Object ConstructBanner
+  KindOf = PRELOAD SELECTABLE INFANTRY BANNER
+End
+
+Object ReskinBanner
+  KindOf = PRELOAD SELECTABLE INFANTRY
+End
+"""
+    documents["data/ini/commandset.ini"] += b"""
+CommandSet ConstructPorterCommandSet
+  1 = Command_ConstructKeep
+End
+"""
+    documents["data/ini/commandbutton.ini"] += b"""
+CommandButton Command_ConstructKeep
+  Command = PORTER_CONSTRUCT
+  Object = ConstructKeep
+End
+"""
+    graph["definitions"]["objects"][0]["edges"] = [
+        {"field": "BannerCarriersAllowed", "targetKind": "horde-banner", "targetId": "ReskinBanner"}
+    ]
+    graph["definitions"]["objects"].extend(
+        [
+            {"id": "ConstructKeep", "edges": []},
+            {"id": "ConstructBanner", "edges": []},
+            {"id": "ReskinBanner", "edges": []},
+        ]
+    )
+    return documents, graph
+
+
+def test_plan_routes_structures_and_excludes_banner_members() -> None:
+    documents, graph = _construct_fixture()
+
+    plan = build_faction_import_plan(graph, documents, catalog_identity_sha256="2" * 64)
+
+    rows = {row["id"]: row for row in plan["objects"]}
+    keep = rows["ConstructKeep"]
+    assert keep["status"] == "descriptor-ready"
+    assert keep["family"] == "structure"
+    assert keep["category"] == "structure"
+    assert len(keep["descriptorSha256"]) == 64
+    for banner_id in ("ConstructBanner", "ReskinBanner"):
+        banner = rows[banner_id]
+        assert banner["status"] == "excluded"
+        assert banner["family"] == "banner-member"
+        assert "parent horde" in banner["reason"]
+    summary = plan["summary"]
+    assert summary["objectCount"] == 6
+    assert summary["descriptorReadyCount"] == 3
+    assert summary["excludedCount"] == 2
+    assert summary["converterGapCount"] == 1
+    assert summary["unsupportedFamilies"] == ["structure"]
+    assert summary["descriptorCoverageComplete"] is False

@@ -382,14 +382,21 @@ def test_hero_roster_preserves_ordinals_and_uses_a_separate_surface() -> None:
     }
 
 
-def test_hero_roster_rejects_duplicate_ordinal_identity() -> None:
+def test_hero_roster_preserves_duplicate_authored_slots_as_separate_routes() -> None:
     documents, graph = _hero_roster_fixture()
     documents["data/ini/playertemplate.ini"] = documents[
         "data/ini/playertemplate.ini"
     ].replace(b"HeroSeven HeroEight", b"HeroSeven HeroSeven")
 
-    with pytest.raises(PlayableUnitCompilerError, match="duplicate BuildableHeroesMP"):
-        compile_playable_unit_descriptor("HeroSeven", documents, faction_graph=graph)
+    result = compile_playable_unit_descriptor(
+        "HeroSeven", documents, faction_graph=graph
+    )
+
+    validate_playable_unit_descriptor(result)
+    routes = result["production"]
+    assert [route["rosterOrdinal"] for route in routes] == [7, 8]
+    assert all(route["surface"] == "hero-roster" for route in routes)
+    assert all("slot" not in route for route in routes)
 
 
 def test_hero_roster_rejects_unreachable_starting_building() -> None:
@@ -801,3 +808,150 @@ def test_validator_rejects_mapped_image_crop_outside_atlas() -> None:
     ).hexdigest()
     with pytest.raises(PlayableUnitCompilerError, match="mapped image crop"):
         validate_playable_unit_descriptor(descriptor)
+
+
+def _ring_hero_fixture() -> tuple[dict[str, bytes], dict[str, object]]:
+    documents, graph = _hero_roster_fixture()
+    objects_path = "data/ini/object/units/test_units.ini"
+    objects = documents[objects_path].decode("utf-8")
+    objects += _object("HeroRing", "HERO INFANTRY", "HeroRingModel").replace(
+        "  SelectPortrait = UPHeroRing\n",
+        "  SelectPortrait = UPHeroRing\n"
+        "  ButtonImage = HIHeroRing\n"
+        "  DisplayName = OBJECT:HeroRing\n"
+        "  DescriptionStrategic = CONTROLBAR:ToolTipHeroRing\n",
+    )
+    documents[objects_path] = objects.encode("utf-8")
+    documents["data/ini/commandbutton.ini"] += b"""
+CommandButton Command_RingHeroReviveSlot
+  Command = REVIVE
+  TextLabel = CONTROLBAR:GenericReviveHero
+  DescriptLabel = CONTROLBAR:ToolTipGenericReviveHero
+End
+"""
+    documents["data/ini/playertemplate.ini"] = documents[
+        "data/ini/playertemplate.ini"
+    ].replace(b"End", b"  BuildableRingHeroesMP = HeroRing\nEnd")
+    graph["definitions"]["objects"].append({"id": "HeroRing", "edges": []})
+    return documents, graph
+
+
+def test_ring_hero_uses_the_engine_ring_roster_route() -> None:
+    documents, graph = _ring_hero_fixture()
+
+    result = compile_playable_unit_descriptor("HeroRing", documents, faction_graph=graph)
+
+    validate_playable_unit_descriptor(result)
+    assert len(result["production"]) == 1
+    route = result["production"][0]
+    assert route["surface"] == "hero-roster"
+    assert route["commandSetId"] == "__engine__/BuildableRingHeroesMP"
+    assert route["commandId"] == "__engine__/RING_HERO_BUILD/HeroRing"
+    assert route["sourceField"] == "BuildableRingHeroesMP"
+    assert route["producerObjectId"] == "UniversalFactory"
+    # The ring slot follows the eight authored hero roster slots.
+    assert route["rosterOrdinal"] == 9
+    assert "slot" not in route
+    assert route["ui"] == {
+        "ButtonImage": ["HIHeroRing"],
+        "TextLabel": ["CONTROLBAR:GenericReviveHero"],
+        "DescriptLabel": ["CONTROLBAR:ToolTipGenericReviveHero"],
+    }
+
+
+def test_ring_hero_rejects_duplicate_ring_roster_entries() -> None:
+    documents, graph = _ring_hero_fixture()
+    documents["data/ini/playertemplate.ini"] = documents[
+        "data/ini/playertemplate.ini"
+    ].replace(
+        b"BuildableRingHeroesMP = HeroRing", b"BuildableRingHeroesMP = HeroRing HeroRing"
+    )
+
+    with pytest.raises(
+        PlayableUnitCompilerError, match="duplicate BuildableRingHeroesMP"
+    ):
+        compile_playable_unit_descriptor("HeroRing", documents, faction_graph=graph)
+
+
+def test_ring_hero_rejects_conflicting_command_socket_route() -> None:
+    documents, graph = _ring_hero_fixture()
+    documents["data/ini/commandbutton.ini"] += b"""
+CommandButton Command_BuildHeroRing
+  Command = HERO_BUILD
+  Object = HeroRing
+End
+"""
+    documents["data/ini/commandset.ini"] += b"""
+CommandSet ConflictingRingCommandSet
+  1 = Command_BuildHeroRing
+End
+"""
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] += b"""
+Object ConflictingRingProducer
+  CommandSet = ConflictingRingCommandSet
+  KindOf = PRELOAD SELECTABLE STRUCTURE
+End
+"""
+    graph["definitions"]["objects"].append(
+        {"id": "ConflictingRingProducer", "edges": []}
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="conflicting"):
+        compile_playable_unit_descriptor("HeroRing", documents, faction_graph=graph)
+
+
+def test_member_resolves_through_an_inherited_initial_payload() -> None:
+    documents = _documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    objects = documents[objects_path].decode("utf-8")
+    objects += _object("LegacyPayloadMember", "INFANTRY", "LegacyPayloadModel")
+    objects += """
+Object LegacyPayloadBase
+  KindOf = PRELOAD SELECTABLE HORDE
+  Behavior = HordeContain ModuleTag_HordeContain
+    InitialPayload = LegacyPayloadMember 3
+  End
+End
+
+ChildObject LegacyPayloadHorde LegacyPayloadBase
+End
+"""
+    documents[objects_path] = objects.encode("utf-8")
+    documents["data/ini/commandbutton.ini"] += b"""
+CommandButton Command_BuildLegacyPayloadHorde
+  Command = UNIT_BUILD
+  Object = LegacyPayloadHorde
+  ButtonImage = BILegacyPayloadHorde
+End
+"""
+    documents["data/ini/commandset.ini"] += b"""
+CommandSet UniversalFactoryLegacyCommandSet
+  1 = Command_BuildLegacyPayloadHorde
+End
+"""
+    documents[objects_path] = documents[objects_path].replace(
+        b"Object UniversalFactory\n  CommandSet = UniversalFactoryCommandSet",
+        b"Object UniversalFactory\n  CommandSet = UniversalFactoryLegacyCommandSet",
+    )
+
+    result = compile_playable_unit_descriptor("LegacyPayloadMember", documents)
+
+    validate_playable_unit_descriptor(result)
+    assert result["objectId"] == "LegacyPayloadHorde"
+    assert result["requestedObjectId"] == "LegacyPayloadMember"
+    assert result["composition"]["containerObjectId"] == "LegacyPayloadHorde"
+    assert result["composition"]["primaryMemberObjectId"] == "LegacyPayloadMember"
+    assert result["production"][0]["commandId"] == "Command_BuildLegacyPayloadHorde"
+
+
+def test_ring_hero_requires_the_authored_revive_slot_button() -> None:
+    documents, graph = _ring_hero_fixture()
+    documents["data/ini/commandbutton.ini"] = documents[
+        "data/ini/commandbutton.ini"
+    ].replace(b"CommandButton Command_RingHeroReviveSlot", b"CommandButton Command_RenamedReviveSlot")
+
+    with pytest.raises(
+        PlayableUnitCompilerError, match="Command_RingHeroReviveSlot"
+    ):
+        compile_playable_unit_descriptor("HeroRing", documents, faction_graph=graph)

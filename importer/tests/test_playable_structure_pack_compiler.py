@@ -208,8 +208,10 @@ def test_phase_grouping_and_converters() -> None:
     models = _models_by_source(recipe)
     assert models[_MODEL_INTACT]["converter"] == "w3d-bundle"
     assert models[_MODEL_CONSTRUCTION]["converter"] == "w3d-bundle"
-    assert models[_MODEL_RUBBLE]["converter"] == "w3d-hierarchical"
+    assert models[_MODEL_RUBBLE]["converter"] == "w3d-static"
     assert models[_MODEL_BIB]["converter"] == "w3d-hierarchical"
+    assert models[_MODEL_BIB]["options"]["provenRootRigidBake"] is True
+    assert "provenRootRigidBake" not in models[_MODEL_RUBBLE]["options"]
     assert models[_MODEL_INTACT]["output"].endswith(
         "/intact-damaged-keep-skn.glb"
     )

@@ -105,6 +105,7 @@ var audio_system: RetailSliceAudio
 var source_map_data: RetailMapData
 var selected_pack_root := ""
 var faction_manifest: Dictionary = {}
+var enemy_faction := ""
 var gameplay_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
 var trebuchet_runtime: Dictionary = {}
@@ -193,6 +194,11 @@ func _initialize_content_and_match() -> void:
 	faction_manifest = _resolve_faction_manifest()
 	if faction_manifest.has("_error"):
 		_fail("Faction manifest failed: %s" % String(faction_manifest.get("_error", "")))
+		return
+	var player_faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
+	enemy_faction = _resolve_enemy_faction(player_faction)
+	if enemy_faction != player_faction:
+		_fail("Enemy faction '%s' cannot be seeded yet: the simulation consumes one faction manifest ('%s') for both teams, so cross-faction matches need per-team manifests that are not implemented." % [enemy_faction, player_faction])
 		return
 	ranger_runtime = ContentDB.get_ranger_runtime()
 	trebuchet_runtime = ContentDB.get_trebuchet_runtime()
@@ -855,12 +861,18 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 
 
 func _resolve_faction_manifest() -> Dictionary:
-	## Faction selection is an explicit environment input. Unset (or "men")
-	## keeps the historical Men/Gondor slice byte-identical; any other value is
-	## a lowercase source object-id prefix resolved purely from the loaded
+	## Faction selection is an explicit input. OPENBFME_SLICE_FACTION always
+	## wins when set; otherwise the main menu's skirmish setup selection on the
+	## GameState autoload is the fallback. Unset (or "men") keeps the
+	## historical Men/Gondor slice byte-identical; any other value is a
+	## lowercase source object-id prefix resolved purely from the loaded
 	## playableUnit.* / playableStructure.* registries, failing closed with a
 	## specific error when the faction's pack content is missing.
 	var faction := OS.get_environment("OPENBFME_SLICE_FACTION").strip_edges().to_lower()
+	if faction == "":
+		var game_state := get_node_or_null("/root/GameState")
+		if game_state != null:
+			faction = String(game_state.get("retail_player_faction")).strip_edges().to_lower()
 	if faction == "" or faction == FactionManifestScript.DEFAULT_FACTION:
 		return FactionManifestScript.default_manifest()
 	return FactionManifestScript.from_registries(
@@ -868,6 +880,22 @@ func _resolve_faction_manifest() -> Dictionary:
 		ContentDB.get_playable_unit_runtimes(),
 		ContentDB.get_playable_structure_runtimes()
 	)
+
+
+func _resolve_enemy_faction(player_faction: String) -> String:
+	## Both teams are seeded from the player's faction manifest today: the
+	## simulation consumes a single manifest for both teams' structures,
+	## rosters, and AI plan. The menu's enemy selection is honored only when
+	## it matches the player faction; a differing choice fails closed in
+	## _initialize_content_and_match() instead of silently seeding Men.
+	## OPENBFME_SLICE_FACTION keeps its historical single-faction behavior.
+	if OS.get_environment("OPENBFME_SLICE_FACTION").strip_edges() != "":
+		return player_faction
+	var game_state := get_node_or_null("/root/GameState")
+	if game_state == null:
+		return player_faction
+	var selected := String(game_state.get("retail_enemy_faction")).strip_edges().to_lower()
+	return selected if selected != "" else player_faction
 
 
 func _faction_scoped_playable_unit_runtimes() -> Dictionary:

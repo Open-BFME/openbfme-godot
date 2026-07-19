@@ -16,6 +16,100 @@ from openbfme_importer.sage_cst import (
 
 
 class SageCstTests(unittest.TestCase):
+    def test_endless_module_header_is_retained_as_assignment(self) -> None:
+        # BFME2 1.06 retail declares an empty draw module with no body and no
+        # terminating End; sibling assignments and modules still belong to the
+        # enclosing object, which must survive with the header retained.
+        source = b"""
+Object CreateAHero
+  SelectPortrait = CPWanderer
+  Draw = W3DScriptedModelDraw ModuleTag_DRAW
+  OkToChangeModelColor = Yes
+  KindOf = CREATE_A_HERO HERO PRELOAD
+  Behavior = AutoAbilityBehavior ModuleTag_AutoAbilityBehavior
+  End
+End
+ChildObject CreateAHeroMounted CreateAHero
+  KindOf = CREATE_A_HERO HERO PRELOAD
+End
+"""
+        document = parse_sage_document(source, "data/ini/object/createahero/createahero.ini")
+        self.assertEqual(
+            [(item.kind, item.name, item.parent) for item in document.objects],
+            [
+                ("Object", "CreateAHero", None),
+                ("ChildObject", "CreateAHeroMounted", "CreateAHero"),
+            ],
+        )
+        hero = document.objects[0]
+        self.assertEqual(hero.values("Draw"), ("W3DScriptedModelDraw ModuleTag_DRAW",))
+        draw = hero.assignments[1]
+        self.assertEqual((draw.key, draw.has_equals), ("Draw", True))
+        self.assertEqual(hero.values("KindOf"), ("CREATE_A_HERO HERO PRELOAD",))
+        self.assertEqual(
+            [(block.kind, block.instance_tag) for block in hero.blocks],
+            [("AutoAbilityBehavior", "ModuleTag_AutoAbilityBehavior")],
+        )
+
+    def test_endless_module_header_before_eof_is_retained(self) -> None:
+        document = parse_sage_document(
+            b"Object Solo\n"
+            b"  Draw = W3DScriptedModelDraw ModuleTag_DRAW\n"
+            b"  KindOf = HERO\n"
+            b"End\n",
+            "data/ini/object/solo.ini",
+        )
+        solo = document.objects[0]
+        self.assertEqual(solo.values("Draw"), ("W3DScriptedModelDraw ModuleTag_DRAW",))
+        self.assertEqual(solo.values("KindOf"), ("HERO",))
+        self.assertEqual(solo.blocks, ())
+
+    def test_bare_state_block_with_unindented_body(self) -> None:
+        # Retail ArmorSet blocks do not always indent their body, so block
+        # kinds must be recognized by name rather than by indentation.
+        source = b"""
+Object Statue
+  ArmorSet
+  Conditions = None
+  Armor = StructureArmor
+  End
+  KindOf = STRUCTURE
+End
+"""
+        document = parse_sage_document(source, "data/ini/object/structures/statue.ini")
+        statue = document.objects[0]
+        armor_set = statue.blocks[0]
+        self.assertEqual(armor_set.kind, "ArmorSet")
+        self.assertEqual(armor_set.values("Conditions"), ("None",))
+        self.assertEqual(armor_set.values("Armor"), ("StructureArmor",))
+        self.assertEqual(statue.values("KindOf"), ("STRUCTURE",))
+
+    def test_sound_upgrade_is_an_end_terminated_block(self) -> None:
+        # Retail UpgradeSoundSelectorClientBehavior modules nest SoundUpgrade
+        # blocks holding upgrade-gated voice overrides.
+        source = b"""
+Object Guardian
+  ClientBehavior = UpgradeSoundSelectorClientBehavior ModuleTag_SoundSelector
+    SoundUpgrade = Upgrade_SiegeHammer
+      VoiceAttack = GuardianVoiceAttackHammer
+    End
+  End
+  ClientBehavior = AnimationSoundClientBehavior ModuleTag_AnimAudio
+  End
+End
+"""
+        document = parse_sage_document(source, "data/ini/object/units/dwarven/guardian.ini")
+        guardian = document.objects[0]
+        self.assertEqual(len(guardian.blocks), 2)
+        selector = guardian.blocks[0]
+        self.assertEqual(selector.kind, "UpgradeSoundSelectorClientBehavior")
+        (sound_upgrade,) = selector.blocks
+        self.assertEqual(sound_upgrade.kind, "SoundUpgrade")
+        self.assertEqual(sound_upgrade.header_key, "SoundUpgrade")
+        self.assertEqual(sound_upgrade.header_tokens, ("Upgrade_SiegeHammer",))
+        self.assertEqual(sound_upgrade.values("VoiceAttack"), ("GuardianVoiceAttackHammer",))
+        self.assertEqual(guardian.blocks[1].kind, "AnimationSoundClientBehavior")
+
     def test_nested_sound_state_is_a_state_block(self) -> None:
         document = parse_sage_document(
             b"""

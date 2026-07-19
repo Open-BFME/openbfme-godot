@@ -155,6 +155,26 @@ func _run_faction_manifest_checks() -> void:
 	var empty_faction := FactionManifest.from_registries("rohan", units, structures)
 	_check(String(empty_faction.get("_error", "")).contains("rohan"), "unconverted faction fails closed naming the faction")
 
+	# Canonical UI faction names map to the retail Object prefixes, and
+	# engine-spawned fortress parts remain presentation-only resources.
+	var elven_fortress := _fixture_document("ElvenFortress", "elvenfortress", "elvenmonsterpen", 5000)
+	var elven_pen := _fixture_document("ElvenMonsterPen", "elvenmonsterpen")
+	for document_value in [elven_fortress, elven_pen]:
+		var production: Dictionary = ((document_value as Dictionary).get("registration", {}) as Dictionary).get("production", {}) as Dictionary
+		for route_value in production.get("routes", []) as Array:
+			(route_value as Dictionary)["builderObjectId"] = "ElvenPorter"
+	var elven_citadel := _fixture_document("ElvenCitadel", "elvencitadel")
+	((elven_citadel.get("registration", {}) as Dictionary).get("production", {}) as Dictionary)["evidence"] = "engine-spawned-composite"
+	((elven_citadel.get("registration", {}) as Dictionary).get("production", {}) as Dictionary)["routes"] = []
+	var elven_structures := {"ElvenFortress": elven_fortress, "ElvenCitadel": elven_citadel, "ElvenMonsterPen": elven_pen}
+	var elven_units := {
+		"ElvenMonster": _fixture_unit_document("ElvenMonster", "ElvenMonsterPen", 200),
+		"ElvenPorter": _fixture_unit_document("ElvenPorter", "ElvenFortress", 1),
+	}
+	var elves := FactionManifest.from_registries("elves", elven_units, elven_structures)
+	_check(not elves.has("_error"), "elves alias resolves Elven Object prefixes: %s" % String(elves.get("_error", "")))
+	_check(Array(elves.get("structure_kinds", [])) == ["fortress", "monsterpen"], "engine-spawned fortress composites are not independent structures")
+
 
 func _fixture_unit_document(object_id: String, producer_object_id: String, damage: int) -> Dictionary:
 	var slug := object_id.to_lower()
