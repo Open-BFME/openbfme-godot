@@ -305,3 +305,44 @@ End
     row = next(r for r in coverage["objects"] if r["id"] == "TestSpellBook")
     assert row["status"] == "excluded"
     assert "spell book" in row["reason"]
+
+
+def test_foundation_without_visuals_is_excluded_with_descriptor_evidence() -> None:
+    documents, graph = _fixture()
+    from openbfme_importer.playable_structure_pack_compiler import (
+        PlayableStructurePackCompilerError,
+    )
+
+    descriptor = {
+        "objectId": "UniversalFactory",
+        "descriptorSha256": "5" * 64,
+        "kindOf": ["STRUCTURE", "BASE_FOUNDATION"],
+        "production": {"evidence": "engine-spawned-composite", "routes": []},
+    }
+    unit_patches = _unit_conversion_patches()
+    with (
+        unit_patches[0],
+        unit_patches[1],
+        mock.patch(
+            "openbfme_importer.faction_import."
+            "compile_playable_structure_descriptor",
+            return_value=descriptor,
+        ),
+        mock.patch(
+            "openbfme_importer.faction_import.compile_structure_visual_recipe",
+            side_effect=PlayableStructurePackCompilerError(
+                "structure has no resolved lifecycle model: UniversalFactory"
+            ),
+        ),
+    ):
+        coverage = build_faction_conversion(
+            graph,
+            documents,
+            Path("unused-effective-root"),
+            catalog_identity_sha256="2" * 64,
+        )
+
+    row = next(r for r in coverage["objects"] if r["id"] == "UniversalFactory")
+    assert row["status"] == "excluded"
+    assert "foundation composite" in row["reason"]
+    assert row["descriptorSha256"] == "5" * 64

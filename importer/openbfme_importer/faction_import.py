@@ -371,6 +371,7 @@ def build_faction_conversion(
                     }
                 )
         elif family == "structure":
+            descriptor = None
             try:
                 descriptor = compile_playable_structure_descriptor(
                     object_id,
@@ -387,7 +388,23 @@ def build_faction_conversion(
                 PlayableStructurePackCompilerError,
                 ValueError,
             ) as exc:
-                row.update({"status": "converter-gap", "reason": str(exc)})
+                if (
+                    isinstance(descriptor, Mapping)
+                    and "no resolved lifecycle model" in str(exc)
+                    and "BASE_FOUNDATION" in descriptor.get("kindOf", [])
+                ):
+                    row.update(
+                        {
+                            "status": "excluded",
+                            "reason": (
+                                "foundation composite authors no lifecycle "
+                                "visuals"
+                            ),
+                            "descriptorSha256": descriptor["descriptorSha256"],
+                        }
+                    )
+                else:
+                    row.update({"status": "converter-gap", "reason": str(exc)})
             else:
                 if artifact_writer is not None:
                     artifact_writer(object_id, "descriptor", descriptor)
