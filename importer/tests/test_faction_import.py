@@ -194,6 +194,7 @@ def _structure_success_patches() -> tuple[mock._patch, ...]:
     }
     recipe = {"recipeSha256": "6" * 64, "resources": [{}, {}]}
     runtime = {"runtimeSha256": "7" * 64}
+    evidence = {"evidenceSha256": "a" * 64}
     return (
         mock.patch(
             "openbfme_importer.faction_import."
@@ -208,6 +209,11 @@ def _structure_success_patches() -> tuple[mock._patch, ...]:
             "openbfme_importer.faction_import."
             "compose_structure_runtime_document",
             return_value=runtime,
+        ),
+        mock.patch(
+            "openbfme_importer.faction_import."
+            "compile_structure_lifecycle_evidence",
+            return_value=evidence,
         ),
     )
 
@@ -237,7 +243,7 @@ def test_conversion_converts_units_and_structures_and_is_deterministic() -> None
     structure_patches = _structure_success_patches()
     with unit_patches[0], unit_patches[1], unit_patches[2], (
         structure_patches[0]
-    ), structure_patches[1], structure_patches[2]:
+    ), structure_patches[1], structure_patches[2], structure_patches[3]:
         for _ in range(2):
             results.append(
                 build_faction_conversion(

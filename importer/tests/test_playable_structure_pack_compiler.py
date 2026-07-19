@@ -4,6 +4,9 @@ from copy import deepcopy
 
 import pytest
 
+from openbfme_importer.playable_structure_lifecycle_evidence import (
+    compile_structure_lifecycle_evidence,
+)
 from openbfme_importer.playable_structure_pack_compiler import (
     PlayableStructurePackCompilerError,
     compile_structure_visual_recipe,
@@ -19,7 +22,7 @@ _MODEL_RUBBLE = "art/w3d/fx/keep_rubble.w3d"
 _MODEL_BIB = "art/w3d/fx/keep_bib.w3d"
 _ANIMATION_CONSTRUCTION = "art/w3d/fx/keep_consa.w3d"
 _ANIMATION_IDLE = "art/w3d/fx/keep_idla.w3d"
-_ANIMATION_LEVER = "art/w3d/fx/keep_levera.w3d"
+_ANIMATION_COLLAPSE = "art/w3d/fx/keep_levera.w3d"
 _ANIMATION_GHOST = "art/w3d/fx/keep_ghosta.w3d"
 _HIERARCHY_MAIN = "art/w3d/fx/keep_skl.w3d"
 
@@ -30,12 +33,13 @@ def _leaf(
     path: str,
     phases: list[str],
     conditions: list[str] | None = None,
+    usage: str | None = None,
 ) -> dict[str, object]:
     return {
         "targetObject": _TARGET,
         "identifier": identifier,
         "kind": kind,
-        "usage": kind,
+        "usage": usage if usage is not None else kind,
         "conditions": conditions or [],
         "lifecyclePhases": phases,
         "status": "resolved",
@@ -72,28 +76,57 @@ def _scan(
     }
 
 
-def _closure() -> dict[str, object]:
+def _closure(*, include_bib: bool = True) -> dict[str, object]:
     leaves = [
-        _leaf("Keep_SKN", "model", _MODEL_INTACT, ["intact", "damaged"]),
-        _leaf("Keep_CONS", "model", _MODEL_CONSTRUCTION, ["construction"]),
-        _leaf("Keep_RUBBLE", "model", _MODEL_RUBBLE, ["rubble", "post-rubble"]),
-        _leaf("Keep_BIB", "model", _MODEL_BIB, ["construction", "intact"]),
-        _leaf("Keep_CONSA", "animation", _ANIMATION_CONSTRUCTION, ["construction"]),
+        _leaf("Keep_SKN", "model", _MODEL_INTACT, ["intact"]),
+        _leaf("Keep_SKN", "model", _MODEL_INTACT, ["damaged"], ["DAMAGED"]),
+        _leaf(
+            "Keep_CONS",
+            "model",
+            _MODEL_CONSTRUCTION,
+            ["construction"],
+            ["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"],
+        ),
+        _leaf("Keep_RUBBLE", "model", _MODEL_RUBBLE, ["rubble"], ["RUBBLE"]),
+        _leaf(
+            "Keep_CONSA",
+            "animation",
+            _ANIMATION_CONSTRUCTION,
+            ["construction"],
+            ["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"],
+        ),
         _leaf("Keep_IDLA", "animation", _ANIMATION_IDLE, ["intact"]),
-        _leaf("Keep_LEVERA", "animation", _ANIMATION_LEVER, ["really-damaged"]),
+        _leaf(
+            "Keep_LEVERA",
+            "animation",
+            _ANIMATION_COLLAPSE,
+            ["rubble"],
+            ["RUBBLE"],
+        ),
         _leaf("Keep_GHOSTA", "animation", _ANIMATION_GHOST, ["intact"]),
     ]
+    if include_bib:
+        leaves.append(
+            _leaf(
+                "Keep_BIB",
+                "model",
+                _MODEL_BIB,
+                ["intact"],
+                usage="floor-model",
+            )
+        )
     scanned = [
         _scan(_MODEL_INTACT),
         _scan(_MODEL_CONSTRUCTION),
         _scan(_MODEL_RUBBLE),
-        _scan(_MODEL_BIB, hierarchy_ids=["KEEP_BIB_SKL"]),
         _scan(_ANIMATION_CONSTRUCTION, animation_ids=["KEEP_SKL.KEEP_CONSA"]),
         _scan(_ANIMATION_IDLE, animation_ids=["KEEP_SKL.KEEP_IDLA"]),
-        _scan(_ANIMATION_LEVER, animation_ids=["KEEP_SKL.KEEP_LEVERA"]),
+        _scan(_ANIMATION_COLLAPSE, animation_ids=["KEEP_SKL.KEEP_LEVERA"]),
         _scan(_ANIMATION_GHOST, animation_ids=["KEEP_GHOST_SKL.KEEP_GHOSTA"]),
         _scan(_HIERARCHY_MAIN, hierarchy_ids=["KEEP_SKL"]),
     ]
+    if include_bib:
+        scanned.insert(3, _scan(_MODEL_BIB, hierarchy_ids=["KEEP_BIB_SKL"]))
     embedded = [
         {
             "identifier": "Fixture.tga",
@@ -179,7 +212,7 @@ def _rehash(closure: dict[str, object]) -> None:
 
 def _models_by_source(recipe: dict[str, object]) -> dict[str, dict[str, object]]:
     result: dict[str, dict[str, object]] = {}
-    for state in recipe["lifecycleStates"]:
+    for state in (*recipe["lifecycleStates"], *recipe["bibStates"]):
         resource = next(
             row
             for row in recipe["resources"]
@@ -187,6 +220,25 @@ def _models_by_source(recipe: dict[str, object]) -> dict[str, dict[str, object]]
         )
         result[str(state["sourceW3d"])] = resource
     return result
+
+
+def _keep_fixture() -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+    return descriptor, recipe, evidence
 
 
 def test_recipe_is_deterministic_and_validates() -> None:
@@ -197,8 +249,8 @@ def test_recipe_is_deterministic_and_validates() -> None:
     validate_structure_visual_recipe(first)
     assert first["slug"] == "universalkeep"
     assert first["phaseCoverage"] == {
-        "covered": ["construction", "intact", "damaged", "rubble", "post-rubble"],
-        "missing": ["really-damaged"],
+        "covered": ["construction", "intact", "damaged", "rubble"],
+        "missing": ["really-damaged", "post-rubble"],
     }
 
 
@@ -208,19 +260,30 @@ def test_phase_grouping_and_converters() -> None:
     models = _models_by_source(recipe)
     assert models[_MODEL_INTACT]["converter"] == "w3d-bundle"
     assert models[_MODEL_CONSTRUCTION]["converter"] == "w3d-bundle"
-    assert models[_MODEL_RUBBLE]["converter"] == "w3d-static"
+    assert models[_MODEL_RUBBLE]["converter"] == "w3d-bundle"
     assert models[_MODEL_BIB]["converter"] == "w3d-hierarchical"
     assert models[_MODEL_BIB]["options"]["provenRootRigidBake"] is True
-    assert "provenRootRigidBake" not in models[_MODEL_RUBBLE]["options"]
     assert models[_MODEL_INTACT]["output"].endswith(
         "/intact-damaged-keep-skn.glb"
     )
     assert models[_MODEL_CONSTRUCTION]["output"].endswith(
         "/construction-keep-cons.glb"
     )
-    assert models[_MODEL_RUBBLE]["output"].endswith(
-        "/rubble-post-rubble-keep-rubble.glb"
-    )
+    assert models[_MODEL_RUBBLE]["output"].endswith("/rubble-keep-rubble.glb")
+    assert models[_MODEL_BIB]["output"].endswith("/bib-keep-bib.glb")
+    assert recipe["bibStates"][0]["sourceW3d"] == _MODEL_BIB
+
+
+def test_lifecycle_states_record_conditions_and_clips() -> None:
+    recipe = compile_structure_visual_recipe(_TARGET, _closure())
+
+    by_source = {
+        str(state["sourceW3d"]): state for state in recipe["lifecycleStates"]
+    }
+    assert by_source[_MODEL_INTACT]["sourceConditionSets"] == [[], ["DAMAGED"]]
+    assert by_source[_MODEL_INTACT]["animationClipIds"] == ["keep_idla"]
+    assert by_source[_MODEL_CONSTRUCTION]["animationClipIds"] == ["keep_consa"]
+    assert by_source[_MODEL_RUBBLE]["animationClipIds"] == ["keep_levera"]
 
 
 def test_animations_bind_by_hierarchy_not_by_phase_alone() -> None:
@@ -237,7 +300,6 @@ def test_animations_bind_by_hierarchy_not_by_phase_alone() -> None:
     assert _HIERARCHY_MAIN not in models[_MODEL_BIB]["patterns"]
 
     reasons = {(row["reason"], row["sourceW3d"]) for row in recipe["exclusions"]}
-    assert ("animation-unattached", _ANIMATION_LEVER) in reasons
     assert ("animation-hierarchy-unresolved", _ANIMATION_GHOST) in reasons
 
 
@@ -332,7 +394,126 @@ def test_tampered_recipe_digest_is_rejected() -> None:
         validate_structure_visual_recipe(tampered)
 
 
-def test_runtime_document_joins_descriptor_and_recipe() -> None:
+def test_runtime_document_composes_presenter_grade_lifecycle() -> None:
+    descriptor, recipe, evidence = _keep_fixture()
+
+    first = compose_structure_runtime_document(descriptor, recipe, evidence)
+    second = compose_structure_runtime_document(descriptor, recipe, evidence)
+
+    assert first == second
+    assert first["schema"] == "openbfme.playable-structure-runtime"
+    assert first["schemaVersion"] == 0
+    assert first["descriptorSha256"] == descriptor["descriptorSha256"]
+    assert first["recipeSha256"] == recipe["recipeSha256"]
+    assert first["lifecycleEvidenceSha256"] == evidence["evidenceSha256"]
+    assert len(first["runtimeSha256"]) == 64
+
+    lifecycle = first["registration"]["presentation"]["buildingLifecycle"]
+    assert lifecycle["schema"] == "openbfme.building-lifecycle-presentation"
+    assert lifecycle["schemaVersion"] == 1
+    assert lifecycle["evidenceProfile"] == "composed-structure-runtime"
+    assert lifecycle["objectId"] == "bfme2.object.test-keep"
+    assert lifecycle["initialPhase"] == "intact"
+    assert lifecycle["rebuildHole"] is None
+
+    phases = {row["phase"]: row for row in lifecycle["phases"]}
+    assert [row["phase"] for row in lifecycle["phases"]] == [
+        "construction",
+        "intact",
+        "damaged",
+        "really-damaged",
+        "collapsing",
+        "rubble",
+        "post-rubble",
+        "post-collapse",
+    ]
+    assert phases["construction"]["nextPhase"] == "intact"
+    assert phases["construction"]["animation"] == {
+        "clip": "keep_consa",
+        "mode": "manual-progress",
+    }
+    assert phases["construction"]["sourceConditionSets"] == [
+        ["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"]
+    ]
+    assert phases["intact"]["visual"]["mode"] == "glb"
+    assert phases["intact"]["animation"] == {
+        "clip": "keep_idla",
+        "mode": "loop-random",
+    }
+    assert phases["damaged"]["visual"]["glb"] == phases["intact"]["visual"]["glb"]
+    assert (
+        phases["really-damaged"]["visual"]["visualFallback"]
+        == "default-model-condition-state"
+    )
+    assert phases["collapsing"]["visual"]["glb"].endswith(
+        "/rubble-keep-rubble.glb"
+    )
+    assert phases["collapsing"]["animation"] == {
+        "clip": "keep_levera",
+        "mode": "once",
+    }
+    assert phases["rubble"]["animation"] == {"clip": None, "mode": "none"}
+    assert phases["post-rubble"]["visual"] == {
+        "mode": "no-render",
+        "sourceIdentifier": "None",
+    }
+    assert phases["post-collapse"]["nextPhase"] is None
+    for row in lifecycle["phases"]:
+        assert row["transitionAuthority"] == "deterministic-simulation"
+
+    facts = lifecycle["simulationFacts"]
+    assert facts["maximumHealth"] == 3000
+    assert facts["damageStateRule"] == {
+        "damagedThreshold": 2000,
+        "reallyDamagedThreshold": 1000,
+    }
+    assert facts["construction"] == {
+        "buildTimeSeconds": 45.0,
+        "animationMode": "MANUAL",
+        "animation": "keep_consa",
+    }
+    assert facts["collapse"]["module"] == "StructureCollapseUpdate"
+    assert facts["collapse"]["destroyObjectWhenDone"] is True
+    assert facts["collapse"]["fxLists"] == {
+        "initial": "FX_StructureMediumCollapse",
+        "almost-final": "FX_StructureAlmostCollapse",
+    }
+    assert facts["postRubble"] == {
+        "terminalDuration": "destroy-object-when-collapse-done"
+    }
+
+    assert lifecycle["audioEvents"] == {"collapse": None, "construction": None}
+    effects = lifecycle["effects"]
+    assert effects["enteringStateFx"] == {
+        "damaged": "FX_BuildingDamaged",
+        "really-damaged": "FX_BuildingReallyDamaged",
+        "collapsing": "FX_StructureMediumCollapse",
+    }
+    assert effects["collapseUpdateFx"] == {
+        "initial": "FX_StructureMediumCollapse",
+        "almost-final": "FX_StructureAlmostCollapse",
+    }
+    assert effects["particleAttachments"] == [
+        {
+            "bone": "FireSmall01",
+            "options": [],
+            "particleSystemId": "FireBuildingMedium",
+            "sourceConditions": ["DAMAGED"],
+            "sourceObject": "TestKeep",
+        }
+    ]
+
+    bib = lifecycle["bib"]
+    assert bib["duringConstruction"] is False
+    assert bib["visual"]["mode"] == "glb"
+    assert bib["visual"]["glb"].endswith("/bib-keep-bib.glb")
+    assert bib["hideIfModelConditions"] == [
+        "AWAITING_CONSTRUCTION",
+        "PARTIALLY_CONSTRUCTED",
+    ]
+
+
+def test_runtime_document_without_floor_draw_has_null_bib() -> None:
     from importer.tests.test_playable_structure_compiler import (
         _structure_documents,
     )
@@ -341,53 +522,73 @@ def test_runtime_document_joins_descriptor_and_recipe() -> None:
     )
 
     documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    start = source.index("  Draw = W3DFloorDraw ModuleTag_Bib")
+    end = source.index("End", start) + len("End\n")
+    documents[objects_path] = (source[:start] + source[end:]).encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure(include_bib=False)
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    assert lifecycle["bib"] is None
+
+
+def test_runtime_document_requires_manual_construction_clip() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path]
+        .decode("utf-8")
+        .replace("        AnimationMode = MANUAL\n", "", 1)
+        .encode("utf-8")
+    )
+
     descriptor = compile_playable_structure_descriptor("TestKeep", documents)
     closure = _closure()
     for row in closure["exactLeaves"]:
         row["targetObject"] = "TestKeep"
     _rehash(closure)
     recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
 
-    first = compose_structure_runtime_document(descriptor, recipe)
-    second = compose_structure_runtime_document(descriptor, recipe)
-
-    assert first == second
-    assert first["schema"] == "openbfme.playable-structure-runtime"
-    assert first["descriptorSha256"] == descriptor["descriptorSha256"]
-    assert first["recipeSha256"] == recipe["recipeSha256"]
-    lifecycle = first["registration"]["presentation"]["buildingLifecycle"]
-    assert lifecycle["schemaVersion"] == 1
-    assert lifecycle["simulationFacts"] == {
-        "maxHealth": 3000,
-        "damageStateRule": {
-            "damagedThreshold": 2000,
-            "reallyDamagedThreshold": 1000,
-        },
-    }
-    chain = {row["phase"]: row.get("nextPhase") for row in lifecycle["phases"]}
-    assert chain["construction"] == "intact"
-    assert chain["intact"] == "damaged"
-    assert chain["rubble"] == "post-rubble"
-    assert chain["post-rubble"] is None
-    assert len(first["runtimeSha256"]) == 64
+    with pytest.raises(
+        PlayableStructurePackCompilerError, match="exactly one bundled MANUAL"
+    ):
+        compose_structure_runtime_document(descriptor, recipe, evidence)
 
 
 def test_runtime_document_rejects_identity_mismatch() -> None:
-    from importer.tests.test_playable_structure_compiler import (
-        _structure_documents,
-    )
-    from openbfme_importer.playable_structure_compiler import (
-        compile_playable_structure_descriptor,
-    )
-
-    documents = _structure_documents()
-    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    descriptor, _recipe, evidence = _keep_fixture()
     recipe = compile_structure_visual_recipe(_TARGET, _closure())
 
     with pytest.raises(
         PlayableStructurePackCompilerError, match="identities differ"
     ):
-        compose_structure_runtime_document(descriptor, recipe)
+        compose_structure_runtime_document(descriptor, recipe, evidence)
+
+
+def test_runtime_document_rejects_tampered_evidence() -> None:
+    descriptor, recipe, evidence = _keep_fixture()
+    tampered = deepcopy(evidence)
+    tampered["evidenceSha256"] = "0" * 64
+
+    with pytest.raises(ValueError, match="evidence digest"):
+        compose_structure_runtime_document(descriptor, recipe, tampered)
 
 
 def test_state_referencing_unknown_resource_is_rejected() -> None:

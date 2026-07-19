@@ -18,6 +18,9 @@ from .playable_structure_compiler import (
     PlayableStructureCompilerError,
     compile_playable_structure_descriptor,
 )
+from .playable_structure_lifecycle_evidence import (
+    compile_structure_lifecycle_evidence,
+)
 from .playable_structure_pack_compiler import (
     PlayableStructurePackCompilerError,
     compile_structure_visual_recipe,
@@ -478,7 +481,12 @@ def build_faction_conversion(
                 )
                 closure = build_retail_visual_closure(effective_root, [object_id])
                 recipe = compile_structure_visual_recipe(object_id, closure)
-                runtime = compose_structure_runtime_document(descriptor, recipe)
+                evidence = compile_structure_lifecycle_evidence(
+                    object_id, documents, prepared=prepared
+                )
+                runtime = compose_structure_runtime_document(
+                    descriptor, recipe, evidence
+                )
             except (
                 PlayableStructureCompilerError,
                 PlayableStructurePackCompilerError,
@@ -505,6 +513,7 @@ def build_faction_conversion(
                 if artifact_writer is not None:
                     artifact_writer(object_id, "descriptor", descriptor)
                     artifact_writer(object_id, "pack-recipe", recipe)
+                    artifact_writer(object_id, "lifecycle-evidence", evidence)
                     artifact_writer(object_id, "runtime", runtime)
                 row.update(
                     {
