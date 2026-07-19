@@ -1,7 +1,11 @@
 extends SceneTree
-## Focused fail-closed gate for the generic playable-structure runtime registry.
+## Focused fail-closed gate for the generic playable-structure runtime registry
+## and the data-driven faction manifest built on top of it.
 ## Mirrors playable_unit_runtime_consumer_runner.gd: synthetic fixture packs
 ## only, no retail content, and every malformed delta must reject atomically.
+
+const FactionManifest = preload("res://src/retail_slice/retail_faction_manifest.gd")
+const Sim = preload("res://src/retail_slice/retail_slice_sim.gd")
 
 var passed := 0
 var failed := 0
@@ -79,7 +83,132 @@ func _run() -> void:
 	_check_rejected_variant(content_db, pack_root, "damage_rule_drift", func(broken: Dictionary) -> void:
 		((_lifecycle_of(broken).get("simulationFacts", {}) as Dictionary).get("damageStateRule", {}) as Dictionary)["damagedThreshold"] = 2500)
 
+	_run_faction_manifest_checks()
 	_finish()
+
+
+func _run_faction_manifest_checks() -> void:
+	var structures := {
+		"FixtureFortress": _fixture_document("FixtureFortress", "fixturefortress", "fixturemonsterpen", 5000),
+		"FixtureMonsterPen": _fixture_document("FixtureMonsterPen", "fixturemonsterpen"),
+	}
+	var units := {
+		"FixtureMonster": _fixture_unit_document("FixtureMonster", "FixtureMonsterPen", 200),
+		"FixturePorter": _fixture_unit_document("FixturePorter", "FixtureFortress", 1),
+	}
+
+	var manifest := FactionManifest.from_registries("fixture", units, structures)
+	_check(not manifest.has("_error"), "fixture faction manifest builds: %s" % String(manifest.get("_error", "")))
+	if manifest.has("_error"):
+		return
+	_check(Array(manifest.get("structure_kinds", [])) == ["fortress", "monsterpen"], "structure kinds derive fortress-first from document slugs")
+	_check(int((manifest.get("structure_max_health", {}) as Dictionary).get("fortress", 0)) == 5000, "fortress health comes from simulationFacts")
+	_check(int((manifest.get("structure_max_health", {}) as Dictionary).get("monsterpen", 0)) == 3000, "producer health comes from simulationFacts")
+	var build_rule: Dictionary = (manifest.get("structure_build_rules", {}) as Dictionary).get("monsterpen", {}) as Dictionary
+	_check(int(build_rule.get("cost", -1)) == 300 and is_equal_approx(float(build_rule.get("seconds", 0.0)), 30.0), "build rules parse BuildCost/BuildTime scalars")
+	_check((manifest.get("producer_kind_registry", {}) as Dictionary) == {"FixtureFortress": "fortress", "FixtureMonsterPen": "monsterpen"}, "producer registry maps source objects to kinds")
+	_check(Array(manifest.get("ai_production_plan", [])) == ["bfme2.object.fixture-monster"], "AI plan is one trainable unit per producer in fixed order")
+	_check(Array(manifest.get("builder_unit_ids", [])) == ["bfme2.object.fixture-porter"], "builder derives from authored construct routes")
+	var roster: Array = manifest.get("spawn_roster", [])
+	var roster_ids: Array = []
+	for entry in roster:
+		roster_ids.append(int((entry as Dictionary).get("id", 0)))
+	_check(roster_ids == [1, 2, 101, 102, 103, 3, 104], "spawn roster covers the deterministic anchor slots")
+
+	var sim = Sim.new()
+	sim._apply_gameplay_rules({
+		"enable_base_loop": true,
+		"faction_manifest": manifest,
+		"playable_unit_runtimes": units,
+		"producer_kind_by_source_object": manifest.get("producer_kind_registry", {}),
+		"unit_rules": {},
+		"starting_resources": 2000,
+		"source_map_transform_scale": 0.1,
+	})
+	_check(sim.configuration_error == "", "fixture faction simulation configures: %s" % sim.configuration_error)
+	sim.setup({}, sim._rules)
+	_check(sim.configuration_error == "", "fixture faction setup stays configured: %s" % sim.configuration_error)
+	_check(sim.structure_ids(0).size() == 2 and sim.structure_ids(1).size() == 2, "base loop seeds both teams from structure documents")
+	_check(sim.fortress_id(0) != 0 and sim.fortress_id(1) != 0, "fortress kind is normalized so the base anchor resolves")
+	_check(sim.structure_maximum_health("monsterpen") == 3000, "structure health flows from the manifest")
+	_check(sim.initial_battalion_count() == 7 and sim.entity_ids().size() == 7, "faction spawn roster fills every anchor slot")
+	_check(bool(sim.entity(3).get("is_builder", false)) and bool(sim.entity(104).get("is_builder", false)), "builder flag rides the manifest builder unit ids")
+	_check(String(sim.entity(1).get("object_id", "")) == "bfme2.object.fixture-monster", "player spawn identity is descriptor-driven")
+	var producer: int = sim.producer_id(0, "monsterpen")
+	var queued: Dictionary = sim.queue_unit(0, producer, "bfme2.object.fixture-monster")
+	_check(bool(queued.get("ok", false)), "faction producer trains its declared unit: %s" % String(queued.get("reason", "")))
+	var wrong: Dictionary = sim.queue_unit(0, sim.fortress_id(0), "bfme2.object.fixture-monster")
+	_check(not bool(wrong.get("ok", true)) and String(wrong.get("reason", "")) == "unsupported-unit", "fortress rejects units it does not train")
+
+	var no_porter := units.duplicate(true)
+	no_porter.erase("FixturePorter")
+	var missing_builder := FactionManifest.from_registries("fixture", no_porter, structures)
+	_check(String(missing_builder.get("_error", "")).contains("FixturePorter"), "missing porter fails closed naming the builder")
+	var no_fortress := structures.duplicate(true)
+	no_fortress.erase("FixtureFortress")
+	var missing_fortress := FactionManifest.from_registries("fixture", units, no_fortress)
+	_check(String(missing_fortress.get("_error", "")).contains("fortress"), "missing fortress fails closed naming the gap")
+	var foreign_units := units.duplicate(true)
+	foreign_units["FixtureStray"] = _fixture_unit_document("FixtureStray", "GondorBarracks", 50)
+	var missing_producer := FactionManifest.from_registries("fixture", foreign_units, structures)
+	_check(String(missing_producer.get("_error", "")).contains("GondorBarracks"), "unknown producer fails closed naming the structure")
+	var empty_faction := FactionManifest.from_registries("rohan", units, structures)
+	_check(String(empty_faction.get("_error", "")).contains("rohan"), "unconverted faction fails closed naming the faction")
+
+
+func _fixture_unit_document(object_id: String, producer_object_id: String, damage: int) -> Dictionary:
+	var slug := object_id.to_lower()
+	return {
+		"schema": "openbfme.playable-unit-runtime",
+		"schemaVersion": 0,
+		"objectId": object_id,
+		"category": "infantry",
+		"descriptorSha256": "1".repeat(64),
+		"recipeSha256": "2".repeat(64),
+		"resourceIds": ["%s-model" % slug],
+		"registration": {
+			"production": [{
+				"producerObjectId": producer_object_id,
+				"commandSetId": "%sCommandSet" % producer_object_id,
+				"commandId": "Command_Construct%s" % object_id,
+				"surface": "command-socket",
+				"slot": 1,
+				"prerequisites": [],
+				"commandSetTransition": [],
+			}],
+			"composition": {
+				"containerObjectId": object_id,
+				"primaryMemberObjectId": object_id,
+				"members": [{"objectId": object_id, "count": 1}],
+			},
+			"gameplay": {},
+			"simulation": {
+				"displayName": "%s Display" % object_id,
+				"buildCost": 700,
+				"buildTimeSeconds": 45.0,
+				"commandPoints": 35,
+				"memberCount": 1,
+				"memberHealth": 2500,
+				"speed": 50.0,
+				"visionRange": 400.0,
+				"combat": {
+					"attackRange": 30.0, "minimumAttackRange": 0.0,
+					"delayBetweenShotsMs": 1000.0, "preAttackDelayMs": 250.0,
+					"firingDurationMs": 250.0, "damage": damage,
+				},
+				"movement": {"acceleration": 100.0, "braking": 100.0, "turnRateDegreesPerSecond": 360.0},
+				"formation": {"memberCount": 1, "positions": [{"x": 0.0, "y": 0.0}]},
+			},
+			"capabilities": [{"id": "move"}],
+			"visual": {"components": [], "coreAnimations": {}},
+			"ui": {"portraitImageIds": [], "commands": []},
+			"imageBindings": {},
+			"audioRoutes": {"container": {}, "primaryMember": {}},
+			"audioBindings": {},
+			"audioResolution": {},
+			"unsupportedCapabilities": [],
+		},
+	}
 
 
 func _lifecycle_of(document: Dictionary) -> Dictionary:
@@ -112,8 +241,10 @@ func _build_fixture(pack_root: String) -> void:
 	_write_json(pack_root.path_join("data/playable-structures/fixturemonsterpen2.json"), _fixture_document("SecondPen", "secondpen", "fixturemonsterpen"))
 
 
-func _fixture_document(object_id: String, slug: String, asset_slug: String = "") -> Dictionary:
+func _fixture_document(object_id: String, slug: String, asset_slug: String = "", maximum_health: int = 3000) -> Dictionary:
 	var model_slug := asset_slug if asset_slug != "" else ("variantpen" if slug == "variantpen" else "fixturemonsterpen")
+	var damaged := maximum_health - 1000
+	var really_damaged := maximum_health - 2000
 	return {
 		"schema": "openbfme.playable-structure-runtime",
 		"schemaVersion": 0,
@@ -141,9 +272,9 @@ func _fixture_document(object_id: String, slug: String, asset_slug: String = "")
 						"module": "StructureBody ModuleTag_01",
 						"sourceIni": "data/ini/object/fixture.ini",
 						"line": 10,
-						"maxHealth": {"authored": "3000", "value": 3000},
-						"maxHealthDamaged": {"authored": "2000", "value": 2000},
-						"maxHealthReallyDamaged": {"authored": "1000", "value": 1000},
+						"maxHealth": {"authored": str(maximum_health), "value": maximum_health},
+						"maxHealthDamaged": {"authored": str(damaged), "value": damaged},
+						"maxHealthReallyDamaged": {"authored": str(really_damaged), "value": really_damaged},
 					},
 					"evidence": [],
 				},
@@ -181,8 +312,8 @@ func _fixture_document(object_id: String, slug: String, asset_slug: String = "")
 						"missing": ["construction", "really-damaged", "rubble", "post-rubble"],
 					},
 					"simulationFacts": {
-						"maxHealth": 3000,
-						"damageStateRule": {"damagedThreshold": 2000, "reallyDamagedThreshold": 1000},
+						"maxHealth": maximum_health,
+						"damageStateRule": {"damagedThreshold": damaged, "reallyDamagedThreshold": really_damaged},
 					},
 				},
 				"ui": {"DisplayName": {"expression": "OBJECT:%s" % object_id, "sourceIni": "data/ini/object/fixture.ini", "line": 2}},
