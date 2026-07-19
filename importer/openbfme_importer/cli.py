@@ -27,7 +27,7 @@ from .paths import (
 from .pipeline import ImportPipeline, audit_pack, bundle_digest
 from .playable_unit_import import import_playable_unit
 from .faction_census import census_playable_faction
-from .faction_import import plan_faction_import
+from .faction_import import convert_faction_import, plan_faction_import
 from .faction_policy import implicit_object_roots
 from .faction_profile import build_men_leaf_profile
 from .map_profile import build_five_map_profile
@@ -242,7 +242,12 @@ def build_parser() -> argparse.ArgumentParser:
     import_faction.add_argument(
         "--plan-only",
         action="store_true",
-        help="required until every reported converter family has a pack compiler",
+        help="account for every object without compiling conversion artifacts",
+    )
+    import_faction.add_argument(
+        "--convert",
+        action="store_true",
+        help="compile every supported descriptor, recipe, and runtime artifact",
     )
 
     faction_profile = sub.add_parser(
@@ -414,9 +419,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "import-faction":
             if args.game != "bfme2":
                 raise ValueError("import-faction currently supports BFME2 1.06 only")
-            if not args.plan_only:
+            if args.plan_only == args.convert:
                 raise ValueError(
-                    "full faction publication is not enabled; rerun with --plan-only"
+                    "pass exactly one of --plan-only or --convert; pack "
+                    "publication is a later stage"
                 )
             pipeline = ImportPipeline(catalog, _state_root(args), game="bfme2")
             effective_root, manifest_path, _staging, _backup = (
@@ -424,13 +430,43 @@ def main(argv: list[str] | None = None) -> int:
             )
             if not manifest_path.is_file():
                 pipeline.extract_all_assets(force=False)
+            report_root = _state_root(args) / "reports" / "faction-import"
+            if args.convert:
+                artifact_root = report_root / args.faction / "objects"
+
+                def _write_artifact(
+                    object_id: str, kind: str, document: object
+                ) -> None:
+                    write_json_atomic(
+                        artifact_root / object_id.casefold() / f"{kind}.json",
+                        document,
+                    )
+
+                value = convert_faction_import(
+                    catalog,
+                    effective_root,
+                    args.faction,
+                    artifact_writer=_write_artifact,
+                )
+                report_path = report_root / f"{args.faction}-coverage.json"
+                write_json_atomic(report_path, value)
+                summary = value["summary"]
+                _render(
+                    {
+                        "ready": summary["conversionComplete"],
+                        "report": str(report_path),
+                        "aggregate_sha256": value["aggregateSha256"],
+                        "object_count": summary["objectCount"],
+                        "converted_count": summary["convertedCount"],
+                        "excluded_count": summary["excludedCount"],
+                        "converter_gap_count": summary["converterGapCount"],
+                        "unresolved_leaf_count": summary["unresolvedLeafCount"],
+                    },
+                    args.json,
+                )
+                return 0 if bool(summary["conversionComplete"]) else 6
             value = plan_faction_import(catalog, effective_root, args.faction)
-            report_path = (
-                _state_root(args)
-                / "reports"
-                / "faction-import"
-                / f"{args.faction}-plan.json"
-            )
+            report_path = report_root / f"{args.faction}-plan.json"
             write_json_atomic(report_path, value)
             summary = value["summary"]
             _render(

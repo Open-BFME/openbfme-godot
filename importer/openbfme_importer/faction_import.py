@@ -1,15 +1,24 @@
-"""Deterministic completeness planning for a BFME2 faction import."""
+"""Deterministic completeness planning and conversion for a BFME2 faction import."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from .catalog import InstallCatalog
 from .faction_census import census_playable_faction
 from .faction_policy import implicit_object_roots
+from .playable_structure_compiler import (
+    PlayableStructureCompilerError,
+    compile_playable_structure_descriptor,
+)
+from .playable_structure_pack_compiler import (
+    PlayableStructurePackCompilerError,
+    compile_structure_visual_recipe,
+    compose_structure_runtime_document,
+)
 from .playable_unit_import import FACTIONS, _source_documents
 from .playable_unit_compiler import (
     PlayableUnitCompilerError,
@@ -17,10 +26,24 @@ from .playable_unit_compiler import (
     playable_object_kind_of,
     prepare_playable_unit_compiler,
 )
+from .playable_unit_pack_compiler import (
+    PlayableUnitPackCompilerError,
+    compile_playable_unit_pack_recipe,
+)
+from .retail_visual_closure import build_retail_visual_closure
 
 
 SCHEMA = "openbfme.faction-import-plan"
 SCHEMA_VERSION = 0
+COVERAGE_SCHEMA = "openbfme.faction-import-coverage"
+COVERAGE_SCHEMA_VERSION = 0
+
+_EXCLUDED_FAMILY_REASONS = {
+    "banner-member": "banner members convert inside their parent horde recipes",
+    "projectile": "projectiles convert inside their firing unit recipes",
+    "spellbook": "spell book surfaces are outside the vertical-slice scope",
+    "object-inheritance": "inheritance-only base objects are not standalone content",
+}
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -223,11 +246,7 @@ def build_faction_import_plan(
     return plan
 
 
-def plan_faction_import(
-    catalog: InstallCatalog, effective_root: Path, faction: str
-) -> dict[str, object]:
-    """Build the source-backed plan for one of the six BFME2 factions."""
-
+def _faction_spec(faction: str) -> tuple[str, str, str]:
     key = faction.casefold().strip()
     spec = next(
         (
@@ -239,6 +258,15 @@ def plan_faction_import(
     )
     if spec is None:
         raise ValueError(f"unsupported playable faction: {faction!r}")
+    return spec
+
+
+def plan_faction_import(
+    catalog: InstallCatalog, effective_root: Path, faction: str
+) -> dict[str, object]:
+    """Build the source-backed plan for one of the six BFME2 factions."""
+
+    spec = _faction_spec(faction)
     graph = census_playable_faction(
         catalog,
         player_template=spec[1],
@@ -252,9 +280,215 @@ def plan_faction_import(
     )
 
 
+def _wall_template_roots(faction_graph: Mapping[str, object]) -> tuple[str, ...]:
+    definitions = faction_graph.get("definitions")
+    if not isinstance(definitions, Mapping):
+        return ()
+    targets: set[str] = set()
+    for row in definitions.get("objects", []):
+        if not isinstance(row, Mapping):
+            continue
+        for edge in row.get("edges", []):
+            if not isinstance(edge, Mapping):
+                continue
+            kind = str(edge.get("targetKind", ""))
+            target = str(edge.get("targetId", ""))
+            if kind.startswith("wall-") and kind.endswith("-template") and target:
+                targets.add(target)
+    return tuple(sorted(targets, key=lambda value: (value.casefold(), value)))
+
+
+def build_faction_conversion(
+    faction_graph: Mapping[str, object],
+    documents: Mapping[str, bytes],
+    effective_root: Path,
+    *,
+    catalog_identity_sha256: str,
+    artifact_writer: Callable[[str, str, Mapping[str, object]], None] | None = None,
+) -> dict[str, object]:
+    """Convert every supported plan row and account for the rest, fail-closed.
+
+    Per-object conversion failures become coverage rows, never a batch abort;
+    ``artifact_writer(object_id, artifact_kind, document)`` receives each
+    compiled descriptor, recipe, and runtime document for persistence.
+    """
+
+    plan = build_faction_import_plan(
+        faction_graph, documents, catalog_identity_sha256=catalog_identity_sha256
+    )
+    prepared = prepare_playable_unit_compiler(documents)
+    target = plan["target"]
+    assert isinstance(target, Mapping)
+    template = str(target["playerTemplate"])
+    spawned = tuple(
+        object_id for object_id, _reason in implicit_object_roots(template)
+    )
+    wall_templates = _wall_template_roots(faction_graph)
+
+    rows: list[dict[str, object]] = []
+    for plan_row in plan["objects"]:
+        assert isinstance(plan_row, Mapping)
+        object_id = str(plan_row["id"])
+        family = str(plan_row["family"])
+        status = str(plan_row["status"])
+        row: dict[str, object] = {"id": object_id, "family": family}
+        if status == "descriptor-ready":
+            try:
+                descriptor = compile_playable_unit_descriptor(
+                    object_id,
+                    documents,
+                    faction_graph=faction_graph,
+                    prepared=prepared,
+                )
+                composition = descriptor["composition"]
+                assert isinstance(composition, Mapping)
+                targets = {str(composition["containerObjectId"])}
+                targets.update(
+                    str(member["objectId"]) for member in composition["members"]
+                )
+                closure = build_retail_visual_closure(
+                    effective_root, sorted(targets, key=str.casefold)
+                )
+                recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+            except (
+                PlayableUnitCompilerError,
+                PlayableUnitPackCompilerError,
+                ValueError,
+            ) as exc:
+                row.update({"status": "converter-gap", "reason": str(exc)})
+            else:
+                if artifact_writer is not None:
+                    artifact_writer(object_id, "descriptor", descriptor)
+                    artifact_writer(object_id, "pack-recipe", recipe)
+                row.update(
+                    {
+                        "status": "converted",
+                        "converter": "playable-unit",
+                        "category": str(descriptor["category"]),
+                        "descriptorSha256": descriptor["descriptorSha256"],
+                        "recipeSha256": recipe["recipeSha256"],
+                        "resourceCount": len(recipe["resources"]),
+                    }
+                )
+        elif family == "structure":
+            try:
+                descriptor = compile_playable_structure_descriptor(
+                    object_id,
+                    documents,
+                    prepared=prepared,
+                    engine_spawned_roots=spawned,
+                    wall_template_roots=wall_templates,
+                )
+                closure = build_retail_visual_closure(effective_root, [object_id])
+                recipe = compile_structure_visual_recipe(object_id, closure)
+                runtime = compose_structure_runtime_document(descriptor, recipe)
+            except (
+                PlayableStructureCompilerError,
+                PlayableStructurePackCompilerError,
+                ValueError,
+            ) as exc:
+                row.update({"status": "converter-gap", "reason": str(exc)})
+            else:
+                if artifact_writer is not None:
+                    artifact_writer(object_id, "descriptor", descriptor)
+                    artifact_writer(object_id, "pack-recipe", recipe)
+                    artifact_writer(object_id, "runtime", runtime)
+                row.update(
+                    {
+                        "status": "converted",
+                        "converter": "playable-structure",
+                        "category": "structure",
+                        "productionEvidence": str(
+                            descriptor["production"]["evidence"]
+                        ),
+                        "descriptorSha256": descriptor["descriptorSha256"],
+                        "recipeSha256": recipe["recipeSha256"],
+                        "runtimeSha256": runtime["runtimeSha256"],
+                        "resourceCount": len(recipe["resources"]),
+                    }
+                )
+        elif family in _EXCLUDED_FAMILY_REASONS:
+            row.update(
+                {
+                    "status": "excluded",
+                    "reason": _EXCLUDED_FAMILY_REASONS[family],
+                }
+            )
+        else:
+            row.update(
+                {
+                    "status": "converter-gap",
+                    "reason": str(plan_row.get("reason", "")),
+                }
+            )
+        rows.append(row)
+
+    counts = {
+        key: sum(row["status"] == key for row in rows)
+        for key in ("converted", "excluded", "converter-gap")
+    }
+    plan_summary = plan["summary"]
+    assert isinstance(plan_summary, Mapping)
+    unresolved = int(plan_summary["unresolvedLeafCount"])
+    coverage: dict[str, object] = {
+        "schema": COVERAGE_SCHEMA,
+        "schemaVersion": COVERAGE_SCHEMA_VERSION,
+        "target": dict(target),
+        "inputs": dict(plan["inputs"]),
+        "planAggregateSha256": plan["aggregateSha256"],
+        "objects": rows,
+        "summary": {
+            # Conversion coverage is not publication: pack build, audit, and
+            # runtime receipts belong to the publication stage.
+            "publicationReady": False,
+            "objectCount": len(rows),
+            "convertedCount": counts["converted"],
+            "excludedCount": counts["excluded"],
+            "converterGapCount": counts["converter-gap"],
+            "unresolvedLeafCount": unresolved,
+            "conversionComplete": unresolved == 0
+            and counts["converter-gap"] == 0,
+            "blockingReason": "conversion artifacts lack a pack/runtime receipt",
+        },
+    }
+    coverage["aggregateSha256"] = hashlib.sha256(
+        _canonical_bytes(coverage)
+    ).hexdigest()
+    return coverage
+
+
+def convert_faction_import(
+    catalog: InstallCatalog,
+    effective_root: Path,
+    faction: str,
+    *,
+    artifact_writer: Callable[[str, str, Mapping[str, object]], None] | None = None,
+) -> dict[str, object]:
+    """Convert one faction's supported objects and account for every other row."""
+
+    spec = _faction_spec(faction)
+    graph = census_playable_faction(
+        catalog,
+        player_template=spec[1],
+        expected_side=spec[2],
+        implicit_object_roots=implicit_object_roots(spec[1]),
+    )
+    return build_faction_conversion(
+        graph,
+        _source_documents(effective_root),
+        effective_root,
+        catalog_identity_sha256=catalog.identity_sha256(),
+        artifact_writer=artifact_writer,
+    )
+
+
 __all__ = [
+    "COVERAGE_SCHEMA",
+    "COVERAGE_SCHEMA_VERSION",
     "SCHEMA",
     "SCHEMA_VERSION",
+    "build_faction_conversion",
     "build_faction_import_plan",
+    "convert_faction_import",
     "plan_faction_import",
 ]
