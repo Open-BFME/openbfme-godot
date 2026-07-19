@@ -113,14 +113,32 @@ const AI_PRODUCTION_PLAN: Array[String] = [
 	ARCHER_OBJECT_ID,
 	KNIGHT_OBJECT_ID,
 ]
-const INITIAL_BATTALION_COUNT := 5
+# Default faction roster: entries flagged requires_unit_rule spawn only when the
+# selected pack's unit rules define that object (the two Builder battalions).
+const DEFAULT_SPAWN_ROSTER: Array = [
+	{"id": 1, "team": PLAYER_TEAM, "anchor": "player_spawn_primary", "name": "Gondor Soldiers", "object_id": SOLDIER_OBJECT_ID, "unit_type": SOLDIER_HORDE_ID},
+	{"id": 2, "team": PLAYER_TEAM, "anchor": "player_spawn_secondary", "name": "Gondor Archers", "object_id": ARCHER_OBJECT_ID, "unit_type": ARCHER_OBJECT_ID},
+	{"id": 101, "team": ENEMY_TEAM, "anchor": "enemy_spawn_primary", "name": "Enemy Soldiers", "object_id": SOLDIER_OBJECT_ID, "unit_type": SOLDIER_HORDE_ID},
+	{"id": 102, "team": ENEMY_TEAM, "anchor": "enemy_spawn_secondary", "name": "Enemy Tower Guard", "object_id": TOWER_GUARD_OBJECT_ID, "unit_type": TOWER_GUARD_OBJECT_ID},
+	{"id": 103, "team": ENEMY_TEAM, "anchor": "enemy_reserve", "name": "Enemy Gondor Knights", "object_id": KNIGHT_OBJECT_ID, "unit_type": KNIGHT_OBJECT_ID},
+	{"id": 3, "team": PLAYER_TEAM, "anchor": "player_builder", "name": "Builder", "object_id": BUILDER_OBJECT_ID, "unit_type": BUILDER_OBJECT_ID, "command_points": 0, "requires_unit_rule": true},
+	{"id": 104, "team": ENEMY_TEAM, "anchor": "enemy_builder", "name": "Enemy Builder", "object_id": BUILDER_OBJECT_ID, "unit_type": BUILDER_OBJECT_ID, "command_points": 0, "requires_unit_rule": true},
+]
 
 
 func initial_battalion_count() -> int:
-	# The two Builder battalions (ids 3/104) spawn only when the selected
-	# pack's unit rules define the builder object.
 	var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
-	return INITIAL_BATTALION_COUNT + (2 if configured_unit_rules.has(BUILDER_OBJECT_ID) else 0)
+	var count := 0
+	for entry_value in _active_spawn_roster():
+		var entry := entry_value as Dictionary
+		if bool(entry.get("requires_unit_rule", false)) and not configured_unit_rules.has(String(entry.get("object_id", ""))):
+			continue
+		count += 1
+	return count
+
+
+func _active_spawn_roster() -> Array:
+	return _spawn_roster if not _spawn_roster.is_empty() else DEFAULT_SPAWN_ROSTER
 
 var tick_index := 0
 var winner := -1
@@ -148,6 +166,9 @@ var configuration_error := ""
 var _unit_production_rules: Dictionary = {}
 var _completed_hero_identities: Dictionary = {}
 var _production_unit_order: Array[String] = []
+var _ai_production_plan: Array[String] = []
+var _unit_damage_types: Dictionary = {}
+var _spawn_roster: Array = []
 var _structure_kinds: Array[String] = []
 var _structure_max_health: Dictionary = {}
 var _structure_build_rules: Dictionary = {}
@@ -190,17 +211,21 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_next_dynamic_id = {PLAYER_TEAM: 10, ENEMY_TEAM: 110}
 	_next_dynamic_structure_id = 3000
 	if bool(_rules.get("spawn_initial_battalions", true)):
-		_add_battalion(1, PLAYER_TEAM, Vector2(_spawn_positions[1]), "Gondor Soldiers", SOLDIER_OBJECT_ID, SOLDIER_HORDE_ID)
-		_add_battalion(2, PLAYER_TEAM, Vector2(_spawn_positions[2]), "Gondor Archers", ARCHER_OBJECT_ID, ARCHER_OBJECT_ID)
-		_add_battalion(101, ENEMY_TEAM, Vector2(_spawn_positions[101]), "Enemy Soldiers", SOLDIER_OBJECT_ID, SOLDIER_HORDE_ID)
-		_add_battalion(102, ENEMY_TEAM, Vector2(_spawn_positions[102]), "Enemy Tower Guard", TOWER_GUARD_OBJECT_ID, TOWER_GUARD_OBJECT_ID)
-		var enemy_reserve_position := (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5
-		_add_battalion(103, ENEMY_TEAM, enemy_reserve_position, "Enemy Gondor Knights", KNIGHT_OBJECT_ID, KNIGHT_OBJECT_ID)
 		var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
-		if configured_unit_rules.has(BUILDER_OBJECT_ID):
-			_add_battalion(3, PLAYER_TEAM, Vector2(_spawn_positions[1]) + Vector2(0.0, 4.0), "Builder", BUILDER_OBJECT_ID, BUILDER_OBJECT_ID, 0)
-			var enemy_builder_position := _builder_spawn_position(ENEMY_TEAM) if base_loop_enabled else Vector2(_spawn_positions[101]) + Vector2(0.0, -4.0)
-			_add_battalion(104, ENEMY_TEAM, enemy_builder_position, "Enemy Builder", BUILDER_OBJECT_ID, BUILDER_OBJECT_ID, 0)
+		for entry_value in _active_spawn_roster():
+			var entry := entry_value as Dictionary
+			var object_id := String(entry.get("object_id", ""))
+			if bool(entry.get("requires_unit_rule", false)) and not configured_unit_rules.has(object_id):
+				continue
+			_add_battalion(
+				int(entry.get("id", 0)),
+				int(entry.get("team", PLAYER_TEAM)),
+				_spawn_anchor_position(String(entry.get("anchor", ""))),
+				String(entry.get("name", "")),
+				object_id,
+				String(entry.get("unit_type", object_id)),
+				int(entry.get("command_points", -1))
+			)
 	if base_loop_enabled:
 		_initialize_base_loop()
 	_emit_music("explore")
@@ -269,16 +294,15 @@ func _apply_fallback_configuration() -> void:
 func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	_rules = gameplay_rules.duplicate(true)
 	configuration_error = ""
-	_unit_production_rules = UNIT_PRODUCTION_RULES.duplicate(true)
-	_production_unit_order.assign(AI_PRODUCTION_PLAN)
-	_structure_kinds.assign(STRUCTURE_KINDS)
-	_structure_max_health = STRUCTURE_MAX_HEALTH.duplicate(true)
-	_structure_build_rules = STRUCTURE_BUILD_RULES.duplicate(true)
+	if not _configure_faction_manifest():
+		return
 	_unit_prerequisites.clear()
 	_structure_upgrade_contracts.clear()
 	_configure_ranger_runtime_contract()
 	_configure_trebuchet_runtime_contract()
 	_configure_playable_unit_runtime_contracts()
+	_configure_manifest_builders()
+	_validate_faction_manifest_coherence()
 	base_loop_enabled = bool(_rules.get("enable_base_loop", false))
 	command_point_cap = maxi(60, int(_rules.get("command_point_cap", 200)))
 	team_resources = {
@@ -286,6 +310,105 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 		ENEMY_TEAM: maxi(0, int(_rules.get("starting_resources", 1200 if base_loop_enabled else 0))),
 	}
 	team_command_points = {PLAYER_TEAM: 120, ENEMY_TEAM: 120}
+
+
+func _configure_faction_manifest() -> bool:
+	## Every faction-scoped table flows through the manifest. Absent keys
+	## default to exactly the historical Gondor constants, so a rules
+	## dictionary without a manifest stays byte-identical to the old behavior.
+	var manifest_value: Variant = _rules.get("faction_manifest", {})
+	if typeof(manifest_value) != TYPE_DICTIONARY:
+		configuration_error = "Faction manifest is not a dictionary"
+		return false
+	var manifest := manifest_value as Dictionary
+	if manifest.has("_error"):
+		configuration_error = "Faction manifest is invalid: %s" % String(manifest.get("_error", ""))
+		return false
+	var typed_expectations := {
+		"unit_production_rules": TYPE_DICTIONARY,
+		"ai_production_plan": TYPE_ARRAY,
+		"structure_kinds": TYPE_ARRAY,
+		"structure_max_health": TYPE_DICTIONARY,
+		"structure_build_rules": TYPE_DICTIONARY,
+		"unit_damage_types": TYPE_DICTIONARY,
+		"spawn_roster": TYPE_ARRAY,
+		"builder_unit_ids": TYPE_ARRAY,
+	}
+	for key in typed_expectations:
+		if manifest.has(key) and typeof(manifest.get(key)) != int(typed_expectations[key]):
+			configuration_error = "Faction manifest field '%s' has the wrong type" % String(key)
+			return false
+	_unit_production_rules = (manifest.get("unit_production_rules", UNIT_PRODUCTION_RULES) as Dictionary).duplicate(true)
+	var plan: Array = Array(manifest.get("ai_production_plan", AI_PRODUCTION_PLAN))
+	var kinds: Array = Array(manifest.get("structure_kinds", STRUCTURE_KINDS))
+	for table in [plan, kinds]:
+		for value in table as Array:
+			if typeof(value) != TYPE_STRING or String(value).strip_edges() == "":
+				configuration_error = "Faction manifest plan or structure kinds contain a non-string entry"
+				return false
+	_production_unit_order.assign(plan)
+	_ai_production_plan.assign(plan)
+	_structure_kinds.assign(kinds)
+	_structure_max_health = (manifest.get("structure_max_health", STRUCTURE_MAX_HEALTH) as Dictionary).duplicate(true)
+	_structure_build_rules = (manifest.get("structure_build_rules", STRUCTURE_BUILD_RULES) as Dictionary).duplicate(true)
+	_unit_damage_types = (manifest.get("unit_damage_types", UNIT_DAMAGE_TYPES) as Dictionary).duplicate(true)
+	_spawn_roster = (manifest.get("spawn_roster", DEFAULT_SPAWN_ROSTER) as Array).duplicate(true)
+	for kind_value in _structure_kinds:
+		var kind := String(kind_value)
+		if int(_structure_max_health.get(kind, 0)) <= 0:
+			configuration_error = "Faction manifest structure kind '%s' has no positive maximum health" % kind
+			return false
+		var build_rule: Dictionary = _structure_build_rules.get(kind, {}) as Dictionary
+		if int(build_rule.get("cost", -1)) < 0 or float(build_rule.get("seconds", 0.0)) <= 0.0:
+			configuration_error = "Faction manifest structure kind '%s' has no valid build rule" % kind
+			return false
+	return true
+
+
+func _configure_manifest_builders() -> void:
+	## A data-driven faction names its builder via the structure documents'
+	## authored construct routes; the flag rides the normalized unit rule.
+	if configuration_error != "":
+		return
+	var manifest: Dictionary = _rules.get("faction_manifest", {}) as Dictionary
+	var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
+	for builder_value in manifest.get("builder_unit_ids", []) as Array:
+		var builder_id := String(builder_value)
+		if not configured_unit_rules.has(builder_id):
+			configuration_error = "Faction manifest builder unit '%s' has no configured unit rule" % builder_id
+			return
+		var builder_rule: Dictionary = configured_unit_rules[builder_id] as Dictionary
+		builder_rule["is_builder"] = true
+		configured_unit_rules[builder_id] = builder_rule
+	_rules["unit_rules"] = configured_unit_rules
+
+
+func _validate_faction_manifest_coherence() -> void:
+	## Only an explicitly supplied manifest is validated end-to-end; legacy
+	## rule dictionaries keep their historical permissiveness.
+	if configuration_error != "" or not _rules.has("faction_manifest"):
+		return
+	var manifest: Dictionary = _rules.get("faction_manifest", {}) as Dictionary
+	if manifest.is_empty():
+		return
+	for unit_type_value in _ai_production_plan:
+		var unit_type := String(unit_type_value)
+		if not _unit_production_rules.has(unit_type):
+			configuration_error = "Faction manifest AI plan entry '%s' has no production rule" % unit_type
+			return
+	var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
+	for entry_value in _spawn_roster:
+		if typeof(entry_value) != TYPE_DICTIONARY:
+			configuration_error = "Faction manifest spawn roster contains a non-object entry"
+			return
+		var entry := entry_value as Dictionary
+		var object_id := String(entry.get("object_id", ""))
+		if object_id == "" or int(entry.get("id", 0)) <= 0:
+			configuration_error = "Faction manifest spawn roster entry is missing its identity"
+			return
+		if not bool(entry.get("requires_unit_rule", false)) and not configured_unit_rules.has(object_id):
+			configuration_error = "Faction manifest spawn roster entry '%s' has no configured unit rule" % object_id
+			return
 
 
 func _configure_playable_unit_runtime_contracts() -> void:
@@ -701,6 +824,27 @@ func _builder_spawn_position(team: int) -> Vector2:
 	return Vector2(team_layout.get("rally", _fallback_rally_position(team)))
 
 
+func _spawn_anchor_position(anchor: String) -> Vector2:
+	## Named map anchors keep the faction roster data-driven while spawn
+	## geometry stays derived from the cooked source map's player starts.
+	match anchor:
+		"player_spawn_primary":
+			return Vector2(_spawn_positions[1])
+		"player_spawn_secondary":
+			return Vector2(_spawn_positions[2])
+		"enemy_spawn_primary":
+			return Vector2(_spawn_positions[101])
+		"enemy_spawn_secondary":
+			return Vector2(_spawn_positions[102])
+		"enemy_reserve":
+			return (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5
+		"player_builder":
+			return Vector2(_spawn_positions[1]) + Vector2(0.0, 4.0)
+		"enemy_builder":
+			return _builder_spawn_position(ENEMY_TEAM) if base_loop_enabled else Vector2(_spawn_positions[101]) + Vector2(0.0, -4.0)
+	return Vector2(_spawn_positions[1])
+
+
 func _add_battalion(
 	id: int,
 	team: int,
@@ -795,7 +939,7 @@ func _add_battalion(
 		"minimum_attack_range_source": float(unit_rule["minimum_attack_range_source"]),
 		"vision_range": float(unit_rule["vision_range"]),
 		"vision_range_source": float(unit_rule["vision_range_source"]),
-		"damage_type": String(UNIT_DAMAGE_TYPES.get(object_id, "slash")),
+		"damage_type": String((_unit_damage_types if not _unit_damage_types.is_empty() else UNIT_DAMAGE_TYPES).get(object_id, "slash")),
 		"delay_between_shots_ms": float(unit_rule["delay_between_shots_ms"]),
 		"pre_attack_delay_ms": float(unit_rule["pre_attack_delay_ms"]),
 		"firing_duration_ms": float(unit_rule["firing_duration_ms"]),
@@ -2328,8 +2472,10 @@ func _update_enemy_ai() -> void:
 	if base_loop_enabled and not _enemy_ai_construction_resolved:
 		return
 	if base_loop_enabled and tick_index % maxi(15, int(_rules.get("ai_queue_interval_ticks", 60))) == 0:
-		for unit_type in AI_PRODUCTION_PLAN:
-			var production_rule: Dictionary = _unit_production_rules[unit_type]
+		for unit_type in (_ai_production_plan if not _ai_production_plan.is_empty() else AI_PRODUCTION_PLAN):
+			var production_rule: Dictionary = _unit_production_rules.get(unit_type, {})
+			if production_rule.is_empty():
+				continue
 			var producer := producer_id(ENEMY_TEAM, String(production_rule.get("producer_kind", "")))
 			if producer != 0:
 				queue_unit(ENEMY_TEAM, producer, unit_type)

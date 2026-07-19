@@ -15,6 +15,7 @@ const HudScript = preload("res://src/retail_slice/retail_hud.gd")
 const LinearFogScript = preload("res://src/retail_slice/fords_linear_fog.gd")
 const MemberHealthOverlayScript = preload("res://src/retail_slice/retail_member_health_overlay.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const SOLDIER_HORDE_ID := "bfme2.object.gondor-fighter-horde"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -51,14 +52,8 @@ const UNIT_QUEUE_NAMES := {
 	"bfme2.object.gondor-knight": "Gondor Knights",
 	RANGER_HORDE_ID: "Ithilien Rangers",
 }
-const BUILDING_OBJECT_IDS := {
-	"fortress": "bfme2.object.men-fortress",
-	"farm": "bfme2.object.men-farm",
-	"barracks": "bfme2.object.men-barracks",
-	"archery_range": "bfme2.object.men-archery-range",
-	"stable": "bfme2.object.men-stable",
-	"workshop": "bfme2.object.gondor-workshop",
-}
+# Structure object ids now live on the faction manifest
+# (RetailFactionManifest.DEFAULT_STRUCTURE_OBJECT_IDS carries the Men table).
 const FORDS_ENVIRONMENT_ORACLE_SHA256 := "c1f300fcf6fed6f225d1b04f50b14fab04883641d8b5b36762be6cfcb58e9a59"
 const FORDS_ACTIVE_TIME_OF_DAY := "AFTERNOON"
 const FORDS_ACTIVE_WEATHER := "NORMAL"
@@ -109,6 +104,7 @@ var attack_target_indicator: RetailAttackTargetIndicator
 var audio_system: RetailSliceAudio
 var source_map_data: RetailMapData
 var selected_pack_root := ""
+var faction_manifest: Dictionary = {}
 var gameplay_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
 var trebuchet_runtime: Dictionary = {}
@@ -176,6 +172,7 @@ var _initialization_last_ms := 0
 func _ready() -> void:
 	_initialization_started_ms = Time.get_ticks_msec()
 	_initialization_last_ms = _initialization_started_ms
+	faction_manifest = _resolve_faction_manifest()
 	if DisplayServer.get_name() != "headless":
 		# Windowed runs load phase-by-phase behind a progress bar; headless
 		# runners keep the original single-pass initialization.
@@ -191,6 +188,12 @@ func _ready() -> void:
 func _initialize_content_and_match() -> void:
 	if not ContentDB.bundle_objects.has(SOLDIER_OBJECT_ID):
 		ContentDB.reload()
+	# Re-resolve after the potential reload so a data-driven faction manifest
+	# always reflects the registries the match will actually run against.
+	faction_manifest = _resolve_faction_manifest()
+	if faction_manifest.has("_error"):
+		_fail("Faction manifest failed: %s" % String(faction_manifest.get("_error", "")))
+		return
 	ranger_runtime = ContentDB.get_ranger_runtime()
 	trebuchet_runtime = ContentDB.get_trebuchet_runtime()
 	playable_unit_runtimes = ContentDB.get_playable_unit_runtimes()
@@ -213,8 +216,9 @@ func _initialize_content_and_match() -> void:
 		_fail("The private bfme2-men-vslice pack is not selected. Run run_importer.bat to build and select it.")
 		return
 	selected_pack_root = String(member_definition.get("_pack_root", ""))
-	if selected_pack_root == "" or String((ModLoader._read_json(selected_pack_root.path_join("pack.json")) as Dictionary).get("id", "")) != "bfme2-men-vslice":
-		_fail("The selected content pack is not bfme2-men-vslice.")
+	var expected_pack_id := String(faction_manifest.get("pack_id", "bfme2-men-vslice"))
+	if selected_pack_root == "" or String((ModLoader._read_json(selected_pack_root.path_join("pack.json")) as Dictionary).get("id", "")) != expected_pack_id:
+		_fail("The selected content pack is not %s." % expected_pack_id)
 		return
 	var presentation_definition_error := _load_required_presentation_definitions()
 	if presentation_definition_error != "":
@@ -291,10 +295,11 @@ func _initialize_content_and_match() -> void:
 	hud.set_command_costs(command_costs)
 	hud.apply_audio_values(audio_system.get_music_volume(), audio_system.get_voice_sfx_volume(), audio_system.is_muted())
 	audio_system.sync_events(simulation.events)
+	var expected_structure_count := 2 * (faction_manifest.get("structure_kinds", []) as Array).size()
 	ready_ok = (
 		battalion_nodes.size() == simulation.initial_battalion_count()
 		and _all_battalion_retail_visuals_loaded()
-		and structure_nodes.size() == 10
+		and structure_nodes.size() == expected_structure_count
 		and _all_structure_retail_visuals_loaded()
 		and map_preview_loaded
 		and map_art_loaded
@@ -312,8 +317,8 @@ func _initialize_content_and_match() -> void:
 			failed_capabilities.append("battalion_count=%d expected=%d" % [battalion_nodes.size(), simulation.initial_battalion_count()])
 		if not _all_battalion_retail_visuals_loaded():
 			failed_capabilities.append("battalion_retail_visuals")
-		if structure_nodes.size() != 10:
-			failed_capabilities.append("structure_count=%d expected=10" % structure_nodes.size())
+		if structure_nodes.size() != expected_structure_count:
+			failed_capabilities.append("structure_count=%d expected=%d" % [structure_nodes.size(), expected_structure_count])
 		if not _all_structure_retail_visuals_loaded():
 			failed_capabilities.append("structure_retail_visuals")
 		if not map_preview_loaded:
@@ -619,8 +624,12 @@ func _load_required_presentation_definitions() -> String:
 		):
 			return "%s generic playable-unit presentation is incomplete" % String(runtime.get("objectId", ""))
 		validated_battalion_capabilities[member_id] = capability.duplicate(true)
-	for kind in ["fortress", "farm", "barracks", "archery_range", "stable"]:
-		var structure_object_id := String(BUILDING_OBJECT_IDS[kind])
+	var structure_object_ids: Dictionary = faction_manifest.get("structure_object_ids", {}) as Dictionary
+	for kind_value in faction_manifest.get("structure_kinds", []) as Array:
+		var kind := String(kind_value)
+		var structure_object_id := String(structure_object_ids.get(kind, ""))
+		if structure_object_id == "":
+			return "faction manifest declares structure kind '%s' without an object id" % kind
 		var lifecycle_error := _validate_retail_structure_lifecycle(structure_object_id, kind)
 		if lifecycle_error != "":
 			return lifecycle_error
@@ -703,7 +712,7 @@ func _validate_retail_structure_lifecycle(object_id: String, structure_kind: Str
 		lifecycle,
 		structure_kind,
 		String(presentation.get("model", "")),
-		int(SimScript.STRUCTURE_MAX_HEALTH.get(structure_kind, 0))
+		int((faction_manifest.get("structure_max_health", {}) as Dictionary).get(structure_kind, 0))
 	)
 	if contract_error != "":
 		return "%s lifecycle contract failed: %s" % [object_id, contract_error]
@@ -832,29 +841,58 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		"ai_attack_delay_ticks": 300,
 	}
 	rules["source_map_transform_scale"] = source_map_data.local_transform_scale
+	rules["faction_manifest"] = faction_manifest.duplicate(true)
 	if not ranger_runtime.is_empty():
 		rules["ranger_runtime"] = ranger_runtime.duplicate(true)
 		rules["ranger_unit_rule"] = (unit_rules[RANGER_OBJECT_ID] as Dictionary).duplicate(true)
 	if not trebuchet_runtime.is_empty():
 		rules["trebuchet_runtime"] = trebuchet_runtime.duplicate(true)
-	if not playable_unit_runtimes.is_empty():
-		rules["playable_unit_runtimes"] = playable_unit_runtimes.duplicate(true)
+	var scoped_playable_unit_runtimes := _faction_scoped_playable_unit_runtimes()
+	if not scoped_playable_unit_runtimes.is_empty():
+		rules["playable_unit_runtimes"] = scoped_playable_unit_runtimes.duplicate(true)
 		rules["producer_kind_by_source_object"] = _producer_kind_registry()
 	return rules
+
+
+func _resolve_faction_manifest() -> Dictionary:
+	## Faction selection is an explicit environment input. Unset (or "men")
+	## keeps the historical Men/Gondor slice byte-identical; any other value is
+	## a lowercase source object-id prefix resolved purely from the loaded
+	## playableUnit.* / playableStructure.* registries, failing closed with a
+	## specific error when the faction's pack content is missing.
+	var faction := OS.get_environment("OPENBFME_SLICE_FACTION").strip_edges().to_lower()
+	if faction == "" or faction == FactionManifestScript.DEFAULT_FACTION:
+		return FactionManifestScript.default_manifest()
+	return FactionManifestScript.from_registries(
+		faction,
+		ContentDB.get_playable_unit_runtimes(),
+		ContentDB.get_playable_structure_runtimes()
+	)
+
+
+func _faction_scoped_playable_unit_runtimes() -> Dictionary:
+	## A non-Men faction consumes only its own playable-unit documents, so
+	## Men-scoped documents from cohabiting packs can neither leak into its
+	## roster nor fail its producer validation.
+	var faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
+	if faction == FactionManifestScript.DEFAULT_FACTION:
+		return playable_unit_runtimes
+	var scoped: Dictionary = {}
+	for object_id_value in playable_unit_runtimes.keys():
+		if String(object_id_value).to_lower().begins_with(faction):
+			scoped[object_id_value] = playable_unit_runtimes[object_id_value]
+	return scoped
 
 
 func _producer_kind_registry() -> Dictionary:
 	# This registry describes the structures actually instantiated by this
 	# faction slice. A descriptor whose retail producer is not present fails
-	# closed instead of being attached to an unrelated building.
-	return {
-		"GondorFortress": "fortress",
-		"MenFortress": "fortress",
-		"GondorBarracks": "barracks",
-		"GondorArcherRange": "archery_range",
-		"GondorStable": "stable",
-		"GondorWorkshop": "workshop",
-	}
+	# closed instead of being attached to an unrelated building. The Men table
+	# lives on the default faction manifest.
+	var registry: Dictionary = faction_manifest.get("producer_kind_registry", {}) as Dictionary
+	if registry.is_empty():
+		registry = FactionManifestScript.DEFAULT_PRODUCER_KIND_REGISTRY
+	return registry.duplicate(true)
 
 
 func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dictionary:
@@ -1097,7 +1135,7 @@ func _spawn_structure(id: int) -> void:
 	structure.lifecycle_route_requested.connect(
 		Callable(self, "_on_structure_lifecycle_route_requested").bind(structure)
 	)
-	structure.configure(entity, String(BUILDING_OBJECT_IDS.get(kind, "")), source_map_data.local_transform_scale)
+	structure.configure(entity, String((faction_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, "")), source_map_data.local_transform_scale)
 	var position := Vector2(entity["position"])
 	structure.position = Vector3(position.x, _presentation_height(position) - 0.35, position.y)
 	add_child(structure)
@@ -1176,7 +1214,7 @@ func _all_structure_retail_visuals_loaded() -> bool:
 
 
 func _all_men_structure_contracts_v1() -> bool:
-	for object_id_value in BUILDING_OBJECT_IDS.values():
+	for object_id_value in (faction_manifest.get("structure_object_ids", {}) as Dictionary).values():
 		var definition: Dictionary = ContentDB.get_bundle_object(String(object_id_value))
 		var presentation: Dictionary = definition.get("presentation", {}) as Dictionary
 		var lifecycle: Dictionary = presentation.get("buildingLifecycle", {}) as Dictionary
