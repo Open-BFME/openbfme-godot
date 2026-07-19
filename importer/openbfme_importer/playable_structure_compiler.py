@@ -262,6 +262,37 @@ def _wall_upgrade_routes(
     return routes
 
 
+def _resolved_scalar_fields(
+    scalars: Mapping[str, Mapping[str, object]],
+    keys: frozenset[str],
+    defines: Mapping[str, int | float],
+) -> dict[str, dict[str, object]]:
+    """Copy selected scalar rows, resolving numeric GameData constants.
+
+    The authored expression stays untouched; ``value`` is added only when the
+    expression is a literal number or a resolvable ``#define``.  Unresolvable
+    symbols keep expression-only rows so downstream consumers fail closed on
+    the exact field they need instead of on descriptor compilation.
+    """
+
+    result: dict[str, dict[str, object]] = {}
+    for key, row in sorted(scalars.items()):
+        if key not in keys:
+            continue
+        entry: dict[str, object] = dict(row)
+        expression = str(row.get("expression", "")).strip().rstrip("%")
+        try:
+            entry["value"] = (
+                float(expression) if "." in expression else int(expression)
+            )
+        except ValueError:
+            resolved = defines.get(expression.casefold())
+            if resolved is not None:
+                entry["value"] = resolved
+        result[key] = entry
+    return result
+
+
 def _health_contract(
     lineage: Sequence[SageObject],
     defines: Mapping[str, int | float],
@@ -507,18 +538,19 @@ def compile_playable_structure_descriptor(
             "health": health,
             "trainedCommandSets": trained,
             "sourceNullCommandSets": source_null_sets,
-            "scalarFields": {
-                key: value
-                for key, value in sorted(scalars.items())
-                if key
-                in {
-                    "BuildCost",
-                    "BuildTime",
-                    "VisionRange",
-                    "ShroudClearingRange",
-                    "CommandPoints",
-                }
-            },
+            "scalarFields": _resolved_scalar_fields(
+                scalars,
+                frozenset(
+                    {
+                        "BuildCost",
+                        "BuildTime",
+                        "VisionRange",
+                        "ShroudClearingRange",
+                        "CommandPoints",
+                    }
+                ),
+                prepared.numeric_defines,
+            ),
         },
         "presentation": {
             "ui": {

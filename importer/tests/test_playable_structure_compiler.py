@@ -29,6 +29,48 @@ Object TestKeep
   SelectPortrait = UPTestKeep
   ButtonImage = BITestKeep
   SoundOnDamaged = KeepDamagedSound
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    DefaultModelConditionState
+      Model = Keep_SKN
+    End
+    IdleAnimationState
+      Animation = Idle
+        AnimationName = Keep_SKL.Keep_IDLA
+      End
+    End
+    ModelConditionState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED
+      Model = Keep_CONS
+    End
+    AnimationState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED
+      Animation = Build
+        AnimationName = Keep_SKL.Keep_CONSA
+        AnimationMode = MANUAL
+      End
+    End
+    ModelConditionState = DAMAGED
+      Model = Keep_SKN
+      ParticleSysBone = FireSmall01 FireBuildingMedium
+      EnteringStateFX = FX_BuildingDamaged
+    End
+    ModelConditionState = REALLYDAMAGED
+      Model = Keep_SKN
+      EnteringStateFX = FX_BuildingReallyDamaged
+    End
+    ModelConditionState = RUBBLE
+      Model = Keep_RUBBLE
+      EnteringStateFX = FX_StructureMediumCollapse
+    End
+    AnimationState = RUBBLE
+      Animation = Die
+        AnimationName = Keep_SKL.Keep_LEVERA
+        AnimationMode = ONCE
+      End
+    End
+  End
+  Draw = W3DFloorDraw ModuleTag_Bib
+    ModelName = Keep_BIB
+    HideIfModelConditions = AWAITING_CONSTRUCTION PARTIALLY_CONSTRUCTED
+  End
   Body = StructureBody ModuleTag_Body
     MaxHealth = KEEP_HEALTH
     MaxHealthDamaged = KEEP_HEALTH_DAMAGED
@@ -37,6 +79,19 @@ Object TestKeep
   Behavior = CommandSetUpgrade ModuleTag_Level2
     TriggeredBy = Upgrade_KeepLevel2
     CommandSet = TestKeepCommandSetLevel2
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse
+    MinCollapseDelay = 0
+    MaxCollapseDelay = 0
+    CollapseDamping = 0.5
+    MaxShudder = 0.6
+    MinBurstDelay = 250
+    MaxBurstDelay = 800
+    BigBurstFrequency = 4
+    FXList = INITIAL FX_StructureMediumCollapse
+    FXList = ALMOST_FINAL FX_StructureAlmostCollapse
+    DestroyObjectWhenDone = Yes
+    CollapseHeight = 155
   End
 End
 
