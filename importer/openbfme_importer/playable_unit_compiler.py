@@ -191,10 +191,15 @@ def _effective_top_blocks(ancestry: Sequence[SageObject]) -> tuple[SageBlock, ..
     positions: dict[str, int] = {}
     for item in ancestry:
         for block in item.blocks:
+            conditions = "\0".join(
+                assignment.value.strip().casefold()
+                for assignment in block.assignments
+                if assignment.key.casefold() in {"condition", "conditions"}
+            )
             identity = "\0".join(
                 (
                     (block.header_key or block.kind).casefold(),
-                    (block.instance_tag or block.raw_header).casefold(),
+                    (block.instance_tag or conditions or block.raw_header).casefold(),
                 )
             )
             if identity in positions:
@@ -221,22 +226,497 @@ def _effective_recursive_assignments(
             yield from nested.assignments
 
 
-def _numeric_defines(documents: Mapping[str, bytes]) -> dict[str, int]:
-    result: dict[str, int] = {}
+def _numeric_defines(documents: Mapping[str, bytes]) -> dict[str, int | float]:
+    result: dict[str, int | float] = {}
     pattern = re.compile(
-        rb"(?m)^[ \t]*#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+([0-9]+)[ \t]*(?://|;|$)"
+        rb"(?m)^[ \t]*#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+(-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))[ \t]*(?://|;|\r?$)"
     )
     for path, payload in documents.items():
         if path.replace("\\", "/").casefold() != "data/ini/gamedata.ini":
             continue
         for match in pattern.finditer(payload):
             key = match.group(1).decode("ascii").casefold()
-            value = int(match.group(2))
+            token = match.group(2).decode("ascii")
+            value: int | float = float(token) if "." in token else int(token)
             if key in result and result[key] != value:
                 raise PlayableUnitCompilerError(
                     f"ambiguous numeric GameData constant: {match.group(1).decode('ascii')}"
                 )
             result[key] = value
+    return result
+
+
+def _resolved_expression(
+    expression: str, constants: Mapping[str, int | float]
+) -> int | float | None:
+    token = expression.strip()
+    if re.fullmatch(r"-?[0-9]+", token):
+        return int(token)
+    if re.fullmatch(r"-?(?:[0-9]+\.[0-9]*|\.[0-9]+)", token):
+        return float(token)
+    return constants.get(token.casefold())
+
+
+def _resolved_scalar(
+    fields: Mapping[str, Mapping[str, object]],
+    name: str,
+    constants: Mapping[str, int | float],
+) -> dict[str, object] | None:
+    row = fields.get(name)
+    if not isinstance(row, Mapping):
+        return None
+    expression = str(row.get("expression", ""))
+    value = _resolved_expression(expression, constants)
+    if value is None:
+        return None
+    return {
+        "value": value,
+        "expression": expression,
+        "sourceIni": str(row.get("sourceIni", "")),
+        "line": int(row.get("line", 0)),
+        "constantSourceIni": (
+            "data/ini/gamedata.ini" if expression.casefold() in constants else None
+        ),
+    }
+
+
+def _effective_body_health(
+    ancestry: Sequence[SageObject], constants: Mapping[str, int | float]
+) -> dict[str, object] | None:
+    bodies = [
+        block
+        for block in _effective_top_blocks(ancestry)
+        if (block.header_key or "").casefold() == "body"
+    ]
+    values = [
+        assignment
+        for block in bodies
+        for assignment in block.assignments
+        if assignment.key.casefold() == "maxhealth"
+    ]
+    if len(values) != 1:
+        return None
+    assignment = values[0]
+    resolved = _resolved_expression(assignment.value, constants)
+    if resolved is None:
+        return None
+    return {
+        "value": resolved,
+        "expression": assignment.value.strip(),
+        "sourceIni": assignment.source_virtual_path,
+        "line": assignment.line,
+        "constantSourceIni": (
+            "data/ini/gamedata.ini"
+            if assignment.value.strip().casefold() in constants
+            else None
+        ),
+    }
+
+
+def _default_set_block(
+    ancestry: Sequence[SageObject], block_name: str
+) -> SageBlock | None:
+    candidates: list[SageBlock] = []
+    for block in _effective_top_blocks(ancestry):
+        if (block.header_key or block.kind).casefold() != block_name.casefold():
+            continue
+        conditions = [
+            row.value.strip().casefold()
+            for row in block.assignments
+            if row.key.casefold() in {"condition", "conditions"}
+        ]
+        if conditions and all(
+            "set_normal" not in _tokens(value.casefold()) and value not in {"none", ""}
+            for value in conditions
+        ):
+            continue
+        candidates.append(block)
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _default_set_target(
+    ancestry: Sequence[SageObject], block_name: str, assignment_name: str
+) -> str | None:
+    block = _default_set_block(ancestry, block_name)
+    if block is None:
+        return None
+    candidates: list[str] = []
+    primary_candidates: list[str] = []
+    for assignment in block.assignments:
+        if assignment.key.casefold() != assignment_name.casefold():
+            continue
+        tokens = _tokens(assignment.value)
+        if tokens:
+            candidates.append(tokens[-1])
+            if any(token.casefold() == "primary" for token in tokens[:-1]):
+                primary_candidates.append(tokens[-1])
+    if primary_candidates:
+        candidates = primary_candidates
+    unique = {value.casefold(): value for value in candidates}
+    return next(iter(unique.values())) if len(unique) == 1 else None
+
+
+def _resolved_set_field(
+    ancestry: Sequence[SageObject],
+    block_name: str,
+    field: str,
+    constants: Mapping[str, int | float],
+) -> dict[str, object] | None:
+    block = _default_set_block(ancestry, block_name)
+    if block is None:
+        return None
+    rows = [row for row in block.assignments if row.key.casefold() == field.casefold()]
+    if len(rows) != 1:
+        return None
+    row = rows[0]
+    value = _resolved_expression(row.value, constants)
+    if value is None:
+        return None
+    return {
+        "value": value,
+        "expression": row.value.strip(),
+        "sourceIni": row.source_virtual_path,
+        "line": row.line,
+        "constantSourceIni": (
+            "data/ini/gamedata.ini"
+            if row.value.strip().casefold() in constants
+            else None
+        ),
+    }
+
+
+def _named_definition_values(
+    documents: Mapping[str, bytes], kind: str, identifier: str
+) -> dict[str, list[dict[str, object]]] | None:
+    header = re.compile(
+        rf"^{re.escape(kind)}\s+{re.escape(identifier)}\s*$", re.IGNORECASE
+    )
+    matches: list[dict[str, list[dict[str, object]]]] = []
+    for path, payload in sorted(documents.items(), key=lambda item: item[0].casefold()):
+        try:
+            lines = payload.decode("cp1252").splitlines()
+        except UnicodeDecodeError:
+            continue
+        active = False
+        values: dict[str, list[dict[str, object]]] = defaultdict(list)
+        for line_number, raw in enumerate(lines, start=1):
+            stripped = raw.strip()
+            if not active:
+                header_text = stripped.split(";", 1)[0].split("//", 1)[0].strip()
+                if raw.lstrip() == raw and header.fullmatch(header_text):
+                    active = True
+                continue
+            if raw.lstrip() == raw and stripped.casefold() == "end":
+                matches.append(dict(values))
+                active = False
+                break
+            clean = stripped.split(";", 1)[0].strip()
+            if "=" not in clean:
+                continue
+            key, expression = (part.strip() for part in clean.split("=", 1))
+            if key and expression:
+                values[key.casefold()].append(
+                    {
+                        "expression": expression,
+                        "sourceIni": path.replace("\\", "/"),
+                        "line": line_number,
+                    }
+                )
+    if not matches:
+        return None
+    semantic = {_digest(value): value for value in matches}
+    return next(iter(semantic.values())) if len(semantic) == 1 else None
+
+
+def _default_nested_target(
+    documents: Mapping[str, bytes], kind: str, identifier: str, field: str
+) -> str | None:
+    candidates: dict[str, str] = {}
+    for payload in documents.values():
+        try:
+            blocks = parse_flat_named_blocks(payload, kind)
+        except (UnicodeDecodeError, ValueError):
+            continue
+        for block in blocks:
+            if block.name.casefold() != identifier.casefold():
+                continue
+            values = [value for value in (_first((row,)) for row in block.values(field)) if value]
+            if len(values) == 1:
+                candidates[values[0].casefold()] = values[0]
+    return next(iter(candidates.values())) if len(candidates) == 1 else None
+
+
+def _resolved_definition_field(
+    definition: Mapping[str, Sequence[Mapping[str, object]]] | None,
+    field: str,
+    constants: Mapping[str, int | float],
+) -> dict[str, object] | None:
+    if definition is None:
+        return None
+    rows = definition.get(field.casefold(), ())
+    resolved: list[dict[str, object]] = []
+    for row in rows:
+        expression = str(row.get("expression", ""))
+        value = _resolved_expression(expression, constants)
+        if value is not None:
+            resolved.append(
+                {
+                    "value": value,
+                    "expression": expression,
+                    "sourceIni": str(row.get("sourceIni", "")),
+                    "line": int(row.get("line", 0)),
+                    "constantSourceIni": (
+                        "data/ini/gamedata.ini"
+                        if expression.casefold() in constants
+                        else None
+                    ),
+                }
+            )
+    by_value: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for row in resolved:
+        by_value[_digest(row["value"])].append(row)
+    if len(by_value) != 1:
+        return None
+    equivalent = next(iter(by_value.values()))
+    result = dict(equivalent[0])
+    if len(equivalent) > 1:
+        result["equivalentSources"] = [
+            {"sourceIni": row["sourceIni"], "line": row["line"]}
+            for row in equivalent
+        ]
+    return result
+
+
+def _simulation_contract(
+    container_fields: Mapping[str, Mapping[str, object]],
+    member_fields: Mapping[str, Mapping[str, object]],
+    member_lineage: Sequence[SageObject],
+    members: Sequence[Mapping[str, object]],
+    constants: Mapping[str, int | float],
+    documents: Mapping[str, bytes],
+    container_lineage: Sequence[SageObject],
+) -> dict[str, object]:
+    resolved: dict[str, object] = {}
+    required = {
+        "buildCost": (container_fields, "BuildCost"),
+        "buildTimeSeconds": (container_fields, "BuildTime"),
+        "commandPoints": (container_fields, "CommandPoints"),
+        "visionRange": (member_fields, "VisionRange"),
+    }
+    missing: list[str] = []
+    for output_name, (owner, source_name) in required.items():
+        row = _resolved_scalar(owner, source_name, constants)
+        if row is None:
+            missing.append(output_name)
+        else:
+            resolved[output_name] = row
+    health = _effective_body_health(member_lineage, constants)
+    if health is None:
+        missing.append("memberHealth")
+    else:
+        resolved["memberHealth"] = health
+    member_count = sum(int(row.get("count", 0)) for row in members)
+    if member_count <= 0:
+        missing.append("memberCount")
+    else:
+        resolved["memberCount"] = {
+            "value": member_count,
+            "source": "composition.members",
+        }
+    display = member_fields.get("DisplayName") or container_fields.get("DisplayName")
+    if not isinstance(display, Mapping) or not str(display.get("expression", "")):
+        missing.append("displayNameId")
+    else:
+        resolved["displayNameId"] = {
+            "value": str(display["expression"]),
+            "sourceIni": str(display.get("sourceIni", "")),
+            "line": int(display.get("line", 0)),
+        }
+    locomotor_id = _default_set_target(member_lineage, "LocomotorSet", "Locomotor")
+    speed = _resolved_set_field(member_lineage, "LocomotorSet", "Speed", constants)
+    if speed is None:
+        missing.append("speed")
+    else:
+        speed["definitionId"] = locomotor_id
+        resolved["speed"] = speed
+    locomotor = (
+        _named_definition_values(documents, "Locomotor", locomotor_id)
+        if locomotor_id
+        else None
+    )
+    movement: dict[str, object] = {}
+    if locomotor is not None:
+        for output_name, source_name in (
+            ("acceleration", "Acceleration"),
+            ("braking", "Braking"),
+        ):
+            field = _resolved_definition_field(locomotor, source_name, constants)
+            if field is not None:
+                movement[output_name] = field
+        turn_rate = _resolved_definition_field(locomotor, "TurnRate", constants)
+        if turn_rate is None:
+            turn_time = _resolved_definition_field(locomotor, "TurnTime", constants)
+            if turn_time is not None and float(turn_time["value"]) > 0.0:
+                turn_rate = dict(turn_time)
+                turn_rate["value"] = 360000.0 / float(turn_time["value"])
+                turn_rate["semantic"] = "360 degrees divided by TurnTime seconds"
+        if turn_rate is not None:
+            movement["turnRateDegreesPerSecond"] = turn_rate
+    for field in ("acceleration", "braking", "turnRateDegreesPerSecond"):
+        if field not in movement:
+            missing.append(field)
+    if movement:
+        movement["locomotorId"] = locomotor_id
+        resolved["movement"] = movement
+    weapon_id = _default_set_target(member_lineage, "WeaponSet", "Weapon")
+    weapon = (
+        _named_definition_values(documents, "Weapon", weapon_id) if weapon_id else None
+    )
+    if weapon_id and weapon is not None:
+        combat: dict[str, object] = {"weaponId": weapon_id}
+        for output_name, source_name in (
+            ("attackRange", "AttackRange"),
+            ("minimumAttackRange", "MinimumAttackRange"),
+            ("projectileSpeed", "WeaponSpeed"),
+            ("delayBetweenShotsMs", "DelayBetweenShots"),
+            ("preAttackDelayMs", "PreAttackDelay"),
+            ("firingDurationMs", "FiringDuration"),
+            ("damage", "Damage"),
+        ):
+            field = _resolved_definition_field(weapon, source_name, constants)
+            if field is not None:
+                combat[output_name] = field
+        damage_owner = weapon
+        warheads = {
+            str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
+            for key in ("warheadtemplatename", "warhead")
+            for row in weapon.get(key, ())
+            if str(row.get("expression", ""))
+        }
+        warhead_id = (
+            next(iter(warheads.values()))
+            if len(warheads) == 1
+            else _default_nested_target(
+                documents, "Weapon", weapon_id, "WarheadTemplateName"
+            )
+        )
+        if warhead_id:
+            warhead = _named_definition_values(documents, "Weapon", warhead_id)
+            if warhead is not None:
+                damage_owner = warhead
+                combat["warheadId"] = warhead_id
+                damage = _resolved_definition_field(warhead, "Damage", constants)
+                if damage is not None:
+                    combat["damage"] = damage
+        projectiles = {
+            str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
+            for row in weapon.get("projectiletemplatename", ())
+            if str(row.get("expression", ""))
+        }
+        projectile_id = (
+            next(iter(projectiles.values()))
+            if len(projectiles) == 1
+            else _default_nested_target(
+                documents, "Weapon", weapon_id, "ProjectileTemplateName"
+            )
+        )
+        if projectile_id:
+            combat["projectileObjectId"] = projectile_id
+        damage_types = damage_owner.get("damagetype", ())
+        unique_damage_types = {
+            str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
+            for row in damage_types
+            if str(row.get("expression", ""))
+        }
+        if len(unique_damage_types) == 1:
+            combat["damageType"] = next(iter(unique_damage_types.values()))
+        for output_name, source_name in (
+            ("clipSize", "ClipSize"),
+            ("clipReloadTimeMs", "ClipReloadTime"),
+            ("continuousFireOne", "ContinuousFireOne"),
+            ("continuousFireCoastMs", "ContinuousFireCoast"),
+        ):
+            field = _resolved_definition_field(weapon, source_name, constants)
+            if field is not None:
+                combat[output_name] = field
+        resolved["combat"] = combat
+    else:
+        missing.append("combat.weapon")
+    combat_value = resolved.get("combat", {})
+    if isinstance(combat_value, Mapping):
+        for field in ("attackRange", "delayBetweenShotsMs", "preAttackDelayMs", "firingDurationMs", "damage"):
+            if field not in combat_value:
+                missing.append(f"combat.{field}")
+    formation = _formation_contract(container_lineage, members)
+    if formation is None:
+        missing.append("formation")
+    else:
+        resolved["formation"] = formation
+    return {
+        "status": "ready" if not missing else "unresolved",
+        "resolved": resolved,
+        "missing": sorted(set(missing), key=str.casefold),
+    }
+
+
+def _formation_contract(
+    lineage: Sequence[SageObject], members: Sequence[Mapping[str, object]]
+) -> dict[str, object] | None:
+    member_count = sum(int(row.get("count", 0)) for row in members)
+    if member_count == 1 and len(members) == 1:
+        return {
+            "memberCount": 1,
+            "positions": [{"x": 0, "y": 0}],
+            "source": "singleton-composition",
+        }
+    rank_rows: list[dict[str, object]] = []
+    position_pattern = re.compile(
+        r"Position\s*:\s*X\s*:\s*(-?(?:\d+(?:\.\d*)?|\.\d+))\s+Y\s*:\s*(-?(?:\d+(?:\.\d*)?|\.\d+))",
+        re.I,
+    )
+    for block in _effective_top_blocks(lineage):
+        if block.kind.casefold() not in {
+            "hordecontain",
+            "horsehordecontain",
+        }:
+            continue
+        for assignment in block.assignments:
+            if assignment.key.casefold() != "rankinfo":
+                continue
+            positions = [
+                {"x": float(x), "y": float(y)}
+                for x, y in position_pattern.findall(assignment.value)
+            ]
+            if not positions:
+                return None
+            rank_rows.append(
+                {
+                    "positions": positions,
+                    "sourceIni": assignment.source_virtual_path,
+                    "line": assignment.line,
+                }
+            )
+    positions = [position for rank in rank_rows for position in rank["positions"]]
+    if len(positions) != member_count:
+        return None
+    return {"memberCount": member_count, "positions": positions, "ranks": rank_rows}
+
+
+def _provenance_paths(value: object) -> set[str]:
+    result: set[str] = set()
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if (
+                key in {"sourceIni", "constantSourceIni"}
+                and isinstance(child, str)
+                and child
+            ):
+                result.add(child)
+            else:
+                result.update(_provenance_paths(child))
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        for child in value:
+            result.update(_provenance_paths(child))
     return result
 
 
@@ -295,6 +775,14 @@ def _player_template_context(
             f"PlayerTemplate {template_id} must author one BuildableHeroesMP roster"
         )
     roster = list(_tokens(roster_values[0]))
+    folded_roster: set[str] = set()
+    for object_id in roster:
+        folded = object_id.casefold()
+        if folded in folded_roster:
+            raise PlayableUnitCompilerError(
+                f"PlayerTemplate {template_id} has duplicate BuildableHeroesMP hero: {object_id}"
+            )
+        folded_roster.add(folded)
     starting_values = _block_values(template, "StartingBuilding")
     starting_building = _first(starting_values) or ""
     return roster, starting_building, template_id
@@ -430,6 +918,7 @@ def _producer_bindings(
                     "producerObjectId": producer.name,
                     "commandSetId": command_set.name,
                     "commandId": command["id"],
+                    "surface": "command-socket",
                     "slot": slot,
                     "prerequisites": sorted(
                         set(direct_requirements + transition_requirements),
@@ -674,6 +1163,7 @@ def _scalar_fields(ancestry: Sequence[SageObject]) -> dict[str, dict[str, object
         "VisionRange",
         "ShroudClearingRange",
         "DisplayName",
+        "DescriptionStrategic",
         "SelectPortrait",
         "ButtonImage",
         "LocomotorSet",
@@ -858,6 +1348,7 @@ def compile_playable_unit_descriptor(
     converted_visuals: Mapping[str, Mapping[str, object]] | None = None,
     resolved_images: Mapping[str, Mapping[str, object]] | None = None,
     resolved_audio: Mapping[str, Sequence[str]] | None = None,
+    resolved_strings: Mapping[str, str] | None = None,
     faction_graph: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Compile one source-backed descriptor or fail on an unresolved core edge."""
@@ -941,15 +1432,54 @@ def compile_playable_unit_descriptor(
             documents, faction_graph
         )
     target = requested_target
+    is_roster_hero = target.name.casefold() in {
+        value.casefold() for value in hero_roster
+    }
+    direct_error: PlayableUnitCompilerError | None = None
+    direct_producers: tuple[dict[str, object], ...] = ()
     try:
-        producers = _producer_bindings(
-            target.name,
-            objects,
-            command_sets,
-            command_buttons,
-            reachable_object_ids,
+        direct_producers = _producer_bindings(
+            target.name, objects, command_sets, command_buttons, reachable_object_ids
         )
-    except PlayableUnitCompilerError as direct_error:
+    except PlayableUnitCompilerError as error:
+        direct_error = error
+    if is_roster_hero:
+        if direct_producers:
+            raise PlayableUnitCompilerError(
+                f"hero {target.name} has conflicting hero-roster and command-socket routes"
+            )
+        if (
+            not starting_building
+            or starting_building.casefold() not in objects
+            or reachable_object_ids is None
+            or starting_building.casefold() not in reachable_object_ids
+        ):
+            raise PlayableUnitCompilerError(
+                f"hero {target.name} has no reachable starting-fortress producer"
+            )
+        roster_ordinal = next(
+            index + 1
+            for index, value in enumerate(hero_roster)
+            if value.casefold() == target.name.casefold()
+        )
+        producers = (
+            {
+                "producerObjectId": objects[starting_building.casefold()].name,
+                "commandSetId": "__engine__/BuildableHeroesMP",
+                "commandId": f"__engine__/HERO_BUILD/{target.name}",
+                "surface": "hero-roster",
+                "rosterOrdinal": roster_ordinal,
+                "prerequisites": [],
+                "commandSetTransition": [],
+                "sourceField": "BuildableHeroesMP",
+                "sourcePlayerTemplate": player_template_id,
+                "ui": {},
+            },
+        )
+    elif direct_producers:
+        producers = direct_producers
+    else:
+        assert direct_error is not None
         containers = _horde_containers(target.name, objects)
         reachable: list[tuple[SageObject, tuple[dict[str, object], ...]]] = []
         for container in containers:
@@ -970,29 +1500,6 @@ def compile_playable_unit_descriptor(
                 continue
         if len(reachable) == 1:
             target, producers = reachable[0]
-        elif target.name.casefold() in {value.casefold() for value in hero_roster}:
-            if not starting_building or starting_building.casefold() not in objects:
-                raise PlayableUnitCompilerError(
-                    f"hero {target.name} has no reachable starting-fortress producer"
-                )
-            slot = next(
-                index + 1
-                for index, value in enumerate(hero_roster)
-                if value.casefold() == target.name.casefold()
-            )
-            producers = (
-                {
-                    "producerObjectId": objects[starting_building.casefold()].name,
-                    "commandSetId": "__engine__/BuildableHeroesMP",
-                    "commandId": f"__engine__/HERO_BUILD/{target.name}",
-                    "rosterOrdinal": slot,
-                    "prerequisites": [],
-                    "commandSetTransition": [],
-                    "sourceField": "BuildableHeroesMP",
-                    "sourcePlayerTemplate": player_template_id,
-                    "ui": {},
-                },
-            )
         else:
             raise direct_error
     target_lineage = _ancestry(objects, target)
@@ -1052,7 +1559,32 @@ def compile_playable_unit_descriptor(
     unsupported_modules = sorted(
         {str(row["kind"]) for row in unsupported_module_evidence}, key=str.casefold
     )
+    container_fields = _scalar_fields(target_lineage)
     member_fields = _scalar_fields(member_lineage)
+    for producer in producers:
+        if not str(producer.get("commandId", "")).startswith("__engine__/HERO_BUILD/"):
+            continue
+        button = container_fields.get("ButtonImage")
+        label = container_fields.get("DisplayName")
+        tooltip = container_fields.get("DescriptionStrategic")
+        if button is None or label is None or tooltip is None:
+            raise PlayableUnitCompilerError(
+                f"hero {target.name} has unresolved required retail UI values"
+            )
+        producer["ui"] = {
+            "ButtonImage": [str(button["expression"])],
+            "TextLabel": [str(label["expression"])],
+            "DescriptLabel": [str(tooltip["expression"])],
+        }
+    simulation = _simulation_contract(
+        container_fields,
+        member_fields,
+        member_lineage,
+        members,
+        _numeric_defines(documents),
+        documents,
+        target_lineage,
+    )
     combined_kinds = tuple(sorted(set(target_kinds) | set(member_kinds)))
     capabilities, unsupported_capabilities, traits = _capability_contract(
         category,
@@ -1068,6 +1600,7 @@ def compile_playable_unit_descriptor(
         *(item.source_virtual_path for item in target_lineage),
         *(item.source_virtual_path for item in member_lineage),
     }
+    used_paths.update(_provenance_paths(simulation))
     for producer in producers:
         source = producer.get("source", {})
         if isinstance(source, Mapping):
@@ -1086,6 +1619,10 @@ def compile_playable_unit_descriptor(
     for item in (*target_lineage, *member_lineage):
         semantic_scopes[item.source_virtual_path.casefold()].append(
             _object_semantic(item)
+        )
+    for path in _provenance_paths(simulation):
+        semantic_scopes[path.casefold()].append(
+            {"kind": "ResolvedPlayableUnitSimulation", "contract": simulation}
         )
     for producer in producers:
         producer_id = str(producer["producerObjectId"])
@@ -1142,9 +1679,10 @@ def compile_playable_unit_descriptor(
             "primaryMember": list(member_kinds),
         },
         "gameplay": {
-            "containerFields": _scalar_fields(target_lineage),
+            "containerFields": container_fields,
             "memberFields": member_fields,
             "references": visual_refs,
+            "simulation": simulation,
         },
         "presentation": {
             "visualRoots": visual_refs.get("model", []),
@@ -1166,6 +1704,12 @@ def compile_playable_unit_descriptor(
                 key: deepcopy(value)
                 for key, value in sorted(
                     (resolved_images or {}).items(), key=lambda item: item[0].casefold()
+                )
+            },
+            "resolvedStrings": {
+                key: value
+                for key, value in sorted(
+                    (resolved_strings or {}).items(), key=lambda item: item[0].casefold()
                 )
             },
             "audioRoutes": {
@@ -1248,17 +1792,24 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
                 raise PlayableUnitCompilerError(
                     f"playable-unit production {field} is invalid"
                 )
+        surface = row.get("surface")
+        if surface not in {"command-socket", "hero-roster"}:
+            raise PlayableUnitCompilerError(
+                "playable-unit production surface is invalid"
+            )
         slot = row.get("slot")
         roster_ordinal = row.get("rosterOrdinal")
-        if not (
-            isinstance(slot, int) and not isinstance(slot, bool) and slot > 0
-        ) and not (
+        valid_slot = isinstance(slot, int) and not isinstance(slot, bool) and slot > 0
+        valid_ordinal = (
             isinstance(roster_ordinal, int)
             and not isinstance(roster_ordinal, bool)
             and roster_ordinal > 0
+        )
+        if (surface == "command-socket" and (not valid_slot or valid_ordinal)) or (
+            surface == "hero-roster" and (not valid_ordinal or valid_slot)
         ):
             raise PlayableUnitCompilerError(
-                "playable-unit production has no valid slot or roster ordinal"
+                "playable-unit production route disagrees with its surface"
             )
         prerequisites = row.get("prerequisites")
         if not isinstance(prerequisites, list) or any(
@@ -1439,6 +1990,7 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         ("convertedVisuals", Mapping),
         ("unresolvedVisualRoots", list),
         ("resolvedImages", Mapping),
+        ("resolvedStrings", Mapping),
         ("resolvedAudio", Mapping),
     ):
         if not isinstance(presentation.get(field), expected_type):
@@ -1512,6 +2064,14 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             or any(not isinstance(path, str) or not path for path in paths)
         ):
             raise PlayableUnitCompilerError("playable-unit resolved audio is invalid")
+    for key, text in presentation["resolvedStrings"].items():
+        if (
+            not isinstance(key, str)
+            or not key
+            or not isinstance(text, str)
+            or not text
+        ):
+            raise PlayableUnitCompilerError("playable-unit resolved strings are invalid")
     runtime_modules = value.get("runtimeModules")
     module_evidence = value.get("runtimeModuleEvidence")
     special = value.get("specialCapabilities")

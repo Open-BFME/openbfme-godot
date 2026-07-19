@@ -264,6 +264,113 @@ def test_each_production_route_retains_its_own_ui() -> None:
     ]
 
 
+def _hero_roster_fixture() -> tuple[dict[str, bytes], dict[str, object]]:
+    documents = _documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    objects = documents[objects_path].decode("utf-8")
+    for name in ("HeroSeven", "HeroEight"):
+        objects += _object(name, "HERO INFANTRY", f"{name}Model").replace(
+            f"  SelectPortrait = UP{name}\n",
+            f"  SelectPortrait = UP{name}\n"
+            f"  ButtonImage = HI{name}\n"
+            f"  DisplayName = OBJECT:{name}\n"
+            f"  DescriptionStrategic = CONTROLBAR:ToolTip{name}\n",
+        )
+    documents[objects_path] = objects.encode("utf-8")
+    documents["data/ini/playertemplate.ini"] = b"""
+PlayerTemplate FactionMen
+  Side = Men
+  StartingBuilding = UniversalFactory
+  BuildableHeroesMP = Placeholder1 Placeholder2 Placeholder3 Placeholder4 Placeholder5 Placeholder6 HeroSeven HeroEight
+End
+"""
+    graph = {
+        "target": {"playerTemplate": "FactionMen"},
+        "definitions": {
+            "objects": [
+                {"id": value, "edges": []}
+                for value in ("UniversalFactory", "HeroSeven", "HeroEight")
+            ],
+            "commandButtons": [],
+        },
+    }
+    return documents, graph
+
+
+def test_hero_roster_preserves_ordinals_and_uses_a_separate_surface() -> None:
+    documents, graph = _hero_roster_fixture()
+
+    seven = compile_playable_unit_descriptor(
+        "HeroSeven", documents, faction_graph=graph
+    )
+    eight = compile_playable_unit_descriptor(
+        "HeroEight", documents, faction_graph=graph
+    )
+
+    assert seven["production"][0]["surface"] == "hero-roster"
+    assert seven["production"][0]["rosterOrdinal"] == 7
+    assert "slot" not in seven["production"][0]
+    assert eight["production"][0]["rosterOrdinal"] == 8
+    assert seven["production"][0]["ui"] == {
+        "ButtonImage": ["HIHeroSeven"],
+        "TextLabel": ["OBJECT:HeroSeven"],
+        "DescriptLabel": ["CONTROLBAR:ToolTipHeroSeven"],
+    }
+
+
+def test_hero_roster_rejects_duplicate_ordinal_identity() -> None:
+    documents, graph = _hero_roster_fixture()
+    documents["data/ini/playertemplate.ini"] = documents[
+        "data/ini/playertemplate.ini"
+    ].replace(b"HeroSeven HeroEight", b"HeroSeven HeroSeven")
+
+    with pytest.raises(PlayableUnitCompilerError, match="duplicate BuildableHeroesMP"):
+        compile_playable_unit_descriptor("HeroSeven", documents, faction_graph=graph)
+
+
+def test_hero_roster_rejects_unreachable_starting_building() -> None:
+    documents, graph = _hero_roster_fixture()
+    graph["definitions"]["objects"] = [
+        row
+        for row in graph["definitions"]["objects"]
+        if row["id"] != "UniversalFactory"
+    ]
+
+    with pytest.raises(PlayableUnitCompilerError, match="no reachable"):
+        compile_playable_unit_descriptor("HeroSeven", documents, faction_graph=graph)
+
+
+def test_hero_roster_rejects_conflicting_command_socket_route() -> None:
+    documents, graph = _hero_roster_fixture()
+    documents["data/ini/commandbutton.ini"] += b"""
+CommandButton Command_BuildHeroSeven
+  Command = HERO_BUILD
+  Object = HeroSeven
+  ButtonImage = HIHeroSeven
+  TextLabel = OBJECT:HeroSeven
+  DescriptLabel = CONTROLBAR:ToolTipHeroSeven
+End
+"""
+    documents["data/ini/commandset.ini"] += b"""
+CommandSet ConflictingHeroCommandSet
+  1 = Command_BuildHeroSeven
+End
+"""
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] += b"""
+Object ConflictingHeroProducer
+  CommandSet = ConflictingHeroCommandSet
+  KindOf = PRELOAD SELECTABLE STRUCTURE
+End
+"""
+    graph["definitions"]["objects"].append(
+        {"id": "ConflictingHeroProducer", "edges": []}
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="conflicting"):
+        compile_playable_unit_descriptor("HeroSeven", documents, faction_graph=graph)
+
+
 def test_faction_graph_audio_edges_reject_numeric_lookalikes() -> None:
     documents = _documents()
     documents["data/ini/playertemplate.ini"] = b"""

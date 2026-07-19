@@ -8,6 +8,8 @@ const MAX_MAP_CATALOG_ROW_FIELDS := 64
 const MAX_COOKED_MAP_ROOT_FIELDS := 128
 const MAX_MAP_ID_LENGTH := 256
 const MAX_MAP_PATH_LENGTH := 1024
+const MAX_PLAYABLE_UNIT_RUNTIME_BYTES := 4 * 1024 * 1024
+const MAX_PLAYABLE_UNIT_RUNTIMES_PER_PACK := 512
 
 var units: Dictionary = {}
 var buildings: Dictionary = {}
@@ -19,6 +21,8 @@ var maps: Dictionary = {}
 var bundle_objects: Dictionary = {}
 var retail_unit_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
+var trebuchet_runtime: Dictionary = {}
+var playable_unit_runtimes: Dictionary = {}
 var animation_capabilities: Dictionary = {}
 var bundle_maps: Dictionary = {}
 var retail_ui_images: Dictionary = {}
@@ -52,6 +56,8 @@ func reload() -> void:
 	bundle_objects.clear()
 	retail_unit_rules.clear()
 	ranger_runtime.clear()
+	trebuchet_runtime.clear()
+	playable_unit_runtimes.clear()
 	animation_capabilities.clear()
 	bundle_maps.clear()
 	retail_ui_images.clear()
@@ -141,6 +147,8 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	_load_declared_rows(root, String(declared.get("objects", "")), "objects", bundle_objects)
 	_load_retail_unit_rules(root, String(declared.get("unitRules", "")))
 	_load_ranger_runtime(root, String(declared.get("rangerRuntime", "")))
+	_load_trebuchet_runtime(root, String(declared.get("trebuchetRuntime", "")))
+	_load_playable_unit_runtimes(root, declared)
 	_load_declared_rows(root, String(declared.get("animationCapabilities", "")), "capabilities", animation_capabilities)
 	_load_retail_ui_manifest(root, String(declared.get("uiManifest", "")))
 	_load_retail_strings(root, String(declared.get("strings", "")))
@@ -280,6 +288,309 @@ func _load_ranger_runtime(root: String, relative: String) -> void:
 	document["_source"] = ModLoader.resolve_pack_path(root, relative)
 	document["_pack_root"] = root
 	ranger_runtime = document
+
+
+func _load_trebuchet_runtime(root: String, relative: String) -> void:
+	if relative == "":
+		return
+	var document := _read_declared_document(root, relative)
+	if (
+		String(document.get("schema", "")) != "openbfme.trebuchet-runtime-contract"
+		or int(document.get("schemaVersion", -1)) != 0
+		or String(document.get("capabilityStatus", "")) != "bounded-direct-structure-ready"
+	):
+		return
+	var workshop: Dictionary = bundle_objects.get("bfme2.object.gondor-workshop", {})
+	var trebuchet: Dictionary = bundle_objects.get("bfme2.object.gondor-trebuchet", {})
+	if (
+		String(workshop.get("_pack_root", "")) != root
+		or String(trebuchet.get("_pack_root", "")) != root
+		or String(workshop.get("kind", "")) != "structure"
+		or String(trebuchet.get("kind", "")) != "member"
+	):
+		return
+	var presentation: Dictionary = trebuchet.get("presentation", {}) as Dictionary
+	for key in ["model", "deathModel", "projectileModel"]:
+		var asset := String(presentation.get(key, ""))
+		if asset == "" or resolve_asset(asset, root) == "":
+			return
+	document["_source"] = ModLoader.resolve_pack_path(root, relative)
+	document["_pack_root"] = root
+	trebuchet_runtime = document
+
+
+func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
+	## Generic playable units are an atomic per-pack registry. A malformed or
+	## colliding declaration rejects this pack's entire playable-unit delta so a
+	## half-loaded faction can never leak into production or the HUD.
+	var keys: Array[String] = []
+	for value in declared.keys():
+		var key := String(value)
+		if key.begins_with("playableUnit."):
+			keys.append(key)
+	keys.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	if keys.size() > MAX_PLAYABLE_UNIT_RUNTIMES_PER_PACK:
+		return false
+	var pending: Dictionary = {}
+	var pending_folded: Dictionary = {}
+	for key in keys:
+		var relative := String(declared.get(key, ""))
+		if relative == "" or not ModLoader.is_safe_relative_path(relative):
+			return false
+		var document := _read_declared_document_bounded(root, relative, MAX_PLAYABLE_UNIT_RUNTIME_BYTES)
+		if not _validate_playable_unit_runtime(root, document):
+			return false
+		var object_id := String(document["objectId"])
+		var folded := object_id.to_lower()
+		if pending_folded.has(folded):
+			return false
+		for existing_id_value in playable_unit_runtimes.keys():
+			if String(existing_id_value).to_lower() == folded and String(existing_id_value) != object_id:
+				return false
+		document["_source"] = ModLoader.resolve_pack_path(root, relative)
+		document["_pack_root"] = root
+		document["_pack_file_key"] = key
+		pending[object_id] = document
+		pending_folded[folded] = object_id
+	var projections: Dictionary = {}
+	var hero_ordinals: Dictionary = {}
+	for existing_id_value in playable_unit_runtimes.keys():
+		var existing_id := String(existing_id_value)
+		var existing_document := playable_unit_runtimes[existing_id] as Dictionary
+		var existing_production: Array = (existing_document.get("registration", {}) as Dictionary).get("production", [])
+		for route_value in existing_production:
+			var route := route_value as Dictionary
+			if String(route.get("surface", "")) == "hero-roster":
+				var ordinal_key := "%s:%d" % [String(route.get("producerObjectId", "")).to_lower(), int(route.get("rosterOrdinal", 0))]
+				hero_ordinals[ordinal_key] = existing_id
+	for object_id_value in pending.keys():
+		var object_id := String(object_id_value)
+		var document := pending[object_id] as Dictionary
+		var production: Array = (document.get("registration", {}) as Dictionary).get("production", [])
+		for route_value in production:
+			var route := route_value as Dictionary
+			if String(route.get("surface", "")) != "hero-roster":
+				continue
+			var ordinal_key := "%s:%d" % [String(route.get("producerObjectId", "")).to_lower(), int(route.get("rosterOrdinal", 0))]
+			if hero_ordinals.has(ordinal_key) and String(hero_ordinals[ordinal_key]).to_lower() != object_id.to_lower():
+				return false
+			hero_ordinals[ordinal_key] = object_id
+		var projection := _playable_unit_projection(document)
+		if projection.is_empty():
+			return false
+		projections[object_id] = projection
+	for object_id_value in pending.keys():
+		var object_id := String(object_id_value)
+		var document := pending[object_id] as Dictionary
+		var projection := projections[object_id] as Dictionary
+		playable_unit_runtimes[object_id] = document
+		var member := projection["member"] as Dictionary
+		var capability := projection["capability"] as Dictionary
+		bundle_objects[String(member["id"])] = member
+		animation_capabilities[String(capability["id"])] = capability
+	return true
+
+
+func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool:
+	if (
+		String(document.get("schema", "")) != "openbfme.playable-unit-runtime"
+		or int(document.get("schemaVersion", -1)) != 0
+		or String(document.get("objectId", "")).strip_edges() == ""
+		or String(document.get("objectId", "")).length() > 256
+		or String(document.get("category", "")) not in ["infantry", "ranged-infantry", "cavalry", "hero", "siege", "monster", "naval"]
+		or not _is_sha256(String(document.get("descriptorSha256", "")))
+		or not _is_sha256(String(document.get("recipeSha256", "")))
+	):
+		return false
+	var resource_ids: Variant = document.get("resourceIds")
+	var registration_value: Variant = document.get("registration")
+	if typeof(resource_ids) != TYPE_ARRAY or typeof(registration_value) != TYPE_DICTIONARY:
+		return false
+	var seen_resources: Dictionary = {}
+	for value in resource_ids as Array:
+		if typeof(value) != TYPE_STRING or String(value).strip_edges() == "":
+			return false
+		var folded := String(value).to_lower()
+		if seen_resources.has(folded):
+			return false
+		seen_resources[folded] = true
+	var registration := registration_value as Dictionary
+	var category := String(document.get("category", ""))
+	for required in ["production", "composition", "gameplay", "simulation", "capabilities", "visual", "ui", "imageBindings", "audioRoutes", "audioBindings", "audioResolution", "unsupportedCapabilities"]:
+		if not registration.has(required):
+			return false
+	if typeof(registration.production) != TYPE_ARRAY or (registration.production as Array).is_empty():
+		return false
+	for route_value in registration.production as Array:
+		if typeof(route_value) != TYPE_DICTIONARY:
+			return false
+		var route := route_value as Dictionary
+		var surface := String(route.get("surface", ""))
+		var slot := int(route.get("slot", 0))
+		var roster_ordinal := int(route.get("rosterOrdinal", 0))
+		if (
+			String(route.get("producerObjectId", "")) == ""
+			or String(route.get("commandSetId", "")) == ""
+			or String(route.get("commandId", "")) == ""
+			or surface not in ["command-socket", "hero-roster"]
+			or (surface == "command-socket" and (slot < 1 or roster_ordinal != 0))
+			or (surface == "hero-roster" and (roster_ordinal < 1 or slot != 0))
+			or (category == "hero" and surface != "hero-roster")
+			or (category != "hero" and surface == "hero-roster")
+		):
+			return false
+	if typeof(registration.composition) != TYPE_DICTIONARY or typeof(registration.gameplay) != TYPE_DICTIONARY:
+		return false
+	if typeof(registration.visual) != TYPE_DICTIONARY or typeof(registration.ui) != TYPE_DICTIONARY:
+		return false
+	var visual := registration.visual as Dictionary
+	var components: Variant = visual.get("components")
+	var core: Variant = visual.get("coreAnimations")
+	if typeof(components) != TYPE_ARRAY or (components as Array).is_empty() or typeof(core) != TYPE_DICTIONARY:
+		return false
+	var default_count := 0
+	for component_value in components as Array:
+		if typeof(component_value) != TYPE_DICTIONARY:
+			return false
+		var component := component_value as Dictionary
+		var output := String(component.get("output", ""))
+		if output == "" or resolve_asset(output, root) == "":
+			return false
+		if bool(component.get("default", false)):
+			default_count += 1
+	if default_count != 1:
+		return false
+	for state_value in (core as Dictionary).values():
+		if typeof(state_value) != TYPE_ARRAY or (state_value as Array).is_empty():
+			return false
+		for binding_value in state_value as Array:
+			if typeof(binding_value) != TYPE_DICTIONARY or String((binding_value as Dictionary).get("identifier", "")) == "":
+				return false
+	for bindings_key in ["imageBindings", "audioBindings"]:
+		var bindings: Variant = registration.get(bindings_key)
+		if typeof(bindings) != TYPE_DICTIONARY:
+			return false
+		for paths_value in (bindings as Dictionary).values():
+			var paths: Array = paths_value if typeof(paths_value) == TYPE_ARRAY else [paths_value]
+			for path_value in paths:
+				if typeof(path_value) != TYPE_STRING or resolve_asset(String(path_value), root) == "":
+					return false
+	var image_bindings := registration.get("imageBindings", {}) as Dictionary
+	if registration.has("imageBindingMetadata"):
+		var image_metadata_value: Variant = registration.get("imageBindingMetadata")
+		if typeof(image_metadata_value) != TYPE_DICTIONARY:
+			return false
+		var image_metadata := image_metadata_value as Dictionary
+		if image_metadata.size() != image_bindings.size():
+			return false
+		for image_id_value in image_bindings.keys():
+			var image_id := String(image_id_value)
+			var metadata_value: Variant = image_metadata.get(image_id)
+			if typeof(metadata_value) != TYPE_DICTIONARY:
+				return false
+			var metadata := metadata_value as Dictionary
+			if metadata.size() != 2 or not metadata.has("width") or not metadata.has("height"):
+				return false
+			for axis in ["width", "height"]:
+				var dimension: Variant = metadata[axis]
+				if typeof(dimension) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(dimension)) or float(dimension) != float(int(dimension)) or int(dimension) <= 0:
+					return false
+	if registration.has("stringBindings"):
+		var string_bindings_value: Variant = registration.get("stringBindings")
+		if typeof(string_bindings_value) != TYPE_DICTIONARY:
+			return false
+		var string_bindings := string_bindings_value as Dictionary
+		var required_string_ids: Dictionary = {}
+		for command_value in (registration.ui as Dictionary).get("commands", []):
+			if typeof(command_value) != TYPE_DICTIONARY:
+				return false
+			var fields := (command_value as Dictionary).get("fields", {}) as Dictionary
+			for field in ["TextLabel", "DescriptLabel"]:
+				for string_id_value in fields.get(field, []):
+					required_string_ids[String(string_id_value)] = true
+		if not string_bindings.is_empty() and string_bindings.size() != required_string_ids.size():
+			return false
+		for string_id_value in string_bindings.keys():
+			if not required_string_ids.has(String(string_id_value)) or String(string_id_value).strip_edges() == "" or typeof(string_bindings[string_id_value]) != TYPE_STRING or String(string_bindings[string_id_value]).strip_edges() == "":
+				return false
+	return true
+
+
+func _playable_unit_projection(document: Dictionary) -> Dictionary:
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var composition: Dictionary = registration.get("composition", {}) as Dictionary
+	var visual: Dictionary = registration.get("visual", {}) as Dictionary
+	var components: Array = visual.get("components", []) as Array
+	var default_component: Dictionary = {}
+	for value in components:
+		if typeof(value) == TYPE_DICTIONARY and bool((value as Dictionary).get("default", false)):
+			default_component = value as Dictionary
+			break
+	var source_member := String(composition.get("primaryMemberObjectId", ""))
+	var model := String(default_component.get("output", ""))
+	if source_member == "" or model == "":
+		return {}
+	var member_id := _playable_runtime_id(source_member)
+	var capability_id := "playable-unit:" + String(document.get("objectId", "")).to_lower()
+	var states: Dictionary = {}
+	var core: Dictionary = visual.get("coreAnimations", {}) as Dictionary
+	for state_value in core.keys():
+		var state := String(state_value)
+		var clips: Array[String] = []
+		for binding_value in core[state] as Array:
+			var identifier := String((binding_value as Dictionary).get("identifier", ""))
+			if identifier != "" and not clips.has(identifier):
+				clips.append(identifier)
+		states[state] = {
+			"clips": clips,
+			"mode": "loop" if state in ["idle", "move"] else "once",
+			"useWeaponTiming": state == "attack",
+		}
+	var root := String(document.get("_pack_root", ""))
+	return {
+		"member": {
+			"id": member_id,
+			"kind": "member",
+			"sourceObjectId": source_member,
+			"animationCapabilityId": capability_id,
+			"presentation": {"model": model},
+			"_source": String(document.get("_source", "")),
+			"_pack_root": root,
+		},
+		"capability": {
+			"id": capability_id,
+			"states": states,
+			"unresolvedAnimationTracks": 0,
+			"source": "openbfme.playable-unit-runtime",
+			"_source": String(document.get("_source", "")),
+			"_pack_root": root,
+		},
+	}
+
+
+func _playable_runtime_id(source_id: String) -> String:
+	var output := ""
+	var previous_dash := false
+	for index in source_id.length():
+		var code := source_id.unicode_at(index)
+		var is_upper := code >= 65 and code <= 90
+		var is_lower := code >= 97 and code <= 122
+		var is_digit := code >= 48 and code <= 57
+		if is_upper and index > 0 and not previous_dash:
+			var previous := source_id.unicode_at(index - 1)
+			if (previous >= 97 and previous <= 122) or (previous >= 48 and previous <= 57):
+				output += "-"
+		if is_upper or is_lower or is_digit:
+			output += String.chr(code).to_lower()
+			previous_dash = false
+		elif not previous_dash and output != "":
+			output += "-"
+			previous_dash = true
+	return "bfme2.object." + output.trim_suffix("-")
+
+
+func _is_sha256(value: String) -> bool:
+	return value.length() == 64 and value.is_valid_hex_number(false)
 
 
 func _pack_tree_sha256(root: String) -> String:
@@ -450,6 +761,30 @@ func get_retail_unit_rules(id: String) -> Dictionary:
 
 func get_ranger_runtime() -> Dictionary:
 	return ranger_runtime.duplicate(true)
+
+
+func get_trebuchet_runtime() -> Dictionary:
+	return trebuchet_runtime.duplicate(true)
+
+
+func get_playable_unit_runtime(object_id: String) -> Dictionary:
+	return (playable_unit_runtimes.get(object_id, {}) as Dictionary).duplicate(true)
+
+
+func get_playable_unit_runtimes() -> Dictionary:
+	return playable_unit_runtimes.duplicate(true)
+
+
+func resolve_playable_unit_image_path(object_id: String, image_id: String) -> String:
+	var document: Dictionary = playable_unit_runtimes.get(object_id, {})
+	if document.is_empty():
+		return ""
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var bindings: Dictionary = registration.get("imageBindings", {}) as Dictionary
+	var relative: Variant = bindings.get(image_id)
+	if typeof(relative) != TYPE_STRING:
+		return ""
+	return resolve_asset(String(relative), String(document.get("_pack_root", "")))
 
 func get_animation_capability(id: String) -> Dictionary:
 	return animation_capabilities.get(id, {})

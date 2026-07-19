@@ -16,6 +16,28 @@ from openbfme_importer.sage_cst import (
 
 
 class SageCstTests(unittest.TestCase):
+    def test_nested_sound_state_is_a_state_block(self) -> None:
+        document = parse_sage_document(
+            b"""
+Object RetailHero
+  ClientBehavior = ModelConditionSoundSelectorClientBehavior ModuleTag_Sound
+    SoundState = MOUNTED
+      VoiceMove = HeroVoiceMoveMounted
+      VoiceSelect = HeroVoiceSelectMounted
+    End
+  End
+End
+""",
+            "data/ini/object/units/retailhero.ini",
+        )
+
+        client = document.objects[0].blocks[0]
+        sound_state = client.blocks[0]
+        self.assertEqual(sound_state.kind, "SoundState")
+        self.assertEqual(sound_state.header_key, "SoundState")
+        self.assertEqual(sound_state.header_tokens, ("MOUNTED",))
+        self.assertEqual(sound_state.values("VoiceMove"), ("HeroVoiceMoveMounted",))
+
     def test_nested_object_cst_preserves_order_repeats_tags_conditions_and_provenance(self) -> None:
         source = """
 Object GondorUnit

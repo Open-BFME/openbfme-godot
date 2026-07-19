@@ -30,6 +30,12 @@ def _descriptor(target: str) -> dict[str, object]:
         for rows in owner.values()
         for row in rows
     }
+    string_ids = {
+        value
+        for command in presentation["ui"]["commands"]
+        for field in ("TextLabel", "DescriptLabel")
+        for value in command["fields"].get(field, [])
+    }
     descriptor = compile_playable_unit_descriptor(
         target,
         _documents(),
@@ -52,6 +58,7 @@ def _descriptor(target: str) -> dict[str, object]:
         resolved_audio={
             identifier: [f"audio/{identifier}.wav"] for identifier in audio_ids
         },
+        resolved_strings={identifier: f"Resolved {identifier}" for identifier in string_ids},
     )
     capability_ids = {row["id"] for row in descriptor["capabilities"]}
     for identifier in ("move", "attack", "death"):
@@ -347,6 +354,12 @@ def test_same_compiler_emits_complete_category_recipes(
     recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
     validate_playable_unit_pack_recipe(recipe)
     assert recipe["category"] == category
+    assert recipe["runtimeRegistration"]["stringBindings"] == descriptor["presentation"]["resolvedStrings"]
+    assert set(recipe["runtimeRegistration"]["imageBindingMetadata"]) == set(recipe["runtimeRegistration"]["imageBindings"])
+    assert all(
+        metadata == {"width": 16, "height": 16}
+        for metadata in recipe["runtimeRegistration"]["imageBindingMetadata"].values()
+    )
     assert recipe["descriptorSha256"] == descriptor["descriptorSha256"]
     assert set(recipe["runtimeRegistration"]["visual"]["coreAnimations"]) == {
         "idle",
@@ -413,6 +426,52 @@ def test_missing_required_core_state_fails_closed() -> None:
         compile_playable_unit_pack_recipe(descriptor, closure)
 
 
+def test_missing_conditional_core_animation_is_not_tolerated() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    resolved_move = next(
+        row
+        for row in closure["exactLeaves"]
+        if row["kind"] == "animation" and "MOVING" in row["conditions"]
+    )
+    missing_move = deepcopy(resolved_move)
+    missing_move["identifier"] = "HEROUNIT_SKL.HEROUNIT_RUN_MISSING"
+    missing_move["status"] = "missing"
+    missing_move.pop("physicalVirtualPaths")
+    closure["unresolved"]["references"].append(missing_move)
+    closure["summary"]["ready"] = False
+    _rehash_closure(closure)
+
+    with pytest.raises(PlayableUnitPackCompilerError, match="conversion-ready"):
+        compile_playable_unit_pack_recipe(descriptor, closure)
+
+
+def test_rehashed_non_core_gap_cannot_be_forged_into_core_state() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    missing = deepcopy(
+        next(row for row in closure["exactLeaves"] if row["kind"] == "animation")
+    )
+    missing["identifier"] = "HEROUNIT_SKL.HEROUNIT_MORALE_MISSING"
+    missing["conditions"] = ["EMOTION_MORALE_HIGH"]
+    missing["status"] = "missing"
+    missing.pop("physicalVirtualPaths")
+    closure["unresolved"]["references"].append(missing)
+    closure["summary"]["ready"] = False
+    _rehash_closure(closure)
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    row = recipe["runtimeRegistration"]["visual"]["unsupportedVisualReferences"][0]
+    assert row["runtimeSupport"] == "excluded-non-core-animation-gap"
+    row["conditions"] = ["MOVING"]
+    unsigned = dict(recipe)
+    unsigned.pop("recipeSha256")
+    recipe["recipeSha256"] = hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    with pytest.raises(PlayableUnitPackCompilerError, match="unsupported visual"):
+        validate_playable_unit_pack_recipe(recipe)
+
+
 def test_unresolved_selected_texture_fails_closed() -> None:
     descriptor = _descriptor("MonsterUnit")
     closure = _closure(descriptor)
@@ -421,6 +480,97 @@ def test_unresolved_selected_texture_fails_closed() -> None:
     _rehash_closure(closure)
     with pytest.raises(PlayableUnitPackCompilerError, match="unresolved texture"):
         compile_playable_unit_pack_recipe(descriptor, closure)
+
+
+def test_missing_texture_on_conditional_model_is_explicitly_unsupported() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    member = descriptor["composition"]["primaryMemberObjectId"]
+    conditional_id = "HeroMountedModel"
+    conditional_path = "art/w3d/fi/heromountedmodel.w3d"
+    conditional_root = deepcopy(descriptor["presentation"]["visualRoots"][0])
+    conditional_root["id"] = conditional_id
+    conditional_root["expression"] = conditional_id
+    descriptor["presentation"]["visualRoots"].insert(0, conditional_root)
+    _rehash_descriptor(descriptor)
+
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            conditional_id,
+            "model",
+            conditional_path,
+            ["MOUNTED"],
+            "ModelConditionState MOUNTED",
+        )
+    )
+    closure["scannedW3d"].append(
+        {
+            "virtualPath": conditional_path,
+            "byteLength": 1,
+            "sha256": "1" * 64,
+            "headerIds": {
+                "virtualPath": conditional_path,
+                "modelIds": [conditional_id],
+                "hierarchyIds": [],
+                "animationIds": [],
+            },
+            "modelReferences": [],
+            "warnings": [],
+        }
+    )
+    closure["w3dDependencyClosure"]["embeddedTextures"].append(
+        {
+            "identifier": "MissingMounted.tga",
+            "sourceW3dVirtualPath": conditional_path,
+            "status": "missing",
+            "physicalVirtualPaths": [],
+            "evidence": ["fixture"],
+            "provenance": {"virtualPath": conditional_path},
+        }
+    )
+    closure["summary"]["ready"] = False
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+
+    visual = recipe["runtimeRegistration"]["visual"]
+    assert len(visual["components"]) == 1
+    assert visual["unsupportedVisualReferences"][0]["identifier"] == "MissingMounted.tga"
+    assert visual["unsupportedVisualReferences"][0]["runtimeSupport"] == (
+        "excluded-missing-conditional-model-texture"
+    )
+    assert visual["unsupportedVisualReferences"][1]["identifier"] == conditional_id
+    assert visual["unsupportedVisualReferences"][1]["runtimeSupport"] == (
+        "excluded-hero-form"
+    )
+
+
+def test_world_builder_model_occurrence_does_not_claim_runtime_ownership() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    member = descriptor["composition"]["primaryMemberObjectId"]
+    default_model = next(
+        row for row in closure["exactLeaves"] if row["kind"] == "model"
+    )
+    editor_row = _leaf(
+        member,
+        default_model["identifier"],
+        "model",
+        default_model["physicalVirtualPaths"][0],
+        ["WORLD_BUILDER"],
+        "ModelConditionState WORLD_BUILDER",
+        "W3DModelDraw ModuleTag_WorldBuilder",
+    )
+    closure["exactLeaves"].append(editor_row)
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+
+    visual = recipe["runtimeRegistration"]["visual"]
+    assert len(visual["components"]) == 1
+    assert visual["unsupportedVisualReferences"][0]["identifier"] == editor_row["identifier"]
+    assert visual["unsupportedVisualReferences"][0]["runtimeSupport"] == "excluded-editor-only"
 
 
 def test_authored_silent_command_audio_has_an_explicit_empty_binding() -> None:
@@ -792,4 +942,43 @@ def test_rehashed_malformed_semantic_registration_is_rejected() -> None:
             json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         with pytest.raises(PlayableUnitPackCompilerError, match="semantic is invalid"):
+            validate_playable_unit_pack_recipe(recipe)
+
+
+def test_rehashed_malformed_unsupported_visual_reference_is_rejected() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    member = descriptor["composition"]["primaryMemberObjectId"]
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            "HeroUnit_EDITOR",
+            "model",
+            "art/w3d/fi/herounit_editor.w3d",
+            ["WORLD_BUILDER"],
+            "ModelConditionState WORLD_BUILDER",
+        )
+    )
+    _rehash_closure(closure)
+    original = compile_playable_unit_pack_recipe(descriptor, closure)
+    for mutation in ("condition", "provenance", "path", "marker"):
+        recipe = deepcopy(original)
+        row = recipe["runtimeRegistration"]["visual"]["unsupportedVisualReferences"][0]
+        if mutation == "condition":
+            row["conditions"] = [7]
+        elif mutation == "provenance":
+            row["provenance"] = {}
+        elif mutation == "marker":
+            row["runtimeSupport"] = "excluded-hero-form"
+        else:
+            row["physicalVirtualPaths"] = ["../escaped.w3d"]
+        unsigned = dict(recipe)
+        unsigned.pop("recipeSha256")
+        recipe["recipeSha256"] = hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        with pytest.raises(
+            (PlayableUnitPackCompilerError, ValueError),
+            match="unsupported visual|unsafe|relative",
+        ):
             validate_playable_unit_pack_recipe(recipe)

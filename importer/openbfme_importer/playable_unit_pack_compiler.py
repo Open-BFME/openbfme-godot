@@ -38,6 +38,13 @@ _ATTACK_TOKENS = {
     "SPECIAL_WEAPON_TWO",
     "SPECIAL_WEAPON_THREE",
 }
+_EXCLUDED_HERO_FORM_CONDITIONS = {
+    "hero",
+    "mounted",
+    "user_1",
+    "user_2",
+    "user_3",
+}
 
 
 class PlayableUnitPackCompilerError(ValueError):
@@ -59,6 +66,14 @@ def _slug(value: str) -> str:
     if not result:
         raise PlayableUnitPackCompilerError("unit identifier has no safe slug")
     return result
+
+
+def _w3d_rig_family(value: str) -> str:
+    key = value.casefold()
+    for marker in ("_skl", "_skn"):
+        if marker in key:
+            return key.split(marker, 1)[0]
+    return ""
 
 
 def _resource_id(*parts: str) -> str:
@@ -415,7 +430,183 @@ def compile_playable_unit_pack_recipe(
     ):
         raise PlayableUnitPackCompilerError("visual closure digest is invalid")
     summary = visual_closure.get("summary")
-    if not isinstance(summary, Mapping) or summary.get("ready") is not True:
+    if not isinstance(summary, Mapping):
+        raise PlayableUnitPackCompilerError("visual closure is not conversion-ready")
+    unresolved = visual_closure.get("unresolved")
+    if not isinstance(unresolved, Mapping):
+        raise PlayableUnitPackCompilerError("visual closure unresolved contract is invalid")
+    graph_diagnostics = _rows(
+        unresolved.get("graphDiagnostics"), "visual graph diagnostics"
+    )
+    unresolved_references = _rows(
+        unresolved.get("references"), "unresolved visual references"
+    )
+    missing_definitions = _rows(
+        visual_closure.get("missingDefinitions", []), "missing visual definitions"
+    )
+    conditional_animation_candidates = [
+        row
+        for row in unresolved_references
+        if row.get("status") == "missing"
+        and row.get("kind") == "animation"
+        and row.get("usage") == "animation"
+        and isinstance(row.get("conditions"), list)
+        and bool(row.get("conditions"))
+        and isinstance(row.get("provenance"), Mapping)
+    ]
+    dependency = visual_closure.get("w3dDependencyClosure")
+    if not isinstance(dependency, Mapping):
+        raise PlayableUnitPackCompilerError("visual texture closure is invalid")
+    embedded = _rows(dependency.get("embeddedTextures"), "embedded textures")
+    scanned = _rows(visual_closure.get("scannedW3d"), "scanned W3D")
+    _validate_dependency_closure(visual_closure, scanned)
+    missing_embedded = [row for row in embedded if row.get("status") == "missing"]
+    exact_rows = _rows(visual_closure.get("exactLeaves"), "exact visual leaves")
+    editor_only_model_rows = [
+        row
+        for row in exact_rows
+        if row.get("kind") == "model"
+        and isinstance(row.get("conditions"), list)
+        and "world_builder"
+        in {str(value).casefold() for value in row.get("conditions", [])}
+    ]
+    hero_form_model_rows = [
+        row
+        for row in exact_rows
+        if descriptor.get("category") == "hero"
+        and row.get("kind") == "model"
+        and isinstance(row.get("conditions"), list)
+        and bool(row.get("conditions"))
+        and {
+            str(value).casefold() for value in row.get("conditions", [])
+        }.issubset(_EXCLUDED_HERO_FORM_CONDITIONS)
+        and not any(
+            other.get("kind") == "model"
+            and other.get("conditions") == []
+            and _draw_key(other) == _draw_key(row)
+            and bool(
+                {
+                    str(path).casefold()
+                    for path in other.get("physicalVirtualPaths", [])
+                }
+                & {
+                    str(path).casefold()
+                    for path in row.get("physicalVirtualPaths", [])
+                }
+            )
+            for other in exact_rows
+        )
+    ]
+    hero_form_animation_rows = [
+        row
+        for row in exact_rows
+        if row.get("kind") == "animation"
+        and isinstance(row.get("conditions"), list)
+        and any(
+            _draw_key(model) == _draw_key(row)
+            and {
+                str(value).casefold()
+                for value in model.get("conditions", [])
+            }.issubset(
+                {str(value).casefold() for value in row.get("conditions", [])}
+            )
+            for model in hero_form_model_rows
+        )
+    ]
+    unsupported_hero_form_rows = [
+        {
+            **deepcopy(row),
+            "runtimeSupport": "excluded-hero-form",
+            "runtimeExclusionReason": "authored-hero-form-outside-runtime-scope",
+            "excludedFormConditions": sorted(
+                {
+                    str(value).casefold()
+                    for value in row.get("conditions", [])
+                }
+                & _EXCLUDED_HERO_FORM_CONDITIONS
+            ),
+        }
+        for row in [*hero_form_model_rows, *hero_form_animation_rows]
+    ]
+    unsupported_model_sources: set[str] = set()
+    for missing in missing_embedded:
+        source = str(missing.get("sourceW3dVirtualPath", ""))
+        model_rows = [
+            row
+            for row in exact_rows
+            if row.get("kind") == "model"
+            and source in row.get("physicalVirtualPaths", [])
+        ]
+        if (
+            not source
+            or not model_rows
+            or any(not row.get("conditions") for row in model_rows)
+        ):
+            raise PlayableUnitPackCompilerError(
+                "required model has an unresolved texture"
+            )
+        unsupported_model_sources.add(source)
+    unsupported_model_hierarchies: set[str] = set()
+    unsupported_model_families = {
+        family
+        for row in exact_rows
+        if row.get("kind") == "model"
+        and any(
+            str(path) in unsupported_model_sources
+            for path in row.get("physicalVirtualPaths", [])
+        )
+        for family in [_w3d_rig_family(str(row.get("identifier", "")))]
+        if family
+    }
+    unsupported_form_animation_rows = [
+        row
+        for row in exact_rows
+        if row.get("kind") == "animation"
+        and row not in hero_form_animation_rows
+        and "." in str(row.get("identifier", ""))
+        and _w3d_rig_family(
+            str(row.get("identifier", "")).split(".", 1)[0]
+        )
+        in unsupported_model_families
+    ]
+    unsupported_source_keys = {source.casefold() for source in unsupported_model_sources}
+    for row in scanned:
+        if str(row.get("virtualPath", "")).casefold() not in unsupported_source_keys:
+            continue
+        headers = row.get("headerIds")
+        if not isinstance(headers, Mapping):
+            raise PlayableUnitPackCompilerError("scanned W3D headers are invalid")
+        hierarchy_ids = headers.get("hierarchyIds", [])
+        if not isinstance(hierarchy_ids, list) or any(
+            not isinstance(value, str) or not value for value in hierarchy_ids
+        ):
+            raise PlayableUnitPackCompilerError("scanned W3D hierarchy ids are invalid")
+        unsupported_model_hierarchies.update(
+            value.casefold() for value in hierarchy_ids
+        )
+    conditional_animation_gaps = [
+        row
+        for row in conditional_animation_candidates
+        if _state(row) is None
+        or (
+            "." in str(row.get("identifier", ""))
+            and (
+                str(row.get("identifier", "")).split(".", 1)[0].casefold()
+                in unsupported_model_hierarchies
+                or _w3d_rig_family(
+                    str(row.get("identifier", "")).split(".", 1)[0]
+                )
+                in unsupported_model_families
+            )
+        )
+    ]
+    tolerated_non_core_gaps = (
+        not graph_diagnostics
+        and not missing_definitions
+        and len(conditional_animation_gaps) == len(unresolved_references)
+        and all(row.get("status") in {"resolved", "missing"} for row in embedded)
+    )
+    if summary.get("ready") is not True and not tolerated_non_core_gaps:
         raise PlayableUnitPackCompilerError("visual closure is not conversion-ready")
     composition = descriptor["composition"]
     if not isinstance(composition, Mapping):
@@ -432,12 +623,18 @@ def compile_playable_unit_pack_recipe(
         container_id.casefold(),
         *(identifier.casefold() for identifier in member_ids),
     }
-    scanned = _rows(visual_closure.get("scannedW3d"), "scanned W3D")
-    _validate_dependency_closure(visual_closure, scanned)
     exact = [
         row
-        for row in _rows(visual_closure.get("exactLeaves"), "exact visual leaves")
+        for row in exact_rows
         if str(row.get("targetObject", "")).casefold() in relevant_targets
+        and row not in editor_only_model_rows
+        and row not in hero_form_model_rows
+        and row not in hero_form_animation_rows
+        and row not in unsupported_form_animation_rows
+        and not any(
+            str(path) in unsupported_model_sources
+            for path in row.get("physicalVirtualPaths", [])
+        )
     ]
     semantic = [
         row
@@ -462,11 +659,24 @@ def compile_playable_unit_pack_recipe(
         if str(row.get("id", "")).casefold() not in {"", "none"}
     }
     exact_ids = {str(row.get("identifier", "")).casefold() for row in exact}
+    unsupported_model_ids = {
+        str(row.get("identifier", "")).casefold()
+        for row in exact_rows
+        if row.get("kind") == "model"
+        and (
+            row in hero_form_model_rows
+            or any(
+                str(path) in unsupported_model_sources
+                for path in row.get("physicalVirtualPaths", [])
+            )
+        )
+    }
     missing_visual_ids = sorted(
         (
             identifier
             for identifier in required_visual_ids
             if identifier.casefold() not in exact_ids
+            and identifier.casefold() not in unsupported_model_ids
         ),
         key=str.casefold,
     )
@@ -479,19 +689,10 @@ def compile_playable_unit_pack_recipe(
     auxiliary_rows = [
         row for row in exact if row.get("kind") not in {"model", "animation"}
     ]
-    primary_visual_id = next(
-        (
-            str(row.get("id"))
-            for row in visual_roots
-            if str(row.get("id", "")).casefold() not in {"", "none"}
-        ),
-        "",
-    )
     primary_models = {
         path
         for row in model_rows
         if str(row.get("targetObject", "")).casefold() == member_id.casefold()
-        and str(row.get("identifier", "")).casefold() == primary_visual_id.casefold()
         and row.get("conditions") == []
         for path in _paths(row, "primary model")
     }
@@ -577,11 +778,26 @@ def compile_playable_unit_pack_recipe(
         if not isinstance(raw_conditions, list):
             raise PlayableUnitPackCompilerError("animation conditions are invalid")
         condition_keys = {str(item).casefold() for item in raw_conditions}
+        conditional_specificity: dict[str, int] = {}
+        for path in candidates:
+            matching_conditions = [
+                {str(item).casefold() for item in occurrence["conditions"]}
+                for occurrence in model_occurrences[path]
+                if occurrence["conditions"]
+                and {
+                    str(item).casefold()
+                    for item in occurrence["conditions"]
+                }.issubset(condition_keys)
+            ]
+            if matching_conditions:
+                conditional_specificity[path] = max(
+                    len(conditions) for conditions in matching_conditions
+                )
+        best_specificity = max(conditional_specificity.values(), default=0)
         conditional_owners = [
             path
-            for path in candidates
-            if model_conditions[path]
-            and {item.casefold() for item in model_conditions[path]} & condition_keys
+            for path, specificity in conditional_specificity.items()
+            if specificity == best_specificity
         ]
         if len(conditional_owners) > 1:
             raise PlayableUnitPackCompilerError(
@@ -912,6 +1128,7 @@ def compile_playable_unit_pack_recipe(
         )
         mapped_by_atlas.setdefault(source, []).append((identifier, image))
     image_bindings: dict[str, str] = {}
+    image_binding_metadata: dict[str, dict[str, int]] = {}
     for atlas_index, (source, records) in enumerate(
         sorted(mapped_by_atlas.items(), key=lambda item: item[0].casefold())
     ):
@@ -949,6 +1166,10 @@ def compile_playable_unit_pack_recipe(
                 }
             )
             image_bindings[identifier] = f"{output_directory}/{output_name}"
+            image_binding_metadata[identifier] = {
+                "width": values[2] - values[0],
+                "height": values[3] - values[1],
+            }
         resources.append(
             {
                 "id": resource_id,
@@ -1014,6 +1235,7 @@ def compile_playable_unit_pack_recipe(
             "production": deepcopy(descriptor["production"]),
             "composition": deepcopy(descriptor["composition"]),
             "gameplay": deepcopy(descriptor["gameplay"]),
+            "simulation": deepcopy(descriptor["gameplay"]["simulation"]),
             "capabilities": deepcopy(descriptor["capabilities"]),
             "visual": {
                 "components": components,
@@ -1021,9 +1243,64 @@ def compile_playable_unit_pack_recipe(
                 "authoredAnimationStates": authored_animation_states,
                 "authoredVisualLeaves": authored_visual_leaves,
                 "authoredVisualSemantics": authored_visual_semantics,
+                "unsupportedVisualReferences": deepcopy(
+                    [
+                        *[
+                            {
+                                **row,
+                                "runtimeSupport": "excluded-non-core-animation-gap",
+                                "runtimeExclusionReason": (
+                                    "unmapped-runtime-state"
+                                    if _state(row) is None
+                                    else "unsupported-model-rig"
+                                ),
+                                **(
+                                    {
+                                        "unsupportedRigFamily": _w3d_rig_family(
+                                            str(row.get("identifier", "")).split(".", 1)[0]
+                                        )
+                                    }
+                                    if _state(row) is not None
+                                    else {}
+                                ),
+                            }
+                            for row in conditional_animation_gaps
+                        ],
+                        *[
+                            {
+                                **row,
+                                "runtimeSupport": "excluded-missing-conditional-model-texture",
+                                "runtimeExclusionReason": "conditional-model-texture-unresolved",
+                            }
+                            for row in missing_embedded
+                        ],
+                        *[
+                            {
+                                **row,
+                                "runtimeSupport": "excluded-editor-only",
+                                "runtimeExclusionReason": "world-builder-only",
+                            }
+                            for row in editor_only_model_rows
+                        ],
+                        *[
+                            {
+                                **row,
+                                "runtimeSupport": "excluded-unsupported-model-rig",
+                                "runtimeExclusionReason": "conditional-model-texture-unresolved",
+                                "unsupportedRigFamily": _w3d_rig_family(
+                                    str(row.get("identifier", "")).split(".", 1)[0]
+                                ),
+                            }
+                            for row in unsupported_form_animation_rows
+                        ],
+                        *unsupported_hero_form_rows,
+                    ]
+                ),
             },
             "ui": deepcopy(ui),
             "imageBindings": image_bindings,
+            "imageBindingMetadata": image_binding_metadata,
+            "stringBindings": deepcopy(presentation.get("resolvedStrings", {})),
             "audioRoutes": deepcopy(audio_routes),
             "audioBindings": audio_bindings,
             "audioResolution": {
@@ -1180,6 +1457,153 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
         ):
             raise PlayableUnitPackCompilerError("authored visual semantic is invalid")
         _safe_path(provenance["virtualPath"], "semantic provenance path")
+    unsupported_visual = _rows(
+        visual.get("unsupportedVisualReferences"), "unsupported visual references"
+    )
+    for row in unsupported_visual:
+        conditions = row.get("conditions", [])
+        provenance = row.get("provenance")
+        valid_conditions = isinstance(conditions, list) and all(
+            isinstance(value, str) and bool(value) for value in conditions
+        )
+        valid_provenance = (
+            isinstance(provenance, Mapping)
+            and bool(provenance)
+            and isinstance(provenance.get("virtualPath"), str)
+            and bool(provenance.get("virtualPath"))
+        )
+        scope = provenance.get("scopePath", []) if isinstance(provenance, Mapping) else []
+        valid_graph_provenance = (
+            valid_provenance
+            and isinstance(provenance.get("definingObject"), str)
+            and bool(provenance.get("definingObject"))
+            and isinstance(provenance.get("inheritanceDistance"), int)
+            and not isinstance(provenance.get("inheritanceDistance"), bool)
+            and provenance.get("inheritanceDistance") >= 0
+            and isinstance(provenance.get("line"), int)
+            and not isinstance(provenance.get("line"), bool)
+            and provenance.get("line") > 0
+            and isinstance(scope, list)
+            and bool(scope)
+            and all(isinstance(value, str) and bool(value) for value in scope)
+        )
+        exclusion_reason = row.get("runtimeExclusionReason")
+        rig_family = row.get("unsupportedRigFamily", "")
+        is_animation = (
+            row.get("status") == "missing"
+            and row.get("kind") == "animation"
+            and row.get("usage") == "animation"
+            and isinstance(row.get("identifier"), str)
+            and bool(row.get("identifier"))
+            and valid_conditions
+            and bool(conditions)
+            and valid_graph_provenance
+            and not row.get("physicalVirtualPaths", [])
+            and row.get("runtimeSupport") == "excluded-non-core-animation-gap"
+            and exclusion_reason in {"unmapped-runtime-state", "unsupported-model-rig"}
+            and (
+                (_state(row) is None and exclusion_reason == "unmapped-runtime-state" and not rig_family)
+                or (
+                    _state(row) is not None
+                    and exclusion_reason == "unsupported-model-rig"
+                    and isinstance(rig_family, str)
+                    and bool(rig_family)
+                    and "." in str(row.get("identifier", ""))
+                    and rig_family
+                    == _w3d_rig_family(str(row.get("identifier", "")).split(".", 1)[0])
+                )
+            )
+        )
+        is_embedded_texture = (
+            row.get("status") == "missing"
+            and isinstance(row.get("sourceW3dVirtualPath"), str)
+            and bool(row.get("sourceW3dVirtualPath"))
+            and isinstance(row.get("identifier"), str)
+            and bool(row.get("identifier"))
+            and valid_provenance
+            and not row.get("physicalVirtualPaths", [])
+            and row.get("candidateCount", 0) == 0
+            and row.get("candidates", []) == []
+            and row.get("runtimeSupport")
+            == "excluded-missing-conditional-model-texture"
+            and exclusion_reason == "conditional-model-texture-unresolved"
+        )
+        is_editor_only_model = (
+            row.get("status") == "resolved"
+            and row.get("kind") == "model"
+            and row.get("usage") == "model"
+            and isinstance(row.get("identifier"), str)
+            and bool(row.get("identifier"))
+            and isinstance(row.get("physicalVirtualPaths"), list)
+            and bool(row.get("physicalVirtualPaths"))
+            and valid_conditions
+            and "world_builder" in {value.casefold() for value in conditions}
+            and valid_graph_provenance
+            and row.get("runtimeSupport") == "excluded-editor-only"
+            and exclusion_reason == "world-builder-only"
+        )
+        is_excluded_form_animation = (
+            row.get("status") == "resolved"
+            and row.get("kind") == "animation"
+            and row.get("usage") == "animation"
+            and isinstance(row.get("identifier"), str)
+            and bool(row.get("identifier"))
+            and isinstance(row.get("physicalVirtualPaths"), list)
+            and bool(row.get("physicalVirtualPaths"))
+            and valid_conditions
+            and bool(conditions)
+            and valid_graph_provenance
+            and row.get("runtimeSupport") == "excluded-unsupported-model-rig"
+            and exclusion_reason == "conditional-model-texture-unresolved"
+            and isinstance(rig_family, str)
+            and bool(rig_family)
+            and "." in str(row.get("identifier", ""))
+            and rig_family
+            == _w3d_rig_family(str(row.get("identifier", "")).split(".", 1)[0])
+        )
+        is_excluded_hero_form = (
+            row.get("runtimeSupport") == "excluded-hero-form"
+            and row.get("status") == "resolved"
+            and row.get("kind") in {"model", "animation"}
+            and row.get("usage") == row.get("kind")
+            and isinstance(row.get("identifier"), str)
+            and bool(row.get("identifier"))
+            and isinstance(row.get("physicalVirtualPaths"), list)
+            and bool(row.get("physicalVirtualPaths"))
+            and valid_conditions
+            and bool(conditions)
+            and valid_graph_provenance
+            and exclusion_reason == "authored-hero-form-outside-runtime-scope"
+            and isinstance(row.get("excludedFormConditions"), list)
+            and bool(row.get("excludedFormConditions"))
+            and set(row.get("excludedFormConditions", []))
+            == ({value.casefold() for value in conditions} & _EXCLUDED_HERO_FORM_CONDITIONS)
+            and (
+                row.get("kind") == "animation"
+                or {value.casefold() for value in conditions}.issubset(
+                    _EXCLUDED_HERO_FORM_CONDITIONS
+                )
+            )
+        )
+        if (
+            not is_animation
+            and not is_embedded_texture
+            and not is_editor_only_model
+            and not is_excluded_form_animation
+            and not is_excluded_hero_form
+        ):
+            raise PlayableUnitPackCompilerError(
+                "unsupported visual reference is invalid"
+            )
+        _safe_path(provenance["virtualPath"], "unsupported visual provenance path")
+        if is_embedded_texture:
+            _safe_path(row["sourceW3dVirtualPath"], "unsupported embedded texture source")
+        for path in row.get("physicalVirtualPaths", []):
+            if not isinstance(path, str):
+                raise PlayableUnitPackCompilerError(
+                    "unsupported visual reference is invalid"
+                )
+            _safe_path(path, "unsupported visual physical path")
     declared_outputs = {
         str(row.get("output"))
         for row in resources
@@ -1193,12 +1617,50 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             if isinstance(crop, Mapping) and isinstance(crop.get("output"), str):
                 declared_outputs.add(f"{directory}/{crop['output']}")
     image_bindings = runtime.get("imageBindings")
+    image_binding_metadata = runtime.get("imageBindingMetadata")
+    string_bindings = runtime.get("stringBindings")
     audio_bindings = runtime.get("audioBindings")
     audio_resolution = runtime.get("audioResolution")
     if not isinstance(image_bindings, Mapping) or any(
         value not in declared_outputs for value in image_bindings.values()
     ):
         raise PlayableUnitPackCompilerError("UI binding output is dangling")
+    if (
+        not isinstance(image_binding_metadata, Mapping)
+        or set(image_binding_metadata) != set(image_bindings)
+        or any(
+            not isinstance(metadata, Mapping)
+            or set(metadata) != {"width", "height"}
+            or any(
+                isinstance(metadata.get(axis), bool)
+                or not isinstance(metadata.get(axis), int)
+                or metadata.get(axis, 0) <= 0
+                for axis in ("width", "height")
+            )
+            for metadata in image_binding_metadata.values()
+        )
+    ):
+        raise PlayableUnitPackCompilerError("UI binding metadata is invalid")
+    required_string_ids = {
+        str(value)
+        for command in runtime.get("ui", {}).get("commands", [])
+        if isinstance(command, Mapping)
+        for field in ("TextLabel", "DescriptLabel")
+        for value in command.get("fields", {}).get(field, [])
+        if value
+    }
+    if (
+        not isinstance(string_bindings, Mapping)
+        or (bool(string_bindings) and set(string_bindings) != required_string_ids)
+        or any(
+            not isinstance(key, str)
+            or not key
+            or not isinstance(value, str)
+            or not value
+            for key, value in string_bindings.items()
+        )
+    ):
+        raise PlayableUnitPackCompilerError("localized string bindings are invalid")
     declared_audio_ids = {
         str(row.get("id", ""))
         for owner in runtime.get("audioRoutes", {}).values()

@@ -14,10 +14,12 @@ const BattlefieldScript = preload("res://src/retail_slice/retail_fords_battlefie
 const HudScript = preload("res://src/retail_slice/retail_hud.gd")
 const LinearFogScript = preload("res://src/retail_slice/fords_linear_fog.gd")
 const MemberHealthOverlayScript = preload("res://src/retail_slice/retail_member_health_overlay.gd")
+const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const SOLDIER_HORDE_ID := "bfme2.object.gondor-fighter-horde"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
 const RANGER_HORDE_ID := "bfme2.object.gondor-ranger-horde"
+const TREBUCHET_OBJECT_ID := "bfme2.object.gondor-trebuchet"
 const BUILDER_OBJECT_ID := "bfme2.object.men-porter"
 const MAP_ID := "bfme2.map.fords-of-isen-ii"
 const UNIT_OBJECT_IDS: Array[String] = [
@@ -32,6 +34,7 @@ const UNIT_MODEL_PATHS := {
 	"bfme2.object.gondor-tower-guard": "assets/models/units/gondor-tower-guard.glb",
 	"bfme2.object.gondor-knight": "assets/models/units/gondor-knight.glb",
 	RANGER_OBJECT_ID: "assets/models/m3/units/gondorranger.glb",
+	TREBUCHET_OBJECT_ID: "assets/models/m3/units/gondortrebuchet.glb",
 	"bfme2.object.men-porter": "assets/models/units/men-porter.glb",
 }
 const PRESENTATION_UNIT_OBJECT_IDS: Array[String] = [
@@ -54,6 +57,7 @@ const BUILDING_OBJECT_IDS := {
 	"barracks": "bfme2.object.men-barracks",
 	"archery_range": "bfme2.object.men-archery-range",
 	"stable": "bfme2.object.men-stable",
+	"workshop": "bfme2.object.gondor-workshop",
 }
 const FORDS_ENVIRONMENT_ORACLE_SHA256 := "c1f300fcf6fed6f225d1b04f50b14fab04883641d8b5b36762be6cfcb58e9a59"
 const FORDS_ACTIVE_TIME_OF_DAY := "AFTERNOON"
@@ -107,7 +111,11 @@ var source_map_data: RetailMapData
 var selected_pack_root := ""
 var gameplay_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
+var trebuchet_runtime: Dictionary = {}
+var playable_unit_runtimes: Dictionary = {}
 var ranger_hud_configuration_error := ""
+var trebuchet_hud_configuration_error := ""
+var playable_unit_hud_configuration_error := ""
 var validated_battalion_capabilities: Dictionary = {}
 var ready_ok := false
 var failure_reason := ""
@@ -184,8 +192,16 @@ func _initialize_content_and_match() -> void:
 	if not ContentDB.bundle_objects.has(SOLDIER_OBJECT_ID):
 		ContentDB.reload()
 	ranger_runtime = ContentDB.get_ranger_runtime()
+	trebuchet_runtime = ContentDB.get_trebuchet_runtime()
+	playable_unit_runtimes = ContentDB.get_playable_unit_runtimes()
 	if ranger_hud_configuration_error != "":
 		_fail("Ranger HUD configuration failed: %s" % ranger_hud_configuration_error)
+		return
+	if trebuchet_hud_configuration_error != "":
+		_fail("Trebuchet HUD configuration failed: %s" % trebuchet_hud_configuration_error)
+		return
+	if playable_unit_hud_configuration_error != "":
+		_fail("Playable-unit HUD configuration failed: %s" % playable_unit_hud_configuration_error)
 		return
 	await _mark_initialization_phase("content")
 	var member_definition := ContentDB.get_bundle_object(SOLDIER_OBJECT_ID)
@@ -270,8 +286,8 @@ func _initialize_content_and_match() -> void:
 		command_costs[unit_type] = simulation._production_rule_value(String(unit_type), "cost_rule", "default_cost")
 	if not ranger_runtime.is_empty():
 		command_costs["Upgrade_GondorArcheryRangeLevel2"] = int((ranger_runtime.get("prerequisite", {}) as Dictionary).get("cost", 0))
-	for structure_kind in SimScript.STRUCTURE_BUILD_RULES.keys():
-		command_costs[structure_kind] = int((SimScript.STRUCTURE_BUILD_RULES[structure_kind] as Dictionary).get("cost", 0))
+	for structure_kind in simulation.structure_build_rule_ids():
+		command_costs[structure_kind] = int(simulation.structure_build_rule(structure_kind).get("cost", 0))
 	hud.set_command_costs(command_costs)
 	hud.apply_audio_values(audio_system.get_music_volume(), audio_system.get_voice_sfx_volume(), audio_system.is_muted())
 	audio_system.sync_events(simulation.events)
@@ -568,23 +584,75 @@ func _load_required_presentation_definitions() -> String:
 	var presentation_ids: Array[String] = PRESENTATION_UNIT_OBJECT_IDS.duplicate()
 	if not ranger_runtime.is_empty():
 		presentation_ids.append(RANGER_OBJECT_ID)
+	if not trebuchet_runtime.is_empty():
+		presentation_ids.append(TREBUCHET_OBJECT_ID)
 	for object_id in presentation_ids:
 		var expected_kind := "builder" if object_id == BUILDER_OBJECT_ID else "member"
 		var model_error := _validate_retail_object_model(object_id, expected_kind, String(UNIT_MODEL_PATHS[object_id]))
 		if model_error != "":
 			return model_error
+		if object_id == TREBUCHET_OBJECT_ID:
+			validated_battalion_capabilities[object_id] = _trebuchet_animation_capability()
+			continue
 		var definition: Dictionary = ContentDB.get_bundle_object(object_id)
 		var capability_id := String(definition.get("animationCapabilityId", ""))
 		var capability: Dictionary = ContentDB.get_animation_capability(capability_id)
 		if capability_id == "" or capability.is_empty() or String(capability.get("_pack_root", "")) != String(definition.get("_pack_root", "")):
 			return "%s has no selected-pack animation capability" % object_id
 		validated_battalion_capabilities[object_id] = _attach_equipment_proof(capability) if object_id == SOLDIER_OBJECT_ID else capability.duplicate(true)
+	for runtime_value in playable_unit_runtimes.values():
+		if typeof(runtime_value) != TYPE_DICTIONARY:
+			return "playable-unit runtime registry contains a non-object"
+		var runtime := runtime_value as Dictionary
+		var member_id := PlayableUnitAdapter.runtime_member_id(runtime)
+		var definition := ContentDB.get_bundle_object(member_id)
+		var capability := ContentDB.get_animation_capability(String(definition.get("animationCapabilityId", "")))
+		var runtime_root := String(runtime.get("_pack_root", ""))
+		if (
+			member_id == ""
+			or definition.is_empty()
+			or capability.is_empty()
+			or runtime_root == ""
+			or String(definition.get("_pack_root", "")) != runtime_root
+			or String(capability.get("_pack_root", "")) != runtime_root
+			or ContentDB.resolve_mesh_path(definition) == ""
+		):
+			return "%s generic playable-unit presentation is incomplete" % String(runtime.get("objectId", ""))
+		validated_battalion_capabilities[member_id] = capability.duplicate(true)
 	for kind in ["fortress", "farm", "barracks", "archery_range", "stable"]:
 		var structure_object_id := String(BUILDING_OBJECT_IDS[kind])
 		var lifecycle_error := _validate_retail_structure_lifecycle(structure_object_id, kind)
 		if lifecycle_error != "":
 			return lifecycle_error
 	return ""
+
+
+func _trebuchet_animation_capability() -> Dictionary:
+	var models: Dictionary = (trebuchet_runtime.get("unit", {}) as Dictionary).get("models", {}) as Dictionary
+	var clips: Dictionary = {}
+	for source_value in models.get("animations", []) as Array:
+		var source := String(source_value)
+		clips[source.get_file().get_basename().to_lower()] = true
+	var expected := {
+		"idle": "gusiegtreb_idla",
+		"move": "gusiegtreb_wlka",
+		"attack": "gusiegtreb_atak",
+	}
+	for state in expected:
+		if not clips.has(String(expected[state])):
+			return {}
+	return {
+		"states": {
+			"idle": {"clips": [expected["idle"]], "mode": "loop"},
+			"move": {"clips": [expected["move"]], "mode": "loop"},
+			"attack": {"clips": [expected["attack"]], "mode": "once", "useWeaponTiming": true},
+			"attackRangedPre": {"clips": [expected["attack"]], "mode": "once"},
+			"attackRangedFire": {"clips": [expected["attack"]], "mode": "once"},
+			"death": {"clips": [], "mode": "once"},
+		},
+		"unresolvedAnimationTracks": 0,
+		"source": "typed-trebuchet-runtime-contract",
+	}
 
 
 func _validate_retail_object_model(object_id: String, expected_kind: String, expected_model: String) -> String:
@@ -763,10 +831,30 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		"ai_queue_interval_ticks": 60,
 		"ai_attack_delay_ticks": 300,
 	}
+	rules["source_map_transform_scale"] = source_map_data.local_transform_scale
 	if not ranger_runtime.is_empty():
 		rules["ranger_runtime"] = ranger_runtime.duplicate(true)
 		rules["ranger_unit_rule"] = (unit_rules[RANGER_OBJECT_ID] as Dictionary).duplicate(true)
+	if not trebuchet_runtime.is_empty():
+		rules["trebuchet_runtime"] = trebuchet_runtime.duplicate(true)
+	if not playable_unit_runtimes.is_empty():
+		rules["playable_unit_runtimes"] = playable_unit_runtimes.duplicate(true)
+		rules["producer_kind_by_source_object"] = _producer_kind_registry()
 	return rules
+
+
+func _producer_kind_registry() -> Dictionary:
+	# This registry describes the structures actually instantiated by this
+	# faction slice. A descriptor whose retail producer is not present fails
+	# closed instead of being attached to an unrelated building.
+	return {
+		"GondorFortress": "fortress",
+		"MenFortress": "fortress",
+		"GondorBarracks": "barracks",
+		"GondorArcherRange": "archery_range",
+		"GondorStable": "stable",
+		"GondorWorkshop": "workshop",
+	}
 
 
 func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dictionary:
@@ -1523,9 +1611,13 @@ func _refresh_hud() -> void:
 		var locked_units: Array[String] = []
 		for unit_type_value in production:
 			var unit_type := String(unit_type_value)
-			var required_upgrade := simulation.required_upgrade_for_unit(unit_type)
-			if required_upgrade != "" and not completed_upgrades.has(required_upgrade):
+			if simulation.hero_unavailable(0, unit_type):
 				locked_units.append(unit_type)
+				continue
+			for required_upgrade_value in simulation.required_upgrades_for_unit(unit_type, String(structure.get("structure_kind", ""))):
+				if not completed_upgrades.has(String(required_upgrade_value)):
+					locked_units.append(unit_type)
+					break
 		hud.set_production_state(
 			production,
 			can_train,
@@ -1533,7 +1625,8 @@ func _refresh_hud() -> void:
 			queue_state,
 			locked_units,
 			completed_upgrades,
-			simulation.structure_upgrade_queue_state(selected_structure_id)
+			simulation.structure_upgrade_queue_state(selected_structure_id),
+			String(structure.get("structure_kind", ""))
 		)
 		hud.set_unit_selection_state([], simulation.entities)
 	else:
@@ -1675,13 +1768,13 @@ func _arm_attack_move() -> void:
 
 
 func _arm_construction(structure_kind: String) -> void:
-	if simulation == null or simulation.selected_ids.is_empty() or not SimScript.STRUCTURE_BUILD_RULES.has(structure_kind):
+	if simulation == null or simulation.selected_ids.is_empty() or simulation.structure_build_rule(structure_kind).is_empty():
 		hud.set_feedback("Builder construction command rejected.", true)
 		return
 	construction_kind_armed = structure_kind
 	attack_move_armed = false
 	_spawn_construction_ghost()
-	var rule: Dictionary = SimScript.STRUCTURE_BUILD_RULES[structure_kind]
+	var rule: Dictionary = simulation.structure_build_rule(structure_kind)
 	hud.set_feedback("Place %s: left-click a clear site (right-click cancels). Cost %d." % [structure_kind.replace("_", " ").capitalize(), int(rule["cost"])])
 
 
@@ -2122,6 +2215,8 @@ func _build_hud() -> void:
 	hud = HudScript.new()
 	hud_root = hud
 	ranger_hud_configuration_error = hud.enable_ranger_content(ContentDB.get_ranger_runtime())
+	trebuchet_hud_configuration_error = hud.enable_trebuchet_content(ContentDB.get_trebuchet_runtime())
+	playable_unit_hud_configuration_error = hud.enable_playable_unit_content(playable_unit_runtimes, _producer_kind_registry())
 	layer.add_child(hud)
 	hud.build()
 	var viewport := get_viewport()

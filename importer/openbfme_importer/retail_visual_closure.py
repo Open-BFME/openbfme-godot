@@ -507,6 +507,42 @@ def _scan_w3d_candidates(
     return tuple(result)
 
 
+def _scan_hierarchy_candidate_paths(
+    scanned: tuple[W3DMetadata, ...],
+    w3d_paths: tuple[str, ...],
+    already_selected: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Select exact-stem hierarchy files discovered from animation headers."""
+
+    by_stem: dict[str, list[str]] = {}
+    for path in w3d_paths:
+        by_stem.setdefault(PurePosixPath(path).stem.casefold(), []).append(path)
+
+    authored_hierarchies: set[str] = set()
+    required_hierarchies: set[str] = set()
+    for item in scanned:
+        headers = item.file_headers()
+        authored_hierarchies.update(
+            identifier.casefold() for identifier in headers.hierarchy_ids
+        )
+        for identifier in headers.animation_ids:
+            if "." in identifier:
+                required_hierarchies.add(identifier.split(".", 1)[0].casefold())
+
+    selected_keys = {path.casefold() for path in already_selected}
+    follow_up = {
+        path
+        for identifier in required_hierarchies - authored_hierarchies
+        for path in by_stem.get(identifier, ())
+        if path.casefold() not in selected_keys
+    }
+    if len(already_selected) + len(follow_up) > MAX_TARGET_W3D_SCANS:
+        raise ValueError(
+            f"targeted W3D scan count exceeds {MAX_TARGET_W3D_SCANS} limit"
+        )
+    return tuple(sorted(follow_up, key=_sort_text))
+
+
 def _embedded_texture_dependencies(
     scanned: tuple[W3DMetadata, ...],
     visual_paths: tuple[str, ...],
@@ -891,8 +927,22 @@ def build_retail_visual_closure(
     initial_graph = resolve_typed_visual_graph(
         cst, targets, initial_index, visual_paths
     )
-    candidate_paths = _scan_candidate_paths(initial_graph, w3d_paths)
-    scanned = _scan_w3d_candidates(candidate_paths, w3d_records)
+    initial_candidate_paths = _scan_candidate_paths(initial_graph, w3d_paths)
+    initial_scanned = _scan_w3d_candidates(initial_candidate_paths, w3d_records)
+    hierarchy_candidate_paths = _scan_hierarchy_candidate_paths(
+        initial_scanned, w3d_paths, initial_candidate_paths
+    )
+    hierarchy_scanned = _scan_w3d_candidates(
+        hierarchy_candidate_paths, w3d_records
+    )
+    candidate_paths = tuple(
+        sorted(
+            {*initial_candidate_paths, *hierarchy_candidate_paths}, key=_sort_text
+        )
+    )
+    scanned = tuple(
+        sorted((*initial_scanned, *hierarchy_scanned), key=lambda item: _sort_text(item.virtual_path))
+    )
     headers: tuple[W3DFileHeaders, ...] = tuple(
         item.file_headers() for item in scanned
     )

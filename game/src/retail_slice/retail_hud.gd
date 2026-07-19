@@ -31,6 +31,7 @@ const PalantirFrameScript = preload("res://src/retail_slice/retail_palantir_fram
 const AptRuntimeScript = preload("res://src/retail_slice/retail_hud_apt_runtime.gd")
 const TooltipScript = preload("res://src/retail_slice/retail_tooltip.gd")
 const SideCommandBarScript = preload("res://src/retail_slice/retail_side_command_bar.gd")
+const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const RETAIL_TOOLTIP_HOVER_DELAY := 0.4
 const RETAIL_TRAIN_ICON_ID := "BGBarracks_Soldiers"
 const RETAIL_TRAIN_LABEL_ID := "CONTROLBAR:ConstructGondorFighterHorde"
@@ -160,6 +161,7 @@ const RANGER_PORTRAIT_SPEC := {
 	"unit_id": "bfme2.object.gondor-ranger-horde",
 	"image_id": "UPGondor_Ranger",
 }
+const TREBUCHET_OBJECT_ID := "bfme2.object.gondor-trebuchet"
 const ARCHERY_LEVEL_TWO_ACTION_SPEC := {
 	"action_id": "upgrade_archery_range_level2",
 	"button_name": "UpgradeArcheryRangeLevel2",
@@ -202,6 +204,7 @@ const RETAIL_MEMBER_TO_HORDE := {
 	"bfme2.object.gondor-archer": "bfme2.object.gondor-archer",
 	"bfme2.object.gondor-knight": "bfme2.object.gondor-knight",
 	"bfme2.object.gondor-ranger": "bfme2.object.gondor-ranger-horde",
+	TREBUCHET_OBJECT_ID: TREBUCHET_OBJECT_ID,
 	"bfme2.object.men-porter": "bfme2.object.men-porter",
 }
 const MAX_RETAIL_COMMAND_ICON_BYTES := 16 * 1024 * 1024
@@ -216,6 +219,9 @@ var resource_label: Label
 var command_points_label: Label
 var train_button: Button
 var train_buttons: Dictionary = {}
+var hero_selection_panel: PanelContainer
+var hero_selection_grid: Control
+var hero_buttons: Dictionary = {}
 var unit_action_buttons: Dictionary = {}
 var production_queue_label: Label
 var production_progress: ProgressBar
@@ -284,6 +290,125 @@ var _retail_command_specs: Array = RETAIL_COMMAND_SPECS.duplicate(true)
 var _retail_portrait_specs: Array = RETAIL_PORTRAIT_SPECS.duplicate(true)
 var _retail_action_specs: Array = RETAIL_UNIT_ACTION_SPECS.duplicate(true)
 var _ranger_content_enabled := false
+var _trebuchet_content_enabled := false
+var _generic_playable_units: Dictionary = {}
+var _generic_playable_routes: Dictionary = {}
+var _generic_playable_route_validations: Dictionary = {}
+var _hero_command_specs: Array[Dictionary] = []
+var _hero_routes: Dictionary = {}
+var _hero_route_validations: Dictionary = {}
+
+
+func enable_playable_unit_content(runtimes: Dictionary, producer_kinds: Dictionary = {}) -> String:
+	if _built:
+		return "Playable-unit HUD content must be enabled before build."
+	var pending_commands: Array[Dictionary] = []
+	var pending_heroes: Array[Dictionary] = []
+	var pending_portraits: Array[Dictionary] = []
+	var seen: Dictionary = {}
+	var occupied_routes: Dictionary = {}
+	var occupied_hero_ordinals: Dictionary = {}
+	for index in _retail_command_specs.size():
+		var value := _retail_command_specs[index] as Dictionary
+		seen[String(value.get("unit_id", "")).to_lower()] = index
+	var object_ids: Array[String] = []
+	for value in runtimes.keys():
+		object_ids.append(String(value))
+	object_ids.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	for object_id in object_ids:
+		var document_value: Variant = runtimes.get(object_id)
+		if typeof(document_value) != TYPE_DICTIONARY:
+			return "Playable-unit HUD runtime '%s' is invalid." % object_id
+		var document := document_value as Dictionary
+		var declared_surfaces: Dictionary = {}
+		for route_value in Array((document.get("registration", {}) as Dictionary).get("production", [])):
+			if typeof(route_value) == TYPE_DICTIONARY:
+				declared_surfaces[String((route_value as Dictionary).get("surface", ""))] = true
+		if declared_surfaces.size() > 1:
+			return "Playable-unit HUD runtime '%s' has conflicting production surfaces." % object_id
+		var specs := PlayableUnitAdapter.hud_specs(document)
+		if specs.is_empty():
+			return "Playable-unit HUD runtime '%s' has incomplete UI evidence." % object_id
+		var surfaces: Dictionary = {}
+		for route_spec in specs:
+			var source_producer := String(route_spec.get("producer_source_object_id", ""))
+			var producer_kind := String(producer_kinds.get(source_producer, source_producer))
+			var surface := String(route_spec.get("surface", ""))
+			var slot := int(route_spec.get("slot", 0))
+			var roster_ordinal := int(route_spec.get("roster_ordinal", 0))
+			var route_position := slot if surface == "command-socket" else roster_ordinal
+			var slot_key := "%s:%s:%d" % [producer_kind, surface, route_position]
+			var semantic_key := "%s|%s|%s" % [String(route_spec.get("image_id", "")), String(route_spec.get("label_id", "")), String(route_spec.get("tooltip_id", ""))]
+			if (
+				producer_kind == ""
+				or surface not in ["command-socket", "hero-roster"]
+				or (surface == "command-socket" and (slot < 1 or slot > RETAIL_COMMAND_SLOT_SOURCE.size() or roster_ordinal != 0))
+				or (surface == "hero-roster" and (roster_ordinal < 1 or slot != 0))
+			):
+				return "Playable-unit HUD runtime '%s' has an invalid or colliding producer slot." % object_id
+			if occupied_routes.has(slot_key) and String(occupied_routes[slot_key]) != semantic_key:
+				return "Playable-unit HUD runtime '%s' has conflicting command-set variants in one producer slot." % object_id
+			if surface == "hero-roster":
+				var ordinal_key := "%s:%d" % [producer_kind, roster_ordinal]
+				if occupied_hero_ordinals.has(ordinal_key):
+					return "Playable-unit HUD runtime '%s' duplicates hero roster ordinal %d." % [object_id, roster_ordinal]
+				occupied_hero_ordinals[ordinal_key] = object_id
+			route_spec["producer_kind"] = producer_kind
+			route_spec["runtime_object_id"] = object_id
+			occupied_routes[slot_key] = semantic_key
+			surfaces[surface] = true
+		if surfaces.size() != 1:
+			return "Playable-unit HUD runtime '%s' has conflicting production surfaces." % object_id
+		var spec := specs[0]
+		var unit_id := String(spec.get("unit_id", ""))
+		if unit_id == "":
+			return "Playable-unit HUD runtime '%s' has no runtime unit id." % object_id
+		if surfaces.has("hero-roster"):
+			spec["runtime_object_id"] = object_id
+			spec["route_specs"] = specs.duplicate(true)
+			pending_heroes.append(spec)
+			continue
+		spec["replace_index"] = int(seen.get(unit_id.to_lower(), -1))
+		if int(spec["replace_index"]) < 0:
+			seen[unit_id.to_lower()] = _retail_command_specs.size() + pending_commands.size()
+		spec["runtime_object_id"] = object_id
+		spec["route_specs"] = specs.duplicate(true)
+		pending_commands.append(spec)
+		pending_portraits.append({
+			"unit_id": unit_id,
+			"image_id": String(spec["portrait_image_id"]),
+			"runtime_object_id": object_id,
+		})
+	for spec in pending_commands:
+		var replace_index := int(spec.get("replace_index", -1))
+		var route_specs: Array = (spec.get("route_specs", []) as Array).duplicate(true)
+		spec.erase("replace_index")
+		spec.erase("route_specs")
+		if replace_index >= 0:
+			_retail_command_specs[replace_index] = spec
+		else:
+			_retail_command_specs.append(spec)
+		_generic_playable_units[String(spec["unit_id"])] = String(spec["runtime_object_id"])
+		_generic_playable_routes[String(spec["unit_id"])] = route_specs
+	for spec in pending_portraits:
+		var replaced := false
+		for index in _retail_portrait_specs.size():
+			if String((_retail_portrait_specs[index] as Dictionary).get("unit_id", "")).to_lower() == String(spec["unit_id"]).to_lower():
+				_retail_portrait_specs[index] = spec
+				replaced = true
+				break
+		if not replaced:
+			_retail_portrait_specs.append(spec)
+	pending_heroes.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("roster_ordinal", 0)) < int(b.get("roster_ordinal", 0))
+	)
+	for spec in pending_heroes:
+		var route_specs: Array = (spec.get("route_specs", []) as Array).duplicate(true)
+		spec.erase("route_specs")
+		_hero_command_specs.append(spec)
+		_generic_playable_units[String(spec["unit_id"])] = String(spec["runtime_object_id"])
+		_hero_routes[String(spec["unit_id"])] = route_specs
+	return ""
 
 
 func enable_ranger_content(contract: Dictionary) -> String:
@@ -304,6 +429,49 @@ func enable_ranger_content(contract: Dictionary) -> String:
 	_retail_portrait_specs.append(RANGER_PORTRAIT_SPEC.duplicate(true))
 	_retail_action_specs.append(ARCHERY_LEVEL_TWO_ACTION_SPEC.duplicate(true))
 	_ranger_content_enabled = true
+	return ""
+
+
+func enable_trebuchet_content(contract: Dictionary) -> String:
+	if _built:
+		return "Trebuchet HUD content must be enabled before build."
+	if contract.is_empty():
+		return ""
+	var presentation: Dictionary = contract.get("presentation", {}) as Dictionary
+	var text: Dictionary = presentation.get("text", {}) as Dictionary
+	if (
+		String(contract.get("schema", "")) != "openbfme.trebuchet-runtime-contract"
+		or String(contract.get("capabilityStatus", "")) != "bounded-direct-structure-ready"
+		or String(presentation.get("trainButtonImage", "")) == ""
+		or String(presentation.get("workshopButtonImage", "")) == ""
+		or String(presentation.get("portraitImage", "")) == ""
+		or String(text.get("trainLabel", "")) == ""
+		or String(text.get("trainTooltip", "")) == ""
+		or String(text.get("workshopLabel", "")) == ""
+		or String(text.get("workshopTooltip", "")) == ""
+	):
+		return "Trebuchet HUD contract identity is invalid."
+	_retail_command_specs.append({
+		"unit_id": TREBUCHET_OBJECT_ID,
+		"button_name": "TrainTrebuchet",
+		"fallback_label": "Train Gondor Trebuchet",
+		"fallback_tooltip": "Queue one Gondor Trebuchet",
+		"image_id": String(presentation["trainButtonImage"]),
+		"label_id": String(text["trainLabel"]),
+		"tooltip_id": String(text["trainTooltip"]),
+	})
+	_retail_portrait_specs.append({
+		"unit_id": TREBUCHET_OBJECT_ID,
+		"image_id": String(presentation["portraitImage"]),
+	})
+	_retail_action_specs.append({
+		"action_id": "construct_workshop",
+		"button_name": "BuildWorkshop",
+		"image_id": String(presentation["workshopButtonImage"]),
+		"label_id": String(text["workshopLabel"]),
+		"tooltip_id": String(text["workshopTooltip"]),
+	})
+	_trebuchet_content_enabled = true
 	return ""
 
 
@@ -421,7 +589,8 @@ func set_production_state(
 	queue_state: Array = [],
 	locked_units: Array = [],
 	completed_upgrades: Array = [],
-	upgrade_queue: Array = []
+	upgrade_queue: Array = [],
+	producer_kind: String = ""
 ) -> void:
 	## Only commands authored by the selected producer are exposed. Labels stay
 	## source-derived in private parity mode; queue state is metadata, not copy.
@@ -432,11 +601,50 @@ func set_production_state(
 		if button == null:
 			continue
 		var supported := production.has(unit_id)
+		if supported and _generic_playable_routes.has(unit_id):
+			for route_value in _generic_playable_routes[unit_id] as Array:
+				var route := route_value as Dictionary
+				if producer_kind == "" or String(route.get("producer_kind", "")) == producer_kind:
+					button.set_meta("retail_command_slot", int(route.get("slot", 0)))
+					var validation: Dictionary = (_generic_playable_route_validations.get(unit_id, {}) as Dictionary).get(String(route.get("producer_kind", "")), {})
+					if not validation.is_empty():
+						_apply_retail_command(route, validation)
+					elif not private_parity_mode_active:
+						button.text = String(route.get("fallback_label", ""))
+						button.tooltip_text = String(route.get("fallback_tooltip", ""))
+					break
 		button.visible = supported
 		button.disabled = not enabled or not supported or locked_units.has(unit_id)
 		button.set_meta("producer_queue_count", maxi(0, queue_count))
 		if _retail_train_labels.has(unit_id) and not private_parity_mode_active:
 			button.text = String(_retail_train_labels[unit_id])
+	var hero_surface_visible := false
+	for spec in _hero_command_specs:
+		var unit_id := String(spec["unit_id"])
+		var button: Button = hero_buttons.get(unit_id)
+		if button == null:
+			continue
+		var route_matches := false
+		for route_value in _hero_routes.get(unit_id, []) as Array:
+			var route := route_value as Dictionary
+			if producer_kind == "" or String(route.get("producer_kind", "")) == producer_kind:
+				route_matches = true
+				button.set_meta("retail_roster_ordinal", int(route.get("roster_ordinal", 0)))
+				button.set_meta("retail_command_id", String(route.get("command_id", "")))
+				var validation: Dictionary = (_hero_route_validations.get(unit_id, {}) as Dictionary).get(String(route.get("producer_kind", "")), {})
+				if not validation.is_empty():
+					_apply_retail_hero_command(route, validation)
+				elif not private_parity_mode_active:
+					button.text = String(route.get("fallback_label", ""))
+					button.tooltip_text = String(route.get("fallback_tooltip", ""))
+				break
+		var supported := production.has(unit_id) and route_matches
+		button.visible = supported
+		button.disabled = not enabled or not supported or locked_units.has(unit_id)
+		button.set_meta("producer_queue_count", maxi(0, queue_count))
+		hero_surface_visible = hero_surface_visible or supported
+	if hero_selection_panel != null:
+		hero_selection_panel.visible = hero_surface_visible
 	for action_id_value in unit_action_buttons.keys():
 		var action_id := String(action_id_value)
 		var action_button := unit_action_buttons[action_id] as Button
@@ -583,6 +791,7 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 	):
 		return "Private retail HUD APT rejected its deterministic live values: %s" % retail_apt_runtime.error
 	var validated: Dictionary = {}
+	var route_validated: Dictionary = {}
 	var validation_errors: Array[String] = []
 	for spec_value in _retail_command_specs:
 		var spec: Dictionary = spec_value
@@ -592,6 +801,31 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 			validation_errors.append(error)
 		else:
 			validated[String(spec["unit_id"])] = validation
+	for unit_id_value in _generic_playable_routes.keys():
+		var unit_id := String(unit_id_value)
+		var by_producer: Dictionary = {}
+		for route_value in _generic_playable_routes[unit_id] as Array:
+			var route := route_value as Dictionary
+			var validation := _validate_retail_command(content_db, expected_pack_root, route)
+			var error := String(validation.get("error", ""))
+			if error != "":
+				validation_errors.append(error)
+			else:
+				by_producer[String(route.get("producer_kind", ""))] = validation
+		route_validated[unit_id] = by_producer
+	var hero_validated: Dictionary = {}
+	for unit_id_value in _hero_routes.keys():
+		var unit_id := String(unit_id_value)
+		var by_producer: Dictionary = {}
+		for route_value in _hero_routes[unit_id] as Array:
+			var route := route_value as Dictionary
+			var validation := _validate_retail_command(content_db, expected_pack_root, route, Vector2i.ZERO)
+			var error := String(validation.get("error", ""))
+			if error != "":
+				validation_errors.append(error)
+			else:
+				by_producer[String(route.get("producer_kind", ""))] = validation
+		hero_validated[unit_id] = by_producer
 	var action_validated: Dictionary = {}
 	for spec_value in _retail_action_specs:
 		var spec: Dictionary = spec_value
@@ -610,7 +844,8 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 			content_db,
 			expected_pack_root,
 			String(spec["image_id"]),
-			RETAIL_PORTRAIT_SOURCE_SIZE
+			RETAIL_PORTRAIT_SOURCE_SIZE,
+			String(spec.get("runtime_object_id", ""))
 		)
 		var error := String(validation.get("error", ""))
 		if error != "":
@@ -630,12 +865,18 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 			validation_errors.append(control_bar_error)
 	if not validation_errors.is_empty():
 		return "Private retail HUD is incomplete: %s" % "; ".join(validation_errors)
+	_generic_playable_route_validations = route_validated
+	_hero_route_validations = hero_validated
 	for spec_value in _retail_command_specs:
 		var spec: Dictionary = spec_value
 		_apply_retail_command(spec, validated[String(spec["unit_id"])])
 	for spec_value in _retail_action_specs:
 		var spec: Dictionary = spec_value
 		_apply_retail_action(spec, action_validated[String(spec["action_id"])])
+	for spec in _hero_command_specs:
+		var unit_id := String(spec["unit_id"])
+		var producer_kind := String(((_hero_routes[unit_id] as Array)[0] as Dictionary).get("producer_kind", ""))
+		_apply_retail_hero_command(spec, (hero_validated[unit_id] as Dictionary)[producer_kind])
 	for spec_value in _retail_portrait_specs:
 		var spec: Dictionary = spec_value
 		var unit_id := String(spec["unit_id"])
@@ -698,14 +939,22 @@ func _validate_retail_command(
 	var image_id := String(spec["image_id"])
 	var label_id := String(spec["label_id"])
 	var tooltip_id := String(spec["tooltip_id"])
-	var image_validation := _validate_retail_image(content_db, expected_pack_root, image_id, exact_size)
+	var image_validation := _validate_retail_image(
+		content_db, expected_pack_root, image_id, exact_size,
+		String(spec.get("runtime_object_id", ""))
+	)
 	if String(image_validation.get("error", "")) != "":
 		return image_validation
 
-	var label_text := String(content_db.get_retail_string(label_id, _MISSING_RETAIL_STRING))
+	var runtime_object_id := String(spec.get("runtime_object_id", ""))
+	var runtime_registration: Dictionary = {}
+	if runtime_object_id != "":
+		runtime_registration = (content_db.get_playable_unit_runtime(runtime_object_id).get("registration", {}) as Dictionary)
+	var runtime_strings: Dictionary = runtime_registration.get("stringBindings", {}) as Dictionary
+	var label_text := String(runtime_strings.get(label_id, content_db.get_retail_string(label_id, _MISSING_RETAIL_STRING)))
 	if label_text == _MISSING_RETAIL_STRING:
 		return {"error": "Required localized string '%s' is missing." % label_id}
-	var tooltip_text := String(content_db.get_retail_string(tooltip_id, _MISSING_RETAIL_STRING))
+	var tooltip_text := String(runtime_strings.get(tooltip_id, content_db.get_retail_string(tooltip_id, _MISSING_RETAIL_STRING)))
 	if tooltip_text == _MISSING_RETAIL_STRING:
 		return {"error": "Required localized string '%s' is missing." % tooltip_id}
 	image_validation["label"] = label_text
@@ -713,15 +962,35 @@ func _validate_retail_command(
 	return image_validation
 
 
-func _validate_retail_image(content_db, expected_pack_root: String, image_id: String, exact_size: Vector2i) -> Dictionary:
+func _validate_retail_image(
+	content_db, expected_pack_root: String, image_id: String, exact_size: Vector2i,
+	runtime_object_id: String = ""
+) -> Dictionary:
 	var image_definition: Dictionary = content_db.get_retail_ui_image(image_id)
-	if image_definition.is_empty():
+	if runtime_object_id != "":
+		var runtime: Dictionary = content_db.get_playable_unit_runtime(runtime_object_id)
+		if runtime.is_empty():
+			return {"error": "Playable-unit runtime '%s' is missing." % runtime_object_id}
+		var registration := runtime.get("registration", {}) as Dictionary
+		var metadata := (registration.get("imageBindingMetadata", {}) as Dictionary).get(image_id, {}) as Dictionary
+		image_definition = {
+			"_pack_root": String(runtime.get("_pack_root", "")),
+			"path": String((registration.get("imageBindings", {}) as Dictionary).get(image_id, "")),
+		}
+		if not metadata.is_empty():
+			image_definition["width"] = int(metadata.get("width", 0))
+			image_definition["height"] = int(metadata.get("height", 0))
+	elif image_definition.is_empty():
 		return {"error": "Required UI manifest image '%s' is missing." % image_id}
 	var image_pack_root := String(image_definition.get("_pack_root", ""))
 	if expected_pack_root == "" or image_pack_root != expected_pack_root:
 		return {"error": "Required UI image '%s' did not come from the selected private pack." % image_id}
 
-	var image_path := String(content_db.resolve_retail_ui_image_path(image_id))
+	var image_path := String(
+		content_db.resolve_playable_unit_image_path(runtime_object_id, image_id)
+		if runtime_object_id != ""
+		else content_db.resolve_retail_ui_image_path(image_id)
+	)
 	if image_path == "":
 		return {"error": "Required UI image '%s' does not resolve inside the selected private pack." % image_id}
 	if image_path.get_extension().to_lower() != "png":
@@ -815,6 +1084,26 @@ func _apply_retail_command(spec: Dictionary, validation: Dictionary) -> void:
 	_retail_train_labels[unit_id] = String(validation["label"])
 
 
+func _apply_retail_hero_command(spec: Dictionary, validation: Dictionary) -> void:
+	var unit_id := String(spec["unit_id"])
+	var button: Button = hero_buttons.get(unit_id)
+	if button == null:
+		return
+	button.icon = validation["texture"] as Texture2D
+	button.expand_icon = true
+	button.add_theme_constant_override("icon_max_width", 56)
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.text = ""
+	button.tooltip_text = String(validation["tooltip"])
+	button.set_meta("retail_icon_id", String(spec["image_id"]))
+	button.set_meta("retail_label_id", String(spec["label_id"]))
+	button.set_meta("retail_tooltip_id", String(spec["tooltip_id"]))
+	button.set_meta("retail_label", String(validation["label"]))
+	button.set_meta("retail_icon_path", String(validation["path"]))
+	button.set_meta("retail_icon_source_size", Vector2i(validation["source_size"]))
+	_retail_train_labels[unit_id] = String(validation["label"])
+
+
 func _apply_retail_action(spec: Dictionary, validation: Dictionary) -> void:
 	var action_id := String(spec["action_id"])
 	var button: Button = unit_action_buttons[action_id]
@@ -874,6 +1163,17 @@ func _clear_retail_command_bindings(hide_commands: bool) -> void:
 		]:
 			if button.has_meta(metadata_key):
 				button.remove_meta(metadata_key)
+	for spec in _hero_command_specs:
+		var button: Button = hero_buttons.get(String(spec["unit_id"]))
+		if button == null:
+			continue
+		button.icon = null
+		button.text = String(spec["fallback_label"])
+		button.tooltip_text = String(spec["fallback_tooltip"])
+		button.disabled = hide_commands
+		button.visible = not hide_commands
+	if hero_selection_panel != null:
+		hero_selection_panel.visible = false
 	for spec_value in _retail_action_specs:
 		var spec: Dictionary = spec_value
 		var button: Button = unit_action_buttons.get(String(spec["action_id"]))
@@ -1240,9 +1540,41 @@ func _build_command_panel() -> void:
 		button.visible = false
 		_style_button(button)
 		button.pressed.connect(_emit_train_requested.bind(unit_id))
+		button.set_meta("retail_command_slot", int(spec.get("slot", slot_index + 1)))
+		button.set_meta("runtime_object_id", String(spec.get("runtime_object_id", "")))
 		_place_command_button(button, slot_index)
 		slot_index += 1
 		train_buttons[unit_id] = button
+	hero_selection_panel = PanelContainer.new()
+	hero_selection_panel.name = "HeroSelectionSurface"
+	hero_selection_panel.position = Vector2(118, 28)
+	hero_selection_panel.size = Vector2(300, 190)
+	hero_selection_panel.add_theme_stylebox_override("panel", _panel)
+	hero_selection_panel.visible = false
+	hero_selection_panel.z_index = 6
+	command_grid.add_child(hero_selection_panel)
+	hero_selection_grid = Control.new()
+	hero_selection_grid.name = "HeroRosterGrid"
+	hero_selection_grid.custom_minimum_size = Vector2(288, 176)
+	hero_selection_panel.add_child(hero_selection_grid)
+	for spec in _hero_command_specs:
+		var unit_id := String(spec["unit_id"])
+		var ordinal := int(spec.get("roster_ordinal", 0))
+		var button := Button.new()
+		button.name = String(spec["button_name"])
+		button.text = String(spec["fallback_label"])
+		button.tooltip_text = String(spec["fallback_tooltip"])
+		button.position = Vector2(float((ordinal - 1) % 4) * 68.0 + 8.0, float((ordinal - 1) / 4) * 78.0 + 8.0)
+		button.size = Vector2(64, 64)
+		button.disabled = true
+		button.visible = false
+		button.set_meta("retail_roster_ordinal", ordinal)
+		button.set_meta("runtime_object_id", String(spec.get("runtime_object_id", "")))
+		button.set_meta("retail_surface", "hero-roster")
+		_style_button(button)
+		button.pressed.connect(_emit_train_requested.bind(unit_id))
+		hero_selection_grid.add_child(button)
+		hero_buttons[unit_id] = button
 	for spec_value in _retail_action_specs:
 		var spec: Dictionary = spec_value
 		var action_id := String(spec["action_id"])
@@ -1299,25 +1631,29 @@ func _place_command_button(button: Button, slot: int) -> void:
 
 
 func _layout_command_sockets() -> void:
-	# Single placement authority: whatever commands are visible for the
-	# current selection occupy the six dish sockets in declaration order.
-	# Icons render inside the socket art itself, so nothing can drift off the
-	# ring the way the old static per-creation slots did.
-	var occupants: Array[Button] = []
+	var occupied: Dictionary = {}
 	for spec_value in _retail_command_specs:
 		var train_button_row: Button = train_buttons.get(String((spec_value as Dictionary)["unit_id"]))
 		if train_button_row != null and train_button_row.visible:
-			occupants.append(train_button_row)
+			var slot := int(train_button_row.get_meta("retail_command_slot", 0)) - 1
+			if slot < 0 or slot >= RETAIL_COMMAND_SLOT_SOURCE.size() or occupied.has(slot):
+				train_button_row.visible = false
+				continue
+			train_button_row.position = RETAIL_COMMAND_SLOT_SOURCE[slot]
+			train_button_row.size = RETAIL_COMMAND_SLOT_SIZE
+			occupied[slot] = true
 	for spec_value in _retail_action_specs:
 		var action_button: Button = unit_action_buttons.get(String((spec_value as Dictionary)["action_id"]))
 		if action_button != null and action_button.visible:
-			occupants.append(action_button)
-	for index in occupants.size():
-		if index >= RETAIL_COMMAND_SLOT_SOURCE.size():
-			occupants[index].visible = false
-			continue
-		occupants[index].position = RETAIL_COMMAND_SLOT_SOURCE[index]
-		occupants[index].size = RETAIL_COMMAND_SLOT_SIZE
+			var slot := 0
+			while slot < RETAIL_COMMAND_SLOT_SOURCE.size() and occupied.has(slot):
+				slot += 1
+			if slot >= RETAIL_COMMAND_SLOT_SOURCE.size():
+				action_button.visible = false
+				continue
+			action_button.position = RETAIL_COMMAND_SLOT_SOURCE[slot]
+			action_button.size = RETAIL_COMMAND_SLOT_SIZE
+			occupied[slot] = true
 
 
 func _build_orb_buttons(dock: Control) -> void:
@@ -2196,6 +2532,16 @@ func _wire_retail_tooltips() -> void:
 		var spec: Dictionary = spec_value
 		var unit_id := String(spec["unit_id"])
 		var button: Button = train_buttons.get(unit_id)
+		if button == null:
+			continue
+		button.set_meta("tooltip_group", "train")
+		button.set_meta("tooltip_unit_id", unit_id)
+		button.set_meta("tooltip_fallback_label", String(spec["fallback_label"]))
+		button.set_meta("tooltip_fallback_desc", String(spec["fallback_tooltip"]))
+		_register_button_tooltip(button)
+	for spec in _hero_command_specs:
+		var unit_id := String(spec["unit_id"])
+		var button: Button = hero_buttons.get(unit_id)
 		if button == null:
 			continue
 		button.set_meta("tooltip_group", "train")

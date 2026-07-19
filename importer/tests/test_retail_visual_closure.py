@@ -49,6 +49,31 @@ def _animation_w3d(identifier: str, hierarchy: str) -> bytes:
     ) + _chunk(0x200, _chunk(0x201, header), children=True)
 
 
+def _animation_only_w3d(identifier: str, hierarchy: str) -> bytes:
+    header = struct.pack(
+        "<I16s16sII",
+        0x00040001,
+        _fixed(identifier, 16),
+        _fixed(hierarchy, 16),
+        30,
+        15,
+    )
+    return _chunk(0x200, _chunk(0x201, header), children=True)
+
+
+def _hierarchy_only_w3d(identifier: str) -> bytes:
+    header = struct.pack(
+        "<I16sI3f",
+        0x00040001,
+        _fixed(identifier, 16),
+        0,
+        0.0,
+        0.0,
+        0.0,
+    )
+    return _chunk(0x100, _chunk(0x101, header), children=True)
+
+
 def _textured_w3d(*identifiers: str) -> bytes:
     textures = b"".join(
         _chunk(
@@ -159,6 +184,76 @@ End
 
 
 class RetailVisualClosureTests(unittest.TestCase):
+    def test_animation_header_adds_exact_hierarchy_to_read_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _write(
+                root,
+                "data/ini/object/target.ini",
+                b"""
+Object HierarchyTarget
+  Draw = W3DScriptedModelDraw ModuleTag_Main
+    DefaultModelConditionState
+      Model = TargetModel
+    End
+    AnimationState = MOVING
+      Animation = Move
+        AnimationName = TARGET_SKL.TARGET_RUN
+      End
+    End
+  End
+End
+""",
+            )
+            _write(root, "art/w3d/targetmodel.w3d", b"")
+            _write(
+                root,
+                "art/w3d/target_run.w3d",
+                _animation_only_w3d("TARGET_RUN", "TARGET_SKL"),
+            )
+            _write(
+                root,
+                "art/w3d/target_skl.w3d",
+                _hierarchy_only_w3d("TARGET_SKL"),
+            )
+            _write(root, "art/w3d/unrelated.w3d", b"not a W3D payload")
+            reads: list[str] = []
+
+            def guarded_read(asset: object) -> bytes:
+                self.assertIsInstance(asset, closure._AssetFile)
+                record = asset
+                reads.append(record.virtual_path)
+                self.assertNotEqual(record.virtual_path, "art/w3d/unrelated.w3d")
+                return record.physical_path.read_bytes()
+
+            with mock.patch.object(
+                closure, "_read_target_w3d_bytes", side_effect=guarded_read
+            ):
+                report = closure.build_retail_visual_closure(
+                    root, ["HierarchyTarget"]
+                )
+
+            self.assertEqual(
+                reads,
+                [
+                    "art/w3d/target_run.w3d",
+                    "art/w3d/targetmodel.w3d",
+                    "art/w3d/target_skl.w3d",
+                ],
+            )
+            self.assertEqual(
+                report["w3dDependencyClosure"]["readBoundary"][
+                    "uniqueVirtualPaths"
+                ],
+                [
+                    "art/w3d/target_run.w3d",
+                    "art/w3d/target_skl.w3d",
+                    "art/w3d/targetmodel.w3d",
+                ],
+            )
+            self.assertEqual(report["summary"]["scannedW3dCount"], 3)
+            self.assertTrue(report["summary"]["ready"])
+
     def test_object_assignment_is_not_misclassified_as_a_declaration(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

@@ -110,6 +110,7 @@ var _rebuild_hole_visual: Node3D
 var _runtime_route_registry: Dictionary = {}
 var _source_unit_scale := 0.0
 var _pending_route_phase := ""
+var _bounded_phase_paths: Dictionary = {}
 
 
 func _enter_tree() -> void:
@@ -152,8 +153,9 @@ func configure_fixture(
 
 func sync_state(entity: Dictionary) -> void:
 	var entity_maximum := int(entity.get("maximum_health", 0))
-	var lifecycle_maximum := maximum_health_for_lifecycle(_lifecycle)
-	if contract_error == "" and entity_maximum != lifecycle_maximum:
+	var bounded_workshop := presentation_mode == "bounded-workshop-model-state-evidence"
+	var lifecycle_maximum := entity_maximum if bounded_workshop else maximum_health_for_lifecycle(_lifecycle)
+	if not bounded_workshop and contract_error == "" and entity_maximum != lifecycle_maximum:
 		_set_contract_error(
 			"entity maximum_health %d does not equal lifecycle maximum health %d"
 			% [entity_maximum, lifecycle_maximum]
@@ -162,7 +164,9 @@ func sync_state(entity: Dictionary) -> void:
 	var health := int(entity.get("health", maximum))
 	health_ratio = clampf(float(health) / float(maximum), 0.0, 1.0)
 	construction_ratio = clampf(float(entity.get("construction_progress", 1.0)), 0.0, 1.0)
-	if contract_error == "":
+	if contract_error == "" and bounded_workshop:
+		_sync_bounded_workshop_phase(health, construction_ratio)
+	elif contract_error == "":
 		if int(_lifecycle.get("schemaVersion", -1)) == LIFECYCLE_SCHEMA_VERSION_V1:
 			if current_lifecycle_phase == "":
 				_activate_phase(String(_lifecycle.get("initialPhase", "")))
@@ -1028,9 +1032,81 @@ func _configure_selected_pack_contract(bundle_object_id: String) -> void:
 		return
 	var presentation: Dictionary = definition["presentation"]
 	if typeof(presentation.get("buildingLifecycle")) != TYPE_DICTIONARY:
+		if (
+			bundle_object_id == "bfme2.object.gondor-workshop"
+			and String(presentation.get("lifecycleStatus", "")) == "deferred-composite-role-and-runtime-binding"
+			and typeof(presentation.get("modelStateEvidence")) == TYPE_ARRAY
+		):
+			_configure_bounded_workshop_evidence(presentation.get("modelStateEvidence", []) as Array)
+			return
 		_set_contract_error("structure presentation has no buildingLifecycle object")
 		return
 	_configure_contract(presentation, presentation["buildingLifecycle"] as Dictionary)
+
+
+func _configure_bounded_workshop_evidence(evidence: Array) -> void:
+	var expected := {
+		"construction": "art/w3d/gb/gbworkshop_a.w3d",
+		"intact": "art/w3d/gb/gbworkshop.w3d",
+		"rubble": "art/w3d/gb/gbworkshop_d3.w3d",
+	}
+	_bounded_phase_paths.clear()
+	for phase in expected:
+		var matches: Array[Dictionary] = []
+		for value in evidence:
+			if typeof(value) == TYPE_DICTIONARY and String((value as Dictionary).get("sourceW3d", "")).to_lower() == String(expected[phase]):
+				matches.append(value as Dictionary)
+		if matches.size() != 1:
+			_set_contract_error("Workshop %s model-state evidence is not exact" % phase)
+			return
+		var relative := String(matches[0].get("output", "")).replace("\\", "/")
+		var resolved := ContentDB.resolve_asset(relative, _pack_root)
+		if resolved == "":
+			_set_contract_error("Workshop %s model-state GLB is missing" % phase)
+			return
+		_bounded_phase_paths[phase] = relative
+		_resolved_paths[relative] = resolved
+	var intact := _load_visual(String(_bounded_phase_paths["intact"]), "body")
+	if intact == null:
+		_set_contract_error("Workshop intact model-state GLB could not be instantiated")
+		return
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	var intact_aabb: AABB = asset_factory.model_aabb(intact)
+	if intact_aabb.size.y <= 0.000001:
+		_set_contract_error("Workshop intact model-state GLB has no body AABB")
+		return
+	shared_uniform_scale = _source_unit_scale if _source_unit_scale > 0.0 else DEFAULT_TARGET_HEIGHT / intact_aabb.size.y
+	shared_vertical_offset = -intact_aabb.position.y * shared_uniform_scale
+	_model_host.scale = Vector3.ONE * shared_uniform_scale
+	_model_host.position.y = shared_vertical_offset
+	intact.visible = false
+	_target_height = maxf(DEFAULT_TARGET_HEIGHT, intact_aabb.size.y * shared_uniform_scale)
+	retail_visual_loaded = true
+	presentation_mode = "bounded-workshop-model-state-evidence"
+	_update_lifecycle_metadata()
+
+
+func _sync_bounded_workshop_phase(health: int, construction_progress: float) -> void:
+	var phase := "rubble" if health <= 0 else ("construction" if construction_progress < 1.0 else "intact")
+	if phase == current_lifecycle_phase:
+		return
+	var body_path := String(_bounded_phase_paths.get(phase, ""))
+	var body := _load_visual(body_path, "body")
+	if body == null:
+		_set_contract_error("Workshop %s model-state body could not be instantiated" % phase)
+		return
+	_hide_loaded_visuals()
+	body.visible = true
+	_active_body = body
+	_active_bib = null
+	_active_door = null
+	current_lifecycle_phase = phase
+	active_body_path = body_path
+	active_bib_path = ""
+	active_door_path = ""
+	active_animation_clip = ""
+	active_animation_mode = ""
+	active_visual_mode = "glb"
 
 
 func _configure_contract(presentation: Dictionary, lifecycle: Dictionary) -> void:

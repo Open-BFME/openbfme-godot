@@ -325,6 +325,7 @@ _STATE_BLOCK_KEYS = frozenset(
         "locomotorset",
         "meleebehavior",
         "modelconditionstate",
+        "soundstate",
         "transitionstate",
         "weaponset",
     }

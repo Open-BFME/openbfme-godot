@@ -7,12 +7,12 @@ const OBSERVABILITY_LOG_TRIM_COUNT := 512
 ## manifests. Logical SAGE event IDs, not filename guesses, select the leaves.
 
 const UserSettingsScript = preload("res://src/ui/user_settings.gd")
+const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
 const TOWER_GUARD_OBJECT_ID := "bfme2.object.gondor-tower-guard"
 const KNIGHT_OBJECT_ID := "bfme2.object.gondor-knight"
-const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
 const ROSTER_OBJECT_IDS: Array[String] = [
 	SOLDIER_OBJECT_ID,
 	ARCHER_OBJECT_ID,
@@ -43,12 +43,6 @@ const ROSTER_VOICE_EVENT_IDS: Dictionary = {
 		"select": ["GondorKnightVoiceSelectMS"],
 		"move": ["GondorKnightVoiceMove"],
 		"attack": ["GondorKnightVoiceAttack"],
-		"death": ["HumanVoiceDie"],
-	},
-	RANGER_OBJECT_ID: {
-		"select": ["RangerVoiceSelectMS"],
-		"move": ["RangerVoiceMove"],
-		"attack": ["RangerVoiceAttack"],
 		"death": ["HumanVoiceDie"],
 	},
 }
@@ -120,6 +114,8 @@ var voice_streams: Dictionary = {"select": [], "attack": []}
 var audio_event_routes: Dictionary = {}
 var declared_structure_lifecycle_audio_active := false
 var roster_voice_routes: Dictionary = {}
+var playable_unit_audio_events: Dictionary = {}
+var playable_unit_categories: Dictionary = {}
 var route_failures: Dictionary = {}
 var missing_required_events: Array[String] = []
 var intent_log: Array[Dictionary] = []
@@ -152,6 +148,8 @@ func configure(selected_pack_root: String, enable_playback: bool = true) -> bool
 	voice_streams = {"select": [], "attack": []}
 	audio_event_routes.clear()
 	roster_voice_routes.clear()
+	playable_unit_audio_events.clear()
+	playable_unit_categories.clear()
 	route_failures.clear()
 	missing_required_events.clear()
 	intent_log.clear()
@@ -355,16 +353,13 @@ func _music_state_for_file(file_name: String) -> String:
 func _load_declared_audio_routes() -> void:
 	var requested: Dictionary = {}
 	for object_id in _active_roster_object_ids():
-		var by_kind: Dictionary = ROSTER_VOICE_EVENT_IDS[object_id]
+		var by_kind: Dictionary = _voice_event_ids_for_object(object_id)
 		for kind in REQUIRED_VOICE_KINDS:
-			for event_id in Array(by_kind[kind]):
+			for event_id in Array(by_kind.get(kind, [])):
 				requested[String(event_id).to_lower()] = String(event_id)
 	for event_id in REQUIRED_SFX_EVENT_IDS:
 		requested[event_id.to_lower()] = event_id
-	for kind in ["created", "purchase"]:
-		var ranger_event_id := _ranger_runtime_audio_event_id(kind)
-		if ranger_event_id != "":
-			requested[ranger_event_id.to_lower()] = ranger_event_id
+	_load_playable_unit_audio_routes()
 	for event_id in FORDS_AMBIENT_TYPE_EVENT_IDS.values():
 		requested[String(event_id).to_lower()] = String(event_id)
 	for event_id in requested.values():
@@ -765,7 +760,7 @@ func _read_json_without_diagnostics(path: String) -> Variant:
 
 func _bind_roster_voice_routes() -> void:
 	for object_id in _active_roster_object_ids():
-		var by_kind: Dictionary = ROSTER_VOICE_EVENT_IDS[object_id]
+		var by_kind: Dictionary = _voice_event_ids_for_object(object_id)
 		var bound: Dictionary = {}
 		for kind in REQUIRED_VOICE_KINDS:
 			for event_id_value in Array(by_kind[kind]):
@@ -813,7 +808,7 @@ func _collect_readiness_diagnostics() -> void:
 			missing_required_events.append("missing_music_state:%s" % state)
 	for object_id in _active_roster_object_ids():
 		var bound: Dictionary = roster_voice_routes.get(object_id, {})
-		var expected: Dictionary = ROSTER_VOICE_EVENT_IDS[object_id]
+		var expected: Dictionary = _voice_event_ids_for_object(object_id)
 		for kind in REQUIRED_VOICE_KINDS:
 			if not bound.has(kind):
 				missing_required_events.append("missing_voice_event:%s:%s:%s" % [object_id, kind, String(Array(expected[kind])[0])])
@@ -847,10 +842,9 @@ func _consume_event(event: Dictionary) -> void:
 		var produced_object_id := String(event.get("object_id", ""))
 		if produced_object_id != "" and _active_roster_object_ids().has(produced_object_id):
 			_entity_object_ids[target_id] = produced_object_id
-		if produced_object_id == RANGER_OBJECT_ID:
-			_play_routed(route_audio_event(_ranger_runtime_audio_event_id("created"), sequence), voice_player)
-	elif kind == "production.queued" and String(event.get("unit_type", "")) == "bfme2.object.gondor-ranger-horde":
-		_play_routed(route_audio_event(_ranger_runtime_audio_event_id("purchase"), sequence), voice_player)
+		_play_first_unit_event(produced_object_id, "created", sequence)
+	elif kind == "production.queued":
+		_play_first_unit_event(String(event.get("unit_type", "")), "purchase", sequence, String(event.get("command_id", "")))
 	elif kind.begins_with("music."):
 		_set_music(kind.trim_prefix("music."))
 	elif kind == "voice.select":
@@ -862,12 +856,12 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "battalion.defeated":
 		var defeated_object_id := _object_id_for_event(event, target_id)
 		_play_routed(route_roster_voice(defeated_object_id, "death", sequence), voice_player)
-		_play_routed(route_audio_event("ImpactHorse" if defeated_object_id == KNIGHT_OBJECT_ID else "BodyFallSoldier", sequence), sfx_player)
+		_play_routed(route_audio_event("ImpactHorse" if _is_cavalry_object(defeated_object_id) else "BodyFallSoldier", sequence), sfx_player)
 		if not INITIAL_ENTITY_OBJECT_IDS.has(target_id):
 			_entity_object_ids.erase(target_id)
 	elif kind == "combat.swing":
 		var attacker_object_id := _object_id_for_event(event, entity_id)
-		_play_routed(route_audio_event("ArrowDrawBow" if attacker_object_id in [ARCHER_OBJECT_ID, RANGER_OBJECT_ID] else "SwordShingClean1ForHordes", sequence), sfx_player)
+		_play_routed(route_audio_event("ArrowDrawBow" if _is_ranged_object(attacker_object_id) else "SwordShingClean1ForHordes", sequence), sfx_player)
 	elif kind == "combat.hit_structure":
 		if not declared_structure_lifecycle_audio_active:
 			_play_routed(route_audio_event("BuildingLightDamageStone", sequence), sfx_player)
@@ -892,27 +886,83 @@ func route_roster_voice(object_id: String, kind: String, sequence: int) -> Dicti
 		return _rejection("unknown_voice_kind", "", object_id, kind, sequence)
 	var by_kind: Dictionary = roster_voice_routes.get(object_id, {})
 	if not by_kind.has(kind):
-		var expected: Dictionary = ROSTER_VOICE_EVENT_IDS[object_id]
-		return _rejection("missing_event", String(Array(expected[kind])[0]), object_id, kind, sequence)
+		var expected: Dictionary = _voice_event_ids_for_object(object_id)
+		var candidates: Array = expected.get(kind, [])
+		return _rejection("missing_event", String(candidates[0]) if not candidates.is_empty() else "", object_id, kind, sequence)
 	return _route_definition(by_kind[kind], sequence, object_id, kind)
 
 
 func _active_roster_object_ids() -> Array[String]:
 	var active := ROSTER_OBJECT_IDS.duplicate()
-	if not _ranger_runtime_contract().is_empty():
-		active.append(RANGER_OBJECT_ID)
+	for runtime in _playable_unit_runtime_documents().values():
+		var object_id := PlayableUnitAdapter.runtime_member_id(runtime as Dictionary)
+		if object_id != "" and not active.has(object_id):
+			active.append(object_id)
 	return active
 
 
-func _ranger_runtime_audio_event_id(kind: String) -> String:
-	var runtime := _ranger_runtime_contract()
-	var routes: Dictionary = runtime.get("audioRoutes", {}) as Dictionary
-	return String((routes.get(kind, {}) as Dictionary).get("id", ""))
-
-
-func _ranger_runtime_contract() -> Dictionary:
+func _playable_unit_runtime_documents() -> Dictionary:
 	var content_db := get_node_or_null("/root/ContentDB")
-	return content_db.get_ranger_runtime() if content_db != null else {}
+	return content_db.get_playable_unit_runtimes() if content_db != null else {}
+
+
+func _voice_event_ids_for_object(object_id: String) -> Dictionary:
+	if ROSTER_VOICE_EVENT_IDS.has(object_id):
+		return ROSTER_VOICE_EVENT_IDS[object_id]
+	return (playable_unit_audio_events.get(object_id, {}) as Dictionary).get("voice", {})
+
+
+func _load_playable_unit_audio_routes() -> void:
+	var content_db := get_node_or_null("/root/ContentDB")
+	if content_db == null:
+		return
+	for document_value in _playable_unit_runtime_documents().values():
+		var document := document_value as Dictionary
+		var object_id := PlayableUnitAdapter.runtime_member_id(document)
+		var unit_id := PlayableUnitAdapter.runtime_unit_id(document)
+		var category := String(document.get("category", ""))
+		var voice: Dictionary = {}
+		for kind in REQUIRED_VOICE_KINDS:
+			voice[kind] = PlayableUnitAdapter.audio_event_ids(document, kind)
+		var production := PlayableUnitAdapter.production_audio_event_ids(document)
+		playable_unit_audio_events[object_id] = {"voice": voice, "production": production}
+		playable_unit_categories[object_id] = category
+		if unit_id != object_id:
+			playable_unit_audio_events[unit_id] = {"voice": voice, "production": production}
+			playable_unit_categories[unit_id] = category
+		var registration: Dictionary = document.get("registration", {}) as Dictionary
+		var bindings: Dictionary = registration.get("audioBindings", {}) as Dictionary
+		var resolutions: Dictionary = registration.get("audioResolution", {}) as Dictionary
+		for event_id_value in bindings.keys():
+			var event_id := String(event_id_value)
+			var leaves: Array[Dictionary] = []
+			for relative_value in Array(bindings[event_id_value]):
+				var path := String(content_db.call("resolve_asset", String(relative_value), String(document.get("_pack_root", ""))))
+				if path == "":
+					continue
+				leaves.append({"sample_id": path.get_file().get_basename(), "path": path, "weight": 1, "validated_path": true})
+			if not leaves.is_empty():
+				audio_event_routes[event_id.to_lower()] = {"event_id": event_id, "source": "playable-unit-runtime", "leaves": leaves}
+			elif String(resolutions.get(event_id_value, "")) == "authored-silent":
+				audio_event_routes[event_id.to_lower()] = {"event_id": event_id, "source": "authored-silent", "leaves": [], "authored_silent": true}
+
+
+func _play_first_unit_event(object_id: String, kind: String, sequence: int, command_id: String = "") -> void:
+	var events: Dictionary = playable_unit_audio_events.get(object_id, {})
+	var production: Dictionary = events.get("production", {})
+	var candidates: Array = production.get(kind, [])
+	if kind == "purchase" and command_id != "":
+		candidates = (production.get("purchase_by_command", {}) as Dictionary).get(command_id, [])
+	if not candidates.is_empty():
+		_play_routed(route_audio_event(String(candidates[0]), sequence), voice_player)
+
+
+func _is_ranged_object(object_id: String) -> bool:
+	return object_id == ARCHER_OBJECT_ID or String(playable_unit_categories.get(object_id, "")) in ["ranged-infantry", "siege", "naval"]
+
+
+func _is_cavalry_object(object_id: String) -> bool:
+	return object_id == KNIGHT_OBJECT_ID or String(playable_unit_categories.get(object_id, "")) == "cavalry"
 
 
 func route_audio_event(event_id: String, sequence: int) -> Dictionary:
@@ -964,6 +1014,8 @@ func play_declared_structure_event(event_id: String, sequence: int, structure_id
 func _route_definition(route: Dictionary, sequence: int, object_id: String, kind: String) -> Dictionary:
 	var event_id := String(route.get("event_id", ""))
 	var leaves_value: Variant = route.get("leaves", [])
+	if bool(route.get("authored_silent", false)) and typeof(leaves_value) == TYPE_ARRAY and (leaves_value as Array).is_empty():
+		return _rejection("authored_silent", event_id, object_id, kind, sequence)
 	if event_id == "" or typeof(leaves_value) != TYPE_ARRAY or (leaves_value as Array).is_empty():
 		return _rejection("invalid_event", event_id, object_id, kind, sequence)
 	var leaves := leaves_value as Array

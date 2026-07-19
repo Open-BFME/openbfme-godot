@@ -22,6 +22,7 @@ from .playable_unit_compiler import (
 from .playable_unit_pack_compiler import compile_playable_unit_pack_recipe
 from .profile import ImportProfile, resolve_profile
 from .retail_visual_closure import build_retail_visual_closure
+from .sage_string import MAX_STRING_BYTES, parse_string_catalog
 from .util import read_json, write_json_atomic
 
 
@@ -38,6 +39,10 @@ _REQUIRED_DOCUMENTS = (
     "data/ini/commandbutton.ini",
     "data/ini/gamedata.ini",
     "data/ini/playertemplate.ini",
+    "data/ini/locomotor.ini",
+    "data/ini/weapon.ini",
+    "data/ini/armor.ini",
+    "data/ini/upgrade.ini",
 )
 
 
@@ -143,8 +148,18 @@ def _required_audio_ids(descriptor: Mapping[str, object]) -> set[str]:
     return result
 
 
+def _required_string_ids(descriptor: Mapping[str, object]) -> set[str]:
+    result: set[str] = set()
+    for command in descriptor["presentation"]["ui"]["commands"]:
+        fields = command.get("fields", {})
+        for field in ("TextLabel", "DescriptLabel"):
+            result.update(str(value) for value in fields.get(field, []) if str(value))
+    return result
+
+
 def _resolved_media(
-    graph: Mapping[str, object], descriptor: Mapping[str, object]
+    graph: Mapping[str, object],
+    descriptor: Mapping[str, object],
 ) -> tuple[dict[str, Mapping[str, object]], dict[str, list[str]]]:
     leaves = graph.get("resolvedLeaves")
     if not isinstance(leaves, Mapping):
@@ -207,7 +222,27 @@ def _resolved_media(
     for identifier in sorted(_required_audio_ids(descriptor), key=str.casefold):
         paths = sorted(resolve_audio(identifier), key=str.casefold)
         resolved_audio[identifier] = paths
+
     return images, resolved_audio
+
+
+def _resolved_strings(
+    catalog: InstallCatalog, descriptor: Mapping[str, object]
+) -> dict[str, str]:
+    string_entry = catalog.resolve_exact("data/lotr.str")
+    if string_entry is None:
+        raise ValueError("required string catalog is unresolved")
+    string_source = catalog.open_archive_for(string_entry).read_entry(
+        catalog.as_entry(string_entry), max_bytes=MAX_STRING_BYTES
+    )
+    string_catalog = parse_string_catalog(string_source, duplicate_policy="first-wins")
+    resolved_strings: dict[str, str] = {}
+    for identifier in sorted(_required_string_ids(descriptor), key=str.casefold):
+        record = string_catalog.record(identifier)
+        if record is None or not record.value:
+            raise ValueError(f"required localized string is unresolved: {identifier}")
+        resolved_strings[identifier] = record.value
+    return resolved_strings
 
 
 def compile_unit_recipe(
@@ -222,12 +257,14 @@ def compile_unit_recipe(
     documents = _source_documents(effective_root)
     graph, draft = _select_faction_graph(catalog, documents, object_id, faction)
     images, audio = _resolved_media(graph, draft)
+    strings = _resolved_strings(catalog, draft)
     descriptor = compile_playable_unit_descriptor(
         object_id,
         documents,
         faction_graph=graph,
         resolved_images=images,
         resolved_audio=audio,
+        resolved_strings=strings,
     )
     composition = descriptor["composition"]
     targets = [str(composition["containerObjectId"])]

@@ -1,6 +1,8 @@
 class_name RetailSliceSim
 extends RefCounted
 
+const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+
 const MAX_RETAINED_EVENT_HISTORY := 2048
 const MAX_RETAINED_EVENTS_PER_KIND := 32
 const MAX_RETAINED_STRUCTURE_TARGETS_PER_KIND := 256
@@ -36,6 +38,7 @@ const TOWER_GUARD_OBJECT_ID := "bfme2.object.gondor-tower-guard"
 const KNIGHT_OBJECT_ID := "bfme2.object.gondor-knight"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
 const RANGER_HORDE_ID := "bfme2.object.gondor-ranger-horde"
+const TREBUCHET_OBJECT_ID := "bfme2.object.gondor-trebuchet"
 const BUILDER_OBJECT_ID := "bfme2.object.men-porter"
 const SOLDIER_HORDE_ID := "bfme2.object.gondor-fighter-horde"
 const PRODUCTION_DOOR_INSET_RADIUS := 0.9
@@ -47,6 +50,7 @@ const UNIT_DAMAGE_TYPES: Dictionary = {
 	ARCHER_OBJECT_ID: "pierce",
 	RANGER_OBJECT_ID: "pierce",
 	KNIGHT_OBJECT_ID: "cavalry",
+	TREBUCHET_OBJECT_ID: "siege",
 }
 # BFME2 1.06 FortressArmor keeps the source 7,500 hit points but applies
 # damage-type resistance. The old slice skipped this layer, making infantry
@@ -142,7 +146,11 @@ var _home_layout: Dictionary = {}
 var _rules: Dictionary = {}
 var configuration_error := ""
 var _unit_production_rules: Dictionary = {}
+var _completed_hero_identities: Dictionary = {}
 var _production_unit_order: Array[String] = []
+var _structure_kinds: Array[String] = []
+var _structure_max_health: Dictionary = {}
+var _structure_build_rules: Dictionary = {}
 var _unit_prerequisites: Dictionary = {}
 var _structure_upgrade_contracts: Dictionary = {}
 var _next_dynamic_id: Dictionary = {PLAYER_TEAM: 10, ENEMY_TEAM: 110}
@@ -168,6 +176,7 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_event_digest = 0x811C9DC5
 	entities.clear()
 	structures.clear()
+	_completed_hero_identities.clear()
 	_next_event_sequence = 1
 	_next_order_sequence = 1
 	_music_state = ""
@@ -262,9 +271,14 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	configuration_error = ""
 	_unit_production_rules = UNIT_PRODUCTION_RULES.duplicate(true)
 	_production_unit_order.assign(AI_PRODUCTION_PLAN)
+	_structure_kinds.assign(STRUCTURE_KINDS)
+	_structure_max_health = STRUCTURE_MAX_HEALTH.duplicate(true)
+	_structure_build_rules = STRUCTURE_BUILD_RULES.duplicate(true)
 	_unit_prerequisites.clear()
 	_structure_upgrade_contracts.clear()
 	_configure_ranger_runtime_contract()
+	_configure_trebuchet_runtime_contract()
+	_configure_playable_unit_runtime_contracts()
 	base_loop_enabled = bool(_rules.get("enable_base_loop", false))
 	command_point_cap = maxi(60, int(_rules.get("command_point_cap", 200)))
 	team_resources = {
@@ -272,6 +286,95 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 		ENEMY_TEAM: maxi(0, int(_rules.get("starting_resources", 1200 if base_loop_enabled else 0))),
 	}
 	team_command_points = {PLAYER_TEAM: 120, ENEMY_TEAM: 120}
+
+
+func _configure_playable_unit_runtime_contracts() -> void:
+	var value: Variant = _rules.get("playable_unit_runtimes", {})
+	if typeof(value) != TYPE_DICTIONARY:
+		configuration_error = "Playable-unit runtime registry is not a dictionary"
+		return
+	var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
+	var producer_kinds: Dictionary = _rules.get("producer_kind_by_source_object", {}) as Dictionary
+	var object_ids: Array[String] = []
+	for object_id_value in (value as Dictionary).keys():
+		object_ids.append(String(object_id_value))
+	object_ids.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	for object_id in object_ids:
+		var document_value: Variant = (value as Dictionary).get(object_id)
+		if typeof(document_value) != TYPE_DICTIONARY:
+			configuration_error = "Playable-unit runtime '%s' is invalid" % object_id
+			return
+		var simulation := PlayableUnitAdapter.simulation_rule(document_value as Dictionary)
+		if simulation.is_empty():
+			configuration_error = "Playable-unit runtime '%s' has unresolved simulation evidence" % object_id
+			return
+		var unit_type := String(simulation["unit_type"])
+		var member_id := String(simulation["object_id"])
+		if (
+			_unit_production_rules.has(unit_type)
+			and String((_unit_production_rules[unit_type] as Dictionary).get("object_id", "")) != member_id
+		):
+			configuration_error = "Playable-unit runtime '%s' collides with production '%s'" % [object_id, unit_type]
+			return
+		var unit_rule := PlayableUnitAdapter.normalized_unit_rule(simulation, float(_rules.get("source_map_transform_scale", 0.0)))
+		if unit_rule.is_empty():
+			unit_rule = (configured_unit_rules.get(member_id, {}) as Dictionary).duplicate(true)
+		if unit_rule.is_empty():
+			configuration_error = "Playable-unit runtime '%s' has no normalized unit rule" % object_id
+			return
+		var producers: Array = simulation.get("producers", [])
+		if producers.is_empty():
+			configuration_error = "Playable-unit runtime '%s' has no producer" % object_id
+			return
+		var resolved_producers: Array[Dictionary] = []
+		var resolved_producer_kinds: Array[String] = []
+		for producer_value in producers:
+			var producer := producer_value as Dictionary
+			var source_producer := String(producer.get("producer_source_object_id", ""))
+			var producer_kind := String(producer_kinds.get(source_producer, ""))
+			if producer_kind == "":
+				configuration_error = "Playable-unit runtime '%s' producer '%s' is not loaded by this faction slice" % [object_id, source_producer]
+				return
+			var route := producer.duplicate(true)
+			route["producer_kind"] = producer_kind
+			resolved_producers.append(route)
+			if not resolved_producer_kinds.has(producer_kind):
+				resolved_producer_kinds.append(producer_kind)
+		var primary_producer := resolved_producers[0]
+		configured_unit_rules[member_id] = unit_rule
+		_unit_production_rules[unit_type] = {
+			"category": String(simulation.get("category", "")),
+			"producer_kind": String(primary_producer["producer_kind"]),
+			"producer_kinds": resolved_producer_kinds,
+			"producer_routes": resolved_producers,
+			"producer_source_object_id": String(primary_producer["producer_source_object_id"]),
+			"object_id": member_id,
+			"display_name": String(simulation["display_name"]),
+			"default_cost": int(simulation["default_cost"]),
+			"default_build_ticks": int(simulation["default_build_ticks"]),
+			"default_command_points": int(simulation["default_command_points"]),
+			"command_id": String(primary_producer.get("command_id", "")),
+			"command_slot": int(primary_producer.get("slot", 0)),
+		}
+		if not _production_unit_order.has(unit_type):
+			_production_unit_order.append(unit_type)
+		var prerequisites_by_producer: Dictionary = {}
+		for route in resolved_producers:
+			var producer_kind := String(route["producer_kind"])
+			var candidate: Array = (route.get("prerequisites", []) as Array).duplicate()
+			if not prerequisites_by_producer.has(producer_kind):
+				prerequisites_by_producer[producer_kind] = candidate
+				continue
+			var existing: Array = prerequisites_by_producer[producer_kind]
+			var candidate_is_subset := candidate.all(func(value: Variant) -> bool: return existing.has(value))
+			var existing_is_subset := existing.all(func(value: Variant) -> bool: return candidate.has(value))
+			if candidate_is_subset:
+				prerequisites_by_producer[producer_kind] = candidate
+			elif not existing_is_subset:
+				configuration_error = "Playable-unit runtime '%s' has ambiguous prerequisite variants for '%s'" % [object_id, producer_kind]
+				return
+		_unit_prerequisites[unit_type] = prerequisites_by_producer
+	_rules["unit_rules"] = configured_unit_rules
 
 
 func _configure_ranger_runtime_contract() -> void:
@@ -375,6 +478,122 @@ func _configure_ranger_runtime_contract() -> void:
 	}
 
 
+func _configure_trebuchet_runtime_contract() -> void:
+	var value: Variant = _rules.get("trebuchet_runtime", {})
+	if typeof(value) != TYPE_DICTIONARY:
+		configuration_error = "Trebuchet runtime contract is not a dictionary"
+		return
+	var contract := value as Dictionary
+	if contract.is_empty():
+		return
+	if (
+		String(contract.get("schema", "")) != "openbfme.trebuchet-runtime-contract"
+		or int(contract.get("schemaVersion", -1)) != 0
+		or String(contract.get("capabilityStatus", "")) != "bounded-direct-structure-ready"
+	):
+		configuration_error = "Trebuchet runtime contract identity is invalid"
+		return
+	var production: Dictionary = contract.get("production", {}) as Dictionary
+	var unit: Dictionary = contract.get("unit", {}) as Dictionary
+	var movement: Dictionary = unit.get("movement", {}) as Dictionary
+	var combat: Dictionary = contract.get("combat", {}) as Dictionary
+	var workshop: Dictionary = contract.get("workshop", {}) as Dictionary
+	var workshop_stats: Dictionary = workshop.get("stats", {}) as Dictionary
+	var scale := float(_rules.get("source_map_transform_scale", 0.0))
+	if (
+		scale <= 0.0
+		or String(production.get("id", "")) != "GondorTrebuchet"
+		or String(unit.get("objectId", "")) != "GondorTrebuchet"
+		or String(workshop_stats.get("id", "")) != "GondorWorkshop"
+		or String(workshop.get("trainCommandId", "")) != "Command_ConstructGondorTrebuchet"
+		or String(movement.get("mode", "")) != "existing-generic-unit-path"
+		or String(combat.get("scope", "")) != "direct-structure-first-slice"
+		or String(combat.get("damageType", "")).to_lower() != "siege"
+	):
+		configuration_error = "Trebuchet runtime contract values are invalid"
+		return
+	var speed_source := float(movement.get("speed", 0.0))
+	var attack_range_source := float(combat.get("attackRange", 0.0))
+	var minimum_range_source := float(combat.get("minimumAttackRange", 0.0))
+	var vision_source := float(unit.get("visionRange", 0.0))
+	var delay_ms := float(combat.get("delayBetweenShotsMs", 0.0))
+	var pre_attack_ms := float(combat.get("preAttackDelayMs", 0.0))
+	var firing_ms := float(combat.get("firingDurationMs", 0.0))
+	var health := int(unit.get("maximumHealth", 0))
+	var damage := int(combat.get("damage", 0))
+	var build_cost := int(production.get("buildCost", -1))
+	var build_ticks := roundi(float(production.get("buildTime", -1.0)) / TICK_SECONDS)
+	var command_points := int(production.get("commandPoints", -1))
+	var workshop_cost := int(workshop_stats.get("buildCost", -1))
+	var workshop_ticks := roundi(float(workshop_stats.get("buildTime", -1.0)) / TICK_SECONDS)
+	var workshop_health := int(workshop_stats.get("maxHealth", 0))
+	if (
+		speed_source <= 0.0
+		or attack_range_source <= 0.0
+		or minimum_range_source <= 0.0
+		or vision_source <= 0.0
+		or attack_range_source <= minimum_range_source
+		or health <= 0
+		or damage <= 0
+		or build_cost <= 0
+		or build_ticks <= 0
+		or command_points <= 0
+		or workshop_cost <= 0
+		or workshop_ticks <= 0
+		or workshop_health <= 0
+		or delay_ms <= 0.0
+		or pre_attack_ms <= 0.0
+		or firing_ms <= 0.0
+	):
+		configuration_error = "Trebuchet runtime numeric contract is invalid"
+		return
+	var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
+	configured_unit_rules[TREBUCHET_OBJECT_ID] = {
+		"horde_id": TREBUCHET_OBJECT_ID,
+		"member_count": 1,
+		"member_health": health,
+		"member_damage": damage,
+		"speed": speed_source * scale,
+		"speed_source": speed_source,
+		"acceleration": speed_source * scale,
+		"acceleration_source": speed_source,
+		"turn_rate_degrees_per_second": 360.0,
+		"braking": speed_source * scale,
+		"braking_source": speed_source,
+		"attack_range": attack_range_source * scale,
+		"attack_range_source": attack_range_source,
+		"minimum_attack_range": minimum_range_source * scale,
+		"minimum_attack_range_source": minimum_range_source,
+		"vision_range": vision_source * scale,
+		"vision_range_source": vision_source,
+		"delay_between_shots_ms": delay_ms,
+		"pre_attack_delay_ms": pre_attack_ms,
+		"firing_duration_ms": firing_ms,
+		"attack_period_ticks": maxi(1, roundi(delay_ms / (TICK_SECONDS * 1000.0))),
+		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (TICK_SECONDS * 1000.0))),
+		"firing_duration_ticks": maxi(0, roundi(firing_ms / (TICK_SECONDS * 1000.0))),
+		"clip_size": int(combat.get("clipSize", 0)),
+		"clip_reload_time_ms": 0.0,
+		"continuous_fire_one": 0,
+		"continuous_fire_coast_ticks": 0,
+		"continuous_fire_rate_multiplier": 1.0,
+		"formation_positions": [Vector3.ZERO],
+		"provenance": {"contractSources": contract.get("sources", []).duplicate(true)},
+	}
+	_rules["unit_rules"] = configured_unit_rules
+	_unit_production_rules[TREBUCHET_OBJECT_ID] = {
+		"producer_kind": "workshop",
+		"object_id": TREBUCHET_OBJECT_ID,
+		"display_name": "Gondor Trebuchet",
+		"default_cost": build_cost,
+		"default_build_ticks": build_ticks,
+		"default_command_points": command_points,
+	}
+	_production_unit_order.append(TREBUCHET_OBJECT_ID)
+	_structure_max_health["workshop"] = workshop_health
+	_structure_build_rules["workshop"] = {"cost": workshop_cost, "seconds": float(workshop_stats.get("buildTime", 0.0))}
+
+
 func _ranger_command_sets_are_valid(command_sets: Array) -> bool:
 	var expected := {
 		"GondorArcheryCommandSet": "Command_PurchaseUpgradeGondorArcheryRangeLevel2",
@@ -413,14 +632,15 @@ func _initialize_base_loop() -> void:
 	for team in [PLAYER_TEAM, ENEMY_TEAM]:
 		var team_layout: Dictionary = layout.get(team, layout.get(str(team), {}))
 		var base_id := PLAYER_STRUCTURE_BASE if team == PLAYER_TEAM else ENEMY_STRUCTURE_BASE
-		for index in range(STRUCTURE_KINDS.size()):
-			var kind := STRUCTURE_KINDS[index]
+		for index in range(_structure_kinds.size()):
+			var kind := _structure_kinds[index]
 			var position := Vector2(team_layout.get(kind, _fallback_structure_position(team, index)))
-			var maximum_health := int(STRUCTURE_MAX_HEALTH[kind])
+			var maximum_health := int(_structure_max_health[kind])
 			var production: Array[String] = []
 			for unit_type in _production_unit_order:
 				var production_rule: Dictionary = _unit_production_rules[unit_type]
-				if String(production_rule.get("producer_kind", "")) == kind:
+				var producer_kinds_for_rule: Array = production_rule.get("producer_kinds", [String(production_rule.get("producer_kind", ""))])
+				if producer_kinds_for_rule.has(kind):
 					production.append(unit_type)
 			structures[base_id + index + 1] = {
 				"id": base_id + index + 1,
@@ -706,8 +926,31 @@ func production_rule_ids() -> Array[String]:
 	return _production_unit_order.duplicate()
 
 
-func required_upgrade_for_unit(unit_type: String) -> String:
-	return String(_unit_prerequisites.get(unit_type, ""))
+func structure_build_rule_ids() -> Array[String]:
+	var result: Array[String] = []
+	for value in _structure_build_rules.keys():
+		result.append(String(value))
+	return result
+
+
+func structure_build_rule(kind: String) -> Dictionary:
+	return (_structure_build_rules.get(kind, {}) as Dictionary).duplicate(true)
+
+
+func structure_maximum_health(kind: String) -> int:
+	return int(_structure_max_health.get(kind, 0))
+
+
+func required_upgrade_for_unit(unit_type: String, producer_kind: String = "") -> String:
+	var required := required_upgrades_for_unit(unit_type, producer_kind)
+	return String(required[0]) if not required.is_empty() else ""
+
+
+func required_upgrades_for_unit(unit_type: String, producer_kind: String = "") -> Array:
+	var value: Variant = _unit_prerequisites.get(unit_type, "")
+	if typeof(value) == TYPE_DICTIONARY:
+		return Array((value as Dictionary).get(producer_kind, [])).duplicate()
+	return [String(value)] if String(value) != "" else []
 
 
 func queue_structure_upgrade(team: int, structure_id: int, upgrade_id: String) -> Dictionary:
@@ -876,9 +1119,13 @@ func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) 
 	var production_rule: Dictionary = _unit_production_rules.get(unit_type, {})
 	if production_rule.is_empty():
 		return {"ok": false, "reason": "unsupported-unit"}
-	var required_upgrade := String(_unit_prerequisites.get(unit_type, ""))
-	if required_upgrade != "" and not Array(building.get("completed_upgrades", [])).has(required_upgrade):
-		return {"ok": false, "reason": "missing-upgrade", "required_upgrade": required_upgrade}
+	if String(production_rule.get("category", "")) == "hero" and hero_unavailable(team, unit_type):
+		return {"ok": false, "reason": "hero-unavailable"}
+	var required_upgrades := required_upgrades_for_unit(unit_type, String(building.get("structure_kind", "")))
+	for required_upgrade_value in required_upgrades:
+		var required_upgrade := String(required_upgrade_value)
+		if not Array(building.get("completed_upgrades", [])).has(required_upgrade):
+			return {"ok": false, "reason": "missing-upgrade", "required_upgrade": required_upgrade}
 	var queue: Array = building.get("queue", [])
 	if queue.size() >= maxi(1, int(_rules.get("maximum_queue", 5))):
 		return {"ok": false, "reason": "queue-full"}
@@ -900,11 +1147,40 @@ func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) 
 		"duration_ticks": build_ticks,
 		"complete_tick": starts_at + build_ticks,
 	}
+	for route_value in Array(production_rule.get("producer_routes", [])):
+		var route := route_value as Dictionary
+		if String(route.get("producer_kind", "")) == String(building.get("structure_kind", "")):
+			item["command_id"] = String(route.get("command_id", ""))
+			break
 	queue.append(item)
 	building["queue"] = queue
 	team_resources[team] = resources_for_team(team) - cost
-	_emit_event("production.queued", producer, 0, {"team": team, "unit_type": unit_type, "complete_tick": int(item["complete_tick"])})
+	_emit_event("production.queued", producer, 0, {"team": team, "unit_type": unit_type, "command_id": String(item.get("command_id", "")), "complete_tick": int(item["complete_tick"])})
 	return {"ok": true, "reason": "", "producer_id": producer, "item": item.duplicate(true)}
+
+
+func hero_unavailable(team: int, unit_type: String) -> bool:
+	var production_rule: Dictionary = _unit_production_rules.get(unit_type, {})
+	if String(production_rule.get("category", "")) != "hero":
+		return false
+	if _completed_hero_identities.has("%d:%s" % [team, unit_type]):
+		return true
+	for structure_value in structures.values():
+		var structure := structure_value as Dictionary
+		if int(structure.get("team", -1)) != team:
+			continue
+		for item_value in Array(structure.get("queue", [])):
+			if String((item_value as Dictionary).get("unit_type", "")) == unit_type:
+				return true
+	for entity_value in entities.values():
+		var row := entity_value as Dictionary
+		if (
+			int(row.get("team", -1)) == team
+			and int(row.get("health", 0)) > 0
+			and String(row.get("unit_type", "")) == unit_type
+		):
+			return true
+	return false
 
 
 func production_queue_state(producer: int) -> Array[Dictionary]:
@@ -1295,6 +1571,8 @@ func _step_production() -> void:
 		# QueueProductionExitUpdate uses a create point at the producer doorway,
 		# reveals the horde there, and only then sends it to the rally point.
 		_add_battalion(new_id, team, door_point, display_name, object_id, unit_type, committed_command_points)
+		if String(production_rule.get("category", "")) == "hero":
+			_completed_hero_identities["%d:%s" % [team, unit_type]] = true
 		var produced: Dictionary = entities[new_id]
 		produced["production_producer_id"] = id
 		produced["production_exit_start_tick"] = tick_index
@@ -1420,7 +1698,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		return {"ok": false, "reason": "match-unavailable"}
 	if team != PLAYER_TEAM and team != ENEMY_TEAM:
 		return {"ok": false, "reason": "invalid-team"}
-	if not STRUCTURE_BUILD_RULES.has(structure_kind):
+	if not _structure_build_rules.has(structure_kind):
 		return {"ok": false, "reason": "unsupported-structure"}
 	if playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, playable_outline):
 		return {"ok": false, "reason": "outside-playable-area"}
@@ -1440,7 +1718,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		break
 	if builder_id == 0:
 		return {"ok": false, "reason": "builder-required"}
-	var build_rule: Dictionary = STRUCTURE_BUILD_RULES[structure_kind]
+	var build_rule: Dictionary = _structure_build_rules[structure_kind]
 	var cost := int(build_rule["cost"])
 	if resources_for_team(team) < cost:
 		return {"ok": false, "reason": "insufficient-resources", "cost": cost}
@@ -1448,7 +1726,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		return {"ok": true, "reason": "", "dry_run": true, "cost": cost}
 	var structure_id := _next_dynamic_structure_id
 	_next_dynamic_structure_id += 1
-	var maximum_health := int(STRUCTURE_MAX_HEALTH[structure_kind])
+	var maximum_health := int(_structure_max_health[structure_kind])
 	var production: Array[String] = []
 	for unit_type in _production_unit_order:
 		var production_rule: Dictionary = _unit_production_rules[unit_type]
@@ -2437,6 +2715,10 @@ func state_snapshot() -> Dictionary:
 			"edge_a": [snappedf(edge_a.x, 0.001), snappedf(edge_a.y, 0.001)],
 			"edge_b": [snappedf(edge_b.x, 0.001), snappedf(edge_b.y, 0.001)],
 		})
+	var completed_hero_identities: Array[String] = []
+	for identity_value in _completed_hero_identities.keys():
+		completed_hero_identities.append(String(identity_value))
+	completed_hero_identities.sort()
 	return {
 		"tick": tick_index,
 		"winner": winner,
@@ -2451,6 +2733,7 @@ func state_snapshot() -> Dictionary:
 		"music": _music_state,
 		"source_map_configured": source_map_configured,
 		"ford_gates": gate_rows,
+		"completed_hero_identities": completed_hero_identities,
 		"entities": rows,
 		"structures": structure_rows,
 		"next_event_sequence": _next_event_sequence,
