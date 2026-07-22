@@ -101,7 +101,32 @@ class CatalogProfileTests(unittest.TestCase):
             payload[-1] ^= 1
             base.write_bytes(payload)
             os.utime(base, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
-            self.assertIn("changed archive payload: INI.big", catalog.stale_reasons())
+            # Payload sample canary catches bit-flips without full MD5.
+            reasons = catalog.stale_reasons()
+            self.assertTrue(
+                any(
+                    reason.startswith("changed archive payload sample: INI.big")
+                    or reason.startswith("changed archive payload: INI.big")
+                    for reason in reasons
+                ),
+                reasons,
+            )
+            # Deep path still reports full policy MD5 mismatch.
+            previous = os.environ.get("OPENBFME_CATALOG_DEEP")
+            os.environ["OPENBFME_CATALOG_DEEP"] = "1"
+            try:
+                deep_reasons = catalog.stale_reasons()
+                self.assertTrue(
+                    any(
+                        "changed archive payload" in reason for reason in deep_reasons
+                    ),
+                    deep_reasons,
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop("OPENBFME_CATALOG_DEEP", None)
+                else:
+                    os.environ["OPENBFME_CATALOG_DEEP"] = previous
             with self.assertRaisesRegex(ValueError, "digest changed"):
                 InstallCatalog.build(root, source_policy=policy)
 
@@ -268,9 +293,33 @@ class CatalogProfileTests(unittest.TestCase):
             base.touch()
             os.utime(base, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
             self.assertEqual(base.stat().st_size, original_stat.st_size)
+            reasons = catalog.stale_reasons()
+            # Sample canary or deep directory re-parse both detect directory edits.
             self.assertTrue(
-                any(reason.startswith("changed archive directory:") for reason in catalog.stale_reasons())
+                any(
+                    reason.startswith("changed archive payload sample:")
+                    or reason.startswith("changed archive directory:")
+                    for reason in reasons
+                ),
+                reasons,
             )
+            previous = os.environ.get("OPENBFME_CATALOG_DEEP")
+            os.environ["OPENBFME_CATALOG_DEEP"] = "1"
+            try:
+                deep_reasons = catalog.stale_reasons()
+                self.assertTrue(
+                    any(
+                        reason.startswith("changed archive payload sample:")
+                        or reason.startswith("changed archive directory:")
+                        for reason in deep_reasons
+                    ),
+                    deep_reasons,
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop("OPENBFME_CATALOG_DEEP", None)
+                else:
+                    os.environ["OPENBFME_CATALOG_DEEP"] = previous
 
     def test_loaded_catalog_entries_are_bound_to_reopened_big_directory(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

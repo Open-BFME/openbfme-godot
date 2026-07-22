@@ -106,6 +106,7 @@ func _run() -> void:
 	)
 
 	_run_fortress_armor_contract()
+	_run_armor_system_contract()
 	_run_archer_dual_weapon_contract()
 	_run_stance_contract()
 	_run_corpse_lifecycle_contract()
@@ -236,6 +237,183 @@ func _run_fortress_armor_contract() -> void:
 		int(sim.structure(fortress_id).get("health", 0)) == 7450,
 		str(sim.structure(fortress_id))
 	)
+
+
+func _run_armor_system_contract() -> void:
+	## armor.ini, compiled end-to-end (importer/openbfme_importer/armor_compiler.py):
+	## attacker damage type vs the victim's authored ArmorSet. The injected
+	## tables mirror the retail rows with armor.ini line provenance; the
+	## pack-driven sweep in retail_slice_runner re-proves them from converted
+	## documents.
+	var sim = SimScript.new()
+	sim.setup({}, {
+		"enable_base_loop": true,
+		"member_health": 100,
+		"unit_rules": _unit_rules(5, 50),
+	})
+	sim.ai_enabled = false
+	# KnightArmor (armor.ini:613-631): PIERCE 40% (line 618), SPECIALIST 200%
+	# (line 619). SoldierArmor (armor.ini:483-500) upgrades to SoldierHeavyArmor
+	# (armor.ini:502-519): PIERCE 20% with DamageScalar 120%.
+	sim._unit_armor[SimScript.KNIGHT_OBJECT_ID] = {
+		"set_id": "KnightArmor",
+		"damage_scalar": 1.0,
+		"scalars": {"default": 1.0, "slash": 0.40, "pierce": 0.40, "specialist": 2.0, "crush": 0.60, "cavalry": 1.0},
+		"upgrades": {},
+	}
+	sim._unit_armor[SimScript.SOLDIER_OBJECT_ID] = {
+		"set_id": "SoldierArmor",
+		"damage_scalar": 1.0,
+		"scalars": {"default": 1.0, "slash": 1.0, "pierce": 1.25, "specialist": 0.50, "crush": 1.25, "cavalry": 1.50},
+		"upgrades": {
+			"Upgrade_GondorHeavyArmor": {
+				"set_id": "SoldierHeavyArmor",
+				"damage_scalar": 1.20,
+				"scalars": {"default": 0.50, "slash": 0.50, "pierce": 0.20, "specialist": 0.20, "cavalry": 1.20, "crush": 0.65, "siege": 0.50},
+			},
+		},
+	}
+	# GondorSwordUpgraded (weapon.ini:5537-5560): 90 SLASH
+	# (GONDOR_SOLDIER_SWORD_UPGRADE, gamedata.ini:1113) with DamageScalar
+	# 200% ANY +INFANTRY -HERO / 150% ANY +HERO.
+	sim._unit_weapon_upgrades[SimScript.SOLDIER_OBJECT_ID] = {
+		"Upgrade_GondorForgedBlades": {
+			"kind": "weapon-swap",
+			"damage": 90.0,
+			"damage_type": "slash",
+			"scalars": [
+				{"percent": 2.0, "filter": "ANY +INFANTRY -HERO", "relation": "ANY", "plus": ["INFANTRY"], "minus": ["HERO"]},
+				{"percent": 1.5, "filter": "ANY +HERO", "relation": "ANY", "plus": ["HERO"], "minus": []},
+			],
+		},
+	}
+	var knight: Dictionary = sim.entities[101]
+	knight["object_id"] = SimScript.KNIGHT_OBJECT_ID
+	knight["category"] = "cavalry"
+	# Archer (pierce) vs KnightArmor: 50 x 0.40 = 20 (was 50 pre-armor).
+	var archer: Dictionary = sim.entities[2]
+	archer["damage_type"] = "pierce"
+	sim._apply_member_damage(2, 0, 101, 50, "battalion", 0, 0)
+	var pierce_hit := _last_hit_event(sim)
+	_check(
+		"archer_pierce_vs_knight_armor_scales_to_retail_forty_percent",
+		int(knight.get("member_health", [])[0]) == 80
+			and is_equal_approx(float(pierce_hit.get("armor_scalar", 0.0)), 0.40)
+			and String(pierce_hit.get("damage_type", "")) == "pierce",
+		"health=%s scalar=%s" % [str(knight.get("member_health", [])), str(pierce_hit.get("armor_scalar", ""))]
+	)
+	# Tower guard (specialist) vs KnightArmor: 50 x 2.00 = 100 (pike counter).
+	var pike: Dictionary = sim.entities[1]
+	pike["damage_type"] = "specialist"
+	sim._apply_member_damage(1, 0, 101, 50, "battalion", 0, 1)
+	var pike_hit := _last_hit_event(sim)
+	_check(
+		"pike_specialist_vs_knight_armor_doubles_to_retail_counter",
+		int(knight.get("member_health", [])[1]) == 0
+			and is_equal_approx(float(pike_hit.get("armor_scalar", 0.0)), 2.0),
+		"health=%s scalar=%s" % [str(knight.get("member_health", [])), str(pike_hit.get("armor_scalar", ""))]
+	)
+	# Specialist vs the fortress's compiled table: 50 x 0.12 = 6.
+	var fortress_id: int = sim.fortress_id(SimScript.ENEMY_TEAM)
+	sim._apply_structure_damage(1, fortress_id, 50, "specialist")
+	_check(
+		"pike_vs_fortress_suffers_structure_penalty",
+		int(sim.structure(fortress_id).get("health", 0)) == 7494,
+		str(sim.structure(fortress_id).get("health", -1))
+	)
+	# Missing kinds stay recorded provisionals, never silent.
+	_check(
+		"non_fortress_legacy_kinds_are_recorded_provisionals",
+		sim.structure_armor_provisional_kinds.has("farm")
+			and sim.structure_armor_provisional_kinds.has("barracks")
+			and sim.structure_armor_provisional_kinds.has("archery_range")
+			and sim.structure_armor_provisional_kinds.has("stable")
+			and not sim.structure_armor_provisional_kinds.has("fortress"),
+		str(sim.structure_armor_provisional_kinds)
+	)
+	# Forge honesty: recorded per-horde equipment changes the effective armor /
+	# damage by the compiled amount and nothing else.
+	var soldier: Dictionary = sim.entities[1]
+	soldier["category"] = "infantry"
+	soldier["object_id"] = SimScript.SOLDIER_OBJECT_ID
+	soldier["damage_type"] = "slash"
+	var enemy_soldier: Dictionary = sim.entities[101]
+	enemy_soldier["object_id"] = SimScript.SOLDIER_OBJECT_ID
+	enemy_soldier["category"] = "infantry"
+	sim._apply_equipment_to_horde(soldier, ["Upgrade_GondorForgedBlades"])
+	sim._apply_equipment_to_horde(enemy_soldier, ["Upgrade_GondorHeavyArmor"])
+	_check(
+		"forge_equipment_is_recorded_per_horde_not_team_wide",
+		(soldier.get("applied_upgrades", {}) as Dictionary).has("Upgrade_GondorForgedBlades")
+			and (enemy_soldier.get("applied_upgrades", {}) as Dictionary).has("Upgrade_GondorHeavyArmor")
+			and not (soldier.get("applied_upgrades", {}) as Dictionary).has("Upgrade_GondorHeavyArmor")
+			and String(enemy_soldier.get("active_armor_upgrade", "")) == "Upgrade_GondorHeavyArmor",
+		"attacker=%s victim=%s" % [str(soldier.get("applied_upgrades", "")), str(enemy_soldier.get("applied_upgrades", ""))]
+	)
+	# Forged blades: 90 (compiled, replaces base 40) x 2.00 vs infantry = 180
+	# against 100 member health; the unupgraded 50 could never one-shot.
+	sim._apply_member_damage(1, 0, 101, 90, "battalion", 0, 2)
+	var blades_hit := _last_hit_event(sim)
+	_check(
+		"forged_blades_apply_compiled_damage_and_infantry_scalar",
+		int(enemy_soldier.get("member_health", [])[2]) == 0
+			and int(blades_hit.get("amount", 0)) == 100
+			and is_equal_approx(float(blades_hit.get("weapon_factor", 0.0)), 2.0),
+		"amount=%s factor=%s" % [str(blades_hit.get("amount", "")), str(blades_hit.get("weapon_factor", ""))]
+	)
+	# Heavy armor: pierce 50 x (0.20 x 1.20 DamageScalar) = 12, set swapped
+	# only on the upgraded horde.
+	(enemy_soldier.get("member_health", []) as Array)[3] = 100
+	sim._apply_member_damage(2, 0, 101, 50, "battalion", 0, 3)
+	var armor_hit := _last_hit_event(sim)
+	_check(
+		"heavy_armor_swaps_to_compiled_upgraded_set",
+		int(enemy_soldier.get("member_health", [])[3]) == 88
+			and is_equal_approx(float(armor_hit.get("armor_scalar", 0.0)), 0.24),
+		"health=%s scalar=%s" % [str(enemy_soldier.get("member_health", [])), str(armor_hit.get("armor_scalar", ""))]
+	)
+	# Fire arrows (GondorArcherBowFireWarhead, weapon.ini:4678-4714): the
+	# pierce nugget stays the primary hit while the authored flame bonus lands
+	# as its own typed hit, scaled 25% vs non-structures
+	# (GONDOR_ARCHER_FIRE_UPGRADE_DAMAGE = 32, gamedata.ini:1134).
+	var fire_sim = _make_sim()
+	var fire_archer: Dictionary = fire_sim.entities[2]
+	fire_archer["damage_type"] = "pierce"
+	fire_sim._unit_weapon_upgrades[SimScript.ARCHER_OBJECT_ID] = {
+		"Upgrade_GondorArcherFireArrows": {
+			"kind": "warhead-upgrade",
+			"damage": 25.0,
+			"damage_type": "pierce",
+			"scalars": [],
+			"bonus_nuggets": [
+				{"damage": 1.0, "damage_type": "flame", "scalars": [{"percent": 500.0, "filter": "NONE +MINE", "relation": "NONE", "plus": ["MINE"], "minus": []}]},
+				{"damage": 32.0, "damage_type": "flame", "scalars": [{"percent": 0.25, "filter": "ALL -STRUCTURE", "relation": "ALL", "plus": [], "minus": ["STRUCTURE"]}]},
+			],
+		},
+	}
+	fire_sim._apply_equipment_to_horde(fire_archer, ["Upgrade_GondorArcherFireArrows"])
+	var fire_effect: Dictionary = fire_sim._applied_weapon_effect(fire_archer)
+	_check("fire_arrows_warhead_upgrade_resolves_primary_and_bonus", String(fire_effect.get("kind", "")) == "warhead-upgrade" and float(fire_effect.get("damage", 0.0)) == 25.0 and (fire_effect.get("bonus_nuggets", []) as Array).size() == 2, str(fire_effect))
+	var fire_target: Dictionary = fire_sim.entities[101]
+	fire_target["category"] = "infantry"
+	var fire_bonus_factor := fire_sim._damage_scalar_factor((fire_effect.get("bonus_nuggets", []) as Array)[1].get("scalars", []), fire_target, "battalion")
+	var mine_bonus_factor := fire_sim._damage_scalar_factor((fire_effect.get("bonus_nuggets", []) as Array)[0].get("scalars", []), fire_target, "battalion")
+	_check(
+		"fire_arrows_bonus_scales_twenty_five_percent_vs_units_and_mine_nugget_stays_inert",
+		is_equal_approx(fire_bonus_factor, 0.25) and is_equal_approx(mine_bonus_factor, 1.0),
+		"bonus=%s mine=%s" % [str(fire_bonus_factor), str(mine_bonus_factor)]
+	)
+	var structure_factor := fire_sim._damage_scalar_factor((fire_effect.get("bonus_nuggets", []) as Array)[1].get("scalars", []), fire_sim.structure(fire_sim.fortress_id(SimScript.ENEMY_TEAM)), "structure")
+	_check("fire_arrows_bonus_is_unscaled_vs_structures", is_equal_approx(structure_factor, 1.0), str(structure_factor))
+
+
+func _last_hit_event(sim) -> Dictionary:
+	## The most recent combat.hit event (music/voice intents may follow it).
+	for index in range(sim.events.size() - 1, -1, -1):
+		var event: Dictionary = sim.events[index]
+		if String(event.get("kind", "")) == "combat.hit":
+			return event
+	return {}
 
 
 func _run_archer_dual_weapon_contract() -> void:

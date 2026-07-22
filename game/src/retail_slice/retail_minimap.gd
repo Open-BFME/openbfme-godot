@@ -23,6 +23,7 @@ var zoom_response_seconds := 0.09
 var last_center_request := Vector2.ZERO
 
 signal center_requested(world_position: Vector2)
+signal order_requested(world_position: Vector2)
 
 
 func bind_retail_parchment(texture: Texture2D) -> bool:
@@ -84,6 +85,11 @@ func _gui_input(event: InputEvent) -> void:
 			last_center_request = _canvas_to_world(mouse.position, Rect2(Vector2.ZERO, size).grow(-14.0))
 			center_requested.emit(last_center_request)
 			accept_event()
+		elif mouse.button_index == MOUSE_BUTTON_RIGHT:
+			# Retail: right-click on the radar orders the selection to that
+			# world point without moving the camera.
+			order_requested.emit(_canvas_to_world(mouse.position, Rect2(Vector2.ZERO, size).grow(-14.0)))
+			accept_event()
 
 
 func nudge_zoom(direction: int) -> void:
@@ -144,7 +150,9 @@ func _draw_source_geometry(arena: Rect2) -> void:
 	var ink_color := parchment_ink if private_parity_mode else Color("2d7998")
 	if private_parity_mode:
 		land_color.a = 0.0
-		ink_color.a = 0.48
+		# Retail radar ink is a faint brown wash, not a heavy black fill
+		# (REF-24/41/52): keep the water/ford reading subtle.
+		ink_color.a = 0.30
 	var outline := PackedVector2Array()
 	for point in source_map_data.map_outline:
 		outline.append(_world_to_canvas(point, arena))
@@ -227,7 +235,13 @@ func _draw_camera_footprint(arena: Rect2) -> void:
 			var direction := world_camera.project_ray_normal(screen_corner)
 			var hit: Variant = Plane(Vector3.UP, 0.35).intersects_ray(origin, direction)
 			if hit != null:
-				projected.append(_world_to_canvas(Vector2((hit as Vector3).x, (hit as Vector3).z), arena))
+				# The camera frustum regularly spills past the playable edge;
+				# retail clips the wedge at the map boundary, so the footprint
+				# never escapes the parchment disk.
+				var world_hit := Vector2((hit as Vector3).x, (hit as Vector3).z)
+				world_hit.x = clampf(world_hit.x, map_bounds.position.x, map_bounds.end.x)
+				world_hit.y = clampf(world_hit.y, map_bounds.position.y, map_bounds.end.y)
+				projected.append(_world_to_canvas(world_hit, arena))
 		if projected.size() == 4:
 			projected.append(projected[0])
 			draw_polyline(projected, Color(0.92, 0.84, 0.55, 0.9), 1.6, true)

@@ -7,8 +7,10 @@ extends Node3D
 ## object types mount converted retail GLBs; unresolved types and ford gates are
 ## retained as non-rendered diagnostics until exact retail presentation exists.
 
-const MAX_EXACT_TERRAIN_VERTICES := 262_144
-const MAX_EXACT_TERRAIN_TRIANGLES := 524_288
+# Bounds cover the largest cooked map in the five-map pack (Mount Doom at
+# 600x600) while staying below the 1000x1000 grid the fail-closed probes feed.
+const MAX_EXACT_TERRAIN_VERTICES := 750_000
+const MAX_EXACT_TERRAIN_TRIANGLES := 1_500_000
 const MAX_WATER_TRIANGLES := 4096
 const ROAD_SAMPLE_STEP_SOURCE := 10.0
 const ROAD_HEIGHT_BIAS_SOURCE := 0.1
@@ -157,10 +159,12 @@ func configure(map_data: RetailMapData) -> bool:
 		return _abort_configuration(error if error != "" else "source ford-gate diagnostics are incomplete")
 	if not _record_unresolved_prop_diagnostics(map_data):
 		return _abort_configuration(error if error != "" else "source unresolved-prop diagnostics are incomplete")
-	source_driven = (
-		terrain_material_source_driven
-		and terrain_exact_grid_ready
-		and road_material_source_driven
+	# Road and water layers are per-map optional: Fords of Isen II authors both,
+	# other cooked maps may have no road network and (in principle) no water.
+	# When the map data declares the layer, every exact-source check applies;
+	# when it does not, the layer must have stayed exactly empty.
+	var roads_exact := (
+		road_material_source_driven
 		and road_material_count == map_data.road_material_count
 		and road_source_edge_count == map_data.road_segment_count
 		and road_unique_endpoint_count == map_data.road_unique_endpoint_count
@@ -171,12 +175,25 @@ func configure(map_data: RetailMapData) -> bool:
 		and road_vertex_count > 0
 		and road_triangle_count > 0
 		and road_mesh_instance_count == map_data.road_material_count
+	)
+	var roads_vacuous := (
+		map_data.road_type_count == 0
+		and road_material_count == 0
+		and road_source_edge_count == 0
+		and road_vertex_count == 0
+		and road_triangle_count == 0
+		and road_mesh_instance_count == 0
+	)
+	var map_declares_water := map_data.standing_water_count + map_data.river_count > 0
+	source_driven = (
+		terrain_material_source_driven
+		and terrain_exact_grid_ready
+		and (roads_exact or roads_vacuous)
 		and terrain_vertex_count == map_data.width * map_data.height
 		and terrain_triangle_count == (map_data.width - 1) * (map_data.height - 1) * 2
 		and impassable_vertex_count == map_data.impassable_count
-		and water_surface_count > 0
+		and (not map_declares_water or water_surface_count > 0)
 		and ford_marker_count == map_data.ford_gates.size()
-		and ford_marker_count == 3
 		and generic_prop_count == map_data.generic_prop_placements.size()
 		and unresolved_prop_placement_count == map_data.unresolved_prop_placement_count
 		and unresolved_prop_type_ids == map_data.unresolved_prop_type_ids
@@ -341,6 +358,12 @@ func set_passability_debug(enabled: bool) -> void:
 
 
 func _build_roads(map_data: RetailMapData) -> bool:
+	if map_data.road_type_count == 0:
+		# Maps whose cook emitted no road network are valid: nothing is built
+		# and the source_driven gate below treats the road layer as vacuous.
+		if map_data.road_segment_count != 0 or map_data.road_material_count != 0 or map_data.road_control_point_count != 0:
+			return _fail_configuration("roadless source map retained nonzero road facts")
+		return true
 	if (
 		map_data.road_segment_count <= 0
 		or map_data.road_material_count != map_data.road_type_count
@@ -862,6 +885,9 @@ func _build_water(map_data: RetailMapData) -> bool:
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
 	var indices := PackedInt32Array()
+	if map_data.standing_water_polygons.is_empty() and map_data.river_strips.is_empty():
+		# Maps without authored water are valid; the surface layer stays empty.
+		return true
 	for polygon_value in map_data.standing_water_polygons:
 		var polygon: PackedVector3Array = polygon_value
 		var polygon_2d := PackedVector2Array()
@@ -986,6 +1012,20 @@ func _build_bound_retail_props(map_data: RetailMapData) -> bool:
 	container.set_meta("source_type_ids", bound_retail_prop_type_ids.duplicate())
 	var seen_source_indices: Dictionary = {}
 	var staged_mesh_count := 0
+	# Warm the shared mesh cache with one threaded parse per unique bound GLB;
+	# the placement loop below then loads via ordinary cache hits. Only paths
+	# that already pass this function's containment/existence checks are queued.
+	var bound_glb_paths: Array = []
+	for placement_value in map_data.bound_prop_placements:
+		var bound_path := String((placement_value as Dictionary).get("glb_path", ""))
+		if (
+			bound_path != ""
+			and bound_path.get_extension().to_lower() == "glb"
+			and ModLoader.path_is_within(map_data.pack_root, bound_path)
+			and FileAccess.file_exists(bound_path)
+		):
+			bound_glb_paths.append(bound_path)
+	AssetFactoryScript.preload_models_threaded(bound_glb_paths)
 	for placement_value in map_data.bound_prop_placements:
 		var placement: Dictionary = placement_value
 		var source_type := String(placement.get("source_type", ""))
@@ -1040,7 +1080,10 @@ func _build_bound_retail_props(map_data: RetailMapData) -> bool:
 		container.add_child(placement_root)
 		seen_source_indices[source_index] = true
 		staged_mesh_count += mesh_count
-	if container.get_child_count() != map_data.bound_prop_placement_count or staged_mesh_count <= 0:
+	# Maps whose bindings resolve nothing (the five-maps pack today) stage an
+	# empty container; the mesh-count gate only applies when the map data
+	# declares bound placements.
+	if container.get_child_count() != map_data.bound_prop_placement_count or (map_data.bound_prop_placement_count > 0 and staged_mesh_count <= 0):
 		container.free()
 		return _fail_configuration("bound retail GLB placement staging was incomplete")
 	add_child(container)
@@ -1216,6 +1259,20 @@ func _build_bound_retail_structures(map_data: RetailMapData) -> bool:
 	container.set_meta("presentation", "retail-bound-lifecycle-structures")
 	container.set_meta("source_type_ids", bound_retail_structure_type_ids.duplicate())
 	var seen_source_indices: Dictionary = {}
+	# Warm the shared mesh cache with one threaded parse per unique bound GLB;
+	# lifecycle configure below then loads via ordinary cache hits. Only paths
+	# that already pass this function's containment/existence checks are queued.
+	var bound_structure_glb_paths: Array = []
+	for placement_value in map_data.bound_structure_placements:
+		var bound_structure_path := String((placement_value as Dictionary).get("glb_path", ""))
+		if (
+			bound_structure_path != ""
+			and bound_structure_path.get_extension().to_lower() == "glb"
+			and ModLoader.path_is_within(map_data.pack_root, bound_structure_path)
+			and FileAccess.file_exists(bound_structure_path)
+		):
+			bound_structure_glb_paths.append(bound_structure_path)
+	AssetFactoryScript.preload_models_threaded(bound_structure_glb_paths)
 	for placement_value in map_data.bound_structure_placements:
 		var placement: Dictionary = placement_value
 		var source_type := String(placement.get("source_type", ""))

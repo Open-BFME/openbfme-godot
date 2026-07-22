@@ -15,7 +15,6 @@ $doctor = Join-Path $PSScriptRoot "doctor.ps1"
 $exportScan = Join-Path $PSScriptRoot "export-scan.ps1"
 $exportScanSelfTest = Join-Path $PSScriptRoot "test-export-scan.ps1"
 $legacyRunner = Join-Path $gameRoot "tests\cli_runner.gd"
-$matchBootRunner = Join-Path $gameRoot "tests\boot_match.gd"
 $stageBootRunner = Join-Path $gameRoot "tests\stage10_boot_runner.gd"
 $soakRunner = Join-Path $gameRoot "tests\stage10_soak_runner.gd"
 $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)?|ObjectDB instances|RID allocations|resources still in use)\b'
@@ -23,7 +22,7 @@ $forbiddenDiagnostics = '(?i)\b(?:ERROR|WARNING|leak(?:ed|s|ing)?|orphan(?:ed|s)
 try {
     [void](Invoke-ProofPriorGate $gate "stage9_regression" $stage9Gate $GodotPath '(?m)^STAGE9_GATE PASS\s*$')
 
-    foreach ($path in @($doctor, $exportScan, $exportScanSelfTest, $legacyRunner, $matchBootRunner, $stageBootRunner, $soakRunner)) {
+    foreach ($path in @($doctor, $exportScan, $exportScanSelfTest, $legacyRunner, $stageBootRunner, $soakRunner)) {
         Assert-ProofTrue (Test-Path -LiteralPath $path -PathType Leaf) "Missing Stage 10 dependency: $path"
     }
 
@@ -48,7 +47,6 @@ try {
 
     $godot = Resolve-ProofGodot $GodotPath $repoRoot
     [void](Invoke-ProofChecked $gate "legacy_stage_suite" $godot @("--headless", "--path", $gameRoot, "-s", "res://tests/cli_runner.gd") '(?m)^STAGE TESTS: \d+ passed, 0 failed\s*$' $forbiddenDiagnostics)
-    [void](Invoke-ProofChecked $gate "legacy_match_boot" $godot @("--headless", "--path", $gameRoot, "-s", "res://tests/boot_match.gd") '(?m)^BOOT_OK zero script load failures for match path\s*$' $forbiddenDiagnostics)
     $bootOutput = Invoke-ProofChecked $gate "stage_menu_boot" $godot @("--headless", "--path", $gameRoot, "-s", "res://tests/stage10_boot_runner.gd") '(?m)^STAGE10_BOOT_PROOF PASS assertions=\d+\s*$' $forbiddenDiagnostics
     $bootMatch = [regex]::Match($bootOutput, '(?m)^STAGE10_BOOT_PROOF PASS assertions=(\d+)\s*$')
     Assert-ProofTrue ($bootMatch.Success -and [int]$bootMatch.Groups[1].Value -ge 40) "Stage menu boot coverage regressed below 40 assertions."

@@ -3,7 +3,7 @@
 **Owner:** integration owner
 **Owns:** binary completion contract for the active milestone
 **Does not own:** broader product scope or volatile pack identity
-**Last verified commit:** `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
+**Last verified commit:** `ad370cc9b02bdec600564cf1c606e70833faa97a`
 **Update trigger:** acceptance evidence or milestone scope changes
 **Validation:** `run_m2_acceptance.bat -IntegrationOwnerPublish`
 

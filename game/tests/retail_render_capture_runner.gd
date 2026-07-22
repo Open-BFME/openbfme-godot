@@ -4,12 +4,12 @@ extends SceneTree
 const SCENE_PATH := "res://scenes/retail_vertical_slice.tscn"
 const PRIVATE_SCRATCH_PATH := "res://../.private/scratch"
 const DEFAULT_VIEWPORT := Vector2i(1920, 1080)
-const MAX_READY_FRAMES := 600
+const MAX_READY_FRAMES := 2400
 const SETTLE_FRAMES := 12
 
 
 func _initialize() -> void:
-	create_timer(120.0, true, false, true).timeout.connect(_fail.bind("render capture watchdog timeout"))
+	create_timer(300.0, true, false, true).timeout.connect(_fail.bind("render capture watchdog timeout"))
 	call_deferred("_run")
 
 
@@ -79,6 +79,48 @@ func _run() -> void:
 			slice._clamp_camera_focus()
 		slice._apply_camera_transform()
 	var selected_text := OS.get_environment("OPENBFME_CAPTURE_SELECT_BATTALION")
+	if OS.get_environment("OPENBFME_CAPTURE_SELECT_BUILDER") == "1":
+		for entity_id in slice.simulation.entity_ids():
+			var entity_row: Dictionary = slice.simulation.entity(entity_id)
+			if int(entity_row.get("team", -1)) == 0 and bool(entity_row.get("is_builder", false)):
+				selected_text = str(entity_id)
+				break
+	if OS.get_environment("OPENBFME_CAPTURE_SELECT_STRUCTURE") == "1":
+		# Selects the player team's first completed non-fortress structure when
+		# present, otherwise the player fortress.
+		var chosen_structure := 0
+		var fallback_structure := 0
+		for structure_id in slice.simulation.structure_ids():
+			var structure_row: Dictionary = slice.simulation.structure(structure_id)
+			if int(structure_row.get("team", -1)) != 0 or int(structure_row.get("health", 0)) <= 0:
+				continue
+			if fallback_structure == 0:
+				fallback_structure = structure_id
+			if String(structure_row.get("structure_kind", "")) != "fortress" and float(structure_row.get("construction_progress", 1.0)) >= 1.0:
+				if not Array(structure_row.get("production", [])).is_empty():
+					chosen_structure = structure_id
+					break
+				if chosen_structure == 0:
+					chosen_structure = structure_id
+		if chosen_structure == 0:
+			chosen_structure = fallback_structure
+		if chosen_structure == 0:
+			_fail("OPENBFME_CAPTURE_SELECT_STRUCTURE found no player structure")
+			return
+		slice.selected_structure_id = chosen_structure
+		var chosen_row: Dictionary = slice.simulation.structure(chosen_structure)
+		slice.camera_focus = Vector2(chosen_row.get("position", Vector2.ZERO))
+		slice._clamp_camera_focus()
+		slice._apply_camera_transform()
+		slice._sync_presentation()
+		if OS.get_environment("OPENBFME_CAPTURE_DEBUG_RADIAL") == "1":
+			var layer: Control = slice.hud._radial_layer
+			print("RADIAL_DEBUG layer_visible=%s in_tree_visible=%s buttons=%d layer_pos=%s layer_size=%s" % [
+				layer.visible, layer.is_visible_in_tree(), slice.hud._radial_buttons.size(), layer.position, layer.size,
+			])
+			for button_value in slice.hud._radial_buttons:
+				var b := button_value as Button
+				print("RADIAL_DEBUG_BTN %s pos=%s visible=%s alpha=%s icon=%s in_tree=%s" % [b.name, b.position, b.visible, b.modulate.a, b.icon != null, b.is_visible_in_tree()])
 	if selected_text != "":
 		if not selected_text.is_valid_int() or not slice.battalion_nodes.has(int(selected_text)):
 			_fail("OPENBFME_CAPTURE_SELECT_BATTALION must name a live battalion")
@@ -122,6 +164,238 @@ func _run() -> void:
 	var attack_pair_text := OS.get_environment("OPENBFME_CAPTURE_ATTACK_PAIR").strip_edges()
 	if attack_pair_text != "" and not _pose_attack_pair(slice, attack_pair_text):
 		return
+	if OS.get_environment("OPENBFME_CAPTURE_ARM_CONSTRUCT") != "":
+		# Arms a porter construct command and parks the cursor mid-battlefield so
+		# the placement ghost + footprint ring render (REF-29).
+		var construct_kind := OS.get_environment("OPENBFME_CAPTURE_ARM_CONSTRUCT")
+		for entity_id in slice.simulation.entity_ids():
+			var entity_row: Dictionary = slice.simulation.entity(entity_id)
+			if int(entity_row.get("team", -1)) == 0 and bool(entity_row.get("is_builder", false)):
+				slice.simulation.select_only(entity_id)
+				break
+		slice._arm_construction(construct_kind)
+		Input.warp_mouse(root.size * 0.5)
+		slice._sync_presentation()
+		if OS.get_environment("OPENBFME_CAPTURE_DEBUG_GHOST") == "1" and slice.construction_ghost != null:
+			var ghost: Node3D = slice.construction_ghost
+			print("GHOST_DEBUG visible=%s pos=%s children=%s" % [str(ghost.visible), str(ghost.global_position), str(ghost.get_children().map(func(c: Node) -> String: return c.name))])
+			var ghost_model := ghost.get_node_or_null("GhostModel")
+			if ghost_model != null:
+				var mesh_count := [0]
+				var override_count := [0]
+				_count_meshes(ghost_model, mesh_count, override_count)
+				print("GHOST_DEBUG meshes=%d overrides=%d" % [mesh_count[0], override_count[0]])
+	if OS.get_environment("OPENBFME_CAPTURE_CONSTRUCT_DEMO") != "":
+		# Places a real construction site near the player fortress through the
+		# sim API and advances until the build is visibly underway, so the
+		# floating "Building: N% • Ns left" label renders (REF-27/28).
+		var demo_kind := OS.get_environment("OPENBFME_CAPTURE_CONSTRUCT_DEMO")
+		slice._grant_test_resources()
+		var porter_id := 0
+		for entity_id in slice.simulation.entity_ids():
+			var entity_row: Dictionary = slice.simulation.entity(entity_id)
+			if int(entity_row.get("team", -1)) == 0 and bool(entity_row.get("is_builder", false)):
+				porter_id = entity_id
+				break
+		if porter_id == 0:
+			_fail("OPENBFME_CAPTURE_CONSTRUCT_DEMO found no player porter")
+			return
+		var fortress_row: Dictionary = {}
+		for structure_id in slice.simulation.structure_ids():
+			var structure_row: Dictionary = slice.simulation.structure(structure_id)
+			if int(structure_row.get("team", -1)) == 0 and String(structure_row.get("structure_kind", "")) == "fortress":
+				fortress_row = structure_row
+				break
+		if fortress_row.is_empty():
+			_fail("OPENBFME_CAPTURE_CONSTRUCT_DEMO found no player fortress")
+			return
+		var fortress_position := Vector2(fortress_row.get("position", Vector2.ZERO))
+		var porter_ids: Array[int] = [porter_id]
+		var placed := false
+		var site := fortress_position
+		for offset_value in [Vector2(11, 5), Vector2(-11, 5), Vector2(11, -5), Vector2(-11, -5), Vector2(0, 12), Vector2(0, -12), Vector2(14, 0), Vector2(-14, 0)]:
+			var candidate: Vector2 = fortress_position + offset_value
+			var probe: Dictionary = slice.simulation.validate_construct_site(porter_ids, demo_kind, candidate)
+			if bool(probe.get("ok", false)):
+				site = candidate
+				placed = true
+				break
+		if not placed:
+			_fail("OPENBFME_CAPTURE_CONSTRUCT_DEMO found no valid site near the fortress")
+			return
+		var issued: Dictionary = slice.simulation.issue_construct(porter_ids, demo_kind, site)
+		if not bool(issued.get("ok", false)):
+			_fail("OPENBFME_CAPTURE_CONSTRUCT_DEMO construct rejected: %s" % String(issued.get("reason", "")))
+			return
+		# Advance until the site shows real progress (porter walks over first).
+		var progress := 0.0
+		var demo_structure_id := 0
+		for _demo_tick in 600:
+			slice.simulation.advance(1)
+			progress = 0.0
+			for structure_id in slice.simulation.structure_ids():
+				var structure_row: Dictionary = slice.simulation.structure(structure_id)
+				if String(structure_row.get("structure_kind", "")) == demo_kind:
+					progress = float(structure_row.get("construction_progress", 0.0))
+					if demo_structure_id == 0:
+						demo_structure_id = structure_id
+			if progress >= 0.10:
+				break
+		if OS.get_environment("OPENBFME_CAPTURE_CONSTRUCT_DEMO_COMPLETE") == "1":
+			# Complete the build through the sim and select the finished
+			# structure, so its full command surface (research radial) renders.
+			for _demo_tick in 2500:
+				slice.simulation.advance(1)
+				progress = 1.0
+				if demo_structure_id != 0:
+					progress = float(slice.simulation.structure(demo_structure_id).get("construction_progress", 1.0))
+				if progress >= 1.0:
+					break
+			if demo_structure_id != 0:
+				slice.selected_structure_id = demo_structure_id
+		slice.camera_focus = site
+		slice._clamp_camera_focus()
+		slice._apply_camera_transform()
+		slice._sync_presentation()
+		print("RETAIL_RENDER_CONSTRUCT_DEMO kind=%s progress=%.2f site=%s" % [demo_kind, progress, str(site)])
+	if OS.get_environment("OPENBFME_CAPTURE_TRAIN_DEMO") == "1":
+		# Queues two jobs at the player producer and advances a few ticks so the
+		# queue chips show the CCW training dial + live countdown (item 8).
+		slice._grant_test_resources()
+		var producer_id := 0
+		for structure_id in slice.simulation.structure_ids():
+			var structure_row: Dictionary = slice.simulation.structure(structure_id)
+			if int(structure_row.get("team", -1)) == 0 and not Array(structure_row.get("production", [])).is_empty():
+				producer_id = structure_id
+				break
+		if producer_id == 0:
+			_fail("OPENBFME_CAPTURE_TRAIN_DEMO found no player producer")
+			return
+		var producer_row: Dictionary = slice.simulation.structure(producer_id)
+		var queued_types: Array[String] = []
+		for production_value in Array(producer_row.get("production", [])):
+			var candidate := String(production_value)
+			var probe: Dictionary = slice.simulation.queue_unit(0, producer_id, candidate)
+			if bool(probe.get("ok", false)):
+				queued_types.append(candidate)
+			if queued_types.size() >= 2:
+				break
+		if queued_types.is_empty():
+			_fail("OPENBFME_CAPTURE_TRAIN_DEMO could not queue any of %s" % str(producer_row.get("production", [])))
+			return
+		var unit_type := String(queued_types[0])
+		slice.simulation.advance(25)
+		slice.selected_structure_id = producer_id
+		slice.camera_focus = Vector2(producer_row.get("position", Vector2.ZERO))
+		slice._clamp_camera_focus()
+		slice._apply_camera_transform()
+		slice._sync_presentation()
+		var chip_state := "none"
+		if slice.hud.production_queue_buttons.size() > 0:
+			var chip: Button = slice.hud.production_queue_buttons[0]
+			var chip_dial := chip.get_node_or_null("TrainingDial") as TextureProgressBar
+			var chip_countdown := chip.get_node_or_null("TrainingCountdown") as Label
+			chip_state = "visible=%s icon=%s pos=%s dial=%s dial_value=%.2f countdown=%s" % [
+				str(chip.visible), str(chip.icon != null), str(chip.global_position),
+				str(chip_dial != null and chip_dial.visible), float(chip_dial.value) if chip_dial != null else -1.0,
+				chip_countdown.text if chip_countdown != null else "<none>",
+			]
+		print("RETAIL_RENDER_TRAIN_DEMO producer=%d unit=%s queue=%s chip=%s" % [producer_id, unit_type, str(slice.simulation.production_queue_state(producer_id).size()), chip_state])
+	if OS.get_environment("OPENBFME_CAPTURE_SELECT_PAD") != "":
+		# Selects a free fortress expansion pad through the same state the pad
+		# click handler produces, so the pad-anchored expansion radial renders
+		# (owner: clicking a PAD opens the radial with the fortress options).
+		var wanted_pad_kind := OS.get_environment("OPENBFME_CAPTURE_SELECT_PAD")
+		var pad_fortress := 0
+		for structure_id in slice.simulation.structure_ids():
+			var structure_row: Dictionary = slice.simulation.structure(structure_id)
+			if int(structure_row.get("team", -1)) == 0 and String(structure_row.get("structure_kind", "")) == "fortress":
+				pad_fortress = structure_id
+				break
+		if pad_fortress == 0:
+			_fail("OPENBFME_CAPTURE_SELECT_PAD found no player fortress")
+			return
+		var pad_found := false
+		var pad_states: Array = slice.simulation.expansion_pad_states(pad_fortress)
+		for pad_index in pad_states.size():
+			var pad: Dictionary = pad_states[pad_index]
+			if int(pad.get("expansion_structure_id", 0)) != 0:
+				continue
+			if String(pad.get("pad_kind", "")) != wanted_pad_kind:
+				continue
+			slice._selected_expansion_pad = {
+				"fortress_id": pad_fortress,
+				"pad_index": pad_index,
+				"pad_kind": wanted_pad_kind,
+				"position": Vector2(pad.get("position", Vector2.ZERO)),
+			}
+			slice.selected_structure_id = pad_fortress
+			var fortress_row: Dictionary = slice.simulation.structure(pad_fortress)
+			slice.camera_focus = Vector2(fortress_row.get("position", Vector2.ZERO))
+			slice._clamp_camera_focus()
+			slice._apply_camera_transform()
+			pad_found = true
+			break
+		if not pad_found:
+			_fail("OPENBFME_CAPTURE_SELECT_PAD found no free '%s' pad" % wanted_pad_kind)
+			return
+		slice._sync_presentation()
+	if OS.get_environment("OPENBFME_CAPTURE_EVENT_FEED_DEMO") == "1":
+		# Presentation check of the retail top-right event feed with the exact
+		# retail message shapes (REF-25/30/34/46/48).
+		slice.hud.push_event_feed("Insufficient funds.")
+		slice.hud.push_event_feed("Construction Complete: Barracks")
+		slice.hud.push_event_feed("Upgrade Complete: Fire Arrows")
+		slice.hud.push_event_feed("Fortress rally point set.")
+	if OS.get_environment("OPENBFME_CAPTURE_ARM_POWER") == "1":
+		# Arms the first castable purchased power and parks the cursor
+		# mid-battlefield so the AOE range ring renders (REF-49).
+		slice._grant_test_resources()
+		for row_value in slice.hud._spellbook_power_rows:
+			var row: Dictionary = row_value
+			var result: Dictionary = slice.simulation.purchase_power(0, String(row.get("power_id", "")), int(row.get("cost", -1)))
+			if bool(result.get("ok", false)):
+				slice.simulation.accept_spellbook_purchases(0)
+				slice.hud.refresh_powers(slice.simulation.power_points(0), slice.simulation.purchased_powers[0], slice.simulation.spellbook_ui_state(0))
+				slice.power_cast_armed = String(row.get("power_id", ""))
+				break
+		Input.warp_mouse(root.size * 0.5)
+	if OS.get_environment("OPENBFME_CAPTURE_OPEN_SPELLBOOK") == "1":
+		slice.hud._toggle_powers_palette()
+	if OS.get_environment("OPENBFME_CAPTURE_POWERS_DEMO") == "1":
+		# Buys the first two authored tier powers through the sim API so the
+		# left-rim palantir dock renders like REF-24/49.
+		slice._grant_test_resources()
+		var bought := 0
+		for row_value in slice.hud._spellbook_power_rows:
+			var row: Dictionary = row_value
+			var result: Dictionary = slice.simulation.purchase_power(0, String(row.get("power_id", "")), int(row.get("cost", -1)))
+			if bool(result.get("ok", false)):
+				bought += 1
+			if bought >= 2:
+				break
+		slice.simulation.accept_spellbook_purchases(0)
+		slice.hud.refresh_powers(slice.simulation.power_points(0), slice.simulation.purchased_powers[0], slice.simulation.spellbook_ui_state(0))
+		slice._sync_presentation()
+	if OS.get_environment("OPENBFME_CAPTURE_POWERS_DEMO") == "all":
+		# Full dock: every authored power purchased (overflow-fit check).
+		for _grant in 12:
+			slice._grant_test_resources()
+		for row_value in slice.hud._spellbook_power_rows:
+			var row: Dictionary = row_value
+			slice.simulation.purchase_power(0, String(row.get("power_id", "")), int(row.get("cost", -1)))
+		slice.simulation.accept_spellbook_purchases(0)
+		slice.hud.refresh_powers(slice.simulation.power_points(0), slice.simulation.purchased_powers[0], slice.simulation.spellbook_ui_state(0))
+		slice._sync_presentation()
+	if OS.get_environment("OPENBFME_CAPTURE_TOOLTIP_DEMO") == "1":
+		# Shows the retail tooltip for the first side-bar build command through
+		# the real hover path (pack strings + sim costs), like REF-32.
+		slice.hud._end_tooltip_hover(null)
+		var side_buttons: Array = slice.hud.retail_side_command_bar.side_buttons()
+		if side_buttons.is_empty():
+			_fail("OPENBFME_CAPTURE_TOOLTIP_DEMO requires the builder selected (side bar empty)")
+			return
+		slice.hud.show_retail_tooltip(side_buttons[0])
 	if OS.get_environment("OPENBFME_CAPTURE_DISABLE_FOG") == "1":
 		slice.world_environment.compositor = null
 	if OS.get_environment("OPENBFME_CAPTURE_DISABLE_ROADS") == "1" and slice.battlefield.road_container != null:
@@ -348,6 +622,18 @@ func _snap_staged_battalion(battalion: Node3D, world_position: Vector3) -> void:
 		member.position = battalion.call("member_formation_slot", member_index) as Vector3
 	var formation: RefCounted = battalion.get("formation") as RefCounted
 	formation.set("_root_tracking_ready", false)
+
+
+func _count_meshes(node: Node, mesh_count: Array, override_count: Array) -> void:
+	if node is MeshInstance3D:
+		mesh_count[0] = int(mesh_count[0]) + 1
+		var mi := node as MeshInstance3D
+		var surfaces := mi.mesh.get_surface_count() if mi.mesh != null else 0
+		for surface_index in surfaces:
+			if mi.get_surface_override_material(surface_index) != null:
+				override_count[0] = int(override_count[0]) + 1
+	for child in node.get_children():
+		_count_meshes(child, mesh_count, override_count)
 
 
 func _capture_viewport() -> Vector2i:

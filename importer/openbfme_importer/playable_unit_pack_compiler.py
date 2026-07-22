@@ -228,6 +228,144 @@ def _hierarchy_dependencies(
     return tuple(sorted(result, key=lambda item: (item.casefold(), item)))
 
 
+def _model_embedded_animation(
+    model_path: str, scanned_rows: list[Mapping[str, object]]
+) -> bool:
+    """Return whether the model embeds a keyed animation of its own.
+
+    The exact embedded-animation conversion shape (animations=[model]) only
+    exists when the model actually embeds keyed channels; a header-only chunk
+    keys nothing and is vacuous evidence.
+    """
+
+    scanned = {
+        str(row.get("virtualPath", "")).casefold(): row
+        for row in scanned_rows
+        if isinstance(row.get("virtualPath"), str)
+    }
+    row = scanned.get(model_path.casefold())
+    if row is None:
+        raise PlayableUnitPackCompilerError(f"model is not scanned: {model_path}")
+    headers = row.get("headerIds")
+    if not isinstance(headers, Mapping):
+        raise PlayableUnitPackCompilerError("model headers are invalid: " + model_path)
+    animation_ids = headers.get("animationIds", [])
+    if not isinstance(animation_ids, list) or any(
+        not isinstance(value, str) for value in animation_ids
+    ):
+        raise PlayableUnitPackCompilerError(
+            "model animation ids are invalid: " + model_path
+        )
+    if not animation_ids:
+        return False
+    channel_count = row.get("embeddedAnimationChannelCount", 0)
+    if (
+        isinstance(channel_count, bool)
+        or not isinstance(channel_count, int)
+        or channel_count < 0
+    ):
+        raise PlayableUnitPackCompilerError(
+            "model embedded animation channel count is invalid: " + model_path
+        )
+    return channel_count > 0
+
+
+def _model_has_hierarchy(model_path: str, scanned_rows: list[Mapping[str, object]]) -> bool:
+    """Return whether the model resolves any pivots (embedded or external).
+
+    A unit model with no hierarchy at all is a plain static mesh (retail's
+    authored placeholder models, e.g. ``Invisible``); the adapter's static
+    conversion is its exact shape.  Only models that actually resolve pivots
+    take the hierarchical contract.
+    """
+
+    scanned = {
+        str(row.get("virtualPath", "")).casefold(): row
+        for row in scanned_rows
+        if isinstance(row.get("virtualPath"), str)
+    }
+    row = scanned.get(model_path.casefold())
+    if row is None:
+        raise PlayableUnitPackCompilerError(f"model is not scanned: {model_path}")
+    headers = row.get("headerIds")
+    if not isinstance(headers, Mapping):
+        raise PlayableUnitPackCompilerError("model headers are invalid: " + model_path)
+    hierarchy_ids = headers.get("hierarchyIds", [])
+    if not isinstance(hierarchy_ids, list) or any(
+        not isinstance(value, str) for value in hierarchy_ids
+    ):
+        raise PlayableUnitPackCompilerError(
+            "model hierarchy ids are invalid: " + model_path
+        )
+    if hierarchy_ids:
+        return True
+    referenced = row.get("modelHierarchyIdentifiers", [])
+    if not isinstance(referenced, list) or any(
+        not isinstance(value, str) for value in referenced
+    ):
+        raise PlayableUnitPackCompilerError(
+            "model hierarchy identifiers are invalid: " + model_path
+        )
+    return bool(referenced)
+
+
+def _model_hierarchy_dependencies(
+    model_path: str, scanned_rows: list[Mapping[str, object]]
+) -> tuple[str, ...]:
+    """Return the external hierarchy sources the model's HLod headers need.
+
+    A model whose hierarchy lives in a sibling W3D converts only when that
+    provider is staged next to it.  The exact hierarchy identifiers come from
+    the scanned model headers; each must be authored by exactly one scanned
+    provider, which stays fail-closed for missing or ambiguous providers.
+    """
+
+    scanned = {
+        str(row.get("virtualPath", "")).casefold(): row
+        for row in scanned_rows
+        if isinstance(row.get("virtualPath"), str)
+    }
+    row = scanned.get(model_path.casefold())
+    if row is None:
+        raise PlayableUnitPackCompilerError(f"model is not scanned: {model_path}")
+    headers = row.get("headerIds")
+    if not isinstance(headers, Mapping):
+        raise PlayableUnitPackCompilerError("model headers are invalid: " + model_path)
+    authored = {str(value).casefold() for value in headers.get("hierarchyIds", [])}
+    referenced = row.get("modelHierarchyIdentifiers", [])
+    if not isinstance(referenced, list) or any(
+        not isinstance(value, str) for value in referenced
+    ):
+        raise PlayableUnitPackCompilerError(
+            "model hierarchy identifiers are invalid: " + model_path
+        )
+    external = {str(value).casefold() for value in referenced} - authored
+    owners: dict[str, set[str]] = {identifier: set() for identifier in external}
+    for candidate in scanned_rows:
+        candidate_headers = candidate.get("headerIds")
+        if not isinstance(candidate_headers, Mapping):
+            continue
+        candidate_authored = {
+            str(value).casefold()
+            for value in candidate_headers.get("hierarchyIds", [])
+        }
+        matches = candidate_authored & external
+        if matches:
+            path = candidate.get("virtualPath")
+            if not isinstance(path, str) or not path:
+                raise PlayableUnitPackCompilerError("hierarchy path is invalid")
+            for identifier in matches:
+                owners[identifier].add(path)
+    result: set[str] = set()
+    for hierarchy, paths in owners.items():
+        if len(paths) != 1:
+            raise PlayableUnitPackCompilerError(
+                f"model hierarchy ownership is not unique: {hierarchy}"
+            )
+        result.update(paths)
+    return tuple(sorted(result, key=lambda item: (item.casefold(), item)))
+
+
 def _is_separate_death_rig(
     scanned_by_path: Mapping[str, Mapping[str, object]],
     animation_path: str,
@@ -398,7 +536,7 @@ def _validate_resource_values(resources: list[Mapping[str, object]]) -> None:
         if len(dependencies) != len(set(dependencies)) or identifier in dependencies:
             raise PlayableUnitPackCompilerError("resource dependencies are invalid")
         suffixes = {PurePosixPath(path).suffix.casefold() for path in normalized}
-        if converter in {"w3d-bundle", "w3d-hierarchical"}:
+        if converter in {"w3d-bundle", "w3d-hierarchical", "w3d-static"}:
             model = options.get("model")
             animations = options.get("animations", [])
             if (
@@ -416,7 +554,7 @@ def _validate_resource_values(resources: list[Mapping[str, object]]) -> None:
                     for value in animations
                 )
                 or (converter == "w3d-bundle" and not animations)
-                or (converter == "w3d-hierarchical" and animations)
+                or (converter != "w3d-bundle" and animations)
             ):
                 raise PlayableUnitPackCompilerError("W3D resource contract is invalid")
         elif converter == "texture":
@@ -660,10 +798,24 @@ def compile_playable_unit_pack_recipe(
             )
         )
     ]
+    # Retail authors conditional animation variants (backing-up, taunt and
+    # reaction clips) whose W3Ds are absent from the 1.06 archives; the
+    # closure diagnoses each as a missing animation reference.  They are
+    # tolerable only while their semantic state still resolves to authored
+    # clips — verified once state rows are built below — and are recorded
+    # explicitly in the recipe.
+    retail_absent_animation_gaps = [
+        row
+        for row in conditional_animation_candidates
+        if row not in conditional_animation_gaps
+        and row.get("reason") == "missing W3D animation reference"
+        and _state(row) is not None
+    ]
     tolerated_non_core_gaps = (
         not graph_diagnostics
         and not missing_definitions
-        and len(conditional_animation_gaps) == len(unresolved_references)
+        and len(conditional_animation_gaps) + len(retail_absent_animation_gaps)
+        == len(unresolved_references)
         and all(row.get("status") in {"resolved", "missing"} for row in embedded)
     )
     if summary.get("ready") is not True and not tolerated_non_core_gaps:
@@ -731,12 +883,19 @@ def compile_playable_unit_pack_recipe(
             )
         )
     }
+    # Editor-only rows (retail horde banner markers) are recorded through the
+    # excluded-editor-only lane below, so a visual root they author is
+    # accounted for rather than missing.
+    editor_only_visual_ids = {
+        str(row.get("identifier", "")).casefold() for row in editor_only_model_rows
+    }
     missing_visual_ids = sorted(
         (
             identifier
             for identifier in required_visual_ids
             if identifier.casefold() not in exact_ids
             and identifier.casefold() not in unsupported_model_ids
+            and identifier.casefold() not in editor_only_visual_ids
         ),
         key=str.casefold,
     )
@@ -756,11 +915,39 @@ def compile_playable_unit_pack_recipe(
         and row.get("conditions") == []
         for path in _paths(row, "primary model")
     }
+    # A mount composition (retail MordorMumakil carrying its rider horde
+    # MordorHaradrimLancerHorde as InitialPayload) inverts the usual horde
+    # contract: the member horde is authored invisible by default (``Model =
+    # None`` in its DefaultModelConditionState) while the container mount
+    # authors the one visible default model and every core animation.  That
+    # authored form converts explicitly — the mount's single default model is
+    # the composition's visual primary and the hidden member contributes no
+    # model — while any other member-defaultless shape keeps failing closed.
+    mounted_presentation = False
+    if not primary_models:
+        member_hidden_by_default = any(
+            row.get("kind") == "model"
+            and str(row.get("targetObject", "")).casefold() == member_id.casefold()
+            and row.get("reason") == "sage-none-model"
+            and row.get("conditions") == []
+            for row in semantic
+        )
+        mount_models = {
+            path
+            for row in model_rows
+            if str(row.get("targetObject", "")).casefold() == container_id.casefold()
+            and row.get("conditions") == []
+            for path in _paths(row, "mount model")
+        }
+        if member_hidden_by_default and len(mount_models) == 1:
+            primary_models = mount_models
+            mounted_presentation = True
     if len(primary_models) != 1:
         raise PlayableUnitPackCompilerError(
             "primary visual root does not identify one default model"
         )
     default_model = next(iter(primary_models))
+    animated_body_id = container_id if mounted_presentation else member_id
     model_conditions: dict[str, set[str]] = {}
     model_has_unconditional: dict[str, bool] = {}
     model_occurrences: dict[str, list[dict[str, object]]] = {}
@@ -813,12 +1000,35 @@ def compile_playable_unit_pack_recipe(
         state = _state(row)
         if state is not None:
             state_rows[state].append(row)
+    for row in retail_absent_animation_gaps:
+        state = _state(row)
+        if state is None or not state_rows[state]:
+            raise PlayableUnitPackCompilerError(
+                "visual closure is not conversion-ready"
+            )
     required_states = _required_states(descriptor)
     missing_states = [state for state in required_states if not state_rows[state]]
+    core_animation_exclusions: list[dict[str, object]] = []
     if missing_states:
-        raise PlayableUnitPackCompilerError(
-            "unit has no resolved core animations: " + ", ".join(missing_states)
-        )
+        # A build-variation randomizer shell (retail RohanGenericEnt) authors
+        # one static WorldBuilder model and zero AnimationStates: it is never
+        # a playable unit, so its required core states are recorded as
+        # explicit exclusions rather than reported as an unexplained gap.
+        # Anything else — partial states, authored-but-unmapped clips, or an
+        # unready closure — keeps failing closed.
+        if not animation_rows and summary.get("ready") is True:
+            core_animation_exclusions = [
+                {
+                    "state": state,
+                    "runtimeSupport": "excluded-randomizer-shell",
+                    "runtimeExclusionReason": "zero-authored-animation-states",
+                }
+                for state in missing_states
+            ]
+        else:
+            raise PlayableUnitPackCompilerError(
+                "unit has no resolved core animations: " + ", ".join(missing_states)
+            )
 
     animations_by_model: dict[str, set[str]] = {
         path: set() for path in model_conditions
@@ -832,7 +1042,7 @@ def compile_playable_unit_pack_recipe(
         for row in scanned
         if isinstance(row.get("virtualPath"), str)
     }
-    death_swap_sources: set[str] = set()
+    death_swap_rows: list[dict[str, object]] = []
     for row in animation_rows:
         draw_key = _draw_key(row)
         candidates = group_models.get(draw_key, set())
@@ -882,12 +1092,42 @@ def compile_playable_unit_pack_recipe(
             separate_death = (
                 semantic_state == "death"
                 and str(row.get("targetObject", "")).casefold()
-                == member_id.casefold()
+                == animated_body_id.casefold()
                 and _is_separate_death_rig(scanned_by_path, path, owner)
             )
+            scanned_animation = scanned_by_path.get(path.casefold())
+            if scanned_animation is None:
+                raise PlayableUnitPackCompilerError(
+                    f"animation is not scanned: {path}"
+                )
+            animation_byte_length = scanned_animation.get("byteLength")
+            if (
+                isinstance(animation_byte_length, bool)
+                or not isinstance(animation_byte_length, int)
+                or animation_byte_length < 0
+            ):
+                raise PlayableUnitPackCompilerError(
+                    f"animation byteLength is invalid: {path}"
+                )
+            # Retail archives contain zero-byte W3D placeholders for some
+            # authored AnimationName clips (rugimli_idlg, etc.). They cannot
+            # produce an owned keyed action; exclude them from conversion
+            # while keeping the authored binding for provenance.
+            zero_byte_placeholder = animation_byte_length == 0
             if separate_death:
-                death_swap_sources.add(path)
-            else:
+                if zero_byte_placeholder:
+                    raise PlayableUnitPackCompilerError(
+                        "separate-model death animation is a zero-byte placeholder: "
+                        + path
+                    )
+                death_swap_rows.append(
+                    {
+                        "sourceW3d": path,
+                        "identifier": str(row.get("identifier", "")),
+                        "conditions": [str(item) for item in raw_conditions],
+                    }
+                )
+            elif not zero_byte_placeholder:
                 animations_by_model[owner].add(path)
             binding = {
                 "sourceW3d": path,
@@ -902,32 +1142,62 @@ def compile_playable_unit_pack_recipe(
                     **binding,
                     "semanticState": semantic_state,
                     "runtimeSupport": (
-                        "generic-core"
-                        if semantic_state in required_states
-                        else "packaged-unimplemented"
+                        "excluded-zero-byte-placeholder"
+                        if zero_byte_placeholder
+                        else (
+                            "generic-core"
+                            if semantic_state in required_states
+                            else "packaged-unimplemented"
+                        )
+                    ),
+                    **(
+                        {
+                            "runtimeExclusionReason": "zero-byte-retail-w3d-placeholder",
+                        }
+                        if zero_byte_placeholder
+                        else {}
                     ),
                 }
             )
             if (
                 not separate_death
+                and not zero_byte_placeholder
                 and semantic_state in required_states
-                and str(row.get("targetObject", "")).casefold() == member_id.casefold()
+                and str(row.get("targetObject", "")).casefold()
+                == animated_body_id.casefold()
             ):
                 state_bindings[semantic_state].append(binding)
     death_swap_paths = sorted(
-        death_swap_sources, key=lambda item: (item.casefold(), item)
+        {str(row["sourceW3d"]) for row in death_swap_rows},
+        key=lambda item: (item.casefold(), item),
     )
-    if death_swap_paths and state_bindings.get("death"):
-        raise PlayableUnitPackCompilerError(
-            "death state mixes skeleton clips and a separate-model swap"
-        )
-    if len(death_swap_paths) > 1:
+    # Retail units such as GoblinCaveTroll and WildMountainGiant author both
+    # fall-down clips on the primary skeleton (DYING <flag>) and condition-keyed
+    # decay corpse models shipping their own hierarchy (DYING DECAY <flag>).
+    # That mixed form converts explicitly: clip deaths stay animation bindings,
+    # each swap model becomes a condition-keyed death-model resource.
+    mixed_death = bool(death_swap_rows) and bool(state_bindings.get("death"))
+    if death_swap_paths and not mixed_death and len(death_swap_paths) > 1:
         raise PlayableUnitPackCompilerError(
             "separate-model death binding is ambiguous"
         )
+    if mixed_death:
+        seen_condition_sets: set[tuple[str, ...]] = set()
+        for swap_row in death_swap_rows:
+            swap_conditions = swap_row["conditions"]
+            condition_set = tuple(
+                sorted({str(item).casefold() for item in swap_conditions})
+            )
+            if condition_set in seen_condition_sets:
+                raise PlayableUnitPackCompilerError(
+                    "mixed death model swap conditions are ambiguous"
+                )
+            seen_condition_sets.add(condition_set)
     for state in required_states:
         if not state_bindings[state]:
             if state == "death" and death_swap_paths:
+                continue
+            if core_animation_exclusions:
                 continue
             raise PlayableUnitPackCompilerError(
                 f"unit has no primary-member core animation binding: {state}"
@@ -950,9 +1220,10 @@ def compile_playable_unit_pack_recipe(
     hierarchies = set(_hierarchy_dependencies(all_animations, scanned))
     death_swap_w3d: set[str] = set()
     if death_swap_paths:
+        swap_models = death_swap_paths if mixed_death else death_swap_paths[:1]
         death_swap_w3d = {
-            death_swap_paths[0],
-            *_hierarchy_dependencies([death_swap_paths[0]], scanned),
+            *swap_models,
+            *_hierarchy_dependencies(swap_models, scanned),
         }
     selected_w3d = (
         set(model_conditions) | all_animations | hierarchies | death_swap_w3d
@@ -975,6 +1246,13 @@ def compile_playable_unit_pack_recipe(
                 "expected_count": len(textures),
             }
         )
+    # Retail death/disassembly W3Ds (battlewagon diea, cavetroll dis*, etc.) are
+    # both ModelConditionState models and separate-hierarchy death animations.
+    # The death-model resource always converts them as w3d-bundle with
+    # animations=[self].  Visual components of those same sources must use the
+    # identical shape: hierarchical fails closed on the embedded actions that
+    # the death path keeps (and that convert cleanly as animated).
+    death_swap_source_keys = {path.casefold() for path in death_swap_paths}
     components: list[dict[str, object]] = []
     for index, model_path in enumerate(
         sorted(
@@ -989,22 +1267,73 @@ def compile_playable_unit_pack_recipe(
         component_hierarchies = sorted(
             set(_hierarchy_dependencies(animations, scanned)), key=str.casefold
         )
+        model_hierarchies = list(_model_hierarchy_dependencies(model_path, scanned))
         patterns = sorted(
-            {model_path, *animations, *component_hierarchies}, key=str.casefold
+            {
+                model_path,
+                *animations,
+                *component_hierarchies,
+                *model_hierarchies,
+            },
+            key=lambda item: (item.casefold(), item),
         )
         resource_id = _resource_id("unit", slug, "visual", f"{index:02d}")
         output = f"assets/models/units/{slug}/{index:02d}.glb"
+        embedded_animation = _model_embedded_animation(model_path, scanned)
+        death_swap_source = model_path.casefold() in death_swap_source_keys
+        self_animated = embedded_animation or death_swap_source
+        if self_animated and animations and animations != [model_path]:
+            raise PlayableUnitPackCompilerError(
+                "unit model mixes bound and embedded animations: " + model_path
+            )
+        # Hierarchical skins that only ship as SKN (upgrade/reskin shells) still
+        # require their external skeleton for secondary-skin proof and Blender
+        # bind. Fail closed if HLod names a hierarchy we cannot stage.
+        if not animations and not self_animated:
+            model_row = next(
+                (
+                    row
+                    for row in scanned
+                    if str(row.get("virtualPath", "")).casefold()
+                    == model_path.casefold()
+                ),
+                None,
+            )
+            authored_hierarchies: list = []
+            if isinstance(model_row, Mapping):
+                headers = model_row.get("headerIds")
+                if isinstance(headers, Mapping):
+                    raw_hier = headers.get("hierarchyIds", [])
+                    if isinstance(raw_hier, list):
+                        authored_hierarchies = raw_hier
+            if (
+                _model_has_hierarchy(model_path, scanned)
+                and not model_hierarchies
+                and not authored_hierarchies
+            ):
+                raise PlayableUnitPackCompilerError(
+                    "hierarchical model has no staged hierarchy provider: "
+                    + model_path
+                )
         options: dict[str, object] = {
             "model": PurePosixPath(model_path).name,
             "inputResourceIds": texture_ids,
         }
         if animations:
             options["animations"] = [PurePosixPath(path).name for path in animations]
+        elif self_animated:
+            options["animations"] = [PurePosixPath(model_path).name]
         resources.append(
             {
                 "id": resource_id,
                 "kind": "model",
-                "converter": "w3d-bundle" if animations else "w3d-hierarchical",
+                "converter": (
+                    "w3d-bundle"
+                    if animations or self_animated
+                    else "w3d-hierarchical"
+                    if _model_has_hierarchy(model_path, scanned)
+                    else "w3d-static"
+                ),
                 "patterns": patterns,
                 "output": output,
                 "options": options,
@@ -1027,14 +1356,17 @@ def compile_playable_unit_pack_recipe(
                 and model_path == default_model,
                 "ownerObjectId": model_owners[model_path],
                 "drawModule": model_draw_keys[model_path][1],
-                "role": "primary-member"
+                "role": (
+                    "primary-container" if mounted_presentation else "primary-member"
+                )
                 if model_path == default_model
                 else "auxiliary-or-conditional",
             }
         )
 
     death_swap_binding: dict[str, object] | None = None
-    if death_swap_paths:
+    death_swap_bindings: list[dict[str, object]] = []
+    if death_swap_paths and not mixed_death:
         death_path = death_swap_paths[0]
         death_name = PurePosixPath(death_path).name
         death_patterns = sorted(death_swap_w3d, key=str.casefold)
@@ -1063,6 +1395,56 @@ def compile_playable_unit_pack_recipe(
             "sourceW3d": death_path,
             "output": death_output,
         }
+    if mixed_death:
+        resource_by_model: dict[str, tuple[str, str]] = {}
+        for swap_model in death_swap_paths:
+            swap_stem = _slug(PurePosixPath(swap_model).stem)
+            swap_resource_id = _resource_id("unit", slug, "death-model", swap_stem)
+            swap_output = f"assets/models/units/{slug}/death-{swap_stem}.glb"
+            swap_patterns = sorted(
+                {swap_model, *_hierarchy_dependencies([swap_model], scanned)},
+                key=str.casefold,
+            )
+            swap_name = PurePosixPath(swap_model).name
+            resources.append(
+                {
+                    "id": swap_resource_id,
+                    "kind": "model",
+                    "converter": "w3d-bundle",
+                    "patterns": swap_patterns,
+                    "output": swap_output,
+                    "options": {
+                        "model": swap_name,
+                        "inputResourceIds": texture_ids,
+                        "animations": [swap_name],
+                    },
+                    "required": True,
+                    "limit": len(swap_patterns),
+                    "expected_count": len(swap_patterns),
+                }
+            )
+            resource_by_model[swap_model.casefold()] = (swap_resource_id, swap_output)
+        for swap_row in sorted(
+            death_swap_rows,
+            key=lambda row: (
+                str(row["sourceW3d"]).casefold(),
+                str(row["identifier"]).casefold(),
+                tuple(str(item).casefold() for item in row["conditions"]),
+            ),
+        ):
+            swap_resource_id, swap_output = resource_by_model[
+                str(swap_row["sourceW3d"]).casefold()
+            ]
+            death_swap_bindings.append(
+                {
+                    "binding": "separate-model",
+                    "resourceId": swap_resource_id,
+                    "sourceW3d": str(swap_row["sourceW3d"]),
+                    "output": swap_output,
+                    "identifier": str(swap_row["identifier"]),
+                    "conditions": list(swap_row["conditions"]),
+                }
+            )
 
     authored_visual_leaves: list[dict[str, object]] = []
     auxiliary_resources: dict[tuple[str, str], dict[str, object]] = {}
@@ -1350,7 +1732,11 @@ def compile_playable_unit_pack_recipe(
         audio_bindings[str(identifier)] = sorted(set(outputs), key=str.casefold)
     _validate_resource_values(resources)
 
-    core_animations: dict[str, object] = dict(state_bindings)
+    core_animations: dict[str, object] = {
+        state: rows
+        for state, rows in state_bindings.items()
+        if rows or not core_animation_exclusions
+    }
     if death_swap_binding is not None and "death" in core_animations:
         core_animations["death"] = death_swap_binding
 
@@ -1369,9 +1755,40 @@ def compile_playable_unit_pack_recipe(
             "gameplay": deepcopy(descriptor["gameplay"]),
             "simulation": deepcopy(descriptor["gameplay"]["simulation"]),
             "capabilities": deepcopy(descriptor["capabilities"]),
+            **(
+                {"abilities": deepcopy(descriptor["abilities"])}
+                if isinstance(descriptor.get("abilities"), list)
+                else {}
+            ),
+            **(
+                {"experience": deepcopy(descriptor["experience"])}
+                if isinstance(descriptor.get("experience"), Mapping)
+                else {}
+            ),
             "visual": {
                 "components": components,
+                **(
+                    {
+                        "presentationComposition": {
+                            "form": "mounted-container-payload",
+                            "visualPrimaryObjectId": container_id,
+                            "hiddenMemberObjectId": member_id,
+                        }
+                    }
+                    if mounted_presentation
+                    else {}
+                ),
+                **(
+                    {"deathModelSwaps": death_swap_bindings}
+                    if death_swap_bindings
+                    else {}
+                ),
                 "coreAnimations": core_animations,
+                **(
+                    {"coreAnimationExclusions": core_animation_exclusions}
+                    if core_animation_exclusions
+                    else {}
+                ),
                 "authoredAnimationStates": authored_animation_states,
                 "authoredVisualLeaves": authored_visual_leaves,
                 "authoredVisualSemantics": authored_visual_semantics,
@@ -1397,6 +1814,17 @@ def compile_playable_unit_pack_recipe(
                                 ),
                             }
                             for row in conditional_animation_gaps
+                        ],
+                        *[
+                            {
+                                **row,
+                                "runtimeSupport": "excluded-retail-absent-animation-gap",
+                                "runtimeExclusionReason": (
+                                    "retail-absent-animation-state-covered"
+                                ),
+                                "semanticState": str(_state(row)),
+                            }
+                            for row in retail_absent_animation_gaps
                         ],
                         *[
                             {
@@ -1491,6 +1919,52 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
         if source in component_by_model:
             raise PlayableUnitPackCompilerError("runtime component model is duplicated")
         component_by_model[source] = component
+    composition = runtime.get("composition")
+    if not isinstance(composition, Mapping):
+        raise PlayableUnitPackCompilerError("runtime composition is invalid")
+    member_object = str(composition.get("primaryMemberObjectId", ""))
+    container_object = str(composition.get("containerObjectId", ""))
+    if not member_object or not container_object:
+        raise PlayableUnitPackCompilerError("runtime composition is invalid")
+    default_component = next(row for row in components if row.get("default") is True)
+    default_owner = str(default_component.get("ownerObjectId", ""))
+    presentation_composition = visual.get("presentationComposition")
+    mounted = (
+        container_object.casefold() != member_object.casefold()
+        and default_owner.casefold() == container_object.casefold()
+    )
+    if mounted:
+        # A mounted-container-payload recipe is only consistent whole: the
+        # marker names the hidden member, the default component is owned by
+        # the container mount, and the member's authored default stays hidden.
+        hidden_member_semantics = _rows(
+            visual.get("authoredVisualSemantics"), "authored visual semantics"
+        )
+        if (
+            not isinstance(presentation_composition, Mapping)
+            or presentation_composition.get("form") != "mounted-container-payload"
+            or presentation_composition.get("visualPrimaryObjectId")
+            != container_object
+            or presentation_composition.get("hiddenMemberObjectId") != member_object
+            or default_component.get("role") != "primary-container"
+            or not any(
+                row.get("reason") == "sage-none-model"
+                and row.get("conditions") == []
+                and str(row.get("targetObject", "")).casefold()
+                == member_object.casefold()
+                for row in hidden_member_semantics
+            )
+        ):
+            raise PlayableUnitPackCompilerError(
+                "mounted presentation composition is invalid"
+            )
+    elif (
+        presentation_composition is not None
+        or default_component.get("role") != "primary-member"
+    ):
+        raise PlayableUnitPackCompilerError(
+            "presentation composition disagrees with its default component"
+        )
     core = visual.get("coreAnimations")
     if not isinstance(core, Mapping):
         raise PlayableUnitPackCompilerError(
@@ -1502,6 +1976,11 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
         for row in authored
     }
     authored_sources = {source for source, _ in authored_keys}
+    covered_animation_states = {str(state) for state in core} | {
+        str(row.get("semanticState"))
+        for row in authored
+        if isinstance(row.get("semanticState"), str)
+    }
     for state, rows in core.items():
         if isinstance(rows, Mapping):
             resource_id = rows.get("resourceId")
@@ -1553,6 +2032,86 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
                 or (source, identifier) not in authored_keys
             ):
                 raise PlayableUnitPackCompilerError("animation binding is not packaged")
+    death_swaps = visual.get("deathModelSwaps", [])
+    if not isinstance(death_swaps, list) or any(
+        not isinstance(row, Mapping) for row in death_swaps
+    ):
+        raise PlayableUnitPackCompilerError("mixed death model swaps are invalid")
+    if death_swaps and not isinstance(core.get("death"), list):
+        raise PlayableUnitPackCompilerError(
+            "mixed death model swaps require clip death bindings"
+        )
+    swap_condition_sets: set[tuple[str, ...]] = set()
+    for swap in death_swaps:
+        resource_id = swap.get("resourceId")
+        source = swap.get("sourceW3d")
+        output = swap.get("output")
+        conditions = swap.get("conditions")
+        if (
+            set(swap)
+            != {
+                "binding",
+                "resourceId",
+                "sourceW3d",
+                "output",
+                "identifier",
+                "conditions",
+            }
+            or swap.get("binding") != "separate-model"
+            or not isinstance(resource_id, str)
+            or resource_id not in resources_by_id
+            or not isinstance(source, str)
+            or not isinstance(output, str)
+            or not isinstance(swap.get("identifier"), str)
+            or not isinstance(conditions, list)
+            or not conditions
+            or any(not isinstance(item, str) or not item for item in conditions)
+        ):
+            raise PlayableUnitPackCompilerError(
+                "mixed death model swap binding is invalid"
+            )
+        resource = resources_by_id[resource_id]
+        options = resource.get("options", {})
+        if (
+            resource.get("converter") != "w3d-bundle"
+            or resource.get("output") != output
+            or source not in resource.get("patterns", [])
+            or not isinstance(options, Mapping)
+            or options.get("model") != PurePosixPath(source).name
+            or options.get("animations") != [PurePosixPath(source).name]
+            or (source, str(swap["identifier"])) not in authored_keys
+        ):
+            raise PlayableUnitPackCompilerError(
+                "mixed death model swap binding is not packaged"
+            )
+        condition_set = tuple(sorted({str(item).casefold() for item in conditions}))
+        if condition_set in swap_condition_sets:
+            raise PlayableUnitPackCompilerError(
+                "mixed death model swap conditions are ambiguous"
+            )
+        swap_condition_sets.add(condition_set)
+    animation_exclusions = visual.get("coreAnimationExclusions", [])
+    if not isinstance(animation_exclusions, list) or any(
+        not isinstance(row, Mapping) for row in animation_exclusions
+    ):
+        raise PlayableUnitPackCompilerError("core animation exclusions are invalid")
+    if animation_exclusions:
+        if (
+            core
+            or death_swaps
+            or authored
+            or [str(row.get("state", "")) for row in animation_exclusions]
+            != list(_required_states(runtime))
+            or any(
+                set(row) != {"state", "runtimeSupport", "runtimeExclusionReason"}
+                or row["runtimeSupport"] != "excluded-randomizer-shell"
+                or row["runtimeExclusionReason"] != "zero-authored-animation-states"
+                for row in animation_exclusions
+            )
+        ):
+            raise PlayableUnitPackCompilerError(
+                "core animation exclusions are invalid"
+            )
     visual_leaves = _rows(visual.get("authoredVisualLeaves"), "authored visual leaves")
     for leaf in visual_leaves:
         resource_id = leaf.get("resourceId")
@@ -1680,6 +2239,24 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
                 )
             )
         )
+        is_retail_absent_animation = (
+            row.get("status") == "missing"
+            and row.get("kind") == "animation"
+            and row.get("usage") == "animation"
+            and isinstance(row.get("identifier"), str)
+            and bool(row.get("identifier"))
+            and valid_conditions
+            and bool(conditions)
+            and valid_graph_provenance
+            and not row.get("physicalVirtualPaths", [])
+            and not row.get("candidates", [])
+            and row.get("reason") == "missing W3D animation reference"
+            and row.get("runtimeSupport") == "excluded-retail-absent-animation-gap"
+            and exclusion_reason == "retail-absent-animation-state-covered"
+            and _state(row) is not None
+            and row.get("semanticState") == _state(row)
+            and str(row.get("semanticState")) in covered_animation_states
+        )
         is_embedded_texture = (
             row.get("status") == "missing"
             and isinstance(row.get("sourceW3dVirtualPath"), str)
@@ -1753,6 +2330,7 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
         )
         if (
             not is_animation
+            and not is_retail_absent_animation
             and not is_embedded_texture
             and not is_editor_only_model
             and not is_excluded_form_animation

@@ -1,51 +1,141 @@
 Owner: Integration owner
 Owns: Volatile repository state, selected private-pack identity, active blockers, and latest verified gate results.
 Does not own: Product scope, architecture, milestone definitions, or historical evidence.
-Last verified commit: `b517aaebce61a37a836172a3ee77eecc6862062f`
+Last audited base commit: `ad370cc9b02bdec600564cf1c606e70833faa97a`
+Audit date: 2026-07-22
 Update trigger: Selection, worktree state, blocker, capability, or gate result changes.
-Validation: Compare this file with the current commit, private selection and oracle metadata, and the named focused reports.
+Validation: Compare this file with the current commit, private selection and oracle metadata, and the named focused runners.
 
 # OpenBFME status
 
-## Current identity
+## Evidence boundary
 
-- Active target: BFME2 1.06 Men-versus-Men on Fords of Isen II.
-- Clean code/oracle baseline before this status-only update: `b517aaebce61a37a836172a3ee77eecc6862062f`; clean dirty-state digest: `3d0d02f93695a6b4b6e73bb892cf153c90e5c48ef25b25ac64aa22b7144ebecb`. Because this tracked status edit changes the source revision, the schema-v1 oracle workspace and its five Godot sides must be rebound once more after this edit is committed and before retail capture registration begins.
-- Selected private pack: `bfme2-men-vslice/69fd5efe0dfd77a9475250a102c52691044dff0b7d8216b873d725dd22de4cc1`.
-- Strict completion profile SHA-256: `0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d`.
-- The current pending schema-v1 oracle workspace contains exactly 47 ordered rows: 5 Godot sides, 0 retail sides, 0 pairs, and 0 approvals. The preceding schema-v0 authority is retained hash-for-hash under the private archive. Frozen thresholds remain 60 average FPS, 15 one-percent-low FPS, 1 GiB peak memory, 128 MiB total growth, and 16 MiB final-five-minute growth.
+This is an audit of a large, dirty development working tree based on
+`ad370cc9`. Kimi's UI rewrite is actively changing covered files, so there is no
+stable current runtime identity. Results below are explicitly diagnostic and
+must not approve a milestone, release, or parity claim.
 
-## Verified now
+The product target is BFME2 1.06 skirmish compatibility. Campaign material and
+War of the Ring are outside project scope.
 
-- The selected private retail slice loads fail-closed and the current `run_retail_slice.bat --test` result is `245 passed, 0 failed`, signature `AC8D8C4D`.
-- Men/Fords terrain, roads, water, navigation, four unit types, five structures per side, construction, production, combat, victory, defeat, HUD, and audio contracts exercised by that focused runner are green.
-- Commit `ba251d71479abb952ac87fa9f5d5fc428f03126a` added a separate three-match lifecycle proof. It reproduces the full enemy construction -> production -> Fortress hit -> destruction -> defeat chain three times in one process, destroys all three scenes, clears the mesh cache, and reproduces lifecycle signature `932C2486`.
-- The lifecycle packet's exact five-stage focused reliability artifact has SHA-256 `7f7cea814ba353af0ef9f37bc3d44ff8401acf3b930981cbfdeca64dd0ac45d5`; two final adversarial reviews reported no P0/P1 finding.
-- Commit `7e7efffaed0bc6c0d7ed15436ae65c6960dcbe59` preallocates exact frame and memory evidence buffers before the live-soak baseline. The implementation packet's 300.004861-second dirty-worktree diagnostic retained 31,304 recomputable frames, averaged 104.345 FPS, recorded a 36.412 one-percent low, and had zero multi-second stalls or forbidden diagnostics. Its changes were subsequently committed as `7e7efff`; because the artifact itself records the preceding `ba251d7` revision plus a dirty-state digest, it is diagnostic implementation evidence rather than clean current-identity reliability evidence.
-- Private retail and converted payloads remain below `.private`; the public export boundary remains mandatory.
-- Commit `1da72a484f634f7e9dd0bcdcabd1aaf0100ec005` added bounded 2560x1440 capture recipes for `hud-default`, `hud-unit-selected`, `unit-soldier-idle`, `unit-soldier-move`, and `unit-soldier-attack`. Their retained runs are explicitly unapproved scenario evidence, not retail-parity evidence.
-- Commit `8d42ffb027b7645ac7656690ff9527c2efba7a51` added byte-exact private-frame import and recoverable oracle replacement. Focused acceptance covered same-handle import, stable-handle live capture, approval revocation, exact rollback, containment, native argument transport, and failure-injection confinement; two final adversarial reviews reported no P0/P1/P2 defect.
-- Commit `b517aaebce61a37a836172a3ee77eecc6862062f` replaced the false shared cross-engine camera-state field with independent source-backed `retailCameraState` and `godotCameraState` receipts. Real-script acceptance covered distinct side receipts, deliberate selected-side replacement, approval revocation, opposite-side preservation, exact injected-failure rollback, missing-receipt rejection, and schema-v0 rejection; three final adversarial reviews reported no P0/P1/P2 defect.
-- Three adversarial reviews rejected all five retained BFME2 frame candidates as canonical counterparts. The retained video remains useful behavioral evidence, but it lacks source-backed camera receipts; the selected, movement, and attack samples also differ in battalion count or combat target. The correct mapping result is `accepted=0 recapture=5`.
+## Audited identity
 
-## Not complete
+- Base commit: `ad370cc9b02bdec600564cf1c606e70833faa97a`.
+- Active private pack recorded on 2026-07-22:
+  `bfme2-men-vslice/91f1b104bdc70c72c026b2577e98bb75411f5747cf4cbc8c64d91fc933bcd6cf`.
+- Selection SHA-256:
+  `6BA7B1CB8073DE9A0448228CEA720C4C0F78139B9AEE80C65DA82C8957D00FF2`.
+- Godot: `4.7.stable.official.5b4e0cb0f`, executable SHA-256
+  `D8055FB8C7E7F5010D7439EC69BE051554055DAE55A265F8647BD7301C34161C`.
+- A retained diagnostic run began with code snapshot
+  `500313D6EA50A1D159B8D761259F30ADF37AB6DD25BEDBFECD4D6E766748BA20`
+  and ended with
+  `632B6972ECA2732D26FAE0F64BCB205705856A5A593721411C5171FB2764DA82`.
+  Because those digests differ, the run is invalid as current verification.
 
-- M2 is not complete. The pre-status schema-v1 authority has five unapproved Godot sides but no retail side, pair, or approval; all 47 audiovisual oracle rows remain open. After this status commit, those five Godot scenarios must be regenerated for the final clean identity and paired only with newly captured exact BFME2 1.06 counterparts.
-- Reliability is not complete. The last retained 300-second diagnostic recorded 10,119,014 bytes across its late window with a +29,439.71-byte/second linear trend. It remains historical diagnostic evidence rather than accepted current-identity reliability evidence: two adversarial reviewers found that it did not demonstrate an improvement over the prior curve, exercised zero match completions, and did not retain wrapper stdout/stderr.
-- The rejected 1,800-second `3dd886a` artifact remains archived as failure evidence. Its wrapper-level pass must not be finalized or reused.
-- The last clean product identity has no accepted 1,800-second reliability artifact. The authoritative run is deferred until oracle/content identity freezes, then judged against the already-frozen thresholds. A correction packet is warranted only if that run violates them.
-- The generated BFME2-wide feature graph, evidence catalog, and coverage matrix are not implemented; no whole-game completeness claim is valid.
-- C# simulation, 30 Hz production ticks, eight-player lockstep, replays/checkpoints, self-hosted networking, campaigns, War of the Ring, Create-a-Hero, naval play, Ring mechanics, and later content milestones remain roadmap work after the current vertical slice is frozen.
+The raw logs and machine-readable receipt remain under the ignored private job
+workspace and are not public-release inputs.
+
+## Surfaces observed in recent code
+
+- A skirmish shell modeled on BFME2, six faction entries, five map entries,
+  player colors, start positions, resources, command-point factor, and persistent
+  display/audio/gameplay options.
+- Document-driven faction manifests, rosters, structures, production, upgrades,
+  heroes, powers, and spellbooks.
+- Construction, rally points, production cancellation, combat, stances,
+  formations, cavalry trample, experience, hero abilities/death/revival,
+  selection, commands, control groups, AI production/attacks, and outcomes.
+- Source map plumbing for Fords of Isen II, Rivendell, Mount Doom, Dagorlad, and
+  Mordor, including terrain, water, navigation, minimaps, start positions, and
+  fortress placement.
+- Importer commands for faction census/import/conversion, individual units,
+  spellbooks, five-map profiles, and publication into the private slice.
+
+Code presence is not runtime success or parity. The active rewrite must settle
+before these surfaces are reverified together.
+
+## Unbound diagnostic results
+
+Before the active UI rewrite moved the covered source identity, the same
+2026-07-22 working session observed the following totals. Exact code and pack
+digests were not retained for each row, so these are historical diagnostics,
+not current verified results:
+
+| Runner | Result | Interpretation |
+|---|---:|---|
+| Menu/skirmish shell with selected private packs | 74 passed, 0 failed | The tested shell represented six factions and five maps at that unbound identity |
+| Men retail slice | 337 passed, 3 failed | Broad exercised coverage; armor-counter matrix, ambient idle loop, and early production timing failed |
+| Elves retail slice | 289 passed, 7 failed | Substantial runtime coverage; suite is not green |
+| Dwarves retail slice | 262 passed, 4 failed | Substantial runtime coverage; suite is not green |
+| Isengard retail slice | 263 passed, 5 failed | Substantial runtime coverage; suite is not green |
+| Mordor retail slice | 282 passed, 4 failed | Substantial runtime coverage; suite is not green |
+| Goblins/Wild retail slice | 262 passed, 4 failed | Substantial runtime coverage; suite is not green |
+| Retail spellbook runner | 180 passed, 3 failed | Men tree and casts were broadly exercised; War Chant setup failed for Isengard, Mordor, and Wild |
+| Ranger playable surface | 3 passed, 2 failed | Scene and clips load; typed registration and level-one HUD locking fail |
+| Options/pause surface | 15 passed, 0 failed | Focused assertions pass, but teardown diagnostics remain |
+
+Every non-Men faction reproduced its own deterministic replay inside those runs,
+but every pinned battle signature differed from the expected constant. These are
+test failures, not values to repin without review.
+
+During the identity-bound audit attempt, covered code changed between the start
+and end digests. The Men runner reported `5 passed, 7 failed` after slice
+initialization stopped at faction-roster presentation validation; the menu runner
+reported `74 passed, 0 failed`. Both are retained as race diagnostics only.
+
+## Map state
+
+At an unbound pre-rewrite identity, all five selected maps booted through their focused source-map runner with zero
+map assertions failing. Fords loaded terrain, roads, water, navigation, 1,249
+bound props, and the expected starting structures. Rivendell, Mount Doom,
+Dagorlad, and Mordor loaded source terrain/navigation/start structures but bound
+zero props while reporting large unresolved prop counts. They are bootable
+development maps, not five equally polished battlefields.
+
+## Open blockers
+
+- The Men suite is not green and the five other faction suites each fail.
+- The ongoing UI rewrite currently prevents a stable whole-surface verification
+  identity; no public “works today” claim should be promoted until it settles.
+- Pinned battle signatures for all five non-Men factions have drifted.
+- The spellbook and Ranger runners have real failures.
+- Godot reports RID/ObjectDB/instance teardown leaks across the gameplay and map
+  runners, plus animation diagnostics in some runs.
+- Fords is materially ahead of the other four maps in presentation binding.
+- Cross-faction skirmish launch is currently rejected; the shell launches
+  same-faction matchups only.
+- The statistics screen is a visible placeholder rather than tracked gameplay
+  statistics.
+- Final original-game visual approval and the identity-bound long-running
+  reliability gate are not complete.
+- The generated BFME2-wide feature graph, evidence catalog, and coverage matrix
+  are not implemented.
+- Deterministic production networking/dedicated servers and the planned pure C#
+  simulation cutover are not complete.
+
+Under repository policy, any required warning, error, leak, or failed assertion
+makes the applicable gate a failure. A runner exiting zero does not override its
+own reported failures.
 
 ## Next bounded work
 
-1. Commit this status refresh, archive the now-stale private authority, create a final schema-v1 workspace for that clean commit, and regenerate the five supported Godot sides.
-2. Recapture the exact five BFME2 1.06 retail counterparts with source-backed retail camera/action receipts; register no retained approximate frame as a substitute.
-3. Human-review those five pairs, correct only reproducible severity-0/1 differences, then repeat bounded capture/review tranches for the remaining 42 rows.
-4. Freeze the identity only after all 47 rows are paired and approved.
-5. Run the 1,800-second authoritative reliability packet once against that frozen identity and retain complete process output.
-6. Run `run_m2_acceptance.bat -IntegrationOwnerPublish` and tag the M2 baseline before Phase C cleanup or any M3 expansion.
+1. Let the active UI rewrite reach a stable owner-approved identity, then rerun
+   the menu, Men, faction, map, spellbook, Ranger, options, and teardown gates
+   with retained logs and exact code/pack/tool digests.
+2. Reconcile the Men armor matrix, ambient idle loop, and production-timing
+   failures against source/original evidence.
+3. Explain rather than blindly repin each faction signature drift, then close
+   the remaining faction-specific failures.
+4. Repair the spellbook and Ranger contract failures and make every runner return
+   a failing process code when it reports failures.
+5. Eliminate teardown leaks and animation errors on required paths.
+6. Bind and validate presentation props for the four non-Fords maps.
+7. Complete identity-bound human visual review and reliability evidence before
+   declaring the first milestone frozen.
 
 ## Status discipline
 
-Changing counts, hashes, timings, benchmark values, and gate outcomes belong here or in generated private reports. Architecture and product documents define how to measure them but do not copy volatile results.
+Changing counts, hashes, timings, benchmark values, and gate outcomes belong
+here or in generated private reports. Architecture and product documents define
+how to measure them but do not copy volatile results.

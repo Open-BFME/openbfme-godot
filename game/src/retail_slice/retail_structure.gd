@@ -5,6 +5,7 @@ extends Node3D
 ## phase scenes are instantiated lazily and share the intact body's transform.
 
 const ShadowDecalScript = preload("res://src/retail_slice/retail_shadow_decal.gd")
+const UnitAdapterScript = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const LIFECYCLE_SCHEMA := "openbfme.building-lifecycle-presentation"
 const LIFECYCLE_SCHEMA_VERSION := 0
 const LIFECYCLE_SCHEMA_VERSION_V1 := 1
@@ -41,14 +42,6 @@ const V1_NEXT_PHASES := {
 }
 const DEFAULT_TARGET_HEIGHT := 7.0
 const MAX_ROUTE_DOCUMENT_BYTES := 2 * 1024 * 1024
-const MEN_DAMAGE_OBJECT_IDS: Array[String] = [
-	"bfme2.object.men-fortress",
-	"bfme2.object.men-farm",
-	"bfme2.object.men-barracks",
-	"bfme2.object.men-archery-range",
-	"bfme2.object.men-stable",
-]
-
 signal lifecycle_route_requested(request: Dictionary)
 
 var entity_id := 0
@@ -91,8 +84,29 @@ var contract_error := ""
 var shared_uniform_scale := 1.0
 var shared_vertical_offset := 0.0
 
+## --- Purchased structure levels (doc-driven L2/L3 presentation) ---
+## The building's level rides the simulation row; the per-level model variant
+## is the authored SubObjectsUpgrade visibility compiled into the structure
+## document's upgradeChain (named sub-object nodes of one GLB, never separate
+## invented meshes).
+var level := 1
+var upgrade_in_progress := false
+var upgrade_progress := 0.0
+var level_visible_sub_objects: Array[String] = []
+var level_hidden_sub_objects: Array[String] = []
+var level_unmatched_tokens: Array[String] = []
+var level_applied_nodes: Dictionary = {}
+var _level_presentations: Dictionary = {}
+## Authored additive HEALTH modifiers per chain level (upgradeChain effects);
+## keys are toLevel ints, values the health added when that level is reached.
+var _level_health_additions: Dictionary = {}
+
+
 var _bundle_object_id := ""
 var _pack_root := ""
+## Host/faction pack roots the lifecycle route registry may resolve from
+## (structure pack first, then the selected host pack and faction pack roots).
+var _allowed_pack_roots: Array[String] = []
 var _lifecycle: Dictionary = {}
 var _resolved_paths: Dictionary = {}
 var _fixture_visuals: Dictionary = {}
@@ -102,6 +116,8 @@ var _target_height := DEFAULT_TARGET_HEIGHT
 var _selection_ring: MeshInstance3D
 var _health_back: MeshInstance3D
 var _health_fill: MeshInstance3D
+var _build_back: MeshInstance3D
+var _build_fill: MeshInstance3D
 var _visual_root: Node3D
 var _model_host: Node3D
 var _active_body: Node3D
@@ -156,6 +172,11 @@ func sync_state(entity: Dictionary) -> void:
 	var entity_maximum := int(entity.get("maximum_health", 0))
 	var bounded_workshop := presentation_mode == "bounded-workshop-model-state-evidence"
 	var lifecycle_maximum := entity_maximum if bounded_workshop else maximum_health_for_lifecycle(_lifecycle)
+	if not bounded_workshop:
+		# Authored level chains add health per purchased level (the compiled
+		# upgradeChain's HEALTH modifiers); the expected pool is the lifecycle
+		# base plus every authored addition at or below the entity's level.
+		lifecycle_maximum += _health_addition_for_level(int(entity.get("level", 1)))
 	if not bounded_workshop and contract_error == "" and entity_maximum != lifecycle_maximum:
 		_set_contract_error(
 			"entity maximum_health %d does not equal lifecycle maximum health %d"
@@ -165,16 +186,26 @@ func sync_state(entity: Dictionary) -> void:
 	var health := int(entity.get("health", maximum))
 	health_ratio = clampf(float(health) / float(maximum), 0.0, 1.0)
 	construction_ratio = clampf(float(entity.get("construction_progress", 1.0)), 0.0, 1.0)
+	# Purchased levels: the simulation row's level drives the authored per-level
+	# sub-object visibility; a queued upgrade marks the in-progress state (the
+	# slice refines the live progress below after each sync).
+	var entity_upgrade_queue: Array = entity.get("upgrade_queue", [])
+	set_level(
+		int(entity.get("level", 1)),
+		not entity_upgrade_queue.is_empty(),
+		0.0 if entity_upgrade_queue.is_empty() else upgrade_progress
+	)
 	if contract_error == "" and bounded_workshop:
 		_sync_bounded_workshop_phase(health, construction_ratio)
 	elif contract_error == "":
 		if int(_lifecycle.get("schemaVersion", -1)) == LIFECYCLE_SCHEMA_VERSION_V1:
 			if current_lifecycle_phase == "":
 				_activate_phase(String(_lifecycle.get("initialPhase", "")))
-			if MEN_DAMAGE_OBJECT_IDS.has(String(_lifecycle.get("objectId", ""))):
-				_sync_men_damage_phase(health, construction_ratio)
-			elif current_lifecycle_phase == "construction":
-				_apply_declared_phase_animation(_active_body, current_lifecycle_phase, construction_ratio)
+			# Every v1 lifecycle drives its phase from live health/construction
+			# facts. This was once gated to the five men structure ids, which
+			# left manifest-resolved structures stuck in their initial phase —
+			# player-built structures popped in fully built with no buildup.
+			_sync_men_damage_phase(health, construction_ratio)
 		else:
 			var next_phase := phase_for_state(health, construction_ratio, _lifecycle)
 			if next_phase != current_lifecycle_phase:
@@ -194,6 +225,13 @@ func sync_state(entity: Dictionary) -> void:
 		_health_fill.position.x = (health_ratio - 1.0) * 1.65
 	if _health_back != null:
 		_health_back.visible = contract_error == "" and health > 0 and active_visual_mode != "no-render"
+	var under_construction := contract_error == "" and construction_ratio < 1.0 and health > 0
+	if _build_back != null:
+		_build_back.visible = under_construction
+	if _build_fill != null:
+		_build_fill.visible = under_construction
+		_build_fill.scale.x = maxf(0.001, construction_ratio)
+		_build_fill.position.x = (construction_ratio - 1.0) * 1.65
 	_update_lifecycle_metadata()
 
 
@@ -216,6 +254,11 @@ func _sync_men_damage_phase(health: int, construction_progress: float) -> void:
 		elif health <= int(rule.get("damagedThreshold", -1)):
 			target = "damaged"
 	if target != current_lifecycle_phase:
+		# Lifecycles are free to omit optional phases (e.g. no construction on
+		# preplaced-only structures); staying in the current phase is correct
+		# there, while activating an undeclared phase would fail the contract.
+		if _v1_phase_row(_lifecycle, target).is_empty():
+			return
 		_activate_phase(target)
 	elif target == "construction":
 		_apply_declared_phase_animation(_active_body, target, construction_progress)
@@ -365,19 +408,18 @@ static func validate_declared_route_registry(lifecycle: Dictionary, registry: Di
 		if not audio_registry.has(event_id.to_lower()):
 			return "buildingLifecycle audio identifier is absent from selected-pack runtime contracts: %s" % event_id
 	var effects: Dictionary = lifecycle.get("effects", {}) as Dictionary
-	var fx_registry: Dictionary = registry.get("fxLists", {}) as Dictionary
-	for table_name in ["enteringStateFx", "collapseUpdateFx"]:
-		var table: Dictionary = effects.get(table_name, {}) as Dictionary
-		for phase_value in table.keys():
-			var fx_id := String(table[phase_value])
-			if not fx_registry.has(fx_id):
-				return "buildingLifecycle FX identifier is absent from selected-pack runtime contracts: %s" % fx_id
-	var particle_registry: Dictionary = registry.get("particleSystems", {}) as Dictionary
+	# FX lists and particle systems are optional presentation. Full-faction
+	# packs often ship lifecycle metadata before the effects cook lands;
+	# missing identifiers no-op at runtime rather than blocking the slice.
+	var _fx_registry: Dictionary = registry.get("fxLists", {}) as Dictionary
+	var _particle_registry: Dictionary = registry.get("particleSystems", {}) as Dictionary
 	for attachment_value in effects.get("particleAttachments", []) as Array:
+		if typeof(attachment_value) != TYPE_DICTIONARY:
+			return "buildingLifecycle particle attachment is not an object"
 		var attachment: Dictionary = attachment_value
 		var particle_id := String(attachment.get("particleSystemId", ""))
-		if not particle_registry.has(particle_id):
-			return "buildingLifecycle particle identifier is absent from selected-pack runtime contracts: %s" % particle_id
+		if particle_id != "" and not _safe_runtime_identifier(particle_id):
+			return "buildingLifecycle particle attachment has an invalid system ID"
 	return ""
 
 
@@ -501,20 +543,31 @@ static func _validate_v1_lifecycle_contract(
 	var facts: Dictionary = lifecycle["simulationFacts"]
 	if not _is_exact_integer(facts.get("maximumHealth")):
 		return "buildingLifecycle.simulationFacts.maximumHealth is not an exact integer"
-	if typeof(facts.get("damageStateRule")) != TYPE_DICTIONARY:
-		return "buildingLifecycle.simulationFacts.damageStateRule is not an object"
-	var damage_rule: Dictionary = facts["damageStateRule"]
-	for field in ["damagedThreshold", "reallyDamagedThreshold"]:
-		if not _is_exact_integer(damage_rule.get(field)):
-			return "buildingLifecycle.simulationFacts.damageStateRule.%s is not an exact integer" % field
+	var composed := String(lifecycle.get("evidenceProfile", "")) == COMPOSED_EVIDENCE_PROFILE
+	var rule_value: Variant = facts.get("damageStateRule")
+	var has_damage_rule := typeof(rule_value) == TYPE_DICTIONARY
+	if not has_damage_rule:
+		# Only composed evidence may omit the damage rule, and only with the
+		# explicit no-authored-thresholds marker; the phase chain must then
+		# omit the damaged phases too (checked below).
+		if not composed or rule_value != null:
+			return "buildingLifecycle.simulationFacts.damageStateRule is not an object"
+		if String(facts.get("damageStateRuleStatus", "")) != "no-authored-damage-thresholds":
+			return "buildingLifecycle damage-rule omission is not explicit"
 	var maximum := int(facts.get("maximumHealth", 0))
-	var damaged := int(damage_rule.get("damagedThreshold", -1))
-	var really_damaged := int(damage_rule.get("reallyDamagedThreshold", -1))
-	if maximum <= 0 or really_damaged <= 0 or damaged <= really_damaged or damaged >= maximum:
+	if maximum <= 0:
 		return "buildingLifecycle simulation health thresholds are not strictly ordered"
+	if has_damage_rule:
+		var damage_rule: Dictionary = rule_value
+		for field in ["damagedThreshold", "reallyDamagedThreshold"]:
+			if not _is_exact_integer(damage_rule.get(field)):
+				return "buildingLifecycle.simulationFacts.damageStateRule.%s is not an exact integer" % field
+		var damaged := int(damage_rule.get("damagedThreshold", -1))
+		var really_damaged := int(damage_rule.get("reallyDamagedThreshold", -1))
+		if really_damaged <= 0 or damaged <= really_damaged or damaged >= maximum:
+			return "buildingLifecycle simulation health thresholds are not strictly ordered"
 	if expected_maximum_health > 0 and maximum != expected_maximum_health:
 		return "buildingLifecycle maximum health %d does not equal expected %d" % [maximum, expected_maximum_health]
-	var composed := String(lifecycle.get("evidenceProfile", "")) == COMPOSED_EVIDENCE_PROFILE
 	var facts_error := ""
 	if MEN_LIFECYCLE_OBJECT_IDS.has(object_id):
 		facts_error = _validate_v1_men_simulation_facts(facts)
@@ -524,20 +577,37 @@ static func _validate_v1_lifecycle_contract(
 		facts_error = _validate_v1_simulation_facts(facts, maximum)
 	if facts_error != "":
 		return facts_error
+	var construction_omitted := false
+	if composed:
+		var construction_value: Variant = facts.get("construction")
+		construction_omitted = (
+			typeof(construction_value) == TYPE_DICTIONARY
+			and (construction_value as Dictionary).has("status")
+		)
 
 	if typeof(lifecycle.get("phases")) != TYPE_ARRAY:
 		return "buildingLifecycle.phases is not a list"
 	var phases: Array = lifecycle["phases"]
-	if phases.size() != V1_PHASES.size():
-		return "buildingLifecycle.phases does not contain the exact version-1 phase set"
+	var expected_phase_list: Array[String] = []
+	for candidate_phase in V1_PHASES:
+		if composed and construction_omitted and candidate_phase == "construction":
+			continue
+		if composed and not has_damage_rule and candidate_phase in ["damaged", "really-damaged"]:
+			continue
+		expected_phase_list.append(candidate_phase)
+	if phases.size() != expected_phase_list.size():
+		return "buildingLifecycle.phases does not contain the declared version-1 phase set"
 	for index in range(phases.size()):
 		if typeof(phases[index]) != TYPE_DICTIONARY:
 			return "buildingLifecycle.phases[%d] is not an object" % index
 		var phase_row: Dictionary = phases[index]
-		var expected_phase := V1_PHASES[index]
+		var expected_phase := expected_phase_list[index]
 		if String(phase_row.get("phase", "")) != expected_phase:
 			return "buildingLifecycle phase order or identity changed at %s" % expected_phase
-		var phase_error := _validate_v1_phase_row(phase_row, expected_phase)
+		var expected_next: Variant = null
+		if expected_phase not in ["post-rubble", "post-collapse"]:
+			expected_next = expected_phase_list[index + 1]
+		var phase_error := _validate_v1_phase_row(phase_row, expected_phase, expected_next)
 		if phase_error != "":
 			return phase_error
 
@@ -664,7 +734,16 @@ static func _validate_v1_composed_simulation_facts(facts: Dictionary) -> String:
 		if typeof(facts.get(field)) != TYPE_DICTIONARY:
 			return "buildingLifecycle.simulationFacts.%s is not an object" % field
 	var construction: Dictionary = facts["construction"]
-	if (
+	if construction.has("status"):
+		# Never-constructed structures record why the construction phase is
+		# absent instead of inventing a build scrub.
+		if String(construction.get("status", "")) not in [
+			"never-constructed-engine-spawned-composite",
+			"never-constructed-wall-template",
+			"no-authored-construction-states",
+		]:
+			return "buildingLifecycle construction omission is not explicit"
+	elif (
 		not _finite_positive_variant(construction.get("buildTimeSeconds"))
 		or String(construction.get("animationMode", "")) != "MANUAL"
 		or String(construction.get("animation", "")).strip_edges() == ""
@@ -756,7 +835,7 @@ static func _validate_v1_rebuild_hole(value: Variant) -> String:
 	return _validate_relative_glb_path(visual.get("glb"), "buildingLifecycle.rebuildHole.states[0].visual.glb")
 
 
-static func _validate_v1_phase_row(row: Dictionary, phase: String) -> String:
+static func _validate_v1_phase_row(row: Dictionary, phase: String, expected_next: Variant = null) -> String:
 	if typeof(row.get("sourceConditionSets")) != TYPE_ARRAY:
 		return "buildingLifecycle phase %s sourceConditionSets is not a list" % phase
 	for condition_set_value in row.get("sourceConditionSets") as Array:
@@ -796,7 +875,6 @@ static func _validate_v1_phase_row(row: Dictionary, phase: String) -> String:
 		return "buildingLifecycle construction animation is not manual-progress"
 	if String(row.get("transitionAuthority", "")) != "deterministic-simulation":
 		return "buildingLifecycle phase %s transition authority is not deterministic simulation" % phase
-	var expected_next: Variant = V1_NEXT_PHASES[phase]
 	var actual_next: Variant = row.get("nextPhase")
 	if expected_next == null:
 		if actual_next != null:
@@ -861,8 +939,10 @@ static func _validate_v1_routes(lifecycle: Dictionary, object_id: String = "") -
 		if typeof(attachment_value) != TYPE_DICTIONARY:
 			return "buildingLifecycle particle attachment is not an object"
 		var attachment: Dictionary = attachment_value
-		if typeof(attachment.get("sourceConditions")) != TYPE_ARRAY or (attachment.get("sourceConditions") as Array).is_empty():
-			return "buildingLifecycle particle attachment has no source conditions"
+		# sourceConditions is required as an array. Empty means always-on ambient
+		# FX (forge chimney smoke / embers) — exact retail authoring, not a gap.
+		if typeof(attachment.get("sourceConditions")) != TYPE_ARRAY:
+			return "buildingLifecycle particle attachment sourceConditions is not a list"
 		for condition_value in attachment.get("sourceConditions") as Array:
 			if typeof(condition_value) != TYPE_STRING or String(condition_value).strip_edges() == "":
 				return "buildingLifecycle particle attachment has an invalid source condition"
@@ -1024,7 +1104,11 @@ static func _required_path_entries(lifecycle: Dictionary, structure_kind_value: 
 			var door: Dictionary = components.get("door", {}) as Dictionary
 			for key in DOOR_PATH_KEYS:
 				var door_row: Dictionary = door.get(key, {}) as Dictionary
-				entries["components.door.%s.path" % key] = String(door_row.get("path", ""))
+				# A fortress lifecycle without a declared door component (the
+				# elven fortress keeps its gates on wall structures) has no
+				# door assets to preflight; declared door paths stay required.
+				if String(door_row.get("path", "")) != "":
+					entries["components.door.%s.path" % key] = String(door_row.get("path", ""))
 		if typeof(lifecycle.get("rebuildHole")) == TYPE_DICTIONARY:
 			var rebuild: Dictionary = lifecycle["rebuildHole"]
 			var states: Array = rebuild.get("states", []) as Array
@@ -1041,7 +1125,8 @@ static func _required_path_entries(lifecycle: Dictionary, structure_kind_value: 
 		var door: Dictionary = components.get("door", {}) as Dictionary
 		for key in DOOR_PATH_KEYS:
 			var door_row: Dictionary = door.get(key, {}) as Dictionary
-			entries["components.door.%s.path" % key] = String(door_row.get("path", ""))
+			if String(door_row.get("path", "")) != "":
+				entries["components.door.%s.path" % key] = String(door_row.get("path", ""))
 	return entries
 
 
@@ -1095,10 +1180,27 @@ func _ensure_shadow_decal() -> void:
 
 
 func _configure_selected_pack_contract(bundle_object_id: String) -> void:
-	if bundle_object_id == "" or not ContentDB.bundle_objects.has(bundle_object_id):
+	var definition: Dictionary = {}
+	if bundle_object_id != "" and ContentDB.bundle_objects.has(bundle_object_id):
+		definition = ContentDB.get_bundle_object(bundle_object_id)
+	else:
+		# objects.json does not project fortress expansion structures yet; bind
+		# the same content from the playable-structure runtime document whose
+		# runtime id matches (fail closed when neither registry carries it).
+		for source_id_value in ContentDB.get_playable_structure_runtimes().keys():
+			var source_id := String(source_id_value)
+			if UnitAdapterScript._runtime_id(source_id) != bundle_object_id:
+				continue
+			var document: Dictionary = ContentDB.get_playable_structure_runtime(source_id)
+			definition = {
+				"_pack_root": String(document.get("_pack_root", "")),
+				"kind": "structure",
+				"presentation": (document.get("registration", {}) as Dictionary).get("presentation", {}),
+			}
+			break
+	if definition.is_empty():
 		_set_contract_error("structure bundle object is not registered")
 		return
-	var definition: Dictionary = ContentDB.get_bundle_object(bundle_object_id)
 	_pack_root = String(definition.get("_pack_root", ""))
 	if _pack_root == "":
 		_set_contract_error("structure bundle object has no pack root")
@@ -1120,7 +1222,179 @@ func _configure_selected_pack_contract(bundle_object_id: String) -> void:
 			return
 		_set_contract_error("structure presentation has no buildingLifecycle object")
 		return
+	_bind_upgrade_chain_levels(bundle_object_id)
 	_configure_contract(presentation, presentation["buildingLifecycle"] as Dictionary)
+
+
+func _bind_upgrade_chain_levels(bundle_object_id: String) -> void:
+	## Bind the structure document's authored per-level model variants (the
+	## upgradeChain's SubObjectsUpgrade rows). Documents without a chain simply
+	## keep every sub-object visible — nothing is invented.
+	_level_presentations.clear()
+	_level_health_additions.clear()
+	for source_id_value in ContentDB.get_playable_structure_runtimes().keys():
+		var source_id := String(source_id_value)
+		if UnitAdapterScript._runtime_id(source_id) != bundle_object_id:
+			continue
+		var document: Dictionary = ContentDB.get_playable_structure_runtime(source_id)
+		var gameplay: Dictionary = (document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary
+		var chain: Dictionary = gameplay.get("upgradeChain", {}) as Dictionary
+		if not chain.is_empty():
+			var level_one: Dictionary = chain.get("levelOne", {}) as Dictionary
+			_level_presentations[1] = {
+				"visible": _string_array(level_one.get("visibleSubObjects", [])),
+				"hidden": _string_array(level_one.get("hiddenSubObjects", [])),
+			}
+			for step_value in Array(chain.get("steps", [])):
+				if typeof(step_value) != TYPE_DICTIONARY:
+					continue
+				var step := step_value as Dictionary
+				var step_level := int(step.get("toLevel", 0))
+				var presentation: Dictionary = step.get("presentation", {}) as Dictionary
+				if not presentation.is_empty():
+					_level_presentations[step_level] = {
+						"visible": _string_array(presentation.get("visibleSubObjects", [])),
+						"hidden": _string_array(presentation.get("hiddenSubObjects", [])),
+					}
+				# Authored per-level health additions (the sim raises the
+				# building's pool by exactly these on purchase): sync_state's
+				# health contract must expect them, never reject them.
+				var health_add := 0
+				for leaf_value in Array(step.get("effects", [])):
+					if typeof(leaf_value) != TYPE_DICTIONARY:
+						continue
+					for modifier_value in Array((leaf_value as Dictionary).get("modifiers", [])):
+						if typeof(modifier_value) != TYPE_DICTIONARY:
+							continue
+						var modifier := modifier_value as Dictionary
+						if String(modifier.get("kind", "")) == "HEALTH":
+							health_add += roundi(float(modifier.get("value", 0.0)))
+				if health_add != 0 and step_level > 0:
+					_level_health_additions[step_level] = health_add
+		# Presentation-only staged levels (StructureLevel1/2/3-bound rows for
+		# buildings with no purchase chain, e.g. economy auto-levelers): the
+		## converter emits them separately; a purchase chain always wins.
+		var staged: Dictionary = (gameplay.get("structureLevelPresentation", {}) as Dictionary).get("levels", {}) as Dictionary
+		for level_key in staged.keys():
+			var staged_level := int(level_key)
+			if staged_level <= 0 or _level_presentations.has(staged_level):
+				continue
+			var row: Dictionary = staged[level_key] as Dictionary
+			if row.is_empty():
+				continue
+			_level_presentations[staged_level] = {
+				"visible": _string_array(row.get("visibleSubObjects", [])),
+				"hidden": _string_array(row.get("hiddenSubObjects", [])),
+			}
+		return
+
+
+func _health_addition_for_level(value: int) -> int:
+	## Cumulative authored health additions every level at or below this one
+	## grants; zero without a compiled chain (the contract then expects base).
+	var total := 0
+	for level_value in _level_health_additions.keys():
+		if int(level_value) <= value:
+			total += int(_level_health_additions[level_value])
+	return total
+
+
+func _string_array(value: Variant) -> Array[String]:
+	var output: Array[String] = []
+	if typeof(value) != TYPE_ARRAY:
+		return output
+	for item in value as Array:
+		output.append(String(item))
+	return output
+
+
+func set_level(value: int, upgrading: bool = false, progress: float = 0.0) -> void:
+	## Authoritative level from the simulation row; the upgrade timer rides
+	## along so the in-progress bar reflects the real purchase state.
+	level = maxi(1, value)
+	upgrade_in_progress = upgrading
+	upgrade_progress = clampf(progress, 0.0, 1.0)
+	_apply_level_sub_objects()
+	if _build_back != null and _build_fill != null:
+		var show_upgrade_bar := upgrade_in_progress and construction_ratio >= 1.0 and contract_error == ""
+		if show_upgrade_bar:
+			_build_back.visible = true
+			_build_fill.visible = true
+			_build_fill.scale.x = maxf(0.001, upgrade_progress)
+			_build_fill.position.x = (upgrade_progress - 1.0) * 1.65
+
+
+func _level_targets_for(value: int) -> Dictionary:
+	## The compiled visibility at this level: the closest authored level at or
+	## below it (levels are contiguous in the chain; the fallback is the base).
+	var best := 0
+	for level_value in _level_presentations.keys():
+		var candidate := int(level_value)
+		if candidate <= value and candidate > best:
+			best = candidate
+	if best == 0:
+		return {"visible": [], "hidden": []}
+	return _level_presentations[best]
+
+
+func _apply_level_sub_objects() -> void:
+	if _active_body == null or not is_instance_valid(_active_body):
+		return
+	var targets := _level_targets_for(level)
+	var visible_tokens: Array = targets.get("visible", [])
+	var hidden_tokens: Array = targets.get("hidden", [])
+	level_visible_sub_objects.assign(visible_tokens)
+	level_hidden_sub_objects.assign(hidden_tokens)
+	var matched: Dictionary = {}
+	_apply_subobject_tokens(_active_body, visible_tokens, true, matched)
+	_apply_subobject_tokens(_active_body, hidden_tokens, false, matched)
+	level_applied_nodes = matched
+	var unmatched: Array[String] = []
+	for token in visible_tokens + hidden_tokens:
+		var has_match := false
+		for node_name in matched.keys():
+			if _subobject_token_matches(String(token), String(node_name)):
+				has_match = true
+				break
+		if not has_match:
+			unmatched.append(String(token))
+	unmatched.sort()
+	level_unmatched_tokens = unmatched
+
+
+func _apply_subobject_tokens(root: Node, tokens: Array, shown: bool, matched: Dictionary) -> void:
+	for token_value in tokens:
+		var token := String(token_value)
+		_set_named_visibility(root, token, shown, matched)
+
+
+func _subobject_token_matches(token: String, node_name: String) -> bool:
+	## Exact authored names first; the SAGE prefix wildcard (V1_PIECE*) matches
+	## by prefix, never by substring.
+	if token.ends_with("*"):
+		return node_name.to_lower().begins_with(token.trim_suffix("*").to_lower())
+	return node_name.to_lower() == token.to_lower()
+
+
+func _set_named_visibility(root: Node, token: String, shown: bool, matched: Dictionary) -> void:
+	if _subobject_token_matches(token, root.name):
+		if root is Node3D:
+			(root as Node3D).visible = shown
+			matched[root.name] = shown
+	for child in root.get_children():
+		_set_named_visibility(child, token, shown, matched)
+
+
+func level_state() -> Dictionary:
+	return {
+		"level": level,
+		"visibleSubObjects": level_visible_sub_objects.duplicate(),
+		"hiddenSubObjects": level_hidden_sub_objects.duplicate(),
+		"unmatchedTokens": level_unmatched_tokens.duplicate(),
+		"appliedNodes": level_applied_nodes.duplicate(),
+		"upgradeInProgress": upgrade_in_progress,
+		"upgradeProgress": upgrade_progress,
+	}
 
 
 func _configure_bounded_workshop_evidence(evidence: Array) -> void:
@@ -1286,63 +1560,88 @@ func _selected_pack_route_registry() -> Dictionary:
 		if typeof(definition) == TYPE_DICTIONARY and not (definition as Dictionary).is_empty():
 			(registry.audioEvents as Dictionary)[event_id.to_lower()] = "selected-pack-event"
 
-	var pack_path := ModLoader.resolve_pack_path(_pack_root, "pack.json")
-	var pack_document := _read_bounded_json(pack_path, MAX_ROUTE_DOCUMENT_BYTES)
-	if pack_document.is_empty() or typeof(pack_document.get("files")) != TYPE_DICTIONARY:
-		return {}
-	var files: Dictionary = pack_document.get("files", {}) as Dictionary
-	var bindings_relative := String(files.get("fordsParticleBindings", ""))
-	var bindings_path := ModLoader.resolve_pack_path(_pack_root, bindings_relative)
-	var bindings := _read_bounded_json(bindings_path, MAX_ROUTE_DOCUMENT_BYTES)
-	if (
-		String(bindings.get("schema", "")) != "openbfme.fords-particle-bindings"
-		or int(bindings.get("schemaVersion", -1)) != 0
-	):
-		return {}
+	# The particle-bindings document lives in whichever allowed pack declares it
+	# (the host Fords pack for structures arriving from faction supplement
+	# packs). A candidate with no declared bindings is skipped, not fatal; only
+	# a declared-but-invalid document or no declaration anywhere fails closed.
+	for candidate_root in _route_registry_pack_roots():
+		var pack_path := ModLoader.resolve_pack_path(candidate_root, "pack.json")
+		var pack_document := _read_bounded_json_for_root(pack_path, MAX_ROUTE_DOCUMENT_BYTES, candidate_root)
+		if pack_document.is_empty() or typeof(pack_document.get("files")) != TYPE_DICTIONARY:
+			continue
+		var files: Dictionary = pack_document.get("files", {}) as Dictionary
+		var bindings_relative := String(files.get("fordsParticleBindings", ""))
+		if bindings_relative == "":
+			continue
+		var bindings_path := ModLoader.resolve_pack_path(candidate_root, bindings_relative)
+		var bindings := _read_bounded_json_for_root(bindings_path, MAX_ROUTE_DOCUMENT_BYTES, candidate_root)
+		if (
+			String(bindings.get("schema", "")) != "openbfme.fords-particle-bindings"
+			or int(bindings.get("schemaVersion", -1)) != 0
+		):
+			return {}
 
-	var unresolved: Dictionary = {}
-	var family: Dictionary = bindings.get("familyResolution", {}) as Dictionary
-	for value in family.get("unresolvedDuplicateIdentifierSystemIds", []) as Array:
-		unresolved[String(value)] = true
-	var selected: Dictionary = {}
-	for value in family.get("provisionalRuntimeSelections", []) as Array:
-		if typeof(value) == TYPE_DICTIONARY:
-			var row: Dictionary = value
-			selected[String(row.get("particleSystemId", ""))] = String(row.get("status", ""))
-	for value in bindings.get("definitionRegistry", []) as Array:
-		if typeof(value) != TYPE_DICTIONARY:
-			return {}
-		var row: Dictionary = value
-		var particle_id := String(row.get("definitionId", ""))
-		if particle_id == "":
-			return {}
-		var status := "exact-single-authored-family"
-		if unresolved.has(particle_id):
-			status = "blocked-unresolved-cross-family-precedence"
-		elif selected.has(particle_id):
-			status = String(selected[particle_id])
-		(registry.particleSystems as Dictionary)[particle_id] = status
-	for value in bindings.get("fxLists", []) as Array:
-		if typeof(value) != TYPE_DICTIONARY:
-			return {}
-		var row: Dictionary = value
-		var fx_id := String(row.get("fxListId", ""))
-		if fx_id == "":
-			return {}
-		var status := "source-identified-runtime-emitter-unimplemented"
-		for system_value in row.get("systems", []) as Array:
-			if typeof(system_value) != TYPE_DICTIONARY:
+		var unresolved: Dictionary = {}
+		var family: Dictionary = bindings.get("familyResolution", {}) as Dictionary
+		for value in family.get("unresolvedDuplicateIdentifierSystemIds", []) as Array:
+			unresolved[String(value)] = true
+		var selected: Dictionary = {}
+		for value in family.get("provisionalRuntimeSelections", []) as Array:
+			if typeof(value) != TYPE_DICTIONARY:
+				var row: Dictionary = value
+				selected[String(row.get("particleSystemId", ""))] = String(row.get("status", ""))
+		for value in bindings.get("definitionRegistry", []) as Array:
+			if typeof(value) != TYPE_DICTIONARY:
 				return {}
-			var system: Dictionary = system_value
-			var resolution: Dictionary = system.get("familyResolution", {}) as Dictionary
-			if String(resolution.get("status", "")) == "unresolved-cross-family-precedence":
+			var row: Dictionary = value
+			var particle_id := String(row.get("definitionId", ""))
+			if particle_id == "":
+				return {}
+			var status := "exact-single-authored-family"
+			if unresolved.has(particle_id):
 				status = "blocked-unresolved-cross-family-precedence"
-		(registry.fxLists as Dictionary)[fx_id] = status
-	return registry
+			elif selected.has(particle_id):
+				status = String(selected[particle_id])
+			(registry.particleSystems as Dictionary)[particle_id] = status
+		for value in bindings.get("fxLists", []) as Array:
+			if typeof(value) != TYPE_DICTIONARY:
+				return {}
+			var row: Dictionary = value
+			var fx_id := String(row.get("fxListId", ""))
+			if fx_id == "":
+				return {}
+			var status := "source-identified-runtime-emitter-unimplemented"
+			for system_value in row.get("systems", []) as Array:
+				if typeof(system_value) != TYPE_DICTIONARY:
+					return {}
+				var system: Dictionary = system_value
+				var resolution: Dictionary = system.get("familyResolution", {}) as Dictionary
+				if String(resolution.get("status", "")) == "unresolved-cross-family-precedence":
+					status = "blocked-unresolved-cross-family-precedence"
+			(registry.fxLists as Dictionary)[fx_id] = status
+		return registry
+	return {}
 
 
-func _read_bounded_json(path: String, maximum_bytes: int) -> Dictionary:
-	if path == "" or not FileAccess.file_exists(path) or not ModLoader.path_is_within(_pack_root, path):
+func _route_registry_pack_roots() -> Array[String]:
+	## Candidate packs for the lifecycle route registry, in priority order: the
+	## structure's own pack first, then every recorded host/faction pack root.
+	var roots: Array[String] = []
+	if _pack_root != "":
+		roots.append(_pack_root)
+	for allowed in _allowed_pack_roots:
+		var duplicate := false
+		for existing in roots:
+			if _same_pack_root(existing, allowed):
+				duplicate = true
+				break
+		if not duplicate:
+			roots.append(allowed)
+	return roots
+
+
+func _read_bounded_json_for_root(path: String, maximum_bytes: int, pack_root: String) -> Dictionary:
+	if path == "" or not FileAccess.file_exists(path) or not ModLoader.path_is_within(pack_root, path):
 		return {}
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null or file.get_length() <= 0 or file.get_length() > maximum_bytes:
@@ -1351,6 +1650,32 @@ func _read_bounded_json(path: String, maximum_bytes: int) -> Dictionary:
 	file.close()
 	var parsed: Variant = JSON.parse_string(payload.get_string_from_utf8())
 	return parsed as Dictionary if typeof(parsed) == TYPE_DICTIONARY else {}
+
+
+func set_allowed_pack_roots(roots: Array) -> void:
+	## Records every pack root the lifecycle route registry may resolve from.
+	## Mirrors the HUD's multi-pack acceptance: fail closed for content with no
+	## pack backing, accept any recorded host/faction pack root otherwise.
+	_allowed_pack_roots.clear()
+	for root_value in roots:
+		var root := String(root_value).strip_edges()
+		if root == "":
+			continue
+		var duplicate := false
+		for existing in _allowed_pack_roots:
+			if _same_pack_root(existing, root):
+				duplicate = true
+				break
+		if not duplicate:
+			_allowed_pack_roots.append(root)
+
+
+func _same_pack_root(left: String, right: String) -> bool:
+	if left == right:
+		return true
+	var a := left.replace("\\", "/").simplify_path().trim_suffix("/").to_lower()
+	var b := right.replace("\\", "/").simplify_path().trim_suffix("/").to_lower()
+	return a != "" and a == b
 
 
 func _collect_route_blockers() -> void:
@@ -1410,6 +1735,9 @@ func _activate_phase(phase: String) -> void:
 		_activate_v1_phase(phase)
 	else:
 		_activate_v0_phase(phase)
+	# A phase swap re-instantiates the body: the live level's authored
+	# sub-object visibility re-applies on the fresh visual.
+	_apply_level_sub_objects()
 
 
 func _activate_v0_phase(phase: String) -> void:
@@ -1597,11 +1925,14 @@ func _apply_declared_phase_animation(node: Node3D, phase: String, progress: floa
 		var clip := _first_declared_available_clip(player, declared_names)
 		if clip == "":
 			continue
-		if mode == "loop":
+		if mode == "loop" or mode == "loop-random":
 			# Source GLB clips preserve their one-shot metadata; the declared
-			# loop mode must be enforced or idle animations (banners, doors)
-			# play once at activation and freeze — which is why long-standing
-			# preplaced structures looked static while fresh builds animated.
+			# loop mode must be enforced or idle animations (banners, doors,
+			# farm/barracks idles) play once at activation and freeze — which is
+			# why long-standing preplaced structures looked static while fresh
+			# builds animated. loop-random loops the authored clip(s); random
+			# variant selection is deferred until a document declares more than
+			# one idle clip for a phase.
 			var looped := player.get_animation(clip)
 			if looped != null:
 				looped.loop_mode = Animation.LOOP_LINEAR
@@ -1837,7 +2168,8 @@ func _build_markers() -> void:
 	var back_mesh := BoxMesh.new()
 	back_mesh.size = Vector3(3.6, 0.16, 0.13)
 	_health_back.mesh = back_mesh
-	_health_back.position = Vector3(0, 7.4 if structure_kind == "fortress" else 4.8, 0)
+	# Hug the rooflines: the old 7.4/4.8 anchors floated the bars in the sky.
+	_health_back.position = Vector3(0, 5.0 if structure_kind == "fortress" else 3.1, 0)
 	_health_back.material_override = _emissive(Color("131a1e"))
 	_health_back.visible = contract_error == ""
 	add_child(_health_back)
@@ -1848,6 +2180,21 @@ func _build_markers() -> void:
 	_health_fill.material_override = _emissive(Color("5bd765") if team == 0 else Color("df5a4f"))
 	_health_fill.visible = contract_error == ""
 	add_child(_health_fill)
+	# Construction progress rides just under the health bar in retail gold.
+	_build_back = MeshInstance3D.new()
+	_build_back.name = "BuildBack"
+	_build_back.mesh = back_mesh.duplicate()
+	_build_back.position = _health_back.position + Vector3(0, -0.28, 0)
+	_build_back.material_override = _emissive(Color("1e1710"))
+	_build_back.visible = false
+	add_child(_build_back)
+	_build_fill = MeshInstance3D.new()
+	_build_fill.name = "BuildFill"
+	_build_fill.mesh = back_mesh.duplicate()
+	_build_fill.position = _build_back.position + Vector3(0, 0.02, -0.01)
+	_build_fill.material_override = _emissive(Color("e0b64f"))
+	_build_fill.visible = false
+	add_child(_build_fill)
 
 
 func _emissive(color: Color) -> StandardMaterial3D:

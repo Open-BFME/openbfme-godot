@@ -3,13 +3,14 @@
 **Owner:** integration owner
 **Owns:** permanent engineering decisions and milestone order
 **Does not own:** volatile status, task assignments, retail identifiers, or gate results
-**Last verified commit:** `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
+**Last verified commit:** `ad370cc9b02bdec600564cf1c606e70833faa97a`
 **Update trigger:** an approved architecture or milestone-order decision changes
 **Validation:** canonical documents linked from `README.md`
 
 ## Decisions
 
-- BFME2 1.06 only until base-game completion.
+- BFME2 1.06 skirmish compatibility is the product target.
+- Campaign material and War of the Ring are excluded from the product roadmap.
 - Eight players maximum.
 - Python/pinned tools for conversion, pure C# for deterministic simulation,
   Godot/GDScript for presentation.
@@ -19,6 +20,17 @@
 - Self-hosted local/listen/dedicated play; no mandatory central service.
 - Agent work uses an owner-controlled bounded loop with hostile review and a
   proposal-only retrospective.
+
+## Current position
+
+Phase B (M2 Men/Fords acceptance) is the active gate. Development work has run
+ahead of the acceptance order: the tree already carries six faction runtime
+surfaces, a five-map development set, heroes, powers, spellbooks, and a
+skirmish shell, none of which are accepted milestones. The active UI rewrite
+has removed the legacy match scene, `MatchController`, and the legacy HUD from
+the runtime path (part of Phase C item 5); legacy `SimWorld` sources remain
+pending migration. Phase D–E (pure C# simulator, lockstep multiplayer) have not
+started. Volatile pass/fail evidence lives only in `STATUS.md`.
 
 ## Phase A — Control plane
 
@@ -77,8 +89,8 @@ Implement `MatchConfig`, `GameCommand`, `AcceptedCommandBatch`, `StateDigest`,
 3. Classify every effective retail map payload and complete all supported
    skirmish/multiplayer maps.
 4. Ship the independent eight-player multiplayer beta.
-5. Complete Good/Evil campaigns, WotR, Create-a-Hero, shell, saves, replays,
-   observer flow, and custom-map/scenario tools.
+5. Complete Create-a-Hero, the skirmish shell, saves, replays, observer flow,
+   and custom-map/scenario tools.
 
 ## Phase G — Modern product
 

@@ -79,6 +79,17 @@ SOURCE_NULL_COMMAND_SETS: Mapping[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
+# The BFME2 1.06 skirmish shell plays one loop set while loading and one in
+# the shell/game flow; both are engine-level constants, so they are declared
+# here as caller-owned policy rather than guessed from INI traversal.
+MUSIC_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = {
+    key: (
+        ("Shell2Music", "skirmish shell music loop"),
+        ("Shell2MusicForLoadScreen", "skirmish load-screen music loop"),
+    )
+    for key in IMPLICIT_OBJECT_ROOTS
+}
+
 
 def implicit_object_roots(player_template: str) -> tuple[tuple[str, str], ...]:
     """Return the curated implicit census roots for one PlayerTemplate identity."""
@@ -121,12 +132,27 @@ def source_null_command_sets(player_template: str) -> tuple[tuple[str, str], ...
     return SOURCE_NULL_COMMAND_SETS.get(player_template.casefold(), ())
 
 
+def music_roots(player_template: str) -> tuple[tuple[str, str], ...]:
+    """Return the engine-level skirmish music roots for one faction."""
+
+    if not player_template or not isinstance(player_template, str):
+        raise FactionPolicyError("player template identity is invalid")
+    entries = MUSIC_ROOTS.get(player_template.casefold())
+    if entries is None:
+        raise FactionPolicyError(
+            f"faction has no curated music root policy: {player_template}"
+        )
+    return entries
+
+
 __all__ = [
     "FactionPolicyError",
     "IMPLICIT_OBJECT_ROOTS",
+    "MUSIC_ROOTS",
     "SOURCE_NULL_COMMAND_SETS",
     "SOURCE_NULL_MAPPED_IMAGE_TEXTURES",
     "implicit_object_roots",
+    "music_roots",
     "source_null_command_sets",
     "source_null_mapped_image_textures",
 ]

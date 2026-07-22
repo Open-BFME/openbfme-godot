@@ -1034,6 +1034,8 @@ class W3dAdapterInitializationTests(unittest.TestCase):
                     required_equipment=[],
                     excluded_optional_meshes=[],
                     proven_root_rigid_bake=False,
+                    proven_pivot_only_model=False,
+                    retail_absent_textures=[],
                     output=root / "output.glb",
                 )
                 adapter.initialize_w3d_converter = lambda _root: calls.__setitem__(

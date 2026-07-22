@@ -623,10 +623,49 @@ End
         self.assertIsNone(parsed_include.resolved_virtual_path)
 
     def test_header_parent_contract_is_validated(self) -> None:
-        with self.assertRaisesRegex(ValueError, "unexpected parent"):
-            parse_sage_document(b"Object Bad Parent\nEnd", "bad.ini")
+        # Retail top-level Object headers may carry a second token: a parent
+        # template (``Object DwarvenFortressMightyCatapult DwarvenCatapult``)
+        # or a demo-only editor annotation (``Object Water Plane``,
+        # ``Object MoriaDebrisPileA (Rocks)``).  The token is recorded as the
+        # header parent exactly like the flat sage_ini reader; typed passes
+        # own its meaning.
+        document = parse_sage_document(
+            b"Object Water Plane\n"
+            b"  Draw = W3DScriptedModelDraw ModuleTag_Draw\n"
+            b"    DefaultModelConditionState\n"
+            b"      Model = WaterPlane\n"
+            b"    End\n"
+            b"End\n"
+            b"  EditorSorting = SYSTEM\n"
+            b"  KindOf = IMMOBILE\n"
+            b"End\n"
+            b"Object SiegeCatapultUpgraded SiegeCatapult\n"
+            b"  KindOf = MACHINE\n"
+            b"End\n"
+            b"Object MoriaDebrisPileA (Rocks)\n"
+            b"End\n",
+            "data/ini/object/headers.ini",
+        )
+        self.assertEqual(
+            [(item.kind, item.name, item.parent) for item in document.objects],
+            [
+                ("Object", "Water", "Plane"),
+                ("Object", "SiegeCatapultUpgraded", "SiegeCatapult"),
+                ("Object", "MoriaDebrisPileA", "(Rocks)"),
+            ],
+        )
+        water = document.objects[0]
+        self.assertEqual(
+            [block.kind for block in water.blocks], ["W3DScriptedModelDraw"]
+        )
+        self.assertEqual(water.values("EditorSorting"), ("SYSTEM",))
+        self.assertEqual(water.values("KindOf"), ("IMMOBILE",))
         with self.assertRaisesRegex(ValueError, "lacks a parent"):
             parse_sage_document(b"ChildObject Bad\nEnd", "bad.ini")
+        # A keyword line which fits no header shape must fail closed rather
+        # than drop the definition silently.
+        with self.assertRaisesRegex(ValueError, "malformed Object-family header"):
+            parse_sage_document(b"Object Too Many Tokens\nEnd", "bad.ini")
 
 
 if __name__ == "__main__":

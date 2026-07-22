@@ -9,12 +9,13 @@ visual bindings and resolved audio/image leaves when those stages are ready.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import re
+import threading
 
 from .sage_cst import (
     SageAssignment,
@@ -52,6 +53,16 @@ class PlayableUnitCompilerInputs:
     player_templates: Mapping[str, IniBlock]
     numeric_defines: Mapping[str, int | float]
     object_parse_errors: Mapping[str, str]
+    # Lazy per-kind indexes filled during a faction batch (not part of identity).
+    flat_kind_cache: dict[str, tuple[IniBlock, ...]] = field(
+        default_factory=dict, hash=False, compare=False, repr=False
+    )
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] = field(
+        default_factory=dict, hash=False, compare=False, repr=False
+    )
+    cache_lock: threading.Lock = field(
+        default_factory=threading.Lock, hash=False, compare=False, repr=False
+    )
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -291,6 +302,27 @@ def _resolved_expression(
     return constants.get(token.casefold())
 
 
+_MULTIPLICATIVE_PATTERN = re.compile(
+    r"#MULTIPLY\(\s*([^()\s]+)\s+(-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s*\)",
+    re.IGNORECASE,
+)
+
+
+def _resolved_multiplicative_expression(
+    expression: str, constants: Mapping[str, int | float]
+) -> int | float | None:
+    """Resolve one numeric expression, including authored #MULTIPLY factors."""
+
+    match = _MULTIPLICATIVE_PATTERN.fullmatch(expression.strip())
+    if match is None:
+        return _resolved_expression(expression, constants)
+    base = _resolved_expression(match.group(1), constants)
+    if base is None:
+        return None
+    value = float(base) * float(match.group(2))
+    return int(value) if value.is_integer() else value
+
+
 def _resolved_scalar(
     fields: Mapping[str, Mapping[str, object]],
     name: str,
@@ -359,13 +391,24 @@ def _default_set_block(
             for row in block.assignments
             if row.key.casefold() in {"condition", "conditions"}
         ]
-        if conditions and all(
-            "set_normal" not in _tokens(value.casefold()) and value not in {"none", ""}
-            for value in conditions
+        if conditions and not all(
+            _is_default_set_condition(value) for value in conditions
         ):
             continue
         candidates.append(block)
     return candidates[0] if len(candidates) == 1 else None
+
+
+def _is_default_set_condition(value: str) -> bool:
+    """SAGE set-condition semantics: a positive token requires that flag to be
+    set (an alternate stance), while a ``-`` prefix requires it to be *unset*.
+    A set whose conditions carry no positive requirement beyond ``None`` /
+    ``SET_NORMAL`` is therefore the base stance (Rohirrim author their default
+    spear set as ``Conditions = -WEAPONSET_TOGGLE_1``)."""
+    positives = [
+        token for token in _tokens(value.casefold()) if not token.startswith("-")
+    ]
+    return all(token in {"none", "set_normal"} for token in positives)
 
 
 def _default_set_target(
@@ -419,9 +462,50 @@ def _resolved_set_field(
     }
 
 
+def _flat_blocks_for_kind(
+    documents: Mapping[str, bytes],
+    kind: str,
+    cache: dict[str, tuple[IniBlock, ...]] | None = None,
+    *,
+    cache_lock: threading.Lock | None = None,
+) -> tuple[IniBlock, ...]:
+    """Parse every document for one flat INI kind once per prepared batch."""
+
+    key = kind.casefold()
+    if cache is not None:
+        lock = cache_lock or threading.Lock()
+        with lock:
+            if key in cache:
+                return cache[key]
+    blocks: list[IniBlock] = []
+    for payload in documents.values():
+        try:
+            blocks.extend(parse_flat_named_blocks(payload, kind))
+        except (UnicodeDecodeError, ValueError):
+            continue
+    packed = tuple(blocks)
+    if cache is not None:
+        lock = cache_lock or threading.Lock()
+        with lock:
+            cache.setdefault(key, packed)
+            return cache[key]
+    return packed
+
+
 def _named_definition_values(
-    documents: Mapping[str, bytes], kind: str, identifier: str
+    documents: Mapping[str, bytes],
+    kind: str,
+    identifier: str,
+    *,
+    cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None = None,
+    cache_lock: threading.Lock | None = None,
 ) -> dict[str, list[dict[str, object]]] | None:
+    cache_key = (kind.casefold(), identifier.casefold())
+    if cache is not None:
+        lock = cache_lock or threading.Lock()
+        with lock:
+            if cache_key in cache:
+                return cache[cache_key]
     header = re.compile(
         rf"^{re.escape(kind)}\s+{re.escape(identifier)}\s*$", re.IGNORECASE
     )
@@ -457,33 +541,232 @@ def _named_definition_values(
                     }
                 )
     if not matches:
-        return None
-    semantic = {_digest(value): value for value in matches}
-    return next(iter(semantic.values())) if len(semantic) == 1 else None
+        result = None
+    else:
+        semantic = {_digest(value): value for value in matches}
+        result = next(iter(semantic.values())) if len(semantic) == 1 else None
+    if cache is not None:
+        lock = cache_lock or threading.Lock()
+        with lock:
+            cache.setdefault(cache_key, result)
+            return cache[cache_key]
+    return result
 
 
 def _default_nested_target(
-    documents: Mapping[str, bytes], kind: str, identifier: str, field: str
+    documents: Mapping[str, bytes],
+    kind: str,
+    identifier: str,
+    field: str,
+    *,
+    flat_kind_cache: dict[str, tuple[IniBlock, ...]] | None = None,
+    cache_lock: threading.Lock | None = None,
 ) -> str | None:
     candidates: dict[str, str] = {}
-    for payload in documents.values():
-        try:
-            blocks = parse_flat_named_blocks(payload, kind)
-        except (UnicodeDecodeError, ValueError):
+    blocks = _flat_blocks_for_kind(
+        documents, kind, flat_kind_cache, cache_lock=cache_lock
+    )
+    for block in blocks:
+        if block.name.casefold() != identifier.casefold():
             continue
-        for block in blocks:
-            if block.name.casefold() != identifier.casefold():
-                continue
-            values = [value for value in (_first((row,)) for row in block.values(field)) if value]
-            if len(values) == 1:
-                candidates[values[0].casefold()] = values[0]
+        values = [
+            value
+            for value in (_first((row,)) for row in block.values(field))
+            if value
+        ]
+        if len(values) == 1:
+            candidates[values[0].casefold()] = values[0]
     return next(iter(candidates.values())) if len(candidates) == 1 else None
+
+
+def _weapon_damage_nuggets(
+    documents: Mapping[str, bytes],
+    identifier: str,
+    *,
+    cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> list[Mapping[str, object]] | None:
+    """Authored DamageNugget sub-blocks of one named Weapon definition."""
+
+    cache_key = ("weapon-damage-nugget", identifier.casefold())
+    if cache is not None:
+        lock = cache_lock or threading.Lock()
+        with lock:
+            if cache_key in cache:
+                return cache[cache_key]
+    header = re.compile(rf"^Weapon\s+{re.escape(identifier)}\s*$", re.IGNORECASE)
+    matches: list[list[dict[str, object]]] = []
+    for path, payload in sorted(documents.items(), key=lambda item: item[0].casefold()):
+        try:
+            lines = payload.decode("cp1252").splitlines()
+        except UnicodeDecodeError:
+            continue
+        active = False
+        depth = 0
+        nuggets: list[dict[str, object]] = []
+        current: dict[str, object] | None = None
+        for line_number, raw in enumerate(lines, start=1):
+            stripped = raw.strip()
+            clean = stripped.split(";", 1)[0].split("//", 1)[0].strip()
+            if not active:
+                if raw.lstrip() == raw and header.fullmatch(clean):
+                    active = True
+                continue
+            if depth == 0 and raw.lstrip() == raw and clean.casefold() == "end":
+                matches.append(nuggets)
+                active = False
+                break
+            if not clean:
+                continue
+            if re.fullmatch(r"[A-Za-z]+Nugget", clean):
+                depth += 1
+                current = (
+                    {"fields": defaultdict(list), "line": line_number}
+                    if depth == 1 and clean.casefold() == "damagenugget"
+                    else None
+                )
+                if current is not None:
+                    nuggets.append(current)
+                continue
+            if clean.casefold() == "end" and depth:
+                depth -= 1
+                current = None
+                continue
+            if depth == 1 and current is not None and "=" in clean:
+                key, expression = (part.strip() for part in clean.split("=", 1))
+                if key and expression:
+                    fields = current["fields"]
+                    assert isinstance(fields, defaultdict)
+                    fields[key.casefold()].append(
+                        {
+                            "expression": expression,
+                            "sourceIni": path.replace("\\", "/"),
+                            "line": line_number,
+                        }
+                    )
+    if not matches:
+        result = None
+    else:
+        semantic = {_digest(value): value for value in matches}
+        result = next(iter(semantic.values())) if len(semantic) == 1 else None
+    if cache is not None:
+        lock = cache_lock or threading.Lock()
+        with lock:
+            cache.setdefault(cache_key, result)
+            return cache[cache_key]
+    return result
+
+
+def _base_weapon_damage(
+    documents: Mapping[str, bytes],
+    weapon_id: str,
+    constants: Mapping[str, int | float],
+    *,
+    cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> dict[str, object] | None:
+    """Aggregate a weapon's base authored DamageNugget damage.
+
+    Retail hero melee weapons and upgrade-gated horde weapons carry damage in
+    DamageNugget sub-blocks rather than one flat Damage row.  The base
+    (level-1) total sums every nugget that is not locked behind an upgrade or
+    restricted to a target filter; upgrade and filtered nuggets are recorded
+    as exclusions instead of guessed at.
+    """
+
+    nuggets = _weapon_damage_nuggets(
+        documents, weapon_id, cache=cache, cache_lock=cache_lock
+    )
+    if not nuggets:
+        return None
+    components: list[dict[str, object]] = []
+    excluded: list[dict[str, object]] = []
+    for nugget in nuggets:
+        fields = nugget["fields"]
+        assert isinstance(fields, Mapping)
+        exclusion = (
+            "required-upgrade"
+            if fields.get("requiredupgradenames")
+            else "special-object-filter"
+            if fields.get("specialobjectfilter")
+            else ""
+        )
+        damage = _resolved_definition_field(
+            fields,
+            "Damage",
+            constants,
+            resolve=_resolved_multiplicative_expression,
+        )
+        if exclusion:
+            row: dict[str, object] = {"reason": exclusion, "line": nugget["line"]}
+            if damage is not None:
+                row["damage"] = damage
+            excluded.append(row)
+            continue
+        if damage is None:
+            return None
+        component = dict(damage)
+        damage_types = {
+            str(value.get("expression", "")).casefold(): str(
+                value.get("expression", "")
+            )
+            for value in fields.get("damagetype", ())
+            if str(value.get("expression", ""))
+        }
+        if len(damage_types) == 1:
+            component["damageType"] = next(iter(damage_types.values()))
+        components.append(component)
+    if not components:
+        return None
+    result: dict[str, object] = {
+        "value": sum(component["value"] for component in components),
+        "semantic": (
+            "base authored DamageNugget damage total "
+            "(level-1 unupgraded, unfiltered components)"
+        ),
+        "components": components,
+    }
+    if excluded:
+        result["excludedNuggets"] = excluded
+    return result
+
+
+def _hero_secondary_weapon_target(ancestry: Sequence[SageObject]) -> str | None:
+    """Hero standard weapon when the default set reserves PRIMARY for powers."""
+
+    block = _default_set_block(ancestry, "WeaponSet")
+    if block is None:
+        return None
+    restricted_slots = {
+        tokens[0].casefold()
+        for row in block.assignments
+        if row.key.casefold() == "onlyagainst"
+        for tokens in [_tokens(row.value)]
+        if tokens
+    }
+    candidates: list[str] = []
+    for row in block.assignments:
+        if row.key.casefold() != "weapon":
+            continue
+        tokens = _tokens(row.value)
+        if len(tokens) < 2:
+            continue
+        slots = {token.casefold() for token in tokens[:-1]}
+        if slots & restricted_slots:
+            continue
+        candidates.append(tokens[-1])
+    unique = {value.casefold(): value for value in candidates}
+    return next(iter(unique.values())) if len(unique) == 1 else None
 
 
 def _resolved_definition_field(
     definition: Mapping[str, Sequence[Mapping[str, object]]] | None,
     field: str,
     constants: Mapping[str, int | float],
+    *,
+    resolve: Callable[[str, Mapping[str, int | float]], int | float | None] = (
+        _resolved_expression
+    ),
 ) -> dict[str, object] | None:
     if definition is None:
         return None
@@ -491,7 +774,7 @@ def _resolved_definition_field(
     resolved: list[dict[str, object]] = []
     for row in rows:
         expression = str(row.get("expression", ""))
-        value = _resolved_expression(expression, constants)
+        value = resolve(expression, constants)
         if value is not None:
             resolved.append(
                 {
@@ -529,6 +812,14 @@ def _simulation_contract(
     constants: Mapping[str, int | float],
     documents: Mapping[str, bytes],
     container_lineage: Sequence[SageObject],
+    *,
+    flat_kind_cache: dict[str, tuple[IniBlock, ...]] | None = None,
+    named_definition_cache: dict[
+        tuple[str, str], dict[str, list[dict[str, object]]] | None
+    ]
+    | None = None,
+    cache_lock: threading.Lock | None = None,
+    hero: bool = False,
 ) -> dict[str, object]:
     resolved: dict[str, object] = {}
     required = {
@@ -574,7 +865,13 @@ def _simulation_contract(
         speed["definitionId"] = locomotor_id
         resolved["speed"] = speed
     locomotor = (
-        _named_definition_values(documents, "Locomotor", locomotor_id)
+        _named_definition_values(
+            documents,
+            "Locomotor",
+            locomotor_id,
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
         if locomotor_id
         else None
     )
@@ -603,8 +900,20 @@ def _simulation_contract(
         movement["locomotorId"] = locomotor_id
         resolved["movement"] = movement
     weapon_id = _default_set_target(member_lineage, "WeaponSet", "Weapon")
+    if weapon_id is None and hero:
+        # Hero sets that reserve PRIMARY for special powers author the standard
+        # attack on an unrestricted secondary slot (retail Drogoth).
+        weapon_id = _hero_secondary_weapon_target(member_lineage)
     weapon = (
-        _named_definition_values(documents, "Weapon", weapon_id) if weapon_id else None
+        _named_definition_values(
+            documents,
+            "Weapon",
+            weapon_id,
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if weapon_id
+        else None
     )
     if weapon_id and weapon is not None:
         combat: dict[str, object] = {"weaponId": weapon_id}
@@ -618,6 +927,13 @@ def _simulation_contract(
             ("damage", "Damage"),
         ):
             field = _resolved_definition_field(weapon, source_name, constants)
+            if field is None and hero:
+                field = _resolved_definition_field(
+                    weapon,
+                    source_name,
+                    constants,
+                    resolve=_resolved_multiplicative_expression,
+                )
             if field is not None:
                 combat[output_name] = field
         damage_owner = weapon
@@ -631,17 +947,55 @@ def _simulation_contract(
             next(iter(warheads.values()))
             if len(warheads) == 1
             else _default_nested_target(
-                documents, "Weapon", weapon_id, "WarheadTemplateName"
+                documents,
+                "Weapon",
+                weapon_id,
+                "WarheadTemplateName",
+                flat_kind_cache=flat_kind_cache,
+                cache_lock=cache_lock,
             )
         )
         if warhead_id:
-            warhead = _named_definition_values(documents, "Weapon", warhead_id)
+            warhead = _named_definition_values(
+                documents,
+                "Weapon",
+                warhead_id,
+                cache=named_definition_cache,
+                cache_lock=cache_lock,
+            )
             if warhead is not None:
                 damage_owner = warhead
                 combat["warheadId"] = warhead_id
                 damage = _resolved_definition_field(warhead, "Damage", constants)
                 if damage is not None:
                     combat["damage"] = damage
+        if "damage" not in combat:
+            # Retail hero melee weapons and upgrade-gated horde weapons author
+            # damage as DamageNugget sub-blocks; aggregate the base components
+            # instead of failing as an unexplained gap.  Projectile weapons
+            # carry those nuggets on the warhead, which takes precedence just
+            # like a flat warhead Damage row.
+            nugget_damage = (
+                _base_weapon_damage(
+                    documents,
+                    warhead_id,
+                    constants,
+                    cache=named_definition_cache,
+                    cache_lock=cache_lock,
+                )
+                if warhead_id
+                else None
+            )
+            if nugget_damage is None:
+                nugget_damage = _base_weapon_damage(
+                    documents,
+                    weapon_id,
+                    constants,
+                    cache=named_definition_cache,
+                    cache_lock=cache_lock,
+                )
+            if nugget_damage is not None:
+                combat["damage"] = nugget_damage
         projectiles = {
             str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
             for row in weapon.get("projectiletemplatename", ())
@@ -651,7 +1005,12 @@ def _simulation_contract(
             next(iter(projectiles.values()))
             if len(projectiles) == 1
             else _default_nested_target(
-                documents, "Weapon", weapon_id, "ProjectileTemplateName"
+                documents,
+                "Weapon",
+                weapon_id,
+                "ProjectileTemplateName",
+                flat_kind_cache=flat_kind_cache,
+                cache_lock=cache_lock,
             )
         )
         if projectile_id:
@@ -671,8 +1030,35 @@ def _simulation_contract(
             ("continuousFireCoastMs", "ContinuousFireCoast"),
         ):
             field = _resolved_definition_field(weapon, source_name, constants)
+            if field is None and hero:
+                field = _resolved_definition_field(
+                    weapon,
+                    source_name,
+                    constants,
+                    resolve=_resolved_multiplicative_expression,
+                )
             if field is not None:
                 combat[output_name] = field
+        if "delayBetweenShotsMs" not in combat and not weapon.get("delaybetweenshots"):
+            # SAGE defaults an unauthored DelayBetweenShots to 0 ms (retail
+            # MordorLanceThrown comments it out and carries cadence on the clip
+            # reload instead); record that explicitly rather than inventing an
+            # authored source.
+            combat["delayBetweenShotsMs"] = {
+                "value": 0,
+                "semantic": (
+                    "DelayBetweenShots is not authored; the SAGE engine default is 0 ms"
+                ),
+            }
+        if hero and "preAttackDelayMs" not in combat and not weapon.get("preattackdelay"):
+            # SAGE defaults an unauthored PreAttackDelay to 0 ms; record that
+            # explicitly rather than inventing an authored source.
+            combat["preAttackDelayMs"] = {
+                "value": 0,
+                "semantic": (
+                    "PreAttackDelay is not authored; the SAGE engine default is 0 ms"
+                ),
+            }
         resolved["combat"] = combat
     else:
         missing.append("combat.weapon")
@@ -681,6 +1067,56 @@ def _simulation_contract(
         for field in ("attackRange", "delayBetweenShotsMs", "preAttackDelayMs", "firingDurationMs", "damage"):
             if field not in combat_value:
                 missing.append(f"combat.{field}")
+    # Armor/forge-upgrade section (armor.ini ArmorSet tables + WeaponSetUpgrade
+    # effects). A referenced set or effect that cannot be resolved fails the
+    # descriptor closed; an object with no authored ArmorSet records the SAGE
+    # engine passthrough explicitly.
+    # Imported lazily: armor_compiler reuses this module's resolution helpers.
+    from .armor_compiler import (
+        ArmorCompilerError,
+        base_weapon_targets,
+        compile_armor_contract,
+        compile_weapon_upgrades,
+    )
+
+    try:
+        # Singleton units share one ancestry between container and member;
+        # scanning it twice would duplicate every upgrade behavior.
+        armor_lineages = [member_lineage]
+        if (
+            container_lineage
+            and member_lineage
+            and container_lineage[-1].name.casefold()
+            != member_lineage[-1].name.casefold()
+        ):
+            armor_lineages.append(container_lineage)
+        resolved["armor"] = compile_armor_contract(
+            documents,
+            *armor_lineages,
+            named_definition_cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if isinstance(combat_value, Mapping) and combat_value.get("weaponId"):
+            combat_weapon = str(combat_value["weaponId"])
+            weapon_candidates = [combat_weapon] + [
+                candidate
+                for candidate in base_weapon_targets(member_lineage)
+                if candidate.casefold() != combat_weapon.casefold()
+            ]
+            weapon_upgrades = compile_weapon_upgrades(
+                documents,
+                armor_lineages,
+                weapon_candidates,
+                constants,
+                named_definition_cache=named_definition_cache,
+                cache_lock=cache_lock,
+            )
+            if weapon_upgrades:
+                combat_value["upgrades"] = weapon_upgrades
+    except ArmorCompilerError as exc:
+        raise PlayableUnitCompilerError(
+            f"armor/upgrade contract is unresolvable: {exc}"
+        ) from exc
     formation = _formation_contract(container_lineage, members)
     if formation is None:
         missing.append("formation")
@@ -1443,6 +1879,1787 @@ def _ui_binding(
     }
 
 
+# ---------------------------------------------------------------------------
+# Hero ability contract.
+#
+# A retail hero carries active abilities as SPECIAL_POWER commands on its own
+# authored CommandSet.  Each button names a SpecialPower template; Behavior
+# modules on the hero Object bind that template to its effect leaves (weapon
+# blasts, ObjectCreationList summons, attribute modifiers, heals) and an
+# UnpauseSpecialPowerUpgrade gate chains the ability to the hero's authored
+# ExperienceLevel grants.  This section converts that graph into the
+# descriptor ``abilities`` array.  Every resolution fails closed per ability:
+# an ability whose leaves or systems cannot be converted is recorded as
+# ``unimplemented`` with its reason, never approximated; heroes without
+# SPECIAL_POWER commands simply emit an empty array.
+# ---------------------------------------------------------------------------
+
+SPECIAL_POWER_PATH = "data/ini/specialpower.ini"
+EXPERIENCE_LEVELS_PATH = "data/ini/experiencelevels.ini"
+OBJECT_CREATION_LIST_PATH = "data/ini/objectcreationlist.ini"
+ATTRIBUTE_MODIFIER_PATH = "data/ini/attributemodifier.ini"
+WEAPON_PATH = "data/ini/weapon.ini"
+
+_MAX_ABILITY_MODULES = 256
+_MAX_EXPERIENCE_LEVELS = 8192
+_MAX_OCL_BLOCKS = 16_384
+_MAX_MODIFIER_ROWS = 64
+
+# Module kinds that participate in binding/timing/gating but carry no effect
+# leaf of their own.
+_ABILITY_SUPPORT_MODULE_KINDS = frozenset(
+    {
+        "specialpowermodule",
+        "specialabilityupdate",
+        "modelconditionspecialabilityupdate",
+        "specialpowertimerrefreshspecialpower",
+        "unpausespecialpowerupgrade",
+    }
+)
+# Module kinds whose runtime systems do not exist yet; the ability is recorded
+# as unimplemented instead of faking the behavior.
+_ABILITY_UNIMPLEMENTED_MODULE_KINDS = {
+    "togglemountedspecialabilityupdate": "mount/dismount toggle needs the mount system",
+    "specialdisguiseupdate": "disguise needs the disguise system",
+    "weaponmodespecialpowerupdate": "weapon-mode toggle needs the weapon-set system",
+    "arrowstormupdate": "arrow-storm barrage needs the volley targeting system",
+    "togglehiddenspecialabilityupdate": "stealth toggle needs the stealth system",
+    "invisibilityspecialpower": "invisibility needs the stealth system",
+    "levelgrantspecialpower": "experience grant needs the experience system",
+    "teleportspecialabilityupdate": "teleport needs the teleport system",
+    "teleporttocasterspecialpower": "teleport needs the teleport system",
+    "dominateenemyspecialpower": "domination needs the allegiance system",
+    "untamedallegiancespecialpower": "allegiance change needs the allegiance system",
+    "cursespecialpower": "curse needs the status-effect system",
+    "grabpassengerspecialpower": "grab needs the passenger system",
+    "flingpassengerspecialabilityupdate": "fling needs the passenger system",
+    "storeobjectsspecialpower": "object storage needs the garrison system",
+    "stopspecialpower": "stop needs the order-interrupt system",
+    "specialenemysenseupdate": "enemy sense needs the detection system",
+    "siegedeployspecialpower": "siege deploy needs the deploy system",
+    "repairspecialpower": "repair needs the structure-repair system",
+    "hordedispatchspecialpower": "horde dispatch needs the horde-spawn system",
+    "unleashspecialpower": "unleash needs the weapon-set system",
+    "toggledeployspecialabilityupdate": "deploy toggle needs the deploy system",
+    "splithordespecialpower": "horde split needs the horde system",
+    "scavengerspecialpower": "scavenger needs the loot system",
+    "manthewallsspecialpower": "man-the-walls needs the garrison system",
+    "freezingrainspecialpower": "freezing rain needs the weather system",
+    "deflectspecialpower": "deflect needs the status-effect system",
+    "activatemodulespecialpower": "module activation needs the module system",
+}
+# Attribute-modifier kinds the runtime can apply; anything else is recorded as
+# a limitation instead of being silently dropped.
+_SUPPORTED_MODIFIER_KINDS = frozenset({"ARMOR", "DAMAGE_MULT", "SPEED", "INVULNERABLE"})
+
+
+def _ability_button_leaf_fields(button: IniBlock) -> dict[str, object]:
+    """Icon/label/tooltip/options leaves of one SPECIAL_POWER CommandButton."""
+
+    def first_token(value: str) -> str | None:
+        tokens = value.split()
+        if not tokens:
+            return None
+        token = tokens[0]
+        if token.casefold() in {"none", "null", "0"} or token.startswith("$"):
+            return None
+        return token
+
+    options = sorted(
+        {
+            token
+            for value in button.values("Options")
+            for token in _tokens(value)
+            if token.casefold() not in {"none", "null"}
+        },
+        key=str.casefold,
+    )
+    row: dict[str, object] = {
+        "commandId": button.name,
+        "iconIds": [
+            token
+            for value in button.values("ButtonImage")
+            if (token := first_token(value)) is not None
+        ],
+        "labelIds": [
+            token
+            for value in button.values("TextLabel")
+            if (token := first_token(value)) is not None
+        ],
+        "tooltipIds": [
+            token
+            for value in button.values("DescriptLabel")
+            if (token := first_token(value)) is not None
+        ],
+    }
+    if options:
+        row["options"] = options
+    cursor = _first(button.values("RadiusCursorType"))
+    if cursor is not None:
+        row["radiusCursorType"] = cursor
+    return row
+
+
+def _module_tokens(block: SageBlock, field: str) -> tuple[str, ...]:
+    return tuple(
+        token
+        for value in block.values(field)
+        for token in _tokens(value)
+        if token.casefold() not in {"none", "null"}
+    )
+
+
+def _optional_document(documents: Mapping[str, bytes], path: str) -> bytes | None:
+    for candidate, payload in documents.items():
+        if candidate.replace("\\", "/").casefold() == path.casefold():
+            return payload
+    return None
+
+
+def _ability_list_defines(source: bytes) -> dict[str, tuple[str, ...]]:
+    """Parse ``#define NAME token ...`` list constants (ExperienceLevel targets)."""
+
+    result: dict[str, tuple[str, ...]] = {}
+    pattern = re.compile(
+        rb"(?m)^[ \t]*#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+(\S[^;/]*?)[ \t]*(?://|;|\r?$)"
+    )
+    for match in pattern.finditer(source):
+        key = match.group(1).decode("ascii").casefold()
+        tokens = tuple(
+            token
+            for token in _tokens(match.group(2).decode("cp1252", errors="replace"))
+            if token.casefold() not in {"none", "null"}
+        )
+        if key in result and result[key] != tokens:
+            raise PlayableUnitCompilerError(f"ambiguous ExperienceLevel define: {key}")
+        result[key] = tokens
+    return result
+
+
+def _experience_level_rows(source: bytes) -> tuple[dict[str, object], ...]:
+    """Bounded depth-aware scan of ExperienceLevel blocks.
+
+    ExperienceLevel nests a SelectionDecal section, so the flat named-block
+    parser would close each block early.  The gating fields (TargetNames,
+    Rank, Upgrades) plus the full per-level economy leaves
+    (RequiredExperience, ExperienceAward, AttributeModifiers, LevelUpFx and
+    the rank SelectionDecal texture) are captured; every other assignment is
+    ignored by design.
+    """
+
+    if len(source) > 8 * 1024 * 1024 or b"\0" in source:
+        raise PlayableUnitCompilerError(f"{EXPERIENCE_LEVELS_PATH} is unbounded")
+    try:
+        text = source.decode("cp1252")
+    except UnicodeDecodeError as exc:
+        raise PlayableUnitCompilerError(
+            f"{EXPERIENCE_LEVELS_PATH} has unsupported encoding"
+        ) from exc
+    header = re.compile(r"^ExperienceLevel\s+(\S+)\s*$", re.IGNORECASE)
+    rows: list[dict[str, object]] = []
+    active: str | None = None
+    start_line = 0
+    depth = 0
+    target_names = ""
+    upgrades: tuple[str, ...] = ()
+    rank: int | None = None
+    required_experience = ""
+    experience_award = ""
+    attribute_modifiers: tuple[str, ...] = ()
+    level_up_fx = ""
+    decal_texture = ""
+    for line_number, raw in enumerate(text.splitlines(), start=1):
+        line = re.sub(r"\s+", " ", raw.split(";", 1)[0].split("//", 1)[0]).strip()
+        if not line:
+            continue
+        if active is None:
+            match = header.fullmatch(line)
+            if match is not None:
+                if len(rows) >= _MAX_EXPERIENCE_LEVELS:
+                    raise PlayableUnitCompilerError(
+                        f"{EXPERIENCE_LEVELS_PATH} exceeds the ExperienceLevel limit"
+                    )
+                active = match.group(1)
+                start_line = line_number
+                depth = 0
+                target_names = ""
+                upgrades = ()
+                rank = None
+                required_experience = ""
+                experience_award = ""
+                attribute_modifiers = ()
+                level_up_fx = ""
+                decal_texture = ""
+            continue
+        if depth == 0 and header.fullmatch(line):
+            raise PlayableUnitCompilerError(
+                f"{EXPERIENCE_LEVELS_PATH} has an unterminated ExperienceLevel: {active}"
+            )
+        if line.casefold() == "end":
+            if depth == 0:
+                rows.append(
+                    {
+                        "id": active,
+                        "line": start_line,
+                        "targetNames": target_names,
+                        "rank": rank,
+                        "upgrades": upgrades,
+                        "requiredExperience": required_experience,
+                        "experienceAward": experience_award,
+                        "attributeModifiers": attribute_modifiers,
+                        "levelUpFx": level_up_fx,
+                        "selectionDecalTexture": decal_texture,
+                    }
+                )
+                active = None
+            else:
+                depth -= 1
+            continue
+        if "=" in line:
+            key, value = (part.strip() for part in line.split("=", 1))
+            folded = key.casefold()
+            if depth == 1 and folded == "texture" and not decal_texture:
+                # The rank chevron leaf of the nested SelectionDecal section.
+                decal_texture = value.split()[0] if value.split() else ""
+            elif folded == "targetnames":
+                target_names = value
+            elif folded == "upgrades":
+                upgrades = _tokens(value)
+            elif folded == "rank" and re.fullmatch(r"[0-9]+", value):
+                rank = int(value)
+            elif folded == "requiredexperience":
+                required_experience = value
+            elif folded == "experienceaward":
+                experience_award = value
+            elif folded in {"attributemodifiers", "attributemodifier"}:
+                attribute_modifiers = _tokens(value)
+            elif folded == "levelupfx":
+                level_up_fx = value
+            continue
+        depth += 1
+    if active is not None:
+        raise PlayableUnitCompilerError(
+            f"{EXPERIENCE_LEVELS_PATH} has an unterminated ExperienceLevel: {active}"
+        )
+    return tuple(rows)
+
+
+def _hero_level_grants(
+    rows: Sequence[Mapping[str, object]],
+    defines: Mapping[str, tuple[str, ...]],
+    hero_names: frozenset[str],
+) -> dict[str, int]:
+    """Resolve each upgrade granted to this hero to its minimum authored rank."""
+
+    grants: dict[str, int] = {}
+    for row in rows:
+        rank = row.get("rank")
+        if not isinstance(rank, int):
+            continue
+        targets: set[str] = set()
+        for token in _tokens(str(row.get("targetNames", ""))):
+            expanded = defines.get(token.casefold())
+            if expanded:
+                targets.update(value.casefold() for value in expanded)
+            else:
+                targets.add(token.casefold())
+        if not targets & hero_names:
+            continue
+        for upgrade in row.get("upgrades", ()):
+            key = str(upgrade).casefold()
+            if key in {"", "none", "null"}:
+                continue
+            if key not in grants or rank < grants[key]:
+                grants[key] = rank
+    return grants
+
+
+# ---------------------------------------------------------------------------
+# Experience economy contract.
+#
+# Every playable unit gains and pays experience through the authored
+# ExperienceLevel chain that targets it: per-level cumulative XP thresholds
+# (RequiredExperience), the XP a killer collects when this unit dies at that
+# level (ExperienceAward), and the level's permanent AttributeModifiers
+# (SAGE applies them cumulatively at level-up; additive kinds sum into the
+# base stat, multiplicative kinds product).  Chains are selected by target
+# specificity: the smallest authored TargetNames set covering the unit wins,
+# and an equal-size tie fails closed instead of guessing.  Every level of
+# the selected chain must resolve its threshold and award through authored
+# literals or GameData constants — a level retail leaves unresolved fails the
+# descriptor; a unit with no authored chain at all is recorded as
+# ``unauthored`` instead of inventing a default chain.
+# ---------------------------------------------------------------------------
+
+UPGRADE_PATH = "data/ini/upgrade.ini"
+
+# Modifier kinds the runtime level-up path can apply faithfully.  HEALTH and
+# DAMAGE_ADD are flat per-member additions; PRODUCTION is the structure
+# build-speed factor.  Anything else stays recorded, never applied.
+_LEVEL_MODIFIER_ADDITIVE_KINDS = frozenset({"health", "damage_add"})
+_LEVEL_MODIFIER_MULTIPLICATIVE_KINDS = frozenset({"production"})
+
+
+def _experience_target_set(
+    row: Mapping[str, object],
+    defines: Mapping[str, tuple[str, ...]],
+) -> frozenset[str]:
+    """Resolve one row's TargetNames through the authored list defines."""
+
+    targets: set[str] = set()
+    for token in _tokens(str(row.get("targetNames", ""))):
+        expanded = defines.get(token.casefold())
+        if expanded:
+            targets.update(value.casefold() for value in expanded)
+        else:
+            targets.add(token.casefold())
+    targets.discard("")
+    targets.discard("none")
+    targets.discard("null")
+    return frozenset(targets)
+
+
+def _select_experience_chain(
+    rows: Sequence[Mapping[str, object]],
+    defines: Mapping[str, tuple[str, ...]],
+    unit_names: frozenset[str],
+    label: str,
+) -> tuple[tuple[Mapping[str, object], frozenset[str]], ...]:
+    """Pick the most specific authored chain targeting one of the unit names.
+
+    Returns the chain's rows sorted by rank, each paired with the resolved
+    target set it was matched through.  A unit covered by two different
+    chains of equal specificity is ambiguous and fails closed.
+    """
+
+    candidates: dict[frozenset[str], list[Mapping[str, object]]] = {}
+    for row in rows:
+        targets = _experience_target_set(row, defines)
+        if not targets or not targets & unit_names:
+            continue
+        bucket = candidates.setdefault(targets, [])
+        if len(bucket) >= _MAX_EXPERIENCE_LEVELS:
+            raise PlayableUnitCompilerError(
+                f"{label} exceeds the ExperienceLevel chain limit"
+            )
+        bucket.append(row)
+    if not candidates:
+        return ()
+    ordered = sorted(
+        candidates.items(),
+        key=lambda item: (len(item[0]), sorted(item[0])),
+    )
+    if len(ordered) > 1 and len(ordered[0][0]) == len(ordered[1][0]):
+        raise PlayableUnitCompilerError(
+            f"{label} matches two ExperienceLevel chains of equal specificity: "
+            f"{sorted(ordered[0][0])} vs {sorted(ordered[1][0])}"
+        )
+    chain_targets, chain_rows = ordered[0]
+    ranked: list[Mapping[str, object]] = []
+    seen_ranks: set[int] = set()
+    for row in chain_rows:
+        rank = row.get("rank")
+        if not isinstance(rank, int) or rank < 1 or rank in seen_ranks:
+            raise PlayableUnitCompilerError(
+                f"{label} ExperienceLevel {row.get('id')} has a duplicate or "
+                f"invalid Rank: {row.get('rank')}"
+            )
+        seen_ranks.add(rank)
+        ranked.append(row)
+    ranked.sort(key=lambda row: int(row["rank"]))
+    # Retail chains are rank-ascending but not always 1..N: ring heroes and
+    # Treebeard author a single rank-10 row (they enter at the top rank).
+    # The contract keeps the authored ranks verbatim instead of renumbering.
+    return tuple((row, chain_targets) for row in ranked)
+
+
+def _level_modifier_leaf(
+    modifiers: Mapping[str, IniBlock],
+    modifier_id: str,
+    constants: Mapping[str, int | float],
+    label: str,
+) -> dict[str, object]:
+    """Resolve one per-level ModifierList to its runtime-applicable rows."""
+
+    block = modifiers.get(modifier_id.casefold())
+    if block is None:
+        raise PlayableUnitCompilerError(
+            f"{label} references a missing ModifierList: {modifier_id}"
+        )
+    rows: list[dict[str, object]] = []
+    unsupported: list[str] = []
+    for value in block.values("Modifier"):
+        parts = value.split()
+        if len(parts) < 2:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {modifier_id} has a malformed Modifier row: {value!r}"
+            )
+        kind = parts[0]
+        magnitude = _modifier_value(parts[1], constants)
+        if magnitude is None:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {modifier_id} has an unresolvable Modifier value: {value!r}"
+            )
+        if len(rows) >= _MAX_MODIFIER_ROWS:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {modifier_id} exceeds the Modifier row limit"
+            )
+        folded = kind.casefold()
+        if folded in _LEVEL_MODIFIER_ADDITIVE_KINDS:
+            canonical = "HEALTH" if folded == "health" else "DAMAGE_ADD"
+            rows.append(
+                {"kind": canonical, "value": magnitude, "application": "additive"}
+            )
+        elif folded in _LEVEL_MODIFIER_MULTIPLICATIVE_KINDS:
+            rows.append(
+                {"kind": "PRODUCTION", "value": magnitude, "application": "multiplicative"}
+            )
+        else:
+            unsupported.append(kind)
+    leaf: dict[str, object] = {
+        "id": block.name,
+        "modifiers": rows,
+        "sourceIni": ATTRIBUTE_MODIFIER_PATH,
+    }
+    category = _first(block.values("Category"))
+    if category is not None:
+        leaf["category"] = category
+    if unsupported:
+        leaf["unsupportedModifiers"] = sorted(set(unsupported), key=str.casefold)
+    return leaf
+
+
+def _experience_contract(
+    target_lineage: Sequence[SageObject],
+    member_lineage: Sequence[SageObject],
+    members: Sequence[Mapping[str, object]],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+) -> dict[str, object]:
+    """Compile the authored ExperienceLevel chain of one playable unit."""
+
+    label = f"unit {target_lineage[-1].name}"
+    source = _optional_document(documents, EXPERIENCE_LEVELS_PATH)
+    if source is None:
+        return {
+            "status": "unavailable",
+            "note": "experience level source is not in the effective INI view",
+        }
+    unit_names = frozenset(
+        {item.name.casefold() for item in target_lineage}
+        | {item.name.casefold() for item in member_lineage}
+        | {str(row.get("objectId", "")).casefold() for row in members}
+    )
+    rows = _experience_level_rows(source)
+    defines = _ability_list_defines(source)
+    chain = _select_experience_chain(rows, defines, unit_names, label)
+    if not chain:
+        return {
+            "status": "unauthored",
+            "note": "retail authors no ExperienceLevel chain targeting this unit",
+            "sourceIni": EXPERIENCE_LEVELS_PATH,
+        }
+    modifier_source = _optional_document(documents, ATTRIBUTE_MODIFIER_PATH)
+    modifier_blocks: dict[str, IniBlock] = {}
+    if modifier_source is not None:
+        modifier_blocks = _named_blocks(modifier_source, "ModifierList")
+    levels: list[dict[str, object]] = []
+    for row, targets in chain:
+        rank = int(row["rank"])
+        level_label = f"{label} ExperienceLevel {row.get('id')}"
+        required_expression = str(row.get("requiredExperience", "")).strip()
+        award_expression = str(row.get("experienceAward", "")).strip()
+        required = (
+            _resolved_expression(required_expression, constants)
+            if required_expression
+            else None
+        )
+        award = (
+            _resolved_expression(award_expression, constants)
+            if award_expression
+            else None
+        )
+        if required is None:
+            raise PlayableUnitCompilerError(
+                f"{level_label} has no resolvable RequiredExperience"
+            )
+        if award is None:
+            raise PlayableUnitCompilerError(
+                f"{level_label} has no resolvable ExperienceAward"
+            )
+        level: dict[str, object] = {
+            "experienceId": str(row["id"]),
+            "rank": rank,
+            "requiredExperience": required,
+            "experienceAward": award,
+            "line": int(row["line"]),
+        }
+        if any(
+            expression
+            and _resolved_expression(expression, {}) is None
+            for expression in (required_expression, award_expression)
+        ):
+            # A non-literal resolved only through the GameData constants.
+            level["constantSourceIni"] = "data/ini/gamedata.ini"
+        modifier_ids = [
+            token
+            for token in row.get("attributeModifiers", ())
+            if str(token).casefold() not in {"", "none", "null"}
+        ]
+        if modifier_ids:
+            if modifier_source is None:
+                raise PlayableUnitCompilerError(
+                    f"{level_label} authors AttributeModifiers but "
+                    f"{ATTRIBUTE_MODIFIER_PATH} is not in the effective INI view"
+                )
+            level["attributeModifiers"] = [
+                _level_modifier_leaf(modifier_blocks, str(modifier_id), constants, level_label)
+                for modifier_id in modifier_ids
+            ]
+        upgrades = [
+            str(token)
+            for token in row.get("upgrades", ())
+            if str(token).casefold() not in {"", "none", "null"}
+        ]
+        if upgrades:
+            level["upgrades"] = upgrades
+        decal_texture = str(row.get("selectionDecalTexture", "")).strip()
+        if decal_texture:
+            level["selectionDecalTextureId"] = decal_texture
+        level_up_fx = str(row.get("levelUpFx", "")).strip()
+        if level_up_fx:
+            level["levelUpFxId"] = level_up_fx
+        levels.append(level)
+    return {
+        "status": "compiled",
+        "sourceIni": EXPERIENCE_LEVELS_PATH,
+        # Authored entry rank (1 for fielded units; retail summons such as the
+        # ring hero and Treebeard enter at their authored top rank).
+        "initialRank": int(chain[0][0]["rank"]),
+        "maxLevel": int(chain[-1][0]["rank"]),
+        "targetCount": len(chain[0][1]),
+        # SAGE applies level modifiers permanently at level-up; the runtime
+        # recomputes effective stats from the base plus every earned level.
+        "modifierApplication": "cumulative-per-level",
+        "levels": levels,
+    }
+
+
+def _ocl_create_object_entries(
+    source: bytes, ocl_id: str
+) -> tuple[dict[str, object], ...] | None:
+    """Return the CreateObject entries of one authored ObjectCreationList."""
+
+    if len(source) > 8 * 1024 * 1024 or b"\0" in source:
+        raise PlayableUnitCompilerError(f"{OBJECT_CREATION_LIST_PATH} is unbounded")
+    try:
+        text = source.decode("cp1252")
+    except UnicodeDecodeError as exc:
+        raise PlayableUnitCompilerError(
+            f"{OBJECT_CREATION_LIST_PATH} has unsupported encoding"
+        ) from exc
+    header = re.compile(
+        r"^ObjectCreationList\s+" + re.escape(ocl_id) + r"\s*$", re.IGNORECASE
+    )
+    any_header = re.compile(r"^ObjectCreationList\s+\S+\s*$", re.IGNORECASE)
+    entries: list[dict[str, object]] = []
+    active = False
+    depth = 0
+    block_count = 0
+    current: dict[str, object] | None = None
+    for line_number, raw in enumerate(text.splitlines(), start=1):
+        line = re.sub(r"\s+", " ", raw.split(";", 1)[0].split("//", 1)[0]).strip()
+        if not line:
+            continue
+        if not active:
+            if header.fullmatch(line):
+                active = True
+                depth = 0
+            continue
+        if depth == 0 and any_header.fullmatch(line):
+            raise PlayableUnitCompilerError(
+                f"ObjectCreationList {ocl_id} is unterminated"
+            )
+        if line.casefold() == "end":
+            if depth == 0:
+                return tuple(entries)
+            if current is not None:
+                entries.append(current)
+                current = None
+            depth -= 1
+            continue
+        if "=" in line and current is not None:
+            key, value = (part.strip() for part in line.split("=", 1))
+            fields = current["fields"]
+            assert isinstance(fields, list)
+            fields.append({"key": key, "value": value, "line": line_number})
+            continue
+        if "=" not in line:
+            if depth == 0 and line.casefold() == "createobject":
+                block_count += 1
+                if block_count > _MAX_OCL_BLOCKS:
+                    raise PlayableUnitCompilerError(
+                        f"ObjectCreationList {ocl_id} exceeds the CreateObject limit"
+                    )
+                current = {"kind": line, "fields": [], "line": line_number}
+            elif depth >= 1:
+                # Nested sections under CreateObject are outside the summon
+                # contract; fail closed instead of silently skipping them.
+                raise PlayableUnitCompilerError(
+                    f"ObjectCreationList {ocl_id} has an unsupported nested section: {line}"
+                )
+            depth += 1
+    raise PlayableUnitCompilerError(f"ObjectCreationList {ocl_id} is unterminated")
+
+
+def _modifier_value(token: str, constants: Mapping[str, int | float]) -> float | None:
+    """Resolve one authored Modifier magnitude (percent literal, scalar, define)."""
+
+    text = token.strip()
+    if text.endswith("%"):
+        numeric = text[:-1]
+        try:
+            return float(numeric) / 100.0
+        except ValueError:
+            return None
+    resolved = _resolved_expression(text, constants)
+    if resolved is None:
+        return None
+    return float(resolved)
+
+
+def _ability_modifier_leaf(
+    modifiers: Mapping[str, IniBlock],
+    modifier_id: str,
+    constants: Mapping[str, int | float],
+    label: str,
+) -> dict[str, object]:
+    """Resolve one ModifierList leaf to its runtime-applicable rows."""
+
+    block = modifiers.get(modifier_id.casefold())
+    if block is None:
+        raise PlayableUnitCompilerError(
+            f"{label} references a missing ModifierList: {modifier_id}"
+        )
+    rows: list[dict[str, object]] = []
+    unsupported: list[str] = []
+    for value in block.values("Modifier"):
+        parts = value.split()
+        if len(parts) < 2:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {modifier_id} has a malformed Modifier row: {value!r}"
+            )
+        kind = parts[0]
+        magnitude = _modifier_value(parts[1], constants)
+        if magnitude is None:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {modifier_id} has an unresolvable Modifier value: {value!r}"
+            )
+        if len(rows) >= _MAX_MODIFIER_ROWS:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {modifier_id} exceeds the Modifier row limit"
+            )
+        if kind.casefold() in {item.casefold() for item in _SUPPORTED_MODIFIER_KINDS}:
+            rows.append(
+                {
+                    "kind": kind,
+                    "value": magnitude,
+                    "application": (
+                        "additive" if kind.casefold() == "armor" else "multiplicative"
+                    ),
+                }
+            )
+        else:
+            unsupported.append(kind)
+    duration: int | float | None = None
+    duration_values = block.values("Duration")
+    if duration_values:
+        duration = _resolved_expression(duration_values[-1], constants)
+        if duration is None:
+            raise PlayableUnitCompilerError(
+                f"ModifierList {modifier_id} has an unresolvable Duration"
+            )
+    leaf: dict[str, object] = {
+        "id": block.name,
+        "modifiers": rows,
+        "sourceIni": ATTRIBUTE_MODIFIER_PATH,
+    }
+    category = _first(block.values("Category"))
+    if category is not None:
+        leaf["category"] = category
+    if duration is not None:
+        leaf["durationMs"] = duration
+    fx_ids = [
+        token
+        for field in ("FX", "FX2", "FX3")
+        for value in block.values(field)
+        if (token := _first((value,))) is not None
+    ]
+    if fx_ids:
+        leaf["fxIds"] = fx_ids
+    if unsupported:
+        leaf["unsupportedModifiers"] = sorted(set(unsupported), key=str.casefold)
+    return leaf
+
+
+def _weapon_warhead_target(
+    documents: Mapping[str, bytes],
+    identifier: str,
+) -> str | None:
+    """Unique authored WarheadTemplateName behind a weapon's ProjectileNuggets.
+
+    Some ability weapons (Legolas HawkStrike, Thranduil Thorn of Vengeance)
+    carry no DamageNugget of their own: they launch a projectile whose warhead
+    holds the damage.  The authored chain is one hop; ambiguity fails closed.
+    """
+
+    summary = _weapon_nugget_summary(documents, identifier)
+    warheads = summary["warheads"]
+    if summary["found"] and len(warheads) == 1:
+        return next(iter(warheads.values()))
+    return None
+
+
+def _weapon_nugget_summary(
+    documents: Mapping[str, bytes],
+    identifier: str,
+) -> dict[str, object]:
+    """Bounded scan of one weapon's nugget sections (kinds + warhead targets)."""
+
+    header = re.compile(rf"^Weapon\s+{re.escape(identifier)}\s*$", re.IGNORECASE)
+    nugget_header = re.compile(r"^([A-Za-z]+Nugget)\s*$", re.IGNORECASE)
+    kinds: dict[str, str] = {}
+    warheads: dict[str, str] = {}
+    found = False
+    for path, payload in sorted(documents.items(), key=lambda item: item[0].casefold()):
+        try:
+            lines = payload.decode("cp1252").splitlines()
+        except UnicodeDecodeError:
+            continue
+        active = False
+        depth = 0
+        for raw in lines:
+            stripped = raw.strip()
+            clean = stripped.split(";", 1)[0].split("//", 1)[0].strip()
+            if not active:
+                if raw.lstrip() == raw and header.fullmatch(clean):
+                    active = True
+                    found = True
+                continue
+            if depth == 0 and raw.lstrip() == raw and clean.casefold() == "end":
+                break
+            if not clean:
+                continue
+            if clean.casefold() == "end" and depth:
+                depth -= 1
+                continue
+            if "=" in clean and depth >= 1:
+                key, expression = (part.strip() for part in clean.split("=", 1))
+                if key.casefold() == "warheadtemplatename" and expression:
+                    token = expression.split()[0]
+                    warheads.setdefault(token.casefold(), token)
+                continue
+            if "=" not in clean:
+                if depth == 0:
+                    nugget = nugget_header.fullmatch(clean)
+                    if nugget is not None:
+                        kinds.setdefault(nugget.group(1).casefold(), nugget.group(1))
+                depth += 1
+    return {"found": found, "kinds": kinds, "warheads": warheads}
+
+
+def _ability_weapon_leaf(
+    documents: Mapping[str, bytes],
+    weapon_id: str,
+    constants: Mapping[str, int | float],
+    label: str,
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> dict[str, object]:
+    """Resolve one ability Weapon to its base damage, radius, and range."""
+
+    definition = _named_definition_values(
+        documents,
+        "Weapon",
+        weapon_id,
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if definition is None:
+        raise PlayableUnitCompilerError(
+            f"{label} references a missing or ambiguous Weapon: {weapon_id}"
+        )
+    base = _base_weapon_damage(
+        documents,
+        weapon_id,
+        constants,
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    damage_weapon_id = weapon_id
+    if base is None:
+        # ProjectileNugget warhead chain: the launcher authors no damage, its
+        # unique authored warhead does.  One bounded hop, never recursive.
+        summary = _weapon_nugget_summary(documents, weapon_id)
+        warheads = summary["warheads"]
+        warhead_id = next(iter(warheads.values())) if len(warheads) == 1 else None
+        if warhead_id is None:
+            if len(warheads) > 1:
+                raise PlayableUnitCompilerError(
+                    f"{label} weapon {weapon_id} has ambiguous ProjectileNugget "
+                    f"warheads: {', '.join(sorted(warheads.values(), key=str.casefold))}"
+                )
+            unsupported_kinds = sorted(
+                (
+                    kind
+                    for key, kind in summary["kinds"].items()
+                    if key != "damagenugget"
+                ),
+                key=str.casefold,
+            )
+            detail = (
+                f"; its damage payload uses unsupported nugget kinds: "
+                f"{', '.join(unsupported_kinds)}"
+                if unsupported_kinds
+                else ""
+            )
+            raise PlayableUnitCompilerError(
+                f"{label} weapon {weapon_id} has no resolvable base DamageNugget "
+                f"damage and no unique authored warhead{detail}"
+            )
+        base = _base_weapon_damage(
+            documents,
+            warhead_id,
+            constants,
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if base is None:
+            raise PlayableUnitCompilerError(
+                f"{label} weapon {weapon_id} warhead {warhead_id} has no "
+                "resolvable base DamageNugget damage"
+            )
+        damage_weapon_id = warhead_id
+    nuggets = _weapon_damage_nuggets(
+        documents,
+        damage_weapon_id,
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    ) or []
+    radius = 0.0
+    damage_scalar_authored = False
+    for nugget in nuggets:
+        fields = nugget["fields"]
+        assert isinstance(fields, Mapping)
+        if fields.get("requiredupgradenames") or fields.get("specialobjectfilter"):
+            continue
+        if fields.get("damagescalar"):
+            damage_scalar_authored = True
+        resolved = _resolved_definition_field(fields, "Radius", constants)
+        if resolved is not None:
+            radius = max(radius, float(resolved["value"]))
+    damage_types = sorted(
+        {
+            str(component["damageType"])
+            for component in base["components"]
+            if component.get("damageType")
+        },
+        key=str.casefold,
+    )
+    leaf: dict[str, object] = {
+        "id": weapon_id,
+        "damage": base["value"],
+        "damageRadius": radius,
+        "components": list(base["components"]),
+        "sourceIni": WEAPON_PATH,
+    }
+    if damage_weapon_id != weapon_id:
+        leaf["warheadId"] = damage_weapon_id
+    if damage_scalar_authored:
+        leaf["damageScalarAuthored"] = True
+    if len(damage_types) == 1:
+        leaf["damageType"] = damage_types[0]
+    if base.get("excludedNuggets"):
+        leaf["excludedNuggets"] = list(base["excludedNuggets"])
+    attack_range = _resolved_definition_field(definition, "AttackRange", constants)
+    if attack_range is not None:
+        leaf["attackRange"] = attack_range["value"]
+    fire_fx = [
+        row
+        for row in definition.get("firefx", [])
+        if str(row.get("expression", "")).strip()
+    ]
+    if fire_fx:
+        leaf["fireFxId"] = str(fire_fx[0]["expression"]).strip()
+    return leaf
+
+
+def _hero_abilities(
+    target: SageObject,
+    target_lineage: Sequence[SageObject],
+    member_lineage: Sequence[SageObject],
+    command_sets: Mapping[str, IniBlock],
+    command_buttons: Mapping[str, IniBlock],
+    objects: Mapping[str, SageObject],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> tuple[list[dict[str, object]], dict[str, IniBlock]]:
+    """Emit the converted SPECIAL_POWER ability rows for one hero.
+
+    Returns the ability rows plus the authored SpecialPower blocks they
+    consumed (for descriptor provenance).
+    """
+
+    command_values = [
+        value
+        for row in _effective_values(target_lineage, "CommandSet")
+        if (value := _first((row.value,))) is not None
+    ]
+    if not command_values:
+        return [], {}
+    command_set = command_sets.get(command_values[0].casefold())
+    if command_set is None:
+        return [], {}
+
+    # Gather the hero's Behavior modules once; SPECIAL_POWER buttons then bind
+    # the modules that reference their SpecialPower template.
+    lineages: list[Sequence[SageObject]] = [target_lineage]
+    if member_lineage[-1].name.casefold() != target_lineage[-1].name.casefold():
+        lineages.append(member_lineage)
+    behavior_modules: list[SageBlock] = []
+    for lineage in lineages:
+        behavior_modules.extend(
+            block
+            for block in _effective_top_blocks(lineage)
+            if (block.header_key or "").casefold() == "behavior"
+        )
+    hero_names = frozenset(
+        item.name.casefold() for lineage in lineages for item in lineage
+    )
+    burst_heal_modules = [
+        block
+        for block in behavior_modules
+        if block.kind.casefold() == "autohealbehavior"
+        and (_first(block.values("ButtonTriggered")) or "").casefold() == "yes"
+        and (_first(block.values("SingleBurst")) or "").casefold() == "yes"
+    ]
+
+    special_power_source = _optional_document(documents, SPECIAL_POWER_PATH)
+    power_blocks: dict[str, IniBlock] = {}
+    if special_power_source is not None:
+        power_blocks = _named_blocks(special_power_source, "SpecialPower")
+    modifier_source = _optional_document(documents, ATTRIBUTE_MODIFIER_PATH)
+    modifier_blocks: dict[str, IniBlock] = {}
+    if modifier_source is not None:
+        modifier_blocks = _named_blocks(modifier_source, "ModifierList")
+    experience_source = _optional_document(documents, EXPERIENCE_LEVELS_PATH)
+    level_grants: dict[str, int] = {}
+    if experience_source is not None:
+        level_grants = _hero_level_grants(
+            _experience_level_rows(experience_source),
+            _ability_list_defines(experience_source),
+            hero_names,
+        )
+    ocl_source = _optional_document(documents, OBJECT_CREATION_LIST_PATH)
+
+    abilities: list[dict[str, object]] = []
+    used_power_blocks: dict[str, IniBlock] = {}
+    for slot, command_id in _command_slots(command_set):
+        button = command_buttons.get(command_id.casefold())
+        if button is None:
+            raise PlayableUnitCompilerError(
+                f"CommandSet {command_set.name} references a missing "
+                f"CommandButton: {command_id}"
+            )
+        command_kinds = {
+            value.strip().casefold() for value in button.values("Command")
+        }
+        if command_kinds != {"special_power"}:
+            continue
+        ability = _hero_ability_row(
+            slot,
+            button,
+            command_buttons,
+            power_blocks,
+            modifier_blocks,
+            ocl_source,
+            level_grants,
+            experience_source is not None,
+            behavior_modules,
+            burst_heal_modules,
+            objects,
+            documents,
+            constants,
+            named_definition_cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        power_block = power_blocks.get(str(ability["specialPowerId"]).casefold())
+        if power_block is not None:
+            used_power_blocks[power_block.name.casefold()] = power_block
+        abilities.append(ability)
+    return abilities, used_power_blocks
+
+
+def _hero_ability_row(
+    slot: int,
+    button: IniBlock,
+    command_buttons: Mapping[str, IniBlock],
+    power_blocks: Mapping[str, IniBlock],
+    modifier_blocks: Mapping[str, IniBlock],
+    ocl_source: bytes | None,
+    level_grants: Mapping[str, int],
+    experience_levels_available: bool,
+    behavior_modules: Sequence[SageBlock],
+    burst_heal_modules: Sequence[SageBlock],
+    objects: Mapping[str, SageObject],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> dict[str, object]:
+    label = f"ability {button.name}"
+    power_tokens = _module_tokens(button, "SpecialPower")
+    if len(power_tokens) != 1:
+        raise PlayableUnitCompilerError(
+            f"{label} must name exactly one SpecialPower template"
+        )
+    power_id = power_tokens[0]
+    templates = {power_id.casefold()}
+    trigger_tokens = _module_tokens(button, "CommandTrigger")
+    if len(trigger_tokens) > 1:
+        raise PlayableUnitCompilerError(
+            f"{label} has an ambiguous CommandTrigger chain"
+        )
+    if trigger_tokens:
+        trigger_button = command_buttons.get(trigger_tokens[0].casefold())
+        if trigger_button is None:
+            raise PlayableUnitCompilerError(
+                f"{label} CommandTrigger references a missing CommandButton: "
+                f"{trigger_tokens[0]}"
+            )
+        trigger_kinds = {
+            value.strip().casefold() for value in trigger_button.values("Command")
+        }
+        trigger_powers = _module_tokens(trigger_button, "SpecialPower")
+        if trigger_kinds != {"special_power"} or len(trigger_powers) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} CommandTrigger {trigger_button.name} must name exactly "
+                "one SPECIAL_POWER template"
+            )
+        templates.add(trigger_powers[0].casefold())
+
+    options = {
+        token
+        for value in button.values("Options")
+        for token in _tokens(value)
+        if token.casefold() not in {"none", "null"}
+    }
+    bound = [
+        block
+        for block in behavior_modules
+        if templates
+        & {token.casefold() for token in _module_tokens(block, "SpecialPowerTemplate")}
+    ]
+    if len(bound) > _MAX_ABILITY_MODULES:
+        raise PlayableUnitCompilerError(f"{label} exceeds the ability module limit")
+
+    limitations: list[str] = []
+    effect: dict[str, object] = {"kind": "none"}
+    status = "implemented"
+    reason = ""
+
+    # Level gate: every authored UnpauseSpecialPowerUpgrade trigger must chain
+    # to an authored ExperienceLevel grant covering this hero.
+    gate_upgrades = sorted(
+        {
+            token
+            for block in bound
+            if block.kind.casefold() == "unpausespecialpowerupgrade"
+            for token in _module_tokens(block, "TriggeredBy")
+        },
+        key=str.casefold,
+    )
+    level_gate: dict[str, object] | None = None
+    if gate_upgrades:
+        missing = [upgrade for upgrade in gate_upgrades if upgrade.casefold() not in level_grants]
+        if missing:
+            detail = (
+                "no authored ExperienceLevel grants %s to this hero"
+                % ", ".join(missing)
+                if experience_levels_available
+                else "experience level source is not in the effective INI view"
+            )
+            level_gate = {
+                "upgradeIds": list(gate_upgrades),
+                "requiredLevel": None,
+                "limitation": detail,
+                "sourceIni": EXPERIENCE_LEVELS_PATH,
+            }
+            limitations.append(f"level gate unresolved: {detail}")
+        else:
+            level_gate = {
+                "upgradeIds": list(gate_upgrades),
+                "requiredLevel": max(
+                    level_grants[upgrade.casefold()] for upgrade in gate_upgrades
+                ),
+                "sourceIni": EXPERIENCE_LEVELS_PATH,
+            }
+
+    row: dict[str, object] = {
+        "id": button.name,
+        "slot": slot,
+        "specialPowerId": power_id,
+        "button": _ability_button_leaf_fields(button),
+        "targeting": (
+            "point"
+            if "NEED_TARGET_POS" in options
+            else "enemy-object"
+            if "NEED_TARGET_ENEMY_OBJECT" in options
+            else "self"
+        ),
+        "modules": [
+            {
+                "kind": block.kind,
+                "instanceTag": block.instance_tag or "",
+                "sourceIni": block.source_virtual_path,
+                "line": block.line,
+            }
+            for block in bound
+        ],
+        "sourceIni": COMMAND_BUTTON_PATH,
+    }
+    unit_sound = _first(button.values("UnitSpecificSound"))
+    if unit_sound is not None:
+        row["unitSpecificSoundId"] = unit_sound
+
+    power_block = power_blocks.get(power_id.casefold())
+    if power_block is None:
+        status = "unimplemented"
+        reason = f"effective SpecialPower is missing: {power_id}"
+    if status == "implemented" and power_block is not None:
+        enum = _first(power_block.values("Enum"))
+        if enum is not None:
+            row["enum"] = enum
+        reload_values = power_block.values("ReloadTime")
+        cooldown = (
+            _resolved_expression(reload_values[-1], constants) if reload_values else None
+        )
+        if cooldown is None:
+            status = "unimplemented"
+            reason = f"SpecialPower {power_id} has an unresolvable ReloadTime"
+        else:
+            row["cooldownMs"] = cooldown
+        initiate_sound = _first(power_block.values("InitiateAtLocationSound")) or _first(
+            power_block.values("InitiateSound")
+        )
+        if initiate_sound is not None:
+            row["initiateSoundId"] = initiate_sound
+        radius = power_block.values("RadiusCursorRadius")
+        if radius:
+            resolved_radius = _resolved_expression(radius[-1], constants)
+            if resolved_radius is not None:
+                row["radiusCursorRadius"] = resolved_radius
+
+    if status == "implemented":
+        if "NONPRESSABLE" in options:
+            # Passive display buttons (leadership auras, cloak) never cast.
+            status = "passive"
+            reason = "button is authored NONPRESSABLE (passive display)"
+        else:
+            unsupported_kinds = sorted(
+                {
+                    block.kind
+                    for block in bound
+                    if block.kind.casefold() in _ABILITY_UNIMPLEMENTED_MODULE_KINDS
+                    and _ABILITY_UNIMPLEMENTED_MODULE_KINDS[block.kind.casefold()]
+                },
+                key=str.casefold,
+            )
+            unknown_kinds = sorted(
+                {
+                    block.kind
+                    for block in bound
+                    if block.kind.casefold()
+                    not in _ABILITY_SUPPORT_MODULE_KINDS
+                    and block.kind.casefold() not in _ABILITY_UNIMPLEMENTED_MODULE_KINDS
+                    and block.kind.casefold()
+                    not in {
+                        "weaponfirespecialabilityupdate",
+                        "oclspecialpower",
+                        "heromodespecialabilityupdate",
+                        "playerhealspecialpower",
+                    }
+                },
+                key=str.casefold,
+            )
+            if unsupported_kinds:
+                status = "unimplemented"
+                reason = "; ".join(
+                    _ABILITY_UNIMPLEMENTED_MODULE_KINDS[kind.casefold()]
+                    for kind in unsupported_kinds
+                )
+            elif unknown_kinds:
+                status = "unimplemented"
+                reason = "unsupported ability module kind: " + ", ".join(unknown_kinds)
+
+    if status == "implemented":
+        if not gate_upgrades and any(
+            (_first(block.values("StartsPaused")) or "").casefold() == "yes"
+            for block in bound
+        ):
+            status = "unimplemented"
+            reason = "ability starts paused without an authored unpause gate"
+
+    if status == "implemented":
+        try:
+            effect = _hero_ability_effect(
+                label,
+                bound,
+                burst_heal_modules,
+                gate_upgrades,
+                modifier_blocks,
+                ocl_source,
+                objects,
+                documents,
+                constants,
+                limitations,
+                named_definition_cache=named_definition_cache,
+                cache_lock=cache_lock,
+            )
+        except PlayableUnitCompilerError as error:
+            status = "unimplemented"
+            reason = str(error)
+            effect = {"kind": "none"}
+        if status == "implemented" and effect.get("kind") == "none":
+            status = "unimplemented"
+            reason = reason or "no convertible effect leaf is bound to this ability"
+
+    if level_gate is not None:
+        row["levelGate"] = level_gate
+    row["effect"] = effect
+    row["implementation"] = {
+        "status": status,
+        "reason": reason,
+        "limitations": limitations,
+    }
+    return row
+
+
+def _hero_ability_effect(
+    label: str,
+    bound: Sequence[SageBlock],
+    burst_heal_modules: Sequence[SageBlock],
+    gate_upgrades: Sequence[str],
+    modifier_blocks: Mapping[str, IniBlock],
+    ocl_source: bytes | None,
+    objects: Mapping[str, SageObject],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+    limitations: list[str],
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> dict[str, object]:
+    """Bind the ability's effect leaves; raise PlayableUnitCompilerError on gaps."""
+
+    def modules_of(kind: str) -> list[SageBlock]:
+        return [block for block in bound if block.kind.casefold() == kind]
+
+    heal_modules = modules_of("playerhealspecialpower")
+    ocl_modules = modules_of("oclspecialpower")
+    weapon_modules = modules_of("weaponfirespecialabilityupdate")
+    hero_mode_modules = modules_of("heromodespecialabilityupdate")
+
+    if heal_modules:
+        block = heal_modules[0]
+        amount = _resolved_expression(
+            (block.values("HealAmount") or ("",))[-1], constants
+        )
+        radius = _resolved_expression(
+            (block.values("HealRadius") or ("",))[-1], constants
+        )
+        if amount is None or radius is None:
+            raise PlayableUnitCompilerError(
+                f"{label} heal module has an unresolvable HealAmount/HealRadius"
+            )
+        effect: dict[str, object] = {
+            "kind": "heal",
+            "module": block.kind,
+            "amountKind": "fraction",
+            "amount": amount,
+            "radius": radius,
+            "onlyOthers": False,
+            "sourceIni": block.source_virtual_path,
+            "line": block.line,
+        }
+        heal_fx = _first(block.values("HealFX"))
+        if heal_fx is not None:
+            effect["healFxId"] = heal_fx
+        affects = _first(block.values("HealAffects"))
+        if affects is not None:
+            effect["affects"] = affects
+        return effect
+
+    if ocl_modules:
+        block = ocl_modules[0]
+        ocl_tokens = _module_tokens(block, "OCL")
+        if len(ocl_tokens) != 1:
+            raise PlayableUnitCompilerError(f"{label} has an ambiguous OCL reference")
+        if ocl_source is None:
+            raise PlayableUnitCompilerError(
+                f"{label} requires {OBJECT_CREATION_LIST_PATH} in the effective INI view"
+            )
+        entries = _ocl_create_object_entries(ocl_source, ocl_tokens[0])
+        if entries is None:
+            raise PlayableUnitCompilerError(
+                f"{label} references a missing ObjectCreationList: {ocl_tokens[0]}"
+            )
+        summon_objects: list[dict[str, object]] = []
+        for entry in entries:
+            names: list[str] = []
+            count: int | float = 1
+            for field in entry["fields"]:
+                key = str(field["key"]).casefold()
+                if key == "objectnames":
+                    names.extend(
+                        token
+                        for token in _tokens(str(field["value"]))
+                        if token.casefold() not in {"none", "null"}
+                    )
+                elif key == "count":
+                    resolved = _resolved_expression(str(field["value"]), constants)
+                    if resolved is None or int(resolved) < 1:
+                        raise PlayableUnitCompilerError(
+                            f"{label} ObjectCreationList {ocl_tokens[0]} has an "
+                            "unresolvable Count"
+                        )
+                    count = int(resolved)
+            if not names:
+                raise PlayableUnitCompilerError(
+                    f"{label} ObjectCreationList {ocl_tokens[0]} has no ObjectNames"
+                )
+            for name in names:
+                target = objects.get(name.casefold())
+                if target is None:
+                    raise PlayableUnitCompilerError(
+                        f"{label} ObjectCreationList {ocl_tokens[0]} references a "
+                        f"missing Object: {name}"
+                    )
+                summon_objects.append(
+                    {
+                        "id": target.name,
+                        "count": count,
+                        "sourceIni": OBJECT_CREATION_LIST_PATH,
+                        "line": int(entry["line"]),
+                    }
+                )
+        effect = {
+            "kind": "summon",
+            "oclId": ocl_tokens[0],
+            "objects": summon_objects,
+            "sourceIni": OBJECT_CREATION_LIST_PATH,
+        }
+        create_location = _first(block.values("CreateLocation"))
+        if create_location is not None:
+            effect["createLocation"] = create_location
+        return effect
+
+    if weapon_modules:
+        block = weapon_modules[0]
+        weapon_tokens = _module_tokens(block, "SpecialWeapon")
+        if len(weapon_tokens) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} has an ambiguous SpecialWeapon reference"
+            )
+        leaf = _ability_weapon_leaf(
+            documents,
+            weapon_tokens[0],
+            constants,
+            label,
+            named_definition_cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        effect = {
+            "kind": "weapon-blast",
+            "weaponId": leaf["id"],
+            "damage": leaf["damage"],
+            "damageRadius": leaf["damageRadius"],
+            "components": leaf["components"],
+            "sourceIni": WEAPON_PATH,
+        }
+        for key in ("damageType", "attackRange", "fireFxId", "excludedNuggets", "warheadId"):
+            if key in leaf:
+                effect[key] = leaf[key]
+        if leaf.get("damageScalarAuthored"):
+            limitations.append(
+                "weapon authors DamageScalar target-type scaling (not applied)"
+            )
+        slot_tokens = _module_tokens(block, "WhichSpecialWeapon")
+        if slot_tokens:
+            resolved = _resolved_expression(slot_tokens[0], constants)
+            if resolved is not None:
+                effect["specialWeaponSlot"] = int(resolved)
+        start_range = _resolved_expression(
+            (block.values("StartAbilityRange") or ("",))[-1], constants
+        )
+        if start_range is not None:
+            effect["startAbilityRange"] = start_range
+        if "attackRange" not in effect and "startAbilityRange" not in effect:
+            limitations.append("ability weapon authors no AttackRange/StartAbilityRange")
+        return effect
+
+    modifier_id: str | None = None
+    duration: int | float | None = None
+    range_value: int | float | None = None
+    affects_self = True
+    affects_filter: str | None = None
+    anti_category: str | None = None
+    modifier_module: SageBlock | None = None
+    if hero_mode_modules:
+        modifier_module = hero_mode_modules[0]
+        tokens = _module_tokens(modifier_module, "HeroAttributeModifier")
+        if len(tokens) > 1:
+            raise PlayableUnitCompilerError(
+                f"{label} has an ambiguous HeroAttributeModifier"
+            )
+        modifier_id = tokens[0] if tokens else None
+        duration = _resolved_expression(
+            (modifier_module.values("HeroEffectDuration") or ("",))[-1], constants
+        )
+    else:
+        timing = [
+            block
+            for block in modules_of("specialabilityupdate")
+            if _module_tokens(block, "TriggerAttributeModifier")
+        ]
+        starters = [
+            block
+            for block in modules_of("specialpowermodule")
+            if _module_tokens(block, "AttributeModifier")
+        ]
+        if timing:
+            modifier_module = timing[0]
+            modifier_id = _module_tokens(modifier_module, "TriggerAttributeModifier")[0]
+            duration = _resolved_expression(
+                (modifier_module.values("AttributeModifierDuration") or ("",))[-1],
+                constants,
+            )
+        elif starters:
+            modifier_module = starters[0]
+            modifier_id = _module_tokens(modifier_module, "AttributeModifier")[0]
+    if modifier_module is not None and modifier_id is not None:
+        anti_tokens = _module_tokens(modifier_module, "AntiCategory")
+        if anti_tokens:
+            anti_category = anti_tokens[0]
+        range_expression = _resolved_expression(
+            (modifier_module.values("AttributeModifierRange") or ("",))[-1], constants
+        )
+        if range_expression is not None:
+            range_value = range_expression
+        affects_self_value = _first(modifier_module.values("AttributeModifierAffectsSelf"))
+        affects_self = (affects_self_value or "yes").casefold() == "yes"
+        affects_tokens = _module_tokens(modifier_module, "AttributeModifierAffects")
+        if affects_tokens:
+            affects_filter = " ".join(affects_tokens)
+        leaf = _ability_modifier_leaf(modifier_blocks, modifier_id, constants, label)
+        if duration is None:
+            duration = leaf.get("durationMs")  # type: ignore[assignment]
+        supported = list(leaf.get("modifiers", []))
+        if anti_category is not None and not supported:
+            raise PlayableUnitCompilerError(
+                f"{label} strips {anti_category} buffs, which needs the buff system"
+            )
+        if not supported:
+            raise PlayableUnitCompilerError(
+                f"{label} modifier {modifier_id} has no runtime-supported Modifier rows"
+            )
+        if duration is None:
+            raise PlayableUnitCompilerError(
+                f"{label} modifier {modifier_id} has no authored effect duration"
+            )
+        effect = {
+            "kind": "attribute-modifier",
+            "modifierId": modifier_id,
+            "durationMs": duration,
+            "affectsSelf": affects_self,
+            "modifiers": supported,
+            "sourceIni": ATTRIBUTE_MODIFIER_PATH,
+        }
+        if range_value is not None and range_value > 0:
+            effect["range"] = range_value
+        if affects_filter is not None:
+            effect["affectsFilter"] = affects_filter
+        if leaf.get("category"):
+            effect["category"] = leaf["category"]
+        if leaf.get("fxIds"):
+            effect["fxIds"] = leaf["fxIds"]
+        if leaf.get("unsupportedModifiers"):
+            limitations.append(
+                "modifier kinds not applied by the runtime: "
+                + ", ".join(leaf["unsupportedModifiers"])  # type: ignore[arg-type]
+            )
+        if anti_category is not None:
+            limitations.append(f"anti-category strip ({anti_category}) is not applied")
+        return effect
+
+    # Burst heals bind through authored cross-references: the heal module's
+    # TriggeredBy matches the ability gate, or its UnitHealPulseFX matches the
+    # ability's authored TriggerFX.  Ambiguity fails closed (no binding).
+    trigger_fxes = {
+        token.casefold()
+        for block in bound
+        for token in _module_tokens(block, "TriggerFX")
+    }
+    heal_candidates: list[SageBlock] = []
+    for block in burst_heal_modules:
+        triggers = {token.casefold() for token in _module_tokens(block, "TriggeredBy")}
+        if triggers and triggers & {upgrade.casefold() for upgrade in gate_upgrades}:
+            heal_candidates.append(block)
+            continue
+        if not triggers:
+            pulse = (_first(block.values("UnitHealPulseFX")) or "").casefold()
+            if pulse and pulse in trigger_fxes:
+                heal_candidates.append(block)
+    if len(heal_candidates) > 1:
+        raise PlayableUnitCompilerError(
+            f"{label} has an ambiguous burst-heal binding"
+        )
+    if heal_candidates:
+        block = heal_candidates[0]
+        amount = _resolved_expression(
+            (block.values("HealingAmount") or ("",))[-1], constants
+        )
+        radius = _resolved_expression((block.values("Radius") or ("",))[-1], constants)
+        if amount is None or radius is None:
+            raise PlayableUnitCompilerError(
+                f"{label} burst-heal module has an unresolvable HealingAmount/Radius"
+            )
+        effect = {
+            "kind": "heal",
+            "module": block.kind,
+            "amountKind": "flat",
+            "amount": amount,
+            "radius": radius,
+            "onlyOthers": (_first(block.values("HealOnlyOthers")) or "").casefold()
+            == "yes",
+            "sourceIni": block.source_virtual_path,
+            "line": block.line,
+        }
+        pulse_fx = _first(block.values("UnitHealPulseFX"))
+        if pulse_fx is not None:
+            effect["healFxId"] = pulse_fx
+        kind_filter = _first(block.values("KindOf"))
+        if kind_filter is not None:
+            effect["affects"] = kind_filter
+        return effect
+
+    return {"kind": "none"}
+
+
+# ---------------------------------------------------------------------------
+# Per-battalion upgrade purchase surface.
+#
+# Retail sells OBJECT upgrades on the horde's own command set (forged blades,
+# heavy armor, fire arrows, Basic Training): an OBJECT_UPGRADE command button
+# gated by its NeededUpgrade PLAYER technology, priced by the OBJECT block in
+# upgrade.ini.  The horde's LevelUpUpgrade modules (the Basic Training banner
+# carrier across every faction) author the level effect such a purchase
+# applies.  Both compile here verbatim; nothing is inferred from unit class.
+# ---------------------------------------------------------------------------
+
+_OBJECT_UPGRADE_COMMAND = "object_upgrade"
+
+
+def _upgrade_purchase_commands(
+    target: SageObject,
+    target_lineage: Sequence[SageObject],
+    command_sets: Mapping[str, IniBlock],
+    command_buttons: Mapping[str, IniBlock],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+) -> list[dict[str, object]]:
+    """Compile the unit's authored OBJECT_UPGRADE purchase buttons."""
+
+    label = f"unit {target.name}"
+    command_values = [
+        value
+        for row in _effective_values(target_lineage, "CommandSet")
+        if (value := _first((row.value,))) is not None
+    ]
+    if not command_values:
+        return []
+    command_set = command_sets.get(command_values[0].casefold())
+    if command_set is None:
+        return []
+    rows: list[dict[str, object]] = []
+    for slot, command_id in _command_slots(command_set):
+        button = command_buttons.get(command_id.casefold())
+        if button is None:
+            raise PlayableUnitCompilerError(
+                f"CommandSet {command_set.name} references a missing "
+                f"CommandButton: {command_id}"
+            )
+        command_kinds = {value.strip().casefold() for value in button.values("Command")}
+        if command_kinds != {_OBJECT_UPGRADE_COMMAND}:
+            continue
+        upgrades = [
+            token
+            for value in button.values("Upgrade")
+            for token in _tokens(value)
+            if token.casefold() not in {"none", "null"}
+        ]
+        if len(upgrades) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} CommandButton {command_id} names an ambiguous "
+                "upgrade purchase"
+            )
+        upgrade_id = upgrades[0]
+        needed = [
+            token
+            for value in button.values("NeededUpgrade")
+            for token in _tokens(value)
+            if token.casefold() not in {"none", "null"}
+        ]
+        options = {
+            token.casefold()
+            for value in button.values("Options")
+            for token in _tokens(value)
+        }
+        row: dict[str, object] = {
+            "upgradeId": upgrade_id,
+            "commandId": command_id,
+            "commandSetId": command_set.name,
+            "slot": slot,
+            "cancelable": "cancelable" in options,
+            "multiSelect": "ok_for_multi_select" in options,
+            "neededUpgradeAny": any(
+                value.strip().casefold() in {"yes", "true", "1"}
+                for value in button.values("NeededUpgradeAny")
+            ),
+        }
+        if needed:
+            row["neededUpgradeIds"] = needed
+        for field, output_key in (
+            ("TextLabel", "labelId"),
+            ("DescriptLabel", "tooltipId"),
+            ("ButtonImage", "buttonImageId"),
+            ("LacksPrerequisiteLabel", "lacksPrerequisiteLabelId"),
+        ):
+            for value in button.values(field):
+                text = value.strip()
+                if text and text.casefold() not in {"none", "null"}:
+                    row[output_key] = text
+                    break
+        rows.append(row)
+    if not rows:
+        return []
+    upgrade_source = _optional_document(documents, UPGRADE_PATH)
+    if upgrade_source is None:
+        raise PlayableUnitCompilerError(
+            f"{label} authors upgrade purchases but {UPGRADE_PATH} is not in "
+            "the effective INI view"
+        )
+    upgrade_blocks = _named_blocks(upgrade_source, "Upgrade")
+    for row in rows:
+        upgrade_id = str(row["upgradeId"])
+        upgrade_block = upgrade_blocks.get(upgrade_id.casefold())
+        if upgrade_block is None:
+            raise PlayableUnitCompilerError(
+                f"{label} purchase {upgrade_id} has no {UPGRADE_PATH} block"
+            )
+        upgrade_type = _first(upgrade_block.values("Type"))
+        if upgrade_type is None or upgrade_type.strip().casefold() != "object":
+            raise PlayableUnitCompilerError(
+                f"{label} purchase {upgrade_id} is not an OBJECT upgrade"
+            )
+        cost_expression = _first(upgrade_block.values("BuildCost"))
+        time_expression = _first(upgrade_block.values("BuildTime"))
+        if cost_expression is None or time_expression is None:
+            raise PlayableUnitCompilerError(
+                f"{label} purchase {upgrade_id} lacks authored BuildCost/BuildTime"
+            )
+        cost = _resolved_expression(cost_expression, constants)
+        build_time = _resolved_expression(time_expression, constants)
+        if cost is None or build_time is None:
+            raise PlayableUnitCompilerError(
+                f"{label} purchase {upgrade_id} has an unresolvable "
+                "BuildCost/BuildTime"
+            )
+        row["cost"] = cost
+        row["buildTimeSeconds"] = build_time
+    rows.sort(key=lambda row: (int(row["slot"]), str(row["upgradeId"]).casefold()))
+    return rows
+
+
+def _level_up_upgrades(
+    target: SageObject,
+    target_lineage: Sequence[SageObject],
+) -> tuple[list[dict[str, object]], frozenset[tuple[str, int, str, str]]]:
+    """Compile the container's LevelUpUpgrade modules (Basic Training).
+
+    Returns the upgrade rows plus the consumed module identities so the
+    modules leave the unsupported-capability record they used to occupy.
+    """
+
+    label = f"unit {target.name}"
+    rows: list[dict[str, object]] = []
+    consumed: set[tuple[str, int, str, str]] = set()
+    for block in _effective_top_blocks(target_lineage):
+        if (block.header_key or "").casefold() != "behavior":
+            continue
+        if block.kind.casefold() != "levelupupgrade":
+            continue
+        triggers = tuple(
+            token
+            for value in block.values("TriggeredBy")
+            for token in _tokens(value)
+            if token.casefold() not in {"none", "null"}
+        )
+        if not triggers:
+            raise PlayableUnitCompilerError(
+                f"{label} LevelUpUpgrade has no TriggeredBy upgrade"
+            )
+        gains_raw = _first(block.values("LevelsToGain"))
+        cap_raw = _first(block.values("LevelCap"))
+        if (
+            gains_raw is None
+            or not re.fullmatch(r"[0-9]+", gains_raw.strip())
+            or int(gains_raw.strip()) < 1
+        ):
+            raise PlayableUnitCompilerError(
+                f"{label} LevelUpUpgrade has no valid LevelsToGain"
+            )
+        if cap_raw is None or not re.fullmatch(r"[0-9]+", cap_raw.strip()):
+            raise PlayableUnitCompilerError(
+                f"{label} LevelUpUpgrade has no valid LevelCap"
+            )
+        for upgrade_id in triggers:
+            rows.append(
+                {
+                    "upgradeId": upgrade_id,
+                    "levelsToGain": int(gains_raw.strip()),
+                    "levelCap": int(cap_raw.strip()),
+                    "sourceIni": block.source_virtual_path,
+                    "line": int(block.line),
+                }
+            )
+        consumed.add(
+            (
+                block.source_virtual_path.casefold(),
+                block.line,
+                (block.instance_tag or "").casefold(),
+                block.kind.casefold(),
+            )
+        )
+    rows.sort(key=lambda row: str(row["upgradeId"]).casefold())
+    return rows, frozenset(consumed)
+
+
 def compile_playable_unit_descriptor(
     target_id: str,
     documents: Mapping[str, bytes],
@@ -1666,6 +3883,18 @@ def compile_playable_unit_descriptor(
     members, primary_member, consumed_container_modules = _member_rows(
         target, target_lineage, objects, prepared.numeric_defines
     )
+    level_upgrades, consumed_level_up_modules = _level_up_upgrades(
+        target, target_lineage
+    )
+    consumed_container_modules = consumed_container_modules | consumed_level_up_modules
+    upgrade_commands = _upgrade_purchase_commands(
+        target,
+        target_lineage,
+        command_sets,
+        command_buttons,
+        documents,
+        prepared.numeric_defines,
+    )
     member_lineage = _ancestry(objects, primary_member)
     container_audio_edges = (
         frozenset().union(
@@ -1772,6 +4001,10 @@ def compile_playable_unit_descriptor(
         prepared.numeric_defines,
         documents,
         target_lineage,
+        flat_kind_cache=prepared.flat_kind_cache,
+        named_definition_cache=prepared.named_definition_cache,
+        cache_lock=prepared.cache_lock,
+        hero=category == "hero",
     )
     combined_kinds = tuple(sorted(set(target_kinds) | set(member_kinds)))
     capabilities, unsupported_capabilities, traits = _capability_contract(
@@ -1782,6 +4015,28 @@ def compile_playable_unit_descriptor(
         visual_refs,
         (),
     )
+    abilities: list[dict[str, object]] = []
+    ability_power_blocks: dict[str, IniBlock] = {}
+    if category == "hero":
+        abilities, ability_power_blocks = _hero_abilities(
+            target,
+            target_lineage,
+            member_lineage,
+            command_sets,
+            command_buttons,
+            objects,
+            documents,
+            prepared.numeric_defines,
+            named_definition_cache=prepared.named_definition_cache,
+            cache_lock=prepared.cache_lock,
+        )
+    experience = _experience_contract(
+        target_lineage,
+        member_lineage,
+        members,
+        documents,
+        prepared.numeric_defines,
+    )
     used_paths = {
         COMMAND_SET_PATH,
         COMMAND_BUTTON_PATH,
@@ -1789,6 +4044,12 @@ def compile_playable_unit_descriptor(
         *(item.source_virtual_path for item in member_lineage),
     }
     used_paths.update(_provenance_paths(simulation))
+    used_paths.update(_provenance_paths(abilities))
+    used_paths.update(_provenance_paths(experience))
+    if upgrade_commands or level_upgrades:
+        used_paths.add(UPGRADE_PATH)
+    if ability_power_blocks:
+        used_paths.add(SPECIAL_POWER_PATH)
     for producer in producers:
         source = producer.get("source", {})
         if isinstance(source, Mapping):
@@ -1811,6 +4072,18 @@ def compile_playable_unit_descriptor(
     for path in _provenance_paths(simulation):
         semantic_scopes[path.casefold()].append(
             {"kind": "ResolvedPlayableUnitSimulation", "contract": simulation}
+        )
+    for path in _provenance_paths(abilities):
+        semantic_scopes[path.casefold()].append(
+            {"kind": "ResolvedHeroAbilities", "abilities": abilities}
+        )
+    for path in _provenance_paths(experience):
+        semantic_scopes[path.casefold()].append(
+            {"kind": "ResolvedExperienceLevels", "experience": experience}
+        )
+    for power_block in ability_power_blocks.values():
+        semantic_scopes[SPECIAL_POWER_PATH].append(
+            _ini_block_semantic("SpecialPower", power_block)
         )
     for producer in producers:
         producer_id = str(producer["producerObjectId"])
@@ -1869,6 +4142,16 @@ def compile_playable_unit_descriptor(
             "memberFields": member_fields,
             "references": visual_refs,
             "simulation": simulation,
+            **(
+                {"upgradeCommands": upgrade_commands}
+                if upgrade_commands
+                else {}
+            ),
+            **(
+                {"levelUpgrades": level_upgrades}
+                if level_upgrades
+                else {}
+            ),
         },
         "presentation": {
             "visualRoots": visual_refs.get("model", []),
@@ -1923,6 +4206,13 @@ def compile_playable_unit_descriptor(
         ],
         "sourceDocuments": _source_rows(documents, used_paths, semantic_scopes),
     }
+    if category == "hero":
+        # Hero-only contract: SPECIAL_POWER command abilities. Non-hero
+        # descriptors stay byte-stable (no key emitted).
+        descriptor["abilities"] = abilities
+    # Every playable unit carries its experience economy contract (compiled
+    # chain, or the recorded reason there is none).
+    descriptor["experience"] = experience
     descriptor["descriptorSha256"] = _digest(descriptor)
     return descriptor
 
@@ -2322,6 +4612,200 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         raise PlayableUnitCompilerError(
             "playable-unit unsupported modules disagree with special capabilities"
         )
+    abilities = value.get("abilities")
+    if category == "hero":
+        if not isinstance(abilities, list):
+            raise PlayableUnitCompilerError("playable-unit hero abilities are invalid")
+    elif abilities is not None:
+        raise PlayableUnitCompilerError(
+            "playable-unit non-hero descriptor must not carry abilities"
+        )
+    for row in abilities or []:
+        slot = row.get("slot") if isinstance(row, Mapping) else None
+        if (
+            not isinstance(row, Mapping)
+            or not isinstance(row.get("id"), str)
+            or not row.get("id")
+            or not isinstance(slot, int)
+            or isinstance(slot, bool)
+            or slot < 1
+            or not isinstance(row.get("specialPowerId"), str)
+            or not row.get("specialPowerId")
+            or row.get("targeting") not in {"self", "point", "enemy-object"}
+            or not isinstance(row.get("sourceIni"), str)
+            or not row.get("sourceIni")
+        ):
+            raise PlayableUnitCompilerError("playable-unit ability row is invalid")
+        cooldown = row.get("cooldownMs")
+        if cooldown is not None and (
+            not isinstance(cooldown, (int, float))
+            or isinstance(cooldown, bool)
+            or cooldown < 0
+        ):
+            raise PlayableUnitCompilerError("playable-unit ability cooldown is invalid")
+        button = row.get("button")
+        if not isinstance(button, Mapping):
+            raise PlayableUnitCompilerError("playable-unit ability button is invalid")
+        for field in ("iconIds", "labelIds", "tooltipIds"):
+            values = button.get(field)
+            if not isinstance(values, list) or any(
+                not isinstance(item, str) or not item for item in values
+            ):
+                raise PlayableUnitCompilerError(
+                    "playable-unit ability button leaves are invalid"
+                )
+        options = button.get("options")
+        if options is not None and (
+            not isinstance(options, list)
+            or any(not isinstance(item, str) or not item for item in options)
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit ability button options are invalid"
+            )
+        gate = row.get("levelGate")
+        if gate is not None:
+            required = gate.get("requiredLevel") if isinstance(gate, Mapping) else None
+            if (
+                not isinstance(gate, Mapping)
+                or not isinstance(gate.get("upgradeIds"), list)
+                or not gate["upgradeIds"]
+                or any(
+                    not isinstance(item, str) or not item
+                    for item in gate["upgradeIds"]
+                )
+                or (
+                    required is not None
+                    and (
+                        not isinstance(required, int)
+                        or isinstance(required, bool)
+                        or required < 1
+                    )
+                )
+            ):
+                raise PlayableUnitCompilerError(
+                    "playable-unit ability level gate is invalid"
+                )
+        effect = row.get("effect")
+        if not isinstance(effect, Mapping) or effect.get("kind") not in {
+            "none",
+            "weapon-blast",
+            "heal",
+            "summon",
+            "attribute-modifier",
+        }:
+            raise PlayableUnitCompilerError("playable-unit ability effect is invalid")
+        implementation = row.get("implementation")
+        if (
+            not isinstance(implementation, Mapping)
+            or implementation.get("status")
+            not in {"implemented", "unimplemented", "passive"}
+            or not isinstance(implementation.get("reason"), str)
+            or not isinstance(implementation.get("limitations"), list)
+            or any(
+                not isinstance(item, str)
+                for item in implementation["limitations"]
+            )
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit ability implementation is invalid"
+            )
+        if implementation["status"] == "implemented" and (
+            effect["kind"] == "none" or "cooldownMs" not in row
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit implemented ability lacks its effect or cooldown"
+            )
+        if implementation["status"] != "implemented" and effect["kind"] != "none":
+            raise PlayableUnitCompilerError(
+                "playable-unit unavailable ability must not carry an effect"
+            )
+        modules = row.get("modules")
+        if not isinstance(modules, list) or any(
+            not isinstance(module, Mapping)
+            or not isinstance(module.get("kind"), str)
+            or not module.get("kind")
+            or not isinstance(module.get("instanceTag"), str)
+            or not isinstance(module.get("sourceIni"), str)
+            or not isinstance(module.get("line"), int)
+            for module in modules
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit ability module evidence is invalid"
+            )
+    experience = value.get("experience")
+    if not isinstance(experience, Mapping):
+        raise PlayableUnitCompilerError("playable-unit experience contract is invalid")
+    status = experience.get("status")
+    if status not in {"compiled", "unauthored", "unavailable"}:
+        raise PlayableUnitCompilerError("playable-unit experience status is invalid")
+    if status == "compiled":
+        max_level = experience.get("maxLevel")
+        initial_rank = experience.get("initialRank")
+        levels = experience.get("levels")
+        if (
+            not isinstance(max_level, int)
+            or isinstance(max_level, bool)
+            or max_level < 1
+            or not isinstance(initial_rank, int)
+            or isinstance(initial_rank, bool)
+            or initial_rank < 1
+            or initial_rank > max_level
+            or not isinstance(levels, list)
+            or not levels
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit experience level table is invalid"
+            )
+        expected_previous = 0
+        for level_row in levels:
+            if not isinstance(level_row, Mapping):
+                raise PlayableUnitCompilerError(
+                    "playable-unit experience level row is invalid"
+                )
+            rank = level_row.get("rank")
+            required_xp = level_row.get("requiredExperience")
+            award = level_row.get("experienceAward")
+            if (
+                not isinstance(rank, int)
+                or isinstance(rank, bool)
+                or rank <= expected_previous
+                or not isinstance(required_xp, (int, float))
+                or isinstance(required_xp, bool)
+                or required_xp < 0
+                or not isinstance(award, (int, float))
+                or isinstance(award, bool)
+                or award < 0
+            ):
+                raise PlayableUnitCompilerError(
+                    "playable-unit experience level row is invalid"
+                )
+            expected_previous = rank
+            for leaf in level_row.get("attributeModifiers", []):
+                if not isinstance(leaf, Mapping):
+                    raise PlayableUnitCompilerError(
+                        "playable-unit experience modifier leaf is invalid"
+                    )
+                for modifier in leaf.get("modifiers", []):
+                    application = (
+                        modifier.get("application")
+                        if isinstance(modifier, Mapping)
+                        else None
+                    )
+                    if (
+                        not isinstance(modifier, Mapping)
+                        or modifier.get("kind") not in {"HEALTH", "DAMAGE_ADD", "PRODUCTION"}
+                        or not isinstance(modifier.get("value"), (int, float))
+                        or isinstance(modifier.get("value"), bool)
+                        or application
+                        not in {"additive", "multiplicative"}
+                    ):
+                        raise PlayableUnitCompilerError(
+                            "playable-unit experience modifier row is invalid"
+                        )
+        if expected_previous != max_level or int(levels[0]["rank"]) != initial_rank:
+            raise PlayableUnitCompilerError(
+                "playable-unit experience level table is invalid"
+            )
     sources = value.get("sourceDocuments")
     if not isinstance(sources, list) or not sources:
         raise PlayableUnitCompilerError("playable-unit source provenance is invalid")

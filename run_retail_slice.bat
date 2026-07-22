@@ -2,6 +2,7 @@
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 if not defined OPENBFME_CONTENT set "OPENBFME_CONTENT=%~dp0.private\content-packs"
+if not defined OPENBFME_REVIEWED_RANGER_OVERLAY_SHA256 set "OPENBFME_REVIEWED_RANGER_OVERLAY_SHA256=3e6399441fdfec38009ba2465e9249d57acb961934907c5839f5744be48df116"
 if /I "%~1"=="--print-paths" (
   echo OPENBFME_CONTENT=%OPENBFME_CONTENT%
   exit /b 0

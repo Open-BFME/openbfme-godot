@@ -955,3 +955,1468 @@ def test_ring_hero_requires_the_authored_revive_slot_button() -> None:
         PlayableUnitCompilerError, match="Command_RingHeroReviveSlot"
     ):
         compile_playable_unit_descriptor("HeroRing", documents, faction_graph=graph)
+
+
+def _combat_documents(
+    object_rows: str,
+    weapon_ini: str,
+    command_rows: str,
+    button_rows: str,
+    *,
+    defines: str = "",
+) -> dict[str, bytes]:
+    documents = _documents()
+    units_path = "data/ini/object/units/test_units.ini"
+    documents[units_path] = (
+        documents[units_path].decode() + object_rows
+    ).encode()
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    marker = "  7 = Command_BuildChildHorde\nEnd"
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        marker, "  7 = Command_BuildChildHorde" + command_rows + "\nEnd", 1
+    ).encode()
+    buttons_path = "data/ini/commandbutton.ini"
+    documents[buttons_path] = (
+        documents[buttons_path].decode() + button_rows
+    ).encode()
+    documents["data/ini/weapon.ini"] = weapon_ini.encode()
+    documents["data/ini/gamedata.ini"] = (
+        documents["data/ini/gamedata.ini"].decode() + defines
+    ).encode()
+    return documents
+
+
+def _combat_object(name: str, kind_of: str, weapon_set: str) -> str:
+    return (
+        f"\nObject {name}\n"
+        f"  KindOf = PRELOAD SELECTABLE {kind_of}\n"
+        "  BuildCost = 500\n"
+        "  BuildTime = 30\n"
+        "  CommandPoints = 20\n"
+        "  VisionRange = 300\n"
+        f"  SelectPortrait = UP{name}\n"
+        f"  VoiceSelect = {name}VoiceSelect\n"
+        "  VoicePriority = 43\n"
+        f"  VoiceMove = {name}VoiceMove\n"
+        f"  VoiceAttack = {name}VoiceAttack\n"
+        "  Draw = W3DScriptedModelDraw ModuleTag_Draw\n"
+        "    DefaultModelConditionState\n"
+        f"      Model = {name}Model\n"
+        "    End\n"
+        "  End\n"
+        f"{weapon_set}"
+        "End\n"
+    )
+
+
+def _combat_command(name: str, slot: int, target: str) -> tuple[str, str]:
+    return (
+        f"\n  {slot} = Command_Build{name}",
+        f"\nCommandButton Command_Build{name}\n"
+        "  Command = UNIT_BUILD\n"
+        f"  Object = {target}\n"
+        f"  ButtonImage = BI{target}\n"
+        f"  TextLabel = CONTROLBAR:{target}\n"
+        f"  DescriptLabel = CONTROLBAR:ToolTip{target}\n"
+        "End\n",
+    )
+
+
+def _combat_hero_documents(
+    weapon_set: str, weapon_ini: str, *, defines: str = ""
+) -> dict[str, bytes]:
+    command_row, button_row = _combat_command("CombatHero", 8, "CombatHero")
+    return _combat_documents(
+        _combat_object("CombatHero", "HERO INFANTRY", weapon_set),
+        weapon_ini,
+        command_row,
+        button_row,
+        defines=defines,
+    )
+
+
+def test_hero_multi_nugget_damage_resolves_base_total() -> None:
+    documents = _combat_hero_documents(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY HeroNuggetSword\n  End\n",
+        "Weapon HeroNuggetSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 800\n"
+        "  DamageNugget\n"
+        "    Damage = HERO_SWORD_DAMAGE\n"
+        "    DamageType = HERO\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = 20\n"
+        "    DamageType = SLASH\n"
+        "  End\n"
+        "End\n",
+        defines="#define HERO_SWORD_DAMAGE 180\n",
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    simulation = descriptor["gameplay"]["simulation"]
+    combat = simulation["resolved"]["combat"]
+    assert combat["weaponId"] == "HeroNuggetSword"
+    damage = combat["damage"]
+    assert damage["value"] == 200
+    assert [row["value"] for row in damage["components"]] == [180, 20]
+    assert [row["damageType"] for row in damage["components"]] == ["HERO", "SLASH"]
+    assert damage["components"][0]["constantSourceIni"] == "data/ini/gamedata.ini"
+    assert "combat.damage" not in simulation["missing"]
+
+
+def test_hero_flat_damage_wins_over_nugget_aggregation() -> None:
+    documents = _combat_hero_documents(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY HeroNuggetSword\n  End\n",
+        "Weapon HeroNuggetSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 800\n"
+        "  DamageNugget\n"
+        "    Damage = HERO_SWORD_DAMAGE\n"
+        "    DamageType = HERO\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = #MULTIPLY( HERO_SWORD_DAMAGE 0.25 )\n"
+        "    DamageType = HERO\n"
+        "  End\n"
+        "End\n",
+        defines="#define HERO_SWORD_DAMAGE 250\n",
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    damage = descriptor["gameplay"]["simulation"]["resolved"]["combat"]["damage"]
+    assert damage["value"] == 250
+    assert "components" not in damage
+
+
+def test_hero_multiplicative_cadence_fields_resolve() -> None:
+    documents = _combat_hero_documents(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY HeroNuggetSword\n  End\n",
+        "Weapon HeroNuggetSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = #MULTIPLY( HERO_DELAY 0.8 )\n"
+        "  PreAttackDelay = #MULTIPLY( HERO_PREATTACK 0.1 )\n"
+        "  FiringDuration = 1000\n"
+        "  DamageNugget\n"
+        "    Damage = 150\n"
+        "    DamageType = HERO\n"
+        "  End\n"
+        "End\n",
+        defines="#define HERO_DELAY 1000\n#define HERO_PREATTACK 500\n",
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    simulation = descriptor["gameplay"]["simulation"]
+    combat = simulation["resolved"]["combat"]
+    assert combat["delayBetweenShotsMs"]["value"] == 800
+    assert combat["preAttackDelayMs"]["value"] == 50
+    assert combat["preAttackDelayMs"]["expression"] == "#MULTIPLY( HERO_PREATTACK 0.1 )"
+    assert "combat.delayBetweenShotsMs" not in simulation["missing"]
+    assert "combat.preAttackDelayMs" not in simulation["missing"]
+
+
+def test_hero_multiplicative_unknown_constant_fails_closed() -> None:
+    documents = _combat_hero_documents(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY HeroNuggetSword\n  End\n",
+        "Weapon HeroNuggetSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = #MULTIPLY( UNDEFINED_HERO_DELAY 0.8 )\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 1000\n"
+        "  DamageNugget\n"
+        "    Damage = 150\n"
+        "    DamageType = HERO\n"
+        "  End\n"
+        "End\n",
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    simulation = descriptor["gameplay"]["simulation"]
+    assert "delayBetweenShotsMs" not in simulation["resolved"]["combat"]
+    assert "combat.delayBetweenShotsMs" in simulation["missing"]
+
+
+def test_hero_secondary_only_weapon_set_resolves_standard_weapon() -> None:
+    documents = _combat_hero_documents(
+        "  WeaponSet\n"
+        "    Weapon = SECONDARY HeroSwoopWeapon\n"
+        "    Weapon = TERTIARY HeroClawWeapon\n"
+        "    OnlyAgainst = TERTIARY MONSTER\n"
+        "  End\n",
+        "Weapon HeroSwoopWeapon\n"
+        "  MeleeWeapon = No\n"
+        "  AttackRange = 24.0\n"
+        "  DelayBetweenShots = 4000\n"
+        "  PreAttackDelay = 100\n"
+        "  FiringDuration = 4500\n"
+        "  DamageNugget\n"
+        "    Damage = 250\n"
+        "    DamageType = SIEGE\n"
+        "  End\n"
+        "End\n"
+        "Weapon HeroClawWeapon\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 800\n"
+        "  DamageNugget\n"
+        "    Damage = 300\n"
+        "    DamageType = HERO\n"
+        "  End\n"
+        "End\n",
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    combat = descriptor["gameplay"]["simulation"]["resolved"]["combat"]
+    assert combat["weaponId"] == "HeroSwoopWeapon"
+    assert combat["damage"]["value"] == 250
+
+
+def test_hero_absent_preattack_delay_records_engine_default() -> None:
+    documents = _combat_hero_documents(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY HeroNuggetSword\n  End\n",
+        "Weapon HeroNuggetSword\n"
+        "  MeleeWeapon = No\n"
+        "  AttackRange = 24.0\n"
+        "  DelayBetweenShots = 4000\n"
+        "  FiringDuration = 4500\n"
+        "  DamageNugget\n"
+        "    Damage = 250\n"
+        "    DamageType = SIEGE\n"
+        "  End\n"
+        "End\n",
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    simulation = descriptor["gameplay"]["simulation"]
+    pre_attack = simulation["resolved"]["combat"]["preAttackDelayMs"]
+    assert pre_attack["value"] == 0
+    assert "engine default" in pre_attack["semantic"]
+    assert "combat.preAttackDelayMs" not in simulation["missing"]
+
+
+def test_hero_unresolvable_preattack_delay_is_not_defaulted() -> None:
+    documents = _combat_hero_documents(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY HeroNuggetSword\n  End\n",
+        "Weapon HeroNuggetSword\n"
+        "  MeleeWeapon = No\n"
+        "  AttackRange = 24.0\n"
+        "  DelayBetweenShots = 4000\n"
+        "  PreAttackDelay = UNDEFINED_HERO_PREATTACK\n"
+        "  FiringDuration = 4500\n"
+        "  DamageNugget\n"
+        "    Damage = 250\n"
+        "    DamageType = SIEGE\n"
+        "  End\n"
+        "End\n",
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    simulation = descriptor["gameplay"]["simulation"]
+    assert "preAttackDelayMs" not in simulation["resolved"]["combat"]
+    assert "combat.preAttackDelayMs" in simulation["missing"]
+
+
+def test_hero_upgrade_locked_nugget_is_excluded_from_base_total() -> None:
+    documents = _combat_hero_documents(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY HeroNuggetSword\n  End\n",
+        "Weapon HeroNuggetSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 800\n"
+        "  DamageNugget\n"
+        "    Damage = 100\n"
+        "    DamageType = HERO\n"
+        "    ForbiddenUpgradeNames = Upgrade_CombatHeroForgedBlades\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = 300\n"
+        "    DamageType = HERO\n"
+        "    RequiredUpgradeNames = Upgrade_CombatHeroForgedBlades\n"
+        "  End\n"
+        "End\n",
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    damage = descriptor["gameplay"]["simulation"]["resolved"]["combat"]["damage"]
+    assert damage["value"] == 100
+    assert [row["value"] for row in damage["components"]] == [100]
+    assert [row["reason"] for row in damage["excludedNuggets"]] == [
+        "required-upgrade"
+    ]
+
+
+def test_hero_unresolvable_nugget_component_fails_closed() -> None:
+    documents = _combat_hero_documents(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY HeroNuggetSword\n  End\n",
+        "Weapon HeroNuggetSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 800\n"
+        "  DamageNugget\n"
+        "    Damage = 100\n"
+        "    DamageType = HERO\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = 200\n"
+        "    DamageType = SLASH\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = UNDEFINED_HERO_DAMAGE\n"
+        "    DamageType = MAGIC\n"
+        "  End\n"
+        "End\n",
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    simulation = descriptor["gameplay"]["simulation"]
+    assert "damage" not in simulation["resolved"]["combat"]
+    assert "combat.damage" in simulation["missing"]
+
+
+def test_hero_filtered_nugget_is_excluded_from_base_total() -> None:
+    documents = _combat_hero_documents(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY HeroNuggetSword\n  End\n",
+        "Weapon HeroNuggetSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 800\n"
+        "  DamageNugget\n"
+        "    Damage = 100\n"
+        "    DamageType = HERO\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    SpecialObjectFilter = NONE +STRUCTURE\n"
+        "    Damage = 40\n"
+        "    DamageType = SIEGE\n"
+        "  End\n"
+        "End\n",
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    damage = descriptor["gameplay"]["simulation"]["resolved"]["combat"]["damage"]
+    assert damage["value"] == 100
+    assert [row["value"] for row in damage["components"]] == [100]
+    assert [row["reason"] for row in damage["excludedNuggets"]] == [
+        "special-object-filter"
+    ]
+
+
+def test_non_hero_multi_nugget_damage_resolves_base_total() -> None:
+    command_row, button_row = _combat_command("CombatInfantry", 9, "CombatInfantry")
+    documents = _combat_documents(
+        _combat_object(
+            "CombatInfantry",
+            "INFANTRY",
+            "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY TroopNuggetSword\n  End\n",
+        ),
+        "Weapon TroopNuggetSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 800\n"
+        "  DamageNugget\n"
+        "    Damage = 80\n"
+        "    DamageType = SLASH\n"
+        "    ForbiddenUpgradeNames = Upgrade_CombatInfantryForgedBlades\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = 120\n"
+        "    DamageType = SLASH\n"
+        "    RequiredUpgradeNames = Upgrade_CombatInfantryForgedBlades\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatInfantry", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    assert descriptor["category"] == "infantry"
+    simulation = descriptor["gameplay"]["simulation"]
+    damage = simulation["resolved"]["combat"]["damage"]
+    assert damage["value"] == 80
+    assert [row["value"] for row in damage["components"]] == [80]
+    assert [row["reason"] for row in damage["excludedNuggets"]] == [
+        "required-upgrade"
+    ]
+    assert "combat.damage" not in simulation["missing"]
+
+
+def _hero_ability_documents() -> dict[str, bytes]:
+    """Synthetic hero with one authored SPECIAL_POWER ability per effect kind."""
+
+    command_row, button_row = _combat_command("AbilityHero", 8, "AbilityHero")
+    hero_object = (
+        "\nObject AbilityHero\n"
+        "  KindOf = PRELOAD SELECTABLE HERO INFANTRY\n"
+        "  BuildCost = 1000\n"
+        "  BuildTime = 45\n"
+        "  CommandPoints = 50\n"
+        "  VisionRange = 300\n"
+        "  SelectPortrait = HPAbilityHero\n"
+        "  ButtonImage = HIAbilityHero\n"
+        "  DisplayName = OBJECT:AbilityHero\n"
+        "  DescriptionStrategic = CONTROLBAR:ToolTipAbilityHero\n"
+        "  CommandSet = AbilityHeroCommandSet\n"
+        "  Draw = W3DScriptedModelDraw ModuleTag_Draw\n"
+        "    DefaultModelConditionState\n"
+        "      Model = AbilityHeroModel\n"
+        "    End\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        "  Behavior = UnpauseSpecialPowerUpgrade ModuleTag_BlastEnabler\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureBlast\n"
+        "    TriggeredBy = Upgrade_FixtureBlast\n"
+        "  End\n"
+        "  Behavior = SpecialPowerModule ModuleTag_BlastStarter\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureBlast\n"
+        "    UpdateModuleStartsAttack = Yes\n"
+        "    StartsPaused = Yes\n"
+        "  End\n"
+        "  Behavior = WeaponFireSpecialAbilityUpdate ModuleTag_BlastUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureBlast\n"
+        "    SpecialWeapon = FixtureHeroBlast\n"
+        "    StartAbilityRange = 80.0\n"
+        "    WhichSpecialWeapon = 1\n"
+        "  End\n"
+        "  Behavior = PlayerHealSpecialPower ModuleTag_HealStarter\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureHeal\n"
+        "    HealAmount = 0.25\n"
+        "    HealRadius = 120\n"
+        "    HealFX = FX_FixtureHeal\n"
+        "  End\n"
+        "  Behavior = OCLSpecialPower ModuleTag_SummonStarter\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureSummon\n"
+        "    OCL = OCL_FixtureSummon\n"
+        "    CreateLocation = CREATE_AT_LOCATION\n"
+        "  End\n"
+        "  Behavior = HeroModeSpecialAbilityUpdate ModuleTag_RageUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureRage\n"
+        "    HeroAttributeModifier = FixtureRage\n"
+        "    HeroEffectDuration = 20000\n"
+        "  End\n"
+        "  Behavior = SpecialPowerModule ModuleTag_MountStarter\n"
+        "    SpecialPowerTemplate = SpecialAbilityToggleMounted\n"
+        "    UpdateModuleStartsAttack = Yes\n"
+        "  End\n"
+        "  Behavior = ToggleMountedSpecialAbilityUpdate ModuleTag_MountToggle\n"
+        "    SpecialPowerTemplate = SpecialAbilityToggleMounted\n"
+        "    UnpackTime = 1000\n"
+        "  End\n"
+        "  Behavior = WeaponFireSpecialAbilityUpdate ModuleTag_BrokenUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureBroken\n"
+        "    SpecialWeapon = MissingWeapon\n"
+        "  End\n"
+        "  Behavior = SpecialPowerModule ModuleTag_LeadershipDisplay\n"
+        "    SpecialPowerTemplate = SpecialAbilityFakeLeadership\n"
+        "    StartsPaused = No\n"
+        "  End\n"
+        "  Behavior = SpecialPowerModule ModuleTag_GraceStarter\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureGrace\n"
+        "    UpdateModuleStartsAttack = Yes\n"
+        "    TriggerFX = FX_FixtureGrace\n"
+        "  End\n"
+        "  Behavior = SpecialAbilityUpdate ModuleTag_GraceUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureGrace\n"
+        "    UnpackTime = 1\n"
+        "  End\n"
+        "  Behavior = AutoHealBehavior ModuleTag_GraceHealing\n"
+        "    StartsActive = Yes\n"
+        "    ButtonTriggered = Yes\n"
+        "    HealingAmount = 500\n"
+        "    Radius = 150\n"
+        "    SingleBurst = Yes\n"
+        "    UnitHealPulseFX = FX_FixtureGrace\n"
+        "  End\n"
+        "End\n"
+        "\nObject SummonMinion\n"
+        "  KindOf = PRELOAD SELECTABLE INFANTRY\n"
+        "  BuildCost = 100\n"
+        "  BuildTime = 10\n"
+        "  CommandPoints = 5\n"
+        "  VisionRange = 100\n"
+        "  SelectPortrait = UPSummonMinion\n"
+        "  Draw = W3DScriptedModelDraw ModuleTag_Draw\n"
+        "    DefaultModelConditionState\n"
+        "      Model = SummonMinionModel\n"
+        "    End\n"
+        "  End\n"
+        "End\n"
+    )
+    command_sets = (
+        "\nCommandSet AbilityHeroCommandSet\n"
+        "  1 = Command_FixtureStance\n"
+        "  2 = Command_FixtureBlast\n"
+        "  3 = Command_FixtureHeal\n"
+        "  4 = Command_FixtureSummon\n"
+        "  5 = Command_FixtureRage\n"
+        "  6 = Command_FixtureMount\n"
+        "  7 = Command_FixtureLeadership\n"
+        "  8 = Command_FixtureGrace\n"
+        "  9 = Command_FixtureBroken\n"
+        "End\n"
+    )
+    buttons = (
+        "\nCommandButton Command_FixtureStance\n"
+        "  Command = TOGGLE_STANCE\n"
+        "End\n"
+        "\nCommandButton Command_FixtureBlast\n"
+        "  Command = SPECIAL_POWER\n"
+        "  SpecialPower = SpecialAbilityFixtureBlast\n"
+        "  TextLabel = CONTROLBAR:FixtureBlast\n"
+        "  DescriptLabel = CONTROLBAR:ToolTipFixtureBlast\n"
+        "  ButtonImage = HSFixtureBlast\n"
+        "  Options = NEED_TARGET_ENEMY_OBJECT\n"
+        "End\n"
+        "\nCommandButton Command_FixtureHeal\n"
+        "  Command = SPECIAL_POWER\n"
+        "  SpecialPower = SpecialAbilityFixtureHeal\n"
+        "  TextLabel = CONTROLBAR:FixtureHeal\n"
+        "  DescriptLabel = CONTROLBAR:ToolTipFixtureHeal\n"
+        "  ButtonImage = HSFixtureHeal\n"
+        "  Options = NEED_TARGET_POS\n"
+        "  RadiusCursorType = HealRadiusCursor\n"
+        "End\n"
+        "\nCommandButton Command_FixtureSummon\n"
+        "  Command = SPECIAL_POWER\n"
+        "  SpecialPower = SpecialAbilityFixtureSummon\n"
+        "  TextLabel = CONTROLBAR:FixtureSummon\n"
+        "  DescriptLabel = CONTROLBAR:ToolTipFixtureSummon\n"
+        "  ButtonImage = HSFixtureSummon\n"
+        "  Options = NEED_TARGET_POS\n"
+        "End\n"
+        "\nCommandButton Command_FixtureRage\n"
+        "  Command = SPECIAL_POWER\n"
+        "  SpecialPower = SpecialAbilityFixtureRage\n"
+        "  TextLabel = CONTROLBAR:FixtureRage\n"
+        "  DescriptLabel = CONTROLBAR:ToolTipFixtureRage\n"
+        "  ButtonImage = HSFixtureRage\n"
+        "End\n"
+        "\nCommandButton Command_FixtureMount\n"
+        "  Command = SPECIAL_POWER\n"
+        "  SpecialPower = SpecialAbilityToggleMounted\n"
+        "  TextLabel = CONTROLBAR:FixtureMount\n"
+        "  DescriptLabel = CONTROLBAR:ToolTipFixtureMount\n"
+        "  ButtonImage = HSFixtureMount\n"
+        "End\n"
+        "\nCommandButton Command_FixtureLeadership\n"
+        "  Command = SPECIAL_POWER\n"
+        "  SpecialPower = SpecialAbilityFakeLeadership\n"
+        "  TextLabel = CONTROLBAR:FixtureLeadership\n"
+        "  DescriptLabel = CONTROLBAR:ToolTipFixtureLeadership\n"
+        "  ButtonImage = HSFixtureLeadership\n"
+        "  Options = NONPRESSABLE\n"
+        "End\n"
+        "\nCommandButton Command_FixtureGrace\n"
+        "  Command = SPECIAL_POWER\n"
+        "  SpecialPower = SpecialAbilityFixtureGrace\n"
+        "  TextLabel = CONTROLBAR:FixtureGrace\n"
+        "  DescriptLabel = CONTROLBAR:ToolTipFixtureGrace\n"
+        "  ButtonImage = HSFixtureGrace\n"
+        "End\n"
+        "\nCommandButton Command_FixtureBroken\n"
+        "  Command = SPECIAL_POWER\n"
+        "  SpecialPower = SpecialAbilityFixtureBroken\n"
+        "  TextLabel = CONTROLBAR:FixtureBroken\n"
+        "  DescriptLabel = CONTROLBAR:ToolTipFixtureBroken\n"
+        "  ButtonImage = HSFixtureBroken\n"
+        "End\n"
+    )
+    documents = _combat_documents(
+        hero_object,
+        "Weapon FixtureHeroBlast\n"
+        "  AttackRange = 110.0\n"
+        "  DamageNugget\n"
+        "    Damage = 350\n"
+        "    Radius = 40.0\n"
+        "    DamageType = MAGIC\n"
+        "  End\n"
+        "End\n"
+        "Weapon AbilityHeroSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 5.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 400\n"
+        "  FiringDuration = 400\n"
+        "  DamageNugget\n"
+        "    Damage = 120\n"
+        "    DamageType = SLASH\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row + buttons,
+    )
+    documents["data/ini/commandset.ini"] += command_sets.encode()
+    documents["data/ini/specialpower.ini"] = b"""
+SpecialPower SpecialAbilityFixtureBlast
+  Enum = SPECIAL_GENERAL_TARGETLESS
+  ReloadTime = 60000
+End
+SpecialPower SpecialAbilityFixtureHeal
+  Enum = SPECIAL_ATHELAS
+  ReloadTime = 90000
+  RadiusCursorRadius = 150.0
+  InitiateAtLocationSound = FixtureHealSound
+End
+SpecialPower SpecialAbilityFixtureSummon
+  Enum = SPECIAL_SPAWN_OATHBREAKERS
+  ReloadTime = 120000
+End
+SpecialPower SpecialAbilityFixtureRage
+  Enum = SPECIAL_HERO_MODE
+  ReloadTime = 45000
+End
+SpecialPower SpecialAbilityToggleMounted
+  Enum = SPECIAL_TOGGLE_MOUNTED
+  ReloadTime = 1000
+End
+SpecialPower SpecialAbilityFakeLeadership
+  Enum = SPECIAL_FAKE_LEADERSHIP_BUTTON
+  ReloadTime = 1
+End
+SpecialPower SpecialAbilityFixtureGrace
+  Enum = SPECIAL_ATHELAS
+  ReloadTime = 70000
+End
+SpecialPower SpecialAbilityFixtureBroken
+  Enum = SPECIAL_GENERAL_TARGETLESS
+  ReloadTime = 30000
+End
+"""
+    documents["data/ini/attributemodifier.ini"] = b"""
+ModifierList FixtureRage
+  Category = SPELL
+  Modifier = ARMOR 50%
+  Modifier = DAMAGE_MULT 150%
+  Modifier = CRUSH_DECELERATE 0%
+  Duration = 20000
+End
+"""
+    documents["data/ini/objectcreationlist.ini"] = b"""
+ObjectCreationList OCL_FixtureSummon
+  CreateObject
+    ObjectNames = SummonMinion
+    Count = 2
+    Disposition = LIKE_EXISTING
+  End
+End
+"""
+    documents["data/ini/experiencelevels.ini"] = b"""
+#define FIXTUREHERO AbilityHero
+ExperienceLevel FixtureHeroLevel1
+  TargetNames = FIXTUREHERO
+  RequiredExperience = 1
+  ExperienceAward = 20
+  Rank = 1
+  SelectionDecal
+    Texture = decal_hero_good
+  End
+End
+ExperienceLevel FixtureHeroLevel2
+  TargetNames = FIXTUREHERO
+  RequiredExperience = 100
+  ExperienceAward = 25
+  Rank = 2
+  Upgrades = Upgrade_FixtureBlast
+  SelectionDecal
+    Texture = decal_hero_good
+  End
+End
+"""
+    return documents
+
+
+def _abilities_by_id(descriptor: dict[str, object]) -> dict[str, dict[str, object]]:
+    return {
+        str(row["id"]): row
+        for row in descriptor["abilities"]  # type: ignore[index]
+    }
+
+
+def test_hero_abilities_emit_each_effect_kind_with_evidence() -> None:
+    documents = _hero_ability_documents()
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    assert descriptor["category"] == "hero"
+    abilities = _abilities_by_id(descriptor)
+    assert set(abilities) == {
+        "Command_FixtureBlast",
+        "Command_FixtureHeal",
+        "Command_FixtureSummon",
+        "Command_FixtureRage",
+        "Command_FixtureMount",
+        "Command_FixtureLeadership",
+        "Command_FixtureGrace",
+        "Command_FixtureBroken",
+    }
+
+    blast = abilities["Command_FixtureBlast"]
+    assert blast["slot"] == 2
+    assert blast["specialPowerId"] == "SpecialAbilityFixtureBlast"
+    assert blast["cooldownMs"] == 60000
+    assert blast["targeting"] == "enemy-object"
+    assert blast["levelGate"] == {
+        "upgradeIds": ["Upgrade_FixtureBlast"],
+        "requiredLevel": 2,
+        "sourceIni": "data/ini/experiencelevels.ini",
+    }
+    assert blast["button"]["iconIds"] == ["HSFixtureBlast"]
+    assert blast["button"]["labelIds"] == ["CONTROLBAR:FixtureBlast"]
+    assert blast["button"]["tooltipIds"] == ["CONTROLBAR:ToolTipFixtureBlast"]
+    assert blast["implementation"]["status"] == "implemented"
+    effect = blast["effect"]
+    assert effect["kind"] == "weapon-blast"
+    assert effect["weaponId"] == "FixtureHeroBlast"
+    assert effect["damage"] == 350
+    assert effect["damageRadius"] == 40.0
+    assert effect["damageType"] == "MAGIC"
+    assert effect["attackRange"] == 110.0
+    assert effect["startAbilityRange"] == 80.0
+
+    heal = abilities["Command_FixtureHeal"]
+    assert heal["targeting"] == "point"
+    assert heal["initiateSoundId"] == "FixtureHealSound"
+    assert heal["radiusCursorRadius"] == 150.0
+    assert heal["implementation"]["status"] == "implemented"
+    assert heal["effect"] == {
+        "kind": "heal",
+        "module": "PlayerHealSpecialPower",
+        "amountKind": "fraction",
+        "amount": 0.25,
+        "radius": 120,
+        "onlyOthers": False,
+        "sourceIni": "data/ini/object/units/test_units.ini",
+        "line": heal["effect"]["line"],
+        "healFxId": "FX_FixtureHeal",
+    }
+
+    summon = abilities["Command_FixtureSummon"]
+    assert summon["implementation"]["status"] == "implemented"
+    assert summon["effect"]["kind"] == "summon"
+    assert summon["effect"]["oclId"] == "OCL_FixtureSummon"
+    assert summon["effect"]["createLocation"] == "CREATE_AT_LOCATION"
+    assert summon["effect"]["objects"] == [
+        {
+            "id": "SummonMinion",
+            "count": 2,
+            "sourceIni": "data/ini/objectcreationlist.ini",
+            "line": summon["effect"]["objects"][0]["line"],
+        }
+    ]
+
+    rage = abilities["Command_FixtureRage"]
+    assert rage["targeting"] == "self"
+    assert rage["implementation"]["status"] == "implemented"
+    assert rage["effect"]["kind"] == "attribute-modifier"
+    assert rage["effect"]["modifierId"] == "FixtureRage"
+    assert rage["effect"]["durationMs"] == 20000
+    assert rage["effect"]["affectsSelf"] is True
+    assert rage["effect"]["modifiers"] == [
+        {"kind": "ARMOR", "value": 0.5, "application": "additive"},
+        {"kind": "DAMAGE_MULT", "value": 1.5, "application": "multiplicative"},
+    ]
+    assert rage["implementation"]["limitations"] == [
+        "modifier kinds not applied by the runtime: CRUSH_DECELERATE"
+    ]
+
+    grace = abilities["Command_FixtureGrace"]
+    assert grace["implementation"]["status"] == "implemented"
+    assert grace["effect"]["kind"] == "heal"
+    assert grace["effect"]["module"] == "AutoHealBehavior"
+    assert grace["effect"]["amountKind"] == "flat"
+    assert grace["effect"]["amount"] == 500
+    assert grace["effect"]["radius"] == 150
+    assert grace["effect"]["healFxId"] == "FX_FixtureGrace"
+
+
+def test_hero_abilities_fail_closed_per_ability_never_faked() -> None:
+    documents = _hero_ability_documents()
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    abilities = _abilities_by_id(descriptor)
+
+    mount = abilities["Command_FixtureMount"]
+    assert mount["implementation"]["status"] == "unimplemented"
+    assert "mount" in mount["implementation"]["reason"]
+    assert mount["effect"] == {"kind": "none"}
+
+    leadership = abilities["Command_FixtureLeadership"]
+    assert leadership["implementation"]["status"] == "passive"
+    assert "NONPRESSABLE" in leadership["implementation"]["reason"]
+    assert leadership["effect"] == {"kind": "none"}
+
+    broken = abilities["Command_FixtureBroken"]
+    assert broken["implementation"]["status"] == "unimplemented"
+    assert "MissingWeapon" in broken["implementation"]["reason"]
+    assert broken["effect"] == {"kind": "none"}
+
+
+def test_hero_abilities_record_unresolved_level_gates_and_missing_powers() -> None:
+    documents = _hero_ability_documents()
+    del documents["data/ini/experiencelevels.ini"]
+    del documents["data/ini/specialpower.ini"]
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    abilities = _abilities_by_id(descriptor)
+    blast = abilities["Command_FixtureBlast"]
+    assert blast["levelGate"]["upgradeIds"] == ["Upgrade_FixtureBlast"]
+    assert blast["levelGate"]["requiredLevel"] is None
+    assert "experience level source" in blast["levelGate"]["limitation"]
+    assert blast["implementation"]["status"] == "unimplemented"
+    assert "SpecialPower is missing" in blast["implementation"]["reason"]
+    assert blast["effect"] == {"kind": "none"}
+
+
+def test_heroes_without_special_power_commands_emit_an_empty_array() -> None:
+    documents = _documents()
+
+    hero = compile_playable_unit_descriptor("HeroUnit", documents)
+    infantry = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    validate_playable_unit_descriptor(hero)
+    assert hero["category"] == "hero"
+    assert hero["abilities"] == []
+    assert "abilities" not in infantry
+
+
+def test_validation_rejects_ability_row_mutation() -> None:
+    documents = _hero_ability_documents()
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+    validate_playable_unit_descriptor(descriptor)
+
+    mutated = deepcopy(descriptor)
+    mutated["abilities"][0]["cooldownMs"] = 1
+    with pytest.raises(PlayableUnitCompilerError, match="digest"):
+        validate_playable_unit_descriptor(mutated)
+
+    corrupted = deepcopy(descriptor)
+    del corrupted["abilities"]
+    corrupted["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in corrupted.items() if key != "descriptorSha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(PlayableUnitCompilerError, match="abilities"):
+        validate_playable_unit_descriptor(corrupted)
+
+    rehashed = deepcopy(descriptor)
+    rehashed["abilities"][0]["implementation"]["status"] = "passive"
+    rehashed["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in rehashed.items() if key != "descriptorSha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(PlayableUnitCompilerError, match="effect"):
+        validate_playable_unit_descriptor(rehashed)
+
+
+def test_negated_condition_default_weapon_set_resolves_member_weapon() -> None:
+    member_row, member_button = _combat_command("CombatMember", 8, "CombatMember")
+    horde_row, horde_button = _combat_command("CombatHorde", 9, "CombatHorde")
+    documents = _combat_documents(
+        _combat_object(
+            "CombatMember",
+            "INFANTRY",
+            "  WeaponSet\n"
+            "    Conditions = -WEAPONSET_TOGGLE_1\n"
+            "    Weapon = PRIMARY CombatMemberSpear\n"
+            "  End\n"
+            "  WeaponSet\n"
+            "    Conditions = WEAPONSET_TOGGLE_1\n"
+            "    Weapon = SECONDARY CombatMemberBow\n"
+            "  End\n",
+        )
+        + (
+            "\nObject CombatHorde\n"
+            "  KindOf = PRELOAD SELECTABLE HORDE\n"
+            "  BuildCost = 500\n"
+            "  BuildTime = 30\n"
+            "  CommandPoints = 20\n"
+            "  VisionRange = 300\n"
+            "  SelectPortrait = UPCombatHorde\n"
+            "  VoiceSelect = CombatHordeVoiceSelect\n"
+            "  VoicePriority = 43\n"
+            "  VoiceMove = CombatHordeVoiceMove\n"
+            "  VoiceAttack = CombatHordeVoiceAttack\n"
+            "  Draw = W3DScriptedModelDraw ModuleTag_Draw\n"
+            "    DefaultModelConditionState\n"
+            "      Model = CombatHordeModel\n"
+            "    End\n"
+            "  End\n"
+            "  WeaponSet\n"
+            "    Conditions = None\n"
+            "    Weapon = PRIMARY CombatHordeRangefinder\n"
+            "  End\n"
+            "  Behavior = HordeContain ModuleTag_HordeContain\n"
+            "    InitialPayload = CombatMember 5\n"
+            "  End\n"
+            "End\n"
+        ),
+        "Weapon CombatMemberSpear\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 11.5\n"
+        "  DelayBetweenShots = 1000\n"
+        "  PreAttackDelay = 500\n"
+        "  FiringDuration = 1000\n"
+        "  DamageNugget\n"
+        "    Damage = 80\n"
+        "    DamageType = CAVALRY\n"
+        "    ForbiddenUpgradeNames = Upgrade_CombatForgedBlades\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = 120\n"
+        "    DamageType = CAVALRY\n"
+        "    RequiredUpgradeNames = Upgrade_CombatForgedBlades\n"
+        "  End\n"
+        "End\n"
+        "Weapon CombatHordeRangefinder\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 12.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  HordeAttackNugget\n"
+        "  End\n"
+        "End\n",
+        member_row + horde_row,
+        member_button + horde_button,
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    simulation = descriptor["gameplay"]["simulation"]
+    combat = simulation["resolved"]["combat"]
+    assert combat["weaponId"] == "CombatMemberSpear"
+    damage = combat["damage"]
+    assert damage["value"] == 80
+    assert [row["value"] for row in damage["components"]] == [80]
+    assert [row["reason"] for row in damage["excludedNuggets"]] == [
+        "required-upgrade"
+    ]
+    assert "combat.weapon" not in simulation["missing"]
+
+
+def test_warhead_nugget_damage_resolves_from_projectile_warhead() -> None:
+    command_row, button_row = _combat_command("CombatThrower", 9, "CombatThrower")
+    documents = _combat_documents(
+        _combat_object(
+            "CombatThrower",
+            "INFANTRY ARCHER",
+            "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY CombatThrowingAxe\n  End\n",
+        ),
+        "Weapon CombatThrowingAxe\n"
+        "  AttackRange = 250.0\n"
+        "  DelayBetweenShots = 1200\n"
+        "  PreAttackDelay = 666\n"
+        "  FiringDuration = 2000\n"
+        "  ProjectileNugget\n"
+        "    ProjectileTemplateName = CombatAxeProjectile\n"
+        "    WarheadTemplateName = CombatAxeThrowWarhead\n"
+        "  End\n"
+        "End\n"
+        "Weapon CombatAxeThrowWarhead\n"
+        "  RadiusDamageAffects = ENEMIES\n"
+        "  DamageNugget\n"
+        "    Damage = 55\n"
+        "    DamageType = SLASH\n"
+        "    ForbiddenUpgradeNames = Upgrade_CombatForgedBlades\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = 90\n"
+        "    DamageType = SLASH\n"
+        "    RequiredUpgradeNames = Upgrade_CombatForgedBlades\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatThrower", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    combat = descriptor["gameplay"]["simulation"]["resolved"]["combat"]
+    assert combat["warheadId"] == "CombatAxeThrowWarhead"
+    damage = combat["damage"]
+    assert damage["value"] == 55
+    assert [row["value"] for row in damage["components"]] == [55]
+    assert [row["reason"] for row in damage["excludedNuggets"]] == [
+        "required-upgrade"
+    ]
+
+
+def test_warhead_nugget_damage_sums_unrestricted_components() -> None:
+    command_row, button_row = _combat_command("CombatCatapult", 9, "CombatCatapult")
+    documents = _combat_documents(
+        _combat_object(
+            "CombatCatapult",
+            "MACHINE SIEGEENGINE",
+            "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY CombatCatapultRock\n  End\n",
+        ),
+        "Weapon CombatCatapultRock\n"
+        "  AttackRange = 350.0\n"
+        "  DelayBetweenShots = 6000\n"
+        "  PreAttackDelay = 2000\n"
+        "  FiringDuration = 3000\n"
+        "  ProjectileNugget\n"
+        "    ProjectileTemplateName = CombatRockProjectile\n"
+        "    WarheadTemplateName = CombatRockWarhead\n"
+        "  End\n"
+        "End\n"
+        "Weapon CombatRockWarhead\n"
+        "  RadiusDamageAffects = ENEMIES\n"
+        "  DamageNugget\n"
+        "    Damage = 400\n"
+        "    DamageType = SIEGE\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = 60\n"
+        "    DamageType = FLAME\n"
+        "  End\n"
+        "  DamageNugget\n"
+        "    Damage = 400\n"
+        "    DamageType = SIEGE\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatCatapult", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    combat = descriptor["gameplay"]["simulation"]["resolved"]["combat"]
+    assert combat["warheadId"] == "CombatRockWarhead"
+    damage = combat["damage"]
+    assert damage["value"] == 860
+    assert [row["value"] for row in damage["components"]] == [400, 60, 400]
+    assert "excludedNuggets" not in damage
+
+
+def test_absent_delay_between_shots_records_engine_default() -> None:
+    command_row, button_row = _combat_command("CombatLancer", 9, "CombatLancer")
+    documents = _combat_documents(
+        _combat_object(
+            "CombatLancer",
+            "INFANTRY",
+            "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY CombatLanceThrown\n  End\n",
+        ),
+        "Weapon CombatLanceThrown\n"
+        "  AttackRange = 250.0\n"
+        "  LeechRangeWeapon = Yes\n"
+        "  PreAttackDelay = 1500\n"
+        "  FiringDuration = 1000\n"
+        "  ClipSize = 1\n"
+        "  ClipReloadTime = 2800\n"
+        "  DamageNugget\n"
+        "    Damage = 60\n"
+        "    DamageType = CAVALRY\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatLancer", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    simulation = descriptor["gameplay"]["simulation"]
+    combat = simulation["resolved"]["combat"]
+    assert combat["delayBetweenShotsMs"]["value"] == 0
+    assert "engine default" in combat["delayBetweenShotsMs"]["semantic"]
+    assert combat["clipReloadTimeMs"]["value"] == 2800
+    assert "combat.delayBetweenShotsMs" not in simulation["missing"]
+
+
+def test_authored_unresolvable_delay_between_shots_is_not_defaulted() -> None:
+    command_row, button_row = _combat_command("CombatLancer", 9, "CombatLancer")
+    documents = _combat_documents(
+        _combat_object(
+            "CombatLancer",
+            "INFANTRY",
+            "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY CombatLanceThrown\n  End\n",
+        ),
+        "Weapon CombatLanceThrown\n"
+        "  AttackRange = 250.0\n"
+        "  LeechRangeWeapon = Yes\n"
+        "  DelayBetweenShots = UNDEFINED_LANCER_DELAY\n"
+        "  PreAttackDelay = 1500\n"
+        "  FiringDuration = 1000\n"
+        "  DamageNugget\n"
+        "    Damage = 60\n"
+        "    DamageType = CAVALRY\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+    )
+
+    descriptor = compile_playable_unit_descriptor("CombatLancer", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    simulation = descriptor["gameplay"]["simulation"]
+    assert "delayBetweenShotsMs" not in simulation["resolved"]["combat"]
+    assert "combat.delayBetweenShotsMs" in simulation["missing"]
+
+
+# ---------------------------------------------------------------------------
+# Experience economy contract tests.
+# ---------------------------------------------------------------------------
+
+
+def _experience_documents(
+    chain_ini: str,
+    *,
+    defines: str = "",
+    modifiers: str = "",
+) -> dict[str, bytes]:
+    documents = _documents()
+    documents["data/ini/experiencelevels.ini"] = chain_ini.encode()
+    documents["data/ini/gamedata.ini"] = (
+        documents["data/ini/gamedata.ini"].decode() + defines
+    ).encode()
+    if modifiers:
+        documents["data/ini/attributemodifier.ini"] = modifiers.encode()
+    return documents
+
+
+_TROOP_CHAIN = """
+#define FIXTURE_TROOPS InfantryMember InfantryHorde RangedMember RangedHorde CavalryMember CavalryHorde
+ExperienceLevel FixtureTroopLevel1
+  TargetNames = FIXTURE_TROOPS
+  RequiredExperience = 1
+  ExperienceAward = FIXTURE_AWARD_1
+  Rank = 1
+  SelectionDecal
+    Texture = decal_G_level1
+  End
+End
+ExperienceLevel FixtureTroopLevel2
+  TargetNames = FIXTURE_TROOPS
+  RequiredExperience = FIXTURE_NEEDED_2
+  ExperienceAward = FIXTURE_AWARD_2
+  Rank = 2
+  AttributeModifiers = FixtureTroopBonusRank2
+  Upgrades = Upgrade_ObjectLevel2
+  LevelUpFx = FX:FixtureLevelUp2
+  SelectionDecal
+    Texture = decal_G_level2
+  End
+End
+ExperienceLevel FixtureTroopLevel3
+  TargetNames = FIXTURE_TROOPS
+  RequiredExperience = FIXTURE_NEEDED_3
+  ExperienceAward = FIXTURE_AWARD_3
+  Rank = 3
+  AttributeModifiers = FixtureTroopBonusRank3 FixtureTroopBonusSpeed
+  SelectionDecal
+    Texture = decal_G_level3
+  End
+End
+"""
+
+_TROOP_DEFINES = (
+    "#define FIXTURE_NEEDED_2 50\n"
+    "#define FIXTURE_NEEDED_3 100\n"
+    "#define FIXTURE_AWARD_1 3\n"
+    "#define FIXTURE_AWARD_2 4\n"
+    "#define FIXTURE_AWARD_3 5\n"
+    "#define FIXTURE_HP_ADD_2 20\n"
+    "#define FIXTURE_DAM_ADD_2 10\n"
+)
+
+_TROOP_MODIFIERS = """
+ModifierList FixtureTroopBonusRank2
+  Category = LEVEL
+  Modifier = HEALTH FIXTURE_HP_ADD_2
+  Modifier = DAMAGE_ADD FIXTURE_DAM_ADD_2
+  Duration = 0
+End
+ModifierList FixtureTroopBonusRank3
+  Category = LEVEL
+  Modifier = HEALTH 20
+  Modifier = DAMAGE_ADD 10
+  Duration = 0
+End
+ModifierList FixtureTroopBonusSpeed
+  Category = LEVEL
+  Modifier = SPEED 110%
+  Duration = 0
+End
+"""
+
+
+def test_experience_chain_compiles_thresholds_awards_and_modifiers() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN, defines=_TROOP_DEFINES, modifiers=_TROOP_MODIFIERS
+    )
+
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    experience = descriptor["experience"]
+    assert experience["status"] == "compiled"
+    assert experience["sourceIni"] == "data/ini/experiencelevels.ini"
+    assert experience["maxLevel"] == 3
+    assert experience["modifierApplication"] == "cumulative-per-level"
+    assert experience["targetCount"] == 6
+    levels = experience["levels"]
+    assert [row["rank"] for row in levels] == [1, 2, 3]
+    assert [row["requiredExperience"] for row in levels] == [1, 50, 100]
+    assert [row["experienceAward"] for row in levels] == [3, 4, 5]
+    assert levels[0]["experienceId"] == "FixtureTroopLevel1"
+    assert levels[0]["selectionDecalTextureId"] == "decal_G_level1"
+    assert "attributeModifiers" not in levels[0]
+    rank_two_modifiers = levels[1]["attributeModifiers"]
+    assert len(rank_two_modifiers) == 1
+    assert rank_two_modifiers[0]["id"] == "FixtureTroopBonusRank2"
+    assert rank_two_modifiers[0]["modifiers"] == [
+        {"kind": "HEALTH", "value": 20, "application": "additive"},
+        {"kind": "DAMAGE_ADD", "value": 10, "application": "additive"},
+    ]
+    assert levels[1]["upgrades"] == ["Upgrade_ObjectLevel2"]
+    assert levels[1]["levelUpFxId"] == "FX:FixtureLevelUp2"
+    # The constant-backed rows name gamedata.ini as their provenance.
+    assert levels[1]["constantSourceIni"] == "data/ini/gamedata.ini"
+    # Unsupported kinds are recorded on their leaf, never applied.
+    rank_three_modifiers = levels[2]["attributeModifiers"]
+    assert len(rank_three_modifiers) == 2
+    speed_leaf = next(
+        leaf for leaf in rank_three_modifiers if leaf["id"] == "FixtureTroopBonusSpeed"
+    )
+    assert speed_leaf["modifiers"] == []
+    assert speed_leaf["unsupportedModifiers"] == ["SPEED"]
+
+
+def test_experience_member_name_matches_the_horde_chain() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN, defines=_TROOP_DEFINES, modifiers=_TROOP_MODIFIERS
+    )
+
+    descriptor = compile_playable_unit_descriptor("RangedHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    assert descriptor["experience"]["status"] == "compiled"
+    assert descriptor["experience"]["maxLevel"] == 3
+
+
+def test_experience_specific_chain_wins_over_define_chain() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN
+        + """
+ExperienceLevel InfantryOwnLevel1
+  TargetNames = InfantryHorde
+  RequiredExperience = 1
+  ExperienceAward = 9
+  Rank = 1
+End
+""",
+        defines=_TROOP_DEFINES,
+        modifiers=_TROOP_MODIFIERS,
+    )
+
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    experience = descriptor["experience"]
+    assert experience["maxLevel"] == 1
+    assert experience["levels"][0]["experienceId"] == "InfantryOwnLevel1"
+    assert experience["levels"][0]["experienceAward"] == 9
+
+
+def test_experience_unauthored_chain_is_recorded_not_invented() -> None:
+    documents = _experience_documents(_TROOP_CHAIN, defines=_TROOP_DEFINES)
+
+    descriptor = compile_playable_unit_descriptor("HeroUnit", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    experience = descriptor["experience"]
+    assert experience["status"] == "unauthored"
+    assert "no ExperienceLevel chain" in experience["note"]
+
+
+def test_experience_missing_source_is_recorded() -> None:
+    documents = _documents()
+
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    assert descriptor["experience"]["status"] == "unavailable"
+
+
+def test_experience_unresolvable_threshold_fails_closed() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN.replace("FIXTURE_NEEDED_2", "UNDEFINED_CONSTANT"),
+        defines=_TROOP_DEFINES,
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="RequiredExperience"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_experience_missing_award_fails_closed() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN.replace("  ExperienceAward = FIXTURE_AWARD_2\n", ""),
+        defines=_TROOP_DEFINES,
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="ExperienceAward"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_experience_noncontiguous_ranks_fail_closed() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN + """
+ExperienceLevel FixtureTroopDuplicate
+  TargetNames = FIXTURE_TROOPS
+  RequiredExperience = 150
+  ExperienceAward = 8
+  Rank = 3
+End
+""",
+        defines=_TROOP_DEFINES,
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="duplicate or invalid Rank"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_experience_top_rank_summon_chain_compiles_initial_rank() -> None:
+    # Retail summons (ring hero, Treebeard) author a single rank-10 row: the
+    # unit enters at the top rank and never levels further.
+    documents = _experience_documents(
+        """
+ExperienceLevel FixtureSummonLevel1
+  TargetNames = InfantryHorde
+  RequiredExperience = 1
+  ExperienceAward = 100
+  Rank = 10
+  SelectionDecal
+    Texture = decal_hero_good
+  End
+End
+"""
+    )
+
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    experience = descriptor["experience"]
+    assert experience["status"] == "compiled"
+    assert experience["initialRank"] == 10
+    assert experience["maxLevel"] == 10
+    assert len(experience["levels"]) == 1
+    assert experience["levels"][0]["rank"] == 10
+    assert experience["levels"][0]["experienceAward"] == 100
+
+
+def test_experience_ambiguous_specificity_fails_closed() -> None:
+    documents = _experience_documents(
+        """
+#define CHAIN_A InfantryHorde OtherA
+#define CHAIN_B InfantryHorde OtherB
+ExperienceLevel ChainALevel1
+  TargetNames = CHAIN_A
+  RequiredExperience = 1
+  ExperienceAward = 3
+  Rank = 1
+End
+ExperienceLevel ChainBLevel1
+  TargetNames = CHAIN_B
+  RequiredExperience = 1
+  ExperienceAward = 4
+  Rank = 1
+End
+"""
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="equal specificity"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_experience_missing_modifier_list_fails_closed() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN,
+        defines=_TROOP_DEFINES,
+        modifiers="ModifierList UnrelatedBonus\n  Category = LEVEL\n  Modifier = HEALTH 5\n  Duration = 0\nEnd\n",
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="missing ModifierList"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_validation_rejects_experience_mutation() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN, defines=_TROOP_DEFINES, modifiers=_TROOP_MODIFIERS
+    )
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+    validate_playable_unit_descriptor(descriptor)
+
+    mutated = deepcopy(descriptor)
+    mutated["experience"]["levels"][1]["requiredExperience"] = 999
+    with pytest.raises(PlayableUnitCompilerError, match="digest"):
+        validate_playable_unit_descriptor(mutated)
+
+    corrupted = deepcopy(descriptor)
+    del corrupted["experience"]
+    corrupted["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in corrupted.items() if key != "descriptorSha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(PlayableUnitCompilerError, match="experience"):
+        validate_playable_unit_descriptor(corrupted)

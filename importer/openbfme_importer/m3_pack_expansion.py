@@ -2190,6 +2190,30 @@ def _hierarchy_dependencies(
     return tuple(sorted(result, key=str.casefold))
 
 
+def _model_has_hierarchy(model_path: str, scanned: Mapping[str, Mapping[str, Any]]) -> bool:
+    """Return whether the model resolves any pivots (embedded or external).
+
+    A building model with no hierarchy at all is a plain static mesh (retail's
+    authored bib placeholders); the adapter's static conversion is its exact
+    shape.  Only models that actually resolve pivots take the hierarchical
+    contract.
+    """
+
+    row = scanned.get(model_path.casefold())
+    if row is None:
+        raise ValueError(f"model is absent from scannedW3d: {model_path}")
+    headers = _obj(row.get("headerIds"), f"{model_path} headerIds")
+    hierarchy_ids = _list(headers.get("hierarchyIds", []), f"{model_path} hierarchyIds")
+    if hierarchy_ids:
+        return True
+    referenced = row.get("modelHierarchyIdentifiers", [])
+    if not isinstance(referenced, list) or any(
+        not isinstance(value, str) for value in referenced
+    ):
+        raise ValueError(f"model hierarchy identifiers are invalid: {model_path}")
+    return bool(referenced)
+
+
 def _texture_paths_for_w3d(
     closure: Mapping[str, Any], source_paths: Iterable[str]
 ) -> tuple[str, ...]:
@@ -2315,7 +2339,13 @@ def build_m3_visual_resources(
         states: list[dict[str, Any]] = []
         for model_path, animations, hierarchies, output in records:
             patterns = sorted({model_path, *animations, *hierarchies}, key=str.casefold)
-            converter = "w3d-bundle" if animations else "w3d-hierarchical"
+            converter = (
+                "w3d-bundle"
+                if animations
+                else "w3d-hierarchical"
+                if _model_has_hierarchy(model_path, scanned)
+                else "w3d-static"
+            )
             options: dict[str, Any] = {
                 "model": PurePosixPath(model_path).name,
                 "inputResourceIds": texture_ids,

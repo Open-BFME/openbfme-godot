@@ -6,14 +6,14 @@ extends Control
 ## palantir keeps unit commands). Each button re-emits the SAME construct order
 ## as the radial construct buttons; the HUD relays it into construct_requested.
 ##
-## Geometry source: the pack's data/ui/palantir/scene-contract.json
-## frameSelection.inGameSideCommandBar.buttonSetTranslation = (1048.3, 361.3)
-## in the authored 1024x768 space (authoredResolution). The column therefore
-## anchors to the right edge; per-button pitch follows the character-18 button
-## bounds (100 authored units ~= the 64 px socket the radial commands already
-## use). The sealed local topology (sideCommandTopology.buttonSet.localButtons)
-## statically places Button0..Button11 top-to-bottom, so the column grows
-## downward from the anchor.
+## Geometry: retail 1.06 (REF-29/32/50, 2560x1440) runs a single column of
+## ~110px sockets down the right edge, starting ~130px from the top and
+## spanning nearly the full screen height, wrapped in the vine frame. The
+## layout below scales socket size/pitch from the viewport height and
+## shrink-fits the porter's full authored build set into that one column;
+## only an over-long roster wraps into extra columns growing leftward. The
+## authored contract anchor (sideCommandTopology.buttonSet) stays documented
+## in the constants but the capture-measured span wins, as with the dock.
 ##
 ## Fade: the converted contract exposes a frame-stepped fade
 ## (sideCommandFadeRuntime, 0.033 s/frame, fade-in frames 12->22 ~= 0.33 s).
@@ -40,6 +40,11 @@ var _tween: Tween
 func _ready() -> void:
 	if _buttons.is_empty():
 		_build()
+	# The column anchors to the right screen edge; re-pin it when the window
+	# size changes so it never drifts off the edge mid-session.
+	var viewport := get_viewport()
+	if viewport != null and not viewport.size_changed.is_connected(_layout_buttons):
+		viewport.size_changed.connect(_layout_buttons)
 
 
 ## kinds: ordered construct structure kinds (e.g. ["farm", ...]). labels/tips
@@ -88,6 +93,14 @@ func configure_from_constructs(constructs: Array) -> void:
 			button.expand_icon = true
 			button.add_theme_constant_override("icon_max_width", int(BUTTON_DIAMETER) - 12)
 			button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		elif bool(entry.get("text_only", false)):
+			# Honest text-only socket for factions whose build art is not
+			# converted yet — clearly styled chrome, never borrowed Men art.
+			button.text = String(entry.get("title", kind.capitalize()))
+			button.add_theme_font_size_override("font_size", 10)
+			button.add_theme_color_override("font_color", Color("e6d9ae"))
+			button.add_theme_color_override("font_hover_color", Color("fff3c8"))
+			button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		button.pressed.connect(_on_side_button_pressed.bind(kind))
 		if _socket_texture != null:
 			var socket_box := StyleBoxTexture.new()
@@ -116,12 +129,31 @@ func _layout_buttons() -> void:
 	var viewport := get_viewport_rect().size
 	if viewport.x <= 0.0 or viewport.y <= 0.0:
 		viewport = AUTHORED_RESOLUTION
-	# Anchor to the right edge (the authored translation sits at the far right of
-	# the 1024-wide authored frame); scale the vertical start from authored space.
-	var start_y := BUTTON_SET_TRANSLATION.y / AUTHORED_RESOLUTION.y * viewport.y
-	var column_x := viewport.x - BUTTON_DIAMETER - RIGHT_EDGE_MARGIN
+	# Retail (REF-29/32/50, 1440p): a single column of ~110px sockets starting
+	# ~130px from the top and spanning nearly the full right edge. Scale the
+	# sockets from the viewport height and shrink-to-fit so one column always
+	# holds the porter's full authored build set like retail; only an
+	# over-long roster wraps into a second column growing leftward.
+	var count := maxi(1, _buttons.size())
+	var start_y := viewport.y * 0.095
+	var bottom_margin := viewport.y * 0.02
+	var pitch := viewport.y * 0.077 + 7.0
+	var rows := maxi(1, int(floorf((viewport.y - start_y - bottom_margin) / pitch)))
+	if rows < count:
+		pitch = (viewport.y - start_y - bottom_margin) / float(count)
+		rows = count
+	var diameter := clampf(pitch - 7.0, 40.0, viewport.y * 0.077)
 	for index in _buttons.size():
-		_buttons[index].position = Vector2(column_x, start_y + float(index) * BUTTON_PITCH)
+		var row := index % rows
+		var column := index / rows
+		var button := _buttons[index]
+		button.custom_minimum_size = Vector2(diameter, diameter)
+		button.size = Vector2(diameter, diameter)
+		button.add_theme_constant_override("icon_max_width", int(diameter) - 12)
+		button.position = Vector2(
+			viewport.x - RIGHT_EDGE_MARGIN - diameter - float(column) * pitch,
+			start_y + float(row) * pitch
+		)
 
 
 func _on_side_button_pressed(kind: String) -> void:

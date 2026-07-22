@@ -6,7 +6,10 @@ const RetailHouseColorScript = preload("res://src/retail_slice/retail_house_colo
 
 static var _mesh_cache: Dictionary = {}
 static var _private_retail_pack_cache: Dictionary = {}
-const MAX_MESH_CACHE_ENTRIES := 16
+# Bound raised with the full-faction rosters: a faction fields 30+ unique unit
+# GLBs plus bound map props, and a 16-entry cache thrashed (evict-then-reparse)
+# across the boot roster and the first production wave.
+const MAX_MESH_CACHE_ENTRIES := 64
 
 static func make_unit_visual(type_id: String, side: int) -> Node3D:
 	var def: Dictionary = ContentDB.get_unit(type_id)
@@ -82,6 +85,12 @@ static func make_bundle_object_visual(object_id: String, side: int, source_unit_
 			# selected-map runtime therefore applies its single validated source-to-
 			# local scale instead of independently normalizing every model by height.
 			loaded.scale = Vector3.ONE * source_unit_scale
+			# Hero skins often pivot above the soles. Snap the mesh AABB floor to
+			# y=0 so units stand on the terrain instead of floating in a T-pose.
+			if String(definition.get("kind", "")) != "structure":
+				var grounded := _aabb_of(loaded)
+				if is_finite(grounded.position.y) and absf(grounded.position.y) > 0.0001:
+					loaded.position.y -= grounded.position.y
 		else:
 			var presentation: Variant = definition.get("presentation", {})
 			var target_height := 2.4 if String(definition.get("kind", "")) != "structure" else 7.0
@@ -244,6 +253,63 @@ static func is_blockout_visual(node: Node3D) -> bool:
 	if path.begins_with("kit:") and not path.begins_with("kit_multipart:"):
 		return true
 	return false
+
+static func preload_models_threaded(paths: Array) -> void:
+	## Batch-warm the mesh cache for a set of GLB paths. The expensive GLB binary
+	## parse (GLTFDocument.append_from_file) fans out across the worker pool;
+	## scene generation and cache insertion stay on the calling thread, so later
+	## _try_load_model calls on the same paths are ordinary cache hits. Paths
+	## that are missing, cached, or imported (ResourceLoader-visible) keep their
+	## established lazy-load behavior exactly.
+	var threaded: Array[String] = []
+	var seen: Dictionary = {}
+	for path_value in paths:
+		var path := String(path_value)
+		if path == "" or seen.has(path):
+			continue
+		seen[path] = true
+		if _mesh_cache.has(path):
+			continue
+		var extension := path.get_extension().to_lower()
+		if extension != "glb" and extension != "gltf":
+			continue
+		if ResourceLoader.exists(path):
+			# Imported resources load fast through the engine; keep that path.
+			_try_load_model(path)
+			continue
+		if not FileAccess.file_exists(path):
+			continue
+		threaded.append(path)
+	if threaded.is_empty():
+		return
+	if threaded.size() == 1 or OS.get_processor_count() <= 1:
+		for path in threaded:
+			_try_load_model(path)
+		return
+	var parsed: Array = []
+	parsed.resize(threaded.size())
+	var group := WorkerThreadPool.add_group_task(
+		func(element: int) -> void:
+			var document := GLTFDocument.new()
+			var state := GLTFState.new()
+			if document.append_from_file(threaded[element], state) == OK:
+				parsed[element] = {"document": document, "state": state},
+		threaded.size()
+	)
+	WorkerThreadPool.wait_for_group_task_completion(group)
+	for index in threaded.size():
+		var entry: Variant = parsed[index]
+		if typeof(entry) != TYPE_DICTIONARY:
+			# Parse failed on the worker: the lazy path retries and applies the
+			# established failure handling at the call site.
+			continue
+		var node: Node3D = (entry["document"] as GLTFDocument).generate_scene(entry["state"] as GLTFState) as Node3D
+		if node != null:
+			_cache_model(threaded[index], node)
+			# _cache_model stores a duplicate; the generated original is never
+			# parented on this warm path and must be freed or it leaks at exit.
+			node.free()
+
 
 static func _try_load_model(path: String) -> Node3D:
 	if path == null or String(path) == "":

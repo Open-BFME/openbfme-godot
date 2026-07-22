@@ -62,11 +62,14 @@ W3D_DEPENDENCY_CONVERTERS = {
 W3D_INPUT_RESOURCE_IDS_OPTION = "inputResourceIds"
 W3D_EXCLUDED_OPTIONAL_MESHES_OPTION = "excludedOptionalMeshes"
 W3D_PROVEN_ROOT_RIGID_BAKE_OPTION = "provenRootRigidBake"
+W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION = "provenPivotOnlyModel"
 W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION = "provenNoMotionAnimations"
 W3D_TEXTURE_OVERRIDES_OPTION = "textureOverrides"
+W3D_RETAIL_ABSENT_TEXTURES_OPTION = "retailAbsentTextures"
 W3D_SOURCE_VARIANT_OF_OPTION = "sourceVariantOf"
 MAX_W3D_OPTIONAL_MESH_EXCLUSIONS = 64
 MAX_W3D_TEXTURE_OVERRIDES = 16
+MAX_W3D_RETAIL_ABSENT_TEXTURES = 16
 MAX_W3D_NO_MOTION_ANIMATIONS = 16
 W3D_CLEAN_MESH_IDENTIFIER_PATTERN = re.compile(
     r"^[a-z0-9](?:[a-z0-9_]{0,126}[a-z0-9])?$"
@@ -177,6 +180,40 @@ def normalize_w3d_texture_overrides(value: Any) -> list[dict[str, str]]:
             f"{W3D_TEXTURE_OVERRIDES_OPTION} cannot chain target and source names"
         )
     return normalized
+
+
+def normalize_retail_absent_textures(value: Any) -> list[str]:
+    """Validate scanner-recorded retail-absent texture basenames."""
+
+    if (
+        not isinstance(value, list)
+        or len(value) > MAX_W3D_RETAIL_ABSENT_TEXTURES
+        or any(not isinstance(basename, str) for basename in value)
+    ):
+        raise ValueError(
+            f"{W3D_RETAIL_ABSENT_TEXTURES_OPTION} must be an array of at most "
+            f"{MAX_W3D_RETAIL_ABSENT_TEXTURES} strings"
+        )
+    if len(value) != len(set(value)):
+        raise ValueError(f"{W3D_RETAIL_ABSENT_TEXTURES_OPTION} contains duplicates")
+    for basename in value:
+        try:
+            basename_parts = (
+                safe_relative_parts(basename) if isinstance(basename, str) else ()
+            )
+        except ValueError:
+            basename_parts = ()
+        if (
+            not isinstance(basename, str)
+            or not W3D_TEXTURE_BASENAME_PATTERN.fullmatch(basename)
+            or len(basename_parts) != 1
+            or Path(basename).suffix.casefold() not in W3D_TEXTURE_SUFFIXES
+        ):
+            raise ValueError(
+                f"{W3D_RETAIL_ABSENT_TEXTURES_OPTION} must contain only safe "
+                "supported texture basenames"
+            )
+    return sorted(value, key=str.casefold)
 
 
 def normalize_w3d_no_motion_animations(value: Any) -> list[dict[str, Any]]:
@@ -596,6 +633,14 @@ def _validate_hierarchical_w3d_options(resource: "ResourceRule") -> None:
             f"resource {resource.id!r} uses "
             f"{W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION} without w3d-hierarchical"
         )
+    if (
+        W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION in resource.options
+        and resource.converter != "w3d-hierarchical"
+    ):
+        raise ValueError(
+            f"resource {resource.id!r} uses "
+            f"{W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION} without w3d-hierarchical"
+        )
     if resource.converter != "w3d-hierarchical":
         return
     model = resource.options.get("model")
@@ -618,6 +663,18 @@ def _validate_hierarchical_w3d_options(resource: "ResourceRule") -> None:
         raise ValueError(
             f"resource {resource.id!r} w3d-hierarchical "
             f"{W3D_PROVEN_ROOT_RIGID_BAKE_OPTION} must be a boolean"
+        )
+    pivot_only = resource.options.get(W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION, False)
+    if not isinstance(pivot_only, bool):
+        raise ValueError(
+            f"resource {resource.id!r} w3d-hierarchical "
+            f"{W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION} must be a boolean"
+        )
+    if pivot_only and root_rigid_bake:
+        raise ValueError(
+            f"resource {resource.id!r} w3d-hierarchical cannot combine "
+            f"{W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION} and "
+            f"{W3D_PROVEN_ROOT_RIGID_BAKE_OPTION}"
         )
     if W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION in resource.options:
         resource.options[W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION] = (
@@ -776,6 +833,17 @@ class ImportProfile:
                     )
                 options[W3D_TEXTURE_OVERRIDES_OPTION] = normalize_w3d_texture_overrides(
                     options[W3D_TEXTURE_OVERRIDES_OPTION]
+                )
+            if W3D_RETAIL_ABSENT_TEXTURES_OPTION in options:
+                if converter not in W3D_DEPENDENCY_CONVERTERS:
+                    raise ValueError(
+                        f"resource {resource_id!r} uses "
+                        f"{W3D_RETAIL_ABSENT_TEXTURES_OPTION} without a W3D bundle converter"
+                    )
+                options[W3D_RETAIL_ABSENT_TEXTURES_OPTION] = (
+                    normalize_retail_absent_textures(
+                        options[W3D_RETAIL_ABSENT_TEXTURES_OPTION]
+                    )
                 )
             resources.append(
                 ResourceRule(

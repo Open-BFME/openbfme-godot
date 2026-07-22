@@ -298,11 +298,15 @@ def test_conversion_excludes_accounted_support_families() -> None:
     documents[objects_path] = (
         documents[objects_path].decode("utf-8")
         + """
+Object TestBanner
+  KindOf = INFANTRY BANNER
+End
 Object TestSpellBook
   KindOf = SPELL_BOOK
 End
 """
     ).encode("utf-8")
+    graph["definitions"]["objects"].append({"id": "TestBanner", "edges": []})
     graph["definitions"]["objects"].append({"id": "TestSpellBook", "edges": []})
     unit_patches = _unit_conversion_patches()
     with unit_patches[0], unit_patches[1], unit_patches[2]:
@@ -313,9 +317,14 @@ End
             catalog_identity_sha256="2" * 64,
         )
 
-    row = next(r for r in coverage["objects"] if r["id"] == "TestSpellBook")
-    assert row["status"] == "excluded"
-    assert "spell book" in row["reason"]
+    banner = next(r for r in coverage["objects"] if r["id"] == "TestBanner")
+    assert banner["status"] == "excluded"
+    assert "parent horde" in banner["reason"]
+    # The spellbook lane converts the faction spell book now; a bare
+    # SPELL_BOOK object with no authored store content fails closed instead.
+    spellbook = next(r for r in coverage["objects"] if r["id"] == "TestSpellBook")
+    assert spellbook["status"] == "converter-gap"
+    assert spellbook["family"] == "spellbook"
 
 
 def test_foundation_without_visuals_is_excluded_with_descriptor_evidence() -> None:
@@ -431,3 +440,59 @@ def test_plan_routes_structures_and_excludes_banner_members() -> None:
     assert summary["converterGapCount"] == 1
     assert summary["unsupportedFamilies"] == ["structure"]
     assert summary["descriptorCoverageComplete"] is False
+
+
+def test_plan_routes_spellbook_through_the_spellbook_lane() -> None:
+    documents, graph = _construct_fixture()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] += b"""
+Object FixtureSpellBook
+  KindOf = SPELL_BOOK
+End
+"""
+    graph["definitions"]["objects"].append({"id": "FixtureSpellBook", "edges": []})
+    descriptor = {
+        "spellBook": {"objectId": "FixtureSpellBook"},
+        "descriptorSha256": "4" * 64,
+    }
+    with mock.patch(
+        "openbfme_importer.faction_import.compile_spellbook_descriptor",
+        return_value=descriptor,
+    ) as spellbook_compile:
+        plan = build_faction_import_plan(
+            graph, documents, catalog_identity_sha256="2" * 64
+        )
+
+    row = next(r for r in plan["objects"] if r["id"] == "FixtureSpellBook")
+    assert row["status"] == "descriptor-ready"
+    assert row["family"] == "spellbook"
+    assert row["category"] == "spellbook"
+    assert row["descriptorSha256"] == "4" * 64
+    assert spellbook_compile.call_count == 1
+
+
+def test_plan_rejects_a_spellbook_descriptor_with_a_foreign_identity() -> None:
+    documents, graph = _construct_fixture()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] += b"""
+Object FixtureSpellBook
+  KindOf = SPELL_BOOK
+End
+"""
+    graph["definitions"]["objects"].append({"id": "FixtureSpellBook", "edges": []})
+    descriptor = {
+        "spellBook": {"objectId": "OtherSpellBook"},
+        "descriptorSha256": "4" * 64,
+    }
+    with mock.patch(
+        "openbfme_importer.faction_import.compile_spellbook_descriptor",
+        return_value=descriptor,
+    ):
+        plan = build_faction_import_plan(
+            graph, documents, catalog_identity_sha256="2" * 64
+        )
+
+    row = next(r for r in plan["objects"] if r["id"] == "FixtureSpellBook")
+    assert row["status"] == "converter-gap"
+    assert row["family"] == "spellbook"
+    assert "identity" in row["reason"]

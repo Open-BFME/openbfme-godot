@@ -580,6 +580,19 @@ def _append_reference(
                 token_error = "WeatherTexture requires weather condition and texture"
             else:
                 tokens = (tokens[1],)
+        elif folded_key == "model" and len(tokens) == 2:
+            # BFME2 model-condition states stack additional meshes beside the
+            # primary model with the authored ``ExtraMesh:Yes`` suffix (for
+            # example the dead-orc corpse piles in evilfactionprops.ini).  The
+            # model id still resolves exactly; the marker routes the row out
+            # of the single-default-model contract into explicit extra-mesh
+            # handling.  Any other suffix stays invalid-authored.
+            if tokens[1].casefold() == "extramesh:yes":
+                kind, usage = "extra-mesh", "extra-mesh"
+                tokens = (tokens[0],)
+            else:
+                tokens = (assignment.value,)
+                token_error = f"{assignment.key} requires exactly one reference"
         elif folded_key != "texture" and len(tokens) != 1:
             tokens = (assignment.value,)
             token_error = f"{assignment.key} requires exactly one reference"
@@ -1098,7 +1111,17 @@ def _resolve_pending(
 
         try:
             batch = resolve_w3d_references_partial(
-                w3d, [W3DReferenceRequest(item.kind, item.identifier)]
+                w3d,
+                [
+                    W3DReferenceRequest(
+                        (
+                            "model"
+                            if item.kind == "extra-mesh"
+                            else item.kind
+                        ),
+                        item.identifier,
+                    )
+                ],
             )
         except (TypeError, ValueError) as exc:
             results.append(
@@ -1114,6 +1137,50 @@ def _resolve_pending(
                 )
             )
             continue
+        if (
+            batch.missing
+            and not batch.ambiguous
+            and item.kind == "animation"
+            and "." in item.identifier
+            and "/" not in item.identifier
+            and "\\" not in item.identifier
+        ):
+            # Retail animation convention: a ``Hierarchy.Clip`` reference loads
+            # the file ``<Clip>.w3d``.  The authored clip id inside that file
+            # can legitimately differ from the file stem (retail clip-id drift,
+            # e.g. ``RUELROND_SKL.RUELROND_IDLCT3`` ships inside
+            # ``ruelrond_idlct3.w3d`` as the ``RUELROND_IDLC_T`` clip).  The
+            # full identifier already failed, so the exact clip file stem is
+            # the only retail-consistent resolution left.  A stem match is
+            # only an animation when the file actually authors animation ids:
+            # retail also points animation states at static model files (for
+            # example GBWallrampart.GBWallrampart), which the engine treats as
+            # a tolerated missing clip, never as a clip.
+            try:
+                fallback = resolve_w3d_references_partial(
+                    w3d,
+                    [
+                        W3DReferenceRequest(
+                            item.kind, item.identifier.split(".", 1)[1]
+                        )
+                    ],
+                )
+            except (TypeError, ValueError):
+                fallback = None
+            if fallback is not None and fallback.resolved:
+                resolved_path = fallback.resolved[0].physical_virtual_path
+                headers = next(
+                    (
+                        header
+                        for header in w3d.file_headers
+                        if header.virtual_path == resolved_path
+                    ),
+                    None,
+                )
+                if headers is not None and headers.animation_ids:
+                    batch = fallback
+            elif fallback is not None and fallback.ambiguous:
+                batch = fallback
         if batch.resolved:
             resolved = batch.resolved[0]
             paths = (

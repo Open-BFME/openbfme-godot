@@ -51,6 +51,7 @@ var _member_positions: Array[Vector3] = []
 var _living_mask: Array[bool] = []
 var _source_textures: Array[Image] = []
 var _decal: Decal
+var _star: MeshInstance3D
 var _selected := false
 
 
@@ -119,6 +120,9 @@ func set_selected(value: bool) -> void:
 		if contract_ready and value and _decal.texture_albedo == null:
 			_build_merged_texture()
 		_decal.visible = contract_ready and value and _decal.texture_albedo != null
+	if _star != null:
+		# The gold star marks a FORMATION's anchor (REF-45) — not lone heroes.
+		_star.visible = value and _member_positions.size() > 1 and _decal != null and _decal.visible
 
 
 func set_living_mask(mask: Array[bool]) -> void:
@@ -229,6 +233,51 @@ func _build_decal() -> void:
 		_decal.lower_fade = 0.0
 		_decal.visible = false
 		add_child(_decal)
+	if _star == null:
+		# Retail's gold star formation marker under a selected formation
+		# (REF-45): an 8-point compass star at the merged-decal center.
+		_star = MeshInstance3D.new()
+		_star.name = "FormationStarMarker"
+		_star.mesh = _make_star_mesh()
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.albedo_color = Color("e0b73c")
+		material.no_depth_test = false
+		_star.material_override = material
+		_star.set_meta("legal_safe_gameplay_overlay", true)
+		_star.visible = false
+		add_child(_star)
+
+
+func _make_star_mesh() -> ArrayMesh:
+	# Flat 8-point star: four long cardinal points and four short diagonals,
+	# sized like REF-45 (~1.5 member spacings across) at the formation's feet.
+	var long := 0.62
+	var short := 0.30
+	var waist_long := 0.09
+	var waist_short := 0.09
+	var outline: Array[Vector2] = []
+	for index in 8:
+		var angle := float(index) * PI * 0.25
+		var is_long := index % 2 == 0
+		var radius := long if is_long else short
+		outline.append(Vector2(cos(angle), sin(angle)) * radius)
+		var waist_angle := angle + PI * 0.125
+		var waist := waist_long if is_long else waist_short
+		outline.append(Vector2(cos(waist_angle), sin(waist_angle)) * waist)
+	var vertices := PackedVector3Array()
+	for index in outline.size():
+		var a: Vector2 = outline[index]
+		var b: Vector2 = outline[(index + 1) % outline.size()]
+		vertices.append(Vector3.ZERO)
+		vertices.append(Vector3(a.x, 0.0, a.y))
+		vertices.append(Vector3(b.x, 0.0, b.y))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 # Presentation calibration: the contract's 50-source-unit radius is the
@@ -276,6 +325,8 @@ func _build_merged_texture() -> void:
 			merged_texture_size = cached.get("size", canvas_size) as Vector2i
 			_decal.position = Vector3(local_center.x, 1.5, local_center.y)
 			_decal.size = decal_size
+			if _star != null:
+				_star.position = Vector3(local_center.x, 0.05, local_center.y)
 			return
 	var coverage := Image.create(canvas_size.x, canvas_size.y, false, Image.FORMAT_RGBA8)
 	coverage.fill(Color.TRANSPARENT)
@@ -303,6 +354,8 @@ func _build_merged_texture() -> void:
 	merged_texture_size = canvas_size
 	_decal.position = Vector3(local_center.x, 1.5, local_center.y)
 	_decal.size = decal_size
+	if _star != null:
+		_star.position = Vector3(local_center.x, 0.05, local_center.y)
 	_merged_texture_cache[cache_key] = {
 		"texture": merged_texture,
 		"size": canvas_size,

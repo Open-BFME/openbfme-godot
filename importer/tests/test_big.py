@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import struct
 import tempfile
 from pathlib import Path
@@ -96,8 +97,16 @@ class BigArchiveTests(unittest.TestCase):
             changed[-1] = ord("B")
             path.write_bytes(changed)
             changed_archive = BigArchive.open(path)
-            with self.assertRaises(FileExistsError):
-                changed_archive.extract(changed_archive.entries, root / "out")
+            previous = os.environ.get("OPENBFME_EXTRACT_VERIFY")
+            os.environ["OPENBFME_EXTRACT_VERIFY"] = "full"
+            try:
+                with self.assertRaises(FileExistsError):
+                    changed_archive.extract(changed_archive.entries, root / "out")
+            finally:
+                if previous is None:
+                    os.environ.pop("OPENBFME_EXTRACT_VERIFY", None)
+                else:
+                    os.environ["OPENBFME_EXTRACT_VERIFY"] = previous
 
     def test_rejects_case_colliding_extraction_targets(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

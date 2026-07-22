@@ -14,9 +14,25 @@ const SELECTION_VERSION := 0
 
 var diagnostics: Array[String] = []
 
+# Boot-path memoization. _link_status performs a DirAccess.open per call, and
+# boot-time asset resolution calls it for every path segment of every resolved
+# asset (tens of thousands of opens on large retail pack sets). Link status of
+# the immutable pack trees cannot change while a load generation is active, so
+# results are memoized per (parent, child) and flushed whenever the pack set is
+# re-scanned (list_pack_roots) or the selection is rewritten (select_user_pack).
+var _link_status_cache: Dictionary = {}
+var _link_cache_mutex := Mutex.new()
+
+
+func clear_path_caches() -> void:
+	_link_cache_mutex.lock()
+	_link_status_cache.clear()
+	_link_cache_mutex.unlock()
+
 
 func list_pack_roots() -> Array[String]:
 	diagnostics.clear()
+	clear_path_caches()
 	var roots: Array[String] = []
 	_collect_packs(BASE_PATH, roots)
 	_collect_packs(RES_MODS, roots)
@@ -44,7 +60,14 @@ func list_pack_roots() -> Array[String]:
 					external_selected = selected_user_pack_root(external, external_selection)
 					if external_selected != "":
 						roots.append(external_selected)
-				if external_selected == "" or not _is_strict_completion_pack(external_selected):
+						roots.append_array(selected_pack_supplements(external, external_selection))
+						# Explicit selection is a complete load set (active + named
+						# supplements). Never auto-mount sibling packs — stale
+						# leaves (e.g. private-leaves UI) would override the
+						# selected bundle's registries and fail pack-root gates.
+					else:
+						_collect_packs(external, roots)
+				else:
 					_collect_packs(external, roots)
 		else:
 			_diagnose("OPENBFME_CONTENT does not exist: %s" % external)
@@ -57,6 +80,7 @@ func list_pack_roots() -> Array[String]:
 		var selected := selected_user_pack_root()
 		if selected != "":
 			roots.append(selected)
+			roots.append_array(selected_pack_supplements())
 
 	var unique: Array[String] = []
 	var seen: Dictionary = {}
@@ -65,11 +89,25 @@ func list_pack_roots() -> Array[String]:
 		if not seen.has(key):
 			seen[key] = true
 			unique.append(root)
+	# The active selection must load last among equal priorities: faction packs
+	# ship copies of the shared base bundle objects, and the active pack's
+	# documents (not a supplement's copy) must win those shared ids.
+	var active_key := ""
+	if external_selected != "":
+		active_key = _comparison_path(external_selected)
+	elif external_selected == "":
+		var active_user_root := selected_user_pack_root()
+		if active_user_root != "":
+			active_key = _comparison_path(active_user_root)
 	unique.sort_custom(func(a: String, b: String) -> bool:
 		var pa := _pack_priority(a)
 		var pb := _pack_priority(b)
 		if pa != pb:
 			return pa < pb
+		var a_active := active_key != "" and _comparison_path(a) == active_key
+		var b_active := active_key != "" and _comparison_path(b) == active_key
+		if a_active != b_active:
+			return not a_active
 		return _comparison_path(a) < _comparison_path(b)
 	)
 	return unique
@@ -111,6 +149,41 @@ func selected_user_pack_root(cache_root: String = "", selection_path: String = "
 	return selected
 
 
+func selected_pack_supplements(cache_root: String = "", selection_path: String = "") -> Array[String]:
+	## Optional explicit supplement bundles named by the selection document.
+	## Each entry is a cache-relative <pack-id>/<bundle-hash> root resolved
+	## under the same containment and link rules as the active pack. This is
+	## how a converted faction pack loads alongside the selected host bundle
+	## without scanning siblings; invalid entries fail closed: they are
+	## diagnosed and skipped, never searched for.
+	var supplements: Array[String] = []
+	var cache := user_pack_cache_root() if cache_root == "" else cache_root
+	var selection := user_pack_selection_path() if selection_path == "" else selection_path
+	if not FileAccess.file_exists(selection):
+		return supplements
+	var raw: Variant = _read_json(selection)
+	if typeof(raw) != TYPE_DICTIONARY:
+		return supplements
+	var config := raw as Dictionary
+	if String(config.get("schema", "")) != SELECTION_SCHEMA or int(config.get("schemaVersion", -1)) != SELECTION_VERSION:
+		return supplements
+	var entries: Variant = config.get("supplementalPacks", [])
+	if typeof(entries) != TYPE_ARRAY:
+		_diagnose("Content selection supplementalPacks is not an array: %s" % selection)
+		return supplements
+	for entry_value in entries as Array:
+		var relative := String(entry_value)
+		var supplement := resolve_pack_path(cache, relative)
+		if supplement == "":
+			_diagnose("Content selection has an unsafe supplementalPacks path: %s" % relative)
+			continue
+		if not is_valid_pack_root(supplement):
+			_diagnose("Supplemental content pack is invalid or missing: %s" % supplement)
+			continue
+		supplements.append(supplement)
+	return supplements
+
+
 func select_user_pack(relative_pack: String, cache_root: String = "", selection_path: String = "") -> String:
 	## Persist a cache-relative selection. Returns an empty string on success.
 	var cache := user_pack_cache_root() if cache_root == "" else cache_root
@@ -130,6 +203,7 @@ func select_user_pack(relative_pack: String, cache_root: String = "", selection_
 		"activePack": relative_pack.replace("\\", "/"),
 	}, "  ") + "\n")
 	file.close()
+	clear_path_caches()
 	return ""
 
 
@@ -211,11 +285,24 @@ func _path_has_link_component(root_path: String, candidate_path: String) -> bool
 func _link_status(parent_path: String, child_name: String) -> int:
 	## 0 = ordinary/missing entry, 1 = link/reparse point, -1 = unknown.
 	## Unknown is rejected by callers so an unreadable parent cannot weaken the
-	## containment boundary.
+	## containment boundary. The cache is mutex-guarded because threaded content
+	## loaders resolve assets concurrently.
+	var cache_key := parent_path + "|" + child_name
+	_link_cache_mutex.lock()
+	var cached: Variant = _link_status_cache.get(cache_key)
+	_link_cache_mutex.unlock()
+	if cached is int:
+		return cached as int
 	var parent := DirAccess.open(parent_path)
+	var status := 0
 	if parent == null:
-		return -1
-	return 1 if parent.is_link(child_name) else 0
+		status = -1
+	else:
+		status = 1 if parent.is_link(child_name) else 0
+	_link_cache_mutex.lock()
+	_link_status_cache[cache_key] = status
+	_link_cache_mutex.unlock()
+	return status
 
 
 func _ensure_dir(path: String) -> void:

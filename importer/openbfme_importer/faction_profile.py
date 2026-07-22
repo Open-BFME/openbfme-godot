@@ -17,11 +17,16 @@ from typing import Any, Iterable
 
 from .catalog import InstallCatalog
 from .faction_census import (
+    EVA_PATH,
     SCIENCE_PATH,
+    SOUND_EFFECTS_PATH,
     SPECIAL_POWER_PATH,
     STRING_CATALOG_PATH,
     UPGRADE_PATH,
     VOICE_PATH,
+    _effective_entries,
+    _first_identifier,
+    _read_document,
     census_men_faction,
 )
 from .paths import safe_relative_parts
@@ -30,6 +35,14 @@ from .profile import (
     MAX_PROFILE_BYTES,
     MAX_RESOURCES,
     MAX_TEXTURE_ATLAS_CROPS,
+)
+from .sage_audio import (
+    parse_sage_audio_definitions,
+    resolve_audio_sample_paths,
+    resolve_sage_audio_closure,
+)
+from .sage_ini import (
+    _lines as _ini_lines,
 )
 from .sage_string import MAX_STRING_BYTES, parse_string_catalog
 
@@ -535,7 +548,13 @@ def _audio_resources_and_manifest(
     report: dict[str, Any],
     dependencies: dict[str, Any],
     leaves: dict[str, set[str]],
+    audio_slug: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not audio_slug or any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789"
+        for character in audio_slug
+    ):
+        raise ValueError(f"faction audio slug is unsafe: {audio_slug!r}")
     resolved = _object(report.get("resolvedLeaves"), "faction census resolvedLeaves")
     audio = _object(resolved.get("audio"), "faction census resolvedLeaves.audio")
     roots = _unique_strings(audio.get("rootIds"), "faction census audio.rootIds")
@@ -589,7 +608,7 @@ def _audio_resources_and_manifest(
         source_stem = PurePosixPath(path).stem
         if source_stem.casefold() != key or _SAFE_OUTPUT_STEM.fullmatch(source_stem) is None:
             raise ValueError(f"audio sample {identifier!r} has an unsafe or mismatched source stem")
-        output_path = f"assets/audio/men/{source_stem.casefold()}.wav"
+        output_path = f"assets/audio/{audio_slug}/{source_stem.casefold()}.wav"
         output_key = output_path.casefold()
         if output_key in generated_paths:
             raise ValueError("generated audio output path collision")
@@ -607,11 +626,11 @@ def _audio_resources_and_manifest(
     ):
         resources.append(
             {
-                "id": f"men-audio-leaves-{batch_index:03d}",
+                "id": f"{audio_slug}-audio-leaves-{batch_index:03d}",
                 "kind": "audio",
                 "converter": "audio",
                 "patterns": [item[1] for item in batch],
-                "output": "assets/audio/men/{stem}.wav",
+                "output": f"assets/audio/{audio_slug}/{{stem}}.wav",
                 "required": True,
                 "limit": len(batch),
                 "expected_count": len(batch),
@@ -630,7 +649,9 @@ def _audio_resources_and_manifest(
     }
 
 
-def _validate_report(report: Any) -> dict[str, Any]:
+def _validate_report(
+    report: Any, expected_faction: str = "Men", expected_template: str = "FactionMen"
+) -> dict[str, Any]:
     result = _object(report, "faction census report")
     if result.get("format") != 1:
         raise ValueError("faction census report has an unsupported format")
@@ -642,10 +663,10 @@ def _validate_report(report: Any) -> dict[str, Any]:
     if (
         target.get("game") != "BFME2"
         or target.get("patch") != "1.06"
-        or target.get("faction") != "Men"
-        or target.get("playerTemplate") != "FactionMen"
+        or target.get("faction") != expected_faction
+        or target.get("playerTemplate") != expected_template
     ):
-        raise ValueError("faction census target is not BFME2 1.06 Men")
+        raise ValueError(f"faction census target is not BFME2 1.06 {expected_faction}")
     _digest(result.get("inputSetSha256"), "faction census inputSetSha256")
     unresolved = _object(result.get("unresolved"), "faction census unresolved")
     if not unresolved:
@@ -708,8 +729,13 @@ def build_men_leaf_profile_from_report(
         catalog, report, dependencies, source_leaves
     )
     strings_manifest = _localized_strings(catalog, report, dependencies)
+    audio_slug = _text(
+        _object(report["target"], "faction census target").get("faction"),
+        "faction census target.faction",
+        maximum=64,
+    ).casefold()
     audio_resources, audio_manifest = _audio_resources_and_manifest(
-        catalog, report, dependencies, source_leaves
+        catalog, report, dependencies, source_leaves, audio_slug
     )
     _validate_relevant_summary_counts(
         report,
@@ -774,3 +800,312 @@ def build_men_leaf_profile(catalog: InstallCatalog) -> dict[str, Any]:
     """Census the install and return its deterministic private leaf profile."""
 
     return build_men_leaf_profile_from_report(catalog, census_men_faction(catalog))
+
+
+# ---------------------------------------------------------------------------
+# Faction pack audio extension (elves/dwarves/isengard/mordor/wild + overlays)
+#
+# The Men leaf profile above is the reference emission: a schemaVersion-1
+# openbfme.audio-events registry plus the converter resources that cook every
+# resolved sample.  The faction slice packs ship the same surface, generalized
+# per faction, and additionally carry the retail eva.ini announcer coverage
+# (the Camp* side sets) that the object-graph census never requests as roots.
+# ---------------------------------------------------------------------------
+
+_FACTION_PLAYER_TEMPLATES: dict[str, str] = {
+    "Men": "FactionMen",
+    "Elves": "FactionElves",
+    "Dwarves": "FactionDwarves",
+    "Isengard": "FactionIsengard",
+    "Mordor": "FactionMordor",
+    "Wild": "FactionWild",
+}
+_EVA_BLOCK_HEADER = re.compile(
+    r"^(?:NewEvaEvent|PredefinedEvaEvent)\s+([A-Za-z0-9_+.-]+)\s*$", re.IGNORECASE
+)
+_EVA_SOUND_SENTINELS = frozenset({"none", "null", "nosound", "0"})
+MAX_EVA_EVENTS = 1_024
+
+
+def _eva_event_side_sounds(source: bytes) -> dict[str, tuple[str, tuple[tuple[str, str], ...]]]:
+    """Index every eva.ini announcer block's ``(side, sound)`` pairs per event.
+
+    Mirrors the census parser for ``NewEvaEvent`` and adds the
+    ``PredefinedEvaEvent`` family (AllyDefeated, EnemyDefeated, ...) whose
+    blocks author the same nested ``SideSound`` sections.
+    """
+
+    events: dict[str, list[tuple[str, str]]] = {}
+    authored_names: dict[str, str] = {}
+    current: str | None = None
+    in_side_sound = False
+    side: str | None = None
+    for line in _ini_lines(source):
+        header = _EVA_BLOCK_HEADER.fullmatch(line)
+        if header is not None and current is None:
+            current = header.group(1)
+            authored_names.setdefault(current.casefold(), current)
+            events.setdefault(current.casefold(), [])
+            if len(events) > MAX_EVA_EVENTS:
+                raise ValueError("eva event document count exceeds limit")
+            continue
+        if current is None:
+            continue
+        if line.casefold() == "end":
+            if in_side_sound:
+                in_side_sound = False
+                side = None
+            else:
+                current = None
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            key = key.strip().casefold()
+            if in_side_sound and key == "side":
+                side = _first_identifier(value.strip())
+            elif in_side_sound and key == "sound" and side:
+                sound = _first_identifier(value.strip())
+                if sound and sound.casefold() not in _EVA_SOUND_SENTINELS:
+                    events[current.casefold()].append((side, sound))
+            continue
+        if line.split()[0].casefold() == "sidesound":
+            in_side_sound = True
+    return {key: (authored_names[key], tuple(pairs)) for key, pairs in events.items()}
+
+
+def _eva_side_map_document(
+    events: dict[str, tuple[str, tuple[tuple[str, str], ...]]]
+) -> dict[str, Any]:
+    """Project the parsed eva.ini blocks into the runtime side-map document.
+
+    The map is global retail data (identical for every faction): each event id
+    binds one announcer sound per side.  Later-authored duplicate sides win,
+    matching SAGE override order.
+    """
+
+    mapped: dict[str, dict[str, str]] = {}
+    for key in sorted(events, key=str.casefold):
+        authored, pairs = events[key]
+        sides: dict[str, str] = {}
+        for side, sound in pairs:
+            sides[side] = sound
+        if sides:
+            mapped[authored] = dict(sorted(sides.items(), key=lambda item: item[0].casefold()))
+    return {"schema": "openbfme.eva-events", "schemaVersion": 0, "events": mapped}
+
+
+def _eva_audio_extension(
+    catalog: InstallCatalog,
+    side: str,
+    audio_slug: str,
+    existing_samples: dict[str, str],
+    existing_definitions: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Resolve the faction side's eva.ini Camp* announcer sets.
+
+    Returns (resources, events, multisounds, samples) in exactly the manifest
+    row shapes ``_audio_resources_and_manifest`` emits, so callers merge them
+    field-by-field.  Every root must resolve through the same voice.ini /
+    soundeffects.ini definition corpus the census uses; anything unresolved
+    raises (fail closed, never a substitute).
+    """
+
+    eva_document = _read_document(catalog, EVA_PATH)
+    sound_effects_document = _read_document(catalog, SOUND_EFFECTS_PATH)
+    voice_document = _read_document(catalog, VOICE_PATH)
+    eva_events = _eva_event_side_sounds(eva_document.source)
+    side_keys = {side.casefold(), f"player{side.casefold()}"}
+    roots: dict[str, str] = {}
+    for _key in sorted(eva_events, key=str.casefold):
+        _authored, pairs = eva_events[_key]
+        for sound_side, sound in pairs:
+            if sound_side.casefold() in side_keys:
+                roots.setdefault(sound.casefold(), sound)
+    definitions = parse_sage_audio_definitions(
+        sound_effects_document.source + b"\n" + voice_document.source
+    )
+    closure = resolve_sage_audio_closure(definitions, sorted(roots.values(), key=str.casefold))
+    virtual_paths = [entry.name for entry in _effective_entries(catalog).values()]
+    sample_paths = resolve_audio_sample_paths(closure.sample_ids, virtual_paths)
+
+    events: dict[str, Any] = {}
+    multisounds: dict[str, Any] = {}
+    for row in closure.events:
+        if row.id.casefold() in {item.casefold() for item in existing_definitions}:
+            continue
+        neutral = row.neutral()
+        neutral.pop("id")
+        events[row.id] = neutral
+    for row in closure.multisounds:
+        if row.id.casefold() in {item.casefold() for item in existing_definitions}:
+            continue
+        neutral = row.neutral()
+        neutral.pop("id")
+        multisounds[row.id] = neutral
+
+    ordered_new_samples: list[tuple[str, str]] = []
+    known_sample_keys = {item.casefold() for item in existing_samples}
+    for sample_id in closure.sample_ids:
+        if sample_id.casefold() in known_sample_keys:
+            continue
+        virtual_path = sample_paths[sample_id]
+        source_stem = PurePosixPath(virtual_path).stem
+        if source_stem.casefold() != sample_id.casefold() or _SAFE_OUTPUT_STEM.fullmatch(source_stem) is None:
+            raise ValueError(f"eva audio sample {sample_id!r} has an unsafe or mismatched source stem")
+        _catalog_entry(catalog, virtual_path, "eva audio sample")
+        ordered_new_samples.append((sample_id, virtual_path))
+
+    resources: list[dict[str, Any]] = []
+    for batch_index, batch in enumerate(_chunks(ordered_new_samples, MAX_PATTERNS_PER_RESOURCE)):
+        resources.append(
+            {
+                "id": f"{audio_slug}-eva-audio-leaves-{batch_index:03d}",
+                "kind": "audio",
+                "converter": "audio",
+                "patterns": [item[1] for item in batch],
+                "output": f"assets/audio/{audio_slug}/{{stem}}.wav",
+                "required": True,
+                "limit": len(batch),
+                "expected_count": len(batch),
+                "options": {"force_pcm": True},
+            }
+        )
+    samples = {
+        item[0]: f"assets/audio/{audio_slug}/{PurePosixPath(item[1]).stem.casefold()}.wav"
+        for item in ordered_new_samples
+    }
+    return resources, events, multisounds, samples
+
+
+def _validate_faction_audio_report(report: Any, faction: str, template: str) -> dict[str, Any]:
+    """Audio-scoped census validation for the faction pack audio emission.
+
+    The full-report validator (``_validate_report``) gates on every census
+    lane being unresolved-free; isengard/mordor/wild carry pre-existing
+    diagnostics owned by other lanes (the ``+SOUND:`` tokenization and
+    mapped-image texture gaps recorded in AUDIO-COVERAGE.md) that do not
+    touch the audio closure.  This validator pins identity/schema and the
+    audio subtree's presence; ``_audio_resources_and_manifest`` then enforces
+    every audio invariant fail-closed (roots resolve, samples bind unique
+    catalog leaves).  Any unresolved diagnostics stay visible in the returned
+    report rather than being silently waived.
+    """
+
+    result = _object(report, "faction census report")
+    if result.get("format") != 1:
+        raise ValueError("faction census report has an unsupported format")
+    if result.get("schema") != _REPORT_SCHEMA or result.get("schemaVersion") != 1:
+        raise ValueError("faction census report has an unsupported schema")
+    if result.get("closureStatus") != _REPORT_CLOSURE:
+        raise ValueError("faction census report does not contain the required leaf closure")
+    target = _object(result.get("target"), "faction census target")
+    if (
+        target.get("game") != "BFME2"
+        or target.get("patch") != "1.06"
+        or target.get("faction") != faction
+        or target.get("playerTemplate") != template
+    ):
+        raise ValueError(f"faction census target is not BFME2 1.06 {faction}")
+    _digest(result.get("inputSetSha256"), "faction census inputSetSha256")
+    resolved = _object(result.get("resolvedLeaves"), "faction census resolvedLeaves")
+    _object(resolved.get("audio"), "faction census resolvedLeaves.audio")
+    return result
+
+
+def build_faction_audio_extension(
+    catalog: InstallCatalog,
+    report: dict[str, Any],
+    faction: str,
+    *,
+    include_census_registry: bool = True,
+) -> dict[str, Any]:
+    """Build one faction pack's audio surface from its leaf census report.
+
+    Generalizes the Men leaf audio emission to any census-covered faction and
+    adds the faction side's eva.ini announcer coverage.  Returns the profile
+    fragments the caller merges into the composed faction profile:
+    ``resources`` (converter rows), ``runtime_data`` (the schemaVersion-1
+    audio registry and the eva side map), and ``files`` (pack registry keys).
+    With ``include_census_registry=False`` only the EVA surface is emitted
+    (overlay packs mounted next to a full host pack).
+    """
+
+    template = _FACTION_PLAYER_TEMPLATES.get(faction)
+    if template is None:
+        raise ValueError(f"faction audio extension has no player template for {faction!r}")
+    report = _validate_faction_audio_report(report, faction, template)
+    dependencies = _object(report["dependencies"], "faction census dependencies")
+    audio_slug = faction.casefold()
+
+    resources: list[dict[str, Any]] = []
+    events: dict[str, Any] = {}
+    multisounds: dict[str, Any] = {}
+    samples: dict[str, str] = {}
+    roots: list[str] = []
+    if include_census_registry:
+        source_leaves = _source_leaf_roles(catalog, report)
+        census_resources, census_manifest = _audio_resources_and_manifest(
+            catalog, report, dependencies, source_leaves, audio_slug
+        )
+        summary = _object(report.get("summary"), "faction census summary")
+        for field, count in {
+            "audioRootCount": len(census_manifest["rootIds"]),
+            "audioEventCount": len(census_manifest["events"]),
+            "audioMultisoundCount": len(census_manifest["multisounds"]),
+            "audioSampleCount": len(census_manifest["samples"]),
+        }.items():
+            if _integer(summary.get(field), f"faction census summary.{field}") != count:
+                raise ValueError(f"faction census summary.{field} does not match its records")
+        resources.extend(census_resources)
+        events.update(census_manifest["events"])
+        multisounds.update(census_manifest["multisounds"])
+        samples.update(census_manifest["samples"])
+        roots.extend(census_manifest["rootIds"])
+
+    existing_definitions: dict[str, Any] = {**events, **multisounds}
+    eva_resources, eva_events, eva_multisounds, eva_samples = _eva_audio_extension(
+        catalog, faction, audio_slug, samples, existing_definitions
+    )
+    resources.extend(eva_resources)
+    events.update(eva_events)
+    multisounds.update(eva_multisounds)
+    samples.update(eva_samples)
+    roots.extend(
+        sorted(
+            (
+                identifier
+                for identifier in (*eva_events.keys(), *eva_multisounds.keys())
+                if identifier.casefold() not in {item.casefold() for item in roots}
+            ),
+            key=str.casefold,
+        )
+    )
+
+    audio_manifest = {
+        "schema": "openbfme.audio-events",
+        "schemaVersion": 1,
+        "complete": False,
+        "rootIds": roots,
+        "events": dict(sorted(events.items(), key=lambda item: item[0].casefold())),
+        "multisounds": dict(sorted(multisounds.items(), key=lambda item: item[0].casefold())),
+        "samples": dict(sorted(samples.items(), key=lambda item: item[0].casefold())),
+    }
+    eva_document = _read_document(catalog, EVA_PATH)
+    eva_side_map = _eva_side_map_document(_eva_event_side_sounds(eva_document.source))
+    unresolved = _object(report.get("unresolved"), "faction census unresolved")
+    return {
+        "resources": resources,
+        "runtime_data": {
+            "data/audio_events.json": audio_manifest,
+            "data/eva_events.json": eva_side_map,
+        },
+        "files": {
+            "audioEvents": "data/audio_events.json",
+            "evaEvents": "data/eva_events.json",
+        },
+        # Pre-existing non-audio census diagnostics, surfaced (never hidden):
+        # owned by other lanes and irrelevant to this audio closure.
+        "unresolvedDiagnostics": {
+            name: value for name, value in sorted(unresolved.items()) if value
+        },
+    }

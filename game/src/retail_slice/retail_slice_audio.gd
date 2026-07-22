@@ -25,24 +25,28 @@ const ROSTER_VOICE_EVENT_IDS: Dictionary = {
 		"select": ["GondorSoldierVoiceSelectMS", "gondorFighter.select"],
 		"move": ["GondorSoldierVoiceMove"],
 		"attack": ["GondorSoldierVoiceAttack", "gondorFighter.attack"],
+		"attack_structure": ["GondorSoldierVoiceAttackBuilding", "gondorFighter.attackBuilding"],
 		"death": ["HumanVoiceDie"],
 	},
 	ARCHER_OBJECT_ID: {
 		"select": ["GondorArcherVoiceSelectMS"],
 		"move": ["GondorArcherVoiceMove"],
 		"attack": ["GondorArcherVoiceAttack"],
+		"attack_structure": ["GondorArcherVoiceAttackBuilding"],
 		"death": ["HumanVoiceDie"],
 	},
 	TOWER_GUARD_OBJECT_ID: {
 		"select": ["TowerGuardVoiceSelectMS"],
 		"move": ["TowerGuardVoiceMove"],
 		"attack": ["TowerGuardVoiceAttack"],
+		"attack_structure": ["TowerGuardVoiceAttackBuilding"],
 		"death": ["HumanVoiceDie"],
 	},
 	KNIGHT_OBJECT_ID: {
 		"select": ["GondorKnightVoiceSelectMS"],
 		"move": ["GondorKnightVoiceMove"],
 		"attack": ["GondorKnightVoiceAttack"],
+		"attack_structure": ["GondorKnightVoiceAttackBuilding"],
 		"death": ["HumanVoiceDie"],
 	},
 }
@@ -60,13 +64,10 @@ const LEGACY_ATTACK_EVENT_IDS: Array[String] = [
 	"gondorFighter.attackBuilding",
 	"gondorFighter.attackCharge",
 ]
-const INITIAL_ENTITY_OBJECT_IDS: Dictionary = {
-	1: SOLDIER_OBJECT_ID,
-	2: ARCHER_OBJECT_ID,
-	101: SOLDIER_OBJECT_ID,
-	102: TOWER_GUARD_OBJECT_ID,
-	103: KNIGHT_OBJECT_ID,
-}
+## Voice kinds beyond the required four. "attack_structure" splits the
+## retail VoiceAttackStructure/VoiceAttackMachine acks from the generic
+## VoiceAttack candidates; "build" is the porter VoiceBuildResponse ack.
+const EXTRA_VOICE_KINDS: Array[String] = ["attack_structure", "build"]
 const FORDS_AMBIENT_TYPE_EVENT_IDS: Dictionary = {
 	"Amb_BirdsAmonHen1": "Amb_BirdsAmonHen1",
 	"Amb_BirdsAmonHen2": "Amb_BirdsAmonHen2",
@@ -114,8 +115,30 @@ var voice_streams: Dictionary = {"select": [], "attack": []}
 var audio_event_routes: Dictionary = {}
 var declared_structure_lifecycle_audio_active := false
 var roster_voice_routes: Dictionary = {}
+## Alt-form (mounted/knight) voice candidates per object/kind, bound from the
+## same converted audioRoutes rows as the base set. Empty when a unit authors
+## a single form (almost everyone).
+var roster_voice_form_routes: Dictionary = {}
 var playable_unit_audio_events: Dictionary = {}
 var playable_unit_categories: Dictionary = {}
+## object_id -> {"fire": event_id, "swing": event_id} weapon-class SFX routed
+## from converted doc evidence (siege fire, monster melee classes).
+var playable_unit_weapon_sfx: Dictionary = {}
+## object_id -> authored bodyfall event id for siege/monster units (their own
+## class — a machine or monster never borrows the human BodyFallSoldier).
+var playable_unit_bodyfall: Dictionary = {}
+## Per-structure-kind converted audio contract projected by the slice from the
+## faction's playable-structure documents (select/damage/collapse/EVA ids and
+## the damaged-state health fractions). Kinds absent here keep legacy routing.
+var structure_audio_contract: Dictionary = {}
+## Retail eva.ini side name for the local player (Men/Elves/Dwarves/...).
+var faction_side := ""
+var _structure_damage_stage: Dictionary = {}
+## When non-empty, these playable-unit documents replace the ContentDB-wide
+## registry for roster voices and readiness, so a faction match is gated on
+## exactly the units it can field (never on another faction's cohabiting pack
+## or on units the roster composition excluded).
+var scoped_playable_unit_documents: Dictionary = {}
 var route_failures: Dictionary = {}
 var missing_required_events: Array[String] = []
 var intent_log: Array[Dictionary] = []
@@ -136,9 +159,12 @@ var voice_sfx_volume := UserSettingsScript.DEFAULT_VOICE_SFX_VOLUME
 var muted := UserSettingsScript.DEFAULT_MUTED
 
 
-func configure(selected_pack_root: String, enable_playback: bool = true) -> bool:
+func configure(selected_pack_root: String, enable_playback: bool = true, active_playable_unit_documents: Dictionary = {}, faction_structure_audio: Dictionary = {}, player_faction_side: String = "") -> bool:
 	pack_root = selected_pack_root
 	playback_enabled = enable_playback
+	scoped_playable_unit_documents = active_playable_unit_documents.duplicate(true)
+	structure_audio_contract = faction_structure_audio.duplicate(true)
+	faction_side = player_faction_side
 	_ensure_players()
 	_reset_music_playback()
 	music_streams.clear()
@@ -148,25 +174,46 @@ func configure(selected_pack_root: String, enable_playback: bool = true) -> bool
 	voice_streams = {"select": [], "attack": []}
 	audio_event_routes.clear()
 	roster_voice_routes.clear()
+	roster_voice_form_routes.clear()
 	playable_unit_audio_events.clear()
 	playable_unit_categories.clear()
+	playable_unit_weapon_sfx.clear()
+	playable_unit_bodyfall.clear()
 	route_failures.clear()
 	missing_required_events.clear()
 	intent_log.clear()
 	routing_log.clear()
 	last_route_result.clear()
 	_stream_cache.clear()
+	_structure_damage_stage.clear()
 	declared_structure_lifecycle_audio_active = false
-	_entity_object_ids = INITIAL_ENTITY_OBJECT_IDS.duplicate(true)
+	# Entity→object identity is carried on the sim's voice-relevant events and
+	# learned as they stream; no static roster pin exists (S1: the retired
+	# INITIAL_ENTITY_OBJECT_IDS table voiced every faction's id 1 as a Gondor
+	# Soldier).
+	_entity_object_ids = {}
 	_next_event_index = 0
 	current_music_state = ""
+	var profile_boot := OS.get_environment("OPENBFME_PROFILE_BOOT") == "1"
+	var boot_mark := Time.get_ticks_msec()
 	_load_user_settings()
 	_load_music()
+	if profile_boot:
+		print("BOOT_PROFILE audio.load_music_ms=%d" % (Time.get_ticks_msec() - boot_mark))
+		boot_mark = Time.get_ticks_msec()
 	_load_declared_audio_routes()
+	if profile_boot:
+		print("BOOT_PROFILE audio.declared_routes_ms=%d" % (Time.get_ticks_msec() - boot_mark))
+		boot_mark = Time.get_ticks_msec()
 	_configure_fords_ambient_from_pack()
+	if profile_boot:
+		print("BOOT_PROFILE audio.fords_ambient_ms=%d" % (Time.get_ticks_msec() - boot_mark))
+		boot_mark = Time.get_ticks_msec()
 	_bind_roster_voice_routes()
 	_refresh_compatibility_views()
 	_collect_readiness_diagnostics()
+	if profile_boot:
+		print("BOOT_PROFILE audio.voice_bind_readiness_ms=%d" % (Time.get_ticks_msec() - boot_mark))
 	return has_complete_audio_closure()
 
 
@@ -762,14 +809,38 @@ func _bind_roster_voice_routes() -> void:
 	for object_id in _active_roster_object_ids():
 		var by_kind: Dictionary = _voice_event_ids_for_object(object_id)
 		var bound: Dictionary = {}
-		for kind in REQUIRED_VOICE_KINDS:
-			for event_id_value in Array(by_kind[kind]):
+		var form_bound: Dictionary = {}
+		for kind in _all_voice_kinds():
+			for event_id_value in Array(by_kind.get(kind, [])):
 				var event_id := String(event_id_value)
 				var route: Dictionary = audio_event_routes.get(event_id.to_lower(), {})
-				if not route.is_empty():
+				if route.is_empty():
+					continue
+				if not bound.has(kind):
 					bound[kind] = route
-					break
+				var form := _voice_candidate_form(event_id)
+				if form != "" and not form_bound.has("%s/%s" % [form, kind]):
+					form_bound["%s/%s" % [form, kind]] = route
 		roster_voice_routes[object_id] = bound
+		if not form_bound.is_empty():
+			roster_voice_form_routes[object_id] = form_bound
+
+
+func _all_voice_kinds() -> Array[String]:
+	var kinds: Array[String] = []
+	kinds.append_array(REQUIRED_VOICE_KINDS)
+	kinds.append_array(EXTRA_VOICE_KINDS)
+	return kinds
+
+
+func _voice_candidate_form(event_id: String) -> String:
+	## Alt-form hero sets author their form in the event id (Theoden*MountedMS,
+	## FaramirKnight*). A unit whose only set names the form (GondorKnight*) is
+	## that form by default, so classifying it changes nothing for it.
+	var lowered := event_id.to_lower()
+	if lowered.contains("mounted") or lowered.contains("knight"):
+		return "mounted"
+	return ""
 
 
 func _refresh_compatibility_views() -> void:
@@ -810,8 +881,13 @@ func _collect_readiness_diagnostics() -> void:
 		var bound: Dictionary = roster_voice_routes.get(object_id, {})
 		var expected: Dictionary = _voice_event_ids_for_object(object_id)
 		for kind in REQUIRED_VOICE_KINDS:
+			var candidates: Array = expected.get(kind, [])
+			if candidates.is_empty():
+				# A unit with no authored candidates for a kind has nothing to
+				# bind (builders author no attack voice): absent, not missing.
+				continue
 			if not bound.has(kind):
-				missing_required_events.append("missing_voice_event:%s:%s:%s" % [object_id, kind, String(Array(expected[kind])[0])])
+				missing_required_events.append("missing_voice_event:%s:%s:%s" % [object_id, kind, String(candidates[0])])
 	for event_id in REQUIRED_SFX_EVENT_IDS:
 		if not audio_event_routes.has(event_id.to_lower()):
 			missing_required_events.append("missing_sfx_event:%s" % event_id)
@@ -843,33 +919,202 @@ func _consume_event(event: Dictionary) -> void:
 		if produced_object_id != "" and _active_roster_object_ids().has(produced_object_id):
 			_entity_object_ids[target_id] = produced_object_id
 		_play_first_unit_event(produced_object_id, "created", sequence)
+	elif kind == "unit.summoned":
+		# Summons spawn outside the production lane; the event carries the
+		# created object's own id so its voice set resolves immediately.
+		var summoned_object_id := String(event.get("object_id", ""))
+		if summoned_object_id != "" and entity_id > 0:
+			_entity_object_ids[entity_id] = summoned_object_id
+		_play_first_unit_event(summoned_object_id, "created", sequence)
 	elif kind == "production.queued":
 		_play_first_unit_event(String(event.get("unit_type", "")), "purchase", sequence, String(event.get("command_id", "")))
 	elif kind.begins_with("music."):
 		_set_music(kind.trim_prefix("music."))
 	elif kind == "voice.select":
-		_play_routed(route_roster_voice(_object_id_for_event(event, entity_id), "select", sequence), voice_player)
+		_play_routed(route_roster_voice(_object_id_for_event(event, entity_id), "select", sequence, String(event.get("form", ""))), voice_player)
 	elif kind == "order.move" or kind == "voice.move":
-		_play_routed(route_roster_voice(_object_id_for_event(event, entity_id), "move", sequence), voice_player)
+		_play_routed(route_roster_voice(_object_id_for_event(event, entity_id), "move", sequence, String(event.get("form", ""))), voice_player)
 	elif kind == "voice.attack":
-		_play_routed(route_roster_voice(_object_id_for_event(event, entity_id), "attack", sequence), voice_player)
+		var attacker_object_id := _object_id_for_event(event, entity_id)
+		var form := String(event.get("form", ""))
+		var ack_kind := "attack_structure" if String(event.get("target_kind", "")) == "structure" else "attack"
+		var ack := route_roster_voice(attacker_object_id, ack_kind, sequence, form)
+		if not bool(ack.get("ok", false)) and ack_kind != "attack":
+			# A unit with no authored VoiceAttackStructure ack answers with its
+			# generic attack set (retail objects do the same when only
+			# VoiceAttack is authored).
+			ack = route_roster_voice(attacker_object_id, "attack", sequence, form)
+		_play_routed(ack, voice_player)
+	elif kind == "construction.started":
+		# The porter's own VoiceBuildResponse acknowledges the build order and
+		# the site starts its hammering loop bed.
+		_play_routed(route_roster_voice(_object_id_for_event(event, entity_id), "build", sequence), voice_player)
+		_play_routed(route_audio_event("BuildingConstructionLoop", sequence), sfx_player)
+	elif kind == "construction.completed":
+		# Retail EVA "construction complete" sting (GenericBuildingComplete-Builder),
+		# local player team only (team 0 mirrors the sim's PLAYER_TEAM).
+		if int(event.get("team", -1)) == 0:
+			_play_eva_announcement("GenericBuildingComplete-Builder", sequence)
 	elif kind == "battalion.defeated":
 		var defeated_object_id := _object_id_for_event(event, target_id)
 		_play_routed(route_roster_voice(defeated_object_id, "death", sequence), voice_player)
-		_play_routed(route_audio_event("ImpactHorse" if _is_cavalry_object(defeated_object_id) else "BodyFallSoldier", sequence), sfx_player)
-		if not INITIAL_ENTITY_OBJECT_IDS.has(target_id):
-			_entity_object_ids.erase(target_id)
+		_play_routed(_route_bodyfall(defeated_object_id, sequence), sfx_player)
+		_entity_object_ids.erase(target_id)
+	elif kind == "battalion.member_defeated":
+		# Every fallen member lands its own class bodyfall (horde wipes are not
+		# a single thud); the battalion's die voice still fires once at defeat.
+		_play_routed(_route_bodyfall(_object_id_for_event(event, target_id), sequence), sfx_player)
 	elif kind == "combat.swing":
-		var attacker_object_id := _object_id_for_event(event, entity_id)
-		_play_routed(route_audio_event("ArrowDrawBow" if _is_ranged_object(attacker_object_id) else "SwordShingClean1ForHordes", sequence), sfx_player)
+		_play_routed(_route_weapon_swing(_object_id_for_event(event, entity_id), sequence), sfx_player)
+	elif kind == "combat.hit":
+		# Cheap impact layer: mounted/large targets answer with the authored
+		# horse-impact leaf. Infantry has no converted generic impact event in
+		# the pack registries, so it fails closed to silence rather than
+		# borrowing another class's sound.
+		var hit_object_id := String(event.get("target_object_id", ""))
+		if _is_cavalry_object(hit_object_id) or String(playable_unit_categories.get(hit_object_id, "")) in ["monster", "siege"]:
+			_play_routed(route_audio_event("ImpactHorse", sequence), sfx_player)
 	elif kind == "combat.hit_structure":
-		if not declared_structure_lifecycle_audio_active:
-			_play_routed(route_audio_event("BuildingLightDamageStone", sequence), sfx_player)
+		_consume_structure_damage(event, sequence)
 	elif kind == "structure.destroyed":
-		if not declared_structure_lifecycle_audio_active:
-			_play_routed(route_audio_event("BuildingHeavyDamageStone", sequence), sfx_player)
-			_play_routed(route_audio_event("BuildingSink", sequence), sfx_player)
+		_consume_structure_destroyed(event, sequence)
+	elif kind == "power.cast":
+		# Spellbook casts carry the document's initiateSoundId; route_audio_event
+		# lazily promotes ContentDB-registered spell events (fail closed when the
+		# pack cannot resolve them).
+		var cast_sound_id := String(event.get("sound_id", ""))
+		if cast_sound_id != "":
+			_play_routed(route_audio_event(cast_sound_id, sequence), sfx_player)
+	elif kind == "power.purchased":
+		# The authored palantir spellbook purchase click (Gui_PalantirChoosePowerClick);
+		# the powers orb emits no chrome sound of its own on a successful pick.
+		_play_routed(route_audio_event("Gui_PalantirChoosePowerClick", sequence), sfx_player)
+	elif kind == "eva.base_under_attack":
+		_play_structure_eva(event, "eva_damaged", sequence)
+	elif kind == "eva.building_lost":
+		_play_structure_eva(event, "eva_die", sequence)
+	elif kind == "eva.ally_defeated":
+		_play_eva_announcement("AllyDefeated", sequence)
+	elif kind == "eva.enemy_defeated":
+		_play_eva_announcement("EnemyDefeated", sequence)
+	elif kind == "eva.hero_created":
+		_play_eva_announcement("HeroCreated", sequence)
 	_append_bounded_observability(intent_log, event.duplicate(true))
+
+
+func _route_weapon_swing(object_id: String, sequence: int) -> Dictionary:
+	## Weapon-class swing/fire SFX from converted doc evidence: siege fires its
+	## authored launch sound (trebuchet → TrebuchetLaunchVoice, never a bow
+	## draw), monsters swing with their own authored class; everyone else keeps
+	## the legacy ranged/melee split.
+	var weapon_sfx: Dictionary = playable_unit_weapon_sfx.get(object_id, {})
+	var category := String(playable_unit_categories.get(object_id, ""))
+	if category == "siege" and String(weapon_sfx.get("fire", "")) != "":
+		return route_audio_event(String(weapon_sfx["fire"]), sequence)
+	if category == "monster" and String(weapon_sfx.get("swing", "")) != "":
+		return route_audio_event(String(weapon_sfx["swing"]), sequence)
+	return route_audio_event("ArrowDrawBow" if _is_ranged_object(object_id) else "SwordShingClean1ForHordes", sequence)
+
+
+func _route_bodyfall(object_id: String, sequence: int) -> Dictionary:
+	## Class bodyfall per object: authored doc class for siege/monster (never
+	## the human leaf), horse impact for cavalry, generic soldier bodyfall for
+	## infantry/heroes. A siege/monster unit with no authored bodyfall fails
+	## closed — its authored die sound already plays as the death voice.
+	var doc_bodyfall := String(playable_unit_bodyfall.get(object_id, ""))
+	if doc_bodyfall != "":
+		return route_audio_event(doc_bodyfall, sequence)
+	var category := String(playable_unit_categories.get(object_id, ""))
+	if category in ["siege", "monster"]:
+		return _rejection("no_authored_bodyfall", "", object_id, "sfx", sequence)
+	return route_audio_event("ImpactHorse" if _is_cavalry_object(object_id) else "BodyFallSoldier", sequence)
+
+
+func _consume_structure_damage(event: Dictionary, sequence: int) -> void:
+	var structure_kind := String(event.get("structure_kind", ""))
+	var damaged_id := _structure_contract_event("damaged", structure_kind)
+	var really_id := _structure_contract_event("really_damaged", structure_kind)
+	if damaged_id == "" and really_id == "":
+		# No converted per-structure evidence: legacy generic stone damage.
+		_play_routed(route_audio_event("BuildingLightDamageStone", sequence), sfx_player)
+		return
+	# Retail SoundOnDamaged/SoundOnReallyDamaged fire on ENTERING the damaged
+	# bands (the structure doc's own maxHealthDamaged/ReallyDamaged fractions),
+	# not on every hit; the stage is tracked per structure id.
+	var maximum := maxi(1, int(event.get("maximum_health", 0)))
+	var fraction := clampf(float(int(event.get("health", 0))) / float(maximum), 0.0, 1.0)
+	var really_floor := _structure_contract_fraction("really_damaged_fraction", structure_kind)
+	var damaged_floor := _structure_contract_fraction("damaged_fraction", structure_kind)
+	var stage := "intact"
+	if really_id != "" and fraction <= really_floor:
+		stage = "really_damaged"
+	elif damaged_id != "" and fraction <= damaged_floor:
+		stage = "damaged"
+	var structure_id := int(event.get("target_id", 0))
+	var previous := String(_structure_damage_stage.get(structure_id, "intact"))
+	if stage == previous:
+		return
+	_structure_damage_stage[structure_id] = stage
+	match stage:
+		"damaged":
+			_play_structure_stage_sound(damaged_id, "BuildingLightDamageStone", sequence)
+		"really_damaged":
+			_play_structure_stage_sound(really_id, "BuildingHeavyDamageStone", sequence)
+
+
+func _consume_structure_destroyed(event: Dictionary, sequence: int) -> void:
+	var structure_kind := String(event.get("structure_kind", ""))
+	_structure_damage_stage.erase(int(event.get("target_id", 0)))
+	_play_structure_stage_sound(_structure_contract_event("really_damaged", structure_kind), "BuildingHeavyDamageStone", sequence)
+	_play_structure_stage_sound(_structure_contract_event("collapse", structure_kind), "BuildingSink", sequence)
+
+
+func _play_structure_stage_sound(doc_id: String, generic_id: String, sequence: int) -> void:
+	## The structure document's converted event leads; when the mounted packs
+	## cannot route it (the id or its samples are not cooked yet) the legacy
+	## generic plays instead — the same fallback the slice always used — so a
+	## converted-but-unmounted id never silences a building.
+	if doc_id != "":
+		var doc_result := route_audio_event(doc_id, sequence)
+		if bool(doc_result.get("ok", false)):
+			_play_routed(doc_result, sfx_player)
+			return
+	_play_routed(route_audio_event(generic_id, sequence), sfx_player)
+
+
+func _structure_contract_event(role: String, structure_kind: String) -> String:
+	if structure_kind == "":
+		return ""
+	var rows: Variant = structure_audio_contract.get(role, {})
+	return String((rows as Dictionary).get(structure_kind, "")) if typeof(rows) == TYPE_DICTIONARY else ""
+
+
+func _structure_contract_fraction(role: String, structure_kind: String) -> float:
+	var rows: Variant = structure_audio_contract.get(role, {})
+	if typeof(rows) != TYPE_DICTIONARY or not (rows as Dictionary).has(structure_kind):
+		return 0.0
+	return clampf(float((rows as Dictionary)[structure_kind]), 0.0, 1.0)
+
+
+func _play_structure_eva(event: Dictionary, role: String, sequence: int) -> void:
+	var eva_id := _structure_contract_event(role, String(event.get("structure_kind", "")))
+	if eva_id != "":
+		_play_eva_announcement(eva_id, sequence)
+
+
+func _play_eva_announcement(eva_id: String, sequence: int) -> void:
+	## Retail eva.ini binds each announcement to a per-side Camp* sound set.
+	## The slice carries that side map in its structure audio contract; a side
+	## or event the converted evidence does not cover fails closed to silence.
+	var eva_events: Variant = structure_audio_contract.get("eva_events", {})
+	if typeof(eva_events) != TYPE_DICTIONARY or faction_side == "":
+		return
+	var side_sounds: Variant = (eva_events as Dictionary).get(eva_id, {})
+	if typeof(side_sounds) != TYPE_DICTIONARY:
+		return
+	var sound_id := String((side_sounds as Dictionary).get(faction_side, ""))
+	if sound_id != "":
+		_play_routed(route_audio_event(sound_id, sequence), sfx_player)
 
 
 func _object_id_for_event(event: Dictionary, entity_id: int) -> String:
@@ -879,11 +1124,15 @@ func _object_id_for_event(event: Dictionary, entity_id: int) -> String:
 	return String(_entity_object_ids.get(entity_id, ""))
 
 
-func route_roster_voice(object_id: String, kind: String, sequence: int) -> Dictionary:
+func route_roster_voice(object_id: String, kind: String, sequence: int, form: String = "") -> Dictionary:
 	if not _active_roster_object_ids().has(object_id):
 		return _rejection("unknown_roster_object", "", object_id, kind, sequence)
-	if not REQUIRED_VOICE_KINDS.has(kind):
+	if not _all_voice_kinds().has(kind):
 		return _rejection("unknown_voice_kind", "", object_id, kind, sequence)
+	if form != "":
+		var form_route: Dictionary = (roster_voice_form_routes.get(object_id, {}) as Dictionary).get("%s/%s" % [form, kind], {})
+		if not form_route.is_empty():
+			return _route_definition(form_route, sequence, object_id, kind)
 	var by_kind: Dictionary = roster_voice_routes.get(object_id, {})
 	if not by_kind.has(kind):
 		var expected: Dictionary = _voice_event_ids_for_object(object_id)
@@ -902,6 +1151,8 @@ func _active_roster_object_ids() -> Array[String]:
 
 
 func _playable_unit_runtime_documents() -> Dictionary:
+	if not scoped_playable_unit_documents.is_empty():
+		return scoped_playable_unit_documents
 	var content_db := get_node_or_null("/root/ContentDB")
 	return content_db.get_playable_unit_runtimes() if content_db != null else {}
 
@@ -916,13 +1167,16 @@ func _load_playable_unit_audio_routes() -> void:
 	var content_db := get_node_or_null("/root/ContentDB")
 	if content_db == null:
 		return
+	var voice_kinds: Array[String] = []
+	voice_kinds.append_array(REQUIRED_VOICE_KINDS)
+	voice_kinds.append_array(EXTRA_VOICE_KINDS)
 	for document_value in _playable_unit_runtime_documents().values():
 		var document := document_value as Dictionary
 		var object_id := PlayableUnitAdapter.runtime_member_id(document)
 		var unit_id := PlayableUnitAdapter.runtime_unit_id(document)
 		var category := String(document.get("category", ""))
 		var voice: Dictionary = {}
-		for kind in REQUIRED_VOICE_KINDS:
+		for kind in voice_kinds:
 			voice[kind] = PlayableUnitAdapter.audio_event_ids(document, kind)
 		var production := PlayableUnitAdapter.production_audio_event_ids(document)
 		playable_unit_audio_events[object_id] = {"voice": voice, "production": production}
@@ -945,6 +1199,60 @@ func _load_playable_unit_audio_routes() -> void:
 				audio_event_routes[event_id.to_lower()] = {"event_id": event_id, "source": "playable-unit-runtime", "leaves": leaves}
 			elif String(resolutions.get(event_id_value, "")) == "authored-silent":
 				audio_event_routes[event_id.to_lower()] = {"event_id": event_id, "source": "authored-silent", "leaves": [], "authored_silent": true}
+		var weapon_sfx := _weapon_sfx_for_document(document, category, bindings)
+		if not weapon_sfx.is_empty():
+			playable_unit_weapon_sfx[object_id] = weapon_sfx
+			if unit_id != object_id:
+				playable_unit_weapon_sfx[unit_id] = weapon_sfx
+		var bodyfall_id := _bodyfall_for_document(category, bindings)
+		if bodyfall_id != "":
+			playable_unit_bodyfall[object_id] = bodyfall_id
+			if unit_id != object_id:
+				playable_unit_bodyfall[unit_id] = bodyfall_id
+
+
+func _bodyfall_for_document(category: String, bindings: Dictionary) -> String:
+	## Authored bodyfall class for siege/monster units (trebuchet has none —
+	## its authored die sound is its death voice; ents/trolls bind bodyfalls).
+	if category not in ["siege", "monster"]:
+		return ""
+	var ids: Array = bindings.keys()
+	ids.sort_custom(func(a: Variant, b: Variant) -> bool: return String(a).to_lower() < String(b).to_lower())
+	for event_id_value in ids:
+		if String(event_id_value).to_lower().contains("bodyfall"):
+			return String(event_id_value)
+	return ""
+
+
+func _weapon_sfx_for_document(document: Dictionary, category: String, bindings: Dictionary) -> Dictionary:
+	## Retail weapon SFX class per unit, from converted doc evidence only.
+	## Siege fire comes from the object's authored attack-animation
+	## AnimationSound (trebuchet: TrebuchetLaunchVoice on the ATK clips);
+	## monster melee uses the authored swing/impact leaves the doc binds
+	## (Treebeard: TrollTreeSwingLight, ImpactEntGenericPunch/Kick).
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var routes: Dictionary = registration.get("audioRoutes", {}) as Dictionary
+	match category:
+		"siege":
+			for owner_value in routes.values():
+				if typeof(owner_value) != TYPE_DICTIONARY:
+					continue
+				for row_value in Array((owner_value as Dictionary).get("AnimationSound", [])):
+					if typeof(row_value) != TYPE_DICTIONARY:
+						continue
+					var event_id := String((row_value as Dictionary).get("id", ""))
+					if event_id != "" and bindings.has(event_id):
+						return {"fire": event_id}
+		"monster":
+			for event_id_value in bindings.keys():
+				var lowered := String(event_id_value).to_lower()
+				if lowered.contains("swing"):
+					return {"swing": String(event_id_value)}
+			for event_id_value in bindings.keys():
+				var lowered := String(event_id_value).to_lower()
+				if lowered.begins_with("impact") and (lowered.contains("punch") or lowered.contains("kick")):
+					return {"swing": String(event_id_value)}
+	return {}
 
 
 func _play_first_unit_event(object_id: String, kind: String, sequence: int, command_id: String = "") -> void:
@@ -966,10 +1274,57 @@ func _is_cavalry_object(object_id: String) -> bool:
 
 
 func route_audio_event(event_id: String, sequence: int) -> Dictionary:
-	var route: Dictionary = audio_event_routes.get(event_id.to_lower(), {})
+	var key := event_id.to_lower()
+	if not audio_event_routes.has(key):
+		# Lazily promote any ContentDB-registered event into the route table on
+		# first use (structure selects, UI clicks, the construction loop, spell
+		# ids, EVA lines) — the same promotion the spell lane prototyped. A
+		# failed build stays recorded and the rejection remains fail-closed.
+		var built := _build_content_db_route(event_id)
+		if bool(built.get("ok", false)):
+			audio_event_routes[key] = built["route"]
+			route_failures.erase(key)
+		else:
+			route_failures[key] = String(built.get("reason", "invalid_event"))
+	var route: Dictionary = audio_event_routes.get(key, {})
 	if route.is_empty():
-		return _rejection(String(route_failures.get(event_id.to_lower(), "missing_event")), event_id, "", "sfx", sequence)
+		return _rejection(String(route_failures.get(key, "missing_event")), event_id, "", "sfx", sequence)
 	return _route_definition(route, sequence, "", "sfx")
+
+
+# Retail select voices for the legacy men structure roster, kept as the
+# fallback for kinds whose structure document authors no VoiceSelect route.
+const STRUCTURE_SELECT_EVENT_IDS := {
+	"fortress": "MenFortressSelect",
+	"barracks": "GondorBarracksSelect",
+	"archery_range": "GondorArcherySelect",
+	"stable": "GondorStableSelect",
+	"farm": "GondorFarmSelect",
+	"workshop": "GondorWorkshopSelect",
+	"forge": "GondorForgeSelect",
+	"well": "GondorWellSelect",
+	"marketplace": "GondorMarketSelect",
+	"statue": "GondorStatueSelect",
+	"battle_tower": "MenArrowTowerExpansionSelect",
+	"wall_hub": "NeutralWallHubSelect",
+}
+
+
+func play_structure_select(structure_kind: String) -> Dictionary:
+	# Prefer the structure document's own authored VoiceSelect event (every
+	# faction, not just men); fall back to the legacy men table for kinds the
+	# docs do not cover. The route builds lazily from the pack registry.
+	var event_id := _structure_contract_event("select", structure_kind)
+	if event_id == "":
+		event_id = String(STRUCTURE_SELECT_EVENT_IDS.get(structure_kind, ""))
+	if event_id == "":
+		return {}
+	var sequence := _next_ui_sequence
+	_next_ui_sequence += 1
+	var result := route_audio_event(event_id, sequence)
+	if bool(result.get("ok", false)):
+		_play_routed(result, voice_player)
+	return result
 
 
 func play_ui_event(event_id: String) -> Dictionary:
@@ -1316,6 +1671,10 @@ func stop_all() -> void:
 	voice_streams = {"select": [], "attack": []}
 	audio_event_routes.clear()
 	roster_voice_routes.clear()
+	roster_voice_form_routes.clear()
+	playable_unit_weapon_sfx.clear()
+	playable_unit_bodyfall.clear()
+	_structure_damage_stage.clear()
 	_stream_cache.clear()
 	_clear_ambient_players()
 	ambient_emitters.clear()

@@ -245,24 +245,31 @@ class BigArchive:
                         raise FileExistsError(
                             f"cached extraction size mismatch; use --force: {target}"
                         )
+                    # Default warm path: hash the cached file only (one pass).
+                    # Full archive+file dual re-hash was ~2× slower for no-ops.
+                    # Set OPENBFME_EXTRACT_VERIFY=full to re-read archive bytes.
+                    verify_mode = os.environ.get(
+                        "OPENBFME_EXTRACT_VERIFY", "cached"
+                    ).strip().casefold()
                     cached_digest = sha256_file(target)
-                    source.seek(entry.offset)
-                    source_digest = hashlib.sha256()
-                    remaining = entry.size
-                    while remaining:
-                        chunk = source.read(min(COPY_CHUNK, remaining))
-                        if not chunk:
-                            raise BigFormatError(
-                                f"unexpected EOF verifying cached {entry.name!r}"
+                    if verify_mode in {"full", "dual", "archive"}:
+                        source.seek(entry.offset)
+                        source_digest = hashlib.sha256()
+                        remaining = entry.size
+                        while remaining:
+                            chunk = source.read(min(COPY_CHUNK, remaining))
+                            if not chunk:
+                                raise BigFormatError(
+                                    f"unexpected EOF verifying cached {entry.name!r}"
+                                )
+                            source_digest.update(chunk)
+                            remaining -= len(chunk)
+                        current_digest = source_digest.hexdigest()
+                        if cached_digest != current_digest:
+                            raise FileExistsError(
+                                f"cached extraction hash mismatch; use --force: {target}"
                             )
-                        source_digest.update(chunk)
-                        remaining -= len(chunk)
-                    current_digest = source_digest.hexdigest()
-                    if cached_digest != current_digest:
-                        raise FileExistsError(
-                            f"cached extraction hash mismatch; use --force: {target}"
-                        )
-                    results.append(ExtractedEntry(entry, target, current_digest))
+                    results.append(ExtractedEntry(entry, target, cached_digest))
                     continue
 
                 temp = target.with_name(target.name + ".openbfme-part")

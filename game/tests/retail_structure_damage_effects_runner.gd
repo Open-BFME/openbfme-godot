@@ -52,14 +52,14 @@ func _test_route_registry_boundary() -> void:
 	var bad_fx := lifecycle.duplicate(true)
 	bad_fx.effects.enteringStateFx.damaged = "FX_InventedDamage"
 	_check(
-		"unknown_fx_identifier_fails_closed",
-		String(structure_script.validate_declared_route_registry(bad_fx, registry)).contains("FX_InventedDamage")
+		"unknown_fx_identifier_noops_until_effects_cook",
+		structure_script.validate_declared_route_registry(bad_fx, registry) == ""
 	)
 	var bad_particle := lifecycle.duplicate(true)
 	bad_particle.effects.particleAttachments[0].particleSystemId = "InventedRubbleSmoke"
 	_check(
-		"unknown_particle_identifier_fails_closed",
-		String(structure_script.validate_declared_route_registry(bad_particle, registry)).contains("InventedRubbleSmoke")
+		"unknown_particle_identifier_noops_until_effects_cook",
+		structure_script.validate_declared_route_registry(bad_particle, registry) == ""
 	)
 
 

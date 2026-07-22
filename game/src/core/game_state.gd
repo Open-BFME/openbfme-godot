@@ -23,6 +23,22 @@ var difficulty: String = "normal"
 ## unset; the environment variable always wins for headless runners.
 var retail_player_faction: String = "men"
 var retail_enemy_faction: String = "men"
+## RULES tab values for the retail slice. -1 keeps the slice's authored
+## starting resources; the factor multiplies its authored command point cap.
+var retail_initial_resources: int = -1
+var retail_command_point_factor: float = 1.0
+## Player start spot: 0 keeps the authored assignment (the human takes
+## Player_2_Start); 1..N takes retail Player_N_Start and the AI takes another.
+var retail_player_start_index: int = 0
+## House colors chosen on the setup screen. Defaults are the authored slice
+## team colors (Gondor blue vs red), so an untouched setup is byte-identical.
+var retail_player_color: Color = Color(0.176, 0.302, 0.675)
+var retail_enemy_color: Color = Color(0.651, 0.125, 0.110)
+## Retail vertical slice map selection (bfme2.map.<slug>). The slice reads it
+## only when OPENBFME_SLICE_MAP is unset; empty keeps the Fords of Isen II
+## default. Selectable ids: bfme2.map.fords-of-isen-ii, bfme2.map.rivendell,
+## bfme2.map.mount-doom, bfme2.map.dagorlad, bfme2.map.mordor.
+var retail_map_id: String = ""
 
 var resources: Dictionary = {0: 1500.0, 1: 1500.0, 2: 0.0}
 var power_points: Dictionary = {0: 0.0, 1: 0.0}

@@ -317,6 +317,25 @@ def _archive_directory_sha256(
     )
 
 
+def _payload_sample_sha256(path: Path) -> str:
+    """Cheap content canary: size + head/mid/tail samples (not full archive MD5)."""
+
+    stat = path.stat()
+    size = int(stat.st_size)
+    digest = hashlib.sha256()
+    digest.update(str(size).encode("ascii"))
+    sample = 256 * 1024
+    with path.open("rb") as stream:
+        digest.update(stream.read(sample))
+        if size > sample * 2:
+            stream.seek(max(0, size // 2 - sample // 2))
+            digest.update(stream.read(sample))
+        if size > sample:
+            stream.seek(max(0, size - sample))
+            digest.update(stream.read(sample))
+    return digest.hexdigest()
+
+
 class InstallCatalog:
     FORMAT = 4
 
@@ -326,11 +345,17 @@ class InstallCatalog:
         archives: tuple[ArchiveInfo, ...],
         entries: tuple[CatalogEntry, ...],
         source_policy: ArchivePolicy | None = None,
+        payload_samples: Mapping[str, str] | None = None,
     ) -> None:
         self.install_root = install_root.resolve()
         self.archives = archives
         self.entries = entries
         self.source_policy = source_policy
+        self.payload_samples = {
+            key.casefold(): value.casefold()
+            for key, value in (payload_samples or {}).items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
         by_key: dict[str, list[CatalogEntry]] = {}
         for entry in entries:
             by_key.setdefault(entry.key, []).append(entry)
@@ -414,7 +439,19 @@ class InstallCatalog:
                 CatalogEntry(relative, item.name, item.offset, item.size, precedence)
                 for item in parsed.entries
             )
-        return cls(root, tuple(archives), tuple(entries), source_policy)
+        samples = {
+            archive.relative_path: _payload_sample_sha256(
+                root / Path(archive.relative_path)
+            )
+            for archive in archives
+        }
+        return cls(
+            root,
+            tuple(archives),
+            tuple(entries),
+            source_policy,
+            payload_samples=samples,
+        )
 
     @classmethod
     def load(cls, path: Path | str) -> "InstallCatalog":
@@ -461,7 +498,23 @@ class InstallCatalog:
             if not isinstance(raw_policy, dict):
                 raise ValueError("catalog source policy is invalid")
             source_policy = ArchivePolicy.from_serialized(raw_policy)
-        catalog = cls(Path(value["install_root"]), archives, entries, source_policy)
+        raw_samples = value.get("payload_samples")
+        samples: dict[str, str] = {}
+        if isinstance(raw_samples, dict):
+            for key, sample in raw_samples.items():
+                if (
+                    isinstance(key, str)
+                    and isinstance(sample, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", sample.casefold())
+                ):
+                    samples[key] = sample.casefold()
+        catalog = cls(
+            Path(value["install_root"]),
+            archives,
+            entries,
+            source_policy,
+            payload_samples=samples,
+        )
         if source_policy is not None:
             expected = {item.path.casefold() for item in source_policy.archives}
             actual = {item.relative_path.casefold() for item in archives}
@@ -470,12 +523,24 @@ class InstallCatalog:
         return catalog
 
     def save(self, path: Path | str) -> None:
+        # Refresh samples at save so re-index always pins current canaries.
+        samples = {
+            archive.relative_path: _payload_sample_sha256(
+                self.install_root / Path(archive.relative_path)
+            )
+            for archive in self.archives
+            if (self.install_root / Path(archive.relative_path)).is_file()
+        }
+        self.payload_samples = {
+            key.casefold(): value.casefold() for key, value in samples.items()
+        }
         value = {
             "format": self.FORMAT,
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "install_root": str(self.install_root),
             "archives": [asdict(item) for item in self.archives],
             "entries": [asdict(item) for item in self.entries],
+            "payload_samples": samples,
         }
         if self.source_policy is not None:
             value["source_policy"] = self.source_policy.serialized()
@@ -501,6 +566,11 @@ class InstallCatalog:
             current = indexed
         for relative in sorted(indexed - current):
             reasons.append(f"missing archive: {relative}")
+        deep = os.environ.get("OPENBFME_CATALOG_DEEP", "").strip().casefold() in {
+            "1",
+            "true",
+            "yes",
+        }
         for archive in self.archives:
             path = self.install_root / Path(archive.relative_path)
             if not path.is_file():
@@ -510,29 +580,8 @@ class InstallCatalog:
             if stat.st_size != archive.size or stat.st_mtime_ns != archive.mtime_ns:
                 reasons.append(f"changed archive: {archive.relative_path}")
                 continue
-            try:
-                current_directory = _archive_directory_sha256(
-                    BigArchive.open(path),
-                    archive.relative_path,
-                    canonical_precedence[archive.relative_path.casefold()],
-                )
-            except (OSError, ValueError) as exc:
-                reasons.append(f"unreadable archive: {archive.relative_path}: {exc}")
-                continue
-            if current_directory != archive.directory_sha256:
-                reasons.append(f"changed archive directory: {archive.relative_path}")
-                continue
-            if self.source_policy is not None:
-                members = {
-                    item.path.casefold(): item for item in self.source_policy.archives
-                }
-                member = members.get(archive.relative_path.casefold())
-                if member is None:
-                    reasons.append(f"archive is outside source policy: {archive.relative_path}")
-                    continue
-                if _md5_file(path) != member.md5:
-                    reasons.append(f"changed archive payload: {archive.relative_path}")
-                    continue
+            # Fast path: size+mtime already matched. Re-parse/MD5 the full 4GB
+            # policy set only when OPENBFME_CATALOG_DEEP=1 (or --deep tooling).
             catalog_entries = tuple(
                 entry
                 for entry in self.entries
@@ -550,6 +599,55 @@ class InstallCatalog:
                 != archive.directory_sha256
             ):
                 reasons.append(f"catalog directory mismatch: {archive.relative_path}")
+                continue
+            if self.source_policy is not None:
+                members = {
+                    item.path.casefold(): item for item in self.source_policy.archives
+                }
+                member = members.get(archive.relative_path.casefold())
+                if member is None:
+                    reasons.append(
+                        f"archive is outside source policy: {archive.relative_path}"
+                    )
+                    continue
+                if deep and _md5_file(path) != member.md5:
+                    reasons.append(
+                        f"changed archive payload: {archive.relative_path}"
+                    )
+                    continue
+            # Fast content canary: head/mid/tail sample. Catches many bit-flips
+            # without reading the full multi-GB archive set every CLI invoke.
+            expected_sample = self.payload_samples.get(archive.relative_path.casefold())
+            if expected_sample:
+                try:
+                    actual_sample = _payload_sample_sha256(path)
+                except OSError as exc:
+                    reasons.append(
+                        f"unreadable archive sample: {archive.relative_path}: {exc}"
+                    )
+                    continue
+                if actual_sample != expected_sample:
+                    reasons.append(
+                        f"changed archive payload sample: {archive.relative_path}"
+                    )
+                    continue
+            if deep:
+                try:
+                    current_directory = _archive_directory_sha256(
+                        BigArchive.open(path),
+                        archive.relative_path,
+                        canonical_precedence[archive.relative_path.casefold()],
+                    )
+                except (OSError, ValueError) as exc:
+                    reasons.append(
+                        f"unreadable archive: {archive.relative_path}: {exc}"
+                    )
+                    continue
+                if current_directory != archive.directory_sha256:
+                    reasons.append(
+                        f"changed archive directory: {archive.relative_path}"
+                    )
+                    continue
         return reasons
 
     @property
@@ -612,7 +710,17 @@ class InstallCatalog:
         )
 
     def open_archive_for(self, entry: CatalogEntry) -> BigArchive:
-        archive = BigArchive.open(self.install_root / Path(entry.archive))
+        # Reuse one BigArchive directory parse per archive path for the life of
+        # this catalog instance. Faction census used to re-open ini.big per doc.
+        cache = getattr(self, "_archive_handle_cache", None)
+        if cache is None:
+            self._archive_handle_cache: dict[str, BigArchive] = {}
+            cache = self._archive_handle_cache
+        key = entry.archive.casefold()
+        archive = cache.get(key)
+        if archive is None:
+            archive = BigArchive.open(self.install_root / Path(entry.archive))
+            cache[key] = archive
         expected = (entry.name, entry.offset, entry.size)
         actual = {(item.name, item.offset, item.size) for item in archive.entries}
         if expected not in actual:

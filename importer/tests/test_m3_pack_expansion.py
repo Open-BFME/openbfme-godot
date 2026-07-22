@@ -872,3 +872,43 @@ def test_building_stats_schema_has_every_m3_building_and_source_attested_trainab
     assert wall_hub["porterConstructCommand"]["id"] == "Command_PorterConstructMenWallHubOuter"
     assert wall_hub["porterConstructCommand"]["targetId"] == "MenWallHubSmallOuter"
     assert all(row["sourceIni"] == trainable_path for row in result["trainables"])
+
+
+def test_hierarchy_less_bib_model_classifies_as_w3d_static() -> None:
+    scanned = {
+        "art/w3d/gb/gbworkshop_bib.w3d": {
+            "virtualPath": "art/w3d/gb/gbworkshop_bib.w3d",
+            "headerIds": {
+                "virtualPath": "art/w3d/gb/gbworkshop_bib.w3d",
+                "modelIds": ["GBWORKSHOP_BIB"],
+                "hierarchyIds": [],
+                "animationIds": [],
+            },
+            "modelHierarchyIdentifiers": [],
+        },
+        "art/w3d/gb/gbblksmith_bib.w3d": {
+            "virtualPath": "art/w3d/gb/gbblksmith_bib.w3d",
+            "headerIds": {
+                "virtualPath": "art/w3d/gb/gbblksmith_bib.w3d",
+                "modelIds": ["GBBLKSMITH_BIB"],
+                "hierarchyIds": ["GBBLKSMITH_BIB"],
+                "animationIds": [],
+            },
+        },
+        "art/w3d/gb/gbtree_bib.w3d": {
+            "virtualPath": "art/w3d/gb/gbtree_bib.w3d",
+            "headerIds": {
+                "virtualPath": "art/w3d/gb/gbtree_bib.w3d",
+                "modelIds": ["GBTREE_BIB"],
+                "hierarchyIds": [],
+                "animationIds": [],
+            },
+            "modelHierarchyIdentifiers": ["GBTREE_SKL"],
+        },
+    }
+
+    assert m3_module._model_has_hierarchy("art/w3d/gb/gbworkshop_bib.w3d", scanned) is False
+    assert m3_module._model_has_hierarchy("art/w3d/gb/gbblksmith_bib.w3d", scanned) is True
+    assert m3_module._model_has_hierarchy("art/w3d/gb/gbtree_bib.w3d", scanned) is True
+    with pytest.raises(ValueError, match="absent from scannedW3d"):
+        m3_module._model_has_hierarchy("art/w3d/gb/missing.w3d", scanned)

@@ -583,7 +583,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--animations", type=Path, nargs="*", default=[])
     parser.add_argument("--required-equipment", nargs="*", default=[])
     parser.add_argument("--excluded-optional-meshes", nargs="*", default=[])
+    parser.add_argument("--retail-absent-textures", nargs="*", default=[])
     parser.add_argument("--proven-root-rigid-bake", action="store_true")
+    parser.add_argument("--proven-pivot-only-model", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(argv)
 
@@ -612,12 +614,82 @@ def normalize_optional_mesh_exclusions(value: Any) -> list[str]:
     return sorted(value)
 
 
+def normalize_retail_absent_textures(value: Any) -> list[str]:
+    """Validate scanner-recorded retail-absent texture basenames."""
+
+    if (
+        not isinstance(value, list)
+        or len(value) > MAX_RETAIL_ABSENT_TEXTURES
+        or any(not isinstance(basename, str) for basename in value)
+    ):
+        raise ValueError(
+            f"retail-absent textures must be an array of at most "
+            f"{MAX_RETAIL_ABSENT_TEXTURES} strings"
+        )
+    if len(value) != len(set(value)):
+        raise ValueError("retail-absent textures contain duplicates")
+    for basename in value:
+        if (
+            not TEXTURE_BASENAME_PATTERN.fullmatch(basename)
+            or Path(basename).name != basename
+            or Path(basename).suffix.casefold() not in TEXTURE_SUFFIXES
+        ):
+            raise ValueError(
+                f"retail-absent texture is not a safe texture basename: {basename!r}"
+            )
+    return sorted(value)
+
+
+def clear_retail_absent_textures(tolerated: list[str]) -> list[str]:
+    """Unlink generated placeholders for recorded retail-absent textures.
+
+    The pinned importer substitutes a generated color-grid image when a W3D
+    references a texture that is absent from the staged closure. Retail ships
+    models whose referenced texture was never published; the visual closure
+    records each such reference as a ``retail-absent-texture`` exclusion. Only
+    a generated placeholder whose authored name matches a recorded exclusion
+    may be unlinked — every other generated image stays for the placeholder
+    validation to reject. The material keeps all remaining channels; no
+    substitute texture is invented.
+    """
+
+    tolerated_stems = {
+        Path(basename).stem.casefold() for basename in tolerated
+    }
+    unmatched = set(tolerated_stems)
+    cleared: list[str] = []
+    for image in list(getattr(bpy.data, "images", []) or []):
+        if getattr(image, "source", None) != "GENERATED":
+            continue
+        image_name = str(getattr(image, "name", ""))
+        stem = Path(image_name).stem.casefold()
+        if stem not in tolerated_stems:
+            continue
+        for material in list(getattr(bpy.data, "materials", []) or []):
+            node_tree = getattr(material, "node_tree", None)
+            nodes = getattr(node_tree, "nodes", None)
+            if nodes is None:
+                continue
+            for node in list(nodes):
+                if getattr(node, "image", None) is image:
+                    nodes.remove(node)
+        bpy.data.images.remove(image)
+        unmatched.discard(stem)
+        cleared.append(image_name)
+    if unmatched:
+        raise RuntimeError(
+            "retail-absent texture exclusion did not match a generated placeholder"
+        )
+    return sorted(cleared)
+
+
 def validate_asset_kind_request(
     asset_kind: str,
     animations: list[Any],
     required_equipment: list[str],
     *,
     proven_root_rigid_bake: bool = False,
+    proven_pivot_only_model: bool = False,
 ) -> None:
     if asset_kind not in {"animated", "hierarchical", "static"}:
         raise ValueError(f"unsupported W3D asset kind: {asset_kind}")
@@ -633,6 +705,14 @@ def validate_asset_kind_request(
         raise ValueError(
             "proven root-rigid bake is supported only for hierarchical W3D conversion"
         )
+    if proven_pivot_only_model and asset_kind != "hierarchical":
+        raise ValueError(
+            "proven pivot-only model is supported only for hierarchical W3D conversion"
+        )
+    if proven_pivot_only_model and proven_root_rigid_bake:
+        raise ValueError(
+            "proven pivot-only model cannot combine with proven root-rigid bake"
+        )
 
 
 RENDERABLE_W3D_OBJECT_TYPE = "MESH"
@@ -644,6 +724,9 @@ OPAQUE_SOURCE_BLEND_ENUM = 1
 OPAQUE_DESTINATION_BLEND_ENUM = 0
 ADDITIVE_ALPHA_EPSILON = 1.0e-8
 ADDITIVE_PIXEL_ROUND_TRIP_TOLERANCE = (1.0 / 255.0) + 1.0e-6
+# Byte color attributes quantize through sRGB bytes; the worst-case linear
+# round-trip error of one exact conversion is bounded by two byte steps.
+ADDITIVE_VERTEX_COLOR_ROUND_TRIP_TOLERANCE = (2.0 / 255.0) + 1.0e-6
 SHADER_BOOLEAN_PROPERTY_TYPE = 7
 SHADER_BOOLEAN_COMPATIBILITY_PROPERTIES = {
     "AlphaBlendingEnable": "openbfme_w3d_alpha_blending_enable",
@@ -651,6 +734,9 @@ SHADER_BOOLEAN_COMPATIBILITY_PROPERTIES = {
 }
 MAX_OPTIONAL_MESH_EXCLUSIONS = 64
 CLEAN_MESH_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9_]{0,126}[a-z0-9])?$")
+MAX_RETAIL_ABSENT_TEXTURES = 16
+TEXTURE_BASENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+TEXTURE_SUFFIXES = {".bmp", ".dds", ".jpeg", ".jpg", ".png", ".tga"}
 REDUNDANT_KEYFRAME_WARNING = (
     b"Warning: Due to the setting 'Only Insert Needed', "
     b"1 keyframe(s) have not been inserted."
@@ -777,6 +863,7 @@ class AnimationImportOutputLedger:
             raise FileNotFoundError(self._temp_dir)
         self._max_bytes = max_bytes
         self._captured_bytes = 0
+        self._suppressed_total = 0
         self._destination_fds: tuple[int, int] | None = None
         self._records: list[tuple[_AnimationImportStreamCapture, ...]] = []
         self._finished = False
@@ -861,6 +948,16 @@ class AnimationImportOutputLedger:
 
         if phase_checkpoint is not None:
             phase_checkpoint.set("animation-output-capture-accounting")
+        # The exact redundant-keyframe warning class the success replay
+        # suppresses can dwarf all real output (one fortress build clip emits
+        # >180 MB of it). Compact it out before accounting so the bound
+        # measures real output while the exact suppressed count is retained.
+        for capture in streams:
+            payload = capture.path.read_bytes()
+            filtered, suppressed = filter_redundant_keyframe_warning_bytes(payload)
+            if suppressed:
+                self._suppressed_total += suppressed
+                capture.path.write_bytes(filtered)
         self._captured_bytes += sum(capture.path.stat().st_size for capture in streams)
         if self._captured_bytes > self._max_bytes:
             raise RuntimeError(
@@ -906,9 +1003,9 @@ class AnimationImportOutputLedger:
         if self._finished:
             raise RuntimeError("animation import output ledger is already closed")
         captures = list(self._captures())
-        suppressed = sum(self._count_suppressed(item.path) for item in captures)
         for capture in captures:
             self._replay_filtered(capture)
+        suppressed = self._suppressed_total
         self._cleanup()
         return suppressed
 
@@ -2038,7 +2135,10 @@ def _additive_alpha_pixels(pixels: Iterable[Any]) -> tuple[list[float], dict[str
 
 
 def _verify_additive_pixel_round_trip(
-    actual_pixels: Iterable[Any], expected_pixels: Iterable[Any]
+    actual_pixels: Iterable[Any],
+    expected_pixels: Iterable[Any],
+    *,
+    tolerance: float = ADDITIVE_PIXEL_ROUND_TRIP_TOLERANCE,
 ) -> list[float]:
     actual = list(actual_pixels)
     expected = list(expected_pixels)
@@ -2058,11 +2158,218 @@ def _verify_additive_pixel_round_trip(
             or not math.isfinite(target)
             or channel < 0.0
             or channel > 1.0
-            or abs(channel - target) > ADDITIVE_PIXEL_ROUND_TRIP_TOLERANCE
+            or abs(channel - target) > tolerance
         ):
             raise RuntimeError("additive material image alpha did not round trip")
         verified.append(channel)
     return verified
+
+
+def _convert_proven_additive_vertex_material(
+    material: Any,
+    *,
+    principled: Any,
+    base_color: Any,
+    alpha_input: Any,
+    links: Any,
+    phase_checkpoint: _W3DConversionPhaseCheckpoint | None = None,
+) -> dict[str, int]:
+    """Convert a textureless ONE+ONE material whose color source is geometry.
+
+    Some retail additive materials reference no stage-0 texture at all; their
+    contribution is authored per vertex (the mesh color layer) or as the
+    material's constant base color. The same exact alpha derivation used for
+    additive images applies: alpha carries the source intensity and RGB is
+    normalized so ``normalized_rgb * alpha`` reconstructs the authored
+    additive contribution. Anything ambiguous (mixed color sources, shared
+    meshes, conflicting alpha inputs) stays fail-closed.
+    """
+
+    _set_optional_phase_checkpoint(
+        phase_checkpoint, "additive-material-discovery"
+    )
+    meshes = [
+        item
+        for item in list(getattr(bpy.data, "objects", []) or [])
+        if getattr(item, "type", None) == "MESH"
+        and any(
+            getattr(slot, "material", None) is material
+            for slot in list(getattr(item, "material_slots", []) or [])
+        )
+    ]
+    if not meshes:
+        raise RuntimeError("proven additive material has no render mesh")
+    for item in meshes:
+        slot_materials = [
+            getattr(slot, "material", None)
+            for slot in list(getattr(item, "material_slots", []) or [])
+            if getattr(slot, "material", None) is not None
+        ]
+        if any(slot_material is not material for slot_material in slot_materials):
+            raise RuntimeError(
+                "proven additive vertex material shares its render mesh"
+            )
+    default_value = list(getattr(base_color, "default_value", []) or [])
+    if len(default_value) != 4:
+        raise RuntimeError("proven additive material base color is unavailable")
+    try:
+        base_channels = [float(value) for value in default_value]
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "proven additive material base color is unavailable"
+        ) from exc
+    if any(not math.isfinite(value) for value in base_channels):
+        raise RuntimeError("proven additive material base color is not finite")
+
+    color_attributes = []
+    for item in meshes:
+        attributes = getattr(getattr(item, "data", None), "color_attributes", None)
+        active = getattr(attributes, "active_color", None) if attributes else None
+        color_attributes.append(active)
+    if any(attribute is not None for attribute in color_attributes) and any(
+        attribute is None for attribute in color_attributes
+    ):
+        raise RuntimeError(
+            "proven additive material has an ambiguous vertex color source"
+        )
+
+    report = {
+        "converted_materials": 1,
+        "duplicated_images": 0,
+        "changed_alpha_pixels": 0,
+        "transparent_pixels": 0,
+        "visible_pixels": 0,
+    }
+    if all(attribute is not None for attribute in color_attributes):
+        if any(channel > ADDITIVE_ALPHA_EPSILON for channel in base_channels[:3]):
+            raise RuntimeError(
+                "proven additive material has an ambiguous color source"
+            )
+        layer_names = {getattr(attribute, "name", "") for attribute in color_attributes}
+        if len(layer_names) != 1 or not next(iter(layer_names)):
+            raise RuntimeError(
+                "proven additive material has an ambiguous vertex color layer"
+            )
+        _set_optional_phase_checkpoint(
+            phase_checkpoint, "additive-material-alpha-derivation"
+        )
+        for attribute in color_attributes:
+            data = getattr(attribute, "data", None)
+            count = len(data) if data is not None else 0
+            if count < 1:
+                raise RuntimeError(
+                    "proven additive material vertex color layer is empty"
+                )
+            buffer = [0.0] * (count * 4)
+            data.foreach_get("color", buffer)
+            converted, pixel_report = _additive_alpha_pixels(buffer)
+            data.foreach_set("color", converted)
+            round_trip = [0.0] * (count * 4)
+            data.foreach_get("color", round_trip)
+            _verify_additive_pixel_round_trip(
+                round_trip,
+                converted,
+                tolerance=ADDITIVE_VERTEX_COLOR_ROUND_TRIP_TOLERANCE,
+            )
+            for key in (
+                "changed_alpha_pixels",
+                "transparent_pixels",
+                "visible_pixels",
+            ):
+                report[key] += pixel_report[key]
+        try:
+            base_color.default_value = (1.0, 1.0, 1.0, 1.0)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "proven additive material vertex color source could not be bound"
+            ) from exc
+        _set_optional_phase_checkpoint(
+            phase_checkpoint, "additive-material-image-duplication"
+        )
+        node_tree = getattr(material, "node_tree", None)
+        nodes = getattr(node_tree, "nodes", None)
+        if nodes is None:
+            raise RuntimeError(
+                "proven additive material has no exportable node graph"
+            )
+        try:
+            color_node = nodes.new("ShaderNodeVertexColor")
+            color_node.layer_name = next(iter(layer_names))
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            raise RuntimeError(
+                "proven additive material vertex color node could not be created"
+            ) from exc
+        color_output = _socket_by_name(getattr(color_node, "outputs", None), "Color")
+        if color_output is None:
+            raise RuntimeError(
+                "proven additive material vertex color node has no color output"
+            )
+        try:
+            links.new(color_output, base_color)
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            raise RuntimeError(
+                "proven additive material vertex color could not be connected"
+            ) from exc
+        alpha_output = _socket_by_name(getattr(color_node, "outputs", None), "Alpha")
+    else:
+        # Constant-color textureless additive material: derive one exact
+        # alpha value from the authored base color (black contributes
+        # nothing and becomes fully transparent; no visibility guard applies
+        # to a single exact constant).
+        _set_optional_phase_checkpoint(
+            phase_checkpoint, "additive-material-alpha-derivation"
+        )
+        red, green, blue = (
+            min(1.0, max(0.0, value)) for value in base_channels[:3]
+        )
+        intensity = max(red, green, blue)
+        if intensity <= ADDITIVE_ALPHA_EPSILON:
+            normalized = (0.0, 0.0, 0.0)
+        else:
+            normalized = (red / intensity, green / intensity, blue / intensity)
+        try:
+            base_color.default_value = (*normalized, 1.0)
+            alpha_input.default_value = intensity
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "proven additive material constant color could not be normalized"
+            ) from exc
+        report["changed_alpha_pixels"] = int(
+            abs(intensity - base_channels[3]) > ADDITIVE_ALPHA_EPSILON
+        )
+        report["transparent_pixels"] = int(
+            intensity < 1.0 - ADDITIVE_ALPHA_EPSILON
+        )
+        report["visible_pixels"] = int(intensity > ADDITIVE_ALPHA_EPSILON)
+        return report
+
+    _set_optional_phase_checkpoint(phase_checkpoint, "additive-material-alpha-link")
+    if alpha_output is None:
+        raise RuntimeError("proven additive material image has no alpha output")
+    alpha_input_identity = _runtime_identity(alpha_input)
+    incoming_alpha = [
+        link
+        for link in list(links)
+        if _runtime_identity(getattr(link, "to_socket", None)) == alpha_input_identity
+    ]
+    if incoming_alpha:
+        if len(incoming_alpha) != 1 or (
+            not _same_runtime_identity(
+                getattr(incoming_alpha[0], "from_node", None), color_node
+            )
+            or not _same_runtime_identity(
+                getattr(incoming_alpha[0], "from_socket", None), alpha_output
+            )
+        ):
+            raise RuntimeError("proven additive material has an ambiguous alpha input")
+    else:
+        try:
+            links.new(alpha_output, alpha_input)
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            raise RuntimeError(
+                "additive material alpha could not be connected"
+            ) from exc
+    return report
 
 
 def _convert_proven_additive_material(
@@ -2113,6 +2420,15 @@ def _convert_proven_additive_material(
         list(direct_color_nodes.values()) if direct_color_nodes else image_nodes
     )
     if len(candidates) != 1:
+        if not image_nodes:
+            return _convert_proven_additive_vertex_material(
+                material,
+                principled=principled,
+                base_color=base_color,
+                alpha_input=alpha_input,
+                links=links,
+                phase_checkpoint=phase_checkpoint,
+            )
         raise RuntimeError("proven additive material has an ambiguous color image")
     image_node = candidates[0]
     source_image = image_node.image
@@ -2651,12 +2967,16 @@ def bake_proven_root_rigid_hierarchy(
     mesh_objects: list[Any],
     object_collection: Any,
 ) -> dict[str, Any]:
-    """Bake one scanner-proven pivot-zero carrier into rigid scene meshes.
+    """Bake one scanner-proven rigid carrier into rigid scene meshes.
 
     OpenSAGE deliberately omits the source root pivot. For a model whose every
     render reference is planner-proven to target that pivot, the importer emits
-    one empty armature carrier with rigid mesh children. This opt-in path removes
-    only that exact carrier shape while proving that world transforms survive.
+    one empty armature carrier with rigid mesh children. A static multi-pivot
+    hierarchy whose render meshes are all rigidly attached (bone-parented or
+    carrier-parented, never skinned) is the same carrier shape with more rest
+    pivots: the pivots are rigid rest transforms because nothing can animate
+    them. This opt-in path removes only those exact carrier shapes while
+    proving that world transforms survive.
     """
 
     if requested is not True:
@@ -2671,8 +2991,11 @@ def bake_proven_root_rigid_hierarchy(
         raise RuntimeError(
             "proven root-rigid bake requires exactly one armature carrier"
         )
-    if len(list(getattr(getattr(rig, "data", None), "bones", []) or [])) != 0:
-        raise RuntimeError("proven root-rigid bake carrier is not empty")
+    # Pivots may only be rigid rest transforms when nothing animates them: no
+    # actions anywhere in the scene (proven below) and no bone constraints.
+    for pose_bone in list(getattr(getattr(rig, "pose", None), "bones", []) or []):
+        if list(getattr(pose_bone, "constraints", []) or []):
+            raise RuntimeError("proven root-rigid carrier bone has constraints")
     assert_non_animated_scene_has_no_actions(asset_kind)
     if (
         getattr(rig, "parent", None) is not None
@@ -2703,17 +3026,29 @@ def bake_proven_root_rigid_hierarchy(
 
     world_transforms: list[tuple[Any, Any]] = []
     for item in mesh_objects:
-        if (
-            getattr(item, "type", None) != "MESH"
-            or getattr(item, "parent", None) is not rig
-            or str(getattr(item, "parent_type", "")) != "ARMATURE"
-            or str(getattr(item, "parent_bone", ""))
-        ):
+        if getattr(item, "type", None) != "MESH":
             raise RuntimeError(
                 "proven root-rigid render mesh is not rigidly parented to the carrier"
             )
-        if list(getattr(item, "vertex_groups", []) or []) or list(
-            getattr(item, "modifiers", []) or []
+        parent = getattr(item, "parent", None)
+        parent_type = str(getattr(item, "parent_type", ""))
+        if parent is None:
+            if parent_type != "OBJECT":
+                raise RuntimeError(
+                    "proven root-rigid render mesh is not rigidly parented to the carrier"
+                )
+        elif parent is not rig or parent_type not in {"ARMATURE", "OBJECT", "BONE"}:
+            raise RuntimeError(
+                "proven root-rigid render mesh is not rigidly parented to the carrier"
+            )
+        if list(getattr(item, "vertex_groups", []) or []):
+            raise RuntimeError(
+                "proven root-rigid render mesh has ambiguous deformation state"
+            )
+        inert_modifiers = list(getattr(item, "modifiers", []) or [])
+        if any(
+            str(getattr(modifier, "type", "")) != "ARMATURE"
+            for modifier in inert_modifiers
         ):
             raise RuntimeError(
                 "proven root-rigid render mesh has ambiguous deformation state"
@@ -2728,6 +3063,10 @@ def bake_proven_root_rigid_hierarchy(
 
     for item, world in world_transforms:
         try:
+            # Armature modifiers are deformation-inert without vertex weights
+            # (proven above) and dangle once the carrier is removed.
+            for modifier in list(getattr(item, "modifiers", []) or []):
+                item.modifiers.remove(modifier)
             item.parent = None
             item.parent_type = "OBJECT"
             item.parent_bone = ""
@@ -2906,6 +3245,79 @@ def find_single_rig() -> bpy.types.Object:
             f"expected one armature after model import, found {len(rigs)}"
         )
     return rigs[0]
+
+
+def find_model_rig(asset_kind: str) -> Any:
+    """Resolve the model rig; animated composite carriers may be rigless.
+
+    A rigless model is legitimate only for animated conversion, where every
+    requested clip must key its own auxiliary rig (composite citadel models
+    ship static base meshes while their clips target sibling hierarchies).
+    Hierarchical and static conversions keep their exact single/zero rig
+    contracts.
+    """
+
+    if asset_kind == "static":
+        return find_static_rig()
+    rigs = [item for item in bpy.data.objects if item.type == "ARMATURE"]
+    if asset_kind == "animated" and not rigs:
+        return None
+    if len(rigs) != 1:
+        raise RuntimeError(
+            f"expected one armature after model import, found {len(rigs)}"
+        )
+    return rigs[0]
+
+
+def _scene_armature_objects() -> list[Any]:
+    return [
+        item
+        for item in list(getattr(bpy.data, "objects", []) or [])
+        if getattr(item, "type", None) == "ARMATURE"
+    ]
+
+
+def _owned_active_actions(candidate: Any) -> list[Any]:
+    owned: list[Any] = []
+    for owner in (candidate, getattr(candidate, "data", None)):
+        animation_data = getattr(owner, "animation_data", None)
+        active = getattr(animation_data, "action", None)
+        if active is not None:
+            owned.append(active)
+    return owned
+
+
+def find_animation_owner_rig(model_rig: Any, created_actions: list[Any]) -> Any:
+    """Return the single rig owning every action one clip import created.
+
+    Cross-hierarchy clips (mounted rigs, composite citadel siblings) key the
+    auxiliary armature the pinned importer creates for their own hierarchy;
+    same-hierarchy clips key the model rig. The owner must be unique or the
+    capture that follows could silently attribute curves to the wrong rig.
+    """
+
+    if not created_actions:
+        raise RuntimeError("W3D animation did not create an owned keyed action")
+    created_identities = {_runtime_identity(action) for action in created_actions}
+    candidates: list[tuple[Any, set[Any]]] = []
+    rigs = _scene_armature_objects()
+    if model_rig is not None and all(item is not model_rig for item in rigs):
+        rigs.append(model_rig)
+    for candidate in rigs:
+        owned_identities = {
+            _runtime_identity(action)
+            for action in _owned_active_actions(candidate)
+        }
+        if owned_identities & created_identities:
+            candidates.append((candidate, owned_identities))
+    if not candidates:
+        raise RuntimeError("W3D animation did not create an owned keyed action")
+    if len(candidates) != 1:
+        raise RuntimeError("W3D animation created actions across ambiguous owner rigs")
+    candidate, owned_identities = candidates[0]
+    if not created_identities.issubset(owned_identities):
+        raise RuntimeError("W3D animation created actions outside its proven owner set")
+    return candidate
 
 
 def find_static_rig() -> Any:
@@ -3135,33 +3547,54 @@ def capture_split_w3d_animation_actions(rig: Any, actions: Iterable[Any]) -> lis
 def prepare_w3d_animation_nla_tracks(
     rig: Any, action_shapes: list[dict[str, Any]]
 ) -> int:
-    """Bind each logical W3D transform action to one named NLA export track."""
+    """Bind each logical W3D transform action to one named NLA export track.
 
-    detach_actions(rig)
-    animation_data_create = getattr(rig, "animation_data_create", None)
-    if callable(animation_data_create):
-        animation_data_create()
-    animation_data = getattr(rig, "animation_data", None)
-    tracks = getattr(animation_data, "nla_tracks", None)
-    if tracks is None:
-        raise RuntimeError("W3D rig has no NLA track collection")
-    while len(tracks):
-        tracks.remove(tracks[0])
-    created = 0
-    for shape in action_shapes:
-        action = shape.get("object_action")
-        if action is None or shape["public"]["transform_curve_count"] < 1:
+    Each clip is tracked on the rig that actually owns its actions: the model
+    rig for same-hierarchy clips, the auxiliary armature for cross-hierarchy
+    clips. Shapes without an owner record belong to the model rig.
+    """
+
+    owner_rigs: list[Any] = []
+    seen_identities: set[Any] = set()
+    for candidate in [rig, *(shape.get("owner_rig") for shape in action_shapes)]:
+        if candidate is None:
             continue
-        track = tracks.new()
-        track.name = shape["public"]["name"]
-        frame_range = getattr(action, "frame_range", (0.0, 0.0))
-        raw_start = float(frame_range[0])
-        start = int(round(raw_start))
-        if abs(raw_start - start) > 1.0e-6:
-            raise RuntimeError("W3D action has a fractional NLA start frame")
-        strip = track.strips.new(shape["public"]["name"], start, action)
-        strip.name = shape["public"]["name"]
-        created += 1
+        identity = _runtime_identity(candidate)
+        if identity not in seen_identities:
+            seen_identities.add(identity)
+            owner_rigs.append(candidate)
+    created = 0
+    for owner in owner_rigs:
+        detach_actions(owner)
+        animation_data_create = getattr(owner, "animation_data_create", None)
+        if callable(animation_data_create):
+            animation_data_create()
+        animation_data = getattr(owner, "animation_data", None)
+        tracks = getattr(animation_data, "nla_tracks", None)
+        if tracks is None:
+            raise RuntimeError("W3D rig has no NLA track collection")
+        while len(tracks):
+            tracks.remove(tracks[0])
+        owner_identity = _runtime_identity(owner)
+        for shape in action_shapes:
+            shape_owner = shape.get("owner_rig", rig)
+            if shape_owner is None or _runtime_identity(shape_owner) != (
+                owner_identity
+            ):
+                continue
+            action = shape.get("object_action")
+            if action is None or shape["public"]["transform_curve_count"] < 1:
+                continue
+            track = tracks.new()
+            track.name = shape["public"]["name"]
+            frame_range = getattr(action, "frame_range", (0.0, 0.0))
+            raw_start = float(frame_range[0])
+            start = int(round(raw_start))
+            if abs(raw_start - start) > 1.0e-6:
+                raise RuntimeError("W3D action has a fractional NLA start frame")
+            strip = track.strips.new(shape["public"]["name"], start, action)
+            strip.name = shape["public"]["name"]
+            created += 1
     expected = sum(
         1 for shape in action_shapes if shape["public"]["transform_curve_count"] > 0
     )
@@ -3360,9 +3793,19 @@ def restore_duplicate_logical_animations(
 
 
 def validate_split_animation_glb(
-    output: Path, expected_names: Iterable[str]
+    output: Path,
+    expected_names: Iterable[str],
+    *,
+    require_skins: bool = True,
+    require_skeletal_mesh: bool = True,
 ) -> dict[str, int]:
-    """Require the exact emitted glTF animation set and skeletal geometry."""
+    """Require the exact emitted glTF animation set and skeletal geometry.
+
+    ``require_skins`` is the scene-proven contract that skinned meshes had to
+    survive the export. Proven rigid animated models carry no skinned meshes;
+    their bone- or armature-parented render meshes are skeletal content even
+    though the GLB has no skins array.
+    """
 
     expected = [clean_name(name) for name in expected_names]
     if any(not name for name in expected) or len(expected) != len(set(expected)):
@@ -3559,8 +4002,12 @@ def validate_split_animation_glb(
 
     skins = document.get("skins")
     nodes = document.get("nodes")
-    if not isinstance(skins, list) or not skins:
+    if require_skins and (not isinstance(skins, list) or not skins):
         raise RuntimeError("split-animation GLB has no skeletal skin")
+    if skins is None:
+        skins = []
+    if not isinstance(skins, list):
+        raise RuntimeError("split-animation GLB has an invalid skeletal skin array")
     if not isinstance(nodes, list) or not nodes:
         raise RuntimeError("split-animation GLB has no nodes")
     joint_nodes: set[int] = set()
@@ -3592,7 +4039,37 @@ def validate_split_animation_glb(
                 raise RuntimeError("split-animation GLB node has multiple parents")
             parents[child] = parent_index
 
+    # Proven rigid animated models have no skins; their render meshes are
+    # still skeletal content when they hang off a bone (under a joint) or off
+    # the armature itself. Armature-parented meshes are a fallback so exact
+    # counts of skinned or bone-parented meshes never change. With no joints
+    # and no exported channels (an empty single-pivot carrier whose clip only
+    # keys object visibility), the armature node is the mesh's non-mesh
+    # parent itself.
+    armature_nodes: set[int] = set()
+    if not require_skins:
+        for child in joint_nodes:
+            parent = parents.get(child)
+            if parent is not None and parent not in joint_nodes:
+                armature_nodes.add(parent)
+        for animation in animations:
+            channels = animation.get("channels") if isinstance(animation, dict) else []
+            for channel in channels if isinstance(channels, list) else []:
+                if not isinstance(channel, dict):
+                    continue
+                target = channel.get("target")
+                if not isinstance(target, dict):
+                    continue
+                target_node = target.get("node")
+                if isinstance(target_node, int):
+                    parent = parents.get(target_node)
+                    if parent is not None:
+                        armature_nodes.add(parent)
+        for node_index, node in enumerate(nodes):
+            if isinstance(node, dict) and not isinstance(node.get("mesh"), int):
+                armature_nodes.add(node_index)
     skeletal_mesh_count = 0
+    armature_parented_mesh_count = 0
     for node_index, node in enumerate(nodes):
         if not isinstance(node.get("mesh"), int):
             continue
@@ -3602,13 +4079,24 @@ def validate_split_animation_glb(
             continue
         seen: set[int] = set()
         parent = parents.get(node_index)
+        bone_parented = False
+        armature_parented = False
         while parent is not None and parent not in seen:
             if parent in joint_nodes:
-                skeletal_mesh_count += 1
+                bone_parented = True
+                break
+            if parent in armature_nodes:
+                armature_parented = True
                 break
             seen.add(parent)
             parent = parents.get(parent)
-    if skeletal_mesh_count < 1:
+        if bone_parented:
+            skeletal_mesh_count += 1
+        elif armature_parented:
+            armature_parented_mesh_count += 1
+    if skeletal_mesh_count == 0:
+        skeletal_mesh_count = armature_parented_mesh_count
+    if require_skeletal_mesh and skeletal_mesh_count < 1:
         raise RuntimeError(
             "split-animation GLB has no skinned or bone-parented mesh node"
         )
@@ -3821,6 +4309,8 @@ def _convert_w3d_job_impl(
     required_equipment: list[str],
     excluded_optional_meshes: list[str],
     proven_root_rigid_bake: bool,
+    proven_pivot_only_model: bool = False,
+    retail_absent_textures: list[str] | None = None,
     output: Path,
     animation_output_ledger: AnimationImportOutputLedger,
     phase_checkpoint: _W3DConversionPhaseCheckpoint,
@@ -3833,6 +4323,10 @@ def _convert_w3d_job_impl(
         required_equipment=required_equipment,
         excluded_optional_meshes=excluded_optional_meshes,
         proven_root_rigid_bake=proven_root_rigid_bake,
+        proven_pivot_only_model=proven_pivot_only_model,
+        retail_absent_textures=normalize_retail_absent_textures(
+            retail_absent_textures or []
+        ),
     )
     model = model.expanduser().resolve()
     output = output.expanduser().resolve()
@@ -3875,24 +4369,27 @@ def _convert_w3d_job_impl(
         args.animations,
         args.required_equipment,
         proven_root_rigid_bake=args.proven_root_rigid_bake,
+        proven_pivot_only_model=args.proven_pivot_only_model,
     )
     phase_checkpoint.set("rig-validation")
     phase_checkpoint.set("rig-resolution")
-    rig = find_static_rig() if args.asset_kind == "static" else find_single_rig()
+    rig = find_model_rig(args.asset_kind)
     phase_checkpoint.set("action-validation")
     assert_non_animated_scene_has_no_actions(args.asset_kind)
     phase_checkpoint.set("geometry-validation")
     filtered_geometry = remove_non_render_geometry()
     model_mesh_objects = [item for item in bpy.data.objects if item.type == "MESH"]
-    if not model_mesh_objects:
+    if not model_mesh_objects and not args.proven_pivot_only_model:
         raise RuntimeError("W3D model import created no meshes")
     phase_checkpoint.set("skin-validation")
-    if (
-        rig is not None
-        and len(getattr(rig.data, "bones", []) or []) < 1
-        and not args.proven_root_rigid_bake
-    ):
-        raise RuntimeError("skeletal W3D import has an empty hierarchy")
+    # Recorded retail-absent textures are unlinked before material passes see
+    # the graph, so their placeholders never leak into additive or opaque
+    # material conversion. Only scanner-recorded exclusions are tolerated.
+    retail_absent_textures_cleared = (
+        clear_retail_absent_textures(args.retail_absent_textures)
+        if args.retail_absent_textures
+        else []
+    )
     # Preserve the visual contribution of source-proven additive W3D textures
     # before the render payload is fingerprinted. Unproven materials are never
     # modified by this pass.
@@ -3912,7 +4409,7 @@ def _convert_w3d_job_impl(
     )
     model_mesh_objects = [item for item in bpy.data.objects if item.type == "MESH"]
     model_mesh_count = len(model_mesh_objects)
-    if model_mesh_count < 1:
+    if model_mesh_count < 1 and not args.proven_pivot_only_model:
         raise RuntimeError("W3D model import retained no meshes")
     root_rigid_bake = {
         "requested": False,
@@ -3947,6 +4444,20 @@ def _convert_w3d_job_impl(
         rig,
         phase_checkpoint=phase_checkpoint,
     )
+    # An empty armature is only degenerate when real bone-deformed content
+    # needs pivots. Rigid render meshes on an empty carrier (retail's
+    # single-pivot models with object-level visibility clips) are a
+    # legitimate retail shape. The check runs after the mesh inventory (it
+    # needs the skinned flags), so re-anchor the phase to skin validation
+    # instead of leaving the inventory's last checkpoint as the evidence.
+    phase_checkpoint.set("skin-validation")
+    if (
+        rig is not None
+        and len(getattr(rig.data, "bones", []) or []) < 1
+        and not args.proven_root_rigid_bake
+        and any(item["skinned"] for item in mesh_inventory)
+    ):
+        raise RuntimeError("skeletal W3D import has an empty hierarchy")
     phase_checkpoint.set("render-proof")
     render_geometry_proof = capture_render_geometry_proof(model_mesh_objects)
     render_attachment_proof = (
@@ -3980,6 +4491,7 @@ def _convert_w3d_job_impl(
         imported_actions, action_shape = capture_w3d_animation_actions(
             rig, list(bpy.data.actions), resolved_animations[0].stem
         )
+        action_shape["owner_rig"] = rig
         animation_action_shapes.append(action_shape)
         logical_animation_count = 1
         split_action_animation_count = int(
@@ -4014,15 +4526,20 @@ def _convert_w3d_job_impl(
         created = sorted(after - before, key=lambda item: item.name.casefold())
         if not created:
             active_actions = []
-            for owner in (rig, rig.data):
-                animation_data = getattr(owner, "animation_data", None)
-                active = getattr(animation_data, "action", None)
-                if active is not None and active not in before:
-                    active_actions.append(active)
+            for candidate in _scene_armature_objects():
+                for active in _owned_active_actions(candidate):
+                    if active not in before:
+                        active_actions.append(active)
             created = active_actions
+        # Cross-hierarchy clips key the auxiliary armature their own hierarchy
+        # creates; same-hierarchy clips key the model rig. Capture and detach
+        # on the true owner so the next clip can never reuse and merge into
+        # this clip's still-assigned action.
+        owner_rig = find_animation_owner_rig(rig, created)
         captured, action_shape = capture_w3d_animation_actions(
-            rig, created, source.stem
+            owner_rig, created, source.stem
         )
+        action_shape["owner_rig"] = owner_rig
         imported_actions.extend(captured)
         animation_action_shapes.append(action_shape)
         logical_animation_count += 1
@@ -4030,7 +4547,7 @@ def _convert_w3d_job_impl(
             action_shape["public"]["object_action_count"] == 1
             and action_shape["public"]["armature_action_count"] == 1
         )
-        detach_actions(rig)
+        detach_actions(owner_rig)
 
     phase_checkpoint.set("scene-validation")
     phase_checkpoint.set("post-animation-validation")
@@ -4119,6 +4636,16 @@ def _convert_w3d_job_impl(
                 for shape in animation_action_shapes
                 if shape["public"]["transform_curve_count"] > 0
             ],
+            require_skins=skinned_meshes > 0,
+            require_skeletal_mesh=(
+                skinned_meshes > 0
+                or (
+                    rig is not None
+                    and any(
+                        getattr(item, "parent", None) is rig for item in mesh_objects
+                    )
+                )
+            ),
         )
         if (
             action_shape_export["visibility_channels"]
@@ -4141,6 +4668,7 @@ def _convert_w3d_job_impl(
         "mesh_inventory": mesh_inventory,
         "required_equipment": sorted(set(args.required_equipment)),
         "equipment": equipment,
+        "retail_absent_textures_cleared": retail_absent_textures_cleared,
         "animations": logical_animation_count,
         "animation_curves": animation_curve_count,
         "animation_keys": animation_key_count,
@@ -4213,6 +4741,8 @@ def convert_w3d_job(
     excluded_optional_meshes: list[str],
     proven_root_rigid_bake: bool,
     output: Path,
+    proven_pivot_only_model: bool = False,
+    retail_absent_textures: list[str] | None = None,
 ) -> dict[str, Any]:
     """Convert one job while retaining raw animation-import output on failure."""
 
@@ -4228,6 +4758,8 @@ def convert_w3d_job(
             required_equipment=required_equipment,
             excluded_optional_meshes=excluded_optional_meshes,
             proven_root_rigid_bake=proven_root_rigid_bake,
+            proven_pivot_only_model=proven_pivot_only_model,
+            retail_absent_textures=retail_absent_textures,
             output=output,
             animation_output_ledger=animation_output_ledger,
             phase_checkpoint=phase_checkpoint,
@@ -4263,6 +4795,8 @@ def main() -> None:
         required_equipment=args.required_equipment,
         excluded_optional_meshes=args.excluded_optional_meshes,
         proven_root_rigid_bake=args.proven_root_rigid_bake,
+        proven_pivot_only_model=args.proven_pivot_only_model,
+        retail_absent_textures=args.retail_absent_textures,
         output=args.output,
     )
     print("OPENBFME_W3D_OK " + json.dumps(report, sort_keys=True))

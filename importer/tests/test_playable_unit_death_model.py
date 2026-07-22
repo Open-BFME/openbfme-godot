@@ -1,4 +1,9 @@
-"""Separate-hierarchy death W3Ds compile to a model swap, not a clip binding."""
+"""Separate-hierarchy death W3Ds compile to a model swap, not a clip binding.
+
+A death state may also mix primary-skeleton fall clips with condition-keyed
+decay corpse models (retail GoblinCaveTroll/WildMountainGiant): clips stay
+animation bindings while each swap model becomes a death-model resource.
+"""
 
 from __future__ import annotations
 
@@ -25,11 +30,15 @@ from openbfme_importer.playable_unit_pack_compiler import (
 # Recipes compiled from closures without a separate-hierarchy death W3D must
 # stay byte-identical to the pre-feature compiler output.
 PINNED_UNAFFECTED_DIGESTS = {
+    # InfantryHorde has no separate-hierarchy death; digest tracks the current
+    # auxiliary static/hierarchy routing baseline (not death-swap routing).
+    # Baseline includes the compiled experience contract (status "unavailable"
+    # for these fixtures) added with the experiencelevels.ini pipeline.
     ("InfantryHorde", False): (
-        "1e982a5104584ae1f0d91ebaa638da2f8cc86482ea41dd7a874f022d3270649f"
+        "a82c192813d9c0f301d20138ce58ac0420245e6300e8e8adeb3b0c9448532c93"
     ),
     ("SiegeUnit", True): (
-        "b6bd20445a64152888fcf3ff97470eb43510c2c2eb095d3007bf22bbe7365171"
+        "0da2ebdcf911bc53c2a80fa3a9b66c6bc40bd5c26a55da8d7a33d007bc04b839"
     ),
 }
 
@@ -164,9 +173,13 @@ def test_rig_family_mismatch_death_w3d_becomes_model_swap() -> None:
     assert resource["options"]["model"] == PurePosixPath(death_path).name
 
 
-def test_mixed_clip_and_swap_death_fails_closed() -> None:
+def test_mixed_clip_and_swap_death_compiles_with_composition_rules() -> None:
+    # GoblinCaveTroll/WildMountainGiant shape: fall-down clips on the primary
+    # skeleton coexist with a condition-keyed decay corpse model that ships
+    # its own hierarchy.  Clips stay animation bindings; the swap becomes a
+    # condition-keyed death-model resource.
     descriptor = _descriptor("SiegeUnit")
-    closure, _ = _own_rig_death_closure(descriptor)
+    closure, death_path = _own_rig_death_closure(descriptor)
     member = str(descriptor["composition"]["primaryMemberObjectId"])
     clip_path = f"art/w3d/fi/{member.casefold()}_dieb.w3d"
     closure["exactLeaves"].append(
@@ -188,8 +201,278 @@ def test_mixed_clip_and_swap_death_fails_closed() -> None:
         )
     )
     _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    validate_playable_unit_pack_recipe(recipe)
+
+    visual = recipe["runtimeRegistration"]["visual"]
+    death = visual["coreAnimations"]["death"]
+    assert isinstance(death, list)
+    assert [row["sourceW3d"] for row in death] == [clip_path]
+    swaps = visual["deathModelSwaps"]
+    assert len(swaps) == 1
+    swap = swaps[0]
+    assert swap["binding"] == "separate-model"
+    assert swap["sourceW3d"] == death_path
+    assert swap["identifier"] == f"{member}_DIEA"
+    assert swap["conditions"] == ["DYING", "DEATH_1"]
+    resource = next(
+        row for row in recipe["resources"] if row["id"] == swap["resourceId"]
+    )
+    assert resource["converter"] == "w3d-bundle"
+    assert resource["patterns"] == [death_path]
+    assert resource["output"] == swap["output"]
+    name = PurePosixPath(death_path).name
+    assert resource["options"]["model"] == name
+    assert resource["options"]["animations"] == [name]
+
+
+def test_multi_model_mixed_death_compiles_one_resource_per_swap_model() -> None:
+    descriptor = _descriptor("SiegeUnit")
+    closure, first_path = _own_rig_death_closure(descriptor)
+    member = str(descriptor["composition"]["primaryMemberObjectId"])
+    second_path = f"art/w3d/fi/{member.casefold()}_dieb.w3d"
+    second_rig = f"{member}_DIEB".upper()
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            f"{member}_DIEB",
+            "animation",
+            second_path,
+            ["DYING", "DEATH_2"],
+            "AnimationState DYING DEATH_2",
+        )
+    )
+    closure["scannedW3d"].append(
+        _scanned_row(
+            second_path, [second_rig], [second_rig], [f"{second_rig}.{second_rig}"]
+        )
+    )
+    clip_path = f"art/w3d/fi/{member.casefold()}_diec.w3d"
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            f"{member}_DIEC",
+            "animation",
+            clip_path,
+            ["DYING"],
+            "AnimationState DYING",
+        )
+    )
+    closure["scannedW3d"].append(
+        _scanned_row(
+            clip_path,
+            [],
+            [],
+            [f"{member}_SKL.{member}_DIEC".upper()],
+        )
+    )
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    validate_playable_unit_pack_recipe(recipe)
+
+    visual = recipe["runtimeRegistration"]["visual"]
+    death = visual["coreAnimations"]["death"]
+    assert isinstance(death, list)
+    assert [row["sourceW3d"] for row in death] == [clip_path]
+    swaps = visual["deathModelSwaps"]
+    assert [row["sourceW3d"] for row in swaps] == [first_path, second_path]
+    assert [row["conditions"] for row in swaps] == [
+        ["DYING", "DEATH_1"],
+        ["DYING", "DEATH_2"],
+    ]
+    assert len({row["resourceId"] for row in swaps}) == 2
+    for swap in swaps:
+        resource = next(
+            row for row in recipe["resources"] if row["id"] == swap["resourceId"]
+        )
+        assert resource["patterns"] == [swap["sourceW3d"]]
+        assert resource["output"] == swap["output"]
+
+
+def test_death_swap_model_condition_visual_is_bundle_not_hierarchical() -> None:
+    """Battlewagon/catapult shape: DYING ModelCondition reuses the die W3D.
+
+    Separate-hierarchy death is packaged as death-model (w3d-bundle). The same
+    source must not also become a hierarchical visual component — hierarchical
+    fails closed on the embedded animation actions those files carry.
+    """
+
+    descriptor = _descriptor("SiegeUnit")
+    closure, death_path = _own_rig_death_closure(descriptor)
+    member = str(descriptor["composition"]["primaryMemberObjectId"])
+    # Intentionally omit embeddedAnimationChannelCount: routing must key off
+    # the death-swap classification, not only channel-count evidence.
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            f"{member}_DIE_MODEL",
+            "model",
+            death_path,
+            ["DYING"],
+            "ModelConditionState DYING",
+        )
+    )
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    validate_playable_unit_pack_recipe(recipe)
+
+    visual = recipe["runtimeRegistration"]["visual"]
+    death_component = next(
+        row for row in visual["components"] if row["sourceW3d"] == death_path
+    )
+    assert death_component["conditions"] == ["DYING"]
+    visual_resource = next(
+        row for row in recipe["resources"] if row["id"] == death_component["resourceId"]
+    )
+    death_name = PurePosixPath(death_path).name
+    assert visual_resource["converter"] == "w3d-bundle"
+    assert visual_resource["options"]["model"] == death_name
+    assert visual_resource["options"]["animations"] == [death_name]
+
+    death_binding = visual["coreAnimations"]["death"]
+    assert death_binding["binding"] == "separate-model"
+    assert death_binding["sourceW3d"] == death_path
+    death_resource = next(
+        row for row in recipe["resources"] if row["id"] == death_binding["resourceId"]
+    )
+    assert death_resource["converter"] == "w3d-bundle"
+    assert death_resource["options"]["animations"] == [death_name]
+    assert death_resource["id"] != visual_resource["id"]
+
+
+def test_mixed_death_swap_model_condition_visuals_are_bundles() -> None:
+    """CaveTroll/MountainGiant shape: DECAY corpse models are also dis* anims."""
+
+    descriptor = _descriptor("SiegeUnit")
+    closure, first_path = _own_rig_death_closure(descriptor)
+    member = str(descriptor["composition"]["primaryMemberObjectId"])
+    second_path = f"art/w3d/fi/{member.casefold()}_dieb.w3d"
+    second_rig = f"{member}_DIEB".upper()
+    clip_path = f"art/w3d/fi/{member.casefold()}_diec.w3d"
+    closure["exactLeaves"].extend(
+        [
+            _leaf(
+                member,
+                f"{member}_DIEA_MODEL",
+                "model",
+                first_path,
+                ["DYING", "DECAY", "DEATH_1"],
+                "ModelConditionState DYING DECAY DEATH_1",
+            ),
+            _leaf(
+                member,
+                f"{member}_DIEB",
+                "animation",
+                second_path,
+                ["DYING", "DECAY", "DEATH_2"],
+                "AnimationState DYING DECAY DEATH_2",
+            ),
+            _leaf(
+                member,
+                f"{member}_DIEB_MODEL",
+                "model",
+                second_path,
+                ["DYING", "DECAY", "DEATH_2"],
+                "ModelConditionState DYING DECAY DEATH_2",
+            ),
+            _leaf(
+                member,
+                f"{member}_DIEC",
+                "animation",
+                clip_path,
+                ["DYING"],
+                "AnimationState DYING",
+            ),
+        ]
+    )
+    # No embeddedAnimationChannelCount: death-swap membership alone must route.
+    closure["scannedW3d"].extend(
+        [
+            _scanned_row(
+                second_path, [second_rig], [second_rig], [f"{second_rig}.{second_rig}"]
+            ),
+            _scanned_row(
+                clip_path,
+                [],
+                [],
+                [f"{member}_SKL.{member}_DIEC".upper()],
+            ),
+        ]
+    )
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    validate_playable_unit_pack_recipe(recipe)
+
+    visual = recipe["runtimeRegistration"]["visual"]
+    assert isinstance(visual["coreAnimations"]["death"], list)
+    swaps = visual["deathModelSwaps"]
+    assert {row["sourceW3d"] for row in swaps} == {first_path, second_path}
+
+    for path in (first_path, second_path):
+        component = next(row for row in visual["components"] if row["sourceW3d"] == path)
+        resource = next(
+            row for row in recipe["resources"] if row["id"] == component["resourceId"]
+        )
+        name = PurePosixPath(path).name
+        assert resource["converter"] == "w3d-bundle", path
+        assert resource["options"]["animations"] == [name]
+        death_resource = next(
+            row
+            for row in recipe["resources"]
+            if row.get("options", {}).get("model") == name
+            and "death-model" in row["id"]
+        )
+        assert death_resource["converter"] == "w3d-bundle"
+        assert death_resource["id"] != resource["id"]
+
+
+def test_duplicate_condition_mixed_death_fails_closed() -> None:
+    descriptor = _descriptor("SiegeUnit")
+    closure, _ = _own_rig_death_closure(descriptor)
+    member = str(descriptor["composition"]["primaryMemberObjectId"])
+    second_path = f"art/w3d/fi/{member.casefold()}_dieb.w3d"
+    second_rig = f"{member}_DIEB".upper()
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            f"{member}_DIEB",
+            "animation",
+            second_path,
+            ["DYING", "DEATH_1"],
+            "AnimationState DYING DEATH_1",
+        )
+    )
+    closure["scannedW3d"].append(
+        _scanned_row(
+            second_path, [second_rig], [second_rig], [f"{second_rig}.{second_rig}"]
+        )
+    )
+    clip_path = f"art/w3d/fi/{member.casefold()}_diec.w3d"
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            f"{member}_DIEC",
+            "animation",
+            clip_path,
+            ["DYING", "DEATH_2"],
+            "AnimationState DYING DEATH_2",
+        )
+    )
+    closure["scannedW3d"].append(
+        _scanned_row(
+            clip_path,
+            [],
+            [],
+            [f"{member}_SKL.{member}_DIEC".upper()],
+        )
+    )
+    _rehash_closure(closure)
     with pytest.raises(
-        PlayableUnitPackCompilerError, match="mixes skeleton clips"
+        PlayableUnitPackCompilerError, match="swap conditions are ambiguous"
     ):
         compile_playable_unit_pack_recipe(descriptor, closure)
 

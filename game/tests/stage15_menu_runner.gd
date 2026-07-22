@@ -30,11 +30,11 @@ func _run() -> void:
 	_check("main_page_is_default", String(menu.get_current_page()) == "main")
 	_check("main_page_is_uncluttered", _visible(menu, "Center/Solo") and _visible(menu, "Center/Options") and _visible(menu, "Center/Quit"))
 	_check("proof_stages_hidden_by_default", _all_stages_visible(menu, false))
-	_check("retail_launch_hidden_until_solo", not _visible(menu, "Center/Retail"))
+	_check("retail_launch_hidden_until_solo", not _retail_launch_visible(menu))
 
 	_check("solo_page_accepts_navigation", bool(menu.show_page("solo")))
-	_check("solo_page_preserves_retail_launch", _visible(menu, "Center/Retail"))
-	_check("solo_page_preserves_legacy_launch", _visible(menu, "Center/Start") and _visible(menu, "Center/LegacyGrid"))
+	_check("solo_page_preserves_retail_launch", _retail_launch_visible(menu))
+	_check("solo_page_has_no_legacy_launch", menu.get_node_or_null("Center/Start") == null and menu.get_node_or_null("Center/LegacyGrid") == null)
 	_check("solo_page_hides_main_actions", not _visible(menu, "Center/Solo") and not _visible(menu, "Center/Options"))
 
 	_check("developer_page_accepts_navigation", bool(menu.show_page("developer")))
@@ -44,13 +44,17 @@ func _run() -> void:
 	_check("unknown_page_rejected", not bool(menu.show_page("missing")) and String(menu.get_current_page()) == "developer")
 
 	_check("options_page_accepts_navigation", bool(menu.show_page("options")))
-	var music_slider := menu.get_node("Center/MusicRow/Slider") as HSlider
-	var voice_slider := menu.get_node("Center/VoiceRow/Slider") as HSlider
-	var mute_toggle := menu.get_node("Center/Mute") as CheckButton
-	_check("audio_controls_present", music_slider.visible and voice_slider.visible and mute_toggle.visible)
+	# The retail-style options screen owns audio now; the same persistence
+	# contract is asserted against its controls and ACCEPT flow.
+	var music_slider := menu.find_child("MusicSlider", true, false) as HSlider
+	var voice_slider := menu.find_child("SoundFxSlider", true, false) as HSlider
+	var mute_toggle := menu.find_child("MuteToggle", true, false) as CheckButton
+	var accept_button := menu.find_child("AcceptButton", true, false) as Button
+	_check("audio_controls_present", music_slider != null and music_slider.visible and voice_slider != null and voice_slider.visible and mute_toggle != null and mute_toggle.visible and accept_button != null)
 	music_slider.value = 0.37
 	voice_slider.value = 0.63
 	mute_toggle.button_pressed = true
+	accept_button.emit_signal("pressed")
 	var persisted: Dictionary = SettingsScript.load_audio()
 	_check("music_setting_persists", is_equal_approx(float(persisted["music_volume"]), 0.37), str(persisted))
 	_check("voice_sfx_setting_persists", is_equal_approx(float(persisted["voice_sfx_volume"]), 0.63), str(persisted))
@@ -77,6 +81,13 @@ func _run() -> void:
 	menu.queue_free()
 	await process_frame
 	_finish()
+
+
+func _retail_launch_visible(menu: Node) -> bool:
+	## The PLAY button lives inside the GAME SETUP flyout after the setup
+	## rework; visibility still tracks the solo page exactly.
+	var button := menu.find_child("Retail", true, false) as Control
+	return button != null and button.is_visible_in_tree()
 
 
 func _visible(root_node: Node, path: String) -> bool:

@@ -420,6 +420,23 @@ def _validate_visual_closure(
         _validate_id_array(header.get("modelIds"), f"{path} modelIds")
         _validate_id_array(header.get("hierarchyIds"), f"{path} hierarchyIds")
         _validate_id_array(header.get("animationIds"), f"{path} animationIds")
+        if "modelHierarchyIdentifiers" in item:
+            _validate_id_array(
+                item.get("modelHierarchyIdentifiers"),
+                f"{path} modelHierarchyIdentifiers",
+            )
+        if "embeddedAnimationChannelCount" in item:
+            _nonnegative_int(
+                item.get("embeddedAnimationChannelCount"),
+                f"{path} embeddedAnimationChannelCount",
+            )
+        if "skinnedMeshCount" in item:
+            _nonnegative_int(
+                item.get("skinnedMeshCount"),
+                f"{path} skinnedMeshCount",
+            )
+        if "meshCount" in item:
+            _nonnegative_int(item.get("meshCount"), f"{path} meshCount")
         _list(item.get("warnings"), f"scanned W3D {path} warnings")
         model_references = _list(
             item.get("modelReferences"), f"scanned W3D {path} modelReferences"

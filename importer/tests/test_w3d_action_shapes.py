@@ -285,5 +285,208 @@ class W3dActionShapeTests(unittest.TestCase):
                 ADAPTER.restore_duplicate_logical_animations(output, [])
 
 
+class FakeAnimationData:
+    def __init__(self, action=None):
+        self.action = action
+        self.nla_tracks = FakeTrackCollection()
+
+
+class FakeStripCollection(list):
+    def new(self, name: str, start: int, action):
+        strip = types.SimpleNamespace(name=name, start=start, action=action)
+        self.append(strip)
+        return strip
+
+
+class FakeTrack:
+    def __init__(self):
+        self.name = ""
+        self.strips = FakeStripCollection()
+
+
+class FakeTrackCollection(list):
+    def new(self):
+        track = FakeTrack()
+        self.append(track)
+        return track
+
+
+class FakeRig:
+    def __init__(self, name: str):
+        self.type = "ARMATURE"
+        self.name = name
+        self.animation_data = FakeAnimationData()
+        self.data = types.SimpleNamespace(animation_data=FakeAnimationData())
+        self.bones = [object()]
+
+    def animation_data_create(self):
+        if self.animation_data is None:
+            self.animation_data = FakeAnimationData()
+
+
+def nla_shape(name: str, owner) -> dict:
+    action = Action(name, [Curve('pose.bones["ROOT"].location', [0.0, 2.0])])
+    action.frame_range = (0.0, 1.0)
+    return {
+        "public": {
+            "name": name,
+            "shape": "transform-only",
+            "action_count": 1,
+            "object_action_count": 1,
+            "armature_action_count": 0,
+            "transform_curve_count": 1,
+            "visibility_curve_count": 0,
+            "material_curve_count": 0,
+            "unsupported_curve_count": 0,
+        },
+        "object_action": action,
+        "owner_rig": owner,
+    }
+
+
+class W3dAnimationOwnerRigTests(unittest.TestCase):
+    def setUp(self) -> None:
+        ADAPTER.bpy.data = types.SimpleNamespace(objects=[], actions=[])
+
+    def test_find_model_rig_allows_rigless_animated_only(self) -> None:
+        ADAPTER.bpy.data.objects = []
+        self.assertIsNone(ADAPTER.find_model_rig("animated"))
+        with self.assertRaisesRegex(RuntimeError, "found 0"):
+            ADAPTER.find_model_rig("hierarchical")
+        rig = FakeRig("RIG")
+        ADAPTER.bpy.data.objects = [rig]
+        self.assertIs(ADAPTER.find_model_rig("animated"), rig)
+        ADAPTER.bpy.data.objects = [rig, FakeRig("AUX")]
+        with self.assertRaisesRegex(RuntimeError, "found 2"):
+            ADAPTER.find_model_rig("animated")
+
+    def test_owner_rig_resolution_prefers_the_unique_owning_rig(self) -> None:
+        model_rig = FakeRig("MODEL")
+        aux_rig = FakeRig("AUX")
+        ADAPTER.bpy.data.objects = [model_rig, aux_rig]
+        clip = Action("CLIP", [])
+        aux_rig.animation_data.action = clip
+
+        self.assertIs(
+            ADAPTER.find_animation_owner_rig(model_rig, [clip]), aux_rig
+        )
+
+        model_rig.animation_data.action = clip
+        with self.assertRaisesRegex(RuntimeError, "ambiguous owner rigs"):
+            ADAPTER.find_animation_owner_rig(model_rig, [clip])
+
+        aux_rig.animation_data.action = None
+        self.assertIs(
+            ADAPTER.find_animation_owner_rig(model_rig, [clip]), model_rig
+        )
+
+        model_rig.animation_data.action = None
+        with self.assertRaisesRegex(RuntimeError, "owned keyed action"):
+            ADAPTER.find_animation_owner_rig(model_rig, [clip])
+        with self.assertRaisesRegex(RuntimeError, "owned keyed action"):
+            ADAPTER.find_animation_owner_rig(model_rig, [])
+
+    def test_owner_rig_rejects_actions_outside_the_owner_set(self) -> None:
+        model_rig = FakeRig("MODEL")
+        aux_rig = FakeRig("AUX")
+        ADAPTER.bpy.data.objects = [model_rig, aux_rig]
+        owned = Action("OWNED", [])
+        stray = Action("STRAY", [])
+        aux_rig.animation_data.action = owned
+        with self.assertRaisesRegex(RuntimeError, "outside its proven owner set"):
+            ADAPTER.find_animation_owner_rig(model_rig, [owned, stray])
+
+    def test_nla_tracks_are_created_per_owner_rig(self) -> None:
+        model_rig = FakeRig("MODEL")
+        aux_rig = FakeRig("AUX")
+        shapes = [
+            nla_shape("model_clip", model_rig),
+            nla_shape("aux_clip", aux_rig),
+        ]
+
+        created = ADAPTER.prepare_w3d_animation_nla_tracks(model_rig, shapes)
+
+        self.assertEqual(created, 2)
+        self.assertEqual(len(model_rig.animation_data.nla_tracks), 1)
+        self.assertEqual(model_rig.animation_data.nla_tracks[0].name, "model_clip")
+        self.assertEqual(len(aux_rig.animation_data.nla_tracks), 1)
+        self.assertEqual(aux_rig.animation_data.nla_tracks[0].name, "aux_clip")
+
+    def test_nla_shapes_without_owner_stay_on_the_model_rig(self) -> None:
+        model_rig = FakeRig("MODEL")
+        shape = nla_shape("model_clip", model_rig)
+        del shape["owner_rig"]
+
+        created = ADAPTER.prepare_w3d_animation_nla_tracks(model_rig, [shape])
+
+        self.assertEqual(created, 1)
+        self.assertEqual(len(model_rig.animation_data.nla_tracks), 1)
+
+
+class W3dSplitGlbSkeletalRelaxationTests(unittest.TestCase):
+    def _rigid_animated_glb(self, *, mesh_under_armature: bool) -> dict:
+        if mesh_under_armature:
+            nodes = [
+                {"name": "SKL", "children": [1, 2]},
+                {"name": "BONE", "children": []},
+                {"name": "DOOR", "mesh": 0},
+            ]
+        else:
+            nodes = [
+                {"name": "SKL", "children": [1]},
+                {"name": "BONE", "children": []},
+                {"name": "STATIC", "mesh": 0},
+            ]
+        return {
+            "asset": {"version": "2.0"},
+            "scene": 0,
+            "scenes": [{"nodes": [0, 2]}],
+            "nodes": nodes,
+            "meshes": [{"primitives": []}],
+            "animations": [
+                {
+                    "name": "clip",
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 1, "path": "translation"}}
+                    ],
+                    "samplers": [{"input": 0, "output": 1}],
+                }
+            ],
+        }
+
+    def test_rigid_animated_glb_without_skins_validates(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "rigid.glb"
+            output.write_bytes(
+                glb_payload(self._rigid_animated_glb(mesh_under_armature=True))
+            )
+            with self.assertRaisesRegex(RuntimeError, "no skeletal skin"):
+                ADAPTER.validate_split_animation_glb(output, ["clip"])
+
+            result = ADAPTER.validate_split_animation_glb(
+                output, ["clip"], require_skins=False
+            )
+            self.assertEqual(result["skins"], 0)
+            self.assertEqual(result["skeletal_meshes"], 1)
+
+    def test_detached_mesh_requires_skeletal_opt_out(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "rigless.glb"
+            output.write_bytes(
+                glb_payload(self._rigid_animated_glb(mesh_under_armature=False))
+            )
+            with self.assertRaisesRegex(RuntimeError, "no skinned or bone-parented"):
+                ADAPTER.validate_split_animation_glb(
+                    output, ["clip"], require_skins=False
+                )
+            result = ADAPTER.validate_split_animation_glb(
+                output,
+                ["clip"],
+                require_skins=False,
+                require_skeletal_mesh=False,
+            )
+            self.assertEqual(result["skeletal_meshes"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -22,7 +22,7 @@ const PLAYABLE_STRUCTURE_ANIMATION_MODES: Array[String] = [
 	"none", "manual-progress", "loop", "loop-random", "once",
 ]
 const PLAYABLE_STRUCTURE_PRODUCTION_EVIDENCE: Array[String] = [
-	"authored-construct-command", "engine-spawned-composite", "wall-template",
+	"authored-construct-command", "authored-wall-upgrade-command", "engine-spawned-composite", "wall-template",
 ]
 
 var units: Dictionary = {}
@@ -36,7 +36,27 @@ var bundle_objects: Dictionary = {}
 var retail_unit_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
 var trebuchet_runtime: Dictionary = {}
+var spellbook_runtime: Dictionary = {}
 var playable_unit_runtimes: Dictionary = {}
+## Every admitted copy of a playableUnit.* document: casefolded object id to
+## the load-ordered list of per-pack documents. Shared retail units (the
+## evil-faction MordorWorker ships in the isengard/mordor/wild packs, each
+## bound to that faction's own lumber mill) legitimately carry one document
+## per faction pack. The flat registry above keeps only the last-loaded copy;
+## faction-scoped consumers (the manifest) resolve their own pack's copy from
+## this index instead.
+var playable_unit_runtime_pack_index: Dictionary = {}
+## Load-ordered per-pack bundle object members / animation capabilities
+## projected from playableUnit.* documents. Shared retail units (MordorWorker)
+## project the same member and capability ids from every faction pack; the
+## flat bundle_objects / animation_capabilities tables keep only the
+## last-loaded pack's rows, so pack-scoped lookups resolve through these.
+var bundle_object_pack_index: Dictionary = {}
+var animation_capability_pack_index: Dictionary = {}
+## Pack-file keys of playableUnit.* documents skipped during load, with the
+## skip reason ("<key>:<detail>"). Surfaced so roster composition can record
+## them as exclusions instead of the roster silently narrowing.
+var skipped_playable_unit_documents: Array[String] = []
 var playable_structure_runtimes: Dictionary = {}
 var animation_capabilities: Dictionary = {}
 var bundle_maps: Dictionary = {}
@@ -50,11 +70,29 @@ var damage_matrix: Dictionary = {}
 var pack_meta: Array = []
 var pack_roots: Array[String] = []
 var asset_roots: Array[String] = []
+var _asset_exists_cache: Dictionary = {}
+var _asset_exists_mutex := Mutex.new()
+
+
+## Env-gated reload profiler (OPENBFME_PROFILE_CONTENTDB=1): prints cumulative
+## milliseconds per pack/stage since the given mark. Zero cost when disabled.
+var _profile_db_enabled := OS.get_environment("OPENBFME_PROFILE_CONTENTDB") == "1"
+var _profile_db_started_ms := 0
+
+
+func _profile_db(label: String, mark: int) -> void:
+	if not _profile_db_enabled:
+		return
+	var now := Time.get_ticks_msec()
+	print("CONTENTDB_PROFILE stage=%s delta_ms=%d total_ms=%d" % [label, now - mark, now - _profile_db_started_ms])
+
 
 func _ready() -> void:
 	reload()
 
 func reload() -> void:
+	_profile_db_started_ms = Time.get_ticks_msec()
+	_asset_exists_cache.clear()
 	# Cached GLTF scene roots are keyed by pack path. Invalidate them before the
 	# catalog changes so immutable versioned retail packs cannot accumulate
 	# orphan scene roots over a long-running content-selection session.
@@ -72,7 +110,12 @@ func reload() -> void:
 	retail_unit_rules.clear()
 	ranger_runtime.clear()
 	trebuchet_runtime.clear()
+	spellbook_runtime.clear()
 	playable_unit_runtimes.clear()
+	playable_unit_runtime_pack_index.clear()
+	bundle_object_pack_index.clear()
+	animation_capability_pack_index.clear()
+	skipped_playable_unit_documents.clear()
 	playable_structure_runtimes.clear()
 	animation_capabilities.clear()
 	bundle_maps.clear()
@@ -87,7 +130,9 @@ func reload() -> void:
 	pack_roots.clear()
 	asset_roots.clear()
 	for root in ModLoader.list_pack_roots():
+		var pack_mark := Time.get_ticks_msec()
 		_load_pack(root)
+		_profile_db("pack:%s" % root.get_file(), pack_mark)
 	Events.content_reloaded.emit()
 	print("[ContentDB] packs=%d units=%d buildings=%d factions=%d powers=%d research=%d maps=%d" % [
 		pack_meta.size(), units.size(), buildings.size(), factions.size(), powers.size(), research.size(), maps.size()
@@ -105,6 +150,7 @@ func _load_pack(root: String) -> void:
 	pack_meta.append(meta)
 	pack_roots.append(root)
 	asset_roots.append(ModLoader.resolve_pack_path(root, "assets"))
+	var dirs_mark := Time.get_ticks_msec()
 	_load_dir_into(ModLoader.resolve_pack_path(root, "units"), units, root)
 	_load_dir_into(ModLoader.resolve_pack_path(root, "buildings"), buildings, root)
 	_load_dir_into(ModLoader.resolve_pack_path(root, "factions"), factions, root)
@@ -112,6 +158,7 @@ func _load_pack(root: String) -> void:
 	_load_dir_into(ModLoader.resolve_pack_path(root, "powers"), powers, root)
 	_load_dir_into(ModLoader.resolve_pack_path(root, "research"), research, root)
 	_load_dir_into(ModLoader.resolve_pack_path(root, "maps"), maps, root)
+	_profile_db("  legacy_dirs", dirs_mark)
 	_load_bundle_v0(root, meta)
 	var gpath := ModLoader.resolve_pack_path(root, "globals.json")
 	if FileAccess.file_exists(gpath):
@@ -160,16 +207,24 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	if typeof(files) != TYPE_DICTIONARY:
 		return
 	var declared := files as Dictionary
+	var pack_mark := Time.get_ticks_msec()
 	_load_declared_rows(root, String(declared.get("objects", "")), "objects", bundle_objects)
+	_profile_db("  objects", pack_mark)
 	_load_retail_unit_rules(root, String(declared.get("unitRules", "")))
 	_load_ranger_runtime(root, String(declared.get("rangerRuntime", "")))
 	_load_trebuchet_runtime(root, String(declared.get("trebuchetRuntime", "")))
+	_load_spellbook_runtimes(root, declared)
+	_profile_db("  rules+runtimes+spellbook", pack_mark)
 	_load_playable_unit_runtimes(root, declared)
+	_profile_db("  playable_units", pack_mark)
 	_load_playable_structure_runtimes(root, declared)
+	_profile_db("  playable_structures", pack_mark)
 	_load_declared_rows(root, String(declared.get("animationCapabilities", "")), "capabilities", animation_capabilities)
 	_load_retail_ui_manifest(root, String(declared.get("uiManifest", "")))
 	_load_retail_strings(root, String(declared.get("strings", "")))
+	_profile_db("  capabilities+ui+strings", pack_mark)
 	_load_retail_audio_manifest(root, String(declared.get("audioEvents", "")))
+	_profile_db("  audio_manifest", pack_mark)
 	for key in ["entryMap", "stage2Map"]:
 		var relative := String(declared.get(key, ""))
 		var map_doc := _read_declared_document(root, relative)
@@ -336,10 +391,42 @@ func _load_trebuchet_runtime(root: String, relative: String) -> void:
 	trebuchet_runtime = document
 
 
+func _load_spellbook_runtimes(root: String, declared: Dictionary) -> void:
+	## Packs declare spellbook runtime documents as spellbook.<slug>. Prefer the
+	## first valid openbfme.spellbook-runtime document; later packs may replace.
+	var keys: Array[String] = []
+	for value in declared.keys():
+		var key := String(value)
+		if key.begins_with("spellbook.") or key == "spellbookRuntime":
+			keys.append(key)
+	keys.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	for key in keys:
+		var relative := String(declared.get(key, ""))
+		if relative == "" or not ModLoader.is_safe_relative_path(relative):
+			continue
+		var document := _read_declared_document_bounded(root, relative, MAX_PLAYABLE_UNIT_RUNTIME_BYTES)
+		if document.is_empty():
+			continue
+		if (
+			String(document.get("schema", "")) != "openbfme.spellbook-runtime"
+			or int(document.get("schemaVersion", -1)) != 0
+		):
+			continue
+		var powers: Array = (((document.get("registration", {}) as Dictionary).get("powerTree", {}) as Dictionary).get("powers", []) as Array)
+		if powers.is_empty():
+			continue
+		document["_source"] = ModLoader.resolve_pack_path(root, relative)
+		document["_pack_root"] = root
+		document["_pack_file_key"] = key
+		spellbook_runtime = document
+		# Last valid wins across packs (matches other registry overwrite policy).
+
+
 func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
-	## Generic playable units are an atomic per-pack registry. A malformed or
-	## colliding declaration rejects this pack's entire playable-unit delta so a
-	## half-loaded faction can never leak into production or the HUD.
+	## Load every well-formed playable unit from this pack. Invalid documents
+	## are skipped with a diagnostic instead of discarding the whole faction —
+	## incomplete cooks (missing auxiliary GLBs / residual W3D jobs) must not
+	## blank the vertical slice roster.
 	var keys: Array[String] = []
 	for value in declared.keys():
 		var key := String(value)
@@ -347,23 +434,42 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 			keys.append(key)
 	keys.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
 	if keys.size() > MAX_PLAYABLE_UNIT_RUNTIMES_PER_PACK:
+		push_warning("ContentDB: playable unit count exceeds pack limit at %s" % root)
 		return false
 	var pending: Dictionary = {}
 	var pending_folded: Dictionary = {}
+	var skipped: Array[String] = []
+	var relatives: Array[String] = []
 	for key in keys:
-		var relative := String(declared.get(key, ""))
+		relatives.append(String(declared.get(key, "")))
+	var prefetched := _prefetch_declared_documents(root, relatives, MAX_PLAYABLE_UNIT_RUNTIME_BYTES)
+	var validations := _validate_playable_unit_documents_batch(root, prefetched)
+	for key_index in keys.size():
+		var key := keys[key_index]
+		var relative := relatives[key_index]
 		if relative == "" or not ModLoader.is_safe_relative_path(relative):
-			return false
-		var document := _read_declared_document_bounded(root, relative, MAX_PLAYABLE_UNIT_RUNTIME_BYTES)
-		if not _validate_playable_unit_runtime(root, document):
-			return false
+			skipped.append("%s:unsafe-path" % key)
+			continue
+		var document: Dictionary = prefetched[key_index]
+		if document.has("_parse_error"):
+			push_error("JSON parse failed: %s @ %s" % [String(document.get("_parse_error", "")), String(document.get("_parse_path", ""))])
+			document = {}
+		if not validations[key_index]:
+			skipped.append("%s:invalid-runtime" % key)
+			continue
 		var object_id := String(document["objectId"])
 		var folded := object_id.to_lower()
 		if pending_folded.has(folded):
-			return false
+			skipped.append("%s:duplicate-id" % key)
+			continue
+		var collision := false
 		for existing_id_value in playable_unit_runtimes.keys():
 			if String(existing_id_value).to_lower() == folded and String(existing_id_value) != object_id:
-				return false
+				collision = true
+				break
+		if collision:
+			skipped.append("%s:id-collision" % key)
+			continue
 		document["_source"] = ModLoader.resolve_pack_path(root, relative)
 		document["_pack_root"] = root
 		document["_pack_file_key"] = key
@@ -384,28 +490,104 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 		var object_id := String(object_id_value)
 		var document := pending[object_id] as Dictionary
 		var production: Array = (document.get("registration", {}) as Dictionary).get("production", [])
+		var hero_collision := false
 		for route_value in production:
 			var route := route_value as Dictionary
 			if String(route.get("surface", "")) != "hero-roster":
 				continue
 			var ordinal_key := "%s:%d" % [String(route.get("producerObjectId", "")).to_lower(), int(route.get("rosterOrdinal", 0))]
 			if hero_ordinals.has(ordinal_key) and String(hero_ordinals[ordinal_key]).to_lower() != object_id.to_lower():
-				return false
+				hero_collision = true
+				break
 			hero_ordinals[ordinal_key] = object_id
+		if hero_collision:
+			skipped.append("%s:hero-ordinal-collision" % object_id)
+			continue
 		var projection := _playable_unit_projection(document)
 		if projection.is_empty():
-			return false
+			skipped.append("%s:empty-projection" % object_id)
+			continue
 		projections[object_id] = projection
-	for object_id_value in pending.keys():
+	for object_id_value in projections.keys():
 		var object_id := String(object_id_value)
 		var document := pending[object_id] as Dictionary
 		var projection := projections[object_id] as Dictionary
 		playable_unit_runtimes[object_id] = document
+		# Record every admitted per-pack copy: a shared unit's later pack
+		# overwrites the flat slot above, and faction-scoped consumers resolve
+		# their own pack's document from this index.
+		var folded := object_id.to_lower()
+		if not playable_unit_runtime_pack_index.has(folded):
+			playable_unit_runtime_pack_index[folded] = []
+		(playable_unit_runtime_pack_index[folded] as Array).append(document)
 		var member := projection["member"] as Dictionary
 		var capability := projection["capability"] as Dictionary
-		bundle_objects[String(member["id"])] = member
+		var member_key := String(member["id"])
+		# The projected capability only carries the states the shared adapter
+		# maps from coreAnimations. When the pack also ships an authored
+		# capability for the same object (e.g. the porter's construct work
+		# loops), keep its extra states instead of silently dropping them.
+		var replaced_object: Dictionary = bundle_objects.get(member_key, {}) as Dictionary
+		var authored_capability: Dictionary = animation_capabilities.get(
+			String(replaced_object.get("animationCapabilityId", "")), {}
+		) as Dictionary
+		if not authored_capability.is_empty():
+			var projected_states: Dictionary = capability.get("states", {}) as Dictionary
+			var authored_states: Dictionary = authored_capability.get("states", {}) as Dictionary
+			for state_name_value in authored_states.keys():
+				var state_name := String(state_name_value)
+				if not projected_states.has(state_name):
+					projected_states[state_name] = (authored_states[state_name] as Dictionary).duplicate(true)
+			capability["states"] = projected_states
+		bundle_objects[member_key] = member
 		animation_capabilities[String(capability["id"])] = capability
+		# Shared units project the same member/capability ids from every faction
+		# pack; the flat tables above keep only the last-loaded pack's rows.
+		if not bundle_object_pack_index.has(member_key):
+			bundle_object_pack_index[member_key] = []
+		(bundle_object_pack_index[member_key] as Array).append(member)
+		var capability_key := String(capability["id"])
+		if not animation_capability_pack_index.has(capability_key):
+			animation_capability_pack_index[capability_key] = []
+		(animation_capability_pack_index[capability_key] as Array).append(capability)
+	if not skipped.is_empty():
+		for skipped_value in skipped:
+			skipped_playable_unit_documents.append(String(skipped_value))
+		push_warning(
+			"ContentDB: skipped %d playable unit(s) in %s: %s"
+			% [skipped.size(), root.get_file(), ", ".join(skipped)]
+		)
 	return true
+
+
+func get_skipped_playable_unit_documents() -> Array[String]:
+	return skipped_playable_unit_documents.duplicate()
+
+
+func get_playable_unit_runtime_pack_index() -> Dictionary:
+	## Casefolded object id to the load-ordered per-pack documents admitted to
+	## the playable-unit registry. Entries with two or more copies are shared
+	## retail units whose flat-registry document is only the last-loaded pack's.
+	return playable_unit_runtime_pack_index.duplicate(true)
+
+
+func _validate_playable_unit_documents_batch(root: String, documents: Array) -> Array:
+	## Per-document validation is read-only against the registries (asset path
+	## probes go through mutex-guarded caches), so it fans out across the worker
+	## pool. The returned bool array parallels `documents`.
+	var results: Array = []
+	results.resize(documents.size())
+	if documents.size() > 1 and OS.get_processor_count() > 1:
+		var group := WorkerThreadPool.add_group_task(
+			func(element: int) -> void:
+				results[element] = _validate_playable_unit_runtime(root, documents[element]),
+			documents.size()
+		)
+		WorkerThreadPool.wait_for_group_task_completion(group)
+	else:
+		for index in documents.size():
+			results[index] = _validate_playable_unit_runtime(root, documents[index])
+	return results
 
 
 func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool:
@@ -452,12 +634,37 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 			or surface not in ["command-socket", "hero-roster"]
 			or (surface == "command-socket" and (slot < 1 or roster_ordinal != 0))
 			or (surface == "hero-roster" and (roster_ordinal < 1 or slot != 0))
-			or (category == "hero" and surface != "hero-roster")
+			or (category == "hero" and surface == "command-socket" and not _has_authored_command_socket_evidence(route))
 			or (category != "hero" and surface == "hero-roster")
 		):
 			return false
 	if typeof(registration.composition) != TYPE_DICTIONARY or typeof(registration.gameplay) != TYPE_DICTIONARY:
 		return false
+	if registration.has("abilities"):
+		# Additive hero-ability contract (converter-emitted SPECIAL_POWER rows).
+		# Presence is optional so older packs and fixtures keep loading; when
+		# present the rows must be well formed.
+		var abilities_value: Variant = registration.get("abilities")
+		if typeof(abilities_value) != TYPE_ARRAY:
+			return false
+		for ability_value in abilities_value as Array:
+			if typeof(ability_value) != TYPE_DICTIONARY:
+				return false
+			var ability := ability_value as Dictionary
+			var effect: Variant = ability.get("effect")
+			var implementation: Variant = ability.get("implementation")
+			if (
+				String(ability.get("id", "")) == ""
+				or String(ability.get("specialPowerId", "")) == ""
+				or int(ability.get("slot", 0)) < 1
+				or String(ability.get("targeting", "")) not in ["self", "point", "enemy-object"]
+				or typeof(ability.get("button")) != TYPE_DICTIONARY
+				or typeof(effect) != TYPE_DICTIONARY
+				or String((effect as Dictionary).get("kind", "")) not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier"]
+				or typeof(implementation) != TYPE_DICTIONARY
+				or String((implementation as Dictionary).get("status", "")) not in ["implemented", "unimplemented", "passive"]
+			):
+				return false
 	if typeof(registration.visual) != TYPE_DICTIONARY or typeof(registration.ui) != TYPE_DICTIONARY:
 		return false
 	var visual := registration.visual as Dictionary
@@ -466,18 +673,44 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 	if typeof(components) != TYPE_ARRAY or (components as Array).is_empty() or typeof(core) != TYPE_DICTIONARY:
 		return false
 	var default_count := 0
+	var default_resolved := 0
 	for component_value in components as Array:
 		if typeof(component_value) != TYPE_DICTIONARY:
 			return false
 		var component := component_value as Dictionary
 		var output := String(component.get("output", ""))
-		if output == "" or resolve_asset(output, root) == "":
+		var is_default := bool(component.get("default", false))
+		if output == "":
 			return false
-		if bool(component.get("default", false)):
+		var resolved := resolve_asset(output, root)
+		# Default presentation must resolve. Auxiliary/conditional skins
+		# (upgrade shells, death models, mounted variants) may be absent when
+		# an incomplete cook drops residual W3D jobs — those units still field.
+		if is_default:
 			default_count += 1
-	if default_count != 1:
+			if resolved != "":
+				default_resolved += 1
+		elif resolved == "" and not is_default:
+			continue
+	if default_count != 1 or default_resolved != 1:
 		return false
-	for state_value in (core as Dictionary).values():
+	for state_key_value in (core as Dictionary).keys():
+		var state_key := String(state_key_value)
+		var state_value: Variant = (core as Dictionary)[state_key_value]
+		# Standard clip bindings are non-empty arrays of {identifier}.
+		# Death may instead be a separate-model binding object produced by the
+		# pack compiler (binding=separate-model + output glb).
+		if typeof(state_value) == TYPE_DICTIONARY:
+			var death_row := state_value as Dictionary
+			if (
+				state_key != "death"
+				or String(death_row.get("binding", "")) != "separate-model"
+				or String(death_row.get("output", "")).strip_edges() == ""
+			):
+				return false
+			# Death GLB may be absent in incomplete cooks; the unit still fields
+			# on its default visual. Do not fail-closed the whole registry.
+			continue
 		if typeof(state_value) != TYPE_ARRAY or (state_value as Array).is_empty():
 			return false
 		for binding_value in state_value as Array:
@@ -525,10 +758,16 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 			for field in ["TextLabel", "DescriptLabel"]:
 				for string_id_value in fields.get(field, []):
 					required_string_ids[String(string_id_value)] = true
-		if not string_bindings.is_empty() and string_bindings.size() != required_string_ids.size():
-			return false
+		# Coverage, not exact size: ability-bearing heroes bind strings for
+		# their powers (Athelas, BladeMaster, …) beyond the train command's
+		# label/tooltip. Every command-referenced id must be bound with
+		# non-empty text; additional bound ids are valid pack content.
+		for required_id_value in required_string_ids.keys():
+			var required_id := String(required_id_value)
+			if typeof(string_bindings.get(required_id)) != TYPE_STRING or String(string_bindings.get(required_id, "")).strip_edges() == "":
+				return false
 		for string_id_value in string_bindings.keys():
-			if not required_string_ids.has(String(string_id_value)) or String(string_id_value).strip_edges() == "" or typeof(string_bindings[string_id_value]) != TYPE_STRING or String(string_bindings[string_id_value]).strip_edges() == "":
+			if String(string_id_value).strip_edges() == "" or typeof(string_bindings[string_id_value]) != TYPE_STRING or String(string_bindings[string_id_value]).strip_edges() == "":
 				return false
 	return true
 
@@ -553,10 +792,40 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 	var core: Dictionary = visual.get("coreAnimations", {}) as Dictionary
 	for state_value in core.keys():
 		var state := String(state_value)
+		var raw_bindings: Variant = core[state_value]
+		var ranked: Array[Dictionary] = []
+		if typeof(raw_bindings) == TYPE_ARRAY:
+			for binding_value in raw_bindings as Array:
+				if typeof(binding_value) != TYPE_DICTIONARY:
+					continue
+				var binding := binding_value as Dictionary
+				var identifier := String(binding.get("identifier", ""))
+				if identifier == "":
+					continue
+				# Prefer generic locomotion/idle clips (fewest conditions) so
+				# BACKING_UP / WANDER variants do not become the default move.
+				var conditions: Array = binding.get("conditions", []) as Array
+				ranked.append({
+					"identifier": identifier,
+					"condition_count": conditions.size(),
+					"rank": _playable_clip_rank(state, identifier, conditions),
+				})
+		elif typeof(raw_bindings) == TYPE_DICTIONARY:
+			# separate-model death: no clip identifiers on the primary visual.
+			pass
+		else:
+			continue
+		ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			if int(a["rank"]) != int(b["rank"]):
+				return int(a["rank"]) < int(b["rank"])
+			if int(a["condition_count"]) != int(b["condition_count"]):
+				return int(a["condition_count"]) < int(b["condition_count"])
+			return String(a["identifier"]).naturalnocasecmp_to(String(b["identifier"])) < 0
+		)
 		var clips: Array[String] = []
-		for binding_value in core[state] as Array:
-			var identifier := String((binding_value as Dictionary).get("identifier", ""))
-			if identifier != "" and not clips.has(identifier):
+		for entry in ranked:
+			var identifier := String(entry["identifier"])
+			if not clips.has(identifier):
 				clips.append(identifier)
 		states[state] = {
 			"clips": clips,
@@ -585,6 +854,35 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 	}
 
 
+func _playable_clip_rank(state: String, identifier: String, conditions: Array) -> int:
+	## Lower is preferred for the default clip of a locomotion/combat state.
+	var id_lower := identifier.to_lower()
+	var conds: Array[String] = []
+	for value in conditions:
+		conds.append(String(value).to_upper())
+	if state == "move":
+		if conds.has("BACKING_UP") or id_lower.contains("baka") or id_lower.contains("back"):
+			return 40
+		if conds.has("WANDER") or id_lower.contains("wlk"):
+			return 30
+		if conds.has("EMOTION_LOOK_TO_SKY"):
+			return 25
+		if conds == ["MOVING"] or (conds.is_empty() and (id_lower.contains("run") or id_lower.contains("wlk") == false)):
+			return 0 if id_lower.contains("run") else 5
+		if conds.has("MOVING"):
+			return 10
+		return 20
+	if state == "idle":
+		if conds.is_empty():
+			return 0 if id_lower.contains("idla") or id_lower.contains("idle") else 5
+		return 15
+	if state == "attack":
+		if conds.has("MOVING"):
+			return 20
+		return conds.size()
+	return conds.size()
+
+
 func _playable_runtime_id(source_id: String) -> String:
 	var output := ""
 	var previous_dash := false
@@ -607,10 +905,8 @@ func _playable_runtime_id(source_id: String) -> String:
 
 
 func _load_playable_structure_runtimes(root: String, declared: Dictionary) -> bool:
-	## Generic playable structures are an atomic per-pack registry mirroring the
-	## playable-unit loader. A malformed or colliding declaration rejects this
-	## pack's entire playable-structure delta so a half-loaded faction base can
-	## never leak into the slice's base loop or construction surfaces.
+	## Load well-formed playable structures; skip invalid residual W3D/lifecycle
+	## gaps without discarding the rest of the faction base (fortress/farm/etc.).
 	var keys: Array[String] = []
 	for value in declared.keys():
 		var key := String(value)
@@ -618,23 +914,41 @@ func _load_playable_structure_runtimes(root: String, declared: Dictionary) -> bo
 			keys.append(key)
 	keys.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
 	if keys.size() > MAX_PLAYABLE_STRUCTURE_RUNTIMES_PER_PACK:
+		push_warning("ContentDB: playable structure count exceeds pack limit at %s" % root)
 		return false
 	var pending: Dictionary = {}
 	var pending_folded: Dictionary = {}
+	var skipped: Array[String] = []
+	var relatives: Array[String] = []
 	for key in keys:
-		var relative := String(declared.get(key, ""))
+		relatives.append(String(declared.get(key, "")))
+	var prefetched := _prefetch_declared_documents(root, relatives, MAX_PLAYABLE_STRUCTURE_RUNTIME_BYTES)
+	for key_index in keys.size():
+		var key := keys[key_index]
+		var relative := relatives[key_index]
 		if relative == "" or not ModLoader.is_safe_relative_path(relative):
-			return false
-		var document := _read_declared_document_bounded(root, relative, MAX_PLAYABLE_STRUCTURE_RUNTIME_BYTES)
+			skipped.append("%s:unsafe-path" % key)
+			continue
+		var document: Dictionary = prefetched[key_index]
+		if document.has("_parse_error"):
+			push_error("JSON parse failed: %s @ %s" % [String(document.get("_parse_error", "")), String(document.get("_parse_path", ""))])
+			document = {}
 		if not _validate_playable_structure_runtime(root, document):
-			return false
+			skipped.append("%s:invalid-runtime" % key)
+			continue
 		var object_id := String(document["objectId"])
 		var folded := object_id.to_lower()
 		if pending_folded.has(folded):
-			return false
+			skipped.append("%s:duplicate-id" % key)
+			continue
+		var collision := false
 		for existing_id_value in playable_structure_runtimes.keys():
 			if String(existing_id_value).to_lower() == folded and String(existing_id_value) != object_id:
-				return false
+				collision = true
+				break
+		if collision:
+			skipped.append("%s:id-collision" % key)
+			continue
 		document["_source"] = ModLoader.resolve_pack_path(root, relative)
 		document["_pack_root"] = root
 		document["_pack_file_key"] = key
@@ -642,6 +956,11 @@ func _load_playable_structure_runtimes(root: String, declared: Dictionary) -> bo
 		pending_folded[folded] = object_id
 	for object_id_value in pending.keys():
 		playable_structure_runtimes[String(object_id_value)] = pending[object_id_value]
+	if not skipped.is_empty():
+		push_warning(
+			"ContentDB: skipped %d playable structure(s) in %s: %s"
+			% [skipped.size(), root.get_file(), ", ".join(skipped)]
+		)
 	return true
 
 
@@ -683,7 +1002,7 @@ func _validate_playable_structure_runtime(root: String, document: Dictionary) ->
 	var presentation := presentation_value as Dictionary
 	if typeof(presentation.get("ui")) != TYPE_DICTIONARY or typeof(presentation.get("audioRoutes")) != TYPE_DICTIONARY:
 		return false
-	return _validate_playable_structure_lifecycle(root, presentation.get("buildingLifecycle"), gameplay, maximum_health, object_id)
+	return _validate_playable_structure_lifecycle(root, presentation.get("buildingLifecycle"), gameplay, registration.get("production") as Dictionary, maximum_health, object_id)
 
 
 func _validate_playable_structure_production(value: Variant) -> bool:
@@ -695,16 +1014,17 @@ func _validate_playable_structure_production(value: Variant) -> bool:
 	if evidence not in PLAYABLE_STRUCTURE_PRODUCTION_EVIDENCE or typeof(routes_value) != TYPE_ARRAY:
 		return false
 	var routes := routes_value as Array
-	if evidence == "authored-construct-command" and routes.is_empty():
+	var authored := evidence in ["authored-construct-command", "authored-wall-upgrade-command"]
+	if authored and routes.is_empty():
 		return false
-	if evidence != "authored-construct-command" and not routes.is_empty():
+	if not authored and not routes.is_empty():
 		return false
 	for route_value in routes:
 		if typeof(route_value) != TYPE_DICTIONARY:
 			return false
 		var route := route_value as Dictionary
 		if (
-			String(route.get("surface", "")) != "construct"
+			String(route.get("surface", "")) not in ["construct", "wall-upgrade"]
 			or String(route.get("builderObjectId", "")).strip_edges() == ""
 			or String(route.get("commandSetId", "")).strip_edges() == ""
 			or String(route.get("commandId", "")).strip_edges() == ""
@@ -764,7 +1084,7 @@ func _playable_structure_health_number(value: Variant) -> int:
 	return int(number) if int(number) > 0 else 0
 
 
-func _validate_playable_structure_lifecycle(root: String, value: Variant, gameplay: Dictionary, maximum_health: int, source_object_id: String) -> bool:
+func _validate_playable_structure_lifecycle(root: String, value: Variant, gameplay: Dictionary, production: Dictionary, maximum_health: int, source_object_id: String) -> bool:
 	## Validates the composed presenter-grade version-1 lifecycle presentation
 	## document (the exact shape RetailStructure's generic v1 branch consumes).
 	if typeof(value) != TYPE_DICTIONARY:
@@ -781,17 +1101,53 @@ func _validate_playable_structure_lifecycle(root: String, value: Variant, gamepl
 		or typeof(lifecycle.get("simulationFacts")) != TYPE_DICTIONARY
 	):
 		return false
+	var health := gameplay.get("health") as Dictionary
+	var primary := health.get("primary") as Dictionary
+	var damaged := _playable_structure_health_number(primary.get("maxHealthDamaged"))
+	var really_damaged := _playable_structure_health_number(primary.get("maxHealthReallyDamaged"))
+	var has_damage_rule := damaged > 0 and really_damaged > 0
+	if not has_damage_rule and (damaged > 0 or really_damaged > 0):
+		return false
+	var facts := lifecycle.get("simulationFacts") as Dictionary
+	var construction_value: Variant = facts.get("construction")
+	if typeof(construction_value) != TYPE_DICTIONARY:
+		return false
+	var construction := construction_value as Dictionary
+	var construction_omitted := construction.has("status")
+	if construction_omitted:
+		# The omission marker must match the production evidence class.
+		var status := String(construction.get("status", ""))
+		var evidence := String(production.get("evidence", ""))
+		if status == "never-constructed-engine-spawned-composite":
+			if evidence != "engine-spawned-composite":
+				return false
+		elif status == "never-constructed-wall-template":
+			if evidence != "wall-template":
+				return false
+		elif status != "no-authored-construction-states":
+			return false
+	var expected_phases: Array[String] = []
+	for candidate_value in PLAYABLE_STRUCTURE_PRESENTED_PHASES:
+		var candidate := String(candidate_value)
+		if construction_omitted and candidate == "construction":
+			continue
+		if not has_damage_rule and candidate in ["damaged", "really-damaged"]:
+			continue
+		expected_phases.append(candidate)
 	var phases := lifecycle.get("phases") as Array
-	if phases.size() != PLAYABLE_STRUCTURE_PRESENTED_PHASES.size():
+	if phases.size() != expected_phases.size():
 		return false
 	for index in phases.size():
 		if typeof(phases[index]) != TYPE_DICTIONARY:
 			return false
 		var row := phases[index] as Dictionary
 		var phase := String(row.get("phase", ""))
-		if phase != PLAYABLE_STRUCTURE_PRESENTED_PHASES[index]:
+		if phase != expected_phases[index]:
 			return false
-		if not _validate_playable_structure_phase_row(root, row, phase not in ["post-rubble", "post-collapse"]):
+		var expected_next: Variant = null
+		if phase not in ["post-rubble", "post-collapse"]:
+			expected_next = expected_phases[index + 1]
+		if not _validate_playable_structure_phase_row(root, row, expected_next):
 			return false
 	var coverage := lifecycle.get("phaseCoverage") as Dictionary
 	var declared_covered: Variant = coverage.get("covered")
@@ -806,7 +1162,7 @@ func _validate_playable_structure_lifecycle(root: String, value: Variant, gamepl
 	expected_partition.sort()
 	if partition != expected_partition:
 		return false
-	if not Array(declared_covered).has("intact") or not Array(declared_covered).has("construction"):
+	if not Array(declared_covered).has("intact"):
 		return false
 	var bib_value: Variant = lifecycle.get("bib")
 	if typeof(bib_value) == TYPE_DICTIONARY:
@@ -823,30 +1179,32 @@ func _validate_playable_structure_lifecycle(root: String, value: Variant, gamepl
 			return false
 	elif bib_value != null:
 		return false
-	var facts := lifecycle.get("simulationFacts") as Dictionary
 	if _playable_structure_health_number({"value": facts.get("maximumHealth")}) != maximum_health:
 		return false
-	var health := gameplay.get("health") as Dictionary
-	var primary := health.get("primary") as Dictionary
-	var damaged := _playable_structure_health_number(primary.get("maxHealthDamaged"))
-	var really_damaged := _playable_structure_health_number(primary.get("maxHealthReallyDamaged"))
 	var rule_value: Variant = facts.get("damageStateRule")
-	if typeof(rule_value) != TYPE_DICTIONARY:
-		return false
-	var rule := rule_value as Dictionary
-	var rule_damaged := _playable_structure_health_number({"value": rule.get("damagedThreshold")})
-	var rule_really_damaged := _playable_structure_health_number({"value": rule.get("reallyDamagedThreshold")})
-	if (
-		rule_damaged != damaged
-		or rule_really_damaged != really_damaged
-		or really_damaged >= damaged
-		or damaged >= maximum_health
-	):
-		return false
+	if has_damage_rule:
+		if typeof(rule_value) != TYPE_DICTIONARY:
+			return false
+		var rule := rule_value as Dictionary
+		var rule_damaged := _playable_structure_health_number({"value": rule.get("damagedThreshold")})
+		var rule_really_damaged := _playable_structure_health_number({"value": rule.get("reallyDamagedThreshold")})
+		if (
+			rule_damaged != damaged
+			or rule_really_damaged != really_damaged
+			or really_damaged >= damaged
+			or damaged >= maximum_health
+		):
+			return false
+	else:
+		# The omission must be explicit and can never hide authored thresholds.
+		if rule_value != null:
+			return false
+		if String(facts.get("damageStateRuleStatus", "")) != "no-authored-damage-thresholds":
+			return false
 	return true
 
 
-func _validate_playable_structure_phase_row(root: String, row: Dictionary, has_next: bool) -> bool:
+func _validate_playable_structure_phase_row(root: String, row: Dictionary, expected_next: Variant) -> bool:
 	if typeof(row.get("visual")) != TYPE_DICTIONARY or typeof(row.get("animation")) != TYPE_DICTIONARY:
 		return false
 	if typeof(row.get("sourceConditionSets")) != TYPE_ARRAY:
@@ -882,9 +1240,8 @@ func _validate_playable_structure_phase_row(root: String, row: Dictionary, has_n
 	if String(row.get("phase", "")) == "construction" and mode != "manual-progress":
 		return false
 	var next_phase: Variant = row.get("nextPhase")
-	if has_next:
-		var order := PLAYABLE_STRUCTURE_PRESENTED_PHASES.find(String(row.get("phase", "")))
-		if typeof(next_phase) != TYPE_STRING or String(next_phase) != PLAYABLE_STRUCTURE_PRESENTED_PHASES[order + 1]:
+	if expected_next != null:
+		if typeof(next_phase) != TYPE_STRING or String(next_phase) != String(expected_next):
 			return false
 	elif next_phase != null:
 		return false
@@ -913,6 +1270,22 @@ func _playable_structure_slug(value: String) -> String:
 
 func _is_sha256(value: String) -> bool:
 	return value.length() == 64 and value.is_valid_hex_number(false)
+
+
+func _has_authored_command_socket_evidence(route: Dictionary) -> bool:
+	## Retail summons some heroes through a producer's authored construct
+	## command instead of a fortress roster slot (Treebeard is trained by the
+	## Ent Moot's Command_ConstructEntTreeBeard socket). Such a route is only
+	## valid for a hero when it carries the authored INI provenance the
+	## importer records for command sockets; anything else fails closed.
+	var source_value: Variant = route.get("source")
+	if typeof(source_value) != TYPE_DICTIONARY:
+		return false
+	var source := source_value as Dictionary
+	for field in ["producerIni", "commandSetIni", "commandButtonIni"]:
+		if String(source.get(field, "")).strip_edges() == "":
+			return false
+	return true
 
 
 func _pack_tree_sha256(root: String) -> String:
@@ -977,6 +1350,66 @@ func _read_declared_document_bounded(root: String, relative: String, maximum_byt
 		return {}
 	file.close()
 	var raw: Variant = ModLoader._read_json(path)
+	return raw as Dictionary if typeof(raw) == TYPE_DICTIONARY else {}
+
+
+## Bounded bulk read of declared pack documents. Containment resolution and the
+## size bound stay on the calling thread exactly as _read_declared_document_bounded
+## does; only the byte read + JSON parse (the expensive part on slow storage)
+## fans out across the worker pool. The returned array parallels `relatives`;
+## entries are {} wherever the sequential reader would have returned {}.
+func _prefetch_declared_documents(root: String, relatives: Array[String], maximum_bytes: int) -> Array:
+	var paths: Array[String] = []
+	paths.resize(relatives.size())
+	for index in relatives.size():
+		var relative := relatives[index]
+		var path := ""
+		if relative != "" and maximum_bytes > 0:
+			var resolved := ModLoader.resolve_pack_path(root, relative)
+			if resolved != "" and FileAccess.file_exists(resolved):
+				var file := FileAccess.open(resolved, FileAccess.READ)
+				if file != null:
+					var length := file.get_length()
+					file.close()
+					if length > 0 and length <= maximum_bytes:
+						path = resolved
+		paths[index] = path
+	var documents: Array = []
+	documents.resize(relatives.size())
+	for index in documents.size():
+		documents[index] = {}
+	var readable: Array[int] = []
+	for index in paths.size():
+		if paths[index] != "":
+			readable.append(index)
+	if readable.size() == 1 or OS.get_processor_count() <= 1:
+		for index in readable:
+			documents[index] = _parse_json_document(paths[index])
+	elif readable.size() > 1:
+		# Group task on the global pool: each element writes its own pre-sized
+		# slot, so no shared-state locking is needed.
+		var group := WorkerThreadPool.add_group_task(
+			func(element: int) -> void:
+				var index := readable[element]
+				documents[index] = _parse_json_document(paths[index]),
+			readable.size()
+		)
+		WorkerThreadPool.wait_for_group_task_completion(group)
+	return documents
+
+
+static func _parse_json_document(path: String) -> Dictionary:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {}
+	var text := file.get_as_text()
+	file.close()
+	var json := JSON.new()
+	if json.parse(text) != OK:
+		# Diagnostics are emitted by the caller on the main thread; flag the
+		# failure with a sentinel the caller can recognize.
+		return {"_parse_error": json.get_error_message(), "_parse_path": path}
+	var raw: Variant = json.data
 	return raw as Dictionary if typeof(raw) == TYPE_DICTIONARY else {}
 
 
@@ -1077,6 +1510,30 @@ func get_map(id: String) -> Dictionary:
 func get_bundle_object(id: String) -> Dictionary:
 	return bundle_objects.get(id, {})
 
+
+func get_bundle_object_for_pack(id: String, pack_root: String) -> Dictionary:
+	## The bundle object projected from a specific pack's playableUnit document.
+	## Shared retail units project the same member id from several packs; the
+	## flat table keeps only the last-loaded pack's row. Falls back to the flat
+	## row when no pack-scoped variant exists.
+	if pack_root != "":
+		for row_value in bundle_object_pack_index.get(id, []) as Array:
+			var row := row_value as Dictionary
+			if String(row.get("_pack_root", "")) == pack_root:
+				return row.duplicate(true)
+	return bundle_objects.get(id, {})
+
+
+func get_animation_capability_for_pack(id: String, pack_root: String) -> Dictionary:
+	## The animation capability projected from a specific pack's playableUnit
+	## document; same cross-pack shared-id scoping as get_bundle_object_for_pack.
+	if pack_root != "":
+		for row_value in animation_capability_pack_index.get(id, []) as Array:
+			var row := row_value as Dictionary
+			if String(row.get("_pack_root", "")) == pack_root:
+				return row.duplicate(true)
+	return animation_capabilities.get(id, {})
+
 func get_retail_unit_rules(id: String) -> Dictionary:
 	return retail_unit_rules.get(id, {})
 
@@ -1087,6 +1544,10 @@ func get_ranger_runtime() -> Dictionary:
 
 func get_trebuchet_runtime() -> Dictionary:
 	return trebuchet_runtime.duplicate(true)
+
+
+func get_spellbook_runtime() -> Dictionary:
+	return spellbook_runtime.duplicate(true)
 
 
 func get_playable_unit_runtime(object_id: String) -> Dictionary:
@@ -1132,6 +1593,63 @@ func resolve_retail_ui_image_path(id: String) -> String:
 	if row.is_empty():
 		return ""
 	return resolve_asset(String(row.get("path", "")), String(row.get("_pack_root", "")))
+
+
+func prefetch_retail_ui_assets(pack_roots_hint: Array = []) -> int:
+	## First-touch warm-up for the HUD's cold-boot image validation. The files
+	## are exactly the ones the bind resolvers produce; reads fan out across the
+	## worker pool so cloud/seek latency overlaps instead of serializing on the
+	## main thread, and the bytes are discarded. Registry content and every
+	## later validation result are unchanged.
+	var roots: Array = []
+	for value in pack_roots_hint:
+		roots.append(String(value))
+	if roots.is_empty():
+		roots = pack_roots.duplicate()
+	var paths: Array = []
+	var seen: Dictionary = {}
+	for documents_value in playable_unit_runtime_pack_index.values():
+		for document_value in documents_value as Array:
+			var document := document_value as Dictionary
+			var root := String(document.get("_pack_root", ""))
+			if not roots.has(root):
+				continue
+			var bindings: Dictionary = (document.get("registration", {}) as Dictionary).get("imageBindings", {}) as Dictionary
+			for relative_value in bindings.values():
+				var resolved := resolve_asset(String(relative_value), root)
+				if resolved != "" and resolved.get_extension().to_lower() == "png" and not seen.has(resolved):
+					seen[resolved] = true
+					paths.append(resolved)
+	for row_value in retail_ui_images.values():
+		var row := row_value as Dictionary
+		var root := String(row.get("_pack_root", ""))
+		if not roots.has(root):
+			continue
+		var resolved := resolve_asset(String(row.get("path", "")), root)
+		if resolved != "" and resolved.get_extension().to_lower() == "png" and not seen.has(resolved):
+			seen[resolved] = true
+			paths.append(resolved)
+	if paths.is_empty():
+		return 0
+	if paths.size() == 1 or OS.get_processor_count() <= 1:
+		for path in paths:
+			_prefetch_file_bytes(path)
+	else:
+		var group := WorkerThreadPool.add_group_task(
+			func(element: int) -> void: _prefetch_file_bytes(paths[element]),
+			paths.size()
+		)
+		WorkerThreadPool.wait_for_group_task_completion(group)
+	return paths.size()
+
+
+static func _prefetch_file_bytes(path: String) -> void:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return
+	while not file.eof_reached():
+		file.get_buffer(1024 * 1024)
+	file.close()
 
 
 func get_retail_string(id: String, fallback: String = "") -> String:
@@ -1229,7 +1747,22 @@ func resolve_asset(rel_path: String, preferred_pack_root: String = "") -> String
 
 
 func _asset_exists(path: String) -> bool:
-	return FileAccess.file_exists(path) or ResourceLoader.exists(path)
+	# Memoized per reload generation: boot validation probes the same asset
+	# paths repeatedly (registries only grow between reloads and pack files are
+	# immutable while a generation is active). A stale positive still fails
+	# closed later at the real open; a stale negative only hides files added
+	# mid-generation, which the registries would not see either. Mutex-guarded:
+	# playable runtime documents validate concurrently on the worker pool.
+	_asset_exists_mutex.lock()
+	var cached: Variant = _asset_exists_cache.get(path)
+	_asset_exists_mutex.unlock()
+	if cached is bool:
+		return cached as bool
+	var exists := FileAccess.file_exists(path) or ResourceLoader.exists(path)
+	_asset_exists_mutex.lock()
+	_asset_exists_cache[path] = exists
+	_asset_exists_mutex.unlock()
+	return exists
 
 
 func is_resolved_asset_path(path: String) -> bool:

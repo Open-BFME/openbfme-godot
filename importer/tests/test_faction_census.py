@@ -116,7 +116,10 @@ End
 
 
 def _objects(
-    *, duplicate_porter: bool = False, missing_soldier_voice: bool = False
+    *,
+    duplicate_porter: bool = False,
+    missing_soldier_voice: bool = False,
+    respawn_portrait: bool = False,
 ) -> bytes:
     duplicate = b"Object MenPorter\nEnd\n" if duplicate_porter else b""
     source = b"""
@@ -167,6 +170,25 @@ End
 Object MenFortressExpansionPadSide
 End
 """
+    if respawn_portrait:
+        # Retail heroes author their recruitment portrait at the Object top
+        # level while RespawnUpdate modules carry their own respawn icon.
+        source = source.replace(
+            b"  Sound = INITIAL\n  SelectPortrait = UPSoldier\nEnd",
+            b"  Sound = INITIAL\n  SelectPortrait = UPSoldier\n"
+            b"  ButtonImage = HIHeroBase\n"
+            b"  Behavior = RespawnUpdate ModuleTag_RespawnUpdate\n"
+            b"    ButtonImage = HIHeroBaseRespawn\n"
+            b"  End\n"
+            b"End",
+        ).replace(
+            b"ChildObject HeroA HeroBase\n  SelectPortrait = HealImage\nEnd",
+            b"ChildObject HeroA HeroBase\n  SelectPortrait = HealImage\n"
+            b"  Behavior = RespawnUpdate ModuleTag_RespawnUpdate\n"
+            b"    ButtonImage = HIHeroARespawn\n"
+            b"  End\n"
+            b"End",
+        )
     if missing_soldier_voice:
         source = source.replace(
             b"VoiceSelect = SoldierVoice",
@@ -185,9 +207,70 @@ def _additive_voice_objects() -> bytes:
     )
 
 
-def _mapped_images(*, missing_train_texture: bool = False) -> bytes:
+def _spell_fx_objects() -> bytes:
+    return _objects().replace(
+        b"Object MenSpellBook\n  CommandSet = MenSpellBookCommandSet\nEnd",
+        b"Object MenSpellBook\n"
+        b"  CommandSet = MenSpellBookCommandSet\n"
+        b"  Behavior = SpecialPowerModule ModuleTag_Heal\n"
+        b"    SpecialPowerTemplate = SpellBookHeal\n"
+        b"    TriggerFX = FX_HealSpell\n"
+        b"  End\n"
+        b"End",
+    )
+
+
+def _fx_lists() -> bytes:
+    return b"""
+FXList FX_HealSpell
+  ParticleSystem
+    Name = HealFlare
+  End
+  Sound
+    Name = HealSoundFx
+  End
+End
+"""
+
+
+def _spell_fx_sound_effects() -> bytes:
+    return _sound_effects() + b"""
+AudioEvent HealSoundFx
+  Sounds = heal_fx
+  Type = world player
+End
+"""
+
+
+def _mapped_images(
+    *, missing_train_texture: bool = False, respawn_portrait: bool = False
+) -> bytes:
     train_texture = (
         "AbsentTrainAtlas.tga" if missing_train_texture else "TrainAtlas.tga"
+    )
+    respawn = (
+        """
+MappedImage HIHeroBase
+  Texture = HeroBaseIcon.tga
+  TextureWidth = 64
+  TextureHeight = 64
+  Coords = Left:0 Top:0 Right:32 Bottom:32
+End
+MappedImage HIHeroBaseRespawn
+  Texture = HeroBaseRespawn.tga
+  TextureWidth = 64
+  TextureHeight = 64
+  Coords = Left:0 Top:0 Right:32 Bottom:32
+End
+MappedImage HIHeroARespawn
+  Texture = HeroARespawn.tga
+  TextureWidth = 64
+  TextureHeight = 64
+  Coords = Left:0 Top:0 Right:32 Bottom:32
+End
+"""
+        if respawn_portrait
+        else ""
     )
     return f"""
 MappedImage BuildBarracksImage
@@ -214,7 +297,7 @@ MappedImage UPSoldier
   TextureHeight = 64
   Coords = Left:0 Top:0 Right:32 Bottom:32
 End
-""".encode("cp1252")
+{respawn}""".encode("cp1252")
 
 
 def _sound_effects() -> bytes:
@@ -234,6 +317,32 @@ def _voice() -> bytes:
     return b"""
 Multisound SoldierVoice
   Subsounds = SoldierSelect
+End
+"""
+
+
+def _music() -> bytes:
+    return b"""
+MusicTrack BattleTrack01
+  Filename = battle01.mp3
+End
+Multisound Shell2Music
+  Subsounds = BattleTrack01
+End
+Multisound Shell2MusicForLoadScreen
+  Subsounds = BattleTrack01
+End
+"""
+
+
+def _eva() -> bytes:
+    return b"""
+NewEvaEvent FixtureCreated
+  Priority = 5
+  SideSound
+    Side = Men
+    Sound = SoldierSelect
+  End
 End
 """
 
@@ -298,15 +407,19 @@ def _catalog(
     missing_secondary_sound: bool = False,
     additive_voice: bool = False,
     missing_barracks_command_set: bool = False,
+    spell_fx: bool = False,
+    respawn_portrait: bool = False,
 ) -> InstallCatalog:
-    object_source = (
-        _additive_voice_objects()
-        if additive_voice
-        else _objects(
+    if additive_voice:
+        object_source = _additive_voice_objects()
+    elif spell_fx:
+        object_source = _spell_fx_objects()
+    else:
+        object_source = _objects(
             duplicate_porter=duplicate_porter,
             missing_soldier_voice=missing_soldier_voice,
+            respawn_portrait=respawn_portrait,
         )
-    )
     command_set_source = _command_sets()
     if missing_barracks_command_set:
         command_set_source = command_set_source.replace(
@@ -328,10 +441,16 @@ def _catalog(
             ),
             "data/ini/object/goodfaction/men.ini": object_source,
             "data/ini/mappedimages/aptimages/fixture.ini": _mapped_images(
-                missing_train_texture=missing_train_texture
+                missing_train_texture=missing_train_texture,
+                respawn_portrait=respawn_portrait,
             ),
-            "data/ini/soundeffects.ini": _sound_effects(),
+            "data/ini/soundeffects.ini": (
+                _spell_fx_sound_effects() if spell_fx else _sound_effects()
+            ),
             "data/ini/voice.ini": _voice(),
+            "data/ini/fxlist.ini": _fx_lists(),
+            "data/ini/eva.ini": _eva(),
+            "data/ini/music.ini": _music(),
             "data/lotr.str": _strings(),
             "data/ini/upgrade.ini": _upgrades(),
             "data/ini/science.ini": _sciences(),
@@ -343,6 +462,17 @@ def _catalog(
             "data/audio/sounds/soldier_a.wav": b"sample-a",
             "data/audio/sounds/soldier_b.wav": b"sample-b",
             "data/audio/sounds/human_die.wav": b"sample-death",
+            "data/audio/sounds/heal_fx.wav": b"sample-heal-fx",
+            "data/audio/music/battle01.mp3": b"music-battle-01",
+            **(
+                {
+                    "art/compiledtextures/he/herobaseicon.dds": b"texture-hero-base",
+                    "art/compiledtextures/he/herobaserespawn.dds": b"texture-hero-base-respawn",
+                    "art/compiledtextures/he/heroarespawn.dds": b"texture-hero-a-respawn",
+                }
+                if respawn_portrait
+                else {}
+            ),
         },
     )
     return InstallCatalog.build(root)
@@ -578,6 +708,46 @@ class FactionCensusTests(unittest.TestCase):
             )
         )
 
+    def test_module_scoped_button_image_never_shadows_top_level_portrait(self) -> None:
+        # Retail MordorFellBeast shape: the child authors only a RespawnUpdate
+        # module ButtonImage while the parent's top level authors the
+        # recruitment portrait.  The module value is a genuine reference but
+        # must not shadow the inherited top-level one.
+        with tempfile.TemporaryDirectory() as raw:
+            report = census_men_faction(_catalog(Path(raw), respawn_portrait=True))
+        self.assertEqual(report["summary"]["unresolvedCount"], 0)
+        hero = next(
+            item for item in report["definitions"]["objects"] if item["id"] == "HeroA"
+        )
+        self.assertIn(
+            {
+                "field": "ButtonImage",
+                "targetKind": "mapped-image",
+                "targetId": "HIHeroBase",
+                "sourceObjectId": "HeroBase",
+            },
+            hero["edges"],
+        )
+        self.assertIn(
+            {
+                "field": "ButtonImage",
+                "targetKind": "mapped-image",
+                "targetId": "HIHeroARespawn",
+            },
+            hero["edges"],
+        )
+        self.assertIn("HIHeroBase", report["dependencies"]["mappedImages"])
+        self.assertIn("HIHeroARespawn", report["dependencies"]["mappedImages"])
+        self.assertIn(
+            {
+                "field": "ButtonImage",
+                "targetKind": "mapped-image",
+                "targetId": "HIHeroBaseRespawn",
+                "sourceObjectId": "HeroBase",
+            },
+            hero["edges"],
+        )
+
     def test_missing_authored_audio_target_remains_an_unresolved_edge(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             report = census_men_faction(_catalog(Path(raw), missing_soldier_voice=True))
@@ -730,6 +900,36 @@ class FactionCensusTests(unittest.TestCase):
             )
         )
 
+    def test_spellbook_fx_sound_nuggets_become_audio_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            report = census_men_faction(_catalog(Path(raw), spell_fx=True))
+        self.assertEqual(report["summary"]["unresolvedCount"], 0)
+        self.assertEqual(report["unresolved"]["missingFxLists"], [])
+        self.assertIn("FX_HealSpell", report["dependencies"]["fxLists"])
+        self.assertIn("HealSoundFx", report["dependencies"]["audioRootIds"])
+        spellbook = next(
+            item
+            for item in report["definitions"]["objects"]
+            if item["id"] == "MenSpellBook"
+        )
+        self.assertIn(
+            {
+                "field": "TriggerFX",
+                "targetKind": "fx-list",
+                "targetId": "FX_HealSpell",
+            },
+            spellbook["edges"],
+        )
+        self.assertIn(
+            {
+                "field": "FXList:FX_HealSpell",
+                "targetKind": "audio-definition",
+                "targetId": "HealSoundFx",
+                "resolution": "resolved",
+            },
+            spellbook["edges"],
+        )
+
     def test_source_null_texture_policy_covers_only_declared_retail_gaps(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             catalog = _catalog(Path(raw), missing_train_texture=True)
@@ -822,3 +1022,115 @@ class FactionCensusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FactionCensusEvaTests(unittest.TestCase):
+    def test_eva_voice_prefix_routes_side_announcer_sounds(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            report = census_men_faction(_catalog(Path(raw)))
+        self.assertEqual(report["summary"]["unresolvedCount"], 0)
+        self.assertEqual(report["unresolved"]["missingEvaEvents"], [])
+        hero = next(
+            item for item in report["definitions"]["objects"] if item["id"] == "HeroA"
+        )
+        self.assertIn(
+            {
+                "field": "VoiceCreated",
+                "targetKind": "eva-event",
+                "targetId": "FixtureCreated",
+                "resolution": "resolved",
+                "sourceObjectId": "HeroBase",
+            },
+            hero["edges"],
+        )
+        self.assertIn(
+            {
+                "field": "EvaEvent:FixtureCreated",
+                "targetKind": "audio-definition",
+                "targetId": "SoldierSelect",
+                "resolution": "resolved",
+                "sourceObjectId": "HeroBase",
+            },
+            hero["edges"],
+        )
+
+    def test_missing_eva_event_is_an_explicit_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            catalog_root = Path(raw)
+            catalog = _catalog(catalog_root)
+            # Rewrite eva.ini without the referenced event.
+            import zipfile  # noqa: F401  (documents the big archive rewrite below)
+            from importer.tests.test_big import make_big as _make
+            _make(
+                catalog_root / "ini.big",
+                {
+                    "data/ini/playertemplate.ini": _player_template(),
+                    "data/ini/commandset.ini": _command_sets(),
+                    "data/ini/commandbutton.ini": _command_buttons(),
+                    "data/ini/object/goodfaction/men.ini": _objects(),
+                    "data/ini/mappedimages/aptimages/fixture.ini": _mapped_images(),
+                    "data/ini/soundeffects.ini": _sound_effects(),
+                    "data/ini/voice.ini": _voice(),
+                    "data/ini/fxlist.ini": _fx_lists(),
+                    "data/ini/eva.ini": b"\n",
+                    "data/ini/music.ini": _music(),
+                    "data/lotr.str": _strings(),
+                    "data/ini/upgrade.ini": _upgrades(),
+                    "data/ini/science.ini": _sciences(),
+                    "data/ini/specialpower.ini": _special_powers(),
+                    "art/compiledtextures/bu/buildatlas.dds": b"texture-build",
+                    "art/compiledtextures/tr/trainatlas.dds": b"texture-train",
+                    "art/compiledtextures/he/healatlas.dds": b"texture-heal",
+                    "art/compiledtextures/un/unitportrait.dds": b"texture-portrait",
+                    "data/audio/sounds/soldier_a.wav": b"sample-a",
+                    "data/audio/sounds/soldier_b.wav": b"sample-b",
+                    "data/audio/sounds/human_die.wav": b"sample-death",
+                    "data/audio/sounds/heal_fx.wav": b"sample-heal-fx",
+                    "data/audio/music/battle01.mp3": b"music-battle-01",
+                },
+            )
+            report = census_men_faction(InstallCatalog.build(catalog_root))
+        self.assertEqual(report["unresolved"]["missingEvaEvents"], ["FixtureCreated"])
+
+
+class FactionCensusMusicTests(unittest.TestCase):
+    def test_declared_music_roots_resolve_through_music_tracks(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            report = census_playable_faction(
+                _catalog(Path(raw)),
+                player_template="FactionMen",
+                expected_side="Men",
+                music_roots=(
+                    ("Shell2Music", "shell loop"),
+                    ("Shell2MusicForLoadScreen", "load loop"),
+                ),
+            )
+        self.assertEqual(report["summary"]["unresolvedCount"], 0)
+        self.assertEqual(
+            report["dependencies"]["musicRootIds"],
+            ["Shell2Music", "Shell2MusicForLoadScreen"],
+        )
+        self.assertEqual(report["summary"]["musicRootCount"], 2)
+        self.assertIn("Shell2Music", report["dependencies"]["audioRootIds"])
+        self.assertIn(
+            "battle01",
+            {row["id"].casefold() for row in report["resolvedLeaves"]["audio"]["samplePaths"]},
+        )
+        self.assertIn(
+            {
+                "sourceField": "shell loop",
+                "id": "Shell2Music",
+                "edgeKind": "engine-music-root",
+            },
+            report["roots"],
+        )
+
+    def test_undeclared_or_missing_music_root_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(ValueError, "music root"):
+                census_playable_faction(
+                    _catalog(Path(raw)),
+                    player_template="FactionMen",
+                    expected_side="Men",
+                    music_roots=(("AbsentShellMusic", "missing loop"),),
+                )

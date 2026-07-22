@@ -62,7 +62,7 @@ def _text_ids(descriptor: Mapping[str, object]) -> list[str]:
             raise SpellbookPackCompilerError(
                 f"spellbook descriptor {family} requirements are invalid"
             )
-        result[family] = sorted(values, key=str.casefold)
+        result[family] = sorted(values, key=lambda item: (item.casefold(), item))
     return result["mappedImages"], result["audio"], result["strings"]
 
 
@@ -93,11 +93,19 @@ def _image_leaves(
     bindings: dict[str, str] = {}
     metadata: dict[str, dict[str, int]] = {}
     for texture_key in sorted(by_texture):
-        rows = sorted(by_texture[texture_key], key=lambda item: item[0].casefold())
+        rows = sorted(
+            by_texture[texture_key], key=lambda item: (item[0].casefold(), item[0])
+        )
         texture_path = _safe_path(rows[0][1]["compiledTextureVirtualPath"], "icon texture")
         fingerprint = hashlib.sha256(texture_key.encode()).hexdigest()[:8]
         output_directory = f"assets/ui/spellbook/{slug}"
         crops: list[dict[str, object]] = []
+        # Retail references some spell-button images with two casings of one
+        # identifier.  Casefold-derived logical names make those crops
+        # byte-identical duplicates: emit the first casing's crop, keep every
+        # casing's binding, and fail closed only when distinct image evidence
+        # collides on one logical name.
+        seen_crops: dict[str, dict[str, object]] = {}
         for identifier, row in rows:
             coords = row.get("coords")
             if not isinstance(coords, Mapping):
@@ -118,13 +126,20 @@ def _image_leaves(
                     f"spellbook button image crop is invalid: {identifier}"
                 )
             output_name = f"{_slug(identifier)}-{hashlib.sha256(identifier.casefold().encode()).hexdigest()[:8]}.png"
-            crops.append(
-                {
-                    "logicalName": _resource_id("image", identifier),
-                    "output": output_name,
-                    "crop": [left, top, right - left, bottom - top],
-                }
-            )
+            crop = {
+                "logicalName": _resource_id("image", identifier),
+                "output": output_name,
+                "crop": [left, top, right - left, bottom - top],
+            }
+            existing = seen_crops.get(str(crop["logicalName"]).casefold())
+            if existing is None:
+                seen_crops[str(crop["logicalName"]).casefold()] = crop
+                crops.append(crop)
+            elif existing != crop:
+                raise SpellbookPackCompilerError(
+                    "spellbook button images collide on one texture-atlas "
+                    f"logical name with different crops: {identifier}"
+                )
             bindings[identifier] = f"{output_directory}/{output_name}"
             metadata[identifier] = {"width": right - left, "height": bottom - top}
         resources.append(

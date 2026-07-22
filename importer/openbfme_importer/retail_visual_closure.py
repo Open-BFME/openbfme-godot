@@ -21,6 +21,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import threading
 from typing import Iterable
 
 from .paths import safe_relative_parts
@@ -48,6 +49,11 @@ REPORT_SCHEMA = "openbfme.retail-visual-closure"
 REPORT_SCHEMA_VERSION = 1
 MAX_ASSET_FILES = 100_000
 MAX_SAGE_SOURCE_FILES = 25_000
+
+# Per-process inventory/index memo for one effective-assets root. Rebuilds of
+# many object closures in one convert run were re-walking ~40k files each call.
+_ASSET_CONTEXT_CACHE: dict[str, tuple[object, ...]] = {}
+_ASSET_CONTEXT_LOCK = threading.Lock()
 MAX_SAGE_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_TARGET_OBJECTS = 4_096
 MAX_TARGET_W3D_SCANS = 4_096
@@ -507,12 +513,113 @@ def _scan_w3d_candidates(
     return tuple(result)
 
 
+def _trimmed_file_headers(metadata: W3DMetadata) -> W3DFileHeaders:
+    """Return scanned header ids with retail fixed-width padding trimmed.
+
+    W3D chunk name fields are fixed-width strings and retail exporters
+    sometimes pad them with spaces or tabs (for example
+    ``EBSTABLE_A.EBBSTABLES_1 `` or ``DBMINE_A.ROCK_24\\t``).  SAGE logical
+    references never contain whitespace, so padding at a name component's
+    edges is not part of the logical identifier; composite ``hierarchy.clip``
+    ids are trimmed per component because either raw component may carry the
+    padding.  Trimming is the only deterministic normalization; a component
+    that trims to nothing stays fail-closed here, and an id that collides
+    after trimming stays fail-closed in :func:`build_w3d_index`.
+    """
+
+    headers = metadata.file_headers()
+
+    def _trim(kind: str, values: tuple[str, ...]) -> tuple[str, ...]:
+        result: list[str] = []
+        for value in values:
+            parts = [part.strip() for part in value.split(".")]
+            if any(not part for part in parts):
+                raise ValueError(
+                    f"W3D {kind} header id has a whitespace-only component "
+                    f"after retail padding trim: {metadata.virtual_path}"
+                )
+            result.append(".".join(parts))
+        return tuple(result)
+
+    return W3DFileHeaders(
+        virtual_path=headers.virtual_path,
+        model_ids=_trim("model", headers.model_ids),
+        animation_ids=_trim("animation", headers.animation_ids),
+        hierarchy_ids=_trim("hierarchy", headers.hierarchy_ids),
+    )
+
+
+def _model_hierarchy_identifiers(metadata: W3DMetadata) -> list[str]:
+    """Return the exact hierarchy identifiers the model's HLod headers need.
+
+    A model whose HLod hierarchy identifier is not authored inside its own
+    file depends on the external hierarchy source that authors it (the pinned
+    importer resolves that source as a sibling W3D at conversion time).  The
+    recipe lanes need the exact identifier to stage that provider; trim the
+    same retail fixed-width padding as every other header id.
+    """
+
+    identifiers: set[str] = set()
+    for header in metadata.model_headers:
+        parts = [part.strip() for part in header.hierarchy_identifier.split(".")]
+        if any(not part for part in parts):
+            raise ValueError(
+                "W3D model hierarchy id has a whitespace-only component "
+                f"after retail padding trim: {metadata.virtual_path}"
+            )
+        identifiers.add(".".join(parts))
+    return sorted(identifiers, key=str.casefold)
+
+
+_ANIMATION_CHANNEL_CHUNK_NAMES = frozenset(
+    {
+        "animation-channel",
+        "compressed-animation-channel",
+        "compressed-animation-motion-channel",
+    }
+)
+
+def _skinned_mesh_count(metadata: W3DMetadata) -> int:
+    """Count meshes with a vertex-influences stream (actual bone deformation).
+
+    The mesh-header skin geometry flag alone is not proof: retail authors
+    rigid meshes whose header retains the flag without any weights.  The
+    vertex-influences stream is the data the pinned importer deforms with, so
+    it is the only exact skinning evidence.
+    """
+
+    return sum(
+        1 for chunk in metadata.chunks if chunk.chunk_name == "vertex-influences"
+    )
+
+
+def _embedded_animation_channel_count(metadata: W3DMetadata) -> int:
+    """Count keyed channels embedded in the file's own animation chunks.
+
+    Some retail models embed a header-only animation chunk (no channels at
+    all): the clip keys nothing, so it is vacuous evidence rather than an
+    embedded-animation conversion shape.
+    """
+
+    return sum(
+        1
+        for chunk in metadata.chunks
+        if chunk.chunk_name in _ANIMATION_CHANNEL_CHUNK_NAMES
+    )
+
+
 def _scan_hierarchy_candidate_paths(
     scanned: tuple[W3DMetadata, ...],
     w3d_paths: tuple[str, ...],
     already_selected: tuple[str, ...],
 ) -> tuple[str, ...]:
-    """Select exact-stem hierarchy files discovered from animation headers."""
+    """Select exact-stem hierarchy files discovered from animation headers.
+
+    A model's HLod headers reference their pivot source by exact hierarchy
+    identifier, and the pinned importer resolves that source as the
+    exact-stem sibling W3D at conversion time.  Models therefore require
+    those providers exactly the way animation headers do.
+    """
 
     by_stem: dict[str, list[str]] = {}
     for path in w3d_paths:
@@ -521,13 +628,19 @@ def _scan_hierarchy_candidate_paths(
     authored_hierarchies: set[str] = set()
     required_hierarchies: set[str] = set()
     for item in scanned:
-        headers = item.file_headers()
-        authored_hierarchies.update(
+        headers = _trimmed_file_headers(item)
+        authored = {
             identifier.casefold() for identifier in headers.hierarchy_ids
-        )
+        }
+        authored_hierarchies.update(authored)
         for identifier in headers.animation_ids:
             if "." in identifier:
                 required_hierarchies.add(identifier.split(".", 1)[0].casefold())
+        required_hierarchies.update(
+            identifier.casefold()
+            for identifier in _model_hierarchy_identifiers(item)
+            if identifier.casefold() not in authored
+        )
 
     selected_keys = {path.casefold() for path in already_selected}
     follow_up = {
@@ -886,6 +999,112 @@ def default_visual_closure_report_name(object_names: Iterable[str]) -> str:
     return f"retail-visual-closure-{identity}.json"
 
 
+def _assets_root_fingerprint(resolved: Path) -> str:
+    """Stable-ish identity for process-local inventory memoization.
+
+    Prefer the effective-assets manifest (written by extract-all-assets). Fall
+    back to a shallow directory scan fingerprint so in-tree file changes that
+    do not bump the root directory mtime still invalidate the cache.
+    """
+
+    key_parts = [str(resolved).casefold()]
+    manifest = resolved / ".openbfme" / "manifest.json"
+    if manifest.is_file() and not _is_link_like(manifest):
+        try:
+            st = manifest.stat()
+            key_parts.append(f"manifest:{st.st_mtime_ns}:{st.st_size}")
+            # Cheap content peek for totals if present (no full inventory walk).
+            raw = manifest.read_bytes()[:4096]
+            key_parts.append(f"mh:{hashlib.sha256(raw).hexdigest()[:16]}")
+            return "|".join(key_parts)
+        except OSError:
+            pass
+
+    # Bounded shallow walk (depth <= 2, max 2k entries) so deep-only edits
+    # under common retail folders still invalidate the process-local memo.
+    entries: list[tuple[str, int, int]] = []
+    try:
+        for dirpath, dirnames, filenames in os.walk(resolved):
+            relative_dir = Path(dirpath).relative_to(resolved)
+            depth = len(relative_dir.parts)
+            if depth >= 2:
+                dirnames[:] = []
+            dirnames.sort(key=str.casefold)
+            filenames.sort(key=str.casefold)
+            for name in filenames:
+                path = Path(dirpath) / name
+                try:
+                    st = path.stat()
+                    rel = path.relative_to(resolved).as_posix().casefold()
+                    entries.append((rel, int(st.st_mtime_ns), int(st.st_size)))
+                except OSError:
+                    continue
+                if len(entries) >= 2000:
+                    break
+            if len(entries) >= 2000:
+                break
+    except OSError:
+        try:
+            st = resolved.stat()
+            return f"{key_parts[0]}|root:{st.st_mtime_ns}"
+        except OSError:
+            return f"{key_parts[0]}|missing"
+    entries.sort()
+    digest = hashlib.sha256(repr(entries).encode("utf-8")).hexdigest()[:32]
+    return f"{key_parts[0]}|scan:{digest}|n:{len(entries)}"
+
+
+def _asset_context(effective_assets_root: Path | str) -> tuple[object, ...]:
+    """Return cached inventory + SAGE/W3D catalogs for one assets root."""
+
+    root = Path(effective_assets_root).expanduser()
+    try:
+        resolved = root.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"effective-assets root is unavailable: {root}") from exc
+    cache_key = _assets_root_fingerprint(resolved)
+    with _ASSET_CONTEXT_LOCK:
+        cached = _ASSET_CONTEXT_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        # Drop other roots so a long-lived process cannot retain unbounded maps.
+        _ASSET_CONTEXT_CACHE.clear()
+        assets = _inventory_assets(resolved)
+        sources = _sage_sources(assets)
+        definitions = _definition_index(sources)
+        w3d_paths, visual_paths, w3d_records = _path_catalogs(assets)
+        initial_index = build_w3d_index(w3d_paths)
+        packed = (
+            assets,
+            sources,
+            definitions,
+            w3d_paths,
+            visual_paths,
+            w3d_records,
+            initial_index,
+        )
+        _ASSET_CONTEXT_CACHE[cache_key] = packed
+        return packed
+
+
+def clear_visual_closure_asset_cache() -> None:
+    """Test helper: drop the process-local effective-assets cache."""
+
+    with _ASSET_CONTEXT_LOCK:
+        _ASSET_CONTEXT_CACHE.clear()
+
+
+def effective_assets_fingerprint(effective_assets_root: Path | str) -> str:
+    """Public fingerprint for DDC keys that depend on the asset tree."""
+
+    root = Path(effective_assets_root).expanduser()
+    try:
+        resolved = root.resolve(strict=True)
+    except OSError:
+        return f"missing:{root}"
+    return _assets_root_fingerprint(resolved)
+
+
 def build_retail_visual_closure(
     effective_assets_root: Path | str,
     object_names: Iterable[str],
@@ -900,9 +1119,15 @@ def build_retail_visual_closure(
     """
 
     targets = _validated_targets(object_names)
-    assets = _inventory_assets(Path(effective_assets_root))
-    sources = _sage_sources(assets)
-    definitions = _definition_index(sources)
+    (
+        assets,
+        sources,
+        definitions,
+        w3d_paths,
+        visual_paths,
+        w3d_records,
+        initial_index,
+    ) = _asset_context(effective_assets_root)
     target_records, definition_closure, missing_definitions = _definition_closure(
         targets, definitions
     )
@@ -921,9 +1146,6 @@ def build_retail_visual_closure(
     documents = dict(sources)
     documents[_SYNTHETIC_ENTRY] = entry_source
     cst = resolve_sage_documents(_SYNTHETIC_ENTRY, documents)
-
-    w3d_paths, visual_paths, w3d_records = _path_catalogs(assets)
-    initial_index = build_w3d_index(w3d_paths)
     initial_graph = resolve_typed_visual_graph(
         cst, targets, initial_index, visual_paths
     )
@@ -944,7 +1166,7 @@ def build_retail_visual_closure(
         sorted((*initial_scanned, *hierarchy_scanned), key=lambda item: _sort_text(item.virtual_path))
     )
     headers: tuple[W3DFileHeaders, ...] = tuple(
-        item.file_headers() for item in scanned
+        _trimmed_file_headers(item) for item in scanned
     )
     final_index = build_w3d_index(w3d_paths, headers)
     graph = resolve_typed_visual_graph(cst, targets, final_index, visual_paths)
@@ -967,7 +1189,11 @@ def build_retail_visual_closure(
             "virtualPath": item.virtual_path,
             "byteLength": item.byte_length,
             "sha256": item.source_sha256,
-            "headerIds": item.file_headers().neutral(),
+            "headerIds": _trimmed_file_headers(item).neutral(),
+            "modelHierarchyIdentifiers": _model_hierarchy_identifiers(item),
+            "embeddedAnimationChannelCount": _embedded_animation_channel_count(item),
+            "skinnedMeshCount": _skinned_mesh_count(item),
+            "meshCount": len(item.mesh_headers),
             "modelReferences": [
                 reference.neutral() for reference in item.model_references
             ],
@@ -1072,5 +1298,7 @@ __all__ = [
     "REPORT_SCHEMA",
     "REPORT_SCHEMA_VERSION",
     "build_retail_visual_closure",
+    "clear_visual_closure_asset_cache",
     "default_visual_closure_report_name",
+    "effective_assets_fingerprint",
 ]

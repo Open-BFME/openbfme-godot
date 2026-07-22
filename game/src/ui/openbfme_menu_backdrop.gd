@@ -21,9 +21,9 @@ func _draw() -> void:
 
 
 func _draw_sky() -> void:
-	var top := Color("07131f")
-	var horizon := Color("294354")
-	var dusk := Color("725b4b")
+	var top := Color("0a1510")
+	var horizon := Color("3d5145")
+	var dusk := Color("63604a")
 	var bands := 28
 	for band in range(bands):
 		var t := float(band) / float(bands - 1)
@@ -34,8 +34,8 @@ func _draw_sky() -> void:
 		var y1 := size.y * 0.72 * float(band + 1) / float(bands)
 		draw_rect(Rect2(0.0, y0, size.x, y1 - y0 + 1.0), color)
 	var moon_center := Vector2(size.x * 0.77, size.y * 0.20)
-	draw_circle(moon_center, size.y * 0.068, Color(0.70, 0.82, 0.85, 0.07))
-	draw_circle(moon_center, size.y * 0.043, Color(0.82, 0.90, 0.89, 0.11))
+	draw_circle(moon_center, size.y * 0.068, Color(0.68, 0.80, 0.70, 0.07))
+	draw_circle(moon_center, size.y * 0.043, Color(0.80, 0.88, 0.78, 0.11))
 
 
 func _draw_mountains() -> void:
@@ -45,20 +45,20 @@ func _draw_mountains() -> void:
 		_point(0.64, 0.56), _point(0.76, 0.34), _point(0.88, 0.54),
 		_point(0.96, 0.42), _point(1.0, 0.49), _point(1.0, 0.75),
 		_point(0.0, 0.75),
-	]), Color("172b36"))
+	]), Color("152620"))
 	draw_colored_polygon(PackedVector2Array([
 		_point(0.0, 0.66), _point(0.14, 0.51), _point(0.24, 0.63),
 		_point(0.39, 0.48), _point(0.53, 0.65), _point(0.67, 0.49),
 		_point(0.79, 0.62), _point(0.91, 0.50), _point(1.0, 0.61),
 		_point(1.0, 0.80), _point(0.0, 0.80),
-	]), Color("10212b"))
+	]), Color("0e1c15"))
 	for ridge_x in [0.08, 0.33, 0.62, 0.86]:
-		draw_line(_point(ridge_x, 0.54), _point(ridge_x + 0.07, 0.48), Color(0.57, 0.69, 0.72, 0.09), 2.0)
+		draw_line(_point(ridge_x, 0.54), _point(ridge_x + 0.07, 0.48), Color(0.55, 0.68, 0.58, 0.09), 2.0)
 
 
 func _draw_fortress() -> void:
-	var silhouette := Color("09151d")
-	var edge := Color(0.34, 0.49, 0.55, 0.24)
+	var silhouette := Color("0a140f")
+	var edge := Color(0.38, 0.52, 0.38, 0.24)
 	var keep_left := size.x * 0.64
 	var keep_right := size.x * 0.82
 	var base_y := size.y * 0.72
@@ -106,7 +106,7 @@ func _draw_battlefield() -> void:
 		_point(0.0, 0.67), _point(0.17, 0.61), _point(0.36, 0.69),
 		_point(0.56, 0.62), _point(0.75, 0.70), _point(1.0, 0.63),
 		_point(1.0, 1.0), _point(0.0, 1.0),
-	]), Color("08141a"))
+	]), Color("08120b"))
 	# A winding pale road leads toward the fortress.
 	draw_colored_polygon(PackedVector2Array([
 		_point(0.37, 1.0), _point(0.47, 1.0), _point(0.58, 0.75),
@@ -135,12 +135,13 @@ func _draw_bare_tree(x_fraction: float, ground_fraction: float) -> void:
 func _draw_atmosphere() -> void:
 	for index in range(5):
 		var y := size.y * (0.49 + float(index) * 0.055)
-		draw_line(Vector2(0.0, y), Vector2(size.x, y - 20.0), Color(0.62, 0.76, 0.78, 0.035), 28.0)
-	# Darken the lower edge so navigation text stays readable.
-	for index in range(10):
-		var t := float(index) / 9.0
-		var y := size.y * (0.78 + t * 0.22)
-		draw_rect(Rect2(0.0, y, size.x, size.y * 0.025 + 2.0), Color(0.0, 0.0, 0.0, 0.025 + t * 0.055))
+		draw_line(Vector2(0.0, y), Vector2(size.x, y - 20.0), Color(0.60, 0.74, 0.62, 0.035), 28.0)
+	# Darken the lower edge so the navigation row reads like the retail shell's
+	# glass buttons floating over the scene.
+	for index in range(12):
+		var t := float(index) / 11.0
+		var y := size.y * (0.72 + t * 0.28)
+		draw_rect(Rect2(0.0, y, size.x, size.y * 0.024 + 2.0), Color(0.0, 0.0, 0.0, 0.03 + t * 0.075))
 
 
 func _point(x_fraction: float, y_fraction: float) -> Vector2:

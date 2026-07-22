@@ -145,6 +145,46 @@ func _run() -> void:
 	hud.cancel_production_requested.connect(func(queue_index: int) -> void: cancel_requests.append(queue_index))
 	hud.cancel_production_button.pressed.emit()
 	_check("hud_cancel_targets_active_job", cancel_requests == [0], str(cancel_requests))
+	# Fortress hero recruits queue through the same production surface, but their
+	# icons live on the hero roster buttons — the queue chip must fall back to
+	# the hero set and still sweep the CCW dial + countdown (retail training
+	# timer on every producer, heroes included). The chip chrome is parity
+	# chrome; build it directly here (no pack bind in this runner).
+	hud._ensure_production_queue_chips()
+	var hero_image := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	hero_image.fill(Color(0.4, 0.6, 0.9))
+	var hero_icon := ImageTexture.create_from_image(hero_image)
+	var hero_roster_button := Button.new()
+	hero_roster_button.icon = hero_icon
+	# Parent the fixture button under the HUD so hud.free() releases it; an
+	# orphan Button leaks itself plus its default theme resources at exit.
+	hud.add_child(hero_roster_button)
+	hud.hero_buttons["gondorboromir"] = hero_roster_button
+	var hero_queue_fixture: Array[Dictionary] = [{
+		"index": 0,
+		"unit_type": "gondorboromir",
+		"progress": 0.5,
+		"active": true,
+		"remaining_seconds": 12.0,
+	}]
+	hud.set_production_state(["gondorboromir"], true, 1, hero_queue_fixture)
+	var hero_chip: Button = hud.production_queue_buttons[0]
+	_check(
+		"hero_recruit_queue_chip_binds_roster_icon",
+		hero_chip.visible and hero_chip.icon == hero_icon,
+		"visible=%s icon_match=%s" % [str(hero_chip.visible), str(hero_chip.icon == hero_icon)]
+	)
+	var hero_dial := hero_chip.get_node_or_null("TrainingDial") as TextureProgressBar
+	var hero_countdown := hero_chip.get_node_or_null("TrainingCountdown") as Label
+	_check(
+		"hero_recruit_queue_chip_sweeps_ccw_dial_and_countdown",
+		hero_dial != null and hero_dial.visible
+			and hero_dial.fill_mode == TextureProgressBar.FILL_COUNTER_CLOCKWISE
+			and is_equal_approx(float(hero_dial.value), 0.5)
+			and hero_countdown != null and hero_countdown.visible
+			and hero_countdown.text == "12s",
+		"dial=%s countdown=%s" % [str(hero_dial), hero_countdown.text if hero_countdown != null else "null"]
+	)
 	hud.set_production_state([SimScript.SOLDIER_HORDE_ID], true, 0, [])
 	_check(
 		"hud_reports_ready_queue",
@@ -152,6 +192,106 @@ func _run() -> void:
 			and hud.production_queue_label.text == "Production queue ready"
 			and not hud.production_progress.visible
 			and not hud.cancel_production_button.visible
+	)
+	# Battalion OBJECT_UPGRADE purchase surface: compiled rows render as socket
+	# buttons with honest doc-derived text when the pack has no icon/strings
+	# (never a raw id), the NeededUpgrade tech gate locks+greys, and a queued
+	# purchase sweeps the CCW dial with its live countdown.
+	var upgrade_commands: Array[Dictionary] = [{
+		"upgrade_id": "Upgrade_GondorBasicTraining",
+		"command_id": "Command_PurchaseUpgradeGondorBasicTraining",
+		"cost": 300,
+		"duration_ticks": 45,
+		"slot": 6,
+		"label_id": "",
+		"tooltip_id": "",
+		"image_id": "",
+		"research_owned": false,
+		"required_upgrade": "Upgrade_GondorBasicTrainingTech",
+		"applied": false,
+		"queued": false,
+	}]
+	hud.set_battalion_upgrade_state(upgrade_commands, [])
+	var purchase_button: Button = hud._battalion_upgrade_buttons.get("Upgrade_GondorBasicTraining")
+	_check(
+		"battalion_upgrade_button_renders_honest_text_not_raw_id",
+		purchase_button != null
+			and purchase_button.visible
+			and not purchase_button.text.contains("CONTROLBAR:")
+			and not purchase_button.text.contains("Upgrade_"),
+		"text=%s" % (purchase_button.text if purchase_button != null else "null")
+	)
+	_check(
+		"battalion_upgrade_button_locks_until_tech_owned",
+		purchase_button != null
+			and purchase_button.disabled
+			and purchase_button.self_modulate.is_equal_approx(Color(0.45, 0.45, 0.5))
+			and purchase_button.tooltip_text.contains("Cost: 300")
+			and purchase_button.tooltip_text.contains("Requires "),
+		"tooltip=%s" % (purchase_button.tooltip_text if purchase_button != null else "null")
+	)
+	# Tech owned → purchasable; queued → CCW dial + countdown, disabled.
+	upgrade_commands[0]["research_owned"] = true
+	var upgrade_queue_rows: Array[Dictionary] = [{
+		"upgrade_id": "Upgrade_GondorBasicTraining",
+		"duration_ticks": 45,
+		"elapsed_ticks": 9,
+		"progress": 0.2,
+		"remaining_seconds": 36.0,
+	}]
+	hud.set_battalion_upgrade_state(upgrade_commands, upgrade_queue_rows)
+	# Iconless honest-text rows carry progress as the live countdown only (the
+	# dial sweeps the icon texture — none exists here, fail-closed no invented
+	# art); pack-bound rows get the full CCW sweep (verified right after).
+	var purchase_dial := purchase_button.get_node_or_null("TrainingDial") as TextureProgressBar
+	var purchase_countdown := purchase_button.get_node_or_null("TrainingCountdown") as Label
+	_check(
+		"battalion_upgrade_queued_counts_down_on_iconless_button",
+		purchase_dial != null and not purchase_dial.visible
+			and purchase_countdown != null and purchase_countdown.visible
+			and purchase_countdown.text == "36s"
+			and purchase_button.disabled,
+		"dial_visible=%s countdown=%s" % [
+			str(purchase_dial.visible) if purchase_dial != null else "null",
+			purchase_countdown.text if purchase_countdown != null else "null",
+		]
+	)
+	# With a bound icon the same row sweeps the CCW dial (pack buttons ship
+	# buttonImageId — BGArcheryRange_FireArrows / BRArmory_* etc.).
+	var purchase_icon_image := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	purchase_icon_image.fill(Color(0.8, 0.5, 0.2))
+	purchase_button.icon = ImageTexture.create_from_image(purchase_icon_image)
+	hud.set_battalion_upgrade_state(upgrade_commands, upgrade_queue_rows)
+	_check(
+		"battalion_upgrade_queued_sweeps_dial_when_icon_bound",
+		purchase_dial != null and purchase_dial.visible
+			and purchase_dial.fill_mode == TextureProgressBar.FILL_COUNTER_CLOCKWISE
+			and is_equal_approx(float(purchase_dial.value), 0.8)
+			and purchase_countdown != null and purchase_countdown.visible
+			and purchase_countdown.text == "36s"
+			and purchase_button.disabled,
+		"dial=%s countdown=%s" % [
+			str(purchase_dial.value) if purchase_dial != null else "null",
+			purchase_countdown.text if purchase_countdown != null else "null",
+		]
+	)
+	# Applied rows leave the surface entirely (retail removes purchased buttons).
+	upgrade_commands[0]["applied"] = true
+	hud.set_battalion_upgrade_state(upgrade_commands, [])
+	_check(
+		"battalion_upgrade_applied_leaves_surface",
+		not purchase_button.visible,
+		"visible=%s" % str(purchase_button.visible)
+	)
+	var purchase_requests: Array[String] = []
+	hud.battalion_upgrade_requested.connect(func(upgrade_id: String) -> void: purchase_requests.append(upgrade_id))
+	upgrade_commands[0]["applied"] = false
+	hud.set_battalion_upgrade_state(upgrade_commands, [])
+	purchase_button.pressed.emit()
+	_check(
+		"battalion_upgrade_button_emits_purchase_request",
+		purchase_requests == ["Upgrade_GondorBasicTraining"],
+		str(purchase_requests)
 	)
 	hud.free()
 

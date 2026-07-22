@@ -1167,7 +1167,7 @@ class W3dStaticPipelineTests(unittest.TestCase):
                 "deform_ambiguity_absent": False,
             }
         )
-        with self.assertRaisesRegex(RuntimeError, "invalid bones"):
+        with self.assertRaisesRegex(RuntimeError, "skeleton count does not match"):
             _validated_w3d_metadata(not_applied, [], asset_kind="hierarchical")
 
         malformed = root_rigid_report()

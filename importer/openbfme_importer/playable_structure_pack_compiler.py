@@ -115,16 +115,30 @@ def _phase_rows(
     dict[str, set[str]],
     dict[str, set[tuple[str, ...]]],
     dict[str, set[str]],
+    list[str],
+    dict[str, set[str]],
     dict[str, set[tuple[str, ...]]],
+    dict[str, set[str]],
     list[dict[str, object]],
 ]:
     target_key = target_object_id.casefold()
     model_phases: dict[str, set[str]] = {}
     model_conditions: dict[str, set[tuple[str, ...]]] = {}
     model_draw_modules: dict[str, set[str]] = {}
+    module_positions: dict[str, tuple[str, int, str]] = {}
     animation_phases: dict[str, set[str]] = {}
     bib_conditions: dict[str, set[tuple[str, ...]]] = {}
+    bib_identifiers: dict[str, set[str]] = {}
     exclusions: list[dict[str, object]] = []
+    deferred_editor_models: list[
+        tuple[
+            tuple[str, ...],
+            tuple[str, ...],
+            tuple[str, ...],
+            object,
+            str,
+        ]
+    ] = []
     for row in _rows(visual_closure.get("exactLeaves"), "exact visual leaves"):
         if str(row.get("targetObject", "")).casefold() != target_key:
             continue
@@ -155,7 +169,34 @@ def _phase_rows(
                 + ", ".join(sorted(unknown))
             )
         paths = _paths(row, f"structure {kind} leaf")
+        provenance = row.get("provenance", {})
+        scope_path = (
+            provenance.get("scopePath", [])
+            if isinstance(provenance, Mapping)
+            else []
+        )
+        draw_module = (
+            str(scope_path[0])
+            if isinstance(scope_path, list) and scope_path
+            else ""
+        )
         if "world_builder" in condition_keys:
+            # Retail fortresses author ``Model = None`` as their default and
+            # gate the real body behind WORLD_BUILDER because retail fortresses
+            # are always map-placed.  Defer the exclusion decision: when the
+            # object authors no other intact model, the world-builder model is
+            # its only source-backed intact visual and must stay available.
+            if kind == "model" and str(row.get("usage", "")) != "floor-model":
+                deferred_editor_models.append(
+                    (
+                        paths,
+                        tuple(str(value) for value in conditions),
+                        tuple(str(value) for value in raw_phases),
+                        row.get("provenance"),
+                        draw_module,
+                    )
+                )
+                continue
             for path in paths:
                 exclusions.append(
                     {
@@ -169,30 +210,67 @@ def _phase_rows(
         if kind == "model" and str(row.get("usage", "")) == "floor-model":
             for path in paths:
                 bib_conditions.setdefault(path, set()).add(condition_tuple)
+                bib_identifiers.setdefault(path, set()).add(
+                    str(row.get("identifier", ""))
+                )
             continue
-        provenance = row.get("provenance", {})
-        scope_path = (
-            provenance.get("scopePath", [])
-            if isinstance(provenance, Mapping)
-            else []
-        )
-        draw_module = (
-            str(scope_path[0])
-            if isinstance(scope_path, list) and scope_path
-            else ""
-        )
         destination = model_phases if kind == "model" else animation_phases
         for path in paths:
             destination.setdefault(path, set()).update(raw_phases)
             if kind == "model":
                 model_conditions.setdefault(path, set()).add(condition_tuple)
                 model_draw_modules.setdefault(path, set()).add(draw_module)
+                if isinstance(provenance, Mapping):
+                    position = (
+                        str(provenance.get("virtualPath", "")).casefold(),
+                        int(provenance.get("line", 0)),
+                        str(provenance.get("virtualPath", "")),
+                    )
+                    current = module_positions.get(draw_module)
+                    if current is None or position < current:
+                        module_positions[draw_module] = position
+    if any("intact" in phases for phases in model_phases.values()) or not (
+        model_phases
+    ):
+        for paths, _conditions, _phases, _provenance, _module in (
+            deferred_editor_models
+        ):
+            for path in paths:
+                exclusions.append(
+                    {
+                        "kind": "model",
+                        "sourceW3d": path,
+                        "reason": "editor-only-model",
+                    }
+                )
+    else:
+        for paths, condition_tuple, editor_phases, editor_provenance, editor_module in (
+            deferred_editor_models
+        ):
+            for path in paths:
+                model_phases.setdefault(path, set()).update(editor_phases)
+                model_conditions.setdefault(path, set()).add(condition_tuple)
+                model_draw_modules.setdefault(path, set()).add(editor_module)
+                if isinstance(editor_provenance, Mapping):
+                    position = (
+                        str(editor_provenance.get("virtualPath", "")).casefold(),
+                        int(editor_provenance.get("line", 0)),
+                        str(editor_provenance.get("virtualPath", "")),
+                    )
+                    current = module_positions.get(editor_module)
+                    if current is None or position < current:
+                        module_positions[editor_module] = position
+    module_order = sorted(
+        module_positions, key=lambda module: module_positions[module]
+    )
     return (
         model_phases,
         model_conditions,
         model_draw_modules,
+        module_order,
         animation_phases,
         bib_conditions,
+        bib_identifiers,
         exclusions,
     )
 
@@ -239,8 +317,10 @@ def compile_structure_visual_recipe(
         model_phases,
         model_conditions,
         model_draw_modules,
+        draw_module_order,
         animation_phases,
         bib_conditions,
+        bib_identifiers,
         exclusions,
     ) = _phase_rows(visual_closure, target_object_id)
     if not model_phases:
@@ -250,16 +330,86 @@ def compile_structure_visual_recipe(
     slug = _slug(target_object_id)
 
     model_hierarchy_ids: dict[str, frozenset[str]] = {}
+    model_animation_ids: dict[str, frozenset[str]] = {}
+    model_external_hierarchies: dict[str, frozenset[str]] = {}
+    model_skinned_meshes: dict[str, int] = {}
+    model_mesh_counts: dict[str, int] = {}
     for model_path in (*model_phases, *bib_conditions):
         row = scanned.get(model_path.casefold())
         if row is None:
             raise PlayableStructurePackCompilerError(
                 f"structure model is absent from scannedW3d: {model_path}"
             )
-        model_hierarchy_ids[model_path] = frozenset(
+        skinned_mesh_count = row.get("skinnedMeshCount", 0)
+        if (
+            isinstance(skinned_mesh_count, bool)
+            or not isinstance(skinned_mesh_count, int)
+            or skinned_mesh_count < 0
+        ):
+            raise PlayableStructurePackCompilerError(
+                f"scanned W3D skinned mesh count is invalid: {model_path}"
+            )
+        model_skinned_meshes[model_path] = skinned_mesh_count
+        mesh_count = row.get("meshCount")
+        if mesh_count is not None and (
+            isinstance(mesh_count, bool)
+            or not isinstance(mesh_count, int)
+            or mesh_count < 0
+        ):
+            raise PlayableStructurePackCompilerError(
+                f"scanned W3D mesh count is invalid: {model_path}"
+            )
+        model_mesh_counts[model_path] = mesh_count
+        own_ids = frozenset(
             value.casefold() for value in _header_ids(row, "hierarchyIds")
         )
+        model_hierarchy_ids[model_path] = own_ids
+        model_animation_ids[model_path] = frozenset(
+            value.casefold() for value in _header_ids(row, "animationIds")
+        )
+        referenced = row.get("modelHierarchyIdentifiers", [])
+        if not isinstance(referenced, list) or any(
+            not isinstance(value, str) for value in referenced
+        ):
+            raise PlayableStructurePackCompilerError(
+                f"scanned W3D model hierarchy identifiers are invalid: {model_path}"
+            )
+        model_external_hierarchies[model_path] = frozenset(
+            value.casefold()
+            for value in referenced
+            if value.casefold() not in own_ids
+        )
     target_model_keys = {path.casefold() for path in model_phases}
+
+    dependency = visual_closure.get("w3dDependencyClosure")
+    if not isinstance(dependency, Mapping):
+        raise PlayableStructurePackCompilerError("visual texture closure is invalid")
+    row_channel_counts: dict[str, int] = {}
+    for row in scanned.values():
+        channel_count = row.get("embeddedAnimationChannelCount", 0)
+        if (
+            isinstance(channel_count, bool)
+            or not isinstance(channel_count, int)
+            or channel_count < 0
+        ):
+            raise PlayableStructurePackCompilerError(
+                "scanned W3D embedded animation channel count is invalid: "
+                + str(row.get("virtualPath", ""))
+            )
+        row_channel_counts[str(row["virtualPath"]).casefold()] = channel_count
+    retail_absent_textures: dict[str, set[str]] = {}
+    for row in _rows(dependency.get("embeddedTextures"), "embedded textures"):
+        if row.get("status") != "missing":
+            continue
+        source = row.get("sourceW3dVirtualPath")
+        identifier = row.get("identifier")
+        if not isinstance(source, str) or not isinstance(identifier, str):
+            raise PlayableStructurePackCompilerError("embedded texture row is invalid")
+        if not identifier:
+            raise PlayableStructurePackCompilerError(
+                "retail-absent texture identifier is empty"
+            )
+        retail_absent_textures.setdefault(source.casefold(), set()).add(identifier)
 
     animation_bindings: dict[str, dict[str, object]] = {}
     for animation_path in sorted(
@@ -342,6 +492,44 @@ def compile_structure_visual_recipe(
                 hierarchy_patterns.update(required_hierarchy_files)
                 attached_animations.add(animation_path)
         animations.sort(key=lambda item: (item.casefold(), item))
+        external_hierarchies = model_external_hierarchies[model_path]
+        if external_hierarchies:
+            providers = _hierarchy_providers(external_hierarchies, scanned)
+            unresolved = sorted(
+                prefix for prefix, paths in providers.items() if len(paths) != 1
+            )
+            if unresolved:
+                raise PlayableStructurePackCompilerError(
+                    "structure model hierarchy provider is not unique in scannedW3d: "
+                    + ", ".join(unresolved)
+                )
+            hierarchy_patterns.update(paths[0] for paths in providers.values())
+        embedded_animation_ids = model_animation_ids[model_path]
+        channel_count = row_channel_counts[model_path.casefold()]
+        # A header-only embedded animation chunk keys nothing; it is vacuous
+        # evidence, not the adapter's embedded-animation shape.
+        embedded_animation = bool(embedded_animation_ids) and channel_count > 0
+        if embedded_animation and not bind_animations:
+            raise PlayableStructurePackCompilerError(
+                "structure bib model embeds an animation clip: " + model_path
+            )
+        if embedded_animation and animations and animations != [model_path]:
+            raise PlayableStructurePackCompilerError(
+                "structure model mixes bound and embedded animations: " + model_path
+            )
+        pivot_only = (
+            model_mesh_counts[model_path] is not None
+            and model_mesh_counts[model_path] == 0
+        )
+        if pivot_only:
+            if not (own_hierarchies or external_hierarchies):
+                raise PlayableStructurePackCompilerError(
+                    "structure model has no meshes and no hierarchy: " + model_path
+                )
+            if animations or embedded_animation:
+                raise PlayableStructurePackCompilerError(
+                    "structure pivot-only model carries animations: " + model_path
+                )
         patterns = sorted(
             {model_path, *animations, *hierarchy_patterns},
             key=lambda item: (item.casefold(), item),
@@ -351,12 +539,21 @@ def compile_structure_visual_recipe(
         # must use the adapter's explicit, validated root-rigid bake; a model
         # without one is a static mesh. Calling both shapes merely
         # ``w3d-hierarchical`` deferred the distinction until Blender and made
-        # real bib models fail at skin validation.
+        # real bib models fail at skin validation. A model whose HLod headers
+        # reference a hierarchy its own file does not author is the same rigid
+        # carrier with its pivots in a sibling file; the provider is staged so
+        # the pinned importer resolves it exactly. A model that embeds its own
+        # animation clip is the adapter's exact embedded-animation shape. The
+        # bake stays rigid-only: any mesh with a vertex-influences stream is
+        # real skeletal content that baking would destroy, so such models keep
+        # their hierarchy instead. A model with no meshes at all is retail's
+        # authored attachment-pivot carrier (fire and smoke emitters): the
+        # hierarchy IS the content and must survive to the GLB.
         converter = (
             "w3d-bundle"
-            if animations
+            if animations or embedded_animation
             else "w3d-hierarchical"
-            if own_hierarchies
+            if own_hierarchies or external_hierarchies
             else "w3d-static"
         )
         resource_id = _resource_id("structure", slug, PurePosixPath(model_path).stem)
@@ -365,8 +562,17 @@ def compile_structure_visual_recipe(
             options["animations"] = [
                 PurePosixPath(path).name for path in animations
             ]
-        elif own_hierarchies:
+        elif embedded_animation:
+            options["animations"] = [PurePosixPath(model_path).name]
+        elif pivot_only:
+            options["provenPivotOnlyModel"] = True
+        elif (own_hierarchies or external_hierarchies) and (
+            model_skinned_meshes[model_path] == 0
+        ):
             options["provenRootRigidBake"] = True
+        absent = retail_absent_textures.get(model_path.casefold())
+        if absent:
+            options["retailAbsentTextures"] = sorted(absent, key=str.casefold)
         selected_w3d.update(patterns)
         resources.append(
             {
@@ -428,6 +634,7 @@ def compile_structure_visual_recipe(
                 "sourceConditionSets": _condition_sets_list(
                     bib_conditions[bib_path]
                 ),
+                "identifiers": sorted(bib_identifiers.get(bib_path, set())),
                 "resourceId": resource_id,
                 "output": output,
             }
@@ -445,14 +652,25 @@ def compile_structure_visual_recipe(
             }
         )
 
-    dependency = visual_closure.get("w3dDependencyClosure")
-    if not isinstance(dependency, Mapping):
-        raise PlayableStructurePackCompilerError("visual texture closure is invalid")
     selected_keys = {path.casefold() for path in selected_w3d}
     textures: set[str] = set()
     for row in _rows(dependency.get("embeddedTextures"), "embedded textures"):
         source = row.get("sourceW3dVirtualPath")
         if not isinstance(source, str) or source.casefold() not in selected_keys:
+            continue
+        if row.get("status") == "missing":
+            # The texture is absent from the retail install (no exact
+            # candidate); retail renders the model without that map.  Record
+            # the retail-absent reference explicitly instead of guessing a
+            # substitute.  Ambiguous or invalid references stay fail-closed.
+            exclusions.append(
+                {
+                    "kind": "texture",
+                    "identifier": str(row.get("identifier", "")),
+                    "sourceW3d": source,
+                    "reason": "retail-absent-texture",
+                }
+            )
             continue
         if row.get("status") != "resolved":
             raise PlayableStructurePackCompilerError(
@@ -510,6 +728,7 @@ def compile_structure_visual_recipe(
         "resources": [*texture_resources, *resources],
         "lifecycleStates": states,
         "bibStates": bib_states,
+        "drawModuleOrder": draw_module_order,
         "phaseCoverage": {
             "covered": covered_phases,
             "missing": [
@@ -562,6 +781,13 @@ def validate_structure_visual_recipe(value: Mapping[str, object]) -> None:
     if not isinstance(bib_states, list):
         raise PlayableStructurePackCompilerError(
             "structure recipe bib states are invalid"
+        )
+    module_order = value.get("drawModuleOrder")
+    if not isinstance(module_order, list) or any(
+        not isinstance(module, str) for module in module_order
+    ):
+        raise PlayableStructurePackCompilerError(
+            "structure recipe draw module order is invalid"
         )
     for state in (*states, *bib_states):
         if not isinstance(state, Mapping):
@@ -622,10 +848,6 @@ PRESENTED_PHASE_ORDER = (
     "post-collapse",
 )
 
-_EXCLUDED_CONDITION_TOKENS = frozenset(
-    {"SNOW", "WORLD_BUILDER", "BUILD_PLACEMENT_CURSOR", "PHANTOM_STRUCTURE"}
-)
-_EXCLUDED_CONDITION_PREFIXES = ("UPGRADE_", "DOOR_", "USER_", "WEAPONSET_")
 _CONSTRUCTION_CONDITIONS = frozenset(
     {
         "AWAITING_CONSTRUCTION",
@@ -679,20 +901,23 @@ def _runtime_object_id(source_id: str) -> str:
     return "bfme2.object." + slug
 
 
-def _filtered_condition_set(conditions: Sequence[str]) -> tuple[str, ...]:
-    result = []
-    for value in conditions:
-        folded = str(value).upper()
-        if folded in _EXCLUDED_CONDITION_TOKENS:
-            continue
-        if folded.startswith(_EXCLUDED_CONDITION_PREFIXES):
-            continue
-        result.append(folded)
-    return tuple(sorted(result))
+def _exact_condition_set(conditions: Sequence[str]) -> tuple[str, ...]:
+    """Uppercase, order-free authored condition set with no token stripping.
+
+    Canonical phase selection is exact: a state gated by SNOW, UPGRADE_*,
+    DOOR_*, USER_*, or any other extra token is a variant/gated visual and
+    never competes for a base lifecycle phase slot.
+    """
+
+    return tuple(sorted(str(value).upper() for value in conditions))
 
 
 def _canonical_match(phase: str, condition_set: tuple[str, ...]) -> bool:
-    values = set(condition_set)
+    ## Random build variations are engine-picked cosmetic bodies. The composed
+    ## presentation deterministically presents variation ONE (retail authors
+    ## its models as the default state too); other variations stay packed as
+    ## recorded secondary visuals.
+    values = set(condition_set) - {"BUILD_VARIATION_ONE"}
     if phase == "construction":
         return bool(values) and values <= _CONSTRUCTION_CONDITIONS
     if phase == "intact":
@@ -708,27 +933,44 @@ def _canonical_match(phase: str, condition_set: tuple[str, ...]) -> bool:
     return False
 
 
+def _state_canonical_phases(state: Mapping[str, object]) -> set[str]:
+    condition_sets = state.get("sourceConditionSets", [])
+    assert isinstance(condition_sets, list)
+    result: set[str] = set()
+    for phase in LIFECYCLE_PHASE_ORDER:
+        if phase not in state["phases"]:
+            continue
+        if any(
+            _canonical_match(phase, _exact_condition_set(conditions))
+            for conditions in condition_sets
+        ):
+            result.add(phase)
+    return result
+
+
 def _primary_draw_module(
     states: Sequence[Mapping[str, object]],
+    module_order: Sequence[str],
     notes: list[dict[str, object]],
 ) -> tuple[Mapping[str, object], ...]:
     """Restrict phase selection to the primary lifecycle draw module.
 
     Retail structures render several draw modules at once (body, house-color
-    banner, floor bib).  The presenter contract carries exactly one body per
-    phase, so the module authoring the widest lifecycle coverage is the body;
-    every other module's models stay packed but are recorded as unpresented
-    secondary visuals instead of silently competing for phase slots.
+    banner, doors, upgrade sub-draws, floor bib).  The presenter contract
+    carries exactly one body per phase, so the module authoring the widest
+    exact-canonical lifecycle coverage is the body; a coverage tie resolves
+    to the first-authored module (retail authors the body draw first) and is
+    recorded.  Every other module's models stay packed but are recorded as
+    unpresented secondary visuals instead of silently competing for phases.
     """
 
     module_phases: dict[str, set[str]] = {}
     for state in states:
         modules = state.get("drawModules", [])
         assert isinstance(modules, list)
+        canonical = _state_canonical_phases(state)
         for module in modules or [""]:
-            module_phases.setdefault(str(module), set()).update(
-                str(phase) for phase in state["phases"]
-            )
+            module_phases.setdefault(str(module), set()).update(canonical)
     if not module_phases:
         raise PlayableStructurePackCompilerError(
             "structure has no lifecycle draw module evidence"
@@ -739,12 +981,24 @@ def _primary_draw_module(
         for module, phases in module_phases.items()
         if len(phases) == best_coverage
     )
-    if len(winners) != 1:
-        raise PlayableStructurePackCompilerError(
-            "structure primary lifecycle draw module is ambiguous: "
-            + ", ".join(winners)
+    if len(winners) > 1:
+        ordered = [module for module in module_order if module in winners]
+        if len(ordered) != len(winners) or not ordered:
+            raise PlayableStructurePackCompilerError(
+                "structure primary lifecycle draw module is ambiguous: "
+                + ", ".join(winners)
+            )
+        notes.append(
+            {
+                "kind": "phase-visual",
+                "reason": "draw-module-coverage-tie-first-authored",
+                "primaryDrawModule": ordered[0],
+                "tiedDrawModules": winners,
+            }
         )
-    primary = winners[0]
+        primary = ordered[0]
+    else:
+        primary = winners[0]
     result: list[Mapping[str, object]] = []
     for state in states:
         modules = state.get("drawModules", [])
@@ -765,32 +1019,69 @@ def _primary_draw_module(
 
 def _select_phase_states(
     states: Sequence[Mapping[str, object]],
+    module_order: Sequence[str],
     notes: list[dict[str, object]],
 ) -> dict[str, Mapping[str, object]]:
     """Pick the canonical recipe state per authored phase or fail closed."""
 
-    primary_states = _primary_draw_module(states, notes)
+    primary_states = _primary_draw_module(states, module_order, notes)
     selected: dict[str, Mapping[str, object]] = {}
     for phase in LIFECYCLE_PHASE_ORDER:
         candidates: list[Mapping[str, object]] = []
         for state in primary_states:
-            if phase not in state["phases"]:
-                continue
-            condition_sets = state.get("sourceConditionSets", [])
-            assert isinstance(condition_sets, list)
-            if any(
-                _canonical_match(phase, _filtered_condition_set(conditions))
-                for conditions in condition_sets
-            ):
+            if phase in _state_canonical_phases(state):
                 candidates.append(state)
         outputs = {str(state["output"]) for state in candidates}
         if len(outputs) > 1:
             raise PlayableStructurePackCompilerError(
-                f"structure phase visual is ambiguous after weather/editor "
-                f"filtering: {phase}: " + ", ".join(sorted(outputs))
+                f"structure phase visual is ambiguous among exact canonical "
+                f"states: {phase}: " + ", ".join(sorted(outputs))
             )
         if candidates:
             selected[phase] = candidates[0]
+    return selected
+
+
+def _world_builder_intact_fallback(
+    states: Sequence[Mapping[str, object]],
+    module_order: Sequence[str],
+    notes: list[dict[str, object]],
+) -> Mapping[str, object] | None:
+    """Return the exclusively world-builder-gated intact state, when unique.
+
+    Retail fortresses author ``Model = None`` as their default state and gate
+    the real body behind WORLD_BUILDER because retail fortresses are always
+    map-placed.  When no exact-canonical intact state exists, one unambiguous
+    intact model with a world-builder-gated occurrence is the authored default
+    presentation; snow/upgrade-only variants or competing models stay
+    fail-closed.
+    """
+
+    primary_states = _primary_draw_module(states, module_order, notes)
+    candidates = [
+        state
+        for state in primary_states
+        if "intact" in state["phases"]
+        and any(
+            conditions
+            and {str(token).casefold() for token in conditions}
+            <= {"world_builder"}
+            for conditions in state.get("sourceConditionSets", [])
+        )
+    ]
+    outputs = {str(state["output"]) for state in candidates}
+    if len(outputs) != 1:
+        return None
+    selected = candidates[0]
+    notes.append(
+        {
+            "kind": "phase-visual",
+            "phase": "intact",
+            "reason": "world-builder-gated-default-visual",
+            "sourceW3d": str(selected.get("sourceW3d", "")),
+            "drawModules": list(selected.get("drawModules", [])),
+        }
+    )
     return selected
 
 
@@ -840,6 +1131,7 @@ def _evidence_state_clips(
             clips.append(
                 {
                     "clip": name,
+                    "drawModule": scope[0] if scope else "",
                     "rawMode": mode if isinstance(mode, str) else "ONCE",
                     "modeSource": "authored" if isinstance(mode, str) else (
                         "engine-default-once"
@@ -862,10 +1154,8 @@ def _phase_evidence_clips(
         conditions = state.get("conditions", [])
         if not isinstance(conditions, list):
             continue
-        filtered = _filtered_condition_set(
-            [str(value) for value in conditions]
-        )
-        if not _canonical_match(phase, filtered):
+        exact = _exact_condition_set([str(value) for value in conditions])
+        if not _canonical_match(phase, exact):
             continue
         family = str(state.get("family", "")).casefold()
         state_clips = _evidence_state_clips(state)
@@ -885,6 +1175,7 @@ def _phase_animation(
     phase: str,
     bundled_clip_ids: set[str],
     notes: list[dict[str, object]],
+    state_draw_modules: frozenset[str] = frozenset(),
 ) -> dict[str, object]:
     """Derive one phase's declared animation from state evidence, fail closed."""
 
@@ -919,15 +1210,39 @@ def _phase_animation(
                 }
             )
             continue
-        available.append({"clip": name, "mode": mode})
-    if phase == "construction":
-        manual = sorted(
-            {
-                str(clip["clip"])
-                for clip in available
-                if clip["mode"] == "manual-progress"
-            }
+        available.append(
+            {"clip": name, "mode": mode, "drawModule": clip.get("drawModule", "")}
         )
+    if phase == "construction":
+        manual_clips = [
+            clip for clip in available if clip["mode"] == "manual-progress"
+        ]
+        manual = sorted({str(clip["clip"]) for clip in manual_clips})
+        if len(manual) > 1 and state_draw_modules:
+            # Retail structures animate construction in every visible draw
+            # module (the body and, for example, its door or ent).  The
+            # build-progress driver is the clip authored in the selected
+            # construction model's own module; secondary-module clips stay
+            # bundled but do not compete for the presented phase animation.
+            preferred = sorted(
+                {
+                    str(clip["clip"])
+                    for clip in manual_clips
+                    if str(clip.get("drawModule", "")).casefold()
+                    in state_draw_modules
+                }
+            )
+            if len(preferred) == 1:
+                notes.append(
+                    {
+                        "kind": "animation-clip",
+                        "phase": phase,
+                        "clip": preferred[0],
+                        "reason": "manual-construction-clip-primary-draw-module",
+                        "competingClips": manual,
+                    }
+                )
+                manual = preferred
         if len(manual) != 1:
             raise PlayableStructurePackCompilerError(
                 "structure construction phase requires exactly one bundled "
@@ -962,6 +1277,7 @@ def _phase_animation(
 def _floor_draw_bib(
     recipe_bib_states: Sequence[Mapping[str, object]],
     floor_draws: Sequence[Mapping[str, object]],
+    notes: list[dict[str, object]],
 ) -> dict[str, object] | None:
     if not recipe_bib_states and not floor_draws:
         return None
@@ -969,26 +1285,38 @@ def _floor_draw_bib(
         raise PlayableStructurePackCompilerError(
             "structure floor-draw evidence and bib model closure disagree"
         )
-    candidates = [
-        state
-        for state in recipe_bib_states
-        if any(
-            not _filtered_condition_set([str(v) for v in conditions])
-            for conditions in state.get("sourceConditionSets", [])
-        )
-    ]
-    outputs = {str(state["output"]) for state in candidates}
-    if len(outputs) != 1:
-        raise PlayableStructurePackCompilerError(
-            "structure bib visual is absent or ambiguous after weather/editor "
-            "filtering: " + ", ".join(sorted(outputs))
-        )
-    selected = candidates[0]
-    hide_conditions: set[str] = set()
-    start_hidden = False
-    draw_modules: set[str] = set()
-    for draw in floor_draws:
-        draw_modules.add(str(draw.get("moduleKind", "")))
+
+    def _correlated_draws(state: Mapping[str, object]) -> list[Mapping[str, object]]:
+        # The authored link between a floor draw and its bib model is the
+        # draw's own ModelName assignment; module tags are not part of it.
+        identifiers = {
+            str(identifier).casefold()
+            for identifier in state.get("identifiers", [])
+        }
+        if not identifiers:
+            raise PlayableStructurePackCompilerError(
+                "structure floor-draw evidence and bib model closure disagree"
+            )
+        correlated = [
+            draw
+            for draw in floor_draws
+            if any(
+                str(assignment.get("key", "")) == "ModelName"
+                and str(assignment.get("rawValue", "")).strip().casefold()
+                in identifiers
+                for assignment in draw.get("assignments", [])
+                if isinstance(assignment, Mapping)
+            )
+        ]
+        if not correlated:
+            raise PlayableStructurePackCompilerError(
+                "structure floor-draw evidence and bib model closure disagree"
+            )
+        return correlated
+
+    def _draw_facts(draw: Mapping[str, object]) -> tuple[bool, set[str]]:
+        start_hidden = False
+        hide_conditions: set[str] = set()
         for assignment in draw.get("assignments", []):
             if not isinstance(assignment, Mapping):
                 continue
@@ -1002,6 +1330,53 @@ def _floor_draw_bib(
                         "structure floor draw StartHidden value is invalid"
                     )
                 start_hidden = raw == "Yes"
+        return start_hidden, hide_conditions
+
+    candidates = [
+        state
+        for state in recipe_bib_states
+        if any(
+            not _exact_condition_set([str(v) for v in conditions])
+            for conditions in state.get("sourceConditionSets", [])
+        )
+    ]
+    visible: list[Mapping[str, object]] = []
+    for state in candidates:
+        if any(not _draw_facts(draw)[0] for draw in _correlated_draws(state)):
+            visible.append(state)
+        else:
+            # Retail floor draws author hidden variant bibs (StartHidden = Yes)
+            # beside exactly one visible bib; hidden variants stay packed and
+            # are recorded, never presented or silently dropped.
+            notes.append(
+                {
+                    "kind": "bib-visual",
+                    "reason": "start-hidden-authored-bib-not-presented",
+                    "sourceW3d": str(state.get("sourceW3d", "")),
+                    "identifiers": [
+                        str(identifier)
+                        for identifier in state.get("identifiers", [])
+                    ],
+                }
+            )
+    outputs = {str(state["output"]) for state in visible}
+    if len(outputs) != 1:
+        evidence_outputs = outputs or {
+            str(state["output"]) for state in candidates
+        }
+        raise PlayableStructurePackCompilerError(
+            "structure bib visual is absent or ambiguous after weather/editor "
+            "filtering: " + ", ".join(sorted(evidence_outputs))
+        )
+    selected = visible[0]
+    hide_conditions: set[str] = set()
+    start_hidden = True
+    draw_modules: set[str] = set()
+    for draw in _correlated_draws(selected):
+        draw_modules.add(str(draw.get("moduleKind", "")))
+        draw_hidden, draw_hide_conditions = _draw_facts(draw)
+        start_hidden = start_hidden and draw_hidden
+        hide_conditions.update(draw_hide_conditions)
     during_construction = not (
         {"AWAITING_CONSTRUCTION", "PARTIALLY_CONSTRUCTED"} & hide_conditions
     )
@@ -1061,9 +1436,9 @@ _COLLAPSE_FLOAT_FIELDS = {
 }
 
 
-_ANIMATION_SOUND_RE = re.compile(
-    r"^Sound:\s*(?P<event>\S+)\s+Animation:\s*(?P<animation>\S+)\s+"
-    r"Frames:\s*(?P<frames>[0-9 ]+)$"
+_ANIMATION_SOUND_RE = re.compile(r"^Sound:\s*(?P<event>\S+)\s+(?P<groups>Animation:.+)$")
+_ANIMATION_SOUND_GROUP_RE = re.compile(
+    r"Animation:\s*(?P<animation>\S+)\s+Frames:\s*(?P<frames>[0-9]+(?:\s+[0-9]+)*)"
 )
 _MODEL_CONDITION_SOUND_RE = re.compile(
     r"^(?P<condition>.+?)\s+Sound:\s*(?P<event>\S+)$"
@@ -1122,17 +1497,31 @@ def _generic_audio_bindings(
                     raise PlayableStructurePackCompilerError(
                         f"invalid AnimationSound value: {raw!r}"
                     )
-                bindings.append(
-                    {
-                        "animation": match.group("animation"),
-                        "eventId": match.group("event"),
-                        "frames": [
-                            int(value) for value in match.group("frames").split()
-                        ],
-                        "kind": "animation-frame",
-                        "sourceObject": source_object,
-                    }
+                # One authored value may bind the same sound to several
+                # animation/frame groups on a single line.
+                groups = list(
+                    _ANIMATION_SOUND_GROUP_RE.finditer(match.group("groups"))
                 )
+                remainder = _ANIMATION_SOUND_GROUP_RE.sub(
+                    "", match.group("groups")
+                ).strip()
+                if not groups or remainder:
+                    raise PlayableStructurePackCompilerError(
+                        f"invalid AnimationSound value: {raw!r}"
+                    )
+                for group in groups:
+                    bindings.append(
+                        {
+                            "animation": group.group("animation"),
+                            "eventId": match.group("event"),
+                            "frames": [
+                                int(value)
+                                for value in group.group("frames").split()
+                            ],
+                            "kind": "animation-frame",
+                            "sourceObject": source_object,
+                        }
+                    )
     return summary, bindings
 
 
@@ -1286,27 +1675,92 @@ def compose_structure_runtime_document(
         raise PlayableStructurePackCompilerError(
             "structure descriptor lacks a resolved MaxHealth"
         )
-    if not isinstance(damaged, Mapping) or not isinstance(really_damaged, Mapping):
+    has_damage_rule = isinstance(damaged, Mapping) and isinstance(
+        really_damaged, Mapping
+    )
+    if not has_damage_rule and (
+        isinstance(damaged, Mapping) or isinstance(really_damaged, Mapping)
+    ):
         raise PlayableStructurePackCompilerError(
-            "structure descriptor lacks authored damage thresholds required "
-            "by the presenter lifecycle"
+            "structure descriptor authors only one damage threshold; the "
+            "damage state rule cannot be half-proven"
         )
 
     runtime_id = _runtime_object_id(str(descriptor["objectId"]))
     states = visual_recipe["lifecycleStates"]
     assert isinstance(states, list)
+    module_order = visual_recipe.get("drawModuleOrder", [])
+    assert isinstance(module_order, list)
     notes: list[dict[str, object]] = []
-    selected = _select_phase_states(states, notes)
+    if any(
+        "BUILD_VARIATION_ONE" in _exact_condition_set(
+            [str(token) for token in conditions]
+        )
+        for state in states
+        for conditions in state.get("sourceConditionSets", [])
+    ):
+        notes.append(
+            {
+                "kind": "phase-visual",
+                "reason": "build-variation-one-presented",
+            }
+        )
+    selected = _select_phase_states(
+        states, [str(module) for module in module_order], notes
+    )
     intact_state = selected.get("intact")
+    if intact_state is None:
+        intact_state = _world_builder_intact_fallback(
+            states, [str(module) for module in module_order], notes
+        )
     if intact_state is None:
         raise PlayableStructurePackCompilerError(
             "structure has no canonical default-state intact visual"
         )
     construction_state = selected.get("construction")
+    construction_status: str | None = None
     if construction_state is None:
-        raise PlayableStructurePackCompilerError(
-            "structure has no dedicated construction visual"
+        # Retail structures that never construct (engine-spawned composites,
+        # wall templates, and objects authoring no construction states at
+        # all) present a chain starting at intact; the omission is recorded
+        # evidence, never a fabricated construction phase.
+        production = descriptor["production"]
+        assert isinstance(production, Mapping)
+        evidence_kind = str(production.get("evidence", ""))
+        authored_construction_states = any(
+            "construction" in state["phases"] for state in states
         )
+        if evidence_kind in {"engine-spawned-composite", "wall-template"}:
+            construction_status = f"never-constructed-{evidence_kind}"
+        elif not authored_construction_states:
+            construction_status = "no-authored-construction-states"
+        else:
+            raise PlayableStructurePackCompilerError(
+                "structure has no dedicated construction visual"
+            )
+        notes.append(
+            {
+                "kind": "phase-chain",
+                "phase": "construction",
+                "reason": construction_status,
+            }
+        )
+    if not has_damage_rule:
+        notes.append(
+            {
+                "kind": "phase-chain",
+                "phase": "damaged/really-damaged",
+                "reason": "no-authored-damage-thresholds",
+            }
+        )
+    presented_phases = [
+        phase
+        for phase in PRESENTED_PHASE_ORDER
+        if not (phase == "construction" and construction_status is not None)
+        and not (
+            phase in {"damaged", "really-damaged"} and not has_damage_rule
+        )
+    ]
 
     def _visual_for(phase: str) -> tuple[Mapping[str, object], dict[str, object]]:
         state = selected.get(phase)
@@ -1345,23 +1799,25 @@ def compose_structure_runtime_document(
         assert isinstance(clip_ids, list)
         return {str(value) for value in clip_ids}
 
-    construction_condition_sets = [
-        [str(token) for token in conditions]
-        for conditions in construction_state.get("sourceConditionSets", [])
-        if _canonical_match(
-            "construction",
-            _filtered_condition_set([str(token) for token in conditions]),
-        )
-    ]
-    if not construction_condition_sets:
-        raise PlayableStructurePackCompilerError(
-            "structure lacks exact construction conditions"
-        )
+    construction_condition_sets: list[list[str]] = []
+    if construction_state is not None:
+        construction_condition_sets = [
+            [str(token) for token in conditions]
+            for conditions in construction_state.get("sourceConditionSets", [])
+            if _canonical_match(
+                "construction",
+                _exact_condition_set([str(token) for token in conditions]),
+            )
+        ]
+        if not construction_condition_sets:
+            raise PlayableStructurePackCompilerError(
+                "structure lacks exact construction conditions"
+            )
 
     phase_rows: list[dict[str, object]] = []
-    for index, phase in enumerate(PRESENTED_PHASE_ORDER):
+    for index, phase in enumerate(presented_phases):
         next_phase = (
-            PRESENTED_PHASE_ORDER[index + 1]
+            presented_phases[index + 1]
             if phase not in {"post-rubble", "post-collapse"}
             else None
         )
@@ -1390,7 +1846,14 @@ def compose_structure_runtime_document(
         else:
             state, visual = _visual_for(phase)
         animation = _phase_animation(
-            evidence_states, phase, _bundled_clips(state), notes
+            evidence_states,
+            phase,
+            _bundled_clips(state),
+            notes,
+            state_draw_modules=frozenset(
+                str(module).casefold()
+                for module in state.get("drawModules", [])
+            ),
         )
         condition_sets = (
             construction_condition_sets
@@ -1407,9 +1870,15 @@ def compose_structure_runtime_document(
             )
         )
 
-    construction_row = phase_rows[0]
-    construction_animation = construction_row["animation"]
-    assert isinstance(construction_animation, Mapping)
+    construction_animation: Mapping[str, object] | None = next(
+        (
+            row["animation"]
+            for row in phase_rows
+            if row["phase"] == "construction"
+            and isinstance(row["animation"], Mapping)
+        ),
+        None,
+    )
 
     collapse = _generic_collapse_contract(
         [module for module in evidence_modules if isinstance(module, Mapping)]
@@ -1442,22 +1911,33 @@ def compose_structure_runtime_document(
 
     bib_states = visual_recipe.get("bibStates", [])
     assert isinstance(bib_states, list)
-    bib = _floor_draw_bib(bib_states, floor_draws)
+    bib = _floor_draw_bib(bib_states, floor_draws, notes)
 
     simulation_facts: dict[str, object] = {
         "maximumHealth": max_health["value"],
-        "damageStateRule": {
-            "damagedThreshold": damaged["value"],
-            "reallyDamagedThreshold": really_damaged["value"],
-        },
-        "construction": {
-            "buildTimeSeconds": _scalar_number(descriptor, "BuildTime"),
-            "animationMode": "MANUAL",
-            "animation": construction_animation["clip"],
-        },
         "collapse": collapse_facts,
         "postRubble": {"terminalDuration": terminal},
     }
+    if has_damage_rule:
+        assert isinstance(damaged, Mapping)
+        assert isinstance(really_damaged, Mapping)
+        simulation_facts["damageStateRule"] = {
+            "damagedThreshold": damaged["value"],
+            "reallyDamagedThreshold": really_damaged["value"],
+        }
+    else:
+        simulation_facts["damageStateRuleStatus"] = (
+            "no-authored-damage-thresholds"
+        )
+    if construction_status is None:
+        assert construction_animation is not None
+        simulation_facts["construction"] = {
+            "buildTimeSeconds": _scalar_number(descriptor, "BuildTime"),
+            "animationMode": "MANUAL",
+            "animation": construction_animation["clip"],
+        }
+    else:
+        simulation_facts["construction"] = {"status": construction_status}
 
     lifecycle: dict[str, object] = {
         "schema": LIFECYCLE_PRESENTATION_SCHEMA,

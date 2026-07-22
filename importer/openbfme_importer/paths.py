@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import PurePosixPath
 import re
 
 
@@ -15,7 +15,30 @@ WINDOWS_DEVICE_NAMES = {
     "nul",
     *{f"com{index}" for index in range(1, 10)},
     *{f"lpt{index}" for index in range(1, 10)},
+    # Superscript digit COM/LPT forms rejected by pathlib on Windows.
+    "com¹",
+    "com²",
+    "com³",
+    "lpt¹",
+    "lpt²",
+    "lpt³",
 }
+
+# pathlib treats these as reserved prefixes (not only exact stems).
+_WINDOWS_RESERVED_PREFIXES = ("conin$", "conout$")
+
+
+def _is_windows_reserved_part(part: str) -> bool:
+    """Fast equivalent of PureWindowsPath(part).is_reserved() for our checks.
+
+    Avoids constructing pathlib objects per path component (hot on 40k-file walks).
+    """
+
+    # Match pathlib: strip extension and trailing spaces before the first space.
+    stem = part.split(".", 1)[0].split(" ", 1)[0].casefold()
+    if stem in WINDOWS_DEVICE_NAMES:
+        return True
+    return any(stem == prefix or stem.startswith(prefix) for prefix in _WINDOWS_RESERVED_PREFIXES)
 
 
 def safe_relative_parts(value: str) -> tuple[str, ...]:
@@ -34,8 +57,7 @@ def safe_relative_parts(value: str) -> tuple[str, ...]:
             raise ValueError(f"stream/control characters are not allowed: {value!r}")
         if part.endswith(".") or part.endswith(" "):
             raise ValueError(f"trailing dot/space is not allowed: {value!r}")
-        device_stem = part.split(".", 1)[0].casefold()
-        if device_stem in WINDOWS_DEVICE_NAMES or PureWindowsPath(part).is_reserved():
+        if _is_windows_reserved_part(part):
             raise ValueError(f"Windows device path is not allowed: {value!r}")
     return tuple(parts)
 

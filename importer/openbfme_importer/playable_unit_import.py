@@ -14,7 +14,12 @@ from typing import Any, Mapping
 
 from .catalog import InstallCatalog
 from .faction_census import census_playable_faction
-from .faction_policy import implicit_object_roots
+from .faction_policy import (
+    implicit_object_roots,
+    music_roots,
+    source_null_command_sets,
+    source_null_mapped_image_textures,
+)
 from .pipeline import ImportPipeline, audit_pack, bundle_digest
 from .playable_unit_compiler import (
     PlayableUnitCompilerError,
@@ -44,6 +49,8 @@ _REQUIRED_DOCUMENTS = (
     "data/ini/weapon.ini",
     "data/ini/armor.ini",
     "data/ini/upgrade.ini",
+    # Hero ability level gates chain through authored ExperienceLevel grants.
+    "data/ini/experiencelevels.ini",
 )
 
 
@@ -106,6 +113,11 @@ def _select_faction_graph(
             player_template=template,
             expected_side=side,
             implicit_object_roots=implicit_object_roots(template),
+            source_null_mapped_image_textures=source_null_mapped_image_textures(
+                template
+            ),
+            source_null_command_sets=source_null_command_sets(template),
+            music_roots=music_roots(template),
         )
         try:
             descriptor = compile_playable_unit_descriptor(
@@ -136,6 +148,15 @@ def _required_image_ids(descriptor: Mapping[str, object]) -> set[str]:
         for value in command["fields"].get("ButtonImage", []):
             if str(value):
                 result.add(str(value))
+    for ability in descriptor.get("abilities", []):
+        if not isinstance(ability, Mapping):
+            continue
+        button = ability.get("button", {})
+        if not isinstance(button, Mapping):
+            continue
+        for value in button.get("iconIds", []):
+            if str(value):
+                result.add(str(value))
     return result
 
 
@@ -158,6 +179,14 @@ def _required_string_ids(descriptor: Mapping[str, object]) -> set[str]:
         fields = command.get("fields", {})
         for field in ("TextLabel", "DescriptLabel"):
             result.update(str(value) for value in fields.get(field, []) if str(value))
+    for ability in descriptor.get("abilities", []):
+        if not isinstance(ability, Mapping):
+            continue
+        button = ability.get("button", {})
+        if not isinstance(button, Mapping):
+            continue
+        for field in ("labelIds", "tooltipIds"):
+            result.update(str(value) for value in button.get(field, []) if str(value))
     return result
 
 

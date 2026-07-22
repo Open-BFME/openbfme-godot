@@ -11,6 +11,14 @@ materialized.  Their bodies retain assignments and nested blocks in source
 order.  Assignment ``ordinal`` values are zero-based within their containing
 scope; ``key_ordinal`` is the zero-based occurrence of that case-insensitive key.
 
+A top-level ``Object`` header may carry a second token which SAGE treats as a
+parent template (retail ``Object DwarvenFortressMightyCatapult DwarvenCatapult``)
+or, in demo-only leftovers, as an editor annotation (``Object Water Plane``,
+``Object MoriaDebrisPileA (Rocks)``).  This reader records that token as
+``parent`` exactly like the flat :mod:`sage_ini` reader and leaves its meaning
+to later typed passes.  A line opening with an Object-family keyword that fits
+no header shape fails closed instead of being silently skipped.
+
 Retail data occasionally declares an empty module or state block with no body
 and no terminating ``End``.  Such headers are only syntactically
 indistinguishable from real block openers, so when an enclosing scope fails to
@@ -302,6 +310,7 @@ _OBJECT_HEADER = re.compile(
     r"^(Object|ChildObject|ObjectReskin)\s+(\S+)(?:\s+(\S+))?\s*$",
     re.IGNORECASE,
 )
+_OBJECT_KEYWORD = re.compile(r"^(?:Object|ChildObject|ObjectReskin)\b", re.IGNORECASE)
 _INCLUDE_DIRECTIVE = re.compile(r"^#\s*include\s+(.+?)\s*$", re.IGNORECASE)
 _BEGIN_SCRIPT = re.compile(r"^BeginScript\s*$", re.IGNORECASE)
 _END_SCRIPT = re.compile(r"^EndScript\s*$", re.IGNORECASE)
@@ -1005,12 +1014,7 @@ def parse_sage_document(
         object_match = _OBJECT_HEADER.fullmatch(line.text)
         if object_match:
             kind, name, parent = object_match.groups()
-            folded_kind = kind.casefold()
-            if folded_kind == "object" and parent is not None:
-                raise SageCstSyntaxError(
-                    f"Object header has an unexpected parent at {normalized_path}:{line.number}"
-                )
-            if folded_kind != "object" and parent is None:
+            if kind.casefold() != "object" and parent is None:
                 raise SageCstSyntaxError(
                     f"{kind} header lacks a parent at {normalized_path}:{line.number}"
                 )
@@ -1038,6 +1042,11 @@ def parse_sage_document(
             object_ordinal += 1
             continue
 
+        if _OBJECT_KEYWORD.match(line.text):
+            raise SageCstSyntaxError(
+                f"malformed Object-family header at {normalized_path}:{line.number}: "
+                f"{line.text!r}"
+            )
         if line.text.casefold() == "end":
             raise SageCstSyntaxError(f"stray End at {normalized_path}:{line.number}")
         if _BEGIN_SCRIPT.fullmatch(line.text) or _END_SCRIPT.fullmatch(line.text):

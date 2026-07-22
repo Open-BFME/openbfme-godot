@@ -132,7 +132,9 @@ func _run() -> void:
 		for action_id in selected_hud.unit_action_buttons:
 			if String(action_id).begins_with("construct_") and (selected_hud.unit_action_buttons[action_id] as Button).visible:
 				visible_builder_commands += 1
-		_check("selected_pack_builder_exactly_five_construction_commands", visible_builder_commands == 5, str(visible_builder_commands))
+		# Retail (REF-32): the porter's palantir sockets carry only his orders;
+		# every construct command lives on the right-edge side command bar.
+		_check("selected_pack_builder_constructs_live_on_side_bar", visible_builder_commands == 0, str(visible_builder_commands))
 	else:
 		# Treat any selected-pack UI closure gap as an explicit blocker, never as
 		# permission to paint the fake shell.
@@ -188,7 +190,8 @@ func _run() -> void:
 	_check("four_command_binding_atomic_flag", hud.retail_train_commands_bound and hud.retail_train_command_bound)
 	_check("legacy_train_button_aliases_soldier", hud.train_button == hud.train_buttons.get(SOLDIER_ID))
 	_check("exactly_four_deterministic_buttons", hud.train_buttons.size() == 4)
-	_check("eight_source_unit_action_buttons", hud.unit_action_buttons.size() == 8)
+	# attack_move, stop, stance, formation, five construct kinds.
+	_check("nine_source_unit_action_buttons", hud.unit_action_buttons.size() == 9)
 	hud.set_production_state([], false)
 	var selected_member_ids: Array[int] = [7]
 	hud.set_unit_selection_state(selected_member_ids, {7: {"object_id": "bfme2.object.gondor-fighter"}})
@@ -307,9 +310,12 @@ func _check_side_command_bar(hud) -> void:
 		{91: {"object_id": "bfme2.object.men-porter", "is_builder": true}}
 	)
 	var bar = hud.retail_side_command_bar
+	# The porter strip mirrors retail (REF-29): the authored build set minus
+	# the fortress/expansion commands that ride other command sets.
 	var construct_specs := 0
 	for spec_value in HudScript.RETAIL_UNIT_ACTION_SPECS:
-		if String((spec_value as Dictionary)["action_id"]).begins_with("construct_"):
+		var action_id := String((spec_value as Dictionary)["action_id"])
+		if action_id.begins_with("construct_") and not HudScript.PORTER_STRIP_EXCLUDED_KINDS.has(action_id.trim_prefix("construct_")):
 			construct_specs += 1
 	_check(
 		"side_bar_shows_for_builder",
@@ -372,9 +378,10 @@ func _check_complete_binding(prefix: String, hud, content, pack_root: String) ->
 		"%s_no_visible_synthetic_panel_shells" % prefix,
 		hud.get_node("CommandPanel").get_theme_stylebox("panel") is StyleBoxEmpty
 			and hud.get_node("PalantirDock/ResourceStrip").get_theme_stylebox("panel") is StyleBoxEmpty
-			and not hud.get_node("ObjectiveBanner").visible
-			and not hud.get_node("ControlGroupStrip").visible
-			and not hud.get_node("FeedbackPanel").visible
+			# Playable text surfaces stay visible, but shell-less: no synthetic
+			# grey panel art may cover the retail control bar.
+			and hud.get_node("ObjectiveBanner").get_theme_stylebox("panel") is StyleBoxEmpty
+			and hud.get_node("FeedbackPanel").get_theme_stylebox("panel") is StyleBoxEmpty
 	)
 	hud.show_diagnostics("must remain suppressed", true)
 	_check("%s_diagnostics_suppressed" % prefix, not hud.diagnostics_panel.visible)
@@ -468,6 +475,9 @@ func _write_complete_fixture_images() -> Dictionary:
 		var image_id := String(spec["image_id"])
 		var source_size := Vector2i(64, 64) if String(spec["action_id"]).begins_with("construct_") else Vector2i(63, 63)
 		rows[image_id] = _write_fixture_png(image_id, source_size, Color("876a47"))
+	for kind_value in HudScript.EXPANSION_COMMAND_SPECS.keys():
+		var expansion_image_id := String((HudScript.EXPANSION_COMMAND_SPECS[kind_value] as Dictionary)["image_id"])
+		rows[expansion_image_id] = _write_fixture_png(expansion_image_id, Vector2i(64, 64), Color("6a8747"))
 	rows[HudScript.RETAIL_COMMAND_BAR_IMAGE_ID] = _write_fixture_png(
 		HudScript.RETAIL_COMMAND_BAR_IMAGE_ID,
 		HudScript.RETAIL_COMMAND_BAR_SOURCE_SIZE,
@@ -495,6 +505,10 @@ func _fixture_strings() -> Dictionary:
 		var spec: Dictionary = spec_value
 		result[String(spec["label_id"])] = "Fixture %s" % String(spec["button_name"])
 		result[String(spec["tooltip_id"])] = "Fixture tooltip %s" % String(spec["button_name"])
+	for kind_value in HudScript.EXPANSION_COMMAND_SPECS.keys():
+		var expansion_spec: Dictionary = HudScript.EXPANSION_COMMAND_SPECS[kind_value]
+		result[String(expansion_spec["label_id"])] = "Fixture %s" % String((expansion_spec as Dictionary)["button_name"])
+		result[String(expansion_spec["tooltip_id"])] = "Fixture tooltip %s" % String((expansion_spec as Dictionary)["button_name"])
 	return result
 
 

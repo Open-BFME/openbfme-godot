@@ -1077,8 +1077,11 @@ class W3dAnimationImportOutputTests(unittest.TestCase):
 
         self.assertEqual(result, {"FINISHED"})
         self.assertIsNone(suppressed)
-        self.assertEqual(stdout, expected_stdout)
-        self.assertEqual(stderr, expected_stderr)
+        # Capture compaction strips only the byte-exact redundant keyframe
+        # warning class (its count is tracked for the success report); every
+        # other byte survives failure replay exactly.
+        self.assertEqual(stdout, b"stdout-before\nstdout-after\n")
+        self.assertEqual(stderr, b"stderr-after\n")
 
 
 class W3dAnimationGeometryProofTests(unittest.TestCase):
@@ -1468,6 +1471,191 @@ class W3dAnimationGeometryProofTests(unittest.TestCase):
         material_owner.data.materials[0] = FakeMaterial("fixture_metal")
         with self.assertRaisesRegex(RuntimeError, "replaced render material"):
             ADAPTER.assert_render_geometry_unchanged(material_proof, [material_owner])
+
+
+class W3dAdditiveVertexMaterialTests(unittest.TestCase):
+    def _material(self):
+        material = types.SimpleNamespace(
+            name="fixture_additive_vertex_material",
+            use_nodes=True,
+            shader=types.SimpleNamespace(src_blend="1", dest_blend="1"),
+        )
+        principled = FakeNode("BSDF_PRINCIPLED")
+        principled.inputs["Base Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+        material.principled = principled
+        material.node_tree = types.SimpleNamespace(
+            nodes=FakeNodeCollection([principled]), links=FakeLinks()
+        )
+        return material
+
+    def _mesh(self, material, colors):
+        attribute_data = FakeColorAttributeData(colors)
+        attribute = types.SimpleNamespace(
+            name="DCG_0", data=attribute_data, domain="CORNER", data_type="BYTE_COLOR"
+        )
+        mesh_data = types.SimpleNamespace(
+            color_attributes=types.SimpleNamespace(active_color=attribute)
+        )
+        mesh = types.SimpleNamespace(
+            type="MESH",
+            data=mesh_data,
+            material_slots=[types.SimpleNamespace(material=material)],
+        )
+        return mesh, attribute_data
+
+    def _scene(self, material, meshes, images=None):
+        ADAPTER.bpy.data = types.SimpleNamespace(
+            objects=list(meshes),
+            materials=[material],
+            images=list(images or []),
+        )
+
+    def test_textureless_additive_material_converts_vertex_colors(self) -> None:
+        material = self._material()
+        mesh, attribute_data = self._mesh(
+            material, [(0.0, 0.0, 0.0, 1.0), (0.8, 0.4, 0.2, 1.0)]
+        )
+        self._scene(material, [mesh])
+
+        report = ADAPTER.convert_proven_additive_materials([material])
+
+        self.assertEqual(report["converted_materials"], 1)
+        converted = list(attribute_data)
+        self.assertEqual(converted[0], (0.0, 0.0, 0.0, 0.0))
+        self.assertAlmostEqual(converted[1][0], 1.0)
+        self.assertAlmostEqual(converted[1][1], 0.5)
+        self.assertAlmostEqual(converted[1][2], 0.25)
+        self.assertAlmostEqual(converted[1][3], 0.8)
+        base_color = material.principled.inputs["Base Color"].default_value
+        self.assertEqual(tuple(base_color), (1.0, 1.0, 1.0, 1.0))
+        color_links = [
+            link
+            for link in material.node_tree.links
+            if link.to_socket is material.principled.inputs["Base Color"]
+        ]
+        self.assertEqual(len(color_links), 1)
+        self.assertEqual(color_links[0].from_node.layer_name, "DCG_0")
+        alpha_links = [
+            link
+            for link in material.node_tree.links
+            if link.to_socket is material.principled.inputs["Alpha"]
+        ]
+        self.assertEqual(len(alpha_links), 1)
+        self.assertIs(alpha_links[0].from_node, color_links[0].from_node)
+
+    def test_textureless_additive_material_without_colors_uses_constant(self) -> None:
+        material = self._material()
+        mesh = types.SimpleNamespace(
+            type="MESH",
+            data=types.SimpleNamespace(color_attributes=None),
+            material_slots=[types.SimpleNamespace(material=material)],
+        )
+        self._scene(material, [mesh])
+
+        report = ADAPTER.convert_proven_additive_materials([material])
+
+        self.assertEqual(report["converted_materials"], 1)
+        base_color = material.principled.inputs["Base Color"].default_value
+        self.assertEqual(tuple(base_color), (0.0, 0.0, 0.0, 1.0))
+        self.assertEqual(material.principled.inputs["Alpha"].default_value, 0.0)
+
+    def test_textureless_additive_material_with_nonblack_constant_fails(self) -> None:
+        material = self._material()
+        material.principled.inputs["Base Color"].default_value = (0.5, 0.0, 0.0, 1.0)
+        mesh, _attribute_data = self._mesh(material, [(1.0, 1.0, 1.0, 1.0)])
+        self._scene(material, [mesh])
+        with self.assertRaisesRegex(RuntimeError, "ambiguous color source"):
+            ADAPTER.convert_proven_additive_materials([material])
+
+    def test_textureless_additive_material_shared_mesh_fails(self) -> None:
+        material = self._material()
+        other = types.SimpleNamespace(name="other")
+        mesh, _attribute_data = self._mesh(material, [(1.0, 1.0, 1.0, 1.0)])
+        mesh.material_slots.append(types.SimpleNamespace(material=other))
+        self._scene(material, [mesh])
+        with self.assertRaisesRegex(RuntimeError, "shares its render mesh"):
+            ADAPTER.convert_proven_additive_materials([material])
+
+    def test_textureless_additive_material_without_meshes_fails(self) -> None:
+        material = self._material()
+        self._scene(material, [])
+        with self.assertRaisesRegex(RuntimeError, "no render mesh"):
+            ADAPTER.convert_proven_additive_materials([material])
+
+
+class FakeNodeCollection(list):
+    def new(self, node_type: str):
+        node = FakeNode(node_type)
+        if node_type == "ShaderNodeVertexColor":
+            node.outputs = FakeSocketCollection(
+                {name: FakeSocket(name, node) for name in ("Color", "Alpha")}
+            )
+        self.append(node)
+        return node
+
+
+class FakeColorAttributeData(list):
+    def foreach_get(self, attribute: str, buffer: list[float]) -> None:
+        assert attribute == "color"
+        buffer[:] = [channel for row in self for channel in row]
+
+    def foreach_set(self, attribute: str, values) -> None:
+        assert attribute == "color"
+        flat = list(values)
+        self[:] = [
+            tuple(flat[offset : offset + 4]) for offset in range(0, len(flat), 4)
+        ]
+
+
+class W3dRetailAbsentTextureTests(unittest.TestCase):
+    def test_normalize_rejects_unsafe_or_duplicate_basenames(self) -> None:
+        with self.assertRaises(ValueError):
+            ADAPTER.normalize_retail_absent_textures(["a.tga", "a.tga"])
+        with self.assertRaises(ValueError):
+            ADAPTER.normalize_retail_absent_textures(["../escape.tga"])
+        with self.assertRaises(ValueError):
+            ADAPTER.normalize_retail_absent_textures(["no_extension"])
+        with self.assertRaises(ValueError):
+            ADAPTER.normalize_retail_absent_textures(["evil.exe"])
+        self.assertEqual(
+            ADAPTER.normalize_retail_absent_textures(["B.tga", "a.dds"]),
+            ["B.tga", "a.dds"],
+        )
+
+    def test_clear_only_tolerated_generated_placeholders(self) -> None:
+        placeholder = types.SimpleNamespace(name="NBElvnBarx_D_NRM.dds", source="GENERATED")
+        other = types.SimpleNamespace(name="other_missing.dds", source="GENERATED")
+        staged = types.SimpleNamespace(name="staged.dds", source="FILE")
+        image_node = types.SimpleNamespace(type="TEX_IMAGE", image=placeholder)
+        other_node = types.SimpleNamespace(type="TEX_IMAGE", image=other)
+        nodes = FakeNodeCollection([image_node, other_node])
+        ADAPTER.bpy.data = types.SimpleNamespace(
+            images=FakeImageCollection([placeholder, other, staged]),
+            materials=[
+                types.SimpleNamespace(
+                    node_tree=types.SimpleNamespace(nodes=nodes, links=[])
+                )
+            ],
+        )
+
+        cleared = ADAPTER.clear_retail_absent_textures(["NBElvnBarx_D_NRM.tga"])
+
+        self.assertEqual(cleared, ["NBElvnBarx_D_NRM.dds"])
+        self.assertNotIn(placeholder, ADAPTER.bpy.data.images)
+        self.assertIn(other, ADAPTER.bpy.data.images)
+        self.assertIn(staged, ADAPTER.bpy.data.images)
+        self.assertNotIn(image_node, nodes)
+        self.assertIn(other_node, nodes)
+
+    def test_unmatched_tolerated_name_fails_closed(self) -> None:
+        ADAPTER.bpy.data = types.SimpleNamespace(images=[], materials=[])
+        with self.assertRaisesRegex(RuntimeError, "did not match a generated placeholder"):
+            ADAPTER.clear_retail_absent_textures(["absent.tga"])
+
+
+class FakeImageCollection(list):
+    def remove(self, value):
+        super().remove(value)
 
 
 if __name__ == "__main__":

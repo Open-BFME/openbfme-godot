@@ -21,12 +21,17 @@ from .playable_unit_compiler import (
     PlayableUnitCompilerInputs,
     _ancestry,
     _command_slots,
+    _default_set_target,
+    _effective_body_health,
     _effective_top_blocks,
     _effective_values,
     _first,
     _kind_of,
     _named_blocks,
+    _named_definition_values,
     _resolved_expression,
+    _resolved_multiplicative_expression,
+    _resolved_set_field,
     _tokens,
     prepare_playable_unit_compiler,
 )
@@ -49,6 +54,7 @@ WEAPON_PATH = "data/ini/weapon.ini"
 UPGRADE_PATH = "data/ini/upgrade.ini"
 FX_PARTICLE_PATH = "data/ini/fxparticlesystem.ini"
 PLAYER_TEMPLATE_PATH = "data/ini/playertemplate.ini"
+LOCOMOTOR_PATH = "data/ini/locomotor.ini"
 
 _SPELL_BOOK_KIND = "SPELL_BOOK"
 _PURCHASE_COMMAND = "purchase_science"
@@ -58,12 +64,12 @@ _MAX_NESTED_BLOCKS = 65_536
 
 # Behavior-module fields bound to typed effect leaves.  Any other
 # reference-shaped field on a spell-power module fails closed below.
-_MODULE_OCL_FIELDS = frozenset({"ocl", "healocl", "elvenwoodocl"})
-_MODULE_FX_FIELDS = frozenset({"triggerfx", "healfx", "elvenwoodfx"})
+_MODULE_OCL_FIELDS = frozenset({"ocl", "healocl", "elvenwoodocl", "taintocl"})
+_MODULE_FX_FIELDS = frozenset({"triggerfx", "healfx", "elvenwoodfx", "taintfx", "fx"})
 _MODULE_MODIFIER_FIELDS = frozenset({"attributemodifier"})
 _MODULE_UPGRADE_FIELDS = frozenset({"upgradename"})
-_MODULE_OBJECT_FIELDS = frozenset({"sunbeamobject", "elvengroveobject"})
-_MODULE_WEAPON_FIELDS = frozenset({"weapon", "weaponname"})
+_MODULE_OBJECT_FIELDS = frozenset({"sunbeamobject", "elvengroveobject", "taintobject"})
+_MODULE_WEAPON_FIELDS = frozenset({"weapon", "weaponname", "fireweapon"})
 _MODIFIER_FX_FIELDS = frozenset({"fx", "fx2", "fx3"})
 _FX_PARTICLE_SECTION = "particlesystem"
 _FX_SOUND_SECTION = "sound"
@@ -120,6 +126,26 @@ def _numeric_defines(source: bytes, label: str) -> dict[str, int | float]:
     return result
 
 
+def _text_defines(source: bytes) -> dict[str, str]:
+    """Single-line #define constants with free-text values (object filters).
+
+    Values keep their authored token order; the numeric-only parser above
+    deliberately skips these.
+    """
+
+    result: dict[str, str] = {}
+    pattern = re.compile(
+        rb"(?m)^[ \t]*#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+([^\r\n;]+?)[ \t]*(?://|;|\r?$)"
+    )
+    for match in pattern.finditer(source):
+        key = match.group(1).decode("ascii").casefold()
+        value = match.group(2).decode("ascii").strip()
+        if not value or value.replace(".", "").replace("-", "").isdigit():
+            continue
+        result.setdefault(key, value)
+    return result
+
+
 def _merged_defines(
     documents: Mapping[str, bytes], prepared: PlayableUnitCompilerInputs
 ) -> dict[str, int | float]:
@@ -143,9 +169,7 @@ def _resolved_field(
 ) -> dict[str, object]:
     value = _resolved_expression(expression, constants)
     if value is None:
-        raise SpellbookCompilerError(
-            f"{label} has unresolved expression: {expression}"
-        )
+        raise SpellbookCompilerError(f"{label} has unresolved expression: {expression}")
     return {"value": value, "expression": expression}
 
 
@@ -205,7 +229,9 @@ def _dependency_ids(graph: Mapping[str, object], family: str) -> tuple[str, ...]
     if not isinstance(dependencies, Mapping):
         raise SpellbookCompilerError("faction graph dependencies are invalid")
     values = dependencies.get(family)
-    if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+    if not isinstance(values, list) or any(
+        not isinstance(item, str) for item in values
+    ):
         raise SpellbookCompilerError(f"faction graph {family} dependencies are invalid")
     if len({item.casefold() for item in values}) != len(values):
         raise SpellbookCompilerError(f"faction graph has duplicate {family} ids")
@@ -232,9 +258,7 @@ def _graph_context(
         raise SpellbookCompilerError(
             "faction graph playerTemplate/faction identity pair is invalid"
         )
-    graph_identity = _sha256(
-        graph.get("inputSetSha256"), "factionGraphInputSetSha256"
-    )
+    graph_identity = _sha256(graph.get("inputSetSha256"), "factionGraphInputSetSha256")
     summary = graph.get("summary")
     if not isinstance(summary, Mapping):
         raise SpellbookCompilerError("faction graph summary is invalid")
@@ -260,7 +284,9 @@ def _graph_context(
         folded = field.casefold()
         if folded == "spellbookmp":
             if spellbook_id is not None:
-                raise SpellbookCompilerError("faction graph has multiple SpellBookMP roots")
+                raise SpellbookCompilerError(
+                    "faction graph has multiple SpellBookMP roots"
+                )
             spellbook_id = identifier
         elif folded == "purchasesciencecommandsetmp":
             if store_set_id is not None:
@@ -282,9 +308,7 @@ def _graph_context(
         graph_identity,
         spellbook_id,
         store_set_id,
-        tuple(
-            sorted(intrinsic.values(), key=lambda item: (item.casefold(), item))
-        ),
+        tuple(sorted(intrinsic.values(), key=lambda item: (item.casefold(), item))),
     )
 
 
@@ -300,7 +324,9 @@ def _player_template_check(
         )
     template = prepared.player_templates.get(template_id.casefold())
     if template is None:
-        raise SpellbookCompilerError(f"effective PlayerTemplate is missing: {template_id}")
+        raise SpellbookCompilerError(
+            f"effective PlayerTemplate is missing: {template_id}"
+        )
     book = _first(template.values("SpellBookMP"))
     store = _first(template.values("PurchaseScienceCommandSetMP"))
     if book is None or book.casefold() != spellbook_id.casefold():
@@ -317,7 +343,9 @@ def _player_template_check(
 def _button(prepared: PlayableUnitCompilerInputs, command_id: str) -> IniBlock:
     block = prepared.command_buttons.get(command_id.casefold())
     if block is None:
-        raise SpellbookCompilerError(f"effective CommandButton is missing: {command_id}")
+        raise SpellbookCompilerError(
+            f"effective CommandButton is missing: {command_id}"
+        )
     return block
 
 
@@ -393,7 +421,9 @@ def _unique_blocks(source: bytes, kind: str, path: str) -> dict[str, IniBlock]:
     try:
         return _named_blocks(source, kind)
     except ValueError as exc:
-        raise SpellbookCompilerError(f"{path} has ambiguous {kind} blocks: {exc}") from exc
+        raise SpellbookCompilerError(
+            f"{path} has ambiguous {kind} blocks: {exc}"
+        ) from exc
 
 
 def _cross_check_definition(
@@ -448,7 +478,9 @@ def _prerequisite_groups(block: IniBlock) -> tuple[tuple[str, ...], ...]:
     return tuple(tuple(group) for group in groups)
 
 
-def _nested_named_blocks(source: bytes, kind: str, path: str) -> dict[str, dict[str, object]]:
+def _nested_named_blocks(
+    source: bytes, kind: str, path: str
+) -> dict[str, dict[str, object]]:
     """Parse one flat-nested SAGE family such as ObjectCreationList or Weapon.
 
     Each named block carries ordered scalar assignments and ordered nested
@@ -524,7 +556,11 @@ def _nested_named_blocks(source: bytes, kind: str, path: str) -> dict[str, dict[
                 raise SpellbookCompilerError(
                     f"{path} {kind} {name} has an unsupported statement: {line!r}"
                 )
-            section: dict[str, object] = {"kind": tokens[0], "assignments": [], "sections": []}
+            section: dict[str, object] = {
+                "kind": tokens[0],
+                "assignments": [],
+                "sections": [],
+            }
             if stack:
                 nested = stack[-1]["sections"]
                 assert isinstance(nested, list)
@@ -534,7 +570,9 @@ def _nested_named_blocks(source: bytes, kind: str, path: str) -> dict[str, dict[
             stack.append(section)
             cursor += 1
         if not closed:
-            raise SpellbookCompilerError(f"{path} has an unterminated {kind} block: {name}")
+            raise SpellbookCompilerError(
+                f"{path} has an unterminated {kind} block: {name}"
+            )
         result[key] = {"id": name, "assignments": assignments, "sections": sections}
         index = cursor
     return result
@@ -583,6 +621,10 @@ class _LeafResolver:
         self._census_upgrades = census_upgrades
         particle_source = _required_document(documents, FX_PARTICLE_PATH)
         self._particle_definitions = list(parse_particle_definitions(particle_source))
+        self._documents = documents
+        self._text_defines = _text_defines(
+            _required_document(documents, "data/ini/gamedata.ini")
+        )
         self.ocls: dict[str, dict[str, object]] = {}
         self.fx_lists: dict[str, dict[str, object]] = {}
         self.weapons: dict[str, dict[str, object]] = {}
@@ -591,6 +633,7 @@ class _LeafResolver:
         self.objects: dict[str, dict[str, object]] = {}
         self.particles: dict[str, dict[str, object]] = {}
         self.audio_ids: dict[str, str] = {}
+        self.used_locomotor = False
 
     def object_reference(self, identifier: str, label: str) -> None:
         key = identifier.casefold()
@@ -598,16 +641,320 @@ class _LeafResolver:
             return
         target = self._prepared.objects.get(key)
         if target is None:
-            raise SpellbookCompilerError(f"{label} references a missing Object: {identifier}")
-        kinds = _kind_of(_ancestry(self._prepared.objects, target))
-        self.objects[key] = {"id": target.name, "kindOf": list(kinds)}
+            raise SpellbookCompilerError(
+                f"{label} references a missing Object: {identifier}"
+            )
+        self.objects[key] = self._project_effect_object(target, label)
+
+    def _resolve_numeric(self, expression: str) -> int | float | None:
+        return _resolved_multiplicative_expression(expression, self._constants)
+
+    def _project_effect_object(
+        self, target: SageObject, label: str
+    ) -> dict[str, object]:
+        """Bounded structured projection of one effect-referenced Object.
+
+        The effect families the runtime consumes are converted with full
+        inheritance applied (Body/health, summon lifetimes, hatch OCLs, horde
+        payloads, weapon sets, fire-weapon nuggets, attribute-modifier auras,
+        locomotors).  Any other Behavior module on the object is recorded by
+        name in ``unconvertedBehaviors`` so the runtime gate can hold the
+        power locked with the exact gap — evidence is never silently dropped.
+        """
+
+        lineage = _ancestry(self._prepared.objects, target)
+        leaf: dict[str, object] = {
+            "id": target.name,
+            "kindOf": list(_kind_of(lineage)),
+            "sourceIni": target.source_virtual_path,
+            "line": target.line,
+        }
+        for source_name, output_name in (
+            ("EquivalentTo", "equivalentTo"),
+            ("Scale", "scale"),
+            ("VisionRange", "visionRange"),
+            ("CommandPoints", "commandPoints"),
+        ):
+            values = list(_effective_values(lineage, source_name))
+            if len(values) == 1:
+                resolved = self._resolve_numeric(values[0].value.strip())
+                leaf[output_name] = (
+                    resolved if resolved is not None else values[0].value.strip()
+                )
+        health = _effective_body_health(lineage, self._constants)
+        body_kinds = {
+            block.kind
+            for block in _effective_top_blocks(lineage)
+            if (block.header_key or "").casefold() == "body"
+        }
+        if body_kinds:
+            leaf["bodyKinds"] = sorted(body_kinds, key=str.casefold)
+        if health is not None:
+            leaf["maxHealth"] = health["value"]
+        if any(kind.casefold() == "immortalbody" for kind in body_kinds):
+            leaf["immortal"] = True
+        weapon_name = _default_set_target(lineage, "WeaponSet", "Weapon")
+        if weapon_name is not None:
+            leaf["weaponId"] = self.weapon(weapon_name, f"{label} WeaponSet")
+        locomotor_name = _default_set_target(lineage, "LocomotorSet", "Locomotor")
+        if locomotor_name is not None:
+            self._project_locomotor(leaf, lineage, locomotor_name, label)
+        variations = list(_effective_values(lineage, "BuildVariations"))
+        if len(variations) == 1:
+            variation_ids: list[str] = []
+            for token in _tokens(variations[0].value):
+                self.object_reference(token, f"{label} BuildVariations")
+                variation_ids.append(self.objects[token.casefold()]["id"])
+            if variation_ids:
+                leaf["buildVariations"] = variation_ids
+        unconverted: set[str] = set()
+        for block in _effective_top_blocks(lineage):
+            if (block.header_key or "").casefold() != "behavior":
+                continue
+            kind = block.kind.casefold()
+            if kind == "lifetimeupdate":
+                self._project_lifetime(leaf, block)
+            elif kind == "deletionupdate":
+                self._project_deletion(leaf, block)
+            elif kind == "slowdeathbehavior":
+                self._project_hatch(leaf, block, label)
+            elif kind in ("hordecontain", "horsehordecontain", "aodhordecontain"):
+                self._project_horde(leaf, block, label)
+            elif kind == "fireweaponupdate":
+                self._project_fire_weapons(leaf, block, label)
+            elif kind == "attributemodifierauraupdate":
+                self._project_aura(leaf, block, label)
+            else:
+                unconverted.add(block.kind)
+        if unconverted:
+            leaf["unconvertedBehaviors"] = sorted(unconverted, key=str.casefold)
+        return leaf
+
+    def _block_numeric(
+        self, block: SageBlock, field: str
+    ) -> tuple[int | float | None, str | None]:
+        values = block.values(field)
+        if len(values) != 1:
+            return None, None
+        return self._resolve_numeric(values[0].strip()), values[0].strip()
+
+    def _project_lifetime(self, leaf: dict[str, object], block: SageBlock) -> None:
+        minimum, _ = self._block_numeric(block, "MinLifetime")
+        maximum, _ = self._block_numeric(block, "MaxLifetime")
+        if minimum is None and maximum is None:
+            return
+        row: dict[str, object] = {}
+        if minimum is not None:
+            row["minMs"] = minimum
+        if maximum is not None:
+            row["maxMs"] = maximum
+        death_type = next(iter(block.values("DeathType")), None)
+        if death_type is not None:
+            row["deathType"] = death_type.strip()
+        leaf["lifetime"] = row
+
+    def _project_deletion(self, leaf: dict[str, object], block: SageBlock) -> None:
+        minimum, _ = self._block_numeric(block, "MinLifetime")
+        maximum, _ = self._block_numeric(block, "MaxLifetime")
+        if minimum is None and maximum is None:
+            return
+        row: dict[str, object] = {}
+        if minimum is not None:
+            row["minMs"] = minimum
+        if maximum is not None:
+            row["maxMs"] = maximum
+        leaf["deletion"] = row
+
+    def _project_hatch(
+        self, leaf: dict[str, object], block: SageBlock, label: str
+    ) -> None:
+        ocl_values = block.values("OCL")
+        if len(ocl_values) != 1:
+            return
+        tokens = _tokens(ocl_values[0])
+        if not tokens:
+            raise SpellbookCompilerError(
+                f"{label} SlowDeathBehavior has an invalid OCL"
+            )
+        hatch_ocl = tokens[-1]
+        delay, _ = self._block_numeric(block, "DestructionDelay")
+        row: dict[str, object] = {
+            "trigger": tokens[0] if len(tokens) > 1 else "FINAL",
+            "ocl": self.object_creation_list(hatch_ocl, f"{label} SlowDeathBehavior"),
+        }
+        if delay is not None:
+            row["destructionDelayMs"] = delay
+        leaf["hatch"] = row
+
+    def _project_horde(
+        self, leaf: dict[str, object], block: SageBlock, label: str
+    ) -> None:
+        row: dict[str, object] = {}
+        payload_values = block.values("InitialPayload")
+        if len(payload_values) == 1:
+            tokens = _tokens(payload_values[0])
+            if len(tokens) >= 2:
+                self.object_reference(tokens[0], f"{label} InitialPayload")
+                count = self._resolve_numeric(tokens[1])
+                if count is None:
+                    raise SpellbookCompilerError(
+                        f"{label} InitialPayload has an unresolved count: {tokens[1]}"
+                    )
+                row["memberObject"] = self.objects[tokens[0].casefold()]["id"]
+                row["memberCount"] = count
+        slots, _ = self._block_numeric(block, "Slots")
+        if slots is not None:
+            row["slots"] = slots
+        ranks: list[dict[str, object]] = []
+        for value in block.values("RankInfo"):
+            rank_match = re.search(r"RankNumber\s*:\s*(\d+)", value)
+            positions = [
+                [float(x), float(y)]
+                for x, y in re.findall(
+                    r"Position\s*:\s*X\s*:\s*(-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s+Y\s*:\s*(-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))",
+                    value,
+                )
+            ]
+            if rank_match is None or not positions:
+                raise SpellbookCompilerError(f"{label} has a malformed RankInfo row")
+            ranks.append({"rank": int(rank_match.group(1)), "positions": positions})
+        if ranks:
+            row["ranks"] = ranks
+        if row:
+            leaf["horde"] = row
+
+    def _project_fire_weapons(
+        self, leaf: dict[str, object], block: SageBlock, label: str
+    ) -> None:
+        nuggets: list[dict[str, object]] = []
+        for nugget in block.blocks:
+            if nugget.kind.casefold() != "fireweaponnugget":
+                raise SpellbookCompilerError(
+                    f"{label} FireWeaponUpdate has an unsupported {nugget.kind} section"
+                )
+            names = nugget.values("WeaponName")
+            if len(names) != 1:
+                raise SpellbookCompilerError(
+                    f"{label} FireWeaponNugget must have exactly one WeaponName"
+                )
+            row: dict[str, object] = {
+                "weapon": self.weapon(names[0].strip(), f"{label} FireWeaponNugget")
+            }
+            delay, _ = self._block_numeric(nugget, "FireDelay")
+            if delay is not None:
+                row["fireDelayMs"] = delay
+            one_shot = next(iter(nugget.values("OneShot")), None)
+            if one_shot is not None:
+                row["oneShot"] = one_shot.strip()
+            nuggets.append(row)
+        if nuggets:
+            leaf["fireWeapons"] = nuggets
+
+    def _project_aura(
+        self, leaf: dict[str, object], block: SageBlock, label: str
+    ) -> None:
+        names = block.values("BonusName")
+        if len(names) != 1:
+            raise SpellbookCompilerError(
+                f"{label} AttributeModifierAuraUpdate must have exactly one BonusName"
+            )
+        row: dict[str, object] = {
+            "modifier": self.attribute_modifier(names[0].strip(), f"{label} BonusName")
+        }
+        refresh, _ = self._block_numeric(block, "RefreshDelay")
+        if refresh is not None:
+            row["refreshDelayMs"] = refresh
+        aura_range, _ = self._block_numeric(block, "Range")
+        if aura_range is not None:
+            row["range"] = aura_range
+        object_filter = next(iter(block.values("ObjectFilter")), None)
+        if object_filter is not None:
+            row["objectFilter"] = self._text_define(object_filter.strip())
+        required = next(iter(block.values("RequiredConditions")), None)
+        if required is not None:
+            row["requiredConditions"] = required.strip()
+        leaf["aura"] = row
+
+    def _text_define(self, expression: str) -> str:
+        return str(self._text_defines.get(expression.casefold(), expression))
+
+    def _project_locomotor(
+        self,
+        leaf: dict[str, object],
+        lineage: Sequence[SageObject],
+        locomotor_name: str,
+        label: str,
+    ) -> None:
+        definition = _named_definition_values(
+            self._documents, "Locomotor", locomotor_name
+        )
+        if definition is None:
+            raise SpellbookCompilerError(
+                f"{label} references a missing Locomotor: {locomotor_name}"
+            )
+        self.used_locomotor = True
+        row: dict[str, object] = {"id": locomotor_name}
+        # Per-object Speed is authored on the Object's LocomotorSet block;
+        # response fields live in the shared locomotor.ini definition.
+        speed = _resolved_set_field(lineage, "LocomotorSet", "Speed", self._constants)
+        if speed is not None:
+            row["speed"] = speed["value"]
+        for output_name, source_name in (
+            ("acceleration", "Acceleration"),
+            ("braking", "Braking"),
+        ):
+            rows = definition.get(source_name.casefold(), ())
+            if len(rows) != 1:
+                continue
+            expression = str(rows[0].get("expression", ""))
+            # Locomotor rows carry trailing `//` comments (the shared parser
+            # strips `;` only); the authored value is the numeric prefix.
+            cleaned = expression.split("//", 1)[0].split(";", 1)[0].strip()
+            resolved = self._resolve_numeric(cleaned)
+            if resolved is None:
+                raise SpellbookCompilerError(
+                    f"{label} Locomotor {locomotor_name} has an unresolved {source_name}: {expression}"
+                )
+            row[output_name] = resolved
+        turn_rate_rows = definition.get("turnrate", ())
+        turn_time_rows = definition.get("turntime", ())
+        if len(turn_rate_rows) == 1:
+            cleaned = (
+                str(turn_rate_rows[0].get("expression", ""))
+                .split("//", 1)[0]
+                .split(";", 1)[0]
+                .strip()
+            )
+            resolved = self._resolve_numeric(cleaned)
+            if resolved is None:
+                raise SpellbookCompilerError(
+                    f"{label} Locomotor {locomotor_name} has an unresolved TurnRate"
+                )
+            row["turnRateDegreesPerSecond"] = resolved
+        elif len(turn_time_rows) == 1:
+            cleaned = (
+                str(turn_time_rows[0].get("expression", ""))
+                .split("//", 1)[0]
+                .split(";", 1)[0]
+                .strip()
+            )
+            resolved = self._resolve_numeric(cleaned)
+            if resolved is None or float(resolved) <= 0.0:
+                raise SpellbookCompilerError(
+                    f"{label} Locomotor {locomotor_name} has an unresolved TurnTime"
+                )
+            # Mirrors the playable-unit lane: 360 degrees over TurnTime (ms).
+            row["turnRateDegreesPerSecond"] = 360000.0 / float(resolved)
+        leaf["locomotor"] = row
 
     def particle_reference(self, identifier: str, label: str) -> None:
         key = identifier.casefold()
         if key in self.particles:
             return
         try:
-            definition = select_particle_definition(self._particle_definitions, identifier)
+            definition = select_particle_definition(
+                self._particle_definitions, identifier
+            )
         except ValueError as exc:
             raise SpellbookCompilerError(f"{label}: {exc}") from exc
         self.particles[key] = {
@@ -616,12 +963,16 @@ class _LeafResolver:
             "sourceSha256": definition.source.sha256,
         }
 
-    def _fx_section(self, section: Mapping[str, object], label: str) -> dict[str, object]:
+    def _fx_section(
+        self, section: Mapping[str, object], label: str
+    ) -> dict[str, object]:
         kind = str(section.get("kind", ""))
         fields: list[dict[str, str]] = []
         for assignment in section.get("assignments", []):
             if not isinstance(assignment, Mapping):
-                raise SpellbookCompilerError(f"{label} FXList section payload is invalid")
+                raise SpellbookCompilerError(
+                    f"{label} FXList section payload is invalid"
+                )
             fields.append(
                 {
                     "key": str(assignment.get("field", "")),
@@ -651,7 +1002,9 @@ class _LeafResolver:
                 )
             identifier = _first((names[0],))
             if identifier is None:
-                raise SpellbookCompilerError(f"{label} Sound nugget has an invalid Name")
+                raise SpellbookCompilerError(
+                    f"{label} Sound nugget has an invalid Name"
+                )
             self.audio_ids.setdefault(identifier.casefold(), identifier)
             row["soundId"] = identifier
         nested = [
@@ -668,17 +1021,26 @@ class _LeafResolver:
             return str(self.fx_lists[key]["id"])
         record = self._fx_lists.get(key)
         if record is None:
-            raise SpellbookCompilerError(f"{label} references a missing FXList: {identifier}")
+            raise SpellbookCompilerError(
+                f"{label} references a missing FXList: {identifier}"
+            )
         sections = record.get("sections")
         if not isinstance(sections, list):
             raise SpellbookCompilerError(f"FXList {identifier} payload is invalid")
-        nuggets = [self._fx_section(section, f"{label} FXList {identifier}") for section in sections]
+        nuggets = [
+            self._fx_section(section, f"{label} FXList {identifier}")
+            for section in sections
+        ]
         source = record.get("sourceSpan")
         if not isinstance(source, Mapping) or not isinstance(source.get("sha256"), str):
-            raise SpellbookCompilerError(f"FXList {identifier} source evidence is invalid")
+            raise SpellbookCompilerError(
+                f"FXList {identifier} source evidence is invalid"
+            )
         self.fx_lists[key] = {
             "id": str(record.get("fxListId", identifier)),
-            "sourceSha256": _sha256(source.get("sha256"), f"FXList {identifier} sourceSha256"),
+            "sourceSha256": _sha256(
+                source.get("sha256"), f"FXList {identifier} sourceSha256"
+            ),
             "nuggets": nuggets,
         }
         return str(self.fx_lists[key]["id"])
@@ -713,7 +1075,11 @@ class _LeafResolver:
             object_ids: list[str] = []
             particle_ids: list[str] = []
             for field, value in section.get("assignments", []):  # type: ignore[misc]
-                fields.append({"key": str(field), "value": str(value)})
+                row: dict[str, object] = {"key": str(field), "value": str(value)}
+                resolved = self._resolve_numeric(str(value))
+                if resolved is not None:
+                    row["resolved"] = resolved
+                fields.append(row)  # type: ignore[arg-type]
                 folded = str(field).casefold()
                 if folded == "objectnames":
                     for token in _tokens(str(value)):
@@ -727,7 +1093,9 @@ class _LeafResolver:
                         raise SpellbookCompilerError(
                             f"ObjectCreationList {identifier} has an invalid ParticleSystem"
                         )
-                    self.particle_reference(token, f"ObjectCreationList {identifier} ParticleSystem")
+                    self.particle_reference(
+                        token, f"ObjectCreationList {identifier} ParticleSystem"
+                    )
                     particle_ids.append(self.particles[token.casefold()]["id"])
             if not object_ids:
                 raise SpellbookCompilerError(
@@ -777,7 +1145,9 @@ class _LeafResolver:
             return str(self.upgrades[key]["id"])
         block = self._upgrades.get(key)
         if block is None:
-            raise SpellbookCompilerError(f"{label} references a missing Upgrade: {identifier}")
+            raise SpellbookCompilerError(
+                f"{label} references a missing Upgrade: {identifier}"
+            )
         digest = _gameplay_digest(block)
         census_row = self._census_upgrades.get(key)
         if census_row is not None and str(census_row["definitionSha256"]) != digest:
@@ -797,18 +1167,43 @@ class _LeafResolver:
             return str(self.weapons[key]["id"])
         block = self._weapons.get(key)
         if block is None:
-            raise SpellbookCompilerError(f"{label} references a missing Weapon: {identifier}")
+            raise SpellbookCompilerError(
+                f"{label} references a missing Weapon: {identifier}"
+            )
         fields: list[dict[str, str]] = []
         fire_fx: list[str] = []
         projectile: str | None = None
         for field, value in block["assignments"]:  # type: ignore[misc]
-            fields.append({"key": str(field), "value": str(value)})
+            row: dict[str, object] = {"key": str(field), "value": str(value)}
+            min_max = re.fullmatch(
+                r"\s*Min\s*:\s*(\S+)\s+Max\s*:\s*(\S+)\s*", str(value)
+            )
+            if min_max is not None:
+                minimum = self._resolve_numeric(min_max.group(1))
+                maximum = self._resolve_numeric(min_max.group(2))
+                if minimum is not None and maximum is not None:
+                    row["resolvedMin"] = minimum
+                    row["resolvedMax"] = maximum
+            else:
+                resolved = self._resolve_numeric(str(value))
+                if resolved is not None:
+                    row["resolved"] = resolved
+            fields.append(row)  # type: ignore[arg-type]
             folded = str(field).casefold()
             if folded == "firefx":
                 token = _first((str(value),))
                 if token is None:
-                    raise SpellbookCompilerError(f"Weapon {identifier} has an invalid FireFX")
-                fire_fx.append(self.fx_list(token, f"Weapon {identifier} FireFX"))
+                    raise SpellbookCompilerError(
+                        f"Weapon {identifier} has an invalid FireFX"
+                    )
+                # FireFX ids are validated but not traversed: weapon fire
+                # presentation belongs to the FX lane, and deep traversal
+                # drags unpackaged audio chains into this lane's packaging.
+                if token.casefold() not in self._fx_lists:
+                    raise SpellbookCompilerError(
+                        f"Weapon {identifier} references a missing FXList: {token}"
+                    )
+                fire_fx.append(token)
             elif folded == "projectiletemplatename":
                 token = _first((str(value),))
                 if token is None:
@@ -819,9 +1214,13 @@ class _LeafResolver:
                     raise SpellbookCompilerError(
                         f"Weapon {identifier} has ambiguous ProjectileTemplateName"
                     )
-                self.object_reference(token, f"Weapon {identifier} ProjectileTemplateName")
+                self.object_reference(
+                    token, f"Weapon {identifier} ProjectileTemplateName"
+                )
                 projectile = self.objects[token.casefold()]["id"]
-            elif folded.endswith("ocl") or (folded.endswith("template") and folded != "projectiletemplatename"):
+            elif folded.endswith("ocl") or (
+                folded.endswith("template") and folded != "projectiletemplatename"
+            ):
                 raise SpellbookCompilerError(
                     f"Weapon {identifier} has an unsupported effect leaf field: {field}"
                 )
@@ -830,6 +1229,37 @@ class _LeafResolver:
             for section in block["sections"]  # type: ignore[misc]
         ]
         row: dict[str, object] = {"id": str(block["id"]), "fields": fields}
+        radius_affects = [
+            str(value).strip()
+            for field, value in block["assignments"]  # type: ignore[misc]
+            if str(field).casefold() == "radiusdamageaffects"
+        ]
+        if len(radius_affects) == 1:
+            row["radiusDamageAffects"] = radius_affects[0]
+        damage_nuggets: list[dict[str, object]] = []
+        for section in block["sections"]:  # type: ignore[misc]
+            if str(section.get("kind", "")).casefold() != "damagenugget":
+                continue
+            entry: dict[str, object] = {}
+            for field, value in section.get("assignments", []):  # type: ignore[misc]
+                folded = str(field).casefold()
+                if folded in (
+                    "damage",
+                    "radius",
+                    "delaytime",
+                    "damagemaxheightaboveterrain",
+                ):
+                    resolved = self._resolve_numeric(str(value))
+                    if resolved is None:
+                        raise SpellbookCompilerError(
+                            f"Weapon {identifier} DamageNugget has an unresolved {field}: {value}"
+                        )
+                    entry[folded] = resolved
+                elif folded in ("damagetype", "deathtype", "damagescalar", "damagefx"):
+                    entry[folded] = str(value).strip()
+            damage_nuggets.append(entry)
+        if damage_nuggets:
+            row["damageNuggets"] = damage_nuggets
         if fire_fx:
             row["fireFx"] = fire_fx
         if projectile is not None:
@@ -839,9 +1269,14 @@ class _LeafResolver:
         self.weapons[key] = row
         return str(row["id"])
 
-    def _weapon_nugget(self, section: Mapping[str, object], label: str) -> dict[str, object]:
+    def _weapon_nugget(
+        self, section: Mapping[str, object], label: str
+    ) -> dict[str, object]:
         fields: list[dict[str, str]] = []
-        row: dict[str, object] = {"kind": str(section.get("kind", "")), "fields": fields}
+        row: dict[str, object] = {
+            "kind": str(section.get("kind", "")),
+            "fields": fields,
+        }
         fire_fx: list[str] = []
         for field, value in section.get("assignments", []):  # type: ignore[misc]
             fields.append({"key": str(field), "value": str(value)})
@@ -849,8 +1284,26 @@ class _LeafResolver:
             if folded == "firefx":
                 token = _first((str(value),))
                 if token is None:
-                    raise SpellbookCompilerError(f"{label} has an invalid nugget FireFX")
-                fire_fx.append(self.fx_list(token, f"{label} nugget FireFX"))
+                    raise SpellbookCompilerError(
+                        f"{label} has an invalid nugget FireFX"
+                    )
+                fire_fx.append(token)
+            elif folded == "warheadtemplatename":
+                token = _first((str(value),))
+                if token is None:
+                    raise SpellbookCompilerError(
+                        f"{label} has an invalid WarheadTemplateName"
+                    )
+                # Bow/lob weapons carry their damage on the warhead weapon.
+                row["warheadId"] = self.weapon(token, f"{label} WarheadTemplateName")
+            elif folded == "projectiletemplatename":
+                token = _first((str(value),))
+                if token is None:
+                    raise SpellbookCompilerError(
+                        f"{label} has an invalid ProjectileTemplateName"
+                    )
+                self.object_reference(token, f"{label} ProjectileTemplateName")
+                row["projectileTemplateId"] = self.objects[token.casefold()]["id"]
             elif folded.endswith("ocl") or folded.endswith("template"):
                 raise SpellbookCompilerError(
                     f"{label} has an unsupported nugget effect leaf field: {field}"
@@ -885,7 +1338,28 @@ def _effect_modules(
                 f"spell-power module {block.kind} has ambiguous SpecialPowerTemplate"
             )
         key = templates[0].casefold()
-        if key in result:
+        previous = result.get(key)
+        if previous is not None:
+            identity = (
+                block.kind.casefold(),
+                tuple(
+                    (assignment.key.casefold(), assignment.value.strip())
+                    for assignment in block.assignments
+                ),
+            )
+            previous_identity = (
+                previous.kind.casefold(),
+                tuple(
+                    (assignment.key.casefold(), assignment.value.strip())
+                    for assignment in previous.assignments
+                ),
+            )
+            if identity == previous_identity:
+                # Retail 1.06 authors a byte-identical duplicate binding for
+                # one evil spell power (RainOfFire/RainOfFire02).  It is one
+                # effective module, not an ambiguity; conflicting duplicates
+                # still fail closed below.
+                continue
             raise SpellbookCompilerError(
                 f"spell-power {templates[0]} is bound by multiple modules"
             )
@@ -895,10 +1369,26 @@ def _effect_modules(
     return result
 
 
-def _module_field_rows(block: SageBlock) -> list[dict[str, object]]:
+def _module_field_rows(
+    block: SageBlock,
+    constants: Mapping[str, int | float],
+    text_defines: Mapping[str, str],
+) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for assignment in block.assignments:
-        rows.append({"key": assignment.key, "value": assignment.value.strip()})
+        row: dict[str, object] = {
+            "key": assignment.key,
+            "value": assignment.value.strip(),
+        }
+        resolved = _resolved_multiplicative_expression(
+            assignment.value.strip(), constants
+        )
+        if resolved is not None:
+            row["resolved"] = resolved
+        resolved_text = text_defines.get(assignment.value.strip().casefold())
+        if resolved_text is not None:
+            row["resolvedText"] = resolved_text
+        rows.append(row)
     return rows
 
 
@@ -919,7 +1409,9 @@ def _module_leaves(
         if folded in _MODULE_OCL_FIELDS:
             if token is None:
                 raise SpellbookCompilerError(f"{label} has an invalid {assignment.key}")
-            ocls.append(resolver.object_creation_list(token, f"{label} {assignment.key}"))
+            ocls.append(
+                resolver.object_creation_list(token, f"{label} {assignment.key}")
+            )
         elif folded in _MODULE_FX_FIELDS:
             if token is None:
                 raise SpellbookCompilerError(f"{label} has an invalid {assignment.key}")
@@ -927,7 +1419,9 @@ def _module_leaves(
         elif folded in _MODULE_MODIFIER_FIELDS:
             if token is None:
                 raise SpellbookCompilerError(f"{label} has an invalid {assignment.key}")
-            modifiers.append(resolver.attribute_modifier(token, f"{label} {assignment.key}"))
+            modifiers.append(
+                resolver.attribute_modifier(token, f"{label} {assignment.key}")
+            )
         elif folded in _MODULE_UPGRADE_FIELDS:
             if token is None:
                 raise SpellbookCompilerError(f"{label} has an invalid {assignment.key}")
@@ -937,7 +1431,10 @@ def _module_leaves(
                 raise SpellbookCompilerError(f"{label} has an invalid {assignment.key}")
             resolver.object_reference(token, f"{label} {assignment.key}")
             objects.append(
-                {"field": assignment.key, "id": resolver.objects[token.casefold()]["id"]}
+                {
+                    "field": assignment.key,
+                    "id": resolver.objects[token.casefold()]["id"],
+                }
             )
         elif folded in _MODULE_WEAPON_FIELDS:
             if token is None:
@@ -1030,7 +1527,9 @@ def compile_spellbook_descriptor(
     command_set_id = command_values[0]
     command_set = prepared.command_sets.get(command_set_id.casefold())
     if command_set is None:
-        raise SpellbookCompilerError(f"effective CommandSet is missing: {command_set_id}")
+        raise SpellbookCompilerError(
+            f"effective CommandSet is missing: {command_set_id}"
+        )
     store_set = prepared.command_sets.get(store_set_id.casefold())
     if store_set is None:
         raise SpellbookCompilerError(f"effective CommandSet is missing: {store_set_id}")
@@ -1041,7 +1540,9 @@ def compile_spellbook_descriptor(
     tree_science_ids: dict[str, str] = {}
     referenced_science_ids: dict[str, str] = {}
 
-    def _science_row(block: IniBlock, purchase: dict[str, object] | None) -> dict[str, object]:
+    def _science_row(
+        block: IniBlock, purchase: dict[str, object] | None
+    ) -> dict[str, object]:
         digest = _cross_check_definition(block, census_sciences, "Science")
         groups = _prerequisite_groups(block)
         flat = sorted(
@@ -1056,11 +1557,15 @@ def compile_spellbook_descriptor(
             "id": block.name,
             "definitionSha256": digest,
             "isGrantable": grantable.strip().casefold() == "yes",
-            "pointCost": _required_scalar(block, "SciencePurchasePointCost", constants, label),
+            "pointCost": _required_scalar(
+                block, "SciencePurchasePointCost", constants, label
+            ),
             "prerequisiteGroups": [list(group) for group in groups],
             "prerequisites": flat,
         }
-        mp_cost = _optional_scalar(block, "SciencePurchasePointCostMP", constants, label)
+        mp_cost = _optional_scalar(
+            block, "SciencePurchasePointCostMP", constants, label
+        )
         if mp_cost is None:
             if purchase is not None:
                 raise SpellbookCompilerError(
@@ -1074,7 +1579,9 @@ def compile_spellbook_descriptor(
 
     for slot, command_id in _command_slots(store_set):
         button = _button(prepared, command_id)
-        science_id = _unique_button_target(button, "Science", _PURCHASE_COMMAND, "spell store")
+        science_id = _unique_button_target(
+            button, "Science", _PURCHASE_COMMAND, "spell store"
+        )
         key = science_id.casefold()
         if key in tree_science_ids:
             raise SpellbookCompilerError(
@@ -1116,7 +1623,9 @@ def compile_spellbook_descriptor(
     effect_modules = _effect_modules(lineage)
     for slot, command_id in _command_slots(command_set):
         button = _button(prepared, command_id)
-        power_id = _unique_button_target(button, "SpecialPower", _CAST_COMMAND, "spell book")
+        power_id = _unique_button_target(
+            button, "SpecialPower", _CAST_COMMAND, "spell book"
+        )
         key = power_id.casefold()
         if key in tree_power_ids:
             raise SpellbookCompilerError(
@@ -1124,7 +1633,9 @@ def compile_spellbook_descriptor(
             )
         block = power_blocks.get(key)
         if block is None:
-            raise SpellbookCompilerError(f"effective SpecialPower is missing: {power_id}")
+            raise SpellbookCompilerError(
+                f"effective SpecialPower is missing: {power_id}"
+            )
         label = f"SpecialPower {power_id}"
         digest = _cross_check_definition(block, census_powers, "SpecialPower")
         enum = _one_value(block, "Enum", label)
@@ -1145,7 +1656,9 @@ def compile_spellbook_descriptor(
                 continue
             science_block = science_blocks.get(science_key)
             if science_block is None:
-                raise SpellbookCompilerError(f"effective Science is missing: {science_id}")
+                raise SpellbookCompilerError(
+                    f"effective Science is missing: {science_id}"
+                )
             science_rows.append(_science_row(science_block, None))
             referenced_science_ids[science_key] = science_block.name
         flags = sorted(
@@ -1191,7 +1704,7 @@ def compile_spellbook_descriptor(
             "moduleTag": module.instance_tag or "",
             "sourceIni": module.source_virtual_path,
             "line": module.line,
-            "fields": _module_field_rows(module),
+            "fields": _module_field_rows(module, constants, resolver._text_defines),
             "references": _module_leaves(module, resolver, label),
         }
         row["effect"] = effect
@@ -1211,7 +1724,7 @@ def compile_spellbook_descriptor(
             if isinstance(binding, Mapping)
             for token in binding.get("iconIds", [])
         },
-        key=str.casefold,
+        key=lambda item: (item.casefold(), item),
     )
     text_ids = sorted(
         {
@@ -1221,9 +1734,11 @@ def compile_spellbook_descriptor(
             if isinstance(binding, Mapping)
             for token in binding.get("textIds", [])
         },
-        key=str.casefold,
+        key=lambda item: (item.casefold(), item),
     )
-    audio_ids = sorted(resolver.audio_ids.values(), key=str.casefold)
+    audio_ids = sorted(
+        resolver.audio_ids.values(), key=lambda item: (item.casefold(), item)
+    )
 
     used_paths = [
         PLAYER_TEMPLATE_PATH,
@@ -1239,6 +1754,8 @@ def compile_spellbook_descriptor(
         UPGRADE_PATH,
         FX_PARTICLE_PATH,
     ]
+    if resolver.used_locomotor:
+        used_paths.append(LOCOMOTOR_PATH)
     used_paths.extend(
         sorted(
             {item.source_virtual_path for item in lineage},
@@ -1256,7 +1773,9 @@ def compile_spellbook_descriptor(
             None,
         )
         if payload is None:
-            raise SpellbookCompilerError(f"spellbook source document is missing: {path}")
+            raise SpellbookCompilerError(
+                f"spellbook source document is missing: {path}"
+            )
         source_documents.append(
             {"virtualPath": path, "sha256": hashlib.sha256(payload).hexdigest()}
         )
@@ -1286,7 +1805,9 @@ def compile_spellbook_descriptor(
             ],
             "upgrades": [resolver.upgrades[key] for key in sorted(resolver.upgrades)],
             "objects": [resolver.objects[key] for key in sorted(resolver.objects)],
-            "particles": [resolver.particles[key] for key in sorted(resolver.particles)],
+            "particles": [
+                resolver.particles[key] for key in sorted(resolver.particles)
+            ],
         },
         "requirements": {
             "mappedImages": image_ids,
@@ -1303,7 +1824,8 @@ def compile_spellbook_descriptor(
             "resolvedStrings": {
                 key: value
                 for key, value in sorted(
-                    (resolved_strings or {}).items(), key=lambda item: item[0].casefold()
+                    (resolved_strings or {}).items(),
+                    key=lambda item: item[0].casefold(),
                 )
             },
             "resolvedAudio": {
@@ -1318,11 +1840,14 @@ def compile_spellbook_descriptor(
             "Effect payloads cover spell-power modules and their direct leaves "
             "(ObjectCreationList, Weapon, FXList/particles, attribute "
             "modifiers, upgrades, audio, button art).",
-            "Objects created by an ObjectCreationList are typed references "
-            "only; their internal payloads (spell receptacle weapons, Draw, "
-            "client audio, and deeper module templates such as FloodUpdate "
-            "FloodMember chains) belong to the object conversion lanes and "
-            "are not traversed.",
+            "Objects created by an ObjectCreationList carry a bounded "
+            "effect-family projection (health, lifetimes, hatch OCLs, horde "
+            "payloads, weapon sets, fire-weapon nuggets, attribute-modifier "
+            "auras, locomotors) with full Object inheritance applied; "
+            "presentation modules (Draw, client audio) and deeper module "
+            "templates (e.g. FloodUpdate FloodMember chains) stay out of "
+            "scope and any Behavior outside the projected families is "
+            "recorded by name in unconvertedBehaviors.",
             "AI heuristic (AISpecialPowerUpdate) and non-power spellbook "
             "modules are outside this descriptor's power-tree scope.",
         ],
@@ -1344,7 +1869,9 @@ def validate_spellbook_descriptor(value: Mapping[str, object]) -> None:
     if not isinstance(spellbook, Mapping) or _SPELL_BOOK_KIND not in {
         str(item) for item in spellbook.get("kindOf", [])
     }:
-        raise SpellbookCompilerError("spellbook descriptor spell book evidence is invalid")
+        raise SpellbookCompilerError(
+            "spellbook descriptor spell book evidence is invalid"
+        )
     sciences = value.get("sciences")
     powers = value.get("powers")
     if not isinstance(sciences, list) or not isinstance(powers, list) or not powers:
@@ -1355,7 +1882,9 @@ def validate_spellbook_descriptor(value: Mapping[str, object]) -> None:
         if not isinstance(row.get("cast"), Mapping) or not isinstance(
             row.get("effect"), Mapping
         ):
-            raise SpellbookCompilerError("spellbook descriptor power payload is invalid")
+            raise SpellbookCompilerError(
+                "spellbook descriptor power payload is invalid"
+            )
 
 
 __all__ = [

@@ -170,6 +170,7 @@ func _run() -> void:
 
 	_run_map_catalog_rejection_tests(content_db, pack_root)
 	_test_external_selection_with_supplement(mod_loader)
+	_test_external_selection_supplemental_packs(mod_loader)
 
 	_restore_settings()
 	if _startup_had_environment:
@@ -421,12 +422,16 @@ func _test_external_selection_with_supplement(mod_loader: Node) -> void:
 	OS.set_environment("OPENBFME_CONTENT", _external_content_root)
 	var roots: Array[String] = mod_loader.list_pack_roots()
 	_check("external_selection_nested_pack_discovered", roots.has(selected_root))
-	var supplement_discovered := roots.has(supplement_root)
+	# Current discovery contract: a selection document mounts ONLY its named
+	# active pack (plus any explicitly listed supplementalPacks) — sibling packs
+	# sitting next to it are never auto-mounted, so stale leaves can never leak
+	# into the selected closure.
+	var sibling_auto_mounted := roots.has(supplement_root)
 	OS.set_environment("OPENBFME_CONTENT", selected_root)
 	var direct_roots: Array[String] = mod_loader.list_pack_roots()
 	_check(
-		"external_immediate_supplement_discovered",
-		supplement_discovered and direct_roots.has(selected_root) and not direct_roots.has(supplement_root)
+		"external_unlisted_sibling_never_auto_mounted",
+		not sibling_auto_mounted and direct_roots.has(selected_root) and not direct_roots.has(supplement_root)
 	)
 
 	_write_minimal_pack(selected_root, "external-selected-test", 901, true)
@@ -435,6 +440,46 @@ func _test_external_selection_with_supplement(mod_loader: Node) -> void:
 	_check(
 		"external_completion_selection_suppresses_sibling_packs",
 		completion_roots.has(selected_root) and not completion_roots.has(supplement_root)
+	)
+	if had_environment:
+		OS.set_environment("OPENBFME_CONTENT", old_environment)
+	else:
+		OS.unset_environment("OPENBFME_CONTENT")
+
+
+func _test_external_selection_supplemental_packs(mod_loader: Node) -> void:
+	_external_content_root = ProjectSettings.globalize_path("user://external-content-root-%d" % Time.get_ticks_usec())
+	var selected_root := _external_content_root.path_join("selected-pack/sha256-test")
+	var supplement_root := _external_content_root.path_join("faction-pack/sha256-test")
+	var sibling_root := _external_content_root.path_join("stale-leaves")
+	DirAccess.make_dir_recursive_absolute(selected_root)
+	DirAccess.make_dir_recursive_absolute(supplement_root)
+	DirAccess.make_dir_recursive_absolute(sibling_root)
+	_write_minimal_pack(selected_root, "external-selected-test", 901, true)
+	_write_minimal_pack(supplement_root, "external-faction-test", 900)
+	_write_minimal_pack(sibling_root, "external-stale-test", 902)
+	_write_json(_external_content_root.path_join("selection.json"), {
+		"schema": "openbfme.pack-selection",
+		"schemaVersion": 0,
+		"activePack": "selected-pack/sha256-test",
+		"supplementalPacks": ["faction-pack/sha256-test", "../outside", "missing-pack/sha256-test"],
+	})
+
+	var had_environment := OS.has_environment("OPENBFME_CONTENT")
+	var old_environment := OS.get_environment("OPENBFME_CONTENT")
+	OS.set_environment("OPENBFME_CONTENT", _external_content_root)
+	var roots: Array[String] = mod_loader.list_pack_roots()
+	_check(
+		"external_completion_selection_loads_nested_supplement",
+		roots.has(selected_root) and roots.has(supplement_root)
+	)
+	_check(
+		"external_supplement_skips_unsafe_and_missing_entries",
+		not roots.has(_external_content_root.path_join("../outside")) and not roots.has(_external_content_root.path_join("missing-pack/sha256-test"))
+	)
+	_check(
+		"external_supplement_still_suppresses_unlisted_siblings",
+		not roots.has(sibling_root)
 	)
 	if had_environment:
 		OS.set_environment("OPENBFME_CONTENT", old_environment)

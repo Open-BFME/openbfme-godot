@@ -60,8 +60,12 @@ def _scan(
     *,
     hierarchy_ids: list[str] | None = None,
     animation_ids: list[str] | None = None,
+    model_hierarchy_identifiers: list[str] | None = None,
+    embedded_animation_channel_count: int | None = None,
+    skinned_mesh_count: int | None = None,
+    mesh_count: int | None = None,
 ) -> dict[str, object]:
-    return {
+    row: dict[str, object] = {
         "virtualPath": path,
         "byteLength": 1,
         "sha256": hashlib.sha256(path.encode()).hexdigest(),
@@ -74,27 +78,24 @@ def _scan(
         "modelReferences": [],
         "warnings": [],
     }
+    if model_hierarchy_identifiers is not None:
+        row["modelHierarchyIdentifiers"] = model_hierarchy_identifiers
+    if embedded_animation_channel_count is not None:
+        row["embeddedAnimationChannelCount"] = embedded_animation_channel_count
+    if skinned_mesh_count is not None:
+        row["skinnedMeshCount"] = skinned_mesh_count
+    if mesh_count is not None:
+        row["meshCount"] = mesh_count
+    return row
 
 
-def _closure(*, include_bib: bool = True) -> dict[str, object]:
+def _closure(
+    *, include_bib: bool = True, include_construction: bool = True
+) -> dict[str, object]:
     leaves = [
         _leaf("Keep_SKN", "model", _MODEL_INTACT, ["intact"]),
         _leaf("Keep_SKN", "model", _MODEL_INTACT, ["damaged"], ["DAMAGED"]),
-        _leaf(
-            "Keep_CONS",
-            "model",
-            _MODEL_CONSTRUCTION,
-            ["construction"],
-            ["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"],
-        ),
         _leaf("Keep_RUBBLE", "model", _MODEL_RUBBLE, ["rubble"], ["RUBBLE"]),
-        _leaf(
-            "Keep_CONSA",
-            "animation",
-            _ANIMATION_CONSTRUCTION,
-            ["construction"],
-            ["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"],
-        ),
         _leaf("Keep_IDLA", "animation", _ANIMATION_IDLE, ["intact"]),
         _leaf(
             "Keep_LEVERA",
@@ -105,6 +106,27 @@ def _closure(*, include_bib: bool = True) -> dict[str, object]:
         ),
         _leaf("Keep_GHOSTA", "animation", _ANIMATION_GHOST, ["intact"]),
     ]
+    if include_construction:
+        leaves.insert(
+            2,
+            _leaf(
+                "Keep_CONS",
+                "model",
+                _MODEL_CONSTRUCTION,
+                ["construction"],
+                ["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"],
+            ),
+        )
+        leaves.insert(
+            4,
+            _leaf(
+                "Keep_CONSA",
+                "animation",
+                _ANIMATION_CONSTRUCTION,
+                ["construction"],
+                ["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"],
+            ),
+        )
     if include_bib:
         leaves.append(
             _leaf(
@@ -329,6 +351,311 @@ def test_editor_only_models_are_excluded() -> None:
     )
 
 
+def test_world_builder_only_intact_model_is_rescued_and_converted() -> None:
+    closure = _closure()
+    closure["exactLeaves"][0] = _leaf(
+        "Keep_SKN", "model", _MODEL_INTACT, ["intact"], ["WORLD_BUILDER"]
+    )
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+
+    assert ("editor-only-model", _MODEL_INTACT) not in {
+        (row["reason"], row["sourceW3d"]) for row in recipe["exclusions"]
+    }
+    intact = next(
+        state
+        for state in recipe["lifecycleStates"]
+        if "intact" in state["phases"]
+    )
+    assert intact["sourceW3d"] == _MODEL_INTACT
+    assert ["WORLD_BUILDER"] in intact["sourceConditionSets"]
+    assert _MODEL_INTACT in {
+        pattern for row in recipe["resources"] for pattern in row["patterns"]
+    }
+    validate_structure_visual_recipe(recipe)
+
+
+def _world_builder_keep_fixture() -> tuple[
+    dict[str, object], dict[str, object], dict[str, object]
+]:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    closure["exactLeaves"][0] = _leaf(
+        "Keep_SKN", "model", _MODEL_INTACT, ["intact"], ["WORLD_BUILDER"]
+    )
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+    return descriptor, recipe, evidence
+
+
+def test_runtime_document_presents_world_builder_gated_intact() -> None:
+    descriptor, recipe, evidence = _world_builder_keep_fixture()
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    phases = {row["phase"]: row for row in lifecycle["phases"]}
+    assert phases["intact"]["visual"]["glb"].endswith("/intact-damaged-keep-skn.glb")
+    notes = lifecycle["compositionExclusions"]
+    assert any(
+        note.get("reason") == "world-builder-gated-default-visual"
+        and note.get("sourceW3d") == _MODEL_INTACT
+        for note in notes
+    )
+
+
+def test_runtime_document_rejects_competing_world_builder_intact_models() -> None:
+    descriptor, recipe, evidence = _world_builder_keep_fixture()
+    closure = _closure()
+    closure["exactLeaves"][0] = _leaf(
+        "Keep_SKN", "model", _MODEL_INTACT, ["intact"], ["WORLD_BUILDER"]
+    )
+    closure["exactLeaves"].append(
+        _leaf(
+            "Keep_ALT",
+            "model",
+            "art/w3d/fx/keep_alt.w3d",
+            ["intact"],
+            ["WORLD_BUILDER"],
+        )
+    )
+    closure["scannedW3d"].append(_scan("art/w3d/fx/keep_alt.w3d"))
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError,
+        match="no canonical default-state intact visual",
+    ):
+        compose_structure_runtime_document(descriptor, recipe, evidence)
+
+
+def test_start_hidden_bib_variant_does_not_compete_with_the_visible_bib() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    hidden_draw = (
+        "  Draw = W3DFloorDraw DrawFloor_V1\n"
+        "    ModelName = Keep_V1\n"
+        "    StartHidden = Yes\n"
+        "    HideIfModelConditions = AWAITING_CONSTRUCTION PARTIALLY_CONSTRUCTED\n"
+        "  End\n"
+    )
+    anchor = "  Draw = W3DFloorDraw ModuleTag_Bib"
+    source = source.replace(anchor, hidden_draw + anchor, 1)
+    documents[objects_path] = source.encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    closure["exactLeaves"].append(
+        _leaf(
+            "Keep_V1",
+            "model",
+            "art/w3d/fx/keep_v1.w3d",
+            ["intact"],
+            usage="floor-model",
+        )
+    )
+    closure["scannedW3d"].append(_scan("art/w3d/fx/keep_v1.w3d"))
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    bib = lifecycle["bib"]
+    assert bib["visual"]["glb"].endswith("/bib-keep-bib.glb")
+    assert bib["startHiddenAuthored"] is False
+    notes = lifecycle["compositionExclusions"]
+    assert any(
+        note.get("reason") == "start-hidden-authored-bib-not-presented"
+        and note.get("sourceW3d") == "art/w3d/fx/keep_v1.w3d"
+        for note in notes
+    )
+
+
+def test_runtime_document_rejects_an_all_hidden_bib_set() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path]
+        .decode("utf-8")
+        .replace(
+            "    ModelName = Keep_BIB\n",
+            "    ModelName = Keep_BIB\n    StartHidden = Yes\n",
+            1,
+        )
+        .encode("utf-8")
+    )
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError,
+        match="bib visual is absent or ambiguous",
+    ):
+        compose_structure_runtime_document(descriptor, recipe, evidence)
+
+
+def test_construction_manual_clip_prefers_the_selected_models_draw_module() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    door_module = (
+        "  Draw = W3DScriptedModelDraw ModuleTag_Door\n"
+        "    AnimationState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED\n"
+        "      Animation = DoorBuild\n"
+        "        AnimationName = KEEP_DOOR_SKL.KEEP_DOOR_BLD\n"
+        "        AnimationMode = MANUAL\n"
+        "      End\n"
+        "    End\n"
+        "  End\n"
+    )
+    anchor = "  Draw = W3DFloorDraw ModuleTag_Bib"
+    source = source.replace(anchor, door_module + anchor, 1)
+    documents[objects_path] = source.encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    # The closure scopes each leaf to the draw module that authored it.
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+        row["provenance"]["scopePath"][0] = "W3DScriptedModelDraw ModuleTag_Draw"
+    door_leaf = _leaf(
+        "KEEP_DOOR_SKL.KEEP_DOOR_BLD",
+        "animation",
+        "art/w3d/fx/keep_door_bld.w3d",
+        ["construction"],
+        ["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"],
+    )
+    door_leaf["targetObject"] = "TestKeep"
+    door_leaf["provenance"]["scopePath"][0] = "W3DScriptedModelDraw ModuleTag_Door"
+    closure["exactLeaves"].append(door_leaf)
+    closure["scannedW3d"].append(
+        _scan("art/w3d/fx/keep_door_bld.w3d", animation_ids=["KEEP_DOOR_SKL.KEEP_DOOR_BLD"])
+    )
+    closure["scannedW3d"].append(
+        _scan("art/w3d/fx/keep_door_skl.w3d", hierarchy_ids=["KEEP_DOOR_SKL"])
+    )
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    phases = {row["phase"]: row for row in lifecycle["phases"]}
+    assert phases["construction"]["animation"] == {
+        "clip": "keep_consa",
+        "mode": "manual-progress",
+    }
+    notes = lifecycle["compositionExclusions"]
+    assert any(
+        note.get("reason") == "manual-construction-clip-primary-draw-module"
+        and note.get("clip") == "keep_consa"
+        and note.get("competingClips") == ["keep_consa", "keep_door_bld"]
+        for note in notes
+    )
+
+
+def test_construction_manual_clip_stays_fail_closed_without_module_match() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    door_module = (
+        "  Draw = W3DScriptedModelDraw ModuleTag_Door\n"
+        "    AnimationState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED\n"
+        "      Animation = DoorBuild\n"
+        "        AnimationName = KEEP_DOOR_SKL.KEEP_DOOR_BLD\n"
+        "        AnimationMode = MANUAL\n"
+        "      End\n"
+        "    End\n"
+        "  End\n"
+    )
+    anchor = "  Draw = W3DFloorDraw ModuleTag_Bib"
+    source = source.replace(anchor, door_module + anchor, 1)
+    documents[objects_path] = source.encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    # Every leaf claims an unrelated module, so no clip is provably primary.
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+        row["provenance"]["scopePath"][0] = "W3DScriptedModelDraw ModuleTag_Other"
+    door_leaf = _leaf(
+        "KEEP_DOOR_SKL.KEEP_DOOR_BLD",
+        "animation",
+        "art/w3d/fx/keep_door_bld.w3d",
+        ["construction"],
+        ["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"],
+    )
+    door_leaf["targetObject"] = "TestKeep"
+    door_leaf["provenance"]["scopePath"][0] = "W3DScriptedModelDraw ModuleTag_Door"
+    closure["exactLeaves"].append(door_leaf)
+    closure["scannedW3d"].append(
+        _scan("art/w3d/fx/keep_door_bld.w3d", animation_ids=["KEEP_DOOR_SKL.KEEP_DOOR_BLD"])
+    )
+    closure["scannedW3d"].append(
+        _scan("art/w3d/fx/keep_door_skl.w3d", hierarchy_ids=["KEEP_DOOR_SKL"])
+    )
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError, match="exactly one bundled MANUAL"
+    ):
+        compose_structure_runtime_document(descriptor, recipe, evidence)
+
+
 def test_texture_closure_feeds_model_inputs() -> None:
     recipe = compile_structure_visual_recipe(_TARGET, _closure())
 
@@ -361,9 +688,9 @@ def test_structure_without_models_fails_closed() -> None:
         compile_structure_visual_recipe("AbsentKeep", closure)
 
 
-def test_unresolved_texture_fails_closed() -> None:
+def test_ambiguous_texture_fails_closed() -> None:
     closure = _closure()
-    closure["w3dDependencyClosure"]["embeddedTextures"][0]["status"] = "missing"
+    closure["w3dDependencyClosure"]["embeddedTextures"][0]["status"] = "ambiguous"
     closure["w3dDependencyClosure"]["embeddedTextures"][0][
         "physicalVirtualPaths"
     ] = []
@@ -371,6 +698,192 @@ def test_unresolved_texture_fails_closed() -> None:
 
     with pytest.raises(PlayableStructurePackCompilerError):
         compile_structure_visual_recipe(_TARGET, closure)
+
+
+def test_retail_absent_texture_is_an_explicit_exclusion() -> None:
+    closure = _closure()
+    closure["w3dDependencyClosure"]["embeddedTextures"][0]["status"] = "missing"
+    closure["w3dDependencyClosure"]["embeddedTextures"][0][
+        "physicalVirtualPaths"
+    ] = []
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+
+    exclusions = [
+        row for row in recipe["exclusions"] if row["reason"] == "retail-absent-texture"
+    ]
+    assert exclusions == [
+        {
+            "kind": "texture",
+            "identifier": "Fixture.tga",
+            "sourceW3d": _MODEL_INTACT,
+            "reason": "retail-absent-texture",
+        }
+    ]
+    models = _models_by_source(recipe)
+    assert models[_MODEL_INTACT]["options"]["retailAbsentTextures"] == [
+        "Fixture.tga"
+    ]
+    validate_structure_visual_recipe(recipe)
+
+
+_MODEL_D1 = "art/w3d/fx/keep_d1.w3d"
+_HIERARCHY_D1 = "art/w3d/fx/keep_d1skl.w3d"
+_MODEL_DRC = "art/w3d/fx/keep_drc.w3d"
+_MODEL_RING = "art/w3d/fx/keep_ring.w3d"
+_MODEL_SKINNED = "art/w3d/fx/keep_skin.w3d"
+_MODEL_FIRE = "art/w3d/fx/keep_fire.w3d"
+_MODEL_VOID = "art/w3d/fx/keep_void.w3d"
+
+
+def test_external_hierarchy_model_stages_provider_and_bakes() -> None:
+    closure = _closure()
+    closure["exactLeaves"].append(
+        _leaf("Keep_D1", "model", _MODEL_D1, ["damaged"], ["DAMAGED"])
+    )
+    closure["scannedW3d"].append(
+        _scan(_MODEL_D1, model_hierarchy_identifiers=["KEEP_D1_SKL"])
+    )
+    closure["scannedW3d"].append(_scan(_HIERARCHY_D1, hierarchy_ids=["KEEP_D1_SKL"]))
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+
+    models = _models_by_source(recipe)
+    assert models[_MODEL_D1]["converter"] == "w3d-hierarchical"
+    assert models[_MODEL_D1]["options"]["provenRootRigidBake"] is True
+    assert models[_MODEL_D1]["patterns"] == sorted(
+        [_MODEL_D1, _HIERARCHY_D1], key=str.casefold
+    )
+    assert models[_MODEL_D1]["limit"] == 2
+    validate_structure_visual_recipe(recipe)
+
+
+def test_external_hierarchy_model_requires_a_unique_provider() -> None:
+    closure = _closure()
+    closure["exactLeaves"].append(
+        _leaf("Keep_D1", "model", _MODEL_D1, ["damaged"], ["DAMAGED"])
+    )
+    closure["scannedW3d"].append(
+        _scan(_MODEL_D1, model_hierarchy_identifiers=["KEEP_D1_SKL"])
+    )
+    _rehash(closure)
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError, match="hierarchy provider is not unique"
+    ):
+        compile_structure_visual_recipe(_TARGET, closure)
+
+    closure["scannedW3d"].append(_scan(_HIERARCHY_D1, hierarchy_ids=["KEEP_D1_SKL"]))
+    closure["scannedW3d"].append(
+        _scan("art/w3d/fx/keep_d1skl_copy.w3d", hierarchy_ids=["KEEP_D1_SKL"])
+    )
+    _rehash(closure)
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError, match="hierarchy provider is not unique"
+    ):
+        compile_structure_visual_recipe(_TARGET, closure)
+
+
+def test_embedded_animation_model_is_an_embedded_bundle() -> None:
+    closure = _closure()
+    closure["exactLeaves"].append(_leaf("Keep_DRC", "model", _MODEL_DRC, ["intact"]))
+    closure["scannedW3d"].append(
+        _scan(
+            _MODEL_DRC,
+            hierarchy_ids=["KEEP_DRC"],
+            animation_ids=["KEEP_DRC"],
+            embedded_animation_channel_count=3,
+        )
+    )
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+
+    models = _models_by_source(recipe)
+    assert models[_MODEL_DRC]["converter"] == "w3d-bundle"
+    assert models[_MODEL_DRC]["options"]["animations"] == ["keep_drc.w3d"]
+    assert "provenRootRigidBake" not in models[_MODEL_DRC]["options"]
+    validate_structure_visual_recipe(recipe)
+
+
+def test_pivot_only_model_keeps_hierarchy_with_pivot_option() -> None:
+    closure = _closure()
+    closure["exactLeaves"].append(_leaf("Keep_FIRE", "model", _MODEL_FIRE, ["intact"]))
+    closure["scannedW3d"].append(
+        _scan(
+            _MODEL_FIRE,
+            hierarchy_ids=["KEEP_FIRE"],
+            mesh_count=0,
+        )
+    )
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+
+    models = _models_by_source(recipe)
+    assert models[_MODEL_FIRE]["converter"] == "w3d-hierarchical"
+    assert models[_MODEL_FIRE]["options"]["provenPivotOnlyModel"] is True
+    assert "provenRootRigidBake" not in models[_MODEL_FIRE]["options"]
+    validate_structure_visual_recipe(recipe)
+
+
+def test_meshless_model_without_hierarchy_fails_closed() -> None:
+    closure = _closure()
+    closure["exactLeaves"].append(_leaf("Keep_VOID", "model", _MODEL_VOID, ["intact"]))
+    closure["scannedW3d"].append(_scan(_MODEL_VOID, mesh_count=0))
+    _rehash(closure)
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError, match="no meshes and no hierarchy"
+    ):
+        compile_structure_visual_recipe(_TARGET, closure)
+
+
+def test_skinned_hierarchy_model_keeps_hierarchy_without_bake() -> None:
+    closure = _closure()
+    closure["exactLeaves"].append(
+        _leaf("Keep_SKIN", "model", _MODEL_SKINNED, ["intact"])
+    )
+    closure["scannedW3d"].append(
+        _scan(
+            _MODEL_SKINNED,
+            hierarchy_ids=["KEEP_SKIN_SKL"],
+            skinned_mesh_count=1,
+        )
+    )
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+
+    models = _models_by_source(recipe)
+    assert models[_MODEL_SKINNED]["converter"] == "w3d-hierarchical"
+    assert "provenRootRigidBake" not in models[_MODEL_SKINNED]["options"]
+    validate_structure_visual_recipe(recipe)
+
+
+def test_vacuous_embedded_animation_chunk_keeps_rigid_bake() -> None:
+    closure = _closure()
+    closure["exactLeaves"].append(_leaf("Keep_RING", "model", _MODEL_RING, ["intact"]))
+    closure["scannedW3d"].append(
+        _scan(
+            _MODEL_RING,
+            hierarchy_ids=["KEEP_RING"],
+            animation_ids=["KEEP_RING"],
+            embedded_animation_channel_count=0,
+        )
+    )
+    _rehash(closure)
+
+    recipe = compile_structure_visual_recipe(_TARGET, closure)
+
+    models = _models_by_source(recipe)
+    assert models[_MODEL_RING]["converter"] == "w3d-hierarchical"
+    assert models[_MODEL_RING]["options"]["provenRootRigidBake"] is True
+    assert "animations" not in models[_MODEL_RING]["options"]
+    validate_structure_visual_recipe(recipe)
 
 
 def test_tampered_closure_digest_is_rejected() -> None:
@@ -570,6 +1083,134 @@ def test_runtime_document_requires_manual_construction_clip() -> None:
         PlayableStructurePackCompilerError, match="exactly one bundled MANUAL"
     ):
         compose_structure_runtime_document(descriptor, recipe, evidence)
+
+
+def test_runtime_document_reduces_damage_phases_without_thresholds() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path]
+        .decode("utf-8")
+        .replace("    MaxHealthDamaged = KEEP_HEALTH_DAMAGED\n", "")
+        .replace("    MaxHealthReallyDamaged = KEEP_HEALTH_REALLY_DAMAGED\n", "")
+    ).encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    assert [row["phase"] for row in lifecycle["phases"]] == [
+        "construction",
+        "intact",
+        "collapsing",
+        "rubble",
+        "post-rubble",
+        "post-collapse",
+    ]
+    intact = next(
+        row for row in lifecycle["phases"] if row["phase"] == "intact"
+    )
+    assert intact["nextPhase"] == "collapsing"
+    facts = lifecycle["simulationFacts"]
+    assert "damageStateRule" not in facts
+    assert facts["damageStateRuleStatus"] == "no-authored-damage-thresholds"
+    assert {
+        "kind": "phase-chain",
+        "phase": "damaged/really-damaged",
+        "reason": "no-authored-damage-thresholds",
+    } in lifecycle["compositionExclusions"]
+
+
+def test_runtime_document_rejects_half_authored_thresholds() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path]
+        .decode("utf-8")
+        .replace("    MaxHealthDamaged = KEEP_HEALTH_DAMAGED\n", "")
+    ).encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError, match="only one damage threshold"
+    ):
+        compose_structure_runtime_document(descriptor, recipe, evidence)
+
+
+def test_runtime_document_omits_unauthored_construction_phase() -> None:
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    source = source.replace(
+        """    ModelConditionState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED
+      Model = Keep_CONS
+    End
+    AnimationState = ACTIVELY_BEING_CONSTRUCTED PARTIALLY_CONSTRUCTED
+      Animation = Build
+        AnimationName = Keep_SKL.Keep_CONSA
+        AnimationMode = MANUAL
+      End
+    End
+""",
+        "",
+    )
+    documents[objects_path] = source.encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure(include_construction=False)
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    assert [row["phase"] for row in lifecycle["phases"]][0] == "intact"
+    assert lifecycle["initialPhase"] == "intact"
+    facts = lifecycle["simulationFacts"]
+    assert facts["construction"] == {
+        "status": "no-authored-construction-states"
+    }
+    assert {
+        "kind": "phase-chain",
+        "phase": "construction",
+        "reason": "no-authored-construction-states",
+    } in lifecycle["compositionExclusions"]
 
 
 def test_runtime_document_rejects_identity_mismatch() -> None:

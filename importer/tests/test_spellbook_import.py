@@ -88,6 +88,7 @@ End
 """,
         "data/ini/gamedata.ini": b"""
 #define SPELL_RECHARGE_TIME_TIER_1 30000
+#define TEST_BUFF_FILTER ANY +INFANTRY -HERO
 """,
         "data/ini/science.ini": b"""
 #define GOOD_RANK_1_COST 5
@@ -149,6 +150,18 @@ ObjectCreationList OCL_TestVolley
     ObjectNames = TestVolleyReceptacle
     Count = 1
   End
+  CreateObject
+    ObjectNames = TestSummonedHorde
+    Count = 2
+    Disposition = SPAWN_AROUND
+  End
+End
+""",
+        "data/ini/locomotor.ini": b"""
+Locomotor TestLocomotor
+  TurnTime = 500
+  Acceleration = 510
+  Braking = 510
 End
 """,
         "data/ini/fxlist.ini": b"""
@@ -184,6 +197,16 @@ Weapon TestVolleyWeapon
     Damage = 800
     Radius = 100
     DamageType = PIERCE
+  End
+End
+
+Weapon TestReceptacleInternalWeapon
+  RadiusDamageAffects = ENEMIES NEUTRALS
+  DamageNugget
+    Damage = 250
+    Radius = 40
+    DamageType = CAVALRY_RANGED
+    DelayTime = 0
   End
 End
 """,
@@ -222,6 +245,7 @@ Object TestSpellBook
     OCL = OCL_TestVolley
     TriggerFX = FX_TestHealBuff
     AttributeModifier = TestRallyModifier
+    AttributeModifierAffects = TEST_BUFF_FILTER
     UpgradeName = Upgrade_TestBlessing
     Weapon = TestVolleyWeapon
     CreateLocation = CREATE_AT_LOCATION
@@ -243,6 +267,41 @@ Object TestVolleyReceptacle
       FireDelay = 0
       OneShot = Yes
     End
+  End
+End
+
+Object TestSummonedHorde
+  EditorSorting = UNIT
+  KindOf = SELECTABLE CAN_ATTACK INFANTRY HORDE SUMMONED
+  EquivalentTo = TestSummonedHorde
+  CommandPoints = 0
+  Body = ImmortalBody ModuleTag_Body
+    MaxHealth = 1
+  End
+  Behavior = LifetimeUpdate ModuleTag_Lifetime
+    MinLifetime = 75000
+    MaxLifetime = 75000
+    DeathType = FADED
+  End
+  Behavior = HordeContain ModuleTag_HordeContain
+    InitialPayload = TestSummonedMember 5
+    Slots = 5
+    RankInfo = RankNumber:1 UnitType:TestSummonedMember Position:X:0 Y:0 Position:X:0 Y:20
+  End
+End
+
+Object TestSummonedMember
+  EditorSorting = UNIT
+  KindOf = INFANTRY SELECTABLE
+  Body = ActiveBody ModuleTag_Body
+    MaxHealth = 450
+  End
+  WeaponSet
+    Weapon = PRIMARY TestVolleyWeapon
+  End
+  LocomotorSet
+    Locomotor = TestLocomotor
+    Speed = 100
   End
 End
 """,
@@ -468,6 +527,11 @@ def test_descriptor_resolves_tree_costs_prerequisites_and_effect_leaves() -> Non
     assert references["attributeModifiers"] == ["TestRallyModifier"]
     assert references["upgrades"] == ["Upgrade_TestBlessing"]
     assert references["weapons"] == ["TestVolleyWeapon"]
+    effect_fields = {
+        str(row["key"]): row for row in volley_power["effect"]["fields"]
+    }
+    assert effect_fields["AttributeModifierAffects"]["value"] == "TEST_BUFF_FILTER"
+    assert effect_fields["AttributeModifierAffects"]["resolvedText"] == "ANY +INFANTRY -HERO"
 
     leaves = descriptor["leaves"]
     ocls = {row["id"]: row for row in leaves["objectCreationLists"]}
@@ -481,14 +545,52 @@ def test_descriptor_resolves_tree_costs_prerequisites_and_effect_leaves() -> Non
     weapons = {row["id"]: row for row in leaves["weapons"]}
     assert weapons["TestVolleyWeapon"]["fireFx"] == ["FX_TestWeaponFire"]
     assert weapons["TestVolleyWeapon"]["nuggets"][0]["kind"] == "DamageNugget"
-    # Receptacle-internal weapons are object-lane payload and never traversed.
-    assert "TestReceptacleInternalWeapon" not in weapons
+    assert weapons["TestVolleyWeapon"]["damageNuggets"] == [
+        {"damage": 800, "radius": 100, "damagetype": "PIERCE"}
+    ]
+    assert weapons["TestVolleyWeapon"]["radiusDamageAffects"] == "ENEMIES NEUTRALS"
+    # Receptacle-internal weapons are traversed with resolved damage nuggets.
+    assert weapons["TestReceptacleInternalWeapon"]["damageNuggets"] == [
+        {"damage": 250, "radius": 40, "damagetype": "CAVALRY_RANGED", "delaytime": 0}
+    ]
+    receptacle = {row["id"]: row for row in leaves["objects"]}["TestVolleyReceptacle"]
+    assert receptacle["fireWeapons"] == [
+        {"weapon": "TestReceptacleInternalWeapon", "fireDelayMs": 0, "oneShot": "Yes"}
+    ]
+    object_rows = {row["id"]: row for row in leaves["objects"]}
+    horde = object_rows["TestSummonedHorde"]
+    assert horde["horde"] == {
+        "memberObject": "TestSummonedMember",
+        "memberCount": 5,
+        "slots": 5,
+        "ranks": [{"rank": 1, "positions": [[0.0, 0.0], [0.0, 20.0]]}],
+    }
+    assert horde["lifetime"] == {"minMs": 75000, "maxMs": 75000, "deathType": "FADED"}
+    assert horde["immortal"] is True
+    assert horde["commandPoints"] == 0
+    member = object_rows["TestSummonedMember"]
+    assert member["maxHealth"] == 450
+    assert member["weaponId"] == "TestVolleyWeapon"
+    assert member["locomotor"] == {
+        "id": "TestLocomotor",
+        "speed": 100,
+        "acceleration": 510,
+        "braking": 510,
+        "turnRateDegreesPerSecond": 720.0,
+    }
+    source_paths = {row["virtualPath"] for row in descriptor["sourceDocuments"]}
+    assert "data/ini/locomotor.ini" in source_paths
     modifiers = {row["id"]: row for row in leaves["attributeModifiers"]}
     assert modifiers["TestRallyModifier"]["fxLists"] == ["FX_TestHealBuff"]
     particles = {row["id"] for row in leaves["particles"]}
-    assert particles == {"TestHealParticles", "TestWeaponFireParticles"}
+    assert particles == {"TestHealParticles"}
     objects = {row["id"] for row in leaves["objects"]}
-    assert objects == {"TestHealPing", "TestVolleyReceptacle"}
+    assert objects == {
+        "TestHealPing",
+        "TestVolleyReceptacle",
+        "TestSummonedHorde",
+        "TestSummonedMember",
+    }
 
     assert descriptor["requirements"] == {
         "mappedImages": ["SBTest_Heal", "SBTest_Volley"],
@@ -551,7 +653,7 @@ def test_pack_recipe_and_runtime_bind_media_and_power_tree() -> None:
     assert summary["scienceCount"] == 4
     assert summary["purchasableScienceCount"] == 2
     assert summary["powerCount"] == 2
-    assert summary["leafCounts"]["weapons"] == 1
+    assert summary["leafCounts"]["weapons"] == 2
     assert summary["resourceCount"] == 3
 
 
@@ -574,13 +676,7 @@ def test_pack_recipe_and_runtime_bind_media_and_power_tree() -> None:
             "data/ini/fxlist.ini",
             b"FXList FX_TestWeaponFire",
             b"FXList FX_Renamed",
-            "missing FXList: FX_TestWeaponFire",
-        ),
-        (
-            "data/ini/fxparticlesystem.ini",
-            b"FXParticleSystem TestWeaponFireParticles",
-            b"FXParticleSystem RenamedParticles",
-            "missing particle definition",
+            "references a missing FXList: FX_TestWeaponFire",
         ),
         (
             "data/ini/weapon.ini",
@@ -747,3 +843,141 @@ End
 
     with pytest.raises(SpellbookCompilerError, match="multiple slots"):
         compile_spellbook_descriptor(graph, documents)
+
+
+def _compile_with(documents: dict[str, bytes], graph: dict[str, object]) -> dict[str, object]:
+    draft = compile_spellbook_descriptor(graph, documents)
+    images, audio = _resolved_spellbook_media(graph, draft)
+    strings = _resolved_spellbook_strings(_FakeCatalog(_string_catalog()), draft)
+    return compile_spellbook_descriptor(
+        graph,
+        documents,
+        resolved_images=images,
+        resolved_audio=audio,
+        resolved_strings=strings,
+    )
+
+
+def test_case_variant_icon_casings_emit_one_crop_and_keep_all_bindings() -> None:
+    documents, graph = _fixture()
+    path = "data/ini/commandbutton.ini"
+    old = b"  ButtonImage = SBTest_Volley\n  ButtonBorderType = ACTION"
+    assert documents[path].count(old) == 1
+    documents[path] = documents[path].replace(
+        old, b"  ButtonImage = SBTest_vOlley\n  ButtonBorderType = ACTION"
+    )
+
+    descriptor = _compile_with(documents, graph)
+    # Both authored casings remain faithful requirements evidence.
+    assert descriptor["requirements"]["mappedImages"] == [
+        "SBTest_Heal",
+        "SBTest_Volley",
+        "SBTest_vOlley",
+    ]
+
+    recipe = compile_spellbook_pack_recipe(descriptor)
+    validate_spellbook_pack_recipe(recipe)
+    crops = [
+        crop
+        for row in recipe["resources"]
+        if row["kind"] == "ui"
+        for crop in row["options"]["crops"]
+    ]
+    logical_names = [crop["logicalName"] for crop in crops]
+    assert logical_names == ["image-sbtest-heal", "image-sbtest-volley"]
+
+    registration = recipe["runtimeRegistration"]
+    bindings = registration["imageBindings"]
+    assert bindings["SBTest_Volley"] == bindings["SBTest_vOlley"]
+    assert registration["imageBindingMetadata"]["SBTest_Volley"] == (
+        registration["imageBindingMetadata"]["SBTest_vOlley"]
+    )
+    runtime = compose_spellbook_runtime_document(descriptor, recipe)
+    assert runtime["registration"]["presentation"]["imageBindings"]["SBTest_vOlley"] == (
+        bindings["SBTest_Volley"]
+    )
+    # The dedupe is deterministic across repeated compilations.
+    assert (
+        compile_spellbook_pack_recipe(_compile_with(documents, graph))["recipeSha256"]
+        == recipe["recipeSha256"]
+    )
+
+
+def test_mordor_rainoffire_case_variants_emit_one_crop_and_keep_bindings() -> None:
+    """Retail Mordor authors SBEvil_RainOfFire and SBEvil_RainofFire for one atlas rect.
+
+    Those identifiers casefold to one logicalName (image-sbevil-rainoffire). The pack
+    compiler must emit a single crop while retaining both imageBindings so compose/load
+    validation does not reject duplicate texture-atlas logicalName values.
+    """
+    documents, graph = _fixture()
+    path = "data/ini/commandbutton.ini"
+    assert documents[path].count(b"ButtonImage = SBTest_Volley") == 2
+    documents[path] = documents[path].replace(
+        b"ButtonImage = SBTest_Volley", b"ButtonImage = SBEvil_RainOfFire", 1
+    )
+    documents[path] = documents[path].replace(
+        b"ButtonImage = SBTest_Volley", b"ButtonImage = SBEvil_RainofFire", 1
+    )
+    images = graph["resolvedLeaves"]["mappedImages"]
+    assert isinstance(images, list)
+    for index, row in enumerate(images):
+        if row["id"] == "SBTest_Volley":
+            # Retail atlas rect for Rain of Fire: crop [256, 0, 64, 64].
+            images[index] = _mapped_image("SBEvil_RainOfFire", 256, 0, 320, 64)
+
+    descriptor = _compile_with(documents, graph)
+    assert descriptor["requirements"]["mappedImages"] == [
+        "SBEvil_RainOfFire",
+        "SBEvil_RainofFire",
+        "SBTest_Heal",
+    ]
+
+    recipe = compile_spellbook_pack_recipe(descriptor)
+    validate_spellbook_pack_recipe(recipe)
+    crops = [
+        crop
+        for row in recipe["resources"]
+        if row["kind"] == "ui"
+        for crop in row["options"]["crops"]
+    ]
+    rain_crops = [
+        crop for crop in crops if crop["logicalName"] == "image-sbevil-rainoffire"
+    ]
+    assert len(rain_crops) == 1
+    assert rain_crops[0]["crop"] == [256, 0, 64, 64]
+    assert rain_crops[0]["output"] == "sbevil-rainoffire-a9e1e5a2.png"
+
+    registration = recipe["runtimeRegistration"]
+    bindings = registration["imageBindings"]
+    assert bindings["SBEvil_RainOfFire"] == bindings["SBEvil_RainofFire"]
+    assert bindings["SBEvil_RainOfFire"].endswith("/sbevil-rainoffire-a9e1e5a2.png")
+    assert registration["imageBindingMetadata"]["SBEvil_RainOfFire"] == {
+        "width": 64,
+        "height": 64,
+    }
+    assert registration["imageBindingMetadata"]["SBEvil_RainofFire"] == {
+        "width": 64,
+        "height": 64,
+    }
+    runtime = compose_spellbook_runtime_document(descriptor, recipe)
+    assert runtime["registration"]["presentation"]["imageBindings"][
+        "SBEvil_RainofFire"
+    ] == bindings["SBEvil_RainOfFire"]
+
+
+def test_distinct_images_colliding_on_logical_name_fail_closed() -> None:
+    documents, graph = _fixture()
+    path = "data/ini/commandbutton.ini"
+    old = b"  ButtonImage = SBTest_Volley\n  Science = SCIENCE_TestVolley"
+    assert documents[path].count(old) == 1
+    documents[path] = documents[path].replace(
+        old, b"  ButtonImage = SBTest.Volley\n  Science = SCIENCE_TestVolley"
+    )
+    graph["resolvedLeaves"]["mappedImages"].append(
+        _mapped_image("SBTest.Volley", 64, 0, 96, 32)
+    )
+
+    descriptor = _compile_with(documents, graph)
+    with pytest.raises(SpellbookPackCompilerError, match="collide"):
+        compile_spellbook_pack_recipe(descriptor)

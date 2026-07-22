@@ -1,7 +1,10 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://src/ui/main_menu.gd" id="1"]
 [ext_resource type="Script" path="res://src/ui/openbfme_menu_backdrop.gd" id="2"]
+[ext_resource type="Script" path="res://src/ui/options_screen.gd" id="3"]
+[ext_resource type="Script" path="res://src/ui/skirmish_setup.gd" id="4"]
+[ext_resource type="Script" path="res://src/ui/stats_screen.gd" id="5"]
 
 [node name="Boot" type="Control"]
 layout_mode = 3
@@ -137,29 +140,13 @@ anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 28.0
-offset_top = -790.0
-offset_right = 566.0
-offset_bottom = -154.0
+offset_top = -926.0
+offset_right = 1892.0
+offset_bottom = -136.0
 grow_vertical = 0
 mouse_filter = 1
-theme_type_variation = "OverlayPanel"
-
-[node name="OptionsFrame" type="Panel" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -450.0
-offset_top = -304.0
-offset_right = 450.0
-offset_bottom = 304.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 1
-theme_type_variation = "OverlayPanel"
+theme_type_variation = "FlyoutPanel"
+script = ExtResource("4")
 
 [node name="DeveloperFrame" type="Panel" parent="Center"]
 visible = false
@@ -292,334 +279,6 @@ grow_horizontal = 2
 grow_vertical = 0
 theme_type_variation = "NavButton"
 text = "QUIT"
-
-[node name="SoloHeading" type="Label" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 2
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 62.0
-offset_top = -766.0
-offset_right = 532.0
-offset_bottom = -720.0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.89, 0.79, 0.52, 1)
-theme_override_font_sizes/font_size = 27
-text = "SKIRMISH"
-horizontal_alignment = 1
-
-[node name="SkirmishGrid" type="GridContainer" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 2
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 62.0
-offset_top = -708.0
-offset_right = 532.0
-offset_bottom = -586.0
-grow_vertical = 0
-theme_override_constants/h_separation = 12
-theme_override_constants/v_separation = 4
-columns = 2
-
-[node name="PlayerLabel" type="Label" parent="Center/SkirmishGrid"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Player"
-
-[node name="Player" type="OptionButton" parent="Center/SkirmishGrid"]
-custom_minimum_size = Vector2(310, 38)
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="EnemyLabel" type="Label" parent="Center/SkirmishGrid"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Enemy"
-
-[node name="Enemy" type="OptionButton" parent="Center/SkirmishGrid"]
-custom_minimum_size = Vector2(310, 38)
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="MapLabel" type="Label" parent="Center/SkirmishGrid"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Map"
-
-[node name="Map" type="OptionButton" parent="Center/SkirmishGrid"]
-custom_minimum_size = Vector2(310, 38)
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="Retail" type="Button" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 2
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 62.0
-offset_top = -537.0
-offset_right = 532.0
-offset_bottom = -483.0
-grow_vertical = 0
-theme_type_variation = "PrimaryButton"
-text = "LAUNCH SKIRMISH"
-
-[node name="RetailHint" type="Label" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 2
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 62.0
-offset_top = -578.0
-offset_right = 532.0
-offset_bottom = -547.0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.58, 0.72, 0.78, 1)
-theme_override_font_sizes/font_size = 15
-text = "RESOLVING FACTION PACKS"
-horizontal_alignment = 1
-
-[node name="LegacyGrid" type="GridContainer" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 2
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 62.0
-offset_top = -473.0
-offset_right = 532.0
-offset_bottom = -309.0
-grow_vertical = 0
-theme_override_constants/h_separation = 12
-theme_override_constants/v_separation = 4
-columns = 2
-
-[node name="PlayerLabel" type="Label" parent="Center/LegacyGrid"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Player"
-
-[node name="Player" type="OptionButton" parent="Center/LegacyGrid"]
-custom_minimum_size = Vector2(310, 38)
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="EnemyLabel" type="Label" parent="Center/LegacyGrid"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Enemy"
-
-[node name="Enemy" type="OptionButton" parent="Center/LegacyGrid"]
-custom_minimum_size = Vector2(310, 38)
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="MapLabel" type="Label" parent="Center/LegacyGrid"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Map"
-
-[node name="Map" type="OptionButton" parent="Center/LegacyGrid"]
-custom_minimum_size = Vector2(310, 38)
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="DifficultyLabel" type="Label" parent="Center/LegacyGrid"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Difficulty"
-
-[node name="Difficulty" type="OptionButton" parent="Center/LegacyGrid"]
-custom_minimum_size = Vector2(310, 38)
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="Start" type="Button" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 2
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 62.0
-offset_top = -299.0
-offset_right = 532.0
-offset_bottom = -251.0
-grow_vertical = 0
-text = "LEGACY PROTOTYPE SKIRMISH"
-
-[node name="SoloBack" type="Button" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 2
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 62.0
-offset_top = -241.0
-offset_right = 532.0
-offset_bottom = -193.0
-grow_vertical = 0
-text = "CLOSE"
-
-[node name="OptionsHeading" type="Label" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -390.0
-offset_top = -260.0
-offset_right = 390.0
-offset_bottom = -210.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(0.89, 0.79, 0.52, 1)
-theme_override_font_sizes/font_size = 29
-text = "AUDIO OPTIONS"
-horizontal_alignment = 1
-
-[node name="MusicRow" type="HBoxContainer" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -370.0
-offset_top = -155.0
-offset_right = 370.0
-offset_bottom = -105.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_constants/separation = 16
-
-[node name="Label" type="Label" parent="Center/MusicRow"]
-custom_minimum_size = Vector2(180, 0)
-layout_mode = 2
-text = "Music"
-
-[node name="Slider" type="HSlider" parent="Center/MusicRow"]
-custom_minimum_size = Vector2(0, 42)
-layout_mode = 2
-size_flags_horizontal = 3
-max_value = 1.0
-step = 0.01
-value = 0.8
-
-[node name="Percent" type="Label" parent="Center/MusicRow"]
-custom_minimum_size = Vector2(70, 0)
-layout_mode = 2
-text = "80%"
-horizontal_alignment = 2
-
-[node name="VoiceRow" type="HBoxContainer" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -370.0
-offset_top = -72.0
-offset_right = 370.0
-offset_bottom = -22.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_constants/separation = 16
-
-[node name="Label" type="Label" parent="Center/VoiceRow"]
-custom_minimum_size = Vector2(180, 0)
-layout_mode = 2
-text = "Voice / SFX"
-
-[node name="Slider" type="HSlider" parent="Center/VoiceRow"]
-custom_minimum_size = Vector2(0, 42)
-layout_mode = 2
-size_flags_horizontal = 3
-max_value = 1.0
-step = 0.01
-value = 0.85
-
-[node name="Percent" type="Label" parent="Center/VoiceRow"]
-custom_minimum_size = Vector2(70, 0)
-layout_mode = 2
-text = "85%"
-horizontal_alignment = 2
-
-[node name="Mute" type="CheckButton" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -370.0
-offset_top = 30.0
-offset_right = 370.0
-offset_bottom = 80.0
-grow_horizontal = 2
-grow_vertical = 2
-text = "Mute all audio"
-
-[node name="AudioHint" type="Label" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -370.0
-offset_top = 93.0
-offset_right = 370.0
-offset_bottom = 125.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(0.55, 0.68, 0.75, 1)
-theme_override_font_sizes/font_size = 15
-text = "Changes are saved automatically."
-horizontal_alignment = 1
-
-[node name="ResetAudio" type="Button" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -370.0
-offset_top = 148.0
-offset_right = -10.0
-offset_bottom = 204.0
-grow_horizontal = 2
-grow_vertical = 2
-text = "RESET DEFAULTS"
-
-[node name="OptionsBack" type="Button" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = 10.0
-offset_top = 148.0
-offset_right = 370.0
-offset_bottom = 204.0
-grow_horizontal = 2
-grow_vertical = 2
-text = "BACK"
 
 [node name="DeveloperHeading" type="Label" parent="Center"]
 visible = false
@@ -834,6 +493,31 @@ theme_override_colors/font_color = Color(0.55, 0.68, 0.75, 1)
 theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1
 autowrap_mode = 2
+
+[node name="OptionsScreen" type="Control" parent="Center"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("3")
+
+[node name="StatsScreen" type="Panel" parent="Center"]
+visible = false
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 28.0
+offset_top = -902.0
+offset_right = 1892.0
+offset_bottom = -136.0
+grow_vertical = 0
+mouse_filter = 1
+theme_type_variation = "FlyoutPanel"
+script = ExtResource("5")
 
 [node name="DeveloperAccess" type="Button" parent="."]
 visible = false

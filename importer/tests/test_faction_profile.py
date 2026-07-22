@@ -102,3 +102,68 @@ def test_rejects_recipe_not_bound_to_coverage(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(subject, "validate_structure_visual_recipe", lambda recipe: None)
     with pytest.raises(ValueError, match="coverage/recipe identity mismatch"):
         compose_faction_profile(_base(), tmp_path, ["elves"])
+
+
+def _horde_alias_coverage(root: Path, *, parent_row: bool = True) -> None:
+    member_recipe = {
+        "objectId": "ElvenArcherHorde", "category": "ranged-infantry",
+        "descriptorSha256": "a" * 64, "recipeSha256": "b" * 64,
+        "resources": [_resource("unit-elvenarcherhorde")],
+        "runtimeRegistration": {"production": []},
+    }
+    horde_recipe = {
+        "objectId": "ElvenArcherHorde", "category": "ranged-infantry",
+        "descriptorSha256": "e" * 64, "recipeSha256": "f" * 64,
+        "resources": [_resource("unit-elvenarcherhorde")],
+        "runtimeRegistration": {"production": []},
+    }
+    rows = [
+        {"id": "ElvenArcher", "family": "playable-unit", "status": "converted", "recipeSha256": "b" * 64},
+    ]
+    if parent_row:
+        rows.append({"id": "ElvenArcherHorde", "family": "playable-unit", "status": "converted", "recipeSha256": "f" * 64})
+    coverage = {
+        "schema": "openbfme.faction-import-coverage", "schemaVersion": 0,
+        "objects": rows,
+        "summary": {"convertedCount": len(rows), "converterGapCount": 0, "conversionComplete": True},
+    }
+    coverage["aggregateSha256"] = _digest(coverage)
+    _write_json(root / "elves-coverage.json", coverage)
+    _write_json(root / "elves/objects/elvenarcher/pack-recipe.json", member_recipe)
+    _write_json(root / "elves/objects/elvenarcherhorde/pack-recipe.json", horde_recipe)
+
+
+def test_horde_member_row_aliases_parent_horde_recipe(tmp_path: Path) -> None:
+    _horde_alias_coverage(tmp_path)
+    target, receipt = compose_faction_profile(_base(), tmp_path, ["elves"])
+    assert [row["id"] for row in target["resources"]] == ["unit-elvenarcherhorde"]
+    assert target["pack"]["files"] == {"playableUnit.elvenarcherhorde": "data/playable-units/elvenarcherhorde.json"}
+    document = target["runtime_data"]["data/playable-units/elvenarcherhorde.json"]
+    assert document["objectId"] == "ElvenArcherHorde"
+    assert document["recipeSha256"] == "f" * 64
+    assert receipt["objects"] == [
+        {"faction": "elves", "family": "playable-unit", "objectId": "ElvenArcher", "aliasOf": "ElvenArcherHorde"},
+        {
+            "faction": "elves", "family": "playable-unit", "objectId": "ElvenArcherHorde",
+            "runtimePath": "data/playable-units/elvenarcherhorde.json",
+            "packFileKey": "playableUnit.elvenarcherhorde",
+            "resourceIds": ["unit-elvenarcherhorde"],
+            "update": False,
+        },
+    ]
+
+
+def test_rejects_horde_member_alias_without_parent_row(tmp_path: Path) -> None:
+    _horde_alias_coverage(tmp_path, parent_row=False)
+    with pytest.raises(ValueError, match="coverage/recipe identity mismatch"):
+        compose_faction_profile(_base(), tmp_path, ["elves"])
+
+
+def test_rejects_horde_member_alias_with_unbound_recipe(tmp_path: Path) -> None:
+    _horde_alias_coverage(tmp_path)
+    path = tmp_path / "elves/objects/elvenarcher/pack-recipe.json"
+    value = json.loads(path.read_text())
+    value["recipeSha256"] = "d" * 64
+    _write_json(path, value)
+    with pytest.raises(ValueError, match="coverage/recipe identity mismatch"):
+        compose_faction_profile(_base(), tmp_path, ["elves"])

@@ -7,17 +7,27 @@ extends Control
 ## pixels, draws a one-pixel outline, and scales the width by tactical zoom.
 ## Keeping this in CanvasItem space avoids the large billboard quads that were
 ## previously used as a gameplay approximation.
+##
+## Veterancy: a battalion at rank 2+ draws one small chevron pip per earned
+## rank above its first rendered bar — placeholder-styled after the retail
+## rank badges (reference/INDEX.md REF-24/REF-44), no retail art claims.
 
 const SOURCE_MINIMUM_INFANTRY_WIDTH_PIXELS := 40.0
 const SOURCE_HEIGHT_PIXELS := 3.0
 const SOURCE_OUTLINE_PIXELS := 1.0
 const SOURCE_CLOSE_CAMERA_HEIGHT := 120.0
 const SOURCE_FAR_CAMERA_HEIGHT := 300.0
+const CHEVRON_WIDTH_PIXELS := 5.0
+const CHEVRON_HEIGHT_PIXELS := 3.0
+const CHEVRON_SPACING_PIXELS := 2.0
+const CHEVRON_LIFT_PIXELS := 2.0
+const CHEVRON_COLOR := Color(0.95, 0.85, 0.35, 0.95)
 
 var tactical_view: Node
 var tactical_camera: Camera3D
 var battalions: Dictionary
 var rendered_bar_count := 0
+var rendered_chevron_count := 0
 
 
 func configure(view: Node, camera: Camera3D, battalion_nodes: Dictionary) -> void:
@@ -35,6 +45,7 @@ func _process(_delta: float) -> void:
 
 func _draw() -> void:
 	rendered_bar_count = 0
+	rendered_chevron_count = 0
 	if tactical_camera == null or not is_instance_valid(tactical_camera):
 		return
 	var zoom := 1.0
@@ -49,6 +60,8 @@ func _draw() -> void:
 		var battalion_team := int(battalion.get("team"))
 		if not should_show_battalion(battalion_team, bool(battalion.get("selected"))):
 			continue
+		var chevron_anchor := Vector2.INF
+		var chevron_pips := 0
 		for row_value in battalion.call("member_health_overlay_rows"):
 			var row := row_value as Dictionary
 			var world_position := row.get("world_position", Vector3.ZERO) as Vector3
@@ -64,6 +77,9 @@ func _draw() -> void:
 			var region := Rect2(origin, Vector2(width, SOURCE_HEIGHT_PIXELS))
 			if not viewport_rect.intersects(region):
 				continue
+			if chevron_anchor == Vector2.INF:
+				chevron_anchor = origin
+				chevron_pips = maxi(0, int(row.get("experience_level", 1)) - 1)
 			var ratio := clampf(float(row.get("health_ratio", 0.0)), 0.0, 1.0)
 			if ratio <= 0.0:
 				continue
@@ -77,6 +93,25 @@ func _draw() -> void:
 					true
 				)
 			rendered_bar_count += 1
+		if chevron_pips > 0 and chevron_anchor != Vector2.INF:
+			_draw_rank_chevrons(chevron_anchor, chevron_pips)
+
+
+func _draw_rank_chevrons(origin: Vector2, pip_count: int) -> void:
+	## Placeholder-styled rank pips: one small chevron per earned rank above
+	## the first visible member's bar, matching the retail badge count.
+	for pip_index in range(pip_count):
+		var x := origin.x + float(pip_index) * (CHEVRON_WIDTH_PIXELS + CHEVRON_SPACING_PIXELS)
+		var top := origin.y - CHEVRON_LIFT_PIXELS - CHEVRON_HEIGHT_PIXELS
+		draw_colored_polygon(
+			PackedVector2Array([
+				Vector2(x, top + CHEVRON_HEIGHT_PIXELS),
+				Vector2(x + CHEVRON_WIDTH_PIXELS * 0.5, top),
+				Vector2(x + CHEVRON_WIDTH_PIXELS, top + CHEVRON_HEIGHT_PIXELS),
+			]),
+			CHEVRON_COLOR
+		)
+		rendered_chevron_count += 1
 
 
 static func source_health_colors(health_ratio: float) -> Dictionary:

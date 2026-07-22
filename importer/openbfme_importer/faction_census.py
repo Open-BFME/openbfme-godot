@@ -19,10 +19,12 @@ from .sage_audio import (
     resolve_audio_sample_paths,
     resolve_sage_audio_closure,
 )
+from .sage_cst import SageCstError, parse_sage_document
 from .sage_gameplay import resolve_gameplay_definition_closure
 from .sage_ini import (
     IniBlock,
     MAX_INI_BYTES,
+    _lines as _ini_lines,
     parse_flat_named_blocks,
     parse_object_definitions,
 )
@@ -38,11 +40,16 @@ STRING_CATALOG_PATH = "data/lotr.str"
 UPGRADE_PATH = "data/ini/upgrade.ini"
 SCIENCE_PATH = "data/ini/science.ini"
 SPECIAL_POWER_PATH = "data/ini/specialpower.ini"
+FX_LIST_PATH = "data/ini/fxlist.ini"
+EVA_PATH = "data/ini/eva.ini"
+MUSIC_PATH = "data/ini/music.ini"
 MAPPED_IMAGE_PREFIX = "data/ini/mappedimages/"
 MAX_OBJECT_DOCUMENTS = 4_096
 MAX_TOTAL_OBJECT_INI_BYTES = 128 * 1024 * 1024
 MAX_MAPPED_IMAGE_DOCUMENTS = 4_096
 MAX_TOTAL_MAPPED_IMAGE_BYTES = 128 * 1024 * 1024
+MAX_FX_LISTS = 4_096
+MAX_EVA_EVENTS = 4_096
 
 _IMPLICIT_MEN_ROOTS = (
     ("MenFortressCenterGeneric", "fortress-composite-center"),
@@ -157,6 +164,12 @@ def _definition_tokens(value: str) -> tuple[str, ...]:
 
 _ADDITIVE_SOUND_PREFIX = re.compile(r"^\+\s*sound:(?P<identifier>.+)$", re.IGNORECASE)
 
+# Behavior-module fields which reference FX lists on a spell book Object.
+# Mirrors the effect-leaf taxonomy proven by the spellbook compiler lane.
+_SPELLBOOK_FX_FIELDS = frozenset(
+    {"triggerfx", "healfx", "elvenwoodfx", "taintfx", "fx"}
+)
+
 
 def _audio_reference_tokens(value: str) -> tuple[str, ...]:
     """Tokenize one audio field, honoring the additive SOUND namespace prefix.
@@ -170,6 +183,107 @@ def _audio_reference_tokens(value: str) -> tuple[str, ...]:
     if match:
         return (match.group("identifier").strip(),)
     return _definition_tokens(value)
+
+
+_FX_LIST_HEADER = re.compile(r"^FXList\s+([A-Za-z0-9_+.-]+)\s*$", re.IGNORECASE)
+_EVA_EVENT_HEADER = re.compile(r"^NewEvaEvent\s+([A-Za-z0-9_+.-]+)\s*$", re.IGNORECASE)
+
+
+def _eva_event_side_sounds(source: bytes) -> dict[str, tuple[str, tuple[tuple[str, str], ...]]]:
+    """Index NewEvaEvent announcer sounds as ``(side, sound)`` pairs per event.
+
+    Object ``EVA:<Event>`` voice values reference these blocks; each nested
+    ``SideSound`` section binds one faction side to one audio definition.
+    """
+
+    events: dict[str, list[tuple[str, str]]] = {}
+    authored_names: dict[str, str] = {}
+    current: str | None = None
+    in_side_sound = False
+    side: str | None = None
+    for line in _ini_lines(source):
+        header = _EVA_EVENT_HEADER.fullmatch(line)
+        if header is not None and current is None:
+            current = header.group(1)
+            authored_names.setdefault(current.casefold(), current)
+            events.setdefault(current.casefold(), [])
+            if len(events) > MAX_EVA_EVENTS:
+                raise ValueError("EvaEvent document count exceeds limit")
+            continue
+        if current is None:
+            continue
+        if line.casefold() == "end":
+            if in_side_sound:
+                in_side_sound = False
+                side = None
+            else:
+                current = None
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            key = key.strip().casefold()
+            if in_side_sound and key == "side":
+                side = _first_identifier(value.strip())
+            elif in_side_sound and key == "sound" and side:
+                sound = _first_identifier(value.strip())
+                if sound:
+                    events[current.casefold()].append((side, sound))
+            continue
+        if line.split()[0].casefold() == "sidesound":
+            in_side_sound = True
+    return {
+        key: (authored_names[key], tuple(pairs))
+        for key, pairs in events.items()
+    }
+
+
+def _fx_list_sound_names(source: bytes) -> dict[str, tuple[str, tuple[str, ...]]]:
+    """Index Sound nugget names per FXList without resolving FX semantics.
+
+    fxlist.ini nests flat ``Sound`` sections inside each ``FXList`` body; a
+    census only needs the authored ``Name`` references inside those sections
+    to route their audio definitions.  The file is line-oriented SAGE INI:
+    bare words open sections, ``End`` closes them.
+    """
+
+    sounds: dict[str, list[str]] = {}
+    authored_names: dict[str, str] = {}
+    current_list: str | None = None
+    section_stack: list[str] = []
+    for line in _ini_lines(source):
+        header = _FX_LIST_HEADER.fullmatch(line)
+        if header is not None and current_list is None:
+            current_list = header.group(1)
+            authored_names.setdefault(current_list.casefold(), current_list)
+            sounds.setdefault(current_list.casefold(), [])
+            if len(sounds) > MAX_FX_LISTS:
+                raise ValueError("FXList document count exceeds limit")
+            continue
+        if current_list is None:
+            continue
+        if line.casefold() == "end":
+            if section_stack:
+                section_stack.pop()
+            else:
+                current_list = None
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            if (
+                key.strip().casefold() == "name"
+                and "sound" in section_stack
+                and (identifier := _first_identifier(value.strip()))
+            ):
+                sounds[current_list.casefold()].append(identifier)
+            continue
+        section_stack.append(line.split()[0].casefold())
+    result: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for key, values in sounds.items():
+        deduped = tuple(
+            dict.fromkeys(sorted(values, key=lambda item: (item.casefold(), item)))
+        )
+        result[key] = (authored_names[key], deduped)
+    return result
 
 
 def _block_candidates(blocks: Iterable[IniBlock]) -> dict[str, list[IniBlock]]:
@@ -219,6 +333,40 @@ def _casefold_unique(values: Iterable[str]) -> tuple[str, ...]:
 
 def _block_values(block: IniBlock, key: str) -> list[str]:
     return list(block.values(key))
+
+
+# Object UI image fields whose override must be scope-aware: a module-scoped
+# value (the RespawnUpdate respawn portrait) is a real reference but never
+# shadows an inherited top-level authored value.
+_SCOPE_AWARE_OVERRIDE_FIELDS = frozenset({"buttonimage", "selectportrait"})
+
+
+def _object_ui_top_level_fields(
+    object_docs: Iterable[_SourceDocument],
+) -> dict[tuple[str, str], frozenset[str]]:
+    """Index strict-parse top-level UI field keys per (document, object).
+
+    The flat IniBlock reader cannot distinguish a module-scoped assignment
+    from the Object's own top-level one; the strict sage_cst reader can.
+    Documents outside the strict grammar contribute no entries and their
+    objects keep the legacy flat override behavior.
+    """
+
+    scope: dict[tuple[str, str], frozenset[str]] = {}
+    for document in object_docs:
+        try:
+            parsed = parse_sage_document(document.source, document.virtual_path)
+        except SageCstError:
+            continue
+        for item in parsed.objects:
+            scope[(document.virtual_path.casefold(), item.name.casefold())] = (
+                frozenset(
+                    assignment.key.casefold()
+                    for assignment in item.assignments
+                    if assignment.key.casefold() in _SCOPE_AWARE_OVERRIDE_FIELDS
+                )
+            )
+    return scope
 
 
 _OBJECT_AUDIO_VALUE_FIELDS = frozenset(
@@ -290,30 +438,59 @@ def _command_audio_reference_ordinals(
 def _effective_object_assignments(
     definition: _ObjectDefinition,
     candidates: dict[str, list[_ObjectDefinition]],
+    ui_top_level_fields: dict[tuple[str, str], frozenset[str]] | None = None,
 ) -> tuple[
     list[tuple[str, str, _ObjectDefinition]],
     list[_ObjectDefinition],
     tuple[str, str] | None,
 ]:
-    """Resolve all inherited assignment families with child override semantics."""
+    """Resolve all inherited assignment families with child override semantics.
+
+    UI image fields (``SelectPortrait``/``ButtonImage``) are scope-aware: a
+    module-scoped value (for example the RespawnUpdate respawn portrait) is a
+    genuine reference but never overrides an inherited top-level authored
+    value.  ``ui_top_level_fields`` carries the strict-parse top-level keys
+    per (document, object); objects without an entry keep the legacy flat
+    behavior where any presence selects the field.
+    """
 
     current = definition
     ancestry: list[_ObjectDefinition] = []
     seen = {current.block.name.casefold()}
     selected_fields: set[str] = set()
     effective: list[tuple[str, str, _ObjectDefinition]] = []
+    supplemental: list[tuple[str, str, _ObjectDefinition]] = []
     while True:
         assignments_by_field: dict[str, list[tuple[str, str]]] = {}
         for field, value in current.block.assignments:
             assignments_by_field.setdefault(field.casefold(), []).append((field, value))
+        top_level = (
+            ui_top_level_fields.get(
+                (
+                    current.source.virtual_path.casefold(),
+                    current.block.name.casefold(),
+                )
+            )
+            if ui_top_level_fields is not None
+            else None
+        )
         for folded, assignments in assignments_by_field.items():
             if folded in selected_fields:
+                continue
+            if (
+                folded in _SCOPE_AWARE_OVERRIDE_FIELDS
+                and top_level is not None
+                and folded not in top_level
+            ):
+                supplemental.extend(
+                    (field, value, current) for field, value in assignments
+                )
                 continue
             selected_fields.add(folded)
             effective.extend((field, value, current) for field, value in assignments)
         parent = current.block.parent
         if not parent:
-            return effective, ancestry, None
+            return [*effective, *supplemental], ancestry, None
         key = parent.casefold()
         if key in seen:
             raise ValueError(
@@ -322,9 +499,9 @@ def _effective_object_assignments(
         seen.add(key)
         matches = candidates.get(key, [])
         if not matches:
-            return effective, ancestry, ("missing", parent)
+            return [*effective, *supplemental], ancestry, ("missing", parent)
         if len(matches) != 1:
-            return effective, ancestry, ("ambiguous", parent)
+            return [*effective, *supplemental], ancestry, ("ambiguous", parent)
         current = matches[0]
         ancestry.append(current)
 
@@ -337,6 +514,7 @@ def _census_playable_faction(
     implicit_object_roots: Iterable[tuple[str, str]] = (),
     source_null_mapped_image_textures: Iterable[tuple[str, str]] = (),
     source_null_command_sets: Iterable[tuple[str, str]] = (),
+    music_roots: Iterable[tuple[str, str]] = (),
     _legacy_men_identity: bool = False,
 ) -> dict[str, Any]:
     """Return neutral command/UI dependency facts without retail INI bodies.
@@ -351,6 +529,10 @@ def _census_playable_faction(
     CommandSet).  Each policy entry must name the exact authored identifier
     and is only consumed when the reference is genuinely absent from the
     effective catalog; a policy entry which suddenly resolves fails closed.
+
+    ``music_roots`` declares the engine-level skirmish music loops (shell and
+    load-screen).  Each declared root must resolve through the merged
+    MusicTrack/Multisound namespace; anything else fails closed.
     """
 
     if not re.fullmatch(r"[A-Za-z0-9_+.-]+", player_template):
@@ -405,6 +587,7 @@ def _census_playable_faction(
     source_null_command_set_policy = _policy_entries(
         source_null_command_sets, "source-null CommandSet"
     )
+    music_root_policy = _policy_entries(music_roots, "music root")
 
     player_doc = _read_document(catalog, PLAYER_TEMPLATE_PATH)
     command_set_doc = _read_document(catalog, COMMAND_SET_PATH)
@@ -415,15 +598,21 @@ def _census_playable_faction(
     upgrade_doc = _read_document(catalog, UPGRADE_PATH)
     science_doc = _read_document(catalog, SCIENCE_PATH)
     special_power_doc = _read_document(catalog, SPECIAL_POWER_PATH)
+    fx_list_doc = _read_document(catalog, FX_LIST_PATH)
+    eva_doc = _read_document(catalog, EVA_PATH)
+    music_doc = _read_document(catalog, MUSIC_PATH)
     mapped_image_docs = _mapped_image_documents(catalog)
     # Object Voice* fields resolve through voice.ini while impacts, footsteps,
     # construction sounds, and other world SFX resolve through
     # soundeffects.ini. Treat the two retail definition documents as one
     # namespace so cross-document Multisound edges stay exact and duplicate
-    # identifiers fail closed in the shared parser.
+    # identifiers fail closed in the shared parser.  music.ini adds the
+    # MusicTrack records and shell Multisound loops to the same namespace.
     audio_definitions = parse_sage_audio_definitions(
-        sound_effects_doc.source + b"\n" + voice_doc.source
+        sound_effects_doc.source + b"\n" + voice_doc.source + b"\n" + music_doc.source
     )
+    fx_list_sounds = _fx_list_sound_names(fx_list_doc.source)
+    eva_events = _eva_event_side_sounds(eva_doc.source)
     string_catalog = parse_string_catalog(
         string_catalog_doc.source, duplicate_policy="first-wins"
     )
@@ -433,7 +622,11 @@ def _census_playable_faction(
     }
     audio_definition_names = {
         item.id.casefold(): item.id
-        for item in (*audio_definitions.events, *audio_definitions.multisounds)
+        for item in (
+            *audio_definitions.events,
+            *audio_definitions.multisounds,
+            *audio_definitions.tracks,
+        )
     }
     player_templates = _block_candidates(
         parse_flat_named_blocks(player_doc.source, "PlayerTemplate")
@@ -471,6 +664,7 @@ def _census_playable_faction(
             object_candidates.setdefault(block.name.casefold(), []).append(
                 _ObjectDefinition(block, document)
             )
+    ui_top_level_fields = _object_ui_top_level_fields(object_docs)
 
     roots: list[dict[str, str]] = []
     roster_entries: list[dict[str, Any]] = []
@@ -478,6 +672,10 @@ def _census_playable_faction(
     object_ids: set[str] = set()
     command_set_ids: set[str] = set()
     missing_audio_definitions: set[str] = set()
+    missing_eva_events: set[str] = set()
+    missing_fx_lists: set[str] = set()
+    spellbook_object_keys: set[str] = set()
+    spellbook_fx_lists: set[str] = set()
     sciences: set[str] = set()
     intrinsic_sciences: set[str] = set()
     for assignment_ordinal, (field, value) in enumerate(template.assignments):
@@ -503,6 +701,8 @@ def _census_playable_faction(
                 roots.append(
                     {"sourceField": field, "id": identifier, "edgeKind": "object"}
                 )
+                if folded == "spellbookmp":
+                    spellbook_object_keys.add(identifier.casefold())
                 if folded in {
                     "buildableheroesmp",
                     "buildableringheroesmp",
@@ -543,6 +743,27 @@ def _census_playable_faction(
                 "edgeKind": "engine-implicit-object",
             }
         )
+    declared_music_roots: list[dict[str, str]] = []
+    music_audio_ids: set[str] = set()
+    for key in sorted(music_root_policy):
+        identifier, reason = music_root_policy[key]
+        audio_id = audio_definition_names.get(key)
+        if audio_id is None:
+            raise ValueError(
+                f"declared music root does not resolve in the effective "
+                f"catalog: {identifier}"
+            )
+        music_audio_ids.add(audio_id)
+        roots.append(
+            {
+                "sourceField": reason,
+                "id": audio_id,
+                "edgeKind": "engine-music-root",
+            }
+        )
+        declared_music_roots.append(
+            {"id": audio_id, "reason": reason}
+        )
 
     processed_objects: set[str] = set()
     processed_command_sets: set[str] = set()
@@ -563,6 +784,8 @@ def _census_playable_faction(
     required_mapped_images: set[str] = set()
     text_ids: set[str] = set()
     audio_roots: set[str] = set()
+    for _audio_id in music_audio_ids:
+        audio_roots.add(_audio_id)
     object_rows: dict[str, dict[str, Any]] = {}
     command_set_rows: dict[str, dict[str, Any]] = {}
     command_button_rows: dict[str, dict[str, Any]] = {}
@@ -594,7 +817,9 @@ def _census_playable_faction(
                     }
                 )
             effective_assignments, ancestry, inheritance_problem = (
-                _effective_object_assignments(definition, object_candidates)
+                _effective_object_assignments(
+                    definition, object_candidates, ui_top_level_fields
+                )
             )
             if inheritance_problem:
                 problem, target = inheritance_problem
@@ -660,7 +885,57 @@ def _census_playable_faction(
                         edge_rows.append(edge)
                 tokens = _audio_reference_tokens(value)
                 for ordinal in _object_audio_reference_ordinals(field):
-                    if value.lstrip().casefold().startswith("eva:"):
+                    stripped_value = value.lstrip()
+                    if stripped_value.casefold().startswith("eva:"):
+                        if ordinal != 0:
+                            continue
+                        eva_token = _first_identifier(stripped_value[4:])
+                        if not eva_token:
+                            continue
+                        eva_record = eva_events.get(eva_token.casefold())
+                        eva_edge = {
+                            "field": field,
+                            "targetKind": "eva-event",
+                            "targetId": (
+                                eva_record[0] if eva_record is not None else eva_token
+                            ),
+                            "resolution": (
+                                "resolved" if eva_record is not None else "unresolved"
+                            ),
+                        }
+                        if inherited:
+                            eva_edge["sourceObjectId"] = supplier.block.name
+                        edge_rows.append(eva_edge)
+                        if eva_record is None:
+                            missing_eva_events.add(eva_token)
+                            continue
+                        side_keys = {
+                            side.casefold(),
+                            f"player{side.casefold()}",
+                        }
+                        for sound_side, sound_token in eva_record[1]:
+                            if sound_side.casefold() not in side_keys:
+                                continue
+                            audio_id = audio_definition_names.get(
+                                sound_token.casefold()
+                            )
+                            if audio_id is not None:
+                                audio_roots.add(audio_id)
+                                target_id = audio_id
+                                resolution = "resolved"
+                            else:
+                                target_id = sound_token
+                                resolution = "unresolved"
+                                missing_audio_definitions.add(sound_token)
+                            sound_edge = {
+                                "field": f"EvaEvent:{eva_record[0]}",
+                                "targetKind": "audio-definition",
+                                "targetId": target_id,
+                                "resolution": resolution,
+                            }
+                            if inherited:
+                                sound_edge["sourceObjectId"] = supplier.block.name
+                            edge_rows.append(sound_edge)
                         continue
                     if ordinal >= len(tokens):
                         continue
@@ -685,6 +960,45 @@ def _census_playable_faction(
                     if inherited:
                         edge["sourceObjectId"] = supplier.block.name
                     edge_rows.append(edge)
+                if key in spellbook_object_keys and folded in _SPELLBOOK_FX_FIELDS:
+                    fx_target = _first_identifier(value)
+                    if fx_target:
+                        spellbook_fx_lists.add(fx_target)
+                        edge = {
+                            "field": field,
+                            "targetKind": "fx-list",
+                            "targetId": fx_target,
+                        }
+                        if inherited:
+                            edge["sourceObjectId"] = supplier.block.name
+                        edge_rows.append(edge)
+                        fx_record = fx_list_sounds.get(fx_target.casefold())
+                        if fx_record is None:
+                            missing_fx_lists.add(fx_target)
+                        else:
+                            for sound_token in fx_record[1]:
+                                audio_id = audio_definition_names.get(
+                                    sound_token.casefold()
+                                )
+                                if audio_id is not None:
+                                    audio_roots.add(audio_id)
+                                    target_id = audio_id
+                                    resolution = "resolved"
+                                else:
+                                    target_id = sound_token
+                                    resolution = "unresolved"
+                                    missing_audio_definitions.add(sound_token)
+                                sound_edge = {
+                                    "field": f"FXList:{fx_record[0]}",
+                                    "targetKind": "audio-definition",
+                                    "targetId": target_id,
+                                    "resolution": resolution,
+                                }
+                                if inherited:
+                                    sound_edge["sourceObjectId"] = (
+                                        supplier.block.name
+                                    )
+                                edge_rows.append(sound_edge)
             edge_rows.sort(
                 key=lambda item: (
                     item["field"].casefold(),
@@ -1039,6 +1353,9 @@ def _census_playable_faction(
         upgrade_doc,
         science_doc,
         special_power_doc,
+        fx_list_doc,
+        eva_doc,
+        music_doc,
         *mapped_image_docs,
         *object_docs,
     ]
@@ -1080,6 +1397,7 @@ def _census_playable_faction(
         for policy_domain, policy in (
             ("source-null-texture", source_null_texture_policy),
             ("source-null-command-set", source_null_command_set_policy),
+            ("music-root", music_root_policy),
         ):
             for key in sorted(policy):
                 identifier, reason = policy[key]
@@ -1136,6 +1454,7 @@ def _census_playable_faction(
         "missingTextIds": sorted(missing_text_ids, key=str.casefold),
         "missingMappedImages": sorted(unresolved_mapped_images, key=str.casefold),
         "missingAudioDefinitions": sorted(missing_audio_definitions, key=str.casefold),
+        "missingEvaEvents": sorted(missing_eva_events, key=str.casefold),
         "ambiguousMappedImages": list(mapped_image_resolution.ambiguous_ids),
         "missingUpgrades": list(gameplay_closure.missing_upgrades),
         "ambiguousUpgrades": list(gameplay_closure.ambiguous_upgrades),
@@ -1143,6 +1462,7 @@ def _census_playable_faction(
         "ambiguousSciences": list(gameplay_closure.ambiguous_sciences),
         "missingSpecialPowers": list(gameplay_closure.missing_special_powers),
         "ambiguousSpecialPowers": list(gameplay_closure.ambiguous_special_powers),
+        "missingFxLists": sorted(missing_fx_lists, key=str.casefold),
     }
     if unresolved_mapped_image_textures:
         unresolved["missingMappedImageTextures"] = sorted(
@@ -1194,7 +1514,12 @@ def _census_playable_faction(
             "sourceNullCommandSets": source_null_command_set_rows,
             "textIds": sorted(text_ids, key=str.casefold),
             "audioRootIds": list(audio_closure.root_ids),
-            "fxLists": list(gameplay_closure.fx_lists),
+            "musicRootIds": [row["id"] for row in declared_music_roots],
+            "fxLists": sorted(
+                {str(item) for item in gameplay_closure.fx_lists}
+                | spellbook_fx_lists,
+                key=str.casefold,
+            ),
         },
         "resolvedLeaves": {
             "mappedImages": mapped_image_rows,
@@ -1237,6 +1562,7 @@ def _census_playable_faction(
             "textResolvedCount": len(resolved_text_rows),
             "requestedTextConflictCount": len(requested_conflicting_text_ids),
             "audioRootCount": len(audio_closure.root_ids),
+            "musicRootCount": len(declared_music_roots),
             "audioEventCount": len(audio_closure.events),
             "audioMultisoundCount": len(audio_closure.multisounds),
             "audioSampleCount": len(audio_closure.sample_ids),
@@ -1254,7 +1580,10 @@ def _census_playable_faction(
             "resolvedUpgradeDefinitionCount": len(gameplay_closure.upgrades),
             "resolvedScienceDefinitionCount": len(gameplay_closure.sciences),
             "resolvedSpecialPowerDefinitionCount": len(gameplay_closure.special_powers),
-            "fxListReferenceCount": len(gameplay_closure.fx_lists),
+            "fxListReferenceCount": len(
+                {str(item) for item in gameplay_closure.fx_lists}
+                | spellbook_fx_lists
+            ),
         },
         "limitations": [
             "Command-reachable upgrade, science, and special-power definitions are resolved as typed identifier edges plus payload-free assignment digests.",
@@ -1262,6 +1591,7 @@ def _census_playable_faction(
             "Mapped-image, localization, and audio leaves cover the current command-reachable object/button graph, not every future runtime state.",
             "Authored SelectPortrait references with no MappedImage definition are preserved as explicit source-null images; required ButtonImage gaps remain unresolved.",
             "Caller-declared source-null policy covers only retail-authored references absent from every effective archive (placeholder button atlas textures, the Isengard side-pad CommandSet); every other missing leaf remains unresolved.",
+            "Caller-declared music roots cover the engine-level skirmish shell and load-screen loops resolved through the merged MusicTrack/Multisound namespace.",
             "Localized duplicate conflicts use BFME2 source order and remain explicit oracle-review evidence.",
             "Runtime support and oracle parity are not implied by definition reachability.",
             "ROTWK 2.01 data is a separate future overlay and is not merged into this BFME2 1.06 report.",
@@ -1282,6 +1612,7 @@ def census_playable_faction(
     implicit_object_roots: Iterable[tuple[str, str]] = (),
     source_null_mapped_image_textures: Iterable[tuple[str, str]] = (),
     source_null_command_sets: Iterable[tuple[str, str]] = (),
+    music_roots: Iterable[tuple[str, str]] = (),
 ) -> dict[str, Any]:
     """Return one generic playable-faction census with identity-bound policy."""
 
@@ -1292,6 +1623,7 @@ def census_playable_faction(
         implicit_object_roots=implicit_object_roots,
         source_null_mapped_image_textures=source_null_mapped_image_textures,
         source_null_command_sets=source_null_command_sets,
+        music_roots=music_roots,
         _legacy_men_identity=False,
     )
 

@@ -2,6 +2,8 @@
 
 > **Superseded:** use `docs/MILESTONE_CURRENT.md`, `PLAN.md`, and generated
 > compatibility coverage. This mixed remediation/expansion plan cannot assign work.
+> Its former campaign/War of the Ring expansion phase was removed after the
+> owner explicitly excluded both domains from the product scope.
 
 **Date:** 2026-07-15  
 **Scope authority:** `DIRECTION.md` and `docs/M2_MEN_FORDS_DOD.md`  
@@ -350,12 +352,10 @@ new source-driven systems in widening rings, with a playable gate at each ring.
 - Do not couple retail asset payload transfer to multiplayer; peers validate
   compatible private pack identities locally.
 
-### E6 - Campaign and War of the Ring
+### E6 - Removed from scope
 
-- Convert scripted maps, missions, cinematics, objectives, dialogs, hero state,
-  persistence, strategic layer, rewards, and campaign-specific UI/audio.
-- Treat campaign scripting and WotR as separate products with their own corpus
-  census and acceptance manifests.
+- Campaign material and War of the Ring are not OpenBFME roadmap phases. See
+  `DIRECTION.md` and the product-scope contract.
 
 ### E7 - Public code-only release preparation
 

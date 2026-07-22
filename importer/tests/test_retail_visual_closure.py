@@ -74,6 +74,17 @@ def _hierarchy_only_w3d(identifier: str) -> bytes:
     return _chunk(0x100, _chunk(0x101, header), children=True)
 
 
+def _hlod_model_w3d(model: str, hierarchy: str) -> bytes:
+    header = struct.pack(
+        "<II16s16s",
+        0x00040001,
+        1,
+        _fixed(model, 16),
+        _fixed(hierarchy, 16),
+    )
+    return _chunk(0x700, _chunk(0x701, header), children=True)
+
+
 def _textured_w3d(*identifiers: str) -> bytes:
     textures = b"".join(
         _chunk(
@@ -253,6 +264,49 @@ End
             )
             self.assertEqual(report["summary"]["scannedW3dCount"], 3)
             self.assertTrue(report["summary"]["ready"])
+
+    def test_model_hlod_reference_adds_exact_hierarchy_to_read_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _write(
+                root,
+                "data/ini/object/target.ini",
+                b"""
+Object ModelHierarchyTarget
+  Draw = W3DScriptedModelDraw ModuleTag_Main
+    DefaultModelConditionState
+      Model = TargetModel
+    End
+  End
+End
+""",
+            )
+            _write(
+                root,
+                "art/w3d/targetmodel.w3d",
+                _hlod_model_w3d("TARGETMODEL", "TARGET_SKL"),
+            )
+            _write(
+                root,
+                "art/w3d/target_skl.w3d",
+                _hierarchy_only_w3d("TARGET_SKL"),
+            )
+
+            report = closure.build_retail_visual_closure(
+                root, ["ModelHierarchyTarget"]
+            )
+
+            self.assertIn(
+                "art/w3d/target_skl.w3d",
+                report["w3dDependencyClosure"]["readBoundary"]["uniqueVirtualPaths"],
+            )
+            scanned = {
+                row["virtualPath"]: row for row in report["scannedW3d"]
+            }
+            self.assertEqual(
+                scanned["art/w3d/targetmodel.w3d"]["modelHierarchyIdentifiers"],
+                ["TARGET_SKL"],
+            )
 
     def test_object_assignment_is_not_misclassified_as_a_declaration(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -709,6 +763,63 @@ End
                 "texture-bearing shader material property must have a non-empty string",
             ):
                 closure.build_retail_visual_closure(root, ["ShaderTarget"])
+
+    def test_retail_padding_in_w3d_header_ids_is_trimmed_deterministically(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _write(
+                root,
+                "data/ini/object/target.ini",
+                b"""
+Object PaddedTarget
+  Draw = W3DScriptedModelDraw ModuleTag_Main
+    DefaultModelConditionState
+      Model = TargetModel
+    End
+    AnimationState = MOVING
+      Animation = Move
+        AnimationName = TARGET_SKL.TARGET_RUN
+      End
+    End
+  End
+End
+""",
+            )
+            _write(root, "art/w3d/targetmodel.w3d", b"")
+            # Retail exporters pad fixed-width chunk names with spaces/tabs
+            # (e.g. EBSTABLE_A.EBBSTABLES_1␣, DBMINE_A.ROCK_24\t); the logical
+            # identifier is the trimmed form.
+            _write(
+                root,
+                "art/w3d/target_run.w3d",
+                _animation_only_w3d("TARGET_RUN ", "TARGET_SKL\t"),
+            )
+            _write(
+                root,
+                "art/w3d/target_skl.w3d",
+                _hierarchy_only_w3d("TARGET_SKL\t"),
+            )
+
+            report = closure.build_retail_visual_closure(root, ["PaddedTarget"])
+
+            self.assertTrue(report["summary"]["ready"])
+            scanned = {item["virtualPath"]: item for item in report["scannedW3d"]}
+            self.assertEqual(
+                scanned["art/w3d/target_run.w3d"]["headerIds"]["animationIds"],
+                ["TARGET_RUN", "TARGET_SKL.TARGET_RUN"],
+            )
+            self.assertEqual(
+                scanned["art/w3d/target_skl.w3d"]["headerIds"]["hierarchyIds"],
+                ["TARGET_SKL"],
+            )
+            animation = next(
+                row
+                for row in report["exactLeaves"]
+                if row["kind"] == "animation"
+            )
+            self.assertEqual(
+                animation["physicalVirtualPaths"], ["art/w3d/target_run.w3d"]
+            )
 
     def test_ambiguous_definitions_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

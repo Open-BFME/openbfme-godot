@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Mapping
 
 from .catalog import (
     ArchivePolicy,
@@ -16,6 +17,7 @@ from .catalog import (
     doctor_install,
 )
 from .bootstrap import bootstrap_tools, tool_status
+from .dependency_check import check_dependencies, format_dependency_report
 from .asset_census import census_assets
 from .game import RETAIL_GAME_IDS, workspace_root
 from .paths import (
@@ -30,6 +32,7 @@ from .faction_census import census_playable_faction
 from .faction_import import convert_faction_import, plan_faction_import
 from .faction_policy import implicit_object_roots
 from .faction_profile import build_men_leaf_profile
+from .faction_slice_profile import compose_faction_profile
 from .map_profile import build_five_map_profile
 from .map_census import census_multiplayer_maps
 from .profile import ImportProfile, profile_path, resolve_profile
@@ -38,6 +41,7 @@ from .retail_visual_closure import (
     default_visual_closure_report_name,
 )
 from .sage_roads import build_road_closure, default_road_closure_report_name
+from .progress import configure_progress, complete as progress_complete
 from .util import write_json_atomic
 from .version import __version__
 
@@ -249,6 +253,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="compile every supported descriptor, recipe, and runtime artifact",
     )
+    import_faction.add_argument(
+        "--convert-jobs",
+        type=int,
+        default=None,
+        metavar="N",
+        help="parallel object convert workers (default: min(8, cpu-1))",
+    )
+    import_faction.add_argument(
+        "--dev",
+        action="store_true",
+        help=(
+            "developer mode: PNG level 6 and other process defaults for this "
+            "invocation only (OPENBFME_DEV=1). Object DDC is separate "
+            "(state_root / OPENBFME_SHARED_CACHE)."
+        ),
+    )
 
     faction_profile = sub.add_parser(
         "generate-faction-profile",
@@ -328,7 +348,7 @@ def build_parser() -> argparse.ArgumentParser:
                 type=int,
                 default=None,
                 metavar="N",
-                help="parallel W3D conversion workers (default: min(8, cpu_count-2))",
+                help="parallel W3D conversion workers (default: min(16, cpu_count-2))",
             )
             command.add_argument(
                 "--godot-content-root",
@@ -336,6 +356,82 @@ def build_parser() -> argparse.ArgumentParser:
                 default=default_godot_content_root(),
                 help="private Godot content-packs directory",
             )
+            command.add_argument(
+                "--dev",
+                action="store_true",
+                help=(
+                    "developer cook: PNG level 6, soft tool re-attest, light pack "
+                    "audit (size-only). Sets OPENBFME_DEV=1 for the process."
+                ),
+            )
+
+    publish_faction = sub.add_parser(
+        "publish-faction-to-slice",
+        help=(
+            "compose converted faction coverage into a pack profile, cook the "
+            "Godot pack, and select it for the retail vertical slice "
+            "(converter → pack → selection auto path)"
+        ),
+    )
+    publish_faction.add_argument("--install", required=True)
+    _add_game_argument(publish_faction)
+    publish_faction.add_argument(
+        "--faction",
+        required=True,
+        choices=("men", "elves", "dwarves", "isengard", "mordor", "wild"),
+    )
+    publish_faction.add_argument(
+        "--base-profile",
+        type=Path,
+        default=None,
+        help="host pack profile to extend (default: men-fords-v1.generated.json)",
+    )
+    publish_faction.add_argument(
+        "--profile-output",
+        type=Path,
+        default=None,
+        help="where to write the composed profile (default: state profiles/faction-slice-<faction>.generated.json)",
+    )
+    publish_faction.add_argument(
+        "--coverage-root",
+        type=Path,
+        default=None,
+        help="faction-import report root with <faction>-coverage.json (default: state reports/faction-import)",
+    )
+    publish_faction.add_argument("--reindex", action="store_true")
+    publish_faction.add_argument("--force", action="store_true")
+    publish_faction.add_argument("--allow-incomplete", action="store_true")
+    publish_faction.add_argument(
+        "--no-publish",
+        action="store_true",
+        help="cook the pack without updating Godot selection.json",
+    )
+    publish_faction.add_argument(
+        "--no-conversion-cache",
+        action="store_true",
+        help="force cold W3D conversion without reading or populating the conversion cache",
+    )
+    publish_faction.add_argument(
+        "--conversion-jobs",
+        type=int,
+        default=None,
+        metavar="N",
+        help="parallel W3D conversion workers (default: min(16, cpu_count-2))",
+    )
+    publish_faction.add_argument(
+        "--godot-content-root",
+        type=Path,
+        default=default_godot_content_root(),
+        help="private Godot content-packs directory",
+    )
+    publish_faction.add_argument(
+        "--dev",
+        action="store_true",
+        help=(
+            "developer cook: PNG level 6, soft tool re-attest, light pack "
+            "audit (size-only). Sets OPENBFME_DEV=1 for the process."
+        ),
+    )
 
     audit = sub.add_parser(
         "audit", help="verify every converted output against provenance hashes"
@@ -344,21 +440,123 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _apply_dev_mode(enabled: bool) -> dict[str, str | None]:
+    """Enable developer cook defaults for this process.
+
+    Returns prior env values so the caller can restore them (CLI scopes --dev
+    to a single main() invocation and must not pollute later in-process work).
+    """
+
+    keys = (
+        "OPENBFME_DEV",
+        "OPENBFME_PNG_LEVEL",
+        "OPENBFME_DEV_AUDIT",
+        "OPENBFME_STRICT_TOOL_ATTEST",
+    )
+    prior = {key: os.environ.get(key) for key in keys}
+    if not enabled:
+        return prior
+    os.environ["OPENBFME_DEV"] = "1"
+    os.environ.setdefault("OPENBFME_PNG_LEVEL", "6")
+    os.environ.setdefault("OPENBFME_DEV_AUDIT", "light")
+    # Soft tool re-attest (skip full Blender tree re-hash at end).
+    os.environ.pop("OPENBFME_STRICT_TOOL_ATTEST", None)
+    return prior
+
+
+def _restore_env(prior: Mapping[str, str | None]) -> None:
+    for key, value in prior.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    dev_env_prior: dict[str, str | None] | None = None
     try:
+        if getattr(args, "dev", False):
+            dev_env_prior = _apply_dev_mode(True)
+        if args.command in {
+            "import-faction",
+            "import-unit",
+            "build",
+            "plan",
+            "extract",
+            "publish-faction-to-slice",
+        }:
+            progress_root = _state_root(args) / "reports" / "progress"
+            stage_plan = {
+                # Align with GUI 5-stage model (complete is terminal).
+                "import-faction": [
+                    "catalog",
+                    "extract-assets",
+                    "census",
+                    "faction-plan",
+                    "faction-convert",
+                    "complete",
+                ],
+                "build": [
+                    "catalog",
+                    "extract",
+                    "convert-assets",
+                    "assemble",
+                    "complete",
+                ],
+                "import-unit": [
+                    "catalog",
+                    "plan",
+                    "convert",
+                    "blender-w3d",
+                    "publish",
+                    "complete",
+                ],
+                "plan": ["catalog", "plan", "complete"],
+                "extract": ["catalog", "extract", "complete"],
+                "publish-faction-to-slice": [
+                    "catalog",
+                    "compose",
+                    "extract",
+                    "convert-assets",
+                    "assemble",
+                    "publish",
+                    "complete",
+                ],
+            }.get(args.command, [])
+            configure_progress(
+                sink=progress_root / f"{args.command}.jsonl",
+                stages=stage_plan,
+            )
+
         if args.command == "bootstrap-tools":
             value = bootstrap_tools(_state_root(args), args.ffmpeg)
             _render(value, args.json)
             return 0
 
         if args.command == "doctor":
-            value = doctor_install(args.install, deep=args.deep, game=args.game)
-            value["state_root"] = str(_state_root(args))
-            value["tools"] = tool_status(_state_root(args))
-            value["ready"] = bool(value["ready"] and value["tools"]["ready"])
-            _render(value, args.json)
+            if getattr(args, "deep", False):
+                os.environ["OPENBFME_CATALOG_DEEP"] = "1"
+            # Unified dependency preflight (install + tools + Godot + state).
+            value = check_dependencies(
+                args.install,
+                _state_root(args),
+                mode="men-build",
+                deep=bool(getattr(args, "deep", False)),
+            )
+            # Keep legacy keys for scripts that parse doctor JSON.
+            value["install_root"] = value.get("install", {}).get(
+                "install_root", str(args.install)
+            )
+            value["tools"] = tool_status(
+                _state_root(args),
+                skip_w3d_attestation=not bool(getattr(args, "deep", False)),
+            )
+            if not args.json:
+                print(format_dependency_report(value))
+            else:
+                _render(value, True)
             return 0 if value["ready"] else 2
 
         if args.command == "audit":
@@ -415,8 +613,14 @@ def main(argv: list[str] | None = None) -> int:
             _render(value, args.json)
             return 0 if value["ready"] else 6
 
+        if args.command in {"import-faction", "import-unit", "build", "plan", "extract"}:
+            from .progress import emit as progress_emit
+
+            progress_emit("catalog", "loading / verifying install catalog")
         catalog = _load_or_build_catalog(args)
         if args.command == "import-faction":
+            from .progress import emit as progress_emit
+
             if args.game != "bfme2":
                 raise ValueError("import-faction currently supports BFME2 1.06 only")
             if args.plan_only == args.convert:
@@ -429,7 +633,14 @@ def main(argv: list[str] | None = None) -> int:
                 pipeline._effective_asset_paths()
             )
             if not manifest_path.is_file():
+                progress_emit("extract-assets", "extracting effective asset tree")
                 pipeline.extract_all_assets(force=False)
+            else:
+                progress_emit(
+                    "extract-assets",
+                    "skipped — effective-assets manifest already present",
+                    extra={"skipped": True},
+                )
             report_root = _state_root(args) / "reports" / "faction-import"
             if args.convert:
                 artifact_root = report_root / args.faction / "objects"
@@ -447,10 +658,16 @@ def main(argv: list[str] | None = None) -> int:
                     effective_root,
                     args.faction,
                     artifact_writer=_write_artifact,
+                    state_root=_state_root(args),
+                    convert_jobs=getattr(args, "convert_jobs", None),
                 )
                 report_path = report_root / f"{args.faction}-coverage.json"
                 write_json_atomic(report_path, value)
                 summary = value["summary"]
+                progress_complete(
+                    f"report={report_path} converted "
+                    f"{summary['convertedCount']}/{summary['objectCount']}"
+                )
                 _render(
                     {
                         "ready": summary["conversionComplete"],
@@ -469,6 +686,10 @@ def main(argv: list[str] | None = None) -> int:
             report_path = report_root / f"{args.faction}-plan.json"
             write_json_atomic(report_path, value)
             summary = value["summary"]
+            progress_complete(
+                f"report={report_path} plan ready "
+                f"({summary['descriptorReadyCount']}/{summary['objectCount']} ready)"
+            )
             _render(
                 {
                     "ready": summary["ready"],
@@ -502,6 +723,114 @@ def main(argv: list[str] | None = None) -> int:
             )
             _render(value, args.json)
             return 0
+        if args.command == "publish-faction-to-slice":
+            if args.game != "bfme2":
+                raise ValueError(
+                    "publish-faction-to-slice currently supports BFME2 1.06 only"
+                )
+            from .progress import emit as progress_emit
+
+            workspace = _workspace_root(args)
+            coverage_root = Path(
+                args.coverage_root
+                or (workspace / "reports" / "faction-import")
+            ).expanduser()
+            coverage_path = coverage_root / f"{args.faction}-coverage.json"
+            if not coverage_path.is_file():
+                raise FileNotFoundError(
+                    f"faction coverage missing at {coverage_path}; "
+                    f"run: openbfme-import import-faction --faction {args.faction} --convert"
+                )
+            base_profile_path = Path(
+                args.base_profile
+                or (workspace / "profiles" / "men-fords-v1.generated.json")
+            ).expanduser()
+            if not base_profile_path.is_file():
+                raise FileNotFoundError(
+                    f"base profile missing at {base_profile_path}; "
+                    "generate men-fords-v1 (or pass --base-profile)"
+                )
+            profile_output = Path(
+                args.profile_output
+                or (
+                    workspace
+                    / "profiles"
+                    / f"faction-slice-{args.faction}.generated.json"
+                )
+            ).expanduser()
+            progress_emit(
+                "compose",
+                f"composing {args.faction} coverage into pack profile",
+            )
+            base = json.loads(base_profile_path.read_text(encoding="utf-8"))
+            if not isinstance(base, dict):
+                raise ValueError(f"base profile root is not an object: {base_profile_path}")
+            composed, receipt = compose_faction_profile(
+                base, coverage_root, [args.faction]
+            )
+            # Keep the host pack id stable so the vertical slice host pack
+            # assertion (bfme2-men-vslice) continues to pass for Men.
+            pack = composed.get("pack")
+            if isinstance(pack, dict) and args.faction == "men":
+                pack["id"] = "bfme2-men-vslice"
+                composed["title"] = "BFME2 Men full faction vertical slice"
+            # Freshly composed profiles bind to the catalog they were composed
+            # against; inherited m3 markers otherwise fail the build's source
+            # catalog identity check with no stamping path.
+            if isinstance(pack, dict) and "sourceCatalogIdentitySha256" not in pack:
+                pack["sourceCatalogIdentitySha256"] = catalog.identity_sha256()
+            write_json_atomic(profile_output, composed)
+            receipt_path = profile_output.with_suffix(".receipt.json")
+            write_json_atomic(receipt_path, receipt)
+            # Validate the composed profile loads under the import schema.
+            ImportProfile.load(profile_output)
+            progress_emit(
+                "compose",
+                f"profile={profile_output.name} objects={len(receipt.get('objects', []))}",
+            )
+            pipeline = ImportPipeline(
+                catalog,
+                _state_root(args),
+                game=args.game,
+                conversion_cache_enabled=not args.no_conversion_cache,
+                conversion_jobs=args.conversion_jobs,
+            )
+            resolved = resolve_profile(ImportProfile.load(profile_output), catalog)
+            pack_root = pipeline.build(
+                resolved,
+                force=args.force,
+                allow_incomplete=args.allow_incomplete,
+            )
+            progress_emit("assemble", "auditing pack")
+            light_audit = bool(args.dev) or os.environ.get(
+                "OPENBFME_DEV", ""
+            ).strip().casefold() in {"1", "true", "yes"}
+            value = audit_pack(pack_root, light=light_audit)
+            value["pack"] = str(pack_root)
+            value["profile"] = str(profile_output)
+            value["receipt"] = str(receipt_path)
+            value["faction"] = args.faction
+            value["composed_objects"] = len(receipt.get("objects", []))
+            if light_audit:
+                value["bundle_sha256"] = "dev-skipped"
+                value["dev_mode"] = True
+            else:
+                value["bundle_sha256"] = bundle_digest(pack_root)
+            value["conversion_cache"] = pipeline.conversion_cache_stats
+            if not args.no_publish:
+                progress_emit("publish", "selecting pack for Godot vertical slice")
+                value.update(
+                    pipeline.publish_to_godot(
+                        pack_root,
+                        args.godot_content_root,
+                        allow_incomplete=bool(args.allow_incomplete),
+                    )
+                )
+            progress_complete(
+                f"faction={args.faction} pack={pack_root} slice path ready"
+            )
+            _render(value, args.json)
+            return 0 if value.get("valid", False) else 3
         if args.command == "index":
             value = {
                 "catalog": str(_catalog_path(args)),
@@ -689,17 +1018,36 @@ def main(argv: list[str] | None = None) -> int:
             _render(value, args.json)
             return 0 if value["ready"] else 4
         if args.command == "build":
+            from .progress import emit as progress_emit
+
             pack = pipeline.build(
                 resolved,
                 force=args.force,
                 allow_incomplete=args.allow_incomplete,
             )
-            value = audit_pack(pack)
+            progress_emit("assemble", "auditing pack")
+            light_audit = bool(getattr(args, "dev", False)) or os.environ.get(
+                "OPENBFME_DEV", ""
+            ).strip().casefold() in {"1", "true", "yes"}
+            value = audit_pack(pack, light=light_audit)
             value["pack"] = str(pack)
-            value["bundle_sha256"] = bundle_digest(pack)
+            if light_audit:
+                # Skip second full-pack SHA-256 walk in dev mode.
+                value["bundle_sha256"] = "dev-skipped"
+                value["dev_mode"] = True
+            else:
+                value["bundle_sha256"] = bundle_digest(pack)
             value["conversion_cache"] = pipeline.conversion_cache_stats
             if not args.no_publish:
-                value.update(pipeline.publish_to_godot(pack, args.godot_content_root))
+                progress_emit("assemble", "publishing pack to Godot content root")
+                value.update(
+                    pipeline.publish_to_godot(
+                        pack,
+                        args.godot_content_root,
+                        allow_incomplete=bool(args.allow_incomplete),
+                    )
+                )
+            progress_complete(f"report={pack} pack build finished")
             _render(value, args.json)
             return 0 if value["valid"] else 3
         parser.error(f"unknown command: {args.command}")
@@ -709,4 +1057,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if dev_env_prior is not None:
+            _restore_env(dev_env_prior)
     return 0

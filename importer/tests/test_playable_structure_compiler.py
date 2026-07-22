@@ -416,3 +416,305 @@ End
     assert descriptor["production"]["evidence"] == "authored-construct-command"
     surfaces = {route["surface"] for route in descriptor["production"]["routes"]}
     assert surfaces == {"construct", "wall-upgrade"}
+
+
+# ---------------------------------------------------------------------------
+# Purchased structure level chain tests.
+# ---------------------------------------------------------------------------
+
+
+def _upgradeable_documents() -> dict[str, bytes]:
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path].decode("utf-8")
+        + """
+Object UpgradeableKeep
+  CommandSet = UpgradeableKeepCommandSet
+  KindOf = SELECTABLE STRUCTURE
+  BuildCost = 800
+  BuildTime = 45.0
+  VisionRange = 200
+  DisplayName = OBJECT:UpgradeableKeep
+  Body = StructureBody ModuleTag_Body
+    MaxHealth = 3000
+  End
+  Behavior = SubObjectsUpgrade ModuleTag_HideAll
+    TriggeredBy = Upgrade_StructureLevel1
+    HideSubObjects = V1 V1FLAG V2 V2A V1_PIECE* V2_PIECE*
+  End
+  Behavior = SubObjectsUpgrade ModuleTag_ShowWallsAndFlag
+    TriggeredBy = Upgrade_KeepLevel2
+    ShowSubObjects = V1 V1FLAG V1_PIECE*
+    HideSubObjects = V2 V2A V2_PIECE*
+  End
+  Behavior = SubObjectsUpgrade ModuleTag_ShowTowers
+    TriggeredBy = Upgrade_KeepLevel3
+    ShowSubObjects = V1 V2 V2A V1_PIECE* V2_PIECE*
+    HideSubObjects = V1FLAG
+  End
+  Behavior = LevelUpUpgrade ModuleTag_KeepLevel2
+    TriggeredBy = Upgrade_KeepLevel2
+    LevelsToGain = 1
+    LevelCap = 3
+  End
+  Behavior = LevelUpUpgrade ModuleTag_KeepLevel3
+    TriggeredBy = Upgrade_KeepLevel3
+    LevelsToGain = 1
+    LevelCap = 3
+  End
+  Behavior = CommandSetUpgrade ModuleTag_KeepLevel2Set
+    TriggeredBy = Upgrade_KeepLevel2
+    CommandSet = UpgradeableKeepCommandSetLevel2
+  End
+  Behavior = CommandSetUpgrade ModuleTag_KeepLevel3Set
+    TriggeredBy = Upgrade_KeepLevel3
+    CommandSet = UpgradeableKeepCommandSetLevel3
+  End
+End
+"""
+    ).encode("utf-8")
+    documents["data/ini/commandset.ini"] = (
+        documents["data/ini/commandset.ini"].decode("utf-8")
+        + """
+CommandSet UpgradeableKeepCommandSet
+  1 = Command_BuildInfantry
+  5 = Command_PurchaseUpgradeKeepLevel2
+End
+CommandSet UpgradeableKeepCommandSetLevel2
+  1 = Command_BuildRanged
+  5 = Command_PurchaseUpgradeKeepLevel3
+End
+CommandSet UpgradeableKeepCommandSetLevel3
+  1 = Command_BuildRanged
+End
+"""
+    ).encode("utf-8")
+    documents["data/ini/commandbutton.ini"] = (
+        documents["data/ini/commandbutton.ini"].decode("utf-8")
+        + """
+CommandButton Command_ConstructUpgradeableKeep
+  Command = PORTER_CONSTRUCT
+  Object = UpgradeableKeep
+End
+CommandButton Command_PurchaseUpgradeKeepLevel2
+  Command = OBJECT_UPGRADE
+  Upgrade = Upgrade_KeepLevel2
+  Options = CANCELABLE
+  TextLabel = CONTROLBAR:KeepLevel2
+  DescriptLabel = CONTROLBAR:ToolTipKeepLevel2
+  ButtonImage = UCCommon_UpgradeStructureNew
+End
+CommandButton Command_PurchaseUpgradeKeepLevel3
+  Command = OBJECT_UPGRADE
+  Upgrade = Upgrade_KeepLevel3
+  TextLabel = CONTROLBAR:KeepLevel3
+  DescriptLabel = CONTROLBAR:ToolTipKeepLevel3
+End
+"""
+    ).encode("utf-8")
+    documents["data/ini/commandset.ini"] = (
+        documents["data/ini/commandset.ini"].decode("utf-8").replace(
+            "CommandSet PorterCommandSet\n  1 = Command_ConstructTestKeep\nEnd",
+            "CommandSet PorterCommandSet\n  1 = Command_ConstructTestKeep\n  2 = Command_ConstructUpgradeableKeep\nEnd",
+            1,
+        )
+    ).encode("utf-8")
+    documents["data/ini/upgrade.ini"] = b"""
+Upgrade Upgrade_KeepLevel2
+  Type = OBJECT
+  BuildCost = KEEP_LEVEL2_COST
+  BuildTime = KEEP_LEVEL2_BUILDTIME
+  DisplayName = Upgrade:KeepLevel2
+End
+Upgrade Upgrade_KeepLevel3
+  Type = OBJECT
+  BuildCost = KEEP_LEVEL3_COST
+  BuildTime = KEEP_LEVEL3_BUILDTIME
+  DisplayName = Upgrade:KeepLevel3
+End
+"""
+    documents["data/ini/experiencelevels.ini"] = b"""
+ExperienceLevel KeepLevel1
+  TargetNames = UpgradeableKeep
+  RequiredExperience = 1
+  ExperienceAward = 50
+  Rank = 1
+End
+ExperienceLevel KeepLevel2
+  TargetNames = UpgradeableKeep
+  RequiredExperience = 100
+  ExperienceAward = 60
+  Rank = 2
+  AttributeModifiers = KeepBuildSpeedModLvl2
+  Upgrades = Upgrade_KeepLevel2
+End
+ExperienceLevel KeepLevel3
+  TargetNames = UpgradeableKeep
+  RequiredExperience = 1000
+  ExperienceAward = 70
+  Rank = 3
+  AttributeModifiers = KeepBuildSpeedModLvl3
+  Upgrades = Upgrade_KeepLevel3
+End
+"""
+    documents["data/ini/attributemodifier.ini"] = b"""
+ModifierList KeepBuildSpeedModLvl2
+  Category = STRUCTURE
+  Modifier = PRODUCTION KEEP_LVL2_BUILD_SPEED
+  Modifier = HEALTH KEEP_LVL2_HP_ADD
+  Duration = 0
+End
+ModifierList KeepBuildSpeedModLvl3
+  Category = STRUCTURE
+  Modifier = PRODUCTION 1.25
+  Modifier = HEALTH 1500
+  Duration = 0
+End
+"""
+    documents["data/ini/gamedata.ini"] = (
+        documents["data/ini/gamedata.ini"]
+        + b"#define KEEP_LEVEL2_COST 500\n"
+        + b"#define KEEP_LEVEL2_BUILDTIME 30\n"
+        + b"#define KEEP_LEVEL3_COST 650\n"
+        + b"#define KEEP_LEVEL3_BUILDTIME 60\n"
+        + b"#define KEEP_LVL2_BUILD_SPEED 1.10\n"
+        + b"#define KEEP_LVL2_HP_ADD 1500\n"
+    )
+    return documents
+
+
+def test_upgrade_chain_compiles_costs_sets_and_level_effects() -> None:
+    documents = _upgradeable_documents()
+
+    descriptor = compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    chain = descriptor["gameplay"]["upgradeChain"]
+    assert chain["levelCap"] == 3
+    assert [step["toLevel"] for step in chain["steps"]] == [2, 3]
+    level_two, level_three = chain["steps"]
+    assert level_two["upgradeId"] == "Upgrade_KeepLevel2"
+    assert level_two["commandId"] == "Command_PurchaseUpgradeKeepLevel2"
+    assert level_two["slot"] == 5
+    assert level_two["cost"] == 500
+    assert level_two["buildTimeSeconds"] == 30
+    assert level_two["cancelable"] is True
+    assert level_two["fromCommandSet"] == "UpgradeableKeepCommandSet"
+    assert level_two["toCommandSet"] == "UpgradeableKeepCommandSetLevel2"
+    assert "requiresUpgradeId" not in level_two
+    assert level_two["effects"] == [
+        {
+            "id": "KeepBuildSpeedModLvl2",
+            "modifiers": [
+                {"kind": "PRODUCTION", "value": 1.1, "application": "multiplicative"},
+                {"kind": "HEALTH", "value": 1500, "application": "additive"},
+            ],
+            "sourceIni": "data/ini/attributemodifier.ini",
+            "category": "STRUCTURE",
+        }
+    ]
+    assert level_two["buttonLabels"] == [
+        "CONTROLBAR:KeepLevel2",
+        "CONTROLBAR:ToolTipKeepLevel2",
+        "UCCommon_UpgradeStructureNew",
+    ]
+    assert level_two["labelId"] == "CONTROLBAR:KeepLevel2"
+    assert level_two["tooltipId"] == "CONTROLBAR:ToolTipKeepLevel2"
+    assert level_two["buttonImageId"] == "UCCommon_UpgradeStructureNew"
+    # Per-level model variants: the authored SubObjectsUpgrade directives ride
+    # each step with the cumulative visibility resolved from the level-one
+    # base state.
+    level_one = chain["levelOne"]
+    assert level_one["hiddenSubObjects"] == [
+        "V1", "V1_PIECE*", "V1FLAG", "V2", "V2_PIECE*", "V2A"
+    ]
+    assert level_one["visibleSubObjects"] == []
+    presentation_two = level_two["presentation"]
+    assert presentation_two["subObjects"] == [
+        {
+            "show": ["V1", "V1FLAG", "V1_PIECE*"],
+            "hide": ["V2", "V2A", "V2_PIECE*"],
+            "sourceIni": "data/ini/object/units/test_units.ini",
+            "line": presentation_two["subObjects"][0]["line"],
+        }
+    ]
+    assert presentation_two["visibleSubObjects"] == ["V1", "V1_PIECE*", "V1FLAG"]
+    assert presentation_two["hiddenSubObjects"] == ["V2", "V2_PIECE*", "V2A"]
+    presentation_three = level_three["presentation"]
+    assert presentation_three["visibleSubObjects"] == [
+        "V1", "V1_PIECE*", "V2", "V2_PIECE*", "V2A"
+    ]
+    assert presentation_three["hiddenSubObjects"] == ["V1FLAG"]
+    assert level_three["requiresUpgradeId"] == "Upgrade_KeepLevel2"
+    assert level_three["fromCommandSet"] == "UpgradeableKeepCommandSetLevel2"
+    assert level_three["toCommandSet"] == "UpgradeableKeepCommandSetLevel3"
+    assert level_three["cancelable"] is False
+    assert level_three["cost"] == 650
+    sources = {row["virtualPath"] for row in descriptor["sourceDocuments"]}
+    assert "data/ini/upgrade.ini" in sources
+    assert "data/ini/experiencelevels.ini" in sources
+    assert "data/ini/attributemodifier.ini" in sources
+
+
+def test_structure_without_level_upgrades_has_no_chain_key() -> None:
+    documents = _upgradeable_documents()
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    assert "upgradeChain" not in descriptor["gameplay"]
+
+
+def test_upgrade_chain_missing_purchase_button_fails_closed() -> None:
+    documents = _upgradeable_documents()
+    documents["data/ini/commandset.ini"] = (
+        documents["data/ini/commandset.ini"].decode("utf-8").replace(
+            "  5 = Command_PurchaseUpgradeKeepLevel3\n", "", 1
+        )
+    ).encode("utf-8")
+
+    with pytest.raises(PlayableStructureCompilerError, match="not purchasable"):
+        compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+
+def test_upgrade_chain_missing_upgrade_block_fails_closed() -> None:
+    documents = _upgradeable_documents()
+    documents["data/ini/upgrade.ini"] = b"""
+Upgrade Upgrade_KeepLevel2
+  Type = OBJECT
+  BuildCost = 500
+  BuildTime = 30
+End
+"""
+
+    with pytest.raises(PlayableStructureCompilerError, match="no .*Upgrade.* block|Upgrade_KeepLevel3"):
+        compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+
+def test_upgrade_chain_missing_experience_chain_fails_closed() -> None:
+    documents = _upgradeable_documents()
+    documents["data/ini/experiencelevels.ini"] = b"""
+ExperienceLevel UnrelatedLevel1
+  TargetNames = UnrelatedKeep
+  RequiredExperience = 1
+  ExperienceAward = 50
+  Rank = 1
+End
+"""
+
+    with pytest.raises(PlayableStructureCompilerError, match="no ExperienceLevel chain"):
+        compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+
+def test_upgrade_chain_unresolvable_cost_fails_closed() -> None:
+    documents = _upgradeable_documents()
+    documents["data/ini/upgrade.ini"] = (
+        documents["data/ini/upgrade.ini"]
+        .decode("utf-8")
+        .replace("KEEP_LEVEL2_COST", "UNDEFINED_KEEP_COST", 1)
+        .encode("utf-8")
+    )
+
+    with pytest.raises(PlayableStructureCompilerError, match="GameData constant"):
+        compile_playable_structure_descriptor("UpgradeableKeep", documents)

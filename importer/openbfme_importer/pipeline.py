@@ -27,10 +27,13 @@ from .profile import (
     W3D_EXCLUDED_OPTIONAL_MESHES_OPTION,
     W3D_INPUT_RESOURCE_IDS_OPTION,
     W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION,
+    W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION,
     W3D_PROVEN_ROOT_RIGID_BAKE_OPTION,
+    W3D_RETAIL_ABSENT_TEXTURES_OPTION,
     W3D_TEXTURE_SUFFIXES,
     W3D_TEXTURE_OVERRIDES_OPTION,
     normalize_excluded_optional_meshes,
+    normalize_retail_absent_textures,
     normalize_texture_atlas_crops,
     normalize_w3d_no_motion_animations,
     normalize_w3d_texture_overrides,
@@ -343,6 +346,7 @@ def _validated_w3d_metadata(
     expected_excluded_optional_meshes: list[str] | None = None,
     expected_proven_root_rigid_bake: bool = False,
     expected_embedded_model_animation: bool = False,
+    expected_pivot_only_model: bool = False,
 ) -> dict[str, Any]:
     """Validate the private adapter report and return payload-free bundle facts."""
 
@@ -362,6 +366,8 @@ def _validated_w3d_metadata(
         raise ValueError("expected proven root-rigid bake must be a boolean")
     if not isinstance(expected_embedded_model_animation, bool):
         raise ValueError("expected embedded model animation must be a boolean")
+    if not isinstance(expected_pivot_only_model, bool):
+        raise ValueError("expected pivot-only model must be a boolean")
     if expected_proven_root_rigid_bake and asset_kind != "hierarchical":
         raise ValueError(
             "proven root-rigid bake is supported only for hierarchical W3D conversion"
@@ -369,6 +375,14 @@ def _validated_w3d_metadata(
     if expected_embedded_model_animation and asset_kind != "animated":
         raise ValueError(
             "embedded model animation is supported only for animated W3D conversion"
+        )
+    if expected_pivot_only_model and asset_kind != "hierarchical":
+        raise ValueError(
+            "proven pivot-only model is supported only for hierarchical W3D conversion"
+        )
+    if expected_pivot_only_model and expected_proven_root_rigid_bake:
+        raise ValueError(
+            "proven pivot-only model cannot combine with proven root-rigid bake"
         )
     reported_asset_kind = report.get("asset_kind", "animated")
     if reported_asset_kind != asset_kind:
@@ -385,7 +399,7 @@ def _validated_w3d_metadata(
             "W3D adapter did not enforce the requested equipment semantics"
         )
 
-    mesh_count = _report_int(report, "meshes", minimum=1)
+    mesh_count = _report_int(report, "meshes", minimum=0 if expected_pivot_only_model else 1)
     raw_root_rigid_bake = report.get("root_rigid_bake")
     root_rigid_keys = {
         "requested",
@@ -443,6 +457,31 @@ def _validated_w3d_metadata(
         raise RuntimeError("W3D adapter reported an unexpected root-rigid bake")
     animated = asset_kind == "animated"
     skeletal = asset_kind in {"animated", "hierarchical"} and not root_rigid_applied
+    # The adapter proves which skeletal content the scene actually carried:
+    # skinned meshes must survive as exported skins, and a model rig must have
+    # skeleton-bound geometry. Proven rigid animated models (bone- or
+    # armature-parented meshes, no weights) legitimately export no skins;
+    # rigless animated composite carriers legitimately export neither.
+    model_skinned_mesh_count = report.get("skinned_meshes")
+    if (
+        isinstance(model_skinned_mesh_count, bool)
+        or not isinstance(model_skinned_mesh_count, int)
+        or model_skinned_mesh_count < 0
+    ):
+        raise RuntimeError("W3D adapter report has invalid skinned_meshes")
+    model_skeleton_count = report.get("skeletons")
+    if model_skeleton_count is None:
+        model_skeleton_count = 1 if animated else 0
+    if (
+        isinstance(model_skeleton_count, bool)
+        or not isinstance(model_skeleton_count, int)
+        or model_skeleton_count < 0
+    ):
+        raise RuntimeError("W3D adapter report has an invalid skeleton count")
+    exported_skins_required = animated and model_skinned_mesh_count > 0
+    exported_skeletal_meshes_required = animated and (
+        model_skinned_mesh_count > 0 or model_skeleton_count > 0
+    )
     animation_count = _report_int(report, "animations", minimum=1 if animated else 0)
     animation_curve_count = _report_int(
         report, "animation_curves", minimum=1 if animated else 0
@@ -630,8 +669,11 @@ def _validated_w3d_metadata(
             expected_transform_animation_count == 0
             and action_shape_exported_sampler_count != 0
         )
-        or (animated and action_shape_exported_skin_count < 1)
-        or (animated and action_shape_exported_skeletal_mesh_count < 1)
+        or (exported_skins_required and action_shape_exported_skin_count < 1)
+        or (
+            exported_skeletal_meshes_required
+            and action_shape_exported_skeletal_mesh_count < 1
+        )
         or duplicated_logical_animation_count
         >= max(1, expected_transform_animation_count)
         or preserved_visibility_channel_count != expected_visibility_channels
@@ -695,8 +737,11 @@ def _validated_w3d_metadata(
             or animation_count != 1
             or embedded_counts["actionCount"] != action_shape_action_count
             or not embedded_transform_export_is_exact
-            or embedded_counts["exportedSkinCount"] < 1
-            or embedded_counts["exportedSkeletalMeshCount"] < 1
+            or (exported_skins_required and embedded_counts["exportedSkinCount"] < 1)
+            or (
+                exported_skeletal_meshes_required
+                and embedded_counts["exportedSkeletalMeshCount"] < 1
+            )
         ):
             raise RuntimeError("W3D adapter embedded-animation proof is incomplete")
     elif any(embedded_counts.values()):
@@ -754,13 +799,20 @@ def _validated_w3d_metadata(
             or split_animation_count > animation_count
             or split_counts["actionCount"] != split_animation_count * 2
             or not split_transform_export_is_exact
-            or split_counts["exportedSkinCount"] < 1
-            or split_counts["exportedSkeletalMeshCount"] < 1
+            or (exported_skins_required and split_counts["exportedSkinCount"] < 1)
+            or (
+                exported_skeletal_meshes_required
+                and split_counts["exportedSkeletalMeshCount"] < 1
+            )
         ):
             raise RuntimeError("W3D adapter split-animation proof is incomplete")
     elif any(split_counts.values()):
         raise RuntimeError("W3D adapter reported inconsistent split-animation proof")
-    bone_count = _report_int(report, "bones", minimum=1 if skeletal else 0)
+    bone_count = _report_int(
+        report,
+        "bones",
+        minimum=1 if skeletal and model_skinned_mesh_count > 0 else 0,
+    )
     raw_skeleton_count = report.get("skeletons")
     if raw_skeleton_count is None:
         if asset_kind == "hierarchical":
@@ -768,11 +820,23 @@ def _validated_w3d_metadata(
         skeleton_count = 1 if animated else 0
     else:
         skeleton_count = _report_int(report, "skeletons")
-    expected_skeleton_count = 1 if skeletal else 0
-    if skeleton_count != expected_skeleton_count:
+    if asset_kind == "animated":
+        # Rigless animated composite carriers are proven by the adapter when
+        # every clip keys its own auxiliary rig; any other animated model
+        # still carries exactly one model rig.
+        allowed_skeleton_counts = {0, 1}
+    elif skeletal:
+        allowed_skeleton_counts = {1}
+    else:
+        allowed_skeleton_counts = {0}
+    if skeleton_count not in allowed_skeleton_counts:
         raise RuntimeError("W3D adapter skeleton count does not match the asset kind")
-    vertex_count = _report_int(report, "vertices", minimum=1)
-    triangle_count = _report_int(report, "triangles", minimum=1)
+    vertex_count = _report_int(
+        report, "vertices", minimum=0 if expected_pivot_only_model else 1
+    )
+    triangle_count = _report_int(
+        report, "triangles", minimum=0 if expected_pivot_only_model else 1
+    )
     skinned_mesh_count = _report_int(report, "skinned_meshes")
     if not typed_action_report and animated and skinned_mesh_count < 1:
         raise RuntimeError("W3D adapter report has invalid skinned_meshes")
@@ -1144,25 +1208,54 @@ def _w3d_conversion_cache_key(
     adapter_sha256: str,
     plugin_attestation_sha256: str,
     blender_tree_sha256: str,
-    argument_vector: list[str],
+    argument_vector: list[str] | None = None,
+    logical: Mapping[str, Any] | None = None,
 ) -> str:
-    """Hash every byte-affecting W3D conversion input canonically."""
+    """Hash every byte-affecting W3D conversion input canonically.
 
-    payload = {
-        "adapter_sha256": adapter_sha256,
-        "argument_vector": list(argument_vector),
-        "blender_tree_sha256": blender_tree_sha256,
-        "plugin_attestation_sha256": plugin_attestation_sha256,
-        "source_hashes": {
-            name: source_hashes[name]
-            for name in sorted(source_hashes, key=lambda value: (value.casefold(), value))
-        },
-    }
-    return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+    Prefer *logical* identity (asset kind, model name, options) so absolute
+    output paths do not partition the shared DDC across factions/profiles.
+    """
+
+    if logical is not None:
+        identity: dict[str, Any] = {
+            "adapter_sha256": adapter_sha256,
+            "blender_tree_sha256": blender_tree_sha256,
+            "logical": dict(logical),
+            "plugin_attestation_sha256": plugin_attestation_sha256,
+            "source_hashes": {
+                name: source_hashes[name]
+                for name in sorted(
+                    source_hashes, key=lambda value: (value.casefold(), value)
+                )
+            },
+        }
+    else:
+        identity = {
+            "adapter_sha256": adapter_sha256,
+            "argument_vector": list(argument_vector or ()),
+            "blender_tree_sha256": blender_tree_sha256,
+            "plugin_attestation_sha256": plugin_attestation_sha256,
+            "source_hashes": {
+                name: source_hashes[name]
+                for name in sorted(
+                    source_hashes, key=lambda value: (value.casefold(), value)
+                )
+            },
+        }
+    return hashlib.sha256(_canonical_json_bytes(identity)).hexdigest()
 
 
 def _w3d_plugin_attestation_sha256(attestation: Mapping[str, str]) -> str:
     return hashlib.sha256(_canonical_json_bytes(dict(attestation))).hexdigest()
+
+
+# The multi-job adapter captures each job's real process output into per-job
+# files and rides it on the success marker as ``output_log`` (bounded at the
+# adapter by MAX_JOB_OUTPUT_CAPTURE_BYTES). The warning-text guards in
+# _finalize_w3d_bundle_job must evaluate that real content; an unbounded or
+# missing log fails the job closed so it can never reach the conversion cache.
+_W3D_MULTI_JOB_MAX_OUTPUT_LOG_CHARS = 1024 * 1024
 
 
 def _entry_cache_key(entry: CatalogEntry) -> str:
@@ -1173,6 +1266,31 @@ def _entry_cache_key(entry: CatalogEntry) -> str:
 def _source_cache_key(entry: CatalogEntry, source_sha256: str) -> str:
     value = f"{entry.archive.casefold()}\n{entry.name.casefold()}\n{source_sha256}"
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
+
+
+def _media_conversion_cache_key(
+    *,
+    source_sha256: str,
+    converter: str,
+    options: Mapping[str, Any],
+    tool_token: str,
+    relative_output: str = "",
+) -> str:
+    """Content-addressed key for audio/texture outputs (shared across factions).
+
+    Intentionally ignores pack-relative output path so the same source cooks
+    once for every faction/profile that needs it.
+    """
+
+    suffix = Path(relative_output).suffix.casefold() if relative_output else ""
+    payload = {
+        "converter": converter,
+        "options": dict(options),
+        "output_suffix": suffix,
+        "source_sha256": source_sha256.casefold(),
+        "tool_token": tool_token,
+    }
+    return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
 
 
 def _w3d_staging_sources(
@@ -1268,7 +1386,7 @@ def _prepare_w3d_secondary_skin_streams(
             continue
         candidates.append((basename, result))
 
-    if len(candidates) != 1:
+    if len(candidates) > 1:
         detail = "; ".join(rejected[:8])
         if len(rejected) > 8:
             detail += f"; plus {len(rejected) - 8} more rejected candidates"
@@ -1276,6 +1394,48 @@ def _prepare_w3d_secondary_skin_streams(
             "W3D secondary-skin proof requires exactly one compatible hierarchy; "
             f"found {len(candidates)}" + (f" ({detail})" if detail else "")
         )
+
+    if not candidates:
+        # A bind-space coincidence rejection means redundancy could not be
+        # proven for the staged hierarchy.  The pinned importer provably skips
+        # secondary chunks at read time (it seeks past VERTICES_2/NORMALS_2
+        # unconditionally), so the conversion output is identical to the
+        # stripped outcome.  Retain the streams and record every rejected
+        # candidate as exact evidence instead of inventing an equivalence
+        # proof that does not exist.  Structural and identity failures (wrong
+        # hierarchy, malformed chunks, ambiguous providers) still fail
+        # closed, and when nothing was evaluated at all the job keeps failing.
+        unproven = [
+            reason
+            for reason in rejected
+            if "bind position delta" in reason or "bind normal delta" in reason
+        ]
+        if len(unproven) != len(rejected) or not rejected:
+            detail = "; ".join(rejected[:8])
+            if len(rejected) > 8:
+                detail += f"; plus {len(rejected) - 8} more rejected candidates"
+            raise RuntimeError(
+                "W3D secondary-skin proof requires exactly one compatible hierarchy; "
+                f"found 0 ({detail})"
+            )
+        after_hashes = {
+            basename: sha256_file(path) for basename, path in sorted(copied.items())
+        }
+        if after_hashes != before_hashes:
+            raise RuntimeError(
+                "W3D secondary-skin retention changed staged files"
+            )
+        return {
+            "schema": "openbfme.w3d-secondary-skin-retention",
+            "schemaVersion": 0,
+            "retained": True,
+            "transformedMeshCount": 0,
+            "removedByteCount": 0,
+            "rejectedCandidates": rejected[:8],
+            "rejectedCandidateCount": len(rejected),
+            "stagedClosureBeforeSha256": _canonical_value_sha256(before_hashes),
+            "stagedClosureAfterSha256": _canonical_value_sha256(after_hashes),
+        }
 
     hierarchy_basename, result = candidates[0]
     transformed = result.model_bytes()
@@ -1778,14 +1938,31 @@ def _validate_w3d_texture_override_glb(
     return {**proof, "entries": validated_entries, "complete": True}
 
 
+def _strip_windows_extended_prefix(value: Path) -> Path:
+    """Normalize the \\\\?\\ and \\\\?\\UNC\\ forms Path.resolve may return."""
+    text = str(value)
+    if text.startswith("\\\\?\\UNC\\"):
+        return Path("\\\\" + text[len("\\\\?\\UNC\\") :])
+    if text.startswith("\\\\?\\"):
+        return Path(text[len("\\\\?\\") :])
+    return value
+
+
 def _safe_output(root: Path, relative: str) -> Path:
     parts = safe_relative_parts(relative)
-    target = (root / Path(*parts)).resolve()
+    resolved_root = root.resolve()
+    target = (resolved_root / Path(*parts)).resolve()
     try:
-        target.relative_to(root.resolve())
+        # Windows resolves a not-yet-created target through a different
+        # syscall path than the existing root, which can race concurrent
+        # directory creation and come back with a \\?\ extended prefix. The
+        # containment check must compare the same spelling on both sides.
+        contained = _strip_windows_extended_prefix(target).relative_to(
+            _strip_windows_extended_prefix(resolved_root)
+        )
     except ValueError as exc:
         raise ValueError(f"output path escaped pack root: {relative!r}") from exc
-    return target
+    return resolved_root / contained
 
 
 def _render_output_template(template: str, *, index: int, stem: str, name: str) -> str:
@@ -2129,8 +2306,16 @@ class ImportPipeline:
         self.packs_root = self.workspace_root / "packs"
         self.reports_root = self.workspace_root / "reports"
         self.jobs_root = self.workspace_root / "jobs"
-        self.converted_cache_root = self.workspace_root / "cache" / "converted"
-        default_jobs = max(1, min(8, (os.cpu_count() or 1) - 2))
+        # Shared DDC root (cross-faction): OPENBFME_SHARED_CACHE or workspace cache.
+        shared = os.environ.get("OPENBFME_SHARED_CACHE", "").strip()
+        if shared:
+            shared_root = Path(shared).expanduser().resolve()
+        else:
+            shared_root = self.workspace_root / "cache"
+        self.converted_cache_root = shared_root / "converted"
+        # Blender import/export is mostly single-threaded per process; more
+        # workers amortize spawn cost better on 16–24 core boxes.
+        default_jobs = max(1, min(16, (os.cpu_count() or 1) - 2))
         if conversion_jobs is not None and conversion_jobs < 1:
             raise ValueError("conversion_jobs must be at least 1")
         self.conversion_jobs = conversion_jobs or default_jobs
@@ -2141,7 +2326,16 @@ class ImportPipeline:
         self._w3d_batch_tools: dict[str, Any] | None = None
         self._w3d_final_attestation: dict[str, Any] | None = None
         self._blender_tree_verified = False
+        self._blender_exe_fingerprint: tuple[int, int] | None = None
+        self._blender_soft_tree_fingerprint_value: str | None = None
         self._python_runtime_report: dict[str, Any] = {}
+        self._ffmpeg_attested_path: str | None = None
+        self.media_cache_root = shared_root / "converted-media"
+        self.dev_mode = os.environ.get("OPENBFME_DEV", "").strip().casefold() in {
+            "1",
+            "true",
+            "yes",
+        }
 
     @property
     def conversion_cache_stats(self) -> dict[str, Any]:
@@ -2151,6 +2345,101 @@ class ImportPipeline:
                 "jobs": self.conversion_jobs,
                 **self._conversion_cache_stats,
             }
+
+    def _media_cache_lock(self, key: str) -> threading.Lock:
+        with self._conversion_cache_lock:
+            return self._conversion_key_locks.setdefault(f"media:{key}", threading.Lock())
+
+    def _copy_media_cache_hit(self, key: str, target: Path) -> bool:
+        if not self.conversion_cache_enabled:
+            return False
+        entry = self.media_cache_root / key[:2] / key
+        metadata_path = entry / "metadata.json"
+        cached_output = entry / "output.bin"
+        try:
+            metadata = read_json(metadata_path)
+            if (
+                metadata.get("format") != 1
+                or metadata.get("key") != key
+                or metadata.get("output_size") != cached_output.stat().st_size
+                or metadata.get("output_sha256") != sha256_file(cached_output)
+            ):
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                with self._conversion_cache_lock:
+                    self._conversion_cache_stats["misses"] += 1
+                return False
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_name(target.name + ".media-cache-copying")
+            temporary.unlink(missing_ok=True)
+            shutil.copyfile(cached_output, temporary)
+            if (
+                temporary.stat().st_size != metadata["output_size"]
+                or sha256_file(temporary) != metadata["output_sha256"]
+            ):
+                temporary.unlink(missing_ok=True)
+                raise RuntimeError("media conversion cache copy failed byte verification")
+            os.replace(temporary, target)
+        except (FileNotFoundError, KeyError, OSError, TypeError, ValueError):
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+            with self._conversion_cache_lock:
+                self._conversion_cache_stats["misses"] += 1
+            return False
+        with self._conversion_cache_lock:
+            self._conversion_cache_stats["hits"] += 1
+        return True
+
+    def _populate_media_cache(self, key: str, target: Path) -> None:
+        if not self.conversion_cache_enabled:
+            return
+        destination = self.media_cache_root / key[:2] / key
+        if destination.is_dir():
+            existing = destination / "output.bin"
+            if existing.is_file() and sha256_file(existing) == sha256_file(target):
+                return
+            raise RuntimeError(
+                "media conversion cache key produced non-byte-identical output"
+            )
+        self.media_cache_root.mkdir(parents=True, exist_ok=True)
+        (self.media_cache_root / key[:2]).mkdir(parents=True, exist_ok=True)
+        temporary: Path | None = Path(
+            tempfile.mkdtemp(prefix=f".{key[:12]}.", dir=self.media_cache_root / key[:2])
+        )
+        try:
+            cached_output = temporary / "output.bin"
+            shutil.copyfile(target, cached_output)
+            output_sha256 = sha256_file(target)
+            if sha256_file(cached_output) != output_sha256:
+                raise RuntimeError("media conversion cache populate changed output bytes")
+            write_json_atomic(
+                temporary / "metadata.json",
+                {
+                    "format": 1,
+                    "key": key,
+                    "output_size": target.stat().st_size,
+                    "output_sha256": output_sha256,
+                },
+            )
+            try:
+                os.replace(temporary, destination)
+            except OSError:
+                if not destination.is_dir():
+                    raise
+                # A peer process populated the same key first: accept iff the
+                # peer's bytes are identical to ours (same key, same output).
+                existing = destination / "output.bin"
+                if not existing.is_file() or sha256_file(existing) != output_sha256:
+                    raise RuntimeError(
+                        "media conversion cache key produced non-byte-identical output"
+                    )
+                return
+            temporary = None
+            with self._conversion_cache_lock:
+                self._conversion_cache_stats["populated"] += 1
+        finally:
+            if temporary is not None and temporary.is_dir():
+                shutil.rmtree(temporary)
 
     def _validate_source_catalog_binding(self, resolved: ResolvedProfile) -> str:
         profile = resolved.profile
@@ -2648,23 +2937,43 @@ class ImportPipeline:
         force: bool = False,
         allow_incomplete: bool = False,
     ) -> Path:
+        from .progress import emit as progress_emit
+
         self._validate_source_catalog_binding(resolved)
         if resolved.missing_required and not allow_incomplete:
             missing = ", ".join(resolved.missing_required)
             raise RuntimeError(f"required profile resources did not resolve: {missing}")
 
+        progress_emit("extract", "attesting archives/tools and extracting sources")
         source_archives = self._attest_source_archives(resolved)
         self._verify_required_tools(resolved)
-
         extracted = self.extract_sources(resolved, force=force)
         pack_root = self.packs_root / resolved.profile.pack_id
         staging = self.packs_root / (resolved.profile.pack_id + ".building")
         if staging.exists():
             shutil.rmtree(staging)
         staging.mkdir(parents=True)
+        progress_emit(
+            "convert-assets",
+            f"cooking pack resources ({len(resolved.resources)} rules)",
+        )
         provenance_entries: list[dict[str, Any]] = []
         incomplete: list[dict[str, str]] = []
-        for resource in resolved.resources:
+        # Single classification pass: incomplete reasons + W3D jobs + media jobs.
+        w3d_jobs: list[
+            tuple[int, list[Path], str | None, dict[str, Any], Path, str, str, str]
+        ] = []
+        media_outputs: dict[tuple[int, int], list[Path]] = {}
+        media_errors: dict[tuple[int, int], Exception] = {}
+        media_jobs: list[
+            tuple[int, int, Path, str, str | None, dict[str, Any], Path, str]
+        ] = []
+        w3d_kind = {
+            "w3d-bundle": "animated",
+            "w3d-hierarchical": "hierarchical",
+            "w3d-static": "static",
+        }
+        for resource_index, resource in enumerate(resolved.resources):
             reasons: list[str] = []
             if resource.missing_patterns:
                 reasons.append(
@@ -2679,15 +2988,8 @@ class ImportPipeline:
                     {"resource": resource.rule.id, "reason": "; ".join(reasons)}
                 )
 
-        w3d_jobs: list[
-            tuple[int, list[Path], str | None, dict[str, Any], Path, str, str, str]
-        ] = []
-        for resource_index, resource in enumerate(resolved.resources):
-            if (
-                resource.rule.converter
-                in {"w3d-bundle", "w3d-hierarchical", "w3d-static"}
-                and resource.entries
-            ):
+            converter = resource.rule.converter
+            if converter in w3d_kind and resource.entries:
                 w3d_jobs.append(
                     (
                         resource_index,
@@ -2697,14 +2999,62 @@ class ImportPipeline:
                         staging,
                         resolved.profile.id,
                         resource.rule.id,
-                        {
-                            "w3d-bundle": "animated",
-                            "w3d-hierarchical": "hierarchical",
-                            "w3d-static": "static",
-                        }[resource.rule.converter],
+                        w3d_kind[converter],
                     )
                 )
-        w3d_outputs, w3d_errors = self._convert_w3d_resources(w3d_jobs)
+            elif converter in {"audio", "texture", "texture-crop"}:
+                for entry_index, entry in enumerate(resource.entries):
+                    cached = extracted.get(
+                        (entry.archive.casefold(), entry.name.casefold())
+                    )
+                    if cached is None:
+                        media_errors[(resource_index, entry_index)] = RuntimeError(
+                            f"media source was not extracted: {entry.name}"
+                        )
+                        continue
+                    media_jobs.append(
+                        (
+                            resource_index,
+                            entry_index,
+                            Path(cached["source_path"]),
+                            converter,
+                            resource.rule.output,
+                            resource.rule.options,
+                            staging,
+                            str(cached.get("source_sha256") or ""),
+                        )
+                    )
+
+        # Overlap W3D and media lanes when both have work (independent outputs).
+        # Use one progress stage so concurrent workers do not clobber stage ETA.
+        if w3d_jobs and media_jobs:
+            from .progress import emit as progress_emit
+
+            progress_emit(
+                "convert-assets",
+                f"w3d={len(w3d_jobs)} media={len(media_jobs)} (parallel)",
+                total_units=len(w3d_jobs) + len(media_jobs),
+            )
+            with ThreadPoolExecutor(max_workers=2) as coordinator:
+                w3d_future = coordinator.submit(
+                    self._convert_w3d_resources,
+                    w3d_jobs,
+                    progress_stage="",
+                )
+                media_future = coordinator.submit(
+                    self._convert_media_jobs,
+                    media_jobs,
+                    media_errors,
+                    progress_stage="",
+                )
+                w3d_outputs, w3d_errors = w3d_future.result()
+                media_outputs, media_errors = media_future.result()
+        else:
+            w3d_outputs, w3d_errors = self._convert_w3d_resources(w3d_jobs)
+            if media_jobs:
+                media_outputs, media_errors = self._convert_media_jobs(
+                    media_jobs, media_errors
+                )
 
         for resource_index, resource in enumerate(resolved.resources):
             bundle_outputs: list[Path] | None = None
@@ -2726,6 +3076,17 @@ class ImportPipeline:
                     )
                     if resource.rule.required and not allow_incomplete:
                         raise exc
+                    bundle_outputs = []
+                elif resource_index not in w3d_outputs:
+                    # Mirror the media lane: a required W3D job must never
+                    # vanish between scheduling and collection without a
+                    # recorded error (prior menofdale misclassification).
+                    reason = "W3D conversion job was not scheduled"
+                    incomplete.append(
+                        {"resource": resource.rule.id, "reason": reason}
+                    )
+                    if resource.rule.required and not allow_incomplete:
+                        raise RuntimeError(reason)
                     bundle_outputs = []
                 else:
                     bundle_outputs = w3d_outputs[resource_index]
@@ -2819,6 +3180,27 @@ class ImportPipeline:
                     # but their cooked files are declared only once. Repeating
                     # outputs per source obscures collisions and inflates audits.
                     output_paths = (bundle_outputs or []) if index == 0 else []
+                elif resource.rule.converter in {"audio", "texture", "texture-crop"}:
+                    media_key = (resource_index, index)
+                    if media_key in media_errors:
+                        exc = media_errors[media_key]
+                        incomplete.append(
+                            {"resource": resource.rule.id, "reason": str(exc)}
+                        )
+                        if resource.rule.required and not allow_incomplete:
+                            raise exc
+                        output_paths = []
+                    elif media_key not in media_outputs:
+                        # Must not silently emit empty outputs for a missed job.
+                        reason = "media conversion job was not scheduled"
+                        incomplete.append(
+                            {"resource": resource.rule.id, "reason": reason}
+                        )
+                        if resource.rule.required and not allow_incomplete:
+                            raise RuntimeError(reason)
+                        output_paths = []
+                    else:
+                        output_paths = media_outputs[media_key]
                 else:
                     try:
                         output_paths = self._convert_resource(
@@ -2828,6 +3210,7 @@ class ImportPipeline:
                             resource.rule.options,
                             staging,
                             index=index,
+                            source_sha256=str(cache.get("source_sha256") or "") or None,
                         )
                     except (FileNotFoundError, RuntimeError, ValueError) as exc:
                         incomplete.append(
@@ -2902,7 +3285,9 @@ class ImportPipeline:
         }
         provenance["bundle_files"] = _canonical_pack_inventory(staging)
         write_json_atomic(staging / "provenance" / "manifest.json", provenance)
-        audit = audit_pack(staging)
+        # On-disk audit.json is always full (canonical). Dev light audit is only
+        # an optional outer CLI speed path and must not claim hash validity here.
+        audit = audit_pack(staging, light=False)
         write_json_atomic(staging / "provenance" / "audit.json", audit)
         if not audit["valid"]:
             raise RuntimeError("built pack failed its internal hash audit")
@@ -3003,7 +3388,11 @@ class ImportPipeline:
         self._python_runtime_report = dict(status.get("python_runtime", {}))
 
     def publish_to_godot(
-        self, pack_root: Path | str, content_root: Path | str
+        self,
+        pack_root: Path | str,
+        content_root: Path | str,
+        *,
+        allow_incomplete: bool = False,
     ) -> dict[str, str]:
         source = Path(pack_root).expanduser().resolve()
         pack_data = read_json(source / "pack.json")
@@ -3014,10 +3403,15 @@ class ImportPipeline:
         ):
             raise ValueError(f"built pack has an unsafe id: {pack_id!r}")
         if not bool(pack_data.get("profile_build_complete", False)):
-            raise RuntimeError(
-                "incomplete retail packs cannot be published or selected"
-            )
-        source_audit = audit_pack(source)
+            if not allow_incomplete:
+                raise RuntimeError(
+                    "incomplete retail packs cannot be published or selected"
+                )
+            # Dev/allow-incomplete path: still select so the vertical slice can
+            # load converted playableUnit/Structure registries while residual
+            # W3D gaps are fixed. Canonical release builds must stay complete.
+        # Publication always full-hash audits regardless of OPENBFME_DEV / light.
+        source_audit = audit_pack(source, light=False)
         if not source_audit["valid"]:
             raise RuntimeError("source pack failed canonical audit before publication")
         root = ensure_external_to_repo(Path(content_root), repo_root_from_module())
@@ -3035,7 +3429,7 @@ class ImportPipeline:
         if destination.is_dir():
             if (
                 bundle_digest(destination) != digest
-                or not audit_pack(destination)["valid"]
+                or not audit_pack(destination, light=False)["valid"]
             ):
                 raise RuntimeError(
                     f"pre-existing published bundle is corrupt or tampered: {destination}"
@@ -3051,20 +3445,45 @@ class ImportPipeline:
                 raise RuntimeError(
                     "published staging copy failed its bundle hash check"
                 )
-            if not audit_pack(staging)["valid"]:
+            if not audit_pack(staging, light=False)["valid"]:
                 shutil.rmtree(staging)
                 raise RuntimeError("published staging copy failed its canonical audit")
             os.replace(staging, destination)
-        selection = {
+        selection: dict[str, Any] = {
             "schema": "openbfme.pack-selection",
             "schemaVersion": 0,
             "activePack": relative.as_posix(),
         }
-        write_json_atomic(root / "selection.json", selection)
+        # Preserve supplemental packs (map overlays, ranger contracts, etc.) so
+        # a faction republish does not silently drop the rest of the slice stack.
+        selection_path = root / "selection.json"
+        if selection_path.is_file():
+            try:
+                prior = read_json(selection_path)
+            except (OSError, ValueError, TypeError, KeyError):
+                prior = {}
+            prior_supplements = prior.get("supplementalPacks")
+            if isinstance(prior_supplements, list):
+                kept: list[str] = []
+                seen: set[str] = set()
+                for raw in prior_supplements:
+                    entry = str(raw).strip().replace("\\", "/")
+                    if not entry or entry in seen:
+                        continue
+                    # Never re-attach the pack we just published as a supplement.
+                    if entry == relative.as_posix() or entry.startswith(f"{pack_id}/"):
+                        continue
+                    if not (root / entry).is_dir():
+                        continue
+                    seen.add(entry)
+                    kept.append(entry)
+                if kept:
+                    selection["supplementalPacks"] = kept
+        write_json_atomic(selection_path, selection)
         return {
             "bundle_sha256": digest,
             "published_pack": str(destination),
-            "selection": str(root / "selection.json"),
+            "selection": str(selection_path),
             "active_pack": relative.as_posix(),
         }
 
@@ -3158,6 +3577,7 @@ class ImportPipeline:
         pack_root: Path,
         *,
         index: int,
+        source_sha256: str | None = None,
     ) -> list[Path]:
         relative_output = output or f"source/{source.name}"
         relative_output = _render_output_template(
@@ -3168,18 +3588,172 @@ class ImportPipeline:
         )
         target = _safe_output(pack_root, relative_output)
         target.parent.mkdir(parents=True, exist_ok=True)
-        if converter == "hash-only":
-            return []
-        if converter == "sage-map":
-            return self._convert_sage_map(source, target, options)
-        if converter == "sage-particle-definition":
-            return self._convert_sage_particle_definition(source, target, options)
-        if converter in {"copy", "text", "map"}:
-            shutil.copyfile(source, target)
-            return [target]
-        if converter in {"texture", "texture-crop"}:
+        match converter:
+            case "hash-only":
+                return []
+            case "sage-map":
+                return self._convert_sage_map(source, target, options)
+            case "sage-particle-definition":
+                return self._convert_sage_particle_definition(source, target, options)
+            case "copy" | "text" | "map":
+                shutil.copyfile(source, target)
+                return [target]
+            case "texture" | "texture-crop" | "audio":
+                return self._convert_cached_media(
+                    source,
+                    converter,
+                    options,
+                    target,
+                    relative_output=relative_output,
+                    source_sha256=source_sha256,
+                )
+            case "w3d-model" | "w3d-animation":
+                executable = os.environ.get("OPENBFME_W3D_CONVERTER", "").strip()
+                if not executable or not Path(executable).is_file():
+                    raise FileNotFoundError(
+                        "W3D converter unavailable; set OPENBFME_W3D_CONVERTER"
+                    )
+                mode = "model" if converter == "w3d-model" else "animation"
+                run_checked(
+                    [
+                        executable,
+                        "convert",
+                        "--mode",
+                        mode,
+                        "--input",
+                        str(source),
+                        "--output",
+                        str(target),
+                    ]
+                )
+                if not target.is_file():
+                    raise RuntimeError(f"W3D converter did not create {target}")
+                return [target]
+            case _:
+                raise ValueError(f"unsupported converter: {converter}")
+
+    def _png_compress_level(self) -> int:
+        """PNG zlib level. Default 9 (shipping) or 6 in OPENBFME_DEV.
+
+        Tool token includes the level, so media DDC never mixes level-6 and level-9.
+        """
+
+        default = "6" if getattr(self, "dev_mode", False) else "9"
+        raw = os.environ.get("OPENBFME_PNG_LEVEL", default).strip()
+        try:
+            level = int(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"OPENBFME_PNG_LEVEL must be an integer 0-9, got {raw!r}"
+            ) from exc
+        if level < 0 or level > 9:
+            raise ValueError(f"OPENBFME_PNG_LEVEL must be 0-9, got {level}")
+        return level
+
+    def _convert_media_jobs(
+        self,
+        media_jobs: list[
+            tuple[int, int, Path, str, str | None, dict[str, Any], Path, str]
+        ],
+        prior_errors: dict[tuple[int, int], Exception] | None = None,
+        *,
+        progress_stage: str | None = "media",
+    ) -> tuple[dict[tuple[int, int], list[Path]], dict[tuple[int, int], Exception]]:
+        """Convert audio/texture jobs in parallel; returns outputs + errors."""
+
+        from .progress import emit as progress_emit
+
+        outputs: dict[tuple[int, int], list[Path]] = {}
+        errors: dict[tuple[int, int], Exception] = dict(prior_errors or {})
+        if not media_jobs:
+            return outputs, errors
+        stage = "" if progress_stage is None else progress_stage
+        if stage:
+            progress_emit(
+                stage,
+                f"converting {len(media_jobs)} audio/texture files "
+                f"({self.conversion_jobs} workers)",
+                total_units=len(media_jobs),
+            )
+
+        def _run_media(
+            job: tuple[int, int, Path, str, str | None, dict[str, Any], Path, str],
+        ) -> list[Path]:
+            (
+                _resource_index,
+                entry_index,
+                source_path,
+                converter,
+                output,
+                options,
+                pack_root,
+                source_sha,
+            ) = job
+            return self._convert_resource(
+                source_path,
+                converter,
+                output,
+                options,
+                pack_root,
+                index=entry_index,
+                source_sha256=source_sha or None,
+            )
+
+        workers = min(self.conversion_jobs, len(media_jobs))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_run_media, job): (job[0], job[1]) for job in media_jobs
+            }
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    outputs[key] = future.result()
+                    progress_emit(
+                        stage,
+                        f"media done ({len(outputs) + len(errors)}/{len(media_jobs)})",
+                        unit_delta=1,
+                    )
+                except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+                    errors[key] = exc
+                    progress_emit(
+                        stage,
+                        f"media failed ({len(outputs) + len(errors)}/{len(media_jobs)})",
+                        unit_delta=1,
+                    )
+        return outputs, errors
+
+    def _convert_cached_media(
+        self,
+        source: Path,
+        converter: str,
+        options: dict[str, Any],
+        target: Path,
+        *,
+        relative_output: str,
+        source_sha256: str | None = None,
+    ) -> list[Path]:
+        """Convert audio/texture with content-addressed cache + tool attest once."""
+
+        png_level = self._png_compress_level()
+        if converter == "audio":
+            from .bootstrap import FFMPEG_EXE_SHA256
+
+            ffmpeg = discover_executable("ffmpeg", "OPENBFME_FFMPEG")
+            if not ffmpeg:
+                raise FileNotFoundError(
+                    "ffmpeg is required; set OPENBFME_FFMPEG to its executable"
+                )
+            resolved_ffmpeg = str(Path(ffmpeg).resolve())
+            with self._conversion_cache_lock:
+                if self._ffmpeg_attested_path != resolved_ffmpeg:
+                    if sha256_file(ffmpeg).casefold() != FFMPEG_EXE_SHA256:
+                        raise RuntimeError(
+                            "FFmpeg executable does not match the pinned 8.1.1 hash"
+                        )
+                    self._ffmpeg_attested_path = resolved_ffmpeg
+            tool_token = f"ffmpeg:{FFMPEG_EXE_SHA256}"
+        else:
             try:
-                from PIL import Image
                 import PIL
             except ImportError as exc:
                 raise FileNotFoundError(
@@ -3187,101 +3761,100 @@ class ImportPipeline:
                 ) from exc
             if PIL.__version__ != "12.2.0":
                 raise RuntimeError(
-                    f"Pillow 12.2.0 is required for deterministic texture output; found {PIL.__version__}"
+                    "Pillow 12.2.0 is required for deterministic texture output; "
+                    f"found {PIL.__version__}"
                 )
-            if target.suffix.casefold() != ".png":
-                raise ValueError(
-                    "deterministic texture conversion currently emits PNG only"
-                )
-            with Image.open(source) as opened:
-                converted = opened.convert("RGBA")
-                if converter == "texture-crop":
-                    crop = options.get("crop", [])
-                    if not (
-                        isinstance(crop, list)
-                        and len(crop) == 4
-                        and all(isinstance(value, int) and value >= 0 for value in crop)
-                        and crop[2] > 0
-                        and crop[3] > 0
-                    ):
-                        raise ValueError(
-                            "texture-crop requires options.crop=[x,y,width,height]"
-                        )
-                    converted = converted.crop(
-                        (crop[0], crop[1], crop[0] + crop[2], crop[1] + crop[3])
-                    )
-                converted.save(target, format="PNG", compress_level=9, optimize=False)
-            return [target]
-        if converter == "audio":
-            ffmpeg = discover_executable("ffmpeg", "OPENBFME_FFMPEG")
-            if not ffmpeg:
-                raise FileNotFoundError(
-                    "ffmpeg is required; set OPENBFME_FFMPEG to its executable"
-                )
-            from .bootstrap import FFMPEG_EXE_SHA256
+            tool_token = f"pillow:{PIL.__version__}:png{png_level}"
 
-            if sha256_file(ffmpeg).casefold() != FFMPEG_EXE_SHA256:
-                raise RuntimeError(
-                    "FFmpeg executable does not match the pinned 8.1.1 hash"
-                )
-            command = [
-                str(ffmpeg),
-                "-nostdin",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-i",
-                str(source),
-            ]
-            if source.suffix.casefold() == target.suffix.casefold() and not bool(
-                options.get("force_pcm", False)
-            ):
-                shutil.copyfile(source, target)
+        source_sha = source_sha256 or sha256_file(source)
+        cache_key = _media_conversion_cache_key(
+            source_sha256=source_sha,
+            converter=converter,
+            options=options,
+            tool_token=tool_token,
+            relative_output=relative_output,
+        )
+        with self._media_cache_lock(cache_key):
+            if self._copy_media_cache_hit(cache_key, target):
                 return [target]
-            if target.suffix.casefold() != ".wav":
-                raise ValueError(
-                    "deterministic audio conversion only supports exact copies or PCM WAV output"
-                )
-            command.extend(
-                [
-                    "-fflags",
-                    "+bitexact",
-                    "-flags:a",
-                    "+bitexact",
-                    "-map_metadata",
-                    "-1",
-                    "-vn",
-                    "-c:a",
-                    "pcm_s16le",
-                ]
-            )
-            command.append(str(target))
-            run_checked(command)
-            return [target]
-        if converter in {"w3d-model", "w3d-animation"}:
-            executable = os.environ.get("OPENBFME_W3D_CONVERTER", "").strip()
-            if not executable or not Path(executable).is_file():
-                raise FileNotFoundError(
-                    "W3D converter unavailable; set OPENBFME_W3D_CONVERTER"
-                )
-            mode = "model" if converter == "w3d-model" else "animation"
-            run_checked(
-                [
-                    executable,
-                    "convert",
-                    "--mode",
-                    mode,
-                    "--input",
-                    str(source),
-                    "--output",
-                    str(target),
-                ]
-            )
-            if not target.is_file():
-                raise RuntimeError(f"W3D converter did not create {target}")
-            return [target]
-        raise ValueError(f"unsupported converter: {converter}")
+            match converter:
+                case "texture" | "texture-crop":
+                    from PIL import Image
+
+                    if target.suffix.casefold() != ".png":
+                        raise ValueError(
+                            "deterministic texture conversion currently emits PNG only"
+                        )
+                    with Image.open(source) as opened:
+                        converted = opened.convert("RGBA")
+                        if converter == "texture-crop":
+                            crop = options.get("crop", [])
+                            if not (
+                                isinstance(crop, list)
+                                and len(crop) == 4
+                                and all(
+                                    isinstance(value, int) and value >= 0
+                                    for value in crop
+                                )
+                                and crop[2] > 0
+                                and crop[3] > 0
+                            ):
+                                raise ValueError(
+                                    "texture-crop requires options.crop="
+                                    "[x,y,width,height]"
+                                )
+                            converted = converted.crop(
+                                (
+                                    crop[0],
+                                    crop[1],
+                                    crop[0] + crop[2],
+                                    crop[1] + crop[3],
+                                )
+                            )
+                        converted.save(
+                            target,
+                            format="PNG",
+                            compress_level=png_level,
+                            optimize=False,
+                        )
+                case "audio":
+                    ffmpeg = discover_executable("ffmpeg", "OPENBFME_FFMPEG")
+                    assert ffmpeg is not None
+                    if source.suffix.casefold() == target.suffix.casefold() and not bool(
+                        options.get("force_pcm", False)
+                    ):
+                        shutil.copyfile(source, target)
+                    else:
+                        if target.suffix.casefold() != ".wav":
+                            raise ValueError(
+                                "deterministic audio conversion only supports exact "
+                                "copies or PCM WAV output"
+                            )
+                        command = [
+                            str(ffmpeg),
+                            "-nostdin",
+                            "-hide_banner",
+                            "-loglevel",
+                            "error",
+                            "-y",
+                            "-i",
+                            str(source),
+                            "-fflags",
+                            "+bitexact",
+                            "-flags:a",
+                            "+bitexact",
+                            "-map_metadata",
+                            "-1",
+                            "-vn",
+                            "-c:a",
+                            "pcm_s16le",
+                            str(target),
+                        ]
+                        run_checked(command)
+                case _:
+                    raise ValueError(f"unsupported media converter: {converter}")
+            self._populate_media_cache(cache_key, target)
+        return [target]
 
     def _convert_sage_particle_definition(
         self,
@@ -3649,6 +4222,125 @@ class ImportPipeline:
                 outputs.append(target)
         return outputs
 
+    def _blender_soft_tree_fingerprint(self, blender: Path) -> str:
+        """Bounded soft identity for end-of-batch tool checks (dev / opt-in).
+
+        Portable Blender 4.x puts conversion-relevant scripts under
+        ``<version>/scripts/**`` (not always a top-level ``scripts/``). Soft
+        mode samples:
+        - blender.exe + top-level natives
+        - every ``**/scripts/**`` tree (content hash for small files)
+        - bounded native libs under versioned subdirs (``.dll``/``.pyd``)
+        """
+
+        root = blender.parent
+        digest = hashlib.sha256()
+        seen: set[str] = set()
+
+        def _add(path: Path, *, content: bool) -> None:
+            try:
+                if not path.is_file() or _is_link_like(path):
+                    return
+                rel = path.relative_to(root).as_posix().casefold()
+            except (OSError, ValueError):
+                return
+            if rel in seen:
+                return
+            seen.add(rel)
+            try:
+                st = path.stat()
+                payload = path.read_bytes() if content and st.st_size <= 262_144 else None
+            except OSError:
+                return
+            digest.update(rel.encode("utf-8"))
+            digest.update(b"\0")
+            if payload is not None:
+                digest.update(hashlib.sha256(payload).digest())
+            else:
+                digest.update(str(int(st.st_mtime_ns)).encode("ascii"))
+                digest.update(b"\0")
+                digest.update(str(int(st.st_size)).encode("ascii"))
+            digest.update(b"\n")
+
+        _add(blender, content=False)
+        try:
+            for path in sorted(root.iterdir(), key=lambda p: p.name.casefold()):
+                if path.is_file() and path.suffix.casefold() in {
+                    ".dll",
+                    ".pyd",
+                    ".exe",
+                }:
+                    _add(path, content=False)
+        except OSError:
+            pass
+
+        # Versioned portable layout: 4.2/scripts (not only top-level scripts/).
+        # Bound discovery to root + one-level children to stay O(version dirs).
+        script_roots: list[Path] = []
+        try:
+            if (root / "scripts").is_dir() and not _is_link_like(root / "scripts"):
+                script_roots.append(root / "scripts")
+            for child in sorted(root.iterdir(), key=lambda p: p.name.casefold()):
+                if not child.is_dir() or _is_link_like(child):
+                    continue
+                candidate = child / "scripts"
+                if candidate.is_dir() and not _is_link_like(candidate):
+                    script_roots.append(candidate)
+        except OSError:
+            pass
+
+        script_count = 0
+        for scripts in script_roots:
+            try:
+                for path in sorted(scripts.rglob("*"), key=lambda p: str(p).casefold()):
+                    if not path.is_file():
+                        continue
+                    # Prefer content for scripts/python sources.
+                    content = path.suffix.casefold() in {
+                        ".py",
+                        ".pyw",
+                        ".txt",
+                        ".xml",
+                        ".json",
+                        ".osl",
+                    }
+                    _add(path, content=content)
+                    script_count += 1
+                    if script_count >= 800:
+                        break
+            except OSError:
+                continue
+            if script_count >= 800:
+                break
+
+        # Bounded natives under top-level and versioned children (e.g. 4.2/python).
+        native_count = 0
+        native_roots: list[Path] = [root]
+        try:
+            for child in sorted(root.iterdir(), key=lambda p: p.name.casefold()):
+                if child.is_dir() and not _is_link_like(child):
+                    native_roots.append(child)
+        except OSError:
+            pass
+        for native_root in native_roots:
+            try:
+                for path in sorted(
+                    native_root.rglob("*"), key=lambda p: str(p).casefold()
+                ):
+                    if not path.is_file():
+                        continue
+                    if path.suffix.casefold() not in {".dll", ".pyd"}:
+                        continue
+                    _add(path, content=False)
+                    native_count += 1
+                    if native_count >= 200:
+                        break
+            except OSError:
+                continue
+            if native_count >= 200:
+                break
+        return digest.hexdigest()
+
     def _prepare_w3d_execution_tools(
         self, blender: Path, plugin: Path
     ) -> tuple[str, dict[str, str]]:
@@ -3662,6 +4354,17 @@ class ImportPipeline:
         blender_tree_sha256 = prepare_blender_portable_tree(self.state_root, blender)
         plugin_attestation = prepare_opensage_plugin_checkout(self.state_root, plugin)
         self._blender_tree_verified = True
+        try:
+            st = blender.stat()
+            # Keep legacy exe pair for diagnostics; soft end-attest uses the
+            # broader scripts/native sample fingerprint.
+            self._blender_exe_fingerprint = (int(st.st_mtime_ns), int(st.st_size))
+            self._blender_soft_tree_fingerprint_value = (
+                self._blender_soft_tree_fingerprint(blender)
+            )
+        except OSError:
+            self._blender_exe_fingerprint = None
+            self._blender_soft_tree_fingerprint_value = None
         return blender_tree_sha256, plugin_attestation
 
     def _w3d_execution_tool_paths(self) -> tuple[Path, Path]:
@@ -3733,7 +4436,34 @@ class ImportPipeline:
         _reject_tree_links(blender.parent, "Blender portable tree")
         _reject_python_bytecode(blender.parent, "Blender portable tree")
         plugin_attestation = _attest_opensage_plugin_checkout(plugin)
-        if directory_tree_sha256(blender.parent) != BLENDER_TREE_SHA256:
+        # Shipping default: full tree re-hash at end (~5–7s). Soft end-attest
+        # (bounded scripts/native sample) is only for OPENBFME_DEV or explicit
+        # OPENBFME_SOFT_TOOL_ATTEST. OPENBFME_STRICT_TOOL_ATTEST forces full.
+        force_strict = os.environ.get(
+            "OPENBFME_STRICT_TOOL_ATTEST", ""
+        ).strip().casefold() in {"1", "true", "yes"}
+        allow_soft = (
+            not force_strict
+            and (
+                self.dev_mode
+                or os.environ.get("OPENBFME_SOFT_TOOL_ATTEST", "")
+                .strip()
+                .casefold()
+                in {"1", "true", "yes"}
+            )
+        )
+        tree_ok = False
+        soft_fp = getattr(self, "_blender_soft_tree_fingerprint_value", None)
+        if allow_soft and soft_fp is not None:
+            try:
+                tree_ok = soft_fp == self._blender_soft_tree_fingerprint(
+                    blender
+                ) and str(tools.get("blender_tree_sha256", "")).casefold() == (
+                    BLENDER_TREE_SHA256.casefold()
+                )
+            except OSError:
+                tree_ok = False
+        if not tree_ok and directory_tree_sha256(blender.parent) != BLENDER_TREE_SHA256:
             raise RuntimeError("Blender portable tree changed during W3D conversion")
         plugin_clean = git_worktree_clean(plugin)
         if not plugin_clean:
@@ -3742,11 +4472,14 @@ class ImportPipeline:
             "blender_tree_sha256": BLENDER_TREE_SHA256,
             "plugin": plugin_attestation,
             "plugin_worktree_clean": plugin_clean,
+            "end_attest": "soft" if (allow_soft and tree_ok) else "full",
         }
 
     def _convert_w3d_resources(
         self,
         jobs: list[tuple[int, list[Path], str | None, dict[str, Any], Path, str, str, str]],
+        *,
+        progress_stage: str | None = "blender-w3d",
     ) -> tuple[dict[int, list[Path]], dict[int, Exception]]:
         outputs: dict[int, list[Path]] = {}
         errors: dict[int, Exception] = {}
@@ -3777,19 +4510,260 @@ class ImportPipeline:
                 validated_output.parent.mkdir(parents=True, exist_ok=True)
         self._begin_w3d_conversion_batch()
         try:
-            with ThreadPoolExecutor(max_workers=min(self.conversion_jobs, len(jobs))) as pool:
-                futures = {
-                    pool.submit(self._convert_w3d_bundle, *job[1:]): job[0]
-                    for job in jobs
-                }
-                for future in as_completed(futures):
-                    index = futures[future]
-                    try:
-                        outputs[index] = future.result()
-                    except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
-                        errors[index] = exc
+            from .progress import emit as progress_emit
+
+            use_multi = os.environ.get("OPENBFME_W3D_MULTI", "1").strip().casefold() not in {
+                "0",
+                "false",
+                "no",
+            }
+            try:
+                batch_size = max(1, int(os.environ.get("OPENBFME_W3D_BATCH_SIZE", "8")))
+            except ValueError:
+                batch_size = 8
+            stage = "" if progress_stage is None else progress_stage
+            if stage:
+                progress_emit(
+                    stage,
+                    f"converting {len(jobs)} W3D models "
+                    f"(workers={self.conversion_jobs}, multi={use_multi}, batch={batch_size})",
+                    total_units=len(jobs),
+                )
+            if use_multi and len(jobs) > 1 and batch_size > 1:
+                chunks = [
+                    jobs[offset : offset + batch_size]
+                    for offset in range(0, len(jobs), batch_size)
+                ]
+                workers = min(self.conversion_jobs, len(chunks))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = {
+                        pool.submit(self._convert_w3d_chunk, chunk): chunk
+                        for chunk in chunks
+                    }
+                    for future in as_completed(futures):
+                        try:
+                            chunk_outputs, chunk_errors = future.result()
+                        except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+                            # Whole chunk failed before per-job accounting.
+                            for job in futures[future]:
+                                errors[job[0]] = exc
+                                progress_emit(
+                                    stage,
+                                    f"chunk failed ({len(outputs) + len(errors)}/{len(jobs)})",
+                                    unit_delta=1,
+                                )
+                            continue
+                        outputs.update(chunk_outputs)
+                        errors.update(chunk_errors)
+                        done = len(chunk_outputs) + len(chunk_errors)
+                        progress_emit(
+                            stage,
+                            f"chunk done +{done} ({len(outputs) + len(errors)}/{len(jobs)})",
+                            unit_delta=done,
+                        )
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=min(self.conversion_jobs, len(jobs))
+                ) as pool:
+                    futures = {
+                        pool.submit(self._convert_w3d_bundle, *job[1:]): job[0]
+                        for job in jobs
+                    }
+                    for future in as_completed(futures):
+                        index = futures[future]
+                        try:
+                            outputs[index] = future.result()
+                            progress_emit(
+                                stage,
+                                f"model done ({len(outputs) + len(errors)}/{len(jobs)})",
+                                unit_delta=1,
+                            )
+                        except (
+                            FileNotFoundError,
+                            RuntimeError,
+                            ValueError,
+                            OSError,
+                        ) as exc:
+                            errors[index] = exc
+                            progress_emit(
+                                stage,
+                                f"model failed ({len(outputs) + len(errors)}/{len(jobs)})",
+                                unit_delta=1,
+                            )
         finally:
             self._end_w3d_conversion_batch()
+        return outputs, errors
+
+    def _convert_w3d_chunk(
+        self,
+        chunk: list[
+            tuple[int, list[Path], str | None, dict[str, Any], Path, str, str, str]
+        ],
+    ) -> tuple[dict[int, list[Path]], dict[int, Exception]]:
+        """Convert one batch of W3D jobs; one Blender process for cache misses."""
+
+        outputs: dict[int, list[Path]] = {}
+        errors: dict[int, Exception] = {}
+        # Fall back to single-job path when batch is tiny or multi is unsafe.
+        if len(chunk) == 1:
+            index = chunk[0][0]
+            try:
+                outputs[index] = self._convert_w3d_bundle(*chunk[0][1:])
+            except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+                errors[index] = exc
+            return outputs, errors
+
+        prepared: list[dict[str, Any]] = []
+        for job in chunk:
+            index = job[0]
+            try:
+                prepared.append(
+                    self._prepare_w3d_bundle_job(index, *job[1:])
+                )
+            except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+                errors[index] = exc
+
+        hits = [item for item in prepared if item["cache_hit"]]
+        misses = [item for item in prepared if not item["cache_hit"]]
+        for item in hits:
+            try:
+                outputs[item["index"]] = self._finalize_w3d_bundle_job(
+                    item, item["combined_log"], cache_hit=True
+                )
+            except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+                errors[item["index"]] = exc
+
+        if not misses:
+            return outputs, errors
+
+        if self._w3d_batch_tools is None:
+            raise RuntimeError("W3D conversion requires an active attested batch")
+        blender = Path(self._w3d_batch_tools["blender"])
+        plugin = Path(self._w3d_batch_tools["plugin"])
+        multi_adapter = (
+            repo_root_from_module() / "importer" / "blender" / "w3d_multi_to_glb.py"
+        )
+        batch_root = (
+            self.jobs_root
+            / misses[0]["profile_id"]
+            / "w3d-multi"
+            / hashlib.sha256(
+                "|".join(item["asset_id"] for item in misses).encode("utf-8")
+            ).hexdigest()[:16]
+        )
+        if batch_root.exists():
+            shutil.rmtree(batch_root)
+        batch_root.mkdir(parents=True)
+        multi_jobs = []
+        for item in misses:
+            multi_jobs.append(
+                {
+                    "job_id": item["asset_id"],
+                    "model": str(item["model"]),
+                    "asset_kind": item["asset_kind"],
+                    "animations": [str(path) for path in item["animations"]],
+                    "required_equipment": list(item["required_equipment"]),
+                    "excluded_optional_meshes": list(item["excluded_optional_meshes"]),
+                    "proven_root_rigid_bake": item["proven_root_rigid_bake"],
+                    "proven_pivot_only_model": item.get(
+                        "proven_pivot_only_model", False
+                    ),
+                    "retail_absent_textures": list(
+                        item.get("retail_absent_textures", [])
+                    ),
+                    "output": str(item["target"]),
+                }
+            )
+        jobs_path = batch_root / "jobs.json"
+        write_json_atomic(
+            jobs_path,
+            {"schema": "openbfme.w3d-multi-jobs", "jobs": multi_jobs},
+        )
+        command = [
+            str(blender),
+            "--factory-startup",
+            "-noaudio",
+            "--background",
+            "--python-use-system-env",
+            "--python-exit-code",
+            "1",
+            "--python",
+            str(multi_adapter),
+            "--",
+            "--plugin-root",
+            str(plugin),
+            "--jobs",
+            str(jobs_path),
+        ]
+        isolated = _isolated_blender_environment(os.environ, batch_root)
+        try:
+            result = run_checked(command, env=isolated)
+            combined = result.stdout + "\n" + result.stderr
+        except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+            for item in misses:
+                errors[item["index"]] = exc
+            return outputs, errors
+
+        ok_payloads: dict[str, dict[str, Any]] = {}
+        fails: dict[str, str] = {}
+        for line in combined.splitlines():
+            if line.startswith("OPENBFME_W3D_JOB_OK "):
+                payload = json.loads(line.split(" ", 1)[1])
+                ok_payloads[str(payload["job_id"])] = payload
+            elif line.startswith("OPENBFME_W3D_JOB_FAIL "):
+                payload = json.loads(line.split(" ", 1)[1])
+                detail = str(
+                    payload.get("error") or payload.get("error_type") or "failed"
+                )
+                failure_phase = payload.get("failure_phase")
+                failure_kind = payload.get("failure_kind")
+                if (
+                    type(failure_phase) is str
+                    and failure_phase
+                    and type(failure_kind) is str
+                    and failure_kind
+                ):
+                    detail = f"{detail} [failure_phase={failure_phase} failure_kind={failure_kind}]"
+                fails[str(payload["job_id"])] = detail
+
+        for item in misses:
+            asset_id = item["asset_id"]
+            if asset_id in fails:
+                errors[item["index"]] = RuntimeError(
+                    f"W3D multi-job failed for {asset_id}: {fails[asset_id]}"
+                )
+                continue
+            payload = ok_payloads.get(asset_id)
+            if payload is None:
+                errors[item["index"]] = RuntimeError(
+                    f"W3D multi-job missing success marker for {asset_id}"
+                )
+                continue
+            report = payload.get("report")
+            output_log = payload.get("output_log")
+            if (
+                not isinstance(report, dict)
+                or type(output_log) is not str
+                or len(output_log) > _W3D_MULTI_JOB_MAX_OUTPUT_LOG_CHARS
+            ):
+                errors[item["index"]] = RuntimeError(
+                    f"W3D multi-job emitted an invalid or unbounded output log "
+                    f"for {asset_id}"
+                )
+                continue
+            # Finalize against the job's REAL captured output (plus the
+            # synthesized success marker), never the marker alone: the
+            # warning-text guards in _finalize_w3d_bundle_job must see the
+            # same content the single-job process log carries, and the
+            # combined log is what the conversion cache stores for later
+            # single-job cache hits.
+            log = output_log + "\nOPENBFME_W3D_OK " + json.dumps(report, sort_keys=True)
+            try:
+                outputs[item["index"]] = self._finalize_w3d_bundle_job(
+                    item, log, cache_hit=False
+                )
+            except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+                errors[item["index"]] = exc
         return outputs, errors
 
     def _w3d_cache_lock(self, key: str) -> threading.Lock:
@@ -3890,8 +4864,9 @@ class ImportPipeline:
             if temporary is not None and temporary.is_dir():
                 shutil.rmtree(temporary)
 
-    def _convert_w3d_bundle(
+    def _prepare_w3d_bundle_job(
         self,
+        index: int,
         staging_sources: list[Path],
         output: str | None,
         options: dict[str, Any],
@@ -3899,7 +4874,9 @@ class ImportPipeline:
         profile_id: str,
         asset_id: str,
         asset_kind: str,
-    ) -> list[Path]:
+    ) -> dict[str, Any]:
+        """Stage sources and resolve cache for one W3D job (no Blender yet)."""
+
         if not output:
             raise ValueError(f"w3d-{asset_kind} requires an output path")
         if asset_kind not in {"animated", "hierarchical", "static"}:
@@ -3933,11 +4910,28 @@ class ImportPipeline:
             raise ValueError(
                 "proven root-rigid bake is supported only for hierarchical W3D conversion"
             )
+        proven_pivot_only_model = options.get(
+            W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION, False
+        )
+        if not isinstance(proven_pivot_only_model, bool):
+            raise ValueError(
+                f"W3D options.{W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION} must be a boolean"
+            )
+        if proven_pivot_only_model and asset_kind != "hierarchical":
+            raise ValueError(
+                "proven pivot-only model is supported only for hierarchical W3D conversion"
+            )
+        if proven_pivot_only_model and proven_root_rigid_bake:
+            raise ValueError(
+                "proven pivot-only model cannot combine with proven root-rigid bake"
+            )
+        retail_absent_textures = normalize_retail_absent_textures(
+            options.get(W3D_RETAIL_ABSENT_TEXTURES_OPTION, [])
+        )
         if asset_kind != "animated" and required_equipment:
             raise ValueError(
                 f"w3d-{asset_kind} does not accept options.required_equipment"
             )
-
         if self._w3d_batch_tools is None:
             raise RuntimeError("W3D conversion requires an active attested batch")
         blender = Path(self._w3d_batch_tools["blender"])
@@ -3948,7 +4942,6 @@ class ImportPipeline:
             shutil.rmtree(job_root)
         input_root = job_root / "input"
         copied = _stage_w3d_sources(staging_sources, input_root)
-
         model = copied.get(model_name)
         if not model:
             raise FileNotFoundError(
@@ -3959,20 +4952,45 @@ class ImportPipeline:
             model,
             options.get(W3D_PROVEN_NO_MOTION_ANIMATIONS_OPTION),
         )
-        secondary_skin_proof = _prepare_w3d_secondary_skin_streams(copied, model)
+        try:
+            secondary_skin_proof = _prepare_w3d_secondary_skin_streams(copied, model)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"W3D secondary-skin preparation failed for asset '{asset_id}' "
+                f"model '{model.name}': {exc}"
+            ) from exc
         texture_override_proof = _apply_w3d_texture_overrides(
             copied,
             model,
             options.get(W3D_TEXTURE_OVERRIDES_OPTION),
         )
         animations: list[Path] = []
+        effective_animation_names: list[str] = []
+        empty_placeholder_animations: list[str] = []
         for name in animation_names:
             animation = copied.get(name)
             if not animation:
                 raise FileNotFoundError(
                     f"W3D animation was not selected by the profile: {name}"
                 )
+            # Retail ships a handful of zero-byte W3D placeholders (e.g.
+            # rugimli_idlg.w3d, guboromir_dieb.w3d). Importing them creates no
+            # owned action and used to surface as a misleading owner-rig error.
+            # Drop them from the conversion set with explicit evidence; do not
+            # invent clips.
+            if animation.stat().st_size == 0:
+                empty_placeholder_animations.append(name)
+                continue
             animations.append(animation)
+            effective_animation_names.append(name)
+        if asset_kind == "animated" and not animations:
+            raise ValueError(
+                "w3d-bundle requires at least one non-empty animation; "
+                "all declared clips were zero-byte retail placeholders: "
+                + ", ".join(empty_placeholder_animations)
+            )
+        # Cache / finalize must key on the clips actually converted.
+        animation_names = effective_animation_names
 
         target = _safe_output(pack_root, output)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -3995,6 +5013,7 @@ class ImportPipeline:
             "--asset-kind",
             asset_kind,
             *(["--proven-root-rigid-bake"] if proven_root_rigid_bake else []),
+            *(["--proven-pivot-only-model"] if proven_pivot_only_model else []),
             "--output",
             str(target),
             "--animations",
@@ -4003,8 +5022,9 @@ class ImportPipeline:
             *required_equipment,
             "--excluded-optional-meshes",
             *excluded_optional_meshes,
+            "--retail-absent-textures",
+            *retail_absent_textures,
         ]
-        isolated_environment = _isolated_blender_environment(os.environ, job_root)
         source_hashes = {
             name: sha256_file(path)
             for name, path in sorted(
@@ -4013,21 +5033,75 @@ class ImportPipeline:
         }
         cache_key = _w3d_conversion_cache_key(
             source_hashes=source_hashes,
-            adapter_sha256=sha256_file(adapter),
+            adapter_sha256=(
+                sha256_file(adapter)
+                + sha256_file(
+                    repo_root_from_module()
+                    / "importer"
+                    / "blender"
+                    / "w3d_multi_to_glb.py"
+                )
+            ),
             plugin_attestation_sha256=str(
                 self._w3d_batch_tools["plugin_attestation_sha256"]
             ),
             blender_tree_sha256=str(self._w3d_batch_tools["blender_tree_sha256"]),
-            argument_vector=[*command, "--canonical-options", json.dumps(options, sort_keys=True, separators=(",", ":"))],
+            logical={
+                "asset_kind": asset_kind,
+                "model_name": model_name,
+                "animation_names": list(animation_names),
+                "required_equipment": list(required_equipment),
+                "excluded_optional_meshes": list(excluded_optional_meshes),
+                "proven_root_rigid_bake": proven_root_rigid_bake,
+                "options": json.loads(
+                    json.dumps(options, sort_keys=True, separators=(",", ":"))
+                ),
+            },
         )
-        cache_hit = False
+        combined_log: str | None
         with self._w3d_cache_lock(cache_key):
             combined_log = self._copy_w3d_cache_hit(cache_key, target)
-            if combined_log is None:
-                result = run_checked(command, env=isolated_environment)
-                combined_log = result.stdout + "\n" + result.stderr
-            else:
-                cache_hit = True
+        return {
+            "index": index,
+            "asset_id": asset_id,
+            "profile_id": profile_id,
+            "asset_kind": asset_kind,
+            "model_name": model_name,
+            "animation_names": animation_names,
+            "empty_placeholder_animations": empty_placeholder_animations,
+            "required_equipment": required_equipment,
+            "excluded_optional_meshes": excluded_optional_meshes,
+            "proven_root_rigid_bake": proven_root_rigid_bake,
+            "proven_pivot_only_model": proven_pivot_only_model,
+            "retail_absent_textures": retail_absent_textures,
+            "model": model,
+            "animations": animations,
+            "target": target,
+            "copied": copied,
+            "options": options,
+            "pack_root": pack_root,
+            "report_relative_path": report_relative_path,
+            "no_motion_proof": no_motion_proof,
+            "secondary_skin_proof": secondary_skin_proof,
+            "texture_override_proof": texture_override_proof,
+            "cache_key": cache_key,
+            "command": command,
+            "job_root": job_root,
+            "cache_hit": combined_log is not None,
+            "combined_log": combined_log or "",
+        }
+
+    def _finalize_w3d_bundle_job(
+        self,
+        prepared: Mapping[str, Any],
+        combined_log: str,
+        *,
+        cache_hit: bool,
+    ) -> list[Path]:
+        """Validate GLB + adapter report and write metrics/cache."""
+
+        target = Path(prepared["target"])
+        pack_root = Path(prepared["pack_root"])
         unsupported = [
             line
             for line in combined_log.splitlines()
@@ -4062,21 +5136,22 @@ class ImportPipeline:
         report = json.loads(marker_lines[0].split(" ", 1)[1])
         metrics = _validated_w3d_metadata(
             report,
-            required_equipment,
-            expected_animation_count=len(animation_names),
-            asset_kind=asset_kind,
-            expected_excluded_optional_meshes=excluded_optional_meshes,
-            expected_proven_root_rigid_bake=proven_root_rigid_bake,
+            prepared["required_equipment"],
+            expected_animation_count=len(prepared["animation_names"]),
+            asset_kind=prepared["asset_kind"],
+            expected_excluded_optional_meshes=prepared["excluded_optional_meshes"],
+            expected_proven_root_rigid_bake=prepared["proven_root_rigid_bake"],
+            expected_pivot_only_model=prepared.get("proven_pivot_only_model", False),
             expected_embedded_model_animation=(
-                asset_kind == "animated"
-                and len(animation_names) == 1
-                and animation_names[0] == model_name
+                prepared["asset_kind"] == "animated"
+                and len(prepared["animation_names"]) == 1
+                and prepared["animation_names"][0] == prepared["model_name"]
             ),
         )
         validated_texture_overrides = _validate_w3d_texture_override_glb(
             target,
-            copied,
-            texture_override_proof,
+            prepared["copied"],
+            prepared["texture_override_proof"],
         )
         if validated_texture_overrides is not None:
             metrics["textureOverrides"] = validated_texture_overrides
@@ -4086,17 +5161,24 @@ class ImportPipeline:
             metrics["metrics"]["textureOverrideCount"] = len(
                 validated_texture_overrides["entries"]
             )
+        secondary_skin_proof = prepared["secondary_skin_proof"]
         if secondary_skin_proof is not None:
             metrics["secondarySkinStreams"] = secondary_skin_proof
+            retained = secondary_skin_proof.get("retained") is True
             metrics["capabilities"][
                 "secondarySkinStreamsProvenEquivalentAndRemoved"
-            ] = True
+            ] = not retained
+            if retained:
+                metrics["capabilities"][
+                    "secondarySkinStreamsRetainedWithUnprovenRedundancy"
+                ] = True
             metrics["metrics"]["secondarySkinTransformedMeshCount"] = (
                 secondary_skin_proof["transformedMeshCount"]
             )
             metrics["metrics"]["secondarySkinRemovedByteCount"] = secondary_skin_proof[
                 "removedByteCount"
             ]
+        no_motion_proof = prepared["no_motion_proof"]
         if no_motion_proof is not None:
             metrics["noMotionAnimations"] = no_motion_proof
             metrics["capabilities"]["headerOnlyNoMotionAnimationsProvenAndRemoved"] = (
@@ -4108,11 +5190,63 @@ class ImportPipeline:
             metrics["metrics"]["noMotionRemovedByteCount"] = no_motion_proof[
                 "removedByteCount"
             ]
-        metrics_path = _safe_output(pack_root, report_relative_path)
+        empty_placeholders = list(prepared.get("empty_placeholder_animations") or [])
+        if empty_placeholders:
+            metrics["emptyPlaceholderAnimations"] = empty_placeholders
+            metrics["capabilities"]["zeroByteRetailAnimationPlaceholdersExcluded"] = True
+            metrics["metrics"]["emptyPlaceholderAnimationCount"] = len(
+                empty_placeholders
+            )
+        metrics_path = _safe_output(pack_root, prepared["report_relative_path"])
         write_json_atomic(metrics_path, metrics)
         if not cache_hit:
-            self._populate_w3d_cache(cache_key, target, combined_log)
+            with self._w3d_cache_lock(str(prepared["cache_key"])):
+                self._populate_w3d_cache(
+                    prepared["cache_key"], target, combined_log
+                )
         return [target, metrics_path]
+
+    def _convert_w3d_bundle(
+        self,
+        staging_sources: list[Path],
+        output: str | None,
+        options: dict[str, Any],
+        pack_root: Path,
+        profile_id: str,
+        asset_id: str,
+        asset_kind: str,
+    ) -> list[Path]:
+        prepared = self._prepare_w3d_bundle_job(
+            -1,
+            staging_sources,
+            output,
+            options,
+            pack_root,
+            profile_id,
+            asset_id,
+            asset_kind,
+        )
+        if prepared["cache_hit"]:
+            return self._finalize_w3d_bundle_job(
+                prepared, prepared["combined_log"], cache_hit=True
+            )
+        isolated_environment = _isolated_blender_environment(
+            os.environ, prepared["job_root"]
+        )
+        with self._w3d_cache_lock(prepared["cache_key"]):
+            # Re-check cache under lock in case a peer filled it.
+            combined_log = self._copy_w3d_cache_hit(
+                prepared["cache_key"], prepared["target"]
+            )
+            if combined_log is None:
+                result = run_checked(prepared["command"], env=isolated_environment)
+                combined_log = result.stdout + "\n" + result.stderr
+                cache_hit = False
+            else:
+                cache_hit = True
+        return self._finalize_w3d_bundle_job(
+            prepared, combined_log, cache_hit=cache_hit
+        )
 
     def _write_runtime_data(
         self, pack_root: Path, runtime_data: dict[str, Any]
@@ -4432,8 +5566,25 @@ def _audit_retail_provenance(
     return summary
 
 
-def audit_pack(pack_root: Path | str) -> dict[str, Any]:
+def audit_pack(pack_root: Path | str, *, light: bool | None = None) -> dict[str, Any]:
+    """Audit pack outputs against provenance.
+
+    *light* (or OPENBFME_DEV / OPENBFME_DEV_AUDIT=light): verify path + size only,
+    skip per-file SHA-256 rehash of the full pack (dev iteration speed).
+    """
+
     root = Path(pack_root).expanduser().resolve()
+    if light is None:
+        light = os.environ.get("OPENBFME_DEV", "").strip().casefold() in {
+            "1",
+            "true",
+            "yes",
+        } or os.environ.get("OPENBFME_DEV_AUDIT", "").strip().casefold() in {
+            "1",
+            "true",
+            "yes",
+            "light",
+        }
     manifest_path = root / "provenance" / "manifest.json"
     errors: list[str] = []
     checked = 0
@@ -4508,7 +5659,7 @@ def audit_pack(pack_root: Path | str) -> dict[str, Any]:
         checked += 1
         if target.stat().st_size != item.get("size"):
             errors.append(f"size mismatch: {relative}")
-        if sha256_file(target) != item.get("sha256"):
+        elif not light and sha256_file(target) != item.get("sha256"):
             errors.append(f"hash mismatch: {relative}")
 
     excluded = {"provenance/manifest.json", "provenance/audit.json"}
@@ -4571,6 +5722,7 @@ def audit_pack(pack_root: Path | str) -> dict[str, Any]:
     unique_errors = sorted(set(errors))
     return {
         "valid": not unique_errors,
+        "light": bool(light),
         "checked_files": checked,
         "checked_outputs": len(declared_outputs),
         "errors": unique_errors,

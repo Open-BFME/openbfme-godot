@@ -7,6 +7,73 @@ extends RefCounted
 const TICK_SECONDS := 0.1
 
 
+static func _has_authored_command_socket_evidence(route: Dictionary) -> bool:
+	## Retail summons some heroes through a producer's authored construct
+	## command instead of a fortress roster slot (Treebeard is trained by the
+	## Ent Moot's Command_ConstructEntTreeBeard socket). Such a route is only
+	## valid for a hero when it carries the authored INI provenance the
+	## importer records for command sockets; anything else fails closed. This
+	## mirrors the ContentDB registry gate verbatim.
+	var source_value: Variant = route.get("source")
+	if typeof(source_value) != TYPE_DICTIONARY:
+		return false
+	var source := source_value as Dictionary
+	for field in ["producerIni", "commandSetIni", "commandButtonIni"]:
+		if String(source.get(field, "")).strip_edges() == "":
+			return false
+	return true
+
+
+static func is_ring_hero_summon(document: Dictionary) -> bool:
+	## Retail ring heroes (Galadriel) are summoned by the One Ring mechanic,
+	## never trained from a producer roster: their roster entry is the summon
+	## slot and their command-point cost is zero. Such a document is not a
+	## trained production candidate for any faction.
+	if String(document.get("category", "")) != "hero":
+		return false
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var simulation_row: Dictionary = registration.get("simulation", {}) as Dictionary
+	var resolved: Dictionary = simulation_row.get("resolved", {}) as Dictionary
+	var command_points: Variant = _resolved_value(resolved.get("commandPoints"))
+	return command_points != null and int(command_points) == 0
+
+
+static func fieldability(document: Dictionary) -> Dictionary:
+	## Fail-closed classification for roster composition: exactly why a
+	## converted playable-unit document can or cannot join a faction slice.
+	## Callers record the reason; nothing is silently approximated.
+	var category := String(document.get("category", ""))
+	if category not in ["infantry", "ranged-infantry", "cavalry", "hero", "siege", "monster"]:
+		return {"ok": false, "reason": "unsupported-category:%s" % category}
+	if is_ring_hero_summon(document):
+		return {"ok": false, "reason": "ring-hero-summon-not-trained"}
+	var simulation := simulation_rule(document)
+	if not simulation.is_empty():
+		# Heroes and combat units without proven damage stay out of the roster
+		# rather than crashing later when the normalized unit rule is empty.
+		var combat: Dictionary = simulation.get("combat", {}) as Dictionary
+		var damage_value: Variant = combat.get("damage")
+		if typeof(damage_value) not in [TYPE_INT, TYPE_FLOAT] or int(damage_value) <= 0:
+			return {"ok": false, "reason": "unresolved-combat-damage"}
+		return {"ok": true, "reason": ""}
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var simulation_row: Dictionary = registration.get("simulation", {}) as Dictionary
+	var missing: Array = (simulation_row.get("missing", []) as Array).duplicate()
+	if not missing.is_empty():
+		var fields: Array[String] = []
+		for value in missing:
+			fields.append(String(value))
+		return {"ok": false, "reason": "unresolved-simulation-evidence:%s" % ",".join(fields)}
+	var resolved: Dictionary = simulation_row.get("resolved", {}) as Dictionary
+	var command_points: Variant = _resolved_value(resolved.get("commandPoints"))
+	if command_points != null and int(command_points) <= 0:
+		return {"ok": false, "reason": "command-points-unresolved-or-zero"}
+	var combat_resolved: Dictionary = _resolved_dictionary(resolved.get("combat", {}))
+	if int(combat_resolved.get("damage", 0)) <= 0:
+		return {"ok": false, "reason": "unresolved-combat-damage"}
+	return {"ok": false, "reason": "unresolved-simulation-evidence"}
+
+
 static func runtime_unit_id(document: Dictionary) -> String:
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
 	var composition: Dictionary = registration.get("composition", {}) as Dictionary
@@ -37,7 +104,7 @@ static func producer_bindings(document: Dictionary) -> Array[Dictionary]:
 			surface not in ["command-socket", "hero-roster"]
 			or (surface == "command-socket" and (slot < 1 or roster_ordinal != 0))
 			or (surface == "hero-roster" and (roster_ordinal < 1 or slot != 0))
-			or (category == "hero" and surface != "hero-roster")
+			or (category == "hero" and surface != "hero-roster" and not _has_authored_command_socket_evidence(row))
 			or (category != "hero" and surface == "hero-roster")
 		):
 			return []
@@ -55,6 +122,17 @@ static func producer_bindings(document: Dictionary) -> Array[Dictionary]:
 	return output
 
 
+static func _select_portrait_id(portraits: Variant) -> String:
+	## Prefer the authored SelectPortrait over the button icon when the
+	## document declares both: hero portraits are "HP*" (192px), unit
+	## portraits are "UP*" (191px), button icons are "HI*"/"BG*" (63-64px).
+	for prefix in ["HP", "UP"]:
+		for value in portraits as Array:
+			if typeof(value) == TYPE_STRING and String(value).begins_with(prefix):
+				return String(value)
+	return _first_string(portraits)
+
+
 static func hud_spec(document: Dictionary) -> Dictionary:
 	var specs := hud_specs(document)
 	return specs[0] if not specs.is_empty() else {}
@@ -67,7 +145,7 @@ static func hud_specs(document: Dictionary) -> Array[Dictionary]:
 	var portraits: Variant = ui.get("portraitImageIds", [])
 	if typeof(commands) != TYPE_ARRAY or (commands as Array).is_empty() or typeof(portraits) != TYPE_ARRAY or (portraits as Array).is_empty():
 		return []
-	var portrait_id := _first_string(portraits)
+	var portrait_id := _select_portrait_id(portraits)
 	if portrait_id == "":
 		return []
 	var source_id := String(document.get("objectId", ""))
@@ -149,12 +227,17 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 	var producers := producer_bindings(document)
 	if producers.is_empty():
 		return {}
+	var display_name := String(row.displayName)
+	# The display name arrives as a source string-table id (OBJECT:ElvenElrond);
+	# the pack's reviewed string bindings localize it when they cover the id.
+	var string_bindings: Dictionary = registration.get("stringBindings", {}) as Dictionary
+	display_name = String(string_bindings.get(display_name, display_name))
 	return {
 		"unit_type": runtime_unit_id(document),
 		"object_id": runtime_member_id(document),
 		"source_object_id": String(document.get("objectId", "")),
 		"category": String(document.get("category", "")),
-		"display_name": String(row.displayName),
+		"display_name": display_name,
 		"default_cost": int(row.buildCost),
 		"default_build_ticks": maxi(1, roundi(float(row.buildTimeSeconds) / TICK_SECONDS)),
 		"default_command_points": int(row.commandPoints),
@@ -168,6 +251,43 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 		"producers": producers,
 		"prerequisites": (producers[0].get("prerequisites", []) as Array).duplicate(),
 	}
+
+
+static func builder_production_rule(document: Dictionary) -> Dictionary:
+	## Builders never resolve combat evidence (porters do not fight) and cost
+	## zero command points, both of which the full simulation_rule contract
+	## rejects. This narrower projection carries only the production facts
+	## needed to train the faction builder from its authored producer.
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var simulation: Variant = registration.get("simulation", {})
+	if typeof(simulation) != TYPE_DICTIONARY:
+		return {}
+	var resolved: Dictionary = (simulation as Dictionary).get("resolved", {}) as Dictionary
+	var display := String(_resolved_value(resolved.get("displayNameId")))
+	var cost := int(_resolved_value(resolved.get("buildCost")))
+	var seconds := float(_resolved_value(resolved.get("buildTimeSeconds")))
+	var command_points := int(_resolved_value(resolved.get("commandPoints")))
+	if display.strip_edges() == "" or cost <= 0 or seconds <= 0.0 or command_points < 0:
+		return {}
+	var producers := producer_bindings(document)
+	if producers.is_empty():
+		return {}
+	var string_bindings: Dictionary = registration.get("stringBindings", {}) as Dictionary
+	return {
+		"unit_type": runtime_unit_id(document),
+		"object_id": runtime_member_id(document),
+		"category": String(document.get("category", "")),
+		"display_name": String(string_bindings.get(display, display)),
+		"default_cost": cost,
+		"default_build_ticks": maxi(1, roundi(seconds / TICK_SECONDS)),
+		"default_command_points": command_points,
+		"producers": producers,
+	}
+
+
+## Multiplies proven locomotor acceleration/braking for snappier horde response.
+## Not a retail claim — scales source-authored numbers only (see REPORT).
+const HORDE_LOCOMOTION_RESPONSE_SCALE := 1.5
 
 
 static func normalized_unit_rule(simulation: Dictionary, source_scale: float) -> Dictionary:
@@ -202,8 +322,8 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		positions.append(Vector3((position.y - center.y) * source_scale, 0.0, (position.x - center.x) * source_scale))
 	var speed := float(simulation.get("speed_source", -1.0))
 	var vision := float(simulation.get("vision_range_source", -1.0))
-	var acceleration := float(movement.get("acceleration", -1.0))
-	var braking := float(movement.get("braking", -1.0))
+	var acceleration := float(movement.get("acceleration", -1.0)) * HORDE_LOCOMOTION_RESPONSE_SCALE
+	var braking := float(movement.get("braking", -1.0)) * HORDE_LOCOMOTION_RESPONSE_SCALE
 	var turn_rate := float(movement.get("turnRateDegreesPerSecond", -1.0))
 	var attack_range := float(combat.get("attackRange", -1.0))
 	var minimum_range := float(combat.get("minimumAttackRange", 0.0))
@@ -220,11 +340,13 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	var clip_reload_ms := float(combat.get("clipReloadTimeMs", 0.0))
 	if period_ms <= 0.0 and clip_reload_ms > 0.0:
 		period_ms = clip_reload_ms
+	var category := String(simulation.get("category", ""))
 	return {
 		"horde_id": String(simulation.get("unit_type", "")),
 		"member_count": int(simulation.get("member_count", 0)),
 		"member_health": int(simulation.get("member_health", 0)),
 		"member_damage": damage,
+		"category": category,
 		"speed": speed * source_scale,
 		"speed_source": speed,
 		"acceleration": acceleration * source_scale,
@@ -259,6 +381,8 @@ static func audio_event_ids(document: Dictionary, kind: String) -> Array[String]
 		"select": ["voiceselect", "voiceselectbattle"],
 		"move": ["voicemove"],
 		"attack": ["voiceattack", "voiceattackmachine", "voiceattackstructure"],
+		"attack_structure": ["voiceattackstructure", "voiceattackmachine"],
+		"build": ["voicebuildresponse"],
 		"death": ["voicedie", "sound", "sounddeath", "sounddeath1", "sounddeath2"],
 	}
 	if not aliases.has(kind):
@@ -310,6 +434,157 @@ static func production_audio_event_ids(document: Dictionary) -> Dictionary:
 			_append_unique_string(output.purchase, String(route.get("id", "")))
 		(output.purchase_by_command as Dictionary)[command_id] = command_events
 	return output
+
+
+static func experience_rule(document: Dictionary) -> Dictionary:
+	## Project the converter-emitted ExperienceLevel chain of one unit document
+	## into the narrow runtime contract: cumulative per-level thresholds, the XP
+	## a killer collects per member kill at each of this unit's levels, and the
+	## per-level stat effects the sim can apply faithfully. Fail-closed like the
+	## other adapter surfaces: a malformed row rejects the whole contract. Older
+	## packs without the key and units whose chain retail never authored
+	## ("unauthored"/"unavailable") project an empty rule.
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var experience_value: Variant = registration.get("experience")
+	if typeof(experience_value) != TYPE_DICTIONARY:
+		return {}
+	var experience := experience_value as Dictionary
+	if String(experience.get("status", "")) != "compiled":
+		return {}
+	var max_level := int(experience.get("maxLevel", 0))
+	var initial_rank := int(experience.get("initialRank", 1))
+	var levels_value: Variant = experience.get("levels")
+	if (
+		max_level < 1
+		or initial_rank < 1
+		or initial_rank > max_level
+		or typeof(levels_value) != TYPE_ARRAY
+		or (levels_value as Array).is_empty()
+	):
+		return {}
+	var levels: Array[Dictionary] = []
+	var previous_rank := 0
+	for row_value in levels_value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return {}
+		var row := row_value as Dictionary
+		var rank := int(row.get("rank", 0))
+		var required: Variant = row.get("requiredExperience")
+		var award: Variant = row.get("experienceAward")
+		# Authored ranks ascend but are not always 1..N (retail summons such as
+		# the ring hero enter at their authored top rank); rows keep their
+		# authored ranks verbatim.
+		if rank <= previous_rank or required == null or award == null:
+			return {}
+		previous_rank = rank
+		var health_add := 0.0
+		var damage_add := 0.0
+		var production_mult := 1.0
+		var unsupported: Array[String] = []
+		for leaf_value in Array(row.get("attributeModifiers", [])):
+			if typeof(leaf_value) != TYPE_DICTIONARY:
+				return {}
+			var leaf := leaf_value as Dictionary
+			for modifier_value in Array(leaf.get("modifiers", [])):
+				if typeof(modifier_value) != TYPE_DICTIONARY:
+					return {}
+				var modifier := modifier_value as Dictionary
+				match String(modifier.get("kind", "")):
+					"HEALTH":
+						health_add += float(modifier.get("value", 0.0))
+					"DAMAGE_ADD":
+						damage_add += float(modifier.get("value", 0.0))
+					"PRODUCTION":
+						production_mult *= float(modifier.get("value", 1.0))
+					_:
+						return {}
+			for unsupported_value in Array(leaf.get("unsupportedModifiers", [])):
+				unsupported.append(String(unsupported_value))
+		var level_row: Dictionary = {
+			"rank": rank,
+			"required_experience": int(required),
+			"experience_award": int(award),
+			"health_add": health_add,
+			"damage_add": damage_add,
+			"production_multiplier": production_mult,
+		}
+		if not unsupported.is_empty():
+			level_row["unsupported_modifiers"] = unsupported
+		if String(row.get("selectionDecalTextureId", "")) != "":
+			level_row["selection_decal_texture_id"] = String(row.get("selectionDecalTextureId", ""))
+		levels.append(level_row)
+	if previous_rank != max_level or int((levels[0] as Dictionary).get("rank", 0)) != initial_rank:
+		return {}
+	return {
+		"max_level": max_level,
+		"initial_rank": initial_rank,
+		"levels": levels,
+		"source_ini": String(experience.get("sourceIni", "")),
+	}
+
+
+static func ability_rules(document: Dictionary) -> Array[Dictionary]:
+	## Project the converter-emitted SPECIAL_POWER ability rows of one hero
+	## document into the narrow runtime contract. Fail-closed like the other
+	## adapter surfaces: any malformed row rejects the whole array instead of
+	## silently dropping an authored ability.
+	var output: Array[Dictionary] = []
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var rows: Variant = registration.get("abilities", [])
+	if typeof(rows) != TYPE_ARRAY:
+		return []
+	var string_bindings: Dictionary = registration.get("stringBindings", {}) as Dictionary
+	for value in rows as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			return []
+		var row := value as Dictionary
+		var ability_id := String(row.get("id", ""))
+		var slot := int(row.get("slot", 0))
+		var targeting := String(row.get("targeting", ""))
+		if ability_id == "" or slot < 1 or targeting not in ["self", "point", "enemy-object"]:
+			return []
+		var button: Dictionary = row.get("button", {}) as Dictionary
+		var effect: Dictionary = row.get("effect", {}) as Dictionary
+		var effect_kind := String(effect.get("kind", ""))
+		if effect_kind not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier"]:
+			return []
+		var implementation: Dictionary = row.get("implementation", {}) as Dictionary
+		var status := String(implementation.get("status", ""))
+		if status not in ["implemented", "unimplemented", "passive"]:
+			return []
+		var gate: Dictionary = row.get("levelGate", {}) as Dictionary
+		var raw_level: Variant = gate.get("requiredLevel")
+		var label_id := _first_string(button.get("iconIds", []))
+		var text_id := _first_string(button.get("labelIds", []))
+		var tooltip_id := _first_string(button.get("tooltipIds", []))
+		output.append({
+			"ability_id": ability_id,
+			"slot": slot,
+			"special_power_id": String(row.get("specialPowerId", "")),
+			"targeting": targeting,
+			"cooldown_ticks": maxi(0, roundi(float(row.get("cooldownMs", 0.0)) / (TICK_SECONDS * 1000.0))),
+			"required_level": int(raw_level) if raw_level != null else 1,
+			"level_gate_resolved": gate.is_empty() or raw_level != null,
+			"castable": status == "implemented",
+			"availability_reason": String(implementation.get("reason", "")),
+			"limitations": (implementation.get("limitations", []) as Array).duplicate(),
+			"effect": effect.duplicate(true),
+			"icon_id": _first_string(button.get("iconIds", [])),
+			"label_id": text_id,
+			"tooltip_id": tooltip_id,
+			"fallback_label": String(string_bindings.get(text_id, text_id)),
+			"fallback_tooltip": String(string_bindings.get(tooltip_id, tooltip_id)),
+			"initiate_sound_id": String(row.get("initiateSoundId", "")),
+			"unit_specific_sound_id": String(row.get("unitSpecificSoundId", "")),
+			"radius_cursor_type": String(button.get("radiusCursorType", "")),
+			"options": (button.get("options", []) as Array).duplicate(),
+		})
+	return output
+
+
+static func runtime_object_id(source_id: String) -> String:
+	## Public slug for summon/OCL object lookups (mirrors runtime_member_id).
+	return _runtime_id(source_id)
 
 
 static func _first_production_slot(document: Dictionary) -> int:

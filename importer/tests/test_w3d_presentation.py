@@ -486,6 +486,7 @@ class W3dPresentationFixtureTests(unittest.TestCase):
             rig = types.SimpleNamespace(
                 type="ARMATURE",
                 data=types.SimpleNamespace(bones=[], animation_data=None),
+                pose=types.SimpleNamespace(bones=[]),
                 parent=None,
                 parent_type="OBJECT",
                 parent_bone="",
@@ -521,13 +522,8 @@ class W3dPresentationFixtureTests(unittest.TestCase):
 
         malformed_cases = (
             (
-                "parent",
-                lambda rig, mesh, objects: setattr(mesh, "parent", None),
-                "rigidly parented",
-            ),
-            (
-                "parent-type",
-                lambda rig, mesh, objects: setattr(mesh, "parent_type", "OBJECT"),
+                "foreign-parent",
+                lambda rig, mesh, objects: setattr(mesh, "parent", objects[0]),
                 "rigidly parented",
             ),
             (
@@ -536,16 +532,18 @@ class W3dPresentationFixtureTests(unittest.TestCase):
                 "ambiguous deformation",
             ),
             (
-                "modifier",
+                "deforming-modifier",
                 lambda rig, mesh, objects: setattr(
-                    mesh, "modifiers", [types.SimpleNamespace(type="ARMATURE")]
+                    mesh, "modifiers", [types.SimpleNamespace(type="SUBSURF")]
                 ),
                 "ambiguous deformation",
             ),
             (
-                "non-root-hierarchy",
-                lambda rig, mesh, objects: rig.data.bones.append(object()),
-                "carrier is not empty",
+                "bone-constraints",
+                lambda rig, mesh, objects: rig.pose.bones.append(
+                    types.SimpleNamespace(constraints=[object()])
+                ),
+                "bone has constraints",
             ),
         )
         for name, mutate, message in malformed_cases:
@@ -563,6 +561,79 @@ class W3dPresentationFixtureTests(unittest.TestCase):
             ADAPTER.bake_proven_root_rigid_hierarchy(
                 "hierarchical", True, rig, [mesh], objects
             )
+
+    def test_proven_root_rigid_bake_accepts_rigid_multi_pivot_carrier(self) -> None:
+        def scene():
+            bones = [
+                types.SimpleNamespace(name="ROOT", constraints=[]),
+                types.SimpleNamespace(name="DOOR", constraints=[]),
+            ]
+            rig = types.SimpleNamespace(
+                type="ARMATURE",
+                data=types.SimpleNamespace(bones=bones, animation_data=None),
+                pose=types.SimpleNamespace(bones=bones),
+                parent=None,
+                parent_type="OBJECT",
+                parent_bone="",
+                modifiers=[],
+                constraints=[],
+                animation_data=None,
+            )
+
+            def mesh(parent, parent_type, parent_bone, modifiers, offset):
+                return types.SimpleNamespace(
+                    type="MESH",
+                    data=types.SimpleNamespace(animation_data=None),
+                    parent=parent,
+                    parent_type=parent_type,
+                    parent_bone=parent_bone,
+                    modifiers=modifiers,
+                    vertex_groups=[],
+                    matrix_world=[
+                        [1.0, 0.0, 0.0, offset],
+                        [0.0, 1.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 0.0],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ],
+                    animation_data=None,
+                )
+
+            bone_parented = mesh(
+                rig,
+                "BONE",
+                "DOOR",
+                [],
+                1.0,
+            )
+            carrier_parented = mesh(
+                rig,
+                "ARMATURE",
+                "",
+                [types.SimpleNamespace(type="ARMATURE")],
+                2.0,
+            )
+            unparented = mesh(None, "OBJECT", "", [], 3.0)
+            meshes = [bone_parented, carrier_parented, unparented]
+            objects = FakeCollection([*meshes, rig])
+            FAKE_BPY.data = types.SimpleNamespace(objects=objects, actions=[])
+            return rig, meshes, objects
+
+        rig, meshes, objects = scene()
+        report = ADAPTER.bake_proven_root_rigid_hierarchy(
+            "hierarchical", True, rig, meshes, objects
+        )
+
+        self.assertTrue(report["applied"])
+        self.assertEqual(report["removed_carriers"], 1)
+        self.assertEqual(report["baked_meshes"], 3)
+        for item, offset in zip(meshes, (1.0, 2.0, 3.0)):
+            self.assertIsNone(item.parent)
+            self.assertEqual(item.parent_type, "OBJECT")
+            self.assertEqual(item.parent_bone, "")
+            self.assertEqual(item.modifiers, [])
+            self.assertEqual(item.matrix_world[0][3], offset)
+        self.assertNotIn(rig, list(objects))
+        self.assertEqual(list(objects), meshes)
 
     def test_hierarchical_scene_rejects_accidental_actions(self) -> None:
         FAKE_BPY.data = types.SimpleNamespace(objects=[], actions=[object()])

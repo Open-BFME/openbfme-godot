@@ -192,9 +192,23 @@ class FullAssetExtractTests(unittest.TestCase):
                 archive_path,
                 ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
             )
-            self.assertEqual(catalog.stale_reasons(), [])
-            with self.assertRaisesRegex(RuntimeError, "use --force"):
-                pipeline.extract_all_assets()
+            # Payload sample canary flags the archive even when mtime is pinned.
+            self.assertTrue(
+                any(
+                    "payload sample" in reason
+                    for reason in catalog.stale_reasons()
+                )
+            )
+            previous = os.environ.get("OPENBFME_EXTRACT_VERIFY")
+            os.environ["OPENBFME_EXTRACT_VERIFY"] = "full"
+            try:
+                with self.assertRaisesRegex(RuntimeError, "catalog is stale|use --force"):
+                    pipeline.extract_all_assets()
+            finally:
+                if previous is None:
+                    os.environ.pop("OPENBFME_EXTRACT_VERIFY", None)
+                else:
+                    os.environ["OPENBFME_EXTRACT_VERIFY"] = previous
 
     def test_rejects_stale_unsafe_and_over_limit_catalogs_before_writing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

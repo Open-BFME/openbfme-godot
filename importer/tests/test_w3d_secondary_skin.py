@@ -370,6 +370,79 @@ class W3DSecondarySkinSuccessTests(unittest.TestCase):
         self.assertGreater(result.proof.maximum_position_delta, 0.0)
         self.assertGreater(result.proof.maximum_normal_delta, 0.0)
 
+    def test_reskin_authoring_normal_drift_within_tolerance_still_proves(
+        self,
+    ) -> None:
+        """RUArcher_SKN / GUArcher_SKL dual-local normals drift ~1.46e-3.
+
+        Positions stay dual-local; only unit-normal authoring variance grows.
+        0.01-scale fixtures remain rejected as genuinely distinct streams.
+        """
+
+        # Secondary normal in bone-2 local space that reconstructs to a bind
+        # normal within the measured reskin band but above the old 3e-6 floor.
+        reskin_normal_delta = 1.46e-3
+        result = strip_proven_redundant_secondary_skin_streams(
+            _model(
+                _target_mesh(
+                    secondary_normals=(
+                        (0.0, 0.0, 1.0),
+                        (reskin_normal_delta, 1.0, 0.0),
+                    ),
+                )
+            ),
+            _hierarchy(),
+        )
+        self.assertGreater(result.proof.maximum_normal_delta, 3.0e-6)
+        self.assertLessEqual(
+            result.proof.maximum_normal_delta, NORMAL_COINCIDENCE_TOLERANCE
+        )
+
+        with self.assertRaisesRegex(W3DSecondarySkinError, "bind normal delta"):
+            strip_proven_redundant_secondary_skin_streams(
+                _model(
+                    _target_mesh(
+                        secondary_normals=((0.0, 0.0, 1.0), (0.01, 1.0, 0.0)),
+                    )
+                ),
+                _hierarchy(),
+            )
+
+    def test_magnitude_relative_roundoff_bounds_follow_bind_coordinate_scale(
+        self,
+    ) -> None:
+        # The active dual vertex sits at |bind| ≈ 116; the secondary local
+        # copy compensates the (1,-2,0) bone offset, so bind-space copies
+        # coincide up to the displacement. The float32 authoring round trip
+        # may exceed the absolute floor at this scale; deltas far beyond the
+        # relative bound still fail closed.
+        result = strip_proven_redundant_secondary_skin_streams(
+            _model(
+                _target_mesh(
+                    primary_vertices=((1.0, 3.0, 4.0), (100.0, 50.0, 30.0)),
+                    secondary_vertices=(
+                        (3.0, 3.0, 7.0),
+                        (101.0 + POSITION_COINCIDENCE_TOLERANCE * 5.0, 48.0, 30.0),
+                    ),
+                )
+            ),
+            _hierarchy(),
+        )
+        self.assertGreater(
+            result.proof.maximum_position_delta, POSITION_COINCIDENCE_TOLERANCE
+        )
+
+        with self.assertRaisesRegex(W3DSecondarySkinError, "bind position delta"):
+            strip_proven_redundant_secondary_skin_streams(
+                _model(
+                    _target_mesh(
+                        primary_vertices=((1.0, 3.0, 4.0), (100.0, 50.0, 30.0)),
+                        secondary_vertices=((3.0, 3.0, 7.0), (102.0, 48.0, 30.0)),
+                    )
+                ),
+                _hierarchy(),
+            )
+
     def test_zero_weight_secondary_records_are_finite_but_otherwise_irrelevant(
         self,
     ) -> None:
@@ -434,12 +507,12 @@ class W3DSecondarySkinFailureTests(unittest.TestCase):
             (
                 "active-secondary-root",
                 _target_mesh(influences=((1, 0, 100, 0), (1, 0, 60, 40))),
-                "reserved secondary root index",
+                "bind position delta",
             ),
             (
                 "active-primary-root",
                 _target_mesh(influences=((1, 0, 100, 0), (0, 2, 60, 40))),
-                "reserved primary root index",
+                "bind position delta",
             ),
             (
                 "non-finite",

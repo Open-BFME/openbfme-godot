@@ -142,6 +142,7 @@ CHECKPOINT_SEQUENCE = (
     "mesh-box-ambiguity-validation",
     "mesh-equipment-classification",
     "required-equipment-validation",
+    "skin-validation",
     "render-proof",
     "animation-import",
     "scene-validation",
@@ -317,6 +318,13 @@ class StaticConversionHarness:
         self.validate_request = mock.Mock(wraps=CONVERTER.validate_asset_kind_request)
         self.find_static_rig = mock.Mock(return_value=None)
         self.find_single_rig = mock.Mock(return_value=None)
+        self.find_model_rig = mock.Mock(
+            side_effect=lambda asset_kind: (
+                self.find_static_rig()
+                if asset_kind == "static"
+                else self.find_single_rig()
+            )
+        )
         self.assert_non_animated = mock.Mock()
         self.remove_geometry = mock.Mock(return_value=[])
 
@@ -372,6 +380,7 @@ class StaticConversionHarness:
             "validate_asset_kind_request": self.validate_request,
             "find_static_rig": self.find_static_rig,
             "find_single_rig": self.find_single_rig,
+            "find_model_rig": self.find_model_rig,
             "assert_non_animated_scene_has_no_actions": self.assert_non_animated,
             "remove_non_render_geometry": self.remove_geometry,
             "convert_proven_additive_materials": self.convert_materials,
@@ -706,6 +715,10 @@ class W3dConverterPhaseEvidenceTests(unittest.TestCase):
         harness.find_static_rig.return_value = types.SimpleNamespace(
             data=types.SimpleNamespace(bones=[])
         )
+        harness.build_inventory.side_effect = lambda *_args, **_kwargs: (
+            [{"vertices": 3, "triangles": 1, "skinned": True}],
+            {},
+        )
         with tempfile.TemporaryDirectory() as raw:
             self._invoke_real_failure(
                 harness,
@@ -713,6 +726,33 @@ class W3dConverterPhaseEvidenceTests(unittest.TestCase):
                 failure_phase="skin-validation",
                 secret=secret,
             )
+
+        # An empty carrier with no skinned meshes is a legitimate rigid shape:
+        # the same harness must now convert instead of failing.
+        harness = StaticConversionHarness()
+        harness.find_static_rig.return_value = types.SimpleNamespace(
+            data=types.SimpleNamespace(bones=[])
+        )
+        checkpoint = TrackingPhaseCheckpoint()
+        ledger = FakeAnimationOutputLedger()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            model, output = harness.paths(root)
+            with harness.patched():
+                report = CONVERTER._convert_w3d_job_impl(
+                    model=model,
+                    asset_kind="static",
+                    animations=[],
+                    required_equipment=[],
+                    excluded_optional_meshes=[],
+                    proven_root_rigid_bake=False,
+                    output=output,
+                    animation_output_ledger=ledger,
+                    phase_checkpoint=checkpoint,
+                )
+        self.assertEqual(report["meshes"], 1)
+        self.assertEqual(report["bones"], 0)
+        self.assertEqual(checkpoint.phases.count("skin-validation"), 3)
 
         secret = "PRIVATE_ROOT_BAKE"
         harness = StaticConversionHarness()

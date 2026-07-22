@@ -63,6 +63,7 @@ var member_health_backs: Dictionary = {}
 var member_health_fills: Dictionary = {}
 var member_health_ratios: Dictionary = {}
 var member_health_anchor_heights: Dictionary = {}
+var experience_level := 1
 var member_attack_tokens: Dictionary = {}
 var member_attack_release_tokens: Dictionary = {}
 var member_attack_target_globals: Dictionary = {}
@@ -310,6 +311,11 @@ func _build_markers() -> void:
 	# existing fallback below.
 	if private_parity_mode_active:
 		return
+	if source_selection_decal != null and source_selection_decal.contract_ready:
+		# The retail squiggly decal bound from this faction's own pack: the big
+		# synthetic team/selection tori are the men-less fallback and must not
+		# double-draw over it (the elven porter's giant blue/green ellipses).
+		return
 	_team_ring = MeshInstance3D.new()
 	_team_ring.name = "SyntheticTeamRing"
 	var team_ring_mesh := TorusMesh.new()
@@ -518,7 +524,9 @@ func sync_member_states(
 				_play_member_state(member_index, "attack_ranged_fire", release_token, true)
 				_present_archer_member_attack(member_index)
 		elif battalion_state_changed or String(member_action_states.get(member_index, "")) != normalized_state:
-			_play_member_state(member_index, normalized_state, token, false)
+			# Restart on state change so walk clips cannot keep looping after
+			# the sim has already settled into idle (archer stop-anim bug).
+			_play_member_state(member_index, normalized_state, token, battalion_state_changed)
 	_sync_source_selection_living_mask()
 	_refresh_member_overlays()
 
@@ -727,8 +735,13 @@ func member_health_overlay_rows() -> Array[Dictionary]:
 			"member_index": member_index,
 			"health_ratio": ratio,
 			"world_position": visual.global_position + Vector3.UP * float(member_health_anchor_heights.get(member_index, 1.8)),
+			"experience_level": experience_level,
 		})
 	return rows
+
+
+func set_experience_level(level: int) -> void:
+	experience_level = maxi(1, level)
 
 
 func visual_is_emerged(member_index: int) -> bool:
@@ -919,6 +932,19 @@ func _is_private_retail_pack(definition: Dictionary) -> bool:
 	)
 
 
+## True when the unit's own pack ships the retail SHADOW_MERGE_DECAL selection
+## contract (every converted faction pack carries the identical one). The
+## decal's configure still validates fail-closed; this only decides whether the
+## attempt replaces the synthetic fallback rings.
+func _selection_decal_pack_supported(definition: Dictionary) -> bool:
+	var pack_root := String(definition.get("_pack_root", ""))
+	if pack_root == "" or pack_root.begins_with("res://"):
+		return false
+	var contract_path := ProjectSettings.globalize_path(pack_root).replace("\\", "/").simplify_path().path_join("effects/men-selection-decal.json").simplify_path()
+	var pack_base := ProjectSettings.globalize_path(pack_root).replace("\\", "/").simplify_path().trim_suffix("/")
+	return contract_path.to_lower().begins_with(pack_base.to_lower() + "/") and FileAccess.file_exists(contract_path)
+
+
 func _configure_combat_visual_contract(definition: Dictionary) -> void:
 	combat_visual_source_closure_present = false
 	exact_projectile_node_count = 0
@@ -957,7 +983,11 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 
 
 func _configure_source_selection_decal(definition: Dictionary) -> void:
-	if not private_parity_mode_active:
+	# Retail selection presentation is universal: any faction pack that ships
+	# the SHADOW_MERGE_DECAL contract binds the leafy squiggly ring (the elven
+	# porter's giant blue/green synthetic ellipses were the men-less fallback).
+	# Packs without the contract keep the legal-safe synthetic overlay.
+	if not private_parity_mode_active and not _selection_decal_pack_supported(definition):
 		return
 	var positions: Array[Vector3] = []
 	for member_index in range(member_count):
@@ -990,9 +1020,30 @@ func _sync_source_selection_living_mask() -> void:
 
 
 func _resolve_animation_name(player: AnimationPlayer, requested: String) -> String:
+	## Cooked playable clips often use W3D-style ids like GUAragorn_SKL.GUAragorn_IDLE
+	## while GLB AnimationPlayer tracks are basename-only or slash-separated.
+	var want := requested.strip_edges()
+	if want == "" or player == null:
+		return ""
+	var want_lower := want.to_lower()
+	var want_base := want_lower.get_file().replace("\\", "/")
+	if want_base.contains("."):
+		want_base = want_base.get_slice(".", want_base.get_slice_count(".") - 1)
+	if want_base.contains("/"):
+		want_base = want_base.get_file()
 	for animation_name in player.get_animation_list():
 		var candidate := String(animation_name)
-		if candidate.to_lower() == requested.to_lower() or candidate.to_lower().ends_with("/" + requested.to_lower()):
+		var cand_lower := candidate.to_lower()
+		if cand_lower == want_lower:
+			return candidate
+		if cand_lower.ends_with("/" + want_lower) or cand_lower.ends_with("." + want_lower):
+			return candidate
+		var cand_base := cand_lower.get_file().replace("\\", "/")
+		if cand_base.contains("."):
+			cand_base = cand_base.get_slice(".", cand_base.get_slice_count(".") - 1)
+		if cand_base == want_base or cand_base.ends_with("_" + want_base) or want_base.ends_with("_" + cand_base):
+			return candidate
+		if cand_lower.ends_with("/" + want_base) or cand_lower.ends_with("." + want_base):
 			return candidate
 	return ""
 

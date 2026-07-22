@@ -16,6 +16,10 @@ const TEAM_COLORS := {
 	0: Color8(45, 77, 172),
 	1: Color8(166, 32, 28),
 }
+## Optional per-team color override (menu house-color selection seam). Empty
+## dictionary keeps the authored TEAM_COLORS untouched; a Color entry replaces
+## that team's row without touching the mask machinery.
+static var team_color_overrides: Dictionary = {}
 
 static var _configured_pack := ""
 static var _stem_to_mask_path: Dictionary = {}
@@ -33,7 +37,8 @@ static func apply(node: Node3D, team: int, pack_root: String) -> int:
 		return 0
 	if not _configure(pack_root):
 		return 0
-	return _apply_recursive(node, Color(TEAM_COLORS[team]))
+	var team_color := Color(team_color_overrides.get(team, TEAM_COLORS[team]))
+	return _apply_recursive(node, team_color)
 
 
 static func _apply_recursive(node: Node, team_color: Color) -> int:

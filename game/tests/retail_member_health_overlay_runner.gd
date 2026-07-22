@@ -24,9 +24,64 @@ func _run() -> void:
 	_check_colors("half_health", 0.5, Color(0.5, 1.0, 0.0, 1.0), Color(0.5, 0.5, 0.0, 1.0))
 	_check_colors("damaged_health", 0.4, Color(1.0, 0.8, 0.0, 1.0), Color(0.5, 0.4, 0.0, 1.0))
 	_check_colors("really_damaged_health", 0.25, Color(1.0, 0.25, 0.0, 1.0), Color(0.5, 0.25, 0.0, 1.0))
+	await _check_rank_chevrons()
 
 	print("RETAIL_MEMBER_HEALTH_OVERLAY_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+func _check_rank_chevrons() -> void:
+	## Veterancy pips: the battalion's live level rides the overlay rows, and
+	## rank 2+ draws one placeholder chevron per earned rank above the bar.
+	var camera := Camera3D.new()
+	root.add_child(camera)
+	camera.global_position = Vector3(0.0, 30.0, 30.0)
+	camera.look_at(Vector3.ZERO, Vector3.UP)
+	camera.current = true
+	var veteran := FakeBattalion.new(3, 2, true)
+	var rookie := FakeBattalion.new(1, 1, true)
+	var overlay := OverlayScript.new()
+	root.add_child(overlay)
+	overlay.configure(null, camera, {"veteran": veteran, "rookie": rookie})
+	await process_frame
+	await process_frame
+	overlay._draw()
+	_check(
+		"rank_chevrons_track_experience_level",
+		overlay.rendered_chevron_count == 2,
+		"chevrons=%d" % overlay.rendered_chevron_count
+	)
+	_check("rank_one_draws_no_chevrons", overlay.rendered_bar_count == 3, "bars=%d" % overlay.rendered_bar_count)
+	veteran.free()
+	rookie.free()
+	overlay.free()
+	camera.free()
+
+
+class FakeBattalion:
+	extends Node
+	var team := 0
+	var selected := true
+	var _level := 1
+	var _members := 1
+
+
+	func _init(level: int, members: int, is_selected: bool) -> void:
+		_level = level
+		_members = members
+		selected = is_selected
+
+
+	func member_health_overlay_rows() -> Array[Dictionary]:
+		var rows: Array[Dictionary] = []
+		for index in range(_members):
+			rows.append({
+				"member_index": index,
+				"health_ratio": 1.0,
+				"world_position": Vector3(float(index), 0.0, 0.0),
+				"experience_level": _level,
+			})
+		return rows
 
 
 func _check_colors(name: String, ratio: float, expected_fill: Color, expected_outline: Color) -> void:

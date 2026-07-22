@@ -4,6 +4,7 @@ extends Node3D
 ## held by RetailSliceSim; Godot nodes interpolate and present that state only.
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
+const LockstepSessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 const BattalionScript = preload("res://src/retail_slice/retail_battalion.gd")
 const StructureScript = preload("res://src/retail_slice/retail_structure.gd")
 const OrderIndicatorScript = preload("res://src/retail_slice/retail_order_indicator.gd")
@@ -16,6 +17,9 @@ const LinearFogScript = preload("res://src/retail_slice/fords_linear_fog.gd")
 const MemberHealthOverlayScript = preload("res://src/retail_slice/retail_member_health_overlay.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
+const HouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
+const OptionsScreenScript = preload("res://src/ui/options_screen.gd")
+const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const SOLDIER_HORDE_ID := "bfme2.object.gondor-fighter-horde"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -23,6 +27,12 @@ const RANGER_HORDE_ID := "bfme2.object.gondor-ranger-horde"
 const TREBUCHET_OBJECT_ID := "bfme2.object.gondor-trebuchet"
 const BUILDER_OBJECT_ID := "bfme2.object.men-porter"
 const MAP_ID := "bfme2.map.fords-of-isen-ii"
+## The five-maps supplement pack. The slice resolves non-default slice maps
+## from this pack's catalog when ContentDB has not registered it yet (the
+## integration step registers it in selection.json as a supplemental pack).
+const FIVE_MAPS_PACK_ID := "bfme2-five-maps-106-private"
+const MAP_CATALOG_MAX_BYTES := 1024 * 1024
+const MAP_DOCUMENT_MAX_BYTES := 2 * 1024 * 1024
 const UNIT_OBJECT_IDS: Array[String] = [
 	"bfme2.object.gondor-fighter",
 	"bfme2.object.gondor-archer",
@@ -97,6 +107,14 @@ const FORDS_AFTERNOON_LIGHT_RIGS := {
 }
 
 var simulation: RetailSliceSim
+var local_team := 0
+var _local_command_seq := 0
+var lockstep_session
+var _mp_mode := OS.get_environment("OPENBFME_MP").strip_edges().to_lower()
+var _mp_address := OS.get_environment("OPENBFME_MP_ADDRESS").strip_edges()
+var _mp_port_text := OS.get_environment("OPENBFME_MP_PORT").strip_edges()
+var _mp_desync_reported := false
+var _mp_last_pause_command_tick := -1
 var battalion_nodes: Dictionary = {}
 var structure_nodes: Dictionary = {}
 var order_indicators: Dictionary = {}
@@ -104,12 +122,22 @@ var attack_target_indicator: RetailAttackTargetIndicator
 var audio_system: RetailSliceAudio
 var source_map_data: RetailMapData
 var selected_pack_root := ""
+var map_id := MAP_ID
+var map_pack_root := ""
 var faction_manifest: Dictionary = {}
 var enemy_faction := ""
 var gameplay_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
 var trebuchet_runtime: Dictionary = {}
 var playable_unit_runtimes: Dictionary = {}
+## Honestly fieldable converted units for the active faction (resolved sim +
+## supported category). Populated by _classify_faction_units.
+var fieldable_unit_runtimes: Dictionary = {}
+## Subset of fieldable units that may train from producers (excludes builders
+## that only exist for construct routes without combat evidence).
+var producible_unit_runtimes: Dictionary = {}
+## Converted unit docs excluded from the roster with an explicit reason.
+var unit_roster_exclusions: Array = []
 var ranger_hud_configuration_error := ""
 var trebuchet_hud_configuration_error := ""
 var playable_unit_hud_configuration_error := ""
@@ -152,14 +180,30 @@ var _source_art_texture: Texture2D
 var _last_presented_winner := -1
 var attack_move_armed := false
 var construction_kind_armed := ""
-var construction_ghost: MeshInstance3D = null
+var construction_ghost: Node3D = null
 var _drag_select_origin := Vector2.INF
 var _drag_selecting := false
 var _selection_band: Control = null
 const DRAG_SELECT_THRESHOLD := 8.0
 var camera_user_yaw := 0.0
+var _last_backspace_ms := 0
+var _right_drag_origin := Vector2.INF
+var _right_dragging := false
+## Runtime camera scroll-speed multiplier, driven by the options screen's
+## Scroll Speed slider (options seam; the base rate constant stays untouched).
+var keyboard_scroll_speed_scale := 1.0
+var options_overlay = null
+var _loaded_map_definition: Dictionary = {}
 var _camera_orbiting := false
 var power_cast_armed := ""
+## Set when the current faction has no spellbook document in any mounted
+## pack (fail closed; the sim locks the whole tree with spellbook-unavailable).
+var _spellbook_resolution_note := ""
+# Armed hero ability cast: {"hero_id": int, "ability_id": String, "unit_id": String}.
+# Empty when no ability button armed a targeted cast.
+var ability_cast_armed: Dictionary = {}
+var _power_cast_ghost: MeshInstance3D
+var _power_cast_glyph: MeshInstance3D
 # Env-gated presentation profiler (OPENBFME_PROFILE_SYNC=1): accumulates
 # per-section time so soak runs can attribute frame-cost growth exactly.
 var _profile_sync := OS.get_environment("OPENBFME_PROFILE_SYNC") == "1"
@@ -173,6 +217,7 @@ var _initialization_last_ms := 0
 func _ready() -> void:
 	_initialization_started_ms = Time.get_ticks_msec()
 	_initialization_last_ms = _initialization_started_ms
+	_apply_stored_display_settings()
 	faction_manifest = _resolve_faction_manifest()
 	if DisplayServer.get_name() != "headless":
 		# Windowed runs load phase-by-phase behind a progress bar; headless
@@ -203,6 +248,17 @@ func _initialize_content_and_match() -> void:
 	ranger_runtime = ContentDB.get_ranger_runtime()
 	trebuchet_runtime = ContentDB.get_trebuchet_runtime()
 	playable_unit_runtimes = ContentDB.get_playable_unit_runtimes()
+	# Refresh faction chrome after the post-reload manifest resolution so a
+	# full pack's buildings/heading reach the side command bar.
+	if hud != null:
+		if hud.has_method("configure_faction_surface"):
+			hud.configure_faction_surface(faction_manifest)
+		else:
+			hud.configure_manifest_construct_kinds(faction_manifest.get("structure_kinds", []) as Array)
+		if ContentDB.has_method("get_spellbook_runtime"):
+			var spellbook_doc: Dictionary = _faction_spellbook_document()
+			if not spellbook_doc.is_empty() and hud.has_method("configure_spellbook_runtime"):
+				hud.configure_spellbook_runtime(spellbook_doc)
 	if ranger_hud_configuration_error != "":
 		_fail("Ranger HUD configuration failed: %s" % ranger_hud_configuration_error)
 		return
@@ -217,20 +273,60 @@ func _initialize_content_and_match() -> void:
 	var horde_definition := ContentDB.get_bundle_object(SOLDIER_HORDE_ID)
 	var soldier_capability_id := String(member_definition.get("animationCapabilityId", ""))
 	var soldier_capability := ContentDB.get_animation_capability(soldier_capability_id)
-	var map_definition := ContentDB.get_bundle_map(MAP_ID)
-	if member_definition.is_empty() or horde_definition.is_empty() or soldier_capability.is_empty() or map_definition.is_empty():
+	if member_definition.is_empty() or horde_definition.is_empty() or soldier_capability.is_empty():
 		_fail("The private bfme2-men-vslice pack is not selected. Run run_importer.bat to build and select it.")
 		return
-	selected_pack_root = String(member_definition.get("_pack_root", ""))
+	# Resolve the asserted host pack by id, not through the member document's
+	# pack root: supplements carry their own copy of the shared base bundle
+	# objects, so the document merge can legitimately resolve a shared id from
+	# another pack while the host assertion must stay pinned to pack_id.
 	var expected_pack_id := String(faction_manifest.get("pack_id", "bfme2-men-vslice"))
-	if selected_pack_root == "" or String((ModLoader._read_json(selected_pack_root.path_join("pack.json")) as Dictionary).get("id", "")) != expected_pack_id:
+	selected_pack_root = _pack_root_for_id(expected_pack_id)
+	if selected_pack_root == "":
 		_fail("The selected content pack is not %s." % expected_pack_id)
 		return
-	var presentation_definition_error := _load_required_presentation_definitions()
-	if presentation_definition_error != "":
-		_fail("Private Men roster presentation validation failed: %s" % presentation_definition_error)
+	map_id = _resolve_slice_map_id()
+	if map_id == "":
+		_fail("Slice map selection is not a well-formed retail map id. Use OPENBFME_SLICE_MAP=bfme2.map.<slug> (for example bfme2.map.fords-of-isen-ii).")
 		return
-	var hud_binding_error := hud.bind_retail_train_commands(ContentDB, selected_pack_root, true)
+	var map_definition := _resolve_slice_map_definition(map_id)
+	if map_definition.is_empty():
+		_fail("Slice map '%s' is unavailable: it is neither in the registered content nor in the %s pack catalog." % [map_id, FIVE_MAPS_PACK_ID])
+		return
+	_loaded_map_definition = map_definition.duplicate(true)
+	map_pack_root = String(map_definition.get("_pack_root", ""))
+	if map_pack_root == "" or not DirAccess.dir_exists_absolute(map_pack_root):
+		_fail("Slice map '%s' has no usable pack root." % map_id)
+		return
+	# Identity lands as early as the map resolves: title, matchup, and player
+	# rows. The map-art phase call below then adds the imported textures.
+	_update_loading_overlay_identity(map_definition)
+	_project_faction_structure_definitions()
+	var profile_boot := OS.get_environment("OPENBFME_PROFILE_BOOT") == "1"
+	var boot_mark := Time.get_ticks_msec()
+	var presentation_definition_error := _load_required_presentation_definitions()
+	if profile_boot:
+		print("BOOT_PROFILE slice.presentation_definitions_ms=%d" % (Time.get_ticks_msec() - boot_mark))
+		boot_mark = Time.get_ticks_msec()
+	if presentation_definition_error != "":
+		_fail("Faction roster presentation validation failed: %s" % presentation_definition_error)
+		return
+	_prewarm_boot_glb_cache()
+	if profile_boot:
+		print("BOOT_PROFILE slice.glb_prewarm_ms=%d" % (Time.get_ticks_msec() - boot_mark))
+		boot_mark = Time.get_ticks_msec()
+	# The bind below first-touches every faction icon/portrait; fan those cold
+	# reads across the worker pool first so storage latency overlaps instead of
+	# serializing into the retail_command_ui phase.
+	var prefetched_count := ContentDB.prefetch_retail_ui_assets([selected_pack_root] + faction_manifest.get("faction_pack_roots", []) as Array)
+	if profile_boot:
+		print("BOOT_PROFILE ui_prefetch_count=%d slice.ui_prefetch_ms=%d" % [prefetched_count, Time.get_ticks_msec() - boot_mark])
+		boot_mark = Time.get_ticks_msec()
+	var hud_binding_error := hud.bind_retail_train_commands(
+		ContentDB, selected_pack_root, true, faction_manifest.get("faction_pack_roots", []) as Array
+	)
+	if profile_boot:
+		print("BOOT_PROFILE slice.hud_bind_ms=%d" % (Time.get_ticks_msec() - boot_mark))
 	if hud_binding_error != "":
 		_fail("Private Men production UI validation failed: %s" % hud_binding_error)
 		return
@@ -241,17 +337,18 @@ func _initialize_content_and_match() -> void:
 	attack_target_indicator.configure(hud.retail_action_texture("attack_move"))
 
 	var asset_factory = load("res://src/view/asset_factory.gd")
-	var preview_path := ContentDB.resolve_asset(String(map_definition.get("preview", "")), selected_pack_root)
-	var art_path := ContentDB.resolve_asset(String(map_definition.get("art", "")), selected_pack_root)
+	var preview_path := ContentDB.resolve_asset(String(map_definition.get("preview", "")), map_pack_root)
+	var art_path := ContentDB.resolve_asset(String(map_definition.get("art", "")), map_pack_root)
 	_preview_texture = asset_factory.load_texture_asset(preview_path)
 	_source_art_texture = asset_factory.load_texture_asset(art_path)
 	map_preview_loaded = _preview_texture != null
 	map_art_loaded = _source_art_texture != null
+	_update_loading_overlay_identity(map_definition)
 	await _mark_initialization_phase("map_art")
 
 	source_map_data = MapDataScript.new()
-	if not source_map_data.load_from_pack(selected_pack_root, map_definition):
-		_fail("Cooked Fords map data failed validation: %s" % source_map_data.error)
+	if not source_map_data.load_from_pack(map_pack_root, map_definition):
+		_fail("Cooked %s map data failed validation: %s" % [map_id, source_map_data.error])
 		return
 	var environment_error := _configure_source_environment()
 	if environment_error != "":
@@ -273,9 +370,22 @@ func _initialize_content_and_match() -> void:
 	if gameplay_rules.has("_error"):
 		_fail("Retail unit gameplay rules failed validation: %s" % String(gameplay_rules["_error"]))
 		return
+	_apply_menu_match_options()
 	simulation = SimScript.new()
-	simulation.setup(source_map_data.simulation_configuration(), gameplay_rules)
-	var player_fortress_id := simulation.fortress_id(0)
+	_configure_simulation_spellbook()
+	simulation.setup(_match_configuration(), gameplay_rules)
+	if _mp_mode == "host" or _mp_mode == "join":
+		local_team = 0 if _mp_mode == "host" else 1
+		simulation.ai_enabled = false
+		lockstep_session = LockstepSessionScript.new(simulation)
+		var mp_port := 26015 if _mp_port_text == "" else int(_mp_port_text)
+		var mp_address := "127.0.0.1" if _mp_address == "" else _mp_address
+		var mp_error: Error = lockstep_session.host(mp_port) if _mp_mode == "host" else lockstep_session.join(mp_address, mp_port)
+		if mp_error != OK:
+			_fail("Lockstep %s failed (%s:%d, error %d)." % [_mp_mode, mp_address, mp_port, mp_error])
+			return
+	_configure_simulation_expansions()
+	var player_fortress_id := simulation.fortress_id(local_team)
 	if player_fortress_id != 0:
 		var player_fortress_position := Vector2(simulation.structure(player_fortress_id).get("position", Vector2.ZERO))
 		camera_focus = player_fortress_position
@@ -287,21 +397,41 @@ func _initialize_content_and_match() -> void:
 
 	audio_system = AudioScript.new()
 	add_child(audio_system)
-	audio_system.configure(selected_pack_root, DisplayServer.get_name() != "headless")
+	audio_system.configure(selected_pack_root, DisplayServer.get_name() != "headless", producible_unit_runtimes, _faction_structure_audio_contract(), _faction_eva_side())
 	audio_system.set_declared_structure_lifecycle_audio_active(_all_men_structure_contracts_v1())
 	await _mark_initialization_phase("audio")
 	hud.configure_minimap(simulation, source_map_data, camera, _preview_texture)
 	var command_costs: Dictionary = {}
 	for unit_type in simulation.production_rule_ids():
 		command_costs[unit_type] = simulation._production_rule_value(String(unit_type), "cost_rule", "default_cost")
-	if not ranger_runtime.is_empty():
+	if not ranger_runtime.is_empty() and String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)) == FactionManifestScript.DEFAULT_FACTION:
 		command_costs["Upgrade_GondorArcheryRangeLevel2"] = int((ranger_runtime.get("prerequisite", {}) as Dictionary).get("cost", 0))
 	for structure_kind in simulation.structure_build_rule_ids():
 		command_costs[structure_kind] = int(simulation.structure_build_rule(structure_kind).get("cost", 0))
+	for expansion_kind_value in simulation._expansion_build_rules.keys():
+		var expansion_kind := String(expansion_kind_value)
+		command_costs[expansion_kind] = int(simulation._expansion_build_rules[expansion_kind].get("cost", 0))
 	hud.set_command_costs(command_costs)
+	var command_point_costs: Dictionary = {}
+	for unit_type in simulation.production_rule_ids():
+		command_point_costs[unit_type] = simulation._production_rule_value(String(unit_type), "command_points_rule", "default_command_points")
+	hud.set_command_point_costs(command_point_costs)
+	var command_build_seconds: Dictionary = {}
+	for unit_type in simulation.production_rule_ids():
+		command_build_seconds[unit_type] = float(simulation._production_rule_value(String(unit_type), "build_time_rule", "default_build_ticks")) * SimScript.TICK_SECONDS
+	for structure_kind in simulation.structure_build_rule_ids():
+		command_build_seconds[structure_kind] = float(simulation.structure_build_rule(structure_kind).get("seconds", 0.0))
+	for expansion_kind_value in simulation._expansion_build_rules.keys():
+		var expansion_kind := String(expansion_kind_value)
+		command_build_seconds[expansion_kind] = float(simulation._expansion_build_rules[expansion_kind].get("seconds", 0.0))
+	hud.set_command_build_seconds(command_build_seconds)
 	hud.apply_audio_values(audio_system.get_music_volume(), audio_system.get_voice_sfx_volume(), audio_system.is_muted())
 	audio_system.sync_events(simulation.events)
-	var expected_structure_count := 2 * (faction_manifest.get("structure_kinds", []) as Array).size()
+	# Full-pack manifests seed fortresses only; constructable kinds stay on the
+	# builder bar. Tiny Men pack still seeds its full five-building starter.
+	var seed_kinds: Array = faction_manifest.get("seed_structure_kinds", faction_manifest.get("structure_kinds", [])) as Array
+	var expected_structure_count := 2 * seed_kinds.size()
+	var men_faction_slice := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)) == FactionManifestScript.DEFAULT_FACTION
 	ready_ok = (
 		battalion_nodes.size() == simulation.initial_battalion_count()
 		and _all_battalion_retail_visuals_loaded()
@@ -309,7 +439,9 @@ func _initialize_content_and_match() -> void:
 		and _all_structure_retail_visuals_loaded()
 		and map_preview_loaded
 		and map_art_loaded
-		and equipment_proof_loaded
+		# Full Men packs field via playableUnit projections; the legacy soldier
+		# equipment proof is host-pack Men tiny-slice only.
+		and (equipment_proof_loaded or not men_faction_slice or _men_uses_full_pack_manifest())
 		and source_map_data.ready
 		and source_driven_terrain
 		and simulation.source_map_configured
@@ -326,12 +458,25 @@ func _initialize_content_and_match() -> void:
 		if structure_nodes.size() != expected_structure_count:
 			failed_capabilities.append("structure_count=%d expected=%d" % [structure_nodes.size(), expected_structure_count])
 		if not _all_structure_retail_visuals_loaded():
-			failed_capabilities.append("structure_retail_visuals")
+			var structure_failures: Array[String] = []
+			for structure_id in simulation.structure_ids():
+				var structure_node: RetailStructure = structure_nodes.get(structure_id)
+				if structure_node == null:
+					structure_failures.append("%d:missing-node" % structure_id)
+				elif structure_node.contract_error != "":
+					structure_failures.append("%d:%s" % [structure_id, structure_node.contract_error])
+				elif structure_node.presentation_mode != "private-imported-lifecycle":
+					structure_failures.append("%d:mode=%s" % [structure_id, structure_node.presentation_mode])
+				elif not structure_node.retail_visual_loaded:
+					structure_failures.append("%d:visual-not-loaded" % structure_id)
+			failed_capabilities.append(
+				"structure_retail_visuals[%s]" % ", ".join(structure_failures)
+			)
 		if not map_preview_loaded:
 			failed_capabilities.append("map_preview")
 		if not map_art_loaded:
 			failed_capabilities.append("map_art")
-		if not equipment_proof_loaded:
+		if not equipment_proof_loaded and men_faction_slice and not _men_uses_full_pack_manifest():
 			failed_capabilities.append("equipment_proof")
 		if not source_map_data.ready:
 			failed_capabilities.append("source_map_data")
@@ -510,58 +655,65 @@ func _probe_click(point: Vector2) -> void:
 
 
 # Measured phase costs (ms) weight the loading bar so it advances honestly
-# rather than in even steps.
+# rather than in even steps. Re-measured after the threaded-content boot wave
+# (men, Fords of Isen II, this machine's headless harness; isengard tracks
+# within ~10%).
 const LOADING_PHASE_WEIGHTS := {
-	"ready": 1, "environment": 16, "hud": 51, "content": 12,
-	"retail_command_ui": 214, "map_art": 13, "map_data": 1293,
-	"battlefield": 2507, "simulation": 12, "presentations": 962,
-	"audio": 488, "ready_complete": 1,
+	"ready": 540, "environment": 12, "hud": 120, "content": 600,
+	"retail_command_ui": 560, "map_art": 15, "map_data": 1050,
+	"battlefield": 1400, "simulation": 70, "presentations": 60,
+	"audio": 800, "ready_complete": 1,
 }
-var _loading_overlay: CanvasLayer = null
-var _loading_bar: ProgressBar = null
-var _loading_phase_label: Label = null
+const LOADING_SCREEN_SCENE := "res://scenes/retail_loading_screen.tscn"
+var _loading_screen: CanvasLayer = null
 var _loading_weight_done := 0.0
+var _loading_weight_total := -1.0
 
 
 func _build_loading_overlay() -> void:
-	_loading_overlay = CanvasLayer.new()
-	_loading_overlay.name = "LoadingOverlay"
-	_loading_overlay.layer = 50
-	add_child(_loading_overlay)
-	var backdrop := ColorRect.new()
-	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	backdrop.color = Color(0.01, 0.015, 0.02)
-	_loading_overlay.add_child(backdrop)
-	var column := VBoxContainer.new()
-	column.set_anchors_preset(Control.PRESET_CENTER)
-	column.alignment = BoxContainer.ALIGNMENT_CENTER
-	column.add_theme_constant_override("separation", 18)
-	backdrop.add_child(column)
-	var title := Label.new()
-	title.text = "FORDS OF ISEN II"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 44)
-	title.add_theme_color_override("font_color", Color("e9d489"))
-	column.add_child(title)
-	_loading_bar = ProgressBar.new()
-	_loading_bar.custom_minimum_size = Vector2(560, 22)
-	_loading_bar.min_value = 0.0
-	_loading_bar.max_value = 100.0
-	_loading_bar.show_percentage = true
-	var bar_bg := StyleBoxFlat.new()
-	bar_bg.bg_color = Color(0.05, 0.06, 0.05)
-	bar_bg.border_color = Color(0.55, 0.48, 0.28)
-	bar_bg.set_border_width_all(1)
-	var bar_fill := StyleBoxFlat.new()
-	bar_fill.bg_color = Color(0.72, 0.6, 0.28)
-	_loading_bar.add_theme_stylebox_override("background", bar_bg)
-	_loading_bar.add_theme_stylebox_override("fill", bar_fill)
-	column.add_child(_loading_bar)
-	_loading_phase_label = Label.new()
-	_loading_phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_loading_phase_label.add_theme_font_size_override("font_size", 15)
-	_loading_phase_label.add_theme_color_override("font_color", Color("9fb2a1"))
-	column.add_child(_loading_phase_label)
+	## Menu→match transitions arrive through the loading-boot scene, which
+	## already shows the retail loading screen; adopt that instance instead of
+	## stacking a second one. Direct launches and gate runners build their own.
+	_loading_screen = get_tree().get_first_node_in_group("retail_loading_screen") as CanvasLayer
+	if _loading_screen != null:
+		return
+	var packed := load(LOADING_SCREEN_SCENE)
+	if packed == null:
+		return
+	_loading_screen = packed.instantiate()
+	add_child(_loading_screen)
+
+
+func _update_loading_overlay_identity(map_definition: Dictionary) -> void:
+	## Once the map resolves, the load screen stops being generic: real map
+	## name, the imported map art and preview, and the two player rows.
+	if _loading_screen == null:
+		return
+	var display_name := String(map_definition.get("displayName", map_definition.get("name", "")))
+	var player_count := int(map_definition.get("playerCount", 0))
+	var map_title := display_name
+	if display_name != "" and player_count > 0:
+		map_title = "%s (%d)" % [display_name, player_count]
+	var description := String(map_definition.get("description", ""))
+	var player_faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
+	if description == "" and player_faction != "":
+		# Packs ship no authored map blurbs yet; the retail frame shows the
+		# matchup instead of an invented lore paragraph.
+		description = "%s versus %s" % [_faction_display_name(player_faction), _faction_display_name(enemy_faction)]
+	_loading_screen.call("configure_identity", {
+		"map_name": map_title,
+		"description": description,
+		"art": _source_art_texture,
+		"preview": _preview_texture,
+		"players": [
+			{"name": "Player", "army": _faction_display_name(player_faction), "level": 1, "color": Color(0.36, 0.49, 0.79)},
+			{"name": "Computer", "army": _faction_display_name(enemy_faction), "level": 1, "color": Color(0.75, 0.22, 0.17)},
+		],
+	})
+
+
+func _faction_display_name(faction: String) -> String:
+	return faction.capitalize() if faction != "" else ""
 
 
 func _mark_initialization_phase(phase: String) -> void:
@@ -570,20 +722,21 @@ func _mark_initialization_phase(phase: String) -> void:
 	if DisplayServer.get_name() == "headless":
 		print("RETAIL_INIT_PHASE name=%s delta_ms=%d total_ms=%d" % [phase, now - _initialization_last_ms, now - _initialization_started_ms])
 	_initialization_last_ms = now
-	if _loading_overlay == null:
+	if _loading_screen == null:
 		return
 	_loading_weight_done += float(LOADING_PHASE_WEIGHTS.get(phase, 10))
-	var total := 0.0
-	for weight in LOADING_PHASE_WEIGHTS.values():
-		total += float(weight)
-	_loading_bar.value = clampf(_loading_weight_done / total * 100.0, 0.0, 100.0)
-	_loading_phase_label.text = "Loading %s..." % phase.replace("_", " ")
+	if _loading_weight_total <= 0.0:
+		_loading_weight_total = 0.0
+		for weight in LOADING_PHASE_WEIGHTS.values():
+			_loading_weight_total += float(weight)
+	var ratio := clampf(_loading_weight_done / _loading_weight_total, 0.0, 1.0)
+	# The screen's progress is monotonic: a menu-transition floor (scene fetch
+	# share) and any later phase can never move the bar backward.
+	_loading_screen.call("set_load_progress", ratio, "Loading %s..." % phase.replace("_", " "))
 	if phase == "ready_complete":
-		var overlay := _loading_overlay
-		_loading_overlay = null
-		var fade := create_tween()
-		fade.tween_interval(0.2)
-		fade.tween_callback(func() -> void: overlay.queue_free())
+		var screen := _loading_screen
+		_loading_screen = null
+		screen.call("fade_out_and_free")
 	else:
 		# Yield one frame so the bar actually renders between phases.
 		await get_tree().process_frame
@@ -592,33 +745,51 @@ func _mark_initialization_phase(phase: String) -> void:
 func _load_required_presentation_definitions() -> String:
 	validated_battalion_capabilities.clear()
 	equipment_proof_loaded = false
-	var presentation_ids: Array[String] = PRESENTATION_UNIT_OBJECT_IDS.duplicate()
-	if not ranger_runtime.is_empty():
-		presentation_ids.append(RANGER_OBJECT_ID)
-	if not trebuchet_runtime.is_empty():
-		presentation_ids.append(TREBUCHET_OBJECT_ID)
-	for object_id in presentation_ids:
-		var expected_kind := "builder" if object_id == BUILDER_OBJECT_ID else "member"
-		var model_error := _validate_retail_object_model(object_id, expected_kind, String(UNIT_MODEL_PATHS[object_id]))
-		if model_error != "":
-			return model_error
-		if object_id == TREBUCHET_OBJECT_ID:
-			validated_battalion_capabilities[object_id] = _trebuchet_animation_capability()
-			continue
-		var definition: Dictionary = ContentDB.get_bundle_object(object_id)
-		var capability_id := String(definition.get("animationCapabilityId", ""))
-		var capability: Dictionary = ContentDB.get_animation_capability(capability_id)
-		if capability_id == "" or capability.is_empty() or String(capability.get("_pack_root", "")) != String(definition.get("_pack_root", "")):
-			return "%s has no selected-pack animation capability" % object_id
-		validated_battalion_capabilities[object_id] = _attach_equipment_proof(capability) if object_id == SOLDIER_OBJECT_ID else capability.duplicate(true)
-	for runtime_value in playable_unit_runtimes.values():
+	var faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
+	# The hard-coded Men roster block (core four, porter, ranger, trebuchet)
+	# validates only the Men slice; other factions present entirely through
+	# their converted playableUnit.* documents below.
+	if faction == FactionManifestScript.DEFAULT_FACTION and not _men_uses_full_pack_manifest():
+		# Legacy tiny Men pack: hard-coded core four + optional overlay contracts.
+		var presentation_ids: Array[String] = PRESENTATION_UNIT_OBJECT_IDS.duplicate()
+		if not ranger_runtime.is_empty() and not _playable_has_ranger():
+			presentation_ids.append(RANGER_OBJECT_ID)
+		if not trebuchet_runtime.is_empty():
+			presentation_ids.append(TREBUCHET_OBJECT_ID)
+		for object_id in presentation_ids:
+			var expected_kind := "builder" if object_id == BUILDER_OBJECT_ID else "member"
+			var model_error := _validate_retail_object_model(object_id, expected_kind, String(UNIT_MODEL_PATHS[object_id]))
+			if model_error != "":
+				return model_error
+			if object_id == TREBUCHET_OBJECT_ID:
+				validated_battalion_capabilities[object_id] = _trebuchet_animation_capability()
+				continue
+			var definition: Dictionary = ContentDB.get_bundle_object(object_id)
+			var capability_id := String(definition.get("animationCapabilityId", ""))
+			var capability: Dictionary = ContentDB.get_animation_capability(capability_id)
+			if capability_id == "" or capability.is_empty() or String(capability.get("_pack_root", "")) != String(definition.get("_pack_root", "")):
+				return "%s has no selected-pack animation capability" % object_id
+			validated_battalion_capabilities[object_id] = _attach_equipment_proof(capability) if object_id == SOLDIER_OBJECT_ID else capability.duplicate(true)
+	elif faction == FactionManifestScript.DEFAULT_FACTION and _men_uses_full_pack_manifest():
+		# Full Men pack still needs the host pack's soldier equipment proof for
+		# the Men host map presentation, when the soldier is among fieldable units.
+		var soldier_def: Dictionary = ContentDB.get_bundle_object(SOLDIER_OBJECT_ID)
+		if not soldier_def.is_empty():
+			var soldier_cap_id := String(soldier_def.get("animationCapabilityId", ""))
+			var soldier_cap: Dictionary = ContentDB.get_animation_capability(soldier_cap_id)
+			if not soldier_cap.is_empty():
+				validated_battalion_capabilities[SOLDIER_OBJECT_ID] = _attach_equipment_proof(soldier_cap)
+	for runtime_value in fieldable_unit_runtimes.values():
 		if typeof(runtime_value) != TYPE_DICTIONARY:
 			return "playable-unit runtime registry contains a non-object"
 		var runtime := runtime_value as Dictionary
 		var member_id := PlayableUnitAdapter.runtime_member_id(runtime)
-		var definition := ContentDB.get_bundle_object(member_id)
-		var capability := ContentDB.get_animation_capability(String(definition.get("animationCapabilityId", "")))
+		# Shared retail units project the same member/capability ids from every
+		# faction pack; resolve the presentation from the runtime's own pack so a
+		# cohabiting pack's projection cannot pass or fail this faction's proof.
 		var runtime_root := String(runtime.get("_pack_root", ""))
+		var definition := ContentDB.get_bundle_object_for_pack(member_id, runtime_root)
+		var capability := ContentDB.get_animation_capability_for_pack(String(definition.get("animationCapabilityId", "")), runtime_root)
 		if (
 			member_id == ""
 			or definition.is_empty()
@@ -640,6 +811,114 @@ func _load_required_presentation_definitions() -> String:
 		if lifecycle_error != "":
 			return lifecycle_error
 	return ""
+
+
+var _glb_stream_queue: Array[String] = []
+var _glb_stream_seen: Dictionary = {}
+
+
+func _prewarm_boot_glb_cache() -> void:
+	## Boot GLB strategy: parse only the boot-critical GLBs up front (the units
+	## the simulation seeds at match start and the seed structures' intact + BIB
+	## models), then stream the rest of the faction roster into the shared mesh
+	## cache over the first post-boot frames (_pump_glb_stream). With 30+ unit
+	## rosters and half-gigabyte structure model sets per faction, warming
+	## everything would serialize tens of seconds of scene generation into boot.
+	## All paths come from the same resolvers the validators just ran, and
+	## AssetFactory still fails closed at the real load site for anything the
+	## warm-up could not parse.
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	var boot_paths: Array = []
+	var starter_army := OS.get_environment("OPENBFME_STARTER_ARMY") == "1"
+	var boot_object_ids: Dictionary = {}
+	for entry_value in faction_manifest.get("spawn_roster", []) as Array:
+		var entry := entry_value as Dictionary
+		if not starter_army and not String(entry.get("anchor", "")).ends_with("builder"):
+			continue
+		boot_object_ids[String(entry.get("object_id", ""))] = true
+		boot_object_ids[String(entry.get("unit_type", ""))] = true
+	for runtime_value in fieldable_unit_runtimes.values():
+		var runtime := runtime_value as Dictionary
+		var member_id := PlayableUnitAdapter.runtime_member_id(runtime)
+		var definition := ContentDB.get_bundle_object_for_pack(
+			member_id,
+			String(runtime.get("_pack_root", ""))
+		)
+		var mesh_path := ContentDB.resolve_mesh_path(definition)
+		if mesh_path == "":
+			continue
+		if (
+			boot_object_ids.has(member_id)
+			or boot_object_ids.has(PlayableUnitAdapter.runtime_unit_id(runtime))
+			or boot_object_ids.has(String(runtime.get("objectId", "")))
+		):
+			boot_paths.append(mesh_path)
+		else:
+			_glb_stream_offer(mesh_path)
+	for object_id_value in validated_battalion_capabilities.keys():
+		var object_id := String(object_id_value)
+		var definition := ContentDB.get_bundle_object(object_id)
+		var mesh_path := ContentDB.resolve_mesh_path(definition)
+		if mesh_path == "":
+			continue
+		if boot_object_ids.has(object_id):
+			boot_paths.append(mesh_path)
+		else:
+			_glb_stream_offer(mesh_path)
+	var structure_object_ids: Dictionary = faction_manifest.get("structure_object_ids", {}) as Dictionary
+	var seed_kinds: Array = faction_manifest.get("seed_structure_kinds", faction_manifest.get("structure_kinds", [])) as Array
+	for kind_value in faction_manifest.get("structure_kinds", []) as Array:
+		var kind := String(kind_value)
+		var structure_object_id := String(structure_object_ids.get(kind, ""))
+		if structure_object_id == "":
+			continue
+		var definition := ContentDB.get_bundle_object(structure_object_id)
+		var definition_root := String(definition.get("_pack_root", ""))
+		var presentation: Dictionary = definition.get("presentation", {}) as Dictionary
+		var lifecycle: Dictionary = presentation.get("buildingLifecycle", {}) as Dictionary
+		# Lifecycle aux models vary by faction (bib may be absent or null): the
+		# warm-up is best-effort and never validates, so read defensively.
+		var bib_visual: Dictionary = {}
+		if typeof(lifecycle.get("bib")) == TYPE_DICTIONARY:
+			var bib: Dictionary = lifecycle["bib"]
+			if typeof(bib.get("visual")) == TYPE_DICTIONARY:
+				bib_visual = bib["visual"]
+		for relative in [String(presentation.get("model", "")), String(bib_visual.get("glb", ""))]:
+			if relative == "":
+				continue
+			var resolved := ContentDB.resolve_asset(relative, definition_root)
+			if resolved == "":
+				continue
+			if seed_kinds.has(kind):
+				boot_paths.append(resolved)
+			else:
+				_glb_stream_offer(resolved)
+	asset_factory.preload_models_threaded(boot_paths)
+
+
+func _glb_stream_offer(mesh_path: String) -> void:
+	if _glb_stream_seen.has(mesh_path):
+		return
+	_glb_stream_seen[mesh_path] = true
+	_glb_stream_queue.append(mesh_path)
+
+
+func _pump_glb_stream() -> void:
+	## Post-boot roster streaming: a small threaded batch per frame keeps the
+	## remaining faction units'/structures' scene generation off the boot path
+	## while staying ahead of first production, which then loads from the warm
+	## cache instead of reparsing on demand.
+	if _glb_stream_queue.is_empty() or DisplayServer.get_name() == "headless":
+		# Headless gate runners keep the established lazy-load behavior so their
+		# per-frame timing evidence is unchanged; the stream is a windowed-play
+		# boot optimization.
+		return
+	var batch: Array = []
+	for index in mini(2, _glb_stream_queue.size()):
+		batch.append(_glb_stream_queue[index])
+	_glb_stream_queue = _glb_stream_queue.slice(mini(2, _glb_stream_queue.size()))
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	asset_factory.preload_models_threaded(batch)
 
 
 func _trebuchet_animation_capability() -> Dictionary:
@@ -704,8 +983,14 @@ func _validate_retail_object_model(object_id: String, expected_kind: String, exp
 
 func _validate_retail_structure_lifecycle(object_id: String, structure_kind: String) -> String:
 	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
-	if definition.is_empty() or String(definition.get("_pack_root", "")) != selected_pack_root:
+	var definition_root := String(definition.get("_pack_root", ""))
+	if definition.is_empty() or definition_root == "":
 		return "%s is not registered by the selected pack" % object_id
+	# The host pack owns the Men structures; a data-driven faction's structures
+	# arrive from the packs its manifest recorded.
+	var faction_roots: Array = faction_manifest.get("faction_pack_roots", []) as Array
+	if definition_root != selected_pack_root and not faction_roots.has(definition_root):
+		return "%s escaped the selected and faction packs" % object_id
 	if String(definition.get("kind", "")) != "structure":
 		return "%s is not a structure object" % object_id
 	if typeof(definition.get("presentation")) != TYPE_DICTIONARY:
@@ -725,7 +1010,7 @@ func _validate_retail_structure_lifecycle(object_id: String, structure_kind: Str
 	var asset_error: String = StructureScript.preflight_lifecycle_assets(
 		lifecycle,
 		structure_kind,
-		selected_pack_root
+		definition_root
 	)
 	if asset_error != "":
 		return "%s lifecycle assets failed: %s" % [object_id, asset_error]
@@ -775,61 +1060,90 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	var member: Dictionary = member_definition.get("simulation", {}) as Dictionary
 	var member_count := maxi(1, int(horde_definition.get("memberCount", 15)))
 	var tick_ms := SimScript.TICK_SECONDS * 1000.0
+	var faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
+	var men_slice := faction == FactionManifestScript.DEFAULT_FACTION
+	var full_men := men_slice and _men_uses_full_pack_manifest()
 	var unit_rules: Dictionary = {}
-	var gameplay_unit_ids: Array[String] = UNIT_OBJECT_IDS.duplicate()
-	if not ranger_runtime.is_empty():
-		gameplay_unit_ids.append(RANGER_OBJECT_ID)
-	for object_id in gameplay_unit_ids:
-		var source_rules := (
-			(ranger_runtime.get("unitRule", {}) as Dictionary)
-			if object_id == RANGER_OBJECT_ID
-			else ContentDB.get_retail_unit_rules(object_id)
-		)
-		var converted := _convert_retail_unit_rule(source_rules, tick_ms)
-		if converted.has("_error"):
-			return {"_error": "%s: %s" % [object_id, String(converted["_error"])]}
-		if object_id == RANGER_OBJECT_ID:
-			var ranger_member: Dictionary = (source_rules.get("member", {}) as Dictionary)
-			converted["member_health"] = int((ranger_member.get("health", {}) as Dictionary).get("value", 0))
-			# The converted core bundle proves bow presentation only. Keep the
-			# source sword rule in provenance, but never activate it until its
-			# authored transition/attack clips are converted and bound.
-			converted["unsupported_close_weapon"] = String(converted.get("close_weapon_mode", "")) != ""
-			converted["close_weapon_mode"] = ""
-		unit_rules[object_id] = converted
+	# The hard-coded Men core-four conversions validate only the legacy tiny
+	# Men slice; full Men packs and other factions arrive through playableUnit
+	# documents via playable_unit_runtimes on the rules dictionary.
+	if men_slice and not full_men:
+		var gameplay_unit_ids: Array[String] = UNIT_OBJECT_IDS.duplicate()
+		if not ranger_runtime.is_empty() and not _playable_has_ranger():
+			gameplay_unit_ids.append(RANGER_OBJECT_ID)
+		for object_id in gameplay_unit_ids:
+			var source_rules := (
+				(ranger_runtime.get("unitRule", {}) as Dictionary)
+				if object_id == RANGER_OBJECT_ID
+				else ContentDB.get_retail_unit_rules(object_id)
+			)
+			var converted := _convert_retail_unit_rule(source_rules, tick_ms)
+			if converted.has("_error"):
+				return {"_error": "%s: %s" % [object_id, String(converted["_error"])]}
+			if object_id == RANGER_OBJECT_ID:
+				var ranger_member: Dictionary = (source_rules.get("member", {}) as Dictionary)
+				converted["member_health"] = int((ranger_member.get("health", {}) as Dictionary).get("value", 0))
+				# The converted core bundle proves bow presentation only. Keep the
+				# source sword rule in provenance, but never activate it until its
+				# authored transition/attack clips are converted and bound.
+				converted["unsupported_close_weapon"] = String(converted.get("close_weapon_mode", "")) != ""
+				converted["close_weapon_mode"] = ""
+				converted["category"] = "ranged-infantry"
+			elif object_id == "bfme2.object.gondor-knight":
+				converted["category"] = "cavalry"
+			elif object_id == "bfme2.object.gondor-archer":
+				converted["category"] = "ranged-infantry"
+			else:
+				converted["category"] = String(converted.get("category", "infantry"))
+			unit_rules[object_id] = converted
+	# Men host pack may still carry a MenPorter bundle simulation (tiny pack).
+	# Full Men packs only ship playableUnit.MenPorter — builder_unit_ids then
+	# supply the rule. Never skip the data-driven path when ids match the
+	# host constant but the host bundle simulation is absent (that bug
+	# silently dropped the starting porter from spawn).
 	var builder_definition := ContentDB.get_bundle_object(BUILDER_OBJECT_ID)
 	var builder_simulation: Dictionary = builder_definition.get("simulation", {}) as Dictionary
-	if builder_definition.is_empty() or builder_simulation.is_empty():
+	if not builder_definition.is_empty() and not builder_simulation.is_empty():
+		unit_rules[BUILDER_OBJECT_ID] = {
+			"horde_id": BUILDER_OBJECT_ID,
+			"member_count": 1,
+			"member_health": maxi(1, int(builder_simulation.get("health", 500))),
+			"member_damage": 1,
+			"speed": float(builder_simulation.get("speed", 60.0)) * source_map_data.local_transform_scale,
+			"speed_source": float(builder_simulation.get("speed", 60.0)),
+			"acceleration": 60.0 * source_map_data.local_transform_scale * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
+			"acceleration_source": 60.0 * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
+			"turn_rate_degrees_per_second": 360.0,
+			"braking": 60.0 * source_map_data.local_transform_scale * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
+			"braking_source": 60.0 * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
+			"attack_range": 0.0,
+			"attack_range_source": 0.0,
+			"minimum_attack_range": 0.0,
+			"minimum_attack_range_source": 0.0,
+			"vision_range": float(builder_simulation.get("vision", 25.0)) * source_map_data.local_transform_scale,
+			"vision_range_source": float(builder_simulation.get("vision", 25.0)),
+			"delay_between_shots_ms": 1000.0,
+			"pre_attack_delay_ms": 0.0,
+			"firing_duration_ms": 0.0,
+			"attack_period_ticks": 10,
+			"pre_attack_ticks": 0,
+			"firing_duration_ticks": 0,
+			"formation_positions": [Vector3.ZERO],
+			"stances": {"default": "Battle", "cycleOrder": ["HoldGround", "Battle", "Aggressive"], "states": {"HoldGround": {}, "Battle": {}, "Aggressive": {}}},
+			"is_builder": true,
+			"provenance": {"source": "data/ini/object/goodfaction/units/men/porter.ini", "constants": "data/ini/gamedata.ini"},
+		}
+	elif men_slice and not full_men:
 		return {"_error": "missing selected-pack MenPorter simulation contract"}
-	unit_rules[BUILDER_OBJECT_ID] = {
-		"horde_id": BUILDER_OBJECT_ID,
-		"member_count": 1,
-		"member_health": maxi(1, int(builder_simulation.get("health", 500))),
-		"member_damage": 1,
-		"speed": float(builder_simulation.get("speed", 60.0)) * source_map_data.local_transform_scale,
-		"speed_source": float(builder_simulation.get("speed", 60.0)),
-		"acceleration": 60.0 * source_map_data.local_transform_scale,
-		"acceleration_source": 60.0,
-		"turn_rate_degrees_per_second": 360.0,
-		"braking": 60.0 * source_map_data.local_transform_scale,
-		"braking_source": 60.0,
-		"attack_range": 0.0,
-		"attack_range_source": 0.0,
-		"minimum_attack_range": 0.0,
-		"minimum_attack_range_source": 0.0,
-		"vision_range": float(builder_simulation.get("vision", 25.0)) * source_map_data.local_transform_scale,
-		"vision_range_source": float(builder_simulation.get("vision", 25.0)),
-		"delay_between_shots_ms": 1000.0,
-		"pre_attack_delay_ms": 0.0,
-		"firing_duration_ms": 0.0,
-		"attack_period_ticks": 10,
-		"pre_attack_ticks": 0,
-		"firing_duration_ticks": 0,
-		"formation_positions": [Vector3.ZERO],
-		"stances": {"default": "Battle", "cycleOrder": ["HoldGround", "Battle", "Aggressive"], "states": {"HoldGround": {}, "Battle": {}, "Aggressive": {}}},
-		"is_builder": true,
-		"provenance": {"source": "data/ini/object/goodfaction/units/men/porter.ini", "constants": "data/ini/gamedata.ini"},
-	}
+	# Data-driven builders (including MenPorter when only playableUnit exists).
+	for builder_value in (faction_manifest.get("builder_unit_ids", []) as Array):
+		var builder_id := String(builder_value)
+		if builder_id == "" or unit_rules.has(builder_id):
+			continue
+		var faction_builder_rule := _faction_builder_unit_rule(builder_id)
+		if faction_builder_rule.is_empty():
+			return {"_error": "faction builder '%s' has no converted playableUnit document" % builder_id}
+		unit_rules[builder_id] = faction_builder_rule
 	var rules := {
 		"enable_base_loop": true,
 		"starting_resources": 1200,
@@ -846,40 +1160,311 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		"ai_queue_interval_ticks": 60,
 		"ai_attack_delay_ticks": 300,
 	}
+	# Menu RULES tab seam: GameState carries the setup's Initial Resources and
+	# Command Point Factor. -1 / 1.0 keep the authored values above.
+	var game_state := get_node_or_null("/root/GameState")
+	if game_state != null:
+		var menu_resources := int(game_state.get("retail_initial_resources"))
+		if menu_resources > 0:
+			rules["starting_resources"] = menu_resources
+		var menu_factor := float(game_state.get("retail_command_point_factor"))
+		if menu_factor > 0.0 and not is_equal_approx(menu_factor, 1.0):
+			rules["command_point_cap"] = maxi(60, int(roundi(float(rules["command_point_cap"]) * menu_factor)))
 	rules["source_map_transform_scale"] = source_map_data.local_transform_scale
-	rules["faction_manifest"] = faction_manifest.duplicate(true)
-	if not ranger_runtime.is_empty():
+	var manifest_for_rules: Dictionary = faction_manifest.duplicate(true)
+	# Retail skirmish start: fortress + porter only — the base is built, not
+	# given. Gate runners set OPENBFME_STARTER_ARMY=1 to keep the legacy
+	# pre-spawned battalions their combat checks are written against.
+	if OS.get_environment("OPENBFME_STARTER_ARMY") != "1":
+		var builder_only: Array = []
+		for entry_value in manifest_for_rules.get("spawn_roster", []) as Array:
+			var entry := entry_value as Dictionary
+			if String(entry.get("anchor", "")).ends_with("builder"):
+				builder_only.append(entry)
+		if not builder_only.is_empty():
+			manifest_for_rules["spawn_roster"] = builder_only
+	rules["faction_manifest"] = manifest_for_rules
+	# Overlay ranger contract only when the full pack did not already ship
+	# GondorRanger as a playableUnit runtime document.
+	if men_slice and not ranger_runtime.is_empty() and not _playable_has_ranger():
 		rules["ranger_runtime"] = ranger_runtime.duplicate(true)
-		rules["ranger_unit_rule"] = (unit_rules[RANGER_OBJECT_ID] as Dictionary).duplicate(true)
-	if not trebuchet_runtime.is_empty():
+		if unit_rules.has(RANGER_OBJECT_ID):
+			rules["ranger_unit_rule"] = (unit_rules[RANGER_OBJECT_ID] as Dictionary).duplicate(true)
+	if men_slice and not trebuchet_runtime.is_empty() and not full_men:
 		rules["trebuchet_runtime"] = trebuchet_runtime.duplicate(true)
-	var scoped_playable_unit_runtimes := _faction_scoped_playable_unit_runtimes()
-	if not scoped_playable_unit_runtimes.is_empty():
-		rules["playable_unit_runtimes"] = scoped_playable_unit_runtimes.duplicate(true)
+	elif men_slice and not trebuchet_runtime.is_empty() and full_men:
+		# Full pack may still carry the typed trebuchet contract alongside playable runtimes.
+		rules["trebuchet_runtime"] = trebuchet_runtime.duplicate(true)
+	if not producible_unit_runtimes.is_empty():
+		rules["playable_unit_runtimes"] = producible_unit_runtimes.duplicate(true)
 		rules["producer_kind_by_source_object"] = _producer_kind_registry()
+		var horde_speed_overrides := _horde_speed_overrides()
+		if not horde_speed_overrides.is_empty():
+			rules["horde_speed_overrides"] = horde_speed_overrides
 	return rules
+
+
+func _horde_speed_overrides() -> Dictionary:
+	## Retail hordes move at their horde LocomotorSet speed (menhordes.ini),
+	## while playableUnit documents resolve the unit-object locomotor. For horde
+	## containers the pack's retail unit rules carry the authoritative horde
+	## speed; record it with provenance instead of silently using either.
+	## Retail rules key legacy member ids, so pairing rides the horde
+	## LocomotorSet's source scopeName (GondorFighterHorde etc.) against each
+	## document's container object.
+	var overrides: Dictionary = {}
+	var scope_speeds: Dictionary = {}
+	for entry_value in ContentDB.retail_unit_rules.values():
+		var entry := entry_value as Dictionary
+		var locomotor_set: Dictionary = ((entry.get("horde", {}) as Dictionary).get("locomotorSet", {}) as Dictionary)
+		var speed_field: Dictionary = locomotor_set.get("speed", {}) as Dictionary
+		var scope_name := String((speed_field.get("source", {}) as Dictionary).get("scopeName", ""))
+		var speed_value: Variant = speed_field.get("value")
+		if scope_name == "" or typeof(speed_value) not in [TYPE_INT, TYPE_FLOAT] or float(speed_value) <= 0.0:
+			continue
+		scope_speeds[scope_name.to_lower()] = {
+			"speed": float(speed_value),
+			"source": (speed_field.get("source", {}) as Dictionary).duplicate(true),
+		}
+	for document_value in producible_unit_runtimes.values():
+		var document := document_value as Dictionary
+		var simulation := PlayableUnitAdapter.simulation_rule(document)
+		if simulation.is_empty() or int(simulation.get("member_count", 0)) <= 1:
+			continue
+		var container := String((document.get("registration", {}) as Dictionary).get("composition", {}).get("containerObjectId", ""))
+		var match: Dictionary = scope_speeds.get(container.to_lower(), {}) as Dictionary
+		if match.is_empty():
+			continue
+		overrides[PlayableUnitAdapter.runtime_member_id(document)] = {
+			"speed": float(match.get("speed", 0.0)),
+			"source": (match.get("source", {}) as Dictionary).duplicate(true),
+			"unit_object_speed": float(simulation.get("speed_source", 0.0)),
+		}
+	return overrides
 
 
 func _resolve_faction_manifest() -> Dictionary:
 	## Faction selection is an explicit input. OPENBFME_SLICE_FACTION always
 	## wins when set; otherwise the main menu's skirmish setup selection on the
-	## GameState autoload is the fallback. Unset (or "men") keeps the
-	## historical Men/Gondor slice byte-identical; any other value is a
-	## lowercase source object-id prefix resolved purely from the loaded
-	## playableUnit.* / playableStructure.* registries, failing closed with a
-	## specific error when the faction's pack content is missing.
+	## GameState autoload is the fallback. Unset / "men" with empty playable
+	## registries keeps the historical Men tiny-pack tables. When Men
+	## playableUnit.* / playableStructure.* runtimes are loaded, Men uses the
+	## same data-driven from_registries path as other factions. Non-Men values
+	## are lowercase source object-id prefixes resolved purely from the loaded
+	## registries, failing closed when content is missing.
 	var faction := OS.get_environment("OPENBFME_SLICE_FACTION").strip_edges().to_lower()
 	if faction == "":
 		var game_state := get_node_or_null("/root/GameState")
 		if game_state != null:
 			faction = String(game_state.get("retail_player_faction")).strip_edges().to_lower()
-	if faction == "" or faction == FactionManifestScript.DEFAULT_FACTION:
-		return FactionManifestScript.default_manifest()
+	if faction == "":
+		faction = FactionManifestScript.DEFAULT_FACTION
+	_classify_faction_units(faction)
+	# Only honestly fieldable units reach the manifest: the manifest gate is
+	# deliberately fail-closed for anything it can see, so unfieldable
+	# documents stay out here with their recorded exclusion reason instead.
+	# Men with empty registries returns default_manifest() inside from_registries.
 	return FactionManifestScript.from_registries(
 		faction,
-		ContentDB.get_playable_unit_runtimes(),
+		fieldable_unit_runtimes,
 		ContentDB.get_playable_structure_runtimes()
 	)
+
+
+func _men_uses_full_pack_manifest() -> bool:
+	## True when Men resolved through converted playable runtimes rather than
+	## the hardcoded tiny-pack default tables.
+	return (
+		String(faction_manifest.get("faction", "")) == FactionManifestScript.DEFAULT_FACTION
+		and not (faction_manifest.get("faction_pack_roots", []) as Array).is_empty()
+	)
+
+
+func _playable_has_ranger() -> bool:
+	## GondorRanger may arrive as a playableUnit document (full pack) rather
+	## than the separate ranger overlay contract.
+	for object_id_value in fieldable_unit_runtimes.keys():
+		var object_id := String(object_id_value)
+		if object_id.to_lower() in ["gondorranger", "gondorrangerhorde"]:
+			return true
+		var document := fieldable_unit_runtimes[object_id_value] as Dictionary
+		var runtime_unit := PlayableUnitAdapter.runtime_unit_id(document)
+		if runtime_unit == RANGER_HORDE_ID or runtime_unit == RANGER_OBJECT_ID:
+			return true
+		if PlayableUnitAdapter.runtime_member_id(document) == RANGER_OBJECT_ID:
+			return true
+	return false
+
+
+func _classify_faction_units(faction: String) -> void:
+	## Roster composition for the selected faction: each converted playableUnit
+	## document is either fieldable (resolved simulation evidence, a supported
+	## category, a producer this faction slice loads) or excluded with the
+	## exact reason recorded. Builder candidates stay available to the
+	## manifest's builder discovery even when their own combat numbers are
+	## unresolved — a porter needs movement, not a weapon.
+	fieldable_unit_runtimes.clear()
+	producible_unit_runtimes.clear()
+	unit_roster_exclusions.clear()
+	var slug := faction if faction != "" else FactionManifestScript.DEFAULT_FACTION
+	var prefixes: Array = ((FactionManifestScript.FACTION_OBJECT_PREFIXES as Dictionary).get(slug, [slug]) as Array).duplicate()
+	if slug == FactionManifestScript.DEFAULT_FACTION:
+		# Mirror the manifest: Rohan allies may ship inside a Men pack, so Men
+		# scope includes Rohan documents whenever any are present.
+		var runtimes_for_scope: Dictionary = ContentDB.get_playable_unit_runtimes()
+		var has_rohan := false
+		for scope_id_value in runtimes_for_scope.keys():
+			if String(scope_id_value).to_lower().begins_with("rohan"):
+				has_rohan = true
+				break
+		if not has_rohan:
+			for scope_id_value in ContentDB.get_playable_structure_runtimes().keys():
+				if String(scope_id_value).to_lower().begins_with("rohan"):
+					has_rohan = true
+					break
+		if has_rohan and not prefixes.has("rohan"):
+			prefixes.append("rohan")
+	var structure_runtimes: Dictionary = ContentDB.get_playable_structure_runtimes()
+	var builder_candidates: Dictionary = {}
+	for structure_value in structure_runtimes.values():
+		var structure := structure_value as Dictionary
+		var structure_id := String(structure.get("objectId", ""))
+		var structure_in_scope := false
+		for prefix_value in prefixes:
+			if structure_id.to_lower().begins_with(String(prefix_value)):
+				structure_in_scope = true
+				break
+		if not structure_in_scope:
+			continue
+		var production: Dictionary = ((structure.get("registration", {}) as Dictionary).get("production", {}) as Dictionary)
+		if String(production.get("evidence", "")) != "authored-construct-command":
+			continue
+		for route_value in production.get("routes", []) as Array:
+			builder_candidates[String((route_value as Dictionary).get("builderObjectId", "")).to_lower()] = true
+	# Shared retail units (MordorWorker) ship one document per faction pack in
+	# the flat registry; scope to this faction's own pack copies exactly as the
+	# manifest does so fieldability, production rules, and the HUD all read the
+	# same producer evidence.
+	var runtimes: Dictionary = FactionManifestScript.faction_scoped_unit_runtimes(
+		prefixes,
+		ContentDB.get_playable_unit_runtimes(),
+		structure_runtimes,
+		ContentDB.get_playable_unit_runtime_pack_index()
+	)
+	var object_ids: Array[String] = []
+	for value in runtimes.keys():
+		object_ids.append(String(value))
+	object_ids.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	for object_id in object_ids:
+		var in_scope := false
+		for prefix_value in prefixes:
+			if object_id.to_lower().begins_with(String(prefix_value)):
+				in_scope = true
+				break
+		if not in_scope:
+			unit_roster_exclusions.append({
+				"object_id": object_id,
+				"category": String((runtimes[object_id] as Dictionary).get("category", "")),
+				"reason": "outside-faction-object-scope",
+			})
+			continue
+		var document := runtimes[object_id] as Dictionary
+		if slug == FactionManifestScript.DEFAULT_FACTION and object_id.to_lower().begins_with("rohan"):
+			# Mirror the manifest: Rohan allies only join a Men roster when
+			# produced at Men/Gondor structures; a Rohan object produced at
+			# another faction's structure is that faction's content.
+			var has_men_producer := false
+			for binding in PlayableUnitAdapter.producer_bindings(document):
+				var binding_source := String(binding.get("producer_source_object_id", "")).to_lower()
+				if binding_source.begins_with("men") or binding_source.begins_with("gondor"):
+					has_men_producer = true
+					break
+			if not has_men_producer:
+				unit_roster_exclusions.append({
+					"object_id": object_id,
+					"category": String(document.get("category", "")),
+					"reason": "producer-outside-faction-scope",
+				})
+				continue
+		if builder_candidates.has(object_id.to_lower()):
+			fieldable_unit_runtimes[object_id] = document
+			# A builder with an authored producer route (retail: the fortress
+			# trains porters) is also producible — excluding it here silently
+			# removed the train-porter command from the fortress.
+			if not PlayableUnitAdapter.producer_bindings(document).is_empty():
+				producible_unit_runtimes[object_id] = document
+			continue
+		var verdict := PlayableUnitAdapter.fieldability(document)
+		if not bool(verdict.get("ok", false)):
+			unit_roster_exclusions.append({
+				"object_id": object_id,
+				"category": String(document.get("category", "")),
+				"reason": String(verdict.get("reason", "")),
+			})
+			continue
+		fieldable_unit_runtimes[object_id] = document
+		producible_unit_runtimes[object_id] = document
+
+
+func _faction_builder_unit_rule(builder_member_id: String) -> Dictionary:
+	## The faction builder's unit rule from its converted playableUnit document:
+	## movement and vision come from the document's resolved values; combat is
+	## the unarmed MenPorter shape (zero range, nominal damage) because retail
+	## porters never fight. Missing document health keeps the retail porter
+	## value and says so in provenance.
+	for document_value in fieldable_unit_runtimes.values():
+		var document := document_value as Dictionary
+		if PlayableUnitAdapter.runtime_member_id(document) != builder_member_id:
+			continue
+		var simulation: Dictionary = ((document.get("registration", {}) as Dictionary).get("simulation", {}) as Dictionary)
+		var resolved: Dictionary = simulation.get("resolved", {}) as Dictionary
+		var speed_source := _resolved_document_number(resolved.get("speed"), 60.0)
+		var vision_source := _resolved_document_number(resolved.get("visionRange"), 25.0)
+		var health := int(_resolved_document_number(resolved.get("memberHealth"), 500.0))
+		var defaults_used: Array[String] = []
+		if resolved.get("memberHealth") == null:
+			defaults_used.append("memberHealth=500")
+		return {
+			"horde_id": builder_member_id,
+			"member_count": 1,
+			"member_health": maxi(1, health),
+			"member_damage": 1,
+			"speed": speed_source * source_map_data.local_transform_scale,
+			"speed_source": speed_source,
+			"acceleration": 60.0 * source_map_data.local_transform_scale,
+			"acceleration_source": 60.0,
+			"turn_rate_degrees_per_second": 360.0,
+			"braking": 60.0 * source_map_data.local_transform_scale,
+			"braking_source": 60.0,
+			"attack_range": 0.0,
+			"attack_range_source": 0.0,
+			"minimum_attack_range": 0.0,
+			"minimum_attack_range_source": 0.0,
+			"vision_range": vision_source * source_map_data.local_transform_scale,
+			"vision_range_source": vision_source,
+			"delay_between_shots_ms": 1000.0,
+			"pre_attack_delay_ms": 0.0,
+			"firing_duration_ms": 0.0,
+			"attack_period_ticks": 10,
+			"pre_attack_ticks": 0,
+			"firing_duration_ticks": 0,
+			"formation_positions": [Vector3.ZERO],
+			"stances": {"default": "Battle", "cycleOrder": ["HoldGround", "Battle", "Aggressive"], "states": {"HoldGround": {}, "Battle": {}, "Aggressive": {}}},
+			"is_builder": true,
+			"provenance": {
+				"source": "playable-unit-runtime:%s" % String(document.get("objectId", "")),
+				"document_defaults": defaults_used,
+				"combat_shape": "unarmed-porter-shape",
+			},
+		}
+	return {}
+
+
+func _resolved_document_number(value: Variant, fallback: float) -> float:
+	var raw: Variant = (value as Dictionary).get("value") if typeof(value) == TYPE_DICTIONARY else value
+	if typeof(raw) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(raw)) and float(raw) > 0.0:
+		return float(raw)
+	return fallback
 
 
 func _resolve_enemy_faction(player_faction: String) -> String:
@@ -898,18 +1483,172 @@ func _resolve_enemy_faction(player_faction: String) -> String:
 	return selected if selected != "" else player_faction
 
 
-func _faction_scoped_playable_unit_runtimes() -> Dictionary:
-	## A non-Men faction consumes only its own playable-unit documents, so
-	## Men-scoped documents from cohabiting packs can neither leak into its
-	## roster nor fail its producer validation.
-	var faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
-	if faction == FactionManifestScript.DEFAULT_FACTION:
-		return playable_unit_runtimes
-	var scoped: Dictionary = {}
-	for object_id_value in playable_unit_runtimes.keys():
-		if String(object_id_value).to_lower().begins_with(faction):
-			scoped[object_id_value] = playable_unit_runtimes[object_id_value]
-	return scoped
+func _pack_root_for_id(pack_id: String) -> String:
+	## Deterministic host-pack resolution: the registered root whose pack.json
+	## declares the id, or "" when no registered pack carries it.
+	for root in ModLoader.list_pack_roots():
+		var data := ModLoader._read_json(root.path_join("pack.json")) as Dictionary
+		if String(data.get("id", "")) == pack_id:
+			return root
+	return ""
+
+
+func _resolve_slice_map_id() -> String:
+	## Map selection mirrors faction selection: OPENBFME_SLICE_MAP always wins;
+	## otherwise the main menu's GameState.retail_map_id applies; unset keeps
+	## the historical Fords of Isen II default. Anything that is not a
+	## well-formed bfme2.map.<slug> id fails closed (empty string).
+	var resolved := OS.get_environment("OPENBFME_SLICE_MAP").strip_edges().to_lower()
+	if resolved == "":
+		var game_state := get_node_or_null("/root/GameState")
+		if game_state != null:
+			var state_value: Variant = game_state.get("retail_map_id")
+			if typeof(state_value) == TYPE_STRING:
+				resolved = String(state_value).strip_edges().to_lower()
+	if resolved == "":
+		return MAP_ID
+	return resolved if _is_well_formed_slice_map_id(resolved) else ""
+
+
+func _is_well_formed_slice_map_id(value: String) -> bool:
+	if value.length() < len("bfme2.map.a") or value.length() > 128 or not value.begins_with("bfme2.map."):
+		return false
+	for index in range(value.length()):
+		var codepoint := value.unicode_at(index)
+		if not (codepoint >= 97 and codepoint <= 122) and not (codepoint >= 48 and codepoint <= 57) and codepoint not in [45, 46]:
+			return false
+	return not value.contains("..") and not value.ends_with(".") and not value.ends_with("-")
+
+
+func _resolve_slice_map_definition(resolved_map_id: String) -> Dictionary:
+	## The default slice map is the selected faction pack's declared entry map;
+	## resolving it directly from that pack keeps the Fords boot byte-exact even
+	## when a supplemental map pack also registers the same map id. Other maps
+	## come from the registered content first, then from the five-maps pack
+	## catalog (the pack is not yet registered in selection.json).
+	if resolved_map_id == MAP_ID:
+		return _resolve_pack_entry_map_definition(selected_pack_root, resolved_map_id)
+	var registered := ContentDB.get_bundle_map(resolved_map_id)
+	if not registered.is_empty():
+		return registered
+	return _resolve_five_maps_catalog_definition(resolved_map_id)
+
+
+func _resolve_pack_entry_map_definition(pack_root: String, expected_map_id: String) -> Dictionary:
+	var pack_meta := ModLoader._read_json(pack_root.path_join("pack.json")) as Dictionary
+	var entry_relative := String((pack_meta.get("files", {}) as Dictionary).get("entryMap", ""))
+	if entry_relative == "" or not ModLoader.is_safe_relative_path(entry_relative):
+		return {}
+	var map_doc := _read_bounded_pack_document(pack_root, entry_relative, MAP_DOCUMENT_MAX_BYTES)
+	if map_doc.is_empty() or String(map_doc.get("schema", "")) != "openbfme.map" or int(map_doc.get("schemaVersion", -1)) != 0:
+		return {}
+	if String(map_doc.get("id", "")) != expected_map_id:
+		return {}
+	map_doc["_source"] = ModLoader.resolve_pack_path(pack_root, entry_relative)
+	map_doc["_pack_root"] = pack_root
+	return map_doc
+
+
+func _resolve_five_maps_catalog_definition(resolved_map_id: String) -> Dictionary:
+	## Verification path for the not-yet-registered five-maps pack. Mirrors
+	## ContentDB._load_map_catalog's row merge exactly: catalog-row discovery
+	## metadata is retained while the cooked map document is authoritative for
+	## the fields it defines. Once the pack is registered as a supplement,
+	## ContentDB.get_bundle_map resolves these ids and this path is unreachable.
+	var content_root := OS.get_environment("OPENBFME_CONTENT").strip_edges()
+	if content_root == "" or not DirAccess.dir_exists_absolute(content_root):
+		return {}
+	var pack_root := ModLoader.resolve_pack_path(content_root, FIVE_MAPS_PACK_ID)
+	if pack_root == "" or not ModLoader.path_is_within(content_root, pack_root):
+		return {}
+	var catalog := _read_bounded_pack_document(pack_root, "data/maps.json", MAP_CATALOG_MAX_BYTES)
+	if String(catalog.get("schema", "")) != "openbfme.map-catalog" or int(catalog.get("schemaVersion", -1)) != 0:
+		return {}
+	var rows: Variant = catalog.get("maps", null)
+	if typeof(rows) != TYPE_ARRAY:
+		return {}
+	for row_value in rows as Array:
+		var row := row_value as Dictionary
+		if row == null or String(row.get("id", "")) != resolved_map_id:
+			continue
+		var map_relative := String(row.get("map", ""))
+		if map_relative == "" or not ModLoader.is_safe_relative_path(map_relative):
+			return {}
+		var map_doc := _read_bounded_pack_document(pack_root, map_relative, MAP_DOCUMENT_MAX_BYTES)
+		if map_doc.is_empty() or String(map_doc.get("schema", "")) != "openbfme.map" or int(map_doc.get("schemaVersion", -1)) != 0:
+			return {}
+		if String(map_doc.get("id", "")) != resolved_map_id:
+			return {}
+		var merged := row.duplicate(true)
+		merged.merge(map_doc, true)
+		merged["map"] = map_relative
+		merged["_source"] = ModLoader.resolve_pack_path(pack_root, map_relative)
+		merged["_pack_root"] = pack_root
+		return merged
+	return {}
+
+
+func _read_bounded_pack_document(pack_root: String, relative: String, maximum_bytes: int) -> Dictionary:
+	if relative == "" or maximum_bytes <= 0:
+		return {}
+	var path := ModLoader.resolve_pack_path(pack_root, relative)
+	if path == "" or not ModLoader.path_is_within(pack_root, path) or not FileAccess.file_exists(path):
+		return {}
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null or file.get_length() <= 0 or file.get_length() > maximum_bytes:
+		return {}
+	file.close()
+	var raw: Variant = ModLoader._read_json(path)
+	return raw as Dictionary if typeof(raw) == TYPE_DICTIONARY else {}
+
+
+func _project_faction_structure_definitions() -> void:
+	## Playable-structure documents describe their own lifecycle presentation;
+	## ContentDB only projects bundle objects for units. The slice is the
+	## composition root, so it projects the faction manifest's structure object
+	## ids into bundle-object definitions (the exact shape RetailStructure
+	## consumes) from the converted documents. Legacy tiny Men packs keep their
+	## pack-authored definitions untouched (empty faction_pack_roots). Full Men
+	## packs and every other faction project from playableStructure documents.
+	if (
+		String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)) == FactionManifestScript.DEFAULT_FACTION
+		and (faction_manifest.get("faction_pack_roots", []) as Array).is_empty()
+	):
+		return
+	var structure_runtimes: Dictionary = ContentDB.get_playable_structure_runtimes()
+	var documents_by_runtime_id: Dictionary = {}
+	for source_value in structure_runtimes.keys():
+		var document := structure_runtimes[source_value] as Dictionary
+		documents_by_runtime_id[PlayableUnitAdapter._runtime_id(String(source_value))] = document
+	for kind_value in faction_manifest.get("structure_kinds", []) as Array:
+		var kind := String(kind_value)
+		var object_id := String((faction_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
+		if object_id == "" or not documents_by_runtime_id.has(object_id):
+			continue
+		var document := documents_by_runtime_id[object_id] as Dictionary
+		var registration: Dictionary = document.get("registration", {}) as Dictionary
+		var presentation: Dictionary = registration.get("presentation", {}) as Dictionary
+		var lifecycle: Dictionary = presentation.get("buildingLifecycle", {}) as Dictionary
+		if lifecycle.is_empty():
+			continue
+		# Prefer an already-authored bundle definition when present (tiny Men
+		# workshop etc.); only project missing lifecycle presentation.
+		if ContentDB.bundle_objects.has(object_id):
+			var existing: Dictionary = ContentDB.bundle_objects[object_id] as Dictionary
+			var existing_presentation: Dictionary = existing.get("presentation", {}) as Dictionary
+			if typeof(existing_presentation.get("buildingLifecycle")) == TYPE_DICTIONARY:
+				continue
+		ContentDB.bundle_objects[object_id] = {
+			"id": object_id,
+			"kind": "structure",
+			"sourceObjectId": String(document.get("objectId", "")),
+			"presentation": {
+				"model": StructureScript._intact_visual_path(lifecycle),
+				"buildingLifecycle": lifecycle,
+			},
+			"_source": String(document.get("_source", "")),
+			"_pack_root": String(document.get("_pack_root", "")),
+		}
 
 
 func _producer_kind_registry() -> Dictionary:
@@ -1018,15 +1757,28 @@ func _convert_retail_unit_rule(source_rules: Dictionary, tick_ms: float) -> Dict
 		switch_distance_source = _retail_rule_number(switch_value)
 		if not is_finite(switch_distance_source) or switch_distance_source < 0.0:
 			return {"_error": "invalid dual weapon switch distance"}
+	# Category drives fail-closed features (e.g. cavalry trample). Map the known
+	# Men core-four object ids; unknown units stay uncategorized.
+	var horde_id := String(source_rules.get("hordeId", ""))
+	var category := ""
+	if horde_id in ["GondorKnightHorde", "bfme2.object.gondor-knight"] or String(source_rules.get("memberId", "")).to_lower().contains("knight"):
+		category = "cavalry"
+	elif horde_id in ["GondorArcherHorde", "GondorRangerHorde"] or String(source_rules.get("memberId", "")).to_lower().contains("archer"):
+		category = "ranged-infantry"
+	elif horde_id != "":
+		category = "infantry"
 	return {
-		"horde_id": String(source_rules.get("hordeId", "")),
+		"horde_id": horde_id,
+		"category": category,
 		"speed": speed_raw * source_map_data.local_transform_scale,
 		"speed_source": speed_raw,
-		"acceleration": acceleration_raw * source_map_data.local_transform_scale,
-		"acceleration_source": acceleration_raw,
+		# HORDE_LOCOMOTION_RESPONSE_SCALE snappens proven accel/braking slightly
+		# (not a retail number claim; see playable_unit_runtime_adapter.gd).
+		"acceleration": acceleration_raw * source_map_data.local_transform_scale * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
+		"acceleration_source": acceleration_raw * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
 		"turn_rate_degrees_per_second": turn_rate_raw,
-		"braking": braking_raw * source_map_data.local_transform_scale,
-		"braking_source": braking_raw,
+		"braking": braking_raw * source_map_data.local_transform_scale * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
+		"braking_source": braking_raw * PlayableUnitAdapter.HORDE_LOCOMOTION_RESPONSE_SCALE,
 		"attack_range": attack_range_raw * source_map_data.local_transform_scale,
 		"attack_range_source": attack_range_raw,
 		"minimum_attack_range": minimum_range_raw * source_map_data.local_transform_scale,
@@ -1163,7 +1915,16 @@ func _spawn_structure(id: int) -> void:
 	structure.lifecycle_route_requested.connect(
 		Callable(self, "_on_structure_lifecycle_route_requested").bind(structure)
 	)
-	structure.configure(entity, String((faction_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, "")), source_map_data.local_transform_scale)
+	# The lifecycle route registry may resolve from the host pack and every
+	# pack the faction manifest recorded (mirrors the HUD's multi-pack seam).
+	var allowed_roots: Array = [selected_pack_root]
+	allowed_roots.append_array(faction_manifest.get("faction_pack_roots", []) as Array)
+	structure.set_allowed_pack_roots(allowed_roots)
+	var structure_object_id := String((faction_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
+	if structure_object_id == "":
+		# Fortress expansion structures resolve from their expansion documents.
+		structure_object_id = String((_expansion_object_ids.get(kind, {}) as Dictionary).get("object_id", ""))
+	structure.configure(entity, structure_object_id, source_map_data.local_transform_scale)
 	var position := Vector2(entity["position"])
 	structure.position = Vector3(position.x, _presentation_height(position) - 0.35, position.y)
 	add_child(structure)
@@ -1231,12 +1992,13 @@ func _all_battalion_retail_visuals_loaded() -> bool:
 func _all_structure_retail_visuals_loaded() -> bool:
 	for id in simulation.structure_ids():
 		var structure: RetailStructure = structure_nodes.get(id)
-		if (
-			structure == null
-			or not structure.retail_visual_loaded
-			or structure.presentation_mode != "private-imported-lifecycle"
-			or structure.contract_error != ""
-		):
+		if structure == null:
+			return false
+		if structure.contract_error != "":
+			return false
+		if structure.presentation_mode != "private-imported-lifecycle":
+			return false
+		if not structure.retail_visual_loaded:
 			return false
 	return true
 
@@ -1251,28 +2013,202 @@ func _all_men_structure_contracts_v1() -> bool:
 	return true
 
 
+const FACTION_EVA_SIDES: Dictionary = {
+	"men": "Men",
+	"elves": "Elves",
+	"dwarves": "Dwarves",
+	"isengard": "Isengard",
+	"mordor": "Mordor",
+	"wild": "Wild",
+}
+
+
+func _faction_eva_side() -> String:
+	return String(FACTION_EVA_SIDES.get(String(faction_manifest.get("faction", "")), ""))
+
+
+func _faction_structure_audio_contract() -> Dictionary:
+	## Project each structure kind's converted audio evidence (select, damage
+	## stages, collapse, EVA routes, damaged-band fractions) from its
+	## playable-structure document, plus the global eva.ini side map when a
+	## mounted pack ships it. Kinds without document evidence keep the audio
+	## layer's legacy generic routing.
+	var contract := {
+		"select": {},
+		"damaged": {},
+		"really_damaged": {},
+		"collapse": {},
+		"damaged_fraction": {},
+		"really_damaged_fraction": {},
+		"eva_damaged": {},
+		"eva_die": {},
+		"eva_events": {},
+	}
+	var structure_object_ids: Dictionary = faction_manifest.get("structure_object_ids", {}) as Dictionary
+	var docs_by_runtime_id := {}
+	for object_id_value in ContentDB.get_playable_structure_runtimes().keys():
+		var document: Dictionary = ContentDB.get_playable_structure_runtime(String(object_id_value))
+		docs_by_runtime_id[PlayableUnitAdapter._runtime_id(String(document.get("objectId", "")))] = document
+	for kind_value in structure_object_ids.keys():
+		var kind := String(kind_value)
+		var document: Dictionary = docs_by_runtime_id.get(String(structure_object_ids[kind_value]), {})
+		if document.is_empty():
+			continue
+		var registration: Dictionary = document.get("registration", {}) as Dictionary
+		var presentation: Dictionary = registration.get("presentation", {}) as Dictionary
+		var routes: Dictionary = presentation.get("audioRoutes", {}) as Dictionary
+		var select_id := _first_audio_route_id(routes.get("VoiceSelect", []))
+		if select_id != "":
+			(contract["select"] as Dictionary)[kind] = select_id
+		var damaged_id := _first_audio_route_id(routes.get("SoundOnDamaged", []))
+		if damaged_id != "":
+			(contract["damaged"] as Dictionary)[kind] = damaged_id
+		var really_id := _first_audio_route_id(routes.get("SoundOnReallyDamaged", []))
+		if really_id != "":
+			(contract["really_damaged"] as Dictionary)[kind] = really_id
+		var eva_damaged := _first_audio_route_id(routes.get("EvaEventDamagedOwner", []))
+		if eva_damaged != "":
+			(contract["eva_damaged"] as Dictionary)[kind] = eva_damaged
+		var eva_die := _first_audio_route_id(routes.get("EvaEventDieOwner", []))
+		if eva_die != "":
+			(contract["eva_die"] as Dictionary)[kind] = eva_die
+		# Collapse stays with the v1 lifecycle lane when it names an id.
+		var lifecycle: Dictionary = presentation.get("buildingLifecycle", {}) as Dictionary
+		var collapse_value: Variant = (lifecycle.get("audioEvents", {}) as Dictionary).get("collapse")
+		if typeof(collapse_value) == TYPE_STRING and String(collapse_value) != "":
+			(contract["collapse"] as Dictionary)[kind] = String(collapse_value)
+		var health: Dictionary = ((registration.get("gameplay", {}) as Dictionary).get("health", {}) as Dictionary).get("primary", {}) as Dictionary
+		var max_health := float((health.get("maxHealth", {}) as Dictionary).get("value", 0.0))
+		if max_health > 0.0:
+			var damaged_health := float((health.get("maxHealthDamaged", {}) as Dictionary).get("value", 0.0))
+			var really_health := float((health.get("maxHealthReallyDamaged", {}) as Dictionary).get("value", 0.0))
+			if damaged_health > 0.0:
+				(contract["damaged_fraction"] as Dictionary)[kind] = clampf(damaged_health / max_health, 0.0, 1.0)
+			if really_health > 0.0:
+				(contract["really_damaged_fraction"] as Dictionary)[kind] = clampf(really_health / max_health, 0.0, 1.0)
+	contract["eva_events"] = _load_eva_side_map()
+	return contract
+
+
+func _first_audio_route_id(rows: Variant) -> String:
+	if typeof(rows) != TYPE_ARRAY:
+		return ""
+	for row_value in rows as Array:
+		if typeof(row_value) == TYPE_DICTIONARY:
+			var event_id := String((row_value as Dictionary).get("id", ""))
+			if event_id != "":
+				return event_id
+	return ""
+
+
+func _load_eva_side_map() -> Dictionary:
+	## eva.ini is global: every cooked pack ships the same side map, so the
+	## first mounted pack that carries it wins (the men EVA overlay and every
+	## recooked faction pack are all valid sources). When no pack ships it the
+	## map stays empty and EVA announcements fail closed to silence.
+	for root_value in ContentDB.pack_roots:
+		var root := String(root_value)
+		if root == "":
+			continue
+		var path := String(ModLoader.resolve_pack_path(root, "data/eva_events.json"))
+		if path == "" or not FileAccess.file_exists(path):
+			continue
+		var document: Variant = ModLoader._read_json(path)
+		if typeof(document) != TYPE_DICTIONARY:
+			continue
+		if String((document as Dictionary).get("schema", "")) != "openbfme.eva-events" or int((document as Dictionary).get("schemaVersion", -1)) != 0:
+			continue
+		var events: Variant = (document as Dictionary).get("events", {})
+		if typeof(events) == TYPE_DICTIONARY:
+			return (events as Dictionary).duplicate(true)
+	return {}
+
+
 func _process(delta: float) -> void:
 	_sync_hud_to_viewport()
 	_update_camera(delta)
 	if not ready_ok:
 		return
-	if not simulation_paused and simulation.winner == -1:
+	if lockstep_session != null:
+		lockstep_session.poll()
+		_sync_multiplayer_pause_state()
+		if lockstep_session.desynced:
+			if not _mp_desync_reported:
+				_mp_desync_reported = true
+				hud.set_feedback("MULTIPLAYER DESYNC AT TICK %d" % lockstep_session.desync_tick, true)
+		elif simulation.winner == -1:
+			accumulator = minf(accumulator + minf(delta, 0.25), 0.25)
+			while accumulator >= SimScript.TICK_SECONDS:
+				if not lockstep_session.advance_if_ready():
+					break
+				accumulator -= SimScript.TICK_SECONDS
+				lockstep_session.poll()
+				_sync_multiplayer_pause_state()
+	elif not simulation_paused and simulation.winner == -1:
 		accumulator += minf(delta, 0.25)
 		while accumulator >= SimScript.TICK_SECONDS:
 			accumulator -= SimScript.TICK_SECONDS
 			simulation.tick()
 	_update_construction_ghost()
+	_update_power_cast_ghost()
 	_sync_presentation()
+	_pump_glb_stream()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		# A release lost to alt-tab/focus change must not leave a drag armed —
+		# the next right-press would silently pan instead of ordering.
+		_right_drag_origin = Vector2.INF
+		_right_dragging = false
+		_drag_select_origin = Vector2.INF
+		_drag_selecting = false
+		_hide_selection_band()
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("pause_menu"):
+	if event.is_action_pressed("pause_menu") or (event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo and (event as InputEventKey).keycode == KEY_ESCAPE):
+		# Esc priority: close the options overlay → cancel armed cast/construct →
+		# close spellbook → pause.
+		if options_overlay != null and options_overlay.visible:
+			options_overlay.cancel()
+			get_viewport().set_input_as_handled()
+			return
+		if not ability_cast_armed.is_empty():
+			ability_cast_armed = {}
+			hud.set_feedback("Ability cast cancelled.")
+			get_viewport().set_input_as_handled()
+			return
+		if power_cast_armed != "":
+			power_cast_armed = ""
+			hud.set_feedback("Power cast cancelled.")
+			get_viewport().set_input_as_handled()
+			return
+		if construction_kind_armed != "":
+			construction_kind_armed = ""
+			_clear_construction_ghost()
+			hud.set_feedback("Construction placement cancelled.")
+			get_viewport().set_input_as_handled()
+			return
+		if hud != null and hud.has_method("close_powers_palette") and bool(hud.close_powers_palette()):
+			hud.set_feedback("Spellbook closed.")
+			get_viewport().set_input_as_handled()
+			return
 		toggle_escape_menu()
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey:
 		var key := event as InputEventKey
 		if key.pressed and not key.echo:
+			if key.keycode == KEY_BACKSPACE:
+				# Retail: double-tap Backspace snaps the camera home to the
+				# player fortress with default zoom and rotation.
+				var now := Time.get_ticks_msec()
+				if now - _last_backspace_ms <= 500:
+					_reset_camera_home()
+				_last_backspace_ms = now
+				get_viewport().set_input_as_handled()
+				return
 			if key.keycode == KEY_F10:
 				diagnostics_visible = not diagnostics_visible
 				_refresh_hud()
@@ -1286,6 +2222,26 @@ func _unhandled_input(event: InputEvent) -> void:
 				hud.set_input_debug_visible(hud.input_debug_label == null or not hud.input_debug_label.visible)
 				get_viewport().set_input_as_handled()
 				return
+			# Dev cheats for testing production/spellbook without farming.
+			if key.keycode == KEY_F7 and ready_ok and simulation != null and HudScript.dev_hud_enabled():
+				_grant_test_resources()
+				get_viewport().set_input_as_handled()
+				return
+			# Retail order hotkeys (rebindable through the project input map):
+			# A = attack-move, S = stop, Z = cycle stance.
+			if ready_ok and not simulation.selected_ids.is_empty():
+				if event.is_action_pressed("attack_move"):
+					_arm_attack_move()
+					get_viewport().set_input_as_handled()
+					return
+				if event.is_action_pressed("stop_units"):
+					_stop_selected_units()
+					get_viewport().set_input_as_handled()
+					return
+				if event.is_action_pressed("stance_cycle"):
+					_toggle_selected_stance()
+					get_viewport().set_input_as_handled()
+					return
 			if key.keycode >= KEY_1 and key.keycode <= KEY_9 and ready_ok:
 				var group := int(key.keycode - KEY_0)
 				if key.ctrl_pressed:
@@ -1304,6 +2260,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		camera_user_yaw = wrapf(camera_user_yaw + (event as InputEventMouseMotion).relative.x * 0.006, -PI, PI)
 		_apply_camera_transform()
 		return
+	if event is InputEventMouseMotion and _right_drag_origin != Vector2.INF:
+		# Retail: holding right mouse and dragging grabs the map and pans it.
+		var pan_motion := event as InputEventMouseMotion
+		if _right_dragging or pan_motion.position.distance_to(_right_drag_origin) > DRAG_SELECT_THRESHOLD:
+			_right_dragging = true
+			_pan_camera_screen(pan_motion.relative)
+		return
 	if event is InputEventMouseMotion and _drag_select_origin != Vector2.INF:
 		var motion := event as InputEventMouseMotion
 		if _drag_selecting or motion.position.distance_to(_drag_select_origin) > DRAG_SELECT_THRESHOLD:
@@ -1320,6 +2283,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			_drag_select_origin = Vector2.INF
 			_drag_selecting = false
 			_hide_selection_band()
+			return
+		if mouse.button_index == MOUSE_BUTTON_RIGHT and not mouse.pressed:
+			# Right release: a drag was camera panning; a clean click issues the
+			# order (move/attack for units, rally point for a building).
+			var was_dragging := _right_dragging
+			_right_drag_origin = Vector2.INF
+			_right_dragging = false
+			if was_dragging:
+				return
+			var order_world: Variant = _screen_to_world(mouse.position)
+			if order_world == null:
+				return
+			_issue_order_at(Vector2((order_world as Vector3).x, (order_world as Vector3).z))
 			return
 		if not mouse.pressed:
 			return
@@ -1341,8 +2317,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			_drag_select_origin = mouse.position
 			_drag_selecting = false
 			_handle_left_click(point, mouse.shift_pressed)
-		elif mouse.button_index == MOUSE_BUTTON_RIGHT and not simulation.selected_ids.is_empty():
-			_handle_right_click(point)
+		elif mouse.button_index == MOUSE_BUTTON_RIGHT:
+			# Orders resolve on release so right-drag can pan the camera.
+			_right_drag_origin = mouse.position
+			_right_dragging = false
 
 
 func _update_selection_band(current: Vector2) -> void:
@@ -1419,14 +2397,80 @@ func _select_same_type_on_screen(point: Vector2) -> void:
 	_sync_presentation()
 
 
+func _selected_hero_for_ability(unit_id: String) -> int:
+	## The ability buttons address a converted hero unit type; the cast itself
+	## acts on the selected living hero entity of that type.
+	for id in simulation.selected_ids:
+		var row: Dictionary = simulation.entity(id)
+		if (
+			int(row.get("health", 0)) > 0
+			and String(row.get("unit_type", "")) == unit_id
+			and String(row.get("category", "")) == "hero"
+		):
+			return id
+	return 0
+
+
+func _ability_display_name(unit_id: String, ability_id: String) -> String:
+	for rule_value in simulation.ability_rules_for_unit(unit_id):
+		if String((rule_value as Dictionary).get("ability_id", "")) == ability_id:
+			var label := String((rule_value as Dictionary).get("fallback_label", ""))
+			if label != "":
+				return label
+	return ability_id
+
+
+func _report_ability_cast(unit_id: String, ability_id: String, result: Dictionary) -> void:
+	if bool(result.get("ok", false)):
+		var affected := int(result.get("affected", 0))
+		var summoned: Array = result.get("summoned", [])
+		if not summoned.is_empty():
+			hud.set_feedback("%s summons %d unit%s." % [_ability_display_name(unit_id, ability_id), summoned.size(), "" if summoned.size() == 1 else "s"])
+		else:
+			hud.set_feedback("%s affects %d." % [_ability_display_name(unit_id, ability_id), affected])
+	else:
+		hud.set_feedback("Cannot cast: %s." % String(result.get("reason", "rejected")).replace("-", " "), true)
+
+
+func _apply_local_command(command_type: String, args: Dictionary = {}) -> Variant:
+	if lockstep_session != null:
+		if lockstep_session.desynced:
+			return {"ok": false, "reason": "desynced"}
+		lockstep_session.submit_local(command_type, args)
+		return {"ok": true, "scheduled": true}
+	var command := {
+		"tick": simulation.tick_index,
+		"team": local_team,
+		"seq": _local_command_seq,
+		"type": command_type,
+		"args": args,
+	}
+	_local_command_seq += 1
+	simulation.apply_command(command)
+	return simulation.last_command_result
+
+
 func _handle_left_click(point: Vector2, additive: bool) -> void:
-	if power_cast_armed != "":
-		var cast_result: Dictionary = (
-			simulation.cast_heal(0, point) if power_cast_armed == "heal" else simulation.cast_rally(0, point)
+	if not ability_cast_armed.is_empty():
+		var ability_result: Dictionary = _apply_local_command("cast_ability", {
+			"hero_id": int(ability_cast_armed.get("hero_id", 0)),
+			"ability_id": String(ability_cast_armed.get("ability_id", "")),
+			"target_point": point,
+		})
+		_report_ability_cast(
+			String(ability_cast_armed.get("unit_id", "")),
+			String(ability_cast_armed.get("ability_id", "")),
+			ability_result
 		)
+		if bool(ability_result.get("ok", false)):
+			ability_cast_armed = {}
+		_sync_presentation()
+		return
+	if power_cast_armed != "":
+		var cast_result: Dictionary = _apply_local_command("cast_power", {"power_id": power_cast_armed, "point": point})
 		if bool(cast_result.get("ok", false)):
 			hud.set_feedback("%s affects %d battalion%s." % [
-				power_cast_armed.capitalize(), int(cast_result.get("battalions", 0)),
+				hud.power_display_name(power_cast_armed), int(cast_result.get("battalions", 0)),
 				"" if int(cast_result.get("battalions", 0)) == 1 else "s",
 			])
 			power_cast_armed = ""
@@ -1437,16 +2481,39 @@ func _handle_left_click(point: Vector2, additive: bool) -> void:
 	# Retail placement: with a construction command armed, left-click places
 	# the structure and right-click cancels.
 	if construction_kind_armed != "":
-		var result := simulation.issue_construct(simulation.selected_ids.duplicate(), construction_kind_armed, point)
+		var result: Dictionary = _apply_local_command("issue_construct", {"ids": simulation.selected_ids.duplicate(), "structure_kind": construction_kind_armed, "position": point})
 		if bool(result.get("ok", false)):
 			hud.set_feedback("%s construction started." % construction_kind_armed.replace("_", " ").capitalize())
 			construction_kind_armed = ""
 			_clear_construction_ghost()
 		else:
 			hud.set_feedback("Cannot build here: %s." % String(result.get("reason", "rejected")).replace("-", " "), true)
+			if String(result.get("reason", "")) == "insufficient-resources":
+				hud.push_event_feed("Insufficient funds.")
 		_sync_presentation()
 		return
-	var player_id := _closest_battalion(point, 0, 6.0)
+	_selected_expansion_pad = {}
+	var pad_hit := _closest_expansion_pad(point)
+	if not pad_hit.is_empty() and not additive:
+		# Owner: clicking a fortress PAD (not the fortress) opens the radial
+		# with the fortress's expansion options; the choice builds on that pad.
+		_selected_expansion_pad = pad_hit
+		simulation.clear_selection()
+		selected_structure_id = int(pad_hit.get("fortress_id", 0))
+		hud.set_feedback("Build plot selected: choose an expansion.")
+		_sync_presentation()
+		return
+	var player_id := _closest_battalion(point, local_team, 6.0)
+	# A porter parks on the producer it just raised; whichever of the two is
+	# closer to the click wins, so the building is selectable without making
+	# the porter unselectable anywhere near friendly structures.
+	if player_id != 0 and bool(simulation.entity(player_id).get("is_builder", false)):
+		var shadowing_structure := _closest_structure(point, local_team)
+		if shadowing_structure != 0:
+			var builder_gap := point.distance_to(Vector2(simulation.entity(player_id).get("position", Vector2.ZERO)))
+			var structure_gap := point.distance_to(Vector2(simulation.structure(shadowing_structure).get("position", Vector2.ZERO)))
+			if structure_gap < builder_gap:
+				player_id = 0
 	if player_id != 0:
 		selected_structure_id = 0
 		if additive:
@@ -1455,15 +2522,21 @@ func _handle_left_click(point: Vector2, additive: bool) -> void:
 			simulation.select_only(player_id)
 		hud.set_feedback("Selected %s" % String(simulation.entity(player_id).get("name", "battalion")))
 	else:
-		var structure_id := _closest_structure(point, 0)
+		var structure_id := _closest_structure(point, local_team)
 		simulation.clear_selection()
 		selected_structure_id = structure_id
 		if structure_id != 0:
 			hud.set_feedback("Selected %s" % String(simulation.structure(structure_id).get("name", "structure")))
+			if audio_system != null:
+				audio_system.play_structure_select(String(simulation.structure(structure_id).get("structure_kind", "")))
 	_sync_presentation()
 
 
 func _handle_right_click(point: Vector2) -> void:
+	if not ability_cast_armed.is_empty():
+		ability_cast_armed = {}
+		hud.set_feedback("Ability cast cancelled.")
+		return
 	if power_cast_armed != "":
 		power_cast_armed = ""
 		hud.set_feedback("Power cast cancelled.")
@@ -1479,12 +2552,13 @@ func _handle_right_click(point: Vector2) -> void:
 	if enemy_id == 0:
 		enemy_id = _closest_structure(point, 1)
 	if enemy_id != 0:
-		var accepted := simulation.issue_attack(simulation.selected_ids.duplicate(), enemy_id)
+		var accepted := int(_apply_local_command("issue_attack", {"ids": simulation.selected_ids.duplicate(), "target_id": enemy_id}))
 		hud.set_feedback("Attack order accepted." if accepted > 0 else "Attack order rejected.", accepted == 0)
 		if accepted > 0:
 			_sync_attack_target_indicator(enemy_id)
 	else:
-		var moved := simulation.issue_attack_move(simulation.selected_ids.duplicate(), point) if attack_move_armed else simulation.issue_move(simulation.selected_ids.duplicate(), point)
+		var command_type := "issue_attack_move" if attack_move_armed else "issue_move"
+		var moved := int(_apply_local_command(command_type, {"ids": simulation.selected_ids.duplicate(), "destination": point}))
 		var accepted_text := "Attack-move order plotted." if attack_move_armed else "Move order plotted on the Palantir."
 		hud.set_feedback(accepted_text if moved > 0 else "Move rejected: %s." % simulation.last_route_rejection.replace("-", " "), moved == 0)
 		attack_move_armed = false
@@ -1523,6 +2597,38 @@ func _closest_structure(point: Vector2, team: int) -> int:
 	return result
 
 
+## The player's free fortress build plots, nearest-first within pick range.
+## Returns {"fortress_id", "pad_index", "pad_kind", "position"} or {}.
+var _selected_expansion_pad: Dictionary = {}
+const EXPANSION_PAD_PICK_RADIUS := 2.2
+
+
+func _closest_expansion_pad(point: Vector2) -> Dictionary:
+	var best: Dictionary = {}
+	var best_distance := EXPANSION_PAD_PICK_RADIUS
+	for fortress_id_value in simulation.expansion_pads.keys():
+		var fortress_id := int(fortress_id_value)
+		var fortress: Dictionary = simulation.structure(fortress_id)
+		if fortress.is_empty() or int(fortress.get("team", -1)) != 0 or int(fortress.get("health", 0)) <= 0:
+			continue
+		var pads := simulation.expansion_pad_states(fortress_id)
+		for pad_index in pads.size():
+			var pad: Dictionary = pads[pad_index]
+			if int(pad.get("expansion_structure_id", 0)) != 0:
+				continue
+			var pad_position := Vector2(pad.get("position", Vector2.ZERO))
+			var distance := point.distance_to(pad_position)
+			if distance <= best_distance:
+				best_distance = distance
+				best = {
+					"fortress_id": fortress_id,
+					"pad_index": pad_index,
+					"pad_kind": String(pad.get("pad_kind", "")),
+					"position": pad_position,
+				}
+	return best
+
+
 func _sync_presentation() -> void:
 	if simulation == null:
 		return
@@ -1536,6 +2642,7 @@ func _sync_presentation() -> void:
 		var position := Vector2(entity["position"])
 		battalion.set_authoritative_position(Vector3(position.x, _presentation_height(position), position.y))
 		battalion.set_health(int(entity["health"]), int(entity["maximum_health"]))
+		battalion.set_experience_level(int(entity.get("level", 1)))
 		battalion.set_production_exit_progress(float(entity.get("production_exit_progress", 1.0)))
 		battalion.set_selected(simulation.selected_ids.has(id))
 		var attack_target := _attack_target_node(entity)
@@ -1589,19 +2696,31 @@ func _sync_presentation() -> void:
 		var structure: RetailStructure = structure_nodes[id]
 		structure.set_selected(selected_structure_id == id)
 		structure.sync_state(simulation.structure(id))
+		var structure_upgrade_queue := simulation.structure_upgrade_queue_state(id)
+		if not structure_upgrade_queue.is_empty():
+			# The upgrade timer is sim state; the node only presents it.
+			structure.set_level(
+				int(simulation.structure(id).get("level", 1)),
+				true,
+				float(structure_upgrade_queue[0].get("progress", 0.0))
+			)
 	if _profile_sync:
 		presentation_profile["structures_us"] = presentation_profile.get("structures_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
 	if audio_system != null:
 		audio_system.sync_events(simulation.events)
+	_consume_power_fx_events()
 	if _profile_sync:
 		presentation_profile["audio_us"] = presentation_profile.get("audio_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
 	_sync_selected_attack_target_indicator()
+	_sync_expansion_pad_markers()
 	_refresh_hud()
 	var compacted_events := simulation.compact_consumed_events()
 	if compacted_events > 0:
 		_score_event_index = simulation.events.size()
+		_feed_event_index = simulation.events.size()
+		_power_fx_event_index = simulation.events.size()
 		if audio_system != null:
 			audio_system.acknowledge_event_history_compaction(simulation.events.size())
 	if _profile_sync:
@@ -1662,22 +2781,39 @@ func _member_attack_target_globals(entity: Dictionary) -> Array:
 func _refresh_hud() -> void:
 	if hud == null or simulation == null:
 		return
-	hud.set_resources(simulation.resources_for_team(0), simulation.command_points_for_team(0), simulation.command_point_cap)
+	hud.set_resources(simulation.resources_for_team(local_team), simulation.command_points_for_team(local_team), simulation.command_point_cap)
+	# Cooldown sweeps/purchase states move every tick, and the star orb's
+	# power-point count is always on screen: keep the spellbook surface live.
+	hud.refresh_powers(simulation.power_points(local_team), simulation.purchased_powers[local_team], simulation.spellbook_ui_state(local_team))
+	_consume_event_feed()
 	var score := _player_score_values()
 	hud.set_score_values(int(score.units_trained), int(score.units_lost), int(score.resources_gathered))
 	hud.set_control_groups(simulation.control_groups)
 	if selected_structure_id != 0:
 		var structure := simulation.structure(selected_structure_id)
-		hud.set_selection("%s  •  %d%%" % [String(structure.get("name", "Structure")), roundi(100.0 * float(structure.get("health", 0)) / float(maxi(1, int(structure.get("maximum_health", 1)))))])
+		var structure_progress := float(structure.get("construction_progress", 1.0))
+		if structure_progress < 1.0:
+			var remaining_ticks := maxi(0, int(structure.get("construction_build_ticks", 0)) - int(structure.get("construction_elapsed_ticks", 0)))
+			hud.set_selection("%s  •  Building %d%%  •  %ds left" % [
+				String(structure.get("name", "Structure")),
+				roundi(structure_progress * 100.0),
+				ceili(float(remaining_ticks) * SimScript.TICK_SECONDS),
+			])
+		else:
+			hud.set_selection("%s  •  %d%%" % [String(structure.get("name", "Structure")), roundi(100.0 * float(structure.get("health", 0)) / float(maxi(1, int(structure.get("maximum_health", 1)))))])
 		var production: Array = structure.get("production", [])
 		var can_train := int(structure.get("team", -1)) == 0 and int(structure.get("health", 0)) > 0 and not production.is_empty()
 		var queue_count := Array(structure.get("queue", [])).size()
 		var queue_state := simulation.production_queue_state(selected_structure_id)
+		for queue_row_value in queue_state:
+			var queue_row: Dictionary = queue_row_value
+			# Seconds for the queue button's live countdown (retail training timer).
+			queue_row["remaining_seconds"] = maxf(0.0, float(int(queue_row.get("duration_ticks", 0)) - int(queue_row.get("elapsed_ticks", 0))) * SimScript.TICK_SECONDS)
 		var completed_upgrades: Array = structure.get("completed_upgrades", [])
 		var locked_units: Array[String] = []
 		for unit_type_value in production:
 			var unit_type := String(unit_type_value)
-			if simulation.hero_unavailable(0, unit_type):
+			if simulation.hero_unavailable(local_team, unit_type):
 				locked_units.append(unit_type)
 				continue
 			for required_upgrade_value in simulation.required_upgrades_for_unit(unit_type, String(structure.get("structure_kind", ""))):
@@ -1692,18 +2828,37 @@ func _refresh_hud() -> void:
 			locked_units,
 			completed_upgrades,
 			simulation.structure_upgrade_queue_state(selected_structure_id),
-			String(structure.get("structure_kind", ""))
+			String(structure.get("structure_kind", "")),
+			simulation.structure_upgrade_commands(selected_structure_id)
 		)
-		hud.set_unit_selection_state([], simulation.entities)
+		hud.set_unit_selection_state([], simulation.entities, simulation.tick_index)
+		_sync_radial_commands(structure, production, locked_units, can_train)
+		hud.set_battalion_upgrade_state([], [])
 	else:
 		var names: Array[String] = []
 		for id in simulation.selected_ids:
 			names.append(String(simulation.entity(id).get("name", str(id))))
 		hud.set_selection(", ".join(names) if not names.is_empty() else "No battalion selected")
 		hud.set_production_state([], false)
-		hud.set_unit_selection_state(simulation.selected_ids, simulation.entities)
+		hud.set_unit_selection_state(simulation.selected_ids, simulation.entities, simulation.tick_index)
+		hud.hide_radial_commands()
 		if not simulation.selected_ids.is_empty():
 			hud.set_active_stance(String(simulation.entity(simulation.selected_ids[0]).get("stance", "Battle")))
+		# Battalion OBJECT_UPGRADE purchase surface (compiled per unit doc): the
+		# first selected battalion's authored rows, gate state, and live purchase
+		# progress. Presentation-only wiring; the sim owns eligibility/cost.
+		var first_selected := int(simulation.selected_ids[0]) if not simulation.selected_ids.is_empty() else 0
+		if first_selected == 0:
+			hud.set_battalion_upgrade_state([], [])
+		else:
+			var upgrade_queue_rows := simulation.battalion_upgrade_queue_state(first_selected)
+			for upgrade_row_value in upgrade_queue_rows:
+				var upgrade_row: Dictionary = upgrade_row_value
+				upgrade_row["remaining_seconds"] = maxf(0.0, float(int(upgrade_row.get("duration_ticks", 0)) - int(upgrade_row.get("elapsed_ticks", 0))) * SimScript.TICK_SECONDS)
+			hud.set_battalion_upgrade_state(simulation.battalion_upgrade_commands(first_selected), upgrade_queue_rows)
+	_sync_dish_level_caption()
+	_sync_hero_bar()
+	_sync_construction_progress_labels()
 	if not hud.sync_retail_selection_context(
 		simulation.selected_ids,
 		selected_structure_id,
@@ -1724,7 +2879,7 @@ func _refresh_hud() -> void:
 			simulation.tick_index,
 			simulation.state_signature(),
 			audio_system.current_music_state.to_upper() if audio_system != null else "OFF",
-			simulation.living_ids(0).size(),
+			simulation.living_ids(local_team).size(),
 			simulation.living_ids(1).size(),
 			source_map_data.route_query_count if source_map_data != null else 0,
 		]
@@ -1738,6 +2893,256 @@ func _refresh_hud() -> void:
 
 var _score_cache := {"units_trained": 0, "units_lost": 0, "resources_gathered": 0}
 var _score_event_index := 0
+var _feed_event_index := 0
+
+
+## Retail top-right event feed. Consumes the sim event log incrementally (same
+## discipline as the score counter) and mirrors retail's exact message shapes:
+## "Construction Complete: X", "Upgrade Complete: X Level N" / tech names,
+## "Fortress rally point set.", "Easy has been Defeated".
+func _consume_event_feed() -> void:
+	if simulation == null or hud == null:
+		return
+	var events: Array = simulation.events
+	while _feed_event_index < events.size():
+		var event: Dictionary = events[_feed_event_index]
+		_feed_event_index += 1
+		var kind := String(event.get("kind", ""))
+		if int(event.get("team", -1)) != 0 and kind != "match.victory":
+			continue
+		match kind:
+			"construction.completed":
+				var kind_name := String(event.get("structure_kind", "")).replace("_", " ").capitalize()
+				hud.push_event_feed("Construction Complete: %s" % kind_name)
+			"upgrade.completed":
+				var upgrade_id := String(event.get("upgrade_id", ""))
+				var contract: Dictionary = simulation._structure_upgrade_contracts.get(upgrade_id, {}) as Dictionary
+				if int(contract.get("levels_to_gain", 0)) > 0:
+					var building: Dictionary = simulation.structure(int(event.get("entity_id", 0)))
+					hud.push_event_feed("Upgrade Complete: %s Level %d" % [
+						String(building.get("name", "Structure")),
+						int(event.get("level", 1)),
+					])
+				else:
+					hud.push_event_feed("Upgrade Complete: %s" % upgrade_id.trim_prefix("Upgrade_Gondor").trim_prefix("Upgrade_").capitalize())
+			"structure.rally_set":
+				var rally_structure: Dictionary = simulation.structure(int(event.get("target_id", 0)))
+				hud.push_event_feed("%s rally point set." % String(rally_structure.get("name", "Structure")))
+			"match.victory":
+				# Retail names the defeated AI player; the slice fields the fixed
+				# basic AI opponent.
+				hud.push_event_feed("Easy has been Defeated")
+
+
+## Floating radial command buttons above the selected producer (REF-25/33/35):
+## train commands, forge research, and hero roster arc over the building,
+## re-emitting the exact palantir socket orders.
+func _sync_radial_commands(structure: Dictionary, production: Array, locked_units: Array, can_train: bool) -> void:
+	if hud == null or camera == null:
+		return
+	var sim_position := Vector2(structure.get("position", Vector2.ZERO))
+	# Owner: a clicked pad floats the radial over the PAD with the expansion
+	# options that plot accepts; choosing one builds on that pad.
+	var pad_selected := (
+		selected_structure_id != 0
+		and not _selected_expansion_pad.is_empty()
+		and int(_selected_expansion_pad.get("fortress_id", 0)) == selected_structure_id
+	)
+	var world_position := Vector3(sim_position.x, _presentation_height(sim_position) + 1.0, sim_position.y)
+	if pad_selected:
+		var pad_position := Vector2(_selected_expansion_pad.get("position", sim_position))
+		world_position = Vector3(pad_position.x, _presentation_height(pad_position) + 1.0, pad_position.y)
+	if camera.is_position_behind(world_position):
+		hud.hide_radial_commands()
+		return
+	var entries: Array = []
+	if pad_selected:
+		var pad_kind := String(_selected_expansion_pad.get("pad_kind", ""))
+		for kind_value in simulation.expansion_commands_for(selected_structure_id):
+			var kind := String(kind_value)
+			var rule: Dictionary = simulation._expansion_build_rules.get(kind, {}) as Dictionary
+			if not (rule.get("pad_kinds", []) as Array).has(pad_kind):
+				continue
+			var command := hud.retail_expansion_command(kind)
+			if command.is_empty() or command.get("texture") == null:
+				continue
+			var pad_cost := int(rule.get("cost", 0))
+			entries.append({
+				"command_kind": "expansion",
+				"id": kind,
+				"icon": command.get("texture"),
+				"enabled": simulation.resources_for_team(local_team) >= pad_cost,
+				"label": String(command.get("label", "")),
+				"tooltip": String(command.get("tooltip", "")),
+			})
+		var pad_anchor := camera.unproject_position(world_position)
+		hud.sync_radial_commands(pad_anchor, entries)
+		return
+	if int(structure.get("team", -1)) == 0 and int(structure.get("health", 0)) > 0 and float(structure.get("construction_progress", 1.0)) >= 1.0:
+		# Active queue row per unit type: the radial's training icons sweep the
+		# same CCW dial + live countdown as the palantir queue chips (owner).
+		var radial_queue_by_unit: Dictionary = {}
+		for radial_row_value in simulation.production_queue_state(selected_structure_id):
+			var radial_row: Dictionary = radial_row_value
+			if not bool(radial_row.get("active", false)):
+				continue
+			radial_row["remaining_seconds"] = maxf(0.0, float(int(radial_row.get("duration_ticks", 0)) - int(radial_row.get("elapsed_ticks", 0))) * SimScript.TICK_SECONDS)
+			radial_queue_by_unit[String(radial_row.get("unit_type", ""))] = radial_row
+		for unit_id_value in production:
+			var unit_id := String(unit_id_value)
+			var train_button: Button = hud.train_buttons.get(unit_id) as Button
+			if train_button == null:
+				train_button = hud.hero_buttons.get(unit_id) as Button
+			if train_button == null or train_button.icon == null:
+				continue
+			entries.append({
+				"command_kind": "hero" if hud.hero_buttons.has(unit_id) else "train",
+				"id": unit_id,
+				"icon": train_button.icon,
+				"enabled": can_train and not locked_units.has(unit_id),
+				"label": String(train_button.get_meta("retail_label", "")),
+				"tooltip": train_button.tooltip_text,
+				"queue_row": radial_queue_by_unit.get(unit_id, {}),
+			})
+		# Universal radial (owner: every selected building carries ALL of its
+		# authored commands above it, REF-25/33/35 — train, research, upgrades):
+		# the doc-driven purchasable upgrade steps join the same arc, with the
+		# validated icon from the palantir socket button when the pack has one.
+		var upgrade_queue := simulation.structure_upgrade_queue_state(selected_structure_id)
+		for command_value in simulation.structure_upgrade_commands(selected_structure_id):
+			var upgrade_command: Dictionary = command_value
+			var upgrade_id := String(upgrade_command.get("upgrade_id", ""))
+			var doc_button: Button = hud._doc_upgrade_buttons.get(upgrade_id) as Button
+			var upgrade_icon: Texture2D = doc_button.icon if doc_button != null else null
+			var upgrade_label := ""
+			var upgrade_tip := ""
+			if doc_button != null:
+				upgrade_label = String(doc_button.get_meta("retail_label", ""))
+				upgrade_tip = doc_button.tooltip_text
+			entries.append({
+				"command_kind": "upgrade",
+				"id": upgrade_id,
+				"icon": upgrade_icon,
+				"text": upgrade_label if upgrade_icon == null else "",
+				"enabled": upgrade_queue.is_empty(),
+				"label": upgrade_label,
+				"tooltip": upgrade_tip,
+			})
+		# Research rides the doc-driven rows only (structure_upgrade_commands
+		# carries compiled research with its own pack strings/icons); the
+		# hardcoded forge spec surface is retired — no stale provisional ids.
+		if String(structure.get("structure_kind", "")) == "fortress":
+			# The fortress's authored expansion pad commands (REF-33): one radial
+			# button per expansion with a free plot, click builds on the plot.
+			for kind_value in simulation.expansion_commands_for(selected_structure_id):
+				var kind := String(kind_value)
+				var command := hud.retail_expansion_command(kind)
+				if command.is_empty() or command.get("texture") == null:
+					continue
+				var cost := int(simulation._expansion_build_rules.get(kind, {}).get("cost", 0))
+				entries.append({
+					"command_kind": "expansion",
+					"id": kind,
+					"icon": command.get("texture"),
+					"enabled": simulation.resources_for_team(local_team) >= cost,
+					"label": String(command.get("label", "")),
+					"tooltip": String(command.get("tooltip", "")),
+				})
+	var anchor := camera.unproject_position(world_position)
+	hud.sync_radial_commands(anchor, entries)
+
+
+## Floating "Building: N% • Ns left" above every construction site (REF-27/28).
+func _sync_construction_progress_labels() -> void:
+	if hud == null or simulation == null or camera == null:
+		return
+	var entries: Array = []
+	for id in simulation.structure_ids():
+		var structure: Dictionary = simulation.structure(id)
+		var progress := float(structure.get("construction_progress", 1.0))
+		if progress >= 1.0 or int(structure.get("health", 0)) <= 0:
+			continue
+		var sim_position := Vector2(structure.get("position", Vector2.ZERO))
+		var world_position := Vector3(sim_position.x, _presentation_height(sim_position) + 4.0, sim_position.y)
+		if camera.is_position_behind(world_position):
+			continue
+		var remaining_ticks := maxi(0, int(structure.get("construction_build_ticks", 0)) - int(structure.get("construction_elapsed_ticks", 0)))
+		entries.append({
+			"position": camera.unproject_position(world_position),
+			"percent": roundi(progress * 100.0),
+			"seconds_left": ceili(float(remaining_ticks) * SimScript.TICK_SECONDS),
+		})
+	hud.sync_construction_progress(entries)
+
+
+## "Level: N" caption + progress bar in the palantir dish (REF-25 building,
+## REF-41 hero). The sim has no XP source, so the bar stays honest at 0.
+func _sync_dish_level_caption() -> void:
+	if hud == null or simulation == null:
+		return
+	if selected_structure_id != 0:
+		var structure: Dictionary = simulation.structure(selected_structure_id)
+		if structure.is_empty() or int(structure.get("health", 0)) <= 0:
+			hud.set_dish_level("", 0.0)
+			return
+		var upgrade_queue := simulation.structure_upgrade_queue_state(selected_structure_id)
+		var upgrade_progress := 0.0
+		if not upgrade_queue.is_empty():
+			upgrade_progress = clampf(float(upgrade_queue[0].get("progress", 0.0)), 0.0, 1.0)
+		hud.set_dish_level("Level: %d" % int(structure.get("level", 1)), upgrade_progress)
+		return
+	for id in simulation.selected_ids:
+		var entity: Dictionary = simulation.entity(id)
+		if String(entity.get("category", "")) == "hero":
+			hud.set_dish_level("Level: %d" % int(entity.get("level", 1)), 0.0)
+			return
+	hud.set_dish_level("", 0.0)
+
+
+## Recruited-hero strip bottom-center (REF-24 badges, REF-41 health bar).
+func _sync_hero_bar() -> void:
+	if hud == null or simulation == null:
+		return
+	var heroes: Array = []
+	for id in simulation.entity_ids():
+		var entity: Dictionary = simulation.entity(id)
+		if int(entity.get("team", -1)) != 0 or String(entity.get("category", "")) != "hero":
+			continue
+		if int(entity.get("health", 0)) <= 0:
+			continue
+		heroes.append({
+			"id": id,
+			"unit_type": String(entity.get("unit_type", "")),
+			"name": String(entity.get("name", "Hero")),
+			"level": int(entity.get("level", 1)),
+			"health": int(entity.get("health", 0)),
+			"maximum_health": int(entity.get("maximum_health", 1)),
+			"selected": simulation.selected_ids.has(id),
+		})
+	hud.sync_hero_bar(heroes)
+
+
+func _on_hero_recall_requested(hero_id: int) -> void:
+	if simulation == null or not simulation.entities.has(hero_id):
+		return
+	selected_structure_id = 0
+	simulation.select_only(hero_id)
+	_sync_presentation()
+
+
+func _on_expansion_requested(expansion_kind: String) -> void:
+	if simulation == null or selected_structure_id == 0:
+		return
+	var pad_index := int(_selected_expansion_pad.get("pad_index", -1))
+	var result: Dictionary = _apply_local_command("issue_expansion_construct", {"fortress_id": selected_structure_id, "expansion_kind": expansion_kind, "pad_index": pad_index})
+	var accepted := bool(result.get("ok", false))
+	if accepted:
+		_selected_expansion_pad = {}
+	elif String(result.get("reason", "")) == "insufficient-resources":
+		hud.push_event_feed("Insufficient funds.")
+	else:
+		hud.set_feedback("Expansion unavailable: %s." % String(result.get("reason", "rejected")).replace("-", " "), true)
+	_sync_presentation()
 
 
 func _player_score_values() -> Dictionary:
@@ -1775,7 +3180,11 @@ func _recall_group(group: int) -> void:
 
 
 func _queue_selected_producer(unit_id: String) -> void:
-	var unit_name := String(UNIT_QUEUE_NAMES.get(unit_id, "Unit"))
+	var unit_name := String(UNIT_QUEUE_NAMES.get(unit_id, ""))
+	if unit_name == "" and simulation != null:
+		unit_name = simulation.production_rule_display_name(unit_id)
+	if unit_name == "":
+		unit_name = "Unit"
 	if selected_structure_id == 0:
 		hud.set_feedback("Cannot train %s: select its production building." % unit_name, true)
 		_refresh_hud()
@@ -1783,33 +3192,62 @@ func _queue_selected_producer(unit_id: String) -> void:
 	var producer := selected_structure_id
 	var structure: Dictionary = simulation.structure(producer)
 	var production: Array = structure.get("production", [])
-	if int(structure.get("team", -1)) != 0 or int(structure.get("health", 0)) <= 0 or not production.has(unit_id):
+	if int(structure.get("team", -1)) != local_team or int(structure.get("health", 0)) <= 0 or not production.has(unit_id):
 		hud.set_feedback("Cannot train %s from the selected structure." % unit_name, true)
 		_refresh_hud()
 		return
-	var result := simulation.queue_unit(0, producer, unit_id)
+	var result: Dictionary = _apply_local_command("queue_unit", {"producer": producer, "unit_type": unit_id})
 	var accepted := bool(result.get("ok", false))
 	var reason := String(result.get("reason", "rejected"))
 	var feedback := "%s added to the queue." % unit_name if accepted else "Cannot train %s: %s." % [unit_name, reason.replace("-", " ")]
 	hud.set_feedback(feedback, not accepted)
 	if not accepted and reason == "command-point-cap":
 		hud.flash_command_points()
+	if not accepted and reason == "insufficient-resources":
+		# Retail surfaces rejected purchases in the top-right event feed.
+		hud.push_event_feed("Insufficient funds.")
 	_refresh_hud()
+
+
+func _on_battalion_upgrade_requested(upgrade_id: String) -> void:
+	## Battalion OBJECT_UPGRADE purchase from the HUD socket surface. Every
+	## selected player battalion the sim accepts is charged its authored
+	## (possibly Iron-Ore-discounted) cost; ineligible ones are simply skipped.
+	if simulation == null or simulation.selected_ids.is_empty():
+		return
+	var queued := 0
+	var last_result: Dictionary = {}
+	for entity_id in simulation.selected_ids:
+		var result: Dictionary = _apply_local_command("queue_battalion_upgrade", {"entity_id": entity_id, "upgrade_id": upgrade_id})
+		if bool(result.get("ok", false)):
+			queued += 1
+		else:
+			last_result = result
+	if queued > 0:
+		hud.set_feedback("Purchase started (%d battalion%s)." % [queued, "" if queued == 1 else "s"])
+	elif String(last_result.get("reason", "")) == "insufficient-resources":
+		hud.push_event_feed("Insufficient funds.")
+	else:
+		hud.set_feedback("Cannot purchase: %s." % String(last_result.get("reason", "rejected")).replace("-", " "), true)
+	_sync_presentation()
 
 
 func _upgrade_selected_structure(upgrade_id: String) -> void:
 	if selected_structure_id == 0:
-		hud.set_feedback("Cannot upgrade: select the Archery Range.", true)
+		hud.set_feedback("Cannot research: select the building first.", true)
 		_refresh_hud()
 		return
-	var result := simulation.queue_structure_upgrade(0, selected_structure_id, upgrade_id)
+	var result: Dictionary = _apply_local_command("queue_structure_upgrade", {"structure_id": selected_structure_id, "upgrade_id": upgrade_id})
 	var accepted := bool(result.get("ok", false))
+	var upgrade_label := upgrade_id.trim_prefix("Upgrade_Gondor").capitalize()
 	hud.set_feedback(
-		"Archery Range level 2 upgrade started."
+		"%s research started." % upgrade_label
 		if accepted
-		else "Cannot upgrade Archery Range: %s." % String(result.get("reason", "rejected")).replace("-", " "),
+		else "Cannot research %s: %s." % [upgrade_label, String(result.get("reason", "rejected")).replace("-", " ")],
 		not accepted
 	)
+	if not accepted and String(result.get("reason", "")) == "insufficient-resources":
+		hud.push_event_feed("Insufficient funds.")
 	_refresh_hud()
 
 
@@ -1818,7 +3256,7 @@ func _cancel_selected_production(queue_index: int) -> void:
 		hud.set_feedback("Cannot cancel training: select its production building.", true)
 		_refresh_hud()
 		return
-	var result := simulation.cancel_queued_unit(0, selected_structure_id, queue_index)
+	var result: Dictionary = _apply_local_command("cancel_queued_unit", {"producer": selected_structure_id, "queue_index": queue_index})
 	var accepted := bool(result.get("ok", false))
 	var feedback := "Training cancelled; %d resources refunded." % int(result.get("refund", 0)) if accepted else "Cannot cancel training: %s." % String(result.get("reason", "rejected")).replace("-", " ")
 	hud.set_feedback(feedback, not accepted)
@@ -1839,6 +3277,7 @@ func _arm_construction(structure_kind: String) -> void:
 		return
 	construction_kind_armed = structure_kind
 	attack_move_armed = false
+	ability_cast_armed = {}
 	_spawn_construction_ghost()
 	var rule: Dictionary = simulation.structure_build_rule(structure_kind)
 	hud.set_feedback("Place %s: left-click a clear site (right-click cancels). Cost %d." % [structure_kind.replace("_", " ").capitalize(), int(rule["cost"])])
@@ -1846,24 +3285,139 @@ func _arm_construction(structure_kind: String) -> void:
 
 func _spawn_construction_ghost() -> void:
 	_clear_construction_ghost()
-	# Gameplay placement cursor: a flat ground quad showing the site footprint
-	# with validity tint (a Decal projected a visible volume through the fog).
-	# The retail translucent building-model ghost is an M3 parity item.
-	construction_ghost = MeshInstance3D.new()
+	# Retail placement cursor (REF-29): the translucent intact building model
+	# at the cursor, tinted green when the site validates / red when not, plus
+	# the placement footprint circle and the resource behavior's effectiveness
+	# ring (farm-style) when the structure document ships one.
+	construction_ghost = Node3D.new()
 	construction_ghost.name = "ConstructionPlacementGhost"
-	var quad := PlaneMesh.new()
-	quad.size = Vector2(14.0, 14.0)
-	construction_ghost.mesh = quad
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.albedo_texture = preload("res://src/retail_slice/retail_shadow_decal.gd")._shared_texture()
-	material.albedo_color = Color(0.20, 0.85, 0.30, 0.4)
-	material.no_depth_test = false
-	construction_ghost.material_override = material
 	construction_ghost.set_meta("legal_safe_gameplay_overlay", true)
 	construction_ghost.visible = false
 	add_child(construction_ghost)
+	var kind := construction_kind_armed
+	var object_id := String((faction_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
+	var ghost_model: Node3D = null
+	if object_id != "":
+		var definition := ContentDB.get_bundle_object(object_id)
+		var definition_root := String(definition.get("_pack_root", ""))
+		var relative := String((definition.get("presentation", {}) as Dictionary).get("model", "")).replace("\\", "/")
+		var resolved := ContentDB.resolve_asset(relative, definition_root) if relative != "" else ""
+		if resolved != "" and FileAccess.file_exists(resolved):
+			var asset_factory = load("res://src/view/asset_factory.gd")
+			ghost_model = asset_factory._try_load_model(resolved) as Node3D
+	if ghost_model != null:
+		ghost_model.name = "GhostModel"
+		ghost_model.scale = Vector3.ONE * maxf(0.0001, source_map_data.local_transform_scale)
+		construction_ghost.add_child(ghost_model)
+		# Retail placement ghost (owner change): the mesh's ACTUAL colors at ~50%
+		# opacity, not a flat green tint. Valid/invalid now rides ONLY on the
+		# footprint ring color below (green valid / red invalid).
+		_apply_ghost_translucency(ghost_model)
+	else:
+		# Fail-closed fallback: the flat footprint quad (model not converted).
+		var quad_instance := MeshInstance3D.new()
+		quad_instance.name = "GhostModel"
+		var quad := PlaneMesh.new()
+		quad.size = Vector2(14.0, 14.0)
+		quad_instance.mesh = quad
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.albedo_texture = preload("res://src/retail_slice/retail_shadow_decal.gd")._shared_texture()
+		material.albedo_color = Color(0.20, 0.85, 0.30, 0.4)
+		material.no_depth_test = false
+		quad_instance.material_override = material
+		quad_instance.set_meta("tint_material", material)
+		construction_ghost.add_child(quad_instance)
+	# Placement footprint circle (item 6): the radius the sim enforces.
+	var footprint := MeshInstance3D.new()
+	footprint.name = "FootprintCircle"
+	footprint.mesh = _make_ground_ring(maxf(0.2, simulation._structure_placement_radius(kind)), 64, 0.06)
+	footprint.material_override = _ghost_ring_material(Color(0.35, 0.9, 0.4, 0.85))
+	footprint.position.y = 0.12
+	construction_ghost.add_child(footprint)
+	# Effectiveness ring (farm-style, REF-29/30): only when the structure
+	# document ships a TerrainResourceBehavior radius; hidden otherwise
+	# (fail closed — never invented).
+	var effectiveness_radius := _structure_effectiveness_radius_local(object_id)
+	if effectiveness_radius > 0.0:
+		var ring := MeshInstance3D.new()
+		ring.name = "EffectivenessRing"
+		ring.mesh = _make_ground_ring(effectiveness_radius, 96, 0.08)
+		ring.material_override = _ghost_ring_material(Color(0.55, 0.95, 0.45, 0.6))
+		ring.position.y = 0.1
+		construction_ghost.add_child(ring)
+
+
+## Dims every mesh surface to ~50% opacity while KEEPING each material's own
+## colors/textures (the retail placement ghost look). Duplicates materials so
+## the live structures' originals are never mutated.
+var _ghost_material_cache: Dictionary = {}
+
+
+func _apply_ghost_translucency(node: Node) -> void:
+	if node is MeshInstance3D:
+		var mesh_instance := node as MeshInstance3D
+		var surface_count := mesh_instance.mesh.get_surface_count() if mesh_instance.mesh != null else 0
+		for surface_index in surface_count:
+			var source_material := mesh_instance.get_active_material(surface_index)
+			if source_material == null:
+				continue
+			var cache_key := source_material.get_instance_id()
+			var ghost_material: Material = _ghost_material_cache.get(cache_key)
+			if ghost_material == null:
+				ghost_material = source_material.duplicate()
+				if ghost_material is BaseMaterial3D:
+					var base := ghost_material as BaseMaterial3D
+					base.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+					var color := base.albedo_color
+					color.a = 0.5
+					base.albedo_color = color
+				_ghost_material_cache[cache_key] = ghost_material
+			mesh_instance.set_surface_override_material(surface_index, ghost_material)
+	for child in node.get_children():
+		_apply_ghost_translucency(child)
+
+
+func _ghost_ring_material(color: Color) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.albedo_color = color
+	material.no_depth_test = false
+	return material
+
+
+func _make_ground_ring(radius: float, segments: int, width: float) -> ArrayMesh:
+	var vertices := PackedVector3Array()
+	for index in segments:
+		var a0 := float(index) / float(segments) * TAU
+		var a1 := float(index + 1) / float(segments) * TAU
+		var outer0 := Vector3(cos(a0), 0.0, sin(a0)) * (radius + width)
+		var outer1 := Vector3(cos(a1), 0.0, sin(a1)) * (radius + width)
+		var inner0 := Vector3(cos(a0), 0.0, sin(a0)) * (radius - width)
+		var inner1 := Vector3(cos(a1), 0.0, sin(a1)) * (radius - width)
+		vertices.append_array([outer0, outer1, inner0, outer1, inner1, inner0])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## The structure document's TerrainResourceBehavior radius in local units
+## (0 when the doc ships none — farm/mallorn only).
+func _structure_effectiveness_radius_local(object_id: String) -> float:
+	if object_id == "" or source_map_data == null:
+		return 0.0
+	var definition := ContentDB.get_bundle_object(object_id)
+	var gameplay := ((definition.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+	var behavior := gameplay.get("resourceBehavior", {}) as Dictionary
+	var radius := float((behavior.get("radius", {}) as Dictionary).get("value", 0.0))
+	if radius <= 0.0:
+		return 0.0
+	return radius * source_map_data.local_transform_scale
 
 
 func _clear_construction_ghost() -> void:
@@ -1889,10 +3443,88 @@ func _update_construction_ghost() -> void:
 	var probe := simulation.validate_construct_site(
 		simulation.selected_ids.duplicate(), construction_kind_armed, Vector2(ground.x, ground.z)
 	)
-	var material := construction_ghost.material_override as StandardMaterial3D
-	material.albedo_color = (
-		Color(0.20, 0.85, 0.30, 0.4) if bool(probe.get("ok", false)) else Color(0.90, 0.18, 0.14, 0.4)
-	)
+	var valid := bool(probe.get("ok", false))
+	# Validity rides the footprint ring color; the 3D ghost keeps the mesh's
+	# actual colors (owner change). The quad fallback (unconverted model) still
+	# tints because it has no colors of its own.
+	var valid_color := Color(0.25, 0.9, 0.35, 0.45) if valid else Color(0.92, 0.2, 0.16, 0.45)
+	var ring_color := Color(0.35, 0.9, 0.4, 0.85) if valid else Color(0.92, 0.25, 0.2, 0.85)
+	for child in construction_ghost.get_children():
+		if String(child.name) == "GhostModel" and child.has_meta("tint_material"):
+			var tint := child.get_meta("tint_material", null) as StandardMaterial3D
+			if tint != null:
+				tint.albedo_color = valid_color
+		elif String(child.name) == "FootprintCircle":
+			var ring_material := (child as MeshInstance3D).material_override as StandardMaterial3D
+			if ring_material != null:
+				ring_material.albedo_color = ring_color
+
+
+func _update_power_cast_ghost() -> void:
+	## Spellbook targeting mode: a range ring at the cursor, sized by the
+	## document's resolved radiusCursorRadius for the armed power.
+	if power_cast_armed == "" or simulation == null:
+		if _power_cast_ghost != null:
+			_power_cast_ghost.queue_free()
+			_power_cast_ghost = null
+		if _power_cast_glyph != null:
+			_power_cast_glyph.queue_free()
+			_power_cast_glyph = null
+		return
+	var radius: float = simulation.spellbook_power_radius_sim(power_cast_armed)
+	if radius <= 0.0:
+		radius = 2.0
+	if _power_cast_ghost == null:
+		_power_cast_ghost = MeshInstance3D.new()
+		_power_cast_ghost.name = "PowerCastTargetRing"
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		# REF-49: the targeting ring is a white/pale circle, not green.
+		material.albedo_color = Color(0.95, 0.97, 1.0, 0.8)
+		material.emission_enabled = true
+		material.emission = Color(0.9, 0.93, 1.0)
+		_power_cast_ghost.material_override = material
+		add_child(_power_cast_ghost)
+		# REF-49: the armed power's glyph projects at the ring's center.
+		_power_cast_glyph = MeshInstance3D.new()
+		_power_cast_glyph.name = "PowerCastTargetGlyph"
+		var glyph_material := StandardMaterial3D.new()
+		glyph_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		glyph_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		glyph_material.albedo_color = Color(1.0, 1.0, 1.0, 0.85)
+		_power_cast_glyph.material_override = glyph_material
+		var glyph_quad := QuadMesh.new()
+		glyph_quad.size = Vector2(1.4, 1.4)
+		_power_cast_glyph.mesh = glyph_quad
+		_power_cast_glyph.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+		add_child(_power_cast_glyph)
+		var glyph_icon: Texture2D = null
+		if hud != null:
+			for power_button in hud.power_buttons:
+				if String(power_button.get_meta("power_id", "")) == power_cast_armed:
+					glyph_icon = power_button.icon
+					break
+		if glyph_icon != null:
+			(glyph_material as StandardMaterial3D).albedo_texture = glyph_icon
+	var mesh := _power_cast_ghost.mesh as TorusMesh
+	if mesh == null or not is_equal_approx(mesh.outer_radius, radius):
+		mesh = TorusMesh.new()
+		mesh.outer_radius = radius
+		mesh.inner_radius = radius * 0.94
+		_power_cast_ghost.mesh = mesh
+	var world: Variant = _screen_to_world(get_viewport().get_mouse_position())
+	if world == null:
+		_power_cast_ghost.visible = false
+		if _power_cast_glyph != null:
+			_power_cast_glyph.visible = false
+		return
+	var ground := world as Vector3
+	_power_cast_ghost.visible = true
+	_power_cast_ghost.global_position = Vector3(ground.x, ground.y + 0.15, ground.z)
+	if _power_cast_glyph != null:
+		_power_cast_glyph.visible = true
+		_power_cast_glyph.global_position = Vector3(ground.x, ground.y + 0.2, ground.z)
 
 
 func _stop_selected_units() -> void:
@@ -1901,19 +3533,114 @@ func _stop_selected_units() -> void:
 	attack_move_armed = false
 	construction_kind_armed = ""
 	_clear_construction_ghost()
-	var stopped := simulation.issue_stop(simulation.selected_ids.duplicate())
+	var stopped := int(_apply_local_command("issue_stop", {"ids": simulation.selected_ids.duplicate()}))
 	hud.set_feedback("Stop order accepted." if stopped > 0 else "Stop order rejected.", stopped == 0)
 
 
 func _toggle_selected_stance() -> void:
-	var accepted := simulation.issue_toggle_stance(simulation.selected_ids.duplicate())
+	var accepted := int(_apply_local_command("issue_toggle_stance", {"ids": simulation.selected_ids.duplicate()}))
 	if accepted > 0:
 		var stance := String(simulation.entity(simulation.selected_ids[0]).get("stance", "Battle"))
 		hud.set_active_stance(stance)
-		hud.set_feedback("Stance changed to %s." % stance)
+		hud.set_feedback("Stance: %s" % stance)
 	else:
 		hud.set_feedback("Stance order rejected.", true)
 	_sync_presentation()
+
+
+func _toggle_selected_formation() -> void:
+	if simulation == null:
+		return
+	var accepted := int(_apply_local_command("issue_toggle_formation", {"ids": simulation.selected_ids.duplicate()}))
+	if accepted > 0:
+		var formation := String(simulation.entity(simulation.selected_ids[0]).get("formation_mode", "Line"))
+		if hud.has_method("set_active_formation"):
+			hud.set_active_formation(formation)
+		hud.set_feedback("Formation: %s" % formation)
+	else:
+		hud.set_feedback("Formation order rejected.", true)
+	_sync_presentation()
+
+
+var _expansion_pad_markers: Dictionary = {}
+var _expansion_pad_model_cache: Dictionary = {}
+
+
+## Engine-spawned fortress build plots: the pad plot model at each free pad
+## (retail shows the plot circles ringing the fortress, REF-32/52), hidden
+## once an expansion rises on the pad or the fortress falls.
+func _sync_expansion_pad_markers() -> void:
+	if simulation == null:
+		return
+	for fortress_id_value in simulation.expansion_pads.keys():
+		var fortress_id := int(fortress_id_value)
+		var pads := simulation.expansion_pad_states(fortress_id)
+		var markers: Array = _expansion_pad_markers.get(fortress_id, [])
+		while markers.size() < pads.size():
+			var marker := _make_pad_marker(String((pads[markers.size()] as Dictionary).get("pad_kind", "")))
+			if marker == null:
+				break
+			add_child(marker)
+			_assign_geometry_light_layer(marker, OBJECT_LIGHT_LAYER)
+			markers.append(marker)
+		var fortress: Dictionary = simulation.structure(fortress_id)
+		var fortress_alive := not fortress.is_empty() and int(fortress.get("health", 0)) > 0 and float(fortress.get("construction_progress", 1.0)) >= 1.0
+		for index in markers.size():
+			var marker: Node3D = markers[index]
+			if index >= pads.size():
+				marker.visible = false
+				continue
+			var pad: Dictionary = pads[index]
+			var position := Vector2(pad.get("position", Vector2.ZERO))
+			marker.position = Vector3(position.x, _presentation_height(position) + 0.02, position.y)
+			marker.visible = fortress_alive and int(pad.get("expansion_structure_id", 0)) == 0
+			# The clicked plot swells slightly so the player sees which pad the
+			# radial is anchored to.
+			var marker_selected := (
+				marker.visible
+				and int(_selected_expansion_pad.get("fortress_id", 0)) == fortress_id
+				and int(_selected_expansion_pad.get("pad_index", -1)) == index
+			)
+			marker.scale = Vector3.ONE * (1.35 if marker_selected else 1.0)
+		_expansion_pad_markers[fortress_id] = markers
+
+
+func _make_pad_marker(pad_kind: String) -> Node3D:
+	var source_id := "MenFortressExpansionPadSide" if pad_kind == "side" else "MenFortressExpansionPadCorner"
+	var definition := ContentDB.get_playable_structure_runtime(source_id)
+	if definition.is_empty():
+		return null
+	# Cache only the resolved path; every marker is a fresh instance from the
+	# asset factory's duplicating loader (never a re-parented node).
+	var resolved := String(_expansion_pad_model_cache.get(source_id, ""))
+	if resolved == "<failed>":
+		return null
+	if resolved == "":
+		var bib := (((definition.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary).get("bib", {}) as Dictionary
+		var relative := String((bib.get("visual", {}) as Dictionary).get("glb", "")).replace("\\", "/")
+		resolved = ContentDB.resolve_asset(relative, String(definition.get("_pack_root", ""))) if relative != "" else ""
+		if resolved == "" or not FileAccess.file_exists(resolved):
+			_expansion_pad_model_cache[source_id] = "<failed>"
+			return null
+		_expansion_pad_model_cache[source_id] = resolved
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	var instance: Node3D = asset_factory._try_load_model(resolved) as Node3D
+	if instance == null:
+		return null
+	var marker := Node3D.new()
+	marker.name = "ExpansionPadMarker"
+	instance.scale = Vector3.ONE * maxf(0.0001, source_map_data.local_transform_scale)
+	marker.add_child(instance)
+	# Retail build plots read as a light ground circle; the converted floor
+	# model alone is near-invisible against terrain, so ring it (styled chrome
+	# in the retail plot idiom, never fake art).
+	var ring := MeshInstance3D.new()
+	ring.name = "PadRing"
+	ring.mesh = _make_ground_ring(0.62, 48, 0.055)
+	ring.material_override = _ghost_ring_material(Color(0.82, 0.74, 0.5, 0.7))
+	ring.position.y = 0.06
+	marker.add_child(ring)
+	return marker
 
 
 func _sync_selected_attack_target_indicator() -> void:
@@ -1960,6 +3687,12 @@ func _sync_attack_target_indicator(target_id: int) -> void:
 func toggle_escape_menu() -> void:
 	if not ready_ok or simulation.winner != -1:
 		return
+	if lockstep_session != null:
+		if lockstep_session.desynced:
+			return
+		_apply_local_command("resume" if simulation.clock_paused else "pause")
+		hud.set_feedback("Resume requested." if simulation.clock_paused else "Pause requested.")
+		return
 	simulation_paused = not simulation_paused
 	# Retail pause freezes the world (animations, particles, projectiles), not
 	# just the tick loop. The slice root, HUD, and audio stay live so the menu,
@@ -1975,10 +3708,276 @@ func toggle_escape_menu() -> void:
 	hud.set_feedback("Simulation paused." if simulation_paused else "Simulation resumed.")
 
 
+func _sync_multiplayer_pause_state() -> void:
+	if lockstep_session == null \
+		or lockstep_session.pause_command_tick < 0 \
+		or lockstep_session.pause_command_tick == _mp_last_pause_command_tick:
+		return
+	_mp_last_pause_command_tick = lockstep_session.pause_command_tick
+	simulation_paused = lockstep_session.pause_command_state
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	if hud_root != null:
+		hud_root.process_mode = Node.PROCESS_MODE_ALWAYS
+	if audio_system != null:
+		audio_system.process_mode = Node.PROCESS_MODE_ALWAYS
+	get_tree().paused = simulation_paused
+	hud.show_pause(simulation_paused)
+	hud.set_match_clock_seconds(simulation.tick_index * SimScript.TICK_SECONDS)
+	hud.set_feedback("Simulation paused." if simulation_paused else "Simulation resumed.")
+
+
+func _install_pause_settings_button() -> void:
+	## Options seam: retail's pause screen leads with SETTINGS. The button is
+	## injected into the HUD's pause column from here so retail_hud.gd keeps
+	## owning the panel itself.
+	if pause_panel == null or pause_panel.get_child_count() == 0:
+		return
+	var column := pause_panel.get_child(0)
+	if column == null:
+		return
+	var settings_button := Button.new()
+	settings_button.name = "PauseSettingsButton"
+	settings_button.text = "SETTINGS"
+	settings_button.tooltip_text = "Click here to change your audio and video settings"
+	settings_button.custom_minimum_size = Vector2(0, 44)
+	settings_button.pressed.connect(_open_options_overlay)
+	column.add_child(settings_button)
+	column.move_child(settings_button, 2)
+
+
+func _open_options_overlay() -> void:
+	if options_overlay == null:
+		options_overlay = OptionsScreenScript.new()
+		options_overlay.name = "RetailOptionsOverlay"
+		options_overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+		options_overlay.z_index = 90
+		options_overlay.visible = false
+		options_overlay.closed.connect(_close_options_overlay)
+		add_child(options_overlay)
+		var albertus: Font = null
+		if hud != null and hud.retail_apt_runtime != null and hud.retail_apt_runtime.has_method("external_albertus_font"):
+			albertus = hud.retail_apt_runtime.external_albertus_font()
+		options_overlay.configure({
+			"font": albertus,
+			"audio_system": audio_system,
+			"scroll_target": self,
+		})
+	if pause_panel != null:
+		pause_panel.visible = false
+	options_overlay.open()
+
+
+func _close_options_overlay(applied: bool) -> void:
+	if simulation_paused and pause_panel != null:
+		pause_panel.visible = true
+	if hud != null:
+		hud.set_feedback("Settings applied." if applied else "Settings closed.")
+
+
+func _configure_simulation_spellbook() -> void:
+	## The spellbook tree (costs, prerequisite groups, purchase slots, reloads)
+	## comes from the selected pack's openbfme.spellbook-runtime document; the
+	## sim fails closed (empty tree) when the pack carries none.
+	if simulation == null:
+		return
+	simulation.configure_spellbook_runtime(_faction_spellbook_document())
+
+
+## Fortress expansion pad rules, built from the playable-structure expansion
+## documents in the selected/faction packs. Every number is doc-sourced; kinds
+## without a complete document drop out fail-closed.
+const EXPANSION_DOC_IDS := {
+	"arrow_tower_expansion": "MenArrowTowerExpansion",
+	"trebuchet_expansion": "MenTrebuchetExpansion",
+	"trebuchet_side_expansion": "MenTrebuchetSideExpansion",
+	"garrison_dormitory": "MenGarrisonTowerExpansion",
+}
+var _expansion_object_ids: Dictionary = {}
+
+
+func _configure_simulation_expansions() -> void:
+	if simulation == null:
+		return
+	var rules: Dictionary = {}
+	for kind_value in EXPANSION_DOC_IDS.keys():
+		var kind := String(kind_value)
+		var source_id := String(EXPANSION_DOC_IDS[kind])
+		var runtime_id := PlayableUnitAdapter._runtime_id(source_id)
+		var definition := ContentDB.get_playable_structure_runtime(source_id)
+		if definition.is_empty():
+			continue
+		var registration := definition.get("registration", {}) as Dictionary
+		var gameplay := registration.get("gameplay", {}) as Dictionary
+		var scalar_fields := gameplay.get("scalarFields", {}) as Dictionary
+		var cost := int((scalar_fields.get("BuildCost", {}) as Dictionary).get("value", -1))
+		var seconds := float((scalar_fields.get("BuildTime", {}) as Dictionary).get("value", 0.0))
+		var health := int(((gameplay.get("health", {}) as Dictionary).get("primary", {}) as Dictionary).get("maxHealth", {}).get("value", 0))
+		var pad_kinds: Array = []
+		for route_value in (registration.get("production", {}) as Dictionary).get("routes", []) as Array:
+			var builder := String((route_value as Dictionary).get("builderObjectId", "")).to_lower()
+			if builder.contains("padside") and not pad_kinds.has("side"):
+				pad_kinds.append("side")
+			elif builder.contains("padcorner") and not pad_kinds.has("corner"):
+				pad_kinds.append("corner")
+		if cost <= 0 or seconds <= 0.0 or health <= 0 or pad_kinds.is_empty():
+			# Incomplete doc: the kind is unavailable, never approximated.
+			continue
+		rules[kind] = {
+			"cost": cost,
+			"seconds": seconds,
+			"health": health,
+			"pad_kinds": pad_kinds,
+			"name": kind.replace("_", " ").capitalize(),
+			"object_id": runtime_id,
+		}
+	_expansion_object_ids = rules.duplicate(true)
+	simulation.configure_expansion_rules(rules)
+
+
+func _faction_spellbook_document() -> Dictionary:
+	## Resolve the CURRENT faction's spellbook from the packs, never by slot
+	## position: the content registry's spellbook slot is last-pack-wins across
+	## every mounted pack, so without a faction check every faction plays the
+	## Men tree. Search the active pack first, then every mounted pack root;
+	## a faction whose packs genuinely ship no spellbook fails closed (the sim
+	## reports spellbook-unavailable and locks the tree, recorded here).
+	var faction := String(faction_manifest.get("faction", ""))
+	var document := _spellbook_document_for_faction(selected_pack_root, faction)
+	if not document.is_empty():
+		return document
+	for pack_root in ModLoader.list_pack_roots():
+		if selected_pack_root != "" and pack_root == selected_pack_root:
+			continue
+		document = _spellbook_document_for_faction(pack_root, faction)
+		if not document.is_empty():
+			return document
+	_spellbook_resolution_note = "no spellbook document for faction '%s' in any mounted pack" % (faction if faction != "" else "<unset>")
+	return ContentDB.get_spellbook_runtime() if faction == "" and ContentDB.has_method("get_spellbook_runtime") else {}
+
+
+func _spellbook_document_for_faction(pack_root: String, faction: String) -> Dictionary:
+	if pack_root == "" or faction == "":
+		return {}
+	var pack_document := ModLoader._read_json(pack_root.path_join("pack.json")) as Dictionary
+	var files: Dictionary = pack_document.get("files", {}) as Dictionary
+	var keys: Array[String] = []
+	for key_value in files.keys():
+		if String(key_value).begins_with("spellbook."):
+			keys.append(String(key_value))
+	keys.sort()
+	for key in keys:
+		var relative := String(files.get(key, ""))
+		if relative == "" or not ModLoader.is_safe_relative_path(relative):
+			continue
+		var document := ModLoader._read_json(ModLoader.resolve_pack_path(pack_root, relative)) as Dictionary
+		if document.is_empty() or String(document.get("schema", "")) != "openbfme.spellbook-runtime":
+			continue
+		var target_faction := String((document.get("target", {}) as Dictionary).get("faction", ""))
+		if target_faction.to_lower() != faction.to_lower():
+			continue
+		document["_pack_root"] = pack_root
+		document["_pack_file_key"] = key
+		return document
+	return {}
+
+
+func _apply_menu_match_options() -> void:
+	## Menu setup seam: the chosen house colors ride GameState into the retail
+	## mask-recolor application (defaults are the authored blue/red rows).
+	var game_state := get_node_or_null("/root/GameState")
+	if game_state == null:
+		return
+	HouseColorScript.team_color_overrides[0] = game_state.get("retail_player_color")
+	HouseColorScript.team_color_overrides[1] = game_state.get("retail_enemy_color")
+
+
+func _match_configuration() -> Dictionary:
+	## Simulation configuration with the menu's player-start choice applied
+	## (options seam; 0 keeps the authored assignment — the human then takes
+	## Player_2_Start and the AI takes Player_1_Start). Unknown starts fail
+	## closed back to the authored configuration, never to a wrong position.
+	var configuration := source_map_data.simulation_configuration()
+	var game_state := get_node_or_null("/root/GameState")
+	if game_state == null:
+		return configuration
+	var choice := int(game_state.get("retail_player_start_index"))
+	if choice <= 0:
+		return configuration
+	var starts := _read_waypoint_player_starts()
+	if not starts.has(choice):
+		return configuration
+	var enemy_index := -1
+	for candidate in [1, 2]:
+		if candidate != choice and starts.has(candidate):
+			enemy_index = candidate
+			break
+	if enemy_index < 0:
+		for candidate_value in starts.keys():
+			if int(candidate_value) != choice:
+				enemy_index = int(candidate_value)
+				break
+	if enemy_index < 0:
+		return configuration
+	var spawn_positions := (configuration.get("spawn_positions", {}) as Dictionary).duplicate(true)
+	if spawn_positions.is_empty():
+		return configuration
+	var player_local: Vector2 = starts[choice]
+	var enemy_local: Vector2 = starts[enemy_index]
+	spawn_positions[1] = source_map_data._walkable_spawn(Vector2(player_local.x, player_local.y - 4.5))
+	spawn_positions[2] = source_map_data._walkable_spawn(Vector2(player_local.x, player_local.y + 4.5))
+	spawn_positions[101] = source_map_data._walkable_spawn(Vector2(enemy_local.x, enemy_local.y - 4.5))
+	spawn_positions[102] = source_map_data._walkable_spawn(Vector2(enemy_local.x, enemy_local.y + 4.5))
+	configuration["spawn_positions"] = spawn_positions
+	# The authored home layout is pinned to the default starts; a chosen start
+	# makes the sim derive the base around the new anchor instead.
+	if configuration.has("home_layout"):
+		configuration.erase("home_layout")
+	return configuration
+
+
+func _read_waypoint_player_starts() -> Dictionary:
+	## All authored player starts from the map's cooked waypoints document,
+	## converted to local map coordinates by the map's own transform. Keyed by
+	## the retail playerIndex (1..N).
+	var starts := {}
+	if map_pack_root == "" or source_map_data == null:
+		return starts
+	var source_path := String(_loaded_map_definition.get("_source", ""))
+	if source_path == "":
+		var map_relative := String(_loaded_map_definition.get("map", ""))
+		if map_relative != "":
+			source_path = map_relative
+	if source_path.begins_with(map_pack_root):
+		source_path = source_path.substr(map_pack_root.length()).trim_prefix("/")
+	if source_path == "" or source_path.contains(":") or source_path.begins_with("/"):
+		return starts
+	var document := _read_bounded_pack_document(map_pack_root, source_path.get_base_dir().path_join("waypoints.json"), MAP_DOCUMENT_MAX_BYTES)
+	for start_name_value in (document.get("playerStarts", {}) as Dictionary).keys():
+		var row := (document.get("playerStarts", {}) as Dictionary)[start_name_value] as Dictionary
+		var player_index := int(row.get("playerIndex", -1))
+		var position := _godot_position(row.get("godotPosition", []))
+		if player_index > 0 and position != Vector3.INF:
+			var local: Vector3 = source_map_data.source_to_local(position)
+			starts[player_index] = Vector2(local.x, local.z)
+	return starts
+
+
+func _godot_position(value: Variant) -> Vector3:
+	if typeof(value) != TYPE_ARRAY or (value as Array).size() < 3:
+		return Vector3.INF
+	var row := value as Array
+	return Vector3(float(row[0]), float(row[1]), float(row[2]))
+
+
 func reset_match() -> void:
 	if simulation == null:
 		return
-	simulation.setup(source_map_data.simulation_configuration(), gameplay_rules)
+	_configure_simulation_spellbook()
+	simulation.setup(_match_configuration(), gameplay_rules)
+	# A fresh match starts unpaused with the spellbook closed (setup() also
+	# clears the orb clock-pause seam).
+	if hud != null and hud.has_method("close_powers_palette"):
+		hud.close_powers_palette()
 	simulation_paused = false
 	_score_cache = {"units_trained": 0, "units_lost": 0, "resources_gathered": 0}
 	_score_event_index = 0
@@ -2008,13 +4007,13 @@ func test_select(id: int) -> bool:
 
 
 func test_move(destination: Vector2) -> int:
-	var accepted := simulation.issue_move(simulation.selected_ids.duplicate(), destination)
+	var accepted := int(_apply_local_command("issue_move", {"ids": simulation.selected_ids.duplicate(), "destination": destination}))
 	_sync_presentation()
 	return accepted
 
 
 func test_attack(target_id: int) -> int:
-	var accepted := simulation.issue_attack(simulation.selected_ids.duplicate(), target_id)
+	var accepted := int(_apply_local_command("issue_attack", {"ids": simulation.selected_ids.duplicate(), "target_id": target_id}))
 	_sync_presentation()
 	return accepted
 
@@ -2280,11 +4279,30 @@ func _build_hud() -> void:
 	member_health_overlay.configure(self, camera, battalion_nodes)
 	hud = HudScript.new()
 	hud_root = hud
-	ranger_hud_configuration_error = hud.enable_ranger_content(ContentDB.get_ranger_runtime())
-	trebuchet_hud_configuration_error = hud.enable_trebuchet_content(ContentDB.get_trebuchet_runtime())
-	playable_unit_hud_configuration_error = hud.enable_playable_unit_content(playable_unit_runtimes, _producer_kind_registry())
+	# Ranger/trebuchet typed contracts are Men-only content; other factions
+	# receive every command surface from their own playableUnit documents.
+	# Full Men packs with GondorRanger as a playableUnit skip the overlay HUD path.
+	var men_hud_faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)) == FactionManifestScript.DEFAULT_FACTION
+	var use_ranger_overlay := men_hud_faction and not _playable_has_ranger()
+	ranger_hud_configuration_error = hud.enable_ranger_content(ContentDB.get_ranger_runtime() if use_ranger_overlay else {})
+	trebuchet_hud_configuration_error = hud.enable_trebuchet_content(ContentDB.get_trebuchet_runtime() if men_hud_faction else {})
+	playable_unit_hud_configuration_error = hud.enable_playable_unit_content(producible_unit_runtimes, _producer_kind_registry())
+	# Construct action specs must be registered before build() creates buttons.
+	# The faction must flow with them: without it the Men construct templates
+	# bind on every faction's porter (the elves-uses-Men-art/strings bug).
+	hud.configure_manifest_construct_kinds(
+		faction_manifest.get("structure_kinds", []) as Array,
+		String(faction_manifest.get("faction", "")),
+		faction_manifest.get("structure_training_summaries", {}) as Dictionary
+	)
+	var spellbook_runtime: Dictionary = _faction_spellbook_document()
+	if not spellbook_runtime.is_empty() and hud.has_method("configure_spellbook_runtime"):
+		hud.configure_spellbook_runtime(spellbook_runtime)
 	layer.add_child(hud)
 	hud.build()
+	# Heading label only exists after build.
+	if hud.has_method("configure_faction_surface"):
+		hud.configure_faction_surface(faction_manifest)
 	var viewport := get_viewport()
 	if not viewport.size_changed.is_connected(_sync_hud_to_viewport):
 		viewport.size_changed.connect(_sync_hud_to_viewport)
@@ -2297,38 +4315,89 @@ func _build_hud() -> void:
 	minimap = hud.minimap
 	minimap.mouse_filter = Control.MOUSE_FILTER_STOP
 	minimap.center_requested.connect(_center_camera_on)
+	minimap.order_requested.connect(func(world_position: Vector2) -> void:
+		if not ready_ok or simulation_paused:
+			return
+		_issue_order_at(world_position)
+	)
 	pause_panel = hud.pause_panel
 	failure_panel = hud.failure_panel
+	_install_pause_settings_button()
 	hud.pause_requested.connect(toggle_escape_menu)
 	hud.restart_requested.connect(reset_match)
-	hud.main_menu_requested.connect(func() -> void: get_tree().change_scene_to_file("res://scenes/boot.tscn"))
+	hud.main_menu_requested.connect(func() -> void:
+		# Unpause before leaving: a pause-open exit must not freeze the main
+		# menu's scene tree behind us (buttons dead on a paused tree).
+		simulation_paused = false
+		get_tree().paused = false
+		get_tree().change_scene_to_file("res://scenes/boot.tscn"))
 	hud.quit_requested.connect(func() -> void: get_tree().quit())
 	hud.group_assign_requested.connect(_assign_group)
 	hud.group_recall_requested.connect(_recall_group)
 	hud.train_requested.connect(_queue_selected_producer)
 	hud.structure_upgrade_requested.connect(_upgrade_selected_structure)
+	hud.battalion_upgrade_requested.connect(_on_battalion_upgrade_requested)
 	hud.cancel_production_requested.connect(_cancel_selected_production)
 	hud.attack_move_requested.connect(_arm_attack_move)
 	hud.stop_requested.connect(_stop_selected_units)
 	hud.stance_requested.connect(_toggle_selected_stance)
+	if hud.has_signal("formation_requested"):
+		hud.formation_requested.connect(_toggle_selected_formation)
 	hud.command_cap_changed.connect(func(value: int) -> void:
 		simulation.command_point_cap = maxi(60, value)
 		hud.set_feedback("Command point cap set to %d." % simulation.command_point_cap)
 	)
 	hud.powers_opened.connect(func() -> void:
-		hud.refresh_powers(simulation.power_points(0), simulation.purchased_powers[0])
+		# Single-player: the open spellbook pauses the sim clock (existing
+		# seam; the escape-menu pause composes independently).
+		_apply_local_command("set_spellbook_orb_open", {"open": true})
+		hud.refresh_powers(simulation.power_points(local_team), simulation.purchased_powers[local_team], simulation.spellbook_ui_state(local_team))
 	)
 	hud.power_purchase_requested.connect(func(power_id: String, cost: int) -> void:
-		var result := simulation.purchase_power(0, power_id, cost)
+		var result: Dictionary = _apply_local_command("purchase_power", {"power_id": power_id, "cost": cost})
 		if bool(result.get("ok", false)):
-			hud.set_feedback("Power acquired: %s." % power_id.trim_prefix("SBGood_").capitalize())
+			hud.set_feedback("Power acquired: %s." % hud.power_display_name(power_id))
 		else:
 			hud.set_feedback("Cannot acquire power: %s." % String(result.get("reason", "rejected")).replace("-", " "), true)
-		hud.refresh_powers(simulation.power_points(0), simulation.purchased_powers[0])
+		hud.refresh_powers(simulation.power_points(local_team), simulation.purchased_powers[local_team], simulation.spellbook_ui_state(local_team))
 	)
-	hud.power_cast_requested.connect(func(cast_kind: String) -> void:
-		power_cast_armed = cast_kind
-		hud.set_feedback("Choose a target area for %s (right-click cancels)." % cast_kind.capitalize())
+	hud.powers_reset_requested.connect(func() -> void:
+		# Retail RESET: refund this session's unspent picks and re-pick.
+		var result: Dictionary = _apply_local_command("reset_spellbook_purchases")
+		if int(result.get("refunded", 0)) > 0:
+			hud.set_feedback("Picks reset: %d power point%s refunded." % [int(result.get("refunded", 0)), "" if int(result.get("refunded", 0)) == 1 else "s"])
+		else:
+			hud.set_feedback("No unspent picks to reset.")
+		hud.refresh_powers(simulation.power_points(local_team), simulation.purchased_powers[local_team], simulation.spellbook_ui_state(local_team))
+	)
+	hud.powers_closed.connect(func() -> void:
+		# Every orb close path is the retail ACCEPT commit — and resumes the
+		# sim clock paused on open.
+		_apply_local_command("set_spellbook_orb_open", {"open": false})
+		_apply_local_command("accept_spellbook_purchases")
+		hud.refresh_powers(simulation.power_points(local_team), simulation.purchased_powers[local_team], simulation.spellbook_ui_state(local_team))
+	)
+	hud.power_cast_requested.connect(func(power_id: String) -> void:
+		ability_cast_armed = {}
+		power_cast_armed = power_id
+		hud.set_feedback("Choose a target area for %s (left-click casts; right-click or Esc cancels)." % hud.power_display_name(power_id))
+	)
+	hud.ability_cast_requested.connect(func(unit_id: String, ability_id: String) -> void:
+		var hero_id := _selected_hero_for_ability(unit_id)
+		if hero_id == 0:
+			return
+		var targeting := "self"
+		for rule_value in simulation.ability_rules_for_unit(unit_id):
+			if String((rule_value as Dictionary).get("ability_id", "")) == ability_id:
+				targeting = String((rule_value as Dictionary).get("targeting", "self"))
+		if targeting == "self":
+			var result: Dictionary = _apply_local_command("cast_ability", {"hero_id": hero_id, "ability_id": ability_id, "target_point": Vector2(simulation.entity(hero_id).get("position", Vector2.ZERO))})
+			_report_ability_cast(unit_id, ability_id, result)
+			_sync_presentation()
+			return
+		power_cast_armed = ""
+		ability_cast_armed = {"hero_id": hero_id, "ability_id": ability_id, "unit_id": unit_id}
+		hud.set_feedback("Choose a target for %s (left-click casts; right-click or Esc cancels)." % _ability_display_name(unit_id, ability_id))
 	)
 	hud.weak_fortress_toggled.connect(func(value: bool) -> void:
 		# Testing convenience: cap both fortresses at 1500 HP so matches
@@ -2346,7 +4415,10 @@ func _build_hud() -> void:
 		hud.set_feedback("Weak fortresses %s." % ("enabled" if value else "disabled"))
 		_sync_presentation()
 	)
+	hud.cheat_resources_requested.connect(_grant_test_resources)
 	hud.construct_requested.connect(_arm_construction)
+	hud.hero_recall_requested.connect(_on_hero_recall_requested)
+	hud.expansion_requested.connect(_on_expansion_requested)
 	hud.music_volume_changed.connect(func(value: float) -> void:
 		if audio_system != null: audio_system.set_music_volume(value, true)
 	)
@@ -2390,13 +4462,151 @@ func _update_camera(delta: float) -> void:
 		input_direction.y -= 1.0
 	if Input.is_action_pressed("cam_back"):
 		input_direction.y += 1.0
+	# Retail edge scroll: the cursor resting on a screen border pans the map.
+	if DisplayServer.get_name() != "headless" and not _camera_orbiting and _right_drag_origin == Vector2.INF:
+		var edge := 12.0
+		var viewport_size := get_viewport().get_visible_rect().size
+		var mouse_position := get_viewport().get_mouse_position()
+		if Rect2(Vector2.ZERO, viewport_size).has_point(mouse_position):
+			if mouse_position.x <= edge:
+				input_direction.x -= 1.0
+			elif mouse_position.x >= viewport_size.x - edge:
+				input_direction.x += 1.0
+			if mouse_position.y <= edge:
+				input_direction.y -= 1.0
+			elif mouse_position.y >= viewport_size.y - edge:
+				input_direction.y += 1.0
 	if input_direction.length_squared() > 0.0:
 		var forward := _camera_forward_local()
 		var right := Vector2(-forward.y, forward.x)
 		var movement := right * input_direction.x - forward * input_direction.y
-		camera_focus += movement.normalized() * delta * OPENBFME_KEYBOARD_SCROLL_BASE_LOCAL_PER_SECOND * FORDS_CAMERA_SCROLL_SPEED_SCALAR
+		camera_focus += movement.normalized() * delta * OPENBFME_KEYBOARD_SCROLL_BASE_LOCAL_PER_SECOND * keyboard_scroll_speed_scale * FORDS_CAMERA_SCROLL_SPEED_SCALAR
 		_clamp_camera_focus()
 	_apply_camera_transform()
+	_update_hover_cursor()
+
+
+## Retail shows an attack cursor when the cursor rests over an enemy while a
+## combat selection is active (stock cross shape — styled chrome, not art).
+func _update_hover_cursor() -> void:
+	if DisplayServer.get_name() == "headless" or simulation == null:
+		return
+	var shape := Input.CURSOR_ARROW
+	if (
+		not simulation.selected_ids.is_empty()
+		and construction_kind_armed == ""
+		and ability_cast_armed.is_empty()
+		and power_cast_armed == ""
+	):
+		var world: Variant = _screen_to_world(get_viewport().get_mouse_position())
+		if world != null:
+			var point := Vector2((world as Vector3).x, (world as Vector3).z)
+			var enemy_id := _closest_battalion(point, 1, 6.0)
+			if enemy_id == 0:
+				enemy_id = _closest_structure(point, 1)
+			if enemy_id != 0:
+				shape = Input.CURSOR_CROSS
+	if Input.get_current_cursor_shape() != shape:
+		Input.set_default_cursor_shape(shape)
+
+
+func _grant_test_resources() -> void:
+	if simulation == null:
+		return
+	var grant := 50000
+	simulation.team_resources[0] = int(simulation.team_resources.get(0, 0)) + grant
+	simulation.team_resources[1] = int(simulation.team_resources.get(1, 0)) + grant
+	if simulation.team_power_points is Dictionary:
+		simulation.team_power_points[0] = int(simulation.team_power_points.get(0, 0)) + 10
+		simulation.team_power_points[1] = int(simulation.team_power_points.get(1, 0)) + 10
+	hud.set_resources(simulation.resources_for_team(local_team), simulation.command_points_for_team(local_team), simulation.command_point_cap)
+	hud.refresh_powers(simulation.power_points(local_team), simulation.purchased_powers[local_team], simulation.spellbook_ui_state(local_team))
+	hud.set_feedback("Cheat: +%d resources and +10 power points (both teams)." % grant)
+
+
+var _power_fx_event_index := 0
+
+
+func _consume_power_fx_events() -> void:
+	## Spellbook casts get a visible world cue at the target point (retail
+	## plays authored FX lists; this is the provisional stand-in).
+	var events: Array = simulation.events
+	while _power_fx_event_index < events.size():
+		var event: Dictionary = events[_power_fx_event_index]
+		_power_fx_event_index += 1
+		if String(event.get("kind", "")) != "power.cast":
+			continue
+		var point_value: Variant = event.get("point")
+		if typeof(point_value) != TYPE_ARRAY or (point_value as Array).size() < 2:
+			continue
+		var point := Vector2(float((point_value as Array)[0]), float((point_value as Array)[1]))
+		var is_heal := String(event.get("power_id", "")) == "SpellBookHeal"
+		_spawn_power_flash(point, Color(0.45, 1.0, 0.55) if is_heal else Color(1.0, 0.85, 0.4))
+
+
+func _spawn_power_flash(point: Vector2, color: Color) -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	var ring := MeshInstance3D.new()
+	var mesh := TorusMesh.new()
+	mesh.inner_radius = 2.3
+	mesh.outer_radius = 2.6
+	ring.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.albedo_color = color
+	material.emission_enabled = true
+	material.emission = color
+	ring.material_override = material
+	ring.position = Vector3(point.x, _presentation_height(point) + 0.15, point.y)
+	add_child(ring)
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(ring, "scale", Vector3(2.4, 1.0, 2.4), 0.9).from(Vector3(0.3, 1.0, 0.3))
+	tween.tween_property(material, "albedo_color:a", 0.0, 0.9).from(0.9)
+	tween.chain().tween_callback(ring.queue_free)
+
+
+func _issue_order_at(world_point: Vector2) -> void:
+	## Shared right-click order policy for the world viewport and the radar:
+	## selected units get move/attack, a selected building gets its rally.
+	if not simulation.selected_ids.is_empty():
+		_handle_right_click(world_point)
+	elif selected_structure_id != 0:
+		var rally_result: Dictionary = _apply_local_command("set_structure_rally", {"structure_id": selected_structure_id, "position": world_point})
+		if bool(rally_result.get("ok", false)):
+			hud.set_feedback("Rally point set.")
+
+
+func _pan_camera_screen(relative: Vector2) -> void:
+	## Grab-the-map panning: the terrain point under the cursor stays under the
+	## cursor, so the focus shifts by the world delta of the drag.
+	var center := get_viewport().get_visible_rect().size * 0.5
+	var from_value: Variant = _screen_to_world(center)
+	var to_value: Variant = _screen_to_world(center - relative)
+	if from_value == null or to_value == null:
+		return
+	var from_world := from_value as Vector3
+	var to_world := to_value as Vector3
+	camera_focus += Vector2(to_world.x - from_world.x, to_world.z - from_world.z)
+	_clamp_camera_focus()
+	_apply_camera_transform()
+
+
+func _reset_camera_home() -> void:
+	if simulation == null:
+		return
+	var fortress := simulation.fortress_id(local_team)
+	if fortress != 0:
+		camera_focus = Vector2(simulation.structure(fortress).get("position", Vector2.ZERO))
+	camera_user_yaw = 0.0
+	camera_zoom_target = 1.0
+	camera_zoom = 1.0
+	_clamp_camera_focus()
+	_apply_camera_transform()
+	if hud != null:
+		hud.set_feedback("Camera reset.")
 
 
 func _nudge_camera_zoom(direction: int) -> void:
@@ -2505,6 +4715,15 @@ func cleanup_for_test() -> void:
 	_clear_presentations()
 	var asset_factory = load("res://src/view/asset_factory.gd")
 	asset_factory.clear_mesh_cache()
+
+
+func _apply_stored_display_settings() -> void:
+	## The shell's stored display/graphics settings apply on every entry path
+	## (menu boot, loading boot, direct slice boot), so the user's window
+	## mode/resolution/quality choice survives the whole flow in one window.
+	var display := UserSettingsScript.load_display()
+	OptionsScreenScript.apply_display_settings(String(display["window_mode"]), String(display["resolution"]))
+	OptionsScreenScript.apply_graphics_preset(String(UserSettingsScript.load_graphics()["preset"]), get_viewport())
 
 
 func _exit_tree() -> void:

@@ -44,63 +44,110 @@ func _run() -> void:
 	)
 	_check(presenter_error == "", "loaded composed lifecycle passes the RetailStructure v1 contract: %s" % presenter_error)
 
-	# Atomicity: one malformed doc rejects the pack's whole structure delta.
+	# Reduced chains: no authored damage thresholds and a never-constructed
+	# composite must load and pass the presenter contract too.
+	var reduced := _fixture_document("ReducedPen", "reducedpen", "fixturemonsterpen", 3000, false, false)
+	_write_json(pack_root.path_join("data/playable-structures/reducedpen.json"), reduced)
+	_check(content_db._load_playable_structure_runtimes(pack_root, {
+		"playableStructure.reducedpen": "data/playable-structures/reducedpen.json",
+	}), "reduced-chain structure declaration loads")
+	var reduced_lifecycle: Dictionary = _lifecycle_of(content_db.get_playable_structure_runtime("ReducedPen"))
+	var reduced_phases: Array = []
+	for row_value in reduced_lifecycle.get("phases", []) as Array:
+		reduced_phases.append(String((row_value as Dictionary).get("phase", "")))
+	_check(reduced_phases == ["intact", "collapsing", "rubble", "post-rubble", "post-collapse"], "reduced chain omits construction and damage phases")
+	var reduced_error: String = structure_script.validate_lifecycle_contract(
+		reduced_lifecycle, "reducedpen", "", 3000, _runtime_id("ReducedPen")
+	)
+	_check(reduced_error == "", "reduced composed lifecycle passes the RetailStructure v1 contract: %s" % reduced_error)
+
+	# Invalid documents are skipped with a diagnostic; the well-formed entries
+	# of the same delta still load, and nothing malformed enters the registry.
 	var malformed := _fixture_document("BrokenPen", "brokenpen")
 	malformed["registration"] = {}
 	_write_json(pack_root.path_join("data/playable-structures/broken.json"), malformed)
 	var before: Dictionary = content_db.get_playable_structure_runtimes()
-	_check(not content_db._load_playable_structure_runtimes(pack_root, {
+	_write_json(pack_root.path_join("data/playable-structures/fixturemonsterpen2.json"), _fixture_document("FixtureMonsterPenTwo", "fixturemonsterpentwo"))
+	var malformed_loaded: bool = content_db._load_playable_structure_runtimes(pack_root, {
 		"playableStructure.second": "data/playable-structures/fixturemonsterpen2.json",
 		"playableStructure.broken": "data/playable-structures/broken.json",
-	}), "malformed pack delta fails closed")
-	_check(content_db.get_playable_structure_runtimes() == before, "failed delta is atomic")
+	})
+	var after_malformed: Dictionary = content_db.get_playable_structure_runtimes()
+	_check(
+		malformed_loaded
+			and after_malformed.has("FixtureMonsterPenTwo")
+			and not after_malformed.has("BrokenPen"),
+		"malformed document is skipped while the valid delta entry loads"
+	)
+	_check(not after_malformed.has("BrokenPen"), "skipped document leaves no registry trace")
 
-	# Cross-pack casefolded id collision with a different spelling is rejected.
+	# Cross-pack casefolded id collision with a different spelling is skipped.
 	var collision := _fixture_document("FIXTUREMonsterPen", "fixturemonsterpen")
 	_write_json(pack_root.path_join("data/playable-structures/collision.json"), collision)
-	_check(not content_db._load_playable_structure_runtimes(pack_root, {
+	var before_collision: Dictionary = content_db.get_playable_structure_runtimes()
+	var collision_loaded: bool = content_db._load_playable_structure_runtimes(pack_root, {
 		"playableStructure.collision": "data/playable-structures/collision.json",
-	}), "casefolded object-id collision fails closed")
-	_check(content_db.get_playable_structure_runtimes() == before, "collision rejection is atomic")
+	})
+	_check(collision_loaded and content_db.get_playable_structure_runtimes() == before_collision, "casefolded object-id collision is skipped atomically")
 
-	_check_rejected_variant(content_db, pack_root, "digest_format", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "digest_format", func(broken: Dictionary) -> void:
 		broken["runtimeSha256"] = "zz".repeat(32))
-	_check_rejected_variant(content_db, pack_root, "wrong_slug", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "wrong_slug", func(broken: Dictionary) -> void:
 		broken["slug"] = "fixture-monster-pen")
-	_check_rejected_variant(content_db, pack_root, "missing_visual_asset", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "missing_visual_asset", func(broken: Dictionary) -> void:
 		var phases: Array = _lifecycle_of(broken).get("phases", [])
 		((phases[0] as Dictionary).get("visual", {}) as Dictionary)["glb"] = "assets/models/structures/variantpen/absent.glb")
-	_check_rejected_variant(content_db, pack_root, "phase_order", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "phase_order", func(broken: Dictionary) -> void:
 		var phases: Array = _lifecycle_of(broken).get("phases", [])
 		phases.reverse())
-	_check_rejected_variant(content_db, pack_root, "coverage_mismatch", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "coverage_mismatch", func(broken: Dictionary) -> void:
 		_lifecycle_of(broken)["phaseCoverage"] = {"covered": ["intact"], "missing": []})
-	_check_rejected_variant(content_db, pack_root, "facts_health_drift", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "facts_health_drift", func(broken: Dictionary) -> void:
 		(_lifecycle_of(broken).get("simulationFacts", {}) as Dictionary)["maximumHealth"] = 4000)
-	_check_rejected_variant(content_db, pack_root, "construct_evidence_without_routes", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "construct_evidence_without_routes", func(broken: Dictionary) -> void:
 		((broken.get("registration", {}) as Dictionary).get("production", {}) as Dictionary)["routes"] = [])
-	_check_rejected_variant(content_db, pack_root, "damage_rule_drift", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "damage_rule_drift", func(broken: Dictionary) -> void:
 		((_lifecycle_of(broken).get("simulationFacts", {}) as Dictionary).get("damageStateRule", {}) as Dictionary)["damagedThreshold"] = 2500)
-	_check_rejected_variant(content_db, pack_root, "wrong_lifecycle_object_id", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "wrong_lifecycle_object_id", func(broken: Dictionary) -> void:
 		_lifecycle_of(broken)["objectId"] = "bfme2.object.someone-else")
-	_check_rejected_variant(content_db, pack_root, "construction_not_manual", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "construction_not_manual", func(broken: Dictionary) -> void:
 		var phases: Array = _lifecycle_of(broken).get("phases", [])
 		((phases[0] as Dictionary).get("animation", {}) as Dictionary)["mode"] = "loop")
-	_check_rejected_variant(content_db, pack_root, "evidence_profile_drift", func(broken: Dictionary) -> void:
+	_check_skipped_variant(content_db, pack_root, "evidence_profile_drift", func(broken: Dictionary) -> void:
 		_lifecycle_of(broken).erase("evidenceProfile"))
+	_check_skipped_variant(content_db, pack_root, "damage_rule_hidden_despite_thresholds", func(broken: Dictionary) -> void:
+		var broken_facts: Dictionary = _lifecycle_of(broken).get("simulationFacts", {}) as Dictionary
+		broken_facts.erase("damageStateRule")
+		broken_facts["damageStateRuleStatus"] = "no-authored-damage-thresholds")
+	_check_skipped_variant(content_db, pack_root, "construction_marker_without_evidence", func(broken: Dictionary) -> void:
+		var broken_facts: Dictionary = _lifecycle_of(broken).get("simulationFacts", {}) as Dictionary
+		broken_facts["construction"] = {"status": "never-constructed-engine-spawned-composite"})
 
 	_run_faction_manifest_checks()
+	_run_cross_pack_producer_checks(content_db)
 	_finish()
 
 
 func _run_faction_manifest_checks() -> void:
+	# Retail-shaped citadel: an engine-spawned fortress composite which carries
+	# the fortress command set (the porter construct button lives there).
+	var fixture_citadel := _fixture_document("FixtureCitadel", "fixturecitadel", "", 3000, true, false)
+	((fixture_citadel.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)["trainedCommandSets"] = [{
+		"id": "FixtureFortressCommandSet",
+		"kind": "direct",
+		"slots": [{"slot": 1, "commandId": "Command_ConstructFixturePorter"}],
+	}]
+	var fixture_porter := _fixture_unit_document("FixturePorter", "FixtureCitadel", 1)
+	var fixture_porter_production: Array = (fixture_porter.get("registration", {}) as Dictionary).get("production", []) as Array
+	(fixture_porter_production[0] as Dictionary)["commandSetId"] = "FixtureFortressCommandSet"
 	var structures := {
 		"FixtureFortress": _fixture_document("FixtureFortress", "fixturefortress", "fixturemonsterpen", 5000),
 		"FixtureMonsterPen": _fixture_document("FixtureMonsterPen", "fixturemonsterpen"),
+		"FixtureCitadel": fixture_citadel,
 	}
 	var units := {
 		"FixtureMonster": _fixture_unit_document("FixtureMonster", "FixtureMonsterPen", 200),
-		"FixturePorter": _fixture_unit_document("FixturePorter", "FixtureFortress", 1),
+		"FixturePorter": fixture_porter,
 	}
 
 	var manifest := FactionManifest.from_registries("fixture", units, structures)
@@ -112,7 +159,20 @@ func _run_faction_manifest_checks() -> void:
 	_check(int((manifest.get("structure_max_health", {}) as Dictionary).get("monsterpen", 0)) == 3000, "producer health comes from simulationFacts")
 	var build_rule: Dictionary = (manifest.get("structure_build_rules", {}) as Dictionary).get("monsterpen", {}) as Dictionary
 	_check(int(build_rule.get("cost", -1)) == 300 and is_equal_approx(float(build_rule.get("seconds", 0.0)), 30.0), "build rules parse BuildCost/BuildTime scalars")
-	_check((manifest.get("producer_kind_registry", {}) as Dictionary) == {"FixtureFortress": "fortress", "FixtureMonsterPen": "monsterpen"}, "producer registry maps source objects to kinds")
+	_check((manifest.get("producer_kind_registry", {}) as Dictionary) == {"FixtureFortress": "fortress", "FixtureMonsterPen": "monsterpen", "FixtureCitadel": "fortress"}, "producer registry maps source objects to kinds, folding the proven citadel into the fortress")
+	var fixture_rules: Dictionary = manifest.get("unit_production_rules", {}) as Dictionary
+	var fixture_monster_rule: Dictionary = fixture_rules.get("bfme2.object.fixture-monster", {}) as Dictionary
+	_check(
+		fixture_rules.size() == 1
+			and String(fixture_monster_rule.get("producer_kind", "")) == "monsterpen"
+			and String(fixture_monster_rule.get("object_id", "")) == "bfme2.object.fixture-monster"
+			and int(fixture_monster_rule.get("default_cost", -1)) == 700
+			and int(fixture_monster_rule.get("default_build_ticks", -1)) == 450
+			and int(fixture_monster_rule.get("default_command_points", -1)) == 35
+			and String(fixture_monster_rule.get("command_id", "")) == "Command_ConstructFixtureMonster",
+		"manifest auto-populates the trainable unit's production rule from its document"
+	)
+	_check(Array(manifest.get("excluded_units", [])).is_empty(), "fixture roster has no exclusions")
 	_check(Array(manifest.get("ai_production_plan", [])) == ["bfme2.object.fixture-monster"], "AI plan is one trainable unit per producer in fixed order")
 	_check(Array(manifest.get("builder_unit_ids", [])) == ["bfme2.object.fixture-porter"], "builder derives from authored construct routes")
 	var roster: Array = manifest.get("spawn_roster", [])
@@ -134,17 +194,38 @@ func _run_faction_manifest_checks() -> void:
 	_check(sim.configuration_error == "", "fixture faction simulation configures: %s" % sim.configuration_error)
 	sim.setup({}, sim._rules)
 	_check(sim.configuration_error == "", "fixture faction setup stays configured: %s" % sim.configuration_error)
-	_check(sim.structure_ids(0).size() == 2 and sim.structure_ids(1).size() == 2, "base loop seeds both teams from structure documents")
+	# Retail start seeds fortresses only; the remaining constructable kinds stay
+	# in the builder's build rules until the porter places them.
+	_check(sim.structure_ids(0).size() == 1 and sim.structure_ids(1).size() == 1, "base loop seeds fortresses only at match start")
 	_check(sim.fortress_id(0) != 0 and sim.fortress_id(1) != 0, "fortress kind is normalized so the base anchor resolves")
 	_check(sim.structure_maximum_health("monsterpen") == 3000, "structure health flows from the manifest")
 	_check(sim.initial_battalion_count() == 7 and sim.entity_ids().size() == 7, "faction spawn roster fills every anchor slot")
 	_check(bool(sim.entity(3).get("is_builder", false)) and bool(sim.entity(104).get("is_builder", false)), "builder flag rides the manifest builder unit ids")
 	_check(String(sim.entity(1).get("object_id", "")) == "bfme2.object.fixture-monster", "player spawn identity is descriptor-driven")
+	sim.ai_enabled = false
+	var monster_pen_id := 0
+	# The site must sit outside the enemy's auto-acquire vision so the walking
+	# builder survives construction; the fixture units see far (scale 0.1).
+	for candidate in [Vector2(-30.0, -20.0), Vector2(-25.0, -5.0), Vector2(-30.0, 10.0), Vector2(-20.0, -25.0), Vector2(-44.0, -24.0)]:
+		var construct_result: Dictionary = sim.issue_construct([3], "monsterpen", candidate)
+		if bool(construct_result.get("ok", false)):
+			monster_pen_id = int(construct_result.get("structure_id", 0))
+			break
+	_check(monster_pen_id != 0, "porter constructs the declared producer kind")
+	var pen_built := false
+	for _step in range(600):
+		if monster_pen_id != 0 and float(sim.structure(monster_pen_id).get("construction_progress", 0.0)) >= 1.0:
+			pen_built = true
+			break
+		sim.tick()
+	_check(pen_built, "constructed producer completes")
 	var producer: int = sim.producer_id(0, "monsterpen")
 	var queued: Dictionary = sim.queue_unit(0, producer, "bfme2.object.fixture-monster")
 	_check(bool(queued.get("ok", false)), "faction producer trains its declared unit: %s" % String(queued.get("reason", "")))
 	var wrong: Dictionary = sim.queue_unit(0, sim.fortress_id(0), "bfme2.object.fixture-monster")
 	_check(not bool(wrong.get("ok", true)) and String(wrong.get("reason", "")) == "unsupported-unit", "fortress rejects units it does not train")
+	var porter_queued: Dictionary = sim.queue_unit(0, sim.fortress_id(0), "bfme2.object.fixture-porter")
+	_check(bool(porter_queued.get("ok", false)), "citadel-bound porter trains at the fortress: %s" % String(porter_queued.get("reason", "")))
 
 	var no_porter := units.duplicate(true)
 	no_porter.erase("FixturePorter")
@@ -160,26 +241,203 @@ func _run_faction_manifest_checks() -> void:
 	_check(String(missing_producer.get("_error", "")).contains("GondorBarracks"), "unknown producer fails closed naming the structure")
 	var empty_faction := FactionManifest.from_registries("rohan", units, structures)
 	_check(String(empty_faction.get("_error", "")).contains("rohan"), "unconverted faction fails closed naming the faction")
+	# Men with empty registries keeps the legacy default manifest; with full
+	# registries it takes the same data-driven path as other factions.
+	var men_default := FactionManifest.from_registries("men", {}, {})
+	_check(not men_default.has("_error") and String(men_default.get("faction", "")) == "men" and Array(men_default.get("structure_kinds", [])).has("barracks"), "men empty registries uses default_manifest")
+	var men_full := FactionManifest.from_registries("men", units, structures)
+	# Fixture objects use Fixture* ids, not men/gondor prefixes, so full path fails closed.
+	_check(String(men_full.get("_error", "")).contains("men") or String(men_full.get("_error", "")).contains("playableStructure"), "men full path with foreign fixtures fails closed: %s" % String(men_full.get("_error", "")))
 
 	# Canonical UI faction names map to the retail Object prefixes, and
-	# engine-spawned fortress parts remain presentation-only resources.
+	# engine-spawned fortress parts remain presentation-only resources. Retail
+	# binds the porter to the citadel: the fortress spawns the citadel, and the
+	# citadel carries the fortress command set with the porter construct button.
 	var elven_fortress := _fixture_document("ElvenFortress", "elvenfortress", "elvenmonsterpen", 5000)
 	var elven_pen := _fixture_document("ElvenMonsterPen", "elvenmonsterpen")
 	for document_value in [elven_fortress, elven_pen]:
 		var production: Dictionary = ((document_value as Dictionary).get("registration", {}) as Dictionary).get("production", {}) as Dictionary
 		for route_value in production.get("routes", []) as Array:
 			(route_value as Dictionary)["builderObjectId"] = "ElvenPorter"
-	var elven_citadel := _fixture_document("ElvenCitadel", "elvencitadel")
-	((elven_citadel.get("registration", {}) as Dictionary).get("production", {}) as Dictionary)["evidence"] = "engine-spawned-composite"
-	((elven_citadel.get("registration", {}) as Dictionary).get("production", {}) as Dictionary)["routes"] = []
+	var elven_citadel := _fixture_document("ElvenCitadel", "elvencitadel", "", 3000, true, false)
+	((elven_citadel.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)["trainedCommandSets"] = [{
+		"id": "ElvenFortressCommandSet",
+		"kind": "direct",
+		"slots": [{"slot": 1, "commandId": "Command_ConstructElvenPorter"}],
+	}]
+	var elven_porter := _fixture_unit_document("ElvenPorter", "ElvenCitadel", 1)
+	var elven_porter_production: Array = (elven_porter.get("registration", {}) as Dictionary).get("production", []) as Array
+	(elven_porter_production[0] as Dictionary)["commandSetId"] = "ElvenFortressCommandSet"
 	var elven_structures := {"ElvenFortress": elven_fortress, "ElvenCitadel": elven_citadel, "ElvenMonsterPen": elven_pen}
 	var elven_units := {
 		"ElvenMonster": _fixture_unit_document("ElvenMonster", "ElvenMonsterPen", 200),
-		"ElvenPorter": _fixture_unit_document("ElvenPorter", "ElvenFortress", 1),
+		"ElvenPorter": elven_porter,
 	}
 	var elves := FactionManifest.from_registries("elves", elven_units, elven_structures)
 	_check(not elves.has("_error"), "elves alias resolves Elven Object prefixes: %s" % String(elves.get("_error", "")))
 	_check(Array(elves.get("structure_kinds", [])) == ["fortress", "monsterpen"], "engine-spawned fortress composites are not independent structures")
+	_check(String((elves.get("producer_kind_registry", {}) as Dictionary).get("ElvenCitadel", "")) == "fortress", "citadel-bound porter registers the citadel as a fortress producer component")
+	_check(Array(elves.get("builder_unit_ids", [])) == ["bfme2.object.elven-porter"], "citadel-bound porter still resolves as the faction builder")
+
+	# The fold stays fail-closed: a composite which does not record the cited
+	# command cannot produce, and a non-composite structure never can.
+	var unproven_citadel := _fixture_document("ElvenCitadel", "elvencitadel", "", 3000, true, false)
+	var unproven_structures := {"ElvenFortress": elven_fortress, "ElvenCitadel": unproven_citadel, "ElvenMonsterPen": elven_pen}
+	var unproven := FactionManifest.from_registries("elves", elven_units, unproven_structures)
+	_check(String(unproven.get("_error", "")).contains("ElvenCitadel") and String(unproven.get("_error", "")).contains("Command_ConstructElvenPorter"), "composite without the authored command fails closed: %s" % String(unproven.get("_error", "")))
+	var wall_citadel := _fixture_document("ElvenCitadel", "elvencitadel", "", 3000, true, false)
+	((wall_citadel.get("registration", {}) as Dictionary).get("production", {}) as Dictionary)["evidence"] = "wall-template"
+	var wall_structures := {"ElvenFortress": elven_fortress, "ElvenCitadel": wall_citadel, "ElvenMonsterPen": elven_pen}
+	var walled := FactionManifest.from_registries("elves", elven_units, wall_structures)
+	_check(String(walled.get("_error", "")).contains("wall-template"), "producer with wall-template evidence fails closed: %s" % String(walled.get("_error", "")))
+
+
+func _run_cross_pack_producer_checks(content_db) -> void:
+	# Retail authors some units at several factions' structures (MordorWorker
+	# is built at the isengard, mordor, and wild lumber mills), so each faction
+	# pack ships its own same-name document bound to its own producer. The
+	# foreign copy loads last and takes the flat registry slot; the manifest
+	# must still scope the faction's own pack copy for producer resolution.
+	var home_root := ProjectSettings.globalize_path("user://cross-pack-home-fixture")
+	var foreign_root := ProjectSettings.globalize_path("user://cross-pack-foreign-fixture")
+	for fixture_root in [home_root, foreign_root]:
+		DirAccess.make_dir_recursive_absolute(fixture_root.path_join("data/playable-units"))
+		DirAccess.make_dir_recursive_absolute(fixture_root.path_join("assets/models"))
+		DirAccess.make_dir_recursive_absolute(fixture_root.path_join("assets/ui"))
+		DirAccess.make_dir_recursive_absolute(fixture_root.path_join("assets/audio"))
+		_write_bytes(fixture_root.path_join("assets/models/fixture.glb"), PackedByteArray([7, 8, 9]))
+		_write_bytes(fixture_root.path_join("assets/ui/fixture.png"), PackedByteArray([1, 2, 3]))
+		_write_bytes(fixture_root.path_join("assets/audio/fixture.wav"), _silent_wav())
+	DirAccess.make_dir_recursive_absolute(home_root.path_join("data/playable-structures"))
+	DirAccess.make_dir_recursive_absolute(home_root.path_join("assets/models/structures/fixturemonsterpen"))
+	for stem in ["construction", "intact", "damaged", "rubble", "bib"]:
+		_write_bytes(home_root.path_join("assets/models/structures/fixturemonsterpen/%s.glb" % stem), PackedByteArray([7, 8, 9]))
+	_write_json(home_root.path_join("data/playable-structures/fixturefortress.json"), _fixture_document("FixtureFortress", "fixturefortress", "fixturemonsterpen", 5000))
+	_write_json(home_root.path_join("data/playable-structures/fixturemill.json"), _fixture_document("FixtureMill", "fixturemill"))
+	_write_json(home_root.path_join("data/playable-units/fixtureporter.json"), _loadable_unit_document("FixturePorter", "FixtureFortress"))
+	_write_json(home_root.path_join("data/playable-units/fixtureworker.json"), _loadable_unit_document("FixtureWorker", "FixtureMill"))
+	_write_json(foreign_root.path_join("data/playable-units/fixtureworker.json"), _loadable_unit_document("FixtureWorker", "ForeignMill"))
+	for fixture_root in [home_root, foreign_root]:
+		if not content_db.pack_roots.has(fixture_root):
+			content_db.pack_roots.append(fixture_root)
+
+	_check(content_db._load_playable_structure_runtimes(home_root, {
+		"playableStructure.fixturefortress": "data/playable-structures/fixturefortress.json",
+		"playableStructure.fixturemill": "data/playable-structures/fixturemill.json",
+	}), "home pack structures load")
+	_check(content_db._load_playable_unit_runtimes(home_root, {
+		"playableUnit.fixtureporter": "data/playable-units/fixtureporter.json",
+		"playableUnit.fixtureworker": "data/playable-units/fixtureworker.json",
+	}), "home pack units load")
+	_check(content_db._load_playable_unit_runtimes(foreign_root, {
+		"playableUnit.fixtureworker": "data/playable-units/fixtureworker.json",
+	}), "foreign pack same-name unit loads")
+	var pack_index: Dictionary = content_db.get_playable_unit_runtime_pack_index()
+	_check((pack_index.get("fixtureworker", []) as Array).size() == 2, "shared unit records every admitted pack copy")
+	var flat_worker: Dictionary = content_db.get_playable_unit_runtime("FixtureWorker")
+	var flat_production: Array = (flat_worker.get("registration", {}) as Dictionary).get("production", [])
+	_check(not flat_production.is_empty() and String((flat_production[0] as Dictionary).get("producerObjectId", "")) == "ForeignMill", "flat registry keeps the last-loaded foreign copy")
+
+	var manifest := FactionManifest.from_registries("fixture", content_db.get_playable_unit_runtimes(), content_db.get_playable_structure_runtimes())
+	_check(not manifest.has("_error"), "cross-pack faction manifest builds: %s" % String(manifest.get("_error", "")))
+	var worker_rule: Dictionary = (manifest.get("unit_production_rules", {}) as Dictionary).get("bfme2.object.fixture-worker", {}) as Dictionary
+	_check(String(worker_rule.get("producer_source_object_id", "")) == "FixtureMill", "manifest scopes the faction's own pack copy for a shared unit")
+	_check(String(worker_rule.get("producer_kind", "")) == "mill", "scoped shared unit resolves its own producer kind")
+
+	# With no provable faction pack root the registry document stands, so the
+	# foreign producer still fails closed instead of being silently adopted.
+	var unscoped := FactionManifest.faction_scoped_unit_runtimes(["fixture"], content_db.get_playable_unit_runtimes(), {"FixtureFortress": {}}, pack_index)
+	var unscoped_production: Array = ((unscoped.get("FixtureWorker", {}) as Dictionary).get("registration", {}) as Dictionary).get("production", [])
+	_check(not unscoped_production.is_empty() and String((unscoped_production[0] as Dictionary).get("producerObjectId", "")) == "ForeignMill", "unprovable pack scope keeps the registry copy and fails closed downstream")
+
+
+func _loadable_unit_document(object_id: String, producer_object_id: String) -> Dictionary:
+	## Full ContentDB-loadable unit shape (mirrors the unit consumer fixture):
+	## the manifest-only fixture above is too thin for pack validation.
+	return {
+		"schema": "openbfme.playable-unit-runtime",
+		"schemaVersion": 0,
+		"objectId": object_id,
+		"category": "infantry",
+		"descriptorSha256": "1".repeat(64),
+		"recipeSha256": "2".repeat(64),
+		"resourceIds": ["fixture-model", "fixture-ui", "fixture-audio"],
+		"registration": {
+			"production": [{
+				"producerObjectId": producer_object_id,
+				"commandSetId": "%sCommandSet" % producer_object_id,
+				"commandId": "Command_Construct%s" % object_id,
+				"surface": "command-socket",
+				"slot": 1,
+				"prerequisites": [],
+				"commandSetTransition": [],
+			}],
+			"composition": {
+				"containerObjectId": object_id,
+				"primaryMemberObjectId": object_id,
+				"members": [{"objectId": object_id, "count": 1}],
+			},
+			"gameplay": {},
+			"simulation": {
+				"displayName": "%s Display" % object_id,
+				"buildCost": 700,
+				"buildTimeSeconds": 45.0,
+				"commandPoints": 35,
+				"memberCount": 1,
+				"memberHealth": 2500,
+				"speed": 50.0,
+				"visionRange": 400.0,
+				"combat": {
+					"attackRange": 30.0, "minimumAttackRange": 0.0,
+					"delayBetweenShotsMs": 1000.0, "preAttackDelayMs": 250.0,
+					"firingDurationMs": 250.0, "damage": 200,
+				},
+				"movement": {"acceleration": 100.0, "braking": 100.0, "turnRateDegreesPerSecond": 360.0},
+				"formation": {"memberCount": 1, "positions": [{"x": 0.0, "y": 0.0}]},
+			},
+			"capabilities": [{"id": "move"}],
+			"visual": {
+				"components": [{
+					"default": true,
+					"output": "assets/models/fixture.glb",
+					"resourceId": "fixture-model",
+					"sourceW3d": "art/w3d/fixture.w3d",
+				}],
+				"coreAnimations": {
+					"idle": [{"identifier": "fixture_idle"}],
+					"move": [{"identifier": "fixture_move"}],
+				},
+			},
+			"ui": {
+				"portraitImageIds": ["UPFixture"],
+				"commands": [{
+					"commandId": "Command_Construct%s" % object_id,
+					"fields": {
+						"ButtonImage": ["BIFixture"],
+						"TextLabel": ["CONTROLBAR:%s" % object_id],
+						"DescriptLabel": ["CONTROLBAR:ToolTip%s" % object_id],
+					},
+				}],
+			},
+			"imageBindings": {
+				"BIFixture": "assets/ui/fixture.png",
+				"UPFixture": "assets/ui/fixture.png",
+			},
+			"audioRoutes": {"container": {}, "primaryMember": {}},
+			"audioBindings": {},
+			"audioResolution": {},
+			"unsupportedCapabilities": [],
+		},
+	}
+
+
+func _silent_wav() -> PackedByteArray:
+	return PackedByteArray([
+		82, 73, 70, 70, 38, 0, 0, 0, 87, 65, 86, 69,
+		102, 109, 116, 32, 16, 0, 0, 0, 1, 0, 1, 0,
+		64, 31, 0, 0, 128, 62, 0, 0, 2, 0, 16, 0,
+		100, 97, 116, 97, 2, 0, 0, 0, 0, 0,
+	])
 
 
 func _fixture_unit_document(object_id: String, producer_object_id: String, damage: int) -> Dictionary:
@@ -241,15 +499,16 @@ func _lifecycle_of(document: Dictionary) -> Dictionary:
 	return ((document.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary).get("buildingLifecycle", {}) as Dictionary
 
 
-func _check_rejected_variant(content_db, pack_root: String, label: String, mutate: Callable) -> void:
+func _check_skipped_variant(content_db, pack_root: String, label: String, mutate: Callable) -> void:
 	var broken := _fixture_document("VariantPen", "variantpen")
 	mutate.call(broken)
 	_write_json(pack_root.path_join("data/playable-structures/variant.json"), broken)
 	var before: Dictionary = content_db.get_playable_structure_runtimes()
-	_check(not content_db._load_playable_structure_runtimes(pack_root, {
+	var loaded: bool = content_db._load_playable_structure_runtimes(pack_root, {
 		"playableStructure.variant": "data/playable-structures/variant.json",
-	}), "%s variant fails closed" % label)
-	_check(content_db.get_playable_structure_runtimes() == before, "%s rejection is atomic" % label)
+	})
+	_check(loaded and not content_db.get_playable_structure_runtimes().has("VariantPen"), "%s variant is skipped" % label)
+	_check(content_db.get_playable_structure_runtimes() == before, "%s skip is atomic" % label)
 
 
 func _build_fixture(pack_root: String) -> void:
@@ -298,7 +557,7 @@ func _fixture_phase(phase: String, visual: Dictionary, animation: Dictionary, ne
 	}
 
 
-func _fixture_document(object_id: String, slug: String, asset_slug: String = "", maximum_health: int = 3000) -> Dictionary:
+func _fixture_document(object_id: String, slug: String, asset_slug: String = "", maximum_health: int = 3000, with_thresholds: bool = true, with_construction: bool = true) -> Dictionary:
 	var model_slug := asset_slug if asset_slug != "" else ("variantpen" if slug == "variantpen" else "fixturemonsterpen")
 	var damaged := maximum_health - 1000
 	var really_damaged := maximum_health - 2000
@@ -310,6 +569,54 @@ func _fixture_document(object_id: String, slug: String, asset_slug: String = "",
 		}
 	var none_animation := {"clip": null, "mode": "none"}
 	var no_render := {"mode": "no-render", "sourceIdentifier": "None"}
+	var health_primary := {
+		"module": "StructureBody ModuleTag_01",
+		"sourceIni": "data/ini/object/fixture.ini",
+		"line": 10,
+		"maxHealth": {"authored": str(maximum_health), "value": maximum_health},
+	}
+	if with_thresholds:
+		health_primary["maxHealthDamaged"] = {"authored": str(damaged), "value": damaged}
+		health_primary["maxHealthReallyDamaged"] = {"authored": str(really_damaged), "value": really_damaged}
+	var phases: Array = []
+	if with_construction:
+		phases.append(_fixture_phase("construction", glb.call("construction"), {"clip": "fixture_abld", "mode": "manual-progress"}, "intact", [["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"]]))
+	var intact_next := "damaged" if with_thresholds else "collapsing"
+	phases.append(_fixture_phase("intact", glb.call("intact"), none_animation.duplicate(), intact_next, [[]]))
+	if with_thresholds:
+		phases.append(_fixture_phase("damaged", glb.call("damaged"), none_animation.duplicate(), "really-damaged", [["DAMAGED"]]))
+		phases.append(_fixture_phase("really-damaged", glb.call("damaged"), none_animation.duplicate(), "collapsing", [["REALLYDAMAGED"]]))
+	phases.append(_fixture_phase("collapsing", glb.call("rubble"), {"clip": "fixture_dies", "mode": "once"}, "rubble", [["COLLAPSING"]]))
+	phases.append(_fixture_phase("rubble", glb.call("rubble"), none_animation.duplicate(), "post-rubble", [["RUBBLE"]]))
+	phases.append(_fixture_phase("post-rubble", no_render.duplicate(), none_animation.duplicate(), null, [["POST_RUBBLE"]]))
+	phases.append(_fixture_phase("post-collapse", no_render.duplicate(), none_animation.duplicate(), null, [["POST_COLLAPSE"]]))
+	var facts := {
+		"maximumHealth": maximum_health,
+		"collapse": {"module": null, "status": "no-authored-structure-collapse-update"},
+		"postRubble": {"terminalDuration": "retained-until-explicit-destruction"},
+	}
+	if with_thresholds:
+		facts["damageStateRule"] = {"damagedThreshold": damaged, "reallyDamagedThreshold": really_damaged}
+	else:
+		facts["damageStateRuleStatus"] = "no-authored-damage-thresholds"
+	if with_construction:
+		facts["construction"] = {"buildTimeSeconds": 30.0, "animationMode": "MANUAL", "animation": "fixture_abld"}
+	else:
+		facts["construction"] = {"status": "never-constructed-engine-spawned-composite"}
+	var production := {
+		"evidence": "authored-construct-command",
+		"routes": [{
+			"surface": "construct",
+			"commandId": "Command_Construct%s" % object_id,
+			"commandKind": "DOZER_CONSTRUCT",
+			"builderObjectId": "FixturePorter",
+			"commandSetId": "FixturePorterCommandSet",
+			"slot": 2,
+			"prerequisites": [],
+		}],
+	}
+	if not with_construction:
+		production = {"evidence": "engine-spawned-composite", "routes": []}
 	return {
 		"schema": "openbfme.playable-structure-runtime",
 		"schemaVersion": 0,
@@ -320,28 +627,10 @@ func _fixture_document(object_id: String, slug: String, asset_slug: String = "",
 		"runtimeSha256": "3".repeat(64),
 		"lifecycleEvidenceSha256": "4".repeat(64),
 		"registration": {
-			"production": {
-				"evidence": "authored-construct-command",
-				"routes": [{
-					"surface": "construct",
-					"commandId": "Command_Construct%s" % object_id,
-					"commandKind": "DOZER_CONSTRUCT",
-					"builderObjectId": "FixturePorter",
-					"commandSetId": "FixturePorterCommandSet",
-					"slot": 2,
-					"prerequisites": [],
-				}],
-			},
+			"production": production,
 			"gameplay": {
 				"health": {
-					"primary": {
-						"module": "StructureBody ModuleTag_01",
-						"sourceIni": "data/ini/object/fixture.ini",
-						"line": 10,
-						"maxHealth": {"authored": str(maximum_health), "value": maximum_health},
-						"maxHealthDamaged": {"authored": str(damaged), "value": damaged},
-						"maxHealthReallyDamaged": {"authored": str(really_damaged), "value": really_damaged},
-					},
+					"primary": health_primary,
 					"evidence": [],
 				},
 				"trainedCommandSets": [{
@@ -361,19 +650,10 @@ func _fixture_document(object_id: String, slug: String, asset_slug: String = "",
 					"evidenceProfile": "composed-structure-runtime",
 					"objectId": _runtime_id(object_id),
 					"initialPhase": "intact",
-					"phases": [
-						_fixture_phase("construction", glb.call("construction"), {"clip": "fixture_abld", "mode": "manual-progress"}, "intact", [["ACTIVELY_BEING_CONSTRUCTED", "PARTIALLY_CONSTRUCTED"]]),
-						_fixture_phase("intact", glb.call("intact"), none_animation.duplicate(), "damaged", [[]]),
-						_fixture_phase("damaged", glb.call("damaged"), none_animation.duplicate(), "really-damaged", [["DAMAGED"]]),
-						_fixture_phase("really-damaged", glb.call("damaged"), none_animation.duplicate(), "collapsing", [["REALLYDAMAGED"]]),
-						_fixture_phase("collapsing", glb.call("rubble"), {"clip": "fixture_dies", "mode": "once"}, "rubble", [["COLLAPSING"]]),
-						_fixture_phase("rubble", glb.call("rubble"), none_animation.duplicate(), "post-rubble", [["RUBBLE"]]),
-						_fixture_phase("post-rubble", no_render.duplicate(), none_animation.duplicate(), null, [["POST_RUBBLE"]]),
-						_fixture_phase("post-collapse", no_render.duplicate(), none_animation.duplicate(), null, [["POST_COLLAPSE"]]),
-					],
+					"phases": phases,
 					"phaseCoverage": {
-						"covered": ["construction", "intact", "damaged", "rubble"],
-						"missing": ["really-damaged", "post-rubble"],
+						"covered": ["construction", "intact", "damaged", "rubble"] if with_construction and with_thresholds else ["intact", "rubble"],
+						"missing": ["really-damaged", "post-rubble"] if with_construction and with_thresholds else ["construction", "damaged", "really-damaged", "post-rubble"],
 					},
 					"bib": {
 						"drawModule": "W3DFloorDraw",
@@ -393,13 +673,7 @@ func _fixture_document(object_id: String, slug: String, asset_slug: String = "",
 						"enteringStateBindings": [],
 						"particleAttachments": [],
 					},
-					"simulationFacts": {
-						"maximumHealth": maximum_health,
-						"damageStateRule": {"damagedThreshold": damaged, "reallyDamagedThreshold": really_damaged},
-						"construction": {"buildTimeSeconds": 30.0, "animationMode": "MANUAL", "animation": "fixture_abld"},
-						"collapse": {"module": null, "status": "no-authored-structure-collapse-update"},
-						"postRubble": {"terminalDuration": "retained-until-explicit-destruction"},
-					},
+					"simulationFacts": facts,
 					"rebuildHole": null,
 					"compositionExclusions": [],
 				},

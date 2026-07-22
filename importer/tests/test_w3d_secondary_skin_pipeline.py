@@ -10,7 +10,7 @@ from importer.openbfme_importer.pipeline import (
     _prepare_w3d_secondary_skin_streams,
 )
 from importer.openbfme_importer.w3d_metadata import scan_w3d_metadata
-from importer.tests.test_w3d_secondary_skin import _hierarchy, _model
+from importer.tests.test_w3d_secondary_skin import _hierarchy, _model, _target_mesh
 
 
 class W3DSecondarySkinPipelineTests(unittest.TestCase):
@@ -101,6 +101,33 @@ class W3DSecondarySkinPipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "found 2"):
                 _prepare_w3d_secondary_skin_streams(copied, model)
             self.assertEqual(model.read_bytes(), before)
+
+    def test_unproven_redundancy_retains_streams_with_exact_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            diverged = _model(
+                _target_mesh(
+                    secondary_vertices=((1.0, 3.0, 4.0), (30.0, 30.0, 70.0)),
+                )
+            )
+            copied, model = self._inputs(root, model_bytes=diverged)
+            before = model.read_bytes()
+
+            proof = _prepare_w3d_secondary_skin_streams(copied, model)
+
+            self.assertIsNotNone(proof)
+            assert proof is not None
+            self.assertEqual(proof["schema"], "openbfme.w3d-secondary-skin-retention")
+            self.assertIs(proof["retained"], True)
+            self.assertEqual(proof["transformedMeshCount"], 0)
+            self.assertEqual(proof["removedByteCount"], 0)
+            self.assertEqual(proof["rejectedCandidateCount"], 1)
+            self.assertIn("bind position delta", proof["rejectedCandidates"][0])
+            self.assertEqual(model.read_bytes(), before)
+            self.assertEqual(
+                proof["stagedClosureBeforeSha256"],
+                proof["stagedClosureAfterSha256"],
+            )
 
 
 if __name__ == "__main__":

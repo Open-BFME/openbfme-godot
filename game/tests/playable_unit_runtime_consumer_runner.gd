@@ -106,11 +106,272 @@ func _run() -> void:
 	malformed["registration"] = {}
 	_write_json(pack_root.path_join("data/playable-units/broken.json"), malformed)
 	var before: Dictionary = content_db.get_playable_unit_runtimes()
-	_check(not content_db._load_playable_unit_runtimes(pack_root, {
+	var malformed_loaded: bool = content_db._load_playable_unit_runtimes(pack_root, {
 		"playableUnit.second": "data/playable-units/fixturemonster.json",
 		"playableUnit.broken": "data/playable-units/broken.json",
-	}), "malformed pack delta fails closed")
-	_check(content_db.get_playable_unit_runtimes() == before, "failed delta is atomic")
+	})
+	# Invalid documents are skipped with a diagnostic; the well-formed entries
+	# of the same delta still load. Nothing malformed enters the registry.
+	var after_malformed: Dictionary = content_db.get_playable_unit_runtimes()
+	_check(
+		malformed_loaded
+			and after_malformed.has("FixtureMonster")
+			and not after_malformed.has("BrokenMonster"),
+		"malformed document is skipped while the valid delta entry loads"
+	)
+	_check(not after_malformed.has("BrokenMonster") and not before.has("BrokenMonster"), "skipped document leaves no registry trace")
+	_check(not content_db.get_bundle_object("bfme2.object.fixture-monster").is_empty(), "valid delta entry keeps its projected bundle member")
+
+	# Retail summons some heroes through a producer's authored construct
+	# command instead of a fortress roster slot (Treebeard is trained by the
+	# Ent Moot socket). A hero on a command-socket route validates only with
+	# the authored INI provenance; every other hero route stays fail-closed.
+	var summoned := _fixture_document()
+	summoned["objectId"] = "FixtureSummonedHero"
+	summoned["category"] = "hero"
+	(summoned["registration"] as Dictionary)["production"] = [{
+		"producerObjectId": "UniversalMonsterPen",
+		"commandSetId": "UniversalMonsterPenCommandSet",
+		"commandId": "Command_SummonFixtureHero",
+		"surface": "command-socket",
+		"slot": 2,
+		"prerequisites": [],
+		"commandSetTransition": [],
+		"source": {
+			"producerIni": "data/ini/object/fixture/universalmonsterpen.ini",
+			"commandSetIni": "data/ini/commandset.ini",
+			"commandButtonIni": "data/ini/commandbutton.ini",
+		},
+	}]
+	_write_json(pack_root.path_join("data/playable-units/summonedhero.json"), summoned)
+	_check(content_db._load_playable_unit_runtimes(pack_root, {
+		"playableUnit.summonedhero": "data/playable-units/summonedhero.json",
+	}), "command-socket hero with authored evidence loads")
+	_check(not content_db.get_playable_unit_runtime("FixtureSummonedHero").is_empty(), "command-socket hero runtime is indexed")
+
+	var unproven := summoned.duplicate(true)
+	(((unproven["registration"] as Dictionary)["production"] as Array)[0] as Dictionary).erase("source")
+	_write_json(pack_root.path_join("data/playable-units/unprovenhero.json"), unproven)
+	var before_unproven: Dictionary = content_db.get_playable_unit_runtimes()
+	var unproven_loaded: bool = content_db._load_playable_unit_runtimes(pack_root, {
+		"playableUnit.unprovenhero": "data/playable-units/unprovenhero.json",
+	})
+	_check(unproven_loaded and content_db.get_playable_unit_runtimes() == before_unproven, "command-socket hero without authored evidence is skipped atomically")
+
+	var routeless := summoned.duplicate(true)
+	(routeless["registration"] as Dictionary)["production"] = []
+	_write_json(pack_root.path_join("data/playable-units/routelesshero.json"), routeless)
+	var routeless_loaded: bool = content_db._load_playable_unit_runtimes(pack_root, {
+		"playableUnit.routelesshero": "data/playable-units/routelesshero.json",
+	})
+	_check(routeless_loaded and not content_db.get_playable_unit_runtime("FixtureSummonedHero").is_empty() and content_db.get_playable_unit_runtimes() == before_unproven, "hero without any production route is skipped atomically")
+
+	# Non-hero command-socket routes are unchanged: the monster fixture carries
+	# no authored provenance block and still loads into the registry.
+	var non_hero_routes: Array = (document.get("registration", {}) as Dictionary).get("production", [])
+	var non_hero_has_provenance := false
+	for route_value in non_hero_routes:
+		non_hero_has_provenance = non_hero_has_provenance or (route_value as Dictionary).has("source")
+	_check(not non_hero_has_provenance and not document.is_empty(), "non-hero command-socket routes need no authored provenance")
+
+	# The additive hero-ability contract: well-formed converted rows load, a
+	# malformed abilities array is rejected atomically, and documents without
+	# the key at all keep loading (older packs stay valid).
+	var ability_doc := summoned.duplicate(true)
+	ability_doc["objectId"] = "FixtureAbilityHero"
+	(ability_doc["registration"] as Dictionary)["abilities"] = [{
+		"id": "Command_FixtureHeal",
+		"slot": 2,
+		"specialPowerId": "SpecialAbilityFixtureHeal",
+		"cooldownMs": 70000,
+		"targeting": "self",
+		"button": {"commandId": "Command_FixtureHeal", "iconIds": ["HSFixtureHeal"], "labelIds": ["CONTROLBAR:FixtureHeal"], "tooltipIds": ["CONTROLBAR:ToolTipFixtureHeal"]},
+		"effect": {"kind": "heal", "module": "AutoHealBehavior", "amountKind": "flat", "amount": 500.0, "radius": 150.0, "onlyOthers": false},
+		"modules": [{"kind": "AutoHealBehavior", "instanceTag": "ModuleTag_Heal", "sourceIni": "data/ini/object/test.ini", "line": 1}],
+		"implementation": {"status": "implemented", "reason": "", "limitations": []},
+		"sourceIni": "data/ini/commandbutton.ini",
+	}]
+	_write_json(pack_root.path_join("data/playable-units/abilityhero.json"), ability_doc)
+	_check(content_db._load_playable_unit_runtimes(pack_root, {
+		"playableUnit.abilityhero": "data/playable-units/abilityhero.json",
+	}), "hero with well-formed converted abilities loads")
+	_check(not content_db.get_playable_unit_runtime("FixtureAbilityHero").is_empty(), "ability hero runtime is indexed")
+	var ability_rules := Adapter.ability_rules(content_db.get_playable_unit_runtime("FixtureAbilityHero"))
+	_check(ability_rules.size() == 1, "adapter projects the registration's ability rows")
+	_check(int((ability_rules[0] as Dictionary).get("cooldown_ticks", 0)) == 700, "ability cooldown becomes deterministic ticks")
+	_check(bool((ability_rules[0] as Dictionary).get("castable", false)), "implemented ability is castable")
+
+	var malformed_abilities := ability_doc.duplicate(true)
+	malformed_abilities["objectId"] = "FixtureBrokenAbilityHero"
+	(malformed_abilities["registration"] as Dictionary)["abilities"] = [{"id": "Command_Broken"}]
+	_write_json(pack_root.path_join("data/playable-units/brokenabilityhero.json"), malformed_abilities)
+	var before_broken: Dictionary = content_db.get_playable_unit_runtimes()
+	var broken_loaded: bool = content_db._load_playable_unit_runtimes(pack_root, {
+		"playableUnit.brokenability": "data/playable-units/brokenabilityhero.json",
+	})
+	_check(broken_loaded and content_db.get_playable_unit_runtimes() == before_broken, "malformed ability rows are skipped atomically")
+	_check(Adapter.ability_rules(summoned).is_empty(), "documents without the abilities key project no abilities")
+
+	# The additive experience contract: a well-formed converted chain projects
+	# thresholds/awards/per-level effects, malformed chains project nothing,
+	# and documents without the key stay valid (older packs keep loading).
+	var experience_doc := _fixture_document()
+	(experience_doc["registration"] as Dictionary)["experience"] = {
+		"status": "compiled",
+		"sourceIni": "data/ini/experiencelevels.ini",
+		"maxLevel": 3,
+		"targetCount": 6,
+		"modifierApplication": "cumulative-per-level",
+		"levels": [
+			{"experienceId": "FixtureLevel1", "rank": 1, "requiredExperience": 1, "experienceAward": 3, "line": 2},
+			{
+				"experienceId": "FixtureLevel2", "rank": 2, "requiredExperience": 50, "experienceAward": 4, "line": 9,
+				"attributeModifiers": [{
+					"id": "FixtureBonusRank2",
+					"modifiers": [
+						{"kind": "HEALTH", "value": 20, "application": "additive"},
+						{"kind": "DAMAGE_ADD", "value": 10, "application": "additive"},
+					],
+					"sourceIni": "data/ini/attributemodifier.ini",
+					"category": "LEVEL",
+				}],
+				"upgrades": ["Upgrade_ObjectLevel2"],
+				"selectionDecalTextureId": "decal_G_level2",
+			},
+			{
+				"experienceId": "FixtureLevel3", "rank": 3, "requiredExperience": 100, "experienceAward": 5, "line": 18,
+				"attributeModifiers": [{
+					"id": "FixtureBonusRank3",
+					"modifiers": [{"kind": "HEALTH", "value": 20, "application": "additive"}],
+					"sourceIni": "data/ini/attributemodifier.ini",
+					"category": "LEVEL",
+					"unsupportedModifiers": ["SPEED"],
+				}],
+			},
+		],
+	}
+	var experience_rule := Adapter.experience_rule(experience_doc)
+	_check(int(experience_rule.get("max_level", 0)) == 3, "adapter projects the experience chain level cap")
+	var projected_levels: Array = experience_rule.get("levels", [])
+	_check(
+		projected_levels.size() == 3
+			and int((projected_levels[0] as Dictionary).get("required_experience", 0)) == 1
+			and int((projected_levels[1] as Dictionary).get("required_experience", 0)) == 50
+			and int((projected_levels[2] as Dictionary).get("required_experience", 0)) == 100,
+		"adapter projects authored cumulative thresholds"
+	)
+	_check(
+		projected_levels.size() == 3
+			and int((projected_levels[0] as Dictionary).get("experience_award", 0)) == 3
+			and int((projected_levels[2] as Dictionary).get("experience_award", 0)) == 5,
+		"adapter projects authored per-level kill awards"
+	)
+	_check(
+		projected_levels.size() == 3
+			and int((projected_levels[1] as Dictionary).get("health_add", 0)) == 20
+			and int((projected_levels[1] as Dictionary).get("damage_add", 0)) == 10
+			and int((projected_levels[0] as Dictionary).get("health_add", 0)) == 0,
+		"adapter folds per-level HEALTH/DAMAGE_ADD modifiers"
+	)
+	_check(
+		projected_levels.size() == 3
+			and Array((projected_levels[2] as Dictionary).get("unsupported_modifiers", [])).has("SPEED")
+			and String((projected_levels[1] as Dictionary).get("selection_decal_texture_id", "")) == "decal_G_level2",
+		"adapter records unsupported modifiers and the rank decal leaf"
+	)
+	var malformed_experience := experience_doc.duplicate(true)
+	((malformed_experience["registration"] as Dictionary)["experience"] as Dictionary)["maxLevel"] = 4
+	_check(Adapter.experience_rule(malformed_experience).is_empty(), "malformed experience chains project nothing")
+	_check(Adapter.experience_rule(_fixture_document()).is_empty(), "documents without the experience key project no chain")
+
+	# Sim XP pipeline: member kills pay the victim's authored award at the
+	# victim's current level, thresholds level the attacker, per-level effects
+	# fold into member stats, and the snapshot carries the live state.
+	var victim_doc := experience_doc.duplicate(true)
+	victim_doc["objectId"] = "FixtureVictim"
+	var xp_sim = Sim.new()
+	xp_sim._apply_gameplay_rules({
+		"enable_base_loop": true,
+		"playable_unit_runtimes": {"FixtureMonster": experience_doc, "FixtureVictim": victim_doc},
+		"producer_kind_by_source_object": {"UniversalMonsterPen": "fixture_monster_pen", "AlternateMonsterPen": "alternate_monster_pen"},
+		"unit_rules": {},
+		"starting_resources": 5000,
+		"source_map_transform_scale": 0.1,
+		"spawn_initial_battalions": false,
+	})
+	_check(xp_sim.configuration_error == "", "experience simulation registration succeeds")
+	_check(not xp_sim.experience_rule_for_unit("bfme2.object.fixture-monster").is_empty(), "sim registers the converted experience rule")
+	xp_sim._add_battalion(10, 0, Vector2.ZERO, "Attacker", "bfme2.object.fixture-monster", "bfme2.object.fixture-monster", 10)
+	xp_sim._add_battalion(110, 1, Vector2.ONE, "Victim", "bfme2.object.fixture-monster", "bfme2.object.fixture-monster", 10)
+	var attacker_row: Dictionary = xp_sim.entity(10)
+	_check(int(attacker_row.get("level", 0)) == 1 and int(attacker_row.get("experience_xp", -1)) == 0, "spawned units enter at rank 1 with an empty XP pool")
+	var base_health := int(attacker_row.get("member_maximum_health", 0))
+	var base_damage := int(attacker_row.get("member_damage", 0))
+	# 49 XP (49 authored-award kills at award 1... use direct award calls for a
+	# deterministic boundary) stays below the rank-2 threshold of 50.
+	xp_sim._award_experience(attacker_row, 49)
+	_check(int(attacker_row.get("level", 0)) == 1 and int(attacker_row.get("experience_xp", 0)) == 49, "XP below the authored threshold does not level")
+	xp_sim._award_experience(attacker_row, 1)
+	_check(int(attacker_row.get("level", 0)) == 2, "reaching the authored threshold levels the unit")
+	_check(
+		int(attacker_row.get("member_maximum_health", 0)) == base_health + 20
+			and int(attacker_row.get("member_damage", 0)) == base_damage + 10,
+		"rank 2 folds the authored HEALTH/DAMAGE_ADD level effects"
+	)
+	xp_sim._award_experience(attacker_row, 50)
+	_check(int(attacker_row.get("level", 0)) == 3 and int(attacker_row.get("member_maximum_health", 0)) == base_health + 40, "level effects accumulate per earned rank")
+	xp_sim._award_experience(attacker_row, 500)
+	_check(int(attacker_row.get("level", 0)) == 3, "the authored level cap holds")
+	# A member kill pays the victim's authored award into the killer's pool.
+	var victim_row: Dictionary = xp_sim.entity(110)
+	var xp_before := int(attacker_row.get("experience_xp", 0))
+	xp_sim._apply_member_damage(10, -1, 110, 999999, "battalion", 0, 0)
+	_check(int(attacker_row.get("experience_xp", 0)) == xp_before + 3, "member kill pays the victim's authored rank-1 award")
+	_check(int(victim_row.get("health", 0)) == 0, "the kill still lands")
+	var snapshot_row: Dictionary = {}
+	for row_value in xp_sim.state_snapshot().get("entities", []):
+		if int((row_value as Dictionary).get("id", 0)) == 10:
+			snapshot_row = row_value
+	_check(
+		int(snapshot_row.get("level", 0)) == 3 and snapshot_row.has("experience_xp"),
+		"the deterministic snapshot carries XP and level state"
+	)
+	# A victim retail never authored a chain for pays the recorded default and
+	# the fallback is recorded, never invented.
+	var chainless_sim = Sim.new()
+	chainless_sim._apply_gameplay_rules({
+		"enable_base_loop": true,
+		"playable_unit_runtimes": {"FixtureMonster": experience_doc},
+		"producer_kind_by_source_object": {"UniversalMonsterPen": "fixture_monster_pen", "AlternateMonsterPen": "alternate_monster_pen"},
+		"unit_rules": {
+			"bfme2.object.fixture-victim": {
+				"horde_id": "bfme2.object.fixture-victim", "member_count": 1, "member_health": 100,
+				"member_damage": 5, "speed": 1.0, "speed_source": 10.0, "acceleration": 1.0,
+				"acceleration_source": 10.0, "turn_rate_degrees_per_second": 180.0, "braking": 1.0,
+				"braking_source": 10.0, "attack_range": 1.0, "attack_range_source": 10.0,
+				"minimum_attack_range": 0.0, "minimum_attack_range_source": 0.0, "vision_range": 4.0,
+				"vision_range_source": 40.0, "delay_between_shots_ms": 100.0, "pre_attack_delay_ms": 0.0,
+				"firing_duration_ms": 100.0, "attack_period_ticks": 1, "pre_attack_ticks": 0,
+				"firing_duration_ticks": 1, "clip_size": 0, "clip_reload_time_ms": 0.0,
+				"continuous_fire_one": 0, "continuous_fire_coast_ticks": 0,
+				"continuous_fire_rate_multiplier": 1.0, "formation_positions": [Vector3.ZERO],
+				"provenance": {},
+			},
+		},
+		"starting_resources": 5000,
+		"source_map_transform_scale": 0.1,
+		"spawn_initial_battalions": false,
+	})
+	_check(chainless_sim.configuration_error == "", "chainless-victim simulation registration succeeds")
+	chainless_sim._add_battalion(10, 0, Vector2.ZERO, "Attacker", "bfme2.object.fixture-monster", "bfme2.object.fixture-monster", 10)
+	chainless_sim._add_battalion(110, 1, Vector2.ONE, "Victim", "bfme2.object.fixture-victim", "bfme2.object.fixture-victim", 0)
+	var chainless_xp := int((chainless_sim.entity(10) as Dictionary).get("experience_xp", 0))
+	chainless_sim._apply_member_damage(10, -1, 110, 999999, "battalion", 0, 0)
+	_check(
+		int((chainless_sim.entity(10) as Dictionary).get("experience_xp", 0)) == chainless_xp
+			and chainless_sim.experience_unauthored_victims().has("bfme2.object.fixture-victim"),
+		"chainless victims pay the recorded default with the fallback recorded"
+	)
 	_finish()
 
 

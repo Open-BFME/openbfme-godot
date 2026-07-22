@@ -61,30 +61,58 @@ func _build_texture_array(map_data: RetailMapData) -> bool:
 	texture_array_dimension = RUNTIME_TEXTURE_ARRAY_DIMENSION
 	if texture_array_dimension <= 0:
 		return _fail_bool("terrain texture array has no valid target dimension")
+	var layer_count := map_data.terrain_material_catalog.size()
 	var images: Array[Image] = []
-	for index in range(map_data.terrain_material_catalog.size()):
+	images.resize(layer_count)
+	var layer_errors: Array[String] = []
+	layer_errors.resize(layer_count)
+	# Per-layer work (bounded read, hash, decode, resize, mipmaps) is pure image
+	# processing against immutable pack files, so it fans out across the worker
+	# pool; the Texture2DArray assembly and first-error reporting stay ordered
+	# on this thread exactly as the sequential build did.
+	var decode_layer := func(index: int) -> void:
 		var row: Dictionary = map_data.terrain_material_catalog[index]
 		var path := String(row.get("png_path", ""))
 		var expected_bytes := int(row.get("png_byte_length", -1))
-		if path == "" or not ModLoader.path_is_within(map_data.map_root, path) or not ModLoader.path_is_within(map_data.pack_root, path):
-			return _fail_bool("terrain texture escaped the selected retail pack")
+		# Terrain textures live in the pack-scope material catalog
+		# (assets/terrain/...), not under the individual map folder. Containment
+		# is pack-root only so multi-map packs (five-maps) can share textures.
+		if path == "" or not ModLoader.path_is_within(map_data.pack_root, path):
+			layer_errors[index] = "terrain texture escaped the selected retail pack"
+			return
 		var png_bytes := _read_exact(path, expected_bytes)
 		if png_bytes.is_empty() or _sha256(png_bytes).to_lower() != String(row.get("png_sha256", "")).to_lower():
-			return _fail_bool("terrain texture changed after catalog validation")
+			layer_errors[index] = "terrain texture changed after catalog validation"
+			return
 		var image := Image.new()
 		if image.load_png_from_buffer(png_bytes) != OK:
-			return _fail_bool("terrain texture PNG could not be decoded")
+			layer_errors[index] = "terrain texture PNG could not be decoded"
+			return
 		var declared_width := int(row.get("width", 0))
 		var declared_height := int(row.get("height", 0))
 		if image.get_width() != declared_width or image.get_height() != declared_height:
-			return _fail_bool("terrain texture dimensions do not match the material catalog")
+			layer_errors[index] = "terrain texture dimensions do not match the material catalog"
+			return
 		if image.get_format() != Image.FORMAT_RGBA8:
 			image.convert(Image.FORMAT_RGBA8)
 		if image.get_width() != texture_array_dimension or image.get_height() != texture_array_dimension:
 			image.resize(texture_array_dimension, texture_array_dimension, Image.INTERPOLATE_LANCZOS)
 		if image.generate_mipmaps() != OK:
-			return _fail_bool("terrain texture mipmaps could not be generated")
-		images.append(image)
+			layer_errors[index] = "terrain texture mipmaps could not be generated"
+			return
+		images[index] = image
+	if layer_count > 1 and OS.get_processor_count() > 1:
+		var group := WorkerThreadPool.add_group_task(
+			func(element: int) -> void: decode_layer.call(element),
+			layer_count
+		)
+		WorkerThreadPool.wait_for_group_task_completion(group)
+	else:
+		for index in layer_count:
+			decode_layer.call(index)
+	for index in layer_count:
+		if layer_errors[index] != "":
+			return _fail_bool(layer_errors[index])
 	texture_array = Texture2DArray.new()
 	if texture_array.create_from_images(images) != OK:
 		texture_array = null

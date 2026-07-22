@@ -8,7 +8,7 @@
     "algorithm": "sha256",
     "canonicalization": "UTF-8 JSON with lexicographically sorted keys and no insignificant whitespace",
     "envelope": "All top-level fields and nested values except policy_digest.value.",
-    "value": "745121aff4ad4d9313b81c00e686414c32185bb49e42f46c4ab08e9210aabb04"
+    "value": "81411f7c1242a68a18268797d658d96ce92924186b1b4083955f3aef87ef6525"
   },
   "classification_policy": {
     "authority": "full effective BFME2 1.06 retail catalog",
@@ -60,7 +60,7 @@
     {
       "id": "retail-campaigns",
       "authority": "retail",
-      "disposition": "deferred",
+      "disposition": "excluded",
       "scope": [
         "good-campaign",
         "evil-campaign",
@@ -88,7 +88,7 @@
     {
       "id": "retail-war-of-the-ring",
       "authority": "retail",
-      "disposition": "deferred",
+      "disposition": "excluded",
       "scope": [
         "strategic-map",
         "territories",
@@ -154,8 +154,6 @@
         "options",
         "save-and-replay",
         "observer",
-        "campaign-shell",
-        "war-of-the-ring-shell",
         "localization",
         "ui-audio-animation-and-effects"
       ],
@@ -275,7 +273,7 @@
     {
       "id": "shell-roots",
       "source_authority": "retail window, control-bar, frontend, loading, options, save, replay, observer, localization, audio, and movie definitions",
-      "operation": "Discover all reachable shell screens and states for skirmish, campaign, War of the Ring, replay, observer, and settings flows.",
+      "operation": "Discover all reachable shell screens and states for skirmish, replay, observer, and settings flows; classify campaign and War of the Ring shell states into their excluded domains.",
       "unknown_handling": "emit-unclassified-root"
     }
   ],
@@ -394,6 +392,13 @@
       "required_domains": ["retail-skirmish", "retail-shell"]
     },
     {
+      "id": "bfme2-106-skirmish-complete",
+      "claim": "BFME2 1.06 skirmish compatibility complete",
+      "domain_policy": "Only included skirmish and shell requirements contribute. Campaign and War of the Ring domains are explicitly excluded and cannot be implied by this claim.",
+      "required_domains": ["retail-skirmish", "retail-shell"],
+      "blocking_rule": "Every included required retail domain must have complete non-stale coverage. Deferred or excluded work cannot contribute to this claim."
+    },
+    {
       "id": "bfme2-106-complete",
       "claim": "BFME2 1.06 complete",
       "required_domains": [
@@ -407,21 +412,34 @@
     }
   ],
   "completion_policy": {
-    "claim_profile": "bfme2-106-complete",
-    "claim": "BFME2 1.06 complete",
+    "claim_profile": "bfme2-106-skirmish-complete",
+    "claim": "BFME2 1.06 skirmish compatibility complete",
     "requirements": [
       "Every effective retail winner is classified.",
       "Every domain root query is frozen, reproducible, and recorded with tool and source identities.",
       "Every reachable reference is resolved or has an explicit owner-approved disposition.",
       "No definition remains unowned or unclassified.",
       "Every row required by the selected claim profile has complete, non-stale evidence for every required lane.",
-      "Campaigns, War of the Ring, Create-a-Hero, naval content, Ring mechanics, and shell flows remain independently visible.",
+      "Excluded campaign and War of the Ring domains remain independently visible and cannot contribute to the skirmish-complete claim.",
+      "Create-a-Hero, naval content, Ring mechanics, and included shell flows remain independently visible.",
       "OpenBFME networking and modern modding requirements are excluded from retail-parity denominators and reported separately."
     ],
     "asset_count_rule": "Converted asset or parsed-definition counts alone cannot satisfy a coverage row.",
     "staleness_rule": "Invalidate evidence when any declared source, pack, tool, recipe, schema, commit, or oracle input changes."
   },
   "explicit_exclusions": [
+    {
+      "id": "retail-campaign-material",
+      "scope": "Good and Evil campaigns, campaign maps, scripts, objectives, cinematics, campaign shell, and related presentation content",
+      "owner": "integration-owner",
+      "rationale": "OpenBFME is scoped to skirmish and multiplayer engine work; campaign material is not a roadmap commitment."
+    },
+    {
+      "id": "retail-war-of-the-ring-mode",
+      "scope": "War of the Ring strategic mode, persistence, battle transitions, shell, and related presentation content",
+      "owner": "integration-owner",
+      "rationale": "War of the Ring is outside the OpenBFME product scope."
+    },
     {
       "id": "rotwk-201",
       "scope": "The Rise of the Witch-king 2.01 and all expansion-only content",

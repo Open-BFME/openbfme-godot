@@ -33,12 +33,39 @@ const MAX_PROVENANCE_BUNDLE_FILES := 20_000
 const LOCAL_START_SEPARATION := 76.0
 const FORD_CORRIDOR_DILATION_CELLS := 5
 const MAX_ROUTE_CELLS := 1024
+# Search budget for snapping home-layout anchors (fortress, farms, spawns) to
+# the nearest walkable cell. Fords' anchors are walkable as computed, so the
+# budget never engages there; maps with border-hugging starts (Rivendell's
+# team base sits ~34 cells outside its playable border) need the reach.
+const WALKABLE_SNAP_RADIUS_CELLS := 64
 const REQUIRED_FORD_NAMES: Array[String] = ["ford1", "ford2", "ford3"]
+## Per-map runtime contract for the facts the cooked documents cannot declare
+## themselves. The Fords of Isen II slice contract requires its three authored
+## ford crossings, re-reviews one source-impassable cell, and enforces the
+## reviewed retail crossing rule (cooked water blocks navigation except at the
+## named ford corridors). Every other map navigates on the source-authored
+## passability grid exactly as cooked: their water still rasterizes for
+## presentation and diagnostics, but the Fords-only mask rule is not applied —
+## Mordor's moat gap and Rivendell's shores are source-passable by design.
+const MAP_RUNTIME_PROFILES := {
+	"bfme2.map.fords-of-isen-ii": {
+		"required_ford_names": REQUIRED_FORD_NAMES,
+		"known_impassable_cells": [Vector2i(208, 142)],
+		"water_blocks_navigation": true,
+	},
+}
+const DEFAULT_MAP_RUNTIME_PROFILE := {
+	"required_ford_names": [],
+	"known_impassable_cells": [],
+	"water_blocks_navigation": false,
+}
 
 var ready := false
 var error := ""
 var pack_root := ""
 var map_root := ""
+var map_id := ""
+var _map_runtime_profile: Dictionary = DEFAULT_MAP_RUNTIME_PROFILE
 var width := 0
 var height := 0
 var heightmap_bytes := 0
@@ -64,6 +91,8 @@ var border_width := 0
 var playable_world_extent := Vector2.ZERO
 var playable_grid_min := Vector2i.ZERO
 var playable_grid_max := Vector2i.ZERO
+var navigation_grid_min := Vector2i.ZERO
+var navigation_grid_max := Vector2i.ZERO
 var raw_elevation_min := 0
 var raw_elevation_max := 0
 var computed_raw_elevation_min := 0
@@ -151,24 +180,33 @@ func load_from_pack(selected_pack_root: String, map_definition: Dictionary) -> b
 	source_binary_packaged = bool(map_definition.get("sourceBinaryPackaged", true))
 	if source_binary_packaged:
 		return _fail("retail source map must not be packaged")
+	map_id = String(map_definition.get("id", ""))
+	_map_runtime_profile = MAP_RUNTIME_PROFILES.get(map_id, DEFAULT_MAP_RUNTIME_PROFILE)
 
+	# Roads are an optional cooked layer: maps whose cook emitted no road network
+	# declare no roads/roadMaterials documents at all. When the map definition
+	# does declare them, both documents must validate exactly as before.
+	var roads_declared := String(map_definition.get("roads", "")) != ""
+	var road_materials_declared := String(map_definition.get("roadMaterials", "")) != ""
+	if roads_declared != road_materials_declared:
+		return _fail("cooked map declares only half of its road layer")
 	var terrain := _read_document(String(map_definition.get("terrain", "")), "terrain")
 	var objects := _read_document(String(map_definition.get("objects", "")), "objects")
-	var roads := _read_document(String(map_definition.get("roads", "")), "roads")
-	var road_materials := _read_document(String(map_definition.get("roadMaterials", "")), "road materials")
+	var roads := _read_document(String(map_definition.get("roads", "")), "roads") if roads_declared else {}
+	var road_materials := _read_document(String(map_definition.get("roadMaterials", "")), "road materials") if road_materials_declared else {}
 	var object_bindings := _read_document(String(map_definition.get("objectBindings", "")), "object bindings")
 	var waypoints := _read_document(String(map_definition.get("waypoints", "")), "waypoints")
 	var water := _read_document(String(map_definition.get("water", "")), "water")
 	if profile_init:
 		print("RETAIL_MAP_DATA_PHASE name=documents delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
 		profile_last_ms = Time.get_ticks_msec()
-	if terrain.is_empty() or objects.is_empty() or roads.is_empty() or road_materials.is_empty() or object_bindings.is_empty() or waypoints.is_empty() or water.is_empty():
+	if terrain.is_empty() or objects.is_empty() or object_bindings.is_empty() or waypoints.is_empty() or water.is_empty() or (roads_declared and (roads.is_empty() or road_materials.is_empty())):
 		return false
 	if String(terrain.get("schema", "")) != "openbfme.sage-terrain" or int(terrain.get("schemaVersion", -1)) != 0:
 		return _fail("unexpected cooked terrain schema")
 	if String(objects.get("schema", "")) != "openbfme.sage-map-objects" or int(objects.get("schemaVersion", -1)) != 0:
 		return _fail("unexpected cooked object schema")
-	if String(roads.get("schema", "")) != "openbfme.sage-roads" or int(roads.get("schemaVersion", -1)) != 0:
+	if roads_declared and (String(roads.get("schema", "")) != "openbfme.sage-roads" or int(roads.get("schemaVersion", -1)) != 0):
 		return _fail("unexpected cooked roads schema")
 	if String(object_bindings.get("schema", "")) != "openbfme.sage-object-bindings" or int(object_bindings.get("schemaVersion", -1)) != 0:
 		return _fail("unexpected cooked object-binding schema")
@@ -192,15 +230,16 @@ func load_from_pack(selected_pack_root: String, map_definition: Dictionary) -> b
 	object_bindings_path = _resolve(String(map_definition.get("objectBindings", "")))
 	if object_bindings_path == "":
 		return _fail("object-binding document escaped the selected map")
-	roads_path = _resolve(String(map_definition.get("roads", "")))
-	if roads_path == "":
-		return _fail("roads document escaped the selected map")
-	road_materials_path = _resolve(String(map_definition.get("roadMaterials", "")))
-	if road_materials_path == "":
-		return _fail("road-material document escaped the selected map")
+	if roads_declared:
+		roads_path = _resolve(String(map_definition.get("roads", "")))
+		if roads_path == "":
+			return _fail("roads document escaped the selected map")
+		road_materials_path = _resolve(String(map_definition.get("roadMaterials", "")))
+		if road_materials_path == "":
+			return _fail("road-material document escaped the selected map")
 	if not _load_objects(objects, roads, object_bindings, _dictionary(map_definition.get("roadSummary", {}))):
 		return false
-	if not _load_road_materials(road_materials):
+	if roads_declared and not _load_road_materials(road_materials):
 		return false
 	if profile_init:
 		print("RETAIL_MAP_DATA_PHASE name=objects_roads delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
@@ -293,20 +332,52 @@ func _load_terrain(terrain: Dictionary, terrain_materials_relative: String) -> b
 func _load_terrain_material_catalog(relative: String, blend: Dictionary, blend_textures: Array) -> bool:
 	if relative == "":
 		return _fail("cooked map does not declare terrain materials")
+	# Legacy cooks emit the catalog map-relative; newer cooks share one catalog
+	# across maps at pack scope. Try the map first, then the pack — both stay
+	# confined to the selected pack and every row is digest-validated below.
 	var manifest_path := _resolve(relative)
-	if manifest_path == "":
-		return _fail("terrain material manifest escaped the selected map")
-	var manifest := _read_document(relative, "terrain material")
+	var manifest: Dictionary = {}
+	if manifest_path != "":
+		manifest = _read_document(relative, "terrain material")
+	else:
+		manifest_path = _resolve_pack_asset(relative)
+		if manifest_path == "":
+			return _fail("terrain material manifest escaped the selected map")
+		manifest = _read_pack_document(relative, "terrain material")
 	if manifest.is_empty():
 		return false
 	if String(manifest.get("schema", "")) != "openbfme.sage-terrain-materials" or int(manifest.get("schemaVersion", -1)) != 0:
 		return _fail("unexpected cooked terrain material schema")
 	var materials := _array(manifest.get("materials", []))
 	var texture_rows := _array(manifest.get("textures", []))
-	if int(manifest.get("symbolCount", -1)) != terrain_texture_count or int(manifest.get("textureCount", -1)) != terrain_texture_count:
-		return _fail("terrain material manifest count does not match the terrain table")
-	if materials.size() != terrain_texture_count or texture_rows.size() != terrain_texture_count or blend_textures.size() != terrain_texture_count:
-		return _fail("terrain material catalog is incomplete")
+	# Two catalog shapes are supported. A map-scope catalog covers exactly the
+	# map's texture table in authored order (Fords men-vslice). A pack-scope
+	# shared catalog (five-maps pack) is a superset union across the pack's
+	# maps; each map row is then matched by symbol against its own table.
+	var exact_ordered := materials.size() == terrain_texture_count and texture_rows.size() == terrain_texture_count
+	if exact_ordered:
+		if int(manifest.get("symbolCount", -1)) != terrain_texture_count or int(manifest.get("textureCount", -1)) != terrain_texture_count:
+			return _fail("terrain material manifest count does not match the terrain table")
+		if blend_textures.size() != terrain_texture_count:
+			return _fail("terrain material catalog is incomplete")
+	else:
+		if (
+			int(manifest.get("symbolCount", -1)) != materials.size()
+			or int(manifest.get("textureCount", -1)) != texture_rows.size()
+			or materials.size() != texture_rows.size()
+			or materials.size() < terrain_texture_count
+			or materials.size() > MAX_TERRAIN_TEXTURES
+			or blend_textures.size() != terrain_texture_count
+		):
+			return _fail("terrain material catalog is incomplete")
+	var symbol_indices: Dictionary = {}
+	if not exact_ordered:
+		for material_index in range(materials.size()):
+			var catalog_row := _dictionary(materials[material_index])
+			var catalog_symbol := String(catalog_row.get("symbol", ""))
+			if catalog_row.is_empty() or catalog_symbol == "" or String(catalog_row.get("definitionSymbol", "")) != catalog_symbol or int(catalog_row.get("tableIndex", -1)) != material_index or symbol_indices.has(catalog_symbol):
+				return _fail("shared terrain material catalog is internally inconsistent")
+			symbol_indices[catalog_symbol] = material_index
 
 	var material_root := manifest_path.get_base_dir()
 	var expected_cell_start := 0
@@ -317,6 +388,14 @@ func _load_terrain_material_catalog(relative: String, blend: Dictionary, blend_t
 		var blend_row := _dictionary(blend_textures[index])
 		var material_row := _dictionary(materials[index])
 		var texture_row := _dictionary(texture_rows[index])
+		var expected_table_index := index
+		if not exact_ordered:
+			var shared_index := int(symbol_indices.get(String(blend_row.get("name", "")), -1))
+			if shared_index < 0:
+				return _fail("shared terrain material catalog does not cover the map texture table")
+			material_row = _dictionary(materials[shared_index])
+			texture_row = _dictionary(texture_rows[shared_index])
+			expected_table_index = shared_index
 		var symbol := String(material_row.get("symbol", ""))
 		var definition_symbol := String(material_row.get("definitionSymbol", ""))
 		var blend_symbol := String(blend_row.get("name", ""))
@@ -324,7 +403,7 @@ func _load_terrain_material_catalog(relative: String, blend: Dictionary, blend_t
 		var cell_start := int(blend_row.get("cellStart", -1))
 		var cell_count := int(blend_row.get("cellCount", -1))
 		var cell_size := int(blend_row.get("cellSize", -1))
-		if symbol == "" or definition_symbol != symbol or blend_symbol != symbol or table_index != index or seen_symbols.has(symbol):
+		if symbol == "" or definition_symbol != symbol or blend_symbol != symbol or table_index != expected_table_index or seen_symbols.has(symbol):
 			return _fail("terrain material table order or symbol identity is invalid")
 		if cell_size <= 0 or cell_size > 64 or cell_count != cell_size * cell_size or cell_start != expected_cell_start:
 			return _fail("terrain material cell table is invalid")
@@ -343,6 +422,10 @@ func _load_terrain_material_catalog(relative: String, blend: Dictionary, blend_t
 			return _fail("terrain material dimensions do not match the SAGE cell table")
 		var png_path := _resolve_from(material_root, png_relative)
 		if png_path == "":
+			# Pack-scope catalogs keep their textures beside the manifest, above
+			# the map directory; confinement to the selected pack still applies.
+			png_path = _resolve_from_pack(material_root, png_relative)
+		if png_path == "":
 			return _fail("terrain material PNG escaped the selected map")
 		var png_bytes := _read_bounded_bytes(png_path, MAX_TERRAIN_TEXTURE_BYTES, "terrain material PNG")
 		if png_bytes.is_empty():
@@ -359,7 +442,10 @@ func _load_terrain_material_catalog(relative: String, blend: Dictionary, blend_t
 			"symbol": symbol,
 			"definition_symbol": definition_symbol,
 			"source_texture": String(material_row.get("sourceTexture", "")),
-			"table_index": table_index,
+			# Entries stay in map-local table order (identical to the shared
+			# catalog's global index in exact mode) so consumers can index by
+			# the map's own terrain tile table.
+			"table_index": index,
 			"png_relative": png_relative,
 			"png_path": png_path,
 			"png_sha256": png_sha256,
@@ -398,13 +484,17 @@ func _load_terrain_source_layers(terrain: Dictionary, blend: Dictionary) -> bool
 	var cliff_bytes := _read_terrain_grid_layer(layer_descriptors, "cliffCells", 4, "opaque-uint32", "terrain cliff cells")
 	var blend_description_count := int(blend.get("blendDescriptionCount", -1))
 	var cliff_mapping_count := int(blend.get("cliffMappingCount", -1))
-	if blend_description_count <= 0 or blend_description_count > cell_count or cliff_mapping_count <= 0 or cliff_mapping_count > cell_count:
+	# Maps without authored cliff mappings are valid: their table is empty and
+	# every cliff cell reference must stay zero (checked below).
+	if blend_description_count <= 0 or blend_description_count > cell_count or cliff_mapping_count < 0 or cliff_mapping_count > cell_count:
 		return _fail("terrain description-table counts are invalid")
 	if int(blend.get("rawBlendCount", -1)) != blend_description_count + 1 or int(blend.get("rawCliffCount", -1)) != cliff_mapping_count + 1:
 		return _fail("terrain description-table reserved-entry counts are invalid")
 	var blend_description_bytes := _read_terrain_description_table(table_descriptors, "blendDescriptions", blend_description_count, BLEND_DESCRIPTION_RECORD_BYTES, "terrain blend descriptions")
-	var cliff_mapping_bytes := _read_terrain_description_table(table_descriptors, "cliffMappings", cliff_mapping_count, CLIFF_MAPPING_RECORD_BYTES, "terrain cliff mappings")
-	if error != "" or tile_bytes.is_empty() or blend_bytes.is_empty() or three_way_bytes.is_empty() or cliff_bytes.is_empty() or blend_description_bytes.is_empty() or cliff_mapping_bytes.is_empty():
+	var cliff_mapping_bytes := PackedByteArray()
+	if cliff_mapping_count > 0:
+		cliff_mapping_bytes = _read_terrain_description_table(table_descriptors, "cliffMappings", cliff_mapping_count, CLIFF_MAPPING_RECORD_BYTES, "terrain cliff mappings")
+	if error != "" or tile_bytes.is_empty() or blend_bytes.is_empty() or three_way_bytes.is_empty() or cliff_bytes.is_empty() or blend_description_bytes.is_empty() or (cliff_mapping_count > 0 and cliff_mapping_bytes.is_empty()):
 		return false
 
 	terrain_tile_indices.resize(cell_count)
@@ -552,8 +642,11 @@ func _load_waypoints(document: Dictionary) -> bool:
 		if row.is_empty() or position == Vector3.INF:
 			return _fail("missing or invalid %s" % required_name)
 		player_starts[required_name] = position
-	if player_start_count != 2:
-		return _fail("Fords runtime expects exactly two player starts")
+	# Retail maps author one start per supported player; the slice seeds a
+	# two-player match from the first two starts, so extra authored starts are
+	# valid source data (Rivendell 3, Mount Doom 4, Dagorlad 6, Mordor 8).
+	if player_start_count < 2:
+		return _fail("cooked map declares fewer than two player starts")
 
 	var player_one: Vector3 = player_starts["Player_1_Start"]
 	var player_two: Vector3 = player_starts["Player_2_Start"]
@@ -622,7 +715,12 @@ func _load_water(document: Dictionary) -> bool:
 
 func _derive_ford_gates() -> bool:
 	ford_gates.clear()
-	for ford_name in REQUIRED_FORD_NAMES:
+	# Only maps whose runtime profile declares ford crossings (Fords of Isen II)
+	# must have them; for every other map the absence of ford-named rivers is
+	# ordinary source data, not a contract violation.
+	var required_names: Array = _map_runtime_profile.get("required_ford_names", [])
+	for ford_name_value in required_names:
+		var ford_name := String(ford_name_value)
 		var matching_river: Dictionary = {}
 		for river in river_strips:
 			if String(river.get("name", "")) == ford_name:
@@ -649,7 +747,7 @@ func _derive_ford_gates() -> bool:
 			"center": Vector2(center.x, center.z),
 			"elevation": (middle[0].y + middle[1].y) * 0.5,
 		})
-	return ford_gates.size() == 3
+	return ford_gates.size() == required_names.size()
 
 
 func _load_objects(document: Dictionary, road_document: Dictionary, binding_document: Dictionary, declared_road_summary: Dictionary) -> bool:
@@ -657,6 +755,10 @@ func _load_objects(document: Dictionary, road_document: Dictionary, binding_docu
 	object_count = objects.size()
 	if object_count != int(document.get("count", -1)) or object_count > MAX_MAP_OBJECTS:
 		return _fail("cooked map object count does not match its metadata")
+	# Road wire objects are a separate layer only when the map declares a cooked
+	# roads document. Without one (the five-maps cook does not convert roads),
+	# every placement flows through object binding like any other source object.
+	var roads_declared := not road_document.is_empty()
 	var normalized_objects: Array[Dictionary] = []
 	var source_roads: Dictionary = {}
 	var source_type_counts: Dictionary = {}
@@ -675,7 +777,7 @@ func _load_objects(document: Dictionary, road_document: Dictionary, binding_docu
 		if road_type < 0 or road_type > 0xFFFFFFFF:
 			return _fail("invalid cooked object road wire type")
 		source_indices[source_index] = true
-		if road_type != 0:
+		if roads_declared and road_type != 0:
 			source_roads[source_index] = {
 				"road_id": type_name,
 				"wire_type": road_type,
@@ -694,8 +796,11 @@ func _load_objects(document: Dictionary, road_document: Dictionary, binding_docu
 			"scale": Vector3.ONE,
 		})
 	nonroad_object_count = normalized_objects.size()
-	if not _load_roads(road_document, source_roads, declared_road_summary):
-		return false
+	if roads_declared:
+		if not _load_roads(road_document, source_roads, declared_road_summary):
+			return false
+	elif not declared_road_summary.is_empty():
+		return _fail("cooked map declares a road summary without a roads document")
 	if not _load_object_bindings(binding_document, source_type_counts):
 		return false
 	return _route_normalized_object_placements(normalized_objects)
@@ -1195,6 +1300,11 @@ func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary)
 		source_placement_count += int(source_count_value)
 	var expected_resolution_status := "complete" if unresolved_types == 0 else ("partial" if resolved_types > 0 else "unresolved")
 	object_binding_resolution_status = String(summary.get("resolutionStatus", ""))
+	# The five-maps cook labels a zero-resolved map "partial" where the runtime
+	# formula derives "unresolved"; both labels describe the same, fully
+	# count-validated record table, so the label check accepts either for that
+	# case. Every count above is still matched exactly.
+	var resolution_status_ok := object_binding_resolution_status == expected_resolution_status or (resolved_types == 0 and unresolved_types > 0 and object_binding_resolution_status == "partial")
 	if (
 		int(summary.get("typeCount", -1)) != records.size()
 		or int(summary.get("placementCount", -1)) != all_placements
@@ -1207,7 +1317,7 @@ func _load_object_bindings(document: Dictionary, source_type_counts: Dictionary)
 		or int(summary.get("unresolvedTypeCount", -1)) != unresolved_types
 		or int(summary.get("unresolvedPlacementCount", -1)) != unresolved_prop_placement_count
 		or all_placements != source_placement_count
-		or object_binding_resolution_status != expected_resolution_status
+		or not resolution_status_ok
 	):
 		return _fail("object-binding summary disagrees with its exact records")
 	return true
@@ -1278,6 +1388,25 @@ func _build_map_outline() -> void:
 func _build_navigation() -> bool:
 	navigation_ready = false
 	_navigation_grid = null
+	# The declared playable border is camera metadata. Retail maps may author
+	# player starts just outside it (Rivendell's Player_2 sits two cells below
+	# its border), and navigation must still reach those starts; the
+	# navigation region is the declared playable rect expanded to cover every
+	# stored player start. Fords authors both starts inside the border, so its
+	# navigation region is exactly the declared rect.
+	navigation_grid_min = playable_grid_min
+	navigation_grid_max = playable_grid_max
+	for local_start_value in local_player_starts.values():
+		var local_start := Vector3(local_start_value)
+		var start_cell := local_to_grid_cell(Vector2(local_start.x, local_start.z))
+		navigation_grid_min = Vector2i(mini(navigation_grid_min.x, start_cell.x), mini(navigation_grid_min.y, start_cell.y))
+		navigation_grid_max = Vector2i(maxi(navigation_grid_max.x, start_cell.x), maxi(navigation_grid_max.y, start_cell.y))
+	navigation_grid_min = Vector2i(maxi(0, navigation_grid_min.x), maxi(0, navigation_grid_min.y))
+	navigation_grid_max = Vector2i(mini(width - 1, navigation_grid_max.x), mini(height - 1, navigation_grid_max.y))
+	# The cooked water mask only enforces navigation on maps whose runtime
+	# profile declares it (Fords of Isen II's reviewed crossing rule). Other
+	# maps navigate on the source-authored passability grid alone.
+	var water_mask_blocks := bool(_map_runtime_profile.get("water_blocks_navigation", false))
 	_water_cells.resize(width * height)
 	_water_cells.fill(0)
 	_ford_corridor_cells.clear()
@@ -1311,7 +1440,7 @@ func _build_navigation() -> bool:
 		_ford_corridor_cells[ford_name] = expanded
 
 	_navigation_grid = AStarGrid2D.new()
-	_navigation_grid.region = Rect2i(playable_grid_min, playable_grid_max - playable_grid_min + Vector2i.ONE)
+	_navigation_grid.region = Rect2i(navigation_grid_min, navigation_grid_max - navigation_grid_min + Vector2i.ONE)
 	_navigation_grid.cell_size = Vector2.ONE
 	_navigation_grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_NEVER
 	_navigation_grid.default_compute_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
@@ -1320,10 +1449,10 @@ func _build_navigation() -> bool:
 	navigation_walkable_count = 0
 	navigation_water_blocked_count = 0
 	navigation_ford_corridor_count = 0
-	for grid_y in range(playable_grid_min.y, playable_grid_max.y + 1):
-		for grid_x in range(playable_grid_min.x, playable_grid_max.x + 1):
+	for grid_y in range(navigation_grid_min.y, navigation_grid_max.y + 1):
+		for grid_x in range(navigation_grid_min.x, navigation_grid_max.x + 1):
 			var cell := Vector2i(grid_x, grid_y)
-			var water_blocked := is_water_cell(cell) and not is_ford_corridor_cell(cell)
+			var water_blocked := water_mask_blocks and is_water_cell(cell) and not is_ford_corridor_cell(cell)
 			var blocked := is_impassable_at(grid_x, grid_y) or water_blocked
 			if blocked:
 				_navigation_grid.set_point_solid(cell, true)
@@ -1334,11 +1463,16 @@ func _build_navigation() -> bool:
 			if is_ford_corridor_cell(cell):
 				navigation_ford_corridor_count += 1
 	navigation_build_count += 1
-	navigation_ready = navigation_walkable_count > 0 and navigation_water_blocked_count > 0 and navigation_ford_corridor_count > 0
+	# Ford-corridor topology is a per-map contract (Fords of Isen II). Maps
+	# without authored ford crossings only require a non-empty walkable grid;
+	# their cooked water still blocks cells through the mask above.
+	var requires_ford_crossings := not (_map_runtime_profile.get("required_ford_names", []) as Array).is_empty()
+	navigation_ready = navigation_walkable_count > 0 and (not requires_ford_crossings or (navigation_water_blocked_count > 0 and navigation_ford_corridor_count > 0))
 	if not navigation_ready:
 		return _fail("cooked navigation topology could not be built")
-	if is_navigation_walkable(Vector2i(208, 142)):
-		return _fail("known source-impassable ford cell became walkable")
+	for known_cell_value in _map_runtime_profile.get("known_impassable_cells", []) as Array:
+		if is_navigation_walkable(Vector2i(known_cell_value)):
+			return _fail("known source-impassable ford cell became walkable")
 	return true
 
 
@@ -1354,12 +1488,12 @@ func _rasterize_local_polygon(mask: PackedByteArray, polygon: PackedVector3Array
 		minimum = Vector2(minf(minimum.x, grid_point.x), minf(minimum.y, grid_point.y))
 		maximum = Vector2(maxf(maximum.x, grid_point.x), maxf(maximum.y, grid_point.y))
 	var minimum_cell := Vector2i(
-		clampi(floori(minimum.x), playable_grid_min.x, playable_grid_max.x),
-		clampi(floori(minimum.y), playable_grid_min.y, playable_grid_max.y)
+		clampi(floori(minimum.x), navigation_grid_min.x, navigation_grid_max.x),
+		clampi(floori(minimum.y), navigation_grid_min.y, navigation_grid_max.y)
 	)
 	var maximum_cell := Vector2i(
-		clampi(ceili(maximum.x), playable_grid_min.x, playable_grid_max.x),
-		clampi(ceili(maximum.y), playable_grid_min.y, playable_grid_max.y)
+		clampi(ceili(maximum.x), navigation_grid_min.x, navigation_grid_max.x),
+		clampi(ceili(maximum.y), navigation_grid_min.y, navigation_grid_max.y)
 	)
 	for grid_y in range(minimum_cell.y, maximum_cell.y + 1):
 		for grid_x in range(minimum_cell.x, maximum_cell.x + 1):
@@ -1371,12 +1505,12 @@ func _dilate_mask(source: PackedByteArray, radius: int) -> PackedByteArray:
 	var result := PackedByteArray()
 	result.resize(width * height)
 	result.fill(0)
-	for grid_y in range(playable_grid_min.y, playable_grid_max.y + 1):
-		for grid_x in range(playable_grid_min.x, playable_grid_max.x + 1):
+	for grid_y in range(navigation_grid_min.y, navigation_grid_max.y + 1):
+		for grid_x in range(navigation_grid_min.x, navigation_grid_max.x + 1):
 			if source[grid_y * width + grid_x] == 0:
 				continue
-			for expanded_y in range(maxi(playable_grid_min.y, grid_y - radius), mini(playable_grid_max.y, grid_y + radius) + 1):
-				for expanded_x in range(maxi(playable_grid_min.x, grid_x - radius), mini(playable_grid_max.x, grid_x + radius) + 1):
+			for expanded_y in range(maxi(navigation_grid_min.y, grid_y - radius), mini(navigation_grid_max.y, grid_y + radius) + 1):
+				for expanded_x in range(maxi(navigation_grid_min.x, grid_x - radius), mini(navigation_grid_max.x, grid_x + radius) + 1):
 					result[expanded_y * width + expanded_x] = 1
 	return result
 
@@ -1385,7 +1519,7 @@ func query_route(from_local: Vector2, to_local: Vector2) -> Dictionary:
 	route_query_count += 1
 	if not navigation_ready:
 		return {"valid": false, "reason": "navigation-unavailable", "points": [], "cells": []}
-	if not is_local_inside_playable(from_local) or not is_local_inside_playable(to_local):
+	if not is_local_inside_navigation(from_local) or not is_local_inside_navigation(to_local):
 		return {"valid": false, "reason": "outside-playable-area", "points": [], "cells": []}
 	var start_cell := local_to_grid_cell(from_local)
 	var destination_cell := local_to_grid_cell(to_local)
@@ -1471,7 +1605,7 @@ func _route_contains_named_water(cells_value: Variant, ford_name: String) -> boo
 func _find_non_water_bank(edge: Vector2, outward: Vector2, grid_step_local: float, maximum_steps: int) -> Vector2i:
 	for step in range(1, maximum_steps + 1):
 		var candidate := local_to_grid_cell(edge + outward * grid_step_local * float(step))
-		if not is_grid_inside_playable(candidate):
+		if not is_grid_inside_navigation(candidate):
 			break
 		if is_navigation_walkable(candidate) and not is_water_cell(candidate):
 			return candidate
@@ -1528,6 +1662,13 @@ func is_local_inside_playable(local_position: Vector2) -> bool:
 	return grid.x >= float(playable_grid_min.x) - 0.001 and grid.x <= float(playable_grid_max.x) + 0.001 and grid.y >= float(playable_grid_min.y) - 0.001 and grid.y <= float(playable_grid_max.y) + 0.001
 
 
+func is_local_inside_navigation(local_position: Vector2) -> bool:
+	## The navigation region extends the declared playable border to cover
+	## player starts authored just outside it; routing follows this region.
+	var grid := local_to_grid_float(local_position)
+	return grid.x >= float(navigation_grid_min.x) - 0.001 and grid.x <= float(navigation_grid_max.x) + 0.001 and grid.y >= float(navigation_grid_min.y) - 0.001 and grid.y <= float(navigation_grid_max.y) + 0.001
+
+
 func local_to_grid_float(local_position: Vector2) -> Vector2:
 	var source := local_to_source_horizontal(local_position)
 	return Vector2(source.x / horizontal_scale, -source.y / horizontal_scale)
@@ -1547,12 +1688,16 @@ func is_grid_inside_playable(cell: Vector2i) -> bool:
 	return cell.x >= playable_grid_min.x and cell.x <= playable_grid_max.x and cell.y >= playable_grid_min.y and cell.y <= playable_grid_max.y
 
 
+func is_grid_inside_navigation(cell: Vector2i) -> bool:
+	return cell.x >= navigation_grid_min.x and cell.x <= navigation_grid_max.x and cell.y >= navigation_grid_min.y and cell.y <= navigation_grid_max.y
+
+
 func is_navigation_walkable(cell: Vector2i) -> bool:
-	return navigation_ready and is_grid_inside_playable(cell) and not _navigation_grid.is_point_solid(cell)
+	return navigation_ready and is_grid_inside_navigation(cell) and not _navigation_grid.is_point_solid(cell)
 
 
 func is_water_cell(cell: Vector2i) -> bool:
-	return is_grid_inside_playable(cell) and _water_cells[cell.y * width + cell.x] != 0
+	return is_grid_inside_navigation(cell) and _water_cells[cell.y * width + cell.x] != 0
 
 
 func is_ford_corridor_cell(cell: Vector2i) -> bool:
@@ -1563,7 +1708,7 @@ func is_ford_corridor_cell(cell: Vector2i) -> bool:
 
 
 func is_named_ford_corridor_cell(cell: Vector2i, ford_name: String) -> bool:
-	if not is_grid_inside_playable(cell) or not _ford_corridor_cells.has(ford_name):
+	if not is_grid_inside_navigation(cell) or not _ford_corridor_cells.has(ford_name):
 		return false
 	var mask: PackedByteArray = _ford_corridor_cells[ford_name]
 	return mask[cell.y * width + cell.x] != 0
@@ -1690,8 +1835,31 @@ func simulation_configuration() -> Dictionary:
 			0: _home_layout_for(player_two_horizontal, player_one_horizontal),
 			1: _home_layout_for(player_one_horizontal, player_two_horizontal),
 		},
-		"ford_gates": ford_gates.duplicate(true),
+		"ford_gates": _simulation_ford_gates(),
 	}
+
+
+func _simulation_ford_gates() -> Array:
+	## RetailSliceSim's map-configuration contract accepts exactly three ford
+	## gate rows; they surface only in the deterministic state snapshot, never
+	## in routing. Maps with three authored ford crossings (Fords of Isen II)
+	## pass them through unchanged. Maps without authored fords receive three
+	## inert, explicitly-named sentinel gates so the sim contract holds without
+	## inventing water crossings the source did not author.
+	if ford_gates.size() == 3:
+		return ford_gates.duplicate(true)
+	var sentinels: Array[Dictionary] = []
+	for index in range(3):
+		sentinels.append({
+			"name": "no-authored-ford-crossing-%d" % (index + 1),
+			"source_river_id": -1,
+			"source_section_index": -1,
+			"edge_a": Vector2.ZERO,
+			"edge_b": Vector2.ZERO,
+			"center": Vector2.ZERO,
+			"elevation": 0.0,
+		})
+	return sentinels
 
 
 func _home_layout_for(home: Vector2, opponent: Vector2) -> Dictionary:
@@ -1718,7 +1886,7 @@ func _walkable_spawn(candidate: Vector2) -> Vector2:
 	var cell := local_to_grid_cell(candidate)
 	if is_navigation_walkable(cell):
 		return candidate
-	var nearest := _nearest_walkable_cell(cell, 12)
+	var nearest := _nearest_walkable_cell(cell, WALKABLE_SNAP_RADIUS_CELLS)
 	return grid_to_local_horizontal(nearest) if nearest.x >= 0 else candidate
 
 
@@ -1803,6 +1971,17 @@ func _resolve_from(base_root: String, relative: String) -> String:
 		return ""
 	var resolved := ModLoader.resolve_pack_path(base_root, relative)
 	if resolved == "" or not ModLoader.path_is_within(base_root, resolved) or not ModLoader.path_is_within(map_root, resolved) or not ModLoader.path_is_within(pack_root, resolved):
+		return ""
+	return resolved
+
+
+func _resolve_from_pack(base_root: String, relative: String) -> String:
+	## Like _resolve_from but confined to the pack rather than the map directory,
+	## for pack-scope shared assets (the five-maps terrain material catalog).
+	if base_root == "" or relative == "":
+		return ""
+	var resolved := ModLoader.resolve_pack_path(base_root, relative)
+	if resolved == "" or not ModLoader.path_is_within(base_root, resolved) or not ModLoader.path_is_within(pack_root, resolved):
 		return ""
 	return resolved
 
@@ -1919,6 +2098,8 @@ func _array(value: Variant) -> Array:
 func _reset() -> void:
 	ready = false
 	error = ""
+	map_id = ""
+	_map_runtime_profile = DEFAULT_MAP_RUNTIME_PROFILE
 	height_samples = PackedByteArray()
 	passability_bits = PackedByteArray()
 	terrain_texture_count = 0
@@ -1977,6 +2158,8 @@ func _reset() -> void:
 	object_bindings_path = ""
 	_object_binding_by_type.clear()
 	map_outline = PackedVector2Array()
+	navigation_grid_min = Vector2i.ZERO
+	navigation_grid_max = Vector2i.ZERO
 	navigation_ready = false
 	navigation_walkable_count = 0
 	navigation_water_blocked_count = 0

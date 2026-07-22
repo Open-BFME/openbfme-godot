@@ -36,3 +36,9 @@ __pycache__/
 build/
 **/bin/
 **/obj/
+
+# Claude Code session state (worktrees, local settings)
+.claude/
+
+# Retail-derived reference captures stay out of git (release firewall)
+/reference/

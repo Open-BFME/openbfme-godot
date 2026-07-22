@@ -15,7 +15,12 @@ from typing import Any, Mapping
 
 from .catalog import InstallCatalog
 from .faction_census import census_playable_faction
-from .faction_policy import implicit_object_roots
+from .faction_policy import (
+    implicit_object_roots,
+    music_roots,
+    source_null_command_sets,
+    source_null_mapped_image_textures,
+)
 from .playable_unit_compiler import prepare_playable_unit_compiler
 from .playable_unit_import import FACTIONS, _source_documents
 from .sage_string import MAX_STRING_BYTES, parse_string_catalog
@@ -178,6 +183,9 @@ def compile_spellbook_lane(
         player_template=spec[1],
         expected_side=spec[2],
         implicit_object_roots=implicit_object_roots(spec[1]),
+        source_null_mapped_image_textures=source_null_mapped_image_textures(spec[1]),
+        source_null_command_sets=source_null_command_sets(spec[1]),
+        music_roots=music_roots(spec[1]),
     )
     documents = spellbook_source_documents(effective_root)
     prepared = prepare_playable_unit_compiler(documents)

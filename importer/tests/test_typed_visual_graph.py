@@ -536,6 +536,173 @@ End
             "missing",
         )
 
+    def test_animation_clip_file_stem_resolves_retail_clip_id_drift(self) -> None:
+        documents = {
+            "entry.ini": b"""
+Object DriftedClip
+  Draw = W3DScriptedModelDraw ModuleTag_Main
+    DefaultModelConditionState
+      Model = BaseModel
+    End
+    IdleAnimationState
+      Animation = Idle
+        AnimationName = BASE_SKL.BASE_IDLC_T3
+      End
+    End
+  End
+End
+"""
+        }
+        drifted = build_w3d_index(
+            [
+                "art/w3d/base.w3d",
+                "art/w3d/base_skl.w3d",
+                "art/w3d/base_idlc_t3.w3d",
+            ],
+            [
+                W3DFileHeaders("art/w3d/base.w3d", model_ids=("BaseModel",)),
+                W3DFileHeaders("art/w3d/base_skl.w3d", hierarchy_ids=("BASE_SKL",)),
+                W3DFileHeaders(
+                    "art/w3d/base_idlc_t3.w3d",
+                    animation_ids=("BASE_IDLC_T", "BASE_SKL.BASE_IDLC_T"),
+                ),
+            ],
+        )
+
+        graph = resolve_typed_visual_documents(
+            "entry.ini", documents, ["DriftedClip"], drifted
+        )
+
+        self.assertTrue(graph.complete)
+        animation = next(
+            reference for reference in graph.references if reference.kind == "animation"
+        )
+        self.assertEqual(animation.identifier, "BASE_SKL.BASE_IDLC_T3")
+        self.assertEqual(animation.status, "resolved")
+        self.assertEqual(
+            animation.physical_virtual_paths, ("art/w3d/base_idlc_t3.w3d",)
+        )
+        self.assertIn("exact-stem:base_idlc_t3", animation.evidence)
+
+    def test_extra_mesh_suffix_resolves_as_explicit_extra_mesh_kind(self) -> None:
+        documents = {
+            "entry.ini": b"""
+Object CorpsePile
+  Draw = W3DScriptedModelDraw ModuleTag_Main
+    DefaultModelConditionState
+      Model = BaseModel
+      Model = OverlayModel ExtraMesh:Yes
+    End
+  End
+End
+"""
+        }
+        graph = resolve_typed_visual_documents(
+            "entry.ini", documents, ["CorpsePile"], _index()
+        )
+
+        self.assertTrue(graph.complete)
+        extra = next(
+            reference
+            for reference in graph.references
+            if reference.kind == "extra-mesh"
+        )
+        self.assertEqual(extra.identifier, "OverlayModel")
+        self.assertEqual(extra.usage, "extra-mesh")
+        self.assertEqual(extra.status, "resolved")
+        self.assertEqual(extra.physical_virtual_paths, ("art/w3d/overlay.w3d",))
+
+        bad = {
+            "entry.ini": b"""
+Object CorpsePile
+  Draw = W3DScriptedModelDraw ModuleTag_Main
+    DefaultModelConditionState
+      Model = OverlayModel ExtraMesh:No
+    End
+  End
+End
+"""
+        }
+        graph = resolve_typed_visual_documents(
+            "entry.ini", bad, ["CorpsePile"], _index()
+        )
+        invalid = next(
+            reference
+            for reference in graph.unresolved
+            if reference.kind == "model"
+        )
+        self.assertEqual(invalid.status, "invalid")
+
+    def test_animation_clip_file_stem_fallback_stays_fail_closed(self) -> None:
+        documents = {
+            "entry.ini": b"""
+Object DriftedClip
+  Draw = W3DScriptedModelDraw ModuleTag_Main
+    DefaultModelConditionState
+      Model = BaseModel
+    End
+    IdleAnimationState
+      Animation = Idle
+        AnimationName = BASE_SKL.BASE_IDLC_T3
+      End
+    End
+  End
+End
+"""
+        }
+        ambiguous = build_w3d_index(
+            [
+                "art/w3d/base.w3d",
+                "art/w3d/ru/base_idlc_t3.w3d",
+                "art/w3d/eu/base_idlc_t3.w3d",
+            ],
+            [W3DFileHeaders("art/w3d/base.w3d", model_ids=("BaseModel",))],
+        )
+        graph = resolve_typed_visual_documents(
+            "entry.ini", documents, ["DriftedClip"], ambiguous
+        )
+        animation = next(
+            reference for reference in graph.unresolved if reference.kind == "animation"
+        )
+        self.assertEqual(animation.status, "ambiguous")
+        self.assertEqual(
+            animation.candidates,
+            ("art/w3d/eu/base_idlc_t3.w3d", "art/w3d/ru/base_idlc_t3.w3d"),
+        )
+
+        missing = build_w3d_index(
+            ["art/w3d/base.w3d"],
+            [W3DFileHeaders("art/w3d/base.w3d", model_ids=("BaseModel",))],
+        )
+        graph = resolve_typed_visual_documents(
+            "entry.ini", documents, ["DriftedClip"], missing
+        )
+        animation = next(
+            reference for reference in graph.unresolved if reference.kind == "animation"
+        )
+        self.assertEqual(animation.status, "missing")
+        self.assertEqual(animation.candidates, ())
+
+        model_only = build_w3d_index(
+            ["art/w3d/base.w3d", "art/w3d/base_idlc_t3.w3d"],
+            [
+                W3DFileHeaders("art/w3d/base.w3d", model_ids=("BaseModel",)),
+                W3DFileHeaders(
+                    "art/w3d/base_idlc_t3.w3d",
+                    model_ids=("BASE_IDLC_T3",),
+                    hierarchy_ids=("BASE_IDLC_T3",),
+                ),
+            ],
+        )
+        graph = resolve_typed_visual_documents(
+            "entry.ini", documents, ["DriftedClip"], model_only
+        )
+        animation = next(
+            reference for reference in graph.unresolved if reference.kind == "animation"
+        )
+        self.assertEqual(animation.status, "missing")
+        self.assertEqual(animation.candidates, ())
+
 
 if __name__ == "__main__":
     unittest.main()
