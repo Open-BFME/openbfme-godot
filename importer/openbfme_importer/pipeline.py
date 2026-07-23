@@ -3595,6 +3595,8 @@ class ImportPipeline:
                 return self._convert_sage_map(source, target, options)
             case "sage-particle-definition":
                 return self._convert_sage_particle_definition(source, target, options)
+            case "sage-scripts":
+                return self._convert_sage_scripts(source, target, options)
             case "copy" | "text" | "map":
                 shutil.copyfile(source, target)
                 return [target]
@@ -3880,6 +3882,23 @@ class ImportPipeline:
         )
         write_json_atomic(target, particle_definition_document(definition))
         return [target]
+
+    def _convert_sage_scripts(
+        self,
+        source: Path,
+        target: Path,
+        options: dict[str, Any],
+    ) -> list[Path]:
+        if not target.name.casefold().endswith(".scripts.json"):
+            raise ValueError("sage-scripts output must be a .scripts.json file")
+        if options:
+            raise ValueError(
+                "sage-scripts accepts no options; got: "
+                + ", ".join(sorted(options))
+            )
+        from .sage_scripts import convert_map_scripts
+
+        return convert_map_scripts(source, target)
 
     def _convert_sage_map(
         self,

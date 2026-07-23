@@ -42,6 +42,7 @@ ALLOWED_CONVERTERS = {
     "sage-apt-runtime",
     "retail-unit-rules",
     "sage-particle-definition",
+    "sage-scripts",
     "sage-terrain-materials",
 }
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
