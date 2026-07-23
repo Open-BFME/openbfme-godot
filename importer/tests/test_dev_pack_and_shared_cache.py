@@ -9,6 +9,7 @@ import unittest
 from unittest import mock
 
 from openbfme_importer import cli
+from openbfme_importer.faction_census import PlayableFaction
 from openbfme_importer.pipeline import (
     ImportPipeline,
     _media_conversion_cache_key,
@@ -320,6 +321,11 @@ class DevCliTests(unittest.TestCase):
             with (
                 mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
                 mock.patch.object(cli, "ImportPipeline", return_value=pipeline),
+                mock.patch.object(
+                    cli,
+                    "resolve_playable_faction",
+                    return_value=PlayableFaction("FactionMen", "Men", 57),
+                ),
                 mock.patch.object(cli, "convert_faction_import", convert),
             ):
                 # Clear so _apply_dev_mode can set defaults.
@@ -344,6 +350,7 @@ class DevCliTests(unittest.TestCase):
             convert.assert_called_once()
             kwargs = convert.call_args.kwargs
             self.assertEqual(kwargs.get("convert_jobs"), 3)
+            self.assertEqual(kwargs.get("game"), "bfme2")
             self.assertEqual(Path(kwargs["state_root"]), state_root)
             # --dev is scoped to main(): env restored after the command.
             self.assertNotEqual(os.environ.get("OPENBFME_DEV"), "1")

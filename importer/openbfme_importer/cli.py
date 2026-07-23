@@ -28,7 +28,11 @@ from .paths import (
 )
 from .pipeline import ImportPipeline, audit_pack, bundle_digest
 from .playable_unit_import import import_playable_unit
-from .faction_census import census_playable_faction
+from .faction_census import (
+    census_playable_faction,
+    discover_playable_factions,
+    resolve_playable_faction,
+)
 from .faction_import import convert_faction_import, plan_faction_import
 from .faction_policy import implicit_object_roots
 from .faction_profile import build_men_leaf_profile
@@ -220,16 +224,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     faction_census = sub.add_parser(
         "census-faction",
-        help="inventory BFME2 1.06 faction command-reachable dependency roots",
+        help="inventory one discovered faction's command-reachable dependency roots",
     )
     faction_census.add_argument("--install", required=True)
     _add_game_argument(faction_census)
     faction_census.add_argument(
         "--faction",
         default="men",
-        choices=("men", "elves", "dwarves", "isengard", "mordor", "wild"),
     )
     faction_census.add_argument("--reindex", action="store_true")
+
+    factions_census = sub.add_parser(
+        "census-factions",
+        help="list playable factions discovered from effective PlayerTemplate data",
+    )
+    factions_census.add_argument("--install", required=True)
+    _add_game_argument(factions_census)
+    factions_census.add_argument("--reindex", action="store_true")
 
     import_faction = sub.add_parser(
         "import-faction",
@@ -240,7 +251,6 @@ def build_parser() -> argparse.ArgumentParser:
     import_faction.add_argument(
         "--faction",
         required=True,
-        choices=("men", "elves", "dwarves", "isengard", "mordor", "wild"),
     )
     import_faction.add_argument("--reindex", action="store_true")
     import_faction.add_argument(
@@ -542,8 +552,9 @@ def main(argv: list[str] | None = None) -> int:
             value = check_dependencies(
                 args.install,
                 _state_root(args),
-                mode="men-build",
+                mode="men-build" if args.game == "bfme2" else "faction-plan",
                 deep=bool(getattr(args, "deep", False)),
+                game=args.game,
             )
             # Keep legacy keys for scripts that parse doctor JSON.
             value["install_root"] = value.get("install", {}).get(
@@ -621,14 +632,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "import-faction":
             from .progress import emit as progress_emit
 
-            if args.game != "bfme2":
-                raise ValueError("import-faction currently supports BFME2 1.06 only")
             if args.plan_only == args.convert:
                 raise ValueError(
                     "pass exactly one of --plan-only or --convert; pack "
                     "publication is a later stage"
                 )
-            pipeline = ImportPipeline(catalog, _state_root(args), game="bfme2")
+            if args.convert and args.game != "bfme2":
+                raise ValueError(
+                    "import-faction --convert currently supports BFME2 1.06 only"
+                )
+            faction = resolve_playable_faction(catalog, args.faction)
+            faction_key = faction.short_name
+            pipeline = ImportPipeline(catalog, _state_root(args), game=args.game)
             effective_root, manifest_path, _staging, _backup = (
                 pipeline._effective_asset_paths()
             )
@@ -642,8 +657,10 @@ def main(argv: list[str] | None = None) -> int:
                     extra={"skipped": True},
                 )
             report_root = _state_root(args) / "reports" / "faction-import"
+            if args.game != "bfme2":
+                report_root = _workspace_root(args) / "reports" / "faction-import"
             if args.convert:
-                artifact_root = report_root / args.faction / "objects"
+                artifact_root = report_root / faction_key / "objects"
 
                 def _write_artifact(
                     object_id: str, kind: str, document: object
@@ -656,12 +673,13 @@ def main(argv: list[str] | None = None) -> int:
                 value = convert_faction_import(
                     catalog,
                     effective_root,
-                    args.faction,
+                    faction_key,
                     artifact_writer=_write_artifact,
                     state_root=_state_root(args),
                     convert_jobs=getattr(args, "convert_jobs", None),
+                    game=args.game,
                 )
-                report_path = report_root / f"{args.faction}-coverage.json"
+                report_path = report_root / f"{faction_key}-coverage.json"
                 write_json_atomic(report_path, value)
                 summary = value["summary"]
                 progress_complete(
@@ -682,8 +700,10 @@ def main(argv: list[str] | None = None) -> int:
                     args.json,
                 )
                 return 0 if bool(summary["conversionComplete"]) else 6
-            value = plan_faction_import(catalog, effective_root, args.faction)
-            report_path = report_root / f"{args.faction}-plan.json"
+            value = plan_faction_import(
+                catalog, effective_root, faction_key, game=args.game
+            )
+            report_path = report_root / f"{faction_key}-plan.json"
             write_json_atomic(report_path, value)
             summary = value["summary"]
             progress_complete(
@@ -903,28 +923,58 @@ def main(argv: list[str] | None = None) -> int:
             _render(value, args.json)
             return 0
 
-        if args.command == "census-faction":
-            if args.game != "bfme2":
-                raise ValueError("census-faction currently supports BFME2 only")
-            faction_specs = {
-                "men": ("FactionMen", "Men"),
-                "elves": ("FactionElves", "Elves"),
-                "dwarves": ("FactionDwarves", "Dwarves"),
-                "isengard": ("FactionIsengard", "Isengard"),
-                "mordor": ("FactionMordor", "Mordor"),
-                "wild": ("FactionWild", "Wild"),
+        if args.command == "census-factions":
+            factions = discover_playable_factions(catalog)
+            rows = [
+                {
+                    "name": faction.name,
+                    "side": faction.side,
+                    "object_count": faction.object_count,
+                }
+                for faction in factions
+            ]
+            report = {
+                "format": 1,
+                "schema": "openbfme.playable-faction-census",
+                "schemaVersion": 1,
+                "game": args.game,
+                "factionCount": len(rows),
+                "factions": rows,
             }
-            template, side = faction_specs[args.faction]
+            report_path = (
+                _workspace_root(args)
+                / "reports"
+                / f"{args.game}-playable-factions.json"
+            )
+            write_json_atomic(report_path, report)
+            _render(
+                {
+                    "ready": True,
+                    "game": args.game,
+                    "report": str(report_path),
+                    "faction_count": len(rows),
+                    "factions": rows,
+                },
+                args.json,
+            )
+            return 0
+
+        if args.command == "census-faction":
+            faction = resolve_playable_faction(catalog, args.faction)
+            template, side = faction.name, faction.side
             report = census_playable_faction(
                 catalog,
                 player_template=template,
+                game=args.game,
                 expected_side=side,
-                implicit_object_roots=implicit_object_roots(template),
+                implicit_object_roots=implicit_object_roots(
+                    template, game=args.game
+                ),
             )
             report_path = (
                 _workspace_root(args)
                 / "reports"
-                / f"{args.faction}-faction-leaf-census.json"
+                / f"{faction.short_name}-faction-leaf-census.json"
             )
             write_json_atomic(report_path, report)
             payload = (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from .faction_census import _IMPLICIT_MEN_ROOTS
 
@@ -91,12 +92,55 @@ MUSIC_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = {
 }
 
 
-def implicit_object_roots(player_template: str) -> tuple[tuple[str, str], ...]:
+@dataclass(frozen=True, slots=True)
+class FactionPolicyProfile:
+    """Game-identity-selected curated allowances for faction analysis."""
+
+    implicit_object_roots: Mapping[str, tuple[tuple[str, str], ...]]
+    source_null_mapped_image_textures: Mapping[
+        str, tuple[tuple[str, str], ...]
+    ]
+    source_null_command_sets: Mapping[str, tuple[tuple[str, str], ...]]
+    music_roots: Mapping[str, tuple[tuple[str, str], ...]]
+
+
+FACTION_POLICY_PROFILES: Mapping[str, FactionPolicyProfile] = {
+    "bfme2": FactionPolicyProfile(
+        implicit_object_roots=IMPLICIT_OBJECT_ROOTS,
+        source_null_mapped_image_textures=SOURCE_NULL_MAPPED_IMAGE_TEXTURES,
+        source_null_command_sets=SOURCE_NULL_COMMAND_SETS,
+        music_roots=MUSIC_ROOTS,
+    ),
+    # Expansion analysis is admitted without inventing RotWK curations.
+    "rotwk": FactionPolicyProfile(
+        implicit_object_roots={},
+        source_null_mapped_image_textures={},
+        source_null_command_sets={},
+        music_roots={},
+    ),
+}
+
+
+def _profile(game: str) -> FactionPolicyProfile:
+    try:
+        return FACTION_POLICY_PROFILES[game.casefold().strip()]
+    except (AttributeError, KeyError) as exc:
+        raise FactionPolicyError(
+            f"unsupported faction policy profile: {game!r}"
+        ) from exc
+
+
+def implicit_object_roots(
+    player_template: str, *, game: str = "bfme2"
+) -> tuple[tuple[str, str], ...]:
     """Return the curated implicit census roots for one PlayerTemplate identity."""
 
     if not player_template or not isinstance(player_template, str):
         raise FactionPolicyError("player template identity is invalid")
-    roots = IMPLICIT_OBJECT_ROOTS.get(player_template.casefold())
+    profile = _profile(game)
+    if game.casefold().strip() == "rotwk":
+        return ()
+    roots = profile.implicit_object_roots.get(player_template.casefold())
     if roots is None:
         raise FactionPolicyError(
             f"faction has no curated implicit census roots: {player_template}"
@@ -106,12 +150,17 @@ def implicit_object_roots(player_template: str) -> tuple[tuple[str, str], ...]:
 
 def source_null_mapped_image_textures(
     player_template: str,
+    *,
+    game: str = "bfme2",
 ) -> tuple[tuple[str, str], ...]:
     """Return curated retail-absent MappedImage textures for one faction."""
 
     if not player_template or not isinstance(player_template, str):
         raise FactionPolicyError("player template identity is invalid")
-    entries = SOURCE_NULL_MAPPED_IMAGE_TEXTURES.get(player_template.casefold())
+    profile = _profile(game)
+    if game.casefold().strip() == "rotwk":
+        return ()
+    entries = profile.source_null_mapped_image_textures.get(player_template.casefold())
     if entries is None:
         raise FactionPolicyError(
             "faction has no curated source-null MappedImage texture policy: "
@@ -120,24 +169,34 @@ def source_null_mapped_image_textures(
     return entries
 
 
-def source_null_command_sets(player_template: str) -> tuple[tuple[str, str], ...]:
+def source_null_command_sets(
+    player_template: str, *, game: str = "bfme2"
+) -> tuple[tuple[str, str], ...]:
     """Return curated retail-absent CommandSet references for one faction."""
 
     if not player_template or not isinstance(player_template, str):
         raise FactionPolicyError("player template identity is invalid")
-    if player_template.casefold() not in IMPLICIT_OBJECT_ROOTS:
+    profile = _profile(game)
+    if game.casefold().strip() == "rotwk":
+        return ()
+    if player_template.casefold() not in profile.implicit_object_roots:
         raise FactionPolicyError(
             f"faction has no curated source-null CommandSet policy: {player_template}"
         )
-    return SOURCE_NULL_COMMAND_SETS.get(player_template.casefold(), ())
+    return profile.source_null_command_sets.get(player_template.casefold(), ())
 
 
-def music_roots(player_template: str) -> tuple[tuple[str, str], ...]:
+def music_roots(
+    player_template: str, *, game: str = "bfme2"
+) -> tuple[tuple[str, str], ...]:
     """Return the engine-level skirmish music roots for one faction."""
 
     if not player_template or not isinstance(player_template, str):
         raise FactionPolicyError("player template identity is invalid")
-    entries = MUSIC_ROOTS.get(player_template.casefold())
+    profile = _profile(game)
+    if game.casefold().strip() == "rotwk":
+        return ()
+    entries = profile.music_roots.get(player_template.casefold())
     if entries is None:
         raise FactionPolicyError(
             f"faction has no curated music root policy: {player_template}"
@@ -146,7 +205,9 @@ def music_roots(player_template: str) -> tuple[tuple[str, str], ...]:
 
 
 __all__ = [
+    "FACTION_POLICY_PROFILES",
     "FactionPolicyError",
+    "FactionPolicyProfile",
     "IMPLICIT_OBJECT_ROOTS",
     "MUSIC_ROOTS",
     "SOURCE_NULL_COMMAND_SETS",

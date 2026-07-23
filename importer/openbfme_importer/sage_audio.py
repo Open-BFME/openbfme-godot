@@ -386,3 +386,49 @@ def resolve_audio_sample_paths(
             raise ValueError(f"ambiguous audio sample: {requested[key]!r}")
         result[requested[key]] = matches[0]
     return result
+
+
+def resolve_audio_sample_paths_partial(
+    sample_ids: Iterable[str], virtual_paths: Iterable[str]
+) -> tuple[dict[str, str], tuple[str, ...], tuple[str, ...]]:
+    """Resolve samples once while preserving missing/ambiguous rows as facts."""
+
+    requested: dict[str, str] = {}
+    for sample_id in sample_ids:
+        _identifier(sample_id, "audio sample")
+        key = sample_id.casefold()
+        if key in requested:
+            raise ValueError(f"duplicate audio sample identifier: {sample_id!r}")
+        requested[key] = sample_id
+    if len(requested) > MAX_AUDIO_SAMPLE_PATHS:
+        raise ValueError("audio sample request count exceeds limit")
+
+    selected_paths = list(virtual_paths)
+    if len(selected_paths) > MAX_AUDIO_SAMPLE_PATHS:
+        raise ValueError("audio sample path count exceeds limit")
+    candidates: dict[str, set[str]] = {}
+    for value in selected_paths:
+        parts = safe_relative_parts(value)
+        normalized = "/".join(parts)
+        folded = normalized.casefold()
+        if not folded.startswith("data/audio/"):
+            continue
+        suffix = PurePosixPath(normalized).suffix.casefold()
+        if suffix not in _MEDIA_EXTENSIONS:
+            continue
+        stem = PurePosixPath(normalized).stem.casefold()
+        if stem in requested:
+            candidates.setdefault(stem, set()).add(normalized)
+
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    ambiguous: list[str] = []
+    for key in sorted(requested):
+        matches = sorted(candidates.get(key, set()), key=lambda item: item.casefold())
+        if not matches:
+            missing.append(requested[key])
+        elif len(matches) != 1:
+            ambiguous.append(requested[key])
+        else:
+            resolved[requested[key]] = matches[0]
+    return resolved, tuple(missing), tuple(ambiguous)

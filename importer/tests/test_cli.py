@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 from openbfme_importer import cli
+from openbfme_importer.faction_census import PlayableFaction
 
 
 class CliTests(unittest.TestCase):
@@ -51,6 +52,11 @@ class CliTests(unittest.TestCase):
             with (
                 mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
                 mock.patch.object(cli, "ImportPipeline", return_value=pipeline),
+                mock.patch.object(
+                    cli,
+                    "resolve_playable_faction",
+                    return_value=PlayableFaction("FactionMen", "Men", 57),
+                ),
                 mock.patch.object(cli, "plan_faction_import", return_value=plan),
             ):
                 result = cli.main(
@@ -87,6 +93,75 @@ class CliTests(unittest.TestCase):
             self.assertEqual(args.faction, faction)
             self.assertTrue(args.plan_only)
 
+        template_args = parser.parse_args(
+            [
+                "import-faction",
+                "--install",
+                "C:/RotWK",
+                "--game",
+                "rotwk",
+                "--faction",
+                "FactionAngmar",
+                "--plan-only",
+            ]
+        )
+        self.assertEqual(template_args.faction, "FactionAngmar")
+
+    def test_census_factions_writes_discovered_rows(self) -> None:
+        factions = (
+            PlayableFaction("PlayableAlpha", "Alpha", 3),
+            PlayableFaction("FactionBeta", "Beta", 5),
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            with (
+                mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
+                mock.patch.object(
+                    cli, "discover_playable_factions", return_value=factions
+                ),
+            ):
+                result = cli.main(
+                    [
+                        "--state-root",
+                        raw,
+                        "census-factions",
+                        "--install",
+                        "C:/BFME2",
+                    ]
+                )
+
+            report = json.loads(
+                (Path(raw) / "reports" / "bfme2-playable-factions.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(report["factionCount"], 2)
+        self.assertEqual(report["factions"][0]["name"], "PlayableAlpha")
+
+    def test_rotwk_conversion_is_rejected_before_faction_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with (
+                mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
+                mock.patch.object(cli, "resolve_playable_faction") as resolve,
+            ):
+                result = cli.main(
+                    [
+                        "--state-root",
+                        raw,
+                        "import-faction",
+                        "--install",
+                        "C:/RotWK",
+                        "--game",
+                        "rotwk",
+                        "--faction",
+                        "FactionAngmar",
+                        "--convert",
+                    ]
+                )
+
+        self.assertEqual(result, 1)
+        resolve.assert_not_called()
+
     def test_non_men_census_uses_the_curated_faction_roots(self) -> None:
         report = {
             "summary": {
@@ -104,6 +179,11 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             with (
                 mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
+                mock.patch.object(
+                    cli,
+                    "resolve_playable_faction",
+                    return_value=PlayableFaction("FactionElves", "Elves", 1),
+                ),
                 mock.patch.object(
                     cli, "census_playable_faction", return_value=report
                 ) as census,

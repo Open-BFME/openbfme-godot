@@ -7,7 +7,9 @@ import pytest
 from openbfme_importer.faction_import import (
     build_faction_conversion,
     build_faction_import_plan,
+    convert_faction_import,
 )
+from openbfme_importer.playable_unit_compiler import PlayableUnitCompilerError
 from importer.tests.test_playable_unit_compiler import _hero_roster_fixture
 
 
@@ -86,6 +88,37 @@ def test_missing_effective_object_is_counted_as_a_gap() -> None:
     row = next(item for item in plan["objects"] if item["id"] == "AbsentRetailObject")
     assert row["family"] == "missing-object"
     assert row["status"] == "converter-gap"
+
+
+def test_compiler_initialization_failure_accounts_for_every_object_as_gap() -> None:
+    documents, graph = _fixture()
+    with mock.patch(
+        "openbfme_importer.faction_import.prepare_playable_unit_compiler",
+        side_effect=PlayableUnitCompilerError(
+            "ambiguous effective Object definition: ExpansionOnly"
+        ),
+    ):
+        plan = build_faction_import_plan(
+            graph, documents, catalog_identity_sha256="2" * 64
+        )
+
+    assert plan["summary"]["objectCount"] == 3
+    assert plan["summary"]["converterGapCount"] == 3
+    assert {row["status"] for row in plan["objects"]} == {"converter-gap"}
+    assert {row["family"] for row in plan["objects"]} == {"retail-object-parser"}
+
+
+def test_conversion_rejects_rotwk_catalog_before_census_or_writes() -> None:
+    catalog = mock.Mock()
+    catalog.source_policy = mock.Mock(game="rotwk", patch="2.01")
+
+    with pytest.raises(ValueError, match="BFME2 1.06 policy-bound"):
+        convert_faction_import(
+            catalog,
+            Path("unused"),
+            "men",
+            game="rotwk",
+        )
 
 
 def test_census_resolved_but_unparseable_object_is_a_parser_gap() -> None:
@@ -176,14 +209,18 @@ def test_plan_rejects_invalid_catalog_and_target_identities() -> None:
         )
 
 
-def test_plan_rejects_mismatched_template_and_faction() -> None:
+def test_plan_does_not_infer_side_from_player_template_spelling() -> None:
     documents, graph = _fixture()
-    graph["target"]["faction"] = "Mordor"
+    graph["target"]["playerTemplate"] = "PlayableMen"
 
-    with pytest.raises(ValueError, match="identity pair"):
-        build_faction_import_plan(
-            graph, documents, catalog_identity_sha256="2" * 64
-        )
+    plan = build_faction_import_plan(
+        graph, documents, catalog_identity_sha256="2" * 64
+    )
+
+    assert plan["target"] == {
+        "playerTemplate": "PlayableMen",
+        "faction": "Men",
+    }
 
 
 def _structure_success_patches() -> tuple[mock._patch, ...]:

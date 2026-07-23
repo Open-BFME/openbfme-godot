@@ -6,6 +6,7 @@ try:
     from openbfme_importer.sage_audio import (
         parse_sage_audio_definitions,
         resolve_audio_sample_paths,
+        resolve_audio_sample_paths_partial,
         resolve_sage_audio_closure,
     )
 except ModuleNotFoundError as exc:
@@ -14,6 +15,7 @@ except ModuleNotFoundError as exc:
     from importer.openbfme_importer.sage_audio import (
         parse_sage_audio_definitions,
         resolve_audio_sample_paths,
+        resolve_audio_sample_paths_partial,
         resolve_sage_audio_closure,
     )
 
@@ -116,6 +118,20 @@ End
                 "voice_b": "data/audio/sounds/voice_b.wav",
             },
         )
+
+    def test_partial_sample_resolution_reports_missing_and_ambiguous(self) -> None:
+        resolved, missing, ambiguous = resolve_audio_sample_paths_partial(
+            ["voice", "missing", "duplicate"],
+            [
+                "data/audio/voice.wav",
+                "data/audio/a/duplicate.wav",
+                "data/audio/b/duplicate.mp3",
+            ],
+        )
+
+        self.assertEqual(resolved, {"voice": "data/audio/voice.wav"})
+        self.assertEqual(missing, ("missing",))
+        self.assertEqual(ambiguous, ("duplicate",))
         with self.assertRaisesRegex(ValueError, "unresolved audio sample"):
             resolve_audio_sample_paths(["missing"], ["data/audio/sounds/voice.wav"])
         with self.assertRaisesRegex(ValueError, "ambiguous audio sample"):

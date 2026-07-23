@@ -1,4 +1,4 @@
-"""Payload-free command-reachable census for BFME2 1.06 playable factions."""
+"""Payload-free command-reachable census for supported SAGE factions."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any, Iterable
 
 from .big import sha256_file
 from .catalog import CatalogEntry, InstallCatalog
+from .game import retail_game
 from .mapped_image import (
     resolve_mapped_image_texture_paths_partial,
     resolve_mapped_images_partial,
@@ -17,6 +18,7 @@ from .mapped_image import (
 from .sage_audio import (
     parse_sage_audio_definitions,
     resolve_audio_sample_paths,
+    resolve_audio_sample_paths_partial,
     resolve_sage_audio_closure,
 )
 from .sage_cst import SageCstError, parse_sage_document
@@ -94,6 +96,22 @@ class _ObjectDefinition:
     source: _SourceDocument
 
 
+@dataclass(frozen=True, slots=True)
+class PlayableFaction:
+    """One effective playable PlayerTemplate and its side-owned Object count."""
+
+    name: str
+    side: str
+    object_count: int
+
+    @property
+    def short_name(self) -> str:
+        """Return the established faction alias derived from the template name."""
+
+        value = self.name[7:] if self.name.casefold().startswith("faction") else self.side
+        return value.casefold()
+
+
 def _read_document(catalog: InstallCatalog, virtual_path: str) -> _SourceDocument:
     entry = catalog.resolve_exact(virtual_path)
     if entry is None:
@@ -124,6 +142,22 @@ def _object_documents(catalog: InstallCatalog) -> list[_SourceDocument]:
         raise ValueError("faction census object document count exceeds limit")
     if sum(entry.size for entry in selected) > MAX_TOTAL_OBJECT_INI_BYTES:
         raise ValueError("faction census object document bytes exceed limit")
+    return [_read_document(catalog, entry.name) for entry in selected]
+
+
+def _effective_ini_documents(catalog: InstallCatalog) -> list[_SourceDocument]:
+    """Return every effective ``.ini`` document for source-wide discovery."""
+
+    selected = [
+        entry
+        for entry in _effective_entries(catalog).values()
+        if entry.name.casefold().endswith(".ini")
+    ]
+    selected.sort(key=lambda item: (item.name.casefold(), item.name))
+    if len(selected) > MAX_OBJECT_DOCUMENTS:
+        raise ValueError("faction discovery INI document count exceeds limit")
+    if sum(entry.size for entry in selected) > MAX_TOTAL_OBJECT_INI_BYTES:
+        raise ValueError("faction discovery INI document bytes exceed limit")
     return [_read_document(catalog, entry.name) for entry in selected]
 
 
@@ -506,10 +540,151 @@ def _effective_object_assignments(
         ancestry.append(current)
 
 
+def _is_playable_template(block: IniBlock) -> bool:
+    """Apply the retail-authored playable predicate without truthy coercion."""
+
+    values = _block_values(block, "PlayableSide")
+    if not values:
+        return False
+    identifiers = [_first_identifier(value) for value in values]
+    if len(identifiers) != 1 or identifiers[0] is None:
+        raise ValueError(
+            f"PlayerTemplate {block.name} has ambiguous PlayableSide assignments"
+        )
+    value = identifiers[0].casefold()
+    if value == "yes":
+        return True
+    if value == "no":
+        return False
+    raise ValueError(
+        f"PlayerTemplate {block.name} has unsupported PlayableSide value: "
+        f"{identifiers[0]!r}"
+    )
+
+
+def discover_playable_factions(
+    catalog: InstallCatalog,
+) -> tuple[PlayableFaction, ...]:
+    """Discover playable factions from the effective PlayerTemplate document.
+
+    Retail BFME2/RotWK explicitly distinguish skirmish factions from observer,
+    civilian, tutorial, and incomplete template rows with ``PlayableSide =
+    Yes``.  Admission therefore requires that exact authored predicate plus a
+    single valid ``Side`` assignment; names and sides are never inferred from a
+    built-in faction list.  Object counts resolve each effective Object's
+    inherited ``Side`` with the same child-override semantics as the census.
+    """
+
+    player_doc = _read_document(catalog, PLAYER_TEMPLATE_PATH)
+    candidates = _block_candidates(
+        parse_flat_named_blocks(player_doc.source, "PlayerTemplate")
+    )
+    playable: list[tuple[str, str]] = []
+    for key in sorted(candidates):
+        blocks = candidates[key]
+        if len(blocks) != 1:
+            raise ValueError(
+                "effective PlayerTemplate input has ambiguous "
+                f"definition: {blocks[0].name}"
+            )
+        block = blocks[0]
+        if not _is_playable_template(block):
+            continue
+        side_values = [
+            identifier
+            for value in _block_values(block, "Side")
+            if (identifier := _first_identifier(value)) is not None
+        ]
+        if len(side_values) != 1:
+            raise ValueError(
+                f"playable PlayerTemplate {block.name} must have exactly one valid Side"
+            )
+        playable.append((block.name, side_values[0]))
+
+    object_candidates: dict[str, list[_ObjectDefinition]] = {}
+    for document in _effective_ini_documents(catalog):
+        for block in parse_object_definitions(document.source):
+            object_candidates.setdefault(block.name.casefold(), []).append(
+                _ObjectDefinition(block, document)
+            )
+    resolved_sides: dict[str, str | None] = {}
+
+    def _object_side(
+        definition: _ObjectDefinition, trail: tuple[str, ...] = ()
+    ) -> str | None:
+        key = definition.block.name.casefold()
+        if key in resolved_sides:
+            return resolved_sides[key]
+        if key in trail:
+            resolved_sides[key] = None
+            return None
+        own = [
+            identifier
+            for field, value in definition.block.assignments
+            if field.casefold() == "side"
+            if (identifier := _first_identifier(value)) is not None
+        ]
+        if own:
+            resolved_sides[key] = own[-1]
+            return own[-1]
+        parent = definition.block.parent
+        matches = object_candidates.get(parent.casefold(), []) if parent else []
+        if parent and len(matches) == 1:
+            resolved_sides[key] = _object_side(matches[0], (*trail, key))
+        else:
+            resolved_sides[key] = None
+        return resolved_sides[key]
+
+    objects_by_side: dict[str, set[str]] = {}
+    for definitions in object_candidates.values():
+        for definition in definitions:
+            side = _object_side(definition)
+            if side is None:
+                continue
+            objects_by_side.setdefault(side.casefold(), set()).add(
+                definition.block.name.casefold()
+            )
+
+    return tuple(
+        PlayableFaction(
+            name=name,
+            side=side,
+            object_count=len(objects_by_side.get(side.casefold(), set())),
+        )
+        for name, side in sorted(
+            playable, key=lambda item: (item[0].casefold(), item[0])
+        )
+    )
+
+
+def resolve_playable_faction(
+    catalog: InstallCatalog, value: str
+) -> PlayableFaction:
+    """Resolve a side/template/short alias against discovered playable data."""
+
+    key = value.casefold().strip()
+    if not key:
+        raise ValueError("playable faction selector is empty")
+    matches = [
+        faction
+        for faction in discover_playable_factions(catalog)
+        if key
+        in {
+            faction.name.casefold(),
+            faction.side.casefold(),
+            faction.short_name,
+        }
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"unsupported playable faction: {value!r}")
+    return matches[0]
+
+
 def _census_playable_faction(
     catalog: InstallCatalog,
     *,
     player_template: str,
+    game: str = "bfme2",
     expected_side: str | None = None,
     implicit_object_roots: Iterable[tuple[str, str]] = (),
     source_null_mapped_image_textures: Iterable[tuple[str, str]] = (),
@@ -537,6 +712,7 @@ def _census_playable_faction(
 
     if not re.fullmatch(r"[A-Za-z0-9_+.-]+", player_template):
         raise ValueError(f"invalid PlayerTemplate identifier: {player_template!r}")
+    game_definition = retail_game(game)
 
     def _policy_entries(
         entries: Iterable[tuple[str, str]], label: str
@@ -614,7 +790,7 @@ def _census_playable_faction(
     fx_list_sounds = _fx_list_sound_names(fx_list_doc.source)
     eva_events = _eva_event_side_sounds(eva_doc.source)
     string_catalog = parse_string_catalog(
-        string_catalog_doc.source, duplicate_policy="first-wins"
+        string_catalog_doc.source, duplicate_policy="first-wins", strict=False
     )
     string_identifier_names = {
         record.identifier.casefold(): record.identifier
@@ -1315,13 +1491,29 @@ def _census_playable_faction(
     audio_closure = resolve_sage_audio_closure(
         audio_definitions, _casefold_unique(audio_roots)
     )
-    audio_sample_paths = resolve_audio_sample_paths(
-        audio_closure.sample_ids, effective_virtual_paths
-    )
+    missing_audio_samples: set[str] = set()
+    ambiguous_audio_samples: set[str] = set()
+    try:
+        audio_sample_paths = resolve_audio_sample_paths(
+            audio_closure.sample_ids, effective_virtual_paths
+        )
+    except ValueError as exc:
+        if not str(exc).startswith(("unresolved audio sample:", "ambiguous audio sample:")):
+            raise
+        (
+            audio_sample_paths,
+            missing_rows,
+            ambiguous_rows,
+        ) = resolve_audio_sample_paths_partial(
+            audio_closure.sample_ids, effective_virtual_paths
+        )
+        missing_audio_samples.update(missing_rows)
+        ambiguous_audio_samples.update(ambiguous_rows)
     audio_row = audio_closure.neutral()
     audio_row["samplePaths"] = [
         {"id": identifier, "virtualPath": audio_sample_paths[identifier]}
         for identifier in audio_closure.sample_ids
+        if identifier in audio_sample_paths
     ]
 
     source_leaf_roles: dict[str, set[str]] = {}
@@ -1468,13 +1660,21 @@ def _census_playable_faction(
         unresolved["missingMappedImageTextures"] = sorted(
             unresolved_mapped_image_textures, key=str.casefold
         )
+    if missing_audio_samples:
+        unresolved["missingAudioSamples"] = sorted(
+            missing_audio_samples, key=str.casefold
+        )
+    if ambiguous_audio_samples:
+        unresolved["ambiguousAudioSamples"] = sorted(
+            ambiguous_audio_samples, key=str.casefold
+        )
     report = {
         "format": 1,
         "schema": "openbfme.faction-command-leaf-census",
         "schemaVersion": 1,
         "target": {
-            "game": "BFME2",
-            "patch": "1.06",
+            "game": "BFME2" if game_definition.id == "bfme2" else "RotWK",
+            "patch": "1.06" if game_definition.id == "bfme2" else "2.01",
             "faction": side,
             "playerTemplate": player_template,
             "mode": "normal-skirmish-command-reachable",
@@ -1594,7 +1794,11 @@ def _census_playable_faction(
             "Caller-declared music roots cover the engine-level skirmish shell and load-screen loops resolved through the merged MusicTrack/Multisound namespace.",
             "Localized duplicate conflicts use BFME2 source order and remain explicit oracle-review evidence.",
             "Runtime support and oracle parity are not implied by definition reachability.",
-            "ROTWK 2.01 data is a separate future overlay and is not merged into this BFME2 1.06 report.",
+            (
+                "ROTWK 2.01 data is a separate future overlay and is not merged into this BFME2 1.06 report."
+                if game_definition.id == "bfme2"
+                else "RotWK policy contains no curated BFME2 source-null or implicit-root allowances; unresolved leaves remain explicit."
+            ),
         ],
     }
     if not _legacy_men_identity:
@@ -1608,6 +1812,7 @@ def census_playable_faction(
     catalog: InstallCatalog,
     *,
     player_template: str,
+    game: str = "bfme2",
     expected_side: str | None = None,
     implicit_object_roots: Iterable[tuple[str, str]] = (),
     source_null_mapped_image_textures: Iterable[tuple[str, str]] = (),
@@ -1619,6 +1824,7 @@ def census_playable_faction(
     return _census_playable_faction(
         catalog,
         player_template=player_template,
+        game=game,
         expected_side=expected_side,
         implicit_object_roots=implicit_object_roots,
         source_null_mapped_image_textures=source_null_mapped_image_textures,

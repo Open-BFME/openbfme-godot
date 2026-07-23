@@ -25,6 +25,7 @@ from .bootstrap import (
 )
 from .catalog import doctor_install
 from .big import sha256_file
+from .game import retail_game
 from .paths import default_godot_content_root, default_state_root
 
 
@@ -253,6 +254,7 @@ def check_dependencies(
     mode: str = "faction-convert",
     deep: bool = False,
     godot_path: Path | str | None = None,
+    game: str = "bfme2",
 ) -> dict[str, Any]:
     """Return a structured dependency report.
 
@@ -272,6 +274,7 @@ def check_dependencies(
         else default_state_root()
     )
     mode_key = (mode or "faction-convert").strip().casefold()
+    game_definition = retail_game(game)
     needs_w3d = mode_key in _W3D_MODES or mode_key == "men-build"
     # Map GUI labels
     if mode_key in {"men-build", "build"}:
@@ -281,7 +284,9 @@ def check_dependencies(
 
     # --- Install ---
     try:
-        doctor = doctor_install(install_path, deep=False, game="bfme2")
+        doctor = doctor_install(
+            install_path, deep=False, game=game_definition.id
+        )
     except (OSError, ValueError, TypeError) as exc:
         doctor = {
             "ready": False,
@@ -292,32 +297,50 @@ def check_dependencies(
         }
     install_ok = bool(doctor.get("ready"))
     patch = str(doctor.get("declared_patch", "unknown"))
-    patch_ok = patch.startswith("1.06") or patch == "1.06"
+    if game_definition.id == "bfme2":
+        patch_ok = patch.startswith("1.06") or patch == "1.06"
+        game_label = "BFME2"
+        expected_executable = "lotrbfme2.exe + core .big archives"
+        expected_patch = "1.06"
+        install_fix = "set Install path to a complete BFME2 1.06 folder"
+        patch_fix = "apply official 1.06 patch (or confirmed patch archives)"
+        patch_detail = "importer targets BFME2 1.06 retail"
+    else:
+        patch_ok = any(
+            patch.startswith(marker) or patch == marker
+            for marker in game_definition.patch_markers
+        )
+        game_label = "RotWK"
+        expected_executable = "lotrbfme2ep1.exe + core .big archives"
+        expected_patch = "2.02 or 2.01"
+        install_fix = "set Install path to a complete RotWK 2.01/2.02 folder"
+        patch_fix = "apply a supported RotWK patch archive"
+        patch_detail = "importer analysis supports RotWK 2.01/2.02 retail"
     # Prefer 1.06; warn (not hard fail) on older patches so doctor still runs.
     items.append(
         _item(
             id="install",
-            label="BFME2 install present",
+            label=f"{game_label} install present",
             ok=install_ok,
             required=True,
-            expected="lotrbfme2.exe + core .big archives",
+            expected=expected_executable,
             found=str(doctor.get("install_root", install_path)),
             detail=(
                 f"patch={patch}; missing={doctor.get('missing_required') or []}"
             ),
-            fix="set Install path to a complete BFME2 1.06 folder",
+            fix=install_fix,
         )
     )
     items.append(
         _item(
             id="patch",
-            label="BFME2 patch 1.06",
+            label=f"{game_label} patch {expected_patch}",
             ok=patch_ok if install_ok else False,
             required=True,
-            expected="1.06",
+            expected=expected_patch,
             found=patch,
-            detail="importer targets BFME2 1.06 retail",
-            fix="apply official 1.06 patch (or confirmed patch archives)",
+            detail=patch_detail,
+            fix=patch_fix,
         )
     )
     if doctor.get("executable_attestation", {}).get("modified_marker_detected"):

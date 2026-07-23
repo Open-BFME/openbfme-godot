@@ -146,6 +146,44 @@ eNd
                 with self.assertRaisesRegex(ValueError, message):
                     parse_string_catalog(source)
 
+    def test_lenient_mode_skips_and_reports_one_malformed_record(self) -> None:
+        source = (
+            b'UI:Before "one" End\n'
+            b'UI:Malformed Identifier\n"skipped value"\nEnd\n'
+            b'UI:After "two" End\n'
+        )
+
+        with self.assertRaisesRegex(ValueError, "missing END"):
+            parse_string_catalog(source)
+        catalog = parse_string_catalog(source, strict=False)
+
+        self.assertEqual(len(catalog), 2)
+        self.assertEqual(catalog.resolve("UI:Before"), "one")
+        self.assertEqual(catalog.resolve("UI:After"), "two")
+        self.assertEqual(len(catalog.malformed_records), 1)
+        self.assertEqual(catalog.malformed_records[0].line, 2)
+        self.assertEqual(
+            catalog.malformed_records[0].identifier, "UI:Malformed Identifier"
+        )
+        self.assertEqual(catalog.neutral_summary()["malformedRecordCount"], 1)
+
+    def test_lenient_mode_resynchronizes_at_inline_following_record(self) -> None:
+        source = (
+            b'UI:Before "one" End\n'
+            b'UI:Bad "broken"\n'
+            b'UI:After "two" End\n'
+            b'UI:Last "three" End\n'
+        )
+
+        catalog = parse_string_catalog(source, strict=False)
+
+        self.assertEqual(
+            [record.identifier for record in catalog.records],
+            ["UI:After", "UI:Before", "UI:Last"],
+        )
+        self.assertEqual(len(catalog.malformed_records), 1)
+        self.assertEqual(catalog.malformed_records[0].identifier, "UI:Bad \"broken\"")
+
     def test_rejects_nul_and_undefined_cp1252_bytes(self) -> None:
         with self.assertRaisesRegex(ValueError, "NUL"):
             parse_string_catalog(b'UI:Name "bad\0value" End')

@@ -20,6 +20,7 @@ MAX_IDENTIFIER_CHARS = 4_096
 MAX_VALUE_CHARS = 1024 * 1024
 MAX_DUPLICATE_VALUE_TERMINATORS = 16
 MAX_DIAGNOSTIC_IDENTIFIERS = 4_096
+MAX_MALFORMED_RECORDS = 4_096
 
 DuplicatePolicy = Literal["reject", "first-wins"]
 
@@ -46,6 +47,22 @@ class SageStringRecord:
     category: str
     label: str
     value: str
+
+
+@dataclass(frozen=True, slots=True)
+class SageStringMalformedRecord:
+    """Payload-free evidence for one record skipped by lenient parsing."""
+
+    line: int
+    identifier: str
+    error: str
+
+    def to_report(self) -> dict[str, Any]:
+        return {
+            "line": self.line,
+            "identifier": self.identifier,
+            "error": self.error,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +100,7 @@ class SageStringCatalog:
         "records",
         "duplicate_value_terminators",
         "diagnostics",
+        "malformed_records",
         "_by_identifier",
     )
 
@@ -92,10 +110,12 @@ class SageStringCatalog:
         *,
         duplicate_value_terminators: int,
         diagnostics: SageStringDiagnostics,
+        malformed_records: tuple[SageStringMalformedRecord, ...] = (),
     ) -> None:
         self.records = records
         self.duplicate_value_terminators = duplicate_value_terminators
         self.diagnostics = diagnostics
+        self.malformed_records = malformed_records
         self._by_identifier = {record.identifier.casefold(): record for record in records}
 
     def __len__(self) -> int:
@@ -121,7 +141,7 @@ class SageStringCatalog:
             _digest_field(identifier_digest, record.identifier)
             _digest_field(content_digest, record.identifier)
             _digest_field(content_digest, record.value)
-        return {
+        summary = {
             "format": 1,
             "sourceRecordCount": self.diagnostics.source_record_count,
             "recordCount": len(self.records),
@@ -141,6 +161,12 @@ class SageStringCatalog:
             "identifierSetSha256": identifier_digest.hexdigest(),
             "logicalContentSha256": content_digest.hexdigest(),
         }
+        if self.malformed_records:
+            summary["malformedRecordCount"] = len(self.malformed_records)
+            summary["malformedRecords"] = [
+                record.to_report() for record in self.malformed_records
+            ]
+        return summary
 
 
 def _digest_field(digest: Any, value: str) -> None:
@@ -160,26 +186,73 @@ def _decode(source: bytes) -> str:
         raise ValueError("string catalog has unsupported encoding") from exc
 
 
+class _RecoverableRecordError(ValueError):
+    """A lexical record defect that lenient mode can skip explicitly."""
+
+
 class _Parser:
     __slots__ = (
         "source",
         "position",
         "duplicate_policy",
         "duplicate_value_terminators",
+        "strict",
+        "malformed_records",
     )
 
-    def __init__(self, source: str, duplicate_policy: DuplicatePolicy) -> None:
+    def __init__(
+        self, source: str, duplicate_policy: DuplicatePolicy, *, strict: bool
+    ) -> None:
         self.source = source
         self.position = 0
         self.duplicate_policy = duplicate_policy
         self.duplicate_value_terminators = 0
+        self.strict = strict
+        self.malformed_records: list[SageStringMalformedRecord] = []
 
-    def _error(self, message: str, position: int | None = None) -> ValueError:
+    def _error(
+        self,
+        message: str,
+        position: int | None = None,
+        *,
+        recoverable: bool = False,
+    ) -> ValueError:
         offset = self.position if position is None else position
         line = self.source.count("\n", 0, offset) + 1
         previous_newline = self.source.rfind("\n", 0, offset)
         column = offset - previous_newline
-        return ValueError(f"{message} at line {line}, column {column}")
+        error_type = _RecoverableRecordError if recoverable else ValueError
+        return error_type(f"{message} at line {line}, column {column}")
+
+    def _recover_record(self, start: int, error: ValueError) -> None:
+        line = self.source.count("\n", 0, start) + 1
+        line_end = self.source.find("\n", start)
+        if line_end < 0:
+            line_end = len(self.source)
+        identifier = self.source[start:line_end].strip()[:MAX_IDENTIFIER_CHARS]
+        self.malformed_records.append(
+            SageStringMalformedRecord(line=line, identifier=identifier, error=str(error))
+        )
+        if len(self.malformed_records) > MAX_MALFORMED_RECORDS:
+            raise self._error("malformed string record count exceeds limit", start)
+
+        cursor = line_end + (line_end < len(self.source))
+        identifier_line = re.compile(r"[0-9A-Za-z]+:[!-z]+(?=\s|$)")
+        while cursor < len(self.source):
+            next_end = self.source.find("\n", cursor)
+            if next_end < 0:
+                next_end = len(self.source)
+            stripped = self.source[cursor:next_end].strip()
+            if stripped.casefold() == "end":
+                self.position = next_end + (next_end < len(self.source))
+                return
+            if identifier_line.match(stripped) is not None:
+                self.position = cursor + len(self.source[cursor:next_end]) - len(
+                    self.source[cursor:next_end].lstrip()
+                )
+                return
+            cursor = next_end + (next_end < len(self.source))
+        self.position = len(self.source)
 
     def _skip_layout(self) -> None:
         length = len(self.source)
@@ -206,12 +279,18 @@ class _Parser:
                 raise self._error("string identifier exceeds character limit", start)
         identifier = self.source[start : self.position]
         if ":" not in identifier:
-            raise self._error("string identifier is missing category separator", start)
+            raise self._error(
+                "string identifier is missing category separator", start, recoverable=True
+            )
         category, label = identifier.split(":", 1)
         if _CATEGORY.fullmatch(category) is None:
-            raise self._error("string identifier has an invalid category", start)
+            raise self._error(
+                "string identifier has an invalid category", start, recoverable=True
+            )
         if _LABEL.fullmatch(label) is None:
-            raise self._error("string identifier has an invalid label", start)
+            raise self._error(
+                "string identifier has an invalid label", start, recoverable=True
+            )
         return identifier, category, label
 
     def _read_quoted_value(self) -> str:
@@ -227,10 +306,12 @@ class _Parser:
             if character == "\\":
                 self.position += 1
                 if self.position >= length:
-                    raise self._error("truncated string escape", start)
+                    raise self._error(
+                        "truncated string escape", start, recoverable=True
+                    )
                 escaped = self.source[self.position]
                 if escaped not in _ESCAPES:
-                    raise self._error("unsupported string escape")
+                    raise self._error("unsupported string escape", recoverable=True)
                 value.append(_ESCAPES[escaped])
                 self.position += 1
             else:
@@ -238,7 +319,9 @@ class _Parser:
                 self.position += 1
             if len(value) > MAX_VALUE_CHARS:
                 raise self._error("localized value exceeds character limit", start)
-        raise self._error("unterminated quoted localized value", start)
+        raise self._error(
+            "unterminated quoted localized value", start, recoverable=True
+        )
 
     def _read_bare_value(self) -> str:
         start = self.position
@@ -253,13 +336,19 @@ class _Parser:
                 raise self._error("localized value exceeds character limit", start)
         value = self.source[start : self.position]
         if _BARE_VALUE.fullmatch(value) is None:
-            raise self._error("localized value must be quoted or alphanumeric", start)
+            raise self._error(
+                "localized value must be quoted or alphanumeric",
+                start,
+                recoverable=True,
+            )
         return value
 
     def _consume_end(self) -> None:
         start = self.position
         if self.source[self.position : self.position + 3].casefold() != "end":
-            raise self._error("localized record is missing END", start)
+            raise self._error(
+                "localized record is missing END", start, recoverable=True
+            )
         self.position += 3
         if self.position >= len(self.source):
             return
@@ -267,7 +356,9 @@ class _Parser:
             return
         if self.source.startswith("//", self.position):
             return
-        raise self._error("unexpected characters after END", self.position)
+        raise self._error(
+            "unexpected characters after END", self.position, recoverable=True
+        )
 
     def parse(self) -> SageStringCatalog:
         records: list[SageStringRecord] = []
@@ -282,32 +373,44 @@ class _Parser:
             if source_record_count >= MAX_STRING_RECORDS:
                 raise self._error("string record count exceeds limit")
             source_record_count += 1
-            identifier, category, label = self._read_identifier()
-            self._skip_layout()
-            if self.position >= len(self.source):
-                raise self._error("localized record is missing a value")
-            if self.source[self.position] == '"':
-                value = self._read_quoted_value()
-                # BFME II's shipped English catalog contains a bounded, known
-                # lexical typo where a quoted value has a second terminator.
-                # Accept only one immediately adjacent quote and report it as
-                # neutral structural evidence; arbitrary trailing text remains
-                # an error.
-                if (
-                    self.position < len(self.source)
-                    and self.source[self.position] == '"'
-                ):
-                    self.position += 1
-                    self.duplicate_value_terminators += 1
+            record_start = self.position
+            try:
+                identifier, category, label = self._read_identifier()
+                self._skip_layout()
+                if self.position >= len(self.source):
+                    raise self._error(
+                        "localized record is missing a value", recoverable=True
+                    )
+                if self.source[self.position] == '"':
+                    value = self._read_quoted_value()
+                    # BFME II's shipped English catalog contains a bounded, known
+                    # lexical typo where a quoted value has a second terminator.
+                    # Accept only one immediately adjacent quote and report it as
+                    # neutral structural evidence; arbitrary trailing text remains
+                    # an error.
                     if (
-                        self.duplicate_value_terminators
-                        > MAX_DUPLICATE_VALUE_TERMINATORS
+                        self.position < len(self.source)
+                        and self.source[self.position] == '"'
                     ):
-                        raise self._error("duplicate value terminator count exceeds limit")
-            else:
-                value = self._read_bare_value()
-            self._skip_layout()
-            self._consume_end()
+                        self.position += 1
+                        self.duplicate_value_terminators += 1
+                        if (
+                            self.duplicate_value_terminators
+                            > MAX_DUPLICATE_VALUE_TERMINATORS
+                        ):
+                            raise self._error(
+                                "duplicate value terminator count exceeds limit"
+                            )
+                else:
+                    value = self._read_bare_value()
+                self._skip_layout()
+                self._consume_end()
+            except _RecoverableRecordError as exc:
+                if self.strict:
+                    raise
+                self._recover_record(record_start, exc)
+                self._skip_layout()
+                continue
 
             key = identifier.casefold()
             record = SageStringRecord(identifier, category, label, value)
@@ -358,6 +461,7 @@ class _Parser:
             ordered,
             duplicate_value_terminators=self.duplicate_value_terminators,
             diagnostics=diagnostics,
+            malformed_records=tuple(self.malformed_records),
         )
 
 
@@ -365,6 +469,7 @@ def parse_string_catalog(
     source: bytes,
     *,
     duplicate_policy: DuplicatePolicy = "reject",
+    strict: bool = True,
 ) -> SageStringCatalog:
     """Parse a CP-1252 SAGE catalog with strict duplicate rejection by default.
 
@@ -375,4 +480,6 @@ def parse_string_catalog(
 
     if duplicate_policy not in {"reject", "first-wins"}:
         raise ValueError(f"unsupported duplicate policy: {duplicate_policy!r}")
-    return _Parser(_decode(source), duplicate_policy).parse()
+    if type(strict) is not bool:
+        raise TypeError("strict must be a bool")
+    return _Parser(_decode(source), duplicate_policy, strict=strict).parse()

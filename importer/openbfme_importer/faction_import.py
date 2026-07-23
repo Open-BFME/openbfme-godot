@@ -7,11 +7,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import threading
 from typing import Callable, Mapping
 
 from .catalog import InstallCatalog
-from .faction_census import census_playable_faction
+from .faction_census import census_playable_faction, resolve_playable_faction
 from .faction_object_cache import (
     FactionObjectCache,
     compiler_identity_token,
@@ -39,11 +40,7 @@ from .playable_structure_pack_compiler import (
     compile_structure_visual_recipe,
     compose_structure_runtime_document,
 )
-from .playable_unit_import import (
-    FACTIONS,
-    _resolved_media,
-    _resolved_strings,
-)
+from .playable_unit_import import _resolved_media, _resolved_strings
 from .playable_unit_compiler import (
     PlayableUnitCompilerError,
     PlayableUnitCompilerInputs,
@@ -207,24 +204,21 @@ def build_faction_import_plan(
         raise ValueError("faction graph playerTemplate is invalid")
     if not isinstance(faction, str) or not faction:
         raise ValueError("faction graph faction is invalid")
-    expected_faction = next(
-        (
-            spec[2]
-            for spec in FACTIONS
-            if spec[1].casefold() == player_template.casefold()
-        ),
-        None,
-    )
-    if expected_faction is None or faction != expected_faction:
-        raise ValueError(
-            "faction graph playerTemplate/faction identity pair is invalid"
-        )
+    if re.fullmatch(r"[A-Za-z0-9_+.-]+", player_template) is None:
+        raise ValueError("faction graph playerTemplate identity is invalid")
+    if re.fullmatch(r"[A-Za-z0-9_+.-]+", faction) is None:
+        raise ValueError("faction graph faction identity is invalid")
     catalog_identity = _sha256(catalog_identity_sha256, "catalogIdentitySha256")
     graph_identity = _sha256(
         faction_graph.get("inputSetSha256"), "factionGraphInputSetSha256"
     )
 
-    prepared = prepare_playable_unit_compiler(documents)
+    prepared = None
+    preparation_error: str | None = None
+    try:
+        prepared = prepare_playable_unit_compiler(documents)
+    except PlayableUnitCompilerError as exc:
+        preparation_error = str(exc)
     roots = faction_graph.get("roots", [])
     if not isinstance(roots, list):
         raise ValueError("faction graph roots are invalid")
@@ -250,6 +244,17 @@ def build_faction_import_plan(
     }
     objects: list[dict[str, object]] = []
     for object_id in sorted(object_ids, key=lambda value: (value.casefold(), value)):
+        if prepared is None:
+            objects.append(
+                {
+                    "id": object_id,
+                    "family": "retail-object-parser",
+                    "kindOf": [],
+                    "status": "converter-gap",
+                    "reason": f"compiler initialization failed: {preparation_error}",
+                }
+            )
+            continue
         kinds: tuple[str, ...] = ()
         source_path = ""
         parse_error: str | None = None
@@ -457,38 +462,37 @@ def build_faction_import_plan(
     return plan
 
 
-def _faction_spec(faction: str) -> tuple[str, str, str]:
-    key = faction.casefold().strip()
-    spec = next(
-        (
-            item
-            for item in FACTIONS
-            if key in {item[0], item[1].casefold(), item[2].casefold()}
-        ),
-        None,
-    )
-    if spec is None:
-        raise ValueError(f"unsupported playable faction: {faction!r}")
-    return spec
+def _faction_spec(
+    catalog: InstallCatalog, faction: str
+) -> tuple[str, str, str]:
+    discovered = resolve_playable_faction(catalog, faction)
+    return discovered.short_name, discovered.name, discovered.side
 
 
 def plan_faction_import(
-    catalog: InstallCatalog, effective_root: Path, faction: str
+    catalog: InstallCatalog,
+    effective_root: Path,
+    faction: str,
+    *,
+    game: str = "bfme2",
 ) -> dict[str, object]:
-    """Build the source-backed plan for one of the six BFME2 factions."""
+    """Build a source-backed plan for one discovered playable faction."""
 
     from .progress import emit as progress_emit
 
     progress_emit("census", f"census playable faction: {faction}")
-    spec = _faction_spec(faction)
+    spec = _faction_spec(catalog, faction)
     graph = census_playable_faction(
         catalog,
         player_template=spec[1],
+        game=game,
         expected_side=spec[2],
-        implicit_object_roots=implicit_object_roots(spec[1]),
-        source_null_mapped_image_textures=source_null_mapped_image_textures(spec[1]),
-        source_null_command_sets=source_null_command_sets(spec[1]),
-        music_roots=music_roots(spec[1]),
+        implicit_object_roots=implicit_object_roots(spec[1], game=game),
+        source_null_mapped_image_textures=source_null_mapped_image_textures(
+            spec[1], game=game
+        ),
+        source_null_command_sets=source_null_command_sets(spec[1], game=game),
+        music_roots=music_roots(spec[1], game=game),
     )
     progress_emit("faction-plan", f"building import plan: {faction}")
     return build_faction_import_plan(
@@ -981,13 +985,24 @@ def convert_faction_import(
     artifact_writer: Callable[[str, str, Mapping[str, object]], None] | None = None,
     state_root: Path | None = None,
     convert_jobs: int | None = None,
+    game: str = "bfme2",
 ) -> dict[str, object]:
     """Convert one faction's supported objects and account for every other row."""
 
     from .progress import emit as progress_emit
 
+    source_policy = catalog.source_policy
+    if (
+        game.casefold().strip() != "bfme2"
+        or source_policy is None
+        or source_policy.game.casefold() != "bfme2"
+        or source_policy.patch != "1.06"
+    ):
+        raise ValueError(
+            "import-faction conversion requires a BFME2 1.06 policy-bound catalog"
+        )
     progress_emit("census", f"census playable faction: {faction}")
-    spec = _faction_spec(faction)
+    spec = _faction_spec(catalog, faction)
     graph = census_playable_faction(
         catalog,
         player_template=spec[1],

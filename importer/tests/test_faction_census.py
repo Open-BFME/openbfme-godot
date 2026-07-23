@@ -4,12 +4,17 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from openbfme_importer.catalog import InstallCatalog
 from openbfme_importer.faction_census import (
+    _is_playable_template,
+    PlayableFaction,
     census_men_faction,
     census_playable_faction,
+    resolve_playable_faction,
 )
+from openbfme_importer.sage_ini import IniBlock
 
 from importer.tests.test_big import make_big
 
@@ -479,6 +484,35 @@ def _catalog(
 
 
 class FactionCensusTests(unittest.TestCase):
+    def test_playable_template_predicate_is_exact_and_fail_closed(self) -> None:
+        def block(*assignments: tuple[str, str]) -> IniBlock:
+            return IniBlock("PlayerTemplate", "Fixture", None, assignments)
+
+        self.assertTrue(_is_playable_template(block(("PlayableSide", "Yes"))))
+        self.assertFalse(_is_playable_template(block(("PlayableSide", "No"))))
+        self.assertFalse(_is_playable_template(block()))
+        with self.assertRaisesRegex(ValueError, "unsupported PlayableSide"):
+            _is_playable_template(block(("PlayableSide", "Maybe")))
+        with self.assertRaisesRegex(ValueError, "ambiguous PlayableSide"):
+            _is_playable_template(
+                block(("PlayableSide", "Yes"), ("PlayableSide", "No"))
+            )
+
+    def test_faction_aliases_resolve_against_discovered_templates(self) -> None:
+        factions = (
+            PlayableFaction("FactionAngmar", "Angmar", 89),
+            PlayableFaction("PlayableMen", "Men", 10),
+        )
+        with mock.patch(
+            "openbfme_importer.faction_census.discover_playable_factions",
+            return_value=factions,
+        ):
+            self.assertEqual(
+                resolve_playable_faction(mock.Mock(), "FactionAngmar"), factions[0]
+            )
+            self.assertEqual(resolve_playable_faction(mock.Mock(), "angmar"), factions[0])
+            self.assertEqual(resolve_playable_faction(mock.Mock(), "Men"), factions[1])
+
     def test_command_reachable_census_is_deterministic_and_payload_free(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             catalog = _catalog(Path(raw))

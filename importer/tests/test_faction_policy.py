@@ -5,6 +5,9 @@ from openbfme_importer.faction_policy import (
     FactionPolicyError,
     IMPLICIT_OBJECT_ROOTS,
     implicit_object_roots,
+    music_roots,
+    source_null_command_sets,
+    source_null_mapped_image_textures,
 )
 from openbfme_importer.playable_unit_import import FACTIONS
 
@@ -28,6 +31,13 @@ def test_lookup_is_casefold_insensitive() -> None:
 def test_unknown_faction_fails_closed() -> None:
     with pytest.raises(FactionPolicyError, match="no curated implicit census roots"):
         implicit_object_roots("FactionRohan")
+
+
+def test_rotwk_profile_has_no_invented_curated_allowances() -> None:
+    assert implicit_object_roots("FactionAngmar", game="rotwk") == ()
+    assert source_null_mapped_image_textures("FactionAngmar", game="rotwk") == ()
+    assert source_null_command_sets("FactionAngmar", game="rotwk") == ()
+    assert music_roots("FactionAngmar", game="rotwk") == ()
 
 
 @pytest.mark.parametrize("value", ("", None, 7))
