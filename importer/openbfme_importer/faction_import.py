@@ -911,6 +911,7 @@ def build_faction_conversion(
     catalog: InstallCatalog | None = None,
     state_root: Path | None = None,
     convert_jobs: int | None = None,
+    game: str = "bfme2",
 ) -> dict[str, object]:
     """Convert every supported plan row and account for the rest, fail-closed.
 
@@ -928,12 +929,21 @@ def build_faction_conversion(
     plan = build_faction_import_plan(
         faction_graph, documents, catalog_identity_sha256=catalog_identity_sha256
     )
-    prepared = prepare_playable_unit_compiler(documents)
+    # Fail-closed on compiler-init failure (mirrors build_faction_import_plan):
+    # a corpus the shared compiler cannot index — e.g. RotWK's repeated
+    # ChildObject declarations that trip the strict global object index — must
+    # gap every object, never abort the whole convert batch.
+    try:
+        prepared = prepare_playable_unit_compiler(documents)
+        preparation_error: str | None = None
+    except PlayableUnitCompilerError as exc:
+        prepared = None
+        preparation_error = str(exc)
     target = plan["target"]
     assert isinstance(target, Mapping)
     template = str(target["playerTemplate"])
     spawned = tuple(
-        object_id for object_id, _reason in implicit_object_roots(template)
+        object_id for object_id, _reason in implicit_object_roots(template, game=game)
     )
     wall_templates = _wall_template_roots(faction_graph)
     source_null_sets = _source_null_command_set_ids(faction_graph)
@@ -1029,7 +1039,19 @@ def build_faction_conversion(
                     artifact_writer(object_id, kind, document)
         return index, row
 
-    if workers == 1 or len(plan_objects) <= 1:
+    if prepared is None:
+        # Compiler initialization failed for the whole corpus: account for every
+        # planned object as a converter-gap without attempting conversion. The
+        # plan already carries the retail-object-parser gap rows.
+        progress_emit(
+            "faction-convert",
+            f"compiler initialization failed; gapping {len(plan_objects)} objects: "
+            f"{preparation_error}",
+        )
+        for index, plan_row in enumerate(plan_objects):
+            assert isinstance(plan_row, Mapping)
+            results[index] = dict(plan_row)
+    elif workers == 1 or len(plan_objects) <= 1:
         for index, plan_row in enumerate(plan_objects):
             assert isinstance(plan_row, Mapping)
             idx, row = _work(index, plan_row)
@@ -1113,25 +1135,37 @@ def convert_faction_import(
     from .progress import emit as progress_emit
 
     source_policy = catalog.source_policy
-    if (
-        game.casefold().strip() != "bfme2"
-        or source_policy is None
-        or source_policy.game.casefold() != "bfme2"
-        or source_policy.patch != "1.06"
-    ):
+    game_id = game.casefold().strip()
+    if game_id == "bfme2":
+        if (
+            source_policy is None
+            or source_policy.game.casefold() != "bfme2"
+            or source_policy.patch != "1.06"
+        ):
+            raise ValueError(
+                "import-faction conversion requires a BFME2 1.06 policy-bound catalog"
+            )
+    elif game_id == "rotwk":
+        # RotWK is admitted through data-driven faction discovery; the catalog
+        # is built without a fixed source policy (source_policy is None).
+        pass
+    else:
         raise ValueError(
-            "import-faction conversion requires a BFME2 1.06 policy-bound catalog"
+            f"import-faction conversion does not support game: {game!r}"
         )
     progress_emit("census", f"census playable faction: {faction}")
     spec = _faction_spec(catalog, faction)
     graph = census_playable_faction(
         catalog,
         player_template=spec[1],
+        game=game,
         expected_side=spec[2],
-        implicit_object_roots=implicit_object_roots(spec[1]),
-        source_null_mapped_image_textures=source_null_mapped_image_textures(spec[1]),
-        source_null_command_sets=source_null_command_sets(spec[1]),
-        music_roots=music_roots(spec[1]),
+        implicit_object_roots=implicit_object_roots(spec[1], game=game),
+        source_null_mapped_image_textures=source_null_mapped_image_textures(
+            spec[1], game=game
+        ),
+        source_null_command_sets=source_null_command_sets(spec[1], game=game),
+        music_roots=music_roots(spec[1], game=game),
     )
     progress_emit("faction-convert", f"convert faction objects: {faction}")
     return build_faction_conversion(
@@ -1143,6 +1177,7 @@ def convert_faction_import(
         catalog=catalog,
         state_root=state_root,
         convert_jobs=convert_jobs,
+        game=game,
     )
 
 

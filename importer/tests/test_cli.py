@@ -138,11 +138,39 @@ class CliTests(unittest.TestCase):
         self.assertEqual(report["factionCount"], 2)
         self.assertEqual(report["factions"][0]["name"], "PlayableAlpha")
 
-    def test_rotwk_conversion_is_rejected_before_faction_resolution(self) -> None:
+    def test_rotwk_conversion_is_admitted_and_routes_through_the_converter(
+        self,
+    ) -> None:
+        coverage = {
+            "aggregateSha256": "a" * 64,
+            "summary": {
+                "conversionComplete": False,
+                "objectCount": 42,
+                "convertedCount": 0,
+                "excludedCount": 0,
+                "converterGapCount": 42,
+                "unresolvedLeafCount": 861,
+            },
+        }
+        pipeline = mock.MagicMock()
+        pipeline._effective_asset_paths.return_value = (
+            Path("effective"),
+            Path("effective/manifest.json"),
+            Path("staging"),
+            Path("backup"),
+        )
         with tempfile.TemporaryDirectory() as raw:
             with (
                 mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
-                mock.patch.object(cli, "resolve_playable_faction") as resolve,
+                mock.patch.object(
+                    cli,
+                    "resolve_playable_faction",
+                    return_value=PlayableFaction("FactionAngmar", "Angmar", 1),
+                ) as resolve,
+                mock.patch.object(cli, "ImportPipeline", return_value=pipeline),
+                mock.patch.object(
+                    cli, "convert_faction_import", return_value=coverage
+                ) as convert,
             ):
                 result = cli.main(
                     [
@@ -159,8 +187,27 @@ class CliTests(unittest.TestCase):
                     ]
                 )
 
-        self.assertEqual(result, 1)
-        resolve.assert_not_called()
+        # RotWK conversion is admitted: the faction is resolved and the same
+        # converter entry point runs with game="rotwk" (exit 6 = fail-closed
+        # incomplete coverage, not a hard rejection).
+        self.assertEqual(result, 6)
+        resolve.assert_called_once()
+        self.assertEqual(convert.call_args.kwargs["game"], "rotwk")
+
+    def test_unknown_game_is_rejected_by_the_cli(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.main(
+                [
+                    "import-faction",
+                    "--install",
+                    "C:/RotWK",
+                    "--game",
+                    "tiberium",
+                    "--faction",
+                    "FactionAngmar",
+                    "--convert",
+                ]
+            )
 
     def test_non_men_census_uses_the_curated_faction_roots(self) -> None:
         report = {

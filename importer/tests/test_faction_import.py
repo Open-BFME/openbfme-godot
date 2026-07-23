@@ -108,17 +108,63 @@ def test_compiler_initialization_failure_accounts_for_every_object_as_gap() -> N
     assert {row["family"] for row in plan["objects"]} == {"retail-object-parser"}
 
 
-def test_conversion_rejects_rotwk_catalog_before_census_or_writes() -> None:
+def test_conversion_rejects_bfme2_catalog_without_106_policy() -> None:
     catalog = mock.Mock()
-    catalog.source_policy = mock.Mock(game="rotwk", patch="2.01")
+    catalog.source_policy = None
 
     with pytest.raises(ValueError, match="BFME2 1.06 policy-bound"):
         convert_faction_import(
             catalog,
             Path("unused"),
             "men",
+            game="bfme2",
+        )
+
+
+def test_conversion_rejects_unknown_game() -> None:
+    catalog = mock.Mock()
+    catalog.source_policy = None
+
+    with pytest.raises(ValueError, match="does not support game"):
+        convert_faction_import(
+            catalog,
+            Path("unused"),
+            "men",
+            game="tiberium",
+        )
+
+
+def test_conversion_admits_rotwk_data_driven_catalog() -> None:
+    # RotWK is discovered data-driven: the catalog carries no fixed source
+    # policy (source_policy is None). The conversion path must admit it and
+    # thread game="rotwk" into census + conversion (never the bfme2 curations).
+    catalog = mock.Mock()
+    catalog.source_policy = None
+    sentinel = {"admitted": True}
+
+    with mock.patch(
+        "openbfme_importer.faction_import._faction_spec",
+        return_value=("FactionAngmar", "FactionAngmar", "Angmar"),
+    ), mock.patch(
+        "openbfme_importer.faction_import.census_playable_faction",
+        return_value={"graph": True},
+    ) as census, mock.patch(
+        "openbfme_importer.faction_import.spellbook_source_documents",
+        return_value={},
+    ), mock.patch(
+        "openbfme_importer.faction_import.build_faction_conversion",
+        return_value=sentinel,
+    ) as build:
+        result = convert_faction_import(
+            catalog,
+            Path("unused"),
+            "FactionAngmar",
             game="rotwk",
         )
+
+    assert result is sentinel
+    assert census.call_args.kwargs["game"] == "rotwk"
+    assert build.call_args.kwargs["game"] == "rotwk"
 
 
 def test_census_resolved_but_unparseable_object_is_a_parser_gap() -> None:

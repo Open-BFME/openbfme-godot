@@ -693,9 +693,9 @@ def main(argv: list[str] | None = None) -> int:
                     "pass exactly one of --plan-only or --convert; pack "
                     "publication is a later stage"
                 )
-            if args.convert and args.game != "bfme2":
+            if args.convert and args.game not in {"bfme2", "rotwk"}:
                 raise ValueError(
-                    "import-faction --convert currently supports BFME2 1.06 only"
+                    "import-faction --convert supports BFME2 1.06 and RotWK 2.01"
                 )
             faction = resolve_playable_faction(catalog, args.faction)
             faction_key = faction.short_name
@@ -800,9 +800,9 @@ def main(argv: list[str] | None = None) -> int:
             _render(value, args.json)
             return 0
         if args.command == "publish-faction-to-slice":
-            if args.game != "bfme2":
+            if args.game not in {"bfme2", "rotwk"}:
                 raise ValueError(
-                    "publish-faction-to-slice currently supports BFME2 1.06 only"
+                    "publish-faction-to-slice supports BFME2 1.06 and RotWK 2.01"
                 )
             from .progress import emit as progress_emit
 
