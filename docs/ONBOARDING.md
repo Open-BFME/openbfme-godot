@@ -55,7 +55,7 @@ The wizard walks four fail-closed steps:
 3. **Content** — if a published Men pack is already selected in
    `.private/content-packs/selection.json`, it is verified in place. Otherwise
    the wizard runs the two-step conversion (`import-faction --faction men
-   --convert`, then `publish-faction-to-slice --faction men`). The first
+   --convert`, then `publish-faction-to-slice --faction men --select`). The first
    conversion is long (roughly 30-60 minutes cold); it is resumable and
    cache-backed.
 4. **Verification** — the key headless gates run against the selected pack:
@@ -100,7 +100,7 @@ run_doctor.bat
 set "PY=.private\retail-work\tools\python-3.12-env\Scripts\python.exe"
 %PY% tools\openbfme_import.py doctor --install <BFME2>
 %PY% tools\openbfme_import.py import-faction --install <BFME2> --faction men --convert
-%PY% tools\openbfme_import.py publish-faction-to-slice --install <BFME2> --faction men
+%PY% tools\openbfme_import.py publish-faction-to-slice --install <BFME2> --faction men --select
 
 :: 3. Verify with the headless gates
 set OPENBFME_CONTENT=%CD%\.private\content-packs

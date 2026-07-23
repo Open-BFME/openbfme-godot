@@ -1611,6 +1611,9 @@ class ImportGui(tk.Tk):
                 faction,
                 "--godot-content-root",
                 str(DEFAULT_CONTENT),
+                # The GUI publish button means "make this faction live", so it
+                # opts into selection (publish alone no longer rewrites it).
+                "--select",
             ]
         else:
             cmd += [

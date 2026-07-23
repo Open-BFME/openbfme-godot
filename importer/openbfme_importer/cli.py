@@ -33,7 +33,12 @@ from .paths import (
     ensure_external_to_repo,
     repo_root_from_module,
 )
-from .pipeline import ImportPipeline, audit_pack, bundle_digest
+from .pipeline import (
+    ImportPipeline,
+    audit_pack,
+    bundle_digest,
+    update_selection_entry,
+)
 from .playable_unit_import import import_playable_unit
 from .faction_census import (
     census_playable_faction,
@@ -522,8 +527,8 @@ def build_parser() -> argparse.ArgumentParser:
         "publish-faction-to-slice",
         help=(
             "compose converted faction coverage into a pack profile, cook the "
-            "Godot pack, and select it for the retail vertical slice "
-            "(converter → pack → selection auto path)"
+            "Godot pack, and publish the bundle to the Godot content root; "
+            "selection.json is left untouched unless --select is passed"
         ),
     )
     publish_faction.add_argument("--install", required=True)
@@ -559,7 +564,17 @@ def build_parser() -> argparse.ArgumentParser:
     publish_faction.add_argument(
         "--no-publish",
         action="store_true",
-        help="cook the pack without updating Godot selection.json",
+        help="cook the pack without copying it into the Godot content root",
+    )
+    publish_faction.add_argument(
+        "--select",
+        action="store_true",
+        help=(
+            "also rewrite the live selection.json to activate the published "
+            "pack (legacy auto-select behavior); without this flag the "
+            "selection is never touched — use update-selection-entry to "
+            "repoint an existing entry"
+        ),
     )
     publish_faction.add_argument(
         "--no-conversion-cache",
@@ -586,6 +601,29 @@ def build_parser() -> argparse.ArgumentParser:
             "developer cook: PNG level 6, soft tool re-attest, light pack "
             "audit (size-only). Sets OPENBFME_DEV=1 for the process."
         ),
+    )
+
+    update_selection = sub.add_parser(
+        "update-selection-entry",
+        help=(
+            "atomically repoint the selection.json entry (active or "
+            "supplemental) for a pack id to a newly published bundle hash, "
+            "preserving activePack and entry order"
+        ),
+    )
+    update_selection.add_argument(
+        "--pack-id", required=True, help="published pack id to retarget"
+    )
+    update_selection.add_argument(
+        "--bundle-sha256",
+        required=True,
+        help="bundle digest of the already-published target bundle",
+    )
+    update_selection.add_argument(
+        "--godot-content-root",
+        type=Path,
+        default=default_godot_content_root(),
+        help="private Godot content-packs directory",
     )
 
     audit = sub.add_parser(
@@ -748,6 +786,13 @@ def main(argv: list[str] | None = None) -> int:
                 catalog=args.catalog,
                 verify=args.verify,
                 consumer=args.consumer,
+            )
+            _render(value, args.json)
+            return 0
+
+        if args.command == "update-selection-entry":
+            value = update_selection_entry(
+                args.godot_content_root, args.pack_id, args.bundle_sha256
             )
             _render(value, args.json)
             return 0
@@ -1050,14 +1095,43 @@ def main(argv: list[str] | None = None) -> int:
                 value["bundle_sha256"] = bundle_digest(pack_root)
             value["conversion_cache"] = pipeline.conversion_cache_stats
             if not args.no_publish:
-                progress_emit("publish", "selecting pack for Godot vertical slice")
-                value.update(
-                    pipeline.publish_to_godot(
-                        pack_root,
-                        args.godot_content_root,
-                        allow_incomplete=bool(args.allow_incomplete),
+                if args.select:
+                    progress_emit("publish", "selecting pack for Godot vertical slice")
+                else:
+                    progress_emit(
+                        "publish",
+                        "publishing pack bundle (selection.json untouched; "
+                        "pass --select to activate)",
                     )
+                publication = pipeline.publish_to_godot(
+                    pack_root,
+                    args.godot_content_root,
+                    allow_incomplete=bool(args.allow_incomplete),
+                    select=bool(args.select),
                 )
+                value.update(publication)
+                # Durable record of what was published so orchestration can
+                # retarget selection entries without racing the live file.
+                publish_receipt = {
+                    "schema": "openbfme.publish-receipt",
+                    "schemaVersion": 0,
+                    "faction": args.faction,
+                    "game": args.game,
+                    "packId": publication["pack_id"],
+                    "bundleSha256": publication["bundle_sha256"],
+                    "packRelative": publication["pack_relative"],
+                    "publishedPack": publication["published_pack"],
+                    "contentRoot": str(args.godot_content_root),
+                    "selected": bool(args.select),
+                    "selectionUpdateCommand": (
+                        "openbfme-import update-selection-entry "
+                        f"--pack-id {publication['pack_id']} "
+                        f"--bundle-sha256 {publication['bundle_sha256']}"
+                    ),
+                }
+                publish_receipt_path = profile_output.with_suffix(".publish.json")
+                write_json_atomic(publish_receipt_path, publish_receipt)
+                value["publish_receipt"] = str(publish_receipt_path)
             progress_complete(
                 f"faction={args.faction} pack={pack_root} slice path ready"
             )

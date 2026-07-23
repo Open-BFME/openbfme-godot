@@ -2257,6 +2257,94 @@ def bundle_digest(pack_root: Path | str) -> str:
     return digest.hexdigest()
 
 
+def update_selection_entry(
+    content_root: Path | str,
+    pack_id: str,
+    bundle_sha256: str,
+) -> dict[str, Any]:
+    """Atomically repoint every selection.json entry for ``pack_id`` to
+    ``bundle_sha256``.
+
+    Publication no longer touches selection.json by default, so a supplement
+    (or active pack) that references a republished pack id is retargeted here
+    in exactly one atomic rewrite: activePack stays active, supplement order
+    is preserved, and no other entry changes.
+    """
+
+    if not pack_id or any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789._-"
+        for character in pack_id
+    ):
+        raise ValueError(f"unsafe pack id: {pack_id!r}")
+    digest = str(bundle_sha256).strip().lower()
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
+        raise ValueError(f"bundle sha256 is not a 64-hex digest: {bundle_sha256!r}")
+    root = ensure_external_to_repo(Path(content_root), repo_root_from_module())
+    target_relative = f"{pack_id}/{digest}"
+    target_dir = root / pack_id / digest
+    if not target_dir.is_dir():
+        raise FileNotFoundError(
+            f"published bundle missing for selection update: {target_dir}"
+        )
+    target_pack = read_json(target_dir / "pack.json")
+    if str(target_pack.get("id", "")) != pack_id:
+        raise ValueError(
+            f"published bundle at {target_dir} carries pack id "
+            f"{target_pack.get('id')!r}, expected {pack_id!r}"
+        )
+    selection_path = root / "selection.json"
+    if not selection_path.is_file():
+        raise FileNotFoundError(
+            f"selection.json does not exist yet: {selection_path}; "
+            "publish with --select to create the first selection"
+        )
+    selection = read_json(selection_path)
+    if not isinstance(selection, dict):
+        raise ValueError(f"selection.json root is not an object: {selection_path}")
+
+    def _references_pack(raw: Any) -> bool:
+        entry = str(raw).strip().replace("\\", "/")
+        return entry == pack_id or entry.startswith(f"{pack_id}/")
+
+    updated: list[dict[str, str]] = []
+    referenced = False
+    active = selection.get("activePack")
+    if active is not None and _references_pack(active):
+        referenced = True
+        if str(active).strip().replace("\\", "/") != target_relative:
+            selection["activePack"] = target_relative
+            updated.append({"role": "activePack", "previous": str(active)})
+    supplements = selection.get("supplementalPacks")
+    if isinstance(supplements, list):
+        for index, raw in enumerate(supplements):
+            if not _references_pack(raw):
+                continue
+            referenced = True
+            if str(raw).strip().replace("\\", "/") == target_relative:
+                continue
+            supplements[index] = target_relative
+            updated.append(
+                {
+                    "role": f"supplementalPacks[{index}]",
+                    "previous": str(raw),
+                }
+            )
+    if not referenced:
+        raise ValueError(
+            f"no selection entry references pack id {pack_id!r} in {selection_path}"
+        )
+    if updated:
+        write_json_atomic(selection_path, selection)
+    return {
+        "selection": str(selection_path),
+        "pack_relative": target_relative,
+        "updated": updated,
+        "changed": bool(updated),
+    }
+
+
 def _canonical_pack_inventory(pack_root: Path) -> list[dict[str, Any]]:
     root = pack_root.resolve()
     excluded = {"provenance/manifest.json", "provenance/audit.json"}
@@ -3490,6 +3578,7 @@ class ImportPipeline:
         content_root: Path | str,
         *,
         allow_incomplete: bool = False,
+        select: bool = True,
     ) -> dict[str, str]:
         source = Path(pack_root).expanduser().resolve()
         pack_data = read_json(source / "pack.json")
@@ -3546,6 +3635,16 @@ class ImportPipeline:
                 shutil.rmtree(staging)
                 raise RuntimeError("published staging copy failed its canonical audit")
             os.replace(staging, destination)
+        result: dict[str, str] = {
+            "bundle_sha256": digest,
+            "published_pack": str(destination),
+            "pack_id": pack_id,
+            "pack_relative": relative.as_posix(),
+        }
+        if not select:
+            # Live playtests read selection.json while republished bundles
+            # land; leaving it untouched keeps a running slice loadable.
+            return result
         selection: dict[str, Any] = {
             "schema": "openbfme.pack-selection",
             "schemaVersion": 0,
@@ -3577,12 +3676,9 @@ class ImportPipeline:
                 if kept:
                     selection["supplementalPacks"] = kept
         write_json_atomic(selection_path, selection)
-        return {
-            "bundle_sha256": digest,
-            "published_pack": str(destination),
-            "selection": str(selection_path),
-            "active_pack": relative.as_posix(),
-        }
+        result["selection"] = str(selection_path)
+        result["active_pack"] = relative.as_posix()
+        return result
 
     def _canonical_tool_report(self) -> dict[str, Any]:
         report: dict[str, Any] = {}

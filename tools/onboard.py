@@ -746,6 +746,9 @@ def step_content(ctx: WizardContext) -> None:
             "men",
             "--godot-content-root",
             str(ctx.content_root),
+            # Onboarding intends selection: it cooks the first pack and must
+            # activate it (publish alone no longer touches selection.json).
+            "--select",
         ],
         state_root=ctx.state_root,
     )
