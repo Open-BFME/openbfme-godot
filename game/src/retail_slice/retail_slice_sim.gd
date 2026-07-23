@@ -468,6 +468,9 @@ func _seed_team_manifest_tables() -> void:
 	_team_seed_structure_kinds = {}
 	_team_structure_kinds = {}
 	_team_production_unit_order = {}
+	_team_structure_upgrade_contracts = {}
+	_team_structure_upgrade_effects = {}
+	_team_compiled_research_kinds = {}
 	for team in _roster_team_ids():
 		var manifest: Dictionary = provided.get(team, shared_manifest) as Dictionary
 		_team_manifests[team] = manifest
@@ -487,6 +490,13 @@ func _seed_team_manifest_tables() -> void:
 			_team_seed_structure_kinds[team] = _seed_structure_kinds
 			_team_structure_kinds[team] = _structure_kinds
 			_team_production_unit_order[team] = _production_unit_order
+			# The upgrade-contract tables are hashed authoritative state (built once
+			# from the global manifest). A same-faction team aliases them BY REFERENCE
+			# so the default roster stays byte-identical AND picks up the forge
+			# fallback the global registration adds after setup.
+			_team_structure_upgrade_contracts[team] = _structure_upgrade_contracts
+			_team_structure_upgrade_effects[team] = _structure_upgrade_effects
+			_team_compiled_research_kinds[team] = _compiled_research_kinds
 		else:
 			var kinds: Array = (manifest.get("structure_kinds", []) as Array).duplicate(true)
 			var seed_kinds: Array = (manifest.get("seed_structure_kinds", kinds) as Array).duplicate(true)
@@ -502,6 +512,22 @@ func _seed_team_manifest_tables() -> void:
 			# A fresh faction ships no trebuchet/ranger overlay, so its production
 			# order is exactly its AI plan.
 			_team_production_unit_order[team] = plan.duplicate(true)
+			# Compile THIS team's own structure-upgrade contracts / effects /
+			# research kinds straight from its manifest (the same normalization the
+			# global path runs, but scoped to derived-not-hashed per-team dicts so a
+			# cross-faction match fields each faction's full combat roster while the
+			# default single-manifest roster stays byte-identical). "Binds two
+			# structure kinds" fail-close now scopes per team: the target dicts are
+			# distinct, so Men and Elf contracts never collide across teams.
+			var team_contracts: Dictionary = {}
+			var team_effects: Dictionary = {}
+			var team_research: Dictionary = {}
+			var source := _manifest_upgrade_source(manifest)
+			_compile_structure_upgrade_chains(source, team_contracts)
+			_compile_structure_research_contracts(source, team_contracts, team_effects, team_research)
+			_team_structure_upgrade_contracts[team] = team_contracts
+			_team_structure_upgrade_effects[team] = team_effects
+			_team_compiled_research_kinds[team] = team_research
 
 
 func team_manifest_for(team: int) -> Dictionary:
@@ -543,6 +569,18 @@ func structure_kinds_for_team(team: int) -> Array:
 func production_unit_order_for_team(team: int) -> Array:
 	return _team_production_unit_order.get(team, _production_unit_order) as Array
 
+
+func structure_upgrade_contracts_for_team(team: int) -> Dictionary:
+	return _team_structure_upgrade_contracts.get(team, _structure_upgrade_contracts) as Dictionary
+
+
+func structure_upgrade_effects_for_team(team: int) -> Dictionary:
+	return _team_structure_upgrade_effects.get(team, _structure_upgrade_effects) as Dictionary
+
+
+func compiled_research_kinds_for_team(team: int) -> Dictionary:
+	return _team_compiled_research_kinds.get(team, _compiled_research_kinds) as Dictionary
+
 var tick_index := 0
 var winner := -1
 var ai_enabled := true
@@ -582,6 +620,15 @@ var _team_ai_production_plan: Dictionary = {}
 var _team_seed_structure_kinds: Dictionary = {}
 var _team_structure_kinds: Dictionary = {}
 var _team_production_unit_order: Dictionary = {}
+## Per-team structure-upgrade contract/effect/research tables. Derived (rebuilt at
+## setup/restore), intentionally NOT part of the authoritative snapshot: for the
+## default same-faction roster every entry aliases the hashed global dict by
+## reference (byte-identical), and a cross-faction team carries its own compiled
+## copy. Readers reach them through the *_for_team accessors, which fall back to
+## the global dict so any call site without a rostered team stays unchanged.
+var _team_structure_upgrade_contracts: Dictionary = {}
+var _team_structure_upgrade_effects: Dictionary = {}
+var _team_compiled_research_kinds: Dictionary = {}
 var command_point_cap := 200
 var base_loop_enabled := false
 var source_map_configured := false
@@ -1592,7 +1639,7 @@ func _configure_ranger_runtime_contract() -> void:
 	# The overlay's own upgrade contract rides the same generic registration
 	# the doc-driven structure chains use below; a doc-driven chain for the
 	# same upgrade id overwrites it with the full authored chain.
-	_register_structure_upgrade_contract(upgrade_id, {
+	_register_structure_upgrade_contract(_structure_upgrade_contracts, upgrade_id, {
 		"structure_kind": "archery_range",
 		"cost": upgrade_cost,
 		"duration_ticks": upgrade_ticks,
@@ -1609,19 +1656,42 @@ func _configure_ranger_runtime_contract() -> void:
 	})
 
 
+func _global_upgrade_source() -> Dictionary:
+	## The three raw upgrade tables the global (player-faction) path reads,
+	## resolved exactly as before: an explicit top-level rules key wins, else the
+	## compiled faction manifest supplies it.
+	var manifest: Dictionary = _rules.get("faction_manifest", {}) as Dictionary
+	return {
+		"structure_upgrade_chains": _rules.get("structure_upgrade_chains", manifest.get("structure_upgrade_chains", {})),
+		"structure_research": _rules.get("structure_research", manifest.get("structure_research", {})),
+		"structure_upgrade_effects": _rules.get("structure_upgrade_effects", manifest.get("structure_upgrade_effects", {})),
+	}
+
+
+func _manifest_upgrade_source(manifest: Dictionary) -> Dictionary:
+	## The same three raw tables read straight off a per-team faction manifest
+	## (cross-faction path). The manifest dicts already carry these keys, so no
+	## importer change is needed.
+	return {
+		"structure_upgrade_chains": manifest.get("structure_upgrade_chains", {}),
+		"structure_research": manifest.get("structure_research", {}),
+		"structure_upgrade_effects": manifest.get("structure_upgrade_effects", {}),
+	}
+
+
 func _configure_structure_upgrade_chains() -> void:
+	_compile_structure_upgrade_chains(_global_upgrade_source(), _structure_upgrade_contracts)
+
+
+func _compile_structure_upgrade_chains(source: Dictionary, contracts: Dictionary) -> void:
 	## Generic doc-driven structure levels: every authored upgrade chain the
 	## faction manifest projected from the playableStructure.* documents
-	## (cost/time/level cap/command-set swap/per-level effects) registers here
-	## keyed by its authored upgrade id. Malformed chains fail closed into
-	## configuration_error instead of registering a partial contract.
+	## (cost/time/level cap/command-set swap/per-level effects) registers into
+	## `contracts` keyed by its authored upgrade id. Malformed chains fail closed
+	## into configuration_error instead of registering a partial contract.
 	if configuration_error != "":
 		return
-	var manifest: Dictionary = _rules.get("faction_manifest", {}) as Dictionary
-	var value: Variant = _rules.get(
-		"structure_upgrade_chains",
-		manifest.get("structure_upgrade_chains", {})
-	)
+	var value: Variant = source.get("structure_upgrade_chains", {})
 	if typeof(value) != TYPE_DICTIONARY:
 		configuration_error = "Structure upgrade chains are not a dictionary"
 		return
@@ -1723,42 +1793,48 @@ func _configure_structure_upgrade_chains() -> void:
 			if not unsupported.is_empty():
 				unsupported.sort()
 				contract["unsupported_modifiers"] = unsupported
-			if not _register_structure_upgrade_contract(upgrade_id, contract):
+			if not _register_structure_upgrade_contract(contracts, upgrade_id, contract):
 				return
 			previous_to_level = to_level
 
 
-func _register_structure_upgrade_contract(upgrade_id: String, contract: Dictionary) -> bool:
-	## One upgrade id binds exactly one structure kind; collisions across
-	## sources fail closed instead of picking a winner.
-	if _structure_upgrade_contracts.has(upgrade_id):
-		var existing: Dictionary = _structure_upgrade_contracts[upgrade_id]
+func _register_structure_upgrade_contract(contracts: Dictionary, upgrade_id: String, contract: Dictionary) -> bool:
+	## One upgrade id binds exactly one structure kind WITHIN the target table;
+	## collisions fail closed instead of picking a winner. `contracts` is the
+	## global dict for the player faction and a per-team dict for a cross-faction
+	## team, so the fail-close scopes per team (Men/Elf ids never collide).
+	if contracts.has(upgrade_id):
+		var existing: Dictionary = contracts[upgrade_id]
 		if String(existing.get("structure_kind", "")) != String(contract.get("structure_kind", "")):
 			configuration_error = "Structure upgrade '%s' binds two structure kinds" % upgrade_id
 			return false
-	_structure_upgrade_contracts[upgrade_id] = contract
+	contracts[upgrade_id] = contract
 	return true
 
 
 func _configure_structure_research_contracts() -> void:
+	_compile_structure_research_contracts(
+		_global_upgrade_source(),
+		_structure_upgrade_contracts,
+		_structure_upgrade_effects,
+		_compiled_research_kinds,
+	)
+
+
+func _compile_structure_research_contracts(source: Dictionary, contracts: Dictionary, upgrade_effects: Dictionary, research_kinds: Dictionary) -> void:
 	## Doc-driven PLAYER technology sales: every authored research row the
 	## faction manifest projected from the playableStructure.* documents
-	## (cost/time/gate/button identity) registers here keyed by its authored
-	## upgrade id. Malformed surfaces fail closed into configuration_error.
+	## (cost/time/gate/button identity) registers into `contracts` keyed by its
+	## authored upgrade id, with the per-kind effect bundles in `upgrade_effects`
+	## and the compiled kinds recorded in `research_kinds`. Malformed surfaces
+	## fail closed into configuration_error.
 	if configuration_error != "":
 		return
-	var manifest: Dictionary = _rules.get("faction_manifest", {}) as Dictionary
-	var research_value: Variant = _rules.get(
-		"structure_research",
-		manifest.get("structure_research", {})
-	)
+	var research_value: Variant = source.get("structure_research", {})
 	if typeof(research_value) != TYPE_DICTIONARY:
 		configuration_error = "Structure research surfaces are not a dictionary"
 		return
-	var effects_value: Variant = _rules.get(
-		"structure_upgrade_effects",
-		manifest.get("structure_upgrade_effects", {})
-	)
+	var effects_value: Variant = source.get("structure_upgrade_effects", {})
 	if typeof(effects_value) != TYPE_DICTIONARY:
 		configuration_error = "Structure upgrade effects are not a dictionary"
 		return
@@ -1785,7 +1861,7 @@ func _configure_structure_research_contracts() -> void:
 				"upgrade_must_be_present": String(effect.get("upgradeMustBePresent", "")),
 				"label_id": String(effect.get("labelId", "")),
 			})
-		_structure_upgrade_effects[kind] = {
+		upgrade_effects[kind] = {
 			"effects": normalized_effects,
 			"unsupported_effects": Array(container.get("unsupportedEffects", [])).duplicate(true),
 		}
@@ -1799,7 +1875,7 @@ func _configure_structure_research_contracts() -> void:
 		if rows.is_empty():
 			configuration_error = "Structure research surface for '%s' is malformed" % kind
 			return
-		_compiled_research_kinds[kind] = true
+		research_kinds[kind] = true
 		for row_value in rows:
 			if typeof(row_value) != TYPE_DICTIONARY:
 				configuration_error = "Structure research surface for '%s' has a malformed row" % kind
@@ -1830,7 +1906,7 @@ func _configure_structure_research_contracts() -> void:
 				"needed_upgrade_ids": needed,
 				"needed_upgrade_any": bool(row.get("neededUpgradeAny", false)),
 			}
-			if not _register_structure_upgrade_contract(upgrade_id, contract):
+			if not _register_structure_upgrade_contract(contracts, upgrade_id, contract):
 				return
 
 
@@ -2521,20 +2597,33 @@ var team_upgrades: Dictionary = {}
 
 
 func _register_forge_upgrade_contracts() -> void:
-	if not _structure_build_rules.has("forge"):
+	## Legacy Men fallback, now per team. Each rostered team registers the forge
+	## provisionals into ITS OWN contract table, gated by ITS OWN build rules and
+	## compiled research: a team whose forge already sells compiled PLAYER
+	## technology skips the fallback. For the default same-faction roster every
+	## team aliases the global dict by reference, so team 0 writes the provisionals
+	## into the (hashed) global exactly once and every later team sees them
+	## present and skips — byte-identical to the old single global registration.
+	for team in _roster_team_ids():
+		_register_forge_upgrade_contracts_for_team(int(team))
+
+
+func _register_forge_upgrade_contracts_for_team(team: int) -> void:
+	if not structure_build_rules_for_team(team).has("forge"):
 		return
-	if _compiled_research_kinds.has("forge"):
+	if compiled_research_kinds_for_team(team).has("forge"):
 		# The compiled research surface (the forge's authored PLAYER technology
 		# sales) replaces the recorded provisional contracts below; research
 		# completion then grants the technology and the per-battalion purchase
 		# path equips it — the retail two-tier flow, not the conflation.
 		return
+	var contracts := structure_upgrade_contracts_for_team(team)
 	for upgrade_id_value in FORGE_UPGRADE_CONTRACTS.keys():
 		var upgrade_id := String(upgrade_id_value)
-		if _structure_upgrade_contracts.has(upgrade_id):
+		if contracts.has(upgrade_id):
 			continue
 		var source: Dictionary = FORGE_UPGRADE_CONTRACTS[upgrade_id]
-		_structure_upgrade_contracts[upgrade_id] = {
+		contracts[upgrade_id] = {
 			"structure_kind": String(source["structure_kind"]),
 			"cost": int(source["cost"]),
 			"duration_ticks": maxi(1, roundi(float(source["duration_seconds"]) / TICK_SECONDS)),
@@ -2610,7 +2699,7 @@ func queue_structure_upgrade(team: int, structure_id: int, upgrade_id: String) -
 		return {"ok": false, "reason": "wrong-owner"}
 	if int(building.get("health", 0)) <= 0 or float(building.get("construction_progress", 0.0)) < 1.0:
 		return {"ok": false, "reason": "structure-unavailable"}
-	var contract: Dictionary = _structure_upgrade_contracts.get(upgrade_id, {})
+	var contract: Dictionary = structure_upgrade_contracts_for_team(team).get(upgrade_id, {})
 	if contract.is_empty() or String(contract.get("structure_kind", "")) != String(building.get("structure_kind", "")):
 		return {"ok": false, "reason": "unsupported-upgrade"}
 	if Array(building.get("completed_upgrades", [])).has(upgrade_id):
@@ -2681,12 +2770,13 @@ func structure_upgrade_commands(structure_id: int) -> Array[Dictionary]:
 	var kind := String(building.get("structure_kind", ""))
 	var current_set := String(building.get("command_set", ""))
 	var completed: Array = building.get("completed_upgrades", [])
+	var contracts := structure_upgrade_contracts_for_team(int(building.get("team", -1)))
 	var upgrade_ids: Array[String] = []
-	for upgrade_id_value in _structure_upgrade_contracts.keys():
+	for upgrade_id_value in contracts.keys():
 		upgrade_ids.append(String(upgrade_id_value))
 	upgrade_ids.sort()
 	for upgrade_id in upgrade_ids:
-		var contract: Dictionary = _structure_upgrade_contracts[upgrade_id]
+		var contract: Dictionary = contracts[upgrade_id]
 		if String(contract.get("structure_kind", "")) != kind:
 			continue
 		if bool(contract.get("team_tech", false)):
@@ -2724,7 +2814,7 @@ func structure_upgrade_commands(structure_id: int) -> Array[Dictionary]:
 			# chain step whose from-set is not itself another step's to-set.
 			var is_downstream := false
 			for other_id in upgrade_ids:
-				var other: Dictionary = _structure_upgrade_contracts[other_id]
+				var other: Dictionary = contracts[other_id]
 				if String(other.get("structure_kind", "")) == kind and String(other.get("to_command_set", "")) == from_set:
 					is_downstream = true
 					break
@@ -2825,7 +2915,7 @@ func _discounted_battalion_upgrade_cost(team: int, command: Dictionary) -> int:
 		var building: Dictionary = structures[structure_id]
 		if int(building.get("health", 0)) <= 0:
 			continue
-		var bundle: Dictionary = _structure_upgrade_effects.get(String(building.get("structure_kind", "")), {})
+		var bundle: Dictionary = structure_upgrade_effects_for_team(team).get(String(building.get("structure_kind", "")), {})
 		for effect_value in Array(bundle.get("effects", [])):
 			var effect := effect_value as Dictionary
 			if String(effect.get("kind", "")) != "upgrade-discount" or not bool(effect.get("upgrade_discount", false)):
@@ -2987,7 +3077,7 @@ func _apply_structure_death_refund(building: Dictionary) -> void:
 	## maintains the required building.
 	var team := int(building.get("team", -1))
 	var kind := String(building.get("structure_kind", ""))
-	var bundle: Dictionary = _structure_upgrade_effects.get(kind, {})
+	var bundle: Dictionary = structure_upgrade_effects_for_team(team).get(kind, {})
 	var owned: Dictionary = team_upgrades.get(team, {}) as Dictionary
 	for effect_value in Array(bundle.get("effects", [])):
 		var effect := effect_value as Dictionary
@@ -3010,7 +3100,7 @@ func _income_with_upgrade_bonus(team: int, building: Dictionary, base_income: in
 	## Authored TerrainResourceBehavior upgrade bonuses (Grand Harvest): the
 	## resource structure's own document declares the percent while the team
 	## owns the technology and maintains the required building.
-	var bundle: Dictionary = _structure_upgrade_effects.get(String(building.get("structure_kind", "")), {})
+	var bundle: Dictionary = structure_upgrade_effects_for_team(team).get(String(building.get("structure_kind", "")), {})
 	var owned: Dictionary = team_upgrades.get(team, {}) as Dictionary
 	var income := base_income
 	for effect_value in Array(bundle.get("effects", [])):
@@ -6368,7 +6458,7 @@ func _step_structure_upgrades() -> void:
 		if tick_index < int(item.get("complete_tick", tick_index + 1)):
 			continue
 		var upgrade_id := String(item.get("upgrade_id", ""))
-		var contract: Dictionary = _structure_upgrade_contracts.get(upgrade_id, {})
+		var contract: Dictionary = structure_upgrade_contracts_for_team(int(building.get("team", -1))).get(upgrade_id, {})
 		if contract.is_empty():
 			configuration_error = "queued structure upgrade lost its contract"
 			continue
@@ -8780,6 +8870,11 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	# part of the snapshot, so this does not affect the restored hash.
 	_reseed_roster_from_state()
 	_seed_team_manifest_tables()
+	# Re-apply the legacy forge fallback into any cross-faction team's derived
+	# (unhashed) contract table. Same-faction teams alias the restored global,
+	# which already carries the provisionals, so this is a no-op there and never
+	# mutates hashed state.
+	_register_forge_upgrade_contracts()
 
 
 func _reseed_roster_from_state() -> void:
