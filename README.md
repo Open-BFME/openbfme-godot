@@ -44,48 +44,58 @@ The importer understands BFME2's source formats; the game runtime loads a
 versioned pack generated privately on the user's machine. Proprietary retail
 content stays outside Git and outside public releases.
 
-## What the recent code audit found
+## Where the development tree is today
 
-The development tree is much broader than the original one-map prototype. Kimi's
-UI rewrite is currently changing this surface, so the list below describes the
-most recent audit rather than a frozen release identity:
+The development tree is much broader than the original one-map prototype. The
+list below describes what exists in code and is exercised by headless gates; it
+is not a completion or parity claim:
 
-- a skirmish shell modeled on BFME2, with a main menu, setup screen, persistent graphics/audio
-  options, six faction choices, five map choices, colors, starting positions,
+- a skirmish shell modeled on BFME2, with a main menu, N-player setup screen
+  (multiple factions, alliances, per-AI difficulty), persistent graphics/audio
+  options, seven faction choices, five map choices, colors, starting positions,
   starting resources, and command-point rules;
-- local conversion and runtime manifests for Men, Elves, Dwarves, Isengard,
-  Mordor, and Goblins/Wild; all six are exercised, but none currently has a
-  fully green faction suite;
-- a large Men roster with heroes, infantry, archers, cavalry, siege, builders,
-  production buildings, fortress parts, walls, and upgrades;
+- local conversion and runtime manifests for all six BFME2 factions — Men,
+  Elves, Dwarves, Isengard, Mordor, and Goblins/Wild — plus Angmar, imported
+  from a user-owned Rise of the Witch-king 2.01 installation through the same
+  data-driven, fail-closed pipeline;
 - construction, production and cancellation, rally points, combat, armor and
-  weapon upgrades, stances, formations, cavalry trample, hero experience,
-  abilities, death and revival, control groups, and victory/defeat;
-- a broadly exercised Men spellbook runtime plus compiled spellbook documents
-  for the other factions; non-Men casting coverage is incomplete and currently
-  has failing assertions;
-- AI base construction, production, attacks, and defeat handling;
+  weapon upgrades, stances, formations, cavalry trample and knockback, hero
+  experience, hero abilities (leadership auras, mounts, weapon toggles, and
+  other retail-extracted effects), death and revival, control groups,
+  per-team spellbooks, and victory/defeat with alliances and elimination;
+- deterministic lockstep multiplayer foundations over ENet, with an in-game
+  lobby (player names, chat, settings, per-peer faction choice) and
+  cross-faction matchups presented through each team's own faction;
+- five deterministic AI difficulty tiers with per-team AI controllers, plus
+  opt-in neutral creep lairs with BFME2 guard behavior on maps that define
+  them;
+- a retail HUD lane that executes converted retail APT/ActionScript bytecode
+  in a deterministic VM (all measured opcode tiers), alongside WND runtime
+  semantics;
 - source-derived terrain, roads, water, navigation, minimaps, start positions,
-  and fortress placement for a five-map development set; and
-- deterministic state signatures and hundreds of focused runtime assertions.
+  and fortress placement for a five-map development set, plus an optional
+  BFME1-style build-plot-only mode (default off);
+- deterministic state signatures pinned per faction and enforced by headless
+  gate runners (the Men battle signature is an asserted constant), with
+  hundreds of focused runtime assertions per suite.
 
-That is real progress, but it is not a current completion claim. Men versus Men on Fords
-of Isen II remains the best-covered developer-playable alpha slice. The other factions execute
-substantial gameplay suites but still have failing assertions and stale pinned
-signatures. Four of the five maps boot with source terrain and navigation but do
-not yet have Fords' prop coverage. Runtime teardown leaks and visual-oracle work
-also remain open. See [STATUS.md](STATUS.md) for the current test evidence.
+That breadth is real, but it is not a finished game. Men versus Men on Fords of
+Isen II remains the most deeply verified slice; the other factions and maps have
+substantial but uneven coverage, and presentation, reliability, and visual-oracle
+work remain open. See [STATUS.md](STATUS.md) for the current audited evidence
+and known failures.
 
-| Capability | Most recent audited state |
+| Capability | Current state |
 |---|---|
 | BFME2 1.06 discovery, extraction, conversion, and provenance | Implemented across the active private packs |
-| Men versus Men on Fords of Isen II | Best-covered developer-playable alpha slice; suite still fails |
-| Six faction runtime surfaces | Converted, selectable, and exercised; not yet fully green |
-| Five-map development set | All boot; only Fords has strong prop coverage |
-| Main menu, skirmish setup, options, HUD, and audio | Implemented under focused tests |
-| Deterministic multiplayer and dedicated servers | Planned architecture; not implemented |
+| Men versus Men on Fords of Isen II | Most deeply verified developer-playable slice |
+| Seven faction runtime surfaces (six BFME2 + Angmar) | Converted, selectable, and exercised under per-faction gates |
+| Five-map development set | All boot from source data; Fords has the strongest prop coverage |
+| Main menu, N-player skirmish setup, options, HUD, and audio | Implemented under focused tests |
+| Multiplayer | Deterministic lockstep + ENet with an in-game lobby; early and gate-verified, not yet a hardened production service |
+| Skirmish AI | Five deterministic difficulty tiers, per-team controllers |
 | Campaigns and War of the Ring | Explicitly outside project scope |
-| Rise of the Witch-king | Outside current BFME2 scope |
+| Rise of the Witch-king | RotWK 2.01 is a supported optional import source (Angmar); RotWK campaign content remains out of scope |
 | Public binary or polished installer | Not available |
 
 ## Why this project exists
@@ -134,6 +144,22 @@ The current workflow is Windows-first and intended for developers. You need a
 lawfully acquired BFME2 1.06 installation, Godot 4.7, Python 3.12, and the .NET
 SDK selected by `global.json`.
 
+The guided onboarding wizard checks prerequisites, validates your install
+fail-closed, converts or verifies the Men content pack, and runs the headless
+verification gates:
+
+```bat
+python tools\onboard.py
+```
+
+Non-interactive equivalent (CI or scripted setup):
+
+```bat
+python tools\onboard.py --install "D:\Games\BFME2" --godot "C:\Tools\Godot\Godot_v4.7-stable_win64_console.exe" --yes
+```
+
+The manual command path still works:
+
 ```bat
 set OPENBFME_GODOT=C:\Tools\Godot\Godot_v4.7-stable_win64.exe
 run_doctor.bat
@@ -141,16 +167,19 @@ run_importer.bat "D:\Games\BFME2"
 run_retail_slice.bat
 ```
 
-Use your actual Godot and BFME2 paths. Read the full
-[getting-started guide](docs/GETTING_STARTED.md) before importing.
+Use your actual Godot and BFME2 paths. Read the
+[onboarding guide](docs/ONBOARDING.md) for the ten-minute walkthrough and the
+[getting-started guide](docs/GETTING_STARTED.md) for the full background before
+importing.
 
 ## Roadmap
 
 1. Finish and freeze Men versus Men on Fords of Isen II.
 2. Harden the full Men roster across the selected five-map set.
-3. Bring all six BFME2 factions and official skirmish systems to green runtime
-   and original-game evidence.
-4. Add deterministic, self-hosted multiplayer for up to eight players.
+3. Bring all six BFME2 factions (and the Angmar import) and official skirmish
+   systems to green runtime and original-game evidence.
+4. Harden the deterministic, self-hosted multiplayer foundations (lockstep +
+   lobby exist today) toward reliable play for up to eight players.
 5. Complete the skirmish shell, replays, observers, Create-a-Hero, and broader
    map and modding tools.
 6. Add accessibility, HD presentation packs, safe updates, rollback, and a
@@ -164,6 +193,7 @@ scope and non-goals live in [DIRECTION.md](DIRECTION.md).
 | If you want to... | Start here |
 |---|---|
 | Understand the project in five minutes | [Documentation hub](docs/README.md) |
+| Set up a fresh machine in ten minutes | [Onboarding](docs/ONBOARDING.md) |
 | Install and run the developer build | [Getting started](docs/GETTING_STARTED.md) |
 | Check current passes and failures | [Status](STATUS.md) |
 | Understand the engine boundaries | [Architecture](docs/ARCHITECTURE.md) |

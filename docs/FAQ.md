@@ -26,20 +26,22 @@ requires license, provenance, trademark, and clean-export review.
 
 ## Is it playable right now?
 
-The most recent stable-enough diagnostic showed a private developer-playable
-alpha rather than a finished release. Men versus Men on Fords of Isen II was the
-best-covered slice, alongside a skirmish shell, six faction surfaces, a broad Men
-roster, spellbook work, AI, and five source maps. Kimi's active UI rewrite is now
-changing that surface, so there is no frozen current runtime identity. The
-non-Men faction suites still had failing assertions, four maps lacked bound
-props, and visual/reliability gates remained open. Use [STATUS.md](../STATUS.md)
-for the exact evidence boundary.
+As a private developer-playable alpha, yes; as a finished release, no. The
+current tree offers a skirmish shell with N-player setup, seven selectable
+faction surfaces (the six BFME2 factions plus an Angmar import from RotWK
+2.01), five source maps, five AI difficulty tiers, per-team spellbooks, hero
+abilities, optional creep lairs, and early lockstep multiplayer with an
+in-game lobby. Men versus Men on Fords of Isen II remains the most deeply
+verified slice; coverage across the other factions and maps is substantial but
+uneven, and presentation and reliability work remains open. Use
+[STATUS.md](../STATUS.md) for the exact evidence boundary.
 
 ## Is the whole game implemented?
 
-No. Full skirmish parity, production multiplayer, replays, and several shell and
-presentation systems remain unfinished. All six faction surfaces exist, but
-their full runtime suites are not green. Campaigns and War of the Ring are not
+No. Full skirmish parity, hardened production multiplayer, replays, and several
+shell and presentation systems remain unfinished. All seven faction surfaces
+exist and are exercised by per-faction gates, but coverage depth still varies
+by faction. Campaigns and War of the Ring are not
 later milestones: they are explicitly outside project scope. Create-a-Hero may
 be considered after the core skirmish and multiplayer work.
 
@@ -51,8 +53,12 @@ original-game comparison, and reliability processes to work together.
 
 ## Why BFME2 rather than Rise of the Witch-king?
 
-BFME2 1.06 provides a smaller initial target. Rise of the Witch-king is outside
-the current scope and cannot silently change BFME2 compatibility evidence.
+BFME2 1.06 remains the primary compatibility target because it is the smaller,
+better-measured baseline. Rise of the Witch-king 2.01 is now a supported
+*optional* import source: users who also own RotWK can import Angmar as a
+seventh faction through the same fail-closed pipeline. RotWK content is
+isolated from BFME2 state and cannot silently change BFME2 compatibility
+evidence, and RotWK campaign material stays out of scope.
 
 ## Are campaigns or War of the Ring planned?
 
@@ -86,9 +92,12 @@ human direction. That makes evidence and review more important, not less. Read
 
 ## Will it support multiplayer?
 
-The intended design is self-hosted, server-refereed deterministic lockstep for up
-to eight players, without mandatory Steam or central accounts. That architecture
-is decided but not yet a completed feature.
+The foundations exist today: deterministic lockstep over ENet with an in-game
+lobby (player names, chat, settings, per-peer faction choice), verified by
+headless determinism and network gates. The target remains self-hosted,
+server-refereed play for up to eight players without mandatory Steam or
+central accounts; hardening toward that production quality is ongoing work,
+not a finished feature.
 
 ## Can presentation mods differ between players?
 

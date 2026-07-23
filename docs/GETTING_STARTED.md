@@ -4,6 +4,11 @@ OpenBFME is currently a Windows-first developer project. There is no supported
 installer or public binary release yet. Expect rough edges and read this guide
 before starting the private retail import.
 
+> **Prefer the guided path:** `python tools\onboard.py` walks prerequisites,
+> install validation, content conversion/verification, and the headless gates
+> in one wizard. See [ONBOARDING.md](ONBOARDING.md) for the ten-minute
+> walkthrough. This page documents the underlying manual workflow.
+
 > **Documentation-preview notice:** the public GitHub repository does not yet
 > contain the engine/importer source required by these commands. This guide is
 > published so contributors can review the intended workflow before the clean
