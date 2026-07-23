@@ -87,6 +87,47 @@ def test_composes_only_coverage_approved_artifacts(tmp_path: Path, monkeypatch: 
     assert target["pack"]["full_faction_complete"] is False
 
 
+def _faction_coverage(root: Path, faction: str) -> None:
+    """Write a minimal single-unit converted coverage set for ``faction``."""
+    unit_recipe = {
+        "objectId": "ElvenArcher", "category": "infantry",
+        "descriptorSha256": "a" * 64, "recipeSha256": "b" * 64,
+        "resources": [_resource("unit-elvenarcher")],
+        "runtimeRegistration": {"production": []},
+    }
+    rows = [
+        {"id": "ElvenArcher", "family": "playable-unit", "status": "converted", "recipeSha256": "b" * 64},
+    ]
+    coverage = {
+        "schema": "openbfme.faction-import-coverage", "schemaVersion": 0,
+        "objects": rows,
+        "summary": {"convertedCount": 1, "converterGapCount": 0, "conversionComplete": True},
+    }
+    coverage["aggregateSha256"] = _digest(coverage)
+    _write_json(root / f"{faction}-coverage.json", coverage)
+    _write_json(root / f"{faction}/objects/elvenarcher/pack-recipe.json", unit_recipe)
+
+
+def test_pack_id_is_derived_per_faction(tmp_path: Path) -> None:
+    # Baseline: capture the Men composed pack id before asserting non-Men lanes,
+    # to prove the Men path is byte-for-byte unchanged by the fix.
+    _faction_coverage(tmp_path, "men")
+    men_target, _ = compose_faction_profile(_base(), tmp_path, ["men"])
+    assert men_target["pack"]["id"] == "bfme2-men-vslice"
+    assert _base()["pack"]["id"] == "bfme2-men-vslice"  # base still Men-inherited
+
+    for faction in ("dwarves", "isengard"):
+        _faction_coverage(tmp_path, faction)
+        target, _ = compose_faction_profile(_base(), tmp_path, [faction])
+        # Non-Men publish must NOT inherit the base's bfme2-men-vslice id.
+        assert target["pack"]["id"] == f"bfme2-{faction}-vslice"
+
+
+def test_rejects_unknown_faction(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unknown faction"):
+        compose_faction_profile(_base(), tmp_path, ["angmar"])
+
+
 def test_rejects_tampered_coverage_before_reading_artifacts(tmp_path: Path) -> None:
     _coverage(tmp_path, tamper=True)
     with pytest.raises(ValueError, match="coverage digest is invalid"):

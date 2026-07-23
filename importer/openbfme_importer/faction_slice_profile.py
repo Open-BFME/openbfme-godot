@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Mapping, Sequence
 from .faction_import import coverage_digest_payload
 from .playable_structure_pack_compiler import validate_structure_visual_recipe
-from .playable_unit_import import extend_profile_with_unit
+from .playable_unit_import import FACTIONS as _FACTION_ROWS, extend_profile_with_unit
+
+# Authoritative faction slugs (men, elves, dwarves, isengard, mordor, wild).
+# The per-faction vertical-slice pack convention is bfme2-<faction>-vslice.
+_KNOWN_FACTIONS = frozenset(row[0] for row in _FACTION_ROWS)
 from .spellbook_pack_compiler import validate_spellbook_pack_recipe
 
 def _bytes(value: object) -> bytes:
@@ -97,11 +101,12 @@ def _add_spellbook(profile: Mapping[str, object], recipe: Mapping[str, object], 
 
 def compose_faction_profile(base: Mapping[str, object], report_root: Path, factions: Sequence[str]) -> tuple[dict[str, object], dict[str, object]]:
     """Add only artifacts bound to converted rows in digested coverage reports."""
-    target = deepcopy(dict(base)); receipts: list[dict[str, object]] = []; deltas: list[dict[str, object]] = []; seen: set[str] = set()
+    target = deepcopy(dict(base)); receipts: list[dict[str, object]] = []; deltas: list[dict[str, object]] = []; seen: set[str] = set(); ordered: list[str] = []
     for raw_faction in factions:
         faction = raw_faction.strip().lower()
         if not faction or faction in seen: raise ValueError(f"duplicate or empty faction: {raw_faction!r}")
-        seen.add(faction); coverage = _load(report_root / f"{faction}-coverage.json", "faction coverage")
+        if faction not in _KNOWN_FACTIONS: raise ValueError(f"unknown faction: {raw_faction!r}")
+        seen.add(faction); ordered.append(faction); coverage = _load(report_root / f"{faction}-coverage.json", "faction coverage")
         if coverage.get("schema") != "openbfme.faction-import-coverage" or coverage.get("schemaVersion") != 0: raise ValueError(f"unsupported faction coverage schema: {faction}")
         aggregate = coverage.get("aggregateSha256")
         if aggregate != _coverage_unsigned_digest(coverage):
@@ -141,6 +146,12 @@ def compose_faction_profile(base: Mapping[str, object], report_root: Path, facti
         receipts.append({"faction": faction, "coverageAggregateSha256": aggregate, "convertedCount": len(converted), "converterGapCount": int(summary.get("converterGapCount", 0)), "conversionComplete": bool(summary.get("conversionComplete", False))})
     pack = target.get("pack")
     if not isinstance(pack, dict): raise ValueError("target profile pack is invalid")
+    # Bind the composed pack to its faction's vertical-slice id rather than
+    # inheriting the base profile's (Men) id, so a non-Men publish lands under
+    # bfme2-<faction>-vslice/ instead of stray-bundling under bfme2-men-vslice/.
+    # A single-faction publish is the only shape the CLI emits; when exactly one
+    # faction is composed we own the pack id deterministically.
+    if len(ordered) == 1: pack["id"] = f"bfme2-{ordered[0]}-vslice"
     pack.update({"vertical_slice_complete": False, "full_faction_complete": False, "asset_conversion_complete": False, "factionImportCoverage": receipts})
     target["id"] = "faction-slice-" + hashlib.sha256(_bytes(receipts)).hexdigest()[:16]
     return target, {"factions": receipts, "objects": deltas}
