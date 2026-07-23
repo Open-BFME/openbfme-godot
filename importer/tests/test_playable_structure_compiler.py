@@ -711,6 +711,280 @@ End
         compile_playable_structure_descriptor("UpgradeableKeep", documents)
 
 
+def _structure_level_alias_documents() -> dict[str, bytes]:
+    """Rewrite the keep to retail's aliased authoring style.
+
+    IsengardSiegeWorks, GoblinCave, GoblinFissure, WildSpiderPit, and
+    DwarvenArcheryRange key their CommandSetUpgrade and per-level
+    SubObjectsUpgrade modules to the engine-granted
+    Upgrade_StructureLevel<N> ids instead of the purchased upgrade ids.
+    """
+
+    documents = _upgradeable_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    text = documents[objects_path].decode("utf-8")
+    text = text.replace(
+        "  Behavior = SubObjectsUpgrade ModuleTag_ShowWallsAndFlag\n"
+        "    TriggeredBy = Upgrade_KeepLevel2\n",
+        "  Behavior = SubObjectsUpgrade ModuleTag_ShowWallsAndFlag\n"
+        "    TriggeredBy = Upgrade_StructureLevel2\n",
+        1,
+    )
+    text = text.replace(
+        "  Behavior = SubObjectsUpgrade ModuleTag_ShowTowers\n"
+        "    TriggeredBy = Upgrade_KeepLevel3\n",
+        "  Behavior = SubObjectsUpgrade ModuleTag_ShowTowers\n"
+        "    TriggeredBy = Upgrade_StructureLevel3\n",
+        1,
+    )
+    text = text.replace(
+        "  Behavior = CommandSetUpgrade ModuleTag_KeepLevel2Set\n"
+        "    TriggeredBy = Upgrade_KeepLevel2\n",
+        "  Behavior = CommandSetUpgrade ModuleTag_KeepLevel2Set\n"
+        "    TriggeredBy = Upgrade_StructureLevel2\n",
+        1,
+    )
+    text = text.replace(
+        "  Behavior = CommandSetUpgrade ModuleTag_KeepLevel3Set\n"
+        "    TriggeredBy = Upgrade_KeepLevel3\n",
+        "  Behavior = CommandSetUpgrade ModuleTag_KeepLevel3Set\n"
+        "    TriggeredBy = Upgrade_StructureLevel3\n",
+        1,
+    )
+    documents[objects_path] = text.encode("utf-8")
+    return documents
+
+
+def test_upgrade_chain_resolves_structure_level_alias_transitions() -> None:
+    # Measured retail evidence: the five aliased structures swap command sets
+    # through Upgrade_StructureLevel<N>; the compiled chain must carry the
+    # real swap, marked so downstream can tell it from the purchased-trigger
+    # authoring style.
+    documents = _structure_level_alias_documents()
+
+    descriptor = compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    chain = descriptor["gameplay"]["upgradeChain"]
+    level_two, level_three = chain["steps"]
+    assert level_two["commandSetTransition"] == "structure-level"
+    assert level_two["fromCommandSet"] == "UpgradeableKeepCommandSet"
+    assert level_two["toCommandSet"] == "UpgradeableKeepCommandSetLevel2"
+    assert level_three["commandSetTransition"] == "structure-level"
+    assert level_three["fromCommandSet"] == "UpgradeableKeepCommandSetLevel2"
+    assert level_three["toCommandSet"] == "UpgradeableKeepCommandSetLevel3"
+    # The aliased SubObjectsUpgrade rows ride their steps instead of landing
+    # in unconsumedSubObjectTriggers.
+    assert level_two["presentation"]["visibleSubObjects"] == [
+        "V1", "V1_PIECE*", "V1FLAG"
+    ]
+    assert level_three["presentation"]["hiddenSubObjects"] == ["V1FLAG"]
+    assert "unconsumedSubObjectTriggers" not in chain
+
+
+def test_upgrade_chain_authored_transitions_carry_no_marker() -> None:
+    # The purchased-trigger family must stay byte-identical: no marker key.
+    documents = _upgradeable_documents()
+
+    descriptor = compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+    for step in descriptor["gameplay"]["upgradeChain"]["steps"]:
+        assert "commandSetTransition" not in step
+
+
+def _identity_documents() -> dict[str, bytes]:
+    """Strip every CommandSetUpgrade: the command set legitimately stays put."""
+
+    documents = _upgradeable_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    text = documents[objects_path].decode("utf-8")
+    for tag, trigger, set_id in (
+        ("ModuleTag_KeepLevel2Set", "Upgrade_KeepLevel2", "UpgradeableKeepCommandSetLevel2"),
+        ("ModuleTag_KeepLevel3Set", "Upgrade_KeepLevel3", "UpgradeableKeepCommandSetLevel3"),
+    ):
+        text = text.replace(
+            f"  Behavior = CommandSetUpgrade {tag}\n"
+            f"    TriggeredBy = {trigger}\n"
+            f"    CommandSet = {set_id}\n"
+            "  End\n",
+            "",
+            1,
+        )
+    documents[objects_path] = text.encode("utf-8")
+    # With no set swap, both purchase buttons live on the one direct set.
+    documents["data/ini/commandset.ini"] = (
+        documents["data/ini/commandset.ini"].decode("utf-8").replace(
+            "CommandSet UpgradeableKeepCommandSet\n"
+            "  1 = Command_BuildInfantry\n"
+            "  5 = Command_PurchaseUpgradeKeepLevel2\n"
+            "End",
+            "CommandSet UpgradeableKeepCommandSet\n"
+            "  1 = Command_BuildInfantry\n"
+            "  5 = Command_PurchaseUpgradeKeepLevel2\n"
+            "  6 = Command_PurchaseUpgradeKeepLevel3\n"
+            "End",
+            1,
+        )
+    ).encode("utf-8")
+    return documents
+
+
+def test_upgrade_chain_without_command_set_upgrade_compiles_identity() -> None:
+    documents = _identity_documents()
+
+    descriptor = compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    chain = descriptor["gameplay"]["upgradeChain"]
+    assert [step["toLevel"] for step in chain["steps"]] == [2, 3]
+    for step in chain["steps"]:
+        assert step["commandSetTransition"] == "identity"
+        assert step["fromCommandSet"] == "UpgradeableKeepCommandSet"
+        assert step["toCommandSet"] == "UpgradeableKeepCommandSet"
+    # Stat/model evidence still rides the steps.
+    assert chain["steps"][0]["cost"] == 500
+    assert chain["steps"][0]["effects"]
+    assert chain["steps"][0]["presentation"]["visibleSubObjects"] == [
+        "V1", "V1_PIECE*", "V1FLAG"
+    ]
+
+
+def test_identity_step_missing_build_cost_still_fails_closed() -> None:
+    documents = _identity_documents()
+    documents["data/ini/upgrade.ini"] = (
+        documents["data/ini/upgrade.ini"]
+        .decode("utf-8")
+        .replace("  BuildCost = KEEP_LEVEL2_COST\n", "", 1)
+        .encode("utf-8")
+    )
+
+    with pytest.raises(
+        PlayableStructureCompilerError, match="lacks authored BuildCost/BuildTime"
+    ):
+        compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+
+def test_level_cap_parses_leading_integer_like_retail() -> None:
+    # GoblinFissure's Level3 module authors "LevelCap = 3w"
+    # (data/ini/object/evilfaction/structures/wild/fissure.ini); the SAGE
+    # atoi-style scanner reads 3 and the retail engine caps at level 3.
+    documents = _upgradeable_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path]
+        .decode("utf-8")
+        .replace(
+            "    TriggeredBy = Upgrade_KeepLevel3\n"
+            "    LevelsToGain = 1\n"
+            "    LevelCap = 3\n",
+            "    TriggeredBy = Upgrade_KeepLevel3\n"
+            "    LevelsToGain = 1\n"
+            "    LevelCap = 3w\n",
+            1,
+        )
+        .encode("utf-8")
+    )
+
+    descriptor = compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+    chain = descriptor["gameplay"]["upgradeChain"]
+    assert chain["levelCap"] == 3
+    assert chain["steps"][1]["levelCap"] == 3
+    assert chain["steps"][1]["toLevel"] == 3
+
+
+def test_level_cap_without_leading_digit_fails_closed() -> None:
+    documents = _upgradeable_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path]
+        .decode("utf-8")
+        .replace("    LevelCap = 3\n", "    LevelCap = w3\n", 1)
+        .encode("utf-8")
+    )
+
+    with pytest.raises(
+        PlayableStructureCompilerError, match="no valid LevelCap"
+    ):
+        compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+
+def test_cost_modifier_variant_without_apply_list_is_unsupported_evidence() -> None:
+    # Retail's other CostModifierUpgrade shapes (IsengardFortress Excavations
+    # ObjectFilter discount, MenGarrisonTowerExpansion Slaughter modifier)
+    # must not fail the structure closed; the PLAYER-bound ones surface as
+    # unsupported-effect evidence.
+    documents = _upgradeable_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path]
+        .decode("utf-8")
+        .replace(
+            "Object UpgradeableKeep\n",
+            "Object UpgradeableKeep\n"
+            "  Behavior = CostModifierUpgrade ModuleTag_WallDiscount\n"
+            "    TriggeredBy = Upgrade_KeepExcavations\n"
+            "    ObjectFilter = ANY +STRUCTURE\n"
+            "    Percentage = -10%\n"
+            "  End\n"
+            "  Behavior = CostModifierUpgrade ModuleTag_Slaughter\n"
+            "    StartsActive = Yes\n"
+            "    Slaughter = Yes\n"
+            "    Percentage = 25%\n"
+            "  End\n",
+            1,
+        )
+        .encode("utf-8")
+    )
+    documents["data/ini/upgrade.ini"] = (
+        documents["data/ini/upgrade.ini"]
+        + b"""
+Upgrade Upgrade_KeepExcavations
+  Type = PLAYER
+  BuildCost = 300
+  BuildTime = 30
+End
+"""
+    )
+
+    descriptor = compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    effects = descriptor["gameplay"]["upgradeEffects"]
+    unsupported = effects["unsupportedEffects"]
+    assert any(
+        row["upgradeId"] == "Upgrade_KeepExcavations"
+        and row["module"] == "CostModifierUpgrade"
+        for row in unsupported
+    )
+    # The Slaughter block binds no PLAYER upgrade: no invented evidence.
+    assert all(row["upgradeId"] != "" for row in unsupported)
+
+
+def test_cost_modifier_with_apply_list_missing_trigger_still_fails() -> None:
+    documents = _upgradeable_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path]
+        .decode("utf-8")
+        .replace(
+            "Object UpgradeableKeep\n",
+            "Object UpgradeableKeep\n"
+            "  Behavior = CostModifierUpgrade ModuleTag_BadDiscount\n"
+            "    ApplyToTheseUpgrades = Upgrade_KeepLevel2\n"
+            "  End\n",
+            1,
+        )
+        .encode("utf-8")
+    )
+
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="CostModifierUpgrade lacks TriggeredBy",
+    ):
+        compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+
 def test_upgrade_chain_unresolvable_cost_fails_closed() -> None:
     documents = _upgradeable_documents()
     documents["data/ini/upgrade.ini"] = (

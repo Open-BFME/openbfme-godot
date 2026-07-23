@@ -888,7 +888,35 @@ def _upgrade_effects(
                 if token.casefold() not in {"none", "null"}
             ]
             percent_raw = _first_raw(block, "Percentage")
-            if not triggers or not applied or percent_raw is None:
+            if not applied:
+                # Retail also authors CostModifierUpgrade variants this
+                # runtime does not apply as an upgrade-purchase discount:
+                # ObjectFilter unit/structure cost discounts (the
+                # IsengardFortress Excavations block, hero statues, the
+                # GondorStoneMaker) and StartsActive/Slaughter value
+                # modifiers (MenGarrisonTowerExpansion). Record the
+                # PLAYER-upgrade-bound ones as declared unsupported
+                # capabilities with their authored evidence — mirroring the
+                # unsupported-module path above — instead of failing the
+                # whole structure closed.
+                for token in sorted(
+                    {t for t in triggers if t.casefold() in player_upgrades},
+                    key=str.casefold,
+                ):
+                    unsupported.append(
+                        {
+                            "upgradeId": token,
+                            "module": block.kind,
+                            "sourceIni": block.source_virtual_path,
+                            "line": int(block.line),
+                            "reason": (
+                                "authored CostModifierUpgrade variant is not "
+                                "a supported structure upgrade effect"
+                            ),
+                        }
+                    )
+                continue
+            if not triggers or percent_raw is None:
                 raise PlayableStructureCompilerError(
                     f"{label} CostModifierUpgrade lacks TriggeredBy/"
                     "ApplyToTheseUpgrades/Percentage"
@@ -1028,12 +1056,21 @@ def _upgrade_chain(
             raise PlayableStructureCompilerError(
                 f"{label} LevelUpUpgrade has no valid LevelsToGain"
             )
-        if level_cap is None or not re.fullmatch(r"[0-9]+", level_cap.strip()):
+        # SAGE's INI integer scanner is atoi-style: leading digits parse and
+        # trailing junk is ignored. Retail relies on that exactly once — the
+        # GoblinFissure Level3 module authors "LevelCap = 3w"
+        # (data/ini/object/evilfaction/structures/wild/fissure.ini) and the
+        # retail engine still caps the fissure at level 3. Match the engine:
+        # accept a leading-integer LevelCap; fail closed when no digit leads.
+        cap_match = (
+            re.match(r"[0-9]+", level_cap.strip()) if level_cap is not None else None
+        )
+        if cap_match is None:
             raise PlayableStructureCompilerError(
                 f"{label} LevelUpUpgrade has no valid LevelCap"
             )
         level_up_modules.append(
-            (triggers, int(levels_to_gain.strip()), int(level_cap.strip()), block)
+            (triggers, int(levels_to_gain.strip()), int(cap_match.group(0)), block)
         )
     if not level_up_modules:
         return None
@@ -1139,7 +1176,9 @@ def _upgrade_chain(
             f"{len(direct_sets)} direct command sets"
         )
 
-    def _purchase_button(set_id: str) -> tuple[str, str, int, object] | None:
+    def _purchase_button(
+        set_id: str, already_consumed: set[str]
+    ) -> tuple[str, str, int, object] | None:
         for slot_row in set_slots.get(set_id.casefold(), []):
             command_id = str(slot_row.get("commandId", ""))
             button = command_buttons.get(command_id.casefold())
@@ -1160,6 +1199,11 @@ def _upgrade_chain(
                     "Upgrade chain"
                 )
             upgrade_id = upgrades[0]
+            if upgrade_id.casefold() in already_consumed:
+                # An identity transition keeps the command set in place, so
+                # the already-purchased step's button is still on the panel;
+                # it is spent, not a loop.
+                continue
             if any(
                 upgrade_id.casefold() == trigger.casefold()
                 for triggers, _gain, _cap, _block in level_up_modules
@@ -1170,11 +1214,12 @@ def _upgrade_chain(
 
     steps: list[dict[str, object]] = []
     consumed: set[str] = set()
+    consumed_engine_triggers: set[str] = set()
     current_set = direct_sets[0]
     current_level = 1
     level_cap = max(cap for _t, _g, cap, _b in level_up_modules)
     while True:
-        found = _purchase_button(current_set)
+        found = _purchase_button(current_set, consumed)
         if found is None:
             break
         command_id, upgrade_id, slot, button = found
@@ -1194,11 +1239,31 @@ def _upgrade_chain(
                 f"{len(module_matches)} LevelUpUpgrade modules"
             )
         _triggers, gain, cap = module_matches[0]
+        target_level = min(cap, current_level + gain)
+        # Transition resolution mirrors retail's two authoring styles, then
+        # falls through to an explicit identity — never an invented swap:
+        # 1. "authored": CommandSetUpgrade keyed by the purchased upgrade id
+        #    (the GondorBarracks family; 24 of 29 BFME2 level-up structures).
+        # 2. "structure-level": CommandSetUpgrade keyed by the engine-granted
+        #    Upgrade_StructureLevel<N> that fires when this step's level
+        #    lands (IsengardSiegeWorks, GoblinCave, GoblinFissure,
+        #    WildSpiderPit, DwarvenArcheryRange).
+        # 3. "identity": no CommandSetUpgrade serves the step at all — the
+        #    command set legitimately stays put, compiled as an explicit
+        #    fromCommandSet == toCommandSet pair with a marker so downstream
+        #    stays honest. Malformed steps (missing cost/time/upgrade block)
+        #    still fail closed below.
+        engine_trigger = f"upgrade_structurelevel{target_level}"
+        transition_kind = "authored"
         to_command_set = _transition_for(folded_upgrade)
         if to_command_set is None:
-            raise PlayableStructureCompilerError(
-                f"{label} upgrade {upgrade_id} has no CommandSetUpgrade transition"
-            )
+            to_command_set = _transition_for(engine_trigger)
+            if to_command_set is not None:
+                transition_kind = "structure-level"
+                consumed_engine_triggers.add(engine_trigger)
+            else:
+                transition_kind = "identity"
+                to_command_set = current_set
         if to_command_set.casefold() not in set_slots:
             raise PlayableStructureCompilerError(
                 f"{label} upgrade {upgrade_id} transitions to the missing "
@@ -1222,7 +1287,7 @@ def _upgrade_chain(
             )
         cost = _numeric_value(cost_expression, defines, f"{label} upgrade {upgrade_id}")
         build_time = _numeric_value(time_expression, defines, f"{label} upgrade {upgrade_id}")
-        current_level = min(cap, current_level + gain)
+        current_level = target_level
         options = {
             token.casefold()
             for value in button.values("Options")
@@ -1241,6 +1306,10 @@ def _upgrade_chain(
             "fromCommandSet": current_set,
             "toCommandSet": to_command_set,
         }
+        if transition_kind != "authored":
+            # Absent marker == authored purchased-trigger transition; the
+            # authored family's descriptors stay byte-identical.
+            step["commandSetTransition"] = transition_kind
         if steps:
             step["requiresUpgradeId"] = steps[-1]["upgradeId"]
         labels: list[str] = []
@@ -1261,6 +1330,14 @@ def _upgrade_chain(
             step["buttonLabels"] = labels
         step.update(named_labels)
         step_subobjects = _subobject_modules_for(folded_upgrade)
+        if transition_kind != "authored" and not step_subobjects:
+            # The aliased authoring style binds the per-level model variants
+            # to the same engine-granted Upgrade_StructureLevel<N> trigger as
+            # the command-set swap; the engine fires that upgrade whenever
+            # the level lands, so the rows belong to this step.
+            step_subobjects = _subobject_modules_for(engine_trigger)
+            if step_subobjects:
+                consumed_engine_triggers.add(engine_trigger)
         if step_subobjects:
             step["presentation"] = {
                 "subObjects": [
@@ -1367,9 +1444,11 @@ def _upgrade_chain(
             (token for token, shown in visibility.items() if not shown),
             key=str.casefold,
         )
-    chain_upgrade_ids = {
-        str(step["upgradeId"]).casefold() for step in steps
-    } | {"upgrade_structurelevel1"}
+    chain_upgrade_ids = (
+        {str(step["upgradeId"]).casefold() for step in steps}
+        | {"upgrade_structurelevel1"}
+        | consumed_engine_triggers
+    )
     unconsumed_subobjects = sorted(
         {
             token
