@@ -20,6 +20,7 @@ const FactionManifestScript = preload("res://src/retail_slice/retail_faction_man
 const HouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
 const OptionsScreenScript = preload("res://src/ui/options_screen.gd")
 const UserSettingsScript = preload("res://src/ui/user_settings.gd")
+const ControlServerScript = preload("res://src/debug/retail_control_server.gd")
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const SOLDIER_HORDE_ID := "bfme2.object.gondor-fighter-horde"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -110,6 +111,8 @@ var simulation: RetailSliceSim
 var local_team := 0
 var _local_command_seq := 0
 var lockstep_session
+## Debug-gated Game Control API (OPENBFME_CONTROL_PORT); null when env unset.
+var control_server
 var _mp_mode := OS.get_environment("OPENBFME_MP").strip_edges().to_lower()
 var _mp_address := OS.get_environment("OPENBFME_MP_ADDRESS").strip_edges()
 var _mp_port_text := OS.get_environment("OPENBFME_MP_PORT").strip_edges()
@@ -385,6 +388,18 @@ func _initialize_content_and_match() -> void:
 			_fail("Lockstep %s failed (%s:%d, error %d)." % [_mp_mode, mp_address, mp_port, mp_error])
 			return
 	_configure_simulation_expansions()
+	if OS.get_environment("OPENBFME_CONTROL_PORT").strip_edges() != "":
+		if _mp_mode != "":
+			# Control-API commands bypass the lockstep session and would desync
+			# a networked match; MP support requires routing through
+			# session.submit_local and is deliberately not wired yet.
+			push_warning("Control API is disabled in multiplayer sessions")
+		else:
+			# The live frame loop drives this simulation, so external stepping
+			# stays disallowed: the control API inspects and issues commands only.
+			control_server = ControlServerScript.new(simulation, false)
+			if not control_server.start_from_env():
+				control_server = null
 	var player_fortress_id := simulation.fortress_id(local_team)
 	if player_fortress_id != 0:
 		var player_fortress_position := Vector2(simulation.structure(player_fortress_id).get("position", Vector2.ZERO))
@@ -2129,6 +2144,8 @@ func _process(delta: float) -> void:
 	_update_camera(delta)
 	if not ready_ok:
 		return
+	if control_server != null:
+		control_server.poll()
 	if lockstep_session != null:
 		lockstep_session.poll()
 		_sync_multiplayer_pause_state()
@@ -4727,6 +4744,9 @@ func _apply_stored_display_settings() -> void:
 
 
 func _exit_tree() -> void:
+	if control_server != null:
+		control_server.stop()
+		control_server = null
 	if audio_system != null:
 		audio_system.dispose()
 	var asset_factory = load("res://src/view/asset_factory.gd")
