@@ -18,6 +18,13 @@ var enemy_faction: String = "mordor"
 var map_id: String = "anduin"
 var difficulty: String = "normal"
 
+## Multiplayer lockstep selection, written by the menu's NETWORK flyout.
+## The slice reads these only when OPENBFME_MP is unset; the environment
+## variables always win for headless runners. Empty mode = single player.
+var retail_mp_mode: String = ""
+var retail_mp_address: String = "127.0.0.1"
+var retail_mp_port: int = 26015
+
 ## Retail vertical slice skirmish selection, written by the main menu's
 ## skirmish setup. The slice reads these only when OPENBFME_SLICE_FACTION is
 ## unset; the environment variable always wins for headless runners.

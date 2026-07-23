@@ -9,6 +9,7 @@ const FactionManifestScript = preload("res://src/retail_slice/retail_faction_man
 
 const PAGE_MAIN := "main"
 const PAGE_SOLO := "solo"
+const PAGE_MULTIPLAYER := "multiplayer"
 const PAGE_OPTIONS := "options"
 const PAGE_DEVELOPER := "developer"
 const PAGE_STATS := "stats"
@@ -57,6 +58,7 @@ const HOUSE_COLORS: Array[Dictionary] = [
 @onready var menu_frame: Panel = $MenuFrame
 @onready var main_heading: Label = $Center/MainHeading
 @onready var solo_btn: Button = $Center/Solo
+@onready var multiplayer_btn: Button = $Center/Multiplayer
 @onready var options_btn: Button = $Center/Options
 @onready var quit_btn: Button = $Center/Quit
 @onready var subpage_nav: Control = $Center/SubpageNav
@@ -65,6 +67,7 @@ const HOUSE_COLORS: Array[Dictionary] = [
 @onready var sub_quit_btn: Button = $Center/SubpageNav/Quit
 
 @onready var solo_flyout: Panel = $Center/SoloFlyout
+@onready var multiplayer_flyout: Panel = $Center/MultiplayerFlyout
 @onready var stats_screen: Panel = $Center/StatsScreen
 
 @onready var options_screen = $Center/OptionsScreen
@@ -556,6 +559,9 @@ func apply_skirmish_selection() -> bool:
 	if launch_error != "":
 		_refresh_skirmish_launch_state()
 		return false
+	# A solo launch is always single-player: clear any multiplayer selection a
+	# previous NETWORK visit left behind so the slice never hosts by surprise.
+	_game_state.set("retail_mp_mode", "")
 	_game_state.set("retail_player_faction", _selected_skirmish_faction(solo_flyout.player_army_opt))
 	_game_state.set("retail_enemy_faction", _selected_skirmish_faction(solo_flyout.enemy_army_opt))
 	var map_id := _selected_skirmish_map()
@@ -671,8 +677,12 @@ func _collect_stage_buttons() -> void:
 
 func _connect_actions() -> void:
 	solo_btn.pressed.connect(func() -> void: _show_page(PAGE_SOLO))
+	multiplayer_btn.pressed.connect(func() -> void: _show_page(PAGE_MULTIPLAYER))
 	options_btn.pressed.connect(_on_options)
 	quit_btn.pressed.connect(func() -> void: get_tree().quit())
+	multiplayer_flyout.host_requested.connect(_on_multiplayer_host)
+	multiplayer_flyout.join_requested.connect(_on_multiplayer_join)
+	multiplayer_flyout.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
 	sub_solo_btn.pressed.connect(func() -> void: _show_page(PAGE_SOLO))
 	sub_options_btn.pressed.connect(_on_options)
 	sub_quit_btn.pressed.connect(func() -> void: get_tree().quit())
@@ -705,8 +715,11 @@ func get_current_page() -> String:
 
 func _show_page(page: String) -> void:
 	current_page = page
-	_set_nodes_visible(_main_page_nodes(), page == PAGE_MAIN)
+	# The main bar stays visible under the compact NETWORK flyout, matching the
+	# retail shell where flyouts open above the persistent bottom bar (REF-01).
+	_set_nodes_visible(_main_page_nodes(), page == PAGE_MAIN or page == PAGE_MULTIPLAYER)
 	_set_nodes_visible(_solo_page_nodes(), page == PAGE_SOLO)
+	_set_nodes_visible(_multiplayer_page_nodes(), page == PAGE_MULTIPLAYER)
 	_set_nodes_visible(_options_page_nodes(), page == PAGE_OPTIONS)
 	_set_nodes_visible(_developer_page_nodes(), page == PAGE_DEVELOPER)
 	_set_nodes_visible(_stats_page_nodes(), page == PAGE_STATS)
@@ -727,6 +740,9 @@ func _show_page(page: String) -> void:
 			_refresh_skirmish_launch_state()
 			if solo_flyout.player_army_opt.visible:
 				solo_flyout.player_army_opt.grab_focus()
+		PAGE_MULTIPLAYER:
+			if multiplayer_flyout.host_button != null and multiplayer_flyout.host_button.visible:
+				multiplayer_flyout.host_button.grab_focus()
 		PAGE_OPTIONS:
 			if options_screen.visible and options_screen.window_mode_opt != null:
 				options_screen.window_mode_opt.grab_focus()
@@ -739,11 +755,15 @@ func _show_page(page: String) -> void:
 
 
 func _main_page_nodes() -> Array[Control]:
-	return [main_heading, solo_btn, options_btn, quit_btn]
+	return [main_heading, solo_btn, multiplayer_btn, options_btn, quit_btn]
 
 
 func _solo_page_nodes() -> Array[Control]:
 	return [solo_flyout]
+
+
+func _multiplayer_page_nodes() -> Array[Control]:
+	return [multiplayer_flyout]
 
 
 func _options_page_nodes() -> Array[Control]:
@@ -788,6 +808,50 @@ func _set_nodes_visible(nodes: Array[Control], visible_value: bool) -> void:
 func _on_options() -> void:
 	options_screen.open()
 	_show_page(PAGE_OPTIONS)
+
+
+## Validates and records a NETWORK selection on GameState without any scene
+## change (the runner exercises this seam directly). "" mode is rejected.
+func apply_multiplayer_selection(mode: String, address: String, port: int) -> bool:
+	if mode != "host" and mode != "join":
+		return false
+	if port < multiplayer_flyout.PORT_MIN or port > multiplayer_flyout.PORT_MAX:
+		return false
+	if mode == "join" and not address.strip_edges().is_valid_ip_address():
+		return false
+	var host_error := retail_launch_error()
+	if host_error != "":
+		multiplayer_flyout.set_status("Cannot start: %s" % host_error, true)
+		return false
+	# The tier-1 network scenario is the proven lockstep path: authored slice
+	# defaults (Men vs Men on Fords), no rules overrides, host=team 0.
+	_game_state.set("retail_player_faction", "men")
+	_game_state.set("retail_enemy_faction", "men")
+	_game_state.set("retail_map_id", SliceScript.MAP_ID)
+	_game_state.set("retail_initial_resources", -1)
+	_game_state.set("retail_command_point_factor", 1.0)
+	_game_state.set("retail_player_start_index", 0)
+	_game_state.set("retail_mp_mode", mode)
+	_game_state.set("retail_mp_address", address.strip_edges() if mode == "join" else "127.0.0.1")
+	_game_state.set("retail_mp_port", port)
+	return true
+
+
+func _on_multiplayer_host(port: int) -> void:
+	_launch_multiplayer("host", "127.0.0.1", port)
+
+
+func _on_multiplayer_join(address: String, port: int) -> void:
+	_launch_multiplayer("join", address, port)
+
+
+func _launch_multiplayer(mode: String, address: String, port: int) -> void:
+	if _launch_in_progress:
+		return
+	if not apply_multiplayer_selection(mode, address, port):
+		return
+	_launch_in_progress = true
+	get_tree().change_scene_to_file("res://scenes/retail_loading_boot.tscn")
 
 
 func _on_retail() -> void:

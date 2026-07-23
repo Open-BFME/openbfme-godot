@@ -116,6 +116,24 @@ var control_server
 var _mp_mode := OS.get_environment("OPENBFME_MP").strip_edges().to_lower()
 var _mp_address := OS.get_environment("OPENBFME_MP_ADDRESS").strip_edges()
 var _mp_port_text := OS.get_environment("OPENBFME_MP_PORT").strip_edges()
+
+
+## Menu seam: the NETWORK flyout writes GameState.retail_mp_*; environment
+## variables always win so headless runners stay authoritative. Called before
+## the first _mp_mode consumer during match initialization. The optional
+## override lets tests exercise the seam without tree membership.
+func _resolve_mp_settings(game_state_override: Node = null) -> void:
+	var game_state := game_state_override if game_state_override != null else get_node_or_null("/root/GameState")
+	if game_state == null:
+		return
+	if _mp_mode == "":
+		_mp_mode = String(game_state.get("retail_mp_mode")).strip_edges().to_lower()
+	if _mp_address == "":
+		_mp_address = String(game_state.get("retail_mp_address")).strip_edges()
+	if _mp_port_text == "":
+		var menu_port := int(game_state.get("retail_mp_port"))
+		if menu_port > 0:
+			_mp_port_text = str(menu_port)
 var _mp_desync_reported := false
 var _mp_last_pause_command_tick := -1
 var battalion_nodes: Dictionary = {}
@@ -374,6 +392,7 @@ func _initialize_content_and_match() -> void:
 		_fail("Retail unit gameplay rules failed validation: %s" % String(gameplay_rules["_error"]))
 		return
 	_apply_menu_match_options()
+	_resolve_mp_settings()
 	simulation = SimScript.new()
 	_configure_simulation_spellbook()
 	simulation.setup(_match_configuration(), gameplay_rules)
