@@ -19,7 +19,10 @@ const FIXTURE_RELATIVE := "../.private/retail-work/reports/apt-vm-fixtures/apt_v
 ## Pinned deterministic AptRuntimeHost state digest after driving all three
 ## MainMenu fixture scripts against the tier-3 widget tree (re-pin only when
 ## the fixture file or the host state model changes).
-const TIER3_E2E_DIGEST := "31e7447fb24aa3b0"
+## Re-pinned for tier 4: state() legitimately extended with the handler
+## registry ("handlers", "handler_log") and the converted-movie allowlist
+## ("attachable"). Previous pin: 31e7447fb24aa3b0.
+const TIER3_E2E_DIGEST := "118b6b150a64cd13"
 
 var passed := 0
 var failed := 0
@@ -121,6 +124,12 @@ func _run() -> void:
 	_test_tier3_fscommand_registry()
 	_test_tier3_random_enumerate_digest()
 	_test_tier3_fail_closed_families()
+	# Tier-4 suite: script-defined handler dispatch, attach/remove content,
+	# and the converted-movie allowlist.
+	_test_tier4_handler_registration_and_dispatch()
+	_test_tier4_reentrant_handler_dispatch()
+	_test_tier4_attach_and_remove_movie()
+	_test_tier4_create_delete_content()
 	_run_real_fixtures()
 	_run_tier3_end_to_end()
 	print("RETAIL_APT_VM_RESULT passed=%d failed=%d" % [passed, failed])
@@ -1400,6 +1409,276 @@ func _test_tier3_fail_closed_families() -> void:
 	var result: Dictionary = vm.execute(asm.bytes, _string_constants(names))
 	_check("t3_vm_fail_closed_completes",
 		bool(result["completed"]) and (vm_host.recorded as Array).size() == 1)
+
+
+# --- Tier-4 host-dispatch tests -------------------------------------------------
+
+## Assemble a root script that defines the measured SetFlashEffectState
+## handler (this._parent.FlashEffects[this._name].gotoAndPlay(state)) plus an
+## unmeasured function name that must fail closed. Pool ids: 0="state",
+## 1="_parent", 2="FlashEffects", 3="gotoAndPlay", 4="_name".
+func _build_flash_handler_asm() -> Asm:
+	var asm := Asm.new()
+	var pool_patch := _emit_constant_pool(asm, 5)
+	# DefineFunction "SetFlashEffectState"(state)
+	asm.op_aligned(0x9B)
+	var df_name_patch := asm.mark()
+	asm.u32(0)
+	asm.u32(1)  # param count
+	var df_table_patch := asm.mark()
+	asm.u32(0)
+	var df_size_patch := asm.mark()
+	asm.i32(0)
+	asm.u32(0)
+	asm.u32(0)
+	var body_start := asm.mark()
+	asm.op(0xAE)  # arg: value of param "state"
+	asm.u8(0)
+	asm.op(0x5A)  # argc = 1
+	asm.op(0x70)  # this
+	asm.op(0xA2)  # "_parent"
+	asm.u8(1)
+	asm.op(0x4E)  # GetMember -> parent path
+	asm.op(0xA2)  # "FlashEffects"
+	asm.u8(2)
+	asm.op(0x4E)  # GetMember -> FlashEffects path
+	asm.op(0x70)  # this
+	asm.op(0xA2)  # "_name"
+	asm.u8(4)
+	asm.op(0x4E)  # GetMember -> own clip name
+	asm.op(0x4E)  # GetMember -> FlashEffects[<name>] path
+	asm.op(0xB2)  # EA_CallNamedMethodPop "gotoAndPlay"
+	asm.u8(3)
+	asm.op(0x00)  # End of body
+	asm.patch_i32(df_size_patch, asm.mark() - body_start)
+	# DefineFunction "DoWeirdThing"() - unmeasured, must fail closed.
+	asm.op_aligned(0x9B)
+	var weird_name_patch := asm.mark()
+	asm.u32(0)
+	asm.u32(0)  # no params
+	var weird_table_patch := asm.mark()
+	asm.u32(0)
+	var weird_size_patch := asm.mark()
+	asm.i32(0)
+	asm.u32(0)
+	asm.u32(0)
+	var weird_body_start := asm.mark()
+	asm.op(0x00)
+	asm.patch_i32(weird_size_patch, asm.mark() - weird_body_start)
+	asm.op(0x00)  # End of root script
+	var handler_off := asm.cstring("SetFlashEffectState")
+	var state_off := asm.cstring("state")
+	var weird_off := asm.cstring("DoWeirdThing")
+	asm.patch_u32(df_name_patch, handler_off)
+	asm.patch_u32(df_table_patch, asm.index_table([state_off]))
+	asm.patch_u32(weird_name_patch, weird_off)
+	asm.patch_u32(weird_table_patch, asm.index_table([]))
+	asm.patch_u32(pool_patch, asm.index_table([0, 1, 2, 3, 4]))
+	return asm
+
+
+func _flash_handler_constants() -> Array:
+	return _string_constants(["state", "_parent", "FlashEffects", "gotoAndPlay", "_name"])
+
+
+## Build the side-command-style tree, execute the defining script at the
+## button clip scope, and dispatch the registered handler through the VM.
+func _run_flash_handler_pass() -> Dictionary:
+	var host = host_script.new(0, "_root")
+	var bar: String = host.add_clip("_root", "bar")
+	var button: String = host.add_clip(bar, "0")
+	var fx: String = host.add_clip(bar, "FlashEffects")
+	host.add_clip(fx, "0", {"labels": {"_flash": 3}, "total_frames": 6})
+	host.set_scope(button)
+	var vm = AptVmScript.new()
+	vm.host = host
+	var asm := _build_flash_handler_asm()
+	var result: Dictionary = vm.execute(asm.bytes, _flash_handler_constants())
+	var dispatch: Dictionary = host.dispatch_clip_handler(button, "SetFlashEffectState", ["_flash"])
+	return {"host": host, "result": result, "dispatch": dispatch, "button": button, "fx": fx}
+
+
+## Measured handler family registration, host-driven dispatch through the
+## real VM bytecode body, fail-closed unmeasured names, and deterministic
+## dispatch order (double-run digest equality).
+func _test_tier4_handler_registration_and_dispatch() -> void:
+	var pass_a := _run_flash_handler_pass()
+	var host = pass_a["host"]
+	var result: Dictionary = pass_a["result"]
+	var button := String(pass_a["button"])
+	_check("t4_handler_script_completes",
+		bool(result["completed"]) and (host.recorded as Array).is_empty())
+	_check("t4_measured_handler_registered",
+		host.has_clip_handler(button, "SetFlashEffectState"))
+	_check("t4_unmeasured_define_fails_closed",
+		not host.has_clip_handler(button, "DoWeirdThing")
+		and (host.handler_log as Array).size() == 2
+		and String(((host.handler_log as Array)[1] as Dictionary).get("kind", "")) == "unmeasured-define")
+	var dispatch: Dictionary = pass_a["dispatch"]
+	var flash: Dictionary = host.widget_state(String(pass_a["fx"]) + ".0")
+	_check("t4_dispatch_executes_real_body",
+		bool(dispatch.get("completed", false)) and String(flash.label) == "_flash"
+		and int(flash.frame) == 3 and bool(flash.playing))
+	_check("t4_dispatch_clean_contract", (host.recorded as Array).is_empty())
+	var events: Array = host.events
+	var dispatch_index := -1
+	var playback_index := -1
+	for index in events.size():
+		var event := events[index] as Dictionary
+		if String(event.get("family", "")) == "dispatch" and dispatch_index < 0:
+			dispatch_index = index
+		if String(event.get("family", "")) == "playback" and playback_index < 0:
+			playback_index = index
+	_check("t4_dispatch_event_precedes_effect",
+		dispatch_index >= 0 and playback_index > dispatch_index)
+	var pass_b := _run_flash_handler_pass()
+	_check("t4_dispatch_order_deterministic",
+		host.state_digest() == pass_b["host"].state_digest())
+	var unregistered: Dictionary = host.dispatch_clip_handler(button, "SetGlassState", ["_up"])
+	_check("t4_unregistered_dispatch_fails_closed",
+		not bool(unregistered.get("completed", true))
+		and (host.recorded as Array).size() == 1)
+
+
+## A single script defines SetGlassState then calls it on a host clip path;
+## the host dispatch re-enters the executing VM and the frame save/restore
+## keeps the outer script intact.
+func _test_tier4_reentrant_handler_dispatch() -> void:
+	var host = host_script.new(0, "_root")
+	var clip: String = host.add_clip("_root", "glassClip", {"labels": {"_up": 2}, "total_frames": 4})
+	host.set_scope(clip)
+	host.set_global_variable("glassTarget", clip)
+	var names := ["state", "gotoAndPlay", "SetGlassState", "_up", "glassTarget"]
+	var asm := Asm.new()
+	var pool_patch := _emit_constant_pool(asm, names.size())
+	# DefineFunction "SetGlassState"(state) { this.gotoAndPlay(state) }
+	asm.op_aligned(0x9B)
+	var name_patch := asm.mark()
+	asm.u32(0)
+	asm.u32(1)
+	var table_patch := asm.mark()
+	asm.u32(0)
+	var size_patch := asm.mark()
+	asm.i32(0)
+	asm.u32(0)
+	asm.u32(0)
+	var body_start := asm.mark()
+	asm.op(0xAE)  # state
+	asm.u8(0)
+	asm.op(0x5A)  # argc
+	asm.op(0x70)  # this
+	asm.op(0xB2)  # gotoAndPlay
+	asm.u8(1)
+	asm.op(0x00)
+	asm.patch_i32(size_patch, asm.mark() - body_start)
+	# glassTarget.SetGlassState("_up") - via the host path string, so the
+	# call routes host.call_method -> registered handler -> re-entrant VM.
+	asm.op(0xA2)  # arg "_up"
+	asm.u8(3)
+	asm.op(0x5A)  # argc
+	asm.op(0xA2)  # "glassTarget"
+	asm.u8(4)
+	asm.op(0x1C)  # GetVariable -> clip path
+	asm.op(0xB2)  # EA_CallNamedMethodPop "SetGlassState"
+	asm.u8(2)
+	asm.op(0x00)
+	var handler_off := asm.cstring("SetGlassState")
+	var state_off := asm.cstring("state")
+	asm.patch_u32(name_patch, handler_off)
+	asm.patch_u32(table_patch, asm.index_table([state_off]))
+	asm.patch_u32(pool_patch, asm.index_table(range(names.size())))
+	var vm = AptVmScript.new()
+	vm.host = host
+	var result: Dictionary = vm.execute(asm.bytes, _string_constants(names))
+	var state: Dictionary = host.widget_state(clip)
+	_check("t4_reentrant_dispatch_completes",
+		bool(result["completed"]) and (host.recorded as Array).is_empty())
+	_check("t4_reentrant_dispatch_mutates_clip",
+		String(state.label) == "_up" and int(state.frame) == 2 and bool(state.playing))
+
+
+## attachMovie/removeMovieClip against the converted-movie allowlist: tree
+## mutations are deterministic and digest-visible; unknown symbols fail
+## closed.
+func _test_tier4_attach_and_remove_movie() -> void:
+	var host = host_script.new(0, "_root")
+	host.set_attachable_movie("CommandButton", {"total_frames": 2, "labels": {"_up": 1}})
+	var digest_initial: String = host.state_digest()
+	var attached: Variant = host.call_method("_root", "attachMovie", ["CommandButton", "Bttn", 1])
+	_check("t4_attach_movie_creates_clip",
+		attached == "_root.Bttn" and host.has_widget("_root.Bttn")
+		and int((host.widget_state("_root.Bttn") as Dictionary).total_frames) == 2)
+	var digest_attached: String = host.state_digest()
+	_check("t4_attach_movie_changes_digest", digest_attached != digest_initial)
+	var denied: Variant = host.call_method("_root", "attachMovie", ["StrategicCommandButton", "Nope", 2])
+	_check("t4_attach_movie_allowlist_fails_closed",
+		denied == null and not host.has_widget("_root.Nope")
+		and (host.recorded as Array).size() == 1)
+	var removed: Variant = host.call_method("_root.Bttn", "removeMovieClip", [])
+	_check("t4_remove_movie_clip_destroys_clip",
+		removed == null and not host.has_widget("_root.Bttn"))
+	_check("t4_remove_movie_clip_changes_digest",
+		host.state_digest() != digest_attached and host.state_digest() != digest_initial)
+	# VM-driven attach through `this` proves the full opcode-to-widget wire.
+	var vm_host = host_script.new(0, "_root")
+	vm_host.set_attachable_movie("CommandButton", {"total_frames": 2})
+	var names := ["CommandButton", "Bttn", "attachMovie"]
+	var asm := Asm.new()
+	var pool_patch := _emit_constant_pool(asm, names.size())
+	asm.op(0x5A)  # depth arg = 1 (deepest arg, popped last)
+	asm.op(0xA2)  # "Bttn"
+	asm.u8(1)
+	asm.op(0xA2)  # "CommandButton" (popped first -> args[0])
+	asm.u8(0)
+	asm.op(0xB5)  # argc = 3
+	asm.u8(3)
+	asm.op(0x70)  # this -> resolves to the host scope clip
+	asm.op(0xB2)  # EA_CallNamedMethodPop "attachMovie"
+	asm.u8(2)
+	asm.op(0x00)
+	asm.patch_u32(pool_patch, asm.index_table(range(names.size())))
+	var vm = AptVmScript.new()
+	vm.host = vm_host
+	var result: Dictionary = vm.execute(asm.bytes, _string_constants(names))
+	_check("t4_vm_driven_attach_movie",
+		bool(result["completed"]) and (vm_host.recorded as Array).is_empty()
+		and vm_host.has_widget("_root.Bttn"))
+
+
+## The libInGameUI CreateContent/DeleteContent surface: allowlisted content
+## attaches as this[contentName] with a logged extern-path write; unknown
+## content and missing children fail closed.
+func _test_tier4_create_delete_content() -> void:
+	var host = host_script.new(0, "_root")
+	host.set_attachable_movie("CommandButton", {"total_frames": 2, "labels": {"_up": 1}})
+	var buttons: String = host.add_clip("_root", "CommandButtons")
+	var slot: String = host.add_clip(buttons, "0")
+	var digest_before: String = host.state_digest()
+	var created: Variant = host.call_method(slot, "CreateContent", ["CommandButton", "Bttn"])
+	_check("t4_create_content_attaches_child",
+		created == null and host.has_widget(slot + ".Bttn")
+		and host.get_member(slot, "Bttn") == slot + ".Bttn")
+	var extern_logged := false
+	for event_value in host.events as Array:
+		var event := event_value as Dictionary
+		if String(event.get("family", "")) == "content" \
+				and String(event.get("op", "")) == "create-content" \
+				and String(event.get("externPath", "")) == slot + ".Bttn":
+			extern_logged = true
+	_check("t4_create_content_logs_extern_path_write", extern_logged)
+	_check("t4_create_content_changes_digest", host.state_digest() != digest_before)
+	var unknown: Variant = host.call_method(slot, "CreateContent", ["icon", "Icn"])
+	_check("t4_create_content_unknown_type_fails_closed",
+		unknown == null and not host.has_widget(slot + ".Icn")
+		and (host.recorded as Array).size() == 1)
+	var digest_created: String = host.state_digest()
+	var deleted: Variant = host.call_method(slot, "DeleteContent", ["Bttn"])
+	_check("t4_delete_content_removes_child",
+		deleted == null and not host.has_widget(slot + ".Bttn"))
+	_check("t4_delete_content_changes_digest", host.state_digest() != digest_created)
+	var missing: Variant = host.call_method(slot, "DeleteContent", ["Bttn"])
+	_check("t4_delete_content_missing_fails_closed",
+		missing == null and (host.recorded as Array).size() == 2)
 
 
 # --- Tier-3 end-to-end: MainMenu fixtures against the real host ---------------

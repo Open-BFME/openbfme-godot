@@ -435,6 +435,13 @@ var _staged_wnd_runtime: RefCounted = null
 var _side_command_fade_accumulator := 0.0
 var _side_command_fade_state: Dictionary = {}
 var _vm_fallback_program_ids: Dictionary = {}
+## Tier-4: recorded PlaySound audio intents from VM-lane FSCommand routing
+## (populated only when no injectable audio-intent callback is set).
+var vm_audio_intents: Array[Dictionary] = []
+var _vm_audio_intent_callback := Callable()
+## Tier-4: host widget name -> real CanvasItem display node.
+var _vm_display_bindings: Dictionary = {}
+var _vm_binding_gap_keys: Dictionary = {}
 var _live_text_values := {
 	"$PalantirResources": "0",
 	"$PalantirResourceMultiplier": " ",
@@ -2197,6 +2204,17 @@ func _execute_program_via_vm(program_id: String, program: Dictionary, timeline_s
 		return false
 	var vm = APT_VM_SCRIPT.new()
 	var host = APT_RUNTIME_HOST_SCRIPT.new(0, "clip")
+	for widget_name in _vm_display_bindings:
+		var item: CanvasItem = _vm_display_bindings[widget_name]
+		if not is_instance_valid(item):
+			continue
+		var item_position: Vector2 = item.get("position")
+		host.add_clip("clip", String(widget_name), {
+			"_x": item_position.x,
+			"_y": item_position.y,
+			"_alpha": item.modulate.a * 100.0,
+			"_visible": item.visible,
+		})
 	vm.host = host
 	var result: Dictionary = vm.execute(bytecode, [], 0)
 	if not bool(result.get("completed", false)):
@@ -2205,15 +2223,105 @@ func _execute_program_via_vm(program_id: String, program: Dictionary, timeline_s
 	if not (host.recorded as Array).is_empty():
 		_note_vm_fallback(program_id, "recorded-host-call")
 		return false
+	# The measured HOST_BRIDGE FSCommand is PlaySound; anything else fails
+	# closed to the legacy path before any state is applied.
+	for fs_value in host.fs_log as Array:
+		if String((fs_value as Dictionary).get("command", "")) != "PlaySound":
+			_note_vm_fallback(program_id, "unmeasured-fscommand:%s" % String((fs_value as Dictionary).get("command", "")))
+			return false
 	_apply_vm_playback_events(host.playback_events() as Array, timeline_state)
+	_apply_vm_property_events(host.events as Array, program_id)
+	for fs_value in host.fs_log as Array:
+		_dispatch_vm_audio_intent({
+			"eventId": String((fs_value as Dictionary).get("argument", "")),
+			"dispatch": "FSCommand:PlaySound",
+			"sourceScriptId": program_id,
+		})
 	vm_executed_program_count += 1
 	return true
 
 
-## Bytecode synthesis for the proven playback-only opcode set: End (0x00),
-## Play (0x06), Stop (0x07), GotoFrame (0x81, aligned i32 operand), and
-## GotoLabel (0x8C, aligned u32 string offset). Anything else returns empty
-## (fail-closed to the legacy path).
+## Bind a host widget name to a real display node so VM-lane _x/_y/_alpha/
+## _visible writes move/fade/show the actual Godot CanvasItem.
+func bind_vm_display_item(widget_name: String, item: CanvasItem) -> bool:
+	if widget_name == "" or item == null or not is_instance_valid(item):
+		return false
+	_vm_display_bindings[widget_name] = item
+	return true
+
+
+## Inject the audio surface for VM-lane PlaySound intents. Unset (default):
+## intents are recorded in vm_audio_intents instead.
+func set_vm_audio_intent_callback(callback: Callable) -> void:
+	_vm_audio_intent_callback = callback
+
+
+func _dispatch_vm_audio_intent(intent: Dictionary) -> void:
+	if _vm_audio_intent_callback.is_valid():
+		_vm_audio_intent_callback.call(intent.duplicate(true))
+		return
+	vm_audio_intents.append(intent)
+
+
+## Apply host property mutations to the bound real display items. Additive
+## and fail-closed: a write against an unbound widget or an unmapped
+## property records a diagnostic once and mutates no node, leaving the
+## legacy path in charge of that element.
+func _apply_vm_property_events(events: Array, program_id: String) -> void:
+	for event_value in events:
+		var event := event_value as Dictionary
+		if String(event.get("family", "")) != "property":
+			continue
+		var path := String(event.get("path", ""))
+		var widget_name := path.trim_prefix("clip.")
+		var property_name := String(event.get("property", ""))
+		if widget_name == path or not _vm_display_bindings.has(widget_name):
+			_note_vm_binding_gap(program_id, path, property_name, "unbound-widget")
+			continue
+		var item: CanvasItem = _vm_display_bindings[widget_name]
+		if not is_instance_valid(item):
+			_note_vm_binding_gap(program_id, path, property_name, "freed-node")
+			continue
+		match property_name:
+			"_x":
+				var x_position: Vector2 = item.get("position")
+				x_position.x = float(event.get("value", 0.0))
+				item.set("position", x_position)
+			"_y":
+				var y_position: Vector2 = item.get("position")
+				y_position.y = float(event.get("value", 0.0))
+				item.set("position", y_position)
+			"_alpha":
+				var modulate_color := item.modulate
+				modulate_color.a = clampf(float(event.get("value", 0.0)) / 100.0, 0.0, 1.0)
+				item.modulate = modulate_color
+			"_visible":
+				item.visible = bool(event.get("value", false))
+			_:
+				_note_vm_binding_gap(program_id, path, property_name, "unmapped-property")
+
+
+func _note_vm_binding_gap(program_id: String, path: String, property_name: String, reason: String) -> void:
+	var key := "%s|%s|%s" % [program_id, path, property_name]
+	if _vm_binding_gap_keys.has(key):
+		return
+	_vm_binding_gap_keys[key] = true
+	diagnostics.append({
+		"code": "apt-vm-display-binding-gap",
+		"programId": program_id,
+		"path": path,
+		"property": property_name,
+		"reason": reason,
+	})
+
+
+## Bytecode synthesis for the proven opcode set: End (0x00), Play (0x06),
+## Stop (0x07), GotoFrame (0x81, aligned i32 operand), GotoLabel (0x8C,
+## aligned u32 string offset), plus the tier-4 additions PushString (0xA1,
+## aligned u32 string offset), PushByte (0xB5), PushFloat (0xB4), PushTrue/
+## PushFalse (0x73/0x74), SetProperty (0x23), and GetURL2 (0x9A, the
+## FSCommand dispatch form). Anything else returns empty (fail-closed to
+## the legacy path).
 func _synthesize_vm_bytecode(rows: Array) -> PackedByteArray:
 	if rows.is_empty():
 		return PackedByteArray()
@@ -2232,8 +2340,35 @@ func _synthesize_vm_bytecode(rows: Array) -> PackedByteArray:
 			0x00:
 				bytes.append(0x00)
 				terminated = true
-			0x06, 0x07:
+			0x06, 0x07, 0x23, 0x9A:
 				bytes.append(opcode)
+			0x73, 0x74:
+				bytes.append(opcode)
+			0xB5:
+				var byte_value: Variant = row.get("operand", null)
+				if typeof(byte_value) != TYPE_INT and typeof(byte_value) != TYPE_FLOAT:
+					return PackedByteArray()
+				if int(byte_value) < 0 or int(byte_value) > 255:
+					return PackedByteArray()
+				bytes.append(0xB5)
+				bytes.append(int(byte_value))
+			0xB4:
+				var float_value: Variant = row.get("operand", null)
+				if typeof(float_value) != TYPE_INT and typeof(float_value) != TYPE_FLOAT:
+					return PackedByteArray()
+				bytes.append(0xB4)
+				var float_position := bytes.size()
+				bytes.resize(float_position + 4)
+				bytes.encode_float(float_position, float(float_value))
+			0xA1:
+				var string_value: Variant = row.get("operand", null)
+				if typeof(string_value) != TYPE_STRING:
+					return PackedByteArray()
+				bytes.append(0xA1)
+				while bytes.size() % 4 != 0:
+					bytes.append(0)
+				string_patches.append([bytes.size(), String(string_value)])
+				bytes.resize(bytes.size() + 4)
 			0x81:
 				var frame_value: Variant = row.get("operand", null)
 				if typeof(frame_value) != TYPE_INT and typeof(frame_value) != TYPE_FLOAT:
@@ -3032,6 +3167,9 @@ func _bind_external_movie_slots() -> bool:
 		state["nodePath"] = String(node.get_path())
 		_external_movie_nodes.append(node)
 		_external_movie_slots[String(state.target)] = state
+		# Tier-4: the slot node is the real display item for VM-lane
+		# property writes targeting this widget name.
+		_vm_display_bindings[String(state.target)] = node
 	external_movie_slot_count = _external_movie_slots.size()
 	external_movie_slots_ready = external_movie_slot_count == EXTERNAL_MOVIE_SLOT_SPECS.size()
 	return external_movie_slots_ready
@@ -3821,6 +3959,10 @@ func _reset() -> void:
 	vm_executed_program_count = 0
 	vm_fallback_program_count = 0
 	_vm_fallback_program_ids.clear()
+	vm_audio_intents.clear()
+	_vm_audio_intent_callback = Callable()
+	_vm_display_bindings.clear()
+	_vm_binding_gap_keys.clear()
 	_wnd_runtime = null
 	_staged_wnd_runtime = null
 	_side_command_fade_accumulator = 0.0

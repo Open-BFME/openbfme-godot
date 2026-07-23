@@ -255,8 +255,8 @@ func _run() -> void:
 
 	var vm_lane_document := document.duplicate(true)
 	(vm_lane_document.actionScripts as Array).append_array(_vm_lane_fixture_programs())
-	(vm_lane_document.summary as Dictionary)["actionScriptCount"] = 5
-	(vm_lane_document.summary as Dictionary)["supportedActionScriptCount"] = 4
+	(vm_lane_document.summary as Dictionary)["actionScriptCount"] = 10
+	(vm_lane_document.summary as Dictionary)["supportedActionScriptCount"] = 9
 	(vm_lane_document.summary as Dictionary)["unsupportedActionScriptCount"] = 1
 	var vm_lane_runtime = runtime_script.new()
 	root.add_child(vm_lane_runtime)
@@ -268,8 +268,26 @@ func _run() -> void:
 	var vm_fallback_state := {"playing": false}
 	_check("vm_lane_unsynthesizable_falls_back_to_legacy", bool(vm_lane_runtime.execute_action_script("palantir:142", vm_fallback_state)) and bool(vm_fallback_state.playing) and int(vm_lane_runtime.vm_fallback_program_count) == 1 and _has_diagnostic(vm_lane_runtime.diagnostics, "apt-vm-lane-fallback"))
 	_check("vm_lane_fallback_diagnosed_once", bool(vm_lane_runtime.execute_action_script("palantir:142", vm_fallback_state)) and int(vm_lane_runtime.vm_fallback_program_count) == 2 and _count_diagnostic(vm_lane_runtime.diagnostics, "apt-vm-lane-fallback") == 1)
+	# Tier-4: VM-lane property writes drive real display nodes, PlaySound
+	# routes to the injectable audio-intent surface, and binding gaps fail
+	# closed into diagnostics.
+	var fx_item := Node2D.new()
+	fx_item.name = "FxItemDisplay"
+	root.add_child(fx_item)
+	_check("vm_display_binding_registers", bool(vm_lane_runtime.bind_vm_display_item("fxItem", fx_item)) and not bool(vm_lane_runtime.bind_vm_display_item("", fx_item)))
+	var vm_property_state := {}
+	_check("vm_lane_property_write_moves_real_node", bool(vm_lane_runtime.execute_action_script("palantir:143", vm_property_state)) and absf(fx_item.position.x - 77.0) < 0.0001 and int(vm_lane_runtime.vm_executed_program_count) == 3)
+	_check("vm_lane_alpha_write_fades_real_node", bool(vm_lane_runtime.execute_action_script("palantir:144", vm_property_state)) and absf(fx_item.modulate.a - 0.4) < 0.0001)
+	_check("vm_lane_visible_write_hides_real_node", bool(vm_lane_runtime.execute_action_script("palantir:145", vm_property_state)) and not fx_item.visible)
+	_check("vm_lane_playsound_intent_recorded", bool(vm_lane_runtime.execute_action_script("palantir:146", vm_property_state)) and (vm_lane_runtime.vm_audio_intents as Array).size() == 1 and (vm_lane_runtime.vm_audio_intents as Array)[0] == {"eventId": "Gui_PalantirResourceBarFlash", "dispatch": "FSCommand:PlaySound", "sourceScriptId": "palantir:146"})
+	var captured_intents: Array = []
+	vm_lane_runtime.set_vm_audio_intent_callback(func(intent: Dictionary) -> void: captured_intents.append(intent))
+	_check("vm_lane_playsound_intent_routes_to_callback", bool(vm_lane_runtime.execute_action_script("palantir:146", vm_property_state)) and captured_intents.size() == 1 and String((captured_intents[0] as Dictionary).get("eventId", "")) == "Gui_PalantirResourceBarFlash" and (vm_lane_runtime.vm_audio_intents as Array).size() == 1)
+	var fx_position_before_gap := fx_item.position.x
+	_check("vm_lane_unbound_property_records_binding_gap", bool(vm_lane_runtime.execute_action_script("palantir:147", vm_property_state)) and _count_diagnostic(vm_lane_runtime.diagnostics, "apt-vm-display-binding-gap") == 1 and absf(fx_item.position.x - fx_position_before_gap) < 0.0001)
+	_check("vm_lane_binding_gap_diagnosed_once", bool(vm_lane_runtime.execute_action_script("palantir:147", vm_property_state)) and _count_diagnostic(vm_lane_runtime.diagnostics, "apt-vm-display-binding-gap") == 1)
 	vm_lane_runtime.reset_runtime()
-	_check("vm_lane_counters_reset_atomically", int(vm_lane_runtime.vm_executed_program_count) == 0 and int(vm_lane_runtime.vm_fallback_program_count) == 0)
+	_check("vm_lane_counters_reset_atomically", int(vm_lane_runtime.vm_executed_program_count) == 0 and int(vm_lane_runtime.vm_fallback_program_count) == 0 and (vm_lane_runtime.vm_audio_intents as Array).is_empty())
 	_run_private_contract_if_requested()
 	_finish()
 
@@ -481,6 +499,60 @@ func _vm_lane_fixture_programs() -> Array:
 				{"offset": 1609, "nextOffset": 1610, "opcode": 0, "name": "end", "body": []},
 			],
 			"effects": [{"kind": "play"}],
+		},
+		{
+			"scriptId": "palantir:143",
+			"instructions": [
+				{"offset": 1700, "nextOffset": 1708, "opcode": 0xA1, "name": "push-string", "operand": "fxItem", "body": []},
+				{"offset": 1708, "nextOffset": 1710, "opcode": 0xB5, "name": "push-byte", "operand": 0, "body": []},
+				{"offset": 1710, "nextOffset": 1712, "opcode": 0xB5, "name": "push-byte", "operand": 77, "body": []},
+				{"offset": 1712, "nextOffset": 1713, "opcode": 0x23, "name": "set-property", "body": []},
+				{"offset": 1713, "nextOffset": 1714, "opcode": 0, "name": "end", "body": []},
+			],
+			"effects": [],
+		},
+		{
+			"scriptId": "palantir:144",
+			"instructions": [
+				{"offset": 1800, "nextOffset": 1808, "opcode": 0xA1, "name": "push-string", "operand": "fxItem", "body": []},
+				{"offset": 1808, "nextOffset": 1810, "opcode": 0xB5, "name": "push-byte", "operand": 6, "body": []},
+				{"offset": 1810, "nextOffset": 1812, "opcode": 0xB5, "name": "push-byte", "operand": 40, "body": []},
+				{"offset": 1812, "nextOffset": 1813, "opcode": 0x23, "name": "set-property", "body": []},
+				{"offset": 1813, "nextOffset": 1814, "opcode": 0, "name": "end", "body": []},
+			],
+			"effects": [],
+		},
+		{
+			"scriptId": "palantir:145",
+			"instructions": [
+				{"offset": 1900, "nextOffset": 1908, "opcode": 0xA1, "name": "push-string", "operand": "fxItem", "body": []},
+				{"offset": 1908, "nextOffset": 1910, "opcode": 0xB5, "name": "push-byte", "operand": 7, "body": []},
+				{"offset": 1910, "nextOffset": 1911, "opcode": 0x74, "name": "push-false", "body": []},
+				{"offset": 1911, "nextOffset": 1912, "opcode": 0x23, "name": "set-property", "body": []},
+				{"offset": 1912, "nextOffset": 1913, "opcode": 0, "name": "end", "body": []},
+			],
+			"effects": [],
+		},
+		{
+			"scriptId": "palantir:146",
+			"instructions": [
+				{"offset": 2000, "nextOffset": 2008, "opcode": 0xA1, "name": "push-string", "operand": "FSCommand:PlaySound", "body": []},
+				{"offset": 2008, "nextOffset": 2016, "opcode": 0xA1, "name": "push-string", "operand": "Gui_PalantirResourceBarFlash", "body": []},
+				{"offset": 2016, "nextOffset": 2017, "opcode": 0x9A, "name": "get-url2", "body": []},
+				{"offset": 2017, "nextOffset": 2018, "opcode": 0, "name": "end", "body": []},
+			],
+			"effects": [],
+		},
+		{
+			"scriptId": "palantir:147",
+			"instructions": [
+				{"offset": 2100, "nextOffset": 2108, "opcode": 0xA1, "name": "push-string", "operand": "", "body": []},
+				{"offset": 2108, "nextOffset": 2110, "opcode": 0xB5, "name": "push-byte", "operand": 0, "body": []},
+				{"offset": 2110, "nextOffset": 2112, "opcode": 0xB5, "name": "push-byte", "operand": 9, "body": []},
+				{"offset": 2112, "nextOffset": 2113, "opcode": 0x23, "name": "set-property", "body": []},
+				{"offset": 2113, "nextOffset": 2114, "opcode": 0, "name": "end", "body": []},
+			],
+			"effects": [],
 		},
 	]
 	var source_offset := 140

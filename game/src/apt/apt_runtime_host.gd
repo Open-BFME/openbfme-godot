@@ -48,6 +48,25 @@ const NUMERIC_MEMBER_PROPERTIES := {
 	"_alpha": true, "_width": true, "_height": true,
 }
 
+## Tier-4 measured script-defined handler families. Only these names may be
+## registered as clip-attached handlers when a script defines them
+## (DefineFunction/2 at clip scope). Sources: the palantir:169224 lifecycle
+## registration block and the palantir:169256 / ingamesidecommandbar
+## clip-event:13680 button-method bodies (docs/RETAIL_HUD_PALANTIR_COMMAND_*,
+## docs/RETAIL_HUD_HOST_BRIDGE.md). Anything else fails closed into
+## handler_log and is never dispatchable.
+const MEASURED_SCRIPT_HANDLERS := {
+	"OnMovieClipFrameLoaded": true,
+	"OnMovieClipFrameUnloaded": true,
+	"OnCommandButtonSubMenuLoaded": true,
+	"OnCommandButtonSubMenuUnloaded": true,
+	"OnCommandButtonToggleFlashLoaded": true,
+	"OnCommandButtonToggleFlashUnloaded": true,
+	"SetAutoAbilityOverlayState": true,
+	"SetFlashEffectState": true,
+	"SetGlassState": true,
+}
+
 ## Fail-closed record of every host call outside the measured contract.
 var recorded: Array = []
 ## Ordered mutation/event log (state writes, playback ops, dispatches).
@@ -55,6 +74,9 @@ var events: Array = []
 var fs_log: Array = []
 var url_log: Array = []
 var trace_log: Array = []
+## Deterministic log of every script-defined function definition offered to
+## the host: measured names register, unmeasured names fail closed here.
+var handler_log: Array = []
 
 var _widgets: Dictionary = {}
 var _root_path := ""
@@ -63,6 +85,10 @@ var _globals: Dictionary = {}
 var _extern: Dictionary = {}
 var _fs_registry: Dictionary = {}
 var _function_registry: Dictionary = {}
+## Tier-4: clip path -> {handler name -> {"fn": ScriptFunction, "vm": AptVm}}.
+var _clip_handlers: Dictionary = {}
+## Tier-4 converted-movie allowlist: export symbol -> add_clip config.
+var _attachable_movies: Dictionary = {}
 var _rng_state := 0
 
 
@@ -133,6 +159,7 @@ func remove_clip(path: String) -> bool:
 	if _widgets.has(parent_path):
 		((_widgets[parent_path] as Dictionary)["children"] as Dictionary).erase(String(widget["name"]))
 	_widgets.erase(path)
+	_clip_handlers.erase(path)
 	if _scope_path == path:
 		_scope_path = _root_path
 	return true
@@ -179,6 +206,59 @@ func set_extern_value(key: String, value: Variant) -> void:
 	_extern[key] = value
 
 
+## Tier-4 converted-movie allowlist for attachMovie/CreateContent. Only
+## symbols registered here can create widgets (the measured Men/Fords row is
+## libInGameUI export "CommandButton"; docs/RETAIL_HUD_LIBINGAMEUI_CONTENT_
+## ORACLE.md). config uses the add_clip shape (labels/total_frames/props).
+func set_attachable_movie(symbol: String, config: Dictionary = {}) -> void:
+	if symbol == "":
+		return
+	_attachable_movies[symbol] = config.duplicate(true)
+
+
+## Tier-4 VM hook: a script defined a named function at the current clip
+## scope. Measured handler families register as clip-attached handlers;
+## everything else fails closed into handler_log (visible in state()).
+func on_function_defined(fn_name: String, fn: RefCounted, vm: RefCounted) -> void:
+	if not MEASURED_SCRIPT_HANDLERS.has(fn_name):
+		handler_log.append({"kind": "unmeasured-define", "name": fn_name, "path": _scope_path})
+		return
+	if not _clip_handlers.has(_scope_path):
+		_clip_handlers[_scope_path] = {}
+	(_clip_handlers[_scope_path] as Dictionary)[fn_name] = {"fn": fn, "vm": vm}
+	handler_log.append({"kind": "define", "name": fn_name, "path": _scope_path})
+
+
+func has_clip_handler(path: String, handler_name: String) -> bool:
+	return _clip_handlers.has(path) \
+		and (_clip_handlers[path] as Dictionary).has(handler_name)
+
+
+## Tier-4: execute a registered clip-attached handler through the defining
+## VM (the real bytecode body, not a typed effect table). The handler runs
+## with the target clip as the host scope; the previous scope is restored
+## afterwards. Fail-closed: an unregistered handler or a faulted body is
+## recorded and mutates nothing further.
+func dispatch_clip_handler(path: String, handler_name: String, args: Array) -> Dictionary:
+	if not _widgets.has(path) or not has_clip_handler(path, handler_name):
+		_record("dispatch_handler", path + "." + handler_name, args)
+		return {"completed": false, "fault": "unregistered", "value": null}
+	var entry: Dictionary = (_clip_handlers[path] as Dictionary)[handler_name]
+	var safe_args: Array = []
+	for arg in args:
+		safe_args.append(arg if _jsonable_value(arg) else str(arg))
+	_event("dispatch", path, {"name": handler_name, "args": safe_args})
+	var saved_scope := _scope_path
+	_scope_path = path
+	var result: Dictionary = (entry["vm"] as RefCounted).call(
+		"call_registered_function", entry["fn"], args)
+	_scope_path = saved_scope if _widgets.has(saved_scope) else _root_path
+	if not bool(result.get("completed", false)):
+		_record("dispatch_fault", path + "." + handler_name,
+			[String(result.get("fault", ""))])
+	return result
+
+
 func set_global_variable(var_name: String, value: Variant) -> void:
 	_globals[var_name] = value
 
@@ -197,6 +277,13 @@ func state() -> Dictionary:
 	var widgets := {}
 	for path in _widgets:
 		widgets[path] = (_widgets[path] as Dictionary).duplicate(true)
+	var handlers := {}
+	for path in _clip_handlers:
+		var names: Array = (_clip_handlers[path] as Dictionary).keys()
+		names.sort()
+		handlers[path] = names
+	var attachable: Array = _attachable_movies.keys()
+	attachable.sort()
 	return {
 		"widgets": widgets,
 		"scope": _scope_path,
@@ -205,6 +292,9 @@ func state() -> Dictionary:
 		"urls": url_log.duplicate(true),
 		"traces": trace_log.duplicate(true),
 		"recorded": recorded.duplicate(true),
+		"handlers": handlers,
+		"handler_log": handler_log.duplicate(true),
+		"attachable": attachable,
 	}
 
 
@@ -239,6 +329,12 @@ func get_member(target: String, member_name: String) -> Variant:
 	var widget: Dictionary = _widgets[path]
 	if (widget["children"] as Dictionary).has(member_name):
 		return (widget["children"] as Dictionary)[member_name]
+	if member_name == "_parent":
+		# Measured by the tier-4 handler bodies (this._parent chains).
+		var parent := String(widget["parent"])
+		if parent != "":
+			return parent
+		return _record("get_member", path + "._parent", [])
 	match member_name:
 		"_name":
 			return String(widget["name"])
@@ -293,6 +389,9 @@ func call_method(target: String, method_name: String, args: Array) -> Variant:
 	var path := _resolve_widget(target)
 	if path == "":
 		return _record("call_method", target + "." + method_name, args)
+	# Tier-4: script-defined clip handlers dispatch through the defining VM.
+	if has_clip_handler(path, method_name):
+		return dispatch_clip_handler(path, method_name, args).get("value")
 	match method_name:
 		"gotoAndPlay":
 			if args.size() == 1:
@@ -316,10 +415,58 @@ func call_method(target: String, method_name: String, args: Array) -> Variant:
 			if args.size() >= 1 and _extern.has(String(args[0])):
 				_event("extern", path, {"key": String(args[0])})
 				return _extern[String(args[0])]
+		"attachMovie":
+			# attachMovie(exportSymbol, instanceName, depth?) against the
+			# converted-movie allowlist; returns the new clip path.
+			if args.size() >= 2 and args.size() <= 3 \
+					and _attachable_movies.has(String(args[0])):
+				var attach_path := add_clip(path, String(args[1]),
+					_attachable_movies[String(args[0])] as Dictionary)
+				if attach_path != "":
+					_event("content", attach_path, {
+						"op": "attach",
+						"symbol": String(args[0]),
+						"depth": int(_to_float(args[2])) if args.size() == 3 else 0,
+					})
+					return attach_path
+		"removeMovieClip":
+			if args.is_empty() and path != _root_path:
+				_event("content", path, {"op": "remove"})
+				if remove_clip(path):
+					return null
+		"CreateContent":
+			# libInGameUI CreateContent(contentType, contentName): the
+			# converted export attaches as this[contentName] and the extern
+			# path write is logged; unknown content fails closed.
+			if args.size() == 2 and _attachable_movies.has(String(args[0])):
+				var content_path := add_clip(path, String(args[1]),
+					_attachable_movies[String(args[0])] as Dictionary)
+				if content_path != "":
+					_event("content", content_path, {
+						"op": "create-content",
+						"contentType": String(args[0]),
+						"externPath": path + PATH_SEPARATOR + String(args[1]),
+					})
+					return null
+		"DeleteContent":
+			if args.size() == 1:
+				var doomed_value: Variant = \
+					((_widgets[path] as Dictionary)["children"] as Dictionary).get(String(args[0]), "")
+				var doomed := String(doomed_value)
+				if doomed != "" and remove_clip(doomed):
+					_event("content", doomed, {
+						"op": "delete-content",
+						"externPath": path + PATH_SEPARATOR + String(args[0]),
+					})
+					return null
 	return _record("call_method", path + "." + method_name, args)
 
 
 func call_function(fn_name: String, args: Array) -> Variant:
+	# Tier-4: a bare function call resolves against the executing clip's
+	# registered script-defined handlers before the host registry.
+	if has_clip_handler(_scope_path, fn_name):
+		return dispatch_clip_handler(_scope_path, fn_name, args).get("value")
 	if _function_registry.has(fn_name):
 		_event("function", _scope_path, {"name": fn_name, "args": args.duplicate(true)})
 		return (_function_registry[fn_name] as Callable).call(args)
@@ -458,7 +605,10 @@ func random_int(max_exclusive: int) -> int:
 func _resolve_widget(target: String) -> String:
 	if _widgets.has(target):
 		return target
-	if target == "" or target == "this":
+	if target == "" or target == "this" or target == "[object this]":
+		# "[object this]" is how the VM describes its scope object when a
+		# script-defined body (handler dispatch) touches `this`; the host
+		# scope clip is the authoritative identity.
 		return _scope_path
 	if target == "_root":
 		return _root_path

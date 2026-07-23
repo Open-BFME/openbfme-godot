@@ -308,6 +308,7 @@ var _executed: int = 0
 var _budget: int = 0
 var _returning: bool = false
 var _return_value: Variant = null
+var _executing: bool = false
 
 
 ## Execute raw APT ActionScript bytecode.
@@ -343,7 +344,9 @@ func execute(
 	_returning = false
 	_return_value = null
 
+	_executing = true
 	var completed := _run_frame(entry_offset, 0)
+	_executing = false
 
 	var host_calls: Array = []
 	if host is RecordingHost:
@@ -1049,6 +1052,7 @@ func _run_frame(entry_ip: int, depth: int) -> bool:
 				_executed += 1
 				if df_name.length() > 0:
 					_scope.variables[df_name] = fn
+					_notify_function_defined(df_name, fn)
 				else:
 					_stack.push_back(fn)
 			OP_DEFINE_FUNCTION2:
@@ -1095,6 +1099,7 @@ func _run_frame(entry_ip: int, depth: int) -> bool:
 				_executed += 1
 				if d2_name.length() > 0:
 					_scope.variables[d2_name] = fn2
+					_notify_function_defined(d2_name, fn2)
 				else:
 					_stack.push_back(fn2)
 
@@ -1231,6 +1236,38 @@ func _run_frame(entry_ip: int, depth: int) -> bool:
 
 
 # --- Call helpers -------------------------------------------------------------
+
+## Tier-4 hook: a named DefineFunction/DefineFunction2 executed at clip scope
+## is also offered to the host so it can register clip-attached handlers
+## (measured families only; the host fails closed on the rest). Hosts that do
+## not implement the hook (RecordingHost) are unaffected.
+func _notify_function_defined(fn_name: String, fn: ScriptFunction) -> void:
+	if host.has_method("on_function_defined"):
+		host.on_function_defined(fn_name, fn, self)
+
+
+## Tier-4 public dispatch: execute a previously defined ScriptFunction whose
+## body lives in this VM's byte space. Re-entrant safe: when called from
+## inside a host call during execute(), the frame save/restore in
+## _invoke_function keeps the outer frame intact and a fault propagates
+## through _fault as usual. When called detached (after execute returned),
+## the budget and fault state are reset first so repeated dispatches stay
+## independent and deterministic.
+func call_registered_function(fn: ScriptFunction, args: Array) -> Dictionary:
+	var detached := not _executing
+	if detached:
+		_executed = 0
+		_budget = DEFAULT_INSTRUCTION_BUDGET
+		_fault = ""
+		_halted_on = null
+		_returning = false
+		_return_value = null
+	var value: Variant = _invoke_function(fn, args, null, 0)
+	return {
+		"completed": _fault == "",
+		"fault": _fault,
+		"value": _jsonable(value),
+	}
 
 ## Pop the argument count and then the arguments (OpenSAGE
 ## FunctionCommon.GetArgumentsFromStack).
