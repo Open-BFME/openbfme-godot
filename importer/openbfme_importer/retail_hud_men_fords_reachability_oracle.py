@@ -34,7 +34,7 @@ SIDE_APT_SHA256 = "84d58c67c5cab9a3bf690125cbf1a0cbf3f4bc58ccc29ffa33b992a924eca
 # build-plot, and per-team structure-upgrade changes; every anchored
 # behavioral marker below still validates against the new sources.
 SIM_SHA256 = "5638c75a05965dfdad9c0392595c4906778ead3c28e03cfceba3bfdf3f3fb051"
-SLICE_SHA256 = "3b1750b01441e9948a998d9fd28625aab9465fdaf3ff81ac26f3d6eb56b762d1"
+SLICE_SHA256 = "6c0cdec4768cd06b81fbbe6c2b95138c0f1d62b403adb4793ede9f62f57857fd"
 
 RETAIL_INI_SOURCES: dict[str, str] = {
     "data/ini/commandset.ini": "3d57ff841b93428ce2118d4bff1871684003bb9eacd8d48865f03ce23e4c5300",
