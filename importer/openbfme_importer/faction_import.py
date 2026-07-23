@@ -278,6 +278,7 @@ def build_faction_import_plan(
     documents: Mapping[str, bytes],
     *,
     catalog_identity_sha256: str,
+    game: str = "bfme2",
 ) -> dict[str, object]:
     """Account for every command-reachable Object without claiming unsupported work."""
 
@@ -425,6 +426,7 @@ def build_faction_import_plan(
                     engine_spawned_roots=engine_spawned_roots,
                     wall_template_roots=wall_template_roots,
                     source_null_command_sets=source_null_sets,
+                    game=game,
                 )
             except PlayableStructureCompilerError as exc:
                 objects.append(
@@ -488,7 +490,11 @@ def build_faction_import_plan(
             continue
         try:
             descriptor = compile_playable_unit_descriptor(
-                object_id, documents, faction_graph=faction_graph, prepared=prepared
+                object_id,
+                documents,
+                faction_graph=faction_graph,
+                prepared=prepared,
+                game=game,
             )
         except PlayableUnitCompilerError as exc:
             if family == "banner-member" or object_id.casefold() in horde_banner_targets:
@@ -612,6 +618,7 @@ def plan_faction_import(
         graph,
         spellbook_source_documents(effective_root),
         catalog_identity_sha256=catalog.identity_sha256(),
+        game=game,
     )
 
 
@@ -668,6 +675,7 @@ def _convert_one_plan_object(
     plan_aggregate_sha256: str,
     policy_fp: str,
     compiler_token: str,
+    game: str = "bfme2",
 ) -> tuple[dict[str, object], dict[str, Mapping[str, object]]]:
     """Convert one plan row; returns (coverage_row, artifacts)."""
 
@@ -691,7 +699,7 @@ def _convert_one_plan_object(
         plan_descriptor_sha256=(
             str(plan_descriptor) if isinstance(plan_descriptor, str) else ""
         ),
-        extra={"plan_status": status},
+        extra={"plan_status": status, "game": game.casefold().strip()},
     )
     if object_cache is not None and (
         family in {"structure", "spellbook"} or status == "descriptor-ready"
@@ -712,6 +720,7 @@ def _convert_one_plan_object(
                 engine_spawned_roots=spawned,
                 wall_template_roots=wall_templates,
                 source_null_command_sets=source_null_sets,
+                game=game,
             )
             closure = build_retail_visual_closure(effective_root, [object_id])
             images, image_gaps = _resolved_structure_images(
@@ -831,6 +840,7 @@ def _convert_one_plan_object(
                 documents,
                 faction_graph=faction_graph,
                 prepared=prepared,
+                game=game,
             )
             images, audio = _resolved_media(faction_graph, draft)
             strings = (
@@ -844,6 +854,7 @@ def _convert_one_plan_object(
                 resolved_audio=audio,
                 resolved_strings=strings,
                 prepared=prepared,
+                game=game,
             )
             composition = descriptor["composition"]
             assert isinstance(composition, Mapping)
@@ -927,7 +938,10 @@ def build_faction_conversion(
 
     progress_emit("faction-plan", "building faction import plan")
     plan = build_faction_import_plan(
-        faction_graph, documents, catalog_identity_sha256=catalog_identity_sha256
+        faction_graph,
+        documents,
+        catalog_identity_sha256=catalog_identity_sha256,
+        game=game,
     )
     # Fail-closed on compiler-init failure (mirrors build_faction_import_plan):
     # a corpus the shared compiler cannot index — e.g. RotWK's repeated
@@ -1019,6 +1033,7 @@ def build_faction_conversion(
                 plan_aggregate_sha256=plan_aggregate,
                 policy_fp=policy_fp,
                 compiler_token=compiler_token,
+                game=game,
             )
         except Exception as exc:  # noqa: BLE001 — fail-closed per object, not batch
             object_id = str(plan_row.get("id", f"index-{index}"))

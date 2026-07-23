@@ -829,6 +829,7 @@ def _simulation_contract(
     | None = None,
     cache_lock: threading.Lock | None = None,
     hero: bool = False,
+    game: str = "bfme2",
 ) -> dict[str, object]:
     resolved: dict[str, object] = {}
     required = {
@@ -1119,6 +1120,7 @@ def _simulation_contract(
             *armor_lineages,
             named_definition_cache=named_definition_cache,
             cache_lock=cache_lock,
+            game=game,
         )
         if isinstance(combat_value, Mapping) and combat_value.get("weaponId"):
             combat_weapon = str(combat_value["weaponId"])
@@ -4687,6 +4689,7 @@ def compile_playable_unit_descriptor(
     resolved_strings: Mapping[str, str] | None = None,
     faction_graph: Mapping[str, object] | None = None,
     prepared: PlayableUnitCompilerInputs | None = None,
+    game: str = "bfme2",
 ) -> dict[str, object]:
     """Compile one source-backed descriptor or fail on an unresolved core edge."""
 
@@ -5022,6 +5025,7 @@ def compile_playable_unit_descriptor(
         named_definition_cache=prepared.named_definition_cache,
         cache_lock=prepared.cache_lock,
         hero=category == "hero",
+        game=game,
     )
     combined_kinds = tuple(sorted(set(target_kinds) | set(member_kinds)))
     capabilities, unsupported_capabilities, traits = _capability_contract(

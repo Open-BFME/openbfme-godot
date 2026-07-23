@@ -50,6 +50,11 @@ Armor TestUnknownTypeArmor
   Armor = DEFAULT        100%
   Armor = INVERTED       50%
 End
+
+Armor TestFrostArmor
+  Armor = DEFAULT        100%
+  Armor = FROST          75%
+End
 """
 
 WEAPON_INI = b"""
@@ -199,6 +204,44 @@ def test_armor_table_fails_closed_on_missing_default() -> None:
 def test_armor_table_fails_closed_on_unknown_damage_type() -> None:
     with pytest.raises(ArmorCompilerError, match="unknown damage type"):
         compile_armor_table(_documents(b""), "TestUnknownTypeArmor")
+
+
+def test_frost_accepted_under_rotwk() -> None:
+    # RotWK 2.01 extends the Damage vocabulary with FROST (measured: 162
+    # armor rows in _patch201ini.big!data/ini/armor.ini, first at line 59).
+    table = compile_armor_table(_documents(b""), "TestFrostArmor", game="rotwk")
+    assert table["scalars"]["frost"]["percent"] == 75.0
+    assert table["scalars"]["frost"]["damageType"] == "FROST"
+
+
+def test_frost_rejected_under_bfme2() -> None:
+    # BFME2 1.06 Damage.h has no FROST; the base-game vocabulary must stay
+    # byte-identical, so a FROST row fails closed under the default game.
+    with pytest.raises(ArmorCompilerError, match="unknown damage type 'FROST'"):
+        compile_armor_table(_documents(b""), "TestFrostArmor")
+    with pytest.raises(ArmorCompilerError, match="unknown damage type 'FROST'"):
+        compile_armor_table(_documents(b""), "TestFrostArmor", game="bfme2")
+
+
+def test_unknown_damage_type_rejected_under_both_games() -> None:
+    for game in ("bfme2", "rotwk"):
+        with pytest.raises(ArmorCompilerError, match="unknown damage type"):
+            compile_armor_table(
+                _documents(b""), "TestUnknownTypeArmor", game=game
+            )
+
+
+def test_unknown_game_fails_closed() -> None:
+    with pytest.raises(ArmorCompilerError, match="does not support game"):
+        compile_armor_table(_documents(b""), "TestArmor", game="bfme1")
+
+
+def test_bfme2_vocabulary_accepted_under_rotwk() -> None:
+    # The RotWK vocabulary is a strict superset: every BFME2 table still
+    # resolves identically under game=rotwk.
+    base = compile_armor_table(_documents(b""), "TestArmor")
+    rotwk = compile_armor_table(_documents(b""), "TestArmor", game="rotwk")
+    assert base == rotwk
 
 
 def test_armor_contract_without_armor_set_records_engine_passthrough() -> None:

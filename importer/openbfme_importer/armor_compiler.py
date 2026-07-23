@@ -36,10 +36,11 @@ from .sage_cst import SageObject
 
 ARMOR_INI_PATH = "data/ini/armor.ini"
 
-# Damage.h damage-type vocabulary (mirrored in the armor.ini header comment)
-# plus the DEFAULT fallback row.  Anything outside this set in an Armor row
-# means the parser drifted from the retail grammar, so it fails closed.
-_ARMOR_ROW_TYPES = frozenset(
+# BFME2 1.06 Damage.h damage-type vocabulary (mirrored in the armor.ini
+# header comment) plus the DEFAULT fallback row.  Anything outside the active
+# game's set in an Armor row means the parser drifted from the retail
+# grammar, so it fails closed.
+_BFME2_ARMOR_ROW_TYPES = frozenset(
     {
         "DEFAULT",
         "FORCE",
@@ -72,9 +73,34 @@ _ARMOR_ROW_TYPES = frozenset(
     }
 )
 
+# RotWK 2.01 extends the BFME2 Damage vocabulary.  Measured delta over every
+# winning INI in the RotWK 2.01 catalog (armor rows + DamageType fields):
+# exactly one new type, FROST — 162 Armor rows (first at
+# _patch201ini.big!data/ini/armor.ini:59) and 9 DamageType fields (first at
+# _patch201ini.big!data/ini/weapon.ini:5843).  The AUTORESOLVEUNIT_* rows in
+# livingworldautoresolvearmor.ini appear identically in both games and belong
+# to the living-world auto-resolve grammar, not the Damage vocabulary.
+_ROTWK_ARMOR_ROW_EXTENSIONS = frozenset({"FROST"})
+
+_ARMOR_ROW_TYPES_BY_GAME: Mapping[str, frozenset[str]] = {
+    "bfme2": _BFME2_ARMOR_ROW_TYPES,
+    "rotwk": _BFME2_ARMOR_ROW_TYPES | _ROTWK_ARMOR_ROW_EXTENSIONS,
+}
+
 
 class ArmorCompilerError(ValueError):
     """A referenced armor set or upgrade effect cannot be resolved."""
+
+
+def _armor_row_types(game: str) -> frozenset[str]:
+    """The active game's Damage vocabulary; an unknown game fails closed."""
+
+    types = _ARMOR_ROW_TYPES_BY_GAME.get(game.casefold().strip())
+    if types is None:
+        raise ArmorCompilerError(
+            f"armor compilation does not support game: {game!r}"
+        )
+    return types
 
 
 def _percent(token: str, *, context: str) -> float:
@@ -103,9 +129,11 @@ def compile_armor_table(
     *,
     named_definition_cache: dict | None = None,
     cache_lock: "threading.Lock | None" = None,
+    game: str = "bfme2",
 ) -> dict[str, object]:
     """Resolve one armor.ini Armor definition into a scalar table or fail."""
 
+    armor_row_types = _armor_row_types(game)
     rows = _named_definition_values(
         documents,
         "Armor",
@@ -130,7 +158,7 @@ def compile_armor_table(
                 f"{row.get('sourceIni')}:{row.get('line')}"
             )
         damage_type = parts[0].upper()
-        if damage_type not in _ARMOR_ROW_TYPES:
+        if damage_type not in armor_row_types:
             raise ArmorCompilerError(
                 f"armor set '{set_id}' references unknown damage type "
                 f"'{parts[0]}' at {row.get('sourceIni')}:{row.get('line')}"
@@ -260,6 +288,7 @@ def compile_armor_contract(
     *lineages: Sequence[SageObject],
     named_definition_cache: dict | None = None,
     cache_lock: "threading.Lock | None" = None,
+    game: str = "bfme2",
 ) -> dict[str, object]:
     """Compile the base armor set and ArmorUpgrade-gated sets for an object.
 
@@ -301,6 +330,7 @@ def compile_armor_contract(
             base_set_id,
             named_definition_cache=named_definition_cache,
             cache_lock=cache_lock,
+            game=game,
         ),
         **_row_provenance(
             {
@@ -364,6 +394,7 @@ def compile_armor_contract(
                     set_id,
                     named_definition_cache=named_definition_cache,
                     cache_lock=cache_lock,
+                    game=game,
                 ),
                 **_row_provenance(
                     {"sourceIni": row.source_virtual_path, "line": row.line}

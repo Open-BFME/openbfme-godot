@@ -1394,6 +1394,7 @@ def compile_playable_structure_descriptor(
     engine_spawned_roots: Iterable[str] = (),
     wall_template_roots: Iterable[str] = (),
     source_null_command_sets: Iterable[str] = (),
+    game: str = "bfme2",
 ) -> dict[str, object]:
     """Compile one source-backed structure descriptor or fail closed."""
 
@@ -1454,7 +1455,7 @@ def compile_playable_structure_descriptor(
     from .armor_compiler import ArmorCompilerError, compile_armor_contract
 
     try:
-        armor = compile_armor_contract(documents, lineage)
+        armor = compile_armor_contract(documents, lineage, game=game)
     except ArmorCompilerError as exc:
         raise PlayableStructureCompilerError(
             f"structure armor contract is unresolvable: {exc}"
