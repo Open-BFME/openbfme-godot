@@ -1038,13 +1038,21 @@ func set_selection(text: String) -> void:
 	selection_label.text = text
 
 
+## The real local seat the last selection context carried (test/diagnostic
+## surface; -1 until the first sync). A lockstep guest passes 1, not 0.
+var last_selection_context_local_team := -1
+var _side_fade_local_seat_noted := false
+
+
 func sync_retail_selection_context(
 	selected_ids: Array[int],
 	selected_structure_id: int,
 	entities: Dictionary,
 	structures: Dictionary,
-	winner: int
+	winner: int,
+	local_team: int = 0
 ) -> bool:
+	last_selection_context_local_team = local_team
 	if retail_apt_runtime == null or not retail_apt_bound:
 		return not private_parity_mode_active
 	var context := {
@@ -1053,8 +1061,20 @@ func sync_retail_selection_context(
 		"entities": entities,
 		"structures": structures,
 		"winner": winner,
-		"local_team": 0,
+		"local_team": local_team,
 	}
+	if local_team != 0:
+		# The Men/Fords side-command fade contract pins the team-0 seat (its
+		# typed input declares localTeam=0); a non-zero local seat (lockstep
+		# guest) records a provisional and keeps the bound static surface
+		# instead of tearing the HUD down mid-match. Fail closed on the fade
+		# animation, never on the match.
+		if not _side_fade_local_seat_noted:
+			_side_fade_local_seat_noted = true
+			retail_bind_diagnostics.append(
+				"men-fords-side-fade-provisional: local_team=%d seat is outside the team-0 fade contract; selection fade sync skipped" % local_team
+			)
+		return true
 	if retail_apt_runtime.sync_men_fords_selection(context):
 		return true
 	retail_apt_bound = false

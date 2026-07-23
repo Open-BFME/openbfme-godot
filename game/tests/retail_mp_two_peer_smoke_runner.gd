@@ -170,6 +170,29 @@ func _run() -> void:
 			and guest_heading == "ELVES" and host_heading == "MEN OF THE WEST",
 		"guest_heading=%s host_heading=%s" % [guest_heading, host_heading])
 
+	# Cross-faction presentation docs, per entity: BOTH peers must render each
+	# team's structures/battalions through THAT team's own faction documents
+	# (host sees the guest's elves as elves, guest sees the host's Men as Men).
+	var host_structs := _structure_presentation_report(host_slice)
+	var guest_structs := _structure_presentation_report(guest_slice)
+	_check("host_structures_present_per_team_docs", bool(host_structs.ok), String(host_structs.detail))
+	_check("guest_structures_present_per_team_docs", bool(guest_structs.ok), String(guest_structs.detail))
+	var host_batts := _battalion_presentation_report(host_slice)
+	var guest_batts := _battalion_presentation_report(guest_slice)
+	_check("host_battalions_present_per_team_docs", bool(host_batts.ok), String(host_batts.detail))
+	_check("guest_battalions_present_per_team_docs", bool(guest_batts.ok), String(guest_batts.detail))
+
+	# HUD surfaces are the LOCAL army's: train/portrait specs and the spellbook
+	# document each peer's HUD carries.
+	_check("train_surfaces_are_local_army",
+		_train_surface_matches(host_slice, MEN_PREFIXES) and _train_surface_matches(guest_slice, ELF_PREFIXES),
+		"host=%s guest=%s" % [_train_surface_units(host_slice), _train_surface_units(guest_slice)])
+	var host_spellbook := _hud_spellbook_faction(host_slice)
+	var guest_spellbook := _hud_spellbook_faction(guest_slice)
+	_check("spellbook_docs_are_local_faction",
+		host_spellbook == "men" and guest_spellbook == "elves",
+		"host=%s guest=%s" % [host_spellbook, guest_spellbook])
+
 	# Tick to 60 in lockstep, sampling the deterministic state hash at every
 	# 30-tick barrier both sims cross together.
 	var host_sim = host_slice.get("simulation")
@@ -201,6 +224,17 @@ func _run() -> void:
 			str(sampled_hashes.keys()),
 		])
 
+	# The APT selection context must carry each seat's REAL local team (the
+	# guest is team 1, not a hardcoded 0). _refresh_hud syncs every frame, so
+	# by tick 60 both HUDs have recorded their seat.
+	_check("apt_context_carries_real_local_team",
+		int(host_slice.get("hud").get("last_selection_context_local_team")) == 0 \
+			and int(guest_slice.get("hud").get("last_selection_context_local_team")) == 1,
+		"host=%d guest=%d" % [
+			int(host_slice.get("hud").get("last_selection_context_local_team")),
+			int(guest_slice.get("hud").get("last_selection_context_local_team")),
+		])
+
 	host_slice.queue_free()
 	guest_slice.queue_free()
 	await process_frame
@@ -217,6 +251,118 @@ func _sample_hashes(host_sim, guest_sim) -> void:
 	var guest_hash := String(guest_sim.state_hash())
 	sampled_hashes[tick] = {"host": host_hash, "guest": guest_hash}
 	hashes_equal = hashes_equal and host_hash == guest_hash
+
+
+## Doc-id scopes cover both id namespaces: raw runtime ids ("GondorFighter")
+## and projected bundle-object ids ("bfme2.object.gondor-fighter-horde").
+const MEN_PREFIXES := [
+	"men", "gondor", "rohan",
+	"bfme2.object.men", "bfme2.object.gondor", "bfme2.object.rohan",
+]
+const ELF_PREFIXES := [
+	"elven", "eregion",
+	"bfme2.object.elven", "bfme2.object.eregion",
+]
+
+
+func _in_prefix_scope(value: String, prefixes: Array) -> bool:
+	var lowered := value.to_lower()
+	for prefix_value in prefixes:
+		if lowered.begins_with(String(prefix_value)):
+			return true
+	return false
+
+
+func _team_prefixes(team: int) -> Array:
+	return MEN_PREFIXES if team == 0 else ELF_PREFIXES
+
+
+func _structure_presentation_report(slice) -> Dictionary:
+	## Every team-0/1 structure node must carry the OWNING team's manifest doc
+	## id for its kind, in that team's faction object scope, with a clean
+	## lifecycle contract. Non-vacuous: at least one structure per team.
+	var manifests: Dictionary = slice.get("_team_faction_manifests") as Dictionary
+	var sim = slice.get("simulation")
+	var nodes: Dictionary = slice.get("structure_nodes") as Dictionary
+	var counts := {0: 0, 1: 0}
+	for id_value in sim.structure_ids():
+		var id := int(id_value)
+		var row: Dictionary = sim.structure(id)
+		var team := int(row.get("team", -1))
+		if team != 0 and team != 1:
+			continue
+		var kind := String(row.get("structure_kind", ""))
+		var expected := String((((manifests.get(team, {}) as Dictionary).get("structure_object_ids", {}) as Dictionary)).get(kind, ""))
+		var node = nodes.get(id)
+		if node == null:
+			return {"ok": false, "detail": "%d:%s missing node" % [id, kind]}
+		var actual := String(node.get("_bundle_object_id"))
+		if expected == "" or actual != expected:
+			return {"ok": false, "detail": "%d:%s team=%d expected=%s actual=%s" % [id, kind, team, expected, actual]}
+		if String(node.get("contract_error")) != "":
+			return {"ok": false, "detail": "%d:%s contract=%s" % [id, kind, String(node.get("contract_error"))]}
+		if not _in_prefix_scope(actual, _team_prefixes(team)):
+			return {"ok": false, "detail": "%d:%s doc=%s outside team-%d faction scope" % [id, kind, actual, team]}
+		counts[team] = int(counts[team]) + 1
+	if int(counts[0]) < 1 or int(counts[1]) < 1:
+		return {"ok": false, "detail": "vacuous per-team coverage: %s" % str(counts)}
+	return {"ok": true, "detail": ""}
+
+
+func _battalion_presentation_report(slice) -> Dictionary:
+	## Every team-0/1 battalion node must present its sim object id through a
+	## validated animation capability in the owning team's faction scope.
+	var sim = slice.get("simulation")
+	var nodes: Dictionary = slice.get("battalion_nodes") as Dictionary
+	var capabilities: Dictionary = slice.get("validated_battalion_capabilities") as Dictionary
+	var counts := {0: 0, 1: 0}
+	for id_value in sim.entity_ids():
+		var id := int(id_value)
+		var row: Dictionary = sim.entity(id)
+		var team := int(row.get("team", -1))
+		if team != 0 and team != 1:
+			continue
+		var node = nodes.get(id)
+		if node == null:
+			return {"ok": false, "detail": "%d missing node" % id}
+		var object_id := String(node.get("object_id"))
+		if object_id == "" or object_id != String(row.get("object_id", "")):
+			return {"ok": false, "detail": "%d node doc=%s sim doc=%s" % [id, object_id, String(row.get("object_id", ""))]}
+		if (capabilities.get(object_id, {}) as Dictionary).is_empty():
+			return {"ok": false, "detail": "%d:%s has no validated capability" % [id, object_id]}
+		if not _in_prefix_scope(object_id, _team_prefixes(team)):
+			return {"ok": false, "detail": "%d doc=%s outside team-%d faction scope" % [id, object_id, team]}
+		counts[team] = int(counts[team]) + 1
+	if int(counts[0]) < 1 or int(counts[1]) < 1:
+		return {"ok": false, "detail": "vacuous per-team coverage: %s" % str(counts)}
+	return {"ok": true, "detail": ""}
+
+
+func _train_surface_matches(slice, prefixes: Array) -> bool:
+	## Every train command AND portrait spec on this HUD belongs to the local
+	## army's faction scope (and at least one of each exists).
+	var hud = slice.get("hud")
+	var command_specs: Array = hud.get("_retail_command_specs") as Array
+	var portrait_specs: Array = hud.get("_retail_portrait_specs") as Array
+	if command_specs.is_empty() or portrait_specs.is_empty():
+		return false
+	for spec_value in command_specs + portrait_specs:
+		if not _in_prefix_scope(String((spec_value as Dictionary).get("unit_id", "")), prefixes):
+			return false
+	return true
+
+
+func _train_surface_units(slice) -> String:
+	var hud = slice.get("hud")
+	var units: Array[String] = []
+	for spec_value in hud.get("_retail_command_specs") as Array:
+		units.append(String((spec_value as Dictionary).get("unit_id", "")))
+	return ",".join(units)
+
+
+func _hud_spellbook_faction(slice) -> String:
+	var doc: Dictionary = slice.get("hud").get("_spellbook_runtime") as Dictionary
+	return String((doc.get("target", {}) as Dictionary).get("faction", "")).to_lower()
 
 
 func _roster_is_men_vs_elves(slice) -> bool:

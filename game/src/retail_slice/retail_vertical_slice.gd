@@ -250,7 +250,14 @@ func _ready() -> void:
 	_initialization_started_ms = Time.get_ticks_msec()
 	_initialization_last_ms = _initialization_started_ms
 	_apply_stored_display_settings()
-	faction_manifest = _resolve_faction_manifest()
+	# MP guest presentation: the join seat resolves its OWN (team 1) faction
+	# before the HUD builds, so train/portrait/construct specs — registered
+	# before build() and immutable afterwards — come from the guest's army
+	# instead of the team-0 classification. MP settings resolve first (env
+	# always wins; the later in-match call stays idempotent). Every non-join
+	# boot passes an empty override and keeps the historical resolution.
+	_resolve_mp_settings()
+	faction_manifest = _resolve_faction_manifest(_early_local_presentation_faction())
 	if DisplayServer.get_name() != "headless":
 		# Windowed runs load phase-by-phase behind a progress bar; headless
 		# runners keep the original single-pass initialization.
@@ -325,7 +332,9 @@ func _initialize_content_and_match() -> void:
 		else:
 			hud.configure_manifest_construct_kinds(chrome_manifest.get("structure_kinds", []) as Array)
 		if ContentDB.has_method("get_spellbook_runtime"):
-			var spellbook_doc: Dictionary = _faction_spellbook_document()
+			# HUD spellbook resolves from the LOCAL seat's faction (the guest's
+			# own tree); the sim's copy stays on the team-0 document below.
+			var spellbook_doc: Dictionary = _faction_spellbook_document(String(chrome_manifest.get("faction", "")))
 			if not spellbook_doc.is_empty() and hud.has_method("configure_spellbook_runtime"):
 				hud.configure_spellbook_runtime(spellbook_doc)
 	if ranger_hud_configuration_error != "":
@@ -386,13 +395,19 @@ func _initialize_content_and_match() -> void:
 		boot_mark = Time.get_ticks_msec()
 	# The bind below first-touches every faction icon/portrait; fan those cold
 	# reads across the worker pool first so storage latency overlaps instead of
-	# serializing into the retail_command_ui phase.
-	var prefetched_count := ContentDB.prefetch_retail_ui_assets([selected_pack_root] + faction_manifest.get("faction_pack_roots", []) as Array)
+	# serializing into the retail_command_ui phase. UI roots = host pack + the
+	# team-0 manifest packs + (join) the local seat's own faction packs, so the
+	# guest's train/portrait icons validate from its army's packs.
+	var ui_pack_roots: Array = (faction_manifest.get("faction_pack_roots", []) as Array).duplicate()
+	for chrome_root_value in chrome_manifest.get("faction_pack_roots", []) as Array:
+		if not ui_pack_roots.has(chrome_root_value):
+			ui_pack_roots.append(chrome_root_value)
+	var prefetched_count := ContentDB.prefetch_retail_ui_assets([selected_pack_root] + ui_pack_roots)
 	if profile_boot:
 		print("BOOT_PROFILE ui_prefetch_count=%d slice.ui_prefetch_ms=%d" % [prefetched_count, Time.get_ticks_msec() - boot_mark])
 		boot_mark = Time.get_ticks_msec()
 	var hud_binding_error := hud.bind_retail_train_commands(
-		ContentDB, selected_pack_root, true, faction_manifest.get("faction_pack_roots", []) as Array
+		ContentDB, selected_pack_root, true, ui_pack_roots
 	)
 	if profile_boot:
 		print("BOOT_PROFILE slice.hud_bind_ms=%d" % (Time.get_ticks_msec() - boot_mark))
@@ -915,7 +930,81 @@ func _load_required_presentation_definitions() -> String:
 		var lifecycle_error := _validate_retail_structure_lifecycle(structure_object_id, kind)
 		if lifecycle_error != "":
 			return lifecycle_error
+	_load_cross_team_presentation_definitions()
 	return ""
+
+
+## Recorded provisionals from the cross-faction presentation pass: documents a
+## rostered opponent faction could not provide (member capability, structure
+## lifecycle, manifest). Each entry keeps the wrong-model local fallback on
+## screen instead of failing the boot — fail closed, never a crash.
+var cross_faction_presentation_provisionals: Array = []
+
+
+func _load_cross_team_presentation_definitions() -> void:
+	## Cross-faction opponents present through THEIR OWN faction's documents on
+	## BOTH peers (and in solo cross-faction skirmish): every rostered faction
+	## other than the locally classified one loads its member animation
+	## capabilities here, and — when it is not the team-0 faction the caller
+	## already validated — its structure lifecycles too. Per-document gaps
+	## record a provisional instead of erroring. Same-faction rosters visit
+	## nothing, keeping the default match byte-identical.
+	cross_faction_presentation_provisionals.clear()
+	var player_faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)).strip_edges().to_lower()
+	var local_faction := _local_presentation_faction(player_faction)
+	var visited := {local_faction: true}
+	var restore_needed := false
+	for team_manifest_value in _team_faction_manifests.values():
+		var team_manifest := team_manifest_value as Dictionary
+		var team_faction := String(team_manifest.get("faction", "")).strip_edges().to_lower()
+		if team_manifest.has("_error"):
+			cross_faction_presentation_provisionals.append("manifest:%s:%s" % [team_faction, String(team_manifest.get("_error", ""))])
+			continue
+		if team_faction == "" or visited.has(team_faction):
+			continue
+		visited[team_faction] = true
+		restore_needed = true
+		_classify_faction_units(team_faction)
+		for runtime_value in fieldable_unit_runtimes.values():
+			if typeof(runtime_value) != TYPE_DICTIONARY:
+				continue
+			var runtime := runtime_value as Dictionary
+			var member_id := PlayableUnitAdapter.runtime_member_id(runtime)
+			var runtime_root := String(runtime.get("_pack_root", ""))
+			var definition := ContentDB.get_bundle_object_for_pack(member_id, runtime_root)
+			var capability := ContentDB.get_animation_capability_for_pack(String(definition.get("animationCapabilityId", "")), runtime_root)
+			if (
+				member_id == ""
+				or definition.is_empty()
+				or capability.is_empty()
+				or runtime_root == ""
+				or String(definition.get("_pack_root", "")) != runtime_root
+				or String(capability.get("_pack_root", "")) != runtime_root
+				or ContentDB.resolve_mesh_path(definition) == ""
+			):
+				cross_faction_presentation_provisionals.append("unit:%s:%s" % [team_faction, String(runtime.get("objectId", ""))])
+				continue
+			if not validated_battalion_capabilities.has(member_id):
+				validated_battalion_capabilities[member_id] = capability.duplicate(true)
+		if team_faction == player_faction:
+			# The caller's main body already validated the team-0 faction's
+			# structure kinds; only its member capabilities were missing (the
+			# guest seat classifies its own army, not team 0's).
+			continue
+		var structure_object_ids: Dictionary = team_manifest.get("structure_object_ids", {}) as Dictionary
+		for kind_value in team_manifest.get("structure_kinds", []) as Array:
+			var kind := String(kind_value)
+			var structure_object_id := String(structure_object_ids.get(kind, ""))
+			if structure_object_id == "":
+				cross_faction_presentation_provisionals.append("structure:%s:%s:no-object-id" % [team_faction, kind])
+				continue
+			var lifecycle_error := _validate_retail_structure_lifecycle(structure_object_id, kind, team_manifest)
+			if lifecycle_error != "":
+				cross_faction_presentation_provisionals.append("structure:%s:%s:%s" % [team_faction, kind, lifecycle_error])
+	if restore_needed:
+		# Restore the local seat's classification for the HUD/audio surfaces
+		# that read fieldable/producible runtimes after this call.
+		_classify_faction_units(local_faction)
 
 
 var _glb_stream_queue: Array[String] = []
@@ -1086,14 +1175,18 @@ func _validate_retail_object_model(object_id: String, expected_kind: String, exp
 	return ""
 
 
-func _validate_retail_structure_lifecycle(object_id: String, structure_kind: String) -> String:
+func _validate_retail_structure_lifecycle(object_id: String, structure_kind: String, manifest_override: Dictionary = {}) -> String:
+	## An empty manifest_override keeps the historical local-manifest scope;
+	## the cross-faction presentation pass hands each team's OWN manifest in so
+	## that team's pack roots and health tables gate its documents.
+	var scope_manifest := manifest_override if not manifest_override.is_empty() else faction_manifest
 	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
 	var definition_root := String(definition.get("_pack_root", ""))
 	if definition.is_empty() or definition_root == "":
 		return "%s is not registered by the selected pack" % object_id
 	# The host pack owns the Men structures; a data-driven faction's structures
 	# arrive from the packs its manifest recorded.
-	var faction_roots: Array = faction_manifest.get("faction_pack_roots", []) as Array
+	var faction_roots: Array = scope_manifest.get("faction_pack_roots", []) as Array
 	if definition_root != selected_pack_root and not faction_roots.has(definition_root):
 		return "%s escaped the selected and faction packs" % object_id
 	if String(definition.get("kind", "")) != "structure":
@@ -1108,7 +1201,7 @@ func _validate_retail_structure_lifecycle(object_id: String, structure_kind: Str
 		lifecycle,
 		structure_kind,
 		String(presentation.get("model", "")),
-		int((faction_manifest.get("structure_max_health", {}) as Dictionary).get(structure_kind, 0))
+		int((scope_manifest.get("structure_max_health", {}) as Dictionary).get(structure_kind, 0))
 	)
 	if contract_error != "":
 		return "%s lifecycle contract failed: %s" % [object_id, contract_error]
@@ -1764,6 +1857,31 @@ func _local_presentation_faction(player_faction: String) -> String:
 	return guest_faction if guest_faction != "" else player_faction
 
 
+func _early_local_presentation_faction() -> String:
+	## Pre-manifest-map seam for _ready(): the lockstep guest's own (team 1)
+	## faction straight from the menu roster, before _team_faction_manifests
+	## exists. Empty for every non-join boot and for env-driven joins without a
+	## menu roster (gate runners), which keep the default resolution.
+	if _mp_mode != "join":
+		return ""
+	for entry_value in _menu_team_setup():
+		var entry := entry_value as Dictionary
+		if int(entry.get("team", -1)) == 1:
+			return String(entry.get("faction", "")).strip_edges().to_lower()
+	return ""
+
+
+func _presentation_manifest_for_team(team: int) -> Dictionary:
+	## PRESENTATION-ONLY: the faction manifest whose documents render this
+	## team's entities (each side's buildings/battalions present through their
+	## OWN faction docs on BOTH peers). A missing or failed team manifest falls
+	## back to the local player manifest — the pre-cross-faction behavior.
+	var manifest := _team_faction_manifests.get(team, {}) as Dictionary
+	if manifest.is_empty() or manifest.has("_error"):
+		return faction_manifest
+	return manifest
+
+
 func _first_menu_opponent_faction(menu_setup: Array, player_faction: String) -> String:
 	## The legacy enemy_faction scalar for surfaces that still read a single
 	## opponent: the first rostered faction that differs from the player's, else
@@ -1928,14 +2046,29 @@ func _read_bounded_pack_document(pack_root: String, relative: String, maximum_by
 func _project_faction_structure_definitions() -> void:
 	## Playable-structure documents describe their own lifecycle presentation;
 	## ContentDB only projects bundle objects for units. The slice is the
-	## composition root, so it projects the faction manifest's structure object
-	## ids into bundle-object definitions (the exact shape RetailStructure
-	## consumes) from the converted documents. Legacy tiny Men packs keep their
-	## pack-authored definitions untouched (empty faction_pack_roots). Full Men
-	## packs and every other faction project from playableStructure documents.
+	## composition root, so it projects each manifest's structure object ids
+	## into bundle-object definitions (the exact shape RetailStructure
+	## consumes) from the converted documents. Cross-faction rosters project
+	## every OTHER rostered faction's manifest too, so both peers can present
+	## the opposing side's buildings through that side's own documents.
+	_project_manifest_structure_definitions(faction_manifest)
+	var projected := {String(faction_manifest.get("faction", "")).strip_edges().to_lower(): true}
+	for team_manifest_value in _team_faction_manifests.values():
+		var team_manifest := team_manifest_value as Dictionary
+		var team_faction := String(team_manifest.get("faction", "")).strip_edges().to_lower()
+		if team_faction == "" or projected.has(team_faction) or team_manifest.has("_error"):
+			continue
+		projected[team_faction] = true
+		_project_manifest_structure_definitions(team_manifest)
+
+
+func _project_manifest_structure_definitions(manifest: Dictionary) -> void:
+	## Legacy tiny Men packs keep their pack-authored definitions untouched
+	## (empty faction_pack_roots). Full Men packs and every other faction
+	## project from playableStructure documents.
 	if (
-		String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)) == FactionManifestScript.DEFAULT_FACTION
-		and (faction_manifest.get("faction_pack_roots", []) as Array).is_empty()
+		String(manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)) == FactionManifestScript.DEFAULT_FACTION
+		and (manifest.get("faction_pack_roots", []) as Array).is_empty()
 	):
 		return
 	var structure_runtimes: Dictionary = ContentDB.get_playable_structure_runtimes()
@@ -1943,9 +2076,9 @@ func _project_faction_structure_definitions() -> void:
 	for source_value in structure_runtimes.keys():
 		var document := structure_runtimes[source_value] as Dictionary
 		documents_by_runtime_id[PlayableUnitAdapter._runtime_id(String(source_value))] = document
-	for kind_value in faction_manifest.get("structure_kinds", []) as Array:
+	for kind_value in manifest.get("structure_kinds", []) as Array:
 		var kind := String(kind_value)
-		var object_id := String((faction_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
+		var object_id := String((manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
 		if object_id == "" or not documents_by_runtime_id.has(object_id):
 			continue
 		var document := documents_by_runtime_id[object_id] as Dictionary
@@ -2248,11 +2381,26 @@ func _spawn_structure(id: int) -> void:
 		Callable(self, "_on_structure_lifecycle_route_requested").bind(structure)
 	)
 	# The lifecycle route registry may resolve from the host pack and every
-	# pack the faction manifest recorded (mirrors the HUD's multi-pack seam).
+	# pack the faction manifest recorded (mirrors the HUD's multi-pack seam),
+	# plus the owning TEAM's own faction packs for cross-faction rosters.
+	var presentation_manifest := _presentation_manifest_for_team(int(entity.get("team", -1)))
 	var allowed_roots: Array = [selected_pack_root]
 	allowed_roots.append_array(faction_manifest.get("faction_pack_roots", []) as Array)
+	for team_root_value in presentation_manifest.get("faction_pack_roots", []) as Array:
+		if not allowed_roots.has(team_root_value):
+			allowed_roots.append(team_root_value)
 	structure.set_allowed_pack_roots(allowed_roots)
-	var structure_object_id := String((faction_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
+	# Each team's buildings present through THAT team's own faction documents
+	# (the guest sees the host's Men barracks as Men, the host sees the
+	# guest's Elven fortress as Elven). A team manifest without the kind
+	# records a provisional and keeps the local manifest's (wrong-model)
+	# fallback — fail closed, never a crash.
+	var structure_object_id := String((presentation_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
+	if structure_object_id == "":
+		var local_fallback_id := String((faction_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
+		if local_fallback_id != "" and String(presentation_manifest.get("faction", "")) != String(faction_manifest.get("faction", "")):
+			cross_faction_presentation_provisionals.append("spawn-structure:%d:%s:missing-team-doc" % [id, kind])
+		structure_object_id = local_fallback_id
 	if structure_object_id == "":
 		# Fortress expansion structures resolve from their expansion documents.
 		structure_object_id = String((_expansion_object_ids.get(kind, {}) as Dictionary).get("object_id", ""))
@@ -3250,7 +3398,8 @@ func _refresh_hud() -> void:
 		selected_structure_id,
 		simulation.entities,
 		simulation.structures,
-		simulation.winner
+		simulation.winner,
+		local_team
 	):
 		_fail("Retail Men/Fords side-command FadeIn rejected the live selection context.")
 		return
@@ -4225,14 +4374,19 @@ func _configure_simulation_expansions() -> void:
 	simulation.configure_expansion_rules(rules)
 
 
-func _faction_spellbook_document() -> Dictionary:
+func _faction_spellbook_document(faction_override: String = "") -> Dictionary:
 	## Resolve the CURRENT faction's spellbook from the packs, never by slot
 	## position: the content registry's spellbook slot is last-pack-wins across
 	## every mounted pack, so without a faction check every faction plays the
 	## Men tree. Search the active pack first, then every mounted pack root;
 	## a faction whose packs genuinely ship no spellbook fails closed (the sim
 	## reports spellbook-unavailable and locks the tree, recorded here).
-	var faction := String(faction_manifest.get("faction", ""))
+	## The optional override is the HUD seam: a lockstep guest's spellbook
+	## SCREEN resolves from its own (team 1) faction while the sim keeps
+	## consuming the team-0 document identically on both peers.
+	var faction := faction_override.strip_edges().to_lower()
+	if faction == "":
+		faction = String(faction_manifest.get("faction", ""))
 	var document := _spellbook_document_for_faction(selected_pack_root, faction)
 	if not document.is_empty():
 		return document
