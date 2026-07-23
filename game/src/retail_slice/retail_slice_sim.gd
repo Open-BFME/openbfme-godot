@@ -16,6 +16,48 @@ const ENEMY_TEAM := 1
 # Unowned map structures (capture-building tier-1 targets). No player or AI
 # ever acts as this team; it only owns capturable structures until captured.
 const NEUTRAL_TEAM := 2
+## Dedicated creep owner (retail PlyrCreeps): hostile to every rostered team,
+## never rostered itself — never a victory participant and excluded from
+## spellbook/economy/AI production. Distinct from NEUTRAL_TEAM, which only
+## owns capturable structures. High sentinel so no N-team roster id collides.
+const CREEP_TEAM := 9999
+const CREEP_VISION_SOURCE := 200.0  # gamedata.ini line 61 CREEP_VISION
+const CREEP_LAIR_MAX_HEALTH := 2000  # StructureBody MaxHealth, all six lairs
+const CREEP_LAIR_DAMAGED_HEALTH := 1000  # authored damage tiers 1000/500
+const CREEP_LAIR_REALLY_DAMAGED_HEALTH := 500
+const CREEP_HOLE_MAX_HEALTH := 500  # RebuildHoleExposeDie HoleMaxHealth
+const CREEP_HOLE_REBUILD_TICKS := 1200  # RebuildHoleBehavior WorkerRespawnDelay 120000 ms
+const CREEP_TREASURE_MIN_RESOURCE := 160  # crate.ini TreasureChest1 MinResource
+const CREEP_TREASURE_MAX_RESOURCE := 200  # crate.ini TreasureChest1 MaxResource
+const CREEP_GUARD_WANDER_INTERVAL_TICKS := 40
+const CREEP_GUARD_EXIT_RADIUS := 2.0
+## Per-family lair contract (BFME2 1.06 INI corpus, measured in
+## .private/retail-work/reports/creep-contract/creep_contract.json):
+## SpawnBehavior burst/replace cadence and the hole-death treasure OCL.
+const CREEP_LAIR_FAMILIES := {
+	"CaveTrollLair": {"spawn_number": 1, "replace_delay_ms": 120000.0, "treasure_chests": 4, "levelup_chest": false, "guards": ["bfme2.object.creep-cave-troll"]},
+	"WargLair": {"spawn_number": 2, "replace_delay_ms": 45000.0, "treasure_chests": 3, "levelup_chest": false, "guards": ["bfme2.object.creep-warg"]},
+	"MoriarGoblinLair": {"spawn_number": 8, "replace_delay_ms": 60000.0, "treasure_chests": 2, "levelup_chest": false, "guards": ["bfme2.object.creep-goblin-swordsman", "bfme2.object.creep-goblin-archer"]},
+	"SpiderLair": {"spawn_number": 7, "replace_delay_ms": 45000.0, "treasure_chests": 4, "levelup_chest": false, "guards": ["bfme2.object.creep-minor-spider"]},
+	"BarrowWightLair": {"spawn_number": 1, "replace_delay_ms": 300000.0, "treasure_chests": 1, "levelup_chest": true, "guards": ["bfme2.object.creep-barrow-wight"]},
+	"FireDrakeLair": {"spawn_number": 1, "replace_delay_ms": 120000.0, "treasure_chests": 1, "levelup_chest": true, "guards": ["bfme2.object.creep-fire-drake"]},
+}
+const CREEP_LAIR_FAMILY_ALIASES := {
+	"CaveTrollLairSnow": "CaveTrollLair",
+	"MoriarGoblinLairSnow": "MoriarGoblinLair",
+}
+## Guard chassis: health / GuardMaxRange / GuardWanderRange / CREEP_VISION are
+## measured (creep_contract.json guards table); weapon damage, cadence, and
+## locomotor speeds are recorded provisionals pending INI weapon extraction.
+const CREEP_GUARD_STATS := {
+	"bfme2.object.creep-cave-troll": {"name": "Cave Troll", "health": 3000, "damage": 120, "damage_type": "crush", "speed": 50.0, "attack_range": 20.0, "guard_max_range": 250.0, "guard_wander_range": 80.0, "delay_ms": 2500.0, "art_status": "converted-wild-goblincavetroll"},
+	"bfme2.object.creep-warg": {"name": "Neutral Warg", "health": 800, "damage": 45, "damage_type": "slash", "speed": 90.0, "attack_range": 20.0, "guard_max_range": 250.0, "guard_wander_range": 80.0, "delay_ms": 1500.0, "art_status": "provisional-riderless-iuwarg-unvalidated"},
+	"bfme2.object.creep-goblin-swordsman": {"name": "Goblin Swordsman", "health": 30, "damage": 15, "damage_type": "slash", "speed": 60.0, "attack_range": 20.0, "guard_max_range": 250.0, "guard_wander_range": 40.0, "delay_ms": 1500.0, "art_status": "converted-wild-goblinfighterhorde-member"},
+	"bfme2.object.creep-goblin-archer": {"name": "Goblin Archer", "health": 30, "damage": 12, "damage_type": "pierce", "speed": 60.0, "attack_range": 160.0, "guard_max_range": 250.0, "guard_wander_range": 40.0, "delay_ms": 2000.0, "art_status": "converted-wild-goblinarcherhorde-member"},
+	"bfme2.object.creep-minor-spider": {"name": "Minor Spider", "health": 500, "damage": 40, "damage_type": "slash", "speed": 70.0, "attack_range": 20.0, "guard_max_range": 350.0, "guard_wander_range": 75.0, "delay_ms": 1500.0, "art_status": "converted-wild-wildspiderlinghorde-member"},
+	"bfme2.object.creep-barrow-wight": {"name": "Barrow Wight", "health": 250, "damage": 60, "damage_type": "magic", "speed": 40.0, "attack_range": 20.0, "guard_max_range": 250.0, "guard_wander_range": 75.0, "delay_ms": 2500.0, "art_status": "provisional-cuwight-unconverted"},
+	"bfme2.object.creep-fire-drake": {"name": "Fire Drake", "health": 4000, "damage": 150, "damage_type": "flame", "speed": 80.0, "attack_range": 100.0, "guard_max_range": 420.0, "guard_wander_range": 80.0, "delay_ms": 3000.0, "art_status": "provisional-wufiredrk-unconverted"},
+}
 const MEMBER_ATTACK_STAGGER_WINDOW_TICKS := 4
 const CORPSE_LIFETIME_TICKS := 600
 const STANCE_ORDER: Array[String] = ["HoldGround", "Battle", "Aggressive"]
@@ -391,6 +433,13 @@ func _is_hostile(team_a: int, team_b: int) -> bool:
 	## "other team" boolean, so targeting/victory stay byte-identical.
 	if team_a == team_b:
 		return false
+	if team_a == CREEP_TEAM or team_b == CREEP_TEAM:
+		# Retail PlyrCreeps semantics: the creep owner is hostile to every
+		# rostered combatant team (and they to it), never to itself and never
+		# to non-rostered owners (the NEUTRAL_TEAM capturable holder). Creeps
+		# are not combatants, so victory resolution never counts them.
+		var other := team_b if team_a == CREEP_TEAM else team_a
+		return other != CREEP_TEAM and _is_combatant_team(other)
 	if not _is_combatant_team(team_a) or not _is_combatant_team(team_b):
 		return false
 	var alliance_a: Variant = team_alliance(team_a)
@@ -694,6 +743,13 @@ var _last_base_under_attack_tick := -100000
 var _pending_commands: Dictionary = {}
 var last_command_result: Variant = null
 var _state_hash_static_digest := PackedByteArray()
+## Neutral creep lairs (opt-in gameplay rule "enable_creep_lairs"; default off
+## keeps every legacy runner byte-identical). Placements arrive with the map
+## configuration and stay inert until the rule enables seeding.
+var creep_lairs_enabled := false
+var _creep_lair_placements: Array = []
+var _next_creep_guard_id := 70001
+var _next_creep_structure_id := 60001
 
 
 func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) -> void:
@@ -766,6 +822,10 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 				)
 	if base_loop_enabled:
 		_initialize_base_loop()
+	_next_creep_guard_id = 70001
+	_next_creep_structure_id = 60001
+	if creep_lairs_enabled:
+		_seed_creep_lairs()
 	# Spellbook effect rules (summon stats) bake the source→sim scale, which
 	# only exists once the gameplay rules are applied above: recompute them
 	# now. Ownership/points already reset; configure only touches doc-derived
@@ -823,6 +883,29 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 			if typeof(center_value) == TYPE_VECTOR2:
 				_extra_team_centers[int(team_key)] = center_value
 	source_map_configured = bool(configuration.get("source_map_configured", false))
+	# Optional authored creep-lair placements (PlyrCreeps camps). Inert until
+	# the opt-in creep rule enables seeding; malformed rows are dropped here so
+	# seeding never has to guess.
+	_creep_lair_placements = []
+	var configured_lairs: Variant = configuration.get("creep_lair_placements", [])
+	if typeof(configured_lairs) == TYPE_ARRAY:
+		for lair_value in configured_lairs as Array:
+			if typeof(lair_value) != TYPE_DICTIONARY:
+				continue
+			var lair := lair_value as Dictionary
+			if (
+				typeof(lair.get("position")) != TYPE_VECTOR2
+				or String(lair.get("type_name", "")) == ""
+				or typeof(lair.get("source_index")) != TYPE_INT
+			):
+				continue
+			_creep_lair_placements.append({
+				"type_name": String(lair.get("type_name", "")),
+				"source_index": int(lair.get("source_index", -1)),
+				"position": Vector2(lair.get("position")),
+				"yaw": float(lair.get("yaw", 0.0)),
+				"binding_status": String(lair.get("binding_status", "unresolved")),
+			})
 
 
 func _apply_fallback_configuration() -> void:
@@ -843,6 +926,7 @@ func _apply_fallback_configuration() -> void:
 	_home_layout.clear()
 	_extra_team_centers = {}
 	source_map_configured = false
+	_creep_lair_placements = []
 
 
 func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
@@ -872,6 +956,10 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	# menu) resolves false, so the freeform construction path stays byte-identical.
 	build_plots_only = bool(_rules.get("build_plots_only", false))
 	build_plots.clear()
+	# Neutral creep-lair opt-in. Absent (every legacy runner and the untouched
+	# menu) resolves false, so the default match — and the pinned battle
+	# signature — stays byte-identical.
+	creep_lairs_enabled = bool(_rules.get("enable_creep_lairs", false))
 	command_point_cap = maxi(60, int(_rules.get("command_point_cap", 200)))
 	var starting_resources := maxi(0, int(_rules.get("starting_resources", 1200 if base_loop_enabled else 0)))
 	team_resources = _seed_team_map(starting_resources)
@@ -4095,6 +4183,10 @@ func spellbook_ui_state(team: int) -> Dictionary:
 
 
 func award_power_kill(team: int) -> void:
+	# Creeps are excluded from the spellbook economy: a creep kill never banks
+	# power points for the creep owner. Rostered killers of creeps still earn.
+	if not _is_combatant_team(team):
+		return
 	var kills_per_point := maxi(1, int(_rules.get("power_point_kills", POWER_POINT_KILLS)))
 	_kills_toward_power_point[team] = int(_kills_toward_power_point.get(team, 0)) + 1
 	if int(_kills_toward_power_point[team]) >= kills_per_point:
@@ -5409,6 +5501,10 @@ func tick() -> void:
 	_step_structure_weapons()
 	if ai_enabled and tick_index % AI_CONTROLLER_BASE_INTERVAL == 0:
 		_update_ai_controllers()
+	if creep_lairs_enabled:
+		# Deterministic creep step (lair respawns, hole rebuilds, guard leash
+		# decisions) runs before the entity step executes the resulting orders.
+		_step_creeps()
 	for id in entity_ids():
 		_step_entity(id)
 	_step_battalion_separation()
@@ -6953,6 +7049,10 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 			best_id = candidate
 			best_kind = "battalion"
 	for candidate in _hostile_living_structure_ids(self_team):
+		if bool((structures[candidate] as Dictionary).get("not_auto_acquirable", false)):
+			# holes.ini NOT_AUTOACQUIRABLE: an exposed rebuild hole is only ever
+			# destroyed by an explicit attack order, never by idle acquisition.
+			continue
 		var distance := origin.distance_to(Vector2((structures[candidate] as Dictionary).get("position", Vector2.ZERO)))
 		if distance <= best_distance:
 			best_distance = distance
@@ -7753,6 +7853,8 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 		_emit_event("structure.destroyed", attacker_id, target_id, {"structure_kind": structure_kind, "team": int(target.get("team", -1))})
 		if int(target.get("team", -1)) == PLAYER_TEAM:
 			_emit_event("eva.building_lost", 0, target_id, {"team": PLAYER_TEAM, "structure_kind": structure_kind})
+		if creep_lairs_enabled and int(target.get("team", -1)) == CREEP_TEAM:
+			_on_creep_structure_destroyed(attacker_id, target_id)
 
 
 func _target_alive(target_id: int, target_kind: String) -> bool:
@@ -7764,6 +7866,497 @@ func _target_alive(target_id: int, target_kind: String) -> bool:
 func _target_position(target_id: int, target_kind: String) -> Vector2:
 	var row: Dictionary = structures.get(target_id, {}) if target_kind == "structure" else entities.get(target_id, {})
 	return Vector2(row.get("position", Vector2.ZERO))
+
+
+# ---------------------------------------------------------------------------
+# Neutral creep lairs (retail PlyrCreeps camps). Opt-in via the
+# "enable_creep_lairs" gameplay rule; every path below is unreachable when it
+# is off, keeping the default match byte-identical. Retail semantics per the
+# measured creep contract: 2000 HP lair seeds SpawnBehavior guards, replaces
+# dead guards on the family's SpawnReplaceDelay, exposes a 500 HP hole on
+# death (RebuildHoleExposeDie), the hole regrows the lair after 120 s
+# (RebuildHoleBehavior) unless destroyed, and hole death drops the family's
+# treasure OCL. v0 treasure shape: the chest values are credited directly to
+# the killing team on hole death (SalvageCrateCollide walk-over pickup and the
+# chest crate model are follow-ups; values stay the authored 160-200 band).
+# ---------------------------------------------------------------------------
+
+
+func _creep_scale() -> float:
+	## Source→sim scale for the measured SAGE ranges (CREEP_VISION, leashes).
+	var scale := float(_rules.get("source_map_transform_scale", 0.0))
+	return scale if scale > 0.0 else 1.0
+
+
+func _creep_family_for(type_name: String) -> Dictionary:
+	var family_name := String(CREEP_LAIR_FAMILY_ALIASES.get(type_name, type_name))
+	var family: Dictionary = CREEP_LAIR_FAMILIES.get(family_name, {}) as Dictionary
+	if family.is_empty():
+		return {}
+	var row := family.duplicate(true)
+	row["family"] = family_name
+	return row
+
+
+func _register_creep_guard_rules() -> void:
+	## Synthesized creep guard unit rules (the trebuchet-contract pattern):
+	## measured chassis numbers, recorded-provisional weapon/locomotor values.
+	## Registered only when creeps are enabled, so default rules never move.
+	var scale := _creep_scale()
+	var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
+	var guard_object_ids: Array = CREEP_GUARD_STATS.keys()
+	guard_object_ids.sort()
+	for guard_object_value in guard_object_ids:
+		var guard_object_id := String(guard_object_value)
+		if configured_unit_rules.has(guard_object_id):
+			continue
+		var stats: Dictionary = CREEP_GUARD_STATS[guard_object_id]
+		var speed_source := float(stats["speed"])
+		var attack_range_source := float(stats["attack_range"])
+		var delay_ms := float(stats["delay_ms"])
+		configured_unit_rules[guard_object_id] = {
+			"horde_id": guard_object_id,
+			"member_count": 1,
+			"member_health": int(stats["health"]),
+			"member_damage": int(stats["damage"]),
+			"speed": speed_source * scale,
+			"speed_source": speed_source,
+			"acceleration": speed_source * scale,
+			"acceleration_source": speed_source,
+			"turn_rate_degrees_per_second": 360.0,
+			"braking": speed_source * scale,
+			"braking_source": speed_source,
+			"attack_range": attack_range_source * scale,
+			"attack_range_source": attack_range_source,
+			"minimum_attack_range": 0.0,
+			"minimum_attack_range_source": 0.0,
+			"vision_range": CREEP_VISION_SOURCE * scale,
+			"vision_range_source": CREEP_VISION_SOURCE,
+			"delay_between_shots_ms": delay_ms,
+			"pre_attack_delay_ms": 500.0,
+			"firing_duration_ms": 500.0,
+			"attack_period_ticks": maxi(1, roundi(delay_ms / (TICK_SECONDS * 1000.0))),
+			"pre_attack_ticks": 5,
+			"firing_duration_ticks": 5,
+			"clip_size": 0,
+			"clip_reload_time_ms": 0.0,
+			"continuous_fire_one": 0,
+			"continuous_fire_coast_ticks": 0,
+			"continuous_fire_rate_multiplier": 1.0,
+			"formation_positions": [Vector3.ZERO],
+			"formation_positions_base": [Vector3.ZERO],
+			"formation_mode": "Line",
+			"provenance": {
+				"measured": "creep-contract: MaxHealth/GuardMaxRange/GuardWanderRange/CREEP_VISION per BFME2 1.06 INIs",
+				"provisional": "weapon damage, cadence, and locomotor speeds are recorded provisionals (INI weapon extraction follow-up)",
+				"art_status": String(stats["art_status"]),
+			},
+		}
+		# Only extend a populated compiled damage-type table; seeding an empty
+		# legacy table would silently switch every other unit's lookup source.
+		if not _unit_damage_types.is_empty() and not _unit_damage_types.has(guard_object_id):
+			_unit_damage_types[guard_object_id] = String(stats["damage_type"])
+	_rules["unit_rules"] = configured_unit_rules
+	# MonsterLair / NeutralStructureHole armor is not compiled yet: register a
+	# neutral 1.0 stand-in (recorded provisional) so lair damage is 1:1 instead
+	# of falling to the unrelated 25% structure provisional scalar.
+	if not _structure_armor.has("creep_lair"):
+		_structure_armor["creep_lair"] = {"set_id": "MonsterLair-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
+	if not _structure_armor.has("creep_hole"):
+		_structure_armor["creep_hole"] = {"set_id": "NeutralStructureHole-provisional", "damage_scalar": 1.0, "scalars": {"default": 1.0}}
+
+
+func _seed_creep_lairs() -> void:
+	if _creep_lair_placements.is_empty():
+		return
+	_register_creep_guard_rules()
+	var placements := _creep_lair_placements.duplicate(true)
+	placements.sort_custom(
+		func(a, b): return int((a as Dictionary).get("source_index", 0)) < int((b as Dictionary).get("source_index", 0))
+	)
+	for placement_value in placements:
+		var placement: Dictionary = placement_value
+		var type_name := String(placement.get("type_name", ""))
+		var family := _creep_family_for(type_name)
+		if family.is_empty():
+			# Fail closed: an unmapped lair type is recorded, never seeded blind
+			# and never silently dropped from observability.
+			_emit_event("creep.lair_unsupported", 0, 0, {
+				"type_name": type_name,
+				"source_index": int(placement.get("source_index", -1)),
+			})
+			continue
+		var lair_id := _next_creep_structure_id
+		_next_creep_structure_id += 1
+		var position := Vector2(placement.get("position", Vector2.ZERO))
+		structures[lair_id] = {
+			"id": lair_id,
+			"team": CREEP_TEAM,
+			"structure_kind": "creep_lair",
+			"creep_family": String(family.get("family", type_name)),
+			"creep_type_name": type_name,
+			"source_index": int(placement.get("source_index", -1)),
+			"position": position,
+			"yaw": float(placement.get("yaw", 0.0)),
+			"rally": position,
+			"health": CREEP_LAIR_MAX_HEALTH,
+			"maximum_health": CREEP_LAIR_MAX_HEALTH,
+			"construction_progress": 1.0,
+			"level": 1,
+			"completed_upgrades": [],
+			"damage_remainders": {},
+			"queue": [],
+			"upgrade_queue": [],
+			"creep_spawn_number": int(family.get("spawn_number", 1)),
+			"creep_replace_delay_ticks": maxi(1, roundi(float(family.get("replace_delay_ms", 45000.0)) / (TICK_SECONDS * 1000.0))),
+			"creep_guard_templates": (family.get("guards", []) as Array).duplicate(),
+			"creep_guard_spawn_count": 0,
+			"creep_guard_ids": [],
+			"creep_next_respawn_tick": 0,
+			"creep_hole_id": 0,
+			"creep_cleared": false,
+			"creep_treasure_chests": int(family.get("treasure_chests", 1)),
+			"creep_levelup_chest": bool(family.get("levelup_chest", false)),
+			# Unconverted lair art (goblin/spider/wight/drake families) fails
+			# closed into this recorded provisional: the sim camp is fully live,
+			# presentation simply has no bound lifecycle visual yet.
+			"creep_art_status": String(placement.get("binding_status", "unresolved")),
+		}
+		_emit_event("creep.lair_seeded", 0, lair_id, {
+			"family": String(family.get("family", type_name)),
+			"type_name": type_name,
+			"source_index": int(placement.get("source_index", -1)),
+			"art_status": String(placement.get("binding_status", "unresolved")),
+		})
+		for _burst_index in range(int(family.get("spawn_number", 1))):
+			_spawn_creep_guard(lair_id)
+
+
+func _spawn_creep_guard(lair_id: int) -> int:
+	var lair: Dictionary = structures.get(lair_id, {})
+	if lair.is_empty():
+		return 0
+	var templates: Array = lair.get("creep_guard_templates", [])
+	if templates.is_empty():
+		return 0
+	# Cumulative spawn ordinal drives template alternation (goblin lair mixes
+	# swordsmen and archers) and the deterministic exit fan-out.
+	var spawn_ordinal := int(lair.get("creep_guard_spawn_count", 0))
+	var guard_object_id := String(templates[spawn_ordinal % templates.size()])
+	var rule: Dictionary = (_rules.get("unit_rules", {}) as Dictionary).get(guard_object_id, {}) as Dictionary
+	if rule.is_empty():
+		return 0
+	var spawn_number := maxi(1, int(lair.get("creep_spawn_number", 1)))
+	var home := Vector2(lair.get("position", Vector2.ZERO))
+	var exit_angle := float(lair.get("yaw", 0.0)) + TAU * float(spawn_ordinal % spawn_number) / float(spawn_number)
+	var at := home + Vector2.RIGHT.rotated(exit_angle) * CREEP_GUARD_EXIT_RADIUS
+	if route_provider != null and route_provider.has_method("_walkable_spawn"):
+		at = Vector2(route_provider.call("_walkable_spawn", at))
+	var guard_id := _next_creep_guard_id
+	_next_creep_guard_id += 1
+	var stats: Dictionary = CREEP_GUARD_STATS.get(guard_object_id, {}) as Dictionary
+	_add_battalion(guard_id, CREEP_TEAM, at, String(stats.get("name", guard_object_id)), guard_object_id, guard_object_id, 0)
+	if not entities.has(guard_id):
+		return 0
+	var scale := _creep_scale()
+	var row: Dictionary = entities[guard_id]
+	row["creep_lair_id"] = lair_id
+	row["creep_home"] = home
+	row["creep_guard_max_range"] = float(stats.get("guard_max_range", 250.0)) * scale
+	row["creep_guard_wander_range"] = float(stats.get("guard_wander_range", 40.0)) * scale
+	row["creep_returning"] = false
+	lair["creep_guard_spawn_count"] = spawn_ordinal + 1
+	var guard_ids: Array = lair.get("creep_guard_ids", [])
+	guard_ids.append(guard_id)
+	lair["creep_guard_ids"] = guard_ids
+	_emit_event("creep.guard_spawned", guard_id, lair_id, {"object_id": guard_object_id})
+	return guard_id
+
+
+func _step_creeps() -> void:
+	var lair_ids: Array[int] = []
+	var hole_ids: Array[int] = []
+	for id in structure_ids(CREEP_TEAM):
+		match String((structures[id] as Dictionary).get("structure_kind", "")):
+			"creep_lair":
+				lair_ids.append(id)
+			"creep_hole":
+				hole_ids.append(id)
+	# 1) SpawnBehavior replacement bookkeeping per living lair.
+	for lair_id in lair_ids:
+		var lair: Dictionary = structures[lair_id]
+		if int(lair.get("health", 0)) <= 0:
+			continue
+		if _living_creep_guard_count(lair) >= int(lair.get("creep_spawn_number", 1)):
+			lair["creep_next_respawn_tick"] = 0
+			continue
+		var next_tick := int(lair.get("creep_next_respawn_tick", 0))
+		if next_tick <= 0:
+			lair["creep_next_respawn_tick"] = tick_index + int(lair.get("creep_replace_delay_ticks", 1))
+		elif tick_index >= next_tick:
+			lair["creep_next_respawn_tick"] = 0
+			_spawn_creep_guard(lair_id)
+	# 2) RebuildHoleBehavior: a surviving hole regrows its lair.
+	for hole_id in hole_ids:
+		var hole: Dictionary = structures[hole_id]
+		if int(hole.get("health", 0)) <= 0:
+			continue
+		if tick_index >= int(hole.get("creep_rebuild_tick", 0)):
+			_rebuild_creep_lair(hole_id)
+	# 3) Guard leash AI, ascending guard id.
+	for guard_id in entity_ids():
+		var row: Dictionary = entities[guard_id]
+		if int(row.get("team", -1)) == CREEP_TEAM and row.has("creep_lair_id"):
+			_step_creep_guard(guard_id)
+
+
+func _living_creep_guard_count(lair: Dictionary) -> int:
+	## Prunes expired-corpse ids from the lair roster as a side effect.
+	var living := 0
+	var pruned: Array = []
+	for guard_value in lair.get("creep_guard_ids", []) as Array:
+		var guard_id := int(guard_value)
+		if not entities.has(guard_id):
+			continue
+		pruned.append(guard_id)
+		if int((entities[guard_id] as Dictionary).get("health", 0)) > 0:
+			living += 1
+	lair["creep_guard_ids"] = pruned
+	return living
+
+
+func _step_creep_guard(guard_id: int) -> void:
+	var row: Dictionary = entities[guard_id]
+	if int(row.get("health", 0)) <= 0:
+		return
+	var home := Vector2(row.get("creep_home", row.get("position", Vector2.ZERO)))
+	var leash := float(row.get("creep_guard_max_range", 0.0))
+	var wander := float(row.get("creep_guard_wander_range", 0.0))
+	var position := Vector2(row.get("position", Vector2.ZERO))
+	var target_id := int(row.get("target_id", 0))
+	if target_id != 0:
+		# SlavedUpdate leash enforcement: break the chase the moment either the
+		# guard or its target is beyond GuardMaxRange of the lair anchor.
+		var target_kind := String(row.get("target_kind", "battalion"))
+		var beyond := position.distance_to(home) > leash
+		if not beyond and _target_alive(target_id, target_kind):
+			beyond = _target_position(target_id, target_kind).distance_to(home) > leash
+		if beyond:
+			row["target_id"] = 0
+			row["target_kind"] = "battalion"
+			row["attack_windup"] = 0
+			row["attack_move"] = false
+			row["order_kind"] = ""
+			_clear_member_attack_schedule(row)
+			_clear_member_targets(row)
+			_clear_pending_route(row, false)
+			row["creep_returning"] = true
+			if _assign_route(row, home):
+				row["state"] = "run"
+			else:
+				row["creep_returning"] = false
+				row["state"] = "idle"
+			_emit_event("creep.guard_leash_return", guard_id, 0, {"home": home})
+		return
+	if bool(row.get("creep_returning", false)):
+		# No acquisition on the way home (documented simplification of the
+		# retail return leg); arrival re-arms ordinary aggro below.
+		if (row.get("route", []) as Array).is_empty():
+			row["creep_returning"] = false
+		return
+	# Aggro: CREEP_VISION acquisition against any rostered team's battalion.
+	var vision := float(row.get("vision_range", 0.0))
+	if vision > 0.0:
+		var best_id := 0
+		var best_distance := vision
+		for candidate in _hostile_living_ids(CREEP_TEAM):
+			if not _can_engage_battalion(row, entities[candidate] as Dictionary):
+				continue
+			var distance := position.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
+			if distance <= best_distance:
+				best_distance = distance
+				best_id = candidate
+		if best_id != 0:
+			row["target_id"] = best_id
+			row["target_kind"] = "battalion"
+			row["order_kind"] = "auto_attack"
+			_clear_pending_route(row, false)
+			_emit_event("creep.guard_aggro", guard_id, best_id, {})
+			return
+	# Idle wander within GuardWanderRange (deterministic tick/id hash).
+	if wander <= 0.0 or not (row.get("route", []) as Array).is_empty():
+		return
+	if (tick_index + guard_id) % CREEP_GUARD_WANDER_INTERVAL_TICKS != 0:
+		return
+	var seed_value := (tick_index * 2654435761 + guard_id * 40503) & 0x7FFFFFFF
+	var wander_angle := TAU * float(seed_value % 360) / 360.0
+	var wander_radius := wander * (0.35 + 0.65 * float((seed_value / 360) % 100) / 100.0)
+	if _assign_route(row, home + Vector2.RIGHT.rotated(wander_angle) * wander_radius):
+		row["state"] = "run"
+
+
+func _on_creep_structure_destroyed(attacker_id: int, target_id: int) -> void:
+	var target: Dictionary = structures.get(target_id, {})
+	match String(target.get("structure_kind", "")):
+		"creep_lair":
+			if int(target.get("creep_hole_id", 0)) != 0 or bool(target.get("creep_cleared", false)):
+				return
+			# RebuildHoleExposeDie: lair death exposes the family's 500 HP hole.
+			var hole_id := _next_creep_structure_id
+			_next_creep_structure_id += 1
+			var position := Vector2(target.get("position", Vector2.ZERO))
+			structures[hole_id] = {
+				"id": hole_id,
+				"team": CREEP_TEAM,
+				"structure_kind": "creep_hole",
+				"creep_family": String(target.get("creep_family", "")),
+				"creep_lair_id": target_id,
+				"source_index": int(target.get("source_index", -1)),
+				"position": position,
+				"rally": position,
+				"health": CREEP_HOLE_MAX_HEALTH,
+				"maximum_health": CREEP_HOLE_MAX_HEALTH,
+				"construction_progress": 1.0,
+				"level": 1,
+				"completed_upgrades": [],
+				"damage_remainders": {},
+				"queue": [],
+				"upgrade_queue": [],
+				"not_auto_acquirable": true,
+				"creep_rebuild_tick": tick_index + CREEP_HOLE_REBUILD_TICKS,
+				"creep_treasure_chests": int(target.get("creep_treasure_chests", 1)),
+				"creep_levelup_chest": bool(target.get("creep_levelup_chest", false)),
+			}
+			target["creep_hole_id"] = hole_id
+			target["creep_next_respawn_tick"] = 0
+			_emit_event("creep.hole_exposed", attacker_id, hole_id, {
+				"lair_id": target_id,
+				"family": String(target.get("creep_family", "")),
+				"rebuild_tick": tick_index + CREEP_HOLE_REBUILD_TICKS,
+			})
+		"creep_hole":
+			_award_creep_treasure(attacker_id, target_id)
+
+
+func _rebuild_creep_lair(hole_id: int) -> void:
+	var hole: Dictionary = structures.get(hole_id, {})
+	var lair_id := int(hole.get("creep_lair_id", 0))
+	structures.erase(hole_id)
+	var lair: Dictionary = structures.get(lair_id, {})
+	if lair.is_empty():
+		return
+	lair["health"] = int(lair.get("maximum_health", CREEP_LAIR_MAX_HEALTH))
+	lair["damage_remainders"] = {}
+	lair["creep_hole_id"] = 0
+	lair["creep_next_respawn_tick"] = 0
+	_emit_event("creep.lair_rebuilt", 0, lair_id, {"family": String(lair.get("creep_family", ""))})
+	# The regrown camp bursts back to its full guard complement immediately;
+	# subsequent losses fall back to the ordinary replacement timer.
+	var deficit := int(lair.get("creep_spawn_number", 1)) - _living_creep_guard_count(lair)
+	for _index in range(maxi(0, deficit)):
+		_spawn_creep_guard(lair_id)
+
+
+func _award_creep_treasure(attacker_id: int, hole_id: int) -> void:
+	var hole: Dictionary = structures.get(hole_id, {})
+	var lair_id := int(hole.get("creep_lair_id", 0))
+	var lair: Dictionary = structures.get(lair_id, {})
+	if not lair.is_empty():
+		# Destroying the hole permanently clears the camp: no rebuild ever.
+		lair["creep_cleared"] = true
+		lair["creep_hole_id"] = 0
+		lair["creep_next_respawn_tick"] = 0
+	var chest_count := maxi(1, int(hole.get("creep_treasure_chests", 1)))
+	var seed_index := maxi(0, int(hole.get("source_index", 0)))
+	var chest_values: Array[int] = []
+	var total := 0
+	for chest_index in range(chest_count):
+		# Deterministic stand-in for the retail 160-200 random roll: seeded by
+		# the authored placement so twin runs and both lockstep peers agree.
+		var value := CREEP_TREASURE_MIN_RESOURCE + (seed_index * 31 + chest_index * 17) % (CREEP_TREASURE_MAX_RESOURCE - CREEP_TREASURE_MIN_RESOURCE + 1)
+		chest_values.append(value)
+		total += value
+	var killer_team := -1
+	if entities.has(attacker_id):
+		killer_team = int((entities[attacker_id] as Dictionary).get("team", -1))
+	if _is_combatant_team(killer_team):
+		team_resources[killer_team] = resources_for_team(killer_team) + total
+		_emit_event("creep.treasure_collected", attacker_id, hole_id, {
+			"team": killer_team,
+			"amount": total,
+			"chests": chest_values,
+			"family": String(hole.get("creep_family", "")),
+		})
+	else:
+		# No attributable rostered killer (e.g. a power strike): the drop is
+		# recorded and forfeited rather than silently invented for anyone.
+		_emit_event("creep.treasure_forfeited", attacker_id, hole_id, {
+			"amount": total,
+			"chests": chest_values,
+			"family": String(hole.get("creep_family", "")),
+		})
+	if bool(hole.get("creep_levelup_chest", false)):
+		# TreasureChest2 (wight/drake Special OCL) levels up a nearby battalion
+		# in retail; v0 records the drop instead of inventing a recipient.
+		_emit_event("creep.levelup_chest_provisional", attacker_id, hole_id, {})
+	_emit_event("creep.camp_cleared", attacker_id, lair_id, {
+		"family": String(hole.get("creep_family", "")),
+		"source_index": int(hole.get("source_index", -1)),
+	})
+
+
+func _creep_state_snapshot() -> Dictionary:
+	## Deterministic creep block appended to state_snapshot() only when the
+	## creep rule is enabled (the OFF snapshot stays byte-identical). Lairs,
+	## holes, and guards already serialize through the ordinary structure and
+	## entity rows; this block adds the creep-only timers and links.
+	var lair_rows: Array[Dictionary] = []
+	var hole_rows: Array[Dictionary] = []
+	for id in structure_ids(CREEP_TEAM):
+		var row: Dictionary = structures[id]
+		match String(row.get("structure_kind", "")):
+			"creep_lair":
+				var guard_ids: Array[int] = []
+				for guard_value in row.get("creep_guard_ids", []) as Array:
+					guard_ids.append(int(guard_value))
+				guard_ids.sort()
+				lair_rows.append({
+					"id": id,
+					"family": String(row.get("creep_family", "")),
+					"source_index": int(row.get("source_index", -1)),
+					"health": int(row.get("health", 0)),
+					"spawn_count": int(row.get("creep_guard_spawn_count", 0)),
+					"next_respawn_tick": int(row.get("creep_next_respawn_tick", 0)),
+					"guard_ids": guard_ids,
+					"hole_id": int(row.get("creep_hole_id", 0)),
+					"cleared": bool(row.get("creep_cleared", false)),
+				})
+			"creep_hole":
+				hole_rows.append({
+					"id": id,
+					"lair_id": int(row.get("creep_lair_id", 0)),
+					"health": int(row.get("health", 0)),
+					"rebuild_tick": int(row.get("creep_rebuild_tick", 0)),
+				})
+	var guard_rows: Array[Dictionary] = []
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if int(row.get("team", -1)) != CREEP_TEAM or not row.has("creep_lair_id"):
+			continue
+		var creep_home := Vector2(row.get("creep_home", Vector2.ZERO))
+		guard_rows.append({
+			"id": id,
+			"lair_id": int(row.get("creep_lair_id", 0)),
+			"returning": bool(row.get("creep_returning", false)),
+			"home": [snappedf(creep_home.x, 0.001), snappedf(creep_home.y, 0.001)],
+		})
+	return {
+		"lairs": lair_rows,
+		"holes": hole_rows,
+		"guards": guard_rows,
+		"next_creep_guard_id": _next_creep_guard_id,
+		"next_creep_structure_id": _next_creep_structure_id,
+	}
 
 
 func _update_ai_controllers() -> void:
@@ -8536,7 +9129,7 @@ func state_snapshot() -> Dictionary:
 		power_points_row.append(power_points(team))
 		purchased_powers_row.append((purchased_powers.get(team, []) as Array).duplicate())
 		team_upgrades_row.append((team_upgrades.get(team, {}) as Dictionary).duplicate(true))
-	return {
+	var snapshot_row := {
 		"tick": tick_index,
 		"winner": winner,
 		"base_loop_enabled": base_loop_enabled,
@@ -8562,6 +9155,11 @@ func state_snapshot() -> Dictionary:
 		"next_event_sequence": _next_event_sequence,
 		"event_digest": _event_digest,
 	}
+	if creep_lairs_enabled:
+		# Appended only when the opt-in creep rule is on: the default snapshot
+		# — and therefore the pinned battle signature — stays byte-identical.
+		snapshot_row["creeps"] = _creep_state_snapshot()
+	return snapshot_row
 
 
 func state_signature() -> String:
@@ -8793,6 +9391,10 @@ func _authoritative_state() -> Dictionary:
 		"unit_ability_rules": _unit_ability_rules,
 		"unit_experience_rules": _unit_experience_rules,
 		"pending_commands": _pending_commands,
+		"creep_lairs_enabled": creep_lairs_enabled,
+		"creep_lair_placements": _creep_lair_placements,
+		"next_creep_guard_id": _next_creep_guard_id,
+		"next_creep_structure_id": _next_creep_structure_id,
 	}
 
 
@@ -8864,6 +9466,10 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_unit_ability_rules = state["unit_ability_rules"]
 	_unit_experience_rules = state["unit_experience_rules"]
 	_pending_commands = state["pending_commands"]
+	creep_lairs_enabled = bool(state.get("creep_lairs_enabled", false))
+	_creep_lair_placements = state.get("creep_lair_placements", [])
+	_next_creep_guard_id = int(state.get("next_creep_guard_id", 70001))
+	_next_creep_structure_id = int(state.get("next_creep_structure_id", 60001))
 	# Reconstruct the derived team registry + per-team manifest aliases from the
 	# restored authoritative dicts. Roster order matches setup()'s ascending
 	# seeding; the manifest tables realias the restored global tables. Neither is

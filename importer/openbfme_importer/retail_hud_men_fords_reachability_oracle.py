@@ -26,12 +26,15 @@ FRAME_CONTRACT_FILE_SHA256 = (
 MAP_FILE_SHA256 = "b9932e95e0949a7faecea3e31500b356e4f7f695e40e8b9f6c37202439c4b11b"
 SETUP_FILE_SHA256 = "b6ab4ed3493e3e3e4b286b0a4b7e903d1bf508a09f2bc4393d112c77ea3d0df6"
 SIDE_APT_SHA256 = "84d58c67c5cab9a3bf690125cbf1a0cbf3f4bc58ccc29ffa33b992a924eca6ef"
-# Re-pinned 2026-07-23 after the reviewed hero-ability batch-2, N-team
-# (registry/manifests/victory/geometry), five-tier AI, per-team spellbook,
-# BFME1 build-plot mode, and per-team structure-upgrade changes; every
-# anchored behavioral marker below still validates against the new sources.
-SIM_SHA256 = "1f0ac0263ad9e1f1af043beb3dcd5bd0d774b80d436b8a3791e50b05ff184b50"
-SLICE_SHA256 = "9a508be31f9638ae51a227f723c85d63e48c6475f043a2ad91f9b15dbbc3356c"
+# Re-pinned 2026-07-23 after the neutral creep-lair lane (opt-in PlyrCreeps
+# camps: CREEP_TEAM hostility predicate, map-driven lair seeding with
+# SpawnBehavior bursts/replacement, guard leash AI, lair->hole->treasure
+# reward chain, RebuildHoleBehavior regrow) plus the earlier reviewed
+# hero-ability batch-2, N-team, five-tier AI, per-team spellbook, BFME1
+# build-plot, and per-team structure-upgrade changes; every anchored
+# behavioral marker below still validates against the new sources.
+SIM_SHA256 = "5638c75a05965dfdad9c0392595c4906778ead3c28e03cfceba3bfdf3f3fb051"
+SLICE_SHA256 = "3b1750b01441e9948a998d9fd28625aab9465fdaf3ff81ac26f3d6eb56b762d1"
 
 RETAIL_INI_SOURCES: dict[str, str] = {
     "data/ini/commandset.ini": "3d57ff841b93428ce2118d4bff1871684003bb9eacd8d48865f03ce23e4c5300",

@@ -21,6 +21,12 @@ const BLEND_DESCRIPTION_RECORD_BYTES := 18
 const CLIFF_MAPPING_RECORD_BYTES := 38
 const MAX_MAP_OBJECTS := 5000
 const MAX_WATER_VERTICES := 4096
+## BFME2 1.06 CREEP_OBJECTFILTER lair set (gamedata.ini line 87): every lair
+## placement on the five converted maps carries originalOwner PlyrCreeps.
+const CREEP_LAIR_TYPE_NAMES: Array[String] = [
+	"BarrowWightLair", "CaveTrollLair", "CaveTrollLairSnow", "FireDrakeLair",
+	"MoriarGoblinLair", "MoriarGoblinLairSnow", "SpiderLair", "WargLair",
+]
 const MAX_WAYPOINTS := 256
 const MAX_GENERIC_PROPS := 72
 const MAX_OBJECT_BINDING_RECORDS := 512
@@ -144,6 +150,12 @@ var ford_gates: Array[Dictionary] = []
 var generic_prop_placements: Array[Dictionary] = []
 var bound_prop_placements: Array[Dictionary] = []
 var bound_structure_placements: Array[Dictionary] = []
+## Authored creep-lair placements (retail PlyrCreeps camps), exposed to the
+## deterministic simulation independent of visual binding: bound lair types
+## keep their lifecycle visual in bound_structure_placements, unconverted lair
+## families (goblin/spider/wight/drake) still surface here so the sim can fail
+## closed into a recorded provisional instead of silently dropping the camp.
+var creep_lair_placements: Array[Dictionary] = []
 var bound_prop_type_ids: Array[String] = []
 var bound_structure_type_ids: Array[String] = []
 var logical_prop_type_ids: Array[String] = []
@@ -827,6 +839,7 @@ func _route_normalized_object_placements(normalized_objects: Array[Dictionary]) 
 	generic_prop_placements.clear()
 	bound_prop_placements.clear()
 	bound_structure_placements.clear()
+	creep_lair_placements.clear()
 	var vegetation: Array[Dictionary] = []
 	var rocks: Array[Dictionary] = []
 	var observed_bound_props := 0
@@ -838,6 +851,17 @@ func _route_normalized_object_placements(normalized_objects: Array[Dictionary]) 
 		var type_name := String(placement["source_type"])
 		var binding: Dictionary = _object_binding_by_type.get(type_name, {})
 		var status := String(binding.get("status", ""))
+		if CREEP_LAIR_TYPE_NAMES.has(type_name):
+			# Sim-facing lair record, independent of the visual binding route
+			# below (bound lairs also keep their lifecycle-structure placement).
+			var lair_local := Vector3(placement["position"])
+			creep_lair_placements.append({
+				"type_name": type_name,
+				"source_index": int(placement["source_index"]),
+				"position": Vector2(lair_local.x, lair_local.z),
+				"yaw": float(placement["yaw"]),
+				"binding_status": status if status != "" else "unresolved",
+			})
 		if status == "bound":
 			placement["binding_status"] = "bound"
 			placement["classification"] = String(binding.get("classification", ""))
@@ -1876,6 +1900,9 @@ func simulation_configuration() -> Dictionary:
 		"home_layout": home_layout,
 		"team_start_centers": team_start_centers,
 		"ford_gates": _simulation_ford_gates(),
+		# Authored PlyrCreeps lairs. The simulation only seeds them when its
+		# opt-in creep rule is enabled; carrying them here is inert otherwise.
+		"creep_lair_placements": creep_lair_placements.duplicate(true),
 	}
 
 
@@ -2166,6 +2193,7 @@ func _reset() -> void:
 	generic_prop_placements.clear()
 	bound_prop_placements.clear()
 	bound_structure_placements.clear()
+	creep_lair_placements.clear()
 	bound_prop_type_ids.clear()
 	bound_structure_type_ids.clear()
 	logical_prop_type_ids.clear()

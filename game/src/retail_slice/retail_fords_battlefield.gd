@@ -1377,6 +1377,17 @@ func _build_bound_retail_structures(map_data: RetailMapData) -> bool:
 	return true
 
 
+func bound_structure_node_by_source_index(source_index: int) -> Node:
+	## Lookup for sim-backed creep lairs: the bound lifecycle visual staged for
+	## an authored placement, keyed by its cooked source index.
+	if retail_structure_container == null:
+		return null
+	for child in retail_structure_container.get_children():
+		if child.has_meta("source_index") and int(child.get_meta("source_index")) == source_index:
+			return child
+	return null
+
+
 func _record_unresolved_prop_diagnostics(map_data: RetailMapData) -> bool:
 	var vegetation: Array[Dictionary] = []
 	var rocks: Array[Dictionary] = []

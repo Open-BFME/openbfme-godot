@@ -1334,6 +1334,12 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		if bool(game_state.get("retail_build_plots_only")):
 			rules["build_plots_only"] = true
 	rules["source_map_transform_scale"] = source_map_data.local_transform_scale
+	# Neutral creep lairs are strictly opt-in (menu-independent env seam; a
+	# skirmish RULES toggle can ride this later). Only added when requested, so
+	# every existing runner's rules — and the pinned battle signature — stay
+	# byte-identical.
+	if OS.get_environment("OPENBFME_CREEP_LAIRS") == "1":
+		rules["enable_creep_lairs"] = true
 	var manifest_for_rules: Dictionary = faction_manifest.duplicate(true)
 	# Retail skirmish start: fortress + porter only — the base is built, not
 	# given. Gate runners set OPENBFME_STARTER_ARMY=1 to keep the legacy
@@ -2185,8 +2191,17 @@ func _retail_rule_number(value: Variant) -> float:
 func _spawn_all_presentations(expected_members: int) -> void:
 	_clear_presentations()
 	for id in simulation.entity_ids():
+		if int(simulation.entity(id).get("team", -1)) == SimScript.CREEP_TEAM:
+			# Creep guard presentation fails closed to a recorded provisional:
+			# guard art rides other packs (wild goblincavetroll; riderless
+			# IUWarg is unvalidated), so no battalion visual is invented here.
+			continue
 		_spawn_battalion(id, expected_members)
 	for id in simulation.structure_ids():
+		if int(simulation.structure(id).get("team", -1)) == SimScript.CREEP_TEAM:
+			# Lair visuals are the battlefield's already-bound lifecycle
+			# structures; _sync_creep_lair_visuals drives them from sim state.
+			continue
 		_spawn_structure(id)
 
 
@@ -2294,6 +2309,8 @@ func _on_structure_lifecycle_route_requested(request: Dictionary, structure: Ret
 func _all_battalion_retail_visuals_loaded() -> bool:
 	for id in simulation.entity_ids():
 		var entity: Dictionary = simulation.entity(id)
+		if int(entity.get("team", -1)) == SimScript.CREEP_TEAM:
+			continue  # recorded provisional: creep guards carry no battalion visual yet
 		var battalion: RetailBattalion = battalion_nodes.get(id)
 		var expected_members := maxi(1, int(entity.get("member_count", 15)))
 		if (
@@ -2308,6 +2325,8 @@ func _all_battalion_retail_visuals_loaded() -> bool:
 
 func _all_structure_retail_visuals_loaded() -> bool:
 	for id in simulation.structure_ids():
+		if int(simulation.structure(id).get("team", -1)) == SimScript.CREEP_TEAM:
+			continue  # lairs/holes ride the battlefield's bound lifecycle visuals
 		var structure: RetailStructure = structure_nodes.get(id)
 		if structure == null:
 			return false
@@ -2954,6 +2973,8 @@ func _sync_presentation() -> void:
 	if _profile_sync:
 		_profile_mark = Time.get_ticks_usec()
 	for id in simulation.entity_ids():
+		if int(simulation.entity(id).get("team", -1)) == SimScript.CREEP_TEAM:
+			continue  # recorded provisional: creep guards have no battalion visual yet
 		if not battalion_nodes.has(id):
 			_spawn_battalion(id, int(gameplay_rules.get("member_count", 15)))
 		var entity: Dictionary = simulation.entity(id)
@@ -3010,6 +3031,8 @@ func _sync_presentation() -> void:
 		presentation_profile["battalions_us"] = presentation_profile.get("battalions_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
 	for id in simulation.structure_ids():
+		if int(simulation.structure(id).get("team", -1)) == SimScript.CREEP_TEAM:
+			continue  # lairs/holes ride the battlefield's bound lifecycle visuals
 		if not structure_nodes.has(id):
 			_spawn_structure(id)
 		var structure: RetailStructure = structure_nodes[id]
@@ -3023,6 +3046,7 @@ func _sync_presentation() -> void:
 				true,
 				float(structure_upgrade_queue[0].get("progress", 0.0))
 			)
+	_sync_creep_lair_visuals()
 	if _profile_sync:
 		presentation_profile["structures_us"] = presentation_profile.get("structures_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
@@ -3044,6 +3068,49 @@ func _sync_presentation() -> void:
 			audio_system.acknowledge_event_history_compaction(simulation.events.size())
 	if _profile_sync:
 		presentation_profile["hud_us"] = presentation_profile.get("hud_us", 0) + (Time.get_ticks_usec() - _profile_mark)
+
+
+## Recorded provisional creep visuals: sim lairs whose bound lifecycle visual
+## is absent (unconverted lair families) or whose phase drive was rejected.
+var creep_visual_provisionals: Dictionary = {}
+
+
+func _sync_creep_lair_visuals() -> void:
+	## Binds sim creep lairs to the battlefield's already-shipped bound
+	## lifecycle structures (intact/damaged/really-damaged/collapse and the
+	## converted rebuild-hole art). Missing visuals fail closed into a recorded
+	## provisional — never a crash, never a silent disappearance.
+	if simulation == null or battlefield == null or not bool(simulation.creep_lairs_enabled):
+		return
+	for id in simulation.structure_ids():
+		var row: Dictionary = simulation.structure(id)
+		if int(row.get("team", -1)) != SimScript.CREEP_TEAM or String(row.get("structure_kind", "")) != "creep_lair":
+			continue
+		var source_index := int(row.get("source_index", -1))
+		var node = battlefield.bound_structure_node_by_source_index(source_index)
+		if node == null or not (node is RetailStructure):
+			if not creep_visual_provisionals.has(source_index):
+				creep_visual_provisionals[source_index] = "no-bound-lifecycle-visual:%s" % String(row.get("creep_type_name", ""))
+			continue
+		var structure := node as RetailStructure
+		var health := int(row.get("health", 0))
+		# sync_state drives the authored damage phases (intact/damaged/really-
+		# damaged/collapsing) from live health facts with the structure's own
+		# declared-phase guards; a contract rejection hides the visual and is
+		# recorded below rather than crashing or silently vanishing.
+		structure.sync_state({
+			"health": health,
+			"maximum_health": int(row.get("maximum_health", SimScript.CREEP_LAIR_MAX_HEALTH)),
+			"construction_progress": 1.0,
+			"level": 1,
+			"upgrade_queue": [],
+		})
+		if String(structure.contract_error) != "" and not creep_visual_provisionals.has(source_index):
+			creep_visual_provisionals[source_index] = "lifecycle-contract:%s" % String(structure.contract_error)
+		# Converted rebuild-hole art follows the sim hole entity exactly.
+		structure.set_authoritative_rebuild_hole_present(
+			health <= 0 and int(row.get("creep_hole_id", 0)) != 0
+		)
 
 
 func _entity_facing(entity: Dictionary) -> Vector2:
