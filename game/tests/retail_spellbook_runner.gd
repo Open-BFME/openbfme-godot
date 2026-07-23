@@ -1039,7 +1039,7 @@ func _check(name: String, condition: bool, detail: String = "") -> void:
 
 func _finish() -> void:
 	print("RETAIL_SPELLBOOK_RESULT passed=%d failed=%d" % [passed, failed])
-	quit()
+	quit(0 if failed == 0 else 1)
 
 
 func _men_spellbook_document(content_db) -> Dictionary:
