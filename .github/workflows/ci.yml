@@ -1,0 +1,89 @@
+# OpenBFME CI: engine determinism gates + Godot exports.
+#
+# Public-safe by design: no job touches retail content. The engine suite runs
+# on BOTH Windows and Linux — the pinned-hash test proves the fixed-point
+# kernel is bit-identical across platforms (the 8-player lockstep guarantee).
+# Pack-gated Godot runners (retail_slice_runner etc.) need the private content
+# root and belong on self-hosted NAS runners later: give those jobs
+#   runs-on: [self-hosted, openbfme-private]
+# and they will only ever run on the owner's hardware.
+
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  engine-tests:
+    name: engine determinism (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Run OpenBfme.Sim test suite
+        run: dotnet test engine/OpenBfme.Engine.sln --nologo
+
+  godot-exports:
+    name: godot export (windows + linux)
+    runs-on: ubuntu-latest
+    needs: engine-tests
+    env:
+      GODOT_VERSION: "4.7"
+      GODOT_RELEASE: "4.7-stable"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Godot + export templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_RELEASE }}
+      - name: Download Godot headless + export templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot
+          curl -fsSL -o ~/godot/godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_RELEASE}/Godot_v${GODOT_RELEASE}_linux.x86_64.zip"
+          unzip -q ~/godot/godot.zip -d ~/godot
+          curl -fsSL -o ~/godot/templates.tpz \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_RELEASE}/Godot_v${GODOT_RELEASE}_export_templates.tpz"
+          mkdir -p ~/.local/share/godot/export_templates
+          unzip -q ~/godot/templates.tpz -d ~/godot/templates-extract
+          mv ~/godot/templates-extract/templates \
+            ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+      - name: Import project (first headless run builds .godot cache)
+        run: ~/godot/Godot_v${GODOT_RELEASE}_linux.x86_64 --headless --path game --import || true
+      - name: Export Windows build
+        run: |
+          mkdir -p dist/windows
+          ~/godot/Godot_v${GODOT_RELEASE}_linux.x86_64 --headless --path game \
+            --export-release "windows" "$(pwd)/dist/windows/OpenBFME.exe"
+      - name: Export Linux build
+        run: |
+          mkdir -p dist/linux
+          ~/godot/Godot_v${GODOT_RELEASE}_linux.x86_64 --headless --path game \
+            --export-release "linux" "$(pwd)/dist/linux/OpenBFME.x86_64"
+      - name: Verify artifacts exist and are non-trivial
+        run: |
+          test -s dist/windows/OpenBFME.exe
+          test -s dist/linux/OpenBFME.x86_64
+          ls -la dist/windows dist/linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openbfme-windows
+          path: dist/windows/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openbfme-linux
+          path: dist/linux/
