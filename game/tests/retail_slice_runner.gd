@@ -1568,6 +1568,7 @@ func _run() -> void:
 	_check("escape_menu_pauses", not paused_before and bool(slice.simulation_paused) and bool(slice.pause_panel.visible))
 	slice.toggle_escape_menu()
 	_check("escape_menu_resumes", not bool(slice.simulation_paused) and not bool(slice.pause_panel.visible))
+	_run_hero_ability_batch2_probes(slice)
 	_check("route_queries_reuse_cached_navigation", int(slice.source_map_data.navigation_build_count) == 1 and int(slice.source_map_data.route_query_count) > 10, "builds=%d queries=%d" % [slice.source_map_data.navigation_build_count, slice.source_map_data.route_query_count])
 	print("RETAIL_NAV_METRICS walkable=%d water_blocked=%d ford_corridor=%d route_queries=%d" % [slice.source_map_data.navigation_walkable_count, slice.source_map_data.navigation_water_blocked_count, slice.source_map_data.navigation_ford_corridor_count, slice.source_map_data.route_query_count])
 
@@ -1581,6 +1582,163 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	_finish()
+
+
+func _run_hero_ability_batch2_probes(slice) -> void:
+	## Hero-ability batch 2, pack-driven proof on the freshly reset match: the
+	## compiled Men rows for the weapon toggle (Faramir bow<->sword), the mount
+	## (Theoden horse), and capture-building are castable and drive the live
+	## sim mechanics with the retail-authored magnitudes. Tiny host packs that
+	## predate the full-faction hero roster carry no Faramir document and skip.
+	var adapter = load("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+	var runtimes: Dictionary = slice.producible_unit_runtimes
+	if String(slice.faction_manifest.get("faction", "")) != "men" or not runtimes.has("GondorFaramir"):
+		return
+	var sim = slice.simulation
+	sim.ai_enabled = false
+	var anchor := Vector2(sim._spawn_positions[1])
+	var unit_rules: Dictionary = sim._rules.get("unit_rules", {}) as Dictionary
+	# --- Faramir weapon toggle (bow <-> sword) ---
+	var faramir_doc: Dictionary = runtimes.get("GondorFaramir", {}) as Dictionary
+	var faramir_toggle := _ability_row_by_id(adapter, faramir_doc, "Command_ToggleFaramirWeapon")
+	var faramir_effect: Dictionary = faramir_toggle.get("effect", {}) as Dictionary
+	_check(
+		"faramir_toggle_row_compiles_castable",
+		bool(faramir_toggle.get("castable", false))
+			and String(faramir_effect.get("kind", "")) == "weapon-toggle"
+			and String(faramir_effect.get("toggleMode", "")) == "weaponset_toggle_1",
+		str(faramir_toggle)
+	)
+	var faramir_member := String(adapter.runtime_member_id(faramir_doc))
+	var faramir_rule: Dictionary = unit_rules.get(faramir_member, {}) as Dictionary
+	var faramir_modes: Dictionary = faramir_rule.get("weapon_modes", {}) as Dictionary
+	var faramir_sword: Dictionary = faramir_modes.get("weaponset_toggle_1", {}) as Dictionary
+	_check(
+		"faramir_rule_carries_both_mode_profiles",
+		faramir_modes.has("default")
+			and int(faramir_sword.get("member_damage", 0)) == 200
+			and is_equal_approx(float(faramir_sword.get("attack_range_source", 0.0)), 11.5),
+		str(faramir_modes.keys()) + str(faramir_sword)
+	)
+	sim._add_battalion(9001, 0, anchor + Vector2(2.0, 0.0), "Faramir", faramir_member, String(adapter.runtime_unit_id(faramir_doc)))
+	var faramir: Dictionary = sim.entities.get(9001, {})
+	var faramir_bow_range := float(faramir.get("attack_range", 0.0))
+	var faramir_bow_damage := int(faramir.get("member_damage", 0))
+	var toggle_cast: Dictionary = sim.cast_ability(9001, "Command_ToggleFaramirWeapon", Vector2.ZERO)
+	_check(
+		"faramir_toggle_cast_swaps_to_sword",
+		bool(toggle_cast.get("ok", false))
+			and String(faramir.get("weapon_toggle_mode", "")) == "weaponset_toggle_1"
+			and int(faramir.get("member_damage", 0)) == 200
+			and is_equal_approx(float(faramir.get("attack_range", 0.0)), float(faramir_sword.get("attack_range", -1.0))),
+		str(toggle_cast) + " damage=%d" % int(faramir.get("member_damage", 0))
+	)
+	var toggle_release: Dictionary = sim.cast_ability(9001, "Command_ToggleFaramirWeapon", Vector2.ZERO)
+	_check(
+		"faramir_toggle_recast_restores_bow",
+		bool(toggle_release.get("ok", false))
+			and String(faramir.get("weapon_toggle_mode", "")) == ""
+			and int(faramir.get("member_damage", 0)) == faramir_bow_damage
+			and is_equal_approx(float(faramir.get("attack_range", 0.0)), faramir_bow_range),
+		str(toggle_release)
+	)
+	# --- Theoden mount/dismount (retail 50 on foot, 90 mounted) ---
+	if runtimes.has("RohanTheoden"):
+		var theoden_doc: Dictionary = runtimes.get("RohanTheoden", {}) as Dictionary
+		var mount_row := _ability_row_by_id(adapter, theoden_doc, "Command_TheodenToggleMounted")
+		var mount_effect: Dictionary = mount_row.get("effect", {}) as Dictionary
+		_check(
+			"theoden_mount_row_compiles_castable",
+			bool(mount_row.get("castable", false))
+				and String(mount_effect.get("kind", "")) == "mount-toggle"
+				and is_equal_approx(float(mount_effect.get("mountedSpeed", 0.0)), 90.0)
+				and String(mount_effect.get("mountedWeaponModeKey", "")) == "mounted",
+			str(mount_row)
+		)
+		var theoden_member := String(adapter.runtime_member_id(theoden_doc))
+		var theoden_rule: Dictionary = unit_rules.get(theoden_member, {}) as Dictionary
+		_check(
+			"theoden_rule_carries_mounted_profile",
+			(theoden_rule.get("weapon_modes", {}) as Dictionary).has("mounted"),
+			str((theoden_rule.get("weapon_modes", {}) as Dictionary).keys())
+		)
+		sim._add_battalion(9002, 0, anchor + Vector2(4.0, 0.0), "Theoden", theoden_member, String(adapter.runtime_unit_id(theoden_doc)))
+		var theoden: Dictionary = sim.entities.get(9002, {})
+		var foot_speed_source := float(theoden.get("speed_source", 0.0))
+		var mount_cast: Dictionary = sim.cast_ability(9002, "Command_TheodenToggleMounted", Vector2.ZERO)
+		_check(
+			"theoden_mount_cast_swaps_speed_and_weapon",
+			bool(mount_cast.get("ok", false))
+				and bool(theoden.get("mounted", false))
+				and is_equal_approx(float(theoden.get("speed_source", 0.0)), 90.0)
+				and String(theoden.get("weapon_toggle_mode", "")) == "mounted",
+			str(mount_cast) + " speed_source=%f" % float(theoden.get("speed_source", 0.0))
+		)
+		sim.advance(int(mount_row.get("cooldown_ticks", 0)) + 1)
+		var dismount_cast: Dictionary = sim.cast_ability(9002, "Command_TheodenToggleMounted", Vector2.ZERO)
+		_check(
+			"theoden_dismount_restores_foot_profile",
+			bool(dismount_cast.get("ok", false))
+				and not bool(theoden.get("mounted", true))
+				and is_equal_approx(float(theoden.get("speed_source", 0.0)), foot_speed_source)
+				and String(theoden.get("weapon_toggle_mode", "")) == "",
+			str(dismount_cast) + " speed_source=%f" % float(theoden.get("speed_source", 0.0))
+		)
+	# --- Capture building (tier-1: neutral capturable, synthetic structure) ---
+	var capture_row := _ability_row_by_id(adapter, faramir_doc, "Command_CaptureBuilding")
+	var capture_effect: Dictionary = capture_row.get("effect", {}) as Dictionary
+	_check(
+		"capture_row_compiles_castable",
+		bool(capture_row.get("castable", false))
+			and String(capture_effect.get("kind", "")) == "capture-building"
+			and is_equal_approx(float(capture_effect.get("startAbilityRange", 0.0)), 15.0)
+			and is_equal_approx(float(capture_effect.get("preparationMs", 0.0)), 15000.0),
+		str(capture_row)
+	)
+	var flag_position := anchor + Vector2(2.2, 0.0)
+	sim.structures[9500] = {
+		"id": 9500,
+		"team": SimScript.NEUTRAL_TEAM,
+		"kind": "structure",
+		"structure_kind": "signal_fire",
+		"name": "Signal Fire",
+		"position": flag_position,
+		"rally": flag_position,
+		"health": 1000,
+		"maximum_health": 1000,
+		"construction_progress": 1.0,
+		"level": 1,
+		"completed_upgrades": [],
+		"upgrade_queue": [],
+		"production": [],
+		"queue": [],
+		"damage_remainders": {},
+		"income_per_payout": 0,
+		"capturable": true,
+	}
+	var capture_cast: Dictionary = sim.cast_ability(9001, "Command_CaptureBuilding", flag_position)
+	var channel_ms := float(capture_effect.get("unpackMs", 0.0)) + float(capture_effect.get("preparationMs", 0.0)) + float(capture_effect.get("packMs", 0.0))
+	var channel_ticks := maxi(1, roundi(channel_ms / (SimScript.TICK_SECONDS * 1000.0)))
+	_check(
+		"capture_cast_channels_on_neutral_flag",
+		bool(capture_cast.get("ok", false)) and int(capture_cast.get("structure_id", 0)) == 9500 and channel_ticks > 0,
+		str(capture_cast)
+	)
+	sim.advance(channel_ticks + 1)
+	_check(
+		"capture_completion_transfers_ownership",
+		int((sim.structures.get(9500, {}) as Dictionary).get("team", -1)) == 0
+			and _event_kind_present(sim.events, "structure.captured"),
+		str(sim.structures.get(9500, {}))
+	)
+	# The probe entities never outlive the test: the slice is torn down next.
+
+
+func _ability_row_by_id(adapter, document: Dictionary, ability_id: String) -> Dictionary:
+	for row_value in adapter.ability_rules(document):
+		if String((row_value as Dictionary).get("ability_id", "")) == ability_id:
+			return row_value as Dictionary
+	return {}
 
 
 func _advance_until(slice, predicate: Callable, maximum_ticks: int) -> bool:

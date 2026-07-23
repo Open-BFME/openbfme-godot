@@ -29,7 +29,7 @@ SIDE_APT_SHA256 = "84d58c67c5cab9a3bf690125cbf1a0cbf3f4bc58ccc29ffa33b992a924eca
 # Re-pinned 2026-07-23 after the reviewed knockback/flyer, hero-ability
 # batch-1, MP-menu-seam, and construct-icon HUD changes; every anchored
 # behavioral marker below still validates against the new sources.
-SIM_SHA256 = "d80c06155812a82c545348a198b76d5e9fbea94b7c0435578f2002977255fddc"
+SIM_SHA256 = "9d6d84b6c29e63cd58f4c58e4bcf78ae207943cb6bb7416e5a178aa582fe60f3"
 SLICE_SHA256 = "b18fc1c05bbc01ee8e0ab55883a96564c7ae6c11c914e9682ccfa8cf01f359df"
 
 RETAIL_INI_SOURCES: dict[str, str] = {

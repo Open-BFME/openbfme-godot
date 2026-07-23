@@ -22,6 +22,7 @@ from .sage_cst import (
     SageBlock,
     SageCstError,
     SageObject,
+    parse_sage_body_fragment,
     parse_sage_document,
 )
 from .sage_ini import IniBlock, parse_flat_named_blocks
@@ -1063,6 +1064,21 @@ def _simulation_contract(
         resolved["combat"] = combat
     else:
         missing.append("combat.weapon")
+    # Alternate weapon-mode profiles (WEAPONSET_TOGGLE_* / MOUNTED): the
+    # runtime unit rule carries every fully-resolved conditioned WeaponSet so
+    # toggles and mounts swap live combat stats; unresolvable sets are
+    # recorded gaps, never partial swaps.
+    weapon_modes, weapon_mode_gaps = _conditional_weapon_modes(
+        member_lineage,
+        documents,
+        constants,
+        named_definition_cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if weapon_modes:
+        resolved["weaponModes"] = weapon_modes
+    if weapon_mode_gaps:
+        resolved["weaponModeGaps"] = weapon_mode_gaps
     combat_value = resolved.get("combat", {})
     if isinstance(combat_value, Mapping):
         for field in ("attackRange", "delayBetweenShotsMs", "preAttackDelayMs", "firingDurationMs", "damage"):
@@ -2006,7 +2022,6 @@ _ABILITY_SUPPORT_MODULE_KINDS = frozenset(
 # Module kinds whose runtime systems do not exist yet; the ability is recorded
 # as unimplemented instead of faking the behavior.
 _ABILITY_UNIMPLEMENTED_MODULE_KINDS = {
-    "togglemountedspecialabilityupdate": "mount/dismount toggle needs the mount system",
     "specialdisguiseupdate": "disguise needs the disguise system",
     "weaponmodespecialpowerupdate": "weapon-mode toggle needs the weapon-set system",
     "arrowstormupdate": "arrow-storm barrage needs the volley targeting system",
@@ -2987,6 +3002,194 @@ def _ability_weapon_leaf(
     return leaf
 
 
+def _weapon_mode_profile(
+    documents: Mapping[str, bytes],
+    weapon_id: str,
+    constants: Mapping[str, int | float],
+    label: str,
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> dict[str, object]:
+    """Resolve one conditioned Weapon into a full runtime combat profile.
+
+    The runtime weapon-mode table needs the same fields the default combat
+    contract carries (range, cadence, damage, clip behavior) so a toggled or
+    mounted mode can swap the battalion's live combat stats faithfully.
+    Raises PlayableUnitCompilerError when the authored weapon cannot resolve
+    into a complete profile — a mode is either fully swappable or a recorded
+    gap, never a partial stat swap.
+    """
+
+    definition = _named_definition_values(
+        documents,
+        "Weapon",
+        weapon_id,
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if definition is None:
+        raise PlayableUnitCompilerError(
+            f"{label} references a missing or ambiguous Weapon: {weapon_id}"
+        )
+    profile: dict[str, object] = {"weaponId": weapon_id}
+    for output_name, source_name in (
+        ("attackRange", "AttackRange"),
+        ("minimumAttackRange", "MinimumAttackRange"),
+        ("delayBetweenShotsMs", "DelayBetweenShots"),
+        ("preAttackDelayMs", "PreAttackDelay"),
+        ("firingDurationMs", "FiringDuration"),
+        ("damage", "Damage"),
+        ("clipSize", "ClipSize"),
+        ("clipReloadTimeMs", "ClipReloadTime"),
+        ("continuousFireOne", "ContinuousFireOne"),
+        ("continuousFireCoastMs", "ContinuousFireCoast"),
+    ):
+        field = _resolved_definition_field(definition, source_name, constants)
+        if field is None:
+            # Hero weapons author macro products (FARAMIR_DAMAGE * 0.4).
+            field = _resolved_definition_field(
+                definition,
+                source_name,
+                constants,
+                resolve=_resolved_multiplicative_expression,
+            )
+        if field is not None:
+            profile[output_name] = field
+    if "damage" not in profile:
+        nugget_damage = _base_weapon_damage(
+            documents,
+            weapon_id,
+            constants,
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if nugget_damage is None:
+            raise PlayableUnitCompilerError(
+                f"{label} weapon {weapon_id} has no resolvable Damage"
+            )
+        profile["damage"] = nugget_damage
+    if "attackRange" not in profile:
+        raise PlayableUnitCompilerError(
+            f"{label} weapon {weapon_id} has no resolvable AttackRange"
+        )
+    for output_name, source_name in (
+        ("delayBetweenShotsMs", "DelayBetweenShots"),
+        ("preAttackDelayMs", "PreAttackDelay"),
+        ("firingDurationMs", "FiringDuration"),
+    ):
+        if output_name in profile:
+            continue
+        if definition.get(source_name.casefold()):
+            raise PlayableUnitCompilerError(
+                f"{label} weapon {weapon_id} has an unresolvable {source_name}"
+            )
+        # SAGE defaults unauthored cadence fields to 0 ms; record explicitly.
+        profile[output_name] = {
+            "value": 0,
+            "semantic": (
+                f"{source_name} is not authored; the SAGE engine default is 0 ms"
+            ),
+        }
+    damage_types = {
+        str(row.get("expression", "")).casefold(): str(row.get("expression", ""))
+        for row in definition.get("damagetype", ())
+        if str(row.get("expression", ""))
+    }
+    if len(damage_types) == 1:
+        profile["damageType"] = next(iter(damage_types.values()))
+    profile["sourceIni"] = WEAPON_PATH
+    return profile
+
+
+def _conditioned_weapon_set_target(block: SageBlock, label: str) -> str:
+    """The single authored weapon of one conditioned WeaponSet block."""
+
+    weapon_ids = {
+        tokens[-1].casefold(): tokens[-1]
+        for assignment in block.assignments
+        if assignment.key.casefold() == "weapon"
+        for tokens in [_tokens(assignment.value)]
+        if tokens
+    }
+    if len(weapon_ids) != 1:
+        raise PlayableUnitCompilerError(
+            f"{label} conditioned WeaponSet names an ambiguous weapon set"
+        )
+    return next(iter(weapon_ids.values()))
+
+
+def _conditional_weapon_modes(
+    member_lineage: Sequence[SageObject],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> tuple[dict[str, object], list[dict[str, str]]]:
+    """Compile every single-condition alternate WeaponSet into a mode profile.
+
+    Retail alternate stances author WeaponSet blocks conditioned on exactly one
+    positive flag (WEAPONSET_TOGGLE_1 for weapon toggles, MOUNTED for mounted
+    heroes).  Each such set compiles into a keyed runtime weapon-mode profile;
+    an unresolvable or ambiguous set is a recorded gap, never a partial swap.
+    """
+
+    modes: dict[str, object] = {}
+    gaps: list[dict[str, str]] = []
+    dropped: set[str] = set()
+    for block in _effective_top_blocks(member_lineage):
+        if (block.header_key or block.kind).casefold() != "weaponset":
+            continue
+        positives = sorted(
+            {
+                token.casefold()
+                for assignment in block.assignments
+                if assignment.key.casefold() in {"condition", "conditions"}
+                for token in _tokens(assignment.value)
+                if not token.startswith("-")
+                and token.casefold() not in {"none", "set_normal"}
+            }
+        )
+        if not positives:
+            continue  # the base stance rides the combat contract
+        if len(positives) != 1:
+            gaps.append(
+                {
+                    "mode": " ".join(positives),
+                    "reason": "WeaponSet authors multiple positive conditions",
+                }
+            )
+            continue
+        mode_key = positives[0]
+        label = f"weapon mode {mode_key}"
+        if mode_key in modes or mode_key in dropped:
+            if mode_key in modes:
+                del modes[mode_key]
+            if mode_key not in dropped:
+                dropped.add(mode_key)
+                gaps.append(
+                    {
+                        "mode": mode_key,
+                        "reason": "multiple WeaponSet blocks author this condition",
+                    }
+                )
+            continue
+        try:
+            weapon_id = _conditioned_weapon_set_target(block, label)
+            modes[mode_key] = _weapon_mode_profile(
+                documents,
+                weapon_id,
+                constants,
+                label,
+                named_definition_cache=named_definition_cache,
+                cache_lock=cache_lock,
+            )
+        except PlayableUnitCompilerError as error:
+            gaps.append({"mode": mode_key, "reason": str(error)})
+    return modes, gaps
+
+
 def _leadership_aura_effect(
     label: str,
     behavior_modules: Sequence[SageBlock],
@@ -3110,14 +3313,17 @@ def _weapon_toggle_row(
     """Convert one TOGGLE_WEAPONSET command into an explicit ability row.
 
     The authored toggle (FlagsUsedForToggle + the WeaponSet conditioned on
-    that flag) compiles into evidence, but the runtime unit rule does not
-    yet carry per-mode weapon profiles for converted pack units, so the row
-    stays a recorded gap instead of a castable toggle that could never
-    engage — fail-closed, never faked.
+    that flag) compiles into a castable weapon-toggle effect when the toggled
+    weapon resolves into a complete runtime profile — the same profile the
+    simulation contract publishes under ``weaponModes`` for the runtime unit
+    rule to swap live combat stats.  An unresolvable toggle stays a recorded
+    gap instead of a castable toggle that could never engage — fail-closed,
+    never faked.
     """
 
     label = f"ability {button.name}"
     limitations: list[str] = []
+    toggle_profile: dict[str, object] | None = None
     row: dict[str, object] = {
         "id": button.name,
         "slot": slot,
@@ -3129,8 +3335,8 @@ def _weapon_toggle_row(
         "sourceIni": COMMAND_BUTTON_PATH,
     }
     reason = (
-        "weapon-set toggle mode profiles are not wired into the runtime "
-        "unit rule (runtime weapon-mode wiring is a follow-up)"
+        "the authored toggle contract did not resolve into a complete "
+        "runtime weapon-mode profile"
     )
     evidence: dict[str, object] = {}
     flags = _module_tokens(button, "FlagsUsedForToggle")
@@ -3189,8 +3395,37 @@ def _weapon_toggle_row(
                     )
                 except PlayableUnitCompilerError as error:
                     limitations.append(str(error))
+                try:
+                    toggle_profile = _weapon_mode_profile(
+                        documents,
+                        toggled_weapon,
+                        constants,
+                        label,
+                        named_definition_cache=named_definition_cache,
+                        cache_lock=cache_lock,
+                    )
+                except PlayableUnitCompilerError as error:
+                    reason = str(error)
     if evidence:
         row["weaponToggle"] = evidence
+    if toggle_profile is not None:
+        # Castable toggle: the runtime pins combat to the compiled weapon-mode
+        # profile keyed by the authored flag (published via the simulation
+        # contract's weaponModes) until the player toggles back.  Retail
+        # weapon toggles author no SpecialPower, so no reload gates the flip.
+        row["effect"] = {
+            "kind": "weapon-toggle",
+            "toggleMode": str(evidence["toggleMode"]),
+            "toggledWeaponId": str(evidence["toggledWeaponId"]),
+            "sourceIni": COMMAND_BUTTON_PATH,
+        }
+        row["cooldownMs"] = 0
+        row["implementation"] = {
+            "status": "implemented",
+            "reason": "",
+            "limitations": limitations,
+        }
+        return row
     row["effect"] = {"kind": "none"}
     row["implementation"] = {
         "status": "unimplemented",
@@ -3242,6 +3477,34 @@ def _hero_abilities(
             for block in _effective_top_blocks(lineage)
             if (block.header_key or "").casefold() == "behavior"
         )
+    # Object-body #include directives (retail's shared CaptureBuilding.inc)
+    # author Behavior modules the plain object parse leaves as unexpanded
+    # refs.  Expand each authored include one level deep against the supplied
+    # document view so those modules bind like any other authored Behavior;
+    # a missing or unparsable include contributes nothing (fail-closed: the
+    # dependent ability then stays a recorded gap).
+    included_paths: set[str] = set()
+    for lineage in lineages:
+        for item in lineage:
+            for ref in item.includes:
+                include_path = str(ref.relative_virtual_path)
+                folded = include_path.casefold()
+                if folded in included_paths:
+                    continue
+                included_paths.add(folded)
+                payload = _optional_document(documents, include_path)
+                if payload is None:
+                    continue
+                try:
+                    fragment = parse_sage_body_fragment(payload, include_path)
+                except SageCstError:
+                    continue
+                behavior_modules.extend(
+                    block
+                    for block in fragment.items
+                    if isinstance(block, SageBlock)
+                    and (block.header_key or "").casefold() == "behavior"
+                )
     hero_names = frozenset(
         item.name.casefold() for lineage in lineages for item in lineage
     )
@@ -3319,6 +3582,7 @@ def _hero_abilities(
             documents,
             constants,
             filter_defines,
+            member_lineage,
             named_definition_cache=named_definition_cache,
             cache_lock=cache_lock,
         )
@@ -3344,6 +3608,7 @@ def _hero_ability_row(
     documents: Mapping[str, bytes],
     constants: Mapping[str, int | float],
     filter_defines: Mapping[str, tuple[str, ...]],
+    member_lineage: Sequence[SageObject],
     *,
     named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
     cache_lock: threading.Lock | None,
@@ -3519,6 +3784,7 @@ def _hero_ability_row(
                         "oclspecialpower",
                         "heromodespecialabilityupdate",
                         "playerhealspecialpower",
+                        "togglemountedspecialabilityupdate",
                     }
                 },
                 key=str.casefold,
@@ -3555,6 +3821,8 @@ def _hero_ability_row(
                 constants,
                 filter_defines,
                 limitations,
+                power_enum=str(row.get("enum", "")),
+                member_lineage=member_lineage,
                 named_definition_cache=named_definition_cache,
                 cache_lock=cache_lock,
             )
@@ -3615,6 +3883,8 @@ def _hero_ability_effect(
     filter_defines: Mapping[str, tuple[str, ...]],
     limitations: list[str],
     *,
+    power_enum: str = "",
+    member_lineage: Sequence[SageObject] = (),
     named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
     cache_lock: threading.Lock | None,
 ) -> dict[str, object]:
@@ -3627,6 +3897,175 @@ def _hero_ability_effect(
     ocl_modules = modules_of("oclspecialpower")
     weapon_modules = modules_of("weaponfirespecialabilityupdate")
     hero_mode_modules = modules_of("heromodespecialabilityupdate")
+    mount_modules = modules_of("togglemountedspecialabilityupdate")
+
+    if power_enum.casefold() == "special_infantry_capture_building":
+        # Capture building (the ubiquitous CaptureBuilding.inc): the bound
+        # SpecialAbilityUpdate authors the channel envelope (StartAbilityRange
+        # gate, UnpackTime + PreparationTime + PackTime channel).  The runtime
+        # channels for the authored duration on a capturable structure, then
+        # transfers ownership.
+        capture_modules = [
+            block
+            for block in modules_of("specialabilityupdate")
+            if block.values("StartAbilityRange")
+        ]
+        if len(capture_modules) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} needs exactly one capture SpecialAbilityUpdate with "
+                f"a StartAbilityRange; found {len(capture_modules)}"
+            )
+        block = capture_modules[0]
+        start_range = _resolved_expression(
+            (block.values("StartAbilityRange") or ("",))[-1], constants
+        )
+        if start_range is None or float(start_range) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} capture module has no resolvable StartAbilityRange"
+            )
+        effect: dict[str, object] = {
+            "kind": "capture-building",
+            "startAbilityRange": start_range,
+            "sourceIni": block.source_virtual_path,
+            "line": block.line,
+        }
+        for output_name, source_name in (
+            ("unpackMs", "UnpackTime"),
+            ("preparationMs", "PreparationTime"),
+            ("packMs", "PackTime"),
+        ):
+            resolved = _resolved_expression(
+                (block.values(source_name) or ("",))[-1], constants
+            )
+            effect[output_name] = resolved if resolved is not None else 0
+        if (_first(block.values("DoCaptureFX")) or "").casefold() == "yes":
+            effect["doCaptureFx"] = True
+        limitations.append(
+            "capture is tier-1: only neutral/unowned structures flagged "
+            "capturable by the runtime transfer ownership"
+        )
+        return effect
+
+    if mount_modules:
+        # Mount/dismount (SpecialAbilityToggleMounted): the mounted state
+        # lives on the same object as authored condition sets — LocomotorSet
+        # Condition=SET_MOUNTED carries the mounted speed, an optional
+        # WeaponSet Conditions=MOUNTED carries the mounted weapon (published
+        # as the "mounted" runtime weapon mode by the simulation contract).
+        if len(mount_modules) > 1:
+            raise PlayableUnitCompilerError(
+                f"{label} matches multiple ToggleMountedSpecialAbilityUpdate modules"
+            )
+        block = mount_modules[0]
+        mounted_locomotors = [
+            candidate
+            for candidate in _effective_top_blocks(member_lineage)
+            if (candidate.header_key or candidate.kind).casefold() == "locomotorset"
+            and any(
+                token.casefold() == "set_mounted"
+                for assignment in candidate.assignments
+                if assignment.key.casefold() in {"condition", "conditions"}
+                for token in _tokens(assignment.value)
+            )
+        ]
+        if len(mounted_locomotors) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} needs exactly one SET_MOUNTED LocomotorSet; "
+                f"found {len(mounted_locomotors)}"
+            )
+        locomotor_block = mounted_locomotors[0]
+        speed_rows = [
+            assignment
+            for assignment in locomotor_block.assignments
+            if assignment.key.casefold() == "speed"
+        ]
+        mounted_speed = (
+            _resolved_expression(speed_rows[-1].value, constants)
+            if speed_rows
+            else None
+        )
+        if mounted_speed is None or float(mounted_speed) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} SET_MOUNTED LocomotorSet has no resolvable Speed"
+            )
+        effect = {
+            "kind": "mount-toggle",
+            "mountedSpeed": mounted_speed,
+            "sourceIni": block.source_virtual_path,
+            "line": block.line,
+        }
+        locomotor_ids = [
+            _tokens(assignment.value)[-1]
+            for assignment in locomotor_block.assignments
+            if assignment.key.casefold() == "locomotor" and _tokens(assignment.value)
+        ]
+        if len({token.casefold() for token in locomotor_ids}) == 1:
+            effect["mountedLocomotorId"] = locomotor_ids[0]
+        for output_name, source_name in (
+            ("unpackMs", "UnpackTime"),
+            ("packMs", "PackTime"),
+        ):
+            resolved = _resolved_expression(
+                (block.values(source_name) or ("",))[-1], constants
+            )
+            effect[output_name] = resolved if resolved is not None else 0
+        mounted_weapon_sets = [
+            candidate
+            for candidate in _effective_top_blocks(member_lineage)
+            if (candidate.header_key or candidate.kind).casefold() == "weaponset"
+            and {
+                token.casefold()
+                for assignment in candidate.assignments
+                if assignment.key.casefold() in {"condition", "conditions"}
+                for token in _tokens(assignment.value)
+                if not token.startswith("-")
+                and token.casefold() not in {"none", "set_normal"}
+            }
+            == {"mounted"}
+        ]
+        if len(mounted_weapon_sets) > 1:
+            raise PlayableUnitCompilerError(
+                f"{label} matches multiple MOUNTED WeaponSet blocks"
+            )
+        if mounted_weapon_sets:
+            mounted_weapon = _conditioned_weapon_set_target(
+                mounted_weapon_sets[0], label
+            )
+            # The profile must resolve or the mount fails closed: a mounted
+            # state that silently kept foot combat stats despite an authored
+            # mounted weapon would be a partial swap.
+            _weapon_mode_profile(
+                documents,
+                mounted_weapon,
+                constants,
+                label,
+                named_definition_cache=named_definition_cache,
+                cache_lock=cache_lock,
+            )
+            effect["mountedWeaponModeKey"] = "mounted"
+            effect["mountedWeaponId"] = mounted_weapon
+        else:
+            limitations.append(
+                "no authored MOUNTED WeaponSet; the mounted state keeps the "
+                "foot weapon"
+            )
+        mounted_armor_sets = [
+            candidate
+            for candidate in _effective_top_blocks(member_lineage)
+            if (candidate.header_key or candidate.kind).casefold() == "armorset"
+            and any(
+                token.casefold() == "mounted"
+                for assignment in candidate.assignments
+                if assignment.key.casefold() in {"condition", "conditions"}
+                for token in _tokens(assignment.value)
+            )
+        ]
+        if mounted_armor_sets:
+            limitations.append(
+                "authored MOUNTED ArmorSet is not applied (armor swap is a "
+                "follow-up)"
+            )
+        return effect
 
     if heal_modules:
         block = heal_modules[0]
@@ -5260,6 +5699,8 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             "leadership-aura",
             "weapon-toggle",
             "terror",
+            "mount-toggle",
+            "capture-building",
         }:
             raise PlayableUnitCompilerError("playable-unit ability effect is invalid")
         implementation = row.get("implementation")

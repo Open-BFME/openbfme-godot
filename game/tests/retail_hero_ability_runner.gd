@@ -141,6 +141,20 @@ func _hero_rule() -> Dictionary:
 			"firing_duration_ticks": 2,
 			"member_damage": 18,
 		},
+		"mounted": {
+			"name": "sword-mounted",
+			"attack_range": 2.5,
+			"attack_range_source": 25.0,
+			"minimum_attack_range": 0.0,
+			"minimum_attack_range_source": 0.0,
+			"delay_between_shots_ms": 1400.0,
+			"pre_attack_delay_ms": 500.0,
+			"firing_duration_ms": 500.0,
+			"attack_period_ticks": 14,
+			"pre_attack_ticks": 5,
+			"firing_duration_ticks": 5,
+			"member_damage": 60,
+		},
 	}
 	return rule
 
@@ -213,6 +227,43 @@ func _hero_ability_rules(bonus_name: String) -> Array[Dictionary]:
 			},
 		},
 		{
+			"ability_id": "Command_TestMount",
+			"slot": 5,
+			"special_power_id": "SpecialAbilityToggleMounted",
+			"targeting": "self",
+			"cooldown_ticks": 10,
+			"required_level": 1,
+			"level_gate_resolved": true,
+			"castable": true,
+			"availability_reason": "",
+			"effect": {
+				"kind": "mount-toggle",
+				"mountedSpeed": 3.0,
+				"mountedWeaponModeKey": "mounted",
+				"mountedWeaponId": "TestSwordMounted",
+				"unpackMs": 2000.0,
+				"packMs": 2000.0,
+			},
+		},
+		{
+			"ability_id": "Command_TestCapture",
+			"slot": 6,
+			"special_power_id": "SpecialAbilityCaptureBuilding",
+			"targeting": "enemy-object",
+			"cooldown_ticks": 0,
+			"required_level": 1,
+			"level_gate_resolved": true,
+			"castable": true,
+			"availability_reason": "",
+			"effect": {
+				"kind": "capture-building",
+				"startAbilityRange": 15.0,
+				"unpackMs": 1.0,
+				"preparationMs": 5000.0,
+				"packMs": 1.0,
+			},
+		},
+		{
 			"ability_id": "Command_TestWarCry",
 			"slot": 4,
 			"special_power_id": "SpecialAbilityWarCry",
@@ -258,6 +309,8 @@ func _kill(row: Dictionary) -> void:
 func _run() -> void:
 	_run_aura_checks()
 	_run_toggle_checks()
+	_run_mount_checks()
+	_run_capture_checks()
 	_run_terror_checks()
 	_run_timed_buff_checks()
 	_run_determinism_checks()
@@ -343,6 +396,162 @@ func _run_toggle_checks() -> void:
 	_check("unknown_toggle_mode_fails_closed", not bool(bad.get("ok", false)) and String(bad.get("reason", "")).begins_with("toggle-mode-unavailable"))
 
 
+func _add_neutral_capturable(sim, id: int, at: Vector2, capturable: bool = true, team: int = SimScript.NEUTRAL_TEAM) -> Dictionary:
+	sim.structures[id] = {
+		"id": id,
+		"team": team,
+		"kind": "structure",
+		"structure_kind": "signal_fire",
+		"name": "Signal Fire",
+		"position": at,
+		"rally": at,
+		"health": 1000,
+		"maximum_health": 1000,
+		"construction_progress": 1.0,
+		"level": 1,
+		"completed_upgrades": [],
+		"upgrade_queue": [],
+		"production": [],
+		"queue": [],
+		"damage_remainders": {},
+		"income_per_payout": 0,
+		"capturable": capturable,
+	}
+	return sim.structures[id]
+
+
+func _run_mount_checks() -> void:
+	var sim = _make_sim()
+	for entity_id in sim.entity_ids():
+		sim.entities.erase(entity_id)
+	var hero: Dictionary = _spawn(sim, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	var foot_speed := float(hero.get("speed", 0.0))
+	var foot_speed_source := float(hero.get("speed_source", 0.0))
+	# Wound the hero first: the swap must never touch the live health fraction.
+	hero["member_health"] = [400]
+	hero["health"] = 400
+	var mount: Dictionary = sim.cast_ability(5, "Command_TestMount", Vector2.ZERO)
+	_check("mount_cast_swaps_to_mounted_state", bool(mount.get("ok", false)) and bool(mount.get("mounted", false)) and bool(hero.get("mounted", false)))
+	_check("mount_swaps_locomotor_speed", is_equal_approx(float(hero.get("speed", 0.0)), 3.0) and is_equal_approx(float(hero.get("speed_source", 0.0)), 3.0))
+	_check("mount_pins_mounted_weapon_profile", String(hero.get("weapon_toggle_mode", "")) == "mounted" and is_equal_approx(float(hero.get("attack_range", 0.0)), 2.5) and int(hero.get("member_damage", 0)) == 60)
+	_check("mount_preserves_absolute_health_same_body", int(hero.get("health", 0)) == 400 and int(hero.get("member_maximum_health", 0)) == 800)
+	_check("mount_honors_cooldown", String(sim.cast_ability(5, "Command_TestMount", Vector2.ZERO).get("reason", "")) == "cooldown-active")
+	sim.advance(10)
+	_check("mount_state_survives_ticks", bool(hero.get("mounted", false)) and sim._weapon_mode_for_distance(hero, 0.5) == "mounted")
+	# Snapshot round-trip preserves the mounted state and swapped stats.
+	var bytes: PackedByteArray = sim.snapshot()
+	var restored = _make_sim()
+	var restore_ok: bool = restored.restore(bytes)
+	var restored_hero: Dictionary = restored.entities.get(5, {})
+	_check("mount_round_trips_snapshot", restore_ok and bool(restored_hero.get("mounted", false)) and is_equal_approx(float(restored_hero.get("speed", 0.0)), 3.0) and restored.state_hash() == sim.state_hash())
+	# Dismount restores the recorded foot profile exactly.
+	var dismount: Dictionary = sim.cast_ability(5, "Command_TestMount", Vector2.ZERO)
+	_check("dismount_restores_foot_profile", bool(dismount.get("ok", false)) and not bool(dismount.get("mounted", true)) and not bool(hero.get("mounted", false)) and is_equal_approx(float(hero.get("speed", 0.0)), foot_speed) and is_equal_approx(float(hero.get("speed_source", 0.0)), foot_speed_source))
+	_check("dismount_releases_weapon_pin", String(hero.get("weapon_toggle_mode", "")) == "" and is_equal_approx(float(hero.get("attack_range", 0.0)), 1.15) and int(hero.get("member_damage", 0)) == 40)
+	# ChildObject-style max-health swap preserves the live health FRACTION
+	# (synthetic magnitudes: no Men mount authors a body swap, the mechanism
+	# is exercised here so a future compiled rule rides it unchanged).
+	var rules: Array[Dictionary] = _hero_ability_rules("TestLeadership")
+	for rule in rules:
+		if String(rule.get("ability_id", "")) == "Command_TestMount":
+			(rule["effect"] as Dictionary)["mountedMemberHealth"] = 1600.0
+			(rule["effect"] as Dictionary)["dismountedMemberHealth"] = 800.0
+	sim._unit_ability_rules[HERO_UNIT_TYPE] = sim._scaled_ability_rules(rules, 0.0)
+	sim.advance(10)
+	hero["member_health"] = [400]
+	hero["health"] = 400
+	sim.cast_ability(5, "Command_TestMount", Vector2.ZERO)
+	_check("mount_body_swap_preserves_health_fraction", int(hero.get("member_maximum_health", 0)) == 1600 and int(hero.get("health", 0)) == 800)
+	sim.advance(10)
+	# Out-of-combat hero regeneration keeps ticking while mounted; the swap
+	# contract is about the FRACTION at swap time, so measure just before.
+	var health_before_dismount := int(hero.get("health", 0))
+	var body_dismount: Dictionary = sim.cast_ability(5, "Command_TestMount", Vector2.ZERO)
+	_check(
+		"dismount_body_swap_preserves_health_fraction",
+		bool(body_dismount.get("ok", false))
+			and int(hero.get("member_maximum_health", 0)) == 800
+			and int(hero.get("health", 0)) == roundi(float(health_before_dismount) / 1600.0 * 800.0),
+		"max=%d health=%d before=%d" % [int(hero.get("member_maximum_health", 0)), int(hero.get("health", 0)), health_before_dismount]
+	)
+	# A compiled mounted weapon mode the unit rule does not carry fails closed.
+	var bad_rules: Array[Dictionary] = _hero_ability_rules("TestLeadership")
+	for rule in bad_rules:
+		if String(rule.get("ability_id", "")) == "Command_TestMount":
+			(rule["effect"] as Dictionary)["mountedWeaponModeKey"] = "warg"
+	sim._unit_ability_rules[HERO_UNIT_TYPE] = sim._scaled_ability_rules(bad_rules, 0.0)
+	sim.advance(10)
+	var bad: Dictionary = sim.cast_ability(5, "Command_TestMount", Vector2.ZERO)
+	_check("mount_unknown_weapon_mode_fails_closed", not bool(bad.get("ok", false)) and String(bad.get("reason", "")).begins_with("mount-mode-unavailable") and not bool(hero.get("mounted", false)))
+	# A mount whose compiled speed did not resolve fails closed.
+	var no_speed_rules: Array[Dictionary] = _hero_ability_rules("TestLeadership")
+	for rule in no_speed_rules:
+		if String(rule.get("ability_id", "")) == "Command_TestMount":
+			(rule["effect"] as Dictionary).erase("mountedSpeed")
+	sim._unit_ability_rules[HERO_UNIT_TYPE] = sim._scaled_ability_rules(no_speed_rules, 0.0)
+	var no_speed: Dictionary = sim.cast_ability(5, "Command_TestMount", Vector2.ZERO)
+	_check("mount_without_speed_fails_closed", not bool(no_speed.get("ok", false)) and String(no_speed.get("reason", "")) == "mount-speed-unresolved")
+
+
+func _run_capture_checks() -> void:
+	var sim = _make_sim()
+	for entity_id in sim.entity_ids():
+		sim.entities.erase(entity_id)
+	for structure_id in sim.structure_ids():
+		sim.structures.erase(structure_id)
+	var hero: Dictionary = _spawn(sim, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	var neutral: Dictionary = _add_neutral_capturable(sim, 500, Vector2(3.0, 0.0))
+	var owned: Dictionary = _add_neutral_capturable(sim, 501, Vector2(0.0, 3.0), true, 1)
+	var plain: Dictionary = _add_neutral_capturable(sim, 502, Vector2(-3.0, 0.0), false)
+	var far_structure: Dictionary = _add_neutral_capturable(sim, 503, Vector2(60.0, 0.0))
+	# Out of the authored StartAbilityRange fails before any channel starts.
+	var far: Dictionary = sim.cast_ability(5, "Command_TestCapture", Vector2(60.0, 0.0))
+	_check("capture_out_of_range_fails_closed", not bool(far.get("ok", false)) and String(far.get("reason", "")) == "out-of-range" and int(far_structure.get("team", -1)) == SimScript.NEUTRAL_TEAM)
+	# A structure not flagged capturable is never a target.
+	var flagless: Dictionary = sim.cast_ability(5, "Command_TestCapture", Vector2(-3.0, 0.0))
+	_check("uncapturable_structure_fails_closed", not bool(flagless.get("ok", false)) and String(flagless.get("reason", "")) == "no-capturable-structure" and not bool(plain.get("capturable", false)))
+	# Tier-1 honest scope: owned structures are excluded with their own reason.
+	var enemy_cast: Dictionary = sim.cast_ability(5, "Command_TestCapture", Vector2(0.0, 3.0))
+	_check("owned_structure_is_tier2_scope", not bool(enemy_cast.get("ok", false)) and String(enemy_cast.get("reason", "")) == "capture-tier1-neutral-only" and int(owned.get("team", -1)) == 1)
+	# The real channel: authored 5002 ms envelope = 50 ticks at 0.1 s.
+	var cast: Dictionary = sim.cast_ability(5, "Command_TestCapture", Vector2(3.0, 0.0))
+	_check("capture_cast_starts_the_channel", bool(cast.get("ok", false)) and int(cast.get("structure_id", 0)) == 500 and not (hero.get("capture_channel", {}) as Dictionary).is_empty())
+	_check("capture_recast_fails_while_channeling", String(sim.cast_ability(5, "Command_TestCapture", Vector2(3.0, 0.0)).get("reason", "")) == "capture-in-progress")
+	sim.advance(1)
+	_check("capture_channel_holds_the_hero", String(hero.get("state", "")) == "capture" and is_zero_approx(float(hero.get("current_speed", 1.0))))
+	sim.advance(48)
+	_check("capture_holds_through_the_envelope", int(neutral.get("team", -1)) == SimScript.NEUTRAL_TEAM and not (hero.get("capture_channel", {}) as Dictionary).is_empty())
+	# Snapshot round-trip mid-channel.
+	var bytes: PackedByteArray = sim.snapshot()
+	var restored = _make_sim()
+	var restore_ok: bool = restored.restore(bytes)
+	_check("capture_channel_round_trips_snapshot", restore_ok and restored.state_hash() == sim.state_hash())
+	sim.advance(1)
+	_check("capture_completion_flips_the_team", int(neutral.get("team", -1)) == 0 and (hero.get("capture_channel", {}) as Dictionary).is_empty())
+	var captured_event := false
+	for event_value in sim.events:
+		var event := event_value as Dictionary
+		if String(event.get("kind", "")) == "structure.captured" and int(event.get("structure_id", 0)) == 500:
+			captured_event = true
+	_check("capture_completion_emits_the_event", captured_event)
+	# The restored twin completes on the same tick with the same hash.
+	restored.advance(1)
+	_check("restored_channel_completes_identically", restored.state_hash() == sim.state_hash())
+	# A move order interrupts the channel; the structure stays neutral.
+	var second: Dictionary = _add_neutral_capturable(sim, 504, Vector2(0.0, -3.0))
+	var recast: Dictionary = sim.cast_ability(5, "Command_TestCapture", Vector2(0.0, -3.0))
+	sim.advance(5)
+	var move_ids: Array[int] = [5]
+	sim.issue_move(move_ids, Vector2(6.0, 6.0))
+	sim.advance(5)
+	_check(
+		"move_order_cancels_the_channel",
+		bool(recast.get("ok", false))
+			and (hero.get("capture_channel", {}) as Dictionary).is_empty()
+			and int(second.get("team", -1)) == SimScript.NEUTRAL_TEAM
+	)
+
+
 func _run_terror_checks() -> void:
 	var sim = _make_sim()
 	for entity_id in sim.entity_ids():
@@ -414,21 +623,27 @@ func _determinism_sim():
 	_spawn(sim, 6, 0, Vector2(-4.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
 	_spawn(sim, 105, 1, Vector2(-2.0, 1.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
 	_spawn(sim, 106, 1, Vector2(-2.0, -1.0), FLYER_OBJECT_ID, FLYER_UNIT_TYPE)
+	_add_neutral_capturable(sim, 500, Vector2(-5.0, 1.0))
 	return sim
 
 
 func _scripted_log() -> Array[Dictionary]:
-	## All four families fire inside the twin run: passive auras radiate from
-	## tick 5, plus scripted toggle/terror/buff casts and ordinary combat.
+	## All six families fire inside the twin run: passive auras radiate from
+	## tick 5, plus scripted toggle/mount/capture/terror/buff casts and
+	## ordinary combat. The tick-40 attack order interrupts the capture
+	## channel mid-envelope, so the cancel path is inside the hash too.
 	return [
 		_command(2, 1, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestToggleWeapon", "target_point": Vector2.ZERO}),
-		_command(10, 2, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestWarCry", "target_point": Vector2.ZERO}),
-		_command(20, 3, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestScreech", "target_point": Vector2.ZERO}),
-		_command(40, 4, "issue_attack", {"ids": [5], "target_id": 105}),
-		_command(60, 5, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestScreech", "target_point": Vector2.ZERO}),
-		_command(120, 6, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestToggleWeapon", "target_point": Vector2.ZERO}),
-		_command(150, 7, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestWarCry", "target_point": Vector2.ZERO}),
-		_command(200, 8, "issue_move", {"ids": [5, 6], "destination": Vector2(-10.0, 2.0)}),
+		_command(4, 2, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestCapture", "target_point": Vector2(-5.0, 1.0)}),
+		_command(10, 3, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestWarCry", "target_point": Vector2.ZERO}),
+		_command(20, 4, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestScreech", "target_point": Vector2.ZERO}),
+		_command(40, 5, "issue_attack", {"ids": [5], "target_id": 105}),
+		_command(60, 6, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestScreech", "target_point": Vector2.ZERO}),
+		_command(80, 7, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestMount", "target_point": Vector2.ZERO}),
+		_command(120, 8, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestToggleWeapon", "target_point": Vector2.ZERO}),
+		_command(150, 9, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestWarCry", "target_point": Vector2.ZERO}),
+		_command(180, 10, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestMount", "target_point": Vector2.ZERO}),
+		_command(200, 11, "issue_move", {"ids": [5, 6], "destination": Vector2(-10.0, 2.0)}),
 	]
 
 

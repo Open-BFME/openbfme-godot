@@ -210,6 +210,7 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 			"movement": _resolved_dictionary(resolved.get("movement", {})),
 			"formation": resolved.get("formation", {}),
 			"fearResistant": _resolved_value(resolved.get("fearResistant")),
+			"weaponModes": _resolved_weapon_modes(resolved.get("weaponModes", {})),
 		}
 	for field in ["displayName", "buildCost", "buildTimeSeconds", "commandPoints", "memberCount", "memberHealth", "speed", "visionRange"]:
 		if not row.has(field):
@@ -247,6 +248,7 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 		"speed_source": float(row.speed),
 		"vision_range_source": float(row.visionRange),
 		"combat": (row.get("combat", {}) as Dictionary).duplicate(true),
+		"weapon_modes_source": (row.get("weaponModes", {}) as Dictionary).duplicate(true),
 		"movement": (row.get("movement", {}) as Dictionary).duplicate(true),
 		"formation": (row.get("formation", {}) as Dictionary).duplicate(true),
 		"fear_resistant": row.get("fearResistant") == true,
@@ -343,6 +345,39 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	if period_ms <= 0.0 and clip_reload_ms > 0.0:
 		period_ms = clip_reload_ms
 	var category := String(simulation.get("category", ""))
+	# Compiled alternate weapon-mode profiles (WEAPONSET_TOGGLE_* / MOUNTED):
+	# each converts into the same scaled shape the sim's weapon-mode table
+	# consumes. A profile that fails validation is omitted — the runtime cast
+	# then fails closed (toggle-mode-unavailable) instead of half-swapping.
+	var weapon_modes: Dictionary = {}
+	var modes_source: Dictionary = simulation.get("weapon_modes_source", {}) as Dictionary
+	var mode_keys: Array = modes_source.keys()
+	mode_keys.sort()
+	for mode_key_value in mode_keys:
+		var mode_key := String(mode_key_value)
+		var entry := _normalized_weapon_mode(mode_key, modes_source.get(mode_key_value, {}) as Dictionary, source_scale)
+		if not entry.is_empty():
+			weapon_modes[mode_key] = entry
+	if not weapon_modes.is_empty():
+		weapon_modes["default"] = {
+			"name": String(combat.get("weaponId", "default")),
+			"attack_range": attack_range * source_scale,
+			"attack_range_source": attack_range,
+			"minimum_attack_range": minimum_range * source_scale,
+			"minimum_attack_range_source": minimum_range,
+			"delay_between_shots_ms": delay_ms,
+			"pre_attack_delay_ms": pre_attack_ms,
+			"firing_duration_ms": firing_ms,
+			"attack_period_ticks": maxi(1, roundi(period_ms / (TICK_SECONDS * 1000.0))),
+			"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (TICK_SECONDS * 1000.0))),
+			"firing_duration_ticks": maxi(0, roundi(firing_ms / (TICK_SECONDS * 1000.0))),
+			"member_damage": damage,
+			"clip_size": int(combat.get("clipSize", 0)),
+			"clip_reload_time_ms": clip_reload_ms,
+			"continuous_fire_one": int(combat.get("continuousFireOne", 0)),
+			"continuous_fire_coast_ticks": maxi(0, roundi(float(combat.get("continuousFireCoastMs", 0.0)) / (TICK_SECONDS * 1000.0))),
+			"continuous_fire_rate_multiplier": 1.0,
+		}
 	return {
 		"horde_id": String(simulation.get("unit_type", "")),
 		"member_count": int(simulation.get("member_count", 0)),
@@ -374,8 +409,51 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		"continuous_fire_coast_ticks": maxi(0, roundi(float(combat.get("continuousFireCoastMs", 0.0)) / (TICK_SECONDS * 1000.0))),
 		"continuous_fire_rate_multiplier": 1.0,
 		"fear_resistant": bool(simulation.get("fear_resistant", false)),
+		"weapon_modes": weapon_modes,
+		"default_weapon_mode": "default",
 		"formation_positions": positions,
 		"provenance": {"source_object_id": String(simulation.get("source_object_id", "")), "source_contract": "openbfme.playable-unit-runtime"},
+	}
+
+
+static func _normalized_weapon_mode(mode_key: String, profile: Dictionary, source_scale: float) -> Dictionary:
+	## One compiled alternate weapon profile -> the sim's weapon-mode entry.
+	## Fail-closed: any unresolvable field rejects the whole mode.
+	if profile.is_empty() or mode_key == "" or mode_key == "default":
+		return {}
+	var attack_range := float(profile.get("attackRange", -1.0))
+	var minimum_range := float(profile.get("minimumAttackRange", 0.0))
+	var delay_ms := float(profile.get("delayBetweenShotsMs", -1.0))
+	var pre_attack_ms := float(profile.get("preAttackDelayMs", -1.0))
+	var firing_ms := float(profile.get("firingDurationMs", -1.0))
+	var damage := int(profile.get("damage", 0))
+	for numeric in [attack_range, minimum_range, delay_ms, pre_attack_ms, firing_ms]:
+		if not is_finite(float(numeric)) or float(numeric) < 0.0:
+			return {}
+	if damage <= 0:
+		return {}
+	var period_ms := delay_ms
+	var clip_reload_ms := float(profile.get("clipReloadTimeMs", 0.0))
+	if period_ms <= 0.0 and clip_reload_ms > 0.0:
+		period_ms = clip_reload_ms
+	return {
+		"name": String(profile.get("weaponId", mode_key)),
+		"attack_range": attack_range * source_scale,
+		"attack_range_source": attack_range,
+		"minimum_attack_range": minimum_range * source_scale,
+		"minimum_attack_range_source": minimum_range,
+		"delay_between_shots_ms": delay_ms,
+		"pre_attack_delay_ms": pre_attack_ms,
+		"firing_duration_ms": firing_ms,
+		"attack_period_ticks": maxi(1, roundi(period_ms / (TICK_SECONDS * 1000.0))),
+		"pre_attack_ticks": maxi(0, roundi(pre_attack_ms / (TICK_SECONDS * 1000.0))),
+		"firing_duration_ticks": maxi(0, roundi(firing_ms / (TICK_SECONDS * 1000.0))),
+		"member_damage": damage,
+		"clip_size": int(profile.get("clipSize", 0)),
+		"clip_reload_time_ms": clip_reload_ms,
+		"continuous_fire_one": int(profile.get("continuousFireOne", 0)),
+		"continuous_fire_coast_ticks": maxi(0, roundi(float(profile.get("continuousFireCoastMs", 0.0)) / (TICK_SECONDS * 1000.0))),
+		"continuous_fire_rate_multiplier": 1.0,
 	}
 
 
@@ -549,7 +627,7 @@ static func ability_rules(document: Dictionary) -> Array[Dictionary]:
 		var button: Dictionary = row.get("button", {}) as Dictionary
 		var effect: Dictionary = row.get("effect", {}) as Dictionary
 		var effect_kind := String(effect.get("kind", ""))
-		if effect_kind not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror"]:
+		if effect_kind not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror", "mount-toggle", "capture-building"]:
 			return []
 		var implementation: Dictionary = row.get("implementation", {}) as Dictionary
 		var status := String(implementation.get("status", ""))
@@ -597,6 +675,19 @@ static func _first_production_slot(document: Dictionary) -> int:
 
 static func _resolved_value(value: Variant) -> Variant:
 	return (value as Dictionary).get("value") if typeof(value) == TYPE_DICTIONARY else value
+
+
+static func _resolved_weapon_modes(value: Variant) -> Dictionary:
+	## Converter weaponModes: {mode: {field: {value,...}}} -> {mode: {field: value}}.
+	if typeof(value) != TYPE_DICTIONARY:
+		return {}
+	var output: Dictionary = {}
+	for mode_key in (value as Dictionary).keys():
+		var profile: Variant = (value as Dictionary)[mode_key]
+		if typeof(profile) != TYPE_DICTIONARY:
+			return {}
+		output[String(mode_key)] = _resolved_dictionary(profile)
+	return output
 
 
 static func _resolved_dictionary(value: Variant) -> Dictionary:

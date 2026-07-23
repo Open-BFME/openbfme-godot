@@ -1780,9 +1780,11 @@ def test_hero_abilities_fail_closed_per_ability_never_faked() -> None:
     validate_playable_unit_descriptor(descriptor)
     abilities = _abilities_by_id(descriptor)
 
+    # The fixture hero authors the toggle module but no SET_MOUNTED
+    # locomotor: the mount stays a recorded gap, never a partial stat swap.
     mount = abilities["Command_FixtureMount"]
     assert mount["implementation"]["status"] == "unimplemented"
-    assert "mount" in mount["implementation"]["reason"]
+    assert "SET_MOUNTED LocomotorSet" in mount["implementation"]["reason"]
     assert mount["effect"] == {"kind": "none"}
 
     leadership = abilities["Command_FixtureLeadership"]
@@ -2774,15 +2776,309 @@ def test_weapon_toggle_rows_record_the_authored_contract() -> None:
     toggle = _abilities_by_id(descriptor)["Command_FixtureToggle"]
     assert toggle["command"] == "TOGGLE_WEAPONSET"
     assert toggle["specialPowerId"] == ""
-    assert toggle["implementation"]["status"] == "unimplemented"
-    assert "runtime weapon-mode wiring" in toggle["implementation"]["reason"]
-    assert toggle["effect"] == {"kind": "none"}
+    assert toggle["implementation"]["status"] == "implemented"
+    assert toggle["cooldownMs"] == 0
+    assert toggle["effect"] == {
+        "kind": "weapon-toggle",
+        "toggleMode": "weaponset_toggle_1",
+        "toggledWeaponId": "FixtureToggleBow",
+        "sourceIni": "data/ini/commandbutton.ini",
+    }
     evidence = toggle["weaponToggle"]
     assert evidence["toggleFlag"] == "WEAPONSET_TOGGLE_1"
     assert evidence["defaultWeaponId"] == "AbilityHeroSword"
     assert evidence["toggledWeaponId"] == "FixtureToggleBow"
     assert evidence["toggledWeapon"]["damage"] == 90
     assert evidence["toggledWeapon"]["attackRange"] == 320.0
+    # The simulation contract publishes the toggled mode as a full runtime
+    # weapon-mode profile keyed by the authored condition flag.
+    modes = descriptor["gameplay"]["simulation"]["resolved"]["weaponModes"]
+    profile = modes["weaponset_toggle_1"]
+    assert profile["weaponId"] == "FixtureToggleBow"
+    assert profile["attackRange"]["value"] == 320.0
+    assert profile["damage"]["value"] == 90
+    assert profile["delayBetweenShotsMs"]["value"] == 0
+    assert profile["preAttackDelayMs"]["value"] == 0
+    assert profile["firingDurationMs"]["value"] == 0
+
+
+def test_weapon_toggle_with_unresolvable_weapon_stays_a_gap() -> None:
+    documents = _hero_ability_documents()
+    text = documents["data/ini/object/units/test_units.ini"].decode()
+    documents["data/ini/object/units/test_units.ini"] = text.replace(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n",
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = WEAPONSET_TOGGLE_1\n"
+        "    Weapon = PRIMARY MissingToggleWeapon\n"
+        "  End\n",
+        1,
+    ).encode()
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  9 = Command_FixtureBroken\nEnd",
+        "  9 = Command_FixtureBroken\n  10 = Command_FixtureToggle\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_FixtureToggle\n"
+        b"  Command = TOGGLE_WEAPONSET\n"
+        b"  FlagsUsedForToggle = WEAPONSET_TOGGLE_1\n"
+        b"  TextLabel = CONTROLBAR:FixtureToggle\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureToggle\n"
+        b"  ButtonImage = HSFixtureToggle\n"
+        b"End\n"
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    toggle = _abilities_by_id(descriptor)["Command_FixtureToggle"]
+    assert toggle["implementation"]["status"] == "unimplemented"
+    assert "MissingToggleWeapon" in toggle["implementation"]["reason"]
+    assert toggle["effect"] == {"kind": "none"}
+    resolved = descriptor["gameplay"]["simulation"]["resolved"]
+    assert "weaponModes" not in resolved
+    gaps = resolved["weaponModeGaps"]
+    assert gaps[0]["mode"] == "weaponset_toggle_1"
+    assert "MissingToggleWeapon" in gaps[0]["reason"]
+
+
+def _mounted_hero_documents() -> dict[str, bytes]:
+    """Fixture hero extended with the authored mounted state (Theoden shape)."""
+
+    documents = _hero_ability_documents()
+    text = documents["data/ini/object/units/test_units.ini"].decode()
+    documents["data/ini/object/units/test_units.ini"] = text.replace(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n",
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = MOUNTED\n"
+        "    Weapon = PRIMARY FixtureSwordMounted\n"
+        "  End\n"
+        "  ArmorSet\n"
+        "    Conditions = MOUNTED\n"
+        "    Armor = HeroArmorMounted\n"
+        "  End\n"
+        "  LocomotorSet\n"
+        "    Locomotor = FixtureHorseLocomotor\n"
+        "    Condition = SET_MOUNTED\n"
+        "    Speed = 90\n"
+        "  End\n",
+        1,
+    ).encode()
+    documents["data/ini/weapon.ini"] += (
+        b"\nWeapon FixtureSwordMounted\n"
+        b"  MeleeWeapon = Yes\n"
+        b"  AttackRange = 25.0\n"
+        b"  DelayBetweenShots = 1400\n"
+        b"  PreAttackDelay = 500\n"
+        b"  FiringDuration = 500\n"
+        b"  DamageNugget\n"
+        b"    Damage = 150\n"
+        b"    DamageType = HERO\n"
+        b"  End\n"
+        b"End\n"
+    )
+    return documents
+
+
+def test_mount_toggle_compiles_from_authored_mounted_state() -> None:
+    documents = _mounted_hero_documents()
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    mount = _abilities_by_id(descriptor)["Command_FixtureMount"]
+    assert mount["implementation"]["status"] == "implemented"
+    effect = mount["effect"]
+    assert effect["kind"] == "mount-toggle"
+    assert effect["mountedSpeed"] == 90
+    assert effect["mountedLocomotorId"] == "FixtureHorseLocomotor"
+    assert effect["mountedWeaponModeKey"] == "mounted"
+    assert effect["mountedWeaponId"] == "FixtureSwordMounted"
+    assert effect["unpackMs"] == 1000
+    assert effect["packMs"] == 0
+    assert any(
+        "MOUNTED ArmorSet is not applied" in item
+        for item in mount["implementation"]["limitations"]
+    )
+    modes = descriptor["gameplay"]["simulation"]["resolved"]["weaponModes"]
+    profile = modes["mounted"]
+    assert profile["weaponId"] == "FixtureSwordMounted"
+    assert profile["attackRange"]["value"] == 25.0
+    assert profile["damage"]["value"] == 150
+    assert profile["delayBetweenShotsMs"]["value"] == 1400
+
+
+def test_mount_toggle_without_mounted_weapon_keeps_foot_weapon() -> None:
+    documents = _mounted_hero_documents()
+    text = documents["data/ini/object/units/test_units.ini"].decode()
+    documents["data/ini/object/units/test_units.ini"] = text.replace(
+        "  WeaponSet\n"
+        "    Conditions = MOUNTED\n"
+        "    Weapon = PRIMARY FixtureSwordMounted\n"
+        "  End\n",
+        "",
+        1,
+    ).encode()
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    mount = _abilities_by_id(descriptor)["Command_FixtureMount"]
+    assert mount["implementation"]["status"] == "implemented"
+    effect = mount["effect"]
+    assert effect["kind"] == "mount-toggle"
+    assert effect["mountedSpeed"] == 90
+    assert "mountedWeaponModeKey" not in effect
+    assert any(
+        "keeps the foot weapon" in item
+        for item in mount["implementation"]["limitations"]
+    )
+
+
+def _capture_hero_documents() -> dict[str, bytes]:
+    """Fixture hero extended with the retail CaptureBuilding.inc shape."""
+
+    documents = _hero_ability_documents()
+    _with_hero_modules(
+        documents,
+        "  Behavior = SpecialPowerModule ModuleTag_CaptureBuilding\n"
+        "    SpecialPowerTemplate = SpecialAbilityCaptureBuilding\n"
+        "    UpdateModuleStartsAttack = Yes\n"
+        "    StartsPaused = No\n"
+        "  End\n"
+        "  Behavior = SpecialAbilityUpdate ModuleTag_CaptureBuildingUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityCaptureBuilding\n"
+        "    StartAbilityRange = 15.0\n"
+        "    UnpackTime = 1\n"
+        "    PreparationTime = 15000\n"
+        "    PackTime = 1\n"
+        "    DoCaptureFX = Yes\n"
+        "  End\n",
+    )
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  9 = Command_FixtureBroken\nEnd",
+        "  9 = Command_FixtureBroken\n  10 = Command_CaptureBuilding\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_CaptureBuilding\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityCaptureBuilding\n"
+        b"  Options = NEED_TARGET_ENEMY_OBJECT\n"
+        b"  TextLabel = CONTROLBAR:CaptureBuilding\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipCaptureBuilding\n"
+        b"  ButtonImage = HSCaptureBuilding\n"
+        b"End\n"
+    )
+    documents["data/ini/specialpower.ini"] += (
+        b"\nSpecialPower SpecialAbilityCaptureBuilding\n"
+        b"  Enum = SPECIAL_INFANTRY_CAPTURE_BUILDING\n"
+        b"  ReloadTime = 0\n"
+        b"End\n"
+    )
+    return documents
+
+
+def test_capture_building_compiles_the_channel_envelope() -> None:
+    documents = _capture_hero_documents()
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    capture = _abilities_by_id(descriptor)["Command_CaptureBuilding"]
+    assert capture["implementation"]["status"] == "implemented"
+    assert capture["targeting"] == "enemy-object"
+    assert capture["cooldownMs"] == 0
+    effect = capture["effect"]
+    assert effect["kind"] == "capture-building"
+    assert effect["startAbilityRange"] == 15.0
+    assert effect["unpackMs"] == 1
+    assert effect["preparationMs"] == 15000
+    assert effect["packMs"] == 1
+    assert effect["doCaptureFx"] is True
+    assert any(
+        "tier-1" in item for item in capture["implementation"]["limitations"]
+    )
+
+
+def test_capture_building_binds_through_the_authored_include() -> None:
+    # Retail authors capture via an object-body #include (CaptureBuilding.inc);
+    # the compiler expands authored includes one level deep for module binding.
+    documents = _capture_hero_documents()
+    path = "data/ini/object/units/test_units.ini"
+    text = documents[path].decode()
+    modules = (
+        "  Behavior = SpecialPowerModule ModuleTag_CaptureBuilding\n"
+        "    SpecialPowerTemplate = SpecialAbilityCaptureBuilding\n"
+        "    UpdateModuleStartsAttack = Yes\n"
+        "    StartsPaused = No\n"
+        "  End\n"
+        "  Behavior = SpecialAbilityUpdate ModuleTag_CaptureBuildingUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityCaptureBuilding\n"
+        "    StartAbilityRange = 15.0\n"
+        "    UnpackTime = 1\n"
+        "    PreparationTime = 15000\n"
+        "    PackTime = 1\n"
+        "    DoCaptureFX = Yes\n"
+        "  End\n"
+    )
+    assert modules in text
+    documents[path] = text.replace(
+        modules,
+        '  #include "..\\includes\\CaptureBuilding.inc"\n',
+        1,
+    ).encode()
+    documents["data/ini/object/includes/capturebuilding.inc"] = modules.encode()
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    capture = _abilities_by_id(descriptor)["Command_CaptureBuilding"]
+    assert capture["implementation"]["status"] == "implemented"
+    assert capture["effect"]["kind"] == "capture-building"
+    assert capture["effect"]["preparationMs"] == 15000
+
+
+def test_capture_building_without_channel_module_stays_a_gap() -> None:
+    documents = _capture_hero_documents()
+    path = "data/ini/object/units/test_units.ini"
+    text = documents[path].decode()
+    documents[path] = text.replace(
+        "  Behavior = SpecialAbilityUpdate ModuleTag_CaptureBuildingUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityCaptureBuilding\n"
+        "    StartAbilityRange = 15.0\n"
+        "    UnpackTime = 1\n"
+        "    PreparationTime = 15000\n"
+        "    PackTime = 1\n"
+        "    DoCaptureFX = Yes\n"
+        "  End\n",
+        "",
+        1,
+    ).encode()
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    capture = _abilities_by_id(descriptor)["Command_CaptureBuilding"]
+    assert capture["implementation"]["status"] == "unimplemented"
+    assert "StartAbilityRange" in capture["implementation"]["reason"]
+    assert capture["effect"] == {"kind": "none"}
 
 
 def test_extended_timed_buff_modifier_kinds_compile() -> None:

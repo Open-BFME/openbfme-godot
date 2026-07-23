@@ -13,6 +13,9 @@ const MAX_RETAINED_STRUCTURE_TARGETS_PER_KIND := 256
 const TICK_SECONDS := 0.1
 const PLAYER_TEAM := 0
 const ENEMY_TEAM := 1
+# Unowned map structures (capture-building tier-1 targets). No player or AI
+# ever acts as this team; it only owns capturable structures until captured.
+const NEUTRAL_TEAM := 2
 const MEMBER_ATTACK_STAGGER_WINDOW_TICKS := 4
 const CORPSE_LIFETIME_TICKS := 600
 const STANCE_ORDER: Array[String] = ["HoldGround", "Battle", "Aggressive"]
@@ -1884,6 +1887,9 @@ func _add_battalion(
 		# TOGGLE_WEAPONSET state: non-empty pins combat to that compiled
 		# weapon-mode profile until toggled back (persistent across snapshots).
 		"weapon_toggle_mode": "",
+		# SpecialAbilityToggleMounted state: true while riding (mounted speed
+		# and, when authored, the "mounted" weapon-mode profile are live).
+		"mounted": false,
 		# Honored only when the compiled unit rule authors it (fear-resistance
 		# extraction is an importer follow-up; absent means not resistant).
 		"fear_resistant": bool(unit_rule.get("fear_resistant", false)),
@@ -4820,6 +4826,15 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				effect["radius_scaled"] = float(effect.get("radius", 0.0)) * scale
 				effect["duration_ticks"] = maxi(1, roundi(float(effect.get("durationMs", 0.0)) / (TICK_SECONDS * 1000.0)))
 				effect["scatter_strength_scaled"] = float(effect.get("scatterStrength", 0.0)) * scale
+			"mount-toggle":
+				# Mounted LocomotorSet speed is source units, like every speed.
+				effect["mounted_speed_scaled"] = float(effect.get("mountedSpeed", 0.0)) * scale
+			"capture-building":
+				# StartAbilityRange gates the cast like an attack range; the
+				# channel is the authored unpack + preparation + pack envelope.
+				effect["range"] = float(effect.get("startAbilityRange", 0.0)) * scale
+				var channel_ms := float(effect.get("unpackMs", 0.0)) + float(effect.get("preparationMs", 0.0)) + float(effect.get("packMs", 0.0))
+				effect["channel_ticks"] = maxi(1, roundi(channel_ms / (TICK_SECONDS * 1000.0)))
 		scaled["effect"] = effect
 		output.append(scaled)
 	return output
@@ -5087,6 +5102,10 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2) -> Di
 			result = _apply_ability_weapon_toggle(row, effect)
 		"terror":
 			result = _apply_ability_terror(row, ability_id, effect)
+		"mount-toggle":
+			result = _apply_ability_mount_toggle(row, effect)
+		"capture-building":
+			result = _apply_ability_capture_building(row, effect, target_point)
 		_:
 			return {"ok": false, "reason": "no-effect"}
 	if not bool(result.get("ok", false)):
@@ -5238,6 +5257,149 @@ func _apply_ability_weapon_toggle(hero_row: Dictionary, effect: Dictionary) -> D
 	var resolved := toggle_mode if engaged else String(hero_row.get("default_weapon_mode", "default"))
 	_apply_weapon_mode(hero_row, resolved)
 	return {"ok": true, "reason": "", "effect": "weapon-toggle", "affected": 1, "mode": resolved, "engaged": engaged}
+
+
+func _apply_ability_mount_toggle(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
+	## SpecialAbilityToggleMounted: the mounted state swaps the compiled
+	## SET_MOUNTED locomotor speed and (when authored) pins combat to the
+	## compiled "mounted" weapon-mode profile; dismounting restores the foot
+	## stats. Health is untouched by the same-object condition swap — the
+	## authored fraction is preserved exactly. When a future compiled rule
+	## authors a mounted member health, the swap rescales preserving the live
+	## health fraction instead of resetting it.
+	if bool(hero_row.get("mounted", false)):
+		# Dismount: restore the recorded foot profile.
+		hero_row["speed"] = float(hero_row.get("dismounted_speed", hero_row.get("speed", 0.0)))
+		hero_row["speed_source"] = float(hero_row.get("dismounted_speed_source", hero_row.get("speed_source", 0.0)))
+		hero_row.erase("dismounted_speed")
+		hero_row.erase("dismounted_speed_source")
+		if String(hero_row.get("weapon_toggle_mode", "")) == "mounted":
+			hero_row["weapon_toggle_mode"] = ""
+			_apply_weapon_mode(hero_row, String(hero_row.get("default_weapon_mode", "default")))
+		hero_row["mounted"] = false
+		_rescale_member_health_preserving_fraction(hero_row, int(effect.get("dismountedMemberHealth", 0)))
+		return {"ok": true, "reason": "", "effect": "mount-toggle", "affected": 1, "mounted": false}
+	var mounted_speed_scaled := float(effect.get("mounted_speed_scaled", 0.0))
+	if mounted_speed_scaled <= 0.0:
+		return {"ok": false, "reason": "mount-speed-unresolved"}
+	var mode := String(effect.get("mountedWeaponModeKey", ""))
+	if mode != "" and not (hero_row.get("weapon_modes", {}) as Dictionary).has(mode):
+		# The compiled rule authored a mounted weapon the unit rule does not
+		# carry: never a partial swap.
+		return {"ok": false, "reason": "mount-mode-unavailable:%s" % mode}
+	hero_row["dismounted_speed"] = float(hero_row.get("speed", 0.0))
+	hero_row["dismounted_speed_source"] = float(hero_row.get("speed_source", 0.0))
+	hero_row["speed"] = mounted_speed_scaled
+	hero_row["speed_source"] = float(effect.get("mountedSpeed", 0.0))
+	if mode != "":
+		hero_row["weapon_toggle_mode"] = mode
+		_apply_weapon_mode(hero_row, mode)
+	hero_row["mounted"] = true
+	_rescale_member_health_preserving_fraction(hero_row, int(effect.get("mountedMemberHealth", 0)))
+	return {"ok": true, "reason": "", "effect": "mount-toggle", "affected": 1, "mounted": true}
+
+
+func _rescale_member_health_preserving_fraction(row: Dictionary, new_member_maximum: int) -> void:
+	## ChildObject-style state swaps that change member max health keep the
+	## live health FRACTION (retail mount contract). A zero/absent target max
+	## (the Men mounts: same body both states) leaves health untouched.
+	if new_member_maximum <= 0 or new_member_maximum == int(row.get("member_maximum_health", 0)):
+		return
+	var old_maximum := maxi(1, int(row.get("member_maximum_health", 1)))
+	var health_values: Array = row.get("member_health", [])
+	var aggregate := 0
+	for index in range(health_values.size()):
+		var current := int(health_values[index])
+		if current > 0:
+			health_values[index] = clampi(roundi(float(current) / float(old_maximum) * float(new_member_maximum)), 1, new_member_maximum)
+		aggregate += int(health_values[index]) if int(health_values[index]) > 0 else 0
+	row["member_maximum_health"] = new_member_maximum
+	row["maximum_health"] = new_member_maximum * int(row.get("member_count", 1))
+	row["member_health"] = health_values
+	row["health"] = aggregate
+
+
+func _apply_ability_capture_building(hero_row: Dictionary, effect: Dictionary, target_point: Vector2) -> Dictionary:
+	## Capture building, tier-1 honest scope: a hero channels the authored
+	## unpack+preparation+pack envelope on a NEUTRAL structure flagged
+	## capturable; completion transfers ownership (_step_entity finishes or
+	## cancels the channel). Owned structures are out of tier-1 scope and
+	## fail closed with their own reason.
+	if not (hero_row.get("capture_channel", {}) as Dictionary).is_empty():
+		return {"ok": false, "reason": "capture-in-progress"}
+	var hero_team := int(hero_row.get("team", -1))
+	var best_id := 0
+	var best_distance := 2.0
+	var found_owned := false
+	for structure_id in structure_ids():
+		var structure: Dictionary = structures[structure_id]
+		if int(structure.get("health", 0)) <= 0 or not bool(structure.get("capturable", false)):
+			continue
+		var distance := Vector2(structure.get("position", Vector2.ZERO)).distance_to(target_point)
+		if distance > best_distance:
+			continue
+		if int(structure.get("team", -1)) != NEUTRAL_TEAM:
+			found_owned = int(structure.get("team", -1)) != hero_team or found_owned
+			continue
+		best_distance = distance
+		best_id = structure_id
+	if best_id == 0:
+		return {"ok": false, "reason": "capture-tier1-neutral-only" if found_owned else "no-capturable-structure"}
+	var channel_ticks := maxi(1, int(effect.get("channel_ticks", 1)))
+	hero_row["capture_channel"] = {
+		"structure_id": best_id,
+		"complete_tick": tick_index + channel_ticks,
+	}
+	# Channeling holds the hero: drop any live order/target so the capture
+	# stance is unambiguous (a later order cancels the channel).
+	hero_row["target_id"] = 0
+	hero_row["target_kind"] = "battalion"
+	hero_row["attack_windup"] = 0
+	_clear_member_attack_schedule(hero_row)
+	_clear_member_targets(hero_row)
+	_clear_pending_route(hero_row, true)
+	hero_row["state"] = "capture"
+	_emit_event("structure.capture_started", int(hero_row.get("id", 0)), best_id, {
+		"team": hero_team,
+		"structure_id": best_id,
+		"channel_ticks": channel_ticks,
+	})
+	return {"ok": true, "reason": "", "effect": "capture-building", "affected": 1, "structure_id": best_id}
+
+
+func _step_capture_channel(row: Dictionary) -> bool:
+	## Advance one entity's capture channel. Returns true while the channel
+	## holds the hero in place (the entity step then goes no further).
+	var channel: Dictionary = row.get("capture_channel", {}) as Dictionary
+	if channel.is_empty():
+		return false
+	var structure_id := int(channel.get("structure_id", 0))
+	var structure: Dictionary = structures.get(structure_id, {})
+	var team := int(row.get("team", -1))
+	var interrupted := (
+		structure.is_empty()
+		or int(structure.get("health", 0)) <= 0
+		or int(structure.get("team", -1)) != NEUTRAL_TEAM
+		or not (row["route"] as Array).is_empty()
+		or int(row.get("target_id", 0)) != 0
+	)
+	if interrupted:
+		row.erase("capture_channel")
+		_emit_event("structure.capture_cancelled", int(row.get("id", 0)), structure_id, {"team": team})
+		return false
+	if tick_index >= int(channel.get("complete_tick", tick_index + 1)):
+		structure["team"] = team
+		row.erase("capture_channel")
+		row["state"] = "idle"
+		_emit_event("structure.captured", int(row.get("id", 0)), structure_id, {
+			"team": team,
+			"structure_id": structure_id,
+			"structure_kind": String(structure.get("structure_kind", "")),
+		})
+		return false
+	row["state"] = "capture"
+	row["current_speed"] = 0.0
+	return true
 
 
 func _apply_ability_terror(hero_row: Dictionary, ability_id: String, effect: Dictionary) -> Dictionary:
@@ -5648,6 +5810,11 @@ func _step_entity(id: int) -> void:
 	if knockdown_ticks > 0:
 		# Knocked-down battalions lie incapacitated: no movement, attacks, or
 		# ability steps until the counter drains, then they stand back up.
+		# Being bowled over interrupts a capture channel outright.
+		if not (row.get("capture_channel", {}) as Dictionary).is_empty():
+			var channel: Dictionary = row.get("capture_channel", {}) as Dictionary
+			row.erase("capture_channel")
+			_emit_event("structure.capture_cancelled", id, int(channel.get("structure_id", 0)), {"team": int(row.get("team", -1))})
 		knockdown_ticks -= 1
 		row["knockdown_ticks"] = knockdown_ticks
 		row["current_speed"] = 0.0
@@ -5659,6 +5826,8 @@ func _step_entity(id: int) -> void:
 			row["state"] = "knocked_down"
 		return
 	row["attack_cooldown"] = maxi(0, int(row["attack_cooldown"]) - 1)
+	if _step_capture_channel(row):
+		return
 	if _step_production_exit(row):
 		return
 	if bool(row.get("is_builder", false)):
