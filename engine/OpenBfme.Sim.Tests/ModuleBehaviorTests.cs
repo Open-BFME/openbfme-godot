@@ -67,8 +67,8 @@ public class ReviewRegressionTests
         {
             var world = new SimWorld(BarracksConfig(), ModuleRegistry.CreateDefault());
             var barracks = world.SpawnObject("barracks", 0, FixedVector2.Zero);
-            barracks.FindModule<ProductionModule>()!.TryQueue("soldier");
-            barracks.FindModule<ProductionModule>()!.TryQueue("soldier");
+            barracks.FindModule<ProductionModule>()!.TryQueue(world, barracks, "soldier");
+            barracks.FindModule<ProductionModule>()!.TryQueue(world, barracks, "soldier");
             return world;
         }
 
@@ -123,18 +123,19 @@ public class P1ModuleTests
         var world = new SimWorld(ReviewRegressionTests.BarracksConfig(), ModuleRegistry.CreateDefault());
         var barracks = world.SpawnObject("barracks", 0, new FixedVector2(Fixed64.FromInt(5), Fixed64.FromInt(5)));
         var production = barracks.FindModule<ProductionModule>()!;
-        Assert.True(production.TryQueue("soldier"));
+        Assert.True(production.TryQueue(world, barracks, "soldier"));
 
         // Construction runs ticks 1-10 and clears at the END of tick 10; the
         // production module (later in template order) sees the cleared flag the
-        // same tick, so build ticks are 10..29 and the soldier appears at 29.
+        // same tick, so build ticks are 10..29 and the soldier spawns during
+        // tick 30 — retail spawn phase: completion tick + 1 (dual-run finding).
         world.Advance(9);
         Assert.True(barracks.IsUnderConstruction);
         Assert.Single(world.Objects);
         world.Advance(1);
         Assert.False(barracks.IsUnderConstruction);
 
-        world.Advance(18);
+        world.Advance(19);
         Assert.Single(world.Objects);
         world.Advance(1);
         Assert.Equal(2, world.Objects.Count);
@@ -148,12 +149,12 @@ public class P1ModuleTests
         var world = new SimWorld(ReviewRegressionTests.BarracksConfig(), ModuleRegistry.CreateDefault());
         var barracks = world.SpawnObject("barracks", 0, FixedVector2.Zero);
         var production = barracks.FindModule<ProductionModule>()!;
-        Assert.False(production.TryQueue("catapult"));
+        Assert.False(production.TryQueue(world, barracks, "catapult"));
         for (var i = 0; i < ProductionModule.MaxQueueLength; i++)
         {
-            Assert.True(production.TryQueue("soldier"));
+            Assert.True(production.TryQueue(world, barracks, "soldier"));
         }
-        Assert.False(production.TryQueue("soldier"));
+        Assert.False(production.TryQueue(world, barracks, "soldier"));
     }
 
     [Fact]

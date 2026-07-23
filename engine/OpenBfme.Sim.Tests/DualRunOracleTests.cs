@@ -11,12 +11,13 @@ namespace OpenBfme.Sim.Tests;
 ///
 /// HONEST SCOPE — the engine implements a small module subset, so only the
 /// genuine overlap gates:
-///   * team resources per sampled tick: EXACT (gating),
-///   * mobile entity counts per sampled tick: EXACT (gating; the recorded
-///     1-tick training-completion phase offset — GDScript spawns during
-///     command_tick + build_ticks, the C# ProductionModule's
-///     decrement-then-spawn during command_tick + build_ticks - 1 — never
-///     straddles the 10-tick sampling grid in this scenario),
+///   * team resources per sampled tick: EXACT (gating; production cost is now
+///     engine-native — the barracks template carries "Cost:soldier" and the
+///     ProductionModule debits it at the command tick, matching the trace's
+///     "queue_unit charges cost at the command tick"),
+///   * mobile entity counts per sampled tick: EXACT (gating; spawn phase now
+///     matches retail exactly — both sims spawn the battalion during
+///     command_tick + build_ticks, the former 1-tick offset is closed),
 ///   * positions: tolerance-compared and REPORTED but non-gating, because the
 ///     integrators genuinely differ today — the retail sim accelerates
 ///     (current_speed += accel*dt, brakes on the final leg) while
@@ -24,14 +25,12 @@ namespace OpenBfme.Sim.Tests;
 ///     locomotor work item, not a scenario-construction choice.
 ///
 /// Scenario-construction mirrors (documented, deliberately NOT engine edits):
-///   * production cost: the engine's ProductionModule has no resource-cost
-///     semantics yet (FINDING), so the replay debits the recorded cost
-///     out-of-band at the recorded command tick,
 ///   * the recorded out-of-band resource grant is applied at the same
 ///     after-tick/after-sample boundary the GDScript harness used,
 ///   * the produced battalion is excluded from position comparison: the
-///     retail sim walks it door -> create point -> rally
-///     (QueueProductionExitUpdate), which has no engine counterpart yet.
+///     retail sim walks it door -> create point -> rally; the engine now has
+///     an exit->rally walk (ProductionModule RallyX/YRaw) but not the retail
+///     door->create-point leg, so positions stay excluded for produced units.
 /// </summary>
 public class DualRunOracleTests
 {
@@ -60,20 +59,14 @@ public class DualRunOracleTests
         SubmitReplayCommands(trace, world, idMap);
 
         // Out-of-band ledger adjustments applied after the given tick's sample:
-        // the production cost mirror (engine gap) and the recorded grant.
+        // only the recorded grant remains — production cost is engine-native now.
         var adjustmentsAfterTick = new Dictionary<int, long>();
         foreach (var command in trace.Commands)
         {
-            switch (command.Type)
+            if (command.Type == "grant_resources")
             {
-                case "queue_unit":
-                    adjustmentsAfterTick[command.Tick] =
-                        adjustmentsAfterTick.GetValueOrDefault(command.Tick) - trace.UnitCost;
-                    break;
-                case "grant_resources":
-                    adjustmentsAfterTick[command.Tick] =
-                        adjustmentsAfterTick.GetValueOrDefault(command.Tick) + command.Amount;
-                    break;
+                adjustmentsAfterTick[command.Tick] =
+                    adjustmentsAfterTick.GetValueOrDefault(command.Tick) + command.Amount;
             }
         }
 
@@ -131,6 +124,7 @@ public class DualRunOracleTests
                 new ModuleSpec(ProductionModule.TypeName, new Dictionary<string, long>
                 {
                     ["Build:" + BattalionTemplate] = trace.UnitBuildTicks,
+                    ["Cost:" + BattalionTemplate] = trace.UnitCost,
                 }),
             }),
             new ObjectTemplate(BattalionTemplate, new[]

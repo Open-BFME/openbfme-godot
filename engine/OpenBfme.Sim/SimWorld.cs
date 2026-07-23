@@ -43,6 +43,11 @@ public sealed class SimWorld
     private int _nextObjectId = 1;
     private bool _inUpdateSweep;
     private readonly List<GameObject> _pendingSpawns = new();
+    // Aura armor table: summed basis points of incoming-damage reduction per
+    // object id. DERIVED state — rebuilt at end of every tick (and after
+    // Restore) from AttributeModifierAuraModule caches in ascending carrier id
+    // order, so it is deliberately NOT serialized or hashed.
+    private readonly SortedDictionary<int, long> _auraArmorBonusBp = new();
 
     public int TickIndex { get; private set; }
     public IReadOnlyDictionary<int, GameObject> Objects => _objects;
@@ -153,7 +158,36 @@ public sealed class SimWorld
         }
         _pendingSpawns.Clear();
         RemoveDeadObjects();
+        RebuildAuraTable();
     }
+
+    /// <summary>
+    /// Rebuilds the aura armor table from every living, non-dying, constructed
+    /// carrier's cached member ids (ascending carrier id order — deterministic).
+    /// Runs at end of tick so the table is stable for the whole following tick.
+    /// </summary>
+    private void RebuildAuraTable()
+    {
+        _auraArmorBonusBp.Clear();
+        foreach (var gameObject in _objects.Values)
+        {
+            if (gameObject.IsDying || gameObject.IsUnderConstruction)
+            {
+                continue;
+            }
+            foreach (var module in gameObject.Modules)
+            {
+                if (module is AttributeModifierAuraModule aura)
+                {
+                    aura.ContributeTo(_auraArmorBonusBp, this);
+                }
+            }
+        }
+    }
+
+    /// <summary>Summed aura armor basis points currently granted to an object (0 if none).</summary>
+    public long AuraArmorBonusBp(int objectId) =>
+        _auraArmorBonusBp.TryGetValue(objectId, out var bp) ? bp : 0;
 
     public void Advance(int ticks)
     {
@@ -213,7 +247,15 @@ public sealed class SimWorld
                 if (_objects.TryGetValue((int)command.GetLong("id"), out var producer)
                     && producer.Team == command.Team)
                 {
-                    producer.FindModule<ProductionModule>()?.TryQueue(command.GetString("template"));
+                    // Pass-through: cost debit/affordability live in TryQueue.
+                    producer.FindModule<ProductionModule>()?.TryQueue(this, producer, command.GetString("template"));
+                }
+                break;
+            case "cancel_production":
+                if (_objects.TryGetValue((int)command.GetLong("id"), out var canceller)
+                    && canceller.Team == command.Team)
+                {
+                    canceller.FindModule<ProductionModule>()?.TryCancel(this, canceller, (int)command.GetLong("index"));
                 }
                 break;
             default:
@@ -239,6 +281,13 @@ public sealed class SimWorld
         foreach (var module in target.Modules)
         {
             amount = module.ModifyIncomingDamage(target, damageType, amount);
+        }
+        // Aura armor applies after the per-module chain. Stacked contributions
+        // add; the sum is clamped to [0, 10000] bp (full immunity, never a heal).
+        var auraBp = Math.Clamp(AuraArmorBonusBp(target.Id), 0, 10_000);
+        if (auraBp > 0)
+        {
+            amount -= amount * auraBp / 10_000;
         }
         if (amount <= 0)
         {
@@ -374,6 +423,7 @@ public sealed class SimWorld
             world._pendingCommands.Add(tick, commands);
         }
         reader.ExpectEnd();
+        world.RebuildAuraTable(); // derived state: not in the snapshot, rebuilt from module caches
         return world;
     }
 
