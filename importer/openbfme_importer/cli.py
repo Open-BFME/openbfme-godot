@@ -244,6 +244,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_game_argument(factions_census)
     factions_census.add_argument("--reindex", action="store_true")
 
+    strategic_census_cmd = sub.add_parser(
+        "census-strategic",
+        help="census the War-of-the-Ring and Create-a-Hero INI surface, fail-closed",
+    )
+    strategic_census_cmd.add_argument("--install", required=True)
+    _add_game_argument(strategic_census_cmd)
+    strategic_census_cmd.add_argument("--reindex", action="store_true")
+
     convert_videos_cmd = sub.add_parser(
         "convert-videos",
         help="convert loose data/movies VP6/Bink cinematics to Ogg Theora via pinned ffmpeg",
@@ -1002,6 +1010,31 @@ def main(argv: list[str] | None = None) -> int:
                     "report": str(report_path),
                     "faction_count": len(rows),
                     "factions": rows,
+                },
+                args.json,
+            )
+            return 0
+
+        if args.command == "census-strategic":
+            from .strategic_census import census_strategic_surface
+
+            report = census_strategic_surface(catalog, args.game)
+            report_path = (
+                _workspace_root(args)
+                / "reports"
+                / f"{args.game}-strategic-census.json"
+            )
+            write_json_atomic(report_path, report)
+            _render(
+                {
+                    "ready": True,
+                    "game": args.game,
+                    "report": str(report_path),
+                    "file_count": report["fileCount"],
+                    "surface_file_counts": report["surfaceFileCounts"],
+                    "family_totals": report["familyTotals"],
+                    "unresolved_file_count": len(report["unresolvedFiles"]),
+                    "unclassified_block_count": len(report["unclassifiedBlocks"]),
                 },
                 args.json,
             )
