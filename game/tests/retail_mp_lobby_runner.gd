@@ -51,6 +51,17 @@ func _run() -> void:
 	_check("guest_faction_change_propagates", faction_changed \
 		and int(host_session.lobby_remote_profile.get("color", -1)) == 5)
 
+	# The shared army ladder covers the six BFME2 factions plus Angmar, and an
+	# Angmar profile round-trips like any other ladder entry.
+	var expected_ladder: Array[String] = ["men", "elves", "dwarves", "isengard", "mordor", "wild", "angmar"]
+	_check("faction_ladder_is_seven_wide", SessionScript.LOBBY_FACTION_IDS == expected_ladder,
+		str(SessionScript.LOBBY_FACTION_IDS))
+	guest_session.send_lobby_profile("Witch King", "angmar", 5, false)
+	var angmar_propagated: bool = _pump_until(func() -> bool: return String(host_session.lobby_remote_profile.get("faction", "")) == "angmar")
+	_check("angmar_profile_propagates", angmar_propagated)
+	guest_session.send_lobby_profile("Witch King", "wild", 5, false)
+	_pump_until(func() -> bool: return String(host_session.lobby_remote_profile.get("faction", "")) == "wild")
+
 	# Invalid profiles fail closed on both the send and the receive side.
 	var bad_send_refused: bool = not host_session.send_lobby_profile("x".repeat(25), "men", 0, false) \
 		and not host_session.send_lobby_profile("Aragorn", "numenor", 0, false) \
@@ -141,7 +152,7 @@ func _run() -> void:
 	panel.open(host_session, true, "Aragorn")
 	var ui_ok: bool = panel.heading_label != null and panel.heading_label.text == "GAME LOBBY - HOSTING" \
 		and panel.name_edit.text == "Aragorn" \
-		and panel.army_opt.item_count == 6 and panel.color_opt.item_count == 8 \
+		and panel.army_opt.item_count == 7 and panel.color_opt.item_count == 8 \
 		and panel.map_opt.visible and not panel.map_value_label.visible \
 		and panel.launch_button.visible \
 		and panel.remote_name_label.text == "Witch King" \

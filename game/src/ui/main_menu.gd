@@ -17,9 +17,9 @@ const PAGE_OPTIONS := "options"
 const PAGE_DEVELOPER := "developer"
 const PAGE_STATS := "stats"
 
-## BFME2 skirmish factions. `id` is the lowercase source object-id prefix the
-## retail slice resolves through RetailFactionManifest; `name` is the
-## player-facing BFME2 label.
+## Skirmish factions: the six BFME2 factions plus RotWK's Angmar. `id` is the
+## lowercase source object-id prefix the retail slice resolves through
+## RetailFactionManifest; `name` is the player-facing retail label.
 const RETAIL_FACTIONS: Array[Dictionary] = [
 	{"id": "men", "name": "Men"},
 	{"id": "elves", "name": "Elves"},
@@ -27,6 +27,7 @@ const RETAIL_FACTIONS: Array[Dictionary] = [
 	{"id": "isengard", "name": "Isengard"},
 	{"id": "mordor", "name": "Mordor"},
 	{"id": "wild", "name": "Goblins"},
+	{"id": "angmar", "name": "Angmar"},
 ]
 const RETAIL_MAP_NAME := "Fords of Isen II"
 const NOT_CONVERTED_SUFFIX := " (not converted)"

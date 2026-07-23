@@ -57,15 +57,16 @@ func _run() -> void:
 		_finish()
 		return
 
-	# The skirmish setup offers exactly the six BFME2 factions, in order, with
-	# the slice's internal ids as metadata on both sides.
+	# The skirmish setup offers exactly the six BFME2 factions plus Angmar, in
+	# order, with the slice's internal ids as metadata on both sides.
 	var expected := [
 		["men", "Men"], ["elves", "Elves"], ["dwarves", "Dwarves"],
 		["isengard", "Isengard"], ["mordor", "Mordor"], ["wild", "Goblins"],
+		["angmar", "Angmar"],
 	]
-	_check("six_factions_offered_both_sides", player_opt.item_count == 6 and enemy_opt.item_count == 6)
+	_check("seven_factions_offered_both_sides", player_opt.item_count == 7 and enemy_opt.item_count == 7)
 	var ids_match := true
-	for index in range(mini(6, player_opt.item_count)):
+	for index in range(mini(7, player_opt.item_count)):
 		if String(player_opt.get_item_metadata(index)) != String(expected[index][0]) or String(enemy_opt.get_item_metadata(index)) != String(expected[index][0]):
 			ids_match = false
 		if player_opt.get_item_text(index) != String(expected[index][1]) and player_opt.get_item_text(index) != String(expected[index][1]) + " (not converted)":
@@ -204,7 +205,7 @@ func _run() -> void:
 	# over the slice's fieldable-unit classification for every faction.
 	var slice_probe = slice_script.new()
 	var availability: Dictionary = menu.get_retail_faction_availability()
-	_check("availability_covers_six_factions", availability.size() == 6)
+	_check("availability_covers_seven_factions", availability.size() == 7)
 	var availability_matches_slice_signals := true
 	for entry in expected:
 		var faction_id := String(entry[0])
@@ -529,7 +530,7 @@ func _run() -> void:
 		if enemy_opt.is_item_disabled(index):
 			disabled_index = index
 			break
-	_check("unconverted_option_exists", disabled_index >= 0 or converted_count == 6)
+	_check("unconverted_option_exists", disabled_index >= 0 or converted_count == 7)
 	if disabled_index >= 0:
 		game_state.set("retail_player_faction", "sentinel-player")
 		game_state.set("retail_enemy_faction", "sentinel-enemy")

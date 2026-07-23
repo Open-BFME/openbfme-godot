@@ -24,6 +24,7 @@ const FACTION_OBJECT_PREFIXES := {
 	"isengard": ["isengard"],
 	"mordor": ["mordor"],
 	"wild": ["wild", "goblin"],
+	"angmar": ["angmar"],
 }
 # Moved verbatim from RetailVerticalSlice.BUILDING_OBJECT_IDS.
 const DEFAULT_STRUCTURE_OBJECT_IDS := {
@@ -689,7 +690,13 @@ static func _validate_structure_research(object_id: String, research_value: Vari
 			upgrade_id == ""
 			or seen_upgrades.has(upgrade_id.to_lower())
 			or int(row.get("cost", -1)) < 0
-			or float(row.get("buildTimeSeconds", 0.0)) <= 0.0
+			# Zero is authored evidence, not corruption: RotWK 2.01 sells the
+			# Hall of Twilight necromancy technologies at BuildCost 0 /
+			# BuildTime 0 (_patch201ini.big: #define
+			# ANGMAR_TECH_SOUL_FREEZE_BUILDTIME 0, likewise WELL_OF_SOULS and
+			# CORPSE_RAIN). The simulation clamps research duration to >= 1
+			# tick, so only a negative time is malformed.
+			or float(row.get("buildTimeSeconds", -1.0)) < 0.0
 			or String(row.get("commandId", "")) == ""
 			or int(row.get("slot", 0)) < 1
 		):

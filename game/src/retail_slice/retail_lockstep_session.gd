@@ -16,7 +16,7 @@ const HASH_INTERVAL_TICKS := 30
 const LOBBY_NAME_MAX := 24
 const LOBBY_CHAT_MAX := 200
 const LOBBY_CHAT_LOG_MAX := 64
-const LOBBY_FACTION_IDS: Array[String] = ["men", "elves", "dwarves", "isengard", "mordor", "wild"]
+const LOBBY_FACTION_IDS: Array[String] = ["men", "elves", "dwarves", "isengard", "mordor", "wild", "angmar"]
 const LOBBY_MAP_IDS: Array[String] = [
 	"bfme2.map.fords-of-isen-ii",
 	"bfme2.map.rivendell",

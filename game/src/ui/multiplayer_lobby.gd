@@ -18,7 +18,7 @@ signal leave_requested
 
 const SessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 
-const FACTION_NAMES: Array[String] = ["Men", "Elves", "Dwarves", "Isengard", "Mordor", "Goblins"]
+const FACTION_NAMES: Array[String] = ["Men", "Elves", "Dwarves", "Isengard", "Mordor", "Goblins", "Angmar"]
 const MAP_NAMES: Array[String] = ["Fords of Isen II", "Rivendell", "Mount Doom", "Dagorlad", "Mordor"]
 const DEFAULT_HOST_NAME := "Player"
 const DEFAULT_GUEST_NAME := "Challenger"
