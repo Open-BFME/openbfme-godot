@@ -162,6 +162,37 @@ func _run() -> void:
 	await process_frame
 	_check("lobby_panel_builds_for_both_sides", ui_ok and guest_ui_ok)
 
+	# --- chat UX: alone in the lobby works; invalid text gets an honest error ---
+	# A host with no challenger yet must still be able to chat: the line lands in
+	# the LOCAL log only (nothing to transmit; a later guest never sees pre-join
+	# history, retail-consistent) and the input clears without any error.
+	var solo_host = SessionScript.new()
+	var solo_bind_ok: bool = solo_host.host(0) == OK
+	var chat_panel: Panel = LobbyScript.new()
+	chat_panel.size = Vector2(1000, 640)
+	root.add_child(chat_panel)
+	await process_frame
+	chat_panel.open(solo_host, true, "Aragorn")
+	chat_panel.chat_edit.text = "anyone there?"
+	chat_panel._on_chat_send()
+	_check("chat_alone_lands_in_local_log", solo_bind_ok \
+		and chat_panel.chat_log_label.text == "Aragorn: anyone there?" \
+		and chat_panel.chat_edit.text == "" \
+		and not chat_panel.status_label.text.contains("Message not sent"))
+	# Genuinely invalid text (non-printable-ASCII) is refused with the honest
+	# text-validation error, is never appended, and never transmits: the session
+	# chat log stays empty (fail-closed contract intact).
+	chat_panel.chat_edit.text = "smoke é☕ test"
+	chat_panel._on_chat_send()
+	_check("invalid_chat_text_gets_honest_error", \
+		chat_panel.chat_log_label.text == "Aragorn: anyone there?" \
+		and chat_panel.status_label.text.contains("printable ASCII") \
+		and solo_host.lobby_chat_log.is_empty())
+	chat_panel.close_lobby()
+	solo_host.close()
+	chat_panel.queue_free()
+	await process_frame
+
 	# --- leave / disconnect cleanup ---------------------------------------------
 	guest_session.close()
 	var guest_cleared: bool = guest_session.lobby_remote_profile.is_empty() \
@@ -244,6 +275,23 @@ func _run_menu_wiring_checks() -> void:
 	var guest_join_ok: bool = lobby_session != null and guest.join("127.0.0.1", 27341) == OK
 	var connected: bool = guest_join_ok and await _pump_menu_until(
 		func() -> bool: return bool(lobby_session.handshake_complete) and bool(guest.handshake_complete), guest)
+	# Connected chat still round-trips through the same UI path in BOTH
+	# directions: the host's UI send reaches the guest session, and a guest
+	# session line lands in the host's UI chat log.
+	var ui_chat_ok := false
+	if connected:
+		menu.multiplayer_lobby.chat_edit.text = "gl hf"
+		menu.multiplayer_lobby._on_chat_send()
+		var host_line_arrived: bool = await _pump_menu_until(
+			func() -> bool: return guest.lobby_chat_log.size() >= 1, guest)
+		var guest_line_sent: bool = guest.send_lobby_chat("hi host")
+		var guest_line_arrived: bool = guest_line_sent and await _pump_menu_until(
+			func() -> bool: return menu.multiplayer_lobby.chat_log_label.text.contains("hi host"), guest)
+		ui_chat_ok = host_line_arrived and guest_line_arrived \
+			and String((guest.lobby_chat_log[0] as Dictionary).get("text", "")) == "gl hf" \
+			and menu.multiplayer_lobby.chat_log_label.text.contains(": gl hf") \
+			and menu.multiplayer_lobby.chat_edit.text == ""
+	_check("connected_chat_reaches_both_sides_via_ui", ui_chat_ok)
 	var guest_announced: bool = connected and guest.send_lobby_profile("Legolas", "elves", 2, true)
 	menu.multiplayer_lobby.local_ready_check.button_pressed = true
 	var both_ready: bool = guest_announced and await _pump_menu_until(

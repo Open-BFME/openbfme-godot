@@ -432,11 +432,24 @@ func _on_chat_send() -> void:
 	var text := chat_edit.text.strip_edges()
 	if text == "":
 		return
-	if session.send_lobby_chat(text):
-		_append_chat_line(local_profile_fields()["name"], text)
-		chat_edit.text = ""
-	else:
-		set_status("Message not sent: chat is limited to %d printable characters." % SessionScript.LOBBY_CHAT_MAX, true)
+	# Validate the text itself first so the error is honest: invalid text never
+	# transmits (the session re-checks fail-closed), and a transport problem is
+	# never blamed on the message length.
+	if not SessionScript.lobby_chat_valid(text):
+		set_status(
+			"Message not sent: chat is limited to %d printable ASCII characters." % SessionScript.LOBBY_CHAT_MAX,
+			true
+		)
+		return
+	var connected: bool = bool(session.connected) and bool(session.handshake_complete)
+	if connected and not session.send_lobby_chat(text):
+		set_status("Message not sent: the connection is not ready. Try again.", true)
+		return
+	# Alone in the lobby there is no peer to transmit to: the line lands in the
+	# local log only. A guest who joins later simply never sees pre-join history
+	# (retail-consistent). When connected, the send above already reached the peer.
+	_append_chat_line(local_profile_fields()["name"], text)
+	chat_edit.text = ""
 
 
 func _on_lobby_chat(_team: int, text: String) -> void:

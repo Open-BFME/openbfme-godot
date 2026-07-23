@@ -115,9 +115,106 @@ func _run() -> void:
 			game_state.set("retail_mp_mode", "host")
 			_check("solo_launch_clears_mp_mode", true)
 
+	# --- men-pack gate vs shared-object winners (playtest JOIN-blocked bug) -----
+	# Faction packs legitimately ship their own copy of the shared base bundle
+	# objects, so a foreign ACTIVE pack wins the flat bundle_objects table
+	# (active loads last). The MP gate must resolve the host pack BY ID over the
+	# mounted set — exactly like the slice — and therefore pass while
+	# bfme2-men-vslice is genuinely mounted, in BOTH boot paths (OPENBFME_CONTENT
+	# and the durable user selection), and block with an honest message when the
+	# men pack truly is absent. Synthetic fixture packs only; the real user://
+	# selection is never read or written (the durable path is exercised through
+	# the project-settings cache override).
+	var content_db := root.get_node_or_null("ContentDB")
+	_check("content_db_autoload_present", content_db != null)
+	if content_db != null:
+		var former_content := OS.get_environment("OPENBFME_CONTENT")
+		var fixture_with_men := OS.get_cache_dir().path_join("openbfme-mp-menu-fixture-with-men")
+		var fixture_no_men := OS.get_cache_dir().path_join("openbfme-mp-menu-fixture-no-men")
+		_build_gate_fixture(fixture_with_men, true)
+		_build_gate_fixture(fixture_no_men, false)
+
+		# (1) env-selected content root: men mounted as a supplement behind a
+		# foreign active pack whose gondor-fighter copy wins the flat table.
+		OS.set_environment("OPENBFME_CONTENT", fixture_with_men)
+		content_db.call("reload")
+		var winner_root := String((content_db.call("get_bundle_object", "bfme2.object.gondor-fighter") as Dictionary).get("_pack_root", ""))
+		var env_gate := String(menu._men_pack_gate_error())
+		_check("env_gate_passes_with_men_mounted_behind_foreign_active",
+			winner_root.contains("foreign-vslice") and env_gate == "",
+			"winner=%s gate=%s" % [winner_root, env_gate])
+
+		# (2) the same mounted set through the durable-selection boot path.
+		OS.set_environment("OPENBFME_CONTENT", "")
+		ProjectSettings.set_setting("openbfme/content/user_pack_cache", fixture_with_men)
+		ProjectSettings.set_setting("openbfme/content/user_pack_selection", fixture_with_men.path_join("selection.json"))
+		content_db.call("reload")
+		var durable_gate := String(menu._men_pack_gate_error())
+		_check("durable_gate_passes_with_men_mounted_behind_foreign_active",
+			durable_gate == "", durable_gate)
+
+		# (3) men truly absent stays blocked with the honest mounted-set message
+		# (never the old shared-winner identity claim).
+		ProjectSettings.set_setting("openbfme/content/user_pack_cache", fixture_no_men)
+		ProjectSettings.set_setting("openbfme/content/user_pack_selection", fixture_no_men.path_join("selection.json"))
+		content_db.call("reload")
+		var absent_gate := String(menu._men_pack_gate_error())
+		_check("gate_blocks_honestly_when_men_pack_absent",
+			absent_gate.contains("not mounted") and not absent_gate.contains("selected content pack is not"),
+			absent_gate)
+
+		# Restore the ambient content configuration.
+		ProjectSettings.set_setting("openbfme/content/user_pack_cache", null)
+		ProjectSettings.set_setting("openbfme/content/user_pack_selection", null)
+		OS.set_environment("OPENBFME_CONTENT", former_content)
+		content_db.call("reload")
+
 	menu.queue_free()
 	await process_frame
 	_finish()
+
+
+func _write_fixture_json(path: String, data: Dictionary) -> void:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file != null:
+		file.store_string(JSON.stringify(data, "  ") + "\n")
+		file.close()
+
+
+func _build_gate_fixture(cache: String, include_men: bool) -> void:
+	## Minimal synthetic content cache: a foreign active faction pack shipping
+	## its own copy of the shared men-soldier bundle documents, optionally with
+	## a real-id bfme2-men-vslice pack mounted as a supplement. Overwrite-only:
+	## the fixture never deletes and never touches user://.
+	var packs := {"foreign-vslice": "bfme2-foreign-vslice"}
+	if include_men:
+		packs["men-vslice"] = "bfme2-men-vslice"
+	for dir_name in packs:
+		var pack_root := cache.path_join(String(dir_name))
+		DirAccess.make_dir_recursive_absolute(pack_root.path_join("data"))
+		_write_fixture_json(pack_root.path_join("pack.json"), {
+			"schema": "openbfme.content-pack", "schemaVersion": 0,
+			"id": packs[dir_name], "priority": 900,
+			"files": {
+				"objects": "data/objects.json",
+				"animationCapabilities": "data/caps.json",
+				"entryMap": "data/fords.json",
+			},
+		})
+		_write_fixture_json(pack_root.path_join("data/objects.json"), {"objects": [
+			{"id": "bfme2.object.gondor-fighter", "kind": "member", "animationCapabilityId": "cap.fixture"},
+			{"id": "bfme2.object.gondor-fighter-horde", "kind": "horde"},
+		]})
+		_write_fixture_json(pack_root.path_join("data/caps.json"), {"capabilities": [
+			{"id": "cap.fixture", "states": {}},
+		]})
+		_write_fixture_json(pack_root.path_join("data/fords.json"), {"id": "bfme2.map.fords-of-isen-ii"})
+	var supplements: Array = ["men-vslice"] if include_men else []
+	_write_fixture_json(cache.path_join("selection.json"), {
+		"schema": "openbfme.pack-selection", "schemaVersion": 0,
+		"activePack": "foreign-vslice",
+		"supplementalPacks": supplements,
+	})
 
 
 func _finish() -> void:

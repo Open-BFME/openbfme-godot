@@ -596,10 +596,22 @@ func _selected_faction_pack_root() -> String:
 	return String(member.get("_pack_root", ""))
 
 
+func _mounted_pack_root_for_id(pack_id: String) -> String:
+	## Loaded-state twin of the slice's _pack_root_for_id: the first mounted pack
+	## whose pack.json declares the id, resolved from ContentDB's already-loaded
+	## catalog so the gate judges exactly the pack set the loaded documents came
+	## from (never a fresh disk scan that could disagree with the loaded state).
+	for meta_value in (_content_db.get("pack_meta") as Array):
+		var meta := meta_value as Dictionary
+		if String(meta.get("id", "")) == pack_id:
+			return String(meta.get("root", ""))
+	return ""
+
+
 func _men_pack_gate_error() -> String:
 	## The first fail-closed checks retail_vertical_slice runs for the default
 	## Men manifest: soldier/horde/map bundle documents, the soldier animation
-	## capability, and the selected pack identity.
+	## capability, and the host-pack identity.
 	var member := _content_db.call("get_bundle_object", SliceScript.SOLDIER_OBJECT_ID) as Dictionary
 	var horde := _content_db.call("get_bundle_object", SliceScript.SOLDIER_HORDE_ID) as Dictionary
 	var map_definition := _content_db.call("get_bundle_map", SliceScript.MAP_ID) as Dictionary
@@ -608,9 +620,14 @@ func _men_pack_gate_error() -> String:
 	var capability := _content_db.call("get_animation_capability", String(member.get("animationCapabilityId", ""))) as Dictionary
 	if capability.is_empty():
 		return "the bfme2-men-vslice pack soldier animation capability is missing"
-	var pack_root := String(member.get("_pack_root", ""))
-	if pack_root == "" or String((ModLoader._read_json(pack_root.path_join("pack.json")) as Dictionary).get("id", "")) != FactionManifestScript.DEFAULT_PACK_ID:
-		return "the selected content pack is not %s" % FactionManifestScript.DEFAULT_PACK_ID
+	# Host-pack assertion mirrors the slice (retail_vertical_slice.gd, "Resolve
+	# the asserted host pack by id"): the pack resolves BY ID over the mounted
+	# set, never through the member document's pack root. Supplements and other
+	# active faction packs legitimately carry their own copy of the shared base
+	# bundle objects, so the shared-id winner can be another mounted pack while
+	# the men host pack is present and the slice boots fine.
+	if _mounted_pack_root_for_id(FactionManifestScript.DEFAULT_PACK_ID) == "":
+		return "the %s pack is not mounted by the current content selection" % FactionManifestScript.DEFAULT_PACK_ID
 	return ""
 
 
