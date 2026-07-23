@@ -486,6 +486,17 @@ def _resolved_multiplicative_expression(
     return int(value) if value.is_integer() else value
 
 
+def _resolved_percent_expression(
+    expression: str, constants: Mapping[str, int | float]
+) -> int | float | None:
+    """Resolve one percent-suffixed expression (``100.0%``) to its number."""
+
+    token = expression.strip()
+    if token.endswith("%"):
+        token = token[:-1].strip()
+    return _resolved_expression(token, constants)
+
+
 def _resolved_scalar(
     fields: Mapping[str, Mapping[str, object]],
     name: str,
@@ -2198,15 +2209,9 @@ _ABILITY_SUPPORT_MODULE_KINDS = frozenset(
 _ABILITY_UNIMPLEMENTED_MODULE_KINDS = {
     "specialdisguiseupdate": "disguise needs the disguise system",
     "weaponmodespecialpowerupdate": "weapon-mode toggle needs the weapon-set system",
-    "arrowstormupdate": "arrow-storm barrage needs the volley targeting system",
-    "togglehiddenspecialabilityupdate": "stealth toggle needs the stealth system",
-    "invisibilityspecialpower": "invisibility needs the stealth system",
-    "levelgrantspecialpower": "experience grant needs the experience system",
-    "teleportspecialabilityupdate": "teleport needs the teleport system",
-    "teleporttocasterspecialpower": "teleport needs the teleport system",
+    "teleporttocasterspecialpower": "teleport-to-caster needs the caster-anchor system",
     "dominateenemyspecialpower": "domination needs the allegiance system",
     "untamedallegiancespecialpower": "allegiance change needs the allegiance system",
-    "cursespecialpower": "curse needs the status-effect system",
     "grabpassengerspecialpower": "grab needs the passenger system",
     "flingpassengerspecialabilityupdate": "fling needs the passenger system",
     "storeobjectsspecialpower": "object storage needs the garrison system",
@@ -2293,6 +2298,15 @@ def _ability_button_leaf_fields(button: IniBlock) -> dict[str, object]:
     if cursor is not None:
         row["radiusCursorType"] = cursor
     return row
+
+
+def _invisibility_nugget(block: SageBlock) -> SageBlock | None:
+    """The first nested InvisibilityNugget of one Behavior module, if any."""
+
+    for child in block.blocks:
+        if (child.header_key or child.kind).casefold() == "invisibilitynugget":
+            return child
+    return None
 
 
 def _module_tokens(block: SageBlock, field: str) -> tuple[str, ...]:
@@ -2984,6 +2998,27 @@ def _weapon_warhead_target(
     return None
 
 
+# Damage-payload nugget kinds the runtime has no system for yet, annotated
+# with the system each one needs so a recorded gap names its blocker.
+_UNSUPPORTED_DAMAGE_NUGGET_SYSTEMS = {
+    "firelogicnugget": "needs fire ignition/burn-rate logic",
+    "weaponoclnugget": "needs weapon-spawned object (OCL) payloads",
+    "dotnugget": "needs damage-over-time",
+    "paralyzenugget": "needs paralysis status",
+    "grabnugget": "needs grab/passenger carry",
+    "specialmodelconditionnugget": "needs scripted model-condition status",
+    "attributemodifiernugget": "needs weapon-applied attribute modifiers",
+    "emotionweaponnugget": "needs weapon-applied emotion push",
+    "metaimpactnugget": "knockback-only payload",
+    "projectilenugget": "projectile warhead chain",
+}
+
+
+def _annotated_nugget_kind(kind: str) -> str:
+    annotation = _UNSUPPORTED_DAMAGE_NUGGET_SYSTEMS.get(kind.casefold())
+    return f"{kind} ({annotation})" if annotation else kind
+
+
 def _weapon_nugget_summary(
     documents: Mapping[str, bytes],
     identifier: str,
@@ -3119,19 +3154,15 @@ def _ability_weapon_leaf(
         cache=named_definition_cache,
         cache_lock=cache_lock,
     )
-    damage_weapon_id = weapon_id
+    damage_weapon_ids = [weapon_id]
     if base is None:
         # ProjectileNugget warhead chain: the launcher authors no damage, its
-        # unique authored warhead does.  One bounded hop, never recursive.
+        # authored warheads do.  Retail fires every ProjectileNugget per
+        # shot, so every distinct warhead must resolve and their base
+        # damages combine.  One bounded hop, never recursive.
         summary = _weapon_nugget_summary(documents, weapon_id)
-        warheads = summary["warheads"]
-        warhead_id = next(iter(warheads.values())) if len(warheads) == 1 else None
-        if warhead_id is None:
-            if len(warheads) > 1:
-                raise PlayableUnitCompilerError(
-                    f"{label} weapon {weapon_id} has ambiguous ProjectileNugget "
-                    f"warheads: {', '.join(sorted(warheads.values(), key=str.casefold))}"
-                )
+        warhead_ids = sorted(summary["warheads"].values(), key=str.casefold)
+        if not warhead_ids:
             unsupported_kinds = sorted(
                 (
                     kind
@@ -3142,45 +3173,81 @@ def _ability_weapon_leaf(
             )
             detail = (
                 f"; its damage payload uses unsupported nugget kinds: "
-                f"{', '.join(unsupported_kinds)}"
+                + ", ".join(
+                    _annotated_nugget_kind(kind) for kind in unsupported_kinds
+                )
                 if unsupported_kinds
                 else ""
             )
             raise PlayableUnitCompilerError(
                 f"{label} weapon {weapon_id} has no resolvable base DamageNugget "
-                f"damage and no unique authored warhead{detail}"
+                f"damage and no authored warhead{detail}"
             )
-        base = _base_weapon_damage(
-            documents,
-            warhead_id,
-            constants,
-            cache=named_definition_cache,
-            cache_lock=cache_lock,
-        )
-        if base is None:
-            raise PlayableUnitCompilerError(
-                f"{label} weapon {weapon_id} warhead {warhead_id} has no "
-                "resolvable base DamageNugget damage"
+        warhead_bases: list[dict[str, object]] = []
+        for warhead_id in warhead_ids:
+            warhead_base = _base_weapon_damage(
+                documents,
+                warhead_id,
+                constants,
+                cache=named_definition_cache,
+                cache_lock=cache_lock,
             )
-        damage_weapon_id = warhead_id
-    nuggets = _weapon_damage_nuggets(
-        documents,
-        damage_weapon_id,
-        cache=named_definition_cache,
-        cache_lock=cache_lock,
-    ) or []
+            if warhead_base is None:
+                warhead_summary = _weapon_nugget_summary(documents, warhead_id)
+                unsupported_kinds = sorted(
+                    (
+                        kind
+                        for key, kind in warhead_summary["kinds"].items()
+                        if key != "damagenugget"
+                    ),
+                    key=str.casefold,
+                )
+                detail = (
+                    "; its damage payload uses unsupported nugget kinds: "
+                    + ", ".join(
+                        _annotated_nugget_kind(kind) for kind in unsupported_kinds
+                    )
+                    if unsupported_kinds
+                    else ""
+                )
+                raise PlayableUnitCompilerError(
+                    f"{label} weapon {weapon_id} warhead {warhead_id} has no "
+                    f"resolvable base DamageNugget damage{detail}"
+                )
+            warhead_bases.append(warhead_base)
+        combined_components: list[dict[str, object]] = []
+        combined_excluded: list[dict[str, object]] = []
+        for warhead_base in warhead_bases:
+            combined_components.extend(warhead_base["components"])  # type: ignore[arg-type]
+            combined_excluded.extend(warhead_base.get("excludedNuggets", ()))  # type: ignore[arg-type]
+        base = {
+            "value": sum(
+                warhead_base["value"] for warhead_base in warhead_bases  # type: ignore[misc]
+            ),
+            "components": combined_components,
+        }
+        if combined_excluded:
+            base["excludedNuggets"] = combined_excluded
+        damage_weapon_ids = list(warhead_ids)
     radius = 0.0
     damage_scalar_authored = False
-    for nugget in nuggets:
-        fields = nugget["fields"]
-        assert isinstance(fields, Mapping)
-        if fields.get("requiredupgradenames") or fields.get("specialobjectfilter"):
-            continue
-        if fields.get("damagescalar"):
-            damage_scalar_authored = True
-        resolved = _resolved_definition_field(fields, "Radius", constants)
-        if resolved is not None:
-            radius = max(radius, float(resolved["value"]))
+    for damage_weapon_id in damage_weapon_ids:
+        nuggets = _weapon_damage_nuggets(
+            documents,
+            damage_weapon_id,
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        ) or []
+        for nugget in nuggets:
+            fields = nugget["fields"]
+            assert isinstance(fields, Mapping)
+            if fields.get("requiredupgradenames") or fields.get("specialobjectfilter"):
+                continue
+            if fields.get("damagescalar"):
+                damage_scalar_authored = True
+            resolved = _resolved_definition_field(fields, "Radius", constants)
+            if resolved is not None:
+                radius = max(radius, float(resolved["value"]))
     damage_types = sorted(
         {
             str(component["damageType"])
@@ -3196,8 +3263,11 @@ def _ability_weapon_leaf(
         "components": list(base["components"]),
         "sourceIni": WEAPON_PATH,
     }
-    if damage_weapon_id != weapon_id:
-        leaf["warheadId"] = damage_weapon_id
+    if damage_weapon_ids != [weapon_id]:
+        if len(damage_weapon_ids) == 1:
+            leaf["warheadId"] = damage_weapon_ids[0]
+        else:
+            leaf["warheadIds"] = list(damage_weapon_ids)
     if damage_scalar_authored:
         leaf["damageScalarAuthored"] = True
     if len(damage_types) == 1:
@@ -3562,20 +3632,36 @@ def _weapon_toggle_row(
         evidence["toggleFlag"] = flag
         evidence["toggleMode"] = flag.casefold()
         toggled_sets = []
+        exact_sets = []
         for block in _effective_top_blocks(member_lineage):
             if (block.header_key or block.kind).casefold() != "weaponset":
                 continue
-            condition_tokens = [
-                token
+            positive_tokens = {
+                token.casefold()
                 for assignment in block.assignments
                 if assignment.key.casefold() in {"condition", "conditions"}
                 for token in _tokens(assignment.value)
-            ]
-            if any(token.casefold() == flag.casefold() for token in condition_tokens):
+                if not token.startswith("-")
+                and token.casefold() not in {"none", "set_normal"}
+            }
+            if flag.casefold() in positive_tokens:
                 toggled_sets.append(block)
+                # Retail best-match selection: engaging the toggle sets only
+                # the toggle flag, so the WeaponSet conditioned on exactly
+                # that flag is the toggled base state; sets that add further
+                # conditions (CONTAINED, CLOSE_RANGE, HERO_MODE) are other
+                # states layered on top.
+                if positive_tokens == {flag.casefold()}:
+                    exact_sets.append(block)
+        if len(exact_sets) == 1:
+            toggled_sets = exact_sets
         if len(toggled_sets) != 1:
             reason = (
                 f"{label} matches {len(toggled_sets)} WeaponSet blocks for "
+                f"{flag} and none is conditioned on exactly that flag "
+                "(need one base toggled state)"
+                if len(exact_sets) != 1
+                else f"{label} matches {len(toggled_sets)} WeaponSet blocks for "
                 f"{flag} (need exactly one)"
             )
         else:
@@ -3952,9 +4038,13 @@ def _hero_ability_row(
         if enum is not None:
             row["enum"] = enum
         reload_values = power_block.values("ReloadTime")
-        cooldown = (
-            _resolved_expression(reload_values[-1], constants) if reload_values else None
-        )
+        if reload_values:
+            cooldown = _resolved_expression(reload_values[-1], constants)
+        else:
+            # Retail may omit ReloadTime entirely (Dain's Stubborn Pride):
+            # the engine default is zero milliseconds — no recharge gate.
+            # Only an authored expression that cannot resolve fails closed.
+            cooldown = 0
         if cooldown is None:
             status = "unimplemented"
             reason = f"SpecialPower {power_id} has an unresolvable ReloadTime"
@@ -4000,6 +4090,12 @@ def _hero_ability_row(
                         "heromodespecialabilityupdate",
                         "playerhealspecialpower",
                         "togglemountedspecialabilityupdate",
+                        "levelgrantspecialpower",
+                        "arrowstormupdate",
+                        "togglehiddenspecialabilityupdate",
+                        "invisibilityspecialpower",
+                        "teleportspecialabilityupdate",
+                        "cursespecialpower",
                     }
                 },
                 key=str.casefold,
@@ -4038,6 +4134,8 @@ def _hero_ability_row(
                 limitations,
                 power_enum=str(row.get("enum", "")),
                 member_lineage=member_lineage,
+                behavior_modules=behavior_modules,
+                radius_cursor_radius=row.get("radiusCursorRadius"),
                 named_definition_cache=named_definition_cache,
                 cache_lock=cache_lock,
             )
@@ -4100,6 +4198,8 @@ def _hero_ability_effect(
     *,
     power_enum: str = "",
     member_lineage: Sequence[SageObject] = (),
+    behavior_modules: Sequence[SageBlock] = (),
+    radius_cursor_radius: int | float | None = None,
     named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
     cache_lock: threading.Lock | None,
 ) -> dict[str, object]:
@@ -4399,7 +4499,14 @@ def _hero_ability_effect(
             "components": leaf["components"],
             "sourceIni": WEAPON_PATH,
         }
-        for key in ("damageType", "attackRange", "fireFxId", "excludedNuggets", "warheadId"):
+        for key in (
+            "damageType",
+            "attackRange",
+            "fireFxId",
+            "excludedNuggets",
+            "warheadId",
+            "warheadIds",
+        ):
             if key in leaf:
                 effect[key] = leaf[key]
         # MetaImpactNugget shockwave (Gandalf blasts): source-unit knockback
@@ -4407,6 +4514,8 @@ def _hero_ability_effect(
         knockback_chain: list[str] = [weapon_tokens[0]]
         if "warheadId" in leaf:
             knockback_chain.append(str(leaf["warheadId"]))
+        for warhead_id in leaf.get("warheadIds", ()):  # type: ignore[union-attr]
+            knockback_chain.append(str(warhead_id))
         effect.update(
             _weapon_knockback_fields(
                 documents,
@@ -4434,6 +4543,307 @@ def _hero_ability_effect(
             effect["startAbilityRange"] = start_range
         if "attackRange" not in effect and "startAbilityRange" not in effect:
             limitations.append("ability weapon authors no AttackRange/StartAbilityRange")
+        return effect
+
+    grant_modules = modules_of("levelgrantspecialpower")
+    if grant_modules:
+        # LevelGrantSpecialPower (King's Favor / Train Allies): the module
+        # authors the grant circle and the exact Experience amount; the
+        # runtime pays it through the normal experience pipeline.  Every
+        # consumed magnitude must resolve or the ability stays a recorded gap.
+        if len(grant_modules) > 1:
+            raise PlayableUnitCompilerError(
+                f"{label} matches multiple LevelGrantSpecialPower modules"
+            )
+        block = grant_modules[0]
+        experience = _resolved_expression(
+            (block.values("Experience") or ("",))[-1], constants
+        )
+        if experience is None or float(experience) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} LevelGrantSpecialPower has no resolvable Experience"
+            )
+        radius_effect = _resolved_expression(
+            (block.values("RadiusEffect") or ("",))[-1], constants
+        )
+        if radius_effect is None or float(radius_effect) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} LevelGrantSpecialPower has no resolvable RadiusEffect"
+            )
+        effect = {
+            "kind": "experience-grant",
+            "experience": experience,
+            "radiusEffect": radius_effect,
+            "sourceIni": block.source_virtual_path,
+            "line": block.line,
+        }
+        start_range = _resolved_expression(
+            (block.values("StartAbilityRange") or ("",))[-1], constants
+        )
+        if start_range is not None and float(start_range) > 0.0:
+            effect["startAbilityRange"] = start_range
+        filter_tokens = _module_tokens(block, "AcceptanceFilter")
+        if filter_tokens:
+            effect["affects"] = _projected_object_filter(filter_tokens, filter_defines)
+        level_fx = _first(block.values("LevelFX"))
+        if level_fx is not None:
+            effect["levelFxId"] = level_fx
+        return effect
+
+    storm_modules = modules_of("arrowstormupdate")
+    if storm_modules:
+        # ArrowStormUpdate barrage (Arrow Storm / Lightning Sword): the
+        # module authors the volley envelope; its named WeaponTemplate
+        # resolves per-shot damage through the shared ability-weapon leaf
+        # (ProjectileNugget warhead chain included).  Fail-closed: the
+        # damage, TargetRadius and MaxShots must all resolve.
+        if len(storm_modules) > 1:
+            raise PlayableUnitCompilerError(
+                f"{label} matches multiple ArrowStormUpdate modules"
+            )
+        block = storm_modules[0]
+        weapon_tokens = _module_tokens(block, "WeaponTemplate")
+        if len(weapon_tokens) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} ArrowStormUpdate must name exactly one WeaponTemplate"
+            )
+        leaf = _ability_weapon_leaf(
+            documents,
+            weapon_tokens[0],
+            constants,
+            label,
+            named_definition_cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if float(leaf["damage"]) <= 0.0:  # type: ignore[arg-type]
+            raise PlayableUnitCompilerError(
+                f"{label} arrow-storm weapon {weapon_tokens[0]} resolves no "
+                "positive per-shot damage"
+            )
+        target_radius = _resolved_expression(
+            (block.values("TargetRadius") or ("",))[-1], constants
+        )
+        if target_radius is None or float(target_radius) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} ArrowStormUpdate has no resolvable TargetRadius"
+            )
+        max_shots = _resolved_expression(
+            (block.values("MaxShots") or ("",))[-1], constants
+        )
+        if max_shots is None or int(max_shots) < 1:
+            raise PlayableUnitCompilerError(
+                f"{label} ArrowStormUpdate has no resolvable MaxShots"
+            )
+        shots_per_burst = _resolved_expression(
+            (block.values("ShotsPerBurst") or ("",))[-1], constants
+        )
+        persistent_prep = _resolved_expression(
+            (block.values("PersistentPrepTime") or ("",))[-1], constants
+        )
+        effect = {
+            "kind": "arrow-storm",
+            "weaponId": leaf["id"],
+            "weaponDamage": leaf["damage"],
+            "components": leaf["components"],
+            "targetRadius": target_radius,
+            "maxShots": int(max_shots),
+            "shotsPerBurst": int(shots_per_burst) if shots_per_burst is not None else 1,
+            "persistentPrepMs": persistent_prep if persistent_prep is not None else 0,
+            "canShootEmptyGround": (
+                (_first(block.values("CanShootEmptyGround")) or "").casefold() == "yes"
+            ),
+            "sourceIni": block.source_virtual_path,
+            "line": block.line,
+        }
+        for key in ("damageType", "fireFxId", "warheadId", "excludedNuggets"):
+            if key in leaf:
+                effect[key] = leaf[key]
+        start_range = _resolved_expression(
+            (block.values("StartAbilityRange") or ("",))[-1], constants
+        )
+        if start_range is not None and float(start_range) > 0.0:
+            effect["startAbilityRange"] = start_range
+        if leaf.get("damageScalarAuthored"):
+            limitations.append(
+                "weapon authors DamageScalar target-type scaling (not applied)"
+            )
+        return effect
+
+    hidden_modules = modules_of("togglehiddenspecialabilityupdate")
+    invisibility_modules = modules_of("invisibilityspecialpower")
+    if hidden_modules or invisibility_modules:
+        # Stealth (ToggleHiddenSpecialAbilityUpdate / InvisibilitySpecialPower):
+        # the cast cloaks the hero (and, for a broadcast module, allies in
+        # the authored radius) for the authored duration; the paired
+        # InvisibilityNugget's ForbiddenConditions break the cloak early.
+        if len(hidden_modules) + len(invisibility_modules) > 1:
+            raise PlayableUnitCompilerError(
+                f"{label} matches multiple stealth modules"
+            )
+        if hidden_modules:
+            block = hidden_modules[0]
+            duration = _resolved_expression(
+                (block.values("EffectDuration") or ("",))[-1], constants
+            )
+            if duration is None or float(duration) <= 0.0:
+                raise PlayableUnitCompilerError(
+                    f"{label} ToggleHiddenSpecialAbilityUpdate has no "
+                    "resolvable EffectDuration"
+                )
+            # Retail binds the toggle to the object's FIRST InvisibilityUpdate
+            # (the authored ordering contract in thranduil.ini); its nugget
+            # carries the cloak's ForbiddenConditions.
+            invisibility_updates = [
+                module
+                for module in behavior_modules
+                if module.kind.casefold() == "invisibilityupdate"
+            ]
+            if not invisibility_updates:
+                raise PlayableUnitCompilerError(
+                    f"{label} toggle-hidden has no InvisibilityUpdate module "
+                    "to convert"
+                )
+            nugget = _invisibility_nugget(invisibility_updates[0])
+            if nugget is None:
+                raise PlayableUnitCompilerError(
+                    f"{label} first InvisibilityUpdate authors no "
+                    "InvisibilityNugget"
+                )
+            forbidden = [
+                token
+                for value in nugget.values("ForbiddenConditions")
+                for token in _tokens(value)
+            ]
+            effect = {
+                "kind": "stealth-toggle",
+                "effectDurationMs": duration,
+                "forbiddenConditions": forbidden,
+                "sourceIni": block.source_virtual_path,
+                "line": block.line,
+            }
+        else:
+            block = invisibility_modules[0]
+            duration = _resolved_expression(
+                (block.values("Duration") or ("",))[-1], constants
+            )
+            if duration is None or float(duration) <= 0.0:
+                raise PlayableUnitCompilerError(
+                    f"{label} InvisibilitySpecialPower has no resolvable Duration"
+                )
+            nugget = _invisibility_nugget(block)
+            forbidden = (
+                [
+                    token
+                    for value in nugget.values("ForbiddenConditions")
+                    for token in _tokens(value)
+                ]
+                if nugget is not None
+                else []
+            )
+            effect = {
+                "kind": "stealth-toggle",
+                "effectDurationMs": duration,
+                "forbiddenConditions": forbidden,
+                "sourceIni": block.source_virtual_path,
+                "line": block.line,
+            }
+            broadcast = _resolved_expression(
+                (block.values("BroadcastRadius") or ("",))[-1], constants
+            )
+            if broadcast is not None and float(broadcast) > 0.0:
+                effect["broadcastRadius"] = broadcast
+            filter_tokens = _module_tokens(block, "ObjectFilter")
+            if filter_tokens:
+                effect["affects"] = _projected_object_filter(
+                    filter_tokens, filter_defines
+                )
+        unsupported_conditions = sorted(
+            {
+                token
+                for token in effect["forbiddenConditions"]  # type: ignore[union-attr]
+                if token.casefold()
+                not in {"taking_damage", "firing_any", "using_ability"}
+            },
+            key=str.casefold,
+        )
+        if unsupported_conditions:
+            limitations.append(
+                "forbidden stealth conditions not enforced by the runtime: "
+                + ", ".join(unsupported_conditions)
+            )
+        return effect
+
+    teleport_modules = modules_of("teleportspecialabilityupdate")
+    if teleport_modules:
+        # TeleportSpecialAbilityUpdate (Shelob Tunnel): MaxDistance gates the
+        # cast like a range; BusyForDuration holds the hero after arrival.
+        if len(teleport_modules) > 1:
+            raise PlayableUnitCompilerError(
+                f"{label} matches multiple TeleportSpecialAbilityUpdate modules"
+            )
+        block = teleport_modules[0]
+        max_distance = _resolved_expression(
+            (block.values("MaxDistance") or ("",))[-1], constants
+        )
+        if max_distance is None or float(max_distance) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} TeleportSpecialAbilityUpdate has no resolvable "
+                "MaxDistance"
+            )
+        busy = _resolved_expression(
+            (block.values("BusyForDuration") or ("",))[-1], constants
+        )
+        effect = {
+            "kind": "teleport",
+            "maxDistance": max_distance,
+            "busyForDurationMs": busy if busy is not None else 0,
+            "sourceIni": block.source_virtual_path,
+            "line": block.line,
+        }
+        destination_weapon = _first(block.values("DestinationWeaponName"))
+        if destination_weapon is not None:
+            limitations.append(
+                f"authored DestinationWeaponName ({destination_weapon}) is "
+                "not fired at the arrival point"
+            )
+        return effect
+
+    curse_modules = modules_of("cursespecialpower")
+    if curse_modules:
+        # CurseSpecialPower (Hour of the Witch-King): the authored
+        # CursePercentage restarts the victim hero's recharges; the power's
+        # RadiusCursorRadius bounds target selection.
+        if len(curse_modules) > 1:
+            raise PlayableUnitCompilerError(
+                f"{label} matches multiple CurseSpecialPower modules"
+            )
+        block = curse_modules[0]
+        percentage = _resolved_percent_expression(
+            (block.values("CursePercentage") or ("",))[-1], constants
+        )
+        if percentage is None or float(percentage) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} CurseSpecialPower has no resolvable CursePercentage"
+            )
+        if radius_cursor_radius is None or float(radius_cursor_radius) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} curse power authors no RadiusCursorRadius target circle"
+            )
+        effect = {
+            "kind": "curse",
+            "cursePercentage": percentage,
+            "radiusCursorRadius": radius_cursor_radius,
+            "sourceIni": block.source_virtual_path,
+            "line": block.line,
+        }
+        start_range = _resolved_expression(
+            (block.values("StartAbilityRange") or ("",))[-1], constants
+        )
+        if start_range is not None and float(start_range) > 0.0:
+            effect["startAbilityRange"] = start_range
+        cursed_fx = _first(block.values("CursedFX"))
+        if cursed_fx is not None:
+            effect["cursedFxId"] = cursed_fx
         return effect
 
     # Terror pulse (Elendil, Screech-class): a bound ability update that
@@ -4586,8 +4996,37 @@ def _hero_ability_effect(
             duration = leaf.get("durationMs")  # type: ignore[assignment]
         supported = list(leaf.get("modifiers", []))
         if anti_category is not None and not supported:
+            # Pure anti-category strip (Horn of Gondor): the ModifierList
+            # authors only the suppression Duration; the module authors the
+            # strip radius.  LEADERSHIP strips convert (the runtime drops
+            # aura grants and suppresses new ones); any other category or a
+            # missing magnitude stays a recorded gap.
+            if duration is None:
+                duration = leaf.get("durationMs")  # type: ignore[assignment]
+            if (
+                anti_category.casefold() == "leadership"
+                and duration is not None
+                and float(duration) > 0.0
+                and range_value is not None
+                and float(range_value) > 0.0
+            ):
+                effect = {
+                    "kind": "leadership-strip",
+                    "antiCategory": anti_category,
+                    "modifierId": modifier_id,
+                    "attributeModifierRange": range_value,
+                    "antiCategoryDurationMs": duration,
+                    "sourceIni": modifier_module.source_virtual_path,
+                    "line": modifier_module.line,
+                    "modifierSourceIni": ATTRIBUTE_MODIFIER_PATH,
+                }
+                if affects_filter is not None:
+                    effect["affectsFilter"] = affects_filter
+                return effect
             raise PlayableUnitCompilerError(
-                f"{label} strips {anti_category} buffs, which needs the buff system"
+                f"{label} strips {anti_category} buffs with no supported "
+                "modifier rows; only a LEADERSHIP strip with an authored "
+                "AttributeModifierRange and ModifierList Duration converts"
             )
         if not supported:
             raise PlayableUnitCompilerError(
@@ -4672,6 +5111,33 @@ def _hero_ability_effect(
         if kind_filter is not None:
             effect["affects"] = kind_filter
         return effect
+
+    if power_enum.casefold() == "special_screech":
+        # Screech / Terrible Fury / Instill Terror: the fear push is
+        # hardcoded in the retail engine behind Enum SPECIAL_SCREECH — the
+        # bound SpecialAbilityUpdate authors only an EffectRange plus the
+        # animation envelope (no GenerateTerror, weapon, or modifier leaf),
+        # so there is no authored magnitude to convert without inventing the
+        # emotion push.
+        ranges = [
+            resolved
+            for module in modules_of("specialabilityupdate")
+            if (
+                resolved := _resolved_expression(
+                    (module.values("EffectRange") or ("",))[-1], constants
+                )
+            )
+            is not None
+        ]
+        range_text = (
+            f"EffectRange {ranges[0]}" if ranges else "no EffectRange resolves"
+        )
+        raise PlayableUnitCompilerError(
+            f"{label} SPECIAL_SCREECH fear push is engine-hardcoded: the "
+            f"bound SpecialAbilityUpdate authors only the cast envelope "
+            f"({range_text}), no convertible effect leaf — needs the screech "
+            "emotion system"
+        )
 
     return {"kind": "none"}
 
@@ -5932,6 +6398,12 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             "terror",
             "mount-toggle",
             "capture-building",
+            "experience-grant",
+            "arrow-storm",
+            "stealth-toggle",
+            "teleport",
+            "curse",
+            "leadership-strip",
         }:
             raise PlayableUnitCompilerError("playable-unit ability effect is invalid")
         implementation = row.get("implementation")

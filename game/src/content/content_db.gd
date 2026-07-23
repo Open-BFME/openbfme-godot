@@ -661,7 +661,7 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 				or String(ability.get("targeting", "")) not in ["self", "point", "enemy-object"]
 				or typeof(ability.get("button")) != TYPE_DICTIONARY
 				or typeof(effect) != TYPE_DICTIONARY
-				or String((effect as Dictionary).get("kind", "")) not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror", "mount-toggle", "capture-building"]
+				or String((effect as Dictionary).get("kind", "")) not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror", "mount-toggle", "capture-building", "experience-grant", "arrow-storm", "stealth-toggle", "teleport", "curse", "leadership-strip"]
 				or typeof(implementation) != TYPE_DICTIONARY
 				or String((implementation as Dictionary).get("status", "")) not in ["implemented", "unimplemented", "passive"]
 			):

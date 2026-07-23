@@ -627,7 +627,7 @@ static func ability_rules(document: Dictionary) -> Array[Dictionary]:
 		var button: Dictionary = row.get("button", {}) as Dictionary
 		var effect: Dictionary = row.get("effect", {}) as Dictionary
 		var effect_kind := String(effect.get("kind", ""))
-		if effect_kind not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror", "mount-toggle", "capture-building"]:
+		if effect_kind not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror", "mount-toggle", "capture-building", "experience-grant", "arrow-storm", "stealth-toggle", "teleport", "curse", "leadership-strip"]:
 			return []
 		var implementation: Dictionary = row.get("implementation", {}) as Dictionary
 		var status := String(implementation.get("status", ""))

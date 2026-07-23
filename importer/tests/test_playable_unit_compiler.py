@@ -3378,3 +3378,753 @@ def test_fear_resistance_flag_compiles_from_emotion_tracker() -> None:
     descriptor = compile_playable_unit_descriptor("AbilityHero", no_emotions)
     validate_playable_unit_descriptor(descriptor)
     assert "fearResistant" not in descriptor["gameplay"]["simulation"]["resolved"]
+
+
+# ---------------------------------------------------------------------------
+# Batch-3 ability families: measured-field emission (experience-grant,
+# arrow-storm, stealth-toggle, teleport, curse, leadership-strip).  Fixture
+# magnitudes mirror the retail BFME2 corpus rows they pin (King's Favor,
+# Legolas Arrow Storm, Thranduil Wild Walk / Move Unseen, Shelob Tunnel,
+# Hour of the Witch-King, Horn of Gondor).
+# ---------------------------------------------------------------------------
+
+_BATCH3_BEHAVIORS = (
+    "  Behavior = LevelGrantSpecialPower ModuleTag_KingsFavor\n"
+    "    SpecialPowerTemplate = SpecialAbilityKingsFavor\n"
+    "    UnpackingVariation = 2\n"
+    "    StartAbilityRange = 200.0\n"
+    "    LevelFX = FX_LevelUp\n"
+    "    Experience = 50\n"
+    "    RadiusEffect = 150\n"
+    "    AcceptanceFilter = KINGSFAVOR_OBJECTFILTER\n"
+    "    UnpackTime = 3000\n"
+    "  End\n"
+    "  Behavior = SpecialPowerModule ModuleTag_ArrowStormStarter\n"
+    "    SpecialPowerTemplate = SpecialAbilityArrowStorm\n"
+    "    UpdateModuleStartsAttack = Yes\n"
+    "  End\n"
+    "  Behavior = ArrowStormUpdate ModuleTag_ArrowStormUpdate\n"
+    "    SpecialPowerTemplate = SpecialAbilityArrowStorm\n"
+    "    StartAbilityRange = 320.0\n"
+    "    PersistentPrepTime = 600\n"
+    "    WeaponTemplate = FixtureBowArrowStorm\n"
+    "    TargetRadius = 120\n"
+    "    ShotsPerTarget = 1\n"
+    "    ShotsPerBurst = 3\n"
+    "    MaxShots = 50\n"
+    "    CanShootEmptyGround = Yes\n"
+    "  End\n"
+    "  Behavior = SpecialPowerModule ModuleTag_WildWalkStarter\n"
+    "    SpecialPowerTemplate = SpecialAbilityWildWalk\n"
+    "    UpdateModuleStartsAttack = Yes\n"
+    "  End\n"
+    "  Behavior = ToggleHiddenSpecialAbilityUpdate ModuleTag_WildWalkUpdate\n"
+    "    SpecialPowerTemplate = SpecialAbilityWildWalk\n"
+    "    EffectDuration = 80000\n"
+    "    ShowPalantirTimer = Yes\n"
+    "  End\n"
+    "  Behavior = InvisibilityUpdate ModuleTag_WildWalk\n"
+    "    InvisibilityNugget\n"
+    "      InvisibilityType = STEALTH\n"
+    "      ForbiddenConditions = TAKING_DAMAGE USING_ABILITY\n"
+    "    End\n"
+    "    StartsActive = No\n"
+    "    UpdatePeriod = 2000\n"
+    "  End\n"
+    "  Behavior = InvisibilitySpecialPower ModuleTag_MoveUnseen\n"
+    "    SpecialPowerTemplate = SpecialAbilityMoveUnseen\n"
+    "    BroadcastRadius = THRANDUIL_MOVEUNSEEN_EFFECT_RADIUS\n"
+    "    ObjectFilter = ANY +HORDE +HERO +DOZER ALLIES\n"
+    "    Duration = 30000\n"
+    "    InvisibilityNugget\n"
+    "      ForbiddenConditions = FIRING_ANY\n"
+    "      InvisibilityType = CAMOUFLAGE\n"
+    "    End\n"
+    "  End\n"
+    "  Behavior = SpecialPowerModule ModuleTag_TeleportStarter\n"
+    "    SpecialPowerTemplate = SpecialAbilityFixtureTunnel\n"
+    "    UpdateModuleStartsAttack = Yes\n"
+    "  End\n"
+    "  Behavior = TeleportSpecialAbilityUpdate ModuleTag_TeleportUpdate\n"
+    "    SpecialPowerTemplate = SpecialAbilityFixtureTunnel\n"
+    "    UnpackTime = 1800\n"
+    "    PackTime = 1300\n"
+    "    BusyForDuration = 1800\n"
+    "    MaxDistance = WILD_SHELOB_TUNNEL_DISTANCE\n"
+    "  End\n"
+    "  Behavior = CurseSpecialPower ModuleTag_CurseUpdate\n"
+    "    SpecialPowerTemplate = SpecialAbilityCurseEnemy\n"
+    "    CursePercentage = 100.0%\n"
+    "    StartAbilityRange = 200.0\n"
+    "    CursedFX = FX_FixtureCursed\n"
+    "  End\n"
+    "  Behavior = SpecialPowerModule ModuleTag_HornStarter\n"
+    "    SpecialPowerTemplate = SpecialAbilityHornOfGondor\n"
+    "    UpdateModuleStartsAttack = Yes\n"
+    "    AntiCategory = LEADERSHIP\n"
+    "    AttributeModifier = FixtureHornAntiCategory\n"
+    "    AttributeModifierRange = 70.0\n"
+    "  End\n"
+    "  Behavior = ModelConditionSpecialAbilityUpdate ModuleTag_HornUpdate\n"
+    "    SpecialPowerTemplate = SpecialAbilityHornOfGondor\n"
+    "    UnpackTime = 1700\n"
+    "  End\n"
+)
+
+
+def _batch3_hero_documents() -> dict[str, bytes]:
+    documents = _hero_ability_documents()
+    _with_hero_modules(documents, _BATCH3_BEHAVIORS)
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  9 = Command_FixtureBroken\nEnd",
+        "  9 = Command_FixtureBroken\n"
+        "  10 = Command_FixtureKingsFavor\n"
+        "  11 = Command_FixtureArrowStorm\n"
+        "  12 = Command_FixtureWildWalk\n"
+        "  13 = Command_FixtureMoveUnseen\n"
+        "  14 = Command_FixtureTunnel\n"
+        "  15 = Command_FixtureCurse\n"
+        "  16 = Command_FixtureHorn\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_FixtureKingsFavor\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityKingsFavor\n"
+        b"  Options = NEED_TARGET_POS\n"
+        b"  TextLabel = CONTROLBAR:FixtureKingsFavor\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureKingsFavor\n"
+        b"  ButtonImage = HSFixtureKingsFavor\n"
+        b"End\n"
+        b"\nCommandButton Command_FixtureArrowStorm\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityArrowStorm\n"
+        b"  Options = NEED_TARGET_POS\n"
+        b"  TextLabel = CONTROLBAR:FixtureArrowStorm\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureArrowStorm\n"
+        b"  ButtonImage = HSFixtureArrowStorm\n"
+        b"End\n"
+        b"\nCommandButton Command_FixtureWildWalk\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityWildWalk\n"
+        b"  TextLabel = CONTROLBAR:FixtureWildWalk\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureWildWalk\n"
+        b"  ButtonImage = HSFixtureWildWalk\n"
+        b"End\n"
+        b"\nCommandButton Command_FixtureMoveUnseen\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityMoveUnseen\n"
+        b"  Options = NEED_TARGET_POS\n"
+        b"  TextLabel = CONTROLBAR:FixtureMoveUnseen\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureMoveUnseen\n"
+        b"  ButtonImage = HSFixtureMoveUnseen\n"
+        b"End\n"
+        b"\nCommandButton Command_FixtureTunnel\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityFixtureTunnel\n"
+        b"  Options = NEED_TARGET_POS\n"
+        b"  TextLabel = CONTROLBAR:FixtureTunnel\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureTunnel\n"
+        b"  ButtonImage = HSFixtureTunnel\n"
+        b"End\n"
+        b"\nCommandButton Command_FixtureCurse\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityCurseEnemy\n"
+        b"  Options = NEED_TARGET_ENEMY_OBJECT\n"
+        b"  TextLabel = CONTROLBAR:FixtureCurse\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureCurse\n"
+        b"  ButtonImage = HSFixtureCurse\n"
+        b"End\n"
+        b"\nCommandButton Command_FixtureHorn\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityHornOfGondor\n"
+        b"  TextLabel = CONTROLBAR:FixtureHorn\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureHorn\n"
+        b"  ButtonImage = HSFixtureHorn\n"
+        b"End\n"
+    )
+    documents["data/ini/specialpower.ini"] += (
+        b"\nSpecialPower SpecialAbilityKingsFavor\n"
+        b"  Enum = SPECIAL_KINGS_FAVOR\n"
+        b"  ReloadTime = 180000\n"
+        b"  RadiusCursorRadius = 100.0\n"
+        b"End\n"
+        b"SpecialPower SpecialAbilityArrowStorm\n"
+        b"  Enum = SPECIAL_ARROW_STORM\n"
+        b"  ReloadTime = 60000\n"
+        b"  RadiusCursorRadius = 120.0\n"
+        b"End\n"
+        b"SpecialPower SpecialAbilityWildWalk\n"
+        b"  Enum = SPECIAL_GENERAL_TARGETLESS_TWO\n"
+        b"  ReloadTime = 150000\n"
+        b"End\n"
+        b"SpecialPower SpecialAbilityMoveUnseen\n"
+        b"  Enum = SPECIAL_ARROW_STORM\n"
+        b"  ReloadTime = 60000\n"
+        b"  RadiusCursorRadius = THRANDUIL_MOVEUNSEEN_EFFECT_RADIUS\n"
+        b"End\n"
+        b"SpecialPower SpecialAbilityFixtureTunnel\n"
+        b"  Enum = SPECIAL_BALROG_WINGS\n"
+        b"  ReloadTime = 90000\n"
+        b"End\n"
+        b"SpecialPower SpecialAbilityCurseEnemy\n"
+        b"  Enum = SPECIAL_CURSE_ENEMY\n"
+        b"  ReloadTime = 300000\n"
+        b"  RadiusCursorRadius = 50.0\n"
+        b"End\n"
+        b"SpecialPower SpecialAbilityHornOfGondor\n"
+        b"  Enum = SPECIAL_GENERAL_TARGETLESS\n"
+        b"  ReloadTime = 90000\n"
+        b"End\n"
+    )
+    documents["data/ini/attributemodifier.ini"] += (
+        b"\nModifierList FixtureHornAntiCategory\n"
+        b"  Duration = 5000\n"
+        b"End\n"
+    )
+    documents["data/ini/weapon.ini"] += (
+        b"\nWeapon FixtureBowArrowStorm\n"
+        b"  AttackRange = 320.0\n"
+        b"  HitPercentage = 100\n"
+        b"  ProjectileNugget\n"
+        b"    ProjectileTemplateName = FixtureBowArrowStormProjectile\n"
+        b"    WarheadTemplateName = FixtureBowArrowStormWarhead\n"
+        b"  End\n"
+        b"End\n"
+        b"Weapon FixtureBowArrowStormWarhead\n"
+        b"  HitStoredTarget = Yes\n"
+        b"  DamageNugget\n"
+        b"    Damage = LEGOLAS_ARROWSTORM_DAMAGE\n"
+        b"    Radius = 0.0\n"
+        b"    DamageType = HERO_RANGED\n"
+        b"  End\n"
+        b"End\n"
+    )
+    documents["data/ini/gamedata.ini"] += (
+        b"#define KINGSFAVOR_OBJECTFILTER ANY +CAVALRY +INFANTRY -STRUCTURE"
+        b" -CASTLE_KEEP -BASE_FOUNDATION -HERO -MOVE_ONLY -DOZER ALLIES\n"
+        b"#define THRANDUIL_MOVEUNSEEN_EFFECT_RADIUS 50\n"
+        b"#define WILD_SHELOB_TUNNEL_DISTANCE 9999999\n"
+        b"#define LEGOLAS_ARROWSTORM_DAMAGE 200\n"
+    )
+    return documents
+
+
+def test_experience_grant_rows_emit_measured_fields() -> None:
+    descriptor = compile_playable_unit_descriptor(
+        "AbilityHero", _batch3_hero_documents()
+    )
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureKingsFavor"]
+    assert row["implementation"]["status"] == "implemented"
+    assert row["cooldownMs"] == 180000
+    assert row["targeting"] == "point"
+    effect = row["effect"]
+    assert effect["kind"] == "experience-grant"
+    assert effect["experience"] == 50
+    assert effect["radiusEffect"] == 150
+    assert effect["startAbilityRange"] == 200.0
+    assert effect["levelFxId"] == "FX_LevelUp"
+    assert effect["affects"] == (
+        "ANY +CAVALRY +INFANTRY -STRUCTURE -CASTLE_KEEP -BASE_FOUNDATION"
+        " -HERO -MOVE_ONLY -DOZER ALLIES"
+    )
+
+
+def test_arrow_storm_rows_emit_measured_fields() -> None:
+    descriptor = compile_playable_unit_descriptor(
+        "AbilityHero", _batch3_hero_documents()
+    )
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureArrowStorm"]
+    assert row["implementation"]["status"] == "implemented"
+    assert row["cooldownMs"] == 60000
+    effect = row["effect"]
+    assert effect["kind"] == "arrow-storm"
+    assert effect["weaponId"] == "FixtureBowArrowStorm"
+    assert effect["warheadId"] == "FixtureBowArrowStormWarhead"
+    assert effect["weaponDamage"] == 200
+    assert effect["targetRadius"] == 120
+    assert effect["maxShots"] == 50
+    assert effect["shotsPerBurst"] == 3
+    assert effect["persistentPrepMs"] == 600
+    assert effect["canShootEmptyGround"] is True
+    assert effect["startAbilityRange"] == 320.0
+
+
+def test_stealth_toggle_rows_emit_measured_fields() -> None:
+    descriptor = compile_playable_unit_descriptor(
+        "AbilityHero", _batch3_hero_documents()
+    )
+    validate_playable_unit_descriptor(descriptor)
+    abilities = _abilities_by_id(descriptor)
+    wild_walk = abilities["Command_FixtureWildWalk"]
+    assert wild_walk["implementation"]["status"] == "implemented"
+    assert wild_walk["cooldownMs"] == 150000
+    effect = wild_walk["effect"]
+    assert effect["kind"] == "stealth-toggle"
+    assert effect["effectDurationMs"] == 80000
+    assert effect["forbiddenConditions"] == ["TAKING_DAMAGE", "USING_ABILITY"]
+    assert "broadcastRadius" not in effect
+
+    move_unseen = abilities["Command_FixtureMoveUnseen"]
+    assert move_unseen["implementation"]["status"] == "implemented"
+    effect = move_unseen["effect"]
+    assert effect["kind"] == "stealth-toggle"
+    assert effect["effectDurationMs"] == 30000
+    assert effect["broadcastRadius"] == 50
+    assert effect["forbiddenConditions"] == ["FIRING_ANY"]
+    # HORDE drops from the projected filter (buffs proxy per member).
+    assert effect["affects"] == "ANY +HERO +DOZER ALLIES"
+
+
+def test_teleport_rows_emit_measured_fields() -> None:
+    descriptor = compile_playable_unit_descriptor(
+        "AbilityHero", _batch3_hero_documents()
+    )
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureTunnel"]
+    assert row["implementation"]["status"] == "implemented"
+    assert row["cooldownMs"] == 90000
+    effect = row["effect"]
+    assert effect["kind"] == "teleport"
+    assert effect["maxDistance"] == 9999999
+    assert effect["busyForDurationMs"] == 1800
+
+
+def test_curse_rows_emit_measured_fields() -> None:
+    descriptor = compile_playable_unit_descriptor(
+        "AbilityHero", _batch3_hero_documents()
+    )
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureCurse"]
+    assert row["implementation"]["status"] == "implemented"
+    assert row["cooldownMs"] == 300000
+    effect = row["effect"]
+    assert effect["kind"] == "curse"
+    assert effect["cursePercentage"] == 100.0
+    assert effect["radiusCursorRadius"] == 50.0
+    assert effect["startAbilityRange"] == 200.0
+    assert effect["cursedFxId"] == "FX_FixtureCursed"
+
+
+def test_leadership_strip_rows_emit_measured_fields() -> None:
+    descriptor = compile_playable_unit_descriptor(
+        "AbilityHero", _batch3_hero_documents()
+    )
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureHorn"]
+    assert row["implementation"]["status"] == "implemented"
+    assert row["cooldownMs"] == 90000
+    effect = row["effect"]
+    assert effect["kind"] == "leadership-strip"
+    assert effect["antiCategory"] == "LEADERSHIP"
+    assert effect["modifierId"] == "FixtureHornAntiCategory"
+    assert effect["attributeModifierRange"] == 70.0
+    assert effect["antiCategoryDurationMs"] == 5000
+
+
+def test_batch3_rows_fail_closed_on_missing_magnitudes() -> None:
+    # Experience grant without an authored Experience amount.
+    documents = _batch3_hero_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(b"    Experience = 50\n", b"", 1)
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureKingsFavor"]
+    assert row["implementation"]["status"] == "unimplemented"
+    assert "no resolvable Experience" in row["implementation"]["reason"]
+    assert row["effect"] == {"kind": "none"}
+
+    # Arrow storm without an authored MaxShots.
+    documents = _batch3_hero_documents()
+    documents[path] = documents[path].replace(b"    MaxShots = 50\n", b"", 1)
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureArrowStorm"]
+    assert row["implementation"]["status"] == "unimplemented"
+    assert "no resolvable MaxShots" in row["implementation"]["reason"]
+    assert row["effect"] == {"kind": "none"}
+
+    # Toggle-hidden without the paired InvisibilityUpdate module.
+    documents = _batch3_hero_documents()
+    documents[path] = documents[path].replace(
+        b"  Behavior = InvisibilityUpdate ModuleTag_WildWalk\n"
+        b"    InvisibilityNugget\n"
+        b"      InvisibilityType = STEALTH\n"
+        b"      ForbiddenConditions = TAKING_DAMAGE USING_ABILITY\n"
+        b"    End\n"
+        b"    StartsActive = No\n"
+        b"    UpdatePeriod = 2000\n"
+        b"  End\n",
+        b"",
+        1,
+    )
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureWildWalk"]
+    assert row["implementation"]["status"] == "unimplemented"
+    assert "InvisibilityUpdate" in row["implementation"]["reason"]
+    assert row["effect"] == {"kind": "none"}
+
+    # Teleport without an authored MaxDistance.
+    documents = _batch3_hero_documents()
+    documents[path] = documents[path].replace(
+        b"    MaxDistance = WILD_SHELOB_TUNNEL_DISTANCE\n", b"", 1
+    )
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureTunnel"]
+    assert row["implementation"]["status"] == "unimplemented"
+    assert "no resolvable MaxDistance" in row["implementation"]["reason"]
+    assert row["effect"] == {"kind": "none"}
+
+    # Curse whose power authors no RadiusCursorRadius target circle.
+    documents = _batch3_hero_documents()
+    documents["data/ini/specialpower.ini"] = documents[
+        "data/ini/specialpower.ini"
+    ].replace(
+        b"SpecialPower SpecialAbilityCurseEnemy\n"
+        b"  Enum = SPECIAL_CURSE_ENEMY\n"
+        b"  ReloadTime = 300000\n"
+        b"  RadiusCursorRadius = 50.0\n"
+        b"End\n",
+        b"SpecialPower SpecialAbilityCurseEnemy\n"
+        b"  Enum = SPECIAL_CURSE_ENEMY\n"
+        b"  ReloadTime = 300000\n"
+        b"End\n",
+        1,
+    )
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureCurse"]
+    assert row["implementation"]["status"] == "unimplemented"
+    assert "RadiusCursorRadius" in row["implementation"]["reason"]
+    assert row["effect"] == {"kind": "none"}
+
+    # Anti-category strips other than LEADERSHIP stay recorded gaps.
+    documents = _batch3_hero_documents()
+    documents[path] = documents[path].replace(
+        b"    AntiCategory = LEADERSHIP\n", b"    AntiCategory = SPELL\n", 1
+    )
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureHorn"]
+    assert row["implementation"]["status"] == "unimplemented"
+    assert "only a LEADERSHIP strip" in row["implementation"]["reason"]
+    assert row["effect"] == {"kind": "none"}
+
+
+def test_screech_rows_record_the_engine_hardcoded_gap() -> None:
+    documents = _batch3_hero_documents()
+    _with_hero_modules(
+        documents,
+        "  Behavior = SpecialPowerModule ModuleTag_ScreechStarter\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureScreech\n"
+        "    UpdateModuleStartsAttack = Yes\n"
+        "  End\n"
+        "  Behavior = SpecialAbilityUpdate ModuleTag_ScreechUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureScreech\n"
+        "    UnpackTime = 1\n"
+        "    EffectRange = 180\n"
+        "    PackTime = 3000\n"
+        "  End\n",
+    )
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  16 = Command_FixtureHorn\nEnd",
+        "  16 = Command_FixtureHorn\n  17 = Command_FixtureScreech\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_FixtureScreech\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityFixtureScreech\n"
+        b"  TextLabel = CONTROLBAR:FixtureScreech\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureScreech\n"
+        b"  ButtonImage = HSFixtureScreech\n"
+        b"End\n"
+    )
+    documents["data/ini/specialpower.ini"] += (
+        b"SpecialPower SpecialAbilityFixtureScreech\n"
+        b"  Enum = SPECIAL_SCREECH\n"
+        b"  ReloadTime = 180000\n"
+        b"End\n"
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureScreech"]
+    assert row["implementation"]["status"] == "unimplemented"
+    reason = row["implementation"]["reason"]
+    assert "engine-hardcoded" in reason
+    assert "EffectRange 180" in reason
+    assert row["effect"] == {"kind": "none"}
+
+
+def test_missing_reload_time_defaults_to_zero_cooldown() -> None:
+    # Retail may omit ReloadTime entirely (Dain's Stubborn Pride): the engine
+    # default is zero milliseconds, not an unresolvable expression.
+    documents = _batch3_hero_documents()
+    documents["data/ini/specialpower.ini"] = documents[
+        "data/ini/specialpower.ini"
+    ].replace(
+        b"SpecialPower SpecialAbilityFixtureBlast\n"
+        b"  Enum = SPECIAL_GENERAL_TARGETLESS\n"
+        b"  ReloadTime = 60000\n"
+        b"End\n",
+        b"SpecialPower SpecialAbilityFixtureBlast\n"
+        b"  Enum = SPECIAL_GENERAL_TARGETLESS\n"
+        b"End\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureBlast"]
+    assert row["implementation"]["status"] == "implemented"
+    assert row["cooldownMs"] == 0
+
+
+def test_multi_warhead_launchers_combine_every_authored_warhead() -> None:
+    # Saruman Fireball shape: the launcher authors two ProjectileNuggets and
+    # retail fires both per shot, so both warheads' base damage combines.
+    documents = _batch3_hero_documents()
+    documents["data/ini/weapon.ini"] = documents["data/ini/weapon.ini"].replace(
+        b"Weapon FixtureHeroBlast\n"
+        b"  AttackRange = 110.0\n"
+        b"  DamageNugget\n"
+        b"    Damage = 350\n"
+        b"    Radius = 40.0\n"
+        b"    DamageType = MAGIC\n"
+        b"  End\n"
+        b"End\n",
+        b"Weapon FixtureHeroBlast\n"
+        b"  AttackRange = 110.0\n"
+        b"  ProjectileNugget\n"
+        b"    ProjectileTemplateName = FixtureBlastProjectile\n"
+        b"    WarheadTemplateName = FixtureBlastWarheadA\n"
+        b"  End\n"
+        b"  ProjectileNugget\n"
+        b"    ProjectileTemplateName = FixtureBlastProjectile\n"
+        b"    WarheadTemplateName = FixtureBlastWarheadB\n"
+        b"  End\n"
+        b"End\n"
+        b"Weapon FixtureBlastWarheadA\n"
+        b"  DamageNugget\n"
+        b"    Damage = 400\n"
+        b"    Radius = 30.0\n"
+        b"    DamageType = FLAME\n"
+        b"  End\n"
+        b"End\n"
+        b"Weapon FixtureBlastWarheadB\n"
+        b"  DamageNugget\n"
+        b"    Damage = 60\n"
+        b"    Radius = 4.0\n"
+        b"    DamageType = SIEGE\n"
+        b"  End\n"
+        b"End\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureBlast"]
+    assert row["implementation"]["status"] == "implemented"
+    effect = row["effect"]
+    assert effect["kind"] == "weapon-blast"
+    assert effect["damage"] == 460
+    assert effect["damageRadius"] == 30.0
+    assert effect["warheadIds"] == [
+        "FixtureBlastWarheadA",
+        "FixtureBlastWarheadB",
+    ]
+    assert "warheadId" not in effect
+
+
+def test_unsupported_damage_nuggets_record_annotated_reasons() -> None:
+    documents = _batch3_hero_documents()
+    documents["data/ini/weapon.ini"] = documents["data/ini/weapon.ini"].replace(
+        b"Weapon FixtureHeroBlast\n"
+        b"  AttackRange = 110.0\n"
+        b"  DamageNugget\n"
+        b"    Damage = 350\n"
+        b"    Radius = 40.0\n"
+        b"    DamageType = MAGIC\n"
+        b"  End\n"
+        b"End\n",
+        b"Weapon FixtureHeroBlast\n"
+        b"  AttackRange = 110.0\n"
+        b"  DOTNugget\n"
+        b"    Damage = 5\n"
+        b"    DamageInterval = 1000\n"
+        b"  End\n"
+        b"  ParalyzeNugget\n"
+        b"    Radius = 20\n"
+        b"  End\n"
+        b"End\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixtureBlast"]
+    assert row["implementation"]["status"] == "unimplemented"
+    reason = row["implementation"]["reason"]
+    assert "DOTNugget (needs damage-over-time)" in reason
+    assert "ParalyzeNugget (needs paralysis status)" in reason
+    assert row["effect"] == {"kind": "none"}
+
+
+def test_weapon_toggle_prefers_the_exact_conditioned_set() -> None:
+    # Lurtz carbine shape: many WeaponSets mention WEAPONSET_TOGGLE_1, but
+    # exactly one is conditioned on that flag alone — the toggled base state.
+    documents = _hero_ability_documents()
+    text = documents["data/ini/object/units/test_units.ini"].decode()
+    documents["data/ini/object/units/test_units.ini"] = text.replace(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n",
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = CONTAINED WEAPONSET_TOGGLE_1\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = WEAPONSET_TOGGLE_1 CLOSE_RANGE\n"
+        "    Weapon = PRIMARY FixtureToggleBow\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = WEAPONSET_TOGGLE_1\n"
+        "    Weapon = PRIMARY FixtureToggleBow\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = WEAPONSET_HERO_MODE WEAPONSET_TOGGLE_1\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n",
+        1,
+    ).encode()
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  9 = Command_FixtureBroken\nEnd",
+        "  9 = Command_FixtureBroken\n  10 = Command_FixtureToggle\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_FixtureToggle\n"
+        b"  Command = TOGGLE_WEAPONSET\n"
+        b"  FlagsUsedForToggle = WEAPONSET_TOGGLE_1\n"
+        b"  TextLabel = CONTROLBAR:FixtureToggle\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureToggle\n"
+        b"  ButtonImage = HSFixtureToggle\n"
+        b"End\n"
+    )
+    documents["data/ini/weapon.ini"] += (
+        b"\nWeapon FixtureToggleBow\n"
+        b"  AttackRange = 320.0\n"
+        b"  DamageNugget\n"
+        b"    Damage = 90\n"
+        b"    DamageType = PIERCE\n"
+        b"  End\n"
+        b"End\n"
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    toggle = _abilities_by_id(descriptor)["Command_FixtureToggle"]
+    assert toggle["implementation"]["status"] == "implemented"
+    assert toggle["effect"]["kind"] == "weapon-toggle"
+    assert toggle["effect"]["toggledWeaponId"] == "FixtureToggleBow"
+
+
+def test_passive_button_without_reload_time_binds_its_gated_aura() -> None:
+    # Dain's Stubborn Pride shape: a NONPRESSABLE button whose power authors
+    # no ReloadTime, with a level-gated StartsActive=No aura bound through
+    # the shared TriggeredBy upgrade.
+    documents = _batch3_hero_documents()
+    _with_hero_modules(
+        documents,
+        "  Behavior = UnpauseSpecialPowerUpgrade ModuleTag_PrideUnpause\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixturePride\n"
+        "    TriggeredBy = Upgrade_FixturePride\n"
+        "  End\n"
+        "  Behavior = SpecialPowerModule ModuleTag_PrideStarter\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixturePride\n"
+        "    UpdateModuleStartsAttack = No\n"
+        "    StartsPaused = Yes\n"
+        "  End\n"
+        "  Behavior = AttributeModifierAuraUpdate ModuleTag_PrideUpdate\n"
+        "    StartsActive = No\n"
+        "    BonusName = FixturePride\n"
+        "    TriggeredBy = Upgrade_FixturePride\n"
+        "    RefreshDelay = 2000\n"
+        "    Range = 200\n"
+        "    ObjectFilter = ANY +INFANTRY +CAVALRY -HERO ALLIES\n"
+        "  End\n",
+    )
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  16 = Command_FixtureHorn\nEnd",
+        "  16 = Command_FixtureHorn\n  17 = Command_FixturePride\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_FixturePride\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityFixturePride\n"
+        b"  Options = NONPRESSABLE\n"
+        b"  TextLabel = CONTROLBAR:FixturePride\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixturePride\n"
+        b"  ButtonImage = HSFixturePride\n"
+        b"End\n"
+    )
+    documents["data/ini/specialpower.ini"] += (
+        b"SpecialPower SpecialAbilityFixturePride\n"
+        b"  Enum = SPECIAL_GENERAL_TARGETLESS\n"
+        b"End\n"
+    )
+    documents["data/ini/attributemodifier.ini"] += (
+        b"\nModifierList FixturePride\n"
+        b"  Category = SPELL\n"
+        b"  Modifier = RESIST_FEAR 100%\n"
+        b"  Duration = 3000\n"
+        b"End\n"
+    )
+    documents["data/ini/experiencelevels.ini"] += (
+        b"ExperienceLevel FixtureHeroLevel3\n"
+        b"  TargetNames = FIXTUREHERO\n"
+        b"  RequiredExperience = 300\n"
+        b"  ExperienceAward = 30\n"
+        b"  Rank = 3\n"
+        b"  Upgrades = Upgrade_FixturePride\n"
+        b"  SelectionDecal\n"
+        b"    Texture = decal_hero_good\n"
+        b"  End\n"
+        b"End\n"
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    row = _abilities_by_id(descriptor)["Command_FixturePride"]
+    assert row["implementation"]["status"] == "passive"
+    assert row["cooldownMs"] == 0
+    assert row["levelGate"]["requiredLevel"] == 3
+    effect = row["effect"]
+    assert effect["kind"] == "leadership-aura"
+    assert effect["bonusName"] == "FixturePride"
+    assert effect["range"] == 200
+    assert effect["startsActive"] is True
+    assert effect["modifiers"] == [
+        {"kind": "RESIST_FEAR", "value": 1.0, "application": "multiplicative"}
+    ]
