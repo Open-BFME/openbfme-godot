@@ -45,6 +45,7 @@ func _run() -> void:
 	_sim_pause_checks(doc)
 	_sim_ui_state_checks(doc)
 	_per_faction_checks(content_db)
+	_cross_faction_match_checks(content_db)
 	_hud_integration_checks(content_db, doc)
 	_audio_routing_checks(content_db, doc)
 	_finish()
@@ -963,6 +964,82 @@ func _faction_spellbook_doc(mod_loader, pack_roots: Array, faction: String, frag
 			document["_pack_file_key"] = key
 			return document
 	return {}
+
+
+## --- F3. Cross-faction match: two factions in ONE sim, each its OWN spellbook ---
+
+func _cross_faction_match_checks(content_db) -> void:
+	var mod_loader = root.get_node_or_null("ModLoader")
+	_check("cross_faction_mod_loader_available", mod_loader != null)
+	if mod_loader == null:
+		return
+	var pack_roots: Array = mod_loader.list_pack_roots()
+	var men_doc := _men_spellbook_document(content_db)
+	var mordor_doc := _faction_spellbook_doc(mod_loader, pack_roots, "Mordor", "mordor-vslice")
+	_check("cross_faction_both_docs_resolve", not men_doc.is_empty() and not mordor_doc.is_empty())
+	if men_doc.is_empty() or mordor_doc.is_empty():
+		return
+
+	var team_battalion := func(sim, want_team: int) -> int:
+		for id in sim.entity_ids():
+			var e: Dictionary = sim.entity(id)
+			if int(e.get("team", -1)) == want_team and (e.get("member_health", []) as Array).size() > 0:
+				return int(id)
+		return -1
+
+	# Team 0 rides the global (Men) tree; team 1 gets its OWN (Mordor) override.
+	var build := func() -> Object:
+		var sim = SimScript.new()
+		sim.configure_team_roster([
+			{"team": 0, "faction": "Men", "is_ai": false},
+			{"team": 1, "faction": "Mordor", "is_ai": true},
+		])
+		sim.configure_spellbook_runtime(men_doc)
+		sim.configure_team_spellbook_runtime(1, mordor_doc)
+		sim.setup({}, _rules())
+		sim.ai_enabled = false
+		sim.team_power_points[0] = 100
+		sim.team_power_points[1] = 100
+		return sim
+
+	var sim = build.call()
+	_check("cross_faction_team1_override_active", sim.team_has_spellbook_override(1) and not sim.team_has_spellbook_override(0))
+	var team0_powers: Array = (sim.spellbook_ui_state(0).get("powers", {}) as Dictionary).keys()
+	var team1_powers: Array = (sim.spellbook_ui_state(1).get("powers", {}) as Dictionary).keys()
+	_check("cross_faction_team0_lists_men_powers", team0_powers.has("SpellBookRallyingCall") and not team0_powers.has("SpellBookWarChant"), str(team0_powers))
+	_check("cross_faction_team1_lists_mordor_powers", team1_powers.has("SpellBookWarChant") and not team1_powers.has("SpellBookRohanAllies"), str(team1_powers))
+	# Intrinsic sciences are per-team: no silent Men fallback for team 1.
+	_check("cross_faction_intrinsic_per_team", sim.owned_sciences(1) == ["SCIENCE_MORDOR"] and sim.owned_sciences(0) != sim.owned_sciences(1), "%s vs %s" % [str(sim.owned_sciences(0)), str(sim.owned_sciences(1))])
+	# Neither team can purchase the other faction's power (fail-closed, not Men art).
+	_check("cross_faction_team1_rejects_men_power", String(sim.purchase_power(1, "SpellBookRohanAllies").get("reason", "")) == "unknown-power")
+	_check("cross_faction_team0_rejects_mordor_power", String(sim.purchase_power(0, "SpellBookWarChant").get("reason", "")) == "unknown-power")
+	# Each team purchases + casts a rally-class power FROM ITS OWN doc, on its own battalion.
+	var bat0: int = team_battalion.call(sim, 0)
+	var bat1: int = team_battalion.call(sim, 1)
+	_check("cross_faction_both_teams_have_battalions", bat0 > 0 and bat1 > 0, "bat0=%d bat1=%d" % [bat0, bat1])
+	if bat0 > 0 and bat1 > 0:
+		sim.purchase_power(0, "SpellBookRallyingCall")
+		sim.purchase_power(1, "SpellBookWarChant")
+		var cast0: Dictionary = sim.cast_power(0, "SpellBookRallyingCall", Vector2(sim.entity(bat0)["position"]))
+		var cast1: Dictionary = sim.cast_power(1, "SpellBookWarChant", Vector2(sim.entity(bat1)["position"]))
+		_check("cross_faction_team0_casts_men_rally", bool(cast0.get("ok", false)) and int(sim.entity(bat0).get("rally_until_tick", -1)) > int(sim.tick_index), str(cast0))
+		_check("cross_faction_team1_casts_mordor_warchant", bool(cast1.get("ok", false)) and int(sim.entity(bat1).get("rally_until_tick", -1)) > int(sim.tick_index), str(cast1))
+
+	# The two-faction match is deterministic (twin-run authoritative hash equality).
+	var run_scenario := func() -> String:
+		var s = build.call()
+		var b0: int = team_battalion.call(s, 0)
+		var b1: int = team_battalion.call(s, 1)
+		s.purchase_power(0, "SpellBookRallyingCall")
+		s.purchase_power(1, "SpellBookWarChant")
+		s.cast_power(0, "SpellBookRallyingCall", Vector2(s.entity(b0)["position"]))
+		s.cast_power(1, "SpellBookWarChant", Vector2(s.entity(b1)["position"]))
+		for _i in range(20):
+			s.tick()
+		return String(s.state_hash())
+	_check("cross_faction_match_is_deterministic", run_scenario.call() == run_scenario.call())
+
+
 func _last_power_event(sim, kind: String) -> Dictionary:
 	var found: Dictionary = {}
 	for event_value in sim.events:

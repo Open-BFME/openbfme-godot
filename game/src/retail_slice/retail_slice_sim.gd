@@ -3060,6 +3060,14 @@ var _power_cooldown_until := {PLAYER_TEAM: {}, ENEMY_TEAM: {}}
 ## Picks made since the last ACCEPT: RESET refunds exactly these ("unspent
 ## picks" — casting a staged pick spends it and it can no longer be refunded).
 var _staged_purchases := {PLAYER_TEAM: [], ENEMY_TEAM: []}
+## Per-team spellbook TREE overrides for cross-faction matches (two different
+## factions in one sim). Empty by default: every team then resolves against the
+## single global tree above, so the default same-faction match is byte-identical
+## and the signature does not move. A team present here plays its OWN faction's
+## powers/costs/prereqs/reloads — team ownership overlays (points, purchased,
+## sciences, cooldowns, staged) stay in the per-team maps already declared.
+## team:int -> {ready, powers, order, sciences, science_to_power, intrinsic, document}
+var _team_spellbooks: Dictionary = {}
 ## Single-player pause seam for the spellbook orb: while the palantir is open
 ## the sim clock halts (ticks, production, AI — everything in tick()). The
 ## slice drives this through set_spellbook_orb_open; the escape-menu pause in
@@ -3228,8 +3236,113 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 	return true
 
 
+## Cross-faction seam: give ONE team its own faction spellbook tree while other
+## teams keep the global (player-faction) tree. Reuses the exact parser above by
+## parsing into the globals and lifting the result into the per-team store, then
+## restoring the globals and match-state untouched — so configuring team B never
+## perturbs team A's already-configured tree or the default signature. Fails
+## closed: a missing/incomplete doc leaves the team without an override (it will
+## fall back to the global tree only if one exists) and returns false with the
+## parse error surfaced through team_spellbook_error().
+var _team_spellbook_errors: Dictionary = {}
+
+
+func configure_team_spellbook_runtime(team: int, document: Dictionary) -> bool:
+	# Deep copies: configure_spellbook_runtime() clears the global tree dicts in
+	# place, so a reference-only capture would be wiped mid-parse.
+	var saved := _spellbook_global_bundle_copy()
+	var saved_error := _spellbook_error
+	var saved_document := _spellbook_document
+	var saved_sciences := _team_sciences.duplicate(true)
+	var saved_cooldowns := _power_cooldown_until.duplicate(true)
+	var saved_staged := _staged_purchases.duplicate(true)
+	var ok := configure_spellbook_runtime(document)
+	var parsed := _spellbook_global_bundle_copy() if ok else {}
+	var parse_error := _spellbook_error
+	# Restore the globals + match state exactly as they were before this call.
+	_apply_spellbook_bundle(saved)
+	_spellbook_document = saved_document
+	_spellbook_error = saved_error
+	_team_sciences = saved_sciences
+	_power_cooldown_until = saved_cooldowns
+	_staged_purchases = saved_staged
+	if not ok:
+		_team_spellbooks.erase(team)
+		_team_spellbook_errors[team] = parse_error
+		return false
+	parsed["document"] = document.duplicate(true)
+	_team_spellbooks[team] = parsed
+	_team_spellbook_errors[team] = ""
+	# Seed this team's ownership overlays from ITS OWN intrinsic sciences.
+	_team_sciences[team] = (parsed.get("intrinsic", []) as Array).duplicate(true)
+	_power_cooldown_until[team] = {}
+	_staged_purchases[team] = []
+	purchased_powers[team] = []
+	return true
+
+
+func team_spellbook_error(team: int) -> String:
+	return String(_team_spellbook_errors.get(team, ""))
+
+
+func team_has_spellbook_override(team: int) -> bool:
+	return _team_spellbooks.has(team)
+
+
+func _spellbook_global_bundle() -> Dictionary:
+	## A shallow view of the current global tree fields. Used to lift a freshly
+	## parsed tree into the per-team store and to save/restore around that parse.
+	return {
+		"ready": _spellbook_ready,
+		"powers": _spellbook_powers,
+		"order": _spellbook_order,
+		"sciences": _spellbook_sciences,
+		"science_to_power": _science_to_power,
+		"intrinsic": _spellbook_intrinsic,
+	}
+
+
+func _spellbook_global_bundle_copy() -> Dictionary:
+	## A DEEP copy of the global tree, detached from the live global dicts so a
+	## subsequent in-place clear/refill of those dicts cannot mutate it.
+	var order_copy: Array[String] = []
+	for power_id in _spellbook_order:
+		order_copy.append(String(power_id))
+	return {
+		"ready": _spellbook_ready,
+		"powers": _spellbook_powers.duplicate(true),
+		"order": order_copy,
+		"sciences": _spellbook_sciences.duplicate(true),
+		"science_to_power": _science_to_power.duplicate(true),
+		"intrinsic": (_spellbook_intrinsic as Array).duplicate(true),
+	}
+
+
+func _apply_spellbook_bundle(bundle: Dictionary) -> void:
+	_spellbook_ready = bool(bundle.get("ready", false))
+	_spellbook_powers = bundle.get("powers", {}) as Dictionary
+	_spellbook_order = bundle.get("order", []) as Array[String]
+	_spellbook_sciences = bundle.get("sciences", {}) as Dictionary
+	_science_to_power = bundle.get("science_to_power", {}) as Dictionary
+	_spellbook_intrinsic = bundle.get("intrinsic", []) as Array
+
+
+func _team_tree(team: int) -> Dictionary:
+	## The tree a team resolves powers against: its own override when present,
+	## otherwise a view of the global (default same-faction) tree. Read-only —
+	## team ownership overlays live in the per-team maps, not in the tree.
+	if _team_spellbooks.has(team):
+		return _team_spellbooks[team]
+	return _spellbook_global_bundle()
+
+
 func _reset_spellbook_match_state() -> void:
 	_team_sciences = _seed_team_map(_spellbook_intrinsic)
+	# A team with its own faction tree starts from ITS intrinsic sciences, not
+	# the global player-faction ones.
+	for team_value in _team_spellbooks.keys():
+		var override_tree: Dictionary = _team_spellbooks[team_value]
+		_team_sciences[team_value] = (override_tree.get("intrinsic", []) as Array).duplicate(true)
 	_power_cooldown_until = _seed_team_map({})
 	_staged_purchases = _seed_team_map([])
 	_pending_power_effects.clear()
@@ -3710,7 +3823,8 @@ func _science_owned(team: int, science_id: String) -> bool:
 
 
 func _power_prerequisites_met(team: int, science_id: String) -> bool:
-	var science_row: Dictionary = _spellbook_sciences.get(science_id, {}) as Dictionary
+	var sciences: Dictionary = _team_tree(team).get("sciences", {}) as Dictionary
+	var science_row: Dictionary = sciences.get(science_id, {}) as Dictionary
 	if science_row.is_empty():
 		return false
 	var groups: Array = science_row.get("groups", []) as Array
@@ -3728,9 +3842,10 @@ func _power_prerequisites_met(team: int, science_id: String) -> bool:
 
 
 func can_purchase_power(team: int, power_id: String) -> Dictionary:
-	if not _spellbook_ready:
+	var tree := _team_tree(team)
+	if not bool(tree.get("ready", false)):
 		return {"ok": false, "reason": "spellbook-unavailable"}
-	var row: Dictionary = _spellbook_powers.get(power_id, {}) as Dictionary
+	var row: Dictionary = (tree.get("powers", {}) as Dictionary).get(power_id, {}) as Dictionary
 	if row.is_empty():
 		return {"ok": false, "reason": "unknown-power"}
 	if has_power(team, power_id):
@@ -3746,7 +3861,7 @@ func purchase_power(team: int, power_id: String, cost: int = -1) -> Dictionary:
 	var verdict := can_purchase_power(team, power_id)
 	if not bool(verdict.get("ok", false)):
 		return verdict
-	var row: Dictionary = _spellbook_powers[power_id]
+	var row: Dictionary = (_team_tree(team).get("powers", {}) as Dictionary)[power_id]
 	var doc_cost := int(row.get("cost", 0))
 	if cost >= 0 and cost != doc_cost:
 		return {"ok": false, "reason": "cost-mismatch"}
@@ -3766,7 +3881,7 @@ func purchase_power(team: int, power_id: String, cost: int = -1) -> Dictionary:
 
 func reset_spellbook_purchases(team: int) -> Dictionary:
 	## Retail RESET: refund this session's unspent picks so the player re-picks.
-	if not _spellbook_ready:
+	if not bool(_team_tree(team).get("ready", false)):
 		return {"ok": false, "reason": "spellbook-unavailable"}
 	var refunded := 0
 	var restored: Array = []
@@ -3788,14 +3903,14 @@ func reset_spellbook_purchases(team: int) -> Dictionary:
 
 func accept_spellbook_purchases(team: int) -> Dictionary:
 	## Retail ACCEPT (including closing the orb): the session's picks commit.
-	if not _spellbook_ready:
+	if not bool(_team_tree(team).get("ready", false)):
 		return {"ok": false, "reason": "spellbook-unavailable"}
 	_staged_purchases[team] = []
 	return {"ok": true, "reason": ""}
 
 
 func power_cooldown_state(team: int, power_id: String) -> Dictionary:
-	var row: Dictionary = _spellbook_powers.get(power_id, {}) as Dictionary
+	var row: Dictionary = (_team_tree(team).get("powers", {}) as Dictionary).get(power_id, {}) as Dictionary
 	if row.is_empty():
 		return {}
 	var total := int(row.get("reload_ticks", 1))
@@ -3819,9 +3934,14 @@ func spellbook_power_radius_sim(power_id: String) -> float:
 
 func spellbook_ui_state(team: int) -> Dictionary:
 	## Per-power orb state: the presentation layer never derives tree logic.
+	var tree := _team_tree(team)
+	var tree_powers: Dictionary = tree.get("powers", {}) as Dictionary
+	var tree_sciences: Dictionary = tree.get("sciences", {}) as Dictionary
+	var tree_intrinsic: Array = tree.get("intrinsic", []) as Array
+	var tree_science_to_power: Dictionary = tree.get("science_to_power", {}) as Dictionary
 	var powers: Dictionary = {}
-	for power_id in _spellbook_order:
-		var row: Dictionary = _spellbook_powers[power_id]
+	for power_id in (tree.get("order", []) as Array):
+		var row: Dictionary = tree_powers[power_id]
 		var owned := has_power(team, power_id)
 		var prerequisites_met := _power_prerequisites_met(team, String(row.get("science_id", "")))
 		var cooldown := power_cooldown_state(team, power_id)
@@ -3839,7 +3959,7 @@ func spellbook_ui_state(team: int) -> Dictionary:
 			elif not bool(row.get("castable", false)):
 				locked_reason = String(row.get("locked_reason", "effect-unsupported"))
 		var prereq_power_ids: Array = []
-		var science_row: Dictionary = _spellbook_sciences.get(String(row.get("science_id", "")), {}) as Dictionary
+		var science_row: Dictionary = tree_sciences.get(String(row.get("science_id", "")), {}) as Dictionary
 		for group_value in Array(science_row.get("groups", [])):
 			# Only groups this faction can ever complete draw a palantir fork:
 			# every member must be intrinsic-owned or a tree science (groups
@@ -3848,13 +3968,13 @@ func spellbook_ui_state(team: int) -> Dictionary:
 			var achievable := true
 			for member in group_value as Array:
 				var member_id := String(member)
-				if not _spellbook_intrinsic.has(member_id) and not _science_to_power.has(member_id):
+				if not tree_intrinsic.has(member_id) and not tree_science_to_power.has(member_id):
 					achievable = false
 					break
 			if not achievable:
 				continue
 			for member in group_value as Array:
-				var prereq_power_id := String(_science_to_power.get(String(member), ""))
+				var prereq_power_id := String(tree_science_to_power.get(String(member), ""))
 				if prereq_power_id != "" and not prereq_power_ids.has(prereq_power_id):
 					prereq_power_ids.append(prereq_power_id)
 		powers[power_id] = {
@@ -3888,9 +4008,10 @@ func award_power_kill(team: int) -> void:
 
 
 func cast_power(team: int, power_id: String, point: Vector2) -> Dictionary:
-	if not _spellbook_ready:
+	var tree := _team_tree(team)
+	if not bool(tree.get("ready", false)):
 		return {"ok": false, "reason": "spellbook-unavailable"}
-	var row: Dictionary = _spellbook_powers.get(power_id, {}) as Dictionary
+	var row: Dictionary = (tree.get("powers", {}) as Dictionary).get(power_id, {}) as Dictionary
 	if row.is_empty():
 		return {"ok": false, "reason": "unknown-power"}
 	if not has_power(team, power_id):
@@ -8463,6 +8584,7 @@ func _authoritative_state() -> Dictionary:
 		"team_sciences": _team_sciences,
 		"power_cooldown_until": _power_cooldown_until,
 		"staged_purchases": _staged_purchases,
+		"team_spellbooks": _team_spellbooks,
 		"clock_paused": clock_paused,
 		"pending_power_effects": _pending_power_effects,
 		"active_groves": _active_groves,
@@ -8531,6 +8653,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_team_sciences = state["team_sciences"]
 	_power_cooldown_until = state["power_cooldown_until"]
 	_staged_purchases = state["staged_purchases"]
+	_team_spellbooks = state.get("team_spellbooks", {})
 	clock_paused = bool(state["clock_paused"])
 	_pending_power_effects = state["pending_power_effects"]
 	_active_groves = state["active_groves"]
