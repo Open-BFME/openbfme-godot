@@ -8,6 +8,7 @@ import pytest
 
 from openbfme_importer.playable_unit_compiler import (
     PlayableUnitCompilerError,
+    _numeric_defines,
     compile_playable_unit_descriptor,
     playable_object_kind_of,
     prepare_playable_unit_compiler,
@@ -2394,6 +2395,159 @@ End
 
     with pytest.raises(PlayableUnitCompilerError, match="duplicate or invalid Rank"):
         compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+# ---------------------------------------------------------------------------
+# GameData define-expression evaluator tests.  RotWK authors experience
+# awards and modifier percentages as nested macro defines; the evaluator
+# resolves the measured grammar (#ADD/#SUBTRACT/#MULTIPLY/#DIVIDE, binary,
+# chained defines) and fails closed on everything else.
+# ---------------------------------------------------------------------------
+
+
+def test_nested_divide_chain_award_resolves_and_truncates() -> None:
+    # The exact RotWK Angmar shape: level 1 divides a shared target by the
+    # horde size; level 2 chains through level 1 with a nested #MULTIPLY.
+    documents = _experience_documents(
+        _TROOP_CHAIN,
+        defines=(
+            "#define FIXTURE_NEEDED_2 50\n"
+            "#define FIXTURE_NEEDED_3 100\n"
+            "#define FIXTURE_EXP_TARGET 60\n"
+            "#define FIXTURE_HORDE_SIZE 8\n"
+            "#define FIXTURE_LEVEL_FACTOR_2 110\n"
+            "#define FIXTURE_DIV_FACTOR 100\n"
+            "#define FIXTURE_AWARD_1 #DIVIDE( FIXTURE_EXP_TARGET FIXTURE_HORDE_SIZE )\n"
+            "#define FIXTURE_AWARD_2 #DIVIDE( #MULTIPLY( FIXTURE_AWARD_1 "
+            "FIXTURE_LEVEL_FACTOR_2 ) FIXTURE_DIV_FACTOR )\n"
+            "#define FIXTURE_AWARD_3 #ADD( FIXTURE_AWARD_1 2 )\n"
+        ),
+        modifiers=_TROOP_MODIFIERS.replace("FIXTURE_HP_ADD_2", "20").replace(
+            "FIXTURE_DAM_ADD_2", "10"
+        ),
+    )
+
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    levels = descriptor["experience"]["levels"]
+    # 60 / 8 = 7.5 and 7.5 * 110 / 100 = 8.25: SAGE's integer scanner
+    # truncates both, so the compiled awards are 7 and 8.
+    assert [row["experienceAward"] for row in levels] == [7, 8, 9]
+    assert levels[0]["constantSourceIni"] == "data/ini/gamedata.ini"
+
+
+def test_percent_define_resolves_only_in_modifier_context() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN,
+        defines=_TROOP_DEFINES + "#define FIXTURE_LEVEL_PCT 110%\n",
+        modifiers=_TROOP_MODIFIERS.replace(
+            "Modifier = SPEED 110%", "Modifier = PRODUCTION FIXTURE_LEVEL_PCT"
+        ),
+    )
+
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    levels = descriptor["experience"]["levels"]
+    production_leaf = next(
+        leaf
+        for leaf in levels[2]["attributeModifiers"]
+        if leaf["id"] == "FixtureTroopBonusSpeed"
+    )
+    assert production_leaf["modifiers"] == [
+        {"kind": "PRODUCTION", "value": 1.1, "application": "multiplicative"}
+    ]
+    # The same percent define never resolves in a plain numeric context.
+    numeric = _experience_documents(
+        _TROOP_CHAIN.replace("FIXTURE_AWARD_2", "FIXTURE_LEVEL_PCT"),
+        defines=_TROOP_DEFINES + "#define FIXTURE_LEVEL_PCT 110%\n",
+    )
+    with pytest.raises(PlayableUnitCompilerError, match="ExperienceAward"):
+        compile_playable_unit_descriptor("InfantryHorde", numeric)
+
+
+def test_define_cycle_fails_closed() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN,
+        defines=(
+            "#define FIXTURE_NEEDED_2 50\n"
+            "#define FIXTURE_NEEDED_3 100\n"
+            "#define FIXTURE_AWARD_1 FIXTURE_AWARD_2\n"
+            "#define FIXTURE_AWARD_2 #ADD( FIXTURE_AWARD_1 1 )\n"
+            "#define FIXTURE_AWARD_3 5\n"
+        ),
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="ExperienceAward"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_unknown_identifier_in_expression_fails_closed() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN,
+        defines=_TROOP_DEFINES.replace(
+            "#define FIXTURE_AWARD_2 4\n",
+            "#define FIXTURE_AWARD_2 #DIVIDE( FIXTURE_MISSING 2 )\n",
+        ),
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="ExperienceAward"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_division_by_zero_fails_closed() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN,
+        defines=_TROOP_DEFINES.replace(
+            "#define FIXTURE_AWARD_2 4\n",
+            "#define FIXTURE_ZERO 0\n"
+            "#define FIXTURE_AWARD_2 #DIVIDE( 10 FIXTURE_ZERO )\n",
+        ),
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="ExperienceAward"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_unknown_function_fails_closed() -> None:
+    documents = _experience_documents(
+        _TROOP_CHAIN,
+        defines=_TROOP_DEFINES.replace(
+            "#define FIXTURE_AWARD_2 4\n",
+            "#define FIXTURE_AWARD_2 #MODULO( 10 3 )\n",
+        ),
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="ExperienceAward"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_numeric_defines_evaluates_the_measured_grammar() -> None:
+    table = _numeric_defines(
+        {
+            "data/ini/gamedata.ini": (
+                b"#define BASE 60\n"
+                b"#define SIZE 10\n"
+                b"#define EXACT #DIVIDE( BASE SIZE )\n"
+                b"#define FRACTIONAL #DIVIDE( BASE 8 )\n"
+                b"#define CHAINED #SUBTRACT( EXACT 1 )\n"
+                b"#define ALIASED EXACT\n"
+                b"#define SCALED 110% // comment\n"
+                b"#define FILTERED ANY +INFANTRY -HERO\n"
+            )
+        }
+    )
+
+    assert table["exact"] == 6 and isinstance(table["exact"], int)
+    assert table["fractional"] == 7.5
+    assert table["chained"] == 5
+    assert table["aliased"] == 6
+    # Percent defines live only in the reserved percent namespace.
+    assert "scaled" not in table
+    assert table["scaled%"] == 1.1
+    # Non-numeric bodies stay out of the table entirely.
+    assert "filtered" not in table
 
 
 def test_experience_top_rank_summon_chain_compiles_initial_rank() -> None:

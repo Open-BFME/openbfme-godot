@@ -14,6 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 import json
+import math
 import re
 import threading
 
@@ -279,23 +280,177 @@ def _effective_recursive_assignments(
             yield from nested.assignments
 
 
+# ---------------------------------------------------------------------------
+# GameData define-expression evaluator.
+#
+# Measured over both effective gamedata corpora (BFME2 1.06 and RotWK 2.01):
+# every non-literal numeric define is built from exactly three SAGE macro
+# functions — #ADD, #MULTIPLY, #DIVIDE — always binary, nested at most two
+# deep, chained through at most two intermediate defines, with no cycles and
+# no percent literals inside expressions.  #SUBTRACT is the fourth member of
+# the same SAGE macro family (unobserved in either corpus) and shares the
+# binary shape.  Anything outside that grammar fails closed: unknown
+# identifiers, unknown functions, non-binary arities, division by zero, and
+# define cycles all resolve to None so the consuming contract raises its own
+# descriptive error instead of guessing.
+# ---------------------------------------------------------------------------
+
+_DEFINE_LINE_PATTERN = re.compile(
+    rb"(?m)^[ \t]*#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+([^\r\n]*?)[ \t]*\r?$"
+)
+_NUMERIC_LITERAL_PATTERN = re.compile(r"-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)\Z")
+_PERCENT_LITERAL_PATTERN = re.compile(r"(-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))%\Z")
+_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_EXPRESSION_TOKEN_PATTERN = re.compile(r"#[A-Za-z_]+\(|\)|[^()\s]+")
+_EXPRESSION_FUNCTIONS = frozenset({"add", "subtract", "multiply", "divide"})
+_MAX_DEFINE_EXPRESSION_TOKENS = 64
+
+# Percent-valued defines (``#define LEVEL_MULT_BONUS_DMG_2 110%``) carry
+# percent semantics only: SAGE substitutes the authored ``NNN%`` text at the
+# use site and the field parser scales it, so they must never resolve in a
+# plain numeric context.  They are admitted under this reserved suffix —
+# identifiers can never contain ``%`` — and only the percent-aware
+# ModifierList magnitude path consults that namespace.
+_PERCENT_KEY_SUFFIX = "%"
+
+
+def _stripped_define_body(raw: str) -> str:
+    for marker in ("//", ";"):
+        index = raw.find(marker)
+        if index >= 0:
+            raw = raw[:index]
+    return raw.strip()
+
+
+def _evaluated_expression_node(
+    tokens: Sequence[str],
+    position: int,
+    bodies: Mapping[str, str],
+    stack: tuple[str, ...],
+) -> tuple[float | None, int]:
+    """Evaluate one expression node; (None, len(tokens)) poisons the parse."""
+
+    token = tokens[position]
+    if token.startswith("#") and token.endswith("("):
+        function = token[1:-1].casefold()
+        if function not in _EXPRESSION_FUNCTIONS:
+            return None, len(tokens)
+        position += 1
+        operands: list[float] = []
+        while position < len(tokens) and tokens[position] != ")":
+            value, position = _evaluated_expression_node(
+                tokens, position, bodies, stack
+            )
+            if value is None:
+                return None, len(tokens)
+            operands.append(value)
+        if position >= len(tokens) or len(operands) != 2:
+            return None, len(tokens)
+        left, right = operands
+        if function == "add":
+            result = left + right
+        elif function == "subtract":
+            result = left - right
+        elif function == "multiply":
+            result = left * right
+        else:
+            if right == 0.0:
+                return None, len(tokens)
+            result = left / right
+        return result, position + 1
+    if _NUMERIC_LITERAL_PATTERN.fullmatch(token):
+        return float(token), position + 1
+    if _IDENTIFIER_PATTERN.fullmatch(token):
+        key = token.casefold()
+        if key in stack:
+            return None, len(tokens)
+        referenced = bodies.get(key)
+        if referenced is None:
+            return None, len(tokens)
+        value = _evaluated_define_body(referenced, bodies, stack + (key,))
+        if value is None:
+            return None, len(tokens)
+        return float(value), position + 1
+    return None, len(tokens)
+
+
+def _evaluated_define_body(
+    body: str,
+    bodies: Mapping[str, str],
+    stack: tuple[str, ...] = (),
+) -> int | float | None:
+    """Resolve one define body to a number, fail-closed on everything else.
+
+    SAGE's define scanner consumes exactly one value unit — a single token,
+    or one balanced ``#FUNCTION( ... )`` group — and ignores trailing prose
+    (retail evidence: ``#define AWARD_BASE_RING_HERO 120  (with 110% award
+    increase)`` feeds MordorSauron's award chain).  The evaluator mirrors
+    that: only the first value unit is read.
+    """
+
+    text = body.strip()
+    if not text.startswith("#"):
+        parts = text.split(None, 1)
+        if not parts:
+            return None
+        token = parts[0]
+        if _NUMERIC_LITERAL_PATTERN.fullmatch(token):
+            return float(token) if "." in token else int(token)
+        if _IDENTIFIER_PATTERN.fullmatch(token):
+            key = token.casefold()
+            if key in stack:
+                return None
+            referenced = bodies.get(key)
+            if referenced is None:
+                return None
+            return _evaluated_define_body(referenced, bodies, stack + (key,))
+        return None
+    tokens = _EXPRESSION_TOKEN_PATTERN.findall(text)
+    if not tokens or len(tokens) > _MAX_DEFINE_EXPRESSION_TOKENS:
+        return None
+    value, position = _evaluated_expression_node(tokens, 0, bodies, stack)
+    if value is None or position > len(tokens):
+        return None
+    return int(value) if float(value).is_integer() else float(value)
+
+
 def _numeric_defines(documents: Mapping[str, bytes]) -> dict[str, int | float]:
-    result: dict[str, int | float] = {}
-    pattern = re.compile(
-        rb"(?m)^[ \t]*#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+(-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))[ \t]*(?://|;|\r?$)"
-    )
+    """Numeric GameData constants, including evaluated define expressions."""
+
+    bodies: dict[str, str] = {}
+    occurrences: list[tuple[str, str, str]] = []
     for path, payload in documents.items():
         if path.replace("\\", "/").casefold() != "data/ini/gamedata.ini":
             continue
-        for match in pattern.finditer(payload):
-            key = match.group(1).decode("ascii").casefold()
-            token = match.group(2).decode("ascii")
-            value: int | float = float(token) if "." in token else int(token)
-            if key in result and result[key] != value:
+        for match in _DEFINE_LINE_PATTERN.finditer(payload):
+            name = match.group(1).decode("ascii")
+            body = _stripped_define_body(match.group(2).decode("latin-1"))
+            key = name.casefold()
+            bodies.setdefault(key, body)
+            occurrences.append((name, key, body))
+    result: dict[str, int | float] = {}
+    for name, key, body in occurrences:
+        parts = body.split(None, 1)
+        percent_match = (
+            _PERCENT_LITERAL_PATTERN.fullmatch(parts[0]) if parts else None
+        )
+        if percent_match:
+            scaled = float(percent_match.group(1)) / 100.0
+            percent_key = key + _PERCENT_KEY_SUFFIX
+            if percent_key in result and result[percent_key] != scaled:
                 raise PlayableUnitCompilerError(
-                    f"ambiguous numeric GameData constant: {match.group(1).decode('ascii')}"
+                    f"ambiguous percent GameData constant: {name}"
                 )
-            result[key] = value
+            result[percent_key] = scaled
+            continue
+        value = _evaluated_define_body(body, bodies)
+        if value is None:
+            continue
+        if key in result and result[key] != value:
+            raise PlayableUnitCompilerError(
+                f"ambiguous numeric GameData constant: {name}"
+            )
+        result[key] = value
     return result
 
 
@@ -2527,6 +2682,16 @@ def _experience_contract(
             raise PlayableUnitCompilerError(
                 f"{level_label} has no resolvable ExperienceAward"
             )
+        # SAGE parses both fields through its INI integer scanner, which
+        # truncates fractional macro results (RotWK authors awards like
+        # #DIVIDE( ADVANCED_EXP_AWARD_TARGET ANGMAR_HILL_TROLL_HORDE_SIZE )
+        # = 7.5; every award/threshold context in both corpora is integral
+        # or positive-fractional, where truncation and floor coincide).
+        # BFME2 authors only integral values here, so this is a no-op there.
+        if isinstance(required, float):
+            required = math.floor(required)
+        if isinstance(award, float):
+            award = math.floor(award)
         level: dict[str, object] = {
             "experienceId": str(row["id"]),
             "rank": rank,
@@ -2664,6 +2829,12 @@ def _modifier_value(token: str, constants: Mapping[str, int | float]) -> float |
             return None
     resolved = _resolved_expression(text, constants)
     if resolved is None:
+        # Percent-valued defines live in the reserved percent namespace and
+        # resolve only in this percent-aware context, exactly as SAGE scales
+        # the substituted ``NNN%`` text at the use site.
+        percent = constants.get(text.casefold() + _PERCENT_KEY_SUFFIX)
+        if isinstance(percent, float):
+            return percent
         return None
     return float(resolved)
 

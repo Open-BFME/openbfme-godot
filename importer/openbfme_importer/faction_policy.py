@@ -104,6 +104,21 @@ class FactionPolicyProfile:
     music_roots: Mapping[str, tuple[tuple[str, str], ...]]
 
 
+# RotWK fortresses share BFME2's composite shape: the map-placed camp object
+# unpacks into an engine-spawned citadel and expansion pads that no CommandSet
+# reaches, so each playable RotWK faction curates the same implicit roots.
+# Angmar's members are read from angmarfortress.ini (AngmarFortressCitadel
+# carries AngmarFortressCommandSet, the porter/hero producer surface).
+ROTWK_IMPLICIT_OBJECT_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = {
+    "factionangmar": (
+        ("AngmarFortressCenterGeneric", "fortress-composite-center"),
+        ("AngmarFortressCitadel", "fortress-composite-citadel"),
+        ("AngmarFortressExpansionPadCorner", "fortress-composite-corner-pad"),
+        ("AngmarFortressExpansionPadSide", "fortress-composite-side-pad"),
+    ),
+}
+
+
 FACTION_POLICY_PROFILES: Mapping[str, FactionPolicyProfile] = {
     "bfme2": FactionPolicyProfile(
         implicit_object_roots=IMPLICIT_OBJECT_ROOTS,
@@ -111,9 +126,11 @@ FACTION_POLICY_PROFILES: Mapping[str, FactionPolicyProfile] = {
         source_null_command_sets=SOURCE_NULL_COMMAND_SETS,
         music_roots=MUSIC_ROOTS,
     ),
-    # Expansion analysis is admitted without inventing RotWK curations.
+    # Expansion analysis is admitted without inventing RotWK curations beyond
+    # the explicitly curated fortress-composite roots above; factions without
+    # an entry keep the prior empty-roots behavior.
     "rotwk": FactionPolicyProfile(
-        implicit_object_roots={},
+        implicit_object_roots=ROTWK_IMPLICIT_OBJECT_ROOTS,
         source_null_mapped_image_textures={},
         source_null_command_sets={},
         music_roots={},
@@ -139,7 +156,9 @@ def implicit_object_roots(
         raise FactionPolicyError("player template identity is invalid")
     profile = _profile(game)
     if game.casefold().strip() == "rotwk":
-        return ()
+        # RotWK factions without an explicitly curated entry keep the prior
+        # empty-roots behavior instead of failing the whole census.
+        return profile.implicit_object_roots.get(player_template.casefold(), ())
     roots = profile.implicit_object_roots.get(player_template.casefold())
     if roots is None:
         raise FactionPolicyError(
@@ -210,6 +229,7 @@ __all__ = [
     "FactionPolicyProfile",
     "IMPLICIT_OBJECT_ROOTS",
     "MUSIC_ROOTS",
+    "ROTWK_IMPLICIT_OBJECT_ROOTS",
     "SOURCE_NULL_COMMAND_SETS",
     "SOURCE_NULL_MAPPED_IMAGE_TEXTURES",
     "implicit_object_roots",

@@ -651,6 +651,19 @@ def _assignment_is_block(
 def _bare_is_block(tokens: tuple[str, ...], line: _Line, following: _Line | None) -> bool:
     if tokens and tokens[0].casefold() in (_BARE_BLOCK_KINDS | _STATE_BLOCK_KEYS):
         return True
+    # RotWK authors two UnitSpecificSounds bodies at the same indentation as
+    # the header (AngmarForgeWorks, MordorEasterling), which the generic
+    # greater-indent inference below cannot see.  The block is always
+    # End-terminated in SAGE, so a following body line at any indent admits
+    # it.  A bare header directly followed by End (the default object.ini
+    # template) stays on the existing ambiguous fail-closed path.
+    if (
+        len(tokens) == 1
+        and tokens[0].casefold() == "unitspecificsounds"
+        and following is not None
+        and following.text.casefold() != "end"
+    ):
+        return True
     return following is not None and following.text.casefold() != "end" and following.indent > line.indent
 
 

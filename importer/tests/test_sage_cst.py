@@ -16,6 +16,49 @@ from openbfme_importer.sage_cst import (
 
 
 class SageCstTests(unittest.TestCase):
+    def test_same_indent_unit_specific_sounds_body_is_a_block(self) -> None:
+        # RotWK authors two UnitSpecificSounds bodies at the same indentation
+        # as the bare header (AngmarForgeWorks, MordorEasterling); the block
+        # is always End-terminated in SAGE, so the body must bind to the
+        # block instead of the End closing the enclosing Object early.
+        source = b"""
+Object AngmarForgeWorks
+\tUnitSpecificSounds
+\tUnderConstruction\t= BuildingConstructionLoop
+\tEnd
+\tKindOf = STRUCTURE PRELOAD
+End
+"""
+        document = parse_sage_document(
+            source, "data/ini/object/evilfaction/structures/angmar/angmarforgeworks.ini"
+        )
+        self.assertEqual([item.name for item in document.objects], ["AngmarForgeWorks"])
+        target = document.objects[0]
+        self.assertIn(
+            "unitspecificsounds",
+            [block.kind.casefold() for block in target.blocks],
+        )
+        # The trailing KindOf still belongs to the Object, proving the block
+        # consumed its own End.
+        self.assertIn(
+            "kindof",
+            [assignment.key.casefold() for assignment in target.assignments],
+        )
+
+    def test_empty_bare_unit_specific_sounds_stays_ambiguous(self) -> None:
+        # The default object.ini template authors a bare UnitSpecificSounds
+        # whose body is all comments; it keeps failing closed instead of
+        # silently consuming the End.
+        source = b"""
+Object DefaultTemplate
+\tUnitSpecificSounds
+\tEnd
+End
+"""
+        with self.assertRaises(Exception) as caught:
+            parse_sage_document(source, "data/ini/default/object.ini")
+        self.assertIn("ambiguous bare statement", str(caught.exception))
+
     def test_endless_module_header_is_retained_as_assignment(self) -> None:
         # BFME2 1.06 retail declares an empty draw module with no body and no
         # terminating End; sibling assignments and modules still belong to the
