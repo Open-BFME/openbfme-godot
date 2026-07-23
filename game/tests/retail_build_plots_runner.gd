@@ -22,6 +22,7 @@ func _run() -> void:
 	_test_mode_on_accepts_on_plot_and_tracks_occupancy()
 	_test_mode_on_snapshot_round_trip()
 	_test_mode_on_twin_determinism()
+	await _test_mode_on_non_men_and_cross_faction()
 	print("RETAIL_BUILD_PLOTS_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -125,6 +126,105 @@ func _test_mode_on_twin_determinism() -> void:
 		if diverged < 0 and sim_a.state_hash() != sim_b.state_hash():
 			diverged = tick
 	_check("mode_on_twin_determinism_200_ticks", diverged < 0, "first_divergence=%d" % diverged)
+
+
+## Non-Men + plots and cross-faction + plots (the user-reported load failure):
+## boots the real private slice once for authentic manifests/map, then proves
+## plots-only mode seeds each team's 8-plot ring around ITS OWN faction's
+## fortress for (a) an all-Elves roster and (b) a Men-vs-Elves roster, and that
+## the cross-faction plots match is twin-run deterministic.
+func _test_mode_on_non_men_and_cross_faction() -> void:
+	var packed: PackedScene = load("res://scenes/retail_vertical_slice.tscn")
+	_check("faction_slice_scene_parses", packed != null)
+	if packed == null:
+		return
+	var slice = packed.instantiate()
+	root.add_child(slice)
+	await process_frame
+	await process_frame
+	_check("faction_slice_boots", bool(slice.ready_ok), String(slice.failure_reason))
+	if not bool(slice.ready_ok) or slice.source_map_data == null:
+		slice.queue_free()
+		await process_frame
+		return
+	var base_rules: Dictionary = slice.gameplay_rules.duplicate(true)
+	var map_config: Dictionary = slice.source_map_data.simulation_configuration()
+	var men_manifest: Dictionary = slice.faction_manifest.duplicate(true)
+	slice._classify_faction_units("elves")
+	var elves_manifest: Dictionary = slice._resolve_faction_manifest("elves")
+	slice.queue_free()
+	await process_frame
+	var elves_ok := not elves_manifest.is_empty() and not elves_manifest.has("_error")
+	_check("elves_manifest_resolves", elves_ok, String(elves_manifest.get("_error", "empty")))
+	if not elves_ok:
+		return
+
+	# (a) Non-Men + plots: both teams seed from the Elves manifest.
+	var elves_sim = _make_manifest_sim(base_rules, map_config, {0: elves_manifest, 1: elves_manifest}, [
+		{"team": 0, "faction": "elves", "is_ai": false},
+		{"team": 1, "faction": "elves", "is_ai": false},
+	])
+	_check("non_men_setup_has_no_configuration_error", String(elves_sim.configuration_error) == "", String(elves_sim.configuration_error))
+	for team in [0, 1]:
+		_check_ring_seeded("non_men_team_%d" % team, elves_sim, team)
+
+	# (b) Cross-faction + plots: Men (team 0) vs Elves (team 1), each ring
+	# centered on that team's own fortress.
+	var cross_manifests := {0: men_manifest, 1: elves_manifest}
+	var cross_roster := [
+		{"team": 0, "faction": "men", "is_ai": false},
+		{"team": 1, "faction": "elves", "is_ai": false},
+	]
+	var cross_sim = _make_manifest_sim(base_rules, map_config, cross_manifests, cross_roster)
+	_check("cross_faction_setup_has_no_configuration_error", String(cross_sim.configuration_error) == "", String(cross_sim.configuration_error))
+	_check(
+		"cross_faction_distinct_manifests",
+		String(cross_sim.team_manifest_for(0).get("faction", "")) == "men"
+			and String(cross_sim.team_manifest_for(1).get("faction", "")) == "elves"
+	)
+	for team in [0, 1]:
+		_check_ring_seeded("cross_faction_team_%d" % team, cross_sim, team)
+
+	# Twin determinism over the cross-faction plots setup.
+	var twin_a = _make_manifest_sim(base_rules, map_config, cross_manifests, cross_roster)
+	var twin_b = _make_manifest_sim(base_rules, map_config, cross_manifests, cross_roster)
+	twin_a.advance(200)
+	twin_b.advance(200)
+	_check(
+		"cross_faction_plots_twin_deterministic_200_ticks",
+		twin_a.state_hash() == twin_b.state_hash(),
+		"%s != %s" % [twin_a.state_hash(), twin_b.state_hash()]
+	)
+
+
+func _make_manifest_sim(base_rules: Dictionary, map_config: Dictionary, manifests: Dictionary, roster: Array):
+	var sim = SimScript.new()
+	var rules := base_rules.duplicate(true)
+	rules["enable_base_loop"] = true
+	rules["spawn_initial_battalions"] = false
+	rules["build_plots_only"] = true
+	rules["team_faction_manifests"] = manifests.duplicate(true)
+	sim.configure_team_roster(roster)
+	sim.setup(map_config.duplicate(true), rules)
+	sim.ai_enabled = false
+	return sim
+
+
+func _check_ring_seeded(label: String, sim, team: int) -> void:
+	var fortress := int(sim.fortress_id(team))
+	_check("%s_seeds_a_fortress" % label, fortress != 0)
+	var plots: Array = sim.build_plot_states(team)
+	_check("%s_seeds_full_plot_ring" % label, plots.size() == SimScript.BUILD_PLOT_RING_OFFSETS.size(), str(plots.size()))
+	if fortress == 0 or plots.size() != SimScript.BUILD_PLOT_RING_OFFSETS.size():
+		return
+	var center := Vector2((sim.structures[fortress] as Dictionary).get("position", Vector2.ZERO))
+	var ring_matches := true
+	for index in plots.size():
+		var expected: Vector2 = center + Vector2(SimScript.BUILD_PLOT_RING_OFFSETS[index])
+		if Vector2((plots[index] as Dictionary).get("position", Vector2.INF)) != expected:
+			ring_matches = false
+			break
+	_check("%s_ring_centers_on_own_fortress" % label, ring_matches)
 
 
 func _make_sim(set_flag: bool, plots_only: bool):

@@ -285,6 +285,14 @@ func _initialize_content_and_match() -> void:
 		enemy_faction = _resolve_enemy_faction(player_faction)
 		_team_faction_manifests = _resolve_team_faction_manifests(player_faction, enemy_faction)
 		_menu_team_roster = []
+		if enemy_faction != player_faction:
+			# Resolving the opponent's manifest re-ran _classify_faction_units for
+			# THAT faction, clobbering the player's fieldable/producible runtime
+			# classification (the launch then died on the player's own builder
+			# with a misleading "no converted playableUnit document" behind the
+			# loading screen). Re-classify the player faction, exactly like the
+			# menu-roster branch below does.
+			_classify_faction_units(player_faction)
 	else:
 		_menu_team_roster = _menu_sim_team_roster(menu_team_setup)
 		_team_faction_manifests = _resolve_menu_team_manifests(menu_team_setup, faction_manifest)
@@ -422,7 +430,7 @@ func _initialize_content_and_match() -> void:
 	# only kind the menu sends today) collapse to the player manifest, so every
 	# team aliases the compiled globals and the default path stays byte-identical.
 	if not _team_faction_manifests.is_empty():
-		gameplay_rules["team_faction_manifests"] = _team_faction_manifests.duplicate(true)
+		gameplay_rules["team_faction_manifests"] = _trimmed_team_manifests()
 	_apply_menu_match_options()
 	_resolve_mp_settings()
 	simulation = SimScript.new()
@@ -499,10 +507,16 @@ func _initialize_content_and_match() -> void:
 	# Full-pack manifests seed fortresses only; constructable kinds stay on the
 	# builder bar. Tiny Men pack still seeds its full five-building starter.
 	var seed_kinds: Array = faction_manifest.get("seed_structure_kinds", faction_manifest.get("structure_kinds", [])) as Array
-	# One seeded structure set per rostered team. The default two-team roster keeps
-	# this at 2 * seed_kinds (byte-identical); an N-team roster scales with the
-	# team count so a 1v8 / multi-team match's fortresses all validate.
-	var expected_structure_count := simulation.team_ids().size() * seed_kinds.size()
+	# One seeded structure set per rostered team, each counted from ITS OWN
+	# faction's tables (a cross-faction roster may seed a different kind count
+	# per team). The default same-faction roster keeps the historical
+	# team_count * seed_kinds total exactly (every team aliases the globals).
+	var expected_structure_count := 0
+	for team_id_value in simulation.team_ids():
+		var team_seed_kinds: Array = simulation.seed_structure_kinds_for_team(int(team_id_value))
+		if team_seed_kinds.is_empty():
+			team_seed_kinds = simulation.structure_kinds_for_team(int(team_id_value))
+		expected_structure_count += team_seed_kinds.size()
 	var men_faction_slice := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)) == FactionManifestScript.DEFAULT_FACTION
 	ready_ok = (
 		battalion_nodes.size() == simulation.initial_battalion_count()
@@ -1216,6 +1230,53 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		if faction_builder_rule.is_empty():
 			return {"_error": "faction builder '%s' has no converted playableUnit document" % builder_id}
 		unit_rules[builder_id] = faction_builder_rule
+	# Cross-faction rosters: every OTHER rostered faction must resolve its own
+	# builder rules and producible runtimes too, or its team can never field
+	# even its porter (the spawn roster silently skips ruleless entries and the
+	# match then dies in capability validation behind the loading screen).
+	# Each faction resolves under its own classification; the player
+	# classification is restored afterwards. Empty for the default
+	# single-faction roster, which stays byte-identical.
+	var cross_faction_error := ""
+	var extra_unit_rules: Dictionary = {}
+	var extra_playable_runtimes: Dictionary = {}
+	var extra_producer_kinds: Dictionary = {}
+	var visited_factions := {faction: true}
+	for team_manifest_value in _team_faction_manifests.values():
+		var team_manifest := team_manifest_value as Dictionary
+		var team_faction := String(team_manifest.get("faction", "")).strip_edges().to_lower()
+		if team_faction == "" or visited_factions.has(team_faction) or team_manifest.has("_error"):
+			continue
+		visited_factions[team_faction] = true
+		_classify_faction_units(team_faction)
+		for builder_value in (team_manifest.get("builder_unit_ids", []) as Array):
+			var builder_id := String(builder_value)
+			if builder_id == "" or unit_rules.has(builder_id) or extra_unit_rules.has(builder_id):
+				continue
+			var builder_rule := _faction_builder_unit_rule(builder_id)
+			if builder_rule.is_empty():
+				cross_faction_error = "faction builder '%s' (faction '%s') has no converted playableUnit document" % [builder_id, team_faction]
+				break
+			extra_unit_rules[builder_id] = builder_rule
+		if cross_faction_error != "":
+			break
+		# This faction's producible runtimes join the sim's compiled union
+		# (object ids never collide across factions).
+		for runtime_key in producible_unit_runtimes.keys():
+			if not extra_playable_runtimes.has(runtime_key):
+				extra_playable_runtimes[runtime_key] = (producible_unit_runtimes[runtime_key] as Dictionary).duplicate(true)
+		var team_producer_kinds: Dictionary = team_manifest.get("producer_kind_registry", {}) as Dictionary
+		for producer_key in team_producer_kinds.keys():
+			if not extra_producer_kinds.has(producer_key):
+				extra_producer_kinds[producer_key] = team_producer_kinds[producer_key]
+	if visited_factions.size() > 1:
+		# Restore the player-faction classification the sections below (and the
+		# HUD/spawn paths after this call) depend on.
+		_classify_faction_units(faction)
+	if cross_faction_error != "":
+		return {"_error": cross_faction_error}
+	for extra_builder_id in extra_unit_rules.keys():
+		unit_rules[extra_builder_id] = extra_unit_rules[extra_builder_id]
 	var rules := {
 		"enable_base_loop": true,
 		"starting_resources": 1200,
@@ -1271,9 +1332,17 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	elif men_slice and not trebuchet_runtime.is_empty() and full_men:
 		# Full pack may still carry the typed trebuchet contract alongside playable runtimes.
 		rules["trebuchet_runtime"] = trebuchet_runtime.duplicate(true)
-	if not producible_unit_runtimes.is_empty():
-		rules["playable_unit_runtimes"] = producible_unit_runtimes.duplicate(true)
-		rules["producer_kind_by_source_object"] = _producer_kind_registry()
+	if not producible_unit_runtimes.is_empty() or not extra_playable_runtimes.is_empty():
+		var playable_runtimes: Dictionary = producible_unit_runtimes.duplicate(true)
+		for runtime_key in extra_playable_runtimes.keys():
+			if not playable_runtimes.has(runtime_key):
+				playable_runtimes[runtime_key] = extra_playable_runtimes[runtime_key]
+		rules["playable_unit_runtimes"] = playable_runtimes
+		var producer_kinds: Dictionary = _producer_kind_registry()
+		for producer_key in extra_producer_kinds.keys():
+			if not producer_kinds.has(producer_key):
+				producer_kinds[producer_key] = extra_producer_kinds[producer_key]
+		rules["producer_kind_by_source_object"] = producer_kinds
 		var horde_speed_overrides := _horde_speed_overrides()
 		if not horde_speed_overrides.is_empty():
 			rules["horde_speed_overrides"] = horde_speed_overrides
@@ -1560,6 +1629,29 @@ func _resolve_team_faction_manifests(player_faction: String, opponent_faction: S
 	else:
 		manifests[SimScript.ENEMY_TEAM] = _resolve_faction_manifest(opponent_faction)
 	return manifests
+
+
+func _trimmed_team_manifests() -> Dictionary:
+	## Deep-copied per-team manifests for the sim. Retail skirmish starts field
+	## fortress + porter only, so the builder-only spawn trim the player's
+	## manifest copy gets in _gameplay_rules applies to EVERY team's manifest
+	## here (otherwise a cross-faction opponent would spawn its full authored
+	## roster). Gate runners keep their pre-spawned battalions via
+	## OPENBFME_STARTER_ARMY=1, exactly like the player-manifest trim.
+	var result: Dictionary = {}
+	var trim := OS.get_environment("OPENBFME_STARTER_ARMY") != "1"
+	for team_key in _team_faction_manifests.keys():
+		var manifest := (_team_faction_manifests[team_key] as Dictionary).duplicate(true)
+		if trim:
+			var builder_only: Array = []
+			for entry_value in manifest.get("spawn_roster", []) as Array:
+				var entry := entry_value as Dictionary
+				if String(entry.get("anchor", "")).ends_with("builder"):
+					builder_only.append(entry)
+			if not builder_only.is_empty():
+				manifest["spawn_roster"] = builder_only
+		result[team_key] = manifest
+	return result
 
 
 func _menu_team_setup(game_state = null) -> Array:
@@ -4635,6 +4727,13 @@ func _sync_hud_to_viewport() -> void:
 func _fail(message: String) -> void:
 	failure_reason = message
 	ready_ok = false
+	# A failed init must never leave the adopted loading screen covering the
+	# failure panel — that read as "the game never loads" (an eternal load
+	# screen) instead of the honest reason below.
+	if _loading_screen != null:
+		var screen := _loading_screen
+		_loading_screen = null
+		screen.call("fade_out_and_free")
 	hud.show_failure("RETAIL SLICE UNAVAILABLE\n\n%s\n\nNo retail files are stored in the repository." % message)
 	hud.set_feedback(message, true)
 

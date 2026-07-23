@@ -273,7 +273,18 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 				continue
 			var composite: Dictionary = excluded_structures.get(producer_source.to_lower(), {}) as Dictionary
 			if composite.is_empty():
-				return {"_error": "unit '%s' is produced by '%s', which has no playableStructure.* runtime for faction '%s'" % [unit_id, producer_source, slug]}
+				# A unit whose producer structure never converted (retail authors
+				# IsengardBallista at the not-yet-converted IsengardSiegeWorks) is
+				# that structure's content, not a faction-wide defect: exclude the
+				# unit with a recorded reason instead of failing the manifest, the
+				# same contract the production-rules pass applies below.
+				ally_excluded_units[unit_id] = true
+				production_exclusions.append({
+					"object_id": unit_id,
+					"category": String(unit_document.get("category", "")),
+					"reason": "producer-not-loaded:%s" % producer_source,
+				})
+				break
 			var composite_evidence := String(composite.get("evidence", ""))
 			if composite_evidence != "engine-spawned-composite":
 				return {"_error": "unit '%s' is produced by '%s', whose recorded production evidence '%s' cannot produce units for faction '%s'" % [unit_id, producer_source, composite_evidence, slug]}
