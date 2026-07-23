@@ -9,10 +9,15 @@ public sealed class ModuleSpec
 {
     public string TypeName { get; }
     public IReadOnlyDictionary<string, long> Data => _data;
+    public IReadOnlyDictionary<string, string> StringData => _stringData;
 
     private readonly SortedDictionary<string, long> _data;
+    private readonly SortedDictionary<string, string> _stringData;
 
-    public ModuleSpec(string typeName, IEnumerable<KeyValuePair<string, long>>? data = null)
+    public ModuleSpec(
+        string typeName,
+        IEnumerable<KeyValuePair<string, long>>? data = null,
+        IEnumerable<KeyValuePair<string, string>>? stringData = null)
     {
         TypeName = typeName ?? throw new ArgumentNullException(nameof(typeName));
         _data = new SortedDictionary<string, long>(StringComparer.Ordinal);
@@ -23,12 +28,23 @@ public sealed class ModuleSpec
                 _data.Add(pair.Key, pair.Value);
             }
         }
+        _stringData = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        if (stringData != null)
+        {
+            foreach (var pair in stringData)
+            {
+                _stringData.Add(pair.Key, pair.Value);
+            }
+        }
     }
 
     public long GetLong(string key, long fallback) => _data.TryGetValue(key, out var value) ? value : fallback;
 
     public Fixed64 GetFixed(string key, Fixed64 fallback) =>
         _data.TryGetValue(key, out var value) ? Fixed64.FromRaw(value) : fallback;
+
+    public string GetString(string key, string fallback) =>
+        _stringData.TryGetValue(key, out var value) ? value : fallback;
 }
 
 public sealed class ObjectTemplate
@@ -61,6 +77,12 @@ public abstract class ModuleBase
 
     /// <summary>Returns true when the damage was consumed (e.g. by a body module).</summary>
     public virtual bool OnDamage(SimWorld world, GameObject self, long amount) => false;
+
+    /// <summary>
+    /// Armor-shaped pre-body hook: every module sees the incoming amount and may
+    /// scale it. Runs in module order before the OnDamage chain.
+    /// </summary>
+    public virtual long ModifyIncomingDamage(GameObject self, string damageType, long amount) => amount;
 
     /// <summary>
     /// Death interception hook (SlowDeathBehavior-shaped). Returning true claims
@@ -115,6 +137,10 @@ public sealed class ModuleRegistry
         registry.Register(DestroyDieModule.TypeName, spec => new DestroyDieModule(spec));
         registry.Register(KeepObjectDieModule.TypeName, spec => new KeepObjectDieModule(spec));
         registry.Register(StructureCollapseModule.TypeName, spec => new StructureCollapseModule(spec));
+        registry.Register(ArmorModule.TypeName, spec => new ArmorModule(spec));
+        registry.Register(SquishCollideModule.TypeName, spec => new SquishCollideModule(spec));
+        registry.Register(WeaponModule.TypeName, spec => new WeaponModule(spec));
+        registry.Register(AiCombatModule.TypeName, spec => new AiCombatModule(spec));
         return registry;
     }
 }

@@ -41,6 +41,8 @@ public sealed class SimWorld
     private readonly SortedDictionary<string, int> _moduleGaps = new(StringComparer.Ordinal);
     private DeterministicRandom _random;
     private int _nextObjectId = 1;
+    private bool _inUpdateSweep;
+    private readonly List<GameObject> _pendingSpawns = new();
 
     public int TickIndex { get; private set; }
     public IReadOnlyDictionary<int, GameObject> Objects => _objects;
@@ -79,7 +81,18 @@ public sealed class SimWorld
             }
         }
         var gameObject = new GameObject(_nextObjectId++, templateName, team, position, modules);
-        _objects.Add(gameObject.Id, gameObject);
+        if (_inUpdateSweep)
+        {
+            // Spawns requested by modules mid-sweep (production, death rubble)
+            // are deferred so scanning modules never see the object dictionary
+            // mutate under them; newcomers join at end of sweep, first update
+            // next tick — deterministically.
+            _pendingSpawns.Add(gameObject);
+        }
+        else
+        {
+            _objects.Add(gameObject.Id, gameObject);
+        }
         return gameObject;
     }
 
@@ -106,25 +119,39 @@ public sealed class SimWorld
     {
         TickIndex++;
         ApplyPendingCommands();
-        // Materialized id-ordered list: modules may spawn objects during the
-        // update sweep (production, death rubble); newcomers first update on the
-        // next tick, deterministically. Dead objects never update.
+        // The object dictionary is frozen for the whole sweep: mid-sweep spawns
+        // divert to _pendingSpawns (so modules scanning Objects never see it
+        // mutate) and join afterwards, first updating next tick. Dead objects
+        // never update.
         var updateList = new List<GameObject>(_objects.Values);
-        foreach (var gameObject in updateList)
+        _inUpdateSweep = true;
+        try
         {
-            if (gameObject.IsDead)
+            foreach (var gameObject in updateList)
             {
-                continue;
-            }
-            foreach (var module in gameObject.Modules)
-            {
-                module.OnUpdate(this, gameObject);
                 if (gameObject.IsDead)
                 {
-                    break;
+                    continue;
+                }
+                foreach (var module in gameObject.Modules)
+                {
+                    module.OnUpdate(this, gameObject);
+                    if (gameObject.IsDead)
+                    {
+                        break;
+                    }
                 }
             }
         }
+        finally
+        {
+            _inUpdateSweep = false;
+        }
+        foreach (var spawned in _pendingSpawns)
+        {
+            _objects.Add(spawned.Id, spawned);
+        }
+        _pendingSpawns.Clear();
         RemoveDeadObjects();
     }
 
@@ -196,9 +223,24 @@ public sealed class SimWorld
         }
     }
 
-    public void DealDamage(GameObject target, long amount)
+    public void DealDamage(GameObject target, long amount) => DealDamage(target, amount, DamageTypes.Default);
+
+    public void DealDamage(GameObject target, long amount, string damageType)
     {
-        if (target.IsDead)
+        if (target.IsDead || target.IsDying)
+        {
+            return;
+        }
+        // Crush damage only lands on objects that declare themselves crushable.
+        if (damageType == DamageTypes.Crush && target.FindModule<SquishCollideModule>() == null)
+        {
+            return;
+        }
+        foreach (var module in target.Modules)
+        {
+            amount = module.ModifyIncomingDamage(target, damageType, amount);
+        }
+        if (amount <= 0)
         {
             return;
         }
