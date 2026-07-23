@@ -109,6 +109,12 @@ public sealed class ModuleRegistry
         registry.Register(SlowDeathModule.TypeName, spec => new SlowDeathModule(spec));
         registry.Register(ProductionModule.TypeName, spec => new ProductionModule(spec));
         registry.Register(GettingBuiltModule.TypeName, spec => new GettingBuiltModule(spec));
+        registry.Register(StructureBodyModule.TypeName, spec => new StructureBodyModule(spec));
+        registry.Register(ImmortalBodyModule.TypeName, spec => new ImmortalBodyModule(spec));
+        registry.Register(LifetimeModule.TypeName, spec => new LifetimeModule(spec));
+        registry.Register(DestroyDieModule.TypeName, spec => new DestroyDieModule(spec));
+        registry.Register(KeepObjectDieModule.TypeName, spec => new KeepObjectDieModule(spec));
+        registry.Register(StructureCollapseModule.TypeName, spec => new StructureCollapseModule(spec));
         return registry;
     }
 }
@@ -385,6 +391,222 @@ public sealed class ProductionModule : ModuleBase
             var ticksRemaining = reader.ReadInt();
             _queue.Add((template, ticksRemaining));
         }
+    }
+}
+
+/// <summary>
+/// StructureBody variant of ActiveBody (373 objects): identical health
+/// semantics today; exists as its own type so templates map 1:1 to the SAGE
+/// vocabulary and structure-specific armor rules have a home in P2.
+/// </summary>
+public sealed class StructureBodyModule : ModuleBase
+{
+    public const string TypeName = "StructureBody";
+
+    public long Health { get; private set; }
+    public long MaxHealth { get; }
+
+    public StructureBodyModule(ModuleSpec spec) : base(spec)
+    {
+        MaxHealth = spec.GetLong("MaxHealth", 500);
+        Health = MaxHealth;
+    }
+
+    public override bool OnDamage(SimWorld world, GameObject self, long amount)
+    {
+        if (amount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(amount), "Damage must be non-negative");
+        }
+        if (Health == 0)
+        {
+            return true;
+        }
+        Health = Math.Max(0, Health - amount);
+        if (Health == 0)
+        {
+            world.HandleDeath(self);
+        }
+        return true;
+    }
+
+    public override void WriteState(CanonicalWriter writer) => writer.WriteLong(Health);
+    public override void ReadState(CanonicalReader reader) => Health = reader.ReadLong();
+}
+
+/// <summary>ImmortalBody (229 objects): takes damage down to 1 health, never dies.</summary>
+public sealed class ImmortalBodyModule : ModuleBase
+{
+    public const string TypeName = "ImmortalBody";
+
+    public long Health { get; private set; }
+    public long MaxHealth { get; }
+
+    public ImmortalBodyModule(ModuleSpec spec) : base(spec)
+    {
+        MaxHealth = spec.GetLong("MaxHealth", 100);
+        Health = MaxHealth;
+    }
+
+    public override bool OnDamage(SimWorld world, GameObject self, long amount)
+    {
+        if (amount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(amount), "Damage must be non-negative");
+        }
+        Health = Math.Max(1, Health - amount);
+        return true;
+    }
+
+    public override void WriteState(CanonicalWriter writer) => writer.WriteLong(Health);
+    public override void ReadState(CanonicalReader reader) => Health = reader.ReadLong();
+}
+
+/// <summary>
+/// LifetimeUpdate (198 objects): the object expires after LifetimeTicks,
+/// routed through the normal death pipeline so SlowDeath-class modules can
+/// still claim the removal.
+/// </summary>
+public sealed class LifetimeModule : ModuleBase
+{
+    public const string TypeName = "Lifetime";
+
+    private int _ticksRemaining;
+    private bool _expired;
+
+    public LifetimeModule(ModuleSpec spec) : base(spec)
+    {
+        _ticksRemaining = (int)Math.Max(1, spec.GetLong("LifetimeTicks", 300));
+    }
+
+    public override void OnUpdate(SimWorld world, GameObject self)
+    {
+        if (_expired || self.IsDying)
+        {
+            return;
+        }
+        _ticksRemaining--;
+        if (_ticksRemaining <= 0)
+        {
+            _expired = true;
+            world.HandleDeath(self);
+        }
+    }
+
+    public override void WriteState(CanonicalWriter writer)
+    {
+        writer.WriteInt(_ticksRemaining);
+        writer.WriteBool(_expired);
+    }
+
+    public override void ReadState(CanonicalReader reader)
+    {
+        _ticksRemaining = reader.ReadInt();
+        _expired = reader.ReadBool();
+    }
+}
+
+/// <summary>
+/// Shared shape for death-claiming modules that hold the object for a timer
+/// (SlowDeath, StructureCollapse, KeepObjectDie). Subclasses differ only in
+/// type name, default duration, and whether zero duration means forever.
+/// </summary>
+public abstract class TimedDeathModuleBase : ModuleBase
+{
+    private readonly int _holdTicks;
+    private readonly bool _zeroMeansForever;
+    private int _ticksRemaining;
+    private bool _dying;
+
+    protected TimedDeathModuleBase(ModuleSpec spec, string dataKey, long defaultTicks, bool zeroMeansForever)
+        : base(spec)
+    {
+        var configured = spec.GetLong(dataKey, defaultTicks);
+        _zeroMeansForever = zeroMeansForever && configured == 0;
+        _holdTicks = (int)Math.Max(_zeroMeansForever ? 0 : 1, configured);
+    }
+
+    public bool IsDying => _dying;
+
+    public override bool OnDeath(SimWorld world, GameObject self)
+    {
+        if (_dying)
+        {
+            return true;
+        }
+        _dying = true;
+        _ticksRemaining = _holdTicks;
+        self.MarkDying();
+        return true;
+    }
+
+    public override void OnUpdate(SimWorld world, GameObject self)
+    {
+        if (!_dying || _zeroMeansForever)
+        {
+            return;
+        }
+        _ticksRemaining--;
+        if (_ticksRemaining <= 0)
+        {
+            self.MarkDead();
+        }
+    }
+
+    public override void WriteState(CanonicalWriter writer)
+    {
+        writer.WriteBool(_dying);
+        writer.WriteInt(_ticksRemaining);
+    }
+
+    public override void ReadState(CanonicalReader reader)
+    {
+        _dying = reader.ReadBool();
+        _ticksRemaining = reader.ReadInt();
+    }
+}
+
+/// <summary>DestroyDie (385 objects): explicit immediate removal on death.</summary>
+public sealed class DestroyDieModule : ModuleBase
+{
+    public const string TypeName = "DestroyDie";
+
+    public DestroyDieModule(ModuleSpec spec) : base(spec)
+    {
+    }
+
+    public override bool OnDeath(SimWorld world, GameObject self)
+    {
+        self.MarkDead();
+        return true;
+    }
+}
+
+/// <summary>
+/// KeepObjectDie (268 objects): the corpse stays in the world — forever when
+/// KeepTicks is 0 (cleanup lanes come later), else for KeepTicks.
+/// </summary>
+public sealed class KeepObjectDieModule : TimedDeathModuleBase
+{
+    public const string TypeName = "KeepObjectDie";
+
+    public KeepObjectDieModule(ModuleSpec spec)
+        : base(spec, "KeepTicks", 0, zeroMeansForever: true)
+    {
+    }
+}
+
+/// <summary>
+/// StructureCollapseUpdate (656 objects): the collapsing building holds for
+/// its rubble sequence, then releases for removal.
+/// </summary>
+public sealed class StructureCollapseModule : TimedDeathModuleBase
+{
+    public const string TypeName = "StructureCollapse";
+
+    public StructureCollapseModule(ModuleSpec spec)
+        : base(spec, "CollapseTicks", 45, zeroMeansForever: false)
+    {
     }
 }
 
