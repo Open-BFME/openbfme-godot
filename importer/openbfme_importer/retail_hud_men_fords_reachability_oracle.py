@@ -33,7 +33,7 @@ SIDE_APT_SHA256 = "84d58c67c5cab9a3bf690125cbf1a0cbf3f4bc58ccc29ffa33b992a924eca
 # hero-ability batch-2, N-team, five-tier AI, per-team spellbook, BFME1
 # build-plot, and per-team structure-upgrade changes; every anchored
 # behavioral marker below still validates against the new sources.
-SIM_SHA256 = "5638c75a05965dfdad9c0392595c4906778ead3c28e03cfceba3bfdf3f3fb051"
+SIM_SHA256 = "90116adc4aef90b9ad6eacabff9511f0c38c2d12727c52054288e10f7c85950d"
 SLICE_SHA256 = "6c0cdec4768cd06b81fbbe6c2b95138c0f1d62b403adb4793ede9f62f57857fd"
 
 RETAIL_INI_SOURCES: dict[str, str] = {

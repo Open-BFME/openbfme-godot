@@ -45,8 +45,16 @@ func _make_sim():
 	sim._rules["unit_rules"][HERO_OBJECT_ID] = _hero_rule()
 	sim._rules["unit_rules"][HERO2_OBJECT_ID] = _hero_rule()
 	sim._rules["unit_rules"][FLYER_OBJECT_ID] = _flyer_rule()
-	sim._unit_ability_rules[HERO_UNIT_TYPE] = sim._scaled_ability_rules(_hero_ability_rules("TestLeadership"), 0.0)
-	sim._unit_ability_rules[HERO2_UNIT_TYPE] = sim._scaled_ability_rules(_hero_ability_rules("TestLeadership"), 0.0)
+	sim._unit_ability_rules[HERO_UNIT_TYPE] = sim._scaled_ability_rules(_combined_ability_rules("TestLeadership"), 0.0)
+	sim._unit_ability_rules[HERO2_UNIT_TYPE] = sim._scaled_ability_rules(_combined_ability_rules("TestLeadership"), 0.0)
+	sim._unit_experience_rules[SimScript.SOLDIER_HORDE_ID] = {
+		"max_level": 2,
+		"initial_rank": 1,
+		"levels": [
+			{"rank": 1, "required_experience": 0, "experience_award": 0, "health_add": 0.0, "damage_add": 0.0},
+			{"rank": 2, "required_experience": 100, "experience_award": 0, "health_add": 0.0, "damage_add": 0.0},
+		],
+	}
 	sim._unit_experience_rules[HERO_UNIT_TYPE] = {
 		"max_level": 2,
 		"initial_rank": 1,
@@ -286,6 +294,165 @@ func _hero_ability_rules(bonus_name: String) -> Array[Dictionary]:
 	]
 
 
+func _combined_ability_rules(bonus_name: String) -> Array[Dictionary]:
+	var rules: Array[Dictionary] = _hero_ability_rules(bonus_name)
+	rules.append_array(_long_tail_ability_rules())
+	return rules
+
+
+func _long_tail_ability_rules() -> Array[Dictionary]:
+	## One synthetic ability per long-tail family (batch 3). Scale-free
+	## magnitudes (experience, curse percentage, shot damage/count, durations)
+	## are the measured retail values from the corpus INIs; ranges/radii are
+	## synthetic sim-space values because these rules bind at scale 1.0.
+	return [
+		{
+			# LevelGrantSpecialPower (theoden.ini King's Favor): Experience=50,
+			# filter ANY +CAVALRY +INFANTRY ... -HERO ALLIES.
+			"ability_id": "Command_TestKingsFavor",
+			"slot": 7,
+			"special_power_id": "SpecialAbilityKingsFavor",
+			"targeting": "point",
+			"cooldown_ticks": 30,
+			"required_level": 1,
+			"level_gate_resolved": true,
+			"castable": true,
+			"availability_reason": "",
+			"effect": {
+				"kind": "experience-grant",
+				"experience": 50,
+				"radiusEffect": 8.0,
+				"startAbilityRange": 20.0,
+				"affects": "ANY -HERO",
+			},
+		},
+		{
+			# ArrowStormUpdate (legolas.ini): damage 200 per shot (measured
+			# LEGOLAS_ARROWSTORM_DAMAGE), ShotsPerBurst 3, PersistentPrepTime
+			# 600 ms; shot count shortened for the check horizon.
+			"ability_id": "Command_TestArrowStorm",
+			"slot": 8,
+			"special_power_id": "SpecialAbilityArrowStorm",
+			"targeting": "point",
+			"cooldown_ticks": 40,
+			"required_level": 1,
+			"level_gate_resolved": true,
+			"castable": true,
+			"availability_reason": "",
+			"effect": {
+				"kind": "arrow-storm",
+				"weaponDamage": 200,
+				"targetRadius": 6.0,
+				"maxShots": 6,
+				"shotsPerBurst": 3,
+				"persistentPrepMs": 600.0,
+				"startAbilityRange": 16.0,
+				"canShootEmptyGround": true,
+			},
+		},
+		{
+			# ToggleHiddenSpecialAbilityUpdate (thranduil.ini Wild Walk):
+			# forbidden TAKING_DAMAGE USING_ABILITY; duration shortened.
+			"ability_id": "Command_TestWildWalk",
+			"slot": 9,
+			"special_power_id": "SpecialAbilityWildWalk",
+			"targeting": "self",
+			"cooldown_ticks": 10,
+			"required_level": 1,
+			"level_gate_resolved": true,
+			"castable": true,
+			"availability_reason": "",
+			"effect": {
+				"kind": "stealth-toggle",
+				"effectDurationMs": 8000.0,
+				"forbiddenConditions": ["TAKING_DAMAGE", "USING_ABILITY"],
+			},
+		},
+		{
+			# InvisibilitySpecialPower (thranduil.ini Move Unseen): ally
+			# broadcast cloak, forbidden FIRING_ANY.
+			"ability_id": "Command_TestMoveUnseen",
+			"slot": 10,
+			"special_power_id": "SpecialAbilityMoveUnseen",
+			"targeting": "self",
+			"cooldown_ticks": 20,
+			"required_level": 1,
+			"level_gate_resolved": true,
+			"castable": true,
+			"availability_reason": "",
+			"effect": {
+				"kind": "stealth-toggle",
+				"effectDurationMs": 3000.0,
+				"broadcastRadius": 5.0,
+				"affects": "",
+				"forbiddenConditions": ["FIRING_ANY"],
+			},
+		},
+		{
+			# TeleportSpecialAbilityUpdate (shelob.ini Tunnel): BusyForDuration
+			# 1800 ms measured; MaxDistance synthetic (retail authors 9999999).
+			"ability_id": "Command_TestTunnel",
+			"slot": 11,
+			"special_power_id": "SpecialAbilityWildShelobTunnel",
+			"targeting": "point",
+			"cooldown_ticks": 50,
+			"required_level": 1,
+			"level_gate_resolved": true,
+			"castable": true,
+			"availability_reason": "",
+			"effect": {
+				"kind": "teleport",
+				"maxDistance": 100.0,
+				"busyForDurationMs": 1800.0,
+			},
+		},
+		{
+			# CurseSpecialPower (witchking.ini Hour of the Witch-King):
+			# CursePercentage 100% measured.
+			"ability_id": "Command_TestCurse",
+			"slot": 12,
+			"special_power_id": "SpecialAbilityCurseEnemy",
+			"targeting": "point",
+			"cooldown_ticks": 60,
+			"required_level": 1,
+			"level_gate_resolved": true,
+			"castable": true,
+			"availability_reason": "",
+			"effect": {
+				"kind": "curse",
+				"cursePercentage": 100.0,
+				"startAbilityRange": 20.0,
+				"radiusCursorRadius": 5.0,
+			},
+		},
+		{
+			# SpecialPowerModule AntiCategory=LEADERSHIP (boromir.ini Horn of
+			# Gondor): anti-category duration 5000 ms measured.
+			"ability_id": "Command_TestHorn",
+			"slot": 13,
+			"special_power_id": "SpecialAbilityHornOfGondor",
+			"targeting": "self",
+			"cooldown_ticks": 40,
+			"required_level": 1,
+			"level_gate_resolved": true,
+			"castable": true,
+			"availability_reason": "",
+			"effect": {
+				"kind": "leadership-strip",
+				"attributeModifierRange": 7.0,
+				"antiCategoryDurationMs": 5000.0,
+			},
+		},
+	]
+
+
+class NavStub extends RefCounted:
+	## Minimal route provider: only the walkability probe, so the teleport
+	## destination check can fail closed without a full navigation mesh.
+	func is_local_inside_navigation(position: Vector2) -> bool:
+		return position.x < 90.0
+
+
 func _spawn(sim, id: int, team: int, at: Vector2, object_id: String, unit_type: String) -> Dictionary:
 	sim._add_battalion(id, team, at, "T%d" % id, object_id, unit_type)
 	return sim.entities[id]
@@ -311,6 +478,12 @@ func _run() -> void:
 	_run_capture_checks()
 	_run_terror_checks()
 	_run_timed_buff_checks()
+	_run_experience_grant_checks()
+	_run_arrow_storm_checks()
+	_run_stealth_checks()
+	_run_teleport_checks()
+	_run_curse_checks()
+	_run_leadership_strip_checks()
 	_run_determinism_checks()
 	print("RETAIL_HERO_ABILITY_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
@@ -611,6 +784,229 @@ func _run_timed_buff_checks() -> void:
 	_check("recast_refreshes_instead_of_stacking", _table(hero).size() == 1 and is_equal_approx(sim._ability_vision_multiplier(hero), 2.0))
 
 
+func _fresh_sim():
+	var sim = _make_sim()
+	for entity_id in sim.entity_ids():
+		sim.entities.erase(entity_id)
+	return sim
+
+
+func _long_tail_variant(ability_id: String, mutator: Callable) -> Array[Dictionary]:
+	var rules: Array[Dictionary] = _combined_ability_rules("TestLeadership")
+	for rule in rules:
+		if String(rule.get("ability_id", "")) == ability_id:
+			mutator.call(rule["effect"] as Dictionary)
+	return rules
+
+
+func _run_experience_grant_checks() -> void:
+	var sim = _fresh_sim()
+	var hero: Dictionary = _spawn(sim, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	var near_ally: Dictionary = _spawn(sim, 6, 0, Vector2(2.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var far_ally: Dictionary = _spawn(sim, 7, 0, Vector2(50.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var ally_hero: Dictionary = _spawn(sim, 8, 0, Vector2(1.0, 1.0), HERO2_OBJECT_ID, HERO2_UNIT_TYPE)
+	var enemy: Dictionary = _spawn(sim, 105, 1, Vector2(3.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var cast: Dictionary = sim.cast_ability(5, "Command_TestKingsFavor", Vector2.ZERO)
+	_check("experience_grant_awards_measured_amount", bool(cast.get("ok", false)) and int(cast.get("affected", 0)) == 1 and int(near_ally.get("experience_xp", 0)) == 50)
+	_check("experience_grant_filter_excludes_heroes", not ally_hero.has("experience_xp") or int(ally_hero.get("experience_xp", -1)) == 0)
+	_check("experience_grant_skips_out_of_radius_ally", int(far_ally.get("experience_xp", 0)) == 0)
+	_check("experience_grant_never_pays_enemies", int(enemy.get("experience_xp", 0)) == 0)
+	_check("experience_grant_honors_cooldown", String(sim.cast_ability(5, "Command_TestKingsFavor", Vector2.ZERO).get("reason", "")) == "cooldown-active")
+	sim.advance(30)
+	# After the advance the hero's leadership aura (EXPERIENCE 2.0) rides the
+	# ally: the second authored 50 doubles to 100 → 150 total, level 2 at the
+	# authored 100 threshold.
+	var second: Dictionary = sim.cast_ability(5, "Command_TestKingsFavor", Vector2.ZERO)
+	_check("experience_grant_levels_through_authored_chain", bool(second.get("ok", false)) and int(near_ally.get("experience_xp", 0)) == 150 and int(near_ally.get("level", 0)) == 2)
+	sim.advance(30)
+	_check("experience_grant_out_of_range_fails_closed", String(sim.cast_ability(5, "Command_TestKingsFavor", Vector2(30.0, 0.0)).get("reason", "")) == "out-of-range")
+	# No eligible recipient: the cast fails closed and consumes no cooldown.
+	var lone = _fresh_sim()
+	_spawn(lone, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	var empty: Dictionary = lone.cast_ability(5, "Command_TestKingsFavor", Vector2.ZERO)
+	_spawn(lone, 6, 0, Vector2(1.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var retry: Dictionary = lone.cast_ability(5, "Command_TestKingsFavor", Vector2.ZERO)
+	_check("experience_grant_no_recipients_fails_without_cooldown", String(empty.get("reason", "")) == "no-eligible-allies-in-radius" and bool(retry.get("ok", false)))
+	# An unauthored Experience magnitude stays uncast-able.
+	lone._unit_ability_rules[HERO_UNIT_TYPE] = lone._scaled_ability_rules(_long_tail_variant("Command_TestKingsFavor", func(effect: Dictionary) -> void: effect.erase("experience")), 0.0)
+	lone.advance(30)
+	_check("experience_grant_unmeasured_amount_fails_closed", String(lone.cast_ability(5, "Command_TestKingsFavor", Vector2.ZERO).get("reason", "")) == "experience-grant-fields-missing")
+	_check("experience_grant_hero_row_untouched", not hero.has("experience_xp") or int(hero.get("experience_xp", 0)) == 0)
+
+
+func _run_arrow_storm_checks() -> void:
+	var sim = _fresh_sim()
+	var hero: Dictionary = _spawn(sim, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	var enemy_a: Dictionary = _spawn(sim, 105, 1, Vector2(2.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var enemy_b: Dictionary = _spawn(sim, 106, 1, Vector2(0.0, 2.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var far_enemy: Dictionary = _spawn(sim, 107, 1, Vector2(50.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var cast: Dictionary = sim.cast_ability(5, "Command_TestArrowStorm", Vector2(1.0, 1.0))
+	_check("arrow_storm_cast_starts_the_channel", bool(cast.get("ok", false)) and not (hero.get("volley_channel", {}) as Dictionary).is_empty() and String(hero.get("state", "")) == "volley")
+	# Zero the fresh cooldown so the recast reaches the channel guard itself,
+	# then restore it for the cooldown check below.
+	var storm_state: Dictionary = (hero.get("ability_states", {}) as Dictionary).get("Command_TestArrowStorm", {}) as Dictionary
+	var storm_ready_tick := int(storm_state.get("cooldown_ready_tick", 0))
+	storm_state["cooldown_ready_tick"] = 0
+	_check("arrow_storm_recast_fails_while_channeling", String(sim.cast_ability(5, "Command_TestArrowStorm", Vector2(1.0, 1.0)).get("reason", "")) == "volley-in-progress")
+	storm_state["cooldown_ready_tick"] = storm_ready_tick
+	sim.advance(1)
+	# First burst: 3 shots round-robin over [105, 106] at the measured 200
+	# damage per shot — both single-member battalions die on their first hit.
+	_check("arrow_storm_burst_kills_with_measured_damage", int(enemy_a.get("health", 0)) == 0 and int(enemy_b.get("health", 0)) == 0)
+	_check("arrow_storm_skips_enemy_out_of_radius", int(far_enemy.get("health", 0)) == 200)
+	sim.advance(7)
+	_check("arrow_storm_channel_completes_after_max_shots", (hero.get("volley_channel", {}) as Dictionary).is_empty() and String(hero.get("state", "")) == "idle")
+	_check("arrow_storm_honors_cooldown", String(sim.cast_ability(5, "Command_TestArrowStorm", Vector2(1.0, 1.0)).get("reason", "")) == "cooldown-active")
+	# A move order cancels the channel mid-volley.
+	var cancel_sim = _fresh_sim()
+	var cancel_hero: Dictionary = _spawn(cancel_sim, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	cancel_sim.cast_ability(5, "Command_TestArrowStorm", Vector2(1.0, 1.0))
+	var move_ids: Array[int] = [5]
+	cancel_sim.issue_move(move_ids, Vector2(6.0, 6.0))
+	cancel_sim.advance(1)
+	_check("arrow_storm_move_order_cancels_channel", (cancel_hero.get("volley_channel", {}) as Dictionary).is_empty())
+	# Empty ground without the authored CanShootEmptyGround fails closed.
+	cancel_sim._unit_ability_rules[HERO_UNIT_TYPE] = cancel_sim._scaled_ability_rules(_long_tail_variant("Command_TestArrowStorm", func(effect: Dictionary) -> void: effect["canShootEmptyGround"] = false), 0.0)
+	cancel_sim.advance(60)
+	_check("arrow_storm_empty_ground_fails_closed", String(cancel_sim.cast_ability(5, "Command_TestArrowStorm", Vector2(1.0, 1.0)).get("reason", "")) == "no-target")
+	# An unmeasured per-shot damage stays uncast-able.
+	cancel_sim._unit_ability_rules[HERO_UNIT_TYPE] = cancel_sim._scaled_ability_rules(_long_tail_variant("Command_TestArrowStorm", func(effect: Dictionary) -> void: effect.erase("weaponDamage")), 0.0)
+	_check("arrow_storm_unmeasured_damage_fails_closed", String(cancel_sim.cast_ability(5, "Command_TestArrowStorm", Vector2(1.0, 1.0)).get("reason", "")) == "arrow-storm-fields-missing")
+
+
+func _run_stealth_checks() -> void:
+	var sim = _fresh_sim()
+	var hero: Dictionary = _spawn(sim, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	var enemy: Dictionary = _spawn(sim, 105, 1, Vector2(2.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	_check("stealth_hero_visible_before_cast", int((sim._nearest_auto_target(enemy) as Dictionary).get("id", 0)) == 5)
+	var cast: Dictionary = sim.cast_ability(5, "Command_TestWildWalk", Vector2.ZERO)
+	_check("stealth_cast_engages_cloak", bool(cast.get("ok", false)) and bool(cast.get("engaged", false)) and sim._stealth_active(hero))
+	_check("stealth_blocks_enemy_auto_acquisition", (sim._nearest_auto_target(enemy) as Dictionary).is_empty())
+	# USING_ABILITY: casting another ability drops the cloak.
+	sim.cast_ability(5, "Command_TestWarCry", Vector2.ZERO)
+	_check("stealth_breaks_on_using_ability", not sim._stealth_active(hero))
+	# The visibility phases are done: drop the enemy so ordinary combat cannot
+	# break the cloaks the later phases assert on.
+	sim.entities.erase(105)
+	sim.advance(10)
+	sim.cast_ability(5, "Command_TestWildWalk", Vector2.ZERO)
+	sim._apply_damage(105, 5, 10, "battalion")
+	_check("stealth_breaks_on_taking_damage", not sim._stealth_active(hero))
+	sim.advance(10)
+	var engage: Dictionary = sim.cast_ability(5, "Command_TestWildWalk", Vector2.ZERO)
+	sim.advance(10)
+	var toggle_off: Dictionary = sim.cast_ability(5, "Command_TestWildWalk", Vector2.ZERO)
+	_check("stealth_recast_toggles_off", bool(engage.get("engaged", false)) and bool(toggle_off.get("ok", false)) and not bool(toggle_off.get("engaged", true)) and not sim._stealth_active(hero))
+	# Exact-tick expiry: 8000 ms at 0.1 s ticks = 80 ticks.
+	sim.advance(10)
+	sim.cast_ability(5, "Command_TestWildWalk", Vector2.ZERO)
+	sim.advance(79)
+	var still_active: bool = sim._stealth_active(hero)
+	sim.advance(1)
+	_check("stealth_expires_on_exact_tick", still_active and not sim._stealth_active(hero) and not hero.has("stealth_until_tick"))
+	# Broadcast cloak (Move Unseen): allies inside the authored radius cloak
+	# too; the FIRING_ANY condition breaks only the one who fires.
+	var ally: Dictionary = _spawn(sim, 6, 0, Vector2(1.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var far_ally: Dictionary = _spawn(sim, 7, 0, Vector2(50.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var broadcast: Dictionary = sim.cast_ability(5, "Command_TestMoveUnseen", Vector2.ZERO)
+	_check("stealth_broadcast_cloaks_allies_in_radius", bool(broadcast.get("ok", false)) and int(broadcast.get("affected", 0)) == 2 and sim._stealth_active(ally) and not sim._stealth_active(far_ally))
+	var victim: Dictionary = _spawn(sim, 109, 1, Vector2(2.0, 2.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	sim._apply_damage(5, 109, 10, "battalion")
+	_check("stealth_breaks_on_firing_only_for_the_shooter", int(victim.get("health", 0)) < 200 and not sim._stealth_active(hero) and sim._stealth_active(ally))
+	# An unauthored duration stays uncast-able.
+	sim._unit_ability_rules[HERO_UNIT_TYPE] = sim._scaled_ability_rules(_long_tail_variant("Command_TestWildWalk", func(effect: Dictionary) -> void: effect.erase("effectDurationMs")), 0.0)
+	sim.advance(30)
+	_check("stealth_unmeasured_duration_fails_closed", String(sim.cast_ability(5, "Command_TestWildWalk", Vector2.ZERO).get("reason", "")) == "stealth-fields-missing")
+
+
+func _run_teleport_checks() -> void:
+	var sim = _fresh_sim()
+	var hero: Dictionary = _spawn(sim, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	var cast: Dictionary = sim.cast_ability(5, "Command_TestTunnel", Vector2(30.0, 30.0))
+	_check("teleport_relocates_to_the_target_point", bool(cast.get("ok", false)) and Vector2(hero.get("position", Vector2.ZERO)) == Vector2(30.0, 30.0))
+	_check("teleport_honors_cooldown", String(sim.cast_ability(5, "Command_TestTunnel", Vector2(40.0, 40.0)).get("reason", "")) == "cooldown-active")
+	# The authored BusyForDuration (1800 ms = 18 ticks) holds the hero: a move
+	# order lands but the hero only starts once the hold expires.
+	var move_ids: Array[int] = [5]
+	sim.issue_move(move_ids, Vector2(40.0, 40.0))
+	sim.advance(10)
+	var held: bool = Vector2(hero.get("position", Vector2.ZERO)) == Vector2(30.0, 30.0)
+	sim.advance(15)
+	_check("teleport_busy_envelope_holds_then_releases", held and Vector2(hero.get("position", Vector2.ZERO)) != Vector2(30.0, 30.0))
+	# Beyond the authored MaxDistance fails closed.
+	var short = _fresh_sim()
+	_spawn(short, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	short._unit_ability_rules[HERO_UNIT_TYPE] = short._scaled_ability_rules(_long_tail_variant("Command_TestTunnel", func(effect: Dictionary) -> void: effect["maxDistance"] = 10.0), 0.0)
+	_check("teleport_beyond_max_distance_fails_closed", String(short.cast_ability(5, "Command_TestTunnel", Vector2(30.0, 30.0)).get("reason", "")) == "out-of-range")
+	# An unwalkable destination fails closed (walkability probe stubbed).
+	short._unit_ability_rules[HERO_UNIT_TYPE] = short._scaled_ability_rules(_long_tail_ability_rules(), 0.0)
+	short.route_provider = NavStub.new()
+	var blocked: Dictionary = short.cast_ability(5, "Command_TestTunnel", Vector2(95.0, 0.0))
+	short.route_provider = null
+	_check(
+		"teleport_unwalkable_destination_fails_closed",
+		String(blocked.get("reason", "")) == "destination-unwalkable" and Vector2((short.entities[5] as Dictionary).get("position", Vector2.ZERO)) == Vector2.ZERO
+	)
+	# An unauthored MaxDistance stays uncast-able.
+	short._unit_ability_rules[HERO_UNIT_TYPE] = short._scaled_ability_rules(_long_tail_variant("Command_TestTunnel", func(effect: Dictionary) -> void: effect.erase("maxDistance")), 0.0)
+	_check("teleport_unmeasured_distance_fails_closed", String(short.cast_ability(5, "Command_TestTunnel", Vector2(1.0, 0.0)).get("reason", "")) == "teleport-fields-missing")
+
+
+func _run_curse_checks() -> void:
+	var sim = _fresh_sim()
+	_spawn(sim, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	var enemy_hero: Dictionary = _spawn(sim, 105, 1, Vector2(10.0, 0.0), HERO2_OBJECT_ID, HERO2_UNIT_TYPE)
+	var enemy_soldier: Dictionary = _spawn(sim, 106, 1, Vector2(10.0, 1.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var cast: Dictionary = sim.cast_ability(5, "Command_TestCurse", Vector2(10.0, 0.0))
+	var screech_state: Dictionary = (enemy_hero.get("ability_states", {}) as Dictionary).get("Command_TestScreech", {}) as Dictionary
+	_check("curse_targets_the_enemy_hero", bool(cast.get("ok", false)) and int(cast.get("target_id", 0)) == 105 and int(cast.get("affected", 0)) == 1)
+	_check(
+		"curse_restarts_recharges_at_measured_percentage",
+		int(screech_state.get("cooldown_ready_tick", 0)) == sim.tick_index + 20 and int(cast.get("cursed_abilities", 0)) == 9
+	)
+	_check("curse_never_exceeds_one_full_recharge", int(((enemy_hero.get("ability_states", {}) as Dictionary).get("Command_TestCurse", {}) as Dictionary).get("cooldown_ready_tick", 0)) == sim.tick_index + 60)
+	_check("curse_honors_cooldown", String(sim.cast_ability(5, "Command_TestCurse", Vector2(10.0, 0.0)).get("reason", "")) == "cooldown-active")
+	_check("curse_leaves_non_hero_enemies_untouched", not enemy_soldier.has("ability_states") or (enemy_soldier.get("ability_states", {}) as Dictionary).is_empty())
+	# Only enemy heroes are valid targets: a soldier-only point fails closed.
+	var lone = _fresh_sim()
+	_spawn(lone, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	_spawn(lone, 106, 1, Vector2(0.0, -10.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	_check("curse_without_enemy_hero_fails_closed", String(lone.cast_ability(5, "Command_TestCurse", Vector2(0.0, -10.0)).get("reason", "")) == "no-enemy-hero-in-radius")
+	_check("curse_out_of_range_fails_closed", String(lone.cast_ability(5, "Command_TestCurse", Vector2(30.0, 0.0)).get("reason", "")) == "out-of-range")
+	# An unmeasured percentage stays uncast-able.
+	lone._unit_ability_rules[HERO_UNIT_TYPE] = lone._scaled_ability_rules(_long_tail_variant("Command_TestCurse", func(effect: Dictionary) -> void: effect.erase("cursePercentage")), 0.0)
+	_check("curse_unmeasured_percentage_fails_closed", String(lone.cast_ability(5, "Command_TestCurse", Vector2(0.0, -10.0)).get("reason", "")) == "curse-fields-missing")
+
+
+func _run_leadership_strip_checks() -> void:
+	var sim = _fresh_sim()
+	_spawn(sim, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	# Everyone sits outside the 4.0 vision range so no auto-acquired combat
+	# perturbs the aura bookkeeping the checks assert on.
+	_spawn(sim, 105, 1, Vector2(5.0, 0.0), HERO2_OBJECT_ID, HERO2_UNIT_TYPE)
+	var near_enemy: Dictionary = _spawn(sim, 106, 1, Vector2(4.5, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	var far_enemy: Dictionary = _spawn(sim, 107, 1, Vector2(50.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	_spawn(sim, 108, 1, Vector2(51.0, 0.0), HERO2_OBJECT_ID, HERO2_UNIT_TYPE)
+	sim.advance(5)
+	_check("strip_setup_auras_radiating", _table(near_enemy).has("aura:TestLeadership") and _table(far_enemy).has("aura:TestLeadership"))
+	var cast: Dictionary = sim.cast_ability(5, "Command_TestHorn", Vector2.ZERO)
+	_check("strip_cast_removes_leadership_grants", bool(cast.get("ok", false)) and int(cast.get("affected", 0)) == 2 and not _table(near_enemy).has("aura:TestLeadership"))
+	_check("strip_leaves_enemies_out_of_radius", _table(far_enemy).has("aura:TestLeadership"))
+	sim.advance(10)
+	_check("strip_suppresses_regrant_through_duration", not _table(near_enemy).has("aura:TestLeadership") and _table(far_enemy).has("aura:TestLeadership"))
+	_check("strip_honors_cooldown", String(sim.cast_ability(5, "Command_TestHorn", Vector2.ZERO).get("reason", "")) == "cooldown-active")
+	sim.advance(45)
+	_check("strip_suppression_expires_and_aura_returns", _table(near_enemy).has("aura:TestLeadership") and not near_enemy.has("leadership_suppressed_until_tick"))
+	# No enemies inside the authored range: fail closed, no cooldown burned.
+	var lone = _fresh_sim()
+	_spawn(lone, 5, 0, Vector2.ZERO, HERO_OBJECT_ID, HERO_UNIT_TYPE)
+	_check("strip_without_enemies_fails_closed", String(lone.cast_ability(5, "Command_TestHorn", Vector2.ZERO).get("reason", "")) == "no-enemies-in-radius")
+	# An unauthored anti-category duration stays uncast-able.
+	_spawn(lone, 106, 1, Vector2(2.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
+	lone._unit_ability_rules[HERO_UNIT_TYPE] = lone._scaled_ability_rules(_long_tail_variant("Command_TestHorn", func(effect: Dictionary) -> void: effect.erase("antiCategoryDurationMs")), 0.0)
+	_check("strip_unmeasured_duration_fails_closed", String(lone.cast_ability(5, "Command_TestHorn", Vector2.ZERO).get("reason", "")) == "leadership-strip-fields-missing")
+
+
 func _command(tick: int, seq: int, type: String, args: Dictionary, team: int = 0) -> Dictionary:
 	return {"tick": tick, "team": team, "seq": seq, "type": type, "args": args}
 
@@ -621,6 +1017,7 @@ func _determinism_sim():
 	_spawn(sim, 6, 0, Vector2(-4.0, 0.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
 	_spawn(sim, 105, 1, Vector2(-2.0, 1.0), SimScript.SOLDIER_OBJECT_ID, SimScript.SOLDIER_HORDE_ID)
 	_spawn(sim, 106, 1, Vector2(-2.0, -1.0), FLYER_OBJECT_ID, FLYER_UNIT_TYPE)
+	_spawn(sim, 108, 1, Vector2(2.0, 2.0), HERO2_OBJECT_ID, HERO2_UNIT_TYPE)
 	_add_neutral_capturable(sim, 500, Vector2(-5.0, 1.0))
 	return sim
 
@@ -642,6 +1039,16 @@ func _scripted_log() -> Array[Dictionary]:
 		_command(150, 9, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestWarCry", "target_point": Vector2.ZERO}),
 		_command(180, 10, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestMount", "target_point": Vector2.ZERO}),
 		_command(200, 11, "issue_move", {"ids": [5, 6], "destination": Vector2(-10.0, 2.0)}),
+		# Batch-3 long-tail families inside the twin-run hash: stealth engaged
+		# then broken by the King's Favor cast (USING_ABILITY), the teleport
+		# hold, the volley channel, the curse on the enemy hero, and the
+		# leadership strip attempt.
+		_command(210, 12, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestWildWalk", "target_point": Vector2.ZERO}),
+		_command(230, 13, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestKingsFavor", "target_point": Vector2(-10.0, 2.0)}),
+		_command(250, 14, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestTunnel", "target_point": Vector2(-8.0, 0.0)}),
+		_command(270, 15, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestArrowStorm", "target_point": Vector2(-6.0, 0.0)}),
+		_command(300, 16, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestCurse", "target_point": Vector2(2.0, 2.0)}),
+		_command(330, 17, "cast_ability", {"hero_id": 5, "ability_id": "Command_TestHorn", "target_point": Vector2.ZERO}),
 	]
 
 
@@ -700,6 +1107,19 @@ func _run_determinism_checks() -> void:
 	var baseline_equal: bool = probe_a.state_hash() == probe_b.state_hash()
 	probe_b._set_timed_modifier(probe_b.entities[6] as Dictionary, "aura:Probe", [{"kind": "ARMOR", "value": 0.1}], 50)
 	_check("modifier_table_alone_changes_hash", baseline_equal and probe_a.state_hash() != probe_b.state_hash())
+	# Long-tail inertness: a battle with no casts never grows the new per-row
+	# fields, so the pinned default-battle signature cannot move.
+	var idle_a = _determinism_sim()
+	var idle_b = _determinism_sim()
+	idle_a.advance(120)
+	idle_b.advance(120)
+	var fields_clean := true
+	for id in idle_a.entity_ids():
+		var row: Dictionary = idle_a.entities[id]
+		for field in ["stealth_until_tick", "stealth_forbidden", "volley_channel", "ability_hold_until_tick", "leadership_suppressed_until_tick"]:
+			if row.has(field):
+				fields_clean = false
+	_check("uncast_families_stay_inert", fields_clean and idle_a.state_hash() == idle_b.state_hash())
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:

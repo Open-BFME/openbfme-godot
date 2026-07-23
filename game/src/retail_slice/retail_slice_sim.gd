@@ -5688,6 +5688,45 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				effect["range"] = float(effect.get("startAbilityRange", 0.0)) * scale
 				var channel_ms := float(effect.get("unpackMs", 0.0)) + float(effect.get("preparationMs", 0.0)) + float(effect.get("packMs", 0.0))
 				effect["channel_ticks"] = maxi(1, roundi(channel_ms / (TICK_SECONDS * 1000.0)))
+			"experience-grant":
+				# LevelGrantSpecialPower: StartAbilityRange gates the cast like
+				# an attack range; RadiusEffect is the grant circle; the
+				# authored Experience amount is scale-free.
+				effect["range"] = float(effect.get("startAbilityRange", 0.0)) * scale
+				effect["radius_scaled"] = float(effect.get("radiusEffect", 0.0)) * scale
+			"arrow-storm":
+				# ArrowStormUpdate barrage: ranges/radii are source units; the
+				# burst cadence is the authored PersistentPrepTime; shot counts
+				# and per-shot weapon damage are scale-free.
+				effect["range"] = float(effect.get("startAbilityRange", 0.0)) * scale
+				effect["target_radius_scaled"] = float(effect.get("targetRadius", 0.0)) * scale
+				effect["shot_interval_ticks"] = maxi(1, roundi(float(effect.get("persistentPrepMs", 0.0)) / (TICK_SECONDS * 1000.0)))
+			"stealth-toggle":
+				# ToggleHiddenSpecialAbilityUpdate / InvisibilitySpecialPower:
+				# EffectDuration is milliseconds; an authored BroadcastRadius
+				# (ally cloak) binds to map scale. Zero stays zero: an
+				# unauthored duration keeps the cast fail-closed.
+				var stealth_ms := float(effect.get("effectDurationMs", 0.0))
+				effect["duration_ticks"] = maxi(1, roundi(stealth_ms / (TICK_SECONDS * 1000.0))) if stealth_ms > 0.0 else 0
+				effect["broadcast_radius_scaled"] = float(effect.get("broadcastRadius", 0.0)) * scale
+			"teleport":
+				# TeleportSpecialAbilityUpdate: MaxDistance gates the cast like
+				# a range; BusyForDuration holds the hero after arrival.
+				effect["range"] = float(effect.get("maxDistance", 0.0)) * scale
+				effect["busy_ticks"] = maxi(0, roundi(float(effect.get("busyForDurationMs", 0.0)) / (TICK_SECONDS * 1000.0)))
+			"curse":
+				# CurseSpecialPower: StartAbilityRange gates the cast; the
+				# radius cursor bounds target selection; CursePercentage is
+				# scale-free.
+				effect["range"] = float(effect.get("startAbilityRange", 0.0)) * scale
+				effect["radius_scaled"] = float(effect.get("radiusCursorRadius", 0.0)) * scale
+			"leadership-strip":
+				# SpecialPowerModule AntiCategory=LEADERSHIP: the authored
+				# AttributeModifierRange binds to map scale; the paired
+				# ModifierList authors only the suppression duration.
+				effect["radius_scaled"] = float(effect.get("attributeModifierRange", 0.0)) * scale
+				var strip_ms := float(effect.get("antiCategoryDurationMs", 0.0))
+				effect["duration_ticks"] = maxi(1, roundi(strip_ms / (TICK_SECONDS * 1000.0))) if strip_ms > 0.0 else 0
 		scaled["effect"] = effect
 		output.append(scaled)
 	return output
@@ -5959,10 +5998,26 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2) -> Di
 			result = _apply_ability_mount_toggle(row, effect)
 		"capture-building":
 			result = _apply_ability_capture_building(row, effect, target_point)
+		"experience-grant":
+			result = _apply_ability_experience_grant(row, effect, target_point if targeting == "point" else hero_position)
+		"arrow-storm":
+			result = _apply_ability_arrow_storm(row, effect, target_point if targeting == "point" else hero_position)
+		"stealth-toggle":
+			result = _apply_ability_stealth_toggle(row, effect)
+		"teleport":
+			result = _apply_ability_teleport(row, effect, target_point)
+		"curse":
+			result = _apply_ability_curse(row, effect, target_point)
+		"leadership-strip":
+			result = _apply_ability_leadership_strip(row, effect)
 		_:
 			return {"ok": false, "reason": "no-effect"}
 	if not bool(result.get("ok", false)):
 		return result
+	if effect_kind != "stealth-toggle":
+		# Retail InvisibilityNugget ForbiddenConditions: casting another
+		# ability while cloaked drops a USING_ABILITY-forbidden stealth.
+		_break_stealth(row, "USING_ABILITY")
 	state["cooldown_ready_tick"] = tick_index + int(rule.get("cooldown_ticks", 0))
 	states[ability_id] = state
 	row["ability_states"] = states
@@ -6355,6 +6410,274 @@ func _summon_unit_type_for(source_object_id: String) -> String:
 	return ""
 
 
+func _apply_ability_experience_grant(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
+	## LevelGrantSpecialPower (King's Favor / Train Allies): every allied
+	## battalion inside the authored RadiusEffect of the target point passing
+	## the authored AcceptanceFilter gains exactly the authored Experience
+	## through the normal experience pipeline (EXPERIENCE modifiers included).
+	## Only recipients with a converted ExperienceLevel chain count — a unit
+	## retail never authored a chain for is never granted an invented award.
+	var team := int(hero_row.get("team", -1))
+	var amount := int(effect.get("experience", 0))
+	var radius := float(effect.get("radius_scaled", 0.0))
+	if amount <= 0 or radius <= 0.0:
+		return {"ok": false, "reason": "experience-grant-fields-missing"}
+	var filter_text := String(effect.get("affects", ""))
+	var granted := 0
+	for id in living_ids(team):
+		var ally: Dictionary = entities[id]
+		if Vector2(ally.get("position", Vector2.ZERO)).distance_to(point) > radius:
+			continue
+		if not _ability_filter_accepts(ally, filter_text):
+			continue
+		if (_unit_experience_rules.get(String(ally.get("unit_type", "")), {}) as Dictionary).is_empty():
+			continue
+		_award_experience(ally, amount)
+		granted += 1
+	if granted == 0:
+		return {"ok": false, "reason": "no-eligible-allies-in-radius"}
+	return {"ok": true, "reason": "", "effect": "experience-grant", "affected": granted}
+
+
+func _apply_ability_arrow_storm(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
+	## ArrowStormUpdate barrage (Legolas Arrow Storm, Gandalf Lightning Sword):
+	## the hero channels MaxShots weapon shots in ShotsPerBurst volleys on the
+	## authored PersistentPrepTime cadence against enemies inside the authored
+	## TargetRadius of the target point (deterministic round-robin, ascending
+	## entity ids). Fail-closed: every consumed magnitude must be authored,
+	## and a cast onto empty ground needs the authored CanShootEmptyGround.
+	if not (hero_row.get("volley_channel", {}) as Dictionary).is_empty():
+		return {"ok": false, "reason": "volley-in-progress"}
+	var damage := int(effect.get("weaponDamage", 0))
+	var radius := float(effect.get("target_radius_scaled", 0.0))
+	var max_shots := int(effect.get("maxShots", 0))
+	if damage <= 0 or radius <= 0.0 or max_shots <= 0:
+		return {"ok": false, "reason": "arrow-storm-fields-missing"}
+	var team := int(hero_row.get("team", -1))
+	var can_shoot_empty_ground := bool(effect.get("canShootEmptyGround", false))
+	if not can_shoot_empty_ground and _ability_enemies_near(team, point, radius).is_empty():
+		return {"ok": false, "reason": "no-target"}
+	hero_row["volley_channel"] = {
+		"point": point,
+		"radius": radius,
+		"damage": damage,
+		"shots_left": max_shots,
+		"shots_fired": 0,
+		"shots_per_burst": maxi(1, int(effect.get("shotsPerBurst", 1))),
+		"interval_ticks": maxi(1, int(effect.get("shot_interval_ticks", 1))),
+		"can_shoot_empty_ground": can_shoot_empty_ground,
+		"next_shot_tick": tick_index + 1,
+	}
+	# Channeling holds the hero (same stance as the capture envelope): drop
+	# any live order/target so a later order cancels the volley cleanly.
+	hero_row["target_id"] = 0
+	hero_row["target_kind"] = "battalion"
+	hero_row["attack_windup"] = 0
+	_clear_member_attack_schedule(hero_row)
+	_clear_member_targets(hero_row)
+	_clear_pending_route(hero_row, true)
+	hero_row["state"] = "volley"
+	return {"ok": true, "reason": "", "effect": "arrow-storm", "affected": 0}
+
+
+func _step_volley_channel(row: Dictionary) -> bool:
+	## Advance one entity's arrow-storm volley. Returns true while the channel
+	## holds the hero in place (the entity step then goes no further). Any
+	## later order (route or target) cancels the volley outright.
+	var channel: Dictionary = row.get("volley_channel", {}) as Dictionary
+	if channel.is_empty():
+		return false
+	if not (row["route"] as Array).is_empty() or int(row.get("target_id", 0)) != 0:
+		row.erase("volley_channel")
+		_emit_event("ability.volley_cancelled", int(row.get("id", 0)), 0, {"team": int(row.get("team", -1))})
+		return false
+	if tick_index >= int(channel.get("next_shot_tick", 0)):
+		var team := int(row.get("team", -1))
+		var point := Vector2(channel.get("point", Vector2.ZERO))
+		var enemy_ids := _ability_enemies_near(team, point, float(channel.get("radius", 0.0)))
+		if enemy_ids.is_empty() and not bool(channel.get("can_shoot_empty_ground", false)):
+			row.erase("volley_channel")
+			row["state"] = "idle"
+			_emit_event("ability.volley_complete", int(row.get("id", 0)), 0, {"team": team, "shots": int(channel.get("shots_fired", 0))})
+			return false
+		var shots := mini(int(channel.get("shots_per_burst", 1)), int(channel.get("shots_left", 0)))
+		var damage := int(channel.get("damage", 0))
+		var fired := int(channel.get("shots_fired", 0))
+		for shot_index in range(shots):
+			if enemy_ids.is_empty():
+				continue
+			var target_id := int(enemy_ids[(fired + shot_index) % enemy_ids.size()])
+			if entities.has(target_id) and int((entities[target_id] as Dictionary).get("health", 0)) > 0:
+				_apply_damage(int(row.get("id", 0)), target_id, damage, "battalion")
+		channel["shots_fired"] = fired + shots
+		channel["shots_left"] = int(channel.get("shots_left", 0)) - shots
+		channel["next_shot_tick"] = tick_index + int(channel.get("interval_ticks", 1))
+		if int(channel.get("shots_left", 0)) <= 0:
+			row.erase("volley_channel")
+			row["state"] = "idle"
+			_emit_event("ability.volley_complete", int(row.get("id", 0)), 0, {"team": team, "shots": fired + shots})
+			return false
+		row["volley_channel"] = channel
+	row["state"] = "volley"
+	row["current_speed"] = 0.0
+	return true
+
+
+func _apply_ability_stealth_toggle(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
+	## ToggleHiddenSpecialAbilityUpdate / InvisibilitySpecialPower: cloak the
+	## hero (and, when the module authors a BroadcastRadius, allies inside it)
+	## for the authored EffectDuration. Stealthed battalions are skipped by
+	## enemy auto-acquisition; the authored ForbiddenConditions break the
+	## cloak early. Recasting the toggle drops it (retail toggle-hidden).
+	var duration_ticks := int(effect.get("duration_ticks", 0))
+	if duration_ticks <= 0:
+		return {"ok": false, "reason": "stealth-fields-missing"}
+	if _stealth_active(hero_row):
+		_clear_stealth(hero_row)
+		return {"ok": true, "reason": "", "effect": "stealth-toggle", "affected": 1, "engaged": false}
+	var forbidden: Array = (effect.get("forbiddenConditions", []) as Array).duplicate()
+	var until_tick := tick_index + duration_ticks
+	_grant_stealth(hero_row, until_tick, forbidden)
+	var affected := 1
+	var broadcast := float(effect.get("broadcast_radius_scaled", 0.0))
+	if broadcast > 0.0:
+		var team := int(hero_row.get("team", -1))
+		var origin := Vector2(hero_row.get("position", Vector2.ZERO))
+		var filter_text := String(effect.get("affects", ""))
+		for id in living_ids(team):
+			if id == int(hero_row.get("id", 0)):
+				continue
+			var ally: Dictionary = entities[id]
+			if Vector2(ally.get("position", Vector2.ZERO)).distance_to(origin) > broadcast:
+				continue
+			if not _ability_filter_accepts(ally, filter_text):
+				continue
+			_grant_stealth(ally, until_tick, forbidden)
+			affected += 1
+	return {"ok": true, "reason": "", "effect": "stealth-toggle", "affected": affected, "engaged": true}
+
+
+func _stealth_active(row: Dictionary) -> bool:
+	return tick_index < int(row.get("stealth_until_tick", -1))
+
+
+func _grant_stealth(row: Dictionary, until_tick: int, forbidden: Array) -> void:
+	row["stealth_until_tick"] = until_tick
+	row["stealth_forbidden"] = forbidden.duplicate()
+	_emit_event("ability.stealth", int(row.get("id", 0)), 0, {"engaged": true, "until_tick": until_tick})
+
+
+func _clear_stealth(row: Dictionary) -> void:
+	if not row.has("stealth_until_tick"):
+		return
+	row.erase("stealth_until_tick")
+	row.erase("stealth_forbidden")
+	_emit_event("ability.stealth", int(row.get("id", 0)), 0, {"engaged": false})
+
+
+func _break_stealth(row: Dictionary, condition: String) -> void:
+	## Break an active cloak when its authored ForbiddenConditions include the
+	## triggering condition (TAKING_DAMAGE / FIRING_ANY / USING_ABILITY).
+	if not _stealth_active(row):
+		return
+	if not (row.get("stealth_forbidden", []) as Array).has(condition):
+		return
+	_clear_stealth(row)
+
+
+func _apply_ability_teleport(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
+	## TeleportSpecialAbilityUpdate (Shelob Tunnel): deterministic relocation
+	## to a walkable point inside the authored MaxDistance (the generic range
+	## gate enforces it), then the authored BusyForDuration holds the hero.
+	if float(effect.get("range", 0.0)) <= 0.0:
+		return {"ok": false, "reason": "teleport-fields-missing"}
+	if not _position_walkable(point):
+		return {"ok": false, "reason": "destination-unwalkable"}
+	hero_row["position"] = point
+	hero_row["target_id"] = 0
+	hero_row["target_kind"] = "battalion"
+	hero_row["attack_windup"] = 0
+	_clear_member_attack_schedule(hero_row)
+	_clear_member_targets(hero_row)
+	_clear_pending_route(hero_row, true)
+	hero_row["current_speed"] = 0.0
+	hero_row["state"] = "idle"
+	var busy_ticks := int(effect.get("busy_ticks", 0))
+	if busy_ticks > 0:
+		hero_row["ability_hold_until_tick"] = tick_index + busy_ticks
+	return {"ok": true, "reason": "", "effect": "teleport", "affected": 1}
+
+
+func _apply_ability_curse(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
+	## CurseSpecialPower (Hour of the Witch-King): the nearest enemy hero
+	## inside the authored radius cursor loses the authored CursePercentage of
+	## every ability recharge — its cooldowns restart scaled by the authored
+	## percentage, never beyond one full authored recharge.
+	var percentage := float(effect.get("cursePercentage", 0.0))
+	var radius := float(effect.get("radius_scaled", 0.0))
+	if percentage <= 0.0 or radius <= 0.0:
+		return {"ok": false, "reason": "curse-fields-missing"}
+	var team := int(hero_row.get("team", -1))
+	var best_id := -1
+	var best_distance := radius
+	for id in _ability_enemies_near(team, point, radius):
+		var target: Dictionary = entities[id]
+		if String(target.get("category", "")) != "hero":
+			continue
+		var distance := Vector2(target.get("position", Vector2.ZERO)).distance_to(point)
+		if distance <= best_distance:
+			best_distance = distance
+			best_id = id
+	if best_id < 0:
+		return {"ok": false, "reason": "no-enemy-hero-in-radius"}
+	var target_row: Dictionary = entities[best_id]
+	var states: Dictionary = target_row.get("ability_states", {}) as Dictionary
+	var cursed := 0
+	var ability_keys := states.keys()
+	ability_keys.sort()
+	for ability_key in ability_keys:
+		var state: Dictionary = states[ability_key] as Dictionary
+		var cooldown_ticks := int(state.get("cooldown_ticks", 0))
+		if cooldown_ticks <= 0:
+			continue
+		var setback := tick_index + roundi(float(cooldown_ticks) * minf(percentage, 100.0) / 100.0)
+		state["cooldown_ready_tick"] = maxi(int(state.get("cooldown_ready_tick", 0)), setback)
+		states[ability_key] = state
+		cursed += 1
+	target_row["ability_states"] = states
+	return {"ok": true, "reason": "", "effect": "curse", "affected": 1, "target_id": best_id, "cursed_abilities": cursed}
+
+
+func _apply_ability_leadership_strip(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
+	## SpecialPowerModule AntiCategory=LEADERSHIP (Horn of Gondor): enemies
+	## inside the authored AttributeModifierRange lose their leadership aura
+	## grants and cannot receive new ones for the authored anti-category
+	## duration (the paired ModifierList authors only that duration).
+	var radius := float(effect.get("radius_scaled", 0.0))
+	var duration_ticks := int(effect.get("duration_ticks", 0))
+	if radius <= 0.0 or duration_ticks <= 0:
+		return {"ok": false, "reason": "leadership-strip-fields-missing"}
+	var team := int(hero_row.get("team", -1))
+	var origin := Vector2(hero_row.get("position", Vector2.ZERO))
+	var affected := 0
+	for id in _ability_enemies_near(team, origin, radius):
+		var target: Dictionary = entities[id]
+		var table: Dictionary = target.get("timed_modifiers", {}) as Dictionary
+		var stripped: Array[String] = []
+		for key_value in table.keys():
+			if String(key_value).begins_with("aura:"):
+				stripped.append(String(key_value))
+		stripped.sort()
+		for key in stripped:
+			table.erase(key)
+		target["timed_modifiers"] = table
+		target["leadership_suppressed_until_tick"] = tick_index + duration_ticks
+		affected += 1
+	if affected == 0:
+		return {"ok": false, "reason": "no-enemies-in-radius"}
+	return {"ok": true, "reason": "", "effect": "leadership-strip", "affected": affected}
+
+
 # --- Shared timed-modifier core ---
 # One mechanism serves timed ability buffs, leadership auras, and fear: a
 # per-entity keyed table of {modifiers, expires_tick}. Multiplicative kinds
@@ -6459,6 +6782,10 @@ func _recompute_leadership_auras() -> void:
 					continue
 				if not _ability_filter_accepts(ally, filter_text):
 					continue
+				if tick_index < int(ally.get("leadership_suppressed_until_tick", -1)):
+					# An anti-category strip (Horn of Gondor) suppresses new
+					# leadership grants for its authored duration.
+					continue
 				_set_timed_modifier(ally, "aura:%s" % bonus_name, modifiers, expiry)
 
 
@@ -6471,6 +6798,14 @@ func _step_hero_abilities() -> void:
 		_recompute_leadership_auras()
 	for id in entity_ids():
 		var row: Dictionary = entities[id]
+		# Expiry sweeps for the per-row ability fields (exact tick, then the
+		# field leaves the row so default rows never carry it).
+		if row.has("stealth_until_tick") and tick_index >= int(row["stealth_until_tick"]):
+			_clear_stealth(row)
+		if row.has("leadership_suppressed_until_tick") and tick_index >= int(row["leadership_suppressed_until_tick"]):
+			row.erase("leadership_suppressed_until_tick")
+		if row.has("ability_hold_until_tick") and tick_index >= int(row["ability_hold_until_tick"]):
+			row.erase("ability_hold_until_tick")
 		var table: Dictionary = row.get("timed_modifiers", {}) as Dictionary
 		if table.is_empty():
 			continue
@@ -6694,6 +7029,14 @@ func _step_entity(id: int) -> void:
 		return
 	row["attack_cooldown"] = maxi(0, int(row["attack_cooldown"]) - 1)
 	if _step_capture_channel(row):
+		return
+	if _step_volley_channel(row):
+		return
+	if tick_index < int(row.get("ability_hold_until_tick", -1)):
+		# Authored post-ability busy envelope (teleport BusyForDuration): the
+		# hero holds this tick; accepted orders resume once the hold expires.
+		row["current_speed"] = 0.0
+		row["state"] = "idle"
 		return
 	if _step_production_exit(row):
 		return
@@ -7018,6 +7361,8 @@ func _nearest_attack_move_target(row: Dictionary) -> int:
 	for candidate in _hostile_living_ids(int(row.get("team", PLAYER_TEAM))):
 		if not _can_engage_battalion(row, entities[candidate] as Dictionary):
 			continue
+		if _stealth_active(entities[candidate] as Dictionary):
+			continue
 		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
 		if distance <= best:
 			best = distance
@@ -7042,6 +7387,9 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 	var best_distance := limit
 	for candidate in _hostile_living_ids(self_team):
 		if not _can_engage_battalion(row, entities[candidate] as Dictionary):
+			continue
+		if _stealth_active(entities[candidate] as Dictionary):
+			# InvisibilityUpdate: a cloaked battalion is never auto-acquired.
 			continue
 		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
 		if distance <= best_distance:
@@ -7692,6 +8040,12 @@ func _apply_member_damage(
 	health_values[target_member] = maxi(0, prior_health - stance_adjusted_amount)
 	target["member_health"] = health_values
 	target["last_damage_tick"] = tick_index
+	# Authored InvisibilityNugget ForbiddenConditions: the hit breaks a
+	# TAKING_DAMAGE-forbidden cloak on the victim and a FIRING_ANY-forbidden
+	# cloak on the attacker.
+	_break_stealth(target, "TAKING_DAMAGE")
+	if entities.has(attacker_id):
+		_break_stealth(entities[attacker_id] as Dictionary, "FIRING_ANY")
 	var aggregate_health := 0
 	for health_value in health_values:
 		aggregate_health += int(health_value)
@@ -7822,6 +8176,9 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 	target["damage_remainders"] = remainder_by_type
 	if applied <= 0:
 		return
+	if entities.has(attacker_id):
+		# Firing on a structure breaks a FIRING_ANY-forbidden cloak too.
+		_break_stealth(entities[attacker_id] as Dictionary, "FIRING_ANY")
 	target["health"] = maxi(0, int(target["health"]) - applied)
 	var structure_kind := String(target.get("structure_kind", ""))
 	_emit_event("combat.hit_structure", attacker_id, target_id, {
