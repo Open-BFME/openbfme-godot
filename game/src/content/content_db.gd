@@ -1577,6 +1577,21 @@ func resolve_playable_unit_image_path(object_id: String, image_id: String) -> St
 		return ""
 	return resolve_asset(String(relative), String(document.get("_pack_root", "")))
 
+func resolve_playable_structure_image_path(object_id: String, image_id: String) -> String:
+	## Structure docs carry their converted UI crops under
+	## registration.presentation.imageBindings (construct-button icon and
+	## selection portrait); resolve one against the doc's own pack root.
+	var document: Dictionary = playable_structure_runtimes.get(object_id, {})
+	if document.is_empty():
+		return ""
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var bindings: Dictionary = (registration.get("presentation", {}) as Dictionary).get("imageBindings", {}) as Dictionary
+	var relative: Variant = bindings.get(image_id)
+	if typeof(relative) != TYPE_STRING:
+		return ""
+	return resolve_asset(String(relative), String(document.get("_pack_root", "")))
+
+
 func get_animation_capability(id: String) -> Dictionary:
 	return animation_capabilities.get(id, {})
 

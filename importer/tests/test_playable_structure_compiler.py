@@ -158,6 +158,7 @@ def test_constructed_structure_compiles_deterministically() -> None:
     assert route["builderObjectId"] == "PorterBuilder"
     assert route["commandKind"] == "porter_construct"
     assert route["prerequisites"] == ["Upgrade_StoneWork"]
+    assert route["buttonImageId"] == "BITestKeep"
     health = first["gameplay"]["health"]["primary"]
     assert health["maxHealth"] == {"authored": "KEEP_HEALTH", "value": 3000}
     assert health["maxHealthDamaged"]["value"] == 2000
@@ -235,6 +236,9 @@ End
     route = descriptor["production"]["routes"][0]
     assert route["commandKind"] == "foundation_construct"
     assert route["builderObjectId"] == "FoundationPad"
+    # The fixture's foundation button authors no ButtonImage: the route keeps
+    # the key absent so downstream image binding records an explicit gap.
+    assert "buttonImageId" not in route
 
 
 def test_wall_template_policy_admits_template_only_structures() -> None:

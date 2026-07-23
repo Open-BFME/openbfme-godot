@@ -533,3 +533,141 @@ End
     assert row["status"] == "converter-gap"
     assert row["family"] == "spellbook"
     assert "identity" in row["reason"]
+
+
+def test_resolved_structure_images_bind_construct_icon_and_record_gaps() -> None:
+    from openbfme_importer.faction_import import _resolved_structure_images
+
+    descriptor = {
+        "production": {
+            "evidence": "authored-construct-command",
+            "routes": [
+                {
+                    "surface": "construct",
+                    "commandId": "Command_ConstructTestKeep",
+                    "buttonImageId": "BITestKeep",
+                },
+                {"surface": "construct", "commandId": "Command_ConstructAlias"},
+            ],
+        },
+        "presentation": {
+            "ui": {"SelectPortrait": {"expression": "UPTestKeep"}}
+        },
+    }
+    graph = {
+        "resolvedLeaves": {
+            "mappedImages": [
+                {
+                    "id": "BITestKeep",
+                    "texture": "bibuttons.tga",
+                    "textureWidth": 256,
+                    "textureHeight": 256,
+                    "coords": {"left": 0, "top": 0, "right": 64, "bottom": 64},
+                    "compiledTextureVirtualPath": (
+                        "art/compiledtextures/bi/bibuttons.tga"
+                    ),
+                },
+                {
+                    "id": "UPTestKeep",
+                    "texture": "upportraits.tga",
+                    "textureWidth": 256,
+                    "textureHeight": 256,
+                    "coords": {"left": 0, "top": 0, "right": 191, "bottom": 191},
+                    "compiledTextureResolution": "missing",
+                },
+            ]
+        }
+    }
+
+    images, gaps = _resolved_structure_images(graph, descriptor)
+
+    assert sorted(images) == ["BITestKeep"]
+    assert images["BITestKeep"]["compiledTextureVirtualPath"] == (
+        "art/compiledtextures/bi/bibuttons.tga"
+    )
+    # The portrait's atlas is retail-absent: explicit gap, never silence.
+    assert {
+        "usage": "select-portrait",
+        "imageId": "UPTestKeep",
+        "reason": "unresolved-mapped-image-texture",
+    } in gaps
+    assert len(gaps) == 1
+
+
+def test_resolved_structure_images_record_absent_evidence_gaps() -> None:
+    from openbfme_importer.faction_import import _resolved_structure_images
+
+    descriptor = {
+        "production": {"evidence": "wall-template", "routes": []},
+        "presentation": {"ui": {}},
+    }
+    graph = {"resolvedLeaves": {"mappedImages": []}}
+
+    images, gaps = _resolved_structure_images(graph, descriptor)
+
+    assert images == {}
+    assert gaps == [
+        {
+            "usage": "construct-button",
+            "imageId": "",
+            "reason": "no-authored-construct-command",
+        },
+        {
+            "usage": "select-portrait",
+            "imageId": "",
+            "reason": "no-authored-select-portrait",
+        },
+    ]
+
+
+def test_resolved_structure_images_without_media_closure_record_gaps() -> None:
+    from openbfme_importer.faction_import import _resolved_structure_images
+
+    descriptor = {
+        "production": {
+            "evidence": "authored-construct-command",
+            "routes": [
+                {"surface": "construct", "buttonImageId": "BITestKeep"}
+            ],
+        },
+        "presentation": {"ui": {"SelectPortrait": {"expression": "UPTestKeep"}}},
+    }
+
+    images, gaps = _resolved_structure_images({}, descriptor)
+
+    assert images == {}
+    assert {row["reason"] for row in gaps} == {
+        "faction-graph-has-no-mapped-image-closure"
+    }
+    assert {row["imageId"] for row in gaps} == {"BITestKeep", "UPTestKeep"}
+
+
+def test_unresolved_construct_image_is_an_explicit_gap_row() -> None:
+    from openbfme_importer.faction_import import _resolved_structure_images
+
+    descriptor = {
+        "production": {
+            "evidence": "authored-construct-command",
+            "routes": [
+                {"surface": "construct", "buttonImageId": "BIMissingKeep"}
+            ],
+        },
+        "presentation": {"ui": {"SelectPortrait": {"expression": "None"}}},
+    }
+    graph = {"resolvedLeaves": {"mappedImages": []}}
+
+    images, gaps = _resolved_structure_images(graph, descriptor)
+
+    assert images == {}
+    assert gaps == [
+        {
+            "usage": "construct-button",
+            "imageId": "BIMissingKeep",
+            "reason": "unresolved-mapped-image",
+        },
+        {
+            "usage": "select-portrait",
+            "imageId": "",
+            "reason": "no-authored-select-portrait",
+        },
+    ]

@@ -4329,7 +4329,8 @@ func _build_hud() -> void:
 	hud.configure_manifest_construct_kinds(
 		faction_manifest.get("structure_kinds", []) as Array,
 		String(faction_manifest.get("faction", "")),
-		faction_manifest.get("structure_training_summaries", {}) as Dictionary
+		faction_manifest.get("structure_training_summaries", {}) as Dictionary,
+		faction_manifest.get("structure_construct_icons", {}) as Dictionary
 	)
 	var spellbook_runtime: Dictionary = _faction_spellbook_document()
 	if not spellbook_runtime.is_empty() and hud.has_method("configure_spellbook_runtime"):

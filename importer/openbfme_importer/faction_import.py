@@ -104,6 +104,119 @@ def coverage_digest_payload(coverage: Mapping[str, object]) -> dict[str, object]
         }
     return body
 
+def _structure_required_images(
+    descriptor: Mapping[str, object],
+) -> list[tuple[str, str, str]]:
+    """(usage, imageId, gapReason) rows for one structure descriptor.
+
+    ``imageId`` is empty exactly when the evidence itself is absent; then
+    ``gapReason`` names why (no authored construct command, a construct
+    button without a ButtonImage, no authored SelectPortrait). Non-empty ids
+    carry an empty reason and resolve against the faction census below.
+    """
+
+    rows: list[tuple[str, str, str]] = []
+    production = descriptor.get("production")
+    routes = (
+        production.get("routes", []) if isinstance(production, Mapping) else []
+    )
+    construct_routes = [
+        row
+        for row in routes
+        if isinstance(row, Mapping) and row.get("surface") == "construct"
+    ]
+    if not construct_routes:
+        rows.append(("construct-button", "", "no-authored-construct-command"))
+    else:
+        image_ids = sorted(
+            {
+                str(row["buttonImageId"])
+                for row in construct_routes
+                if isinstance(row.get("buttonImageId"), str)
+                and row.get("buttonImageId")
+            },
+            key=str.casefold,
+        )
+        if not image_ids:
+            rows.append(
+                ("construct-button", "", "construct-button-authors-no-image")
+            )
+        rows.extend(("construct-button", image_id, "") for image_id in image_ids)
+    presentation = descriptor.get("presentation")
+    ui = presentation.get("ui") if isinstance(presentation, Mapping) else None
+    portrait_row = ui.get("SelectPortrait") if isinstance(ui, Mapping) else None
+    portrait = (
+        str(portrait_row.get("expression", ""))
+        if isinstance(portrait_row, Mapping)
+        else ""
+    )
+    if portrait.casefold() in {"", "none"}:
+        rows.append(("select-portrait", "", "no-authored-select-portrait"))
+    else:
+        rows.append(("select-portrait", portrait, ""))
+    return rows
+
+
+def _resolved_structure_images(
+    faction_graph: Mapping[str, object], descriptor: Mapping[str, object]
+) -> tuple[dict[str, Mapping[str, object]], list[dict[str, object]]]:
+    """Resolve a structure's construct-button and selection-portrait images
+    through the faction census MappedImage closure.
+
+    Fail-closed per image: every id that cannot be resolved to a converted
+    atlas crop becomes an explicit gap row (kept in the recipe and runtime
+    document) — never a silent omission and never borrowed art.
+    """
+
+    required = _structure_required_images(descriptor)
+    leaves = faction_graph.get("resolvedLeaves")
+    mapped_rows = (
+        leaves.get("mappedImages") if isinstance(leaves, Mapping) else None
+    )
+    if not isinstance(mapped_rows, list):
+        # A graph without a MappedImage closure cannot bind any art; every
+        # required image becomes an explicit recorded gap, never a guess.
+        return {}, [
+            {
+                "usage": usage,
+                "imageId": image_id,
+                "reason": gap_reason or "faction-graph-has-no-mapped-image-closure",
+            }
+            for usage, image_id, gap_reason in required
+        ]
+    images_by_id = {
+        str(row["id"]).casefold(): row
+        for row in mapped_rows
+        if isinstance(row, Mapping) and isinstance(row.get("id"), str)
+    }
+    images: dict[str, Mapping[str, object]] = {}
+    gaps: list[dict[str, object]] = []
+    for usage, image_id, gap_reason in required:
+        if gap_reason:
+            gaps.append({"usage": usage, "imageId": image_id, "reason": gap_reason})
+            continue
+        row = images_by_id.get(image_id.casefold())
+        if row is None:
+            gaps.append(
+                {
+                    "usage": usage,
+                    "imageId": image_id,
+                    "reason": "unresolved-mapped-image",
+                }
+            )
+        elif not isinstance(row.get("compiledTextureVirtualPath"), str):
+            gaps.append(
+                {
+                    "usage": usage,
+                    "imageId": image_id,
+                    "reason": "unresolved-mapped-image-texture",
+                }
+            )
+        elif image_id not in images:
+            images[image_id] = row
+    return images, gaps
+
+
 _EXCLUDED_FAMILY_REASONS = {
     "banner-member": "banner members convert inside their parent horde recipes",
     "projectile": "projectiles convert inside their firing unit recipes",
@@ -601,7 +714,15 @@ def _convert_one_plan_object(
                 source_null_command_sets=source_null_sets,
             )
             closure = build_retail_visual_closure(effective_root, [object_id])
-            recipe = compile_structure_visual_recipe(object_id, closure)
+            images, image_gaps = _resolved_structure_images(
+                faction_graph, descriptor
+            )
+            recipe = compile_structure_visual_recipe(
+                object_id,
+                closure,
+                resolved_images=images,
+                image_binding_gaps=image_gaps,
+            )
             evidence = compile_structure_lifecycle_evidence(
                 object_id, documents, prepared=prepared
             )

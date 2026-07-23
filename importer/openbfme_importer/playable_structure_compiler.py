@@ -92,6 +92,25 @@ def _numeric_value(
         return resolved
 
 
+def _construct_button_image(button: object) -> str | None:
+    """First authored ButtonImage identifier of a commandbutton, or ``None``.
+
+    Retail authors one MappedImage id per construct/wall-upgrade button; an
+    absent or explicit ``None`` value stays ``None`` so callers record the
+    gap instead of inventing art.
+    """
+
+    values = tuple(
+        filter(
+            None,
+            (_first((value,)) for value in _block_values(button, "ButtonImage")),
+        )
+    )
+    if not values or values[0].casefold() == "none":
+        return None
+    return values[0]
+
+
 def _construct_routes(
     target_id: str,
     objects: Mapping[str, SageObject],
@@ -152,17 +171,23 @@ def _construct_routes(
                 },
                 key=str.casefold,
             )
-            routes.append(
-                {
-                    "surface": "construct",
-                    "commandId": str(command["id"]),
-                    "commandKind": str(command["command"]),
-                    "builderObjectId": builder.name,
-                    "commandSetId": command_set.name,
-                    "slot": slot,
-                    "prerequisites": prerequisites,
-                }
-            )
+            route: dict[str, object] = {
+                "surface": "construct",
+                "commandId": str(command["id"]),
+                "commandKind": str(command["command"]),
+                "builderObjectId": builder.name,
+                "commandSetId": command_set.name,
+                "slot": slot,
+                "prerequisites": prerequisites,
+            }
+            # The construct button's own MappedImage id (BEElvenBarracks,
+            # BDDwarvenHall, ...): the HUD's build-strip icon evidence. A
+            # button without one keeps the key absent so downstream binding
+            # records an explicit gap instead of guessing.
+            button_image = _construct_button_image(button)
+            if button_image is not None:
+                route["buttonImageId"] = button_image
+            routes.append(route)
     routes.sort(
         key=lambda row: (
             str(row["builderObjectId"]).casefold(),
@@ -251,18 +276,20 @@ def _wall_upgrade_routes(
                 },
                 key=str.casefold,
             )
-            routes.append(
-                {
-                    "surface": "wall-upgrade",
-                    "commandId": str(command["id"]),
-                    "commandKind": _WALL_UPGRADE_COMMAND,
-                    "builderObjectId": hub.name,
-                    "commandSetId": command_set.name,
-                    "slot": slot,
-                    "upgrade": upgrades,
-                    "prerequisites": prerequisites,
-                }
-            )
+            route: dict[str, object] = {
+                "surface": "wall-upgrade",
+                "commandId": str(command["id"]),
+                "commandKind": _WALL_UPGRADE_COMMAND,
+                "builderObjectId": hub.name,
+                "commandSetId": command_set.name,
+                "slot": slot,
+                "upgrade": upgrades,
+                "prerequisites": prerequisites,
+            }
+            button_image = _construct_button_image(button)
+            if button_image is not None:
+                route["buttonImageId"] = button_image
+            routes.append(route)
     routes.sort(
         key=lambda row: (
             str(row["builderObjectId"]).casefold(),

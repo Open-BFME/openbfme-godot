@@ -116,6 +116,7 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	var pack_roots: Dictionary = {}
 	var fortress_kind := ""
 	var excluded_structures: Dictionary = {}
+	var structure_construct_icons: Dictionary = {}
 	for object_id in structure_ids:
 		var document: Dictionary = structure_runtimes[object_id] as Dictionary
 		var registration: Dictionary = document.get("registration", {}) as Dictionary
@@ -189,6 +190,12 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 			structure_upgrade_effects[kind] = (upgrade_effects as Dictionary).duplicate(true)
 		producer_kind_registry[object_id] = kind
 		pack_roots[String(document.get("_pack_root", ""))] = true
+		# Doc-driven construct icon: the structure's own converted construct
+		# commandbutton crop. Kinds whose doc records a binding gap are simply
+		# absent here and keep the HUD's honest text-only socket.
+		var construct_icon := _structure_construct_icon(document)
+		if not construct_icon.is_empty():
+			structure_construct_icons[kind] = construct_icon
 		for route_value in production.get("routes", []) as Array:
 			builder_sources[String((route_value as Dictionary).get("builderObjectId", ""))] = true
 	if fortress_kind == "":
@@ -537,6 +544,10 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		# Doc-derived "Trains <units>" per producer kind for honest construct
 		# fallback tooltips (factions without localized construct strings).
 		"structure_training_summaries": structure_training_summaries,
+		# Doc-driven construct-button icons per kind: each structure doc's own
+		# converted construct commandbutton crop (imageBindings). Kinds with a
+		# recorded binding gap are absent and stay honest text-only sockets.
+		"structure_construct_icons": structure_construct_icons,
 		"ai_production_plan": ai_production_plan,
 		"unit_damage_types": unit_damage_types,
 		"excluded_units": excluded_units,
@@ -713,6 +724,29 @@ static func _compiled_structure_armor(document: Dictionary) -> Dictionary:
 		"damage_scalar": float((table.get("damageScalar", {}) as Dictionary).get("percent", 100.0)) / 100.0,
 		"scalars": scalars,
 	}
+
+
+static func _structure_construct_icon(document: Dictionary) -> Dictionary:
+	## The structure doc's own construct-button icon: the authored construct
+	## commandbutton's ButtonImage (buttonImageId on the construct route)
+	## resolved through the doc's registration.presentation.imageBindings.
+	## {} when the doc records a gap instead — the HUD then keeps the honest
+	## text-only socket rather than borrowing another faction's art.
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var bindings: Dictionary = (registration.get("presentation", {}) as Dictionary).get("imageBindings", {}) as Dictionary
+	if bindings.is_empty():
+		return {}
+	for route_value in (registration.get("production", {}) as Dictionary).get("routes", []) as Array:
+		var route := route_value as Dictionary
+		if String(route.get("surface", "")) != "construct":
+			continue
+		var image_id := String(route.get("buttonImageId", ""))
+		if image_id != "" and bindings.has(image_id):
+			return {
+				"image_id": image_id,
+				"structure_object_id": String(document.get("objectId", "")),
+			}
+	return {}
 
 
 static func _composite_authors_producer(document: Dictionary, producer: Dictionary) -> bool:

@@ -1248,3 +1248,131 @@ def test_state_referencing_unknown_resource_is_rejected() -> None:
         PlayableStructurePackCompilerError, match="unknown resource"
     ):
         validate_structure_visual_recipe(tampered)
+
+
+def _mapped_image_row(
+    identifier: str,
+    *,
+    texture: str = "art/compiledtextures/bi/bibuttons.tga",
+    right: int = 64,
+    bottom: int = 64,
+) -> dict[str, object]:
+    return {
+        "id": identifier,
+        "texture": texture.rsplit("/", 1)[-1],
+        "textureWidth": 256,
+        "textureHeight": 256,
+        "coords": {"left": 0, "top": 0, "right": right, "bottom": bottom},
+        "compiledTextureVirtualPath": texture,
+    }
+
+
+def test_ui_image_bindings_compile_into_recipe_and_runtime() -> None:
+    descriptor, _recipe, evidence = _keep_fixture()
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    resolved = {
+        "BITestKeep": _mapped_image_row("BITestKeep"),
+        "UPTestKeep": _mapped_image_row(
+            "UPTestKeep",
+            texture="art/compiledtextures/up/upportraits.tga",
+            right=191,
+            bottom=191,
+        ),
+    }
+    gaps = [
+        {
+            "usage": "select-portrait",
+            "imageId": "UPMissing",
+            "reason": "unresolved-mapped-image",
+        }
+    ]
+
+    recipe = compile_structure_visual_recipe(
+        "TestKeep", closure, resolved_images=resolved, image_binding_gaps=gaps
+    )
+
+    validate_structure_visual_recipe(recipe)
+    assert recipe["imageBindings"]["BITestKeep"].startswith(
+        "assets/ui/structures/testkeep/"
+    )
+    assert recipe["imageBindings"]["BITestKeep"].endswith(".png")
+    assert recipe["imageBindingMetadata"]["BITestKeep"] == {
+        "width": 64,
+        "height": 64,
+    }
+    assert recipe["imageBindingMetadata"]["UPTestKeep"] == {
+        "width": 191,
+        "height": 191,
+    }
+    assert recipe["imageBindingGaps"] == gaps
+    ui_resources = [
+        row
+        for row in recipe["resources"]
+        if row["converter"] == "texture-atlas-crops"
+    ]
+    assert len(ui_resources) == 2
+    patterns = sorted(
+        pattern for row in ui_resources for pattern in row["patterns"]
+    )
+    assert patterns == [
+        "art/compiledtextures/bi/bibuttons.tga",
+        "art/compiledtextures/up/upportraits.tga",
+    ]
+    for row in ui_resources:
+        assert row["kind"] == "ui"
+        assert row["required"] is True
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    presentation = document["registration"]["presentation"]
+    assert presentation["imageBindings"] == recipe["imageBindings"]
+    assert presentation["imageBindingMetadata"] == recipe["imageBindingMetadata"]
+    assert presentation["imageBindingGaps"] == gaps
+
+
+def test_ui_image_gap_only_recipe_records_explicit_rows() -> None:
+    descriptor, _recipe, evidence = _keep_fixture()
+    closure = _closure()
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    _rehash(closure)
+    gaps = [
+        {
+            "usage": "construct-button",
+            "imageId": "BITestKeep",
+            "reason": "unresolved-mapped-image-texture",
+        },
+        {
+            "usage": "select-portrait",
+            "imageId": "",
+            "reason": "no-authored-select-portrait",
+        },
+    ]
+
+    recipe = compile_structure_visual_recipe(
+        "TestKeep", closure, resolved_images={}, image_binding_gaps=gaps
+    )
+
+    validate_structure_visual_recipe(recipe)
+    assert recipe["imageBindings"] == {}
+    assert recipe["imageBindingGaps"] == sorted(
+        gaps, key=lambda row: (row["usage"], row["imageId"], row["reason"])
+    )
+    assert not any(
+        row["converter"] == "texture-atlas-crops" for row in recipe["resources"]
+    )
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    presentation = document["registration"]["presentation"]
+    assert presentation["imageBindings"] == {}
+    assert len(presentation["imageBindingGaps"]) == 2
+
+
+def test_recipe_without_ui_binding_request_stays_legacy_shaped() -> None:
+    recipe = compile_structure_visual_recipe(_TARGET, _closure())
+
+    assert "imageBindings" not in recipe
+    assert "imageBindingMetadata" not in recipe
+    assert "imageBindingGaps" not in recipe

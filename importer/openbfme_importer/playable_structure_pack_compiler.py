@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+import hashlib
 from pathlib import PurePosixPath
 import re
 
@@ -304,10 +305,100 @@ def _condition_sets_list(sets: set[tuple[str, ...]]) -> list[list[str]]:
     ]
 
 
+def _ui_image_resources(
+    slug: str, resolved_images: Mapping[str, Mapping[str, object]]
+) -> tuple[list[dict[str, object]], dict[str, str], dict[str, dict[str, int]]]:
+    """Mirror the playable-unit UI lane: group resolved MappedImage rows by
+    retail atlas and emit one texture-atlas-crops resource per atlas plus the
+    id -> converted PNG bindings and their crop metadata."""
+
+    mapped_by_atlas: dict[str, list[tuple[str, Mapping[str, object]]]] = {}
+    for identifier, image in resolved_images.items():
+        if not isinstance(identifier, str) or not isinstance(image, Mapping):
+            raise PlayableStructurePackCompilerError("mapped UI image is invalid")
+        source = image.get("compiledTextureVirtualPath")
+        if not isinstance(source, str) or not source:
+            raise PlayableStructurePackCompilerError(
+                f"UI image atlas is unresolved: {identifier}"
+            )
+        mapped_by_atlas.setdefault(source, []).append((identifier, image))
+    resources: list[dict[str, object]] = []
+    image_bindings: dict[str, str] = {}
+    image_binding_metadata: dict[str, dict[str, int]] = {}
+    for atlas_index, (source, records) in enumerate(
+        sorted(mapped_by_atlas.items(), key=lambda item: item[0].casefold())
+    ):
+        atlas_digest = hashlib.sha256(source.casefold().encode()).hexdigest()[:12]
+        resource_id = _resource_id(
+            "structure", slug, "ui-atlas", str(atlas_index), atlas_digest
+        )
+        output_directory = f"assets/ui/structures/{slug}/{atlas_digest}"
+        crops: list[dict[str, object]] = []
+        for identifier, image in sorted(records, key=lambda item: item[0].casefold()):
+            coords = image.get("coords")
+            if not isinstance(coords, Mapping):
+                raise PlayableStructurePackCompilerError(
+                    f"UI image crop is invalid: {identifier}"
+                )
+            values = [coords.get(name) for name in ("left", "top", "right", "bottom")]
+            if any(
+                not isinstance(value, int) or isinstance(value, bool)
+                for value in values
+            ):
+                raise PlayableStructurePackCompilerError(
+                    f"UI image crop is invalid: {identifier}"
+                )
+            output_name = (
+                f"{_slug(identifier)}-"
+                f"{hashlib.sha256(identifier.casefold().encode()).hexdigest()[:8]}.png"
+            )
+            crops.append(
+                {
+                    "logicalName": _resource_id("image", identifier),
+                    "output": output_name,
+                    "crop": [
+                        values[0],
+                        values[1],
+                        values[2] - values[0],
+                        values[3] - values[1],
+                    ],
+                }
+            )
+            image_bindings[identifier] = f"{output_directory}/{output_name}"
+            image_binding_metadata[identifier] = {
+                "width": values[2] - values[0],
+                "height": values[3] - values[1],
+            }
+        resources.append(
+            {
+                "id": resource_id,
+                "kind": "ui",
+                "converter": "texture-atlas-crops",
+                "patterns": [source],
+                "output": output_directory,
+                "options": {"crops": crops},
+                "required": True,
+                "limit": 1,
+                "expected_count": 1,
+            }
+        )
+    return resources, image_bindings, image_binding_metadata
+
+
 def compile_structure_visual_recipe(
-    target_object_id: str, visual_closure: Mapping[str, object]
+    target_object_id: str,
+    visual_closure: Mapping[str, object],
+    *,
+    resolved_images: Mapping[str, Mapping[str, object]] | None = None,
+    image_binding_gaps: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
-    """Compile one structure's phase-keyed visual pack recipe or fail closed."""
+    """Compile one structure's phase-keyed visual pack recipe or fail closed.
+
+    ``resolved_images`` carries the structure's construct-button / selection
+    portrait MappedImage rows (census-resolved, with atlas coords) and
+    ``image_binding_gaps`` the explicit rows for images that could not be
+    resolved. When both are ``None`` (standalone tooling and legacy tests)
+    the recipe stays byte-identical to the pre-UI-binding shape."""
 
     if not target_object_id or len(target_object_id) > 256:
         raise PlayableStructurePackCompilerError("target Object id is invalid")
@@ -713,7 +804,28 @@ def compile_structure_visual_recipe(
             str(row["sourceW3d"]),
         )
     )
-    identifiers = [str(row["id"]) for row in (*texture_resources, *resources)]
+    ui_resources: list[dict[str, object]] = []
+    image_bindings: dict[str, str] = {}
+    image_binding_metadata: dict[str, dict[str, int]] = {}
+    bind_ui_images = resolved_images is not None or image_binding_gaps is not None
+    if bind_ui_images:
+        ui_resources, image_bindings, image_binding_metadata = _ui_image_resources(
+            slug, resolved_images or {}
+        )
+    gap_rows = sorted(
+        (
+            {
+                "usage": str(row.get("usage", "")),
+                "imageId": str(row.get("imageId", "")),
+                "reason": str(row.get("reason", "")),
+            }
+            for row in (image_binding_gaps or ())
+        ),
+        key=lambda row: (row["usage"], row["imageId"].casefold(), row["reason"]),
+    )
+    identifiers = [
+        str(row["id"]) for row in (*texture_resources, *resources, *ui_resources)
+    ]
     if len({value.casefold() for value in identifiers}) != len(identifiers):
         raise PlayableStructurePackCompilerError(
             "structure recipe produced colliding resource ids"
@@ -725,7 +837,16 @@ def compile_structure_visual_recipe(
         "objectId": target_object_id,
         "slug": slug,
         "visualClosureSha256": closure_digest,
-        "resources": [*texture_resources, *resources],
+        "resources": [*texture_resources, *resources, *ui_resources],
+        **(
+            {
+                "imageBindings": image_bindings,
+                "imageBindingMetadata": image_binding_metadata,
+                "imageBindingGaps": gap_rows,
+            }
+            if bind_ui_images
+            else {}
+        ),
         "lifecycleStates": states,
         "bibStates": bib_states,
         "drawModuleOrder": draw_module_order,
@@ -771,6 +892,33 @@ def validate_structure_visual_recipe(value: Mapping[str, object]) -> None:
         raise PlayableStructurePackCompilerError(
             "structure recipe resource ids are invalid"
         )
+    if "imageBindings" in value:
+        bindings = value.get("imageBindings")
+        metadata = value.get("imageBindingMetadata")
+        gaps = value.get("imageBindingGaps")
+        if (
+            not isinstance(bindings, Mapping)
+            or any(
+                not isinstance(key, str)
+                or not key
+                or not isinstance(path, str)
+                or not path
+                for key, path in bindings.items()
+            )
+            or not isinstance(metadata, Mapping)
+            or not isinstance(gaps, list)
+            or any(
+                not isinstance(row, Mapping)
+                or not isinstance(row.get("usage"), str)
+                or not row.get("usage")
+                or not isinstance(row.get("reason"), str)
+                or not row.get("reason")
+                for row in gaps
+            )
+        ):
+            raise PlayableStructurePackCompilerError(
+                "structure recipe UI image bindings are invalid"
+            )
     resource_ids = {identifier.casefold() for identifier in identifiers}
     states = _rows(value.get("lifecycleStates"), "structure lifecycle states")
     if not states:
@@ -1982,6 +2130,23 @@ def compose_structure_runtime_document(
                 "buildingLifecycle": lifecycle,
                 "ui": deepcopy(descriptor["presentation"]["ui"]),
                 "audioRoutes": deepcopy(descriptor["presentation"]["audioRoutes"]),
+                # Converted construct-button / selection-portrait crops (and
+                # the explicit rows for images the census could not resolve),
+                # carried from the visual recipe so HUD consumers bind this
+                # faction's own art or keep an honest text-only socket.
+                **(
+                    {
+                        "imageBindings": deepcopy(visual_recipe["imageBindings"]),
+                        "imageBindingMetadata": deepcopy(
+                            visual_recipe["imageBindingMetadata"]
+                        ),
+                        "imageBindingGaps": deepcopy(
+                            visual_recipe["imageBindingGaps"]
+                        ),
+                    }
+                    if "imageBindings" in visual_recipe
+                    else {}
+                ),
             },
             "unsupportedVisualReferences": deepcopy(visual_recipe["exclusions"]),
         },

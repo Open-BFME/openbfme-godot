@@ -546,7 +546,8 @@ func configure_faction_surface(manifest: Dictionary) -> void:
 	configure_manifest_construct_kinds(
 		manifest.get("structure_kinds", []) as Array,
 		faction,
-		manifest.get("structure_training_summaries", {}) as Dictionary
+		manifest.get("structure_training_summaries", {}) as Dictionary,
+		manifest.get("structure_construct_icons", {}) as Dictionary
 	)
 
 
@@ -577,12 +578,15 @@ func _faction_display_name(faction: String) -> String:
 			return faction.replace("_", " ").to_upper() if faction != "" else "FACTION"
 
 
-func configure_manifest_construct_kinds(kinds: Array, faction: String = "", training_summaries: Dictionary = {}) -> void:
+func configure_manifest_construct_kinds(kinds: Array, faction: String = "", training_summaries: Dictionary = {}, construct_icons: Dictionary = {}) -> void:
 	## Filters construct UI to the faction manifest's structure_kinds and
 	## ensures each kind has a construct action spec (workshop included when
 	## present). Specs may still be registered after build so a post-reload
 	## full-pack manifest can feed bind_retail_train_commands; button nodes for
 	## late-added actions are created during that bind path.
+	## `construct_icons` is the manifest's doc-driven per-kind construct icon
+	## table ({kind: {image_id, structure_object_id}}) sourced from each
+	## structure doc's own imageBindings.
 	_faction_surface = faction
 	_manifest_construct_kinds.clear()
 	var existing: Dictionary = {}
@@ -598,24 +602,25 @@ func configure_manifest_construct_kinds(kinds: Array, faction: String = "", trai
 		if existing.has(kind):
 			# A Men template spec registered earlier must never survive onto a
 			# non-Men faction's surface: re-register it as the faction's own
-			# honest fallback instead (the reported porter-uses-Men-art bug).
+			# doc-driven spec (icon from its structure doc when bound) or the
+			# honest fallback (the reported porter-uses-Men-art bug).
 			if not _men_construct_surface(faction):
 				for spec_index in _retail_action_specs.size():
 					var prior: Dictionary = _retail_action_specs[spec_index]
 					if String(prior.get("action_id", "")) == "construct_%s" % kind:
-						_retail_action_specs[spec_index] = _construct_fallback_spec(kind, training_summaries)
+						_retail_action_specs[spec_index] = _construct_faction_spec(kind, training_summaries, construct_icons)
 						break
 			continue
 		# Men/Gondor templates bind only on the Men surface. Non-Men factions
-		# currently ship no faction construct strings/icons (checked the packs:
-		# no ConstructElven*/ConstructDwarven* keys, no BE*/BU* building crops),
-		# so their builds use the recorded authored fallback — never Men art
-		# passed off as another faction's.
+		# resolve construct icons from their OWN structure docs' imageBindings
+		# (the construct commandbutton's converted crop, e.g. BEElvenBarracks);
+		# a kind whose doc records a binding gap keeps the recorded authored
+		# text fallback — never Men art passed off as another faction's.
 		var template: Dictionary = {}
 		if _men_construct_surface(faction):
 			template = MANIFEST_CONSTRUCT_TEMPLATES.get(kind, {}) as Dictionary
 		if template.is_empty():
-			_retail_action_specs.append(_construct_fallback_spec(kind, training_summaries))
+			_retail_action_specs.append(_construct_faction_spec(kind, training_summaries, construct_icons))
 			existing[kind] = true
 			continue
 		_retail_action_specs.append({
@@ -655,6 +660,21 @@ func _construct_fallback_spec(kind: String, training_summaries: Dictionary) -> D
 		"fallback_label": kind_label,
 		"fallback_tooltip": tooltip,
 	}
+
+
+## Doc-driven construct spec for a faction kind: the honest fallback text
+## (kind label + "Trains <units>" summary) plus, when the kind's structure doc
+## binds its construct commandbutton crop, that doc's own icon. Missing or
+## invalid bindings keep the text-only socket — never another faction's art.
+func _construct_faction_spec(kind: String, training_summaries: Dictionary, construct_icons: Dictionary) -> Dictionary:
+	var spec := _construct_fallback_spec(kind, training_summaries)
+	var icon: Dictionary = construct_icons.get(kind, {}) as Dictionary
+	var image_id := String(icon.get("image_id", ""))
+	var structure_object_id := String(icon.get("structure_object_id", ""))
+	if image_id != "" and structure_object_id != "":
+		spec["image_id"] = image_id
+		spec["structure_object_id"] = structure_object_id
+	return spec
 
 
 static func _join_english_list(names: Array[String]) -> String:
@@ -1892,7 +1912,23 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 			# Construct art may be an incomplete cook. Text-only demotion keeps
 			# the LOCALIZED strings (never hand-written text) and is recorded in
 			# the bind diagnostics; if the strings are gone too, fail closed.
-			if is_construct:
+			# Doc-driven faction specs (authored_fallback + structure doc icon)
+			# demote to their recorded honest fallback text instead — a broken
+			# faction icon must never abort the bind or borrow other art.
+			if is_construct and bool(spec.get("authored_fallback", false)):
+				retail_bind_diagnostics.append(
+					"construct-art-missing-recorded: '%s' is text-only with recorded English text — icon validation failed: %s" % [action_id, error]
+				)
+				action_validated[action_id] = {
+					"texture": null,
+					"label": String(spec.get("fallback_label", action_id)),
+					"tooltip": String(spec.get("fallback_tooltip", "")),
+					"path": "",
+					"source_size": Vector2i.ZERO,
+					"aspect_ratio": 1.0,
+					"text_only": true,
+				}
+			elif is_construct:
 				var text_label := String(content_db.get_retail_string(String(spec.get("label_id", "")), _MISSING_RETAIL_STRING))
 				var text_tooltip := String(content_db.get_retail_string(String(spec.get("tooltip_id", "")), _MISSING_RETAIL_STRING))
 				if text_label == _MISSING_RETAIL_STRING or text_tooltip == _MISSING_RETAIL_STRING:
@@ -2056,7 +2092,8 @@ func _validate_retail_command(
 	var tooltip_id := String(spec["tooltip_id"])
 	var image_validation := _validate_retail_image(
 		content_db, expected_pack_root, image_id, exact_size,
-		String(spec.get("runtime_object_id", ""))
+		String(spec.get("runtime_object_id", "")),
+		String(spec.get("structure_object_id", ""))
 	)
 	if String(image_validation.get("error", "")) != "":
 		return image_validation
@@ -2147,10 +2184,25 @@ func _pack_root_allowed(image_pack_root: String) -> bool:
 
 func _validate_retail_image(
 	content_db, expected_pack_root: String, image_id: String, exact_size: Vector2i,
-	runtime_object_id: String = ""
+	runtime_object_id: String = "", structure_object_id: String = ""
 ) -> Dictionary:
 	var image_definition: Dictionary = content_db.get_retail_ui_image(image_id)
-	if runtime_object_id != "":
+	if structure_object_id != "":
+		# Structure docs carry their converted construct-button/portrait crops
+		# under registration.presentation.imageBindings (faction packs).
+		var structure_runtime: Dictionary = content_db.get_playable_structure_runtime(structure_object_id)
+		if structure_runtime.is_empty():
+			return {"error": "Playable-structure runtime '%s' is missing." % structure_object_id}
+		var structure_presentation := (structure_runtime.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary
+		var structure_metadata := (structure_presentation.get("imageBindingMetadata", {}) as Dictionary).get(image_id, {}) as Dictionary
+		image_definition = {
+			"_pack_root": String(structure_runtime.get("_pack_root", "")),
+			"path": String((structure_presentation.get("imageBindings", {}) as Dictionary).get(image_id, "")),
+		}
+		if not structure_metadata.is_empty():
+			image_definition["width"] = int(structure_metadata.get("width", 0))
+			image_definition["height"] = int(structure_metadata.get("height", 0))
+	elif runtime_object_id != "":
 		var runtime: Dictionary = content_db.get_playable_unit_runtime(runtime_object_id)
 		if runtime.is_empty():
 			return {"error": "Playable-unit runtime '%s' is missing." % runtime_object_id}
@@ -2166,20 +2218,22 @@ func _validate_retail_image(
 	elif image_definition.is_empty():
 		return {"error": "Required UI manifest image '%s' is missing." % image_id}
 	var image_pack_root := String(image_definition.get("_pack_root", ""))
-	if runtime_object_id != "":
-		# Runtime-backed unit images may live in a supplemental faction pack:
-		# accept the host pack or any manifest-declared faction pack root, and
-		# fail closed when the image has no pack backing at all.
+	if runtime_object_id != "" or structure_object_id != "":
+		# Runtime-backed unit/structure images may live in a supplemental
+		# faction pack: accept the host pack or any manifest-declared faction
+		# pack root, and fail closed when the image has no pack backing at all.
 		if not _pack_root_allowed(image_pack_root):
 			return {"error": "Required UI image '%s' did not come from the selected or faction private packs." % image_id}
 	elif expected_pack_root == "" or not _same_pack_root(image_pack_root, expected_pack_root):
 		return {"error": "Required UI image '%s' did not come from the selected private pack." % image_id}
 
-	var image_path := String(
-		content_db.resolve_playable_unit_image_path(runtime_object_id, image_id)
-		if runtime_object_id != ""
-		else content_db.resolve_retail_ui_image_path(image_id)
-	)
+	var image_path := ""
+	if structure_object_id != "":
+		image_path = String(content_db.resolve_playable_structure_image_path(structure_object_id, image_id))
+	elif runtime_object_id != "":
+		image_path = String(content_db.resolve_playable_unit_image_path(runtime_object_id, image_id))
+	else:
+		image_path = String(content_db.resolve_retail_ui_image_path(image_id))
 	if image_path == "":
 		return {"error": "Required UI image '%s' does not resolve inside the selected private pack." % image_id}
 	if image_path.get_extension().to_lower() != "png":
