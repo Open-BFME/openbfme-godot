@@ -26,11 +26,12 @@ FRAME_CONTRACT_FILE_SHA256 = (
 MAP_FILE_SHA256 = "b9932e95e0949a7faecea3e31500b356e4f7f695e40e8b9f6c37202439c4b11b"
 SETUP_FILE_SHA256 = "b6ab4ed3493e3e3e4b286b0a4b7e903d1bf508a09f2bc4393d112c77ea3d0df6"
 SIDE_APT_SHA256 = "84d58c67c5cab9a3bf690125cbf1a0cbf3f4bc58ccc29ffa33b992a924eca6ef"
-# Re-pinned 2026-07-23 after the reviewed knockback/flyer, hero-ability
-# batch-1, MP-menu-seam, and construct-icon HUD changes; every anchored
-# behavioral marker below still validates against the new sources.
-SIM_SHA256 = "9d6d84b6c29e63cd58f4c58e4bcf78ae207943cb6bb7416e5a178aa582fe60f3"
-SLICE_SHA256 = "b18fc1c05bbc01ee8e0ab55883a96564c7ae6c11c914e9682ccfa8cf01f359df"
+# Re-pinned 2026-07-23 after the reviewed hero-ability batch-2, N-team
+# (registry/manifests/victory/geometry), five-tier AI, per-team spellbook,
+# BFME1 build-plot mode, and per-team structure-upgrade changes; every
+# anchored behavioral marker below still validates against the new sources.
+SIM_SHA256 = "1f0ac0263ad9e1f1af043beb3dcd5bd0d774b80d436b8a3791e50b05ff184b50"
+SLICE_SHA256 = "9a508be31f9638ae51a227f723c85d63e48c6475f043a2ad91f9b15dbbc3356c"
 
 RETAIL_INI_SOURCES: dict[str, str] = {
     "data/ini/commandset.ini": "3d57ff841b93428ce2118d4bff1871684003bb9eacd8d48865f03ce23e4c5300",
