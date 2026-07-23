@@ -64,7 +64,9 @@ func _run() -> void:
 	_check("typed_action_inventory_is_bound", int(inspection_runtime.action_script_count) == 2 and int(inspection_runtime.supported_action_script_count) == 1)
 	var timeline_state := {"playing": true}
 	_check("exact_stop_script_executes", bool(inspection_runtime.execute_action_script("palantir:100", timeline_state)) and not bool(timeline_state.playing))
+	_check("vm_lane_executed_supported_stop_script", int(inspection_runtime.vm_executed_program_count) == 1 and int(inspection_runtime.vm_fallback_program_count) == 0)
 	_check("blocked_host_script_cannot_execute", not bool(inspection_runtime.execute_action_script("palantir:12", timeline_state)))
+	_check("vm_lane_never_touches_blocked_scripts", int(inspection_runtime.vm_executed_program_count) == 1 and int(inspection_runtime.vm_fallback_program_count) == 0)
 	var minlod_document := document.duplicate(true)
 	(minlod_document.actionScripts as Array).append_array(_minlod_fixture_programs())
 	(minlod_document.summary as Dictionary)["actionScriptCount"] = 5
@@ -87,6 +89,7 @@ func _run() -> void:
 	_check("minlod_named_target_shape_fails_closed", not bool(minlod_runtime.execute_action_script("palantir:334840", incomplete_effect_state, {"MinLOD": true})) and bool(incomplete_effect_state.targets.effect2._visible))
 	var clip_timeline_state := {"playing": true}
 	_check("exact_initialize_clip_action_executes", bool(inspection_runtime.execute_clip_action("palantir:300:fixture/1", 1, clip_timeline_state)) and not bool(clip_timeline_state.playing))
+	_check("vm_lane_executed_clip_initialize_program", int(inspection_runtime.vm_executed_program_count) == 2 and int(inspection_runtime.vm_fallback_program_count) == 0)
 	_check("blocked_unload_clip_action_cannot_execute", not bool(inspection_runtime.execute_clip_action("palantir:300:fixture/1", 0x040000, clip_timeline_state)))
 	_check("inspection_mode_is_explicitly_diagnosed", _has_diagnostic(inspection_runtime.diagnostics, "apt-static-subset-explicitly-enabled"))
 	_check("proven_good_double_is_bound", String(inspection_runtime.initial_frame_variant) == "good-double" and String(inspection_runtime.get_meta("initial_frame_variant", "")) == "good-double")
@@ -249,6 +252,24 @@ func _run() -> void:
 	var malformed_button_state_runtime = runtime_script.new()
 	root.add_child(malformed_button_state_runtime)
 	_check("missing_exact_button_hit_state_fails_closed", not bool(malformed_button_state_runtime.configure_document(malformed_button_state, fixture_root, true)) and String(malformed_button_state_runtime.error).contains("hit state"), String(malformed_button_state_runtime.error))
+
+	var vm_lane_document := document.duplicate(true)
+	(vm_lane_document.actionScripts as Array).append_array(_vm_lane_fixture_programs())
+	(vm_lane_document.summary as Dictionary)["actionScriptCount"] = 5
+	(vm_lane_document.summary as Dictionary)["supportedActionScriptCount"] = 4
+	(vm_lane_document.summary as Dictionary)["unsupportedActionScriptCount"] = 1
+	var vm_lane_runtime = runtime_script.new()
+	root.add_child(vm_lane_runtime)
+	_check("vm_lane_fixture_binds", bool(vm_lane_runtime.configure_document(vm_lane_document, fixture_root, true)), String(vm_lane_runtime.error))
+	var vm_goto_state := {"frame": 0}
+	_check("vm_lane_goto_frame_executes_via_vm", bool(vm_lane_runtime.execute_action_script("palantir:140", vm_goto_state)) and int(vm_goto_state.frame) == 5 and int(vm_lane_runtime.vm_executed_program_count) == 1)
+	var vm_label_state := {"label": ""}
+	_check("vm_lane_goto_label_executes_via_vm", bool(vm_lane_runtime.execute_action_script("palantir:141", vm_label_state)) and String(vm_label_state.label) == "_show" and int(vm_lane_runtime.vm_executed_program_count) == 2)
+	var vm_fallback_state := {"playing": false}
+	_check("vm_lane_unsynthesizable_falls_back_to_legacy", bool(vm_lane_runtime.execute_action_script("palantir:142", vm_fallback_state)) and bool(vm_fallback_state.playing) and int(vm_lane_runtime.vm_fallback_program_count) == 1 and _has_diagnostic(vm_lane_runtime.diagnostics, "apt-vm-lane-fallback"))
+	_check("vm_lane_fallback_diagnosed_once", bool(vm_lane_runtime.execute_action_script("palantir:142", vm_fallback_state)) and int(vm_lane_runtime.vm_fallback_program_count) == 2 and _count_diagnostic(vm_lane_runtime.diagnostics, "apt-vm-lane-fallback") == 1)
+	vm_lane_runtime.reset_runtime()
+	_check("vm_lane_counters_reset_atomically", int(vm_lane_runtime.vm_executed_program_count) == 0 and int(vm_lane_runtime.vm_fallback_program_count) == 0)
 	_run_private_contract_if_requested()
 	_finish()
 
@@ -427,6 +448,62 @@ func _run_private_contract_if_requested() -> void:
 	_check("private_external_attachment_blockers_collapsed", _count_blocker((value as Dictionary).get("unsupportedSemantics", []), "external-movie-target-attachment-not-bound") == 0 and _count_blocker((value as Dictionary).get("unsupportedSemantics", []), "external-movie-lifecycle-capture-not-passed") == 1)
 	_check("private_resource_flash_dynamic_gates_are_narrow", _count_blocker((value as Dictionary).get("unsupportedSemantics", []), "resource-flash-native-trigger-capture-not-passed") == 1 and _count_blocker((value as Dictionary).get("unsupportedSemantics", []), "resource-flash-mixer-overlap-capture-not-passed") == 1 and _count_blocker((value as Dictionary).get("unsupportedSemantics", []), "action-script-unsupported-opcodes") == 8)
 	_check("private_external_slots_bind", bool(private_runtime.external_movie_slots_ready) and int(private_runtime.external_movie_slot_count) == 4 and not bool(private_runtime.external_movie_slot_state("HeroSelectUI").get("visible", true)))
+
+
+## Three supported generic programs for the tier-3 VM lane: a synthesizable
+## goto-frame, a synthesizable goto-label, and a deliberately
+## non-synthesizable program (branch opcode) that must fall back to the
+## legacy declarative path.
+func _vm_lane_fixture_programs() -> Array:
+	var rows: Array = []
+	var specifications := [
+		{
+			"scriptId": "palantir:140",
+			"instructions": [
+				{"offset": 1400, "nextOffset": 1408, "opcode": 0x81, "name": "goto-frame", "operand": 5, "body": []},
+				{"offset": 1408, "nextOffset": 1409, "opcode": 0, "name": "end", "body": []},
+			],
+			"effects": [{"kind": "goto", "targetType": "frame", "target": 5}],
+		},
+		{
+			"scriptId": "palantir:141",
+			"instructions": [
+				{"offset": 1500, "nextOffset": 1508, "opcode": 0x8C, "name": "goto-label", "operand": "_show", "body": []},
+				{"offset": 1508, "nextOffset": 1509, "opcode": 0, "name": "end", "body": []},
+			],
+			"effects": [{"kind": "goto", "targetType": "label", "target": "_show"}],
+		},
+		{
+			"scriptId": "palantir:142",
+			"instructions": [
+				{"offset": 1600, "nextOffset": 1608, "opcode": 0x99, "name": "branch-always", "operand": 0, "body": []},
+				{"offset": 1608, "nextOffset": 1609, "opcode": 6, "name": "play", "body": []},
+				{"offset": 1609, "nextOffset": 1610, "opcode": 0, "name": "end", "body": []},
+			],
+			"effects": [{"kind": "play"}],
+		},
+	]
+	var source_offset := 140
+	for specification_value in specifications:
+		var specification := specification_value as Dictionary
+		var instructions := specification.instructions as Array
+		rows.append({
+			"scriptId": String(specification.scriptId),
+			"movie": "Palantir",
+			"actionKind": "action-script",
+			"sourceOffset": source_offset,
+			"instructionOffset": int((instructions[0] as Dictionary).offset),
+			"byteLength": 9,
+			"sha256": "a1".repeat(32),
+			"instructions": instructions,
+			"supported": true,
+			"effects": specification.effects,
+			"maximumStackDepth": 0,
+			"terminalStackDepth": 0,
+			"unsupportedInstructions": [],
+		})
+		source_offset += 1
+	return rows
 
 
 func _minlod_fixture_programs() -> Array:
@@ -1058,6 +1135,14 @@ func _write_json(path: String, value: Dictionary) -> bool:
 		return false
 	file.store_string(JSON.stringify(value, "  ", true) + "\n")
 	return true
+
+
+func _count_diagnostic(values: Array, code: String) -> int:
+	var count := 0
+	for value in values:
+		if typeof(value) == TYPE_DICTIONARY and String((value as Dictionary).get("code", "")) == code:
+			count += 1
+	return count
 
 
 func _has_diagnostic(values: Array, code: String) -> bool:

@@ -7,6 +7,14 @@ extends Control
 ## branches, the exact resource-flash entry, and two declaration-only Palantir
 ## CommandButtons registrations are executable. Unproven rendering and
 ## downstream native/mixer semantics remain explicit blockers.
+##
+## Tier 3: generic supported play/stop/goto programs additionally execute
+## through the real APT VM (AptVm + AptRuntimeHost) by re-synthesizing their
+## proven instruction rows into bytecode. The VM lane is additive and
+## fail-closed: any program the VM cannot run byte-faithfully (unsupported
+## opcode, halt, or an out-of-contract host call) is recorded in diagnostics
+## and falls back to the legacy declarative-effect path, so behavior never
+## regresses and nothing is half-applied.
 
 const MAX_DOCUMENT_BYTES := 32 * 1024 * 1024
 const MAX_DRAWS := 100_000
@@ -21,6 +29,8 @@ const EXPECTED_SCHEMA := "openbfme.retail-hud-apt-runtime"
 const EXPECTED_SCENE_ID := "bfme2.ui.palantir"
 const ASSET_FACTORY := preload("res://src/view/asset_factory.gd")
 const WND_RUNTIME_SCRIPT := preload("res://src/retail_slice/retail_hud_wnd_runtime.gd")
+const APT_VM_SCRIPT := preload("res://src/apt/apt_vm.gd")
+const APT_RUNTIME_HOST_SCRIPT := preload("res://src/apt/apt_runtime_host.gd")
 const EXTERNAL_MOVIE_SLOT_SPECS := [
 	{
 		"loadOrder": 0, "movie": "InGameSpellBook", "swf": "InGameSpellBook.swf",
@@ -400,6 +410,8 @@ var side_command_fade_eligible := false
 var palantir_command_topology_ready := false
 var wnd_companion_ready := false
 var wnd_typed_callback_count := 0
+var vm_executed_program_count := 0
+var vm_fallback_program_count := 0
 var diagnostics: Array[Dictionary] = []
 
 var _authored_resolution := Vector2(1024.0, 768.0)
@@ -422,6 +434,7 @@ var _wnd_runtime: RefCounted = null
 var _staged_wnd_runtime: RefCounted = null
 var _side_command_fade_accumulator := 0.0
 var _side_command_fade_state: Dictionary = {}
+var _vm_fallback_program_ids: Dictionary = {}
 var _live_text_values := {
 	"$PalantirResources": "0",
 	"$PalantirResourceMultiplier": " ",
@@ -1903,7 +1916,7 @@ func execute_action_script(
 		)
 	if TYPED_PALANTIR_COMMAND_PROGRAMS.has(script_id):
 		return _execute_typed_palantir_command_effect(script_id, value as Dictionary, timeline_state)
-	return _execute_timeline_effects((value as Dictionary).get("effects", []) as Array, timeline_state)
+	return _execute_supported_program(script_id, value as Dictionary, timeline_state)
 
 
 func play_command_point_effect(timeline_state: Dictionary) -> bool:
@@ -2138,7 +2151,7 @@ func execute_clip_action(clip_action_id: String, event_mask: int, timeline_state
 			return false
 		if TYPED_INITIALIZE_PROGRAMS.has(String(event.get("programId", ""))):
 			return _execute_typed_initialize_effect(program_value as Dictionary, timeline_state)
-		return _execute_timeline_effects((program_value as Dictionary).get("effects", []) as Array, timeline_state)
+		return _execute_supported_program(String(event.get("programId", "")), program_value as Dictionary, timeline_state)
 	return false
 
 
@@ -2158,6 +2171,127 @@ func _execute_timeline_effects(effects: Array, timeline_state: Dictionary) -> bo
 			_:
 				return false
 	return true
+
+
+## Generic supported program: prefer the real VM lane, fall back to the
+## legacy declarative effects when the VM cannot run it byte-faithfully.
+func _execute_supported_program(program_id: String, program: Dictionary, timeline_state: Dictionary) -> bool:
+	if _execute_program_via_vm(program_id, program, timeline_state):
+		return true
+	return _execute_timeline_effects(program.get("effects", []) as Array, timeline_state)
+
+
+## Tier-3 VM lane: re-synthesize the proven instruction rows into bytecode
+## and execute through AptVm bound to an AptRuntimeHost. Fail-closed: only
+## a clean end-to-End run with zero out-of-contract host calls mutates the
+## timeline state; anything else records a diagnostic and reports false so
+## the caller keeps the legacy behavior.
+func _execute_program_via_vm(program_id: String, program: Dictionary, timeline_state: Dictionary) -> bool:
+	var rows_value: Variant = program.get("instructions", [])
+	if typeof(rows_value) != TYPE_ARRAY:
+		_note_vm_fallback(program_id, "instructions-missing")
+		return false
+	var bytecode := _synthesize_vm_bytecode(rows_value as Array)
+	if bytecode.is_empty():
+		_note_vm_fallback(program_id, "not-synthesizable")
+		return false
+	var vm = APT_VM_SCRIPT.new()
+	var host = APT_RUNTIME_HOST_SCRIPT.new(0, "clip")
+	vm.host = host
+	var result: Dictionary = vm.execute(bytecode, [], 0)
+	if not bool(result.get("completed", false)):
+		_note_vm_fallback(program_id, "halted:%s" % String(result.get("halted_reason", "")))
+		return false
+	if not (host.recorded as Array).is_empty():
+		_note_vm_fallback(program_id, "recorded-host-call")
+		return false
+	_apply_vm_playback_events(host.playback_events() as Array, timeline_state)
+	vm_executed_program_count += 1
+	return true
+
+
+## Bytecode synthesis for the proven playback-only opcode set: End (0x00),
+## Play (0x06), Stop (0x07), GotoFrame (0x81, aligned i32 operand), and
+## GotoLabel (0x8C, aligned u32 string offset). Anything else returns empty
+## (fail-closed to the legacy path).
+func _synthesize_vm_bytecode(rows: Array) -> PackedByteArray:
+	if rows.is_empty():
+		return PackedByteArray()
+	var bytes := PackedByteArray()
+	var string_patches: Array = []
+	var terminated := false
+	for row_value in rows:
+		if terminated or typeof(row_value) != TYPE_DICTIONARY:
+			return PackedByteArray()
+		var row := row_value as Dictionary
+		var body_value: Variant = row.get("body", [])
+		if typeof(body_value) != TYPE_ARRAY or not (body_value as Array).is_empty():
+			return PackedByteArray()
+		var opcode := int(row.get("opcode", -1))
+		match opcode:
+			0x00:
+				bytes.append(0x00)
+				terminated = true
+			0x06, 0x07:
+				bytes.append(opcode)
+			0x81:
+				var frame_value: Variant = row.get("operand", null)
+				if typeof(frame_value) != TYPE_INT and typeof(frame_value) != TYPE_FLOAT:
+					return PackedByteArray()
+				bytes.append(0x81)
+				while bytes.size() % 4 != 0:
+					bytes.append(0)
+				var frame_position := bytes.size()
+				bytes.resize(frame_position + 4)
+				bytes.encode_s32(frame_position, int(frame_value))
+			0x8C:
+				var label_value: Variant = row.get("operand", null)
+				if typeof(label_value) != TYPE_STRING:
+					return PackedByteArray()
+				bytes.append(0x8C)
+				while bytes.size() % 4 != 0:
+					bytes.append(0)
+				string_patches.append([bytes.size(), String(label_value)])
+				bytes.resize(bytes.size() + 4)
+			_:
+				return PackedByteArray()
+	if not terminated:
+		return PackedByteArray()
+	for patch_value in string_patches:
+		var patch := patch_value as Array
+		var string_offset := bytes.size()
+		bytes.append_array(String(patch[1]).to_utf8_buffer())
+		bytes.append(0)
+		bytes.encode_u32(int(patch[0]), string_offset)
+	return bytes
+
+
+## Apply the host's playback events with exactly the legacy effect mapping,
+## so VM-lane results are indistinguishable from the declarative path.
+func _apply_vm_playback_events(playback_events: Array, timeline_state: Dictionary) -> void:
+	for event_value in playback_events:
+		var event := event_value as Dictionary
+		match String(event.get("op", "")):
+			"play":
+				timeline_state["playing"] = true
+			"stop":
+				timeline_state["playing"] = false
+			"goto_frame":
+				timeline_state["frame"] = int(event.get("frame", -1))
+			"goto_label":
+				timeline_state["label"] = String(event.get("label", ""))
+
+
+func _note_vm_fallback(program_id: String, reason: String) -> void:
+	vm_fallback_program_count += 1
+	if _vm_fallback_program_ids.has(program_id):
+		return
+	_vm_fallback_program_ids[program_id] = true
+	diagnostics.append({
+		"code": "apt-vm-lane-fallback",
+		"programId": program_id,
+		"reason": reason,
+	})
 
 
 func _execute_typed_initialize_effect(program: Dictionary, target_state: Dictionary) -> bool:
@@ -3684,6 +3818,9 @@ func _reset() -> void:
 	palantir_command_topology_ready = false
 	wnd_companion_ready = false
 	wnd_typed_callback_count = 0
+	vm_executed_program_count = 0
+	vm_fallback_program_count = 0
+	_vm_fallback_program_ids.clear()
 	_wnd_runtime = null
 	_staged_wnd_runtime = null
 	_side_command_fade_accumulator = 0.0

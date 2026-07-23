@@ -16,9 +16,14 @@ extends SceneTree
 const AptVmScript = preload("res://src/apt/apt_vm.gd")
 
 const FIXTURE_RELATIVE := "../.private/retail-work/reports/apt-vm-fixtures/apt_vm_fixtures.json"
+## Pinned deterministic AptRuntimeHost state digest after driving all three
+## MainMenu fixture scripts against the tier-3 widget tree (re-pin only when
+## the fixture file or the host state model changes).
+const TIER3_E2E_DIGEST := "31e7447fb24aa3b0"
 
 var passed := 0
 var failed := 0
+var host_script
 
 
 func _initialize() -> void:
@@ -108,7 +113,16 @@ func _run() -> void:
 	_test_tier2_function_family()
 	_test_tier2_url_playback_family()
 	_test_tier2_return_at_root()
+	# Tier-3 suite: real host bound to the deterministic widget model.
+	host_script = load("res://src/apt/apt_runtime_host.gd")
+	_test_tier3_property_family()
+	_test_tier3_playback_family()
+	_test_tier3_method_and_member_family()
+	_test_tier3_fscommand_registry()
+	_test_tier3_random_enumerate_digest()
+	_test_tier3_fail_closed_families()
 	_run_real_fixtures()
+	_run_tier3_end_to_end()
 	print("RETAIL_APT_VM_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -1122,6 +1136,354 @@ func _test_tier2_return_at_root() -> void:
 	_check("t2_return_at_root",
 		result["completed"] == true and result["halted_reason"] == "return" \
 		and result["instructions_executed"] == 2)
+
+
+# --- Tier-3 host-contract tests -----------------------------------------------
+
+## SetProperty moves a widget and GetProperty reads the live value back,
+## driven through the VM (not just the host API).
+func _test_tier3_property_family() -> void:
+	var host = host_script.new(0, "_root")
+	host.add_clip("_root", "spr")
+	var names := ["spr", "px"]
+	var asm := Asm.new()
+	var pool_patch := _emit_constant_pool(asm, names.size())
+	# SetProperty spr#0 (_x) = 42
+	asm.op(0xA2)
+	asm.u8(0)
+	asm.op(0xB5)
+	asm.u8(0)
+	asm.op(0xB5)
+	asm.u8(42)
+	asm.op(0x23)
+	# SetProperty spr#7 (_visible) = false
+	asm.op(0xA2)
+	asm.u8(0)
+	asm.op(0xB5)
+	asm.u8(7)
+	asm.op(0x74)
+	asm.op(0x23)
+	# px = GetProperty(spr#0)
+	asm.op(0xA2)
+	asm.u8(1)
+	asm.op(0xA2)
+	asm.u8(0)
+	asm.op(0xB5)
+	asm.u8(0)
+	asm.op(0x22)
+	asm.op(0x1D)
+	asm.op(0x00)
+	asm.patch_u32(pool_patch, asm.index_table(range(names.size())))
+	var vm = AptVmScript.new()
+	vm.host = host
+	var result: Dictionary = vm.execute(asm.bytes, _string_constants(names))
+	var spr: Dictionary = host.widget_state("_root.spr")
+	_check("t3_set_property_moves_widget", float((spr.properties as Dictionary)._x) == 42.0)
+	_check("t3_set_property_hides_widget", (spr.properties as Dictionary)._visible == false)
+	_check("t3_get_property_reads_live_state", result["variables"].get("px") == 42.0)
+	_check("t3_property_family_clean",
+		bool(result["completed"]) and (host.recorded as Array).is_empty())
+
+
+## Stop/Play/GotoLabel/GotoFrame/GotoFrame2/NextFrame mutate real frame state
+## on the scope clip.
+func _test_tier3_playback_family() -> void:
+	var host = host_script.new(0, "_root")
+	var clip_path: String = host.add_clip("_root", "clip", {"labels": {"Menu": 5}, "total_frames": 10})
+	host.set_scope(clip_path)
+	var asm := Asm.new()
+	asm.op_aligned(0x8C)  # GotoLabel "Menu" -> frame 5
+	var label_patch := asm.mark()
+	asm.u32(0)
+	asm.op_aligned(0x81)  # GotoFrame 3
+	asm.i32(3)
+	var push_patch := _emit_push_string(asm)  # "Menu" for GotoFrame2
+	asm.op_aligned(0x9F)  # GotoFrame2 play-flag -> frame 5 playing
+	asm.i32(1)
+	asm.op(0x04)  # NextFrame -> frame 6, stopped
+	asm.op(0x06)  # Play
+	asm.op(0x07)  # Stop
+	asm.op(0x00)
+	var menu_off := asm.cstring("Menu")
+	asm.patch_u32(label_patch, menu_off)
+	asm.patch_u32(push_patch, menu_off)
+	var vm = AptVmScript.new()
+	vm.host = host
+	var result: Dictionary = vm.execute(asm.bytes, [])
+	var clip: Dictionary = host.widget_state(clip_path)
+	_check("t3_goto_label_changes_frame", int(clip.frame) == 6 and String(clip.label) == "Menu")
+	_check("t3_playback_final_stop", bool(clip.playing) == false)
+	_check("t3_playback_event_log_complete", (host.playback_events() as Array).size() == 6)
+	_check("t3_playback_family_clean",
+		bool(result["completed"]) and (host.recorded as Array).is_empty())
+
+
+## The measured MainMenu call families: named-child variable resolution,
+## clip variable writes (buttonName), gotoAndPlay/gotoAndStop dispatch,
+## _parent/_root navigation, and the GetExtern registry.
+func _test_tier3_method_and_member_family() -> void:
+	var host = host_script.new(0, "_root")
+	var nav_path: String = host.add_clip("_root", "SoloPlayNav", {"labels": {"_hide": 0}, "total_frames": 4})
+	host.add_clip(nav_path, "Skirmish", {"labels": {"_over": 1, "_disable": 2}, "total_frames": 4})
+	host.add_clip(nav_path, "OpenButton", {"labels": {"_over": 1}, "total_frames": 3})
+	host.add_clip("_root", "MultiPlayNav", {"labels": {"_hide": 0}, "total_frames": 4})
+	host.set_scope(nav_path)
+	host.set_extern_value("MainMenuUnlockBonusCampaign", false)
+	var names := ["Skirmish", "buttonName", "$Skirmish", "gotoAndPlay", "_over",
+		"OpenButton", "_parent", "MultiPlayNav", "gotoAndStop", "_hide", "copy",
+		"_root", "GetExtern", "MainMenuUnlockBonusCampaign", "ok"]
+	var asm := Asm.new()
+	var pool_patch := _emit_constant_pool(asm, names.size())
+	# Skirmish.buttonName = "$Skirmish"
+	asm.op(0xA2)
+	asm.u8(0)
+	asm.op(0x1C)
+	asm.op(0xA2)
+	asm.u8(1)
+	asm.op(0xA2)
+	asm.u8(2)
+	asm.op(0x4F)
+	# OpenButton.gotoAndPlay("_over")
+	asm.op(0xA2)
+	asm.u8(4)
+	asm.op(0x5A)
+	asm.op(0xA2)
+	asm.u8(5)
+	asm.op(0x1C)
+	asm.op(0xB2)
+	asm.u8(3)
+	# _parent.MultiPlayNav.gotoAndStop("_hide")
+	asm.op(0xA2)
+	asm.u8(9)
+	asm.op(0x5A)
+	asm.op(0xA2)
+	asm.u8(6)
+	asm.op(0x1C)
+	asm.op(0xA2)
+	asm.u8(7)
+	asm.op(0x4E)
+	asm.op(0xB2)
+	asm.u8(8)
+	# copy = Skirmish.buttonName
+	asm.op(0xA2)
+	asm.u8(10)
+	asm.op(0xA2)
+	asm.u8(0)
+	asm.op(0x1C)
+	asm.op(0xA2)
+	asm.u8(1)
+	asm.op(0x4E)
+	asm.op(0x1D)
+	# ok = _root.GetExtern("MainMenuUnlockBonusCampaign", true)
+	asm.op(0xA2)
+	asm.u8(14)
+	asm.op(0x73)
+	asm.op(0xA2)
+	asm.u8(13)
+	asm.op(0xB5)
+	asm.u8(2)
+	asm.op(0xA2)
+	asm.u8(11)
+	asm.op(0x1C)
+	asm.op(0xA2)
+	asm.u8(12)
+	asm.op(0x52)
+	asm.op(0x1D)
+	asm.op(0x00)
+	asm.patch_u32(pool_patch, asm.index_table(range(names.size())))
+	var vm = AptVmScript.new()
+	vm.host = host
+	var result: Dictionary = vm.execute(asm.bytes, _string_constants(names))
+	var vars: Dictionary = result["variables"]
+	var skirmish: Dictionary = host.widget_state(nav_path + ".Skirmish")
+	var open_button: Dictionary = host.widget_state(nav_path + ".OpenButton")
+	var multi_nav: Dictionary = host.widget_state("_root.MultiPlayNav")
+	_check("t3_set_member_writes_clip_variable",
+		(skirmish.variables as Dictionary).get("buttonName") == "$Skirmish")
+	_check("t3_goto_and_play_drives_frame_state",
+		int(open_button.frame) == 1 and bool(open_button.playing) and String(open_button.label) == "_over")
+	_check("t3_parent_member_goto_and_stop",
+		String(multi_nav.label) == "_hide" and int(multi_nav.frame) == 0 and not bool(multi_nav.playing))
+	_check("t3_get_member_reads_clip_variable", vars.get("copy") == "$Skirmish")
+	_check("t3_get_extern_registry_answers", vars.has("ok") and vars.get("ok") == false)
+	_check("t3_method_member_family_clean",
+		bool(result["completed"]) and (host.recorded as Array).is_empty())
+
+
+## FSCommand routes through the callback registry; plain URLs stay
+## recorded-only.
+func _test_tier3_fscommand_registry() -> void:
+	var host = host_script.new(0, "_root")
+	var captured: Array = []
+	host.register_fs_command("PlaySound", func(command: String, argument: String) -> void:
+		captured.append([command, argument]))
+	var names := ["FSCommand:PlaySound", "Gui_PalantirResourceBarFlash"]
+	var asm := Asm.new()
+	var pool_patch := _emit_constant_pool(asm, names.size())
+	asm.op(0xA2)
+	asm.u8(0)
+	asm.op(0xA2)
+	asm.u8(1)
+	asm.op(0x9A)  # GetURL2 (pops target, then url)
+	asm.op_aligned(0x83)  # GetURL menu.apt -> recorded-only
+	var url_patch := asm.mark()
+	asm.u32(0)
+	var target_patch := asm.mark()
+	asm.u32(0)
+	asm.op(0x00)
+	var url_off := asm.cstring("menu.apt")
+	var tgt_off := asm.cstring("spr")
+	asm.patch_u32(url_patch, url_off)
+	asm.patch_u32(target_patch, tgt_off)
+	asm.patch_u32(pool_patch, asm.index_table(range(names.size())))
+	var vm = AptVmScript.new()
+	vm.host = host
+	var result: Dictionary = vm.execute(asm.bytes, _string_constants(names))
+	_check("t3_fscommand_fires_registry",
+		captured == [["PlaySound", "Gui_PalantirResourceBarFlash"]])
+	_check("t3_fscommand_logged", (host.fs_log as Array).size() == 1)
+	_check("t3_get_url_recorded_only",
+		(host.url_log as Array).size() == 1 and (host.recorded as Array).size() == 1)
+	_check("t3_fscommand_family_clean", bool(result["completed"]))
+
+
+## Seeded deterministic randomness, child enumeration, and the canonical
+## state digest.
+func _test_tier3_random_enumerate_digest() -> void:
+	var host_a = host_script.new(42)
+	var host_b = host_script.new(42)
+	var sequence_a: Array = []
+	var sequence_b: Array = []
+	for _i in range(5):
+		sequence_a.append(host_a.random_int(100))
+		sequence_b.append(host_b.random_int(100))
+	_check("t3_random_seeded_deterministic", sequence_a == sequence_b)
+	var in_range := true
+	for value in sequence_a:
+		in_range = in_range and int(value) >= 0 and int(value) < 100
+	_check("t3_random_in_range", in_range and sequence_a != [0, 0, 0, 0, 0])
+	var host = host_script.new(0)
+	host.add_clip("_root", "a")
+	host.add_clip("_root", "b")
+	_check("t3_enumerate_children", host.enumerate("_root") == ["a", "b"])
+	var digest_before: String = host.state_digest()
+	_check("t3_digest_stable", host.state_digest() == digest_before)
+	host.set_member("a", "tag", 1)
+	_check("t3_digest_tracks_mutation", host.state_digest() != digest_before)
+
+
+## Everything outside the measured contract is recorded and returns
+## undefined; the VM keeps running cleanly.
+func _test_tier3_fail_closed_families() -> void:
+	var host = host_script.new(0)
+	_check("t3_unknown_method_recorded",
+		host.call_method("_root", "Mystery", [1]) == null and (host.recorded as Array).size() == 1)
+	_check("t3_unknown_variable_recorded",
+		host.get_variable("nope") == null and (host.recorded as Array).size() == 2)
+	_check("t3_construct_object_recorded",
+		host.construct_object("Color", [9]) == null and (host.recorded as Array).size() == 3)
+	host.set_property("_root", 13, "renamed")
+	_check("t3_readonly_property_recorded",
+		(host.recorded as Array).size() == 4
+		and String((host.widget_state("_root") as Dictionary).name) == "_root")
+	var vm_host = host_script.new(0)
+	var names := ["Mystery"]
+	var asm := Asm.new()
+	var pool_patch := _emit_constant_pool(asm, 1)
+	asm.op(0x59)  # argc = 0
+	asm.op(0xB0)  # EA_CallNamedFuncPop "Mystery" -> recorded, undefined
+	asm.u8(0)
+	asm.op(0x00)
+	asm.patch_u32(pool_patch, asm.index_table([0]))
+	var vm = AptVmScript.new()
+	vm.host = vm_host
+	var result: Dictionary = vm.execute(asm.bytes, _string_constants(names))
+	_check("t3_vm_fail_closed_completes",
+		bool(result["completed"]) and (vm_host.recorded as Array).size() == 1)
+
+
+# --- Tier-3 end-to-end: MainMenu fixtures against the real host ---------------
+
+## Widget tree scaffold for the three MainMenu nav frame scripts (fixture
+## harness naming; button/nav label tables are test scaffolding, not retail
+## claims).
+func _build_tier3_menu_host():
+	var host = host_script.new(0, "_root")
+	var navs := {
+		"SoloPlayNav": ["Skirmish", "WarOfTheRing", "BonusCampaign", "Expansion1Campaign", "LoadGame"],
+		"MultiPlayNav": ["Replay", "LocalNetwork", "Online"],
+		"OptionsNav": ["Settings", "AdvancedSettings", "Credits"],
+	}
+	for nav_name in navs:
+		var nav_path: String = host.add_clip("_root", nav_name,
+			{"labels": {"_hide": 0, "_show": 1}, "total_frames": 4})
+		for button_name in navs[nav_name]:
+			host.add_clip(nav_path, button_name,
+				{"labels": {"_over": 1, "_disable": 2}, "total_frames": 4})
+		host.add_clip(nav_path, "OpenButton", {"labels": {"_over": 1}, "total_frames": 4})
+	host.set_extern_value("MainMenuUnlockBonusCampaign", false)
+	return host
+
+
+func _run_tier3_end_to_end() -> void:
+	var fixture_path := ProjectSettings.globalize_path("res://").path_join(FIXTURE_RELATIVE)
+	if not FileAccess.file_exists(fixture_path):
+		print("RETAIL_APT_VM SKIP tier3_end_to_end (absent: %s)" % fixture_path)
+		return
+	var fixture: Variant = JSON.parse_string(FileAccess.get_file_as_string(fixture_path))
+	if fixture == null or not (fixture is Dictionary):
+		_check("t3_e2e_fixture_parses", false)
+		return
+	var scope_by_entry := {
+		0x11BA0: "_root.SoloPlayNav",
+		0x11938: "_root.MultiPlayNav",
+		0x11A68: "_root.OptionsNav",
+	}
+	var digests: Array[String] = []
+	var all_complete := true
+	var all_scoped := true
+	var recorded_total := 0
+	var last_host = null
+	for _pass in range(2):
+		var host = _build_tier3_menu_host()
+		for script in fixture.get("scripts", []) as Array:
+			var movie_name := String(script["movie"])
+			var entry := int(script["entry_offset"])
+			if not scope_by_entry.has(entry):
+				all_scoped = false
+				continue
+			var movie: Dictionary = (fixture.get("movies", {}) as Dictionary)[movie_name]
+			host.set_scope(String(scope_by_entry[entry]))
+			var vm = AptVmScript.new()
+			vm.host = host
+			var result: Dictionary = vm.execute(
+				(movie["apt_data_hex"] as String).hex_decode(), movie["constants"], entry)
+			all_complete = all_complete and bool(result["completed"])
+		recorded_total += (host.recorded as Array).size()
+		digests.append(host.state_digest())
+		last_host = host
+	_check("t3_e2e_scripts_complete", all_complete and all_scoped)
+	_check("t3_e2e_full_contract_coverage", recorded_total == 0, "recorded=%d" % recorded_total)
+	_check("t3_e2e_deterministic_double_run", digests.size() == 2 and digests[0] == digests[1])
+	print("RETAIL_APT_VM tier3_e2e digest=%s" % digests[0])
+	_check("t3_e2e_digest_pinned", digests[0] == TIER3_E2E_DIGEST, digests[0])
+	var skirmish: Dictionary = last_host.widget_state("_root.SoloPlayNav.Skirmish")
+	_check("t3_e2e_button_names_written",
+		(skirmish.variables as Dictionary).get("buttonName") == "$Skirmish"
+		and (skirmish.variables as Dictionary).get("closeParent") == true)
+	var replay: Dictionary = last_host.widget_state("_root.MultiPlayNav.Replay")
+	_check("t3_e2e_multiplay_button_named",
+		(replay.variables as Dictionary).get("buttonName") == "$Replays")
+	var open_button: Dictionary = last_host.widget_state("_root.SoloPlayNav.OpenButton")
+	_check("t3_e2e_open_button_plays_over",
+		int(open_button.frame) == 1 and bool(open_button.playing)
+		and String(open_button.label) == "_over")
+	var bonus: Dictionary = last_host.widget_state("_root.SoloPlayNav.BonusCampaign")
+	_check("t3_e2e_locked_bonus_campaign_disabled", String(bonus.label) == "_disable")
+	var multi_nav: Dictionary = last_host.widget_state("_root.MultiPlayNav")
+	_check("t3_e2e_sibling_navs_hidden",
+		String(multi_nav.label) == "_hide" and int(multi_nav.frame) == 0
+		and not bool(multi_nav.playing))
 
 
 # --- Real fixtures ----------------------------------------------------------
