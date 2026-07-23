@@ -14,9 +14,19 @@ signal rules_reset_requested
 signal play_pressed
 signal main_menu_pressed
 signal stats_pressed
+## N-team setup signals: the row set was rebuilt (add/remove/map-capacity clamp),
+## a row's controller (Human/AI) flipped, or a row's Team/alliance changed. The
+## main menu re-populates and re-validates on each.
+signal rows_changed
+signal controller_changed(row: int)
+signal team_changed(row: int)
 
 const TAB_MAP := "map"
 const TAB_RULES := "rules"
+## Skirmish capacity floor/ceiling. Two rows is the retail default (one human +
+## one AI); the ceiling is the largest skirmish the sim's roster admits.
+const MIN_PLAYER_ROWS := 2
+const MAX_PLAYER_ROWS := 8
 
 var map_rows: Array[Dictionary] = []
 var map_rows_host: VBoxContainer
@@ -43,6 +53,19 @@ var team_dropdowns: Array[OptionButton] = []
 var color_swatches: Array[ColorRect] = []
 var color_dropdowns: Array[OptionButton] = []
 var handicap_dropdowns: Array[OptionButton] = []
+## Per-row controls added for the N-team setup. Index aligns with the other
+## per-row arrays; `player_army_opt`/`enemy_army_opt` alias rows 0 and 1 so the
+## legacy two-side callers keep working unchanged.
+var row_army_opts: Array[OptionButton] = []
+var row_controller_opts: Array[OptionButton] = []
+var row_difficulty_opts: Array[OptionButton] = []
+var row_name_labels: Array[Label] = []
+var rows_host: VBoxContainer
+var add_player_btn: Button
+var remove_player_btn: Button
+var player_row_count := MIN_PLAYER_ROWS
+var max_player_count := MIN_PLAYER_ROWS
+var _rows_table: Panel
 var start_row: HBoxContainer
 var start_note: Label
 var start_buttons: Array[Button] = []
@@ -160,6 +183,21 @@ func _build_rules_content() -> void:
 	rules_reset_btn = _button(rules_content, "RulesReset", "RESET", Vector2(rules_content.size.x - 290, rules_content.size.y - 60), Vector2(260, 48))
 
 
+## Column x-origins for a player row (retail REF-09/10 column set plus the
+## Type/Difficulty columns the N-team sim needs). Kept as constants so the
+## header labels and every rebuilt row share one layout.
+const COL_NAME_X := 16.0
+const COL_ARMY_X := 150.0
+const COL_TYPE_X := 372.0
+const COL_DIFF_X := 500.0
+const COL_HERO_X := 648.0
+const COL_TEAM_X := 826.0
+const COL_COLOR_X := 946.0
+const COL_SWATCH_X := 1064.0
+const COL_HANDICAP_X := 1108.0
+const ROW_HEIGHT := 42.0
+
+
 func _build_player_rows() -> void:
 	var table := Panel.new()
 	table.name = "PlayerRows"
@@ -167,52 +205,171 @@ func _build_player_rows() -> void:
 	table.position = Vector2(30, 540)
 	table.size = Vector2(size.x - 60, 168)
 	add_child(table)
-	var header_y := 10.0
-	_label(table, "HeaderPlayer", "Player", Vector2(20, header_y), Vector2(220, 24), 15, Color("b7dc94"))
-	_label(table, "HeaderArmy", "Army", Vector2(260, header_y), Vector2(300, 24), 15, Color("b7dc94"))
-	_label(table, "HeaderHero", "Hero", Vector2(580, header_y), Vector2(240, 24), 15, Color("b7dc94"))
-	_label(table, "HeaderTeam", "Team", Vector2(840, header_y), Vector2(160, 24), 15, Color("b7dc94"))
-	_label(table, "HeaderColor", "Color", Vector2(1020, header_y), Vector2(120, 24), 15, Color("b7dc94"))
-	_label(table, "HeaderHandicap", "Handicap", Vector2(1160, header_y), Vector2(160, 24), 15, Color("b7dc94"))
-	var row_data := [
-		{"name": "Player 1", "army_var": "player_army_opt"},
-		{"name": "Player 2 (AI)", "army_var": "enemy_army_opt"},
-	]
-	for index in row_data.size():
-		var row: Dictionary = row_data[index]
-		var y := 44.0 + index * 74.0
-		_label(table, "RowName%d" % index, String(row["name"]), Vector2(20, y + 10), Vector2(220, 30), 16, Color("d8e6da"))
-		var army := _option(table, "PlayerArmy" if index == 0 else "EnemyArmy", Vector2(260, y), Vector2(300, 42))
+	_rows_table = table
+	var header_y := 8.0
+	_label(table, "HeaderPlayer", "Player", Vector2(COL_NAME_X + 4, header_y), Vector2(140, 24), 14, Color("b7dc94"))
+	_label(table, "HeaderArmy", "Army", Vector2(COL_ARMY_X, header_y), Vector2(210, 24), 14, Color("b7dc94"))
+	_label(table, "HeaderType", "Type", Vector2(COL_TYPE_X, header_y), Vector2(120, 24), 14, Color("b7dc94"))
+	_label(table, "HeaderDifficulty", "Difficulty", Vector2(COL_DIFF_X, header_y), Vector2(140, 24), 14, Color("b7dc94"))
+	_label(table, "HeaderHero", "Hero", Vector2(COL_HERO_X, header_y), Vector2(170, 24), 14, Color("b7dc94"))
+	_label(table, "HeaderTeam", "Team", Vector2(COL_TEAM_X, header_y), Vector2(110, 24), 14, Color("b7dc94"))
+	_label(table, "HeaderColor", "Color", Vector2(COL_COLOR_X, header_y), Vector2(110, 24), 14, Color("b7dc94"))
+	_label(table, "HeaderHandicap", "Handicap", Vector2(COL_HANDICAP_X, header_y), Vector2(120, 24), 14, Color("b7dc94"))
+
+	# Add / Remove sit on the header strip at the far right; the main menu binds
+	# them and re-populates the rebuilt rows.
+	remove_player_btn = _button(table, "RemovePlayer", "-", Vector2(table.size.x - 92, header_y - 2), Vector2(36, 28))
+	remove_player_btn.tooltip_text = "Remove the last AI slot"
+	add_player_btn = _button(table, "AddPlayer", "+", Vector2(table.size.x - 50, header_y - 2), Vector2(36, 28))
+	add_player_btn.tooltip_text = "Add an AI slot (bounded by the map's player capacity)"
+	add_player_btn.pressed.connect(func() -> void: add_player_row())
+	remove_player_btn.pressed.connect(func() -> void: remove_player_row())
+
+	var scroll := ScrollContainer.new()
+	scroll.name = "PlayerRowsScroll"
+	scroll.position = Vector2(8, 38)
+	scroll.size = Vector2(table.size.x - 16, table.size.y - 46)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	table.add_child(scroll)
+	rows_host = VBoxContainer.new()
+	rows_host.name = "PlayerRowsList"
+	rows_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rows_host.add_theme_constant_override("separation", 4)
+	scroll.add_child(rows_host)
+	_rebuild_player_rows()
+
+
+func _rebuild_player_rows() -> void:
+	## (Re)creates exactly `player_row_count` rows. Row 0 is the local human;
+	## rows 1..N default to AI. Per-row control arrays are rebuilt in lockstep and
+	## `player_army_opt`/`enemy_army_opt` re-alias rows 0/1 for the legacy callers.
+	for child in rows_host.get_children():
+		child.queue_free()
+	hero_dropdowns.clear()
+	team_dropdowns.clear()
+	color_swatches.clear()
+	color_dropdowns.clear()
+	handicap_dropdowns.clear()
+	row_army_opts.clear()
+	row_controller_opts.clear()
+	row_difficulty_opts.clear()
+	row_name_labels.clear()
+	player_army_opt = null
+	enemy_army_opt = null
+	var row_width := rows_host.size.x if rows_host.size.x > 0 else _rows_table.size.x - 24
+	for index in player_row_count:
+		var is_human := index == 0
+		var row := Control.new()
+		row.name = "PlayerRow%d" % index
+		row.custom_minimum_size = Vector2(row_width, ROW_HEIGHT)
+		rows_host.add_child(row)
+
+		var name_label := _label(row, "RowName%d" % index, _row_name(index, is_human), Vector2(COL_NAME_X, 6), Vector2(140, 30), 15, Color("d8e6da"))
+		row_name_labels.append(name_label)
+
+		var army := _option(row, "PlayerArmy" if index == 0 else ("EnemyArmy" if index == 1 else "Army%d" % index), Vector2(COL_ARMY_X, 0), Vector2(210, ROW_HEIGHT))
 		army.item_selected.connect(func(_i: int) -> void: army_changed.emit())
-		set(String(row["army_var"]), army)
-		var hero := _option(table, "Hero%d" % index, Vector2(580, y), Vector2(240, 42))
+		row_army_opts.append(army)
+		if index == 0:
+			player_army_opt = army
+		elif index == 1:
+			enemy_army_opt = army
+
+		var controller := _option(row, "Type%d" % index, Vector2(COL_TYPE_X, 0), Vector2(120, ROW_HEIGHT))
+		controller.add_item("Human")
+		controller.add_item("AI")
+		controller.select(0 if is_human else 1)
+		controller.item_selected.connect(func(_i: int) -> void: controller_changed.emit(index))
+		row_controller_opts.append(controller)
+
+		var difficulty := _option(row, "Difficulty%d" % index, Vector2(COL_DIFF_X, 0), Vector2(140, ROW_HEIGHT))
+		row_difficulty_opts.append(difficulty)
+
+		var hero := _option(row, "Hero%d" % index, Vector2(COL_HERO_X, 0), Vector2(170, ROW_HEIGHT))
 		hero.add_item("-")
 		hero.select(0)
 		hero.disabled = true
 		hero.tooltip_text = "Create-a-Hero is not a converted feature"
 		hero_dropdowns.append(hero)
-		var team := _option(table, "Team%d" % index, Vector2(840, y), Vector2(160, 42))
-		team.add_item("-")
-		team.select(0)
-		team.disabled = true
-		team.tooltip_text = "Fixed two-sided match; alternate teams are not supported by the slice"
+
+		var team := _option(row, "Team%d" % index, Vector2(COL_TEAM_X, 0), Vector2(110, ROW_HEIGHT))
+		team.item_selected.connect(func(_i: int) -> void: team_changed.emit(index))
+		team.tooltip_text = "Team/alliance: rows sharing a number are allied"
 		team_dropdowns.append(team)
-		var color_opt := _option(table, "Color%d" % index, Vector2(1016, y), Vector2(120, 42))
+
+		var color_opt := _option(row, "Color%d" % index, Vector2(COL_COLOR_X, 0), Vector2(110, ROW_HEIGHT))
 		color_opt.item_selected.connect(func(_i: int) -> void: color_changed.emit(index))
 		color_dropdowns.append(color_opt)
 		var swatch := ColorRect.new()
 		swatch.name = "ColorSwatch%d" % index
-		swatch.position = Vector2(1146, y + 5)
-		swatch.size = Vector2(32, 32)
+		swatch.position = Vector2(COL_SWATCH_X, 5)
+		swatch.size = Vector2(30, 30)
 		swatch.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		table.add_child(swatch)
+		row.add_child(swatch)
 		color_swatches.append(swatch)
-		var handicap := _option(table, "Handicap%d" % index, Vector2(1190, y), Vector2(160, 42))
+
+		var handicap := _option(row, "Handicap%d" % index, Vector2(COL_HANDICAP_X, 0), Vector2(120, ROW_HEIGHT))
 		handicap.add_item("0%")
 		handicap.select(0)
 		handicap.disabled = true
-		handicap.tooltip_text = "Handicap scaling is not supported by the slice"
+		handicap.tooltip_text = "Handicap scaling is not supported by the slice (difficulty tiers scale AI resources instead)"
 		handicap_dropdowns.append(handicap)
+	_sync_row_affordances()
+
+
+func _row_name(index: int, is_human: bool) -> String:
+	return "Player %d%s" % [index + 1, "" if is_human else " (AI)"]
+
+
+func set_max_player_count(maximum: int) -> void:
+	## Bound the row count to the selected map's capacity. Clamps the current
+	## count down when a smaller map is chosen; the floor is always MIN_PLAYER_ROWS.
+	max_player_count = clampi(maximum, MIN_PLAYER_ROWS, MAX_PLAYER_ROWS)
+	var clamped := clampi(player_row_count, MIN_PLAYER_ROWS, max_player_count)
+	if clamped != player_row_count:
+		player_row_count = clamped
+		_rebuild_player_rows()
+		rows_changed.emit()
+	else:
+		_sync_row_affordances()
+
+
+func add_player_row() -> void:
+	if player_row_count >= max_player_count:
+		return
+	player_row_count += 1
+	_rebuild_player_rows()
+	rows_changed.emit()
+
+
+func remove_player_row() -> void:
+	if player_row_count <= MIN_PLAYER_ROWS:
+		return
+	player_row_count -= 1
+	_rebuild_player_rows()
+	rows_changed.emit()
+
+
+func _sync_row_affordances() -> void:
+	if add_player_btn != null:
+		add_player_btn.disabled = player_row_count >= max_player_count
+	if remove_player_btn != null:
+		remove_player_btn.disabled = player_row_count <= MIN_PLAYER_ROWS
+
+
+func set_row_controller_is_human(row: int, is_human: bool) -> void:
+	## Reflects the resolved controller onto a row: the name gains/loses the
+	## "(AI)" suffix and the Difficulty dropdown only applies to AI rows.
+	if row < 0 or row >= row_name_labels.size():
+		return
+	row_name_labels[row].text = _row_name(row, is_human)
+	var difficulty := row_difficulty_opts[row]
+	difficulty.disabled = is_human
+	difficulty.modulate = Color(1, 1, 1, 0.35 if is_human else 1.0)
+	if is_human:
+		difficulty.tooltip_text = "Difficulty applies to AI slots only"
+	else:
+		difficulty.tooltip_text = ""
 
 
 func _build_bottom_bar() -> void:

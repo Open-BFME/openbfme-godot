@@ -46,6 +46,15 @@ var retail_enemy_color: Color = Color(0.651, 0.125, 0.110)
 ## default. Selectable ids: bfme2.map.fords-of-isen-ii, bfme2.map.rivendell,
 ## bfme2.map.mount-doom, bfme2.map.dagorlad, bfme2.map.mordor.
 var retail_map_id: String = ""
+## N-team skirmish roster written by the main menu's setup screen. Each entry is
+## {team:int, faction:String, controller:String("human"/"ai"), difficulty:String,
+## alliance:int, color:Color, start_index:int}. PRECEDENCE: when this list is
+## non-empty it is authoritative — the slice seeds one team per descriptor and
+## resolves a per-team faction manifest for each. When empty (the untouched
+## two-row default and every headless runner), the slice falls back to the legacy
+## retail_player_faction / retail_enemy_faction pair, so that path stays
+## byte-identical. OPENBFME_SLICE_FACTION still overrides everything.
+var retail_team_setup: Array = []
 
 var resources: Dictionary = {0: 1500.0, 1: 1500.0, 2: 0.0}
 var power_points: Dictionary = {0: 0.0, 1: 0.0}

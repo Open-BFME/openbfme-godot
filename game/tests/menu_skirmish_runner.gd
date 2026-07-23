@@ -123,13 +123,24 @@ func _run() -> void:
 		int(game_state.get("retail_initial_resources")) == 1200
 			and is_equal_approx(float(game_state.get("retail_command_point_factor")), 1.0)
 	)
-	# Honestly disabled columns and toggles carry their reasons as tooltips.
+	# Honestly disabled columns and toggles carry their reasons as tooltips. Team
+	# is no longer in this set: it is the enabled alliance control for the N-team
+	# setup (asserted enabled just below).
 	var disabled_reasons_ok := true
-	for node_name in ["Hero0", "Hero1", "Team0", "Team1", "Handicap0", "Handicap1", "CustomHeroesToggle", "RingHeroesToggle", "ProfileButton"]:
+	for node_name in ["Hero0", "Hero1", "Handicap0", "Handicap1", "CustomHeroesToggle", "RingHeroesToggle", "ProfileButton"]:
 		var control := menu.find_child(node_name, true, false) as Control
 		if control == null or not control.get("disabled") or String(control.tooltip_text).strip_edges() == "":
 			disabled_reasons_ok = false
 	_check("unsupported_columns_disabled_with_reasons", disabled_reasons_ok)
+	# The Team column is now an enabled alliance dropdown (rows sharing a number are
+	# allied); default assigns each of the two rows its own number (free-for-all).
+	var team0_opt := menu.find_child("Team0", true, false) as OptionButton
+	var team1_opt := menu.find_child("Team1", true, false) as OptionButton
+	_check(
+		"team_alliance_dropdowns_enabled",
+		team0_opt != null and team1_opt != null and not team0_opt.disabled and not team1_opt.disabled
+			and team0_opt.item_count == 8 and int(team0_opt.get_item_metadata(team0_opt.selected)) != int(team1_opt.get_item_metadata(team1_opt.selected))
+	)
 	# The description panel stays honest: no converted description text exists.
 	var description_label := menu.find_child("SetupDescription", true, false) as Label
 	_check(

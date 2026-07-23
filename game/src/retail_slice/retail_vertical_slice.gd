@@ -154,6 +154,10 @@ var enemy_faction := ""
 ## the resolved input a future packet feeds to the sim (via
 ## gameplay_rules["team_faction_manifests"]) once victory/AI/geometry are N-ready.
 var _team_faction_manifests: Dictionary = {}
+## Sim-facing team roster ({team,faction,is_ai,difficulty,alliance}) built from
+## the menu's GameState.retail_team_setup. Empty for the legacy two-side default;
+## when populated it is injected via simulation.configure_team_roster() at setup.
+var _menu_team_roster: Array = []
 var gameplay_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
 var trebuchet_runtime: Dictionary = {}
@@ -269,15 +273,26 @@ func _initialize_content_and_match() -> void:
 		_fail("Faction manifest failed: %s" % String(faction_manifest.get("_error", "")))
 		return
 	var player_faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
-	enemy_faction = _resolve_enemy_faction(player_faction)
-	# N-team: resolve a manifest per team through the per-faction path and feed
-	# the map into the simulation (below, in _gameplay_rules). The sim now seeds
-	# each team from its own manifest and resolves victory over the whole roster,
-	# so distinct player/enemy factions are accepted here. The MENU still sends
-	# same-faction today (its N-row / cross-faction selection is a later packet),
-	# so this map collapses to the single player manifest in practice; the runner
-	# proves the cross-faction path by injecting distinct manifests directly.
-	_team_faction_manifests = _resolve_team_faction_manifests(player_faction, enemy_faction)
+	# N-team: the menu's setup screen writes GameState.retail_team_setup — a full
+	# per-row roster (team/faction/controller/difficulty/alliance/start). When it is
+	# present it is authoritative: each team resolves its own faction manifest and
+	# the descriptor list seeds the sim's team registry (configure_team_roster,
+	# applied just before setup()). When it is absent (the untouched two-row default
+	# and every headless runner) the legacy two-side path runs unchanged, so the
+	# default match and its pinned battle signature stay byte-identical.
+	var menu_team_setup := _menu_team_setup()
+	if menu_team_setup.is_empty():
+		enemy_faction = _resolve_enemy_faction(player_faction)
+		_team_faction_manifests = _resolve_team_faction_manifests(player_faction, enemy_faction)
+		_menu_team_roster = []
+	else:
+		_menu_team_roster = _menu_sim_team_roster(menu_team_setup)
+		_team_faction_manifests = _resolve_menu_team_manifests(menu_team_setup, faction_manifest)
+		enemy_faction = _first_menu_opponent_faction(menu_team_setup, player_faction)
+		# Resolving other teams' manifests re-ran _classify_faction_units for those
+		# factions; re-classify the player faction so team 0's fieldable/producible
+		# runtimes (used by the spawn + HUD below) reflect the local player again.
+		_classify_faction_units(player_faction)
 	ranger_runtime = ContentDB.get_ranger_runtime()
 	trebuchet_runtime = ContentDB.get_trebuchet_runtime()
 	playable_unit_runtimes = ContentDB.get_playable_unit_runtimes()
@@ -411,6 +426,9 @@ func _initialize_content_and_match() -> void:
 	_apply_menu_match_options()
 	_resolve_mp_settings()
 	simulation = SimScript.new()
+	# N-team: inject the menu's team registry before setup() consumes it. Empty for
+	# the legacy default, which leaves the sim on its byte-identical 2-team roster.
+	_configure_simulation_team_roster(simulation)
 	_configure_simulation_spellbook()
 	simulation.setup(_match_configuration(), gameplay_rules)
 	if _mp_mode == "host" or _mp_mode == "join":
@@ -481,7 +499,10 @@ func _initialize_content_and_match() -> void:
 	# Full-pack manifests seed fortresses only; constructable kinds stay on the
 	# builder bar. Tiny Men pack still seeds its full five-building starter.
 	var seed_kinds: Array = faction_manifest.get("seed_structure_kinds", faction_manifest.get("structure_kinds", [])) as Array
-	var expected_structure_count := 2 * seed_kinds.size()
+	# One seeded structure set per rostered team. The default two-team roster keeps
+	# this at 2 * seed_kinds (byte-identical); an N-team roster scales with the
+	# team count so a 1v8 / multi-team match's fortresses all validate.
+	var expected_structure_count := simulation.team_ids().size() * seed_kinds.size()
 	var men_faction_slice := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)) == FactionManifestScript.DEFAULT_FACTION
 	ready_ok = (
 		battalion_nodes.size() == simulation.initial_battalion_count()
@@ -1535,6 +1556,97 @@ func _resolve_team_faction_manifests(player_faction: String, opponent_faction: S
 	else:
 		manifests[SimScript.ENEMY_TEAM] = _resolve_faction_manifest(opponent_faction)
 	return manifests
+
+
+func _menu_team_setup(game_state = null) -> Array:
+	## Normalized N-team roster from the menu (GameState.retail_team_setup), or []
+	## when the menu sent none. OPENBFME_SLICE_FACTION forces the legacy single-
+	## faction path (headless faction sweeps), so it returns [] then too. An
+	## injected game_state (detached-node tests) overrides the autoload lookup.
+	if OS.get_environment("OPENBFME_SLICE_FACTION").strip_edges() != "":
+		return []
+	var state = game_state if game_state != null else get_node_or_null("/root/GameState")
+	if state == null:
+		return []
+	var raw: Variant = state.get("retail_team_setup")
+	if typeof(raw) != TYPE_ARRAY:
+		return []
+	var normalized: Array = []
+	for entry_value in raw as Array:
+		if typeof(entry_value) != TYPE_DICTIONARY:
+			continue
+		var entry := entry_value as Dictionary
+		normalized.append(entry.duplicate(true))
+	return normalized
+
+
+func _menu_sim_team_roster(menu_setup: Array) -> Array:
+	## Project the menu descriptors onto the sim's team-roster contract:
+	## {team, faction, is_ai, difficulty, alliance}. Controller "human" -> is_ai
+	## false; every other value (default "ai") -> AI. Alliance is passed through
+	## when present so allied rows share a non-null id.
+	var roster: Array = []
+	for index in menu_setup.size():
+		var entry := menu_setup[index] as Dictionary
+		var descriptor := {
+			"team": int(entry.get("team", index)),
+			"faction": String(entry.get("faction", "")).strip_edges().to_lower(),
+			"is_ai": String(entry.get("controller", "ai")).strip_edges().to_lower() != "human",
+			"difficulty": String(entry.get("difficulty", "medium")).strip_edges().to_lower(),
+		}
+		if entry.has("alliance") and entry.get("alliance") != null:
+			descriptor["alliance"] = entry.get("alliance")
+		roster.append(descriptor)
+	return roster
+
+
+func _resolve_menu_team_manifests(menu_setup: Array, player_manifest: Dictionary) -> Dictionary:
+	## One faction manifest per team (keyed by sim team id). A team whose faction
+	## matches the already-resolved player faction reuses that manifest; every other
+	## faction resolves through the same fail-closed _resolve_faction_manifest path,
+	## cached so a repeated faction resolves once.
+	var manifests: Dictionary = {}
+	var by_faction: Dictionary = {}
+	var player_faction := String(player_manifest.get("faction", "")).strip_edges().to_lower()
+	for index in menu_setup.size():
+		var entry := menu_setup[index] as Dictionary
+		var team := int(entry.get("team", index))
+		var faction := String(entry.get("faction", "")).strip_edges().to_lower()
+		if faction == "" or faction == player_faction:
+			manifests[team] = player_manifest
+		elif by_faction.has(faction):
+			manifests[team] = by_faction[faction]
+		else:
+			var resolved := _resolve_faction_manifest(faction)
+			by_faction[faction] = resolved
+			manifests[team] = resolved
+	return manifests
+
+
+func _first_menu_opponent_faction(menu_setup: Array, player_faction: String) -> String:
+	## The legacy enemy_faction scalar for surfaces that still read a single
+	## opponent: the first rostered faction that differs from the player's, else
+	## the player faction (a same-faction match).
+	for index in menu_setup.size():
+		var faction := String((menu_setup[index] as Dictionary).get("faction", "")).strip_edges().to_lower()
+		if faction != "" and faction != player_faction:
+			return faction
+	return player_faction
+
+
+func _configure_simulation_team_roster(sim, game_state = null) -> Array:
+	## Inject the menu's team roster into the sim before setup(). Returns the roster
+	## actually applied ([] when the legacy default is in force). Reads the cached
+	## _menu_team_roster when already resolved (real boot), otherwise resolves it
+	## straight from the (possibly injected) GameState — the detached-node seam the
+	## N-team setup runner exercises without booting the whole match.
+	var roster := _menu_team_roster
+	if roster.is_empty():
+		roster = _menu_sim_team_roster(_menu_team_setup(game_state))
+	if roster.is_empty():
+		return []
+	sim.configure_team_roster(roster)
+	return roster
 
 
 func _resolve_enemy_faction(player_faction: String) -> String:

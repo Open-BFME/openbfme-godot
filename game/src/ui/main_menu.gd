@@ -53,6 +53,23 @@ const HOUSE_COLORS: Array[Dictionary] = [
 	{"name": "Teal", "color": Color8(46, 158, 155)},
 	{"name": "Pink", "color": Color8(214, 107, 168)},
 ]
+## AI difficulty tiers, matching the sim's AI_DIFFICULTY_PROFILES (easy/medium/
+## hard/brutal/morgoth). Medium is the sim's AI_DEFAULT_DIFFICULTY, so a default
+## AI row is byte-identical to the legacy single-AI setup.
+const RETAIL_AI_DIFFICULTIES: Array[Dictionary] = [
+	{"id": "easy", "name": "Easy"},
+	{"id": "medium", "name": "Medium"},
+	{"id": "hard", "name": "Hard"},
+	{"id": "brutal", "name": "Brutal"},
+	{"id": "morgoth", "name": "Morgoth"},
+]
+const RETAIL_AI_DEFAULT_DIFFICULTY := "medium"
+## Simulation team ids assigned to player rows, skipping NEUTRAL_TEAM (2) which
+## the sim reserves for capturable/prop owners. Row i takes TEAM_ID_POOL[i].
+const NEUTRAL_TEAM_ID := 2
+const TEAM_ID_POOL: Array[int] = [0, 1, 3, 4, 5, 6, 7, 8]
+const CONTROLLER_HUMAN := "human"
+const CONTROLLER_AI := "ai"
 
 @onready var center: Control = $Center
 @onready var menu_frame: Panel = $MenuFrame
@@ -183,23 +200,10 @@ func _populate_skirmish_options() -> void:
 	if not (_content_db.get("bundle_objects") as Dictionary).has(SliceScript.SOLDIER_OBJECT_ID):
 		_content_db.call("reload")
 	_skirmish_availability.clear()
-	var army_options: Array[OptionButton] = [solo_flyout.player_army_opt, solo_flyout.enemy_army_opt]
-	for option in army_options:
-		option.clear()
 	for faction in RETAIL_FACTIONS:
 		var faction_id := String(faction["id"])
-		var note := _retail_faction_availability(faction_id)
-		_skirmish_availability[faction_id] = note
-		var label := String(faction["name"]) + (NOT_CONVERTED_SUFFIX if note != "" else "")
-		for option in army_options:
-			option.add_item(label)
-			var index := option.item_count - 1
-			option.set_item_metadata(index, faction_id)
-			option.set_item_disabled(index, note != "")
-			if note != "":
-				option.set_item_tooltip(index, "Not converted: %s" % note)
-	_select_first_enabled(solo_flyout.player_army_opt)
-	_select_first_enabled(solo_flyout.enemy_army_opt)
+		_skirmish_availability[faction_id] = _retail_faction_availability(faction_id)
+	_populate_row_controls()
 	# Populate every known retail map the slice can boot (five-maps pack +
 	# host Fords entry). Maps the slice cannot resolve stay listed but are
 	# disabled with the honest reason the slice would refuse them.
@@ -268,16 +272,129 @@ func _populate_rules_options() -> void:
 
 
 func _populate_color_options() -> void:
-	for row in range(solo_flyout.color_dropdowns.size()):
-		var option: OptionButton = solo_flyout.color_dropdowns[row]
-		option.clear()
-		for entry in HOUSE_COLORS:
-			option.add_item(String(entry["name"]))
-			option.set_item_metadata(option.item_count - 1, entry["color"])
-	solo_flyout.color_dropdowns[0].select(0)
-	solo_flyout.color_dropdowns[1].select(1)
-	_on_color_changed(0)
-	_on_color_changed(1)
+	# Colors are populated per row by _populate_row_controls(); kept as a thin
+	# entry point so the boot sequence order in _ready() stays explicit.
+	_populate_row_controls()
+
+
+func _populate_row_controls() -> void:
+	## Fills every current player row's Army / Difficulty / Team / Color dropdowns
+	## and reflects each row's controller. Re-run whenever the row set is rebuilt
+	## (add/remove/map-capacity clamp) so the new rows carry valid options.
+	for row in range(solo_flyout.row_army_opts.size()):
+		_populate_row_army(row)
+		_populate_row_difficulty(row)
+		_populate_row_team(row)
+		_populate_row_color(row)
+		_apply_row_controller(row)
+
+
+func _populate_row_army(row: int) -> void:
+	var option: OptionButton = solo_flyout.row_army_opts[row]
+	option.clear()
+	for faction in RETAIL_FACTIONS:
+		var faction_id := String(faction["id"])
+		var note := String(_skirmish_availability.get(faction_id, ""))
+		option.add_item(String(faction["name"]) + (NOT_CONVERTED_SUFFIX if note != "" else ""))
+		var index := option.item_count - 1
+		option.set_item_metadata(index, faction_id)
+		option.set_item_disabled(index, note != "")
+		if note != "":
+			option.set_item_tooltip(index, "Not converted: %s" % note)
+	_select_first_enabled(option)
+
+
+func _populate_row_difficulty(row: int) -> void:
+	var option: OptionButton = solo_flyout.row_difficulty_opts[row]
+	option.clear()
+	for tier in RETAIL_AI_DIFFICULTIES:
+		option.add_item(String(tier["name"]))
+		option.set_item_metadata(option.item_count - 1, String(tier["id"]))
+	_select_option_by_metadata_value(option, RETAIL_AI_DEFAULT_DIFFICULTY)
+
+
+func _populate_row_team(row: int) -> void:
+	## The retail Team column is the alliance grouping: rows sharing a number are
+	## allied. Default assigns each row its own number (row i -> i+1) so a fresh
+	## setup is free-for-all (every team mutually hostile).
+	var option: OptionButton = solo_flyout.team_dropdowns[row]
+	option.clear()
+	option.disabled = false
+	for number in range(1, solo_flyout.MAX_PLAYER_ROWS + 1):
+		option.add_item(str(number))
+		option.set_item_metadata(option.item_count - 1, number)
+	option.select(mini(row, option.item_count - 1))
+	option.tooltip_text = "Team/alliance: rows sharing a number fight as allies"
+
+
+func _populate_row_color(row: int) -> void:
+	var option: OptionButton = solo_flyout.color_dropdowns[row]
+	option.clear()
+	for entry in HOUSE_COLORS:
+		option.add_item(String(entry["name"]))
+		option.set_item_metadata(option.item_count - 1, entry["color"])
+	option.select(row % HOUSE_COLORS.size())
+	_on_color_changed(row)
+
+
+func _apply_row_controller(row: int) -> void:
+	var option: OptionButton = solo_flyout.row_controller_opts[row]
+	var is_human := option.selected >= 0 and option.get_item_text(option.selected) == "Human"
+	solo_flyout.set_row_controller_is_human(row, is_human)
+
+
+func _selected_row_difficulty(row: int) -> String:
+	var option: OptionButton = solo_flyout.row_difficulty_opts[row]
+	if option.selected < 0:
+		return RETAIL_AI_DEFAULT_DIFFICULTY
+	return String(option.get_item_metadata(option.selected))
+
+
+func _selected_row_alliance(row: int) -> int:
+	var option: OptionButton = solo_flyout.team_dropdowns[row]
+	if option.selected < 0:
+		return row + 1
+	return int(option.get_item_metadata(option.selected))
+
+
+func _selected_row_color(row: int) -> Color:
+	var option: OptionButton = solo_flyout.color_dropdowns[row]
+	if option.selected < 0:
+		return HOUSE_COLORS[row % HOUSE_COLORS.size()]["color"]
+	return option.get_item_metadata(option.selected)
+
+
+func _row_is_human(row: int) -> bool:
+	var option: OptionButton = solo_flyout.row_controller_opts[row]
+	return option.selected >= 0 and option.get_item_text(option.selected) == "Human"
+
+
+func _on_rows_changed() -> void:
+	_populate_row_controls()
+	_refresh_start_row()
+	_refresh_skirmish_launch_state()
+
+
+func _on_controller_changed(row: int) -> void:
+	# Exactly one local human: choosing Human on a row demotes every other row to
+	# AI (radio behavior), mirroring retail skirmish where you hold a single slot.
+	if _row_is_human(row):
+		for other in range(solo_flyout.row_controller_opts.size()):
+			if other != row and _row_is_human(other):
+				solo_flyout.row_controller_opts[other].select(1)
+	elif _human_row_index() == -1:
+		# The human slot may never vanish; keep this row human if it was the last.
+		solo_flyout.row_controller_opts[row].select(0)
+	for other in range(solo_flyout.row_controller_opts.size()):
+		_apply_row_controller(other)
+	_refresh_skirmish_launch_state()
+
+
+func _human_row_index() -> int:
+	for row in range(solo_flyout.row_controller_opts.size()):
+		if _row_is_human(row):
+			return row
+	return -1
 
 
 func _on_color_changed(row: int) -> void:
@@ -286,7 +403,12 @@ func _on_color_changed(row: int) -> void:
 		return
 	var color: Color = option.get_item_metadata(option.selected)
 	solo_flyout.color_swatches[row].color = color
-	_game_state.set("retail_player_color" if row == 0 else "retail_enemy_color", color)
+	# Rows 0/1 also drive the legacy two-side color fields so an unchanged default
+	# setup writes byte-identical GameState.
+	if row == 0:
+		_game_state.set("retail_player_color", color)
+	elif row == 1:
+		_game_state.set("retail_enemy_color", color)
 
 
 func _refresh_start_row() -> void:
@@ -365,10 +487,31 @@ func _select_first_available_map_row() -> void:
 
 func _on_map_row_pressed(index: int) -> void:
 	solo_flyout.set_selected_map_row(index)
+	# The selected map's authored player count bounds how many rows the setup can
+	# add. Clamping down may rebuild rows (rows_changed re-populates them).
+	var capacity := _selected_map_player_capacity()
+	if capacity >= solo_flyout.MIN_PLAYER_ROWS:
+		solo_flyout.set_max_player_count(capacity)
 	_refresh_map_preview()
 	_refresh_map_description()
 	_refresh_start_row()
 	_refresh_skirmish_launch_state()
+
+
+func _selected_map_player_capacity() -> int:
+	## The selected map's authored player count, bounded to the setup ceiling. The
+	## number of authored player starts is the hard cap (a team needs a spawn), so
+	## the smaller of playerCount and the resolvable start count wins.
+	var map_id := _selected_skirmish_map()
+	if map_id == "":
+		return solo_flyout.MIN_PLAYER_ROWS
+	var map_doc := _skirmish_map_document(map_id)
+	var declared := int(map_doc.get("playerCount", 0))
+	var starts := _read_map_start_indices(map_id).size()
+	var capacity := declared
+	if starts > 0:
+		capacity = starts if declared <= 0 else mini(declared, starts)
+	return maxi(solo_flyout.MIN_PLAYER_ROWS, mini(capacity, solo_flyout.MAX_PLAYER_ROWS))
 
 
 func _select_first_enabled(option: OptionButton) -> void:
@@ -447,24 +590,55 @@ func get_retail_faction_availability() -> Dictionary:
 
 func retail_launch_error() -> String:
 	## "" when a skirmish launch may proceed, else the player-facing reason it
-	## is blocked. A blocked launch never falls back silently.
+	## is blocked. A blocked launch never falls back silently. Every row is
+	## validated fail-closed: its faction must be convertible (the same per-faction
+	## availability signal the slice uses), the roster must contain at least two
+	## mutually-hostile alliances, and each team must claim a distinct authored
+	## player start.
 	var host_error := _men_pack_gate_error()
 	if host_error != "":
 		return "The retail slice host pack is unavailable: %s." % host_error
-	var player_id := _selected_skirmish_faction(solo_flyout.player_army_opt)
-	var enemy_id := _selected_skirmish_faction(solo_flyout.enemy_army_opt)
-	if player_id == "" or enemy_id == "":
-		return "No converted faction is selectable yet. Convert a faction pack first."
-	for side in [["Player", player_id], ["Enemy", enemy_id]]:
-		var note := String(_skirmish_availability.get(String(side[1]), "not converted"))
-		if note != "":
-			return "%s faction %s is not converted yet: %s." % [String(side[0]), _retail_faction_display_name(String(side[1])), note]
-	if player_id != enemy_id:
-		return "Cross-faction matches are not seeded by the slice yet; pick the same faction for both sides."
 	var map_id := _selected_skirmish_map()
 	if map_id == "":
 		return "No retail map is selectable. Ensure bfme2-five-maps is selected."
+	var row_count: int = solo_flyout.row_army_opts.size()
+	for row in range(row_count):
+		var faction_id := _selected_skirmish_faction(solo_flyout.row_army_opts[row])
+		if faction_id == "":
+			return "No converted faction is selectable yet. Convert a faction pack first."
+		var note := String(_skirmish_availability.get(faction_id, "not converted"))
+		if note != "":
+			return "Player %d faction %s is not converted yet: %s." % [row + 1, _retail_faction_display_name(faction_id), note]
+	if _human_row_index() == -1:
+		return "One slot must be the local player (Human)."
+	var alliances: Dictionary = {}
+	for row in range(row_count):
+		alliances[_selected_row_alliance(row)] = true
+	if alliances.size() < 2:
+		return "All players share one team; a skirmish needs at least two hostile teams."
+	if _assign_start_indices(map_id, row_count).is_empty():
+		return "This map provides fewer authored player starts than the %d players selected." % row_count
 	return ""
+
+
+func _assign_start_indices(map_id: String, row_count: int) -> Array[int]:
+	## One distinct authored player start per row, or [] when the map cannot seat
+	## every team. Row 0 (the human) keeps its manually chosen start when valid;
+	## the rest take the remaining authored starts in ascending order.
+	var starts := _read_map_start_indices(map_id)
+	if starts.size() < row_count:
+		return []
+	var assigned: Array[int] = []
+	var pool := starts.duplicate()
+	var human_start := int(_game_state.get("retail_player_start_index"))
+	if human_start > 0 and pool.has(human_start):
+		assigned.append(human_start)
+		pool.erase(human_start)
+	else:
+		assigned.append(int(pool.pop_front()))
+	for _row in range(1, row_count):
+		assigned.append(int(pool.pop_front()))
+	return assigned
 
 
 func _selected_skirmish_faction(option: OptionButton) -> String:
@@ -562,13 +736,65 @@ func apply_skirmish_selection() -> bool:
 	# A solo launch is always single-player: clear any multiplayer selection a
 	# previous NETWORK visit left behind so the slice never hosts by surprise.
 	_game_state.set("retail_mp_mode", "")
-	_game_state.set("retail_player_faction", _selected_skirmish_faction(solo_flyout.player_army_opt))
-	_game_state.set("retail_enemy_faction", _selected_skirmish_faction(solo_flyout.enemy_army_opt))
 	var map_id := _selected_skirmish_map()
+	# Legacy two-side fields: row 0 is the human, the first AI slot is the "enemy".
+	# They stay authoritative for the byte-identical default launch and remain the
+	# fallback whenever no N-team descriptor list is present (retail_team_setup []).
+	var human_row := maxi(0, _human_row_index())
+	var enemy_row := _first_non_human_row()
+	_game_state.set("retail_player_faction", _selected_skirmish_faction(solo_flyout.row_army_opts[human_row]))
+	_game_state.set("retail_enemy_faction", _selected_skirmish_faction(solo_flyout.row_army_opts[enemy_row]))
 	_game_state.set("retail_map_id", map_id if map_id != "" else SliceScript.MAP_ID)
 	_game_state.set("retail_initial_resources", _selected_rules_resources())
 	_game_state.set("retail_command_point_factor", _selected_rules_factor())
+	# N-team descriptor list: authoritative when present. Only written for setups
+	# the legacy pair cannot express (>2 rows, or a non-medium AI tier); the exact
+	# legacy default clears it so the slice keeps its proven two-team path and the
+	# pinned battle signature is untouched.
+	if _setup_is_advanced():
+		_game_state.set("retail_team_setup", _build_team_descriptors(map_id))
+	else:
+		_game_state.set("retail_team_setup", [])
 	return true
+
+
+func _first_non_human_row() -> int:
+	for row in range(solo_flyout.row_army_opts.size()):
+		if not _row_is_human(row):
+			return row
+	return mini(1, solo_flyout.row_army_opts.size() - 1)
+
+
+func _setup_is_advanced() -> bool:
+	## True when the setup carries something the legacy two-side fields cannot
+	## represent: more than two rows, or any AI slot on a non-default difficulty.
+	if solo_flyout.row_army_opts.size() > 2:
+		return true
+	for row in range(solo_flyout.row_army_opts.size()):
+		if not _row_is_human(row) and _selected_row_difficulty(row) != RETAIL_AI_DEFAULT_DIFFICULTY:
+			return true
+	return false
+
+
+func _build_team_descriptors(map_id: String) -> Array:
+	## The full N-team roster the slice hands to the sim. One descriptor per row,
+	## each carrying its sim team id (skipping NEUTRAL_TEAM), faction, controller,
+	## AI difficulty, alliance number, house color, and a distinct authored start.
+	var row_count: int = solo_flyout.row_army_opts.size()
+	var starts := _assign_start_indices(map_id, row_count)
+	var descriptors: Array = []
+	for row in range(row_count):
+		var is_human := _row_is_human(row)
+		descriptors.append({
+			"team": TEAM_ID_POOL[row],
+			"faction": _selected_skirmish_faction(solo_flyout.row_army_opts[row]),
+			"controller": CONTROLLER_HUMAN if is_human else CONTROLLER_AI,
+			"difficulty": RETAIL_AI_DEFAULT_DIFFICULTY if is_human else _selected_row_difficulty(row),
+			"alliance": _selected_row_alliance(row),
+			"color": _selected_row_color(row),
+			"start_index": starts[row] if row < starts.size() else 0,
+		})
+	return descriptors
 
 
 func _selected_rules_resources() -> int:
@@ -688,6 +914,9 @@ func _connect_actions() -> void:
 	sub_quit_btn.pressed.connect(func() -> void: get_tree().quit())
 	solo_flyout.army_changed.connect(_refresh_skirmish_launch_state)
 	solo_flyout.color_changed.connect(_on_color_changed)
+	solo_flyout.rows_changed.connect(_on_rows_changed)
+	solo_flyout.controller_changed.connect(_on_controller_changed)
+	solo_flyout.team_changed.connect(func(_row: int) -> void: _refresh_skirmish_launch_state())
 	solo_flyout.play_pressed.connect(_on_retail)
 	solo_flyout.main_menu_pressed.connect(func() -> void: _show_page(PAGE_MAIN))
 	solo_flyout.stats_pressed.connect(func() -> void: _show_page(PAGE_STATS))
