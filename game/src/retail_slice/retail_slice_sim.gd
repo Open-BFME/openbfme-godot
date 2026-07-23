@@ -821,6 +821,10 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	_validate_faction_manifest_coherence()
 	_record_structure_armor_provisionals()
 	base_loop_enabled = bool(_rules.get("enable_base_loop", false))
+	# BFME1 build-plots-only toggle. Absent (every legacy runner and the untouched
+	# menu) resolves false, so the freeform construction path stays byte-identical.
+	build_plots_only = bool(_rules.get("build_plots_only", false))
+	build_plots.clear()
 	command_point_cap = maxi(60, int(_rules.get("command_point_cap", 200)))
 	var starting_resources := maxi(0, int(_rules.get("starting_resources", 1200 if base_loop_enabled else 0)))
 	team_resources = _seed_team_map(starting_resources)
@@ -2057,6 +2061,8 @@ func _initialize_base_loop() -> void:
 				"income_per_payout": int(_rules.get("farm_income", 25)) if kind == "farm" else 0,
 			}
 	_seed_all_expansion_pads()
+	if build_plots_only:
+		_seed_all_build_plots()
 
 
 func _team_center(team: int) -> Vector2:
@@ -4621,6 +4627,31 @@ var expansion_pads: Dictionary = {}
 var _expansion_build_rules: Dictionary = {}
 var _next_expansion_structure_id := 9000
 
+# --- BFME1 build-plots-only mode -------------------------------------------
+# When on, freeform porter placement is disallowed: issue_construct only
+# succeeds on a designated empty build plot. Default off keeps today's
+# byte-identical BFME2 freeform behavior (this flag is absent from _rules for
+# every legacy runner, so the default path and the pinned signature never
+# move). Threaded from the menu via GameState.retail_build_plots_only ->
+# gameplay_rules["build_plots_only"] -> _apply_gameplay_rules.
+var build_plots_only: bool = false
+# team:int -> Array[Dictionary{position:Vector2, occupant_structure_id:int}].
+# Empty unless build_plots_only is on. Serialized in the authoritative state so
+# snapshots round-trip plot occupancy.
+var build_plots: Dictionary = {}
+# DOCUMENTED CHOICE: converted maps carry no BFME1 build-plot markers (checked
+# map data and docs — none preserve retail's BUILDPLOT bones), so plots-only
+# mode seeds a deterministic fixed ring of 8 standalone plots at radius 12.0
+# local units around each team's fortress (falling back to the team center).
+# The ring clears the fortress (4.0 placement radius) and its expansion pads.
+const BUILD_PLOT_RING_OFFSETS: Array = [
+	Vector2(12.0, 0.0), Vector2(8.485, 8.485), Vector2(0.0, 12.0), Vector2(-8.485, 8.485),
+	Vector2(-12.0, 0.0), Vector2(-8.485, -8.485), Vector2(0.0, -12.0), Vector2(8.485, -8.485),
+]
+# A construct click within this many local units of a free plot's center snaps
+# to that plot; farther clicks are rejected ("pick an empty plot").
+const BUILD_PLOT_PICK_RADIUS := 5.0
+
 
 ## rules: {kind: {"cost": int, "seconds": float, "health": int, "pad_kinds":
 ## Array, "name": String, "object_id": String}} — derived by the slice from
@@ -4656,6 +4687,67 @@ func _seed_all_expansion_pads() -> void:
 
 func expansion_pad_states(fortress_id: int) -> Array:
 	return (expansion_pads.get(fortress_id, []) as Array).duplicate(true)
+
+
+func _seed_build_plots_for_team(team: int) -> void:
+	if build_plots.has(team):
+		return
+	# Prefer the fortress footprint as the ring center; fall back to the team's
+	# spawn anchor when a team has no fortress (defensive — every rostered team
+	# seeds one in _initialize_base_loop).
+	var center := _team_center(team)
+	var fortress := fortress_id(team)
+	if fortress != 0:
+		center = Vector2((structures[fortress] as Dictionary).get("position", center))
+	var plots: Array = []
+	for offset in BUILD_PLOT_RING_OFFSETS:
+		plots.append({"position": center + (offset as Vector2), "occupant_structure_id": 0})
+	build_plots[team] = plots
+
+
+func _seed_all_build_plots() -> void:
+	for team in _roster_team_ids():
+		_seed_build_plots_for_team(int(team))
+
+
+func _reconcile_build_plots(team: int) -> void:
+	## A plot is free when it has no occupant, or its occupant structure no longer
+	## exists / has been razed (health <= 0). Reconciling lazily keeps plot freeing
+	## deterministic without hooking every structure-destruction path.
+	if not build_plots.has(team):
+		return
+	for plot_value in build_plots[team] as Array:
+		var plot: Dictionary = plot_value
+		var occupant := int(plot.get("occupant_structure_id", 0))
+		if occupant == 0:
+			continue
+		if not structures.has(occupant) or int((structures[occupant] as Dictionary).get("health", 0)) <= 0:
+			plot["occupant_structure_id"] = 0
+
+
+func build_plot_states(team: int) -> Array:
+	## Reconciled (razed plots freed) copy of a team's build plots for the HUD and
+	## tests. Empty unless build_plots_only is on.
+	_reconcile_build_plots(team)
+	return (build_plots.get(team, []) as Array).duplicate(true)
+
+
+func _free_build_plot_index_near(team: int, position: Vector2) -> int:
+	## Nearest free plot within BUILD_PLOT_PICK_RADIUS of the click, ties broken by
+	## lowest index (deterministic). -1 when none is close enough.
+	_reconcile_build_plots(team)
+	var plots: Array = build_plots.get(team, [])
+	var best := -1
+	var best_dist := BUILD_PLOT_PICK_RADIUS + 1.0
+	for index in plots.size():
+		var plot: Dictionary = plots[index]
+		if int(plot.get("occupant_structure_id", 0)) != 0:
+			continue
+		var dist := Vector2(plot.get("position", Vector2.ZERO)).distance_to(position)
+		if dist <= BUILD_PLOT_PICK_RADIUS and dist < best_dist:
+			best_dist = dist
+			best = index
+	return best
 
 
 func expansion_commands_for(fortress_id: int) -> Array:
@@ -6586,15 +6678,26 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		return {"ok": false, "reason": "invalid-team"}
 	if not _structure_build_rules.has(structure_kind):
 		return {"ok": false, "reason": "unsupported-structure"}
-	if playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, playable_outline):
-		return {"ok": false, "reason": "outside-playable-area"}
-	var new_radius := _structure_placement_radius(structure_kind)
-	for existing_id in structure_ids():
-		var existing_row: Dictionary = structures[existing_id] as Dictionary
-		var existing_position := Vector2(existing_row.get("position", Vector2.ZERO))
-		var clearance := new_radius + _structure_placement_radius(String(existing_row.get("structure_kind", ""))) + PLACEMENT_CLEARANCE_MARGIN
-		if existing_position.distance_to(position) < clearance:
-			return {"ok": false, "reason": "site-obstructed"}
+	# BFME1 build-plots-only: construction is restricted to designated empty
+	# plots. The click must land on a free plot; the build then snaps to the
+	# plot's center and skips the freeform geometry checks (plot positions are
+	# predetermined and valid). Occupancy is claimed after the site is created.
+	var build_plot_index := -1
+	if build_plots_only:
+		build_plot_index = _free_build_plot_index_near(team, position)
+		if build_plot_index < 0:
+			return {"ok": false, "reason": "build-plots-only: pick an empty plot"}
+		position = Vector2((build_plots[team] as Array)[build_plot_index].get("position", position))
+	else:
+		if playable_outline.size() >= 3 and not Geometry2D.is_point_in_polygon(position, playable_outline):
+			return {"ok": false, "reason": "outside-playable-area"}
+		var new_radius := _structure_placement_radius(structure_kind)
+		for existing_id in structure_ids():
+			var existing_row: Dictionary = structures[existing_id] as Dictionary
+			var existing_position := Vector2(existing_row.get("position", Vector2.ZERO))
+			var clearance := new_radius + _structure_placement_radius(String(existing_row.get("structure_kind", ""))) + PLACEMENT_CLEARANCE_MARGIN
+			if existing_position.distance_to(position) < clearance:
+				return {"ok": false, "reason": "site-obstructed"}
 	var builder_id := 0
 	for value in ids:
 		var id := int(value)
@@ -6666,6 +6769,8 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		team_resources[team] = resources_for_team(team) + cost
 		builder["construction_id"] = 0
 		return {"ok": false, "reason": last_route_rejection if last_route_rejection != "" else "route-rejected"}
+	if build_plots_only and build_plot_index >= 0:
+		(build_plots[team] as Array)[build_plot_index]["occupant_structure_id"] = structure_id
 	_emit_event("construction.started", builder_id, structure_id, {"team": team, "structure_kind": structure_kind, "cost": cost, "build_ticks": build_ticks, "object_id": String(builder.get("object_id", ""))})
 	return {"ok": true, "builder_id": builder_id, "structure_id": structure_id, "cost": cost, "build_ticks": build_ticks}
 
@@ -8592,6 +8697,8 @@ func _authoritative_state() -> Dictionary:
 		"expansion_pads": expansion_pads,
 		"expansion_build_rules": _expansion_build_rules,
 		"next_expansion_structure_id": _next_expansion_structure_id,
+		"build_plots_only": build_plots_only,
+		"build_plots": build_plots,
 		"has_hero_units": _has_hero_units,
 		"unit_ability_rules": _unit_ability_rules,
 		"unit_experience_rules": _unit_experience_rules,
@@ -8661,6 +8768,8 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	expansion_pads = state["expansion_pads"]
 	_expansion_build_rules = state["expansion_build_rules"]
 	_next_expansion_structure_id = int(state["next_expansion_structure_id"])
+	build_plots_only = bool(state.get("build_plots_only", false))
+	build_plots = state.get("build_plots", {})
 	_has_hero_units = bool(state["has_hero_units"])
 	_unit_ability_rules = state["unit_ability_rules"]
 	_unit_experience_rules = state["unit_experience_rules"]

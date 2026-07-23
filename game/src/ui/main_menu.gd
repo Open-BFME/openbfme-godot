@@ -41,6 +41,8 @@ const RULES_RESOURCE_VALUES: Array[int] = [500, 1000, 1200, 2000, 5000, 10000, 5
 const RULES_DEFAULT_RESOURCES := 1200
 const RULES_FACTOR_VALUES: Array[float] = [0.5, 1.0, 2.0, 4.0]
 const RULES_DEFAULT_FACTOR := 1.0
+## Build Mode default: false = BFME2 freeform placement (byte-identical default).
+const RULES_DEFAULT_BUILD_PLOTS_ONLY := false
 ## BFME2 1.06 house-color rows for the setup's Color dropdowns. Defaults are
 ## Blue for the player and Red for the AI — the authored slice team colors.
 const HOUSE_COLORS: Array[Dictionary] = [
@@ -267,8 +269,14 @@ func _populate_rules_options() -> void:
 		var label := "%sX" % str(factor).trim_suffix(".0")
 		solo_flyout.cp_factor_opt.add_item(label)
 		solo_flyout.cp_factor_opt.set_item_metadata(solo_flyout.cp_factor_opt.item_count - 1, factor)
+	solo_flyout.build_mode_opt.clear()
+	solo_flyout.build_mode_opt.add_item("BFME2 Freeform")
+	solo_flyout.build_mode_opt.set_item_metadata(solo_flyout.build_mode_opt.item_count - 1, false)
+	solo_flyout.build_mode_opt.add_item("BFME1 Plots")
+	solo_flyout.build_mode_opt.set_item_metadata(solo_flyout.build_mode_opt.item_count - 1, true)
 	_select_option_by_metadata_value(solo_flyout.initial_resources_opt, RULES_DEFAULT_RESOURCES)
 	_select_option_by_metadata_value(solo_flyout.cp_factor_opt, RULES_DEFAULT_FACTOR)
+	_select_option_by_metadata_value(solo_flyout.build_mode_opt, RULES_DEFAULT_BUILD_PLOTS_ONLY)
 
 
 func _populate_color_options() -> void:
@@ -747,6 +755,7 @@ func apply_skirmish_selection() -> bool:
 	_game_state.set("retail_map_id", map_id if map_id != "" else SliceScript.MAP_ID)
 	_game_state.set("retail_initial_resources", _selected_rules_resources())
 	_game_state.set("retail_command_point_factor", _selected_rules_factor())
+	_game_state.set("retail_build_plots_only", _selected_build_plots_only())
 	# N-team descriptor list: authoritative when present. Only written for setups
 	# the legacy pair cannot express (>2 rows, or a non-medium AI tier); the exact
 	# legacy default clears it so the slice keeps its proven two-team path and the
@@ -811,14 +820,23 @@ func _selected_rules_factor() -> float:
 	return float(option.get_item_metadata(option.selected))
 
 
+func _selected_build_plots_only() -> bool:
+	var option: OptionButton = solo_flyout.build_mode_opt
+	if option.selected < 0:
+		return RULES_DEFAULT_BUILD_PLOTS_ONLY
+	return bool(option.get_item_metadata(option.selected))
+
+
 func _on_rules_changed(_index: int = 0) -> void:
 	_game_state.set("retail_initial_resources", _selected_rules_resources())
 	_game_state.set("retail_command_point_factor", _selected_rules_factor())
+	_game_state.set("retail_build_plots_only", _selected_build_plots_only())
 
 
 func _on_rules_reset() -> void:
 	_select_option_by_metadata_value(solo_flyout.initial_resources_opt, RULES_DEFAULT_RESOURCES)
 	_select_option_by_metadata_value(solo_flyout.cp_factor_opt, RULES_DEFAULT_FACTOR)
+	_select_option_by_metadata_value(solo_flyout.build_mode_opt, RULES_DEFAULT_BUILD_PLOTS_ONLY)
 	_on_rules_changed()
 
 
@@ -923,6 +941,7 @@ func _connect_actions() -> void:
 	solo_flyout.rules_reset_btn.pressed.connect(_on_rules_reset)
 	solo_flyout.initial_resources_opt.item_selected.connect(_on_rules_changed)
 	solo_flyout.cp_factor_opt.item_selected.connect(_on_rules_changed)
+	solo_flyout.build_mode_opt.item_selected.connect(_on_rules_changed)
 	stats_screen.back_pressed.connect(func() -> void: _show_page(PAGE_SOLO))
 	developer_access_btn.pressed.connect(func() -> void: _show_page(PAGE_DEVELOPER))
 	developer_back_btn.pressed.connect(func() -> void: _show_page(PAGE_MAIN))
@@ -1059,6 +1078,7 @@ func apply_multiplayer_selection(mode: String, address: String, port: int) -> bo
 	_game_state.set("retail_map_id", SliceScript.MAP_ID)
 	_game_state.set("retail_initial_resources", -1)
 	_game_state.set("retail_command_point_factor", 1.0)
+	_game_state.set("retail_build_plots_only", false)
 	_game_state.set("retail_player_start_index", 0)
 	_game_state.set("retail_mp_mode", mode)
 	_game_state.set("retail_mp_address", address.strip_edges() if mode == "join" else "127.0.0.1")

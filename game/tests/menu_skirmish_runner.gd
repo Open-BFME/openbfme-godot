@@ -117,11 +117,21 @@ func _run() -> void:
 			and is_equal_approx(float(game_state.get("retail_command_point_factor")), 2.0),
 		"resources=%d factor=%s" % [int(game_state.get("retail_initial_resources")), str(game_state.get("retail_command_point_factor"))]
 	)
+	# BFME1 build-plots-only toggle: defaults to freeform (false), and flipping the
+	# RULES tab control to "BFME1 Plots" reaches GameState live through the same
+	# validated handoff as resources/factor.
+	var build_mode_opt := menu.find_child("BuildMode", true, false) as OptionButton
+	_check("build_mode_control_present", build_mode_opt != null and build_mode_opt.item_count == 2)
+	_check("build_mode_defaults_freeform", not bool(game_state.get("retail_build_plots_only")))
+	if build_mode_opt != null:
+		_select_option_by_metadata_value(build_mode_opt, true)
+		_check("build_mode_toggle_reaches_game_state", bool(game_state.get("retail_build_plots_only")))
 	rules_reset.emit_signal("pressed")
 	_check(
 		"rules_reset_restores_defaults",
 		int(game_state.get("retail_initial_resources")) == 1200
 			and is_equal_approx(float(game_state.get("retail_command_point_factor")), 1.0)
+			and not bool(game_state.get("retail_build_plots_only"))
 	)
 	# Honestly disabled columns and toggles carry their reasons as tooltips. Team
 	# is no longer in this set: it is the enabled alliance control for the N-team

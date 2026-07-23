@@ -34,6 +34,11 @@ var retail_enemy_faction: String = "men"
 ## starting resources; the factor multiplies its authored command point cap.
 var retail_initial_resources: int = -1
 var retail_command_point_factor: float = 1.0
+## RULES tab building mode. false = today's BFME2 freeform porter placement
+## (default, byte-identical); true = BFME1 build-plots-only (construction is
+## restricted to designated empty plots). Threaded into the sim through
+## gameplay_rules["build_plots_only"].
+var retail_build_plots_only: bool = false
 ## Player start spot: 0 keeps the authored assignment (the human takes
 ## Player_2_Start); 1..N takes retail Player_N_Start and the AI takes another.
 var retail_player_start_index: int = 0

@@ -1242,6 +1242,10 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		var menu_factor := float(game_state.get("retail_command_point_factor"))
 		if menu_factor > 0.0 and not is_equal_approx(menu_factor, 1.0):
 			rules["command_point_cap"] = maxi(60, int(roundi(float(rules["command_point_cap"]) * menu_factor)))
+		# BFME1 build-plots-only toggle from the RULES tab. Only added when on, so
+		# the default freeform launch leaves _rules byte-identical.
+		if bool(game_state.get("retail_build_plots_only")):
+			rules["build_plots_only"] = true
 	rules["source_map_transform_scale"] = source_map_data.local_transform_scale
 	var manifest_for_rules: Dictionary = faction_manifest.duplicate(true)
 	# Retail skirmish start: fortress + porter only — the base is built, not

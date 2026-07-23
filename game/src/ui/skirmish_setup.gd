@@ -45,6 +45,7 @@ var map_tab_btn: Button
 var rules_tab_btn: Button
 var initial_resources_opt: OptionButton
 var cp_factor_opt: OptionButton
+var build_mode_opt: OptionButton
 var custom_heroes_toggle: CheckButton
 var ring_heroes_toggle: CheckButton
 var rules_reset_btn: Button
@@ -164,6 +165,9 @@ func _build_rules_content() -> void:
 	initial_resources_opt = _option(rules_content, "InitialResources", Vector2(230, 14), Vector2(220, 40))
 	var factor_label := _label(rules_content, "CpFactorLabel", "Command Point Factor", Vector2(0, 66), Vector2(220, 30), 17, Color("b7dc94"))
 	cp_factor_opt = _option(rules_content, "CpFactor", Vector2(230, 62), Vector2(220, 40))
+	var build_mode_label := _label(rules_content, "BuildModeLabel", "Build Mode", Vector2(0, 114), Vector2(220, 30), 17, Color("b7dc94"))
+	build_mode_opt = _option(rules_content, "BuildMode", Vector2(230, 110), Vector2(220, 40))
+	build_mode_opt.tooltip_text = "BFME2 Freeform builds anywhere; BFME1 Plots restricts construction to fixed build plots"
 	custom_heroes_toggle = CheckButton.new()
 	custom_heroes_toggle.name = "CustomHeroesToggle"
 	custom_heroes_toggle.text = "Allow Custom Heroes"
