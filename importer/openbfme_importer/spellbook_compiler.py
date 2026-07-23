@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import hashlib
 import json
+from pathlib import PurePosixPath
 import re
 
 from .playable_unit_compiler import (
@@ -35,7 +36,7 @@ from .playable_unit_compiler import (
     _tokens,
     prepare_playable_unit_compiler,
 )
-from .playable_unit_import import FACTIONS
+from .playable_unit_import import FACTIONS, ROTWK_FACTIONS
 from .retail_men_damage_effects import parse_fx_lists
 from .sage_cst import SageBlock, SageObject
 from .sage_gameplay import _digest as _gameplay_digest
@@ -251,7 +252,11 @@ def _graph_context(
     if not isinstance(faction, str) or not faction:
         raise SpellbookCompilerError("faction graph faction is invalid")
     expected = next(
-        (spec[2] for spec in FACTIONS if spec[1].casefold() == template.casefold()),
+        (
+            spec[2]
+            for spec in (*FACTIONS, *ROTWK_FACTIONS)
+            if spec[1].casefold() == template.casefold()
+        ),
         None,
     )
     if expected is None or faction != expected:
@@ -263,10 +268,37 @@ def _graph_context(
     if not isinstance(summary, Mapping):
         raise SpellbookCompilerError("faction graph summary is invalid")
     unresolved = summary.get("unresolvedCount")
+    if not isinstance(unresolved, int) or isinstance(unresolved, bool) or unresolved < 0:
+        raise SpellbookCompilerError("faction graph unresolvedCount is invalid")
     if unresolved != 0:
-        raise SpellbookCompilerError(
+        # Expansion installs (RotWK 2.01) mount the base game's archives at
+        # runtime, so an expansion-only catalog legitimately leaves base-game
+        # payload leaves unresolved graph-wide: audio sample files, mapped
+        # image textures, and base-authored objects. The spellbook never
+        # consumes those families through the graph-wide count — its own
+        # requirements (mappedImages incl. compiledTextureVirtualPath, audio
+        # sample closure, strings) resolve individually fail-closed in the
+        # media/strings lane. Every leaf family the spellbook does bind
+        # through the graph must still be fully resolved here; anything
+        # unaccounted for keeps the historical failure.
+        failure = SpellbookCompilerError(
             f"faction graph has {unresolved} unresolved census leaves"
         )
+        diagnostics = graph.get("unresolved")
+        if not isinstance(diagnostics, Mapping):
+            # No per-family diagnostics: nothing can be proven tolerable.
+            raise failure
+        tolerated = {"missingobjects", "missingmappedimagetextures", "missingaudiosamples"}
+        blocking = 0
+        accounted = 0
+        for family, items in diagnostics.items():
+            if not isinstance(family, str) or not isinstance(items, list):
+                raise failure
+            accounted += len(items)
+            if family.casefold() not in tolerated:
+                blocking += len(items)
+        if blocking != 0 or accounted != unresolved:
+            raise failure
     roots = graph.get("roots")
     if not isinstance(roots, list):
         raise SpellbookCompilerError("faction graph roots are invalid")
@@ -478,29 +510,100 @@ def _prerequisite_groups(block: IniBlock) -> tuple[tuple[str, ...], ...]:
     return tuple(tuple(group) for group in groups)
 
 
-def _nested_named_blocks(
-    source: bytes, kind: str, path: str
-) -> dict[str, dict[str, object]]:
-    """Parse one flat-nested SAGE family such as ObjectCreationList or Weapon.
+_INCLUDE_DIRECTIVE = re.compile(r'^#include\s+"([^"]+)"$', re.IGNORECASE)
+_MAX_INCLUDE_DEPTH = 4
 
-    Each named block carries ordered scalar assignments and ordered nested
-    sections; sections carry their own assignments in source order.  The parser
-    is deliberately lexical: it preserves authored payload without interpreting
-    it and fails closed on unbalanced or duplicate blocks.
+
+def _document_lines(
+    source: bytes,
+    path: str,
+    documents: Mapping[str, bytes] | None,
+    depth: int = 0,
+) -> list[str]:
+    """Comment-stripped significant lines with SAGE ``#include`` expansion.
+
+    RotWK 2.01 authors ``#include`` directives inside definition bodies
+    (weapon.ini's Weapon MordorBalrogBreath pulls balrogdotbreath.inc), so the
+    engine's inline-at-directive semantics must be mirrored here. Includes
+    resolve relative to the including document's directory against the
+    supplied document view and fail closed when absent, oversized, or nested
+    beyond a bounded depth — never skipped silently.
     """
 
-    header = re.compile(r"^" + re.escape(kind) + r"\s+(\S+)\s*$", re.IGNORECASE)
     if len(source) > 16 * 1024 * 1024 or b"\0" in source:
         raise SpellbookCompilerError(f"{path} is unbounded")
     try:
         text = source.decode("cp1252")
     except UnicodeDecodeError as exc:
         raise SpellbookCompilerError(f"{path} has unsupported encoding") from exc
-    lines = [
-        line
-        for raw in text.splitlines()
-        if (line := re.sub(r"\s+", " ", raw.split(";", 1)[0].split("//", 1)[0]).strip())
-    ]
+    lines: list[str] = []
+    for raw in text.splitlines():
+        line = re.sub(r"\s+", " ", raw.split(";", 1)[0].split("//", 1)[0]).strip()
+        if not line:
+            continue
+        include = _INCLUDE_DIRECTIVE.fullmatch(line)
+        if include is None or documents is None:
+            lines.append(line)
+            continue
+        if depth >= _MAX_INCLUDE_DEPTH:
+            raise SpellbookCompilerError(
+                f"{path} exceeds the bounded #include depth"
+            )
+        relative = PurePosixPath(include.group(1).replace("\\", "/"))
+        resolved_parts: list[str] = list(PurePosixPath(path).parent.parts)
+        for part in relative.parts:
+            if part == "..":
+                if not resolved_parts:
+                    raise SpellbookCompilerError(
+                        f"{path} has an escaping #include: {include.group(1)!r}"
+                    )
+                resolved_parts.pop()
+            elif part not in {"", "."}:
+                resolved_parts.append(part)
+        include_path = "/".join(resolved_parts)
+        payload = documents.get(include_path)
+        if payload is None:
+            folded = include_path.casefold()
+            payload = next(
+                (
+                    value
+                    for key, value in documents.items()
+                    if key.replace("\\", "/").casefold() == folded
+                ),
+                None,
+            )
+        if payload is None:
+            raise SpellbookCompilerError(
+                f"{path} #include target is missing: {include.group(1)!r}"
+            )
+        lines.extend(
+            _document_lines(payload, include_path, documents, depth + 1)
+        )
+    return lines
+
+
+def _nested_named_blocks(
+    source: bytes,
+    kind: str,
+    path: str,
+    documents: Mapping[str, bytes] | None = None,
+) -> dict[str, dict[str, object]]:
+    """Parse one flat-nested SAGE family such as ObjectCreationList or Weapon.
+
+    Each named block carries ordered scalar assignments and ordered nested
+    sections; sections carry their own assignments in source order.  The parser
+    is deliberately lexical: it preserves authored payload without interpreting
+    it and fails closed on unbalanced or duplicate blocks.  When ``documents``
+    is supplied, authored ``#include`` directives inline their target first
+    (SAGE engine semantics); without it the historical lexical view applies.
+    """
+
+    # RotWK 2.01 retail authors trailing junk after block names ("Weapon
+    # AvalancheCrush  ."); SAGE's token scanner reads the first two tokens
+    # and ignores the rest, so the header match must too — a stricter match
+    # would drop the whole block and leave its Ends stray.
+    header = re.compile(r"^" + re.escape(kind) + r"\s+(\S+)(?:\s.*)?$", re.IGNORECASE)
+    lines = _document_lines(source, path, documents)
     result: dict[str, dict[str, object]] = {}
     index = 0
     block_count = 0
@@ -605,9 +708,13 @@ class _LeafResolver:
             _required_document(documents, OBJECT_CREATION_LIST_PATH),
             "ObjectCreationList",
             OBJECT_CREATION_LIST_PATH,
+            documents=documents,
         )
         self._weapons = _nested_named_blocks(
-            _required_document(documents, WEAPON_PATH), "Weapon", WEAPON_PATH
+            _required_document(documents, WEAPON_PATH),
+            "Weapon",
+            WEAPON_PATH,
+            documents=documents,
         )
         self._fx_lists = parse_fx_lists(_required_document(documents, FX_LIST_PATH))
         self._modifiers = _unique_blocks(

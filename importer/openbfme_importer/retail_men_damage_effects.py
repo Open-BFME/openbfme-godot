@@ -144,6 +144,20 @@ def _span(
     }
 
 
+def _fx_content_signature(value: Any) -> Any:
+    """Structural identity of one parsed FXList minus its source location."""
+
+    if isinstance(value, Mapping):
+        return tuple(
+            (key, _fx_content_signature(item))
+            for key, item in sorted(value.items())
+            if key != "sourceSpan"
+        )
+    if isinstance(value, list):
+        return tuple(_fx_content_signature(item) for item in value)
+    return value
+
+
 def parse_fx_lists(payload: bytes) -> dict[str, dict[str, Any]]:
     """Parse top-level FXList blocks while preserving nested section order."""
 
@@ -159,8 +173,6 @@ def parse_fx_lists(payload: bytes) -> dict[str, dict[str, Any]]:
             continue
         name = match.group(1)
         key = name.casefold()
-        if key in result:
-            raise ValueError(f"duplicate FXList definition: {name}")
         sections: list[dict[str, Any]] = []
         assignments: list[dict[str, Any]] = []
         stack: list[dict[str, Any]] = []
@@ -174,12 +186,24 @@ def parse_fx_lists(payload: bytes) -> dict[str, dict[str, Any]]:
             if child.casefold() == "end":
                 if not stack:
                     source = _span(payload, start_byte, child_end, line_number, number)
-                    result[key] = {
+                    record = {
                         "fxListId": name,
                         "assignments": assignments,
                         "sections": sections,
                         "sourceSpan": source,
                     }
+                    if key in result:
+                        # RotWK 2.01 retail ships fxlist.ini with the same
+                        # FXList authored twice (FX_PackWolfHit); the SAGE
+                        # parser treats redefinition as a rewrite, and equal
+                        # payloads make either copy the authored truth.
+                        # Diverging duplicates stay a hard failure — the
+                        # engine's silent last-wins cannot be proven here.
+                        if _fx_content_signature(result[key]) != _fx_content_signature(record):
+                            raise ValueError(
+                                f"conflicting duplicate FXList definition: {name}"
+                            )
+                    result[key] = record
                     break
                 opened = stack.pop()
                 opened["sourceSpan"] = _span(

@@ -253,19 +253,37 @@ class CatalogEntry:
         return self.name.casefold()
 
 
-def archive_precedence(relative_path: str) -> tuple[int, str]:
-    """Lower numbers win when duplicate virtual paths exist."""
+_LAYER_DIRECTORY = re.compile(r"layer-(\d{1,4})(?:-[a-z0-9]+)?", re.IGNORECASE)
+
+
+def archive_precedence(relative_path: str) -> tuple[int, int, str]:
+    """Lower tuples win when duplicate virtual paths exist.
+
+    The leading component is the install layer: an expansion install mounts
+    after (and therefore shadows) its base game, so a layered install root
+    whose top-level directories are named ``layer-<n>[-label]`` (junctions to
+    the real installs; the same naming the edition overlay uses) ranks every
+    layer-0 archive above every layer-1 archive regardless of archive family.
+    Plain single-install roots have no such directory and stay in layer 0 —
+    their ordering is unchanged.
+    """
+
+    layer = 0
+    first = relative_path.split("/", 1)[0]
+    matched = _LAYER_DIRECTORY.fullmatch(first)
+    if matched is not None:
+        layer = int(matched.group(1))
     name = Path(relative_path).name.casefold()
     patch_names = [value.casefold() for value in PATCH_ARCHIVES]
     if name in patch_names:
-        return patch_names.index(name), relative_path.casefold()
+        return layer, patch_names.index(name), relative_path.casefold()
     if "patch" in name and name.endswith(".big"):
         # Language patch archives use names such as EnglishPatch105.big.
-        return 50, relative_path.casefold()
+        return layer, 50, relative_path.casefold()
     # EA loads underscore override archives before normal data archives.
     if name.startswith("_"):
-        return 100, relative_path.casefold()
-    return 1000, relative_path.casefold()
+        return layer, 100, relative_path.casefold()
+    return layer, 1000, relative_path.casefold()
 
 
 def _directory_sha256(

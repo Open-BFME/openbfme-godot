@@ -2519,12 +2519,18 @@ def _select_experience_chain(
     defines: Mapping[str, tuple[str, ...]],
     unit_names: frozenset[str],
     label: str,
+    container_names: frozenset[str] = frozenset(),
 ) -> tuple[tuple[Mapping[str, object], frozenset[str]], ...]:
     """Pick the most specific authored chain targeting one of the unit names.
 
     Returns the chain's rows sorted by rank, each paired with the resolved
     target set it was matched through.  A unit covered by two different
-    chains of equal specificity is ambiguous and fails closed.
+    chains of equal specificity is ambiguous and fails closed, unless exactly
+    one of the tied chains targets the fielded container object itself
+    (``container_names``): the engine grants experience per object name, so
+    the chain naming the fielded unit is the authored truth when retail
+    splits a horde and its members across different target lists (RotWK
+    AngmarNecromancerHorde vs its AngmarNecroAcolyte members).
     """
 
     candidates: dict[frozenset[str], list[Mapping[str, object]]] = {}
@@ -2545,10 +2551,21 @@ def _select_experience_chain(
         key=lambda item: (len(item[0]), sorted(item[0])),
     )
     if len(ordered) > 1 and len(ordered[0][0]) == len(ordered[1][0]):
-        raise PlayableUnitCompilerError(
-            f"{label} matches two ExperienceLevel chains of equal specificity: "
-            f"{sorted(ordered[0][0])} vs {sorted(ordered[1][0])}"
-        )
+        tied = [
+            item for item in ordered if len(item[0]) == len(ordered[0][0])
+        ]
+        container_matched = [
+            item for item in tied if item[0] & container_names
+        ]
+        if len(container_matched) == 1:
+            ordered = container_matched + [
+                item for item in ordered if item is not container_matched[0]
+            ]
+        else:
+            raise PlayableUnitCompilerError(
+                f"{label} matches two ExperienceLevel chains of equal specificity: "
+                f"{sorted(ordered[0][0])} vs {sorted(ordered[1][0])}"
+            )
     chain_targets, chain_rows = ordered[0]
     ranked: list[Mapping[str, object]] = []
     seen_ranks: set[int] = set()
@@ -2647,7 +2664,15 @@ def _experience_contract(
     )
     rows = _experience_level_rows(source)
     defines = _ability_list_defines(source)
-    chain = _select_experience_chain(rows, defines, unit_names, label)
+    chain = _select_experience_chain(
+        rows,
+        defines,
+        unit_names,
+        label,
+        container_names=frozenset(
+            item.name.casefold() for item in target_lineage
+        ),
+    )
     if not chain:
         return {
             "status": "unauthored",
@@ -5175,6 +5200,20 @@ def compile_playable_unit_descriptor(
                 "DescriptLabel": list(slot_tooltips),
             }
             continue
+        if tooltip is None:
+            # RotWK's expansion heroes (AngmarKarsh) author no
+            # DescriptionStrategic; retail's recruit-button tooltip for them
+            # is the object's own authored RecruitText, so that label is the
+            # source-backed fallback. Kept out of _scalar_fields so existing
+            # descriptor identities stay byte-stable.
+            recruit_rows = _effective_values(target_lineage, "RecruitText")
+            if recruit_rows:
+                recruit = recruit_rows[-1]
+                tooltip = {
+                    "expression": recruit.value.strip(),
+                    "sourceIni": recruit.source_virtual_path,
+                    "line": recruit.line,
+                }
         if tooltip is None:
             raise PlayableUnitCompilerError(
                 f"hero {target.name} has unresolved required retail UI values"

@@ -716,10 +716,17 @@ def _embedded_texture_dependencies(
         requests.append(VisualLeafRequest(reference.identifier, "texture"))
         pure = PurePosixPath(reference.identifier)
         if pure.suffix.casefold() == ".tga":
+            compiled_identifier = pure.with_suffix("").as_posix()
+            if compiled_identifier.endswith((" ", ".")):
+                # RotWK 2.01 retail ships space-bearing texture names
+                # ("EXIceMunitionsAlpha .tga" beside its compiled
+                # "exicemunitionsalpha .dds"). A trailing-space stem is not a
+                # safe relative path, so this bridge asks for the explicit
+                # compiled .dds basename instead; ordinary names keep the
+                # historical extensionless-stem request byte-for-byte.
+                compiled_identifier = pure.with_suffix(".dds").as_posix()
             compiled_indexes[position] = len(requests)
-            requests.append(
-                VisualLeafRequest(pure.with_suffix("").as_posix(), "texture")
-            )
+            requests.append(VisualLeafRequest(compiled_identifier, "texture"))
 
     batch = diagnose_visual_leaves(visual_paths, requests)
     diagnostics = {item.request_index: item for item in batch.diagnostics}

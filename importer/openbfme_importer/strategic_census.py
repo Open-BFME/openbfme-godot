@@ -70,9 +70,11 @@ _COMMON_WOTR_EXPECTED = (
     STRATEGIC_IMAGES_PATH,
 )
 
-# Measured ground truth: BFME2 1.06 ships 27 strategic files and 6 CaH files
-# (maps/createahero/map.ini exists only there); RotWK 2.01 ships 29 strategic
-# files (adds the Angmar/Arnor icon documents) and 5 CaH files.
+# Measured ground truth: BFME2 1.06 ships 27 strategic files and 6 CaH files;
+# RotWK 2.01 ships 29 strategic files (adds the Angmar/Arnor icon documents)
+# and 6 CaH files — maps/createahero/map.ini ships only in the base game's
+# archives, which the expansion mounts at runtime (the layered rotwk catalog
+# mirrors that install shape).
 EXPECTED_FILES: dict[str, dict[str, tuple[str, ...]]] = {
     "bfme2": {
         "wotr": _COMMON_WOTR_EXPECTED,
@@ -91,6 +93,7 @@ EXPECTED_FILES: dict[str, dict[str, tuple[str, ...]]] = {
         "cah": (
             *CAH_EXACT_PATHS,
             "data/ini/object/createahero/createahero.ini",
+            "maps/createahero/map.ini",
         ),
     },
 }

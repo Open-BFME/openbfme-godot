@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+import re
 from typing import Iterable, Literal, Mapping
 
 from .sage_cst import (
@@ -545,6 +546,9 @@ def _provenance(
     )
 
 
+_NUMERIC_TOKEN = re.compile(r"-?\d+(?:\.\d+)?")
+
+
 def _append_reference(
     pending: list[_PendingReference],
     assignment: SageAssignment,
@@ -593,6 +597,17 @@ def _append_reference(
             else:
                 tokens = (assignment.value,)
                 token_error = f"{assignment.key} requires exactly one reference"
+        elif (
+            folded_key == "animationname"
+            and len(tokens) in {2, 3}
+            and all(_NUMERIC_TOKEN.fullmatch(token) for token in tokens[1:])
+        ):
+            # RotWK 2.01 retail authors idle variants with an inline frame
+            # window ("AnimationName = Kuhwaldar_SKL.Kuhwaldar_IDLB 0 15");
+            # SAGE's scanner reads the reference then the optional start/stop
+            # frames. Only trailing numerals qualify — any other extra token
+            # stays invalid-authored.
+            tokens = (tokens[0],)
         elif folded_key != "texture" and len(tokens) != 1:
             tokens = (assignment.value,)
             token_error = f"{assignment.key} requires exactly one reference"

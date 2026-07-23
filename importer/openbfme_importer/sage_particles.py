@@ -31,6 +31,22 @@ PARTICLE_DEFINITION_DOCUMENT_SCHEMA = "openbfme.sage-particle-definition"
 PARTICLE_DEFINITION_DOCUMENT_SCHEMA_VERSION = 0
 
 _DEFINITION_KINDS = ("ParticleSystem", "FXParticleSystem")
+# FXParticleSystem assignment-shaped module sections (SAGE grammar): only
+# these fields open an ``Field = TemplateName`` section body.
+_FX_SECTION_FIELDS = frozenset(
+    {
+        "system",
+        "color",
+        "alpha",
+        "update",
+        "physics",
+        "draw",
+        "wind",
+        "emissionvelocity",
+        "emissionvolume",
+        "event",
+    }
+)
 _KIND_BY_FOLD = {kind.casefold(): kind for kind in _DEFINITION_KINDS}
 _HEADER = re.compile(r"^(ParticleSystem|FXParticleSystem)\s+(\S+)\s*$", re.IGNORECASE)
 _FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$")
@@ -360,10 +376,9 @@ def _parse_definition(
         raise ValueError(
             f"malformed particle definition header at line {header.number}"
         )
-    if header.indent != 0:
-        raise ValueError(
-            f"particle definition header must be top-level at line {header.number}"
-        )
+    # RotWK 2.01 retail authors indented definition headers (fxparticlesystem
+    # BalrogLandingDust02); the SAGE reader is indentation-blind, and a header
+    # inside an open body is already the unterminated hard failure above.
     kind = _KIND_BY_FOLD[match.group(1).casefold()]
     name = _safe_identifier(match.group(2), f"{kind} name")
 
@@ -374,13 +389,14 @@ def _parse_definition(
     while index < len(lines):
         line = lines[index]
         current = stack[-1]
-        header_indent = current.line.indent
         if line.text.casefold() == "end":
-            if line.indent != header_indent:
-                raise ValueError(
-                    f"unbalanced End at line {line.number}: expected indentation "
-                    f"{header_indent}, found {line.indent}"
-                )
+            # SAGE's ini reader is indentation-blind: End always closes the
+            # innermost open block. RotWK 2.01 retail authors mis-indented
+            # closers (fxparticlesystem.ini AngSanctumCharge05 closes its
+            # "Color = DefaultColor" block one column deeper), so indentation
+            # cannot gate the close. Structural drift still fails closed:
+            # a misattributed End leaves stray entries or a stray top-level
+            # End, both hard errors in this parser.
             current.end_line = line
             stack.pop()
             if not stack:
@@ -394,20 +410,34 @@ def _parse_definition(
             index += 1
             continue
 
-        if line.indent <= header_indent:
-            if _HEADER.match(line.text):
-                raise ValueError(
-                    f"unterminated {current.field!r} before line {line.number}"
-                )
+        # Membership is structural, not indentation-based: the SAGE reader
+        # attributes every entry to the innermost open block until its End.
+        # RotWK 2.01 retail authors children at (or left of) their section
+        # header's column, so an indentation gate would reject shipped data.
+        # A new definition header while blocks remain open is still the
+        # unterminated hard failure.
+        if _HEADER.match(line.text):
             raise ValueError(
-                f"particle entry at line {line.number} is outside its containing block"
+                f"unterminated {current.field!r} before line {line.number}"
             )
 
         is_assignment = "=" in line.text
         field, value = _split_assignment(
             line.text, f"particle field at line {line.number}"
         )
-        opens_block = not is_assignment or _assignment_opens_block(lines, index)
+        if kind == "FXParticleSystem" and is_assignment:
+            # RotWK 2.01 retail authors FXParticleSystem bodies with sloppy
+            # tab/space indentation, so the indentation heuristic misreads
+            # them (AngSanctumCharge05Sml opens EmissionVolume at its
+            # children's indent; GimliSlayer1's tab-indented InitialDelay
+            # makes plain flags look like section headers). The engine's
+            # grammar is structural: exactly the known module fields open an
+            # assignment-shaped section, and every other assignment is a
+            # scalar. A module header without a bare template identifier
+            # stays the hard unsafe-selector failure below.
+            opens_block = field.casefold() in _FX_SECTION_FIELDS
+        else:
+            opens_block = not is_assignment or _assignment_opens_block(lines, index)
         if opens_block:
             selector = value if is_assignment else None
             if selector is not None:

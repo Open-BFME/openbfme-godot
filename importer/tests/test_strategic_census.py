@@ -160,7 +160,7 @@ class StrategicCensusClassifierTests(unittest.TestCase):
         self.assertEqual(len(EXPECTED_FILES["bfme2"]["wotr"]), 27)
         self.assertEqual(len(EXPECTED_FILES["bfme2"]["cah"]), 6)
         self.assertEqual(len(EXPECTED_FILES["rotwk"]["wotr"]), 29)
-        self.assertEqual(len(EXPECTED_FILES["rotwk"]["cah"]), 5)
+        self.assertEqual(len(EXPECTED_FILES["rotwk"]["cah"]), 6)
 
     def test_unterminated_block_fails_closed(self) -> None:
         with self.assertRaises(ValueError):
@@ -224,15 +224,21 @@ class RotwkStrategicCensusIntegrationTests(_RealCatalogTestsBase):
 
     def test_measured_surface(self) -> None:
         report = self.report
-        self.assertEqual(report["surfaceFileCounts"], {"wotr": 29, "cah": 5})
-        self.assertEqual(report["fileCount"], 34)
+        # The canonical rotwk catalog is the layered expansion+base install
+        # (the engine mounts the base game's archives at runtime), so the
+        # base-only CaH map document resolves and archives carry their
+        # layer-<n> install prefix.
+        self.assertEqual(report["surfaceFileCounts"], {"wotr": 29, "cah": 6})
+        self.assertEqual(report["fileCount"], 35)
         self.assertEqual(report["unresolvedFiles"], [])
         self.assertEqual(report["unclassifiedBlocks"], [])
         rows = {row["virtualPath"]: row for row in report["files"]}
         special = rows["data/ini/createaherospecialpowers.ini"]
         self.assertEqual(special["blockCounts"], {"SpecialPower": 147})
         # The 2.01 patch archive must win precedence for this document.
-        self.assertEqual(special["archive"], "_patch201ini.big")
+        self.assertEqual(
+            special["archive"].rsplit("/", 1)[-1], "_patch201ini.big"
+        )
         self.assertEqual(
             rows["data/ini/mappedimages/aptimages/strategicimages.ini"][
                 "blockCounts"

@@ -790,6 +790,7 @@ def _research_surface(
         )
     upgrade_blocks = _named_blocks(upgrade_source, "Upgrade")
     rows: list[dict[str, object]] = []
+    non_purchasable: list[dict[str, object]] = []
     for folded in sorted(entries):
         entry = entries[folded]
         upgrade_id = str(entry["upgradeId"])
@@ -805,6 +806,20 @@ def _research_surface(
             )
         cost_expression = _first(upgrade_block.values("BuildCost"))
         time_expression = _first(upgrade_block.values("BuildTime"))
+        if cost_expression is None and time_expression is None:
+            # RotWK authors its Collector's-Edition graphics switches
+            # (Upgrade_ActivateCEGraphicsA/B) as PLAYER upgrades with no
+            # BuildCost/BuildTime at all: a free player-side feature toggle,
+            # not research the HUD sells. Record the marker row excluded from
+            # the purchasable surface. A row authoring exactly one of the two
+            # fields is still a malformed purchase and fails closed below.
+            marker = dict(entry)
+            marker["reason"] = (
+                "cost-less PLAYER feature toggle (no authored "
+                "BuildCost/BuildTime)"
+            )
+            non_purchasable.append(marker)
+            continue
         if cost_expression is None or time_expression is None:
             raise PlayableStructureCompilerError(
                 f"{label} research {upgrade_id} lacks authored BuildCost/BuildTime"
@@ -815,13 +830,20 @@ def _research_surface(
         )
         rows.append(entry)
     rows.sort(key=lambda row: (int(row["slot"]), str(row["upgradeId"]).casefold()))
-    return {
-        "upgrades": rows,
+    non_purchasable.sort(
+        key=lambda row: (int(row["slot"]), str(row["upgradeId"]).casefold())
+    )
+    result: dict[str, object] = {
         "sourceIni": sorted(
             {UPGRADE_PATH, "data/ini/commandset.ini", "data/ini/commandbutton.ini"},
             key=str.casefold,
         ),
     }
+    if rows:
+        result["upgrades"] = rows
+    if non_purchasable:
+        result["nonPurchasable"] = non_purchasable
+    return result
 
 
 def _upgrade_effects(
@@ -1558,7 +1580,7 @@ def compile_playable_structure_descriptor(
         if upgrade_chain is not None
         else _structure_level_presentation(target.name, lineage)
     )
-    research = _research_surface(
+    research_surface = _research_surface(
         target.name,
         lineage,
         trained,
@@ -1566,6 +1588,21 @@ def compile_playable_structure_descriptor(
         prepared.command_buttons,
         prepared.numeric_defines,
     )
+    # The purchasable surface ("research") and the recorded non-purchasable
+    # feature-toggle markers ride separate keys: downstream registration
+    # validates "research" as a sales surface (non-empty purchasable rows),
+    # while the markers stay evidence-only.
+    research: dict[str, object] | None = None
+    non_purchasable_research: dict[str, object] | None = None
+    if research_surface is not None:
+        marker_rows = research_surface.pop("nonPurchasable", None)
+        if "upgrades" in research_surface:
+            research = research_surface
+        if marker_rows:
+            non_purchasable_research = {
+                "upgrades": marker_rows,
+                "sourceIni": research_surface["sourceIni"],
+            }
     upgrade_effects = _upgrade_effects(
         target.name,
         lineage,
@@ -1598,8 +1635,8 @@ def compile_playable_structure_descriptor(
             else set()
         )
         | (
-            {str(path) for path in research.get("sourceIni", [])}
-            if research is not None
+            {str(path) for path in research_surface.get("sourceIni", [])}
+            if research_surface is not None
             else set()
         )
         | (
@@ -1657,6 +1694,11 @@ def compile_playable_structure_descriptor(
                 else {}
             ),
             **({"research": research} if research is not None else {}),
+            **(
+                {"nonPurchasableResearch": non_purchasable_research}
+                if non_purchasable_research is not None
+                else {}
+            ),
             **(
                 {"upgradeEffects": upgrade_effects}
                 if upgrade_effects is not None

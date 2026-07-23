@@ -416,7 +416,9 @@ def build_parser() -> argparse.ArgumentParser:
     publish_faction.add_argument(
         "--faction",
         required=True,
-        choices=("men", "elves", "dwarves", "isengard", "mordor", "wild"),
+        # BFME2's six factions plus the RotWK 2.01 data-driven expansion
+        # factions (faction_slice_profile validates the game/faction pair).
+        choices=("men", "elves", "dwarves", "isengard", "mordor", "wild", "angmar"),
     )
     publish_faction.add_argument(
         "--base-profile",
@@ -853,7 +855,14 @@ def main(argv: list[str] | None = None) -> int:
             # Freshly composed profiles bind to the catalog they were composed
             # against; inherited m3 markers otherwise fail the build's source
             # catalog identity check with no stamping path.
-            if isinstance(pack, dict) and "sourceCatalogIdentitySha256" not in pack:
+            if isinstance(pack, dict) and (
+                "sourceCatalogIdentitySha256" not in pack
+                or args.game != "bfme2"
+            ):
+                # Non-BFME2 publishes always rebind: the host base profile is
+                # composed from the BFME2 men slice and carries that game's
+                # catalog identity, but this cook resolves everything against
+                # the expansion catalog it was invoked with.
                 pack["sourceCatalogIdentitySha256"] = catalog.identity_sha256()
             write_json_atomic(profile_output, composed)
             receipt_path = profile_output.with_suffix(".receipt.json")

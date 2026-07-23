@@ -649,8 +649,12 @@ def compile_playable_unit_pack_recipe(
         and row.get("kind") == "animation"
         and row.get("usage") == "animation"
         and isinstance(row.get("conditions"), list)
-        and bool(row.get("conditions"))
         and isinstance(row.get("provenance"), Mapping)
+        # Condition-less rows qualify only for the authored idle default
+        # state (RotWK Rogash references KURogash_IDLC/IDLE clips the
+        # archives never shipped); the state-row check below still requires
+        # authored idle clips to remain, so an idle-less unit keeps failing.
+        and (bool(row.get("conditions")) or _state(row) == "idle")
     ]
     dependency = visual_closure.get("w3dDependencyClosure")
     if not isinstance(dependency, Mapping):

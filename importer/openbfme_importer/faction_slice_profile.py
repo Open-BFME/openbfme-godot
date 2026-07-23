@@ -159,6 +159,39 @@ def compose_faction_profile(base: Mapping[str, object], report_root: Path, facti
         receipts.append({"faction": faction, "coverageAggregateSha256": aggregate, "convertedCount": len(converted), "converterGapCount": int(summary.get("converterGapCount", 0)), "conversionComplete": bool(summary.get("conversionComplete", False))})
     pack = target.get("pack")
     if not isinstance(pack, dict): raise ValueError("target profile pack is invalid")
+    if game_key != "bfme2":
+        # Expansion factions publish LEAN supplemental packs: the BFME2 men
+        # host payload (HUD APT bundle, Fords environment, host units) is
+        # pinned to BFME2 1.06 bytes and can never resolve against an
+        # expansion catalog, and the running slice already loads it from the
+        # active host pack. Keep exactly the resources, runtime documents,
+        # and pack file registrations this compose added; the base profile
+        # remains only the validated structural skeleton.
+        added_resource_ids = {
+            str(rid).casefold()
+            for delta in deltas
+            for rid in delta.get("resourceIds", [])
+        }
+        added_paths = {str(d["runtimePath"]) for d in deltas if "runtimePath" in d}
+        added_file_keys = {str(d["packFileKey"]) for d in deltas if "packFileKey" in d}
+        resources = target.get("resources")
+        runtime_data = target.get("runtime_data")
+        files = pack.get("files")
+        if not isinstance(resources, list) or not isinstance(runtime_data, dict) or not isinstance(files, dict):
+            raise ValueError("target profile is not filterable")
+        missing_owned = added_resource_ids - {
+            str(row.get("id", "")).casefold() for row in resources if isinstance(row, Mapping)
+        }
+        if missing_owned:
+            raise ValueError("lean expansion pack lost owned resources: " + ", ".join(sorted(missing_owned)))
+        target["resources"] = [
+            row for row in resources
+            if isinstance(row, Mapping) and str(row.get("id", "")).casefold() in added_resource_ids
+        ]
+        target["runtime_data"] = {k: v for k, v in runtime_data.items() if str(k) in added_paths}
+        pack["files"] = {k: v for k, v in files.items() if str(k) in added_file_keys}
+        if len(target["runtime_data"]) != len(added_paths) or len(pack["files"]) != len(added_file_keys):
+            raise ValueError("lean expansion pack lost owned runtime documents")
     # Bind the composed pack to its faction's vertical-slice id rather than
     # inheriting the base profile's (Men) id, so a non-Men publish lands under
     # bfme2-<faction>-vslice/ instead of stray-bundling under bfme2-men-vslice/.

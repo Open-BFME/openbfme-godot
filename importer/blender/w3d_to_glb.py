@@ -4484,6 +4484,7 @@ def _convert_w3d_job_impl(
     preserved_visibility_channel_count = 0
     preserved_visibility_key_count = 0
     visibility_only_sidecar_animation_count = 0
+    discarded_embedded_model_action_count = 0
     phase_checkpoint.set("animation-import")
     if embedded_model_animation:
         if rig is None:
@@ -4499,10 +4500,25 @@ def _convert_w3d_job_impl(
             and action_shape["public"]["armature_action_count"] == 1
         )
     elif rig is not None:
-        if list(bpy.data.actions):
-            raise RuntimeError(
-                "W3D model import contains unexpected embedded animation actions"
-            )
+        stray_embedded_actions = list(bpy.data.actions)
+        if stray_embedded_actions:
+            if not resolved_animations:
+                raise RuntimeError(
+                    "W3D model import contains unexpected embedded animation actions"
+                )
+            # RotWK 2.01 models embed a redundant one-channel pose clip
+            # beside the externally authored state clips (kbangwgn_a.w3d
+            # embeds KBANGWGN_ASKL.KBANGWGN_A while retail binds the _ABLD
+            # buildup clip). The attached external clips are the authored
+            # presentation this job declares; the embedded pose actions are
+            # removed here with explicit report evidence — never silently.
+            discarded_embedded_model_action_count = len(stray_embedded_actions)
+            for stray_action in stray_embedded_actions:
+                bpy.data.actions.remove(stray_action)
+            if list(bpy.data.actions):
+                raise RuntimeError(
+                    "embedded W3D pose actions were not fully discarded"
+                )
         detach_actions(rig)
     for source in resolved_animations:
         if embedded_model_animation:
@@ -4694,6 +4710,9 @@ def _convert_w3d_job_impl(
         "embedded_model_animation": embedded_model_animation,
         "embedded_model_action_count": (
             len(imported_actions) if embedded_model_animation else 0
+        ),
+        "discarded_embedded_model_action_count": (
+            discarded_embedded_model_action_count
         ),
         "embedded_exported_animation_count": embedded_export["animations"],
         "embedded_exported_channel_count": embedded_export["channels"],

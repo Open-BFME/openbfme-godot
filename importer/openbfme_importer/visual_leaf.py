@@ -334,6 +334,28 @@ def _failure(
     )
 
 
+def _canonical_bucket_candidates(
+    candidates: tuple[_CatalogLeaf, ...],
+) -> tuple[_CatalogLeaf, ...]:
+    """Prefer the engine's canonical compiled-texture bucket among duplicates.
+
+    Retail archives shelve compiled textures at
+    ``art/compiledtextures/<first-two-letters-of-stem>/<name>``; RotWK 2.01
+    additionally ships stray off-bucket copies (``kb/dummy.dds`` beside the
+    canonical ``du/dummy.dds``). When duplicates exist and exactly one sits in
+    its canonical bucket, that copy is the authored lookup target; any other
+    multiplicity stays ambiguous.
+    """
+
+    matched = tuple(
+        leaf
+        for leaf in candidates
+        if leaf.virtual_path.casefold()
+        == f"art/compiledtextures/{leaf.basename_stem_key[:2]}/{leaf.basename_key}"
+    )
+    return matched if len(matched) == 1 else candidates
+
+
 def _single_resolution(
     request: VisualLeafRequest,
     candidates: tuple[_CatalogLeaf, ...],
@@ -341,6 +363,8 @@ def _single_resolution(
 ) -> VisualLeafResolution:
     if not candidates:
         raise _failure("missing", request, "no exact catalog candidate")
+    if len(candidates) != 1 and request.kind != VISUAL_KIND_ATTACHED_MODEL:
+        candidates = _canonical_bucket_candidates(candidates)
     if len(candidates) != 1:
         raise _failure(
             "ambiguous", request, "multiple exact catalog candidates", candidates

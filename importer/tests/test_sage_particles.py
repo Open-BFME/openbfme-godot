@@ -90,9 +90,12 @@ End
         self.assertEqual(blocks[3].entries, ())
 
     def test_interleaved_entries_and_recursive_walk_remain_authored_order(self) -> None:
+        # FXParticleSystem assignment-shaped sections come from the engine's
+        # fixed module vocabulary (Update, Physics, ...); bare headers such
+        # as Child still nest structurally.
         source = b"""FXParticleSystem OrderedFixture
   First = one
-  Section = DefaultSection
+  Update = DefaultUpdate
     NestedFirst = two
     Child
       Deep = three
@@ -113,7 +116,7 @@ End
         )
         self.assertEqual(
             [block.field for block in definition.blocks(recursive=True)],
-            ["Section", "Child"],
+            ["Update", "Child"],
         )
 
     def test_parse_is_deterministic_and_retains_duplicate_evidence(self) -> None:
@@ -160,10 +163,6 @@ End
             (b"End\n", "unbalanced top-level End"),
             (b"ParticleSystem Missing\n  Count = 1\n", "unterminated"),
             (
-                b"FXParticleSystem BadIndent\n  System\n    Count = 1\n End\nEnd\n",
-                "unbalanced End",
-            ),
-            (
                 b"ParticleSystem One\n  Count = 1\nParticleSystem Two\nEnd\n",
                 "unterminated",
             ),
@@ -172,6 +171,42 @@ End
             with self.subTest(message=message):
                 with self.assertRaisesRegex(ValueError, message):
                     parse_particle_definitions(source)
+
+    def test_mis_indented_end_closes_the_innermost_block_like_retail(self) -> None:
+        # RotWK 2.01 retail ships mis-indented closers (fxparticlesystem.ini
+        # AngSanctumCharge05); SAGE's reader is indentation-blind, so End
+        # always closes the innermost open block.
+        definitions = parse_particle_definitions(
+            b"FXParticleSystem BadIndent\n  System\n    Count = 1\n End\nEnd\n"
+        )
+
+        self.assertEqual(len(definitions), 1)
+        (block,) = definitions[0].entries
+        self.assertEqual(block.field, "System")
+        self.assertEqual(block.assignments()[0].field, "Count")
+
+    def test_fx_section_membership_is_structural_not_indentation(self) -> None:
+        # RotWK authors section children at the section header's own column
+        # (AngSanctumCharge05Sml EmissionVolume); entries belong to the
+        # innermost open block until its End, and a trailing assignment whose
+        # value is not a lone identifier never opens a section.
+        definitions = parse_particle_definitions(
+            b"FXParticleSystem Sloppy\n"
+            b"  EmissionVolume = LineEmissionVolume\n"
+            b"  StartPoint = X:0 Y:0 Z:-180\n"
+            b"  EndPoint = X:0 Y:0 Z:-20\n"
+            b"  End\n"
+            b"End\n"
+        )
+
+        self.assertEqual(len(definitions), 1)
+        (volume,) = definitions[0].entries
+        self.assertEqual(volume.field, "EmissionVolume")
+        self.assertEqual(volume.selector, "LineEmissionVolume")
+        self.assertEqual(
+            [item.field for item in volume.assignments()],
+            ["StartPoint", "EndPoint"],
+        )
 
     def test_malformed_names_assignments_quotes_and_top_level_text_fail_closed(
         self,

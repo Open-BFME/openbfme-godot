@@ -40,6 +40,13 @@ FACTIONS = (
     ("mordor", "FactionMordor", "Mordor"),
     ("wild", "FactionWild", "Wild"),
 )
+# RotWK 2.01 expansion factions arrive through data-driven discovery
+# (resolve_playable_faction), but identity admission stays closed: only the
+# (short, PlayerTemplate, Side) pairs pinned here are valid downstream — the
+# same shape the BFME2 table above proves for its six factions.
+ROTWK_FACTIONS = (
+    ("angmar", "FactionAngmar", "Angmar"),
+)
 _REQUIRED_DOCUMENTS = (
     "data/ini/commandset.ini",
     "data/ini/commandbutton.ini",
@@ -230,6 +237,11 @@ def _resolved_media(
         and isinstance(row.get("id"), str)
         and isinstance(row.get("virtualPath"), str)
     }
+    # Census-recorded retail-absent sample files (RotWK 2.01 references nine
+    # Angmar voice samples it never shipped). The engine skips a sound whose
+    # sample file is missing, so a census-proven absence contributes no path;
+    # anything NOT proven absent by the census still fails closed below.
+    source_null_samples = _census_missing_audio_samples(graph)
 
     def resolve_audio(identifier: str, stack: tuple[str, ...] = ()) -> set[str]:
         key = identifier.casefold()
@@ -237,6 +249,8 @@ def _resolved_media(
             raise ValueError(f"audio dependency cycle at {identifier}")
         if key in samples:
             return {samples[key]}
+        if key in source_null_samples:
+            return set()
         row = events.get(key)
         child_field = "sounds"
         if row is None:
@@ -259,6 +273,20 @@ def _resolved_media(
     return images, resolved_audio
 
 
+def _census_missing_audio_samples(graph: Mapping[str, object]) -> frozenset[str]:
+    """Casefolded census-recorded retail-absent audio sample identifiers."""
+
+    unresolved = graph.get("unresolved")
+    if not isinstance(unresolved, Mapping):
+        return frozenset()
+    rows = unresolved.get("missingAudioSamples")
+    if not isinstance(rows, list):
+        return frozenset()
+    return frozenset(
+        str(item).casefold() for item in rows if isinstance(item, str) and item
+    )
+
+
 def _resolved_strings(
     catalog: InstallCatalog, descriptor: Mapping[str, object]
 ) -> dict[str, str]:
@@ -268,7 +296,14 @@ def _resolved_strings(
     string_source = catalog.open_archive_for(string_entry).read_entry(
         catalog.as_entry(string_entry), max_bytes=MAX_STRING_BYTES
     )
-    string_catalog = parse_string_catalog(string_source, duplicate_policy="first-wins")
+    # RotWK 2.01 retail ships lotr.str with a bounded lexical typo (a label
+    # containing a space: "CONTROLBAR:Tooltipbuild AngmarTrollSling"); mirror
+    # the census parse and record malformed rows as evidence instead of
+    # failing the whole catalog. Every REQUIRED identifier below still fails
+    # closed individually when it cannot be resolved.
+    string_catalog = parse_string_catalog(
+        string_source, duplicate_policy="first-wins", strict=False
+    )
     resolved_strings: dict[str, str] = {}
     for identifier in sorted(_required_string_ids(descriptor), key=str.casefold):
         record = string_catalog.record(identifier)

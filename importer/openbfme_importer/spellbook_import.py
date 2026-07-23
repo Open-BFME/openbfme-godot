@@ -54,6 +54,17 @@ def spellbook_source_documents(effective_root: Path) -> dict[str, bytes]:
         if not path.is_file():
             raise FileNotFoundError(f"effective retail source is missing: {relative}")
         documents[relative] = path.read_bytes()
+    # RotWK 2.01 top-level inis pull data/ini/mod/*.inc patch fragments via
+    # authored #include directives; the include expansion fails closed on a
+    # missing target, so the fragments must ride the document view when the
+    # edition ships them (BFME2 1.06 has no mod directory — view unchanged).
+    mod_root = effective_root / "data" / "ini" / "mod"
+    if mod_root.is_dir():
+        for path in sorted(mod_root.rglob("*")):
+            if path.is_file() and path.suffix.casefold() in {".inc", ".ini"}:
+                documents[path.relative_to(effective_root).as_posix()] = (
+                    path.read_bytes()
+                )
     return documents
 
 
@@ -113,12 +124,20 @@ def _resolved_spellbook_media(
         and isinstance(row.get("virtualPath"), str)
     }
 
+    # Same census-proven source-null policy as the unit lane: RotWK 2.01
+    # references voice samples it never shipped, and the engine skips them.
+    from .playable_unit_import import _census_missing_audio_samples
+
+    source_null_samples = _census_missing_audio_samples(graph)
+
     def resolve_audio(identifier: str, stack: tuple[str, ...] = ()) -> set[str]:
         key = identifier.casefold()
         if key in stack:
             raise ValueError(f"audio dependency cycle at {identifier}")
         if key in samples:
             return {samples[key]}
+        if key in source_null_samples:
+            return set()
         row = events.get(key)
         child_field = "sounds"
         if row is None:
@@ -150,7 +169,12 @@ def _resolved_spellbook_strings(
     string_source = catalog.open_archive_for(string_entry).read_entry(
         catalog.as_entry(string_entry), max_bytes=MAX_STRING_BYTES
     )
-    string_catalog = parse_string_catalog(string_source, duplicate_policy="first-wins")
+    # Non-strict like the census: RotWK 2.01 retail authors one lexical typo
+    # record in lotr.str; malformed rows stay recorded evidence while each
+    # required identifier below fails closed individually.
+    string_catalog = parse_string_catalog(
+        string_source, duplicate_policy="first-wins", strict=False
+    )
     resolved: dict[str, str] = {}
     for identifier in sorted(_requirement_ids(descriptor, "strings"), key=str.casefold):
         record = string_catalog.record(identifier)

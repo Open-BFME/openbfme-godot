@@ -511,6 +511,48 @@ def compile_structure_visual_recipe(
             raise PlayableStructurePackCompilerError(
                 f"structure animation is absent from scannedW3d: {animation_path}"
             )
+        raw_mesh_count = row.get("meshCount")
+        header_ids = row.get("headerIds")
+        header_models = (
+            header_ids.get("modelIds", []) if isinstance(header_ids, Mapping) else []
+        )
+        if (
+            isinstance(raw_mesh_count, int)
+            and not isinstance(raw_mesh_count, bool)
+            and raw_mesh_count > 0
+        ) or header_models:
+            # RotWK 2.01 authors door "animation" variants that are full
+            # models (kbhalldoors_cla.w3d ships two door meshes, its own
+            # hierarchy, and the embedded clip). Importing such a file as a
+            # bare clip source injects its meshes into the host bundle, so
+            # it can never bind as an attached animation; the door motion
+            # stays a recorded exclusion instead of silently corrupting the
+            # host model. Files that are themselves lifecycle models still
+            # convert through their own model states.
+            exclusions.append(
+                {
+                    "kind": "animation",
+                    "sourceW3d": animation_path,
+                    "reason": "animation-file-carries-render-model",
+                }
+            )
+            continue
+        raw_channel_count = row.get("embeddedAnimationChannelCount")
+        if raw_channel_count == 0 and not isinstance(raw_channel_count, bool):
+            # RotWK 2.01 binds header-only pose "clips" with zero animation
+            # channels (kbforgd_cls.w3d / kbangwgn_cls.w3d hold the doors in
+            # their modeled pose). There is no motion to convert — importing
+            # them creates no action — so the binding is recorded as an
+            # explicit exclusion and the model presents its base pose,
+            # exactly what the retail engine renders.
+            exclusions.append(
+                {
+                    "kind": "animation",
+                    "sourceW3d": animation_path,
+                    "reason": "animation-authors-no-motion-channels",
+                }
+            )
+            continue
         prefixes = _animation_hierarchies(row, animation_path)
         providers = _hierarchy_providers(prefixes, scanned)
         unprovided = sorted(
@@ -604,10 +646,13 @@ def compile_structure_visual_recipe(
             raise PlayableStructurePackCompilerError(
                 "structure bib model embeds an animation clip: " + model_path
             )
-        if embedded_animation and animations and animations != [model_path]:
-            raise PlayableStructurePackCompilerError(
-                "structure model mixes bound and embedded animations: " + model_path
-            )
+        # RotWK 2.01 models embed a redundant one-channel pose clip beside
+        # externally bound state clips (kbangwgn_a.w3d embeds
+        # KBANGWGN_ASKL.KBANGWGN_A while retail binds the _ABLD buildup
+        # clip; the citadel kbfdoor models are the same shape). The adapter
+        # discards the embedded pose actions with recorded report evidence
+        # when external clips are declared, so a model that mixes both is a
+        # regular bundle of its attached clips — not a failure.
         pivot_only = (
             model_mesh_counts[model_path] is not None
             and model_mesh_counts[model_path] == 0
@@ -681,6 +726,25 @@ def compile_structure_visual_recipe(
         return resource_id, animations, sorted(clip_ids)
 
     for model_path in sorted(model_phases, key=lambda item: (item.casefold(), item)):
+        if (
+            model_mesh_counts[model_path] == 0
+            and not model_hierarchy_ids[model_path]
+            and not model_external_hierarchies[model_path]
+            and model_animation_ids[model_path]
+        ):
+            # RotWK 2.01 authors an animation-only W3D in a Model slot
+            # (AngmarFortressCitadel's House of Lamentation RUBBLE state
+            # names KBFHoLa_D3, a file carrying only the destruction clip).
+            # The engine finds no render object in it and draws nothing, so
+            # the authored truth is an explicit exclusion, never a body.
+            exclusions.append(
+                {
+                    "kind": "model",
+                    "sourceW3d": model_path,
+                    "reason": "model-slot-authors-animation-only-w3d",
+                }
+            )
+            continue
         phases = tuple(
             sorted(
                 model_phases[model_path],
@@ -1180,6 +1244,37 @@ def _select_phase_states(
             if phase in _state_canonical_phases(state):
                 candidates.append(state)
         outputs = {str(state["output"]) for state in candidates}
+        if len(outputs) > 1 and phase == "construction":
+            # RotWK 2.01 authors distinct pre-placement and buildup bodies
+            # (AngmarWallTowerSmall: KBArwWal_A for AWAITING_CONSTRUCTION
+            # beside KBArrwWal_A for ACTIVELY_BEING_CONSTRUCTED). The buildup
+            # body is what retail presents while the structure is built, so
+            # it is the canonical construction visual; the awaiting ghost
+            # stays packed as a recorded secondary. Any other multiplicity
+            # remains the hard failure below.
+            active = [
+                state
+                for state in candidates
+                if any(
+                    "ACTIVELY_BEING_CONSTRUCTED" in _exact_condition_set(conditions)
+                    for conditions in state.get("sourceConditionSets", [])
+                )
+            ]
+            active_outputs = {str(state["output"]) for state in active}
+            if len(active_outputs) == 1:
+                notes.append(
+                    {
+                        "kind": "phase-visual",
+                        "phase": "construction",
+                        "reason": "actively-being-constructed-canonical",
+                        "sourceW3d": str(active[0].get("sourceW3d", "")),
+                        "unpresentedOutputs": sorted(
+                            outputs - active_outputs
+                        ),
+                    }
+                )
+                candidates = active
+                outputs = active_outputs
         if len(outputs) > 1:
             raise PlayableStructurePackCompilerError(
                 f"structure phase visual is ambiguous among exact canonical "
