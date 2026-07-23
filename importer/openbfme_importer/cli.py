@@ -35,6 +35,8 @@ from .faction_census import (
 )
 from .faction_import import convert_faction_import, plan_faction_import
 from .faction_policy import implicit_object_roots
+from .sage_video import convert_videos
+from .tools import discover_executable
 from .faction_profile import build_men_leaf_profile
 from .faction_slice_profile import compose_faction_profile
 from .map_profile import build_five_map_profile
@@ -241,6 +243,24 @@ def build_parser() -> argparse.ArgumentParser:
     factions_census.add_argument("--install", required=True)
     _add_game_argument(factions_census)
     factions_census.add_argument("--reindex", action="store_true")
+
+    convert_videos_cmd = sub.add_parser(
+        "convert-videos",
+        help="convert loose data/movies VP6/Bink cinematics to Ogg Theora via pinned ffmpeg",
+    )
+    convert_videos_cmd.add_argument("--install", required=True)
+    _add_game_argument(convert_videos_cmd)
+    convert_videos_cmd.add_argument(
+        "--only",
+        default=None,
+        help="convert only movies whose path contains this substring",
+    )
+    convert_videos_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="convert at most N movies (discovery order)",
+    )
 
     import_faction = sub.add_parser(
         "import-faction",
@@ -623,6 +643,34 @@ def main(argv: list[str] | None = None) -> int:
             }
             _render(value, args.json)
             return 0 if value["ready"] else 6
+
+        if args.command == "convert-videos":
+            # Loose-file lane: reads data/movies directly, no catalog required.
+            ffmpeg = discover_executable("ffmpeg", "OPENBFME_FFMPEG")
+            if ffmpeg is None:
+                raise SystemExit(
+                    "ffmpeg is required; run bootstrap-tools or set OPENBFME_FFMPEG"
+                )
+            output_root = _workspace_root(args) / "videos"
+            report = convert_videos(
+                Path(args.install).expanduser().resolve(),
+                output_root,
+                Path(ffmpeg),
+                only=args.only,
+                limit=args.limit,
+            )
+            _render(
+                {
+                    "ready": True,
+                    "game": args.game,
+                    "output": str(output_root),
+                    "discovered": report["discovered"],
+                    "converted": report["converted"],
+                    "failed": report["failed"],
+                },
+                args.json,
+            )
+            return 0
 
         if args.command in {"import-faction", "import-unit", "build", "plan", "extract"}:
             from .progress import emit as progress_emit
