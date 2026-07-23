@@ -125,7 +125,30 @@ def test_pack_id_is_derived_per_faction(tmp_path: Path) -> None:
 
 def test_rejects_unknown_faction(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unknown faction"):
-        compose_faction_profile(_base(), tmp_path, ["angmar"])
+        compose_faction_profile(_base(), tmp_path, ["mirkwood"])
+
+
+def test_angmar_is_a_registered_rotwk_faction(tmp_path: Path) -> None:
+    # Angmar is a known composable faction: it must pass the known-faction guard
+    # and fail later on the missing coverage artifact, not up front as unknown.
+    from openbfme_importer.faction_slice_profile import _KNOWN_FACTIONS
+
+    assert "angmar" in _KNOWN_FACTIONS
+    with pytest.raises(ValueError, match="faction coverage"):
+        compose_faction_profile(_base(), tmp_path, ["angmar"], game="rotwk")
+
+
+def test_rotwk_faction_pack_id_is_game_prefixed(tmp_path: Path) -> None:
+    # A RotWK faction publish lands under rotwk-<faction>-vslice, not bfme2-.
+    _faction_coverage(tmp_path, "angmar")
+    target, _ = compose_faction_profile(_base(), tmp_path, ["angmar"], game="rotwk")
+    assert target["pack"]["id"] == "rotwk-angmar-vslice"
+
+
+def test_rejects_unsupported_compose_game(tmp_path: Path) -> None:
+    _faction_coverage(tmp_path, "men")
+    with pytest.raises(ValueError, match="unsupported compose game"):
+        compose_faction_profile(_base(), tmp_path, ["men"], game="bfme3")
 
 
 def test_rejects_tampered_coverage_before_reading_artifacts(tmp_path: Path) -> None:

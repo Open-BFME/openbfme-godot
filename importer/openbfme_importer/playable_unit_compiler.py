@@ -1406,19 +1406,29 @@ def _block_values(block: IniBlock, key: str) -> tuple[str, ...]:
 
 
 def _command_slots(block: IniBlock) -> tuple[tuple[int, str], ...]:
+    # A slot index may legitimately repeat within a single CommandSet: RotWK
+    # packs several radial submenu pages (main / upgrades / hero menus) into one
+    # block and restarts slot numbering per page. BFME2's flat single-page sets
+    # never repeat a slot, so tolerating repeats here changes no BFME2 output
+    # while admitting RotWK's multi-page layout. Genuine malformation (slot < 1
+    # or an empty command binding) still fails closed. Exact (slot, command)
+    # duplicates are collapsed so a copy-pasted line cannot double-count.
     result: list[tuple[int, str]] = []
-    used: set[int] = set()
+    seen: set[tuple[int, str]] = set()
     for key, value in block.assignments:
         if re.fullmatch(r"[0-9]+", key) is None:
             continue
         slot = int(key)
         command = _first((value,))
-        if slot < 1 or slot in used or not command:
+        if slot < 1 or not command:
             raise PlayableUnitCompilerError(
                 f"CommandSet {block.name} has an invalid slot {key}"
             )
-        used.add(slot)
-        result.append((slot, command))
+        pair = (slot, command)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        result.append(pair)
     return tuple(sorted(result))
 
 

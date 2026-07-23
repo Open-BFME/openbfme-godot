@@ -8,9 +8,19 @@ from .faction_import import coverage_digest_payload
 from .playable_structure_pack_compiler import validate_structure_visual_recipe
 from .playable_unit_import import FACTIONS as _FACTION_ROWS, extend_profile_with_unit
 
-# Authoritative faction slugs (men, elves, dwarves, isengard, mordor, wild).
-# The per-faction vertical-slice pack convention is bfme2-<faction>-vslice.
-_KNOWN_FACTIONS = frozenset(row[0] for row in _FACTION_ROWS)
+# Authoritative BFME2 faction slugs (men, elves, dwarves, isengard, mordor,
+# wild) come from the playable-unit FACTIONS registry.  RotWK 2.01 adds its own
+# expansion factions; these are kept out of the BFME2 FACTIONS tuple (which
+# carries BFME2-only policy invariants such as curated census roots) and are
+# registered here so a RotWK faction is composable without inventing BFME2
+# curations.  The per-faction vertical-slice pack convention is
+# <game>-<faction>-vslice (e.g. bfme2-men-vslice, rotwk-angmar-vslice).
+_ROTWK_FACTIONS = frozenset({"angmar"})
+_KNOWN_FACTIONS = frozenset(row[0] for row in _FACTION_ROWS) | _ROTWK_FACTIONS
+
+# Map an import game identity to its pack-id prefix.  BFME2 is the default so
+# every existing bfme2 composition keeps its byte-identical id.
+_GAME_PACK_PREFIX = {"bfme2": "bfme2", "rotwk": "rotwk"}
 from .spellbook_pack_compiler import validate_spellbook_pack_recipe
 
 def _bytes(value: object) -> bytes:
@@ -99,8 +109,11 @@ def _add_spellbook(profile: Mapping[str, object], recipe: Mapping[str, object], 
     data[runtime_path] = deepcopy(dict(runtime)); files[file_key] = runtime_path
     return target, {"objectId": object_id, "runtimePath": runtime_path, "packFileKey": file_key, "resourceIds": sorted(added, key=str.casefold)}
 
-def compose_faction_profile(base: Mapping[str, object], report_root: Path, factions: Sequence[str]) -> tuple[dict[str, object], dict[str, object]]:
+def compose_faction_profile(base: Mapping[str, object], report_root: Path, factions: Sequence[str], *, game: str = "bfme2") -> tuple[dict[str, object], dict[str, object]]:
     """Add only artifacts bound to converted rows in digested coverage reports."""
+    game_key = str(game).strip().casefold()
+    game_prefix = _GAME_PACK_PREFIX.get(game_key)
+    if game_prefix is None: raise ValueError(f"unsupported compose game: {game!r}")
     target = deepcopy(dict(base)); receipts: list[dict[str, object]] = []; deltas: list[dict[str, object]] = []; seen: set[str] = set(); ordered: list[str] = []
     for raw_faction in factions:
         faction = raw_faction.strip().lower()
@@ -151,7 +164,7 @@ def compose_faction_profile(base: Mapping[str, object], report_root: Path, facti
     # bfme2-<faction>-vslice/ instead of stray-bundling under bfme2-men-vslice/.
     # A single-faction publish is the only shape the CLI emits; when exactly one
     # faction is composed we own the pack id deterministically.
-    if len(ordered) == 1: pack["id"] = f"bfme2-{ordered[0]}-vslice"
+    if len(ordered) == 1: pack["id"] = f"{game_prefix}-{ordered[0]}-vslice"
     pack.update({"vertical_slice_complete": False, "full_faction_complete": False, "asset_conversion_complete": False, "factionImportCoverage": receipts})
     target["id"] = "faction-slice-" + hashlib.sha256(_bytes(receipts)).hexdigest()[:16]
     return target, {"factions": receipts, "objects": deltas}

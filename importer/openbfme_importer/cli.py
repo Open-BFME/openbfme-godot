@@ -842,7 +842,7 @@ def main(argv: list[str] | None = None) -> int:
             if not isinstance(base, dict):
                 raise ValueError(f"base profile root is not an object: {base_profile_path}")
             composed, receipt = compose_faction_profile(
-                base, coverage_root, [args.faction]
+                base, coverage_root, [args.faction], game=args.game
             )
             # Keep the host pack id stable so the vertical slice host pack
             # assertion (bfme2-men-vslice) continues to pass for Men.
