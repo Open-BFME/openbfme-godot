@@ -55,6 +55,17 @@ const PRODUCTION_EXIT_DURATION_TICKS := 18
 const TRAMPLE_COLLISION_RADIUS := 2.5
 const TRAMPLE_COOLDOWN_TICKS := 10
 const TRAMPLE_DAMAGE_FACTOR := 0.5
+## Knockback/knockdown lane. Trampled or blast-struck battalions are thrown
+## away from the impact and stay incapacitated (no move/attack/orders) until
+## the counter drains — retail infantry sprawl-then-stand behavior.
+## 2.5 seconds at TICK_SECONDS = 0.1.
+const KNOCKDOWN_DURATION_TICKS := 25
+const TRAMPLE_KNOCKBACK_STRENGTH := 2.0
+## Honest melee-vs-ranged discriminator for flyer targeting: converted melee
+## weapons author source-unit ranges <= ~40 (MeleeWeapon family; harness
+## fixtures use 11.5), while bows/crossbows/siege author 250+. Source-unit
+## ranges are map-scale invariant, unlike the scaled attack_range.
+const MELEE_ATTACK_RANGE_SOURCE_THRESHOLD := 50.0
 ## Retail eva.ini UnderAttack* blocks debounce global under-attack announces
 ## with TimeBetweenEventsMS = 30000 (30s → 300 sim ticks at 0.1s/tick).
 const EVA_BASE_UNDER_ATTACK_DEBOUNCE_TICKS := 300
@@ -1792,6 +1803,13 @@ func _add_battalion(
 		"braking_source": float(unit_rule["braking_source"]),
 		"category": String(unit_rule.get("category", "")),
 		"trample_cooldown": 0,
+		# Flyers ignore ground navigation and cannot be hit by melee or bowled
+		# over; knockdown_ticks > 0 means sprawled on the ground (no acting,
+		# no orders) until the counter drains. Plain dict entries so both
+		# serialize through snapshot()/state_hash() automatically.
+		"flying": bool(unit_rule.get("is_flyer", false)),
+		"knockdown_ticks": 0,
+		"knocked_down": false,
 		"attack_range": float(unit_rule["attack_range"]),
 		"attack_range_source": float(unit_rule["attack_range_source"]),
 		"minimum_attack_range": float(unit_rule["minimum_attack_range"]),
@@ -4434,6 +4452,8 @@ func issue_attack(ids: Array[int], target_id: int, team: int = PLAYER_TEAM) -> i
 		var row: Dictionary = entities[id]
 		if int(row["team"]) == int(target["team"]):
 			continue
+		if target_kind == "battalion" and not _can_engage_battalion(row, target):
+			continue
 		if not _assign_route(row, Vector2(target["position"])):
 			continue
 		row["target_id"] = target_id
@@ -4645,11 +4665,11 @@ func _step_battalion_separation() -> void:
 		var a: Dictionary = entities[ids[index]]
 		# Only settled battalions get nudged apart: pushing marching columns
 		# around mid-route disrupts ford crossings and formation moves.
-		if int(a.get("health", 0)) <= 0 or String(a.get("state", "")) != "idle":
+		if int(a.get("health", 0)) <= 0 or String(a.get("state", "")) != "idle" or bool(a.get("flying", false)):
 			continue
 		for other_index in range(index + 1, ids.size()):
 			var b: Dictionary = entities[ids[other_index]]
-			if int(b.get("health", 0)) <= 0 or String(b.get("state", "")) != "idle":
+			if int(b.get("health", 0)) <= 0 or String(b.get("state", "")) != "idle" or bool(b.get("flying", false)):
 				continue
 			var a_position := Vector2(a["position"])
 			var b_position := Vector2(b["position"])
@@ -4759,6 +4779,13 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				effect["damage_radius"] = float(effect.get("damageRadius", 0.0)) * scale
 				var range_source := float(effect.get("attackRange", effect.get("startAbilityRange", 0.0)))
 				effect["range"] = range_source * scale
+				# Converter-emitted knockback magnitudes (source units) bind to
+				# map scale like every other range. No compiled Men ability
+				# carries these yet (MetaImpactNugget extraction is importer
+				# follow-up); until then the keys stay 0 and the blast deals
+				# damage without a shockwave — fail-closed, nothing invented.
+				effect["knockback_radius"] = float(effect.get("knockbackRadius", 0.0)) * scale
+				effect["knockback_strength"] = float(effect.get("knockbackStrength", 0.0)) * scale
 			"heal":
 				effect["radius_scaled"] = float(effect.get("radius", 0.0)) * scale
 			"attribute-modifier":
@@ -5084,6 +5111,13 @@ func _apply_ability_weapon_blast(hero_row: Dictionary, effect: Dictionary, point
 		if best_id >= 0:
 			_apply_damage(attacker_id, best_id, damage, "battalion")
 			affected = 1
+	# Blast shockwave: abilities whose compiled rule authors knockback fields
+	# throw enemies radially away from the impact point. Damage stays on the
+	# damage_radius path above (knockback itself adds none).
+	var knockback_radius := float(effect.get("knockback_radius", 0.0))
+	var knockback_strength := float(effect.get("knockback_strength", 0.0))
+	if knockback_radius > 0.0 and knockback_strength > 0.0:
+		_apply_knockback(point, knockback_radius, knockback_strength, team, 0, "ability-blast", attacker_id)
 	return {"ok": true, "reason": "", "effect": "weapon-blast", "affected": affected}
 
 
@@ -5390,6 +5424,20 @@ func _step_entity(id: int) -> void:
 		# until the authored weather duration elapses.
 		row["current_speed"] = 0.0
 		return
+	var knockdown_ticks := int(row.get("knockdown_ticks", 0))
+	if knockdown_ticks > 0:
+		# Knocked-down battalions lie incapacitated: no movement, attacks, or
+		# ability steps until the counter drains, then they stand back up.
+		knockdown_ticks -= 1
+		row["knockdown_ticks"] = knockdown_ticks
+		row["current_speed"] = 0.0
+		if knockdown_ticks <= 0:
+			row["knocked_down"] = false
+			row["state"] = "idle"
+			_emit_event("combat.stand_up", id, 0)
+		else:
+			row["state"] = "knocked_down"
+		return
 	row["attack_cooldown"] = maxi(0, int(row["attack_cooldown"]) - 1)
 	if _step_production_exit(row):
 		return
@@ -5439,6 +5487,18 @@ func _step_entity(id: int) -> void:
 			else:
 				_clear_pending_route(row, true)
 				row["state"] = "idle"
+			return
+		if target_kind == "battalion" and not _can_engage_battalion(row, entities[target_id] as Dictionary):
+			# Safety net for targets acquired through paths other than the
+			# guarded acquisition funnels (e.g. retaliation): melee cannot
+			# chase an airborne battalion it can never reach.
+			row["target_id"] = 0
+			row["target_kind"] = "battalion"
+			row["attack_windup"] = 0
+			_clear_member_attack_schedule(row)
+			_clear_member_targets(row)
+			_clear_pending_route(row, true)
+			row["state"] = "idle"
 			return
 		var target_position := _target_position(target_id, target_kind)
 		# Retail/OpenSAGE range is center-to-center: Weapon.cs:54-58 compares the
@@ -5687,6 +5747,8 @@ func _nearest_attack_move_target(row: Dictionary) -> int:
 	var result := 0
 	var best := limit
 	for candidate in living_ids(enemy_team):
+		if not _can_engage_battalion(row, entities[candidate] as Dictionary):
+			continue
 		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
 		if distance <= best:
 			best = distance
@@ -5710,6 +5772,8 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 	var best_kind := ""
 	var best_distance := limit
 	for candidate in living_ids(enemy_team):
+		if not _can_engage_battalion(row, entities[candidate] as Dictionary):
+			continue
 		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
 		if distance <= best_distance:
 			best_distance = distance
@@ -6141,7 +6205,9 @@ func _step_route(row: Dictionary) -> void:
 		route.pop_front()
 	else:
 		position += position.direction_to(waypoint) * step_distance
-	position = _deflect_around_structures(position, int(row.get("target_id", 0)))
+	if not bool(row.get("flying", false)):
+		# Flyers pass straight over building footprints.
+		position = _deflect_around_structures(position, int(row.get("target_id", 0)))
 	# Grid routes ignore structure footprints, so a waypoint can sit inside a
 	# blocked disc; deflection then pins the unit on the ring making zero
 	# progress. Only a sustained stall pops the waypoint — a single flat tick
@@ -6168,7 +6234,10 @@ func _step_route(row: Dictionary) -> void:
 
 func _try_cavalry_trample(row: Dictionary) -> void:
 	## One bonus damage pulse when a charging cavalry battalion overlaps an
-	## enemy within TRAMPLE_COLLISION_RADIUS. Cooldown prevents continuous ticks.
+	## enemy within TRAMPLE_COLLISION_RADIUS. Cooldown prevents continuous
+	## ticks. The struck battalion is also bowled over: knocked down and
+	## displaced away from the charge through the shared knockback core
+	## (retail infantry fly aside, sprawl, then stand up). Flyers are immune.
 	var cooldown := int(row.get("trample_cooldown", 0))
 	if cooldown > 0:
 		row["trample_cooldown"] = cooldown - 1
@@ -6179,6 +6248,8 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 	var best_id := 0
 	var best_distance := TRAMPLE_COLLISION_RADIUS
 	for candidate in living_ids(enemy_team):
+		if bool((entities[candidate] as Dictionary).get("flying", false)):
+			continue
 		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
 		if distance <= best_distance:
 			best_distance = distance
@@ -6191,6 +6262,60 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 	_apply_damage(int(row.get("id", 0)), best_id, damage, "battalion")
 	row["trample_cooldown"] = TRAMPLE_COOLDOWN_TICKS
 	_emit_event("combat.trample", int(row.get("id", 0)), best_id, {"amount": damage, "category": "cavalry"})
+	# Damage keeps its existing single-victim semantics above; the knockdown
+	# sweep covers everything the charge plows through around the impact.
+	_apply_knockback(origin, TRAMPLE_COLLISION_RADIUS, TRAMPLE_KNOCKBACK_STRENGTH, team, 0, "trample", int(row.get("id", 0)))
+
+
+func _apply_knockback(center: Vector2, radius: float, strength: float, source_team: int, damage: int, damage_reason: String, source_id: int = 0) -> int:
+	## Deterministic radial knockback: sweep enemy battalions in ascending id
+	## order, throw each away from the center (clamped to walkable ground),
+	## knock them down for KNOCKDOWN_DURATION_TICKS, and apply the optional
+	## damage through the existing damage path. Allies and flyers are immune.
+	var affected := 0
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if int(row.get("team", -1)) == source_team or int(row.get("health", 0)) <= 0:
+			continue
+		if bool(row.get("flying", false)):
+			# Airborne units cannot be bowled over by ground shockwaves.
+			continue
+		var position := Vector2(row.get("position", Vector2.ZERO))
+		var distance := position.distance_to(center)
+		if distance > radius:
+			continue
+		var direction := (position - center) / distance if distance > 0.001 else Vector2.RIGHT
+		# Try the full throw first, then shorter deterministic fractions so a
+		# victim near water/cliff lands on the nearest walkable spot instead
+		# of being stranded on unwalkable cells.
+		var landed := position
+		for fraction in [1.0, 0.5, 0.25]:
+			var candidate := position + direction * strength * float(fraction)
+			if _position_walkable(candidate):
+				landed = candidate
+				break
+		row["position"] = landed
+		row["knockdown_ticks"] = KNOCKDOWN_DURATION_TICKS
+		row["knocked_down"] = true
+		row["current_speed"] = 0.0
+		row["attack_windup"] = 0
+		row["target_id"] = 0
+		row["target_kind"] = "battalion"
+		row["attack_move"] = false
+		_clear_member_attack_schedule(row)
+		_clear_member_targets(row)
+		_clear_pending_route(row, true)
+		row["state"] = "knocked_down"
+		if damage > 0:
+			_apply_damage(source_id, id, damage, "battalion")
+		_emit_event("combat.knockback", source_id, id, {
+			"reason": damage_reason,
+			"center": [snappedf(center.x, 0.001), snappedf(center.y, 0.001)],
+			"landed": [snappedf(landed.x, 0.001), snappedf(landed.y, 0.001)],
+			"knockdown_ticks": KNOCKDOWN_DURATION_TICKS,
+		})
+		affected += 1
+	return affected
 
 
 func _apply_damage(attacker_id: int, target_id: int, amount: int, target_kind: String = "battalion") -> void:
@@ -6313,7 +6438,11 @@ func _apply_member_damage(
 		# Veterancy: the kill pays the victim's authored ExperienceAward at the
 		# victim's current level into the attacker's XP pool.
 		_award_member_kill_experience(attacker_id, target)
-	if int(target["target_id"]) == 0 and int(target["health"]) > 0 and entities.has(attacker_id):
+	if int(target["target_id"]) == 0 and int(target["health"]) > 0 and entities.has(attacker_id) \
+			and int(target.get("knockdown_ticks", 0)) <= 0 \
+			and _can_engage_battalion(target, entities[attacker_id] as Dictionary):
+		# Sprawled battalions cannot retaliate, and melee never chases an
+		# airborne attacker it can never reach.
 		var attacker_position := Vector2((entities[attacker_id] as Dictionary)["position"])
 		var target_distance := Vector2(target["position"]).distance_to(attacker_position)
 		if String(target.get("stance", "Battle")) == "HoldGround":
@@ -6737,6 +6866,17 @@ func _build_route(from: Vector2, to: Vector2) -> Array[Vector2]:
 
 
 func _assign_route(row: Dictionary, destination: Vector2) -> bool:
+	if bool(row.get("flying", false)):
+		# Flyers ignore ground navigation entirely: straight-line route over
+		# water, void, and structures — no walkability query, no ford logic.
+		var direct: Array[Vector2] = []
+		direct.append(destination)
+		var no_cells: Array[Vector2i] = []
+		row["destination"] = destination
+		row["route"] = direct
+		row["route_cells"] = no_cells
+		row["route_ford"] = ""
+		return true
 	var result := _query_route(Vector2(row["position"]), destination)
 	if not bool(result.get("valid", false)):
 		last_route_rejection = String(result.get("reason", "route-rejected"))
@@ -6806,7 +6946,22 @@ func _is_commandable(id: int) -> bool:
 
 
 func _is_commandable_for_team(id: int, team: int) -> bool:
-	return entities.has(id) and int((entities[id] as Dictionary)["team"]) == team and int((entities[id] as Dictionary)["health"]) > 0 and winner == -1
+	# Knocked-down battalions are incapacitated: orders bounce off until the
+	# battalion stands back up (retail sprawled infantry take no commands).
+	return entities.has(id) and int((entities[id] as Dictionary)["team"]) == team and int((entities[id] as Dictionary)["health"]) > 0 and int((entities[id] as Dictionary).get("knockdown_ticks", 0)) <= 0 and winner == -1
+
+
+func _is_melee_attacker(row: Dictionary) -> bool:
+	## Melee-vs-ranged discriminator for flyer targeting (see the threshold
+	## constant): source-unit weapon range is the honest, scale-invariant
+	## signal present on every converted unit rule.
+	return float(row.get("attack_range_source", 0.0)) < MELEE_ATTACK_RANGE_SOURCE_THRESHOLD
+
+
+func _can_engage_battalion(attacker: Dictionary, target: Dictionary) -> bool:
+	## Flyers soar out of melee reach: only ranged weapons can acquire or hit
+	## an airborne battalion.
+	return not (bool(target.get("flying", false)) and _is_melee_attacker(attacker))
 
 
 func _is_living_player(id: int) -> bool:
@@ -6946,6 +7101,9 @@ func state_snapshot() -> Dictionary:
 			"route_cells": route_cell_rows,
 			"route_ford": String(entity_row.get("route_ford", "")),
 			"order_sequence": int(entity_row.get("order_sequence", 0)),
+			"flying": bool(entity_row.get("flying", false)),
+			"knocked_down": bool(entity_row.get("knocked_down", false)),
+			"knockdown_ticks": int(entity_row.get("knockdown_ticks", 0)),
 		})
 	var structure_rows: Array[Dictionary] = []
 	for id in structure_ids():

@@ -10,7 +10,7 @@ const ARCHER_PROJECTILE_CONTROLLER_PATH := "res://src/retail_slice/retail_archer
 ## Pinned deterministic battle signatures per faction (see
 ## battle_signature_matches_pinned_constant).
 const EXPECTED_BATTLE_SIGNATURES := {
-	"men": "6C6D8D26",
+	"men": "3CB9CA98",
 	"elves": "2521173F",
 	"dwarves": "DEF53068",
 	"isengard": "E35938E4",
