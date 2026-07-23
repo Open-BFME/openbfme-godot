@@ -203,6 +203,132 @@ func initial_battalion_count() -> int:
 func _active_spawn_roster() -> Array:
 	return _spawn_roster if not _spawn_roster.is_empty() else DEFAULT_SPAWN_ROSTER
 
+
+func _roster_team_ids() -> Array:
+	## Ordered team ids for per-team dict seeding and the roster-ordered display
+	## snapshot arrays. Falls back to the historical 2-team order when no roster
+	## is seeded yet (e.g. tests that call _apply_gameplay_rules without setup()),
+	## keeping every legacy path byte-identical.
+	if _team_roster.is_empty():
+		return [PLAYER_TEAM, ENEMY_TEAM]
+	return _team_roster
+
+
+func _seed_team_roster() -> void:
+	## Rebuild the explicit team registry from the injected descriptor list, or
+	## the default 2-team roster when none was injected. Ascending insertion in
+	## descriptor order is what keeps the default {0,1} dict order (and therefore
+	## the pinned battle signature) identical to the pre-registry literals.
+	var source: Array = _pending_team_roster if not _pending_team_roster.is_empty() else DEFAULT_TEAM_ROSTER
+	_team_roster = []
+	_team_descriptors = {}
+	for index in source.size():
+		var descriptor := (source[index] as Dictionary).duplicate(true)
+		var team := int(descriptor.get("team", index))
+		descriptor["team"] = team
+		if not _team_roster.has(team):
+			_team_roster.append(team)
+		_team_descriptors[team] = descriptor
+
+
+func configure_team_roster(descriptors: Array) -> void:
+	## Injection seam for the team registry. The descriptor list is consumed at
+	## the next setup(); an empty list restores the default 2-team roster.
+	_pending_team_roster = descriptors.duplicate(true)
+
+
+func team_ids() -> Array:
+	return _roster_team_ids().duplicate()
+
+
+func team_descriptor(team: int) -> Dictionary:
+	return (_team_descriptors.get(team, {}) as Dictionary).duplicate(true)
+
+
+func team_is_ai(team: int) -> bool:
+	return bool((_team_descriptors.get(team, {}) as Dictionary).get("is_ai", team != PLAYER_TEAM))
+
+
+func _seed_team_map(default_value: Variant) -> Dictionary:
+	## Seed a per-team dict with a fresh copy of default_value per rostered team,
+	## in roster order. Arrays/dicts are duplicated so teams never share mutable
+	## state. For the default {0,1} roster this reproduces the old 2-key literals
+	## exactly (same keys, same insertion order, same values).
+	var seeded := {}
+	for team in _roster_team_ids():
+		match typeof(default_value):
+			TYPE_ARRAY:
+				seeded[team] = (default_value as Array).duplicate(true)
+			TYPE_DICTIONARY:
+				seeded[team] = (default_value as Dictionary).duplicate(true)
+			_:
+				seeded[team] = default_value
+	return seeded
+
+
+func _seed_next_dynamic_ids() -> Dictionary:
+	## Per-team dynamic-id cursors. The formula reproduces the historical seeds
+	## (team 0 -> 10, team 1 -> 110) and extends deterministically to team N.
+	var seeded := {}
+	for team in _roster_team_ids():
+		seeded[team] = 10 + team * 100
+	return seeded
+
+
+func _seed_team_manifest_tables() -> void:
+	## Point every rostered team at the compiled manifest table set. Today one
+	## manifest drives every team, so each entry aliases the single global table
+	## and behavior is byte-identical. The guarded per-team branch reads an
+	## optional _rules["team_faction_manifests"] map so a future caller can
+	## supply distinct manifests; when it is absent (today) all teams share.
+	var provided: Dictionary = _rules.get("team_faction_manifests", {}) as Dictionary
+	var shared_manifest: Dictionary = _rules.get("faction_manifest", {}) as Dictionary
+	_team_manifests = {}
+	_team_unit_production_rules = {}
+	_team_structure_build_rules = {}
+	_team_spawn_roster = {}
+	_team_structure_max_health = {}
+	_team_structure_armor = {}
+	_team_ai_production_plan = {}
+	for team in _roster_team_ids():
+		_team_manifests[team] = provided.get(team, shared_manifest)
+		# Shared aliases today; a future packet compiles distinct tables per
+		# manifest and stores them here instead of the global references.
+		_team_unit_production_rules[team] = _unit_production_rules
+		_team_structure_build_rules[team] = _structure_build_rules
+		_team_spawn_roster[team] = _spawn_roster
+		_team_structure_max_health[team] = _structure_max_health
+		_team_structure_armor[team] = _structure_armor
+		_team_ai_production_plan[team] = _ai_production_plan
+
+
+func team_manifest_for(team: int) -> Dictionary:
+	return _team_manifests.get(team, _rules.get("faction_manifest", {})) as Dictionary
+
+
+func unit_production_rules_for_team(team: int) -> Dictionary:
+	return _team_unit_production_rules.get(team, _unit_production_rules) as Dictionary
+
+
+func structure_build_rules_for_team(team: int) -> Dictionary:
+	return _team_structure_build_rules.get(team, _structure_build_rules) as Dictionary
+
+
+func spawn_roster_for_team(team: int) -> Array:
+	return _team_spawn_roster.get(team, _spawn_roster) as Array
+
+
+func structure_max_health_for_team(team: int) -> Dictionary:
+	return _team_structure_max_health.get(team, _structure_max_health) as Dictionary
+
+
+func structure_armor_for_team(team: int) -> Dictionary:
+	return _team_structure_armor.get(team, _structure_armor) as Dictionary
+
+
+func ai_production_plan_for_team(team: int) -> Array:
+	return _team_ai_production_plan.get(team, _ai_production_plan) as Array
+
 var tick_index := 0
 var winner := -1
 var ai_enabled := true
@@ -214,6 +340,31 @@ var entities: Dictionary = {}
 var structures: Dictionary = {}
 var team_resources: Dictionary = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
 var team_command_points: Dictionary = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
+## Explicit team registry (N-team foundation, step 1-2). Seeded at setup() from
+## an injected descriptor list; defaults to the historical 2-team roster so
+## every existing behavior stays byte-identical. Each descriptor is
+## {team:int, faction:String, is_ai:bool, ...}. The ordered id list drives every
+## per-team dict seed and the roster-ordered display-snapshot arrays.
+const DEFAULT_TEAM_ROSTER: Array = [
+	{"team": PLAYER_TEAM, "faction": "", "is_ai": false},
+	{"team": ENEMY_TEAM, "faction": "", "is_ai": true},
+]
+var _team_roster: Array = []
+var _team_descriptors: Dictionary = {}
+var _pending_team_roster: Array = []
+## Per-team faction plumbing (N-team foundation, step 1). Today one manifest
+## drives every team, so each per-team entry below aliases the single compiled
+## global table (byte-identical to the 2-team past). A future packet compiles
+## distinct tables per manifest; consumers reach them via the *_for_team
+## accessors. These maps are derived (rebuilt at setup/restore) so they are
+## intentionally NOT part of the authoritative snapshot.
+var _team_manifests: Dictionary = {}
+var _team_unit_production_rules: Dictionary = {}
+var _team_structure_build_rules: Dictionary = {}
+var _team_spawn_roster: Dictionary = {}
+var _team_structure_max_health: Dictionary = {}
+var _team_structure_armor: Dictionary = {}
+var _team_ai_production_plan: Dictionary = {}
 var command_point_cap := 200
 var base_loop_enabled := false
 var source_map_configured := false
@@ -271,6 +422,7 @@ var _state_hash_static_digest := PackedByteArray()
 
 
 func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) -> void:
+	_seed_team_roster()
 	if not map_configuration.is_empty():
 		_apply_map_configuration(map_configuration)
 	elif _spawn_positions.is_empty():
@@ -295,18 +447,18 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	last_command_result = null
 	_state_hash_static_digest.clear()
 	last_route_rejection = ""
-	team_power_points = {PLAYER_TEAM: 1, ENEMY_TEAM: 1}
-	purchased_powers = {PLAYER_TEAM: [], ENEMY_TEAM: []}
-	_kills_toward_power_point = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
+	team_power_points = _seed_team_map(1)
+	purchased_powers = _seed_team_map([])
+	_kills_toward_power_point = _seed_team_map(0)
 	_reset_spellbook_match_state()
 	clock_paused = false
 	_apply_gameplay_rules(gameplay_rules if not gameplay_rules.is_empty() else _rules)
-	team_upgrades = {PLAYER_TEAM: {}, ENEMY_TEAM: {}}
+	team_upgrades = _seed_team_map({})
 	_ai_build_order_index = 0
 	_ai_last_wave_tick = 0
 	_has_hero_units = false
 	_register_forge_upgrade_contracts()
-	_next_dynamic_id = {PLAYER_TEAM: 10, ENEMY_TEAM: 110}
+	_next_dynamic_id = _seed_next_dynamic_ids()
 	_next_dynamic_structure_id = 3000
 	if bool(_rules.get("spawn_initial_battalions", true)):
 		var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
@@ -419,11 +571,10 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	_record_structure_armor_provisionals()
 	base_loop_enabled = bool(_rules.get("enable_base_loop", false))
 	command_point_cap = maxi(60, int(_rules.get("command_point_cap", 200)))
-	team_resources = {
-		PLAYER_TEAM: maxi(0, int(_rules.get("starting_resources", 1200 if base_loop_enabled else 0))),
-		ENEMY_TEAM: maxi(0, int(_rules.get("starting_resources", 1200 if base_loop_enabled else 0))),
-	}
-	team_command_points = {PLAYER_TEAM: 120, ENEMY_TEAM: 120}
+	var starting_resources := maxi(0, int(_rules.get("starting_resources", 1200 if base_loop_enabled else 0)))
+	team_resources = _seed_team_map(starting_resources)
+	team_command_points = _seed_team_map(120)
+	_seed_team_manifest_tables()
 
 
 func _configure_faction_manifest() -> bool:
@@ -2772,12 +2923,9 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 
 
 func _reset_spellbook_match_state() -> void:
-	_team_sciences = {
-		PLAYER_TEAM: _spellbook_intrinsic.duplicate(),
-		ENEMY_TEAM: _spellbook_intrinsic.duplicate(),
-	}
-	_power_cooldown_until = {PLAYER_TEAM: {}, ENEMY_TEAM: {}}
-	_staged_purchases = {PLAYER_TEAM: [], ENEMY_TEAM: []}
+	_team_sciences = _seed_team_map(_spellbook_intrinsic)
+	_power_cooldown_until = _seed_team_map({})
+	_staged_purchases = _seed_team_map([])
 	_pending_power_effects.clear()
 	_active_groves.clear()
 	_summon_despawn_ticks.clear()
@@ -7560,14 +7708,30 @@ func state_snapshot() -> Dictionary:
 	for identity_value in _completed_hero_identities.keys():
 		completed_hero_identities.append(String(identity_value))
 	completed_hero_identities.sort()
+	# Roster-ordered per-team arrays (N-team foundation). For the default {0,1}
+	# roster these serialize byte-identically to the prior 2-element literals —
+	# same order, same values — so the pinned battle signature does not move.
+	var resources_row: Array = []
+	var command_points_row: Array = []
+	var next_dynamic_ids_row: Array = []
+	var power_points_row: Array = []
+	var purchased_powers_row: Array = []
+	var team_upgrades_row: Array = []
+	for team in _roster_team_ids():
+		resources_row.append(resources_for_team(team))
+		command_points_row.append(command_points_for_team(team))
+		next_dynamic_ids_row.append(int(_next_dynamic_id.get(team, 10 + team * 100)))
+		power_points_row.append(power_points(team))
+		purchased_powers_row.append((purchased_powers.get(team, []) as Array).duplicate())
+		team_upgrades_row.append((team_upgrades.get(team, {}) as Dictionary).duplicate(true))
 	return {
 		"tick": tick_index,
 		"winner": winner,
 		"base_loop_enabled": base_loop_enabled,
-		"resources": [resources_for_team(PLAYER_TEAM), resources_for_team(ENEMY_TEAM)],
-		"command_points": [command_points_for_team(PLAYER_TEAM), command_points_for_team(ENEMY_TEAM)],
+		"resources": resources_row,
+		"command_points": command_points_row,
 		"command_point_cap": command_point_cap,
-		"next_dynamic_ids": [int(_next_dynamic_id.get(PLAYER_TEAM, 10)), int(_next_dynamic_id.get(ENEMY_TEAM, 110))],
+		"next_dynamic_ids": next_dynamic_ids_row,
 		"selected": selected_ids.duplicate(),
 		"control_groups": control_groups_snapshot(),
 		"next_order_sequence": _next_order_sequence,
@@ -7578,15 +7742,9 @@ func state_snapshot() -> Dictionary:
 		# Spellbook/tech state is gameplay-relevant (casts, team damage
 		# multipliers), so it is part of the deterministic snapshot, not an
 		# undocumented side channel.
-		"power_points": [power_points(PLAYER_TEAM), power_points(ENEMY_TEAM)],
-		"purchased_powers": [
-			(purchased_powers.get(PLAYER_TEAM, []) as Array).duplicate(),
-			(purchased_powers.get(ENEMY_TEAM, []) as Array).duplicate(),
-		],
-		"team_upgrades": [
-			(team_upgrades.get(PLAYER_TEAM, {}) as Dictionary).duplicate(true),
-			(team_upgrades.get(ENEMY_TEAM, {}) as Dictionary).duplicate(true),
-		],
+		"power_points": power_points_row,
+		"purchased_powers": purchased_powers_row,
+		"team_upgrades": team_upgrades_row,
 		"entities": rows,
 		"structures": structure_rows,
 		"next_event_sequence": _next_event_sequence,
@@ -7894,6 +8052,23 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_ai_build_order_index = int(state["ai_build_order_index"])
 	_ai_last_wave_tick = int(state["ai_last_wave_tick"])
 	_pending_commands = state["pending_commands"]
+	# Reconstruct the derived team registry + per-team manifest aliases from the
+	# restored authoritative dicts. Roster order matches setup()'s ascending
+	# seeding; the manifest tables realias the restored global tables. Neither is
+	# part of the snapshot, so this does not affect the restored hash.
+	_reseed_roster_from_state()
+	_seed_team_manifest_tables()
+
+
+func _reseed_roster_from_state() -> void:
+	var ids: Array = team_resources.keys()
+	ids.sort()
+	_team_roster = []
+	for id_value in ids:
+		var team := int(id_value)
+		_team_roster.append(team)
+		if not _team_descriptors.has(team):
+			_team_descriptors[team] = {"team": team, "faction": "", "is_ai": team != PLAYER_TEAM}
 
 
 func _canonicalize(value: Variant) -> Variant:

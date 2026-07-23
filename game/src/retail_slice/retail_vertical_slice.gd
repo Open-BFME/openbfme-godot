@@ -147,6 +147,13 @@ var map_id := MAP_ID
 var map_pack_root := ""
 var faction_manifest: Dictionary = {}
 var enemy_faction := ""
+## Per-team faction manifests (N-team foundation, guarded). Built once player and
+## enemy factions resolve. Today the cross-faction reject in
+## _initialize_content_and_match forces enemy == player, so every entry collapses
+## to faction_manifest and this map is not yet passed into the simulation. It is
+## the resolved input a future packet feeds to the sim (via
+## gameplay_rules["team_faction_manifests"]) once victory/AI/geometry are N-ready.
+var _team_faction_manifests: Dictionary = {}
 var gameplay_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
 var trebuchet_runtime: Dictionary = {}
@@ -263,6 +270,12 @@ func _initialize_content_and_match() -> void:
 		return
 	var player_faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
 	enemy_faction = _resolve_enemy_faction(player_faction)
+	# N-team foundation: resolve a manifest per team through the per-faction path
+	# so a future caller can seed distinct factions. The cross-faction reject
+	# below still fires today, so this map always collapses to the single player
+	# manifest; it is built here to prove the per-team resolution compiles and is
+	# ready to feed the sim once victory/AI/geometry become N-ready.
+	_team_faction_manifests = _resolve_team_faction_manifests(player_faction, enemy_faction)
 	if enemy_faction != player_faction:
 		_fail("Enemy faction '%s' cannot be seeded yet: the simulation consumes one faction manifest ('%s') for both teams, so cross-faction matches need per-team manifests that are not implemented." % [enemy_faction, player_faction])
 		return
@@ -1277,16 +1290,20 @@ func _horde_speed_overrides() -> Dictionary:
 	return overrides
 
 
-func _resolve_faction_manifest() -> Dictionary:
-	## Faction selection is an explicit input. OPENBFME_SLICE_FACTION always
-	## wins when set; otherwise the main menu's skirmish setup selection on the
-	## GameState autoload is the fallback. Unset / "men" with empty playable
-	## registries keeps the historical Men tiny-pack tables. When Men
-	## playableUnit.* / playableStructure.* runtimes are loaded, Men uses the
-	## same data-driven from_registries path as other factions. Non-Men values
-	## are lowercase source object-id prefixes resolved purely from the loaded
-	## registries, failing closed when content is missing.
-	var faction := OS.get_environment("OPENBFME_SLICE_FACTION").strip_edges().to_lower()
+func _resolve_faction_manifest(faction_override: String = "") -> Dictionary:
+	## Faction selection is an explicit input. A non-empty faction_override wins
+	## outright (N-team foundation: the per-team resolver passes each team's
+	## faction here). Otherwise OPENBFME_SLICE_FACTION wins when set; otherwise
+	## the main menu's skirmish setup selection on the GameState autoload is the
+	## fallback. Unset / "men" with empty playable registries keeps the historical
+	## Men tiny-pack tables. When Men playableUnit.* / playableStructure.*
+	## runtimes are loaded, Men uses the same data-driven from_registries path as
+	## other factions. Non-Men values are lowercase source object-id prefixes
+	## resolved purely from the loaded registries, failing closed when content is
+	## missing.
+	var faction := faction_override.strip_edges().to_lower()
+	if faction == "":
+		faction = OS.get_environment("OPENBFME_SLICE_FACTION").strip_edges().to_lower()
 	if faction == "":
 		var game_state := get_node_or_null("/root/GameState")
 		if game_state != null:
@@ -1499,6 +1516,21 @@ func _resolved_document_number(value: Variant, fallback: float) -> float:
 	if typeof(raw) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(raw)) and float(raw) > 0.0:
 		return float(raw)
 	return fallback
+
+
+func _resolve_team_faction_manifests(player_faction: String, opponent_faction: String) -> Dictionary:
+	## Guarded per-team manifest resolution (N-team foundation). Team 0 always
+	## reuses the already-resolved player manifest; team 1 reuses it when the
+	## opponent matches (today's only admitted case) and otherwise resolves the
+	## opponent's own manifest through _resolve_faction_manifest(faction). The
+	## caller does NOT yet inject this into the sim — the cross-faction reject
+	## keeps the match single-faction until a later packet flips it on.
+	var manifests := {SimScript.PLAYER_TEAM: faction_manifest}
+	if opponent_faction == player_faction:
+		manifests[SimScript.ENEMY_TEAM] = faction_manifest
+	else:
+		manifests[SimScript.ENEMY_TEAM] = _resolve_faction_manifest(opponent_faction)
+	return manifests
 
 
 func _resolve_enemy_faction(player_faction: String) -> String:
