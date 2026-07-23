@@ -2132,19 +2132,88 @@ def _runtime_module_evidence(
     )
 
 
+# Retail SelectPortraits are authored 191x191 (units) or 192x192 (heroes and
+# every RotWK "KU*Portrait"); button icons are 63/64px.  The portrait socket
+# must only ever bind portrait-class art — a 64-class icon in that slot is a
+# conversion bug, not a fallback.
+_PORTRAIT_CLASS_SIZES = frozenset({191, 192})
+
+
+def _mapped_image_size_index(
+    faction_graph: Mapping[str, object] | None,
+) -> dict[str, tuple[int, int]] | None:
+    """Casefolded MappedImage id -> (width, height) from the faction census.
+
+    Returns ``None`` when the graph carries no mapped-image closure so the
+    caller can distinguish "no size oracle" from "measured empty".
+    """
+
+    if not isinstance(faction_graph, Mapping):
+        return None
+    leaves = faction_graph.get("resolvedLeaves")
+    if not isinstance(leaves, Mapping):
+        return None
+    rows = leaves.get("mappedImages")
+    if not isinstance(rows, list):
+        return None
+    result: dict[str, tuple[int, int]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        identifier = row.get("id")
+        coords = row.get("coords")
+        if not isinstance(identifier, str) or not isinstance(coords, Mapping):
+            continue
+        values = [coords.get(name) for name in ("left", "top", "right", "bottom")]
+        if any(not isinstance(value, int) or isinstance(value, bool) for value in values):
+            continue
+        result[identifier.casefold()] = (values[2] - values[0], values[3] - values[1])
+    return result
+
+
+def _portrait_image_ids(
+    target_lineage: Sequence[SageObject],
+    member_lineage: Sequence[SageObject],
+    portrait_sizes: Mapping[str, tuple[int, int]] | None,
+) -> list[str]:
+    """The authored SelectPortrait bindings, fail-closed to an empty socket.
+
+    Only the effective authored ``SelectPortrait`` values qualify — button
+    icons (``ButtonImage``) never spill into the portrait slot.  When the
+    faction census provides mapped-image sizes, any candidate that is not
+    measurably portrait-class (191/192 square) is dropped: retail authoring
+    a missing or 64-class SelectPortrait yields an honest empty portrait
+    binding, never borrowed button art.
+    """
+
+    candidates: list[str] = []
+    for lineage in (target_lineage, member_lineage):
+        candidates.extend(
+            row.value.strip() for row in _effective_values(lineage, "SelectPortrait")
+        )
+    candidates = [
+        value for value in candidates if value and value.casefold() != "none"
+    ]
+    if portrait_sizes is not None:
+        candidates = [
+            value
+            for value in candidates
+            if (size := portrait_sizes.get(value.casefold())) is not None
+            and size[0] == size[1]
+            and size[0] in _PORTRAIT_CLASS_SIZES
+        ]
+    return sorted(set(candidates), key=str.casefold)
+
+
 def _ui_binding(
     producers: Sequence[Mapping[str, object]],
     command_buttons: Mapping[str, IniBlock],
     target_lineage: Sequence[SageObject],
     member_lineage: Sequence[SageObject],
     command_audio: Mapping[str, Sequence[Mapping[str, object]]],
+    portrait_sizes: Mapping[str, tuple[int, int]] | None = None,
 ) -> dict[str, object]:
-    portraits: list[str] = []
-    for lineage in (target_lineage, member_lineage):
-        for key in ("SelectPortrait", "ButtonImage"):
-            portraits.extend(
-                row.value.strip() for row in _effective_values(lineage, key)
-            )
+    portraits = _portrait_image_ids(target_lineage, member_lineage, portrait_sizes)
     return {
         "commands": [
             {
@@ -2163,7 +2232,7 @@ def _ui_binding(
             }
             for row in producers
         ],
-        "portraitImageIds": sorted(set(portraits), key=str.casefold),
+        "portraitImageIds": portraits,
     }
 
 
@@ -5865,6 +5934,7 @@ def compile_playable_unit_descriptor(
                 target_lineage,
                 member_lineage,
                 command_audio,
+                _mapped_image_size_index(faction_graph),
             ),
             "resolvedImages": {
                 key: deepcopy(value)

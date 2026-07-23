@@ -4128,3 +4128,157 @@ def test_passive_button_without_reload_time_binds_its_gated_aura() -> None:
     assert effect["modifiers"] == [
         {"kind": "RESIST_FEAR", "value": 1.0, "application": "multiplicative"}
     ]
+
+
+# ---------------------------------------------------------------------------
+# Portrait socket binding.
+#
+# The RotWK 2.01 Angmar corpus authors every unit SelectPortrait as a
+# 192x192 "KU*Portrait" mapped image while Object-level ButtonImage fields
+# carry 64x64 button icons.  The portrait socket must bind ONLY the authored
+# SelectPortrait and fail closed to an empty socket when retail authors none
+# or only button-class art — never borrow a 64-class icon (the playtest
+# regression: BIWargSentry_Warg / KUSnowTrollIcon landing in the 191/192
+# portrait slot).
+# ---------------------------------------------------------------------------
+
+from openbfme_importer.playable_unit_compiler import (  # noqa: E402
+    _mapped_image_size_index,
+    _portrait_image_ids,
+)
+
+
+# Measured from the RotWK 2.01 layered install (layer-0-rotwk/ini.big):
+# data/ini/mappedimages/aptimages/buildingradialbuttons.ini and
+# data/ini/mappedimages/aptimages/expansion1icons.ini.
+_ROTWK_ANGMAR_MAPPED_IMAGE_ROWS = [
+    {
+        "id": "BIWargSentry_Warg",
+        "texture": "BuildingRadialButtons_182.tga",
+        "compiledTextureVirtualPath": "art/compiledtextures/bu/buildingradialbuttons_182.dds",
+        "coords": {"left": 192, "top": 0, "right": 256, "bottom": 64},
+    },
+    {
+        "id": "KUSnowTrollIcon",
+        "texture": "Expansion1Icons_020.tga",
+        "compiledTextureVirtualPath": "art/compiledtextures/ex/expansion1icons_020.dds",
+        "coords": {"left": 325, "top": 260, "right": 389, "bottom": 324},
+    },
+    {
+        "id": "KUDireWolfPortrait",
+        "texture": "Expansion1Icons_007.tga",
+        "compiledTextureVirtualPath": "art/compiledtextures/ex/expansion1icons_007.dds",
+        "coords": {"left": 193, "top": 0, "right": 385, "bottom": 192},
+    },
+    {
+        "id": "KUSnowTrollPortrait",
+        "texture": "Expansion1Icons_012.tga",
+        "compiledTextureVirtualPath": "art/compiledtextures/ex/expansion1icons_012.dds",
+        "coords": {"left": 0, "top": 193, "right": 192, "bottom": 385},
+    },
+]
+
+_ROTWK_ANGMAR_SIZE_INDEX = _mapped_image_size_index(
+    {"resolvedLeaves": {"mappedImages": _ROTWK_ANGMAR_MAPPED_IMAGE_ROWS}}
+)
+
+
+def _portrait_probe_lineage(body: str) -> tuple:
+    documents = _documents()
+    documents["data/ini/object/units/portrait_probe.ini"] = (
+        f"Object PortraitProbe\n  KindOf = PRELOAD SELECTABLE INFANTRY\n{body}End\n"
+    ).encode("utf-8")
+    prepared = prepare_playable_unit_compiler(documents)
+    return (prepared.objects["portraitprobe"],)
+
+
+def test_mapped_image_size_index_pins_rotwk_angmar_corpus_rows() -> None:
+    assert _ROTWK_ANGMAR_SIZE_INDEX == {
+        "biwargsentry_warg": (64, 64),
+        "kusnowtrollicon": (64, 64),
+        "kudirewolfportrait": (192, 192),
+        "kusnowtrollportrait": (192, 192),
+    }
+    assert _mapped_image_size_index(None) is None
+    assert _mapped_image_size_index({}) is None
+    assert _mapped_image_size_index({"resolvedLeaves": {}}) is None
+
+
+def test_portrait_socket_binds_authored_select_portrait_for_dire_wolf_row() -> None:
+    # AngmarDireWolfHorde: angmarhordes.ini authors the container
+    # SelectPortrait = KUDireWolfPortrait; angmardirewolf.ini authors the
+    # member SelectPortrait = KUDireWolfPortrait AND ButtonImage =
+    # BIWargSentry_Warg (64x64).  The button icon must never reach the
+    # portrait socket.
+    container = _portrait_probe_lineage(
+        "  SelectPortrait = KUDireWolfPortrait\n"
+    )
+    member = _portrait_probe_lineage(
+        "  SelectPortrait = KUDireWolfPortrait\n  ButtonImage = BIWargSentry_Warg\n"
+    )
+
+    assert _portrait_image_ids(container, member, _ROTWK_ANGMAR_SIZE_INDEX) == [
+        "KUDireWolfPortrait"
+    ]
+
+
+def test_portrait_socket_binds_authored_select_portrait_for_snow_troll_row() -> None:
+    # AngmarSnowTrollHorde: angmarhordes.ini authors the container
+    # SelectPortrait = KUSnowTrollPortrait; angmarsnowtroll.ini authors the
+    # member SelectPortrait = KUSnowTrollPortrait AND ButtonImage =
+    # KUSnowTrollIcon (64x64).
+    container = _portrait_probe_lineage(
+        "  SelectPortrait = KUSnowTrollPortrait\n"
+    )
+    member = _portrait_probe_lineage(
+        "  SelectPortrait = KUSnowTrollPortrait\n  ButtonImage = KUSnowTrollIcon\n"
+    )
+
+    assert _portrait_image_ids(container, member, _ROTWK_ANGMAR_SIZE_INDEX) == [
+        "KUSnowTrollPortrait"
+    ]
+
+
+def test_portrait_socket_fails_closed_when_retail_authors_no_select_portrait() -> None:
+    lineage = _portrait_probe_lineage("  ButtonImage = BIWargSentry_Warg\n")
+
+    assert _portrait_image_ids(lineage, lineage, _ROTWK_ANGMAR_SIZE_INDEX) == []
+    assert _portrait_image_ids(lineage, lineage, None) == []
+
+
+def test_portrait_socket_fails_closed_on_button_class_select_portrait() -> None:
+    lineage = _portrait_probe_lineage("  SelectPortrait = KUSnowTrollIcon\n")
+
+    assert _portrait_image_ids(lineage, lineage, _ROTWK_ANGMAR_SIZE_INDEX) == []
+
+
+def test_portrait_socket_fails_closed_on_unmeasured_select_portrait() -> None:
+    lineage = _portrait_probe_lineage("  SelectPortrait = KUNeverMappedPortrait\n")
+
+    assert _portrait_image_ids(lineage, lineage, _ROTWK_ANGMAR_SIZE_INDEX) == []
+
+
+def test_portrait_socket_filters_authored_none_placeholder() -> None:
+    lineage = _portrait_probe_lineage("  SelectPortrait = None\n")
+
+    assert _portrait_image_ids(lineage, lineage, None) == []
+
+
+def test_portrait_socket_without_size_oracle_keeps_only_select_portrait() -> None:
+    # No faction census (documents-only compile): the authored SelectPortrait
+    # is kept verbatim but ButtonImage still never spills into the socket.
+    lineage = _portrait_probe_lineage(
+        "  SelectPortrait = UPProbe\n  ButtonImage = BIProbe\n"
+    )
+
+    assert _portrait_image_ids(lineage, lineage, None) == ["UPProbe"]
+
+
+def test_descriptor_portraits_are_select_portraits_only() -> None:
+    documents = _documents()
+    result = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    assert result["presentation"]["ui"]["portraitImageIds"] == [
+        "UPInfantryHorde",
+        "UPInfantryMember",
+    ]
