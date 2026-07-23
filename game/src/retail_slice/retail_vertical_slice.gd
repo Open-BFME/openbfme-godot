@@ -270,15 +270,14 @@ func _initialize_content_and_match() -> void:
 		return
 	var player_faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
 	enemy_faction = _resolve_enemy_faction(player_faction)
-	# N-team foundation: resolve a manifest per team through the per-faction path
-	# so a future caller can seed distinct factions. The cross-faction reject
-	# below still fires today, so this map always collapses to the single player
-	# manifest; it is built here to prove the per-team resolution compiles and is
-	# ready to feed the sim once victory/AI/geometry become N-ready.
+	# N-team: resolve a manifest per team through the per-faction path and feed
+	# the map into the simulation (below, in _gameplay_rules). The sim now seeds
+	# each team from its own manifest and resolves victory over the whole roster,
+	# so distinct player/enemy factions are accepted here. The MENU still sends
+	# same-faction today (its N-row / cross-faction selection is a later packet),
+	# so this map collapses to the single player manifest in practice; the runner
+	# proves the cross-faction path by injecting distinct manifests directly.
 	_team_faction_manifests = _resolve_team_faction_manifests(player_faction, enemy_faction)
-	if enemy_faction != player_faction:
-		_fail("Enemy faction '%s' cannot be seeded yet: the simulation consumes one faction manifest ('%s') for both teams, so cross-faction matches need per-team manifests that are not implemented." % [enemy_faction, player_faction])
-		return
 	ranger_runtime = ContentDB.get_ranger_runtime()
 	trebuchet_runtime = ContentDB.get_trebuchet_runtime()
 	playable_unit_runtimes = ContentDB.get_playable_unit_runtimes()
@@ -404,6 +403,11 @@ func _initialize_content_and_match() -> void:
 	if gameplay_rules.has("_error"):
 		_fail("Retail unit gameplay rules failed validation: %s" % String(gameplay_rules["_error"]))
 		return
+	# N-team: hand the sim the per-team manifest map. Same-faction rosters (the
+	# only kind the menu sends today) collapse to the player manifest, so every
+	# team aliases the compiled globals and the default path stays byte-identical.
+	if not _team_faction_manifests.is_empty():
+		gameplay_rules["team_faction_manifests"] = _team_faction_manifests.duplicate(true)
 	_apply_menu_match_options()
 	_resolve_mp_settings()
 	simulation = SimScript.new()

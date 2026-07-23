@@ -249,6 +249,66 @@ func team_is_ai(team: int) -> bool:
 	return bool((_team_descriptors.get(team, {}) as Dictionary).get("is_ai", team != PLAYER_TEAM))
 
 
+func team_alliance(team: int) -> Variant:
+	## Alliance id for a team from its descriptor, or null when the team declares
+	## no alliance. Teams sharing a non-null alliance id are friendly; every other
+	## distinct team pair is mutually hostile (the free-for-all default).
+	var descriptor := _team_descriptors.get(team, {}) as Dictionary
+	if descriptor.has("alliance") and descriptor.get("alliance") != null:
+		return descriptor.get("alliance")
+	return null
+
+
+func _is_combatant_team(team: int) -> bool:
+	## Only rostered teams fight. Non-rostered owners (the NEUTRAL_TEAM that holds
+	## capturable flags, map props) are never hostile to anyone, exactly as the old
+	## strict "other of {0,1}" flip never targeted a team-2 neutral structure.
+	if _team_roster.is_empty():
+		return team == PLAYER_TEAM or team == ENEMY_TEAM
+	return _team_descriptors.has(team)
+
+
+func _is_hostile(team_a: int, team_b: int) -> bool:
+	## Alliance/hostility predicate (N-team). A team is never hostile to itself,
+	## and non-combatant (non-rostered) owners are neutral. Two distinct rostered
+	## teams are hostile unless they share the same non-null alliance id. Absent
+	## alliance ids are the default free-for-all: every distinct team is mutually
+	## hostile. For the historical {0,1} roster this returns exactly the old
+	## "other team" boolean, so targeting/victory stay byte-identical.
+	if team_a == team_b:
+		return false
+	if not _is_combatant_team(team_a) or not _is_combatant_team(team_b):
+		return false
+	var alliance_a: Variant = team_alliance(team_a)
+	var alliance_b: Variant = team_alliance(team_b)
+	if alliance_a != null and alliance_b != null and alliance_a == alliance_b:
+		return false
+	return true
+
+
+func _hostile_living_ids(team: int) -> Array[int]:
+	## Every living battalion hostile to `team`, ascending id order. For the
+	## 2-team free-for-all this is identical to living_ids(other_team): the sole
+	## hostile team's units in the same id order entity_ids() already produces.
+	var result: Array[int] = []
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if int(row["health"]) > 0 and _is_hostile(team, int(row.get("team", -1))):
+			result.append(id)
+	return result
+
+
+func _hostile_living_structure_ids(team: int) -> Array[int]:
+	## Living structures hostile to `team`, ascending id order (identical to
+	## living_structure_ids(other_team) for the 2-team default).
+	var result: Array[int] = []
+	for id in structure_ids():
+		var row: Dictionary = structures[id]
+		if int(row.get("health", 0)) > 0 and _is_hostile(team, int(row.get("team", -1))):
+			result.append(id)
+	return result
+
+
 func _seed_team_map(default_value: Variant) -> Dictionary:
 	## Seed a per-team dict with a fresh copy of default_value per rostered team,
 	## in roster order. Arrays/dicts are duplicated so teams never share mutable
@@ -283,6 +343,7 @@ func _seed_team_manifest_tables() -> void:
 	## supply distinct manifests; when it is absent (today) all teams share.
 	var provided: Dictionary = _rules.get("team_faction_manifests", {}) as Dictionary
 	var shared_manifest: Dictionary = _rules.get("faction_manifest", {}) as Dictionary
+	var shared_faction := String(shared_manifest.get("faction", ""))
 	_team_manifests = {}
 	_team_unit_production_rules = {}
 	_team_structure_build_rules = {}
@@ -290,16 +351,43 @@ func _seed_team_manifest_tables() -> void:
 	_team_structure_max_health = {}
 	_team_structure_armor = {}
 	_team_ai_production_plan = {}
+	_team_seed_structure_kinds = {}
+	_team_structure_kinds = {}
+	_team_production_unit_order = {}
 	for team in _roster_team_ids():
-		_team_manifests[team] = provided.get(team, shared_manifest)
-		# Shared aliases today; a future packet compiles distinct tables per
-		# manifest and stores them here instead of the global references.
-		_team_unit_production_rules[team] = _unit_production_rules
-		_team_structure_build_rules[team] = _structure_build_rules
-		_team_spawn_roster[team] = _spawn_roster
-		_team_structure_max_health[team] = _structure_max_health
-		_team_structure_armor[team] = _structure_armor
-		_team_ai_production_plan[team] = _ai_production_plan
+		var manifest: Dictionary = provided.get(team, shared_manifest) as Dictionary
+		_team_manifests[team] = manifest
+		# A team whose injected manifest is the same faction that compiled the
+		# global tables (the player faction) aliases those globals exactly — this
+		# keeps the default same-faction path byte-identical, including the
+		# ranger/trebuchet overlays that only live on the globals. A team on a
+		# DIFFERENT faction derives its own tables straight from its manifest dict
+		# (elf/men object ids never collide, so the sim's unit_rules stays a union).
+		if manifest.is_empty() or String(manifest.get("faction", "")) == shared_faction:
+			_team_unit_production_rules[team] = _unit_production_rules
+			_team_structure_build_rules[team] = _structure_build_rules
+			_team_spawn_roster[team] = _spawn_roster
+			_team_structure_max_health[team] = _structure_max_health
+			_team_structure_armor[team] = _structure_armor
+			_team_ai_production_plan[team] = _ai_production_plan
+			_team_seed_structure_kinds[team] = _seed_structure_kinds
+			_team_structure_kinds[team] = _structure_kinds
+			_team_production_unit_order[team] = _production_unit_order
+		else:
+			var kinds: Array = (manifest.get("structure_kinds", []) as Array).duplicate(true)
+			var seed_kinds: Array = (manifest.get("seed_structure_kinds", kinds) as Array).duplicate(true)
+			var plan: Array = (manifest.get("ai_production_plan", []) as Array).duplicate(true)
+			_team_unit_production_rules[team] = (manifest.get("unit_production_rules", {}) as Dictionary).duplicate(true)
+			_team_structure_build_rules[team] = (manifest.get("structure_build_rules", {}) as Dictionary).duplicate(true)
+			_team_spawn_roster[team] = (manifest.get("spawn_roster", []) as Array).duplicate(true)
+			_team_structure_max_health[team] = (manifest.get("structure_max_health", {}) as Dictionary).duplicate(true)
+			_team_structure_armor[team] = (manifest.get("structure_armor", {}) as Dictionary).duplicate(true)
+			_team_ai_production_plan[team] = plan
+			_team_seed_structure_kinds[team] = seed_kinds if not seed_kinds.is_empty() else kinds
+			_team_structure_kinds[team] = kinds
+			# A fresh faction ships no trebuchet/ranger overlay, so its production
+			# order is exactly its AI plan.
+			_team_production_unit_order[team] = plan.duplicate(true)
 
 
 func team_manifest_for(team: int) -> Dictionary:
@@ -328,6 +416,18 @@ func structure_armor_for_team(team: int) -> Dictionary:
 
 func ai_production_plan_for_team(team: int) -> Array:
 	return _team_ai_production_plan.get(team, _ai_production_plan) as Array
+
+
+func seed_structure_kinds_for_team(team: int) -> Array:
+	return _team_seed_structure_kinds.get(team, _seed_structure_kinds) as Array
+
+
+func structure_kinds_for_team(team: int) -> Array:
+	return _team_structure_kinds.get(team, _structure_kinds) as Array
+
+
+func production_unit_order_for_team(team: int) -> Array:
+	return _team_production_unit_order.get(team, _production_unit_order) as Array
 
 var tick_index := 0
 var winner := -1
@@ -365,6 +465,9 @@ var _team_spawn_roster: Dictionary = {}
 var _team_structure_max_health: Dictionary = {}
 var _team_structure_armor: Dictionary = {}
 var _team_ai_production_plan: Dictionary = {}
+var _team_seed_structure_kinds: Dictionary = {}
+var _team_structure_kinds: Dictionary = {}
+var _team_production_unit_order: Dictionary = {}
 var command_point_cap := 200
 var base_loop_enabled := false
 var source_map_configured := false
@@ -374,6 +477,11 @@ var route_provider: RefCounted
 var playable_outline := PackedVector2Array()
 var last_route_rejection := ""
 var _spawn_positions: Dictionary = {}
+## Team -> spawn-anchor Vector2 for rostered teams beyond 0/1 (N-team spawn
+## geometry). Populated from the map layer's team_start_centers; teams 0/1 keep
+## deriving their anchors from spawn ids 1/2 and 101/102, so this is empty and
+## inert for every 2-team match.
+var _extra_team_centers: Dictionary = {}
 var _home_layout: Dictionary = {}
 var _rules: Dictionary = {}
 var configuration_error := ""
@@ -462,20 +570,36 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_next_dynamic_structure_id = 3000
 	if bool(_rules.get("spawn_initial_battalions", true)):
 		var configured_unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
-		for entry_value in _active_spawn_roster():
-			var entry := entry_value as Dictionary
-			var object_id := String(entry.get("object_id", ""))
-			if bool(entry.get("requires_unit_rule", false)) and not configured_unit_rules.has(object_id):
-				continue
-			_add_battalion(
-				int(entry.get("id", 0)),
-				int(entry.get("team", PLAYER_TEAM)),
-				_spawn_anchor_position(String(entry.get("anchor", ""))),
-				String(entry.get("name", "")),
-				object_id,
-				String(entry.get("unit_type", object_id)),
-				int(entry.get("command_points", -1))
-			)
+		# Each rostered team seeds from ITS OWN faction's spawn roster (per-team
+		# manifests). For the default same-faction roster every team aliases the
+		# single global roster, so the union of team-filtered passes reproduces the
+		# historical spawn set exactly; the snapshot serializes by sorted id, so the
+		# per-team pass order never moves the signature.
+		for team in _roster_team_ids():
+			var team_roster: Array = spawn_roster_for_team(int(team))
+			if team_roster.is_empty():
+				team_roster = DEFAULT_SPAWN_ROSTER
+			for entry_value in team_roster:
+				var entry := entry_value as Dictionary
+				if int(entry.get("team", PLAYER_TEAM)) != int(team):
+					continue
+				var object_id := String(entry.get("object_id", ""))
+				if bool(entry.get("requires_unit_rule", false)) and not configured_unit_rules.has(object_id):
+					continue
+				var spawn_position: Vector2 = (
+					Vector2(entry.get("position"))
+					if typeof(entry.get("position")) == TYPE_VECTOR2
+					else _spawn_anchor_position(String(entry.get("anchor", "")), int(team))
+				)
+				_add_battalion(
+					int(entry.get("id", 0)),
+					int(team),
+					spawn_position,
+					String(entry.get("name", "")),
+					object_id,
+					String(entry.get("unit_type", object_id)),
+					int(entry.get("command_points", -1))
+				)
 	if base_loop_enabled:
 		_initialize_base_loop()
 	# Spellbook effect rules (summon stats) bake the source→sim scale, which
@@ -525,6 +649,15 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 	playable_outline = (configured_outline as PackedVector2Array).duplicate()
 	var configured_home_layout: Variant = configuration.get("home_layout", {})
 	_home_layout = (configured_home_layout as Dictionary).duplicate(true) if typeof(configured_home_layout) == TYPE_DICTIONARY else {}
+	# Optional per-team spawn anchors for rostered teams beyond 0/1 (N-team maps
+	# expose all authored Player_N_Start centers here). Absent on 2-team configs.
+	var configured_team_centers: Variant = configuration.get("team_start_centers", {})
+	_extra_team_centers = {}
+	if typeof(configured_team_centers) == TYPE_DICTIONARY:
+		for team_key in (configured_team_centers as Dictionary).keys():
+			var center_value: Variant = (configured_team_centers as Dictionary)[team_key]
+			if typeof(center_value) == TYPE_VECTOR2:
+				_extra_team_centers[int(team_key)] = center_value
 	source_map_configured = bool(configuration.get("source_map_configured", false))
 
 
@@ -544,6 +677,7 @@ func _apply_fallback_configuration() -> void:
 	route_provider = null
 	playable_outline = PackedVector2Array()
 	_home_layout.clear()
+	_extra_team_centers = {}
 	source_map_configured = false
 
 
@@ -1754,20 +1888,35 @@ func _ranger_command_sets_are_valid(command_sets: Array) -> bool:
 	return matched.size() == expected.size()
 
 
+func _team_structure_base(team: int) -> int:
+	## Disjoint seeded-structure id band per team. Teams 0/1 keep their historical
+	## 1000/2000 bands (byte-identical); teams >=2 tile above the dynamic id range.
+	if team == PLAYER_TEAM:
+		return PLAYER_STRUCTURE_BASE
+	if team == ENEMY_TEAM:
+		return ENEMY_STRUCTURE_BASE
+	return 10000 + team * 1000
+
+
 func _initialize_base_loop() -> void:
 	structures.clear()
 	var layout := _home_layout if not _home_layout.is_empty() else _derive_home_layout()
-	var seed_kinds := _seed_structure_kinds if not _seed_structure_kinds.is_empty() else _structure_kinds
-	for team in [PLAYER_TEAM, ENEMY_TEAM]:
+	for team in _roster_team_ids():
 		var team_layout: Dictionary = layout.get(team, layout.get(str(team), {}))
-		var base_id := PLAYER_STRUCTURE_BASE if team == PLAYER_TEAM else ENEMY_STRUCTURE_BASE
-		for index in range(seed_kinds.size()):
-			var kind := String(seed_kinds[index])
+		var base_id := _team_structure_base(team)
+		var team_seed_kinds := seed_structure_kinds_for_team(team)
+		if team_seed_kinds.is_empty():
+			team_seed_kinds = structure_kinds_for_team(team)
+		var team_max_health := structure_max_health_for_team(team)
+		var team_production_order := production_unit_order_for_team(team)
+		var team_production_rules := unit_production_rules_for_team(team)
+		for index in range(team_seed_kinds.size()):
+			var kind := String(team_seed_kinds[index])
 			var position := Vector2(team_layout.get(kind, _fallback_structure_position(team, index)))
-			var maximum_health := int(_structure_max_health[kind])
+			var maximum_health := int(team_max_health[kind])
 			var production: Array[String] = []
-			for unit_type in _production_unit_order:
-				var production_rule: Dictionary = _unit_production_rules[unit_type]
+			for unit_type in team_production_order:
+				var production_rule: Dictionary = team_production_rules[unit_type]
 				var producer_kinds_for_rule: Array = production_rule.get("producer_kinds", [String(production_rule.get("producer_kind", ""))])
 				if producer_kinds_for_rule.has(kind):
 					production.append(unit_type)
@@ -1793,13 +1942,42 @@ func _initialize_base_loop() -> void:
 	_seed_all_expansion_pads()
 
 
+func _team_center(team: int) -> Vector2:
+	## Each roster team's spawn anchor. Teams 0/1 keep their exact historical
+	## centers derived from spawn ids 1/2 and 101/102; teams >=2 read their own
+	## anchor injected by the map layer (Player_N_Start), falling back to the map
+	## centroid so a base still seeds when a start was not supplied.
+	if team == PLAYER_TEAM:
+		return (Vector2(_spawn_positions[1]) + Vector2(_spawn_positions[2])) * 0.5
+	if team == ENEMY_TEAM:
+		return (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5
+	if _extra_team_centers.has(team):
+		return Vector2(_extra_team_centers[team])
+	return _two_team_map_center()
+
+
+func _two_team_map_center() -> Vector2:
+	return ((Vector2(_spawn_positions[1]) + Vector2(_spawn_positions[2])) * 0.5 + (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5) * 0.5
+
+
+func _map_centroid() -> Vector2:
+	## Average of every rostered team's spawn anchor. For the {0,1} default this is
+	## exactly the midpoint of the two team centers the old code used, so the
+	## derived outward/rally directions are unchanged.
+	var teams := _roster_team_ids()
+	if teams.size() <= 2:
+		return _two_team_map_center()
+	var sum := Vector2.ZERO
+	for team in teams:
+		sum += _team_center(int(team))
+	return sum / float(teams.size())
+
+
 func _derive_home_layout() -> Dictionary:
-	var player_center := (Vector2(_spawn_positions[1]) + Vector2(_spawn_positions[2])) * 0.5
-	var enemy_center := (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5
-	var map_center := (player_center + enemy_center) * 0.5
+	var map_center := _map_centroid()
 	var result: Dictionary = {}
-	for team in [PLAYER_TEAM, ENEMY_TEAM]:
-		var anchor := player_center if team == PLAYER_TEAM else enemy_center
+	for team in _roster_team_ids():
+		var anchor := _team_center(int(team))
 		var outward := anchor.direction_to(map_center) * -1.0
 		if outward.length_squared() < 0.01:
 			outward = Vector2.LEFT if team == PLAYER_TEAM else Vector2.RIGHT
@@ -1816,8 +1994,14 @@ func _derive_home_layout() -> Dictionary:
 
 
 func _fallback_structure_position(team: int, index: int) -> Vector2:
-	var anchor := (Vector2(_spawn_positions[1]) + Vector2(_spawn_positions[2])) * 0.5 if team == PLAYER_TEAM else (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5
+	var anchor := _team_center(team)
+	# Structures tile away from the map centroid. Teams 0/1 keep their historical
+	# left/right sign (player centroid-outward points -x on the two-corner maps,
+	# enemy +x); teams >=2 derive the sign from their own outward direction.
 	var sign_value := -1.0 if team == PLAYER_TEAM else 1.0
+	if team != PLAYER_TEAM and team != ENEMY_TEAM:
+		var outward := anchor.direction_to(_map_centroid()) * -1.0
+		sign_value = signf(outward.x) if not is_zero_approx(outward.x) else 1.0
 	if index < 5:
 		return anchor + Vector2(sign_value * (8.0 + float(index) * 2.5), (float(index) - 2.0) * 7.0)
 	# Factions whose manifests declare more base structures than the historical
@@ -1834,7 +2018,7 @@ func _fallback_rally_position(team: int) -> Vector2:
 	# the AI muster path; real matches always carry spawn positions.
 	if _spawn_positions.is_empty():
 		return Vector2.ZERO
-	return (Vector2(_spawn_positions[1]) + Vector2(_spawn_positions[2])) * 0.5 if team == PLAYER_TEAM else (Vector2(_spawn_positions[101]) + Vector2(_spawn_positions[102])) * 0.5
+	return _team_center(team)
 
 
 func _builder_spawn_position(team: int) -> Vector2:
@@ -1843,9 +2027,14 @@ func _builder_spawn_position(team: int) -> Vector2:
 	return Vector2(team_layout.get("rally", _fallback_rally_position(team)))
 
 
-func _spawn_anchor_position(anchor: String) -> Vector2:
+func _spawn_anchor_position(anchor: String, team: int = PLAYER_TEAM) -> Vector2:
 	## Named map anchors keep the faction roster data-driven while spawn
-	## geometry stays derived from the cooked source map's player starts.
+	## geometry stays derived from the cooked source map's player starts. Teams
+	## beyond 0/1 resolve the generalized anchors around their own spawn center.
+	if team != PLAYER_TEAM and team != ENEMY_TEAM:
+		if anchor.ends_with("builder"):
+			return _builder_spawn_position(team) if base_loop_enabled else _team_center(team) + Vector2(0.0, -4.0)
+		return _team_center(team)
 	match anchor:
 		"player_spawn_primary":
 			return Vector2(_spawn_positions[1])
@@ -6278,12 +6467,11 @@ func _step_construction() -> void:
 				_seed_expansion_pads_for(structure_id)
 			_emit_event("construction.completed", builder_id, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
 func _nearest_attack_move_target(row: Dictionary) -> int:
-	var enemy_team := ENEMY_TEAM if int(row.get("team", PLAYER_TEAM)) == PLAYER_TEAM else PLAYER_TEAM
 	var origin := Vector2(row.get("position", Vector2.ZERO))
 	var limit := maxf(float(row.get("attack_range", 1.0)), float(row.get("vision_range", 17.5)) * _ability_vision_multiplier(row))
 	var result := 0
 	var best := limit
-	for candidate in living_ids(enemy_team):
+	for candidate in _hostile_living_ids(int(row.get("team", PLAYER_TEAM))):
 		if not _can_engage_battalion(row, entities[candidate] as Dictionary):
 			continue
 		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
@@ -6294,7 +6482,7 @@ func _nearest_attack_move_target(row: Dictionary) -> int:
 
 
 func _nearest_auto_target(row: Dictionary) -> Dictionary:
-	var enemy_team := ENEMY_TEAM if int(row.get("team", PLAYER_TEAM)) == PLAYER_TEAM else PLAYER_TEAM
+	var self_team := int(row.get("team", PLAYER_TEAM))
 	var origin := Vector2(row.get("position", Vector2.ZERO))
 	var stance := String(row.get("stance", "Battle"))
 	var stance_state := _stance_state(row, stance)
@@ -6308,7 +6496,7 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 	var best_id := 0
 	var best_kind := ""
 	var best_distance := limit
-	for candidate in living_ids(enemy_team):
+	for candidate in _hostile_living_ids(self_team):
 		if not _can_engage_battalion(row, entities[candidate] as Dictionary):
 			continue
 		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
@@ -6316,7 +6504,7 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 			best_distance = distance
 			best_id = candidate
 			best_kind = "battalion"
-	for candidate in living_structure_ids(enemy_team):
+	for candidate in _hostile_living_structure_ids(self_team):
 		var distance := origin.distance_to(Vector2((structures[candidate] as Dictionary).get("position", Vector2.ZERO)))
 		if distance <= best_distance:
 			best_distance = distance
@@ -6515,8 +6703,7 @@ func _apply_hero_cleave(attacker_id: int, row: Dictionary, primary_target_id: in
 		return
 	var cleave_damage := maxi(1, roundi(float(swing_damage) * HERO_CLEAVE_DAMAGE_FRACTION))
 	var origin := Vector2(row.get("position", Vector2.ZERO))
-	var enemy_team := ENEMY_TEAM if int(row.get("team", PLAYER_TEAM)) == PLAYER_TEAM else PLAYER_TEAM
-	for candidate in living_ids(enemy_team):
+	for candidate in _hostile_living_ids(int(row.get("team", PLAYER_TEAM))):
 		if candidate == primary_target_id:
 			continue
 		var candidate_row: Dictionary = entities[candidate]
@@ -6786,11 +6973,10 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 		row["trample_cooldown"] = cooldown - 1
 		return
 	var team := int(row.get("team", PLAYER_TEAM))
-	var enemy_team := ENEMY_TEAM if team == PLAYER_TEAM else PLAYER_TEAM
 	var origin := Vector2(row.get("position", Vector2.ZERO))
 	var best_id := 0
 	var best_distance := TRAMPLE_COLLISION_RADIUS
-	for candidate in living_ids(enemy_team):
+	for candidate in _hostile_living_ids(team):
 		if bool((entities[candidate] as Dictionary).get("flying", false)):
 			continue
 		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
@@ -7450,31 +7636,58 @@ func _query_route(from: Vector2, to: Vector2) -> Dictionary:
 	return {"valid": true, "reason": "", "points": [to], "cells": [], "ford_name": ""}
 
 
-func _resolve_victory() -> void:
+func _team_defeated(team: int) -> bool:
+	## A team is eliminated when its fortress is razed (base loop) or it has no
+	## living battalions (non-base). Exactly the old per-team fortress/liveness
+	## test: a team that never held a fortress (harness sims with none seeded) is
+	## NOT counted as defeated in base-loop mode, so those sims never spuriously
+	## resolve — the pinned battle, whose fortresses persist at 0 health when
+	## razed, still resolves the instant one falls.
 	if base_loop_enabled:
-		var player_fortress := fortress_id(PLAYER_TEAM)
-		var enemy_fortress := fortress_id(ENEMY_TEAM)
-		if player_fortress != 0 and int((structures[player_fortress] as Dictionary).get("health", 0)) <= 0:
-			winner = ENEMY_TEAM
-		elif enemy_fortress != 0 and int((structures[enemy_fortress] as Dictionary).get("health", 0)) <= 0:
-			winner = PLAYER_TEAM
-		else:
-			return
+		var fortress := fortress_id(team)
+		return fortress != 0 and int((structures[fortress] as Dictionary).get("health", 0)) <= 0
+	return living_ids(team).is_empty()
+
+
+func _surviving_teams() -> Array:
+	## Roster teams that are not yet eliminated, in roster order.
+	var survivors: Array = []
+	for team in _roster_team_ids():
+		if not _team_defeated(team):
+			survivors.append(team)
+	return survivors
+
+
+func _resolve_victory() -> void:
+	## Last-alliance-standing over the whole roster. The match ends when no two
+	## surviving teams are mutually hostile (a single alliance, or one team, or
+	## none remain). `winner` stays a single int for snapshot compat: the LOWEST
+	## surviving team id (documented tie-break); with no survivors it is the
+	## lowest rostered team so a mutual wipe still terminates deterministically.
+	## For the historical {0,1} roster this reduces to the old team0-vs-team1
+	## comparison and emits the identical observer-frame events, so the pinned
+	## battle signature does not move.
+	var survivors := _surviving_teams()
+	for i in survivors.size():
+		for j in range(i + 1, survivors.size()):
+			if _is_hostile(int(survivors[i]), int(survivors[j])):
+				return
+	if survivors.is_empty():
+		var roster := _roster_team_ids()
+		winner = int(roster[0]) if not roster.is_empty() else PLAYER_TEAM
 	else:
-		var players_alive := living_ids(PLAYER_TEAM)
-		var enemies_alive := living_ids(ENEMY_TEAM)
-		if players_alive.is_empty():
-			winner = ENEMY_TEAM
-		elif enemies_alive.is_empty():
-			winner = PLAYER_TEAM
-		else:
-			return
+		winner = int(survivors[0])
 	for id in living_ids(winner):
 		var row: Dictionary = entities[id]
 		row["target_id"] = 0
 		_clear_pending_route(row, true)
 		row["state"] = "victory"
-	if winner == PLAYER_TEAM:
+	# EVA/music are framed off the sim's local observer (PLAYER_TEAM): victorious
+	# when the observer's alliance is the surviving one, defeated otherwise. A
+	# true per-observer HUD frame is a HUD-packet concern; the sim carries the
+	# single-observer frame the default path has always emitted.
+	var observer_won := winner != -1 and not _is_hostile(PLAYER_TEAM, winner)
+	if observer_won:
 		_emit_event("match.victory", 0, 0)
 		_emit_event("eva.enemy_defeated", 0, 0, {"team": PLAYER_TEAM})
 		_emit_music("victory")

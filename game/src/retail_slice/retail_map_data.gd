@@ -644,7 +644,18 @@ func _load_waypoints(document: Dictionary) -> bool:
 		player_starts[required_name] = position
 	# Retail maps author one start per supported player; the slice seeds a
 	# two-player match from the first two starts, so extra authored starts are
-	# valid source data (Rivendell 3, Mount Doom 4, Dagorlad 6, Mordor 8).
+	# valid source data (Rivendell 3, Mount Doom 4, Dagorlad 6, Mordor 8). Every
+	# additional authored Player_N_Start is loaded so N-team matches can seed a
+	# team per start; two-team matches ignore the extras (byte-identical config).
+	for extra_index in range(3, MAX_WAYPOINTS + 1):
+		var extra_name := "Player_%d_Start" % extra_index
+		if not starts.has(extra_name):
+			break
+		var extra_row := _dictionary(starts.get(extra_name, {}))
+		var extra_position := _vector3(extra_row.get("godotPosition", []))
+		if extra_row.is_empty() or extra_position == Vector3.INF:
+			return _fail("missing or invalid %s" % extra_name)
+		player_starts[extra_name] = extra_position
 	if player_start_count < 2:
 		return _fail("cooked map declares fewer than two player starts")
 
@@ -662,6 +673,12 @@ func _load_waypoints(document: Dictionary) -> bool:
 	reference_elevation = (player_one.y + player_two.y) * 0.5
 	local_player_starts["Player_1_Start"] = source_to_local(player_one)
 	local_player_starts["Player_2_Start"] = source_to_local(player_two)
+	# Transform every additional authored start into local space too, so N-team
+	# matches can read each seat's anchor. Two-team matches never read these.
+	for start_name in player_starts.keys():
+		if start_name == "Player_1_Start" or start_name == "Player_2_Start":
+			continue
+		local_player_starts[start_name] = source_to_local(player_starts[start_name])
 	return true
 
 
@@ -1819,6 +1836,34 @@ func simulation_configuration() -> Dictionary:
 	spawn_positions[102] = _walkable_spawn(Vector2(player_one.x, player_one.z + 4.5))
 	var player_one_horizontal := Vector2(player_one.x, player_one.z)
 	var player_two_horizontal := Vector2(player_two.x, player_two.z)
+	# Team 0 intentionally uses source Player_2, team 1 uses Player_1 (existing
+	# spawn mapping). Teams >=2 seat at Player_3, Player_4, ... in order. Every
+	# base/rally anchor is snapped to the cooked navigation mask before it enters
+	# deterministic simulation. Two-team matches carry no extra seats, so this
+	# whole block is empty for them and the 2-team config is byte-identical.
+	var team_centers := [player_two_horizontal, player_one_horizontal]
+	var home_layout := {
+		0: _home_layout_for(player_two_horizontal, player_one_horizontal),
+		1: _home_layout_for(player_one_horizontal, player_two_horizontal),
+	}
+	var team_start_centers := {}
+	var extra_seat := 3
+	while local_player_starts.has("Player_%d_Start" % extra_seat):
+		var seat_local: Vector3 = local_player_starts["Player_%d_Start" % extra_seat]
+		var seat_horizontal := _walkable_spawn(Vector2(seat_local.x, seat_local.z))
+		var team := extra_seat - 1
+		team_centers.append(seat_horizontal)
+		team_start_centers[team] = seat_horizontal
+		extra_seat += 1
+	# Give each extra seat a base layout aimed at the roster centroid.
+	if not team_start_centers.is_empty():
+		var centroid := Vector2.ZERO
+		for center in team_centers:
+			centroid += center
+		centroid /= float(team_centers.size())
+		for team_key in team_start_centers.keys():
+			var seat: Vector2 = team_start_centers[team_key]
+			home_layout[team_key] = _home_layout_for(seat, centroid)
 	return {
 		"source_map_configured": ready,
 		"route_provider": self,
@@ -1828,13 +1873,8 @@ func simulation_configuration() -> Dictionary:
 			"Player_1_Start": player_one_horizontal,
 			"Player_2_Start": player_two_horizontal,
 		},
-		# Team 0 intentionally uses source Player_2, matching the existing spawn
-		# mapping. Every base/rally anchor is snapped to the cooked navigation
-		# mask before it enters deterministic simulation.
-		"home_layout": {
-			0: _home_layout_for(player_two_horizontal, player_one_horizontal),
-			1: _home_layout_for(player_one_horizontal, player_two_horizontal),
-		},
+		"home_layout": home_layout,
+		"team_start_centers": team_start_centers,
 		"ford_gates": _simulation_ford_gates(),
 	}
 
