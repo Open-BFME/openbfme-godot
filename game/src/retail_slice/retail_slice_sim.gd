@@ -176,6 +176,82 @@ const AI_PRODUCTION_PLAN: Array[String] = [
 	ARCHER_OBJECT_ID,
 	KNIGHT_OBJECT_ID,
 ]
+## Deterministic per-difficulty AI profiles (no RNG anywhere). Every field is a
+## deterministic scalar consumed by the SINGLE per-team controller; the five
+## tiers are data, not five code paths. Permille fields (1000 == neutral) scale
+## the base `_rules`-derived constant with integer math so the resource/economy
+## handicap and cadences stay hash-stable across platforms.
+##
+## LEGACY / DEFAULT TIER == "medium": all-neutral (permilles 1000, deltas 0,
+## scan_interval 15 == the historical `% 15` gate, no retreat, closest-target
+## priority). A default 2-team roster {0:player, 1:ai} with no "difficulty" key
+## resolves team 1 to "medium", so the controller issues the byte-identical
+## command sequence the old ENEMY_TEAM AI did and the pinned battle signature
+## (3CB9CA98) does not move. Retreat/regroup and weakest-fortress targeting are
+## strictly "hard and up", so they can never touch the default match.
+const AI_DIFFICULTY_PROFILES: Dictionary = {
+	"easy": {
+		"scan_interval": 45,
+		"queue_interval_permille": 2000,
+		"wave_size_delta": -2,
+		"wave_patience_permille": 1600,
+		"attack_delay_permille": 1800,
+		"resource_permille": 550,
+		"retreat_member_permille": 0,
+		"weakest_fortress_priority": false,
+		"extra_producer_cycles": 0,
+	},
+	"medium": {
+		"scan_interval": 15,
+		"queue_interval_permille": 1000,
+		"wave_size_delta": 0,
+		"wave_patience_permille": 1000,
+		"attack_delay_permille": 1000,
+		"resource_permille": 1000,
+		"retreat_member_permille": 0,
+		"weakest_fortress_priority": false,
+		"extra_producer_cycles": 0,
+	},
+	"hard": {
+		"scan_interval": 15,
+		"queue_interval_permille": 700,
+		"wave_size_delta": 2,
+		"wave_patience_permille": 800,
+		"attack_delay_permille": 700,
+		"resource_permille": 1500,
+		"retreat_member_permille": 200,
+		"weakest_fortress_priority": false,
+		"extra_producer_cycles": 1,
+	},
+	"brutal": {
+		"scan_interval": 10,
+		"queue_interval_permille": 550,
+		"wave_size_delta": 4,
+		"wave_patience_permille": 650,
+		"attack_delay_permille": 550,
+		"resource_permille": 2100,
+		"retreat_member_permille": 250,
+		"weakest_fortress_priority": true,
+		"extra_producer_cycles": 2,
+	},
+	"morgoth": {
+		"scan_interval": 5,
+		"queue_interval_permille": 400,
+		"wave_size_delta": 7,
+		"wave_patience_permille": 500,
+		"attack_delay_permille": 400,
+		"resource_permille": 3000,
+		"retreat_member_permille": 300,
+		"weakest_fortress_priority": true,
+		"extra_producer_cycles": 4,
+	},
+}
+const AI_DEFAULT_DIFFICULTY: String = "medium"
+## Outer controller cadence: the shared GCD of every tier's scan_interval, so a
+## team executes on exactly the ticks its own scan_interval selects. medium's 15
+## is a multiple of 5, so the default team still runs on 0,15,30,... — identical
+## to the historical `tick_index % 15 == 0` gate.
+const AI_CONTROLLER_BASE_INTERVAL: int = 5
 # Default faction roster: entries flagged requires_unit_rule spawn only when the
 # selected pack's unit rules define that object (the two Builder battalions).
 const DEFAULT_SPAWN_ROSTER: Array = [
@@ -247,6 +323,44 @@ func team_descriptor(team: int) -> Dictionary:
 
 func team_is_ai(team: int) -> bool:
 	return bool((_team_descriptors.get(team, {}) as Dictionary).get("is_ai", team != PLAYER_TEAM))
+
+
+func team_difficulty(team: int) -> String:
+	## The resolved difficulty tier a team's AI runs at. Reads the seeded per-team
+	## AI state first (so it survives snapshot/restore), then the descriptor, then
+	## the legacy default. An unknown tier name falls back to the default so an
+	## injected typo can never desync determinism.
+	var from_state: Dictionary = _team_ai_state.get(team, {}) as Dictionary
+	var tier := String(from_state.get("difficulty", (_team_descriptors.get(team, {}) as Dictionary).get("difficulty", AI_DEFAULT_DIFFICULTY)))
+	if not AI_DIFFICULTY_PROFILES.has(tier):
+		tier = AI_DEFAULT_DIFFICULTY
+	return tier
+
+
+func _difficulty_profile(team: int) -> Dictionary:
+	return AI_DIFFICULTY_PROFILES.get(team_difficulty(team), AI_DIFFICULTY_PROFILES[AI_DEFAULT_DIFFICULTY]) as Dictionary
+
+
+func _seed_team_ai_state() -> void:
+	## One AI-state record per rostered AI team, in ascending roster order. Each
+	## record carries the team's difficulty tier and the per-team controller
+	## counters. For the default {0,1} roster this yields exactly {1: medium} — the
+	## single legacy AI — so its command stream (and the pinned signature) is
+	## unchanged.
+	_team_ai_state = {}
+	for team in _roster_team_ids():
+		if not team_is_ai(int(team)):
+			continue
+		var tier := String((_team_descriptors.get(team, {}) as Dictionary).get("difficulty", AI_DEFAULT_DIFFICULTY))
+		if not AI_DIFFICULTY_PROFILES.has(tier):
+			tier = AI_DEFAULT_DIFFICULTY
+		_team_ai_state[int(team)] = {
+			"difficulty": tier,
+			"construction_attempted": false,
+			"construction_resolved": false,
+			"build_order_index": 0,
+			"last_wave_tick": 0,
+		}
 
 
 func team_alliance(team: int) -> Variant:
@@ -521,8 +635,14 @@ var _next_dynamic_structure_id := 3000
 var _next_event_sequence := 1
 var _next_order_sequence := 1
 var _music_state := ""
-var _enemy_ai_construction_attempted := false
-var _enemy_ai_construction_resolved := false
+## Per-team AI controller state (N-team difficulty). One entry per AI team,
+## keyed by team id, each carrying its own difficulty tier plus the counters the
+## old single ENEMY_TEAM AI held in scalars (construction_attempted/resolved,
+## build_order_index, last_wave_tick). Seeded at setup() from each is_ai
+## descriptor; serialized/restored so the snapshot round-trips and twin runs stay
+## hash-equal. For the default {0,1} roster this holds exactly {1: medium}, so the
+## single legacy AI behaves byte-identically.
+var _team_ai_state: Dictionary = {}
 var _last_base_under_attack_tick := -100000
 var _pending_commands: Dictionary = {}
 var last_command_result: Variant = null
@@ -548,8 +668,7 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_next_event_sequence = 1
 	_next_order_sequence = 1
 	_music_state = ""
-	_enemy_ai_construction_attempted = false
-	_enemy_ai_construction_resolved = false
+	_seed_team_ai_state()
 	_last_base_under_attack_tick = -100000
 	_pending_commands.clear()
 	last_command_result = null
@@ -562,8 +681,6 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	clock_paused = false
 	_apply_gameplay_rules(gameplay_rules if not gameplay_rules.is_empty() else _rules)
 	team_upgrades = _seed_team_map({})
-	_ai_build_order_index = 0
-	_ai_last_wave_tick = 0
 	_has_hero_units = false
 	_register_forge_upgrade_contracts()
 	_next_dynamic_id = _seed_next_dynamic_ids()
@@ -4987,8 +5104,8 @@ func tick() -> void:
 	_step_grove_auras()
 	_step_summon_despawns()
 	_step_structure_weapons()
-	if ai_enabled and tick_index % 15 == 0:
-		_update_enemy_ai()
+	if ai_enabled and tick_index % AI_CONTROLLER_BASE_INTERVAL == 0:
+		_update_ai_controllers()
 	for id in entity_ids():
 		_step_entity(id)
 	_step_battalion_separation()
@@ -6008,8 +6125,22 @@ func _step_economy() -> void:
 			continue
 		var team := int(row.get("team", -1))
 		income = _income_with_upgrade_bonus(team, row, income)
+		income = _ai_resource_handicap(team, income)
 		team_resources[team] = resources_for_team(team) + income
 		_emit_event("economy.payout", id, 0, {"team": team, "amount": income})
+
+
+func _ai_resource_handicap(team: int, income: int) -> int:
+	## Per-difficulty economy handicap. Non-AI teams and any tier at the neutral
+	## 1000 permille (the legacy/default "medium") return the income untouched, so
+	## the default match's resource curve — and the pinned signature — never move.
+	## Higher tiers gain a deterministic integer bonus, lower tiers a penalty.
+	if not _team_ai_state.has(team):
+		return income
+	var permille := int(_difficulty_profile(team).get("resource_permille", 1000))
+	if permille == 1000:
+		return income
+	return int(income * permille / 1000)
 
 
 func _step_structure_upgrades() -> void:
@@ -6461,8 +6592,9 @@ func _step_construction() -> void:
 			builder["construction_id"] = 0
 			builder["order_kind"] = ""
 			builder["state"] = "idle"
-			if int(site.get("team", -1)) == ENEMY_TEAM:
-				_enemy_ai_construction_resolved = true
+			var site_team := int(site.get("team", -1))
+			if _team_ai_state.has(site_team):
+				(_team_ai_state[site_team] as Dictionary)["construction_resolved"] = true
 			if String(site.get("structure_kind", "")) == "fortress":
 				_seed_expansion_pads_for(structure_id)
 			_emit_event("construction.completed", builder_id, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
@@ -7318,42 +7450,108 @@ func _target_position(target_id: int, target_kind: String) -> Vector2:
 	return Vector2(row.get("position", Vector2.ZERO))
 
 
+func _update_ai_controllers() -> void:
+	## Runs the single data-driven controller once per AI team, in ascending team
+	## order, each on its own difficulty cadence. For the default {0,1} roster this
+	## is exactly one team (team 1 @ medium == legacy), gated on `tick_index % 15`,
+	## so it fires on the identical ticks — and issues the identical commands — the
+	## old ENEMY_TEAM-bound AI did. Iteration is over the sorted AI-state keys so
+	## multiple AI teams resolve deterministically regardless of insertion order.
+	var teams: Array = _team_ai_state.keys()
+	teams.sort()
+	for team_value in teams:
+		var team := int(team_value)
+		var ai_state: Dictionary = _team_ai_state[team]
+		var profile := _difficulty_profile(team)
+		if tick_index % maxi(1, int(profile.get("scan_interval", 15))) != 0:
+			continue
+		_run_ai_for_team(team, profile, ai_state)
+
+
+func _ensure_ai_state(team: int) -> Dictionary:
+	## Lazily materialize a default (legacy/medium) AI-state record for a team so
+	## the back-compat fixture seams below never touch a missing key.
+	if not _team_ai_state.has(team):
+		_team_ai_state[team] = {
+			"difficulty": AI_DEFAULT_DIFFICULTY,
+			"construction_attempted": false,
+			"construction_resolved": false,
+			"build_order_index": 0,
+			"last_wave_tick": 0,
+		}
+	return _team_ai_state[team]
+
+
 func _update_enemy_ai() -> void:
-	if base_loop_enabled and not _enemy_ai_construction_attempted:
-		_enemy_ai_construction_attempted = true
-		if not _start_enemy_ai_farm():
-			_enemy_ai_construction_resolved = true
+	## Back-compat shim: fixtures that drove the historical single ENEMY_TEAM AI
+	## directly still resolve to the same code, now at the medium (== legacy) tier.
+	_run_ai_for_team(ENEMY_TEAM, _difficulty_profile(ENEMY_TEAM), _ensure_ai_state(ENEMY_TEAM))
+
+
+func ai_base_build_order() -> Array[String]:
+	## Back-compat shim over the per-team derivation for the default ENEMY_TEAM.
+	return _ai_build_order_for_team(ENEMY_TEAM)
+
+
+func force_ai_construction_complete(team: int = ENEMY_TEAM) -> void:
+	## Test seam: mark a team's AI construction finished and its build order
+	## exhausted, freezing the base-building phase so a fixture can isolate a later
+	## behavior deterministically (replaces the old three-scalar poke).
+	var state := _ensure_ai_state(team)
+	state["construction_attempted"] = true
+	state["construction_resolved"] = true
+	state["build_order_index"] = AI_BUILD_ORDER.size()
+
+
+func _run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> void:
+	if base_loop_enabled and not bool(ai_state.get("construction_attempted", false)):
+		ai_state["construction_attempted"] = true
+		if not _start_ai_farm(team):
+			ai_state["construction_resolved"] = true
 		else:
-			_ai_build_order_index = 1
-	if base_loop_enabled and not _enemy_ai_construction_resolved and not _enemy_ai_construction_is_viable():
-		_abandon_enemy_ai_construction()
-		_enemy_ai_construction_resolved = true
-	if base_loop_enabled and not _enemy_ai_construction_resolved:
+			ai_state["build_order_index"] = 1
+	if base_loop_enabled and not bool(ai_state.get("construction_resolved", false)) and not _ai_construction_is_viable(team):
+		_abandon_ai_construction(team)
+		ai_state["construction_resolved"] = true
+	if base_loop_enabled and not bool(ai_state.get("construction_resolved", false)):
 		return
 	if base_loop_enabled:
-		_step_enemy_ai_base_building()
-	if base_loop_enabled and tick_index % maxi(15, int(_rules.get("ai_queue_interval_ticks", 60))) == 0:
-		for unit_type in (_ai_production_plan if not _ai_production_plan.is_empty() else AI_PRODUCTION_PLAN):
-			var production_rule: Dictionary = _unit_production_rules.get(unit_type, {})
+		_step_ai_base_building(team, ai_state)
+	var queue_interval := maxi(15, int(_rules.get("ai_queue_interval_ticks", 60)) * int(profile.get("queue_interval_permille", 1000)) / 1000)
+	if base_loop_enabled and tick_index % queue_interval == 0:
+		var plan: Array = ai_production_plan_for_team(team)
+		if plan.is_empty():
+			plan = _ai_production_plan if not _ai_production_plan.is_empty() else AI_PRODUCTION_PLAN
+		var team_rules := unit_production_rules_for_team(team)
+		for unit_type in plan:
+			var production_rule: Dictionary = team_rules.get(unit_type, {})
 			if production_rule.is_empty():
 				continue
-			var producer := producer_id(ENEMY_TEAM, String(production_rule.get("producer_kind", "")))
+			var producer := producer_id(team, String(production_rule.get("producer_kind", "")))
 			if producer != 0:
-				queue_unit(ENEMY_TEAM, producer, unit_type)
-	# Give the player one full Soldier production window before the first wave.
-	# Economy/production still advance symmetrically during the preparation time.
-	if base_loop_enabled and tick_index < maxi(0, int(_rules.get("ai_attack_delay_ticks", 0))):
+				queue_unit(team, producer, unit_type)
+	# Give hostiles one full production window before the first wave. Economy and
+	# production still advance during the preparation time. Higher tiers commit
+	# sooner (shorter attack delay), lower tiers later.
+	var attack_delay := maxi(0, int(_rules.get("ai_attack_delay_ticks", 0)) * int(profile.get("attack_delay_permille", 1000)) / 1000)
+	if base_loop_enabled and tick_index < attack_delay:
 		return
-	var players := living_ids(PLAYER_TEAM)
-	var player_fortress := fortress_id(PLAYER_TEAM) if base_loop_enabled else 0
-	if players.is_empty() and player_fortress == 0:
+	# Damaged battalions pull back to regroup (retreat/regroup is strictly hard+;
+	# the neutral tiers pass a 0 threshold and this is a no-op, keeping the default
+	# match byte-identical).
+	if base_loop_enabled:
+		_ai_apply_retreat(team, profile)
+	var weakest := bool(profile.get("weakest_fortress_priority", false))
+	var hostiles := _hostile_living_ids(team)
+	var enemy_fortress := _ai_primary_hostile_fortress(team, weakest) if base_loop_enabled else 0
+	if hostiles.is_empty() and enemy_fortress == 0:
 		return
 	# Fresh units mass into a wave at the fortress muster point and strike
-	# together instead of trickling at the player one battalion at a time.
+	# together instead of trickling one battalion at a time.
 	if base_loop_enabled:
-		var wave_size := maxi(2, int(_rules.get("ai_wave_size", 4)))
+		var wave_size := maxi(2, int(_rules.get("ai_wave_size", 4)) + int(profile.get("wave_size_delta", 0)))
 		var mustering: Array[int] = []
-		for id in living_ids(ENEMY_TEAM):
+		for id in living_ids(team):
 			var row: Dictionary = entities[id]
 			if bool(row.get("is_builder", false)) or bool(row.get("ai_in_wave", false)):
 				continue
@@ -7362,16 +7560,17 @@ func _update_enemy_ai() -> void:
 			mustering.append(id)
 		# A stalled economy must not hold the last understrength group at the
 		# muster point forever — after the patience window it attacks anyway.
+		var patience := int(_rules.get("ai_wave_patience_ticks", 1200)) * int(profile.get("wave_patience_permille", 1000)) / 1000
 		var wave_ready := mustering.size() >= wave_size
-		if not wave_ready and not mustering.is_empty() and tick_index - _ai_last_wave_tick > int(_rules.get("ai_wave_patience_ticks", 1200)):
+		if not wave_ready and not mustering.is_empty() and tick_index - int(ai_state.get("last_wave_tick", 0)) > patience:
 			wave_ready = true
 		if wave_ready and not mustering.is_empty():
-			_ai_last_wave_tick = tick_index
+			ai_state["last_wave_tick"] = tick_index
 			for id in mustering:
 				(entities[id] as Dictionary)["ai_in_wave"] = true
 		else:
-			var muster := _fallback_rally_position(ENEMY_TEAM)
-			var muster_fortress := fortress_id(ENEMY_TEAM)
+			var muster := _fallback_rally_position(team)
+			var muster_fortress := fortress_id(team)
 			if muster_fortress != 0:
 				muster = Vector2((structures[muster_fortress] as Dictionary).get("rally", muster))
 			for id in mustering:
@@ -7379,9 +7578,9 @@ func _update_enemy_ai() -> void:
 				if (row["route"] as Array).is_empty() and Vector2(row["position"]).distance_to(muster) > 6.0:
 					if _assign_route(row, muster):
 						row["state"] = "run"
-	for id in living_ids(ENEMY_TEAM):
+	for id in living_ids(team):
 		var row: Dictionary = entities[id]
-		# MenPorters construct; they are not combat battalions and have no weapon.
+		# Builders construct; they are not combat battalions and have no weapon.
 		if bool(row.get("is_builder", false)):
 			continue
 		if base_loop_enabled and not bool(row.get("ai_in_wave", false)):
@@ -7390,13 +7589,13 @@ func _update_enemy_ai() -> void:
 			continue
 		var target_id := 0
 		var target_kind := "battalion"
-		if players.is_empty() and player_fortress != 0:
-			target_id = player_fortress
+		if hostiles.is_empty() and enemy_fortress != 0:
+			target_id = enemy_fortress
 			target_kind = "structure"
 		else:
-			target_id = players[0]
+			target_id = hostiles[0]
 			var closest_distance := Vector2(row["position"]).distance_to(Vector2((entities[target_id] as Dictionary)["position"]))
-			for candidate in players:
+			for candidate in hostiles:
 				var distance := Vector2(row["position"]).distance_to(Vector2((entities[candidate] as Dictionary)["position"]))
 				if distance < closest_distance or (is_equal_approx(distance, closest_distance) and candidate < target_id):
 					target_id = candidate
@@ -7404,8 +7603,8 @@ func _update_enemy_ai() -> void:
 		var target_position := _target_position(target_id, target_kind)
 		var target_distance := Vector2(row["position"]).distance_to(target_position)
 		if target_kind == "structure":
-			# Once no defending battalion remains, the known Fortress is the
-			# strategic objective. Assign it before routing so the target's own
+			# Once no defending battalion remains, the objective fortress is the
+			# strategic target. Assign it before routing so the target's own
 			# footprint is exempt and melee units can close to weapon range.
 			if _assign_route(row, target_position):
 				row["target_id"] = target_id
@@ -7419,10 +7618,8 @@ func _update_enemy_ai() -> void:
 		if target_distance > vision_range:
 			# Strategic AI can advance toward the opposing base, but it does not gain
 			# a live combat target or attack animation through unexplored distance.
-			# Advance toward the candidate we are actually trying to acquire. Routing
-			# every unseen target to the fortress can strand the AI at the fortress
-			# when a surviving battalion is outside its short infantry vision radius.
-			# Once no player battalions remain, target_position is the fortress.
+			# Advance toward the candidate we are actually trying to acquire; when no
+			# hostile battalions remain, target_position is the objective fortress.
 			var strategic_destination := target_position
 			if (row["route"] as Array).is_empty() or Vector2(row.get("destination", row["position"])).distance_to(strategic_destination) > 1.0:
 				if _assign_route(row, strategic_destination):
@@ -7441,83 +7638,169 @@ func _update_enemy_ai() -> void:
 			_emit_music("battle")
 
 
+func _ai_primary_hostile_fortress(team: int, weakest: bool) -> int:
+	## The objective fortress for `team`. Default (closest) tiers take the lowest-id
+	## hostile team's fortress; for the {0,1} roster that is exactly
+	## `fortress_id(PLAYER_TEAM)`, so the default path is byte-identical. Weakest-
+	## priority tiers (brutal/morgoth) instead march the whole wave onto the
+	## lowest-health hostile fortress (deterministic, tie-broken by id).
+	var best := 0
+	var best_health := 0
+	for other_value in _roster_team_ids():
+		var other := int(other_value)
+		if not _is_hostile(team, other):
+			continue
+		var fortress := fortress_id(other)
+		if fortress == 0:
+			continue
+		var health := int((structures[fortress] as Dictionary).get("health", 0))
+		if best == 0:
+			best = fortress
+			best_health = health
+		elif weakest and health < best_health:
+			best = fortress
+			best_health = health
+	return best
+
+
+func _ai_apply_retreat(team: int, profile: Dictionary) -> void:
+	## Army management (hard+): a committed battalion whose surviving members have
+	## fallen below the tier's retreat fraction pulls out of the current wave and
+	## routes home to regroup, rejoining the next muster. The threshold is a
+	## permille of member count (integer, no floats), so a 0 threshold — every
+	## neutral tier — returns immediately and never perturbs the default match.
+	var permille := int(profile.get("retreat_member_permille", 0))
+	if permille <= 0:
+		return
+	var muster := _fallback_rally_position(team)
+	var muster_fortress := fortress_id(team)
+	if muster_fortress != 0:
+		muster = Vector2((structures[muster_fortress] as Dictionary).get("rally", muster))
+	for id in living_ids(team):
+		var row: Dictionary = entities[id]
+		if bool(row.get("is_builder", false)) or not bool(row.get("ai_in_wave", false)):
+			continue
+		# A battalion already storming an enemy structure presses the assault — it
+		# does not turn tail at the gates (turtling there would cede the base race).
+		if String(row.get("target_kind", "")) == "structure" and int(row.get("target_id", 0)) != 0:
+			continue
+		var members: Array = row.get("member_health", [])
+		if members.is_empty():
+			continue
+		var alive := 0
+		for value in members:
+			if int(value) > 0:
+				alive += 1
+		if alive * 1000 >= members.size() * permille:
+			continue
+		row["ai_in_wave"] = false
+		row["target_id"] = 0
+		row["target_kind"] = "battalion"
+		row["attack_windup"] = 0
+		if _assign_route(row, muster):
+			row["state"] = "run"
+
+
 # After the proven first farm, the AI keeps developing: economy first, then
 # one of each military producer. Provisional order pending a real strategy
 # layer; every site goes through the same admission path as a player build.
 const AI_BUILD_ORDER: Array[String] = [
 	"farm", "barracks", "farm", "archery_range", "stable", "farm", "workshop",
 ]
-var _ai_build_order_index := 0
-var _ai_last_wave_tick := 0
 
 
-func _step_enemy_ai_base_building() -> void:
+func _step_ai_base_building(team: int, ai_state: Dictionary) -> void:
 	# A dead porter is retrained first, even once the authored build order is
 	# exhausted (factions with few buildable kinds would otherwise never
 	# recover their builder).
 	var living_builders: Array[int] = []
-	for id in living_ids(ENEMY_TEAM):
+	for id in living_ids(team):
 		if bool((entities[id] as Dictionary).get("is_builder", false)):
 			living_builders.append(id)
 	if living_builders.is_empty():
-		_enemy_ai_train_builder()
+		_ai_train_builder(team)
 		return
-	var order := ai_base_build_order()
-	if _ai_build_order_index >= order.size():
+	var order := _ai_build_order_for_team(team)
+	var index := int(ai_state.get("build_order_index", 0))
+	if index >= order.size():
 		return
-	if _enemy_ai_construction_is_viable():
+	if _ai_construction_is_viable(team):
 		return
-	var kind := String(order[_ai_build_order_index])
-	var build_rule: Dictionary = _structure_build_rules.get(kind, {})
+	var kind := String(order[index])
+	var build_rule: Dictionary = structure_build_rules_for_team(team).get(kind, {})
 	if build_rule.is_empty():
-		_ai_build_order_index += 1
+		ai_state["build_order_index"] = index + 1
 		return
-	if resources_for_team(ENEMY_TEAM) < int(build_rule.get("cost", 0)):
+	if resources_for_team(team) < int(build_rule.get("cost", 0)):
 		return
 	var anchor := Vector2((entities[living_builders[0]] as Dictionary).get("position", Vector2.ZERO))
-	var enemy_fortress := fortress_id(ENEMY_TEAM)
-	if enemy_fortress != 0:
-		anchor = Vector2((structures[enemy_fortress] as Dictionary).get("position", Vector2.ZERO))
-	for radius_value in [10.0, 14.0, 18.0, 22.0]:
+	var team_fortress := fortress_id(team)
+	if team_fortress != 0:
+		anchor = Vector2((structures[team_fortress] as Dictionary).get("position", Vector2.ZERO))
+	# The default (medium/easy) search is exactly the historical four rings; tiers
+	# that build extra producers get additional outer rings so the larger base has
+	# room. Untouched for the default match, so its placement stays byte-identical.
+	var radii: Array = [10.0, 14.0, 18.0, 22.0]
+	if int(_difficulty_profile(team).get("extra_producer_cycles", 0)) > 0:
+		radii = [10.0, 14.0, 18.0, 22.0, 26.0, 30.0, 34.0, 38.0]
+	for radius_value in radii:
 		var radius := float(radius_value)
 		for direction_index in range(8):
 			var angle := TAU * float(direction_index) / 8.0
 			var candidate: Vector2 = anchor + Vector2(cos(angle), sin(angle)) * radius
-			if bool(_issue_construct_for_team(ENEMY_TEAM, living_builders, kind, candidate).get("ok", false)):
-				_ai_build_order_index += 1
+			if bool(_issue_construct_for_team(team, living_builders, kind, candidate).get("ok", false)):
+				ai_state["build_order_index"] = index + 1
 				return
 
 
-func ai_base_build_order() -> Array[String]:
+func _ai_build_order_for_team(team: int) -> Array[String]:
 	## Faction-derived build order: farm first when the faction declares one,
 	## then each AI-plan unit's producer kind in plan order. The fortress is
 	## never rebuilt (it is the seeded structure). The historical Men order is
 	## just this derivation over the Gondor plan.
+	##
+	## Economy aggression + build variety (hard and up): the tier appends extra
+	## farm->producer CYCLES, giving higher tiers a genuinely larger production
+	## base (more parallel producers + income) — the lasting military-throughput
+	## edge that banked gold alone cannot buy against a producer-bound opponent.
+	## medium/easy add zero cycles, so the default build order is byte-identical.
 	var order: Array[String] = []
-	if _structure_build_rules.has("farm"):
-		order.append("farm")
-	for unit_type_value in _ai_production_plan:
-		var rule: Dictionary = _unit_production_rules.get(String(unit_type_value), {}) as Dictionary
+	var has_farm := structure_build_rules_for_team(team).has("farm")
+	var team_rules := unit_production_rules_for_team(team)
+	var producers: Array[String] = []
+	for unit_type_value in ai_production_plan_for_team(team):
+		var rule: Dictionary = team_rules.get(String(unit_type_value), {}) as Dictionary
 		var kind := String(rule.get("producer_kind", ""))
-		if kind != "" and kind != "fortress" and not order.has(kind):
+		if kind != "" and kind != "fortress" and not producers.has(kind):
+			producers.append(kind)
+	if has_farm:
+		order.append("farm")
+	for kind in producers:
+		order.append(kind)
+	var cycles := int(_difficulty_profile(team).get("extra_producer_cycles", 0))
+	for _cycle in range(cycles):
+		if has_farm:
+			order.append("farm")
+		for kind in producers:
 			order.append(kind)
 	return order
 
 
-func _enemy_ai_train_builder() -> void:
+func _ai_train_builder(team: int) -> void:
 	## The porter died: retrain it from the fortress so the base can keep
 	## developing. Never double-queue a builder that is already alive or
 	## already in a production queue.
-	var manifest: Dictionary = _rules.get("faction_manifest", {}) as Dictionary
+	var manifest: Dictionary = team_manifest_for(team)
+	var team_rules := unit_production_rules_for_team(team)
 	for builder_value in manifest.get("builder_unit_ids", []) as Array:
 		var builder_id := String(builder_value)
 		var already_covered := false
-		for id in living_ids(ENEMY_TEAM):
+		for id in living_ids(team):
 			if String((entities[id] as Dictionary).get("object_id", "")) == builder_id:
 				already_covered = true
 				break
 		if not already_covered:
-			for structure_id in structure_ids(ENEMY_TEAM):
+			for structure_id in structure_ids(team):
 				for item_value in Array((structures[structure_id] as Dictionary).get("queue", [])):
 					if String((item_value as Dictionary).get("unit_type", "")) == builder_id:
 						already_covered = true
@@ -7526,20 +7809,20 @@ func _enemy_ai_train_builder() -> void:
 					break
 		if already_covered:
 			return
-		for unit_type_value in _unit_production_rules.keys():
+		for unit_type_value in team_rules.keys():
 			var unit_type := String(unit_type_value)
-			var rule: Dictionary = _unit_production_rules[unit_type]
+			var rule: Dictionary = team_rules[unit_type]
 			if String(rule.get("object_id", "")) != builder_id:
 				continue
-			var producer := producer_id(ENEMY_TEAM, String(rule.get("producer_kind", "fortress")))
+			var producer := producer_id(team, String(rule.get("producer_kind", "fortress")))
 			if producer != 0:
-				queue_unit(ENEMY_TEAM, producer, unit_type)
+				queue_unit(team, producer, unit_type)
 			return
 
 
-func _start_enemy_ai_farm() -> bool:
+func _start_ai_farm(team: int) -> bool:
 	var builder_ids: Array[int] = []
-	for id in living_ids(ENEMY_TEAM):
+	for id in living_ids(team):
 		if bool((entities[id] as Dictionary).get("is_builder", false)):
 			builder_ids.append(id)
 	if builder_ids.is_empty():
@@ -7549,14 +7832,14 @@ func _start_enemy_ai_farm() -> bool:
 	# obstruction, route, cost, and construction path as a player MenPorter.
 	for direction in [Vector2.UP, Vector2.RIGHT, Vector2.DOWN, Vector2.LEFT]:
 		var candidate: Vector2 = builder_position + direction * 10.0
-		var result := _issue_construct_for_team(ENEMY_TEAM, builder_ids, "farm", candidate)
+		var result := _issue_construct_for_team(team, builder_ids, "farm", candidate)
 		if bool(result.get("ok", false)):
 			return true
 	return false
 
 
-func _enemy_ai_construction_is_viable() -> bool:
-	for id in living_ids(ENEMY_TEAM):
+func _ai_construction_is_viable(team: int) -> bool:
+	for id in living_ids(team):
 		var builder: Dictionary = entities[id]
 		if not bool(builder.get("is_builder", false)):
 			continue
@@ -7566,10 +7849,10 @@ func _enemy_ai_construction_is_viable() -> bool:
 	return false
 
 
-func _abandon_enemy_ai_construction() -> void:
+func _abandon_ai_construction(team: int) -> void:
 	for id in entity_ids():
 		var builder: Dictionary = entities[id]
-		if int(builder.get("team", -1)) != ENEMY_TEAM or not bool(builder.get("is_builder", false)) or int(builder.get("construction_id", 0)) == 0:
+		if int(builder.get("team", -1)) != team or not bool(builder.get("is_builder", false)) or int(builder.get("construction_id", 0)) == 0:
 			continue
 		var construction_id := int(builder.get("construction_id", 0))
 		if structures.has(construction_id):
@@ -8165,8 +8448,7 @@ func _authoritative_state() -> Dictionary:
 		"next_dynamic_id": _next_dynamic_id,
 		"next_dynamic_structure_id": _next_dynamic_structure_id,
 		"next_order_sequence": _next_order_sequence,
-		"enemy_ai_construction_attempted": _enemy_ai_construction_attempted,
-		"enemy_ai_construction_resolved": _enemy_ai_construction_resolved,
+		"team_ai_state": _team_ai_state,
 		"team_upgrades": team_upgrades,
 		"team_power_points": team_power_points,
 		"purchased_powers": purchased_powers,
@@ -8191,8 +8473,6 @@ func _authoritative_state() -> Dictionary:
 		"has_hero_units": _has_hero_units,
 		"unit_ability_rules": _unit_ability_rules,
 		"unit_experience_rules": _unit_experience_rules,
-		"ai_build_order_index": _ai_build_order_index,
-		"ai_last_wave_tick": _ai_last_wave_tick,
 		"pending_commands": _pending_commands,
 	}
 
@@ -8236,8 +8516,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_next_dynamic_id = state["next_dynamic_id"]
 	_next_dynamic_structure_id = int(state["next_dynamic_structure_id"])
 	_next_order_sequence = int(state["next_order_sequence"])
-	_enemy_ai_construction_attempted = bool(state["enemy_ai_construction_attempted"])
-	_enemy_ai_construction_resolved = bool(state["enemy_ai_construction_resolved"])
+	_team_ai_state = state.get("team_ai_state", {})
 	team_upgrades = state["team_upgrades"]
 	team_power_points = state["team_power_points"]
 	purchased_powers = state["purchased_powers"]
@@ -8262,8 +8541,6 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_has_hero_units = bool(state["has_hero_units"])
 	_unit_ability_rules = state["unit_ability_rules"]
 	_unit_experience_rules = state["unit_experience_rules"]
-	_ai_build_order_index = int(state["ai_build_order_index"])
-	_ai_last_wave_tick = int(state["ai_last_wave_tick"])
 	_pending_commands = state["pending_commands"]
 	# Reconstruct the derived team registry + per-team manifest aliases from the
 	# restored authoritative dicts. Roster order matches setup()'s ascending

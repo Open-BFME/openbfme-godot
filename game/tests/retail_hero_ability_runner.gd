@@ -39,9 +39,7 @@ func _make_sim():
 			sim.entities.erase(entity_id)
 	sim.expansion_pads.clear()
 	sim._ai_production_plan.clear()
-	sim._ai_build_order_index = SimScript.AI_BUILD_ORDER.size()
-	sim._enemy_ai_construction_attempted = true
-	sim._enemy_ai_construction_resolved = true
+	sim.force_ai_construction_complete()
 	# Synthetic hero roster: rules registered before spawn so ability state
 	# attaches through the normal _add_battalion path.
 	sim._rules["unit_rules"][HERO_OBJECT_ID] = _hero_rule()

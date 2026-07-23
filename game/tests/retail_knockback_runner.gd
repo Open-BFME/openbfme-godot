@@ -151,9 +151,7 @@ func _make_sim(with_water := false):
 		sim.entities.erase(entity_id)
 	sim.expansion_pads.clear()
 	sim._ai_production_plan.clear()
-	sim._ai_build_order_index = SimScript.AI_BUILD_ORDER.size()
-	sim._enemy_ai_construction_attempted = true
-	sim._enemy_ai_construction_resolved = true
+	sim.force_ai_construction_complete()
 	if with_water:
 		sim.route_provider = WaterBandRouteProvider.new()
 	sim._unit_ability_rules["test.hero-horde"] = [_blast_rule()]
