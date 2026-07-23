@@ -94,6 +94,10 @@ def test_tracked_v1_is_payload_free_bounded_and_source_gap_honest() -> None:
     )
     assert semantic["patterns"] == [
         "data/ini/housecolor.ini",
+        # Attested 2026-07-22: the structure-lifecycle batch grew the census
+        # building set to include the farm interface, so the trebuchet/building
+        # stats lane reads (and must hash-attest) its defining INI.
+        "data/ini/object/goodfaction/structures/farminterface.ini",
     ]
 
 
@@ -609,6 +613,23 @@ def test_effective_ranger_runtime_contract_is_exact_and_incomplete() -> None:
     assert "complete" not in json.dumps(result).casefold()
 
     model_census = profile["runtime_data"]["data/m3/model-census.json"]
+    ranger_object_ids = {"bfme2.object.gondor-ranger", "bfme2.object.gondor-ranger-horde"}
+    objects_document = profile["runtime_data"]["data/objects.json"]
+    capabilities_document = profile["runtime_data"]["data/animation_capabilities.json"]
+    if any(row["id"] in ranger_object_ids for row in objects_document["objects"]):
+        # The vertical-slice batch integrated the Ranger into the base profile.
+        # The bridge must fail closed on double-application, and then reproduce
+        # the integrated rows exactly when re-run on a pre-integration view.
+        with pytest.raises(ValueError, match="already exists"):
+            attach_ranger_playable_bindings(profile, result, model_census)
+        objects_document["objects"] = [
+            row for row in objects_document["objects"] if row["id"] not in ranger_object_ids
+        ]
+        capabilities_document["capabilities"] = [
+            row
+            for row in capabilities_document["capabilities"]
+            if row["id"] != "bfme2.animation.gondor-ranger"
+        ]
     attach_ranger_playable_bindings(profile, result, model_census)
     objects = {
         row["id"]: row

@@ -26,8 +26,11 @@ FRAME_CONTRACT_FILE_SHA256 = (
 MAP_FILE_SHA256 = "b9932e95e0949a7faecea3e31500b356e4f7f695e40e8b9f6c37202439c4b11b"
 SETUP_FILE_SHA256 = "b6ab4ed3493e3e3e4b286b0a4b7e903d1bf508a09f2bc4393d112c77ea3d0df6"
 SIDE_APT_SHA256 = "84d58c67c5cab9a3bf690125cbf1a0cbf3f4bc58ccc29ffa33b992a924eca6ef"
-SIM_SHA256 = "2c9643295de166e56626bc3e71f9ed6a13b886ce702245f10d4a0e76c59104ba"
-SLICE_SHA256 = "61fc846ec38d3e5220461fadd064454333150c05e073fdfeab98b13818d6a5d1"
+# Re-pinned 2026-07-22 after the reviewed multiplayer-lockstep and Game
+# Control API changes to both files; every anchored behavioral marker below
+# still validates against the new sources.
+SIM_SHA256 = "bd9cb07f0f089c0b816566e4cb36fa8f1147f96a4cc888ac200fac605d2c7a01"
+SLICE_SHA256 = "2bffffe08598cf0a29ee38f2c07186c629e73c654e07ab7ea486adf151ae12d3"
 
 RETAIL_INI_SOURCES: dict[str, str] = {
     "data/ini/commandset.ini": "3d57ff841b93428ce2118d4bff1871684003bb9eacd8d48865f03ce23e4c5300",

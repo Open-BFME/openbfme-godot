@@ -26,7 +26,7 @@
         "id": "men-fords-v0-complete-generated",
         "sha256": "0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d"
       },
-      "censusInputSha256": "b12b7aecbc216fb8d87abf33191d769f46c249a81724edd262a783dcf16a1fbe",
+      "censusInputSha256": "2f5f99741410caf9fecfa1eb61ad8660e8794c5cadf4bbb5fa0ebc5b8aa432a4",
       "targets": {
         "buildings": [
           "MenFortress",
@@ -97,11 +97,12 @@
       "kind": "data",
       "converter": "hash-only",
       "patterns": [
-        "data/ini/housecolor.ini"
+        "data/ini/housecolor.ini",
+        "data/ini/object/goodfaction/structures/farminterface.ini"
       ],
       "required": true,
-      "limit": 1,
-      "expected_count": 1
+      "limit": 2,
+      "expected_count": 2
     }
   ],
   "runtime_data": {}
