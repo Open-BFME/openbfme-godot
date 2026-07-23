@@ -644,7 +644,7 @@ func retail_launch_error() -> String:
 	## player start.
 	var host_error := _men_pack_gate_error()
 	if host_error != "":
-		return "The retail slice host pack is unavailable: %s." % host_error
+		return "The Open BFME host pack is unavailable: %s." % host_error
 	var map_id := _selected_skirmish_map()
 	if map_id == "":
 		return "No retail map is selectable. Ensure bfme2-five-maps is selected."
@@ -896,18 +896,18 @@ func retail_map_availability(map_id: String) -> String:
 	## slice would refuse; the reason chain mirrors the same steps.
 	var probe := _slice_probe()
 	if probe == null:
-		return "slice map resolution is unavailable"
+		return "Open BFME map resolution is unavailable"
 	probe.selected_pack_root = _selected_faction_pack_root()
 	var resolved: Dictionary = probe._resolve_slice_map_definition(map_id)
 	if not resolved.is_empty():
 		return ""
 	if map_id == SliceScript.MAP_ID:
-		return "the selected pack's files.entryMap is missing or invalid; the slice boots Fords only from the selected pack"
+		return "the selected pack's files.entryMap is missing or invalid; Open BFME boots Fords only from the selected pack"
 	if (_content_db.get("bundle_maps") as Dictionary).has(map_id):
 		return ""
 	var content_root := OS.get_environment("OPENBFME_CONTENT").strip_edges()
 	if content_root == "" or not DirAccess.dir_exists_absolute(content_root):
-		return "not registered in selection.json and OPENBFME_CONTENT is unset; the slice requires it for catalog maps"
+		return "not registered in selection.json and OPENBFME_CONTENT is unset; Open BFME requires it for catalog maps"
 	var pack_root := ModLoader.resolve_pack_path(content_root, SliceScript.FIVE_MAPS_PACK_ID)
 	if pack_root == "" or not ModLoader.path_is_within(content_root, pack_root) or not DirAccess.dir_exists_absolute(pack_root):
 		return "not registered in selection.json and the %s pack is not present under OPENBFME_CONTENT" % SliceScript.FIVE_MAPS_PACK_ID
@@ -929,7 +929,7 @@ func retail_map_availability(map_id: String) -> String:
 			return "its map document is missing or failed schema validation"
 		if String(map_doc.get("id", "")) != map_id:
 			return "its map document id does not match the catalog row"
-		return "unresolvable by the slice"
+		return "unresolvable by Open BFME"
 	return "not registered in selection.json and absent from the %s catalog" % SliceScript.FIVE_MAPS_PACK_ID
 
 

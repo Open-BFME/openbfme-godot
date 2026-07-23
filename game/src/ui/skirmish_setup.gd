@@ -316,7 +316,7 @@ func _rebuild_player_rows() -> void:
 		handicap.add_item("0%")
 		handicap.select(0)
 		handicap.disabled = true
-		handicap.tooltip_text = "Handicap scaling is not supported by the slice (difficulty tiers scale AI resources instead)"
+		handicap.tooltip_text = "Handicap scaling is not supported by Open BFME yet (difficulty tiers scale AI resources instead)"
 		handicap_dropdowns.append(handicap)
 	_sync_row_affordances()
 
