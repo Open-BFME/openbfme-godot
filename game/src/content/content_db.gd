@@ -655,12 +655,13 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 			var implementation: Variant = ability.get("implementation")
 			if (
 				String(ability.get("id", "")) == ""
-				or String(ability.get("specialPowerId", "")) == ""
+				# TOGGLE_WEAPONSET rows author no SpecialPower template.
+				or (String(ability.get("specialPowerId", "")) == "" and String(ability.get("command", "")) != "TOGGLE_WEAPONSET")
 				or int(ability.get("slot", 0)) < 1
 				or String(ability.get("targeting", "")) not in ["self", "point", "enemy-object"]
 				or typeof(ability.get("button")) != TYPE_DICTIONARY
 				or typeof(effect) != TYPE_DICTIONARY
-				or String((effect as Dictionary).get("kind", "")) not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier"]
+				or String((effect as Dictionary).get("kind", "")) not in ["none", "weapon-blast", "heal", "summon", "attribute-modifier", "leadership-aura", "weapon-toggle", "terror"]
 				or typeof(implementation) != TYPE_DICTIONARY
 				or String((implementation as Dictionary).get("status", "")) not in ["implemented", "unimplemented", "passive"]
 			):

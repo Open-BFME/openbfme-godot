@@ -209,6 +209,7 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 			"combat": _resolved_dictionary(resolved.get("combat", {})),
 			"movement": _resolved_dictionary(resolved.get("movement", {})),
 			"formation": resolved.get("formation", {}),
+			"fearResistant": _resolved_value(resolved.get("fearResistant")),
 		}
 	for field in ["displayName", "buildCost", "buildTimeSeconds", "commandPoints", "memberCount", "memberHealth", "speed", "visionRange"]:
 		if not row.has(field):
@@ -248,6 +249,7 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 		"combat": (row.get("combat", {}) as Dictionary).duplicate(true),
 		"movement": (row.get("movement", {}) as Dictionary).duplicate(true),
 		"formation": (row.get("formation", {}) as Dictionary).duplicate(true),
+		"fear_resistant": row.get("fearResistant") == true,
 		"producers": producers,
 		"prerequisites": (producers[0].get("prerequisites", []) as Array).duplicate(),
 	}
@@ -371,6 +373,7 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		"continuous_fire_one": int(combat.get("continuousFireOne", 0)),
 		"continuous_fire_coast_ticks": maxi(0, roundi(float(combat.get("continuousFireCoastMs", 0.0)) / (TICK_SECONDS * 1000.0))),
 		"continuous_fire_rate_multiplier": 1.0,
+		"fear_resistant": bool(simulation.get("fear_resistant", false)),
 		"formation_positions": positions,
 		"provenance": {"source_object_id": String(simulation.get("source_object_id", "")), "source_contract": "openbfme.playable-unit-runtime"},
 	}

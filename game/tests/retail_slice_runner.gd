@@ -762,7 +762,7 @@ func _run() -> void:
 		var base_structure_health := int(building.get("maximum_health", 0))
 		var first_step: Dictionary = steps[0]
 		var first_upgrade := String(first_step.get("upgradeId", ""))
-		var commands: Array = roster_sim.structure_upgrade_commands(producer_id)
+		var commands: Array = _chain_purchase_rows(roster_sim.structure_upgrade_commands(producer_id))
 		_check(
 			"%s_exposes_authored_purchase_command" % kind,
 			commands.size() == 1
@@ -855,11 +855,12 @@ func _run() -> void:
 					and is_equal_approx(float(building.get("production_multiplier", 1.0)), snappedf(expected_multiplier * second_multiplier, 0.0001)),
 				str({"level": building.get("level"), "health": building.get("maximum_health"), "mult": building.get("production_multiplier")})
 			)
+			var exhausted_rows := _chain_purchase_rows(roster_sim.structure_upgrade_commands(producer_id))
 			_check(
 				"%s_chain_exhausted_exposes_no_further_purchase" % kind,
-				roster_sim.structure_upgrade_commands(producer_id).is_empty()
-					or String((roster_sim.structure_upgrade_commands(producer_id)[0] as Dictionary).get("upgrade_id", "")) != second_upgrade,
-				str(roster_sim.structure_upgrade_commands(producer_id))
+				exhausted_rows.is_empty()
+					or String((exhausted_rows[0] as Dictionary).get("upgrade_id", "")) != second_upgrade,
+				str(exhausted_rows)
 			)
 		# Mirkwood unlock: the elves barracks level 2 must release Mirkwood
 		# Archers exactly as retail (their only authored prerequisite).
@@ -1331,7 +1332,7 @@ func _run() -> void:
 		slice.simulation.team_resources[0] = slice.simulation.resources_for_team(0) + 6000
 		var first_upgrade := String((level_steps[0] as Dictionary).get("upgradeId", ""))
 		var first_duration := maxi(1, roundi(float((level_steps[0] as Dictionary).get("buildTimeSeconds", 1.0)) / SimScript.TICK_SECONDS))
-		var offered: Array = slice.simulation.structure_upgrade_commands(live_producer)
+		var offered: Array = _chain_purchase_rows(slice.simulation.structure_upgrade_commands(live_producer))
 		_check(
 			"live_structure_exposes_purchase_command",
 			offered.size() == 1
@@ -1399,7 +1400,7 @@ func _run() -> void:
 		if level_steps.size() > 1:
 			var second_upgrade := String((level_steps[1] as Dictionary).get("upgradeId", ""))
 			var second_duration := maxi(1, roundi(float((level_steps[1] as Dictionary).get("buildTimeSeconds", 1.0)) / SimScript.TICK_SECONDS))
-			var offered_second: Array = slice.simulation.structure_upgrade_commands(live_producer)
+			var offered_second: Array = _chain_purchase_rows(slice.simulation.structure_upgrade_commands(live_producer))
 			_check(
 				"level_three_command_surfaces_after_level_two",
 				offered_second.size() == 1 and String((offered_second[0] as Dictionary).get("upgrade_id", "")) == second_upgrade,
@@ -1431,8 +1432,8 @@ func _run() -> void:
 			)
 			_check(
 				"chain_exhausted_exposes_no_purchase",
-				slice.simulation.structure_upgrade_commands(live_producer).is_empty(),
-				str(slice.simulation.structure_upgrade_commands(live_producer))
+				_chain_purchase_rows(slice.simulation.structure_upgrade_commands(live_producer)).is_empty(),
+				str(_chain_purchase_rows(slice.simulation.structure_upgrade_commands(live_producer)))
 			)
 
 	# Run a complete battle through public commands, capturing actual animation
@@ -2057,6 +2058,16 @@ func _event_kind_present(events: Array[Dictionary], kind: String) -> bool:
 
 func _first_event_sequence(events: Array[Dictionary], kind: String, team: int = -1, target_id: int = 0) -> int:
 	return int(_first_event(events, kind, team, target_id).get("sequence", 0))
+
+
+func _chain_purchase_rows(rows: Array) -> Array:
+	## Chain-step purchase rows only: compiled PLAYER research rides the same
+	## structure purchase surface (by design) and asserts on its own checks.
+	var output: Array = []
+	for row_value in rows:
+		if typeof(row_value) == TYPE_DICTIONARY and not bool((row_value as Dictionary).get("research", false)):
+			output.append(row_value)
+	return output
 
 
 func _first_event(events: Array[Dictionary], kind: String, team: int = -1, target_id: int = 0) -> Dictionary:

@@ -877,6 +877,64 @@ def compile_weapon_upgrades(
                     entry["excludedAlternates"] = alternates
             by_upgrade_id[upgrade_id.casefold()] = entry
             upgrades.append(entry)
+    # Retail also sells weapon upgrades whose only authored behavior is a
+    # StatusBitsUpgrade "dummy" while the damage rides upgrade-gated
+    # DamageNuggets on the unchanged base weapon (RohanRohirrim forged
+    # blades: "Just a dummy upgrade module to allow this unit to be
+    # upgraded").  Those resolve through the same gated-nugget contract;
+    # a StatusBitsUpgrade with no gated weapon effect is a production
+    # legality marker and stays out — never an invented effect.
+    for lineage in lineages:
+        for behavior in _behavior_blocks(lineage, "StatusBitsUpgrade"):
+            trigger = _behavior_assignment(behavior, "TriggeredBy")
+            if trigger is None or not _tokens(trigger.value):
+                continue
+            upgrade_id = _tokens(trigger.value)[-1]
+            if upgrade_id.casefold() in by_upgrade_id:
+                continue
+            resolved_effects: list[tuple[str, dict[str, object]]] = []
+            for candidate in base_weapon_ids:
+                try:
+                    resolved_effects.append(
+                        (
+                            candidate,
+                            _gated_nugget_effect(
+                                documents,
+                                candidate,
+                                upgrade_id,
+                                constants,
+                                named_definition_cache=named_definition_cache,
+                                cache_lock=cache_lock,
+                            ),
+                        )
+                    )
+                except ArmorCompilerError:
+                    continue
+            chosen: dict[str, object] | None = None
+            if resolved_effects and base_weapon_ids and (
+                resolved_effects[0][0].casefold() == base_weapon_ids[0].casefold()
+            ):
+                # The combat weapon's effect drives when it resolves.
+                chosen = resolved_effects[0][1]
+            else:
+                unique_effects = {
+                    _digest(effect): effect for _, effect in resolved_effects
+                }
+                if len(unique_effects) == 1:
+                    chosen = next(iter(unique_effects.values()))
+            if chosen is None:
+                continue
+            entry = {
+                "upgradeId": upgrade_id,
+                "behavior": {
+                    "kind": "StatusBitsUpgrade",
+                    "sourceIni": behavior.source_virtual_path,
+                    "line": behavior.line,
+                },
+            }
+            entry.update(chosen)
+            by_upgrade_id[upgrade_id.casefold()] = entry
+            upgrades.append(entry)
     return sorted(upgrades, key=lambda row: str(row["upgradeId"]).casefold())
 
 

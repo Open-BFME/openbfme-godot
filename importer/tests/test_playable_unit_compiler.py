@@ -2420,3 +2420,449 @@ def test_validation_rejects_experience_mutation() -> None:
     ).hexdigest()
     with pytest.raises(PlayableUnitCompilerError, match="experience"):
         validate_playable_unit_descriptor(corrupted)
+
+
+# ---------------------------------------------------------------------------
+# Real hero-ability effect extraction: leadership auras, terror pulses,
+# blast knockback, weapon-set toggles, extended timed-buff modifier kinds,
+# and the fear-resistance unit flag.
+# ---------------------------------------------------------------------------
+
+_HERO_OBJECT_MARKER = "  End\nEnd\n\nObject SummonMinion"
+
+_FIXTURE_EMOTIONS = b"""
+EmotionNugget Terror_Base
+  Type = TERROR
+  AIState = RUN_AWAY_PANIC
+  Duration = 9000
+  PreventPlayerCommands = Yes
+End
+EmotionNugget Taunt_Civilian
+  Type = TAUNT
+  AIState = RUN_AWAY_PANIC
+  Duration = 4000
+  PreventPlayerCommands = Yes
+End
+EmotionNugget Point_Base
+  Type = POINT
+End
+"""
+
+
+def _with_hero_modules(documents: dict[str, bytes], modules: str) -> None:
+    path = "data/ini/object/units/test_units.ini"
+    text = documents[path].decode()
+    assert _HERO_OBJECT_MARKER in text
+    documents[path] = text.replace(
+        _HERO_OBJECT_MARKER, "  End\n" + modules + "End\n\nObject SummonMinion", 1
+    ).encode()
+
+
+def _aura_documents(
+    *,
+    modifier_rows: str = (
+        "  Modifier = ARMOR 25%\n"
+        "  Modifier = DAMAGE_MULT 150%\n"
+        "  Modifier = EXPERIENCE 200%\n"
+        "  Modifier = VISION 120%\n"
+    ),
+    extra_aura_module: str = "",
+) -> dict[str, bytes]:
+    documents = _hero_ability_documents()
+    _with_hero_modules(
+        documents,
+        "  Behavior = UnpauseSpecialPowerUpgrade ModuleTag_LeadershipEnabler\n"
+        "    SpecialPowerTemplate = SpecialAbilityFakeLeadership\n"
+        "    TriggeredBy = Upgrade_FixtureLeadership\n"
+        "  End\n"
+        "  Behavior = AttributeModifierAuraUpdate ModuleTag_LeadershipAura\n"
+        "    StartsActive = No\n"
+        "    BonusName = FixtureLeadershipBonus\n"
+        "    TriggeredBy = Upgrade_FixtureLeadership\n"
+        "    RefreshDelay = 2000\n"
+        "    Range = 200\n"
+        "    AllowSelf = Yes\n"
+        "    ObjectFilter = FIXTURE_BUFF_FILTER\n"
+        "  End\n" + extra_aura_module,
+    )
+    documents["data/ini/attributemodifier.ini"] += (
+        "\nModifierList FixtureLeadershipBonus\n"
+        "  Category = LEADERSHIP\n"
+        + modifier_rows
+        + "  Duration = 3000\n"
+        "  FX = FX_FixtureLeadership\n"
+        "End\n"
+    ).encode()
+    documents["data/ini/gamedata.ini"] += (
+        b"\n#define FIXTURE_BUFF_FILTER ANY +INFANTRY +CAVALRY -HORDE -HERO\n"
+    )
+    documents["data/ini/experiencelevels.ini"] += (
+        b"\nExperienceLevel FixtureHeroLevel3\n"
+        b"  TargetNames = FIXTUREHERO\n"
+        b"  RequiredExperience = 300\n"
+        b"  ExperienceAward = 30\n"
+        b"  Rank = 3\n"
+        b"  Upgrades = Upgrade_FixtureLeadership\n"
+        b"End\n"
+    )
+    return documents
+
+
+def test_leadership_aura_compiles_from_nonpressable_button() -> None:
+    documents = _aura_documents()
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    leadership = _abilities_by_id(descriptor)["Command_FixtureLeadership"]
+    assert leadership["implementation"]["status"] == "passive"
+    assert leadership["levelGate"]["requiredLevel"] == 3
+    effect = leadership["effect"]
+    assert effect["kind"] == "leadership-aura"
+    assert effect["bonusName"] == "FixtureLeadershipBonus"
+    assert effect["range"] == 200
+    assert effect["affectsSelf"] is True
+    assert effect["startsActive"] is True
+    # ALL/ANY normalize and HORDE terms drop (the runtime battalion entity
+    # proxies the members the retail filter buffs).
+    assert effect["affects"] == "ANY +INFANTRY +CAVALRY -HERO"
+    assert effect["modifiers"] == [
+        {"kind": "ARMOR", "value": 0.25, "application": "additive"},
+        {"kind": "DAMAGE_MULT", "value": 1.5, "application": "multiplicative"},
+        {"kind": "EXPERIENCE", "value": 2.0, "application": "multiplicative"},
+        {"kind": "VISION", "value": 1.2, "application": "multiplicative"},
+    ]
+    assert effect["fxIds"] == ["FX_FixtureLeadership"]
+
+
+def test_leadership_aura_without_level_grant_stays_off() -> None:
+    documents = _aura_documents()
+    # Remove the authored grant: the gate no longer resolves to a level.
+    documents["data/ini/experiencelevels.ini"] = documents[
+        "data/ini/experiencelevels.ini"
+    ].replace(b"  Upgrades = Upgrade_FixtureLeadership\n", b"")
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    leadership = _abilities_by_id(descriptor)["Command_FixtureLeadership"]
+    assert leadership["implementation"]["status"] == "passive"
+    assert leadership["effect"]["kind"] == "leadership-aura"
+    assert leadership["effect"]["startsActive"] is False
+    assert any(
+        "aura upgrade gate" in item
+        for item in leadership["implementation"]["limitations"]
+    )
+
+
+def test_leadership_aura_ambiguous_binding_keeps_the_gap_row() -> None:
+    documents = _aura_documents(
+        extra_aura_module=(
+            "  Behavior = AttributeModifierAuraUpdate ModuleTag_LeadershipAura2\n"
+            "    StartsActive = No\n"
+            "    BonusName = FixtureLeadershipBonus\n"
+            "    TriggeredBy = Upgrade_FixtureLeadership\n"
+            "    Range = 100\n"
+            "  End\n"
+        )
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    leadership = _abilities_by_id(descriptor)["Command_FixtureLeadership"]
+    assert leadership["implementation"]["status"] == "passive"
+    assert leadership["effect"] == {"kind": "none"}
+    assert any(
+        "multiple AttributeModifierAuraUpdate" in item
+        for item in leadership["implementation"]["limitations"]
+    )
+
+
+def test_leadership_aura_with_no_supported_modifiers_keeps_the_gap_row() -> None:
+    documents = _aura_documents(
+        modifier_rows="  Modifier = BOUNTY_PERCENTAGE 100.0%\n"
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    leadership = _abilities_by_id(descriptor)["Command_FixtureLeadership"]
+    assert leadership["effect"] == {"kind": "none"}
+    assert any(
+        "no runtime-supported Modifier rows" in item
+        for item in leadership["implementation"]["limitations"]
+    )
+
+
+def _terror_documents() -> dict[str, bytes]:
+    documents = _hero_ability_documents()
+    _with_hero_modules(
+        documents,
+        "  Behavior = SpecialPowerModule ModuleTag_ScreechStarter\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureScreech\n"
+        "    UpdateModuleStartsAttack = Yes\n"
+        "    AntiCategory = LEADERSHIP\n"
+        "  End\n"
+        "  Behavior = SpecialAbilityUpdate ModuleTag_ScreechUpdate\n"
+        "    SpecialPowerTemplate = SpecialAbilityFixtureScreech\n"
+        "    UnpackTime = 1\n"
+        "    GenerateTerror = Yes\n"
+        "    EmotionPulseRadius = 150\n"
+        "    ObjectFilter = ALL -SummonMinion ENEMIES\n"
+        "  End\n",
+    )
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  9 = Command_FixtureBroken\nEnd",
+        "  9 = Command_FixtureBroken\n  10 = Command_FixtureScreech\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_FixtureScreech\n"
+        b"  Command = SPECIAL_POWER\n"
+        b"  SpecialPower = SpecialAbilityFixtureScreech\n"
+        b"  TextLabel = CONTROLBAR:FixtureScreech\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureScreech\n"
+        b"  ButtonImage = HSFixtureScreech\n"
+        b"End\n"
+    )
+    documents["data/ini/specialpower.ini"] += (
+        b"\nSpecialPower SpecialAbilityFixtureScreech\n"
+        b"  Enum = SPECIAL_SCREECH\n"
+        b"  ReloadTime = 180000\n"
+        b"End\n"
+    )
+    documents["data/ini/emotions.ini"] = _FIXTURE_EMOTIONS
+    return documents
+
+
+def test_terror_effect_compiles_from_generate_terror() -> None:
+    documents = _terror_documents()
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    screech = _abilities_by_id(descriptor)["Command_FixtureScreech"]
+    assert screech["implementation"]["status"] == "implemented"
+    effect = screech["effect"]
+    assert effect["kind"] == "terror"
+    assert effect["radius"] == 150
+    assert effect["durationMs"] == 9000
+    assert effect["emotionNuggetId"] == "Terror_Base"
+    assert effect["affects"] == "ANY -SummonMinion ENEMIES"
+    assert effect["modifiers"][0]["kind"] == "DAMAGE_MULT"
+    assert effect["modifiers"][0]["value"] == 0.0
+    limitations = screech["implementation"]["limitations"]
+    assert any("no-fight debuff" in item for item in limitations)
+    assert any("anti-category strip (LEADERSHIP)" in item for item in limitations)
+
+
+def test_terror_without_emotion_source_keeps_the_gap_row() -> None:
+    documents = _terror_documents()
+    del documents["data/ini/emotions.ini"]
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    screech = _abilities_by_id(descriptor)["Command_FixtureScreech"]
+    assert screech["implementation"]["status"] == "unimplemented"
+    assert "data/ini/emotions.ini" in screech["implementation"]["reason"]
+    assert screech["effect"] == {"kind": "none"}
+
+
+def test_weapon_blast_knockback_compiles_from_meta_impact_nugget() -> None:
+    documents = _hero_ability_documents()
+    documents["data/ini/weapon.ini"] = documents["data/ini/weapon.ini"].replace(
+        b"Weapon FixtureHeroBlast\n"
+        b"  AttackRange = 110.0\n",
+        b"Weapon FixtureHeroBlast\n"
+        b"  AttackRange = 110.0\n"
+        b"  MetaImpactNugget\n"
+        b"    ShockWaveAmount = 70.0\n"
+        b"    ShockWaveRadius = 110.0\n"
+        b"    ShockWaveTaperOff = 0.75\n"
+        b"  End\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    blast = _abilities_by_id(descriptor)["Command_FixtureBlast"]
+    assert blast["implementation"]["status"] == "implemented"
+    assert blast["effect"]["knockbackStrength"] == 70.0
+    assert blast["effect"]["knockbackRadius"] == 110.0
+    assert blast["effect"]["knockbackWeaponId"] == "FixtureHeroBlast"
+
+
+def test_ambiguous_meta_impact_nuggets_record_a_limitation() -> None:
+    documents = _hero_ability_documents()
+    documents["data/ini/weapon.ini"] = documents["data/ini/weapon.ini"].replace(
+        b"Weapon FixtureHeroBlast\n"
+        b"  AttackRange = 110.0\n",
+        b"Weapon FixtureHeroBlast\n"
+        b"  AttackRange = 110.0\n"
+        b"  MetaImpactNugget\n"
+        b"    ShockWaveAmount = 70.0\n"
+        b"    ShockWaveRadius = 110.0\n"
+        b"  End\n"
+        b"  MetaImpactNugget\n"
+        b"    ShockWaveAmount = 20.0\n"
+        b"    ShockWaveRadius = 30.0\n"
+        b"  End\n",
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    blast = _abilities_by_id(descriptor)["Command_FixtureBlast"]
+    assert "knockbackStrength" not in blast["effect"]
+    assert any(
+        "multiple MetaImpactNuggets" in item
+        for item in blast["implementation"]["limitations"]
+    )
+
+
+def test_weapon_toggle_rows_record_the_authored_contract() -> None:
+    documents = _hero_ability_documents()
+    text = documents["data/ini/object/units/test_units.ini"].decode()
+    documents["data/ini/object/units/test_units.ini"] = text.replace(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n",
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = WEAPONSET_TOGGLE_1\n"
+        "    Weapon = PRIMARY FixtureToggleBow\n"
+        "  End\n",
+        1,
+    ).encode()
+    command_sets = documents["data/ini/commandset.ini"].decode()
+    documents["data/ini/commandset.ini"] = command_sets.replace(
+        "  9 = Command_FixtureBroken\nEnd",
+        "  9 = Command_FixtureBroken\n  10 = Command_FixtureToggle\nEnd",
+        1,
+    ).encode()
+    documents["data/ini/commandbutton.ini"] += (
+        b"\nCommandButton Command_FixtureToggle\n"
+        b"  Command = TOGGLE_WEAPONSET\n"
+        b"  FlagsUsedForToggle = WEAPONSET_TOGGLE_1\n"
+        b"  TextLabel = CONTROLBAR:FixtureToggle\n"
+        b"  DescriptLabel = CONTROLBAR:ToolTipFixtureToggle\n"
+        b"  ButtonImage = HSFixtureToggle\n"
+        b"End\n"
+    )
+    documents["data/ini/weapon.ini"] += (
+        b"\nWeapon FixtureToggleBow\n"
+        b"  AttackRange = 320.0\n"
+        b"  DamageNugget\n"
+        b"    Damage = 90\n"
+        b"    DamageType = PIERCE\n"
+        b"  End\n"
+        b"End\n"
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    toggle = _abilities_by_id(descriptor)["Command_FixtureToggle"]
+    assert toggle["command"] == "TOGGLE_WEAPONSET"
+    assert toggle["specialPowerId"] == ""
+    assert toggle["implementation"]["status"] == "unimplemented"
+    assert "runtime weapon-mode wiring" in toggle["implementation"]["reason"]
+    assert toggle["effect"] == {"kind": "none"}
+    evidence = toggle["weaponToggle"]
+    assert evidence["toggleFlag"] == "WEAPONSET_TOGGLE_1"
+    assert evidence["defaultWeaponId"] == "AbilityHeroSword"
+    assert evidence["toggledWeaponId"] == "FixtureToggleBow"
+    assert evidence["toggledWeapon"]["damage"] == 90
+    assert evidence["toggledWeapon"]["attackRange"] == 320.0
+
+
+def test_extended_timed_buff_modifier_kinds_compile() -> None:
+    documents = _hero_ability_documents()
+    documents["data/ini/attributemodifier.ini"] = (
+        b"\nModifierList FixtureRage\n"
+        b"  Category = SPELL\n"
+        b"  Modifier = ARMOR 50%\n"
+        b"  Modifier = DAMAGE_MULT 150%\n"
+        b"  Modifier = VISION 200%\n"
+        b"  Modifier = RESIST_FEAR 100%\n"
+        b"  Modifier = CRUSH 150%\n"
+        b"  Modifier = HEALTH 120%\n"
+        b"  Modifier = CRUSH_DECELERATE 0%\n"
+        b"  Duration = 20000\n"
+        b"End\n"
+    )
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    rage = _abilities_by_id(descriptor)["Command_FixtureRage"]
+    assert rage["implementation"]["status"] == "implemented"
+    kinds = [row["kind"] for row in rage["effect"]["modifiers"]]
+    assert kinds == [
+        "ARMOR",
+        "DAMAGE_MULT",
+        "VISION",
+        "RESIST_FEAR",
+        "CRUSH",
+        "HEALTH",
+    ]
+    assert rage["implementation"]["limitations"] == [
+        "modifier kinds not applied by the runtime: CRUSH_DECELERATE"
+    ]
+
+
+def test_fear_resistance_flag_compiles_from_emotion_tracker() -> None:
+    resistant = _hero_ability_documents()
+    resistant["data/ini/emotions.ini"] = _FIXTURE_EMOTIONS
+    _with_hero_modules(
+        resistant,
+        "  Behavior = EmotionTrackerUpdate ModuleTag_EmotionTracker\n"
+        "    AddEmotion = Point_Base\n"
+        "  End\n",
+    )
+    descriptor = compile_playable_unit_descriptor("AbilityHero", resistant)
+    validate_playable_unit_descriptor(descriptor)
+    flag = descriptor["gameplay"]["simulation"]["resolved"]["fearResistant"]
+    assert flag["value"] is True
+    assert flag["sourceIni"] == "data/ini/object/units/test_units.ini"
+
+    fearful = _hero_ability_documents()
+    fearful["data/ini/emotions.ini"] = _FIXTURE_EMOTIONS
+    _with_hero_modules(
+        fearful,
+        "  Behavior = EmotionTrackerUpdate ModuleTag_EmotionTracker\n"
+        "    AddEmotion = Point_Base\n"
+        "    AddEmotion = OVERRIDE Terror_Base\n"
+        "    End\n"
+        "  End\n",
+    )
+    descriptor = compile_playable_unit_descriptor("AbilityHero", fearful)
+    validate_playable_unit_descriptor(descriptor)
+    flag = descriptor["gameplay"]["simulation"]["resolved"]["fearResistant"]
+    assert flag["value"] is False
+
+    absent = _hero_ability_documents()
+    absent["data/ini/emotions.ini"] = _FIXTURE_EMOTIONS
+    descriptor = compile_playable_unit_descriptor("AbilityHero", absent)
+    validate_playable_unit_descriptor(descriptor)
+    assert "fearResistant" not in descriptor["gameplay"]["simulation"]["resolved"]
+
+    no_emotions = _hero_ability_documents()
+    _with_hero_modules(
+        no_emotions,
+        "  Behavior = EmotionTrackerUpdate ModuleTag_EmotionTracker\n"
+        "    AddEmotion = Point_Base\n"
+        "  End\n",
+    )
+    descriptor = compile_playable_unit_descriptor("AbilityHero", no_emotions)
+    validate_playable_unit_descriptor(descriptor)
+    assert "fearResistant" not in descriptor["gameplay"]["simulation"]["resolved"]

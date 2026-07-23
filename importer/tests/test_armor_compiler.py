@@ -625,3 +625,56 @@ def test_unit_descriptor_fails_closed_on_unresolvable_armor_set() -> None:
 
     with pytest.raises(PlayableUnitCompilerError, match="MissingArmor"):
         compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_status_bits_dummy_upgrade_resolves_gated_nugget_effect() -> None:
+    # RohanRohirrim forged blades: the member authors only a StatusBitsUpgrade
+    # "dummy" while the damage rides an upgrade-gated DamageNugget on the
+    # unchanged base weapon.
+    payload = _weapon_object(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY TestPike\n"
+        "  End\n",
+        "  Behavior = StatusBitsUpgrade ModuleTag_ForgedBlades\n"
+        "    TriggeredBy = Upgrade_TestForgedBlades\n"
+        "  End\n",
+    )
+    documents = _documents(payload)
+    lineage, prepared = _lineage(documents)
+    upgrades = compile_weapon_upgrades(
+        documents,
+        [lineage],
+        base_weapon_targets(lineage),
+        prepared.numeric_defines,
+    )
+    assert len(upgrades) == 1
+    upgrade = upgrades[0]
+    assert upgrade["upgradeId"] == "Upgrade_TestForgedBlades"
+    assert upgrade["behavior"]["kind"] == "StatusBitsUpgrade"
+    assert upgrade["kind"] == "nugget-upgrade"
+    assert upgrade["weaponId"] == "TestPike"
+    assert upgrade["nuggets"][0]["damage"]["value"] == 115
+
+
+def test_status_bits_legality_marker_stays_out_of_weapon_upgrades() -> None:
+    # A StatusBitsUpgrade whose upgrade gates no weapon nugget is a production
+    # legality marker, never an invented effect.
+    payload = _weapon_object(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY TestSword\n"
+        "  End\n",
+        "  Behavior = StatusBitsUpgrade ModuleTag_Legality\n"
+        "    TriggeredBy = Upgrade_TestProductionLegality\n"
+        "  End\n",
+    )
+    documents = _documents(payload)
+    lineage, prepared = _lineage(documents)
+    upgrades = compile_weapon_upgrades(
+        documents,
+        [lineage],
+        base_weapon_targets(lineage),
+        prepared.numeric_defines,
+    )
+    assert upgrades == []

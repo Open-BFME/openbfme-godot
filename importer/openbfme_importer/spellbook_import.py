@@ -39,6 +39,9 @@ _REQUIRED_EXTRA_DOCUMENTS = (
     "data/ini/fxlist.ini",
     "data/ini/attributemodifier.ini",
     "data/ini/fxparticlesystem.ini",
+    # Hero terror abilities and fear-resistance flags read the authored
+    # EmotionNugget reactions.
+    "data/ini/emotions.ini",
 )
 
 

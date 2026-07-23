@@ -583,12 +583,13 @@ def _weapon_damage_nuggets(
     documents: Mapping[str, bytes],
     identifier: str,
     *,
+    nugget_kind: str = "damagenugget",
     cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None = None,
     cache_lock: threading.Lock | None = None,
 ) -> list[Mapping[str, object]] | None:
-    """Authored DamageNugget sub-blocks of one named Weapon definition."""
+    """Authored nugget sub-blocks of one kind on one named Weapon definition."""
 
-    cache_key = ("weapon-damage-nugget", identifier.casefold())
+    cache_key = (f"weapon-nugget:{nugget_kind}", identifier.casefold())
     if cache is not None:
         lock = cache_lock or threading.Lock()
         with lock:
@@ -622,7 +623,7 @@ def _weapon_damage_nuggets(
                 depth += 1
                 current = (
                     {"fields": defaultdict(list), "line": line_number}
-                    if depth == 1 and clean.casefold() == "damagenugget"
+                    if depth == 1 and clean.casefold() == nugget_kind
                     else None
                 )
                 if current is not None:
@@ -1122,10 +1123,96 @@ def _simulation_contract(
         missing.append("formation")
     else:
         resolved["formation"] = formation
+    fear_resistance = _fear_resistance_contract(
+        container_lineage, member_lineage, documents
+    )
+    if fear_resistance is not None:
+        resolved["fearResistant"] = fear_resistance
     return {
         "status": "ready" if not missing else "unresolved",
         "resolved": resolved,
         "missing": sorted(set(missing), key=str.casefold),
+    }
+
+
+def _fear_resistance_contract(
+    container_lineage: Sequence[SageObject],
+    member_lineage: Sequence[SageObject],
+    documents: Mapping[str, bytes],
+) -> dict[str, object] | None:
+    """Authored fear reaction of one unit (EmotionTrackerUpdate x emotions.ini).
+
+    SAGE units flee terror because their EmotionTrackerUpdate adds a
+    FEAR/TERROR/UNCONTROLLABLE_FEAR EmotionNugget; retail heroes author those
+    nuggets out.  A unit whose effective trackers (container + member) add no
+    such nugget is fear resistant.  Fail-closed: no tracker, no emotions.ini,
+    or an unresolvable nugget reference emits nothing (the runtime default is
+    "not resistant").
+    """
+
+    trackers: dict[tuple[str, int], SageBlock] = {}
+    lineages: list[Sequence[SageObject]] = [member_lineage]
+    if (
+        container_lineage
+        and member_lineage
+        and container_lineage[-1].name.casefold() != member_lineage[-1].name.casefold()
+    ):
+        lineages.append(container_lineage)
+    for lineage in lineages:
+        for block in _effective_top_blocks(lineage):
+            if (block.header_key or "").casefold() != "behavior":
+                continue
+            if block.kind.casefold() != "emotiontrackerupdate":
+                continue
+            trackers[(block.source_virtual_path, block.line)] = block
+    if not trackers:
+        return None
+    emotions_source = _optional_document(documents, EMOTIONS_PATH)
+    if emotions_source is None:
+        return None
+    nuggets = _named_blocks(emotions_source, "EmotionNugget")
+    fearful = False
+    added: list[str] = []
+    for block in trackers.values():
+        for value in block.values("AddEmotion"):
+            tokens = [
+                token
+                for token in _tokens(value)
+                if token.casefold() not in {"override", "none", "null"}
+            ]
+            if tokens:
+                added.append(tokens[-1])
+        # Retail also authors ``AddEmotion = OVERRIDE <Name> ... End`` blocks;
+        # the CST parses those as nested blocks whose header carries the name.
+        for nested in block.blocks:
+            if nested.kind.casefold() != "addemotion":
+                continue
+            tokens = [
+                token
+                for token in nested.header_tokens
+                if token.casefold() not in {"override", "none", "null"}
+            ]
+            if tokens:
+                added.append(tokens[-1])
+    for name in added:
+        nugget = nuggets.get(name.casefold())
+        if nugget is None:
+            # Dangling emotion reference: fail closed, emit nothing.
+            return None
+        if (_first(nugget.values("Type")) or "").casefold() in _FEAR_EMOTION_TYPES:
+            fearful = True
+    anchor = sorted(trackers.values(), key=lambda row: (row.source_virtual_path, row.line))[0]
+    return {
+        "value": not fearful,
+        "semantic": (
+            "authored EmotionTrackerUpdate adds no FEAR/TERROR/"
+            "UNCONTROLLABLE_FEAR EmotionNugget"
+            if not fearful
+            else "authored EmotionTrackerUpdate adds a fear-reaction EmotionNugget"
+        ),
+        "sourceIni": anchor.source_virtual_path,
+        "line": anchor.line,
+        "emotionSource": {"sourceIni": EMOTIONS_PATH},
     }
 
 
@@ -1949,8 +2036,27 @@ _ABILITY_UNIMPLEMENTED_MODULE_KINDS = {
     "activatemodulespecialpower": "module activation needs the module system",
 }
 # Attribute-modifier kinds the runtime can apply; anything else is recorded as
-# a limitation instead of being silently dropped.
-_SUPPORTED_MODIFIER_KINDS = frozenset({"ARMOR", "DAMAGE_MULT", "SPEED", "INVULNERABLE"})
+# a limitation instead of being silently dropped.  The timed-modifier core in
+# the sim compounds DAMAGE_MULT/SPEED/VISION/EXPERIENCE/CRUSH/HEALTH, sums
+# ARMOR, and reads INVULNERABLE/RESIST_FEAR as flags at value >= 1.
+_SUPPORTED_MODIFIER_KINDS = frozenset(
+    {
+        "ARMOR",
+        "DAMAGE_MULT",
+        "SPEED",
+        "INVULNERABLE",
+        "VISION",
+        "HEALTH",
+        "RESIST_FEAR",
+        "CRUSH",
+        "EXPERIENCE",
+    }
+)
+EMOTIONS_PATH = "data/ini/emotions.ini"
+GAME_DATA_PATH = "data/ini/gamedata.ini"
+# EmotionNugget types that make a unit run a fear reaction (emotions.ini);
+# a unit whose authored EmotionTrackerUpdate adds none of them never flees.
+_FEAR_EMOTION_TYPES = frozenset({"fear", "terror", "uncontrollable_fear"})
 
 
 def _ability_button_leaf_fields(button: IniBlock) -> dict[str, object]:
@@ -2602,6 +2708,34 @@ def _ability_modifier_leaf(
     return leaf
 
 
+def _projected_object_filter(
+    tokens: Sequence[str],
+    filter_defines: Mapping[str, tuple[str, ...]],
+) -> str:
+    """Project one authored ObjectFilter into the runtime filter grammar.
+
+    Named gamedata #define lists expand in place.  ``ALL`` normalizes to the
+    runtime's ``ANY`` superset token.  ``HORDE`` terms drop: retail filters
+    exclude the horde *container* because buffs apply per member, while the
+    runtime battalion entity proxies those members directly.
+    """
+
+    expanded: list[str] = []
+    for token in tokens:
+        rows = filter_defines.get(token.casefold())
+        expanded.extend(rows if rows else (token,))
+    projected: list[str] = []
+    for token in expanded:
+        bare = token.lstrip("+-").casefold()
+        if bare == "horde":
+            continue
+        if bare == "all" and not token.startswith(("+", "-")):
+            projected.append("ANY")
+            continue
+        projected.append(token)
+    return " ".join(projected)
+
+
 def _weapon_warhead_target(
     documents: Mapping[str, bytes],
     identifier: str,
@@ -2666,6 +2800,64 @@ def _weapon_nugget_summary(
                         kinds.setdefault(nugget.group(1).casefold(), nugget.group(1))
                 depth += 1
     return {"found": found, "kinds": kinds, "warheads": warheads}
+
+
+def _weapon_knockback_fields(
+    documents: Mapping[str, bytes],
+    weapon_ids: Sequence[str],
+    constants: Mapping[str, int | float],
+    label: str,
+    limitations: list[str],
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> dict[str, object]:
+    """Authored MetaImpactNugget shockwave of one ability weapon chain.
+
+    ShockWaveAmount/ShockWaveRadius map to knockbackStrength/knockbackRadius
+    in source units (the runtime scales them exactly like attack ranges).
+    The first weapon in the chain that authors a MetaImpactNugget wins; an
+    ambiguous or unresolvable nugget records a limitation and emits nothing
+    (fail-closed: the blast keeps dealing damage without a shockwave).
+    """
+
+    for weapon_id in weapon_ids:
+        nuggets = _weapon_damage_nuggets(
+            documents,
+            weapon_id,
+            nugget_kind="metaimpactnugget",
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if not nuggets:
+            continue
+        if len(nuggets) > 1:
+            limitations.append(
+                f"weapon {weapon_id} authors multiple MetaImpactNuggets "
+                "(ambiguous shockwave, not applied)"
+            )
+            return {}
+        fields = nuggets[0]["fields"]
+        assert isinstance(fields, Mapping)
+        strength = _resolved_definition_field(fields, "ShockWaveAmount", constants)
+        radius = _resolved_definition_field(fields, "ShockWaveRadius", constants)
+        if (
+            strength is None
+            or radius is None
+            or float(strength["value"]) <= 0.0
+            or float(radius["value"]) <= 0.0
+        ):
+            limitations.append(
+                f"weapon {weapon_id} MetaImpactNugget has no resolvable "
+                "ShockWaveAmount/ShockWaveRadius (shockwave not applied)"
+            )
+            return {}
+        return {
+            "knockbackStrength": strength["value"],
+            "knockbackRadius": radius["value"],
+            "knockbackWeaponId": weapon_id,
+        }
+    return {}
 
 
 def _ability_weapon_leaf(
@@ -2795,6 +2987,219 @@ def _ability_weapon_leaf(
     return leaf
 
 
+def _leadership_aura_effect(
+    label: str,
+    behavior_modules: Sequence[SageBlock],
+    gate_upgrades: Sequence[str],
+    gate_resolved: bool,
+    modifier_blocks: Mapping[str, IniBlock],
+    constants: Mapping[str, int | float],
+    filter_defines: Mapping[str, tuple[str, ...]],
+    limitations: list[str],
+) -> dict[str, object] | None:
+    """Bind one passive leadership button to its AttributeModifierAuraUpdate.
+
+    Retail aura modules carry no SpecialPowerTemplate; the authored join is
+    the shared TriggeredBy upgrade between the button's
+    UnpauseSpecialPowerUpgrade gate and the aura module.  StartsActive=No
+    auras whose TriggeredBy upgrades resolve through the hero's authored
+    ExperienceLevel grants ride the row's level gate; an unresolvable gate
+    keeps the aura off (startsActive false).  Returns None when no aura
+    module binds; raises on ambiguous or unconvertible authoring.
+    """
+
+    candidates = [
+        block
+        for block in behavior_modules
+        if block.kind.casefold() == "attributemodifierauraupdate"
+    ]
+    gates = {upgrade.casefold() for upgrade in gate_upgrades}
+    if gates:
+        matched = [
+            block
+            for block in candidates
+            if gates
+            & {token.casefold() for token in _module_tokens(block, "TriggeredBy")}
+        ]
+    else:
+        matched = [
+            block
+            for block in candidates
+            if not _module_tokens(block, "TriggeredBy")
+            and (_first(block.values("StartsActive")) or "yes").casefold() == "yes"
+        ]
+    if not matched:
+        return None
+    if len(matched) > 1:
+        raise PlayableUnitCompilerError(
+            f"{label} matches multiple AttributeModifierAuraUpdate modules"
+        )
+    block = matched[0]
+    bonus_tokens = _module_tokens(block, "BonusName")
+    if len(bonus_tokens) != 1:
+        raise PlayableUnitCompilerError(
+            f"{label} aura must name exactly one BonusName"
+        )
+    bonus_name = bonus_tokens[0]
+    leaf = _ability_modifier_leaf(modifier_blocks, bonus_name, constants, label)
+    supported = list(leaf.get("modifiers", []))
+    if not supported:
+        unsupported = leaf.get("unsupportedModifiers", [])
+        raise PlayableUnitCompilerError(
+            f"{label} aura {bonus_name} has no runtime-supported Modifier rows"
+            + (
+                " (unsupported: %s)" % ", ".join(unsupported)  # type: ignore[arg-type]
+                if unsupported
+                else ""
+            )
+        )
+    aura_range = _resolved_expression((block.values("Range") or ("",))[-1], constants)
+    if aura_range is None or float(aura_range) <= 0.0:
+        raise PlayableUnitCompilerError(f"{label} aura has no resolvable Range")
+    starts_active_authored = (
+        _first(block.values("StartsActive")) or "yes"
+    ).casefold() == "yes"
+    # StartsActive=No means the aura waits for its TriggeredBy upgrade; when
+    # that upgrade is an authored hero level grant, the row's level gate is
+    # the faithful runtime activation and the aura radiates once the hero
+    # reaches the authored rank.  An unresolvable gate keeps the aura off.
+    starts_active = starts_active_authored or (bool(gates) and gate_resolved)
+    if not starts_active:
+        limitations.append(
+            "aura upgrade gate does not resolve to an authored hero level "
+            "grant; the aura stays off"
+        )
+    effect: dict[str, object] = {
+        "kind": "leadership-aura",
+        "bonusName": bonus_name,
+        "range": aura_range,
+        "modifiers": supported,
+        "affectsSelf": (_first(block.values("AllowSelf")) or "no").casefold() == "yes",
+        "startsActive": starts_active,
+        "sourceIni": block.source_virtual_path,
+        "line": block.line,
+        "modifierSourceIni": ATTRIBUTE_MODIFIER_PATH,
+    }
+    filter_tokens = _module_tokens(block, "ObjectFilter")
+    if filter_tokens:
+        effect["affects"] = _projected_object_filter(filter_tokens, filter_defines)
+    if leaf.get("category"):
+        effect["category"] = leaf["category"]
+    if leaf.get("fxIds"):
+        effect["fxIds"] = leaf["fxIds"]
+    if leaf.get("unsupportedModifiers"):
+        limitations.append(
+            "modifier kinds not applied by the runtime: "
+            + ", ".join(leaf["unsupportedModifiers"])  # type: ignore[arg-type]
+        )
+    for anti in _module_tokens(block, "AntiCategory"):
+        limitations.append(f"anti-category strip ({anti}) is not applied")
+    return effect
+
+
+def _weapon_toggle_row(
+    slot: int,
+    button: IniBlock,
+    member_lineage: Sequence[SageObject],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+    *,
+    named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> dict[str, object]:
+    """Convert one TOGGLE_WEAPONSET command into an explicit ability row.
+
+    The authored toggle (FlagsUsedForToggle + the WeaponSet conditioned on
+    that flag) compiles into evidence, but the runtime unit rule does not
+    yet carry per-mode weapon profiles for converted pack units, so the row
+    stays a recorded gap instead of a castable toggle that could never
+    engage — fail-closed, never faked.
+    """
+
+    label = f"ability {button.name}"
+    limitations: list[str] = []
+    row: dict[str, object] = {
+        "id": button.name,
+        "slot": slot,
+        "command": "TOGGLE_WEAPONSET",
+        "specialPowerId": "",
+        "button": _ability_button_leaf_fields(button),
+        "targeting": "self",
+        "modules": [],
+        "sourceIni": COMMAND_BUTTON_PATH,
+    }
+    reason = (
+        "weapon-set toggle mode profiles are not wired into the runtime "
+        "unit rule (runtime weapon-mode wiring is a follow-up)"
+    )
+    evidence: dict[str, object] = {}
+    flags = _module_tokens(button, "FlagsUsedForToggle")
+    if len(flags) != 1:
+        reason = f"{label} must author exactly one FlagsUsedForToggle flag"
+    else:
+        flag = flags[0]
+        evidence["toggleFlag"] = flag
+        evidence["toggleMode"] = flag.casefold()
+        toggled_sets = []
+        for block in _effective_top_blocks(member_lineage):
+            if (block.header_key or block.kind).casefold() != "weaponset":
+                continue
+            condition_tokens = [
+                token
+                for assignment in block.assignments
+                if assignment.key.casefold() in {"condition", "conditions"}
+                for token in _tokens(assignment.value)
+            ]
+            if any(token.casefold() == flag.casefold() for token in condition_tokens):
+                toggled_sets.append(block)
+        if len(toggled_sets) != 1:
+            reason = (
+                f"{label} matches {len(toggled_sets)} WeaponSet blocks for "
+                f"{flag} (need exactly one)"
+            )
+        else:
+            toggled = toggled_sets[0]
+            weapon_ids = {
+                tokens[-1].casefold(): tokens[-1]
+                for assignment in toggled.assignments
+                if assignment.key.casefold() == "weapon"
+                for tokens in [_tokens(assignment.value)]
+                if tokens
+            }
+            default_weapon = _default_set_target(
+                member_lineage, "WeaponSet", "Weapon"
+            )
+            if default_weapon is not None:
+                evidence["defaultWeaponId"] = default_weapon
+            if len(weapon_ids) != 1:
+                reason = (
+                    f"{label} toggled WeaponSet names an ambiguous weapon set"
+                )
+            else:
+                toggled_weapon = next(iter(weapon_ids.values()))
+                evidence["toggledWeaponId"] = toggled_weapon
+                try:
+                    evidence["toggledWeapon"] = _ability_weapon_leaf(
+                        documents,
+                        toggled_weapon,
+                        constants,
+                        label,
+                        named_definition_cache=named_definition_cache,
+                        cache_lock=cache_lock,
+                    )
+                except PlayableUnitCompilerError as error:
+                    limitations.append(str(error))
+    if evidence:
+        row["weaponToggle"] = evidence
+    row["effect"] = {"kind": "none"}
+    row["implementation"] = {
+        "status": "unimplemented",
+        "reason": reason,
+        "limitations": limitations,
+    }
+    return row
+
+
 def _hero_abilities(
     target: SageObject,
     target_lineage: Sequence[SageObject],
@@ -2865,6 +3270,10 @@ def _hero_abilities(
             hero_names,
         )
     ocl_source = _optional_document(documents, OBJECT_CREATION_LIST_PATH)
+    gamedata_source = _optional_document(documents, GAME_DATA_PATH)
+    filter_defines: Mapping[str, tuple[str, ...]] = (
+        _ability_list_defines(gamedata_source) if gamedata_source is not None else {}
+    )
 
     abilities: list[dict[str, object]] = []
     used_power_blocks: dict[str, IniBlock] = {}
@@ -2878,6 +3287,21 @@ def _hero_abilities(
         command_kinds = {
             value.strip().casefold() for value in button.values("Command")
         }
+        if command_kinds == {"toggle_weaponset"}:
+            # Weapon-mode toggles are ability surface too: record the authored
+            # toggle contract explicitly instead of silently skipping it.
+            abilities.append(
+                _weapon_toggle_row(
+                    slot,
+                    button,
+                    member_lineage,
+                    documents,
+                    constants,
+                    named_definition_cache=named_definition_cache,
+                    cache_lock=cache_lock,
+                )
+            )
+            continue
         if command_kinds != {"special_power"}:
             continue
         ability = _hero_ability_row(
@@ -2894,6 +3318,7 @@ def _hero_abilities(
             objects,
             documents,
             constants,
+            filter_defines,
             named_definition_cache=named_definition_cache,
             cache_lock=cache_lock,
         )
@@ -2918,6 +3343,7 @@ def _hero_ability_row(
     objects: Mapping[str, SageObject],
     documents: Mapping[str, bytes],
     constants: Mapping[str, int | float],
+    filter_defines: Mapping[str, tuple[str, ...]],
     *,
     named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
     cache_lock: threading.Lock | None,
@@ -3127,6 +3553,7 @@ def _hero_ability_row(
                 objects,
                 documents,
                 constants,
+                filter_defines,
                 limitations,
                 named_definition_cache=named_definition_cache,
                 cache_lock=cache_lock,
@@ -3138,6 +3565,31 @@ def _hero_ability_row(
         if status == "implemented" and effect.get("kind") == "none":
             status = "unimplemented"
             reason = reason or "no convertible effect leaf is bound to this ability"
+
+    if status == "passive":
+        # Passive leadership buttons bind their AttributeModifierAuraUpdate
+        # through the shared TriggeredBy upgrade; a bound aura compiles into
+        # a real leadership-aura effect the runtime radiates.  Everything
+        # else keeps the placeholder with the recorded gap.
+        gate_is_resolved = level_gate is not None and (
+            level_gate.get("requiredLevel") is not None
+        )
+        try:
+            aura_effect = _leadership_aura_effect(
+                label,
+                behavior_modules,
+                gate_upgrades,
+                gate_is_resolved,
+                modifier_blocks,
+                constants,
+                filter_defines,
+                limitations,
+            )
+        except PlayableUnitCompilerError as error:
+            aura_effect = None
+            limitations.append(f"leadership aura not converted: {error}")
+        if aura_effect is not None:
+            effect = aura_effect
 
     if level_gate is not None:
         row["levelGate"] = level_gate
@@ -3160,6 +3612,7 @@ def _hero_ability_effect(
     objects: Mapping[str, SageObject],
     documents: Mapping[str, bytes],
     constants: Mapping[str, int | float],
+    filter_defines: Mapping[str, tuple[str, ...]],
     limitations: list[str],
     *,
     named_definition_cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
@@ -3295,6 +3748,22 @@ def _hero_ability_effect(
         for key in ("damageType", "attackRange", "fireFxId", "excludedNuggets", "warheadId"):
             if key in leaf:
                 effect[key] = leaf[key]
+        # MetaImpactNugget shockwave (Gandalf blasts): source-unit knockback
+        # magnitudes ride the effect; the runtime scales and applies them.
+        knockback_chain: list[str] = [weapon_tokens[0]]
+        if "warheadId" in leaf:
+            knockback_chain.append(str(leaf["warheadId"]))
+        effect.update(
+            _weapon_knockback_fields(
+                documents,
+                knockback_chain,
+                constants,
+                label,
+                limitations,
+                named_definition_cache=named_definition_cache,
+                cache_lock=cache_lock,
+            )
+        )
         if leaf.get("damageScalarAuthored"):
             limitations.append(
                 "weapon authors DamageScalar target-type scaling (not applied)"
@@ -3311,6 +3780,98 @@ def _hero_ability_effect(
             effect["startAbilityRange"] = start_range
         if "attackRange" not in effect and "startAbilityRange" not in effect:
             limitations.append("ability weapon authors no AttackRange/StartAbilityRange")
+        return effect
+
+    # Terror pulse (Elendil, Screech-class): a bound ability update that
+    # authors GenerateTerror pushes the TERROR emotion onto every enemy in
+    # EmotionPulseRadius; victims run the authored TERROR EmotionNugget
+    # (emotions.ini) — its Duration is the authored fear window and its
+    # PreventPlayerCommands/RUN_AWAY_PANIC lock projects as a no-fight
+    # penalty for that window.  Ambiguity fails closed.
+    terror_modules = [
+        block
+        for block in bound
+        if block.kind.casefold()
+        in {"specialabilityupdate", "modelconditionspecialabilityupdate"}
+        and (_first(block.values("GenerateTerror")) or "").casefold() == "yes"
+    ]
+    if terror_modules:
+        block = terror_modules[0]
+        radius = _resolved_expression(
+            (block.values("EmotionPulseRadius") or ("",))[-1], constants
+        )
+        if radius is None or float(radius) <= 0.0:
+            raise PlayableUnitCompilerError(
+                f"{label} terror module has no resolvable EmotionPulseRadius"
+            )
+        emotions_source = _optional_document(documents, EMOTIONS_PATH)
+        if emotions_source is None:
+            raise PlayableUnitCompilerError(
+                f"{label} requires {EMOTIONS_PATH} in the effective INI view"
+            )
+        terror_nuggets = [
+            nugget
+            for nugget in _named_blocks(emotions_source, "EmotionNugget").values()
+            if (_first(nugget.values("Type")) or "").casefold() == "terror"
+        ]
+        resolved_nuggets: dict[str, tuple[IniBlock, int | float]] = {}
+        for nugget in terror_nuggets:
+            nugget_duration = _resolved_expression(
+                (nugget.values("Duration") or ("",))[-1], constants
+            )
+            if nugget_duration is not None and float(nugget_duration) > 0.0:
+                resolved_nuggets[nugget.name.casefold()] = (nugget, nugget_duration)
+        if len(resolved_nuggets) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} needs exactly one authored TERROR EmotionNugget with "
+                f"a Duration; found {len(resolved_nuggets)}"
+            )
+        nugget, terror_duration = next(iter(resolved_nuggets.values()))
+        if (_first(nugget.values("PreventPlayerCommands")) or "").casefold() != "yes":
+            raise PlayableUnitCompilerError(
+                f"{label} TERROR EmotionNugget {nugget.name} authors no "
+                "PreventPlayerCommands lock to convert"
+            )
+        effect = {
+            "kind": "terror",
+            "radius": radius,
+            "durationMs": terror_duration,
+            # The authored flee reaction (AIState RUN_AWAY_PANIC +
+            # PreventPlayerCommands) projects as a no-fight penalty for the
+            # authored Duration; no stat magnitudes are invented.
+            "modifiers": [
+                {
+                    "kind": "DAMAGE_MULT",
+                    "value": 0.0,
+                    "application": "multiplicative",
+                    "semantic": (
+                        "TERROR victims cannot fight while the authored flee "
+                        "reaction (RUN_AWAY_PANIC / PreventPlayerCommands) holds"
+                    ),
+                }
+            ],
+            "emotionNuggetId": nugget.name,
+            "emotionSource": {"sourceIni": EMOTIONS_PATH},
+            "sourceIni": block.source_virtual_path,
+            "line": block.line,
+        }
+        filter_tokens = _module_tokens(block, "ObjectFilter")
+        if filter_tokens:
+            effect["affects"] = _projected_object_filter(filter_tokens, filter_defines)
+        limitations.append(
+            "authored flee AI (RUN_AWAY_PANIC) is projected as a no-fight "
+            "debuff; retail authors no scatter displacement"
+        )
+        anti_categories = sorted(
+            {
+                token
+                for starter in bound
+                for token in _module_tokens(starter, "AntiCategory")
+            },
+            key=str.casefold,
+        )
+        for anti in anti_categories:
+            limitations.append(f"anti-category strip ({anti}) is not applied")
         return effect
 
     modifier_id: str | None = None
@@ -4630,7 +5191,11 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             or isinstance(slot, bool)
             or slot < 1
             or not isinstance(row.get("specialPowerId"), str)
-            or not row.get("specialPowerId")
+            or (
+                not row.get("specialPowerId")
+                # TOGGLE_WEAPONSET commands author no SpecialPower template.
+                and row.get("command") != "TOGGLE_WEAPONSET"
+            )
             or row.get("targeting") not in {"self", "point", "enemy-object"}
             or not isinstance(row.get("sourceIni"), str)
             or not row.get("sourceIni")
@@ -4692,6 +5257,9 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             "heal",
             "summon",
             "attribute-modifier",
+            "leadership-aura",
+            "weapon-toggle",
+            "terror",
         }:
             raise PlayableUnitCompilerError("playable-unit ability effect is invalid")
         implementation = row.get("implementation")
@@ -4715,9 +5283,17 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             raise PlayableUnitCompilerError(
                 "playable-unit implemented ability lacks its effect or cooldown"
             )
-        if implementation["status"] != "implemented" and effect["kind"] != "none":
+        if implementation["status"] == "unimplemented" and effect["kind"] != "none":
             raise PlayableUnitCompilerError(
                 "playable-unit unavailable ability must not carry an effect"
+            )
+        if implementation["status"] == "passive" and effect["kind"] not in {
+            "none",
+            # Passive leadership buttons carry the aura the runtime radiates.
+            "leadership-aura",
+        }:
+            raise PlayableUnitCompilerError(
+                "playable-unit passive ability carries a non-passive effect"
             )
         modules = row.get("modules")
         if not isinstance(modules, list) or any(
