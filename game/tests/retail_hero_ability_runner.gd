@@ -485,8 +485,114 @@ func _run() -> void:
 	_run_curse_checks()
 	_run_leadership_strip_checks()
 	_run_determinism_checks()
+	_run_fortress_command_set_checks()
 	print("RETAIL_HERO_ABILITY_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+func _run_fortress_command_set_checks() -> void:
+	## The Men fortress surface must match what retail authors, derived from
+	## DOC EVIDENCE (each converted playableUnit's producer bindings), never a
+	## hardcoded roster: every hero authored on the fortress hero roster gets a
+	## fortress production rule, and the porter's authored citadel train route
+	## resolves to a fortress rule for manifest-derived (cross-faction) teams.
+	var ManifestScript = load("res://src/retail_slice/retail_faction_manifest.gd")
+	var AdapterScript = load("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+	var content_db = root.get_node_or_null("ContentDB")
+	_check("fortress_content_db_present", content_db != null)
+	if content_db == null:
+		return
+	var unit_runtimes: Dictionary = content_db.get_playable_unit_runtimes()
+	var structure_runtimes: Dictionary = content_db.get_playable_structure_runtimes()
+	_check("fortress_men_registries_loaded", not unit_runtimes.is_empty() and not structure_runtimes.is_empty())
+	if unit_runtimes.is_empty() or structure_runtimes.is_empty():
+		return
+	var manifest: Dictionary = ManifestScript.from_registries("men", unit_runtimes, structure_runtimes)
+	_check("fortress_men_manifest_builds", not manifest.has("_error"), String(manifest.get("_error", "")))
+	if manifest.has("_error"):
+		return
+	var producer_registry: Dictionary = manifest.get("producer_kind_registry", {}) as Dictionary
+	var registry_folded: Dictionary = {}
+	for producer_id_value in producer_registry.keys():
+		registry_folded[String(producer_id_value).to_lower()] = String(producer_registry[producer_id_value])
+	# Doc-driven expectation: every men/gondor/rohan hero whose bindings put it
+	# on a fortress-resolving hero roster.
+	var scoped_runtimes: Dictionary = ManifestScript.faction_scoped_unit_runtimes(
+		["men", "gondor", "rohan"], unit_runtimes, structure_runtimes,
+		content_db.get_playable_unit_runtime_pack_index()
+	)
+	var expected_fortress_heroes: Dictionary = {}
+	for object_id_value in scoped_runtimes.keys():
+		var object_id := String(object_id_value)
+		var lowered := object_id.to_lower()
+		if not (lowered.begins_with("men") or lowered.begins_with("gondor") or lowered.begins_with("rohan")):
+			continue
+		var document: Dictionary = scoped_runtimes[object_id] as Dictionary
+		if String(document.get("category", "")) != "hero":
+			continue
+		if AdapterScript.is_ring_hero_summon(document):
+			continue
+		for binding_value in AdapterScript.producer_bindings(document):
+			var binding := binding_value as Dictionary
+			var kind := String(registry_folded.get(String(binding.get("producer_source_object_id", "")).to_lower(), ""))
+			if kind == "fortress" and String(binding.get("surface", "")) == "hero-roster":
+				expected_fortress_heroes[String(AdapterScript.simulation_rule(document).get("unit_type", ""))] = true
+				break
+	_check("fortress_docs_author_hero_roster", expected_fortress_heroes.size() >= 2, "found %d" % expected_fortress_heroes.size())
+	var manifest_fortress_heroes: Dictionary = {}
+	var rules: Dictionary = manifest.get("unit_production_rules", {}) as Dictionary
+	for unit_type_value in rules.keys():
+		var rule: Dictionary = rules[unit_type_value] as Dictionary
+		if String(rule.get("category", "")) == "hero" and (rule.get("producer_kinds", []) as Array).has("fortress"):
+			manifest_fortress_heroes[String(unit_type_value)] = true
+	var hero_sets_equal := manifest_fortress_heroes.size() == expected_fortress_heroes.size()
+	for unit_type_value in expected_fortress_heroes.keys():
+		if not manifest_fortress_heroes.has(String(unit_type_value)):
+			hero_sets_equal = false
+	_check(
+		"fortress_manifest_heroes_match_doc_evidence", hero_sets_equal,
+		"docs=%s manifest=%s" % [str(expected_fortress_heroes.keys()), str(manifest_fortress_heroes.keys())]
+	)
+	# The porter: the manifest names it as the builder, and the derived-team
+	# projection resolves its authored citadel train route to a fortress rule
+	# (the rule a cross-faction team's fortress trains it from).
+	var builder_ids: Array = manifest.get("builder_unit_ids", []) as Array
+	_check("fortress_manifest_names_builder", builder_ids.size() == 1 and String(builder_ids[0]) != "", str(builder_ids))
+	if builder_ids.is_empty():
+		return
+	var sim = SimScript.new()
+	sim._rules = {"playable_unit_runtimes": scoped_runtimes}
+	var porter_rule: Dictionary = sim._derived_team_builder_rule(manifest, String(builder_ids[0]))
+	_check(
+		"fortress_porter_train_rule_resolves_from_doc",
+		not porter_rule.is_empty()
+			and (porter_rule.get("producer_kinds", []) as Array).has("fortress")
+			and int(porter_rule.get("default_cost", 0)) > 0
+			and String(porter_rule.get("command_id", "")) != "",
+		str(porter_rule)
+	)
+	# Derived-team tables (the cross-faction seat): the full fortress command
+	# set survives — every doc-evidenced hero AND the porter enter the team's
+	# production order, not just the AI plan's single sample.
+	var derived = SimScript.new()
+	derived._rules = {
+		"playable_unit_runtimes": scoped_runtimes,
+		"faction_manifest": {"faction": "other-faction-placeholder"},
+		"team_faction_manifests": {1: manifest},
+	}
+	derived._team_roster = [0, 1]
+	derived._seed_team_manifest_tables()
+	var derived_rules: Dictionary = derived.unit_production_rules_for_team(1)
+	var derived_order: Array = derived.production_unit_order_for_team(1)
+	var derived_ok := derived_rules.has(String(porter_rule.get("unit_type", "")))
+	for unit_type_value in expected_fortress_heroes.keys():
+		if not derived_order.has(String(unit_type_value)) or not derived_rules.has(String(unit_type_value)):
+			derived_ok = false
+	_check(
+		"fortress_derived_team_keeps_heroes_and_porter",
+		derived_ok and derived_order.has(String(porter_rule.get("unit_type", ""))),
+		"order=%s" % str(derived_order)
+	)
 
 
 func _run_aura_checks() -> void:

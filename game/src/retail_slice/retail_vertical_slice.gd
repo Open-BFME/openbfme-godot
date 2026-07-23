@@ -475,6 +475,10 @@ func _initialize_content_and_match() -> void:
 	simulation.setup(_match_configuration(), gameplay_rules)
 	if _mp_mode == "host" or _mp_mode == "join":
 		local_team = 0 if _mp_mode == "host" else 1
+		# The sim's selection/control-group gating follows the REAL local seat:
+		# a lockstep guest selects and controls its OWN team-1 army, never a
+		# hardcoded team 0. Presentation-only — never hashed.
+		simulation.local_seat_team = local_team
 		simulation.ai_enabled = false
 		lockstep_session = LockstepSessionScript.new(simulation)
 		var mp_port := 26015 if _mp_port_text == "" else int(_mp_port_text)
@@ -2841,7 +2845,9 @@ func _finish_box_selection(release_position: Vector2, additive: bool) -> void:
 	for id_value in battalion_nodes.keys():
 		var id := int(id_value)
 		var entity: Dictionary = simulation.entity(id)
-		if entity.is_empty() or int(entity.get("team", -1)) != 0 or int(entity.get("health", 0)) <= 0:
+		# Box selection picks the LOCAL seat's own army (a lockstep guest is
+		# team 1) — never a hardcoded team 0.
+		if entity.is_empty() or int(entity.get("team", -1)) != local_team or int(entity.get("health", 0)) <= 0:
 			continue
 		var battalion := battalion_nodes[id] as Node3D
 		var screen := camera.unproject_position(battalion.global_position)
@@ -2857,8 +2863,9 @@ func _finish_box_selection(release_position: Vector2, additive: bool) -> void:
 
 
 func _select_same_type_on_screen(point: Vector2) -> void:
-	# Retail double-click: select every on-screen battalion of the same type.
-	var anchor_id := _closest_battalion(point, 0, 6.0)
+	# Retail double-click: select every on-screen battalion of the same type
+	# from the LOCAL seat's own army.
+	var anchor_id := _closest_battalion(point, local_team, 6.0)
 	if anchor_id == 0:
 		return
 	var anchor_type := String(simulation.entity(anchor_id).get("object_id", ""))
@@ -2867,7 +2874,7 @@ func _select_same_type_on_screen(point: Vector2) -> void:
 	for id_value in battalion_nodes.keys():
 		var id := int(id_value)
 		var entity: Dictionary = simulation.entity(id)
-		if entity.is_empty() or int(entity.get("team", -1)) != 0 or int(entity.get("health", 0)) <= 0:
+		if entity.is_empty() or int(entity.get("team", -1)) != local_team or int(entity.get("health", 0)) <= 0:
 			continue
 		if String(entity.get("object_id", "")) != anchor_type:
 			continue
@@ -3034,9 +3041,11 @@ func _handle_right_click(point: Vector2) -> void:
 		hud.set_feedback("Construction placement cancelled.")
 		_sync_presentation()
 		return
-	var enemy_id := _closest_battalion(point, 1, 6.0)
+	# Hostility is from the LOCAL seat's perspective: the host attacks team 1,
+	# a lockstep guest attacks team 0 — never a hardcoded enemy team 1.
+	var enemy_id := _closest_hostile_battalion(point, 6.0)
 	if enemy_id == 0:
-		enemy_id = _closest_structure(point, 1)
+		enemy_id = _closest_hostile_structure(point)
 	if enemy_id != 0:
 		var accepted := int(_apply_local_command("issue_attack", {"ids": simulation.selected_ids.duplicate(), "target_id": enemy_id}))
 		hud.set_feedback("Attack order accepted." if accepted > 0 else "Attack order rejected.", accepted == 0)
@@ -3074,6 +3083,33 @@ func _closest_structure(point: Vector2, team: int) -> int:
 	var result := 0
 	var best_distance := 9.0
 	for id in simulation.living_structure_ids(team):
+		var row: Dictionary = simulation.structure(id)
+		var radius := 8.0 if String(row.get("structure_kind", "")) == "fortress" else 5.5
+		var distance := point.distance_to(Vector2(row["position"]))
+		if distance <= radius and distance <= best_distance:
+			best_distance = distance
+			result = id
+	return result
+
+
+func _closest_hostile_battalion(point: Vector2, maximum_distance: float) -> int:
+	## Closest living battalion hostile to the LOCAL seat (2-team default:
+	## identical to the historical fixed enemy scan for team 0).
+	var result := 0
+	var best_distance := maximum_distance
+	for id in simulation._hostile_living_ids(local_team):
+		var distance := point.distance_to(Vector2(simulation.entity(id)["position"]))
+		if distance <= best_distance:
+			best_distance = distance
+			result = id
+	return result
+
+
+func _closest_hostile_structure(point: Vector2) -> int:
+	## Closest living structure hostile to the LOCAL seat.
+	var result := 0
+	var best_distance := 9.0
+	for id in simulation._hostile_living_structure_ids(local_team):
 		var row: Dictionary = simulation.structure(id)
 		var radius := 8.0 if String(row.get("structure_kind", "")) == "fortress" else 5.5
 		var distance := point.distance_to(Vector2(row["position"]))
@@ -3336,7 +3372,7 @@ func _refresh_hud() -> void:
 		else:
 			hud.set_selection("%s  •  %d%%" % [String(structure.get("name", "Structure")), roundi(100.0 * float(structure.get("health", 0)) / float(maxi(1, int(structure.get("maximum_health", 1)))))])
 		var production: Array = structure.get("production", [])
-		var can_train := int(structure.get("team", -1)) == 0 and int(structure.get("health", 0)) > 0 and not production.is_empty()
+		var can_train := int(structure.get("team", -1)) == local_team and int(structure.get("health", 0)) > 0 and not production.is_empty()
 		var queue_count := Array(structure.get("queue", [])).size()
 		var queue_state := simulation.production_queue_state(selected_structure_id)
 		for queue_row_value in queue_state:
@@ -3518,7 +3554,7 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 		var pad_anchor := camera.unproject_position(world_position)
 		hud.sync_radial_commands(pad_anchor, entries)
 		return
-	if int(structure.get("team", -1)) == 0 and int(structure.get("health", 0)) > 0 and float(structure.get("construction_progress", 1.0)) >= 1.0:
+	if int(structure.get("team", -1)) == local_team and int(structure.get("health", 0)) > 0 and float(structure.get("construction_progress", 1.0)) >= 1.0:
 		# Active queue row per unit type: the radial's training icons sweep the
 		# same CCW dial + live countdown as the palantir queue chips (owner).
 		var radial_queue_by_unit: Dictionary = {}
@@ -3533,12 +3569,23 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 			var train_button: Button = hud.train_buttons.get(unit_id) as Button
 			if train_button == null:
 				train_button = hud.hero_buttons.get(unit_id) as Button
-			if train_button == null or train_button.icon == null:
+			if train_button == null:
 				continue
+			# Iconless doc-honest commands (unconverted art) keep their socket
+			# as text — a hero whose icon did not bind must not vanish from the
+			# producer's radial command set.
+			var radial_text := ""
+			if train_button.icon == null:
+				radial_text = String(train_button.get_meta("retail_label", ""))
+				if radial_text == "":
+					radial_text = train_button.text
+				if radial_text == "":
+					radial_text = simulation.production_rule_display_name(unit_id)
 			entries.append({
 				"command_kind": "hero" if hud.hero_buttons.has(unit_id) else "train",
 				"id": unit_id,
 				"icon": train_button.icon,
+				"text": radial_text,
 				"enabled": can_train and not locked_units.has(unit_id),
 				"label": String(train_button.get_meta("retail_label", "")),
 				"tooltip": train_button.tooltip_text,
@@ -3646,7 +3693,7 @@ func _sync_hero_bar() -> void:
 	var heroes: Array = []
 	for id in simulation.entity_ids():
 		var entity: Dictionary = simulation.entity(id)
-		if int(entity.get("team", -1)) != 0 or String(entity.get("category", "")) != "hero":
+		if int(entity.get("team", -1)) != local_team or String(entity.get("category", "")) != "hero":
 			continue
 		if int(entity.get("health", 0)) <= 0:
 			continue

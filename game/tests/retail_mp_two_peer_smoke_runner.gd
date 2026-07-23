@@ -235,10 +235,142 @@ func _run() -> void:
 			int(guest_slice.get("hud").get("last_selection_context_local_team")),
 		])
 
+	await _run_guest_control_checks(host_slice, guest_slice, host_sim, guest_sim, host_session_live, guest_session_live)
+
 	host_slice.queue_free()
 	guest_slice.queue_free()
 	await process_frame
 	_finish()
+
+
+func _run_guest_control_checks(host_slice, guest_slice, host_sim, guest_sim, host_session_live, guest_session_live) -> void:
+	## The user-reported control bugs, end to end on live lockstep peers:
+	## 1. the guest's OWN porter spawns on team 1 and IS selectable (selection
+	##    gating follows the real local seat, not a hardcoded team 0);
+	## 2. selecting it surfaces the build palette and a real construct order
+	##    lands as a TEAM 1 structure on BOTH sims;
+	## 3. the guest CANNOT select or command team-0 (host) units — orders are
+	##    validated against the issuing peer's seat, fail-closed;
+	## 4. the guest's (manifest-derived, elves) fortress keeps its full command
+	##    set: the hero roster AND the porter train rule;
+	## 5. lockstep hashes stay equal through the whole scenario.
+	var guest_porter_id := 0
+	for id_value in guest_sim.entity_ids():
+		var row: Dictionary = guest_sim.entity(int(id_value))
+		if int(row.get("team", -1)) == 1 and bool(row.get("is_builder", false)) and int(row.get("health", 0)) > 0:
+			guest_porter_id = int(id_value)
+			break
+	_check("guest_own_porter_spawns_on_team_1", guest_porter_id != 0)
+	if guest_porter_id == 0:
+		return
+	var host_porter_id := 0
+	for id_value in guest_sim.entity_ids():
+		var row: Dictionary = guest_sim.entity(int(id_value))
+		if int(row.get("team", -1)) == 0 and bool(row.get("is_builder", false)) and int(row.get("health", 0)) > 0:
+			host_porter_id = int(id_value)
+			break
+
+	# Selection gating follows the guest's real seat.
+	_check("guest_selects_own_porter", bool(guest_sim.select_only(guest_porter_id)))
+	_check("guest_cannot_select_host_units",
+		host_porter_id != 0 and not bool(guest_sim.select_only(host_porter_id)) \
+			and int(guest_sim.select_many([host_porter_id] as Array[int])) == 0)
+	# Re-select the guest porter (the host-unit attempts must not have taken).
+	guest_sim.select_only(guest_porter_id)
+	guest_slice.set("selected_structure_id", 0)
+	guest_slice._sync_presentation()
+	await process_frame
+	var guest_bar = guest_slice.get("hud").get("retail_side_command_bar")
+	_check("guest_own_porter_surfaces_build_palette",
+		guest_bar != null and guest_bar.side_buttons().size() > 0,
+		"buttons=%d" % (guest_bar.side_buttons().size() if guest_bar != null else -1))
+
+	# The guest's own (derived elves) fortress keeps the full command set.
+	var guest_fortress_id: int = int(guest_sim.fortress_id(1))
+	var guest_fortress: Dictionary = guest_sim.structure(guest_fortress_id)
+	var guest_production: Array = guest_fortress.get("production", [])
+	var guest_rules: Dictionary = guest_sim.unit_production_rules_for_team(1)
+	var porter_unit_type := String(guest_sim.entity(guest_porter_id).get("unit_type", ""))
+	var fortress_hero_count := 0
+	var foreign_entries := 0
+	for unit_type_value in guest_production:
+		var unit_type := String(unit_type_value)
+		if not _in_prefix_scope(unit_type, ELF_PREFIXES):
+			foreign_entries += 1
+		if String((guest_rules.get(unit_type, {}) as Dictionary).get("category", "")) == "hero":
+			fortress_hero_count += 1
+	_check("guest_fortress_trains_own_porter",
+		guest_production.has(porter_unit_type) and guest_rules.has(porter_unit_type),
+		"production=%s" % str(guest_production))
+	_check("guest_fortress_keeps_hero_roster", fortress_hero_count >= 2,
+		"heroes=%d production=%s" % [fortress_hero_count, str(guest_production)])
+	_check("guest_fortress_production_stays_in_faction_scope", foreign_entries == 0,
+		"production=%s" % str(guest_production))
+	# The host's fortress must not offer the guest's faction either.
+	var host_fortress: Dictionary = host_sim.structure(int(host_sim.fortress_id(0)))
+	var host_foreign := 0
+	for unit_type_value in host_fortress.get("production", []) as Array:
+		if not _in_prefix_scope(String(unit_type_value), MEN_PREFIXES):
+			host_foreign += 1
+	_check("host_fortress_production_stays_in_faction_scope", host_foreign == 0,
+		"production=%s" % str(host_fortress.get("production", [])))
+
+	# A real construct order through the guest's own porter: pick a provably
+	# valid site via the sim's own dry run, then land it over lockstep.
+	var construct_kind := ""
+	for kind_value in guest_sim.structure_kinds_for_team(1):
+		if String(kind_value) != "fortress":
+			construct_kind = String(kind_value)
+			break
+	var porter_position := Vector2(guest_sim.entity(guest_porter_id).get("position", Vector2.ZERO))
+	var construct_position := Vector2.ZERO
+	for offset in [Vector2(10, 0), Vector2(0, 10), Vector2(-10, 0), Vector2(0, -10), Vector2(14, 6), Vector2(-14, -6), Vector2(18, 0), Vector2(0, 18)]:
+		var probe: Dictionary = guest_sim.issue_construct([guest_porter_id] as Array[int], construct_kind, porter_position + offset, true, 1)
+		if bool(probe.get("ok", false)):
+			construct_position = porter_position + offset
+			break
+	_check("guest_construct_site_resolves", construct_kind != "" and construct_position != Vector2.ZERO,
+		"kind=%s porter_at=%s" % [construct_kind, str(porter_position)])
+	var structures_before: int = guest_sim.structure_ids().size()
+	guest_slice._apply_local_command("issue_construct", {
+		"ids": [guest_porter_id], "structure_kind": construct_kind, "position": construct_position,
+	})
+	# The guest also attempts to command a HOST unit and to train at the host
+	# fortress — both must be rejected by team validation on BOTH sims.
+	var host_porter_before := Vector2(guest_sim.entity(host_porter_id).get("position", Vector2.ZERO))
+	guest_slice._apply_local_command("issue_move", {"ids": [host_porter_id], "destination": host_porter_before + Vector2(30, 30)})
+	guest_slice._apply_local_command("queue_unit", {"producer": int(host_sim.fortress_id(0)), "unit_type": String((host_fortress.get("production", []) as Array)[0]) if not (host_fortress.get("production", []) as Array).is_empty() else "x"})
+	var commands_deadline := Time.get_ticks_msec() + TICK_DEADLINE_MS
+	var target_tick: int = int(guest_sim.tick_index) + 90
+	while Time.get_ticks_msec() < commands_deadline:
+		await process_frame
+		_sample_hashes(host_sim, guest_sim)
+		if bool(host_session_live.desynced) or bool(guest_session_live.desynced):
+			break
+		if int(host_sim.tick_index) >= target_tick and int(guest_sim.tick_index) >= target_tick:
+			break
+	var guest_new_structure_ok := false
+	var host_new_structure_ok := false
+	for sim_pair in [[guest_sim, true], [host_sim, false]]:
+		var sim = sim_pair[0]
+		for id_value in sim.structure_ids():
+			var row: Dictionary = sim.structure(int(id_value))
+			if String(row.get("structure_kind", "")) == construct_kind and int(row.get("team", -1)) == 1 and int(row.get("builder_id", 0)) == guest_porter_id:
+				if bool(sim_pair[1]):
+					guest_new_structure_ok = true
+				else:
+					host_new_structure_ok = true
+	_check("guest_construct_lands_as_team_1_on_both_sims",
+		guest_new_structure_ok and host_new_structure_ok and guest_sim.structure_ids().size() > structures_before,
+		"guest=%s host=%s" % [str(guest_new_structure_ok), str(host_new_structure_ok)])
+	var host_porter_row: Dictionary = host_sim.entity(host_porter_id)
+	_check("guest_cannot_command_host_units",
+		String(host_porter_row.get("order_kind", "")) != "move" \
+			and Array(host_sim.structure(int(host_sim.fortress_id(0))).get("queue", [])).is_empty(),
+		"order_kind=%s queue=%s" % [String(host_porter_row.get("order_kind", "")), str(host_sim.structure(int(host_sim.fortress_id(0))).get("queue", []))])
+	_check("lockstep_hashes_stay_equal_through_control_scenario",
+		hashes_equal and not bool(host_session_live.desynced) and not bool(guest_session_live.desynced),
+		"sampled=%s" % str(sampled_hashes.keys()))
 
 
 func _sample_hashes(host_sim, guest_sim) -> void:

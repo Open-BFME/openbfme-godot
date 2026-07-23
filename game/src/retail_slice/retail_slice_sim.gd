@@ -507,7 +507,22 @@ func _seed_team_manifest_tables() -> void:
 	var provided: Dictionary = _rules.get("team_faction_manifests", {}) as Dictionary
 	var shared_manifest: Dictionary = _rules.get("faction_manifest", {}) as Dictionary
 	var shared_faction := String(shared_manifest.get("faction", ""))
+	# Cross-faction detection: with more than one distinct faction in the
+	# match, the compiled GLOBAL tables are a union of every faction's playable
+	# runtimes, so each team's production surface must be scoped to ITS OWN
+	# faction (a Men fortress must not offer Isengard heroes). Single-faction
+	# matches (the default, and men-v-men lobbies) keep empty scopes and stay
+	# byte-identical.
+	var distinct_factions: Dictionary = {}
+	if shared_faction != "":
+		distinct_factions[shared_faction] = true
+	for provided_value in provided.values():
+		var provided_faction := String((provided_value as Dictionary).get("faction", ""))
+		if provided_faction != "":
+			distinct_factions[provided_faction] = true
+	var cross_faction_match := distinct_factions.size() > 1
 	_team_manifests = {}
+	_team_production_scopes = {}
 	_team_unit_production_rules = {}
 	_team_structure_build_rules = {}
 	_team_spawn_roster = {}
@@ -546,11 +561,26 @@ func _seed_team_manifest_tables() -> void:
 			_team_structure_upgrade_contracts[team] = _structure_upgrade_contracts
 			_team_structure_upgrade_effects[team] = _structure_upgrade_effects
 			_team_compiled_research_kinds[team] = _compiled_research_kinds
+			if cross_faction_match:
+				# The globals this team aliases carry EVERY faction's registered
+				# rules; scope its structures' production to its own manifest
+				# (plus its builder and the men-only ranger/trebuchet overlays).
+				_team_production_scopes[team] = _manifest_production_scope(manifest if not manifest.is_empty() else shared_manifest)
 		else:
 			var kinds: Array = (manifest.get("structure_kinds", []) as Array).duplicate(true)
 			var seed_kinds: Array = (manifest.get("seed_structure_kinds", kinds) as Array).duplicate(true)
 			var plan: Array = (manifest.get("ai_production_plan", []) as Array).duplicate(true)
-			_team_unit_production_rules[team] = (manifest.get("unit_production_rules", {}) as Dictionary).duplicate(true)
+			var team_rules: Dictionary = (manifest.get("unit_production_rules", {}) as Dictionary).duplicate(true)
+			# The faction manifest intentionally leaves its builder out of
+			# unit_production_rules (the spawn/roster passes own the builder);
+			# a derived team still needs the porter's authored train rule at its
+			# fortress, projected from the team's own playableUnit document —
+			# the per-team mirror of _register_builder_production.
+			for builder_value in (manifest.get("builder_unit_ids", []) as Array):
+				var builder_rule := _derived_team_builder_rule(manifest, String(builder_value))
+				if not builder_rule.is_empty() and not team_rules.has(String(builder_rule["unit_type"])):
+					team_rules[String(builder_rule["unit_type"])] = builder_rule
+			_team_unit_production_rules[team] = team_rules
 			_team_structure_build_rules[team] = (manifest.get("structure_build_rules", {}) as Dictionary).duplicate(true)
 			_team_spawn_roster[team] = (manifest.get("spawn_roster", []) as Array).duplicate(true)
 			_team_structure_max_health[team] = (manifest.get("structure_max_health", {}) as Dictionary).duplicate(true)
@@ -558,9 +588,16 @@ func _seed_team_manifest_tables() -> void:
 			_team_ai_production_plan[team] = plan
 			_team_seed_structure_kinds[team] = seed_kinds if not seed_kinds.is_empty() else kinds
 			_team_structure_kinds[team] = kinds
-			# A fresh faction ships no trebuchet/ranger overlay, so its production
-			# order is exactly its AI plan.
-			_team_production_unit_order[team] = plan.duplicate(true)
+			# Full production surface for this team's structures: EVERY manifest
+			# rule (the fortress hero roster, every line unit, the porter), in
+			# deterministic order — not just the AI plan's one-per-producer
+			# sample, which silently stripped the hero roster and the porter
+			# from a derived team's fortress.
+			var team_order: Array = team_rules.keys()
+			team_order.sort_custom(func(a, b) -> bool: return String(a).naturalnocasecmp_to(String(b)) < 0)
+			_team_production_unit_order[team] = team_order
+			if cross_faction_match:
+				_team_production_scopes[team] = _manifest_production_scope(manifest)
 			# Compile THIS team's own structure-upgrade contracts / effects /
 			# research kinds straight from its manifest (the same normalization the
 			# global path runs, but scoped to derived-not-hashed per-team dicts so a
@@ -577,6 +614,91 @@ func _seed_team_manifest_tables() -> void:
 			_team_structure_upgrade_contracts[team] = team_contracts
 			_team_structure_upgrade_effects[team] = team_effects
 			_team_compiled_research_kinds[team] = team_research
+
+
+func _manifest_production_scope(manifest: Dictionary) -> Dictionary:
+	## Unit types a team on this manifest may surface at its structures. Only
+	## consulted in cross-faction matches; {} (single-faction) means unscoped.
+	var scope: Dictionary = {}
+	for unit_type_value in (manifest.get("unit_production_rules", {}) as Dictionary).keys():
+		scope[String(unit_type_value)] = true
+	for builder_value in (manifest.get("builder_unit_ids", []) as Array):
+		var builder_id := String(builder_value)
+		if builder_id != "":
+			scope[builder_id] = true
+		var builder_rule := _derived_team_builder_rule(manifest, builder_id)
+		if not builder_rule.is_empty():
+			scope[String(builder_rule["unit_type"])] = true
+	if String(manifest.get("faction", "")) == "men":
+		# The tiny-pack ranger/trebuchet overlays are Men content registered
+		# outside the manifest tables; full Men packs ship them as playable
+		# runtimes (already in the rules above), so this stays a superset.
+		scope[RANGER_HORDE_ID] = true
+		scope[TREBUCHET_OBJECT_ID] = true
+	return scope
+
+
+func production_scope_for_team(team: int) -> Dictionary:
+	return _team_production_scopes.get(team, {}) as Dictionary
+
+
+func _derived_team_builder_rule(manifest: Dictionary, builder_member_id: String) -> Dictionary:
+	## Projects a faction builder's authored train rule (retail: the fortress
+	## citadel trains porters) from the team's own playableUnit document,
+	## resolving producers through THAT manifest's producer registry. {} when
+	## the document or any authored route cannot be proven — fail-closed, the
+	## team then simply has no porter train rule (and the gates say so).
+	if builder_member_id == "":
+		return {}
+	var runtimes_value: Variant = _rules.get("playable_unit_runtimes", {})
+	if typeof(runtimes_value) != TYPE_DICTIONARY:
+		return {}
+	var document: Dictionary = {}
+	for document_value in (runtimes_value as Dictionary).values():
+		if typeof(document_value) != TYPE_DICTIONARY:
+			continue
+		if PlayableUnitAdapter.runtime_member_id(document_value as Dictionary) == builder_member_id:
+			document = document_value as Dictionary
+			break
+	if document.is_empty():
+		return {}
+	var partial := PlayableUnitAdapter.builder_production_rule(document)
+	if partial.is_empty():
+		return {}
+	var producer_kinds_folded: Dictionary = {}
+	for producer_id_value in (manifest.get("producer_kind_registry", {}) as Dictionary).keys():
+		producer_kinds_folded[String(producer_id_value).to_lower()] = String((manifest.get("producer_kind_registry", {}) as Dictionary)[producer_id_value])
+	var resolved_producers: Array[Dictionary] = []
+	var resolved_producer_kinds: Array[String] = []
+	for producer_value in partial["producers"] as Array:
+		var producer := producer_value as Dictionary
+		var producer_kind := String(producer_kinds_folded.get(String(producer.get("producer_source_object_id", "")).to_lower(), ""))
+		if producer_kind == "":
+			return {}
+		var route := producer.duplicate(true)
+		route["producer_kind"] = producer_kind
+		resolved_producers.append(route)
+		if not resolved_producer_kinds.has(producer_kind):
+			resolved_producer_kinds.append(producer_kind)
+	if resolved_producers.is_empty():
+		return {}
+	var primary_producer := resolved_producers[0]
+	return {
+		"category": String(partial.get("category", "")),
+		"producer_kind": String(primary_producer["producer_kind"]),
+		"producer_kinds": resolved_producer_kinds,
+		"producer_routes": resolved_producers,
+		"producer_source_object_id": String(primary_producer.get("producer_source_object_id", "")),
+		"object_id": String(partial["object_id"]),
+		"unit_type": String(partial["unit_type"]),
+		"display_name": String(partial["display_name"]),
+		"default_cost": int(partial["default_cost"]),
+		"default_build_ticks": int(partial["default_build_ticks"]),
+		"default_command_points": int(partial["default_command_points"]),
+		"command_id": String(primary_producer.get("command_id", "")),
+		"command_slot": int(primary_producer.get("slot", 0)),
+		"surface": String(primary_producer.get("surface", "")),
+	}
 
 
 func team_manifest_for(team: int) -> Dictionary:
@@ -661,6 +783,9 @@ var _pending_team_roster: Array = []
 ## intentionally NOT part of the authoritative snapshot.
 var _team_manifests: Dictionary = {}
 var _team_unit_production_rules: Dictionary = {}
+# Cross-faction production scoping (team -> {unit_type: true}); empty in
+# single-faction matches so the historical tables stay byte-identical.
+var _team_production_scopes: Dictionary = {}
 var _team_structure_build_rules: Dictionary = {}
 var _team_spawn_roster: Dictionary = {}
 var _team_structure_max_health: Dictionary = {}
@@ -2195,12 +2320,15 @@ func _initialize_base_loop() -> void:
 		var team_max_health := structure_max_health_for_team(team)
 		var team_production_order := production_unit_order_for_team(team)
 		var team_production_rules := unit_production_rules_for_team(team)
+		var team_scope := production_scope_for_team(team)
 		for index in range(team_seed_kinds.size()):
 			var kind := String(team_seed_kinds[index])
 			var position := Vector2(team_layout.get(kind, _fallback_structure_position(team, index)))
 			var maximum_health := int(team_max_health[kind])
 			var production: Array[String] = []
 			for unit_type in team_production_order:
+				if not team_scope.is_empty() and not team_scope.has(String(unit_type)):
+					continue
 				var production_rule: Dictionary = team_production_rules[unit_type]
 				var producer_kinds_for_rule: Array = production_rule.get("producer_kinds", [String(production_rule.get("producer_kind", ""))])
 				if producer_kinds_for_rule.has(kind):
@@ -5938,12 +6066,16 @@ func _ability_filter_accepts(row: Dictionary, filter_text: String) -> bool:
 	return included
 
 
-func cast_ability(hero_id: int, ability_id: String, target_point: Vector2) -> Dictionary:
+func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team: int = -1) -> Dictionary:
 	## Cast one converted hero ability, validating ownership, evidence,
 	## cooldown, and the authored level gate before applying the bound effect.
+	## `team` >= 0 is the issuing seat (the lockstep command path always passes
+	## it): a peer can only cast ITS OWN hero's abilities — fail-closed.
 	if not entities.has(hero_id):
 		return {"ok": false, "reason": "unknown-hero"}
 	var row: Dictionary = entities[hero_id]
+	if team >= 0 and int(row.get("team", -1)) != team:
+		return {"ok": false, "reason": "wrong-owner"}
 	if String(row.get("category", "")) != "hero":
 		return {"ok": false, "reason": "not-a-hero"}
 	if int(row.get("health", 0)) <= 0:
@@ -7205,7 +7337,12 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		return {"ok": false, "reason": "match-unavailable"}
 	if team != PLAYER_TEAM and team != ENEMY_TEAM:
 		return {"ok": false, "reason": "invalid-team"}
-	if not _structure_build_rules.has(structure_kind):
+	# The constructing team's OWN faction tables (identical to the globals in
+	# the default single-manifest match; a cross-faction guest builds its own
+	# faction's structures at its own costs).
+	var team_structure_build_rules := structure_build_rules_for_team(team)
+	var team_structure_max_health := structure_max_health_for_team(team)
+	if not team_structure_build_rules.has(structure_kind):
 		return {"ok": false, "reason": "unsupported-structure"}
 	# BFME1 build-plots-only: construction is restricted to designated empty
 	# plots. The click must land on a free plot; the build then snaps to the
@@ -7239,7 +7376,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		break
 	if builder_id == 0:
 		return {"ok": false, "reason": "builder-required"}
-	var build_rule: Dictionary = _structure_build_rules[structure_kind]
+	var build_rule: Dictionary = team_structure_build_rules[structure_kind]
 	var cost := int(build_rule["cost"])
 	if resources_for_team(team) < cost:
 		return {"ok": false, "reason": "insufficient-resources", "cost": cost}
@@ -7247,10 +7384,15 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		return {"ok": true, "reason": "", "dry_run": true, "cost": cost}
 	var structure_id := _next_dynamic_structure_id
 	_next_dynamic_structure_id += 1
-	var maximum_health := int(_structure_max_health[structure_kind])
+	var maximum_health := int(team_structure_max_health[structure_kind])
 	var production: Array[String] = []
-	for unit_type in _production_unit_order:
-		var production_rule: Dictionary = _unit_production_rules[unit_type]
+	var construct_production_order := production_unit_order_for_team(team)
+	var construct_production_rules := unit_production_rules_for_team(team)
+	var construct_scope := production_scope_for_team(team)
+	for unit_type in construct_production_order:
+		if not construct_scope.is_empty() and not construct_scope.has(String(unit_type)):
+			continue
+		var production_rule: Dictionary = construct_production_rules.get(unit_type, {}) as Dictionary
 		var producer_kinds_for_rule: Array = production_rule.get("producer_kinds", [String(production_rule.get("producer_kind", ""))])
 		if producer_kinds_for_rule.has(structure_kind):
 			production.append(unit_type)
@@ -7286,7 +7428,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		var previous_site: Dictionary = structures[previous_site_id]
 		if float(previous_site.get("construction_progress", 1.0)) < 1.0:
 			var previous_team := int(previous_site.get("team", team))
-			team_resources[previous_team] = resources_for_team(previous_team) + int(_structure_build_rules.get(String(previous_site.get("structure_kind", "")), {}).get("cost", 0))
+			team_resources[previous_team] = resources_for_team(previous_team) + int(structure_build_rules_for_team(previous_team).get(String(previous_site.get("structure_kind", "")), {}).get("cost", 0))
 			structures.erase(previous_site_id)
 			_emit_event("construction.cancelled", builder_id, previous_site_id, {"team": previous_team})
 	builder["construction_id"] = structure_id
@@ -9246,8 +9388,16 @@ func _resolve_victory() -> void:
 		_emit_music("defeat")
 
 
+## PRESENTATION-ONLY: the LOCAL machine's seat for selection/control-group
+## gating. Never part of the authoritative state or the lockstep hash — each
+## peer's selection is local. Defaults to PLAYER_TEAM (solo and the host seat);
+## the slice sets the lockstep guest's real seat (team 1) so the guest selects
+## and controls its OWN army instead of a hardcoded team 0.
+var local_seat_team: int = PLAYER_TEAM
+
+
 func _is_commandable(id: int) -> bool:
-	return _is_commandable_for_team(id, PLAYER_TEAM)
+	return _is_commandable_for_team(id, local_seat_team)
 
 
 func _is_commandable_for_team(id: int, team: int) -> bool:
@@ -9270,7 +9420,9 @@ func _can_engage_battalion(attacker: Dictionary, target: Dictionary) -> bool:
 
 
 func _is_living_player(id: int) -> bool:
-	return entities.has(id) and int((entities[id] as Dictionary)["team"]) == PLAYER_TEAM and int((entities[id] as Dictionary)["health"]) > 0
+	# Control groups are per-seat presentation state: the guest's groups hold
+	# the guest's own living units, never a hardcoded team 0.
+	return entities.has(id) and int((entities[id] as Dictionary)["team"]) == local_seat_team and int((entities[id] as Dictionary)["health"]) > 0
 
 
 func _prune_control_group(group: int) -> void:
@@ -9586,7 +9738,7 @@ func apply_command(cmd: Dictionary) -> void:
 		"cast_rally":
 			last_command_result = cast_rally(team, Vector2(args.get("point", Vector2.ZERO)))
 		"cast_ability":
-			last_command_result = cast_ability(int(args.get("hero_id", 0)), String(args.get("ability_id", "")), Vector2(args.get("target_point", Vector2.ZERO)))
+			last_command_result = cast_ability(int(args.get("hero_id", 0)), String(args.get("ability_id", "")), Vector2(args.get("target_point", Vector2.ZERO)), team)
 		"set_structure_rally":
 			last_command_result = set_structure_rally(team, int(args.get("structure_id", 0)), Vector2(args.get("position", Vector2.ZERO)))
 		"pause":
