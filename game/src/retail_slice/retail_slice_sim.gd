@@ -1873,6 +1873,20 @@ func _add_battalion(
 		# battalion); spawned hordes of a tech-owning team arrive equipped.
 		"applied_upgrades": {},
 		"active_armor_upgrade": "",
+		# Shared timed-modifier table: every buff/debuff/aura source (timed
+		# ability buffs, leadership auras, fear) writes a keyed entry
+		# {modifiers, expires_tick}; damage/attack/speed/vision/experience
+		# calculations consult one helper family over this table. Keying by
+		# source name gives retail stacking for free: same-named grants
+		# overwrite (no stack), different names stack. Plain dict entries so
+		# it serializes through snapshot()/state_hash() automatically.
+		"timed_modifiers": {},
+		# TOGGLE_WEAPONSET state: non-empty pins combat to that compiled
+		# weapon-mode profile until toggled back (persistent across snapshots).
+		"weapon_toggle_mode": "",
+		# Honored only when the compiled unit rule authors it (fear-resistance
+		# extraction is an importer follow-up; absent means not resistant).
+		"fear_resistant": bool(unit_rule.get("fear_resistant", false)),
 	}
 	for tech_id_value in (team_upgrades.get(team, {}) as Dictionary).keys():
 		_apply_equipment_to_horde(entities[id], _equipment_ids_for_forge_upgrade(String(tech_id_value)))
@@ -4764,6 +4778,11 @@ const ABILITY_CATEGORY_KINDS := {
 const ABILITY_SUMMON_OFFSET_STEP := 1.75
 const ABILITY_SUMMON_MAX_COUNT := 8
 const ABILITY_ARMOR_CAP := 0.95
+# Leadership auras recompute on a fixed cadence (deterministic, ascending
+# entity ids). Each grant expires one interval after its last refresh, so an
+# aura drops within half a second of the hero dying, being knocked down, or
+# the ally leaving the radius.
+const ABILITY_AURA_INTERVAL_TICKS := 5
 
 
 func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Array[Dictionary]:
@@ -4791,6 +4810,16 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 			"attribute-modifier":
 				effect["duration_ticks"] = maxi(1, roundi(float(effect.get("durationMs", 0.0)) / (TICK_SECONDS * 1000.0)))
 				effect["range_scaled"] = float(effect.get("range", 0.0)) * scale
+			"leadership-aura":
+				# AttributeModifierAuraUpdate: Range binds to map scale like every
+				# other authored range; the modifier list itself is scale-free.
+				effect["range_scaled"] = float(effect.get("range", 0.0)) * scale
+			"terror":
+				# FearNugget/TerrorSpecialPower: radius and the optional scatter
+				# displacement are source units; FearDuration is milliseconds.
+				effect["radius_scaled"] = float(effect.get("radius", 0.0)) * scale
+				effect["duration_ticks"] = maxi(1, roundi(float(effect.get("durationMs", 0.0)) / (TICK_SECONDS * 1000.0)))
+				effect["scatter_strength_scaled"] = float(effect.get("scatterStrength", 0.0)) * scale
 		scaled["effect"] = effect
 		output.append(scaled)
 	return output
@@ -4809,7 +4838,6 @@ func _attach_hero_ability_state(row: Dictionary) -> void:
 		}
 	row["level"] = 1
 	row["ability_states"] = states
-	row["active_modifiers"] = []
 
 
 # --- Experience / veterancy ---
@@ -4906,6 +4934,11 @@ func _award_experience(row: Dictionary, amount: int) -> void:
 	var rule: Dictionary = _unit_experience_rules.get(String(row.get("unit_type", "")), {})
 	if rule.is_empty() or amount <= 0 or int(row.get("health", 0)) <= 0:
 		return
+	# Leadership EXPERIENCE modifiers (and any timed EXPERIENCE buff) scale
+	# the recipient's XP intake — retail's 200% leadership experience rule.
+	var experience_factor := _timed_modifier_product(row, "EXPERIENCE")
+	if experience_factor != 1.0:
+		amount = maxi(1, roundi(float(amount) * experience_factor))
 	var max_level := int(rule.get("max_level", 1))
 	var level := int(row.get("level", 1))
 	# The pool keeps counting at the authored cap (retail's tracker never
@@ -5047,9 +5080,13 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2) -> Di
 			var epicenter := target_point if targeting == "point" else hero_position
 			result = _apply_ability_heal(row, effect, epicenter)
 		"attribute-modifier":
-			result = _apply_ability_modifier(row, effect)
+			result = _apply_ability_modifier(row, ability_id, effect)
 		"summon":
 			result = _apply_ability_summon(row, effect, target_point if targeting == "point" else hero_position)
+		"weapon-toggle":
+			result = _apply_ability_weapon_toggle(row, effect)
+		"terror":
+			result = _apply_ability_terror(row, ability_id, effect)
 		_:
 			return {"ok": false, "reason": "no-effect"}
 	if not bool(result.get("ok", false)):
@@ -5163,11 +5200,11 @@ func _apply_ability_heal(hero_row: Dictionary, effect: Dictionary, epicenter: Ve
 	return {"ok": true, "reason": "", "effect": "heal", "affected": healed}
 
 
-func _apply_ability_modifier(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
+func _apply_ability_modifier(hero_row: Dictionary, ability_id: String, effect: Dictionary) -> Dictionary:
 	## Converted attribute modifier with authored duration: rides the hero (and
 	## allies inside the authored range when the module authors one) until
-	## expiry. ARMOR/DAMAGE_MULT/SPEED/INVULNERABLE rows apply; anything else
-	## stayed a recorded limitation at convert time.
+	## expiry. Keyed by the ability id: a recast refreshes the same grant
+	## instead of stacking it (retail same-named AttributeModifier rule).
 	var hero_id := int(hero_row.get("id", 0))
 	var team := int(hero_row.get("team", -1))
 	var duration_ticks := int(effect.get("duration_ticks", 1))
@@ -5183,11 +5220,86 @@ func _apply_ability_modifier(hero_row: Dictionary, effect: Dictionary) -> Dictio
 				targets.append(id)
 	var expiry := tick_index + duration_ticks
 	for id in targets:
-		var row: Dictionary = entities[id]
-		var active: Array = (row.get("active_modifiers", []) as Array).duplicate(true)
-		active.append({"modifiers": modifiers, "expires_tick": expiry})
-		row["active_modifiers"] = active
+		_set_timed_modifier(entities[id] as Dictionary, "ability:%s" % ability_id, modifiers, expiry)
 	return {"ok": true, "reason": "", "effect": "attribute-modifier", "affected": targets.size()}
+
+
+func _apply_ability_weapon_toggle(hero_row: Dictionary, effect: Dictionary) -> Dictionary:
+	## TOGGLE_WEAPONSET: pin combat to the compiled toggle weapon-mode profile
+	## (Legolas knives, Aragorn bow class), or release back to the default set
+	## when already engaged. Fail-closed: the mode must exist among the unit's
+	## compiled weapon modes or nothing changes.
+	var toggle_mode := String(effect.get("toggleMode", ""))
+	var modes: Dictionary = hero_row.get("weapon_modes", {}) as Dictionary
+	if toggle_mode == "" or not modes.has(toggle_mode):
+		return {"ok": false, "reason": "toggle-mode-unavailable:%s" % toggle_mode}
+	var engaged := String(hero_row.get("weapon_toggle_mode", "")) != toggle_mode
+	hero_row["weapon_toggle_mode"] = toggle_mode if engaged else ""
+	var resolved := toggle_mode if engaged else String(hero_row.get("default_weapon_mode", "default"))
+	_apply_weapon_mode(hero_row, resolved)
+	return {"ok": true, "reason": "", "effect": "weapon-toggle", "affected": 1, "mode": resolved, "engaged": engaged}
+
+
+func _apply_ability_terror(hero_row: Dictionary, ability_id: String, effect: Dictionary) -> Dictionary:
+	## Terror/fear (Screech family): every enemy battalion inside the authored
+	## radius takes the compiled penalty modifiers for the authored duration,
+	## and an authored scatter displaces ground victims away from the caster
+	## through the shared walkable-fraction displacement — without the
+	## knockdown sprawl (fleeing, not bowled over). Fear-resistant units (only
+	## when the compiled rule authors the flag) and RESIST_FEAR carriers are
+	## immune to the debuff; flyers are immune to the scatter only.
+	var team := int(hero_row.get("team", -1))
+	var origin := Vector2(hero_row.get("position", Vector2.ZERO))
+	var radius := float(effect.get("radius_scaled", 0.0))
+	var duration_ticks := int(effect.get("duration_ticks", 1))
+	var modifiers: Array = (effect.get("modifiers", []) as Array).duplicate(true)
+	if radius <= 0.0 or modifiers.is_empty():
+		return {"ok": false, "reason": "terror-fields-missing"}
+	var scatter := float(effect.get("scatter_strength_scaled", 0.0))
+	var filter_text := String(effect.get("affects", ""))
+	var expiry := tick_index + duration_ticks
+	var affected := 0
+	for id in _ability_enemies_near(team, origin, radius):
+		var target: Dictionary = entities[id]
+		if bool(target.get("fear_resistant", false)) or _timed_modifier_active(target, "RESIST_FEAR"):
+			continue
+		if not _ability_filter_accepts(target, filter_text):
+			continue
+		_set_timed_modifier(target, "fear:%s" % ability_id, modifiers, expiry)
+		affected += 1
+		if scatter > 0.0 and not bool(target.get("flying", false)):
+			_apply_fear_scatter(origin, target, scatter)
+	return {"ok": true, "reason": "", "effect": "terror", "affected": affected}
+
+
+func _apply_fear_scatter(center: Vector2, row: Dictionary, strength: float) -> void:
+	## Fear displacement: throw the victim radially away from the terror
+	## source onto the nearest walkable spot (same deterministic fraction
+	## ladder as knockback) and drop its orders — but never the knockdown
+	## sprawl, so the battalion can flee/act again immediately.
+	var position := Vector2(row.get("position", Vector2.ZERO))
+	var distance := position.distance_to(center)
+	var direction := (position - center) / distance if distance > 0.001 else Vector2.RIGHT
+	var landed := position
+	for fraction in [1.0, 0.5, 0.25]:
+		var candidate := position + direction * strength * float(fraction)
+		if _position_walkable(candidate):
+			landed = candidate
+			break
+	row["position"] = landed
+	row["current_speed"] = 0.0
+	row["attack_windup"] = 0
+	row["target_id"] = 0
+	row["target_kind"] = "battalion"
+	row["attack_move"] = false
+	_clear_member_attack_schedule(row)
+	_clear_member_targets(row)
+	_clear_pending_route(row, true)
+	row["state"] = "idle"
+	_emit_event("combat.fear_scatter", int(row.get("id", 0)), 0, {
+		"center": [snappedf(center.x, 0.001), snappedf(center.y, 0.001)],
+		"landed": [snappedf(landed.x, 0.001), snappedf(landed.y, 0.001)],
+	})
 
 
 func _apply_ability_summon(hero_row: Dictionary, effect: Dictionary, point: Vector2) -> Dictionary:
@@ -5228,54 +5340,162 @@ func _summon_unit_type_for(source_object_id: String) -> String:
 	return ""
 
 
-func _ability_outgoing_multiplier(row: Dictionary) -> float:
+# --- Shared timed-modifier core ---
+# One mechanism serves timed ability buffs, leadership auras, and fear: a
+# per-entity keyed table of {modifiers, expires_tick}. Multiplicative kinds
+# (DAMAGE_MULT/SPEED/VISION/EXPERIENCE/CRUSH/HEALTH) compound across keys,
+# ARMOR sums, flag kinds (INVULNERABLE/RESIST_FEAR) trigger at value >= 1.
+
+
+func _set_timed_modifier(row: Dictionary, key: String, modifiers: Array, expires_tick: int) -> void:
+	var table: Dictionary = row.get("timed_modifiers", {}) as Dictionary
+	table[key] = {"modifiers": modifiers.duplicate(true), "expires_tick": expires_tick}
+	row["timed_modifiers"] = table
+
+
+func _timed_modifier_product(row: Dictionary, kind: String) -> float:
 	var factor := 1.0
-	for entry_value in row.get("active_modifiers", []) as Array:
+	for entry_value in (row.get("timed_modifiers", {}) as Dictionary).values():
 		for modifier_value in (entry_value as Dictionary).get("modifiers", []) as Array:
 			var modifier := modifier_value as Dictionary
-			if String(modifier.get("kind", "")) == "DAMAGE_MULT":
+			if String(modifier.get("kind", "")) == kind:
 				factor *= float(modifier.get("value", 1.0))
 	return factor
 
 
-func _ability_incoming_multiplier(row: Dictionary) -> float:
-	var armor := 0.0
-	for entry_value in row.get("active_modifiers", []) as Array:
+func _timed_modifier_active(row: Dictionary, kind: String) -> bool:
+	for entry_value in (row.get("timed_modifiers", {}) as Dictionary).values():
 		for modifier_value in (entry_value as Dictionary).get("modifiers", []) as Array:
 			var modifier := modifier_value as Dictionary
-			match String(modifier.get("kind", "")):
-				"INVULNERABLE":
-					if float(modifier.get("value", 0.0)) >= 1.0:
-						return 0.0
-				"ARMOR":
-					armor += float(modifier.get("value", 0.0))
+			if String(modifier.get("kind", "")) == kind and float(modifier.get("value", 0.0)) >= 1.0:
+				return true
+	return false
+
+
+func _ability_outgoing_multiplier(row: Dictionary) -> float:
+	return _timed_modifier_product(row, "DAMAGE_MULT")
+
+
+func _ability_incoming_multiplier(row: Dictionary) -> float:
+	if _timed_modifier_active(row, "INVULNERABLE"):
+		return 0.0
+	var armor := 0.0
+	for entry_value in (row.get("timed_modifiers", {}) as Dictionary).values():
+		for modifier_value in (entry_value as Dictionary).get("modifiers", []) as Array:
+			var modifier := modifier_value as Dictionary
+			if String(modifier.get("kind", "")) == "ARMOR":
+				armor += float(modifier.get("value", 0.0))
 	return maxf(1.0 - ABILITY_ARMOR_CAP, 1.0 - armor)
 
 
 func _ability_speed_multiplier(row: Dictionary) -> float:
-	var factor := 1.0
-	for entry_value in row.get("active_modifiers", []) as Array:
-		for modifier_value in (entry_value as Dictionary).get("modifiers", []) as Array:
-			var modifier := modifier_value as Dictionary
-			if String(modifier.get("kind", "")) == "SPEED":
-				factor *= float(modifier.get("value", 1.0))
-	return factor
+	return _timed_modifier_product(row, "SPEED")
+
+
+func _ability_vision_multiplier(row: Dictionary) -> float:
+	return _timed_modifier_product(row, "VISION")
+
+
+func _recompute_leadership_auras() -> void:
+	## Passive leadership auras: every living, standing hero radiates its
+	## compiled leadership-aura rows to allied battalions inside the authored
+	## range (plus itself when AffectsSelf), keyed by the compiled BonusName.
+	## Same-named leaderships never stack (one key), different heroes' auras
+	## with different names do — the retail AttributeModifier stacking rule.
+	## Sweep order is ascending entity id; grants expire one interval after
+	## the last refresh, so death/knockdown/leaving-radius drops them.
+	for id in entity_ids():
+		var hero: Dictionary = entities[id]
+		if String(hero.get("category", "")) != "hero":
+			continue
+		if int(hero.get("health", 0)) <= 0 or int(hero.get("knockdown_ticks", 0)) > 0:
+			continue
+		var rules: Array = _unit_ability_rules.get(String(hero.get("unit_type", "")), []) as Array
+		if rules.is_empty():
+			continue
+		var team := int(hero.get("team", -1))
+		var origin := Vector2(hero.get("position", Vector2.ZERO))
+		var level := int(hero.get("level", 1))
+		for rule_value in rules:
+			var rule := rule_value as Dictionary
+			var effect: Dictionary = rule.get("effect", {}) as Dictionary
+			if String(effect.get("kind", "")) != "leadership-aura":
+				continue
+			if not bool(effect.get("startsActive", true)):
+				# Upgrade-gated auras stay off until the gate system lands
+				# (importer follow-up); fail closed, never invented-on.
+				continue
+			if level < int(rule.get("required_level", 1)):
+				continue
+			var bonus_name := String(effect.get("bonusName", ""))
+			var range_limit := float(effect.get("range_scaled", 0.0))
+			var modifiers: Array = effect.get("modifiers", []) as Array
+			if bonus_name == "" or range_limit <= 0.0 or modifiers.is_empty():
+				# Fail closed on placeholder rows that carry no aura data.
+				continue
+			var filter_text := String(effect.get("affects", ""))
+			var expiry := tick_index + ABILITY_AURA_INTERVAL_TICKS
+			for ally_id in living_ids(team):
+				var ally: Dictionary = entities[ally_id]
+				if ally_id == id:
+					if not bool(effect.get("affectsSelf", false)):
+						continue
+				elif Vector2(ally.get("position", Vector2.ZERO)).distance_to(origin) > range_limit:
+					continue
+				if not _ability_filter_accepts(ally, filter_text):
+					continue
+				_set_timed_modifier(ally, "aura:%s" % bonus_name, modifiers, expiry)
 
 
 func _step_hero_abilities() -> void:
-	## Expire attribute modifiers whose authored duration elapsed. Cooldowns
-	## are absolute ready ticks, so nothing counts down here.
+	## Refresh leadership auras on the fixed cadence, expire timed modifiers
+	## whose authored duration elapsed (exact tick), and apply HEALTH-modifier
+	## regeneration. Cooldowns are absolute ready ticks, so nothing counts
+	## down here.
+	if tick_index % ABILITY_AURA_INTERVAL_TICKS == 0:
+		_recompute_leadership_auras()
 	for id in entity_ids():
 		var row: Dictionary = entities[id]
-		var active: Array = row.get("active_modifiers", [])
-		if active.is_empty():
+		var table: Dictionary = row.get("timed_modifiers", {}) as Dictionary
+		if table.is_empty():
 			continue
-		var retained: Array = []
-		for entry_value in active:
-			if tick_index < int((entry_value as Dictionary).get("expires_tick", -1)):
-				retained.append(entry_value)
-		if retained.size() != active.size():
-			row["active_modifiers"] = retained
+		var expired: Array[String] = []
+		for key_value in table.keys():
+			if tick_index >= int((table[key_value] as Dictionary).get("expires_tick", -1)):
+				expired.append(String(key_value))
+		if not expired.is_empty():
+			expired.sort()
+			for key in expired:
+				table.erase(key)
+			row["timed_modifiers"] = table
+		if table.is_empty() or int(row.get("health", 0)) <= 0:
+			continue
+		# HEALTH modifier regeneration (provisional interpretation, recorded:
+		# value v > 1.0 restores (v - 1.0) of member max health per second
+		# while active; exact retail magnitudes are an importer follow-up).
+		var health_factor := _timed_modifier_product(row, "HEALTH")
+		if health_factor > 1.0:
+			var member_maximum := int(row.get("member_maximum_health", 0))
+			var amount := maxi(1, roundi(float(member_maximum) * (health_factor - 1.0) * TICK_SECONDS))
+			var health_values: Array = row.get("member_health", [])
+			var remaining := amount
+			var restored := false
+			for index in range(health_values.size()):
+				if remaining <= 0:
+					break
+				var current := int(health_values[index])
+				if current <= 0 or current >= member_maximum:
+					continue
+				var healed := mini(remaining, member_maximum - current)
+				health_values[index] = current + healed
+				remaining -= healed
+				restored = true
+			if restored:
+				row["member_health"] = health_values
+				var aggregate := 0
+				for value in health_values:
+					aggregate += int(value)
+				row["health"] = aggregate
 
 
 func _step_economy() -> void:
@@ -5743,7 +5963,7 @@ func _step_construction() -> void:
 func _nearest_attack_move_target(row: Dictionary) -> int:
 	var enemy_team := ENEMY_TEAM if int(row.get("team", PLAYER_TEAM)) == PLAYER_TEAM else PLAYER_TEAM
 	var origin := Vector2(row.get("position", Vector2.ZERO))
-	var limit := maxf(float(row.get("attack_range", 1.0)), float(row.get("vision_range", 17.5)))
+	var limit := maxf(float(row.get("attack_range", 1.0)), float(row.get("vision_range", 17.5)) * _ability_vision_multiplier(row))
 	var result := 0
 	var best := limit
 	for candidate in living_ids(enemy_team):
@@ -5761,7 +5981,7 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 	var origin := Vector2(row.get("position", Vector2.ZERO))
 	var stance := String(row.get("stance", "Battle"))
 	var stance_state := _stance_state(row, stance)
-	var limit := float(row.get("vision_range", 0.0)) * float(stance_state.get("visionMultiplier", 1.0))
+	var limit := float(row.get("vision_range", 0.0)) * float(stance_state.get("visionMultiplier", 1.0)) * _ability_vision_multiplier(row)
 	if stance == "HoldGround":
 		var modes: Dictionary = row.get("weapon_modes", {}) as Dictionary
 		var default_mode: Dictionary = modes.get(String(row.get("default_weapon_mode", "default")), {}) as Dictionary
@@ -6007,6 +6227,12 @@ func _clear_member_targets(row: Dictionary) -> void:
 
 
 func _weapon_mode_for_distance(row: Dictionary, distance: float) -> String:
+	# An engaged TOGGLE_WEAPONSET pins the battalion to its toggled compiled
+	# profile: retail's WEAPONSET_TOGGLE_1 condition overrides the range-based
+	# selection entirely until the player toggles back.
+	var toggle_mode := String(row.get("weapon_toggle_mode", ""))
+	if toggle_mode != "" and (row.get("weapon_modes", {}) as Dictionary).has(toggle_mode):
+		return toggle_mode
 	var close_mode := String(row.get("close_weapon_mode", ""))
 	var switch_distance := float(row.get("close_weapon_switch_distance", 0.0))
 	if bool(row.get("unsupported_close_weapon", false)) and switch_distance > 0.0 and distance <= switch_distance:
@@ -6256,7 +6482,7 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 			best_id = candidate
 	if best_id == 0:
 		return
-	var damage := maxi(1, int(round(float(row.get("member_damage", 1)) * float(row.get("member_count", 1)) * TRAMPLE_DAMAGE_FACTOR)))
+	var damage := maxi(1, int(round(float(row.get("member_damage", 1)) * float(row.get("member_count", 1)) * TRAMPLE_DAMAGE_FACTOR * _timed_modifier_product(row, "CRUSH"))))
 	# A braced shield wall blunts the charge (retail pike/shield counterplay).
 	damage = maxi(1, roundi(float(damage) * float(_formation_effects(entities[best_id] as Dictionary).get("trample_damage_multiplier", 1.0))))
 	_apply_damage(int(row.get("id", 0)), best_id, damage, "battalion")

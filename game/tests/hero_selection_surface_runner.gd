@@ -349,11 +349,11 @@ func _run_ability_surface_checks(aragorn: Dictionary, gandalf: Dictionary, minio
 	# Attribute modifier with authored duration.
 	var rage: Dictionary = sim.cast_ability(1, "Command_FixtureRage", Vector2.ZERO)
 	_check(bool(rage.get("ok", false)) and int(rage.get("affected", 0)) == 1, "attribute modifier applies to the hero")
-	_check(Array((sim.entities[1] as Dictionary).get("active_modifiers", [])).size() == 1, "modifier rides the hero until expiry")
+	_check(((sim.entities[1] as Dictionary).get("timed_modifiers", {}) as Dictionary).size() == 1, "modifier rides the hero until expiry")
 	_check(is_equal_approx(sim._ability_outgoing_multiplier(sim.entities[1]), 1.5), "DAMAGE_MULT multiplies outgoing damage")
 	_check(is_equal_approx(sim._ability_incoming_multiplier(sim.entities[1]), 0.5), "ARMOR reduces incoming damage")
 	sim.advance(200)
-	_check(Array((sim.entities[1] as Dictionary).get("active_modifiers", [])).is_empty(), "modifier expires after its authored duration")
+	_check(((sim.entities[1] as Dictionary).get("timed_modifiers", {}) as Dictionary).is_empty(), "modifier expires after its authored duration")
 
 	# Summon via ObjectCreationList.
 	var summon: Dictionary = sim.cast_ability(1, "Command_FixtureSummon", Vector2(5.0, 0.0))
