@@ -187,10 +187,17 @@ def _object_index(
             parsed = tuple(recovered)
         for item in parsed:
             key = item.name.casefold()
-            if key in result:
-                raise PlayableUnitCompilerError(
-                    f"ambiguous effective Object definition: {item.name}"
-                )
+            # SAGE retail semantic for a re-declared Object/ChildObject of the
+            # same name is last-declaration-wins.  In the retail engine
+            # (ThingFactory::parseObjectDefinition) a duplicate ChildObject
+            # re-enters the reskin path: copyFrom(parent) resets the template to
+            # its stated parent (a full ``*this = *that`` overwrite, discarding
+            # the earlier body) before the new body is applied; the DEBUG_CRASH
+            # guard is compiled out of retail release builds.  RotWK ships this
+            # incremental-override pattern (e.g. UAFireDrakeLairHole is declared
+            # twice in data/ini/object/neutral/holes.ini).  BFME2 1.06 has no
+            # duplicate object names, so this branch is never taken there and
+            # its resolved output is unchanged.  Keep the final declaration.
             result[key] = item
     if not result:
         raise PlayableUnitCompilerError("no effective Object definitions were supplied")

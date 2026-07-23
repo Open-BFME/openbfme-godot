@@ -250,6 +250,68 @@ End
     assert "data/ini/object/civilian/large.ini" in prepared.object_parse_errors
 
 
+def test_duplicate_child_object_resolves_last_declaration_wins() -> None:
+    # RotWK re-declares objects via a repeated ``ChildObject <Name> <Parent>``
+    # incremental-override.  Retail SAGE resolves this last-declaration-wins:
+    # ThingFactory::parseObjectDefinition re-enters the reskin path and calls
+    # copyFrom(parent) (a full ``*this = *that`` reset) before applying the new
+    # body, so the final declaration re-inherits from its stated parent and
+    # supersedes the earlier one.  The object index must resolve to the LAST
+    # declaration rather than raising or keeping the first.
+    documents = _documents()
+    documents["data/ini/object/neutral/dup.ini"] = b"""
+Object DuplicateBase
+  KindOf = STRUCTURE
+End
+ChildObject DuplicateChild DuplicateBase
+  KindOf = +FIRST_DECL_ONLY
+End
+ChildObject DuplicateChild DuplicateBase
+  KindOf = +SECOND_DECL_ONLY
+End
+"""
+
+    prepared = prepare_playable_unit_compiler(documents)
+
+    # Last declaration wins: its body (SECOND_DECL_ONLY) is effective and the
+    # first declaration's body (FIRST_DECL_ONLY) is fully superseded.
+    assert playable_object_kind_of(prepared, "DuplicateChild") == (
+        "SECOND_DECL_ONLY",
+        "STRUCTURE",
+    )
+    # The retained definition is the second one (line 8 of this fragment).
+    assert prepared.objects["duplicatechild"].line == 8
+
+
+def test_non_duplicate_corpus_object_index_is_unaffected() -> None:
+    # A corpus with no duplicate object names must be indexed exactly as before
+    # the last-wins tolerance was added: every distinct name is kept, none is
+    # dropped or merged.  This guards BFME2 1.06 (which ships no duplicate object
+    # names) against any behavioural drift from the duplicate-tolerance change.
+    documents = _documents()
+
+    prepared = prepare_playable_unit_compiler(documents)
+
+    assert set(prepared.objects) == {
+        "universalfactory",
+        "upgradingfactory",
+        "alternatefactory",
+        "infantrymember",
+        "infantryhorde",
+        "rangedmember",
+        "rangedhorde",
+        "cavalrymember",
+        "cavalryhorde",
+        "herounit",
+        "siegeunit",
+        "monsterunit",
+        "navalunit",
+        "replacementmember",
+        "parenthorde",
+        "childhorde",
+    }
+
+
 def test_kind_of_additive_modifier_preserves_parent_capabilities() -> None:
     documents = _documents()
     documents["data/ini/object/civilian/inheritance.ini"] = b"""
