@@ -9,10 +9,16 @@ const USER_PACK_CACHE := "user://content-packs"
 const USER_PACK_SELECTION := "user://content-packs/selection.json"
 const PACK_CACHE_SETTING := "openbfme/content/user_pack_cache"
 const PACK_SELECTION_SETTING := "openbfme/content/user_pack_selection"
+const WORKSPACE_CONTENT_SETTING := "openbfme/content/workspace_content_root"
+const WORKSPACE_CONTENT_RELATIVE := ".private/content-packs"
 const SELECTION_SCHEMA := "openbfme.pack-selection"
 const SELECTION_VERSION := 0
 
 var diagnostics: Array[String] = []
+## Which selection source won the last list_pack_roots scan:
+## "external" (OPENBFME_CONTENT), "workspace" (repo .private/content-packs),
+## "durable" (user:// cache), or "" when no selection is active.
+var active_content_source := ""
 
 # Boot-path memoization. _link_status performs a DirAccess.open per call, and
 # boot-time asset resolution calls it for every path segment of every resolved
@@ -76,9 +82,35 @@ func list_pack_roots() -> Array[String]:
 	# replaces the durable user selection so two versions of the same ruleset
 	# cannot merge merely because both caches exist.
 	_ensure_dir(user_pack_cache_root())
-	if external_selected == "":
+	var active_selected := external_selected
+	active_content_source = "external" if external_selected != "" else ""
+
+	# Workspace-first: when no explicit OPENBFME_CONTENT override is set, a repo
+	# checkout's .private/content-packs selection is the freshest published
+	# truth, so editor playtests must never silently fall back to a stale
+	# durable cache copy of the same ruleset. Any workspace that exists but
+	# cannot be loaded is diagnosed loudly before the durable fallback runs.
+	if external == "" and active_selected == "":
+		var workspace := workspace_content_root()
+		if workspace != "":
+			var workspace_selection := workspace.path_join("selection.json")
+			if not FileAccess.file_exists(workspace_selection):
+				_diagnose("Workspace content at %s has no selection.json; falling back to the durable user pack cache, which may be STALE." % workspace)
+			else:
+				var workspace_selected := selected_user_pack_root(workspace, workspace_selection)
+				if workspace_selected != "":
+					active_selected = workspace_selected
+					active_content_source = "workspace"
+					roots.append(workspace_selected)
+					roots.append_array(selected_pack_supplements(workspace, workspace_selection))
+				else:
+					_diagnose("Workspace content selection %s is unusable; falling back to the durable user pack cache, which may be STALE." % workspace_selection)
+
+	if external_selected == "" and active_selected == "":
 		var selected := selected_user_pack_root()
 		if selected != "":
+			active_selected = selected
+			active_content_source = "durable"
 			# LOUD ON PURPOSE. This is the durable pack in the user data
 			# directory, reached only because OPENBFME_CONTENT named nothing
 			# usable. It can be months old while the repository's real pack has
@@ -114,12 +146,8 @@ func list_pack_roots() -> Array[String]:
 	# ship copies of the shared base bundle objects, and the active pack's
 	# documents (not a supplement's copy) must win those shared ids.
 	var active_key := ""
-	if external_selected != "":
-		active_key = _comparison_path(external_selected)
-	elif external_selected == "":
-		var active_user_root := selected_user_pack_root()
-		if active_user_root != "":
-			active_key = _comparison_path(active_user_root)
+	if active_selected != "":
+		active_key = _comparison_path(active_selected)
 	unique.sort_custom(func(a: String, b: String) -> bool:
 		var pa := _pack_priority(a)
 		var pb := _pack_priority(b)
@@ -131,7 +159,29 @@ func list_pack_roots() -> Array[String]:
 			return not a_active
 		return _comparison_path(a) < _comparison_path(b)
 	)
+	if active_selected != "":
+		print("[ModLoader] content source=%s active=%s" % [active_content_source, active_selected])
 	return unique
+
+
+func workspace_content_root() -> String:
+	## Repo-checkout content workspace holding the freshest published selection.
+	## An explicit project-setting override always wins (test seam). Implicit
+	## detection of <repo>/.private/content-packs applies only to non-exported
+	## runs whose durable cache settings are at their defaults — a test fixture
+	## that overrides the cache owns the whole resolution and must not be
+	## hijacked by the developer's real workspace.
+	var configured := String(ProjectSettings.get_setting(WORKSPACE_CONTENT_SETTING, ""))
+	if configured != "":
+		return _absolute_path(configured)
+	if not OS.has_feature("editor"):
+		return ""
+	if ProjectSettings.has_setting(PACK_CACHE_SETTING) or ProjectSettings.has_setting(PACK_SELECTION_SETTING):
+		return ""
+	var workspace := _absolute_path("res://").get_base_dir().path_join(WORKSPACE_CONTENT_RELATIVE)
+	if not DirAccess.dir_exists_absolute(workspace):
+		return ""
+	return workspace
 
 
 func user_pack_cache_root() -> String:

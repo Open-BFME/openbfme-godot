@@ -133,6 +133,31 @@ Private parity mode is strict:
 Loose repository and user packs remain a separate development/modding lane described in
 `MODDING.md`. Passing in that lane is not BFME2 parity evidence.
 
+### Runtime selection-source precedence
+
+`ModLoader.list_pack_roots` resolves the active content selection from exactly one
+source, in this order:
+
+1. **External override** — `OPENBFME_CONTENT` (developer/CI, ephemeral).
+2. **Repo workspace** — `<repo>/.private/content-packs/selection.json`, detected
+   automatically for non-exported runs when the durable cache settings are at their
+   defaults (`openbfme/content/workspace_content_root` overrides the location).
+3. **Durable user cache** — `user://content-packs/selection.json`.
+
+The workspace outranks the durable cache so an editor launch without env setup can
+never silently play a stale durable copy of the same ruleset. A workspace that exists
+but cannot be loaded (missing or unusable `selection.json`) falls back to the durable
+cache with a loud recorded diagnostic naming the stale risk. The winning source is
+reported at boot as `[ModLoader] content source=<external|workspace|durable> active=...`
+and exposed as `ModLoader.active_content_source`.
+
+Installs that cannot see a repo workspace (exported builds, other machines) are kept
+fresh by publishing the workspace selection into the durable cache with
+`tools/publish-durable-pack.ps1` (copies the selected bundles and writes
+`selection.json` last, so a partial publish is never selectable). This copies
+retail-derived bytes only into the local user cache, never into the repository or a
+distributable artifact.
+
 ## Provenance and retention
 
 Canonical provenance covers every source entry, converter recipe, pinned tool,
