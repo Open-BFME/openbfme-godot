@@ -6,10 +6,13 @@ const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 const NavDiamondsScript = preload("res://src/ui/openbfme_nav_diamonds.gd")
 const SliceScript = preload("res://src/retail_slice/retail_vertical_slice.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
+const MultiplayerLobbyScript = preload("res://src/ui/multiplayer_lobby.gd")
+const LockstepSessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 
 const PAGE_MAIN := "main"
 const PAGE_SOLO := "solo"
 const PAGE_MULTIPLAYER := "multiplayer"
+const PAGE_MP_LOBBY := "mp_lobby"
 const PAGE_OPTIONS := "options"
 const PAGE_DEVELOPER := "developer"
 const PAGE_STATS := "stats"
@@ -108,6 +111,12 @@ var _shell_font: Font = null
 var _content_db: Node
 var _launch_in_progress := false
 var _game_state: Node
+## GAME LOBBY panel (built in _ready over the NETWORK flyout's rectangle) and
+## the pre-game lockstep session it drives. The session lives here only between
+## a successful host/join and the lobby's launch/leave; the lobby's _process
+## polls it — the menu never does.
+var multiplayer_lobby: Panel
+var _lobby_session
 
 
 func _ready() -> void:
@@ -121,6 +130,14 @@ func _ready() -> void:
 		return
 	_shell_font = _load_retail_font()
 	theme = ThemeScript.create_theme(_shell_font)
+	# GAME LOBBY panel: same rectangle as the NETWORK flyout it follows, hidden
+	# until a host/join connects a session.
+	multiplayer_lobby = MultiplayerLobbyScript.new()
+	multiplayer_lobby.name = "MultiplayerLobby"
+	multiplayer_lobby.position = multiplayer_flyout.position
+	multiplayer_lobby.size = multiplayer_flyout.size
+	multiplayer_lobby.visible = false
+	center.add_child(multiplayer_lobby)
 	_populate_skirmish_options()
 	_populate_rules_options()
 	_populate_color_options()
@@ -150,6 +167,11 @@ func _exit_tree() -> void:
 	if _slice_probe_instance != null:
 		_slice_probe_instance.free()
 		_slice_probe_instance = null
+	# A menu freed with a live pre-game session (external scene change) must
+	# release the socket; the peer receives the notified disconnect.
+	if _lobby_session != null:
+		_lobby_session.close()
+		_lobby_session = null
 
 
 func _load_retail_font() -> Font:
@@ -927,6 +949,8 @@ func _connect_actions() -> void:
 	multiplayer_flyout.host_requested.connect(_on_multiplayer_host)
 	multiplayer_flyout.join_requested.connect(_on_multiplayer_join)
 	multiplayer_flyout.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
+	multiplayer_lobby.launch_confirmed.connect(_on_lobby_launch_confirmed)
+	multiplayer_lobby.leave_requested.connect(_on_lobby_leave)
 	sub_solo_btn.pressed.connect(func() -> void: _show_page(PAGE_SOLO))
 	sub_options_btn.pressed.connect(_on_options)
 	sub_quit_btn.pressed.connect(func() -> void: get_tree().quit())
@@ -965,9 +989,10 @@ func _show_page(page: String) -> void:
 	current_page = page
 	# The main bar stays visible under the compact NETWORK flyout, matching the
 	# retail shell where flyouts open above the persistent bottom bar (REF-01).
-	_set_nodes_visible(_main_page_nodes(), page == PAGE_MAIN or page == PAGE_MULTIPLAYER)
+	_set_nodes_visible(_main_page_nodes(), page == PAGE_MAIN or page == PAGE_MULTIPLAYER or page == PAGE_MP_LOBBY)
 	_set_nodes_visible(_solo_page_nodes(), page == PAGE_SOLO)
 	_set_nodes_visible(_multiplayer_page_nodes(), page == PAGE_MULTIPLAYER)
+	_set_nodes_visible(_mp_lobby_page_nodes(), page == PAGE_MP_LOBBY)
 	_set_nodes_visible(_options_page_nodes(), page == PAGE_OPTIONS)
 	_set_nodes_visible(_developer_page_nodes(), page == PAGE_DEVELOPER)
 	_set_nodes_visible(_stats_page_nodes(), page == PAGE_STATS)
@@ -991,6 +1016,9 @@ func _show_page(page: String) -> void:
 		PAGE_MULTIPLAYER:
 			if multiplayer_flyout.host_button != null and multiplayer_flyout.host_button.visible:
 				multiplayer_flyout.host_button.grab_focus()
+		PAGE_MP_LOBBY:
+			if multiplayer_lobby.leave_button != null and multiplayer_lobby.leave_button.visible:
+				multiplayer_lobby.leave_button.grab_focus()
 		PAGE_OPTIONS:
 			if options_screen.visible and options_screen.window_mode_opt != null:
 				options_screen.window_mode_opt.grab_focus()
@@ -1012,6 +1040,10 @@ func _solo_page_nodes() -> Array[Control]:
 
 func _multiplayer_page_nodes() -> Array[Control]:
 	return [multiplayer_flyout]
+
+
+func _mp_lobby_page_nodes() -> Array[Control]:
+	return [multiplayer_lobby]
 
 
 func _options_page_nodes() -> Array[Control]:
@@ -1097,10 +1129,55 @@ func _on_multiplayer_join(address: String, port: int) -> void:
 func _launch_multiplayer(mode: String, address: String, port: int) -> void:
 	if _launch_in_progress:
 		return
+	# The selection seam stays: it validates fail-closed and records the
+	# transport fields (mode/address/port) the slice will read. Its tier-1
+	# men/men faction writes are provisional — the GAME LOBBY overwrites the
+	# whole selection (retail_team_setup and friends) at launch.
 	if not apply_multiplayer_selection(mode, address, port):
 		return
+	var session = LockstepSessionScript.new()
+	var session_error: Error = session.host(port) if mode == "host" else session.join(address, port)
+	if session_error != OK:
+		multiplayer_flyout.set_status(
+			"Could not %s on %s:%d (error %d)." % ["host" if mode == "host" else "join", address, port, session_error],
+			true
+		)
+		return
+	_lobby_session = session
+	multiplayer_flyout.set_busy(true)
+	multiplayer_lobby.open(session, mode == "host", String(_game_state.get("retail_mp_player_name")))
+	_show_page(PAGE_MP_LOBBY)
+
+
+func _on_lobby_launch_confirmed() -> void:
+	# Both peers verified the byte-identical roster and wrote GameState (incl.
+	# retail_team_setup) inside the lobby; the menu only owns the scene change.
+	if _launch_in_progress:
+		return
 	_launch_in_progress = true
+	multiplayer_lobby.close_lobby()
+	if _lobby_session != null:
+		# Graceful, frame-async drain: a hard close here provably drops the
+		# host's still-un-acked lobby.launch echo and strands the guest. The
+		# bounded drain never hangs the launch; UDP has no TIME_WAIT, so once
+		# closed the slice's lockstep session re-binds the same port at boot.
+		var session = _lobby_session
+		session.begin_graceful_close()
+		for _frame in range(30):
+			if session.poll_graceful_close():
+				break
+			await get_tree().process_frame
+		session.close()
+	_lobby_session = null
 	get_tree().change_scene_to_file("res://scenes/retail_loading_boot.tscn")
+
+
+func _on_lobby_leave() -> void:
+	# The lobby already closed the session (notified disconnect) before
+	# emitting leave_requested.
+	_lobby_session = null
+	multiplayer_flyout.set_busy(false)
+	_show_page(PAGE_MULTIPLAYER)
 
 
 func _on_retail() -> void:
@@ -1135,7 +1212,12 @@ func _on_tests() -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event.pressed or event.echo:
 		return
-	if event.keycode == KEY_ESCAPE and current_page != PAGE_MAIN:
+	if event.keycode == KEY_ESCAPE and current_page == PAGE_MP_LOBBY:
+		# Escaping the lobby is a LEAVE, never a silent page swap: the session
+		# must close (notified disconnect) or the peer would wait forever.
+		multiplayer_lobby._on_leave_pressed()
+		get_viewport().set_input_as_handled()
+	elif event.keycode == KEY_ESCAPE and current_page != PAGE_MAIN:
 		_show_page(PAGE_MAIN)
 		get_viewport().set_input_as_handled()
 	elif event.keycode == KEY_F10:

@@ -2347,9 +2347,44 @@ func _apply_retail_hero_command(spec: Dictionary, validation: Dictionary) -> voi
 	_retail_train_labels[unit_id] = String(validation["label"])
 
 
+## One command-bar action button per registered spec. Shared by build() and
+## the bind path: construct action specs may be registered AFTER build (the
+## post-reload chrome refresh, incl. a lockstep guest's own-faction surface),
+## and the docstring on configure_manifest_construct_kinds promises those
+## late-added actions receive their button nodes during bind.
+func _ensure_action_button(spec: Dictionary) -> Button:
+	var action_id := String(spec["action_id"])
+	if unit_action_buttons.has(action_id):
+		return unit_action_buttons[action_id]
+	var button := Button.new()
+	button.name = String(spec["button_name"])
+	button.text = String(spec["button_name"])
+	button.custom_minimum_size = Vector2(54, 54)
+	button.disabled = true
+	button.visible = false
+	button.set_meta("action_id", action_id)
+	button.set_meta("preferred_slot", int(spec.get("preferred_slot", -1)))
+	_style_button(button)
+	if action_id == "attack_move":
+		button.pressed.connect(func() -> void: attack_move_requested.emit())
+	elif action_id == "stop":
+		button.pressed.connect(func() -> void: stop_requested.emit())
+	elif action_id == "stance":
+		button.pressed.connect(func() -> void: stance_requested.emit())
+	elif action_id == "formation":
+		button.pressed.connect(func() -> void: formation_requested.emit())
+	elif action_id.begins_with("construct_"):
+		button.pressed.connect(_emit_construct_requested.bind(action_id.trim_prefix("construct_")))
+	elif action_id == "upgrade_archery_range_level2":
+		button.pressed.connect(func() -> void: structure_upgrade_requested.emit("Upgrade_GondorArcheryRangeLevel2"))
+	_place_command_button(button, 0)
+	unit_action_buttons[action_id] = button
+	return button
+
+
 func _apply_retail_action(spec: Dictionary, validation: Dictionary) -> void:
 	var action_id := String(spec["action_id"])
-	var button: Button = unit_action_buttons[action_id]
+	var button: Button = _ensure_action_button(spec)
 	if bool(validation.get("text_only", false)) or validation.get("texture") == null:
 		button.icon = null
 		button.text = String(validation.get("label", spec.get("fallback_label", action_id)))
@@ -2904,31 +2939,7 @@ func _build_command_panel() -> void:
 			buttons_for_unit[ability_id] = ability_button
 		hero_ability_buttons[ability_unit_id] = buttons_for_unit
 	for spec_value in _retail_action_specs:
-		var spec: Dictionary = spec_value
-		var action_id := String(spec["action_id"])
-		var button := Button.new()
-		button.name = String(spec["button_name"])
-		button.text = String(spec["button_name"])
-		button.custom_minimum_size = Vector2(54, 54)
-		button.disabled = true
-		button.visible = false
-		button.set_meta("action_id", action_id)
-		button.set_meta("preferred_slot", int(spec.get("preferred_slot", -1)))
-		_style_button(button)
-		if action_id == "attack_move":
-			button.pressed.connect(func() -> void: attack_move_requested.emit())
-		elif action_id == "stop":
-			button.pressed.connect(func() -> void: stop_requested.emit())
-		elif action_id == "stance":
-			button.pressed.connect(func() -> void: stance_requested.emit())
-		elif action_id == "formation":
-			button.pressed.connect(func() -> void: formation_requested.emit())
-		elif action_id.begins_with("construct_"):
-			button.pressed.connect(_emit_construct_requested.bind(action_id.trim_prefix("construct_")))
-		elif action_id == "upgrade_archery_range_level2":
-			button.pressed.connect(func() -> void: structure_upgrade_requested.emit("Upgrade_GondorArcheryRangeLevel2"))
-		_place_command_button(button, 0)
-		unit_action_buttons[action_id] = button
+		_ensure_action_button(spec_value as Dictionary)
 	if not _retail_command_specs.is_empty():
 		train_button = train_buttons.get(String(_retail_command_specs[0]["unit_id"])) as Button
 	elif not train_buttons.is_empty():

@@ -60,6 +60,11 @@ var retail_map_id: String = ""
 ## retail_player_faction / retail_enemy_faction pair, so that path stays
 ## byte-identical. OPENBFME_SLICE_FACTION still overrides everything.
 var retail_team_setup: Array = []
+## Multiplayer lobby identity, written by the NETWORK lobby panel at launch.
+## Display-only strings (scoreboard/HUD labels): player names ride the lobby
+## protocol and never enter the deterministic sim state.
+var retail_mp_player_name: String = "Player"
+var retail_mp_peer_name: String = "Challenger"
 
 var resources: Dictionary = {0: 1500.0, 1: 1500.0, 2: 0.0}
 var power_points: Dictionary = {0: 0.0, 1: 0.0}

@@ -273,6 +273,11 @@ func _initialize_content_and_match() -> void:
 		_fail("Faction manifest failed: %s" % String(faction_manifest.get("_error", "")))
 		return
 	var player_faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
+	# Multiplayer identity resolves BEFORE roster classification so a lockstep
+	# guest (join side, team 1) can surface its own army below. Idempotent:
+	# environment variables still win, and the pre-setup() consumers read the
+	# same fields this early call filled. (Moved up from the pre-setup() slot.)
+	_resolve_mp_settings()
 	# N-team: the menu's setup screen writes GameState.retail_team_setup — a full
 	# per-row roster (team/faction/controller/difficulty/alliance/start). When it is
 	# present it is authoritative: each team resolves its own faction manifest and
@@ -298,19 +303,27 @@ func _initialize_content_and_match() -> void:
 		_team_faction_manifests = _resolve_menu_team_manifests(menu_team_setup, faction_manifest)
 		enemy_faction = _first_menu_opponent_faction(menu_team_setup, player_faction)
 		# Resolving other teams' manifests re-ran _classify_faction_units for those
-		# factions; re-classify the player faction so team 0's fieldable/producible
-		# runtimes (used by the spawn + HUD below) reflect the local player again.
-		_classify_faction_units(player_faction)
+		# factions; re-classify the LOCAL presentation faction so the fieldable/
+		# producible runtimes (used by the spawn + HUD below) reflect the army this
+		# machine plays: the player (team 0) faction for host/solo, the team-1
+		# descriptor's faction for a lockstep guest. Presentation only — the sim
+		# rules are rebuilt from the team-0 classification inside _gameplay_rules.
+		_classify_faction_units(_local_presentation_faction(player_faction))
 	ranger_runtime = ContentDB.get_ranger_runtime()
 	trebuchet_runtime = ContentDB.get_trebuchet_runtime()
 	playable_unit_runtimes = ContentDB.get_playable_unit_runtimes()
 	# Refresh faction chrome after the post-reload manifest resolution so a
-	# full pack's buildings/heading reach the side command bar.
+	# full pack's buildings/heading reach the side command bar. A lockstep
+	# guest presents its OWN team-1 army here (presentation only; the sim
+	# consumes the identical per-team manifest map on both peers).
+	var chrome_manifest: Dictionary = faction_manifest
+	if _mp_mode == "join":
+		chrome_manifest = _team_faction_manifests.get(1, faction_manifest) as Dictionary
 	if hud != null:
 		if hud.has_method("configure_faction_surface"):
-			hud.configure_faction_surface(faction_manifest)
+			hud.configure_faction_surface(chrome_manifest)
 		else:
-			hud.configure_manifest_construct_kinds(faction_manifest.get("structure_kinds", []) as Array)
+			hud.configure_manifest_construct_kinds(chrome_manifest.get("structure_kinds", []) as Array)
 		if ContentDB.has_method("get_spellbook_runtime"):
 			var spellbook_doc: Dictionary = _faction_spellbook_document()
 			if not spellbook_doc.is_empty() and hud.has_method("configure_spellbook_runtime"):
@@ -426,13 +439,19 @@ func _initialize_content_and_match() -> void:
 	if gameplay_rules.has("_error"):
 		_fail("Retail unit gameplay rules failed validation: %s" % String(gameplay_rules["_error"]))
 		return
+	# _gameplay_rules ends on the team-0 classification (sim-input contract);
+	# restore the guest's own-army presentation classification for the audio
+	# and HUD sync surfaces that follow.
+	if _mp_mode == "join":
+		var presentation_faction := _local_presentation_faction(player_faction)
+		if presentation_faction != player_faction:
+			_classify_faction_units(presentation_faction)
 	# N-team: hand the sim the per-team manifest map. Same-faction rosters (the
 	# only kind the menu sends today) collapse to the player manifest, so every
 	# team aliases the compiled globals and the default path stays byte-identical.
 	if not _team_faction_manifests.is_empty():
 		gameplay_rules["team_faction_manifests"] = _trimmed_team_manifests()
 	_apply_menu_match_options()
-	_resolve_mp_settings()
 	simulation = SimScript.new()
 	# N-team: inject the menu's team registry before setup() consumes it. Empty for
 	# the legacy default, which leaves the sim on its byte-identical 2-team roster.
@@ -1147,6 +1166,13 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	var member_count := maxi(1, int(horde_definition.get("memberCount", 15)))
 	var tick_ms := SimScript.TICK_SECONDS * 1000.0
 	var faction := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION))
+	# The rule tables below are SIM INPUT and must be built from the player
+	# (team 0) faction's classification on every peer: a lockstep guest's
+	# presentation classification (its own team-1 army) must never leak into
+	# them or the tick-30 hash barrier trips. The caller restores the guest's
+	# presentation classification after this function returns.
+	if _mp_mode == "join":
+		_classify_faction_units(faction)
 	var men_slice := faction == FactionManifestScript.DEFAULT_FACTION
 	var full_men := men_slice and _men_uses_full_pack_manifest()
 	var unit_rules: Dictionary = {}
@@ -1717,6 +1743,19 @@ func _resolve_menu_team_manifests(menu_setup: Array, player_manifest: Dictionary
 			by_faction[faction] = resolved
 			manifests[team] = resolved
 	return manifests
+
+
+func _local_presentation_faction(player_faction: String) -> String:
+	## PRESENTATION-ONLY seam: the faction whose roster the LOCAL machine's HUD
+	## chrome, classification-backed presentation validation, and unit voices
+	## should reflect. Sim inputs never read this — both lockstep peers build
+	## byte-identical gameplay rules from the player (team 0) faction. A join
+	## side guest is team 1, so it presents the team-1 descriptor's faction.
+	if _mp_mode != "join":
+		return player_faction
+	var guest_manifest := _team_faction_manifests.get(1, {}) as Dictionary
+	var guest_faction := String(guest_manifest.get("faction", "")).strip_edges().to_lower()
+	return guest_faction if guest_faction != "" else player_faction
 
 
 func _first_menu_opponent_faction(menu_setup: Array, player_faction: String) -> String:
@@ -3148,7 +3187,9 @@ func _refresh_hud() -> void:
 	):
 		_fail("Retail Men/Fords side-command FadeIn rejected the live selection context.")
 		return
-	hud.set_objective("DESTROY THE ENEMY FORTRESS" if simulation.winner == -1 else ("VICTORY" if simulation.winner == 0 else "DEFEAT"))
+	# Outcome is from the LOCAL player's perspective: team 1 (a lockstep guest)
+	# winning is that machine's VICTORY, not a hardcoded team-0 banner.
+	hud.set_objective("DESTROY THE ENEMY FORTRESS" if simulation.winner == -1 else ("VICTORY" if simulation.winner == local_team else "DEFEAT"))
 	minimap.camera_center = camera_focus
 	if diagnostics_visible:
 		# state_signature() deep-copies and serializes the whole sim snapshot
@@ -3160,7 +3201,7 @@ func _refresh_hud() -> void:
 			simulation.state_signature(),
 			audio_system.current_music_state.to_upper() if audio_system != null else "OFF",
 			simulation.living_ids(local_team).size(),
-			simulation.living_ids(1).size(),
+			simulation.living_ids(0 if local_team == 1 else 1).size(),
 			source_map_data.route_query_count if source_map_data != null else 0,
 		]
 		hud.show_diagnostics(diagnostics, true)
@@ -3168,7 +3209,10 @@ func _refresh_hud() -> void:
 		hud.show_diagnostics("", false)
 	if simulation.winner != -1 and simulation.winner != _last_presented_winner:
 		_last_presented_winner = simulation.winner
-		hud.show_outcome(simulation.winner)
+		# The HUD renders 0 as VICTORY / non-zero as DEFEAT; map the winning
+		# team through the local perspective so a guest (team 1) win shows
+		# VICTORY on the guest's machine.
+		hud.show_outcome(0 if simulation.winner == local_team else 1)
 
 
 var _score_cache := {"units_trained": 0, "units_lost": 0, "resources_gathered": 0}

@@ -132,6 +132,18 @@ func _line_edit(node_name: String, initial: String, at: Vector2, width: float) -
 	return edit
 
 
+## Lobby transition support: while the menu is opening a session and moving to
+## the GAME LOBBY panel, the flyout's inputs lock so a double-click can never
+## start two sessions; returning from the lobby unlocks them.
+func set_busy(busy: bool) -> void:
+	host_button.disabled = busy
+	join_button.disabled = busy
+	back_button.disabled = busy
+	host_port_edit.editable = not busy
+	join_address_edit.editable = not busy
+	join_port_edit.editable = not busy
+
+
 func set_status(message: String, is_error: bool = false) -> void:
 	status_label.text = message
 	status_label.add_theme_color_override(
