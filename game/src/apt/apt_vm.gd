@@ -377,13 +377,19 @@ func execute(
 # --- Interpreter core ---------------------------------------------------------
 
 ## Run one instruction stream (root script or function body) until End,
-## Return, or a fault. Returns true on clean End/Return.
-func _run_frame(entry_ip: int, depth: int) -> bool:
+## Return, or a fault. Returns true on clean End/Return. Function bodies
+## additionally end cleanly at their declared byte boundary (end_ip):
+## retail APT bodies are bounded by DefineFunction/2 body size and carry no
+## trailing End opcode, so falling off the boundary is a bare return - never
+## a walk into the enclosing instruction stream.
+func _run_frame(entry_ip: int, depth: int, end_ip: int = -1) -> bool:
 	var ip := entry_ip
 	while true:
 		if _executed >= _budget:
 			_fault = "instruction_budget"
 			return false
+		if end_ip >= 0 and ip >= end_ip:
+			return true
 		if ip < 0 or ip >= _data.size():
 			_fault = "out_of_bounds"
 			return false
@@ -1353,7 +1359,7 @@ func _invoke_function(fn: ScriptFunction, args: Array, this_obj: Variant, depth:
 				_params[pname] = arg
 		_preload_registers(fn.flags, args)
 
-	var completed := _run_frame(fn.body_offset, depth + 1)
+	var completed := _run_frame(fn.body_offset, depth + 1, fn.body_offset + fn.body_size)
 	var ret: Variant = null
 	if completed and _returning:
 		ret = _return_value
@@ -1437,6 +1443,18 @@ func _get_member(obj: Variant, member_name: String) -> Variant:
 
 
 func _set_member(obj: Variant, member_name: String, value: Variant) -> void:
+	# Tier-4 raw-byte lane: the retail HUD registers clip handlers by
+	# assigning anonymous DefineFunction/2 results to members of `this` or of
+	# a host clip path (e.g. `this.SetFlashEffectState = function(state)...`).
+	# Offer those to the host so measured handler families can register from
+	# the real bytecode body; the host fails closed on unmeasured names.
+	# Plain script objects keep pure in-VM member semantics.
+	if value is ScriptFunction and host.has_method("on_member_function_assigned") \
+			and ((obj is ScriptObject and obj == _scope) or not (obj is ScriptObject or obj is Array)):
+		host.on_member_function_assigned(_describe(obj), member_name, value, self)
+		if obj is ScriptObject:
+			obj.variables[member_name] = value
+		return
 	if obj is ScriptObject:
 		obj.variables[member_name] = value
 	elif obj is Array and member_name.is_valid_int():

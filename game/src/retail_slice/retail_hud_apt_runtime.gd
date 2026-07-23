@@ -27,6 +27,11 @@ const MAX_TEXTS := 16_384
 const MAX_BUTTONS := 16_384
 const EXPECTED_SCHEMA := "openbfme.retail-hud-apt-runtime"
 const EXPECTED_SCENE_ID := "bfme2.ui.palantir"
+## Raw-byte lane contract bounds (mirror retail_hud_apt_convert.py).
+const EXPECTED_VM_BYTECODE_VERSION := 1
+const MAX_VM_BYTE_SPACE := 4 * 1024 * 1024
+const MAX_VM_CONSTANT_ENTRIES := 65_536
+const VM_CONSTANT_KINDS := {1: true, 3: true, 4: true, 5: true, 6: true, 7: true, 8: true}
 const ASSET_FACTORY := preload("res://src/view/asset_factory.gd")
 const WND_RUNTIME_SCRIPT := preload("res://src/retail_slice/retail_hud_wnd_runtime.gd")
 const APT_VM_SCRIPT := preload("res://src/apt/apt_vm.gd")
@@ -412,6 +417,12 @@ var wnd_companion_ready := false
 var wnd_typed_callback_count := 0
 var vm_executed_program_count := 0
 var vm_fallback_program_count := 0
+## Raw-byte lane counters: distinguish real retail-byte execution from row
+## synthesis and from the legacy declarative-effect path.
+var vm_raw_byte_executed_program_count := 0
+var vm_synthesized_executed_program_count := 0
+var vm_raw_fallback_program_count := 0
+var legacy_executed_program_count := 0
 var diagnostics: Array[Dictionary] = []
 
 var _authored_resolution := Vector2(1024.0, 768.0)
@@ -435,6 +446,11 @@ var _staged_wnd_runtime: RefCounted = null
 var _side_command_fade_accumulator := 0.0
 var _side_command_fade_state: Dictionary = {}
 var _vm_fallback_program_ids: Dictionary = {}
+var _vm_raw_fallback_program_ids: Dictionary = {}
+## Raw-byte lane: movie key -> validated CONST entry Array for AptVm.
+var _vm_constants: Dictionary = {}
+## Raw-byte lane: program id -> {entry, byteSpaceSize, movieKey, segments}.
+var _vm_raw_programs: Dictionary = {}
 ## Tier-4: recorded PlaySound audio intents from VM-lane FSCommand routing
 ## (populated only when no injectable audio-intent callback is set).
 var vm_audio_intents: Array[Dictionary] = []
@@ -605,6 +621,8 @@ func _validate_contract(document: Dictionary, pack_root: String) -> bool:
 		document.get("externalMovieLifecycle", {}),
 		document.get("sourceDiagnostics", {})
 	):
+		return false
+	if not _validate_vm_constants(document.get("vmConstants", {})):
 		return false
 	var action_script_ids := _validate_action_scripts(document.get("actionScripts", []))
 	if action_script_ids.is_empty():
@@ -866,6 +884,8 @@ func _validate_action_scripts(value: Variant) -> Dictionary:
 		elif typed_minlod or typed_resource_flash or typed_side_command or typed_palantir_command or (unsupported_value as Array).is_empty() or not (effects_value as Array).is_empty():
 			_fail("Palantir blocked ActionScript lost its exact blocker evidence")
 			return {}
+		if not _validate_vm_bytecode_field(script_id, program):
+			return {}
 		ids[script_id] = true
 		_action_scripts[script_id] = program
 	action_script_count = programs.size()
@@ -902,6 +922,121 @@ func _validate_action_effects(effects: Array) -> bool:
 		if not effect.has("target"):
 			return _fail("Palantir ActionScript goto target is missing")
 	return true
+
+
+## Raw-byte lane: optional top-level per-movie CONST tables for AptVm. A
+## rows-only document (no vmConstants / vmBytecode fields) keeps the
+## synthesis lane exactly as before.
+func _validate_vm_constants(value: Variant) -> bool:
+	if typeof(value) != TYPE_DICTIONARY:
+		return _fail("Palantir VM constant inventory is invalid")
+	for movie_key_value in (value as Dictionary):
+		var movie_key := String(movie_key_value)
+		var table_value: Variant = (value as Dictionary)[movie_key_value]
+		if movie_key == "" or typeof(table_value) != TYPE_DICTIONARY:
+			return _fail("Palantir VM constant table is invalid")
+		var table := table_value as Dictionary
+		if (
+			String(table.get("movie", "")).to_lower() != movie_key
+			or not _is_sha256(String(table.get("sha256", "")))
+			or typeof(table.get("entries", null)) != TYPE_ARRAY
+		):
+			return _fail("Palantir VM constant identity changed")
+		var entries_value := table.get("entries") as Array
+		if entries_value.size() > MAX_VM_CONSTANT_ENTRIES:
+			return _fail("Palantir VM constant table exceeds bounds")
+		var entries: Array = []
+		for entry_value in entries_value:
+			if typeof(entry_value) != TYPE_DICTIONARY:
+				return _fail("Palantir VM constant entry is invalid")
+			var entry := entry_value as Dictionary
+			var kind := int(entry.get("type", -1))
+			if not VM_CONSTANT_KINDS.has(kind):
+				return _fail("Palantir VM constant kind is unknown")
+			entries.append({"type": kind, "value": entry.get("value")})
+		_vm_constants[movie_key] = {
+			"sha256": String(table.get("sha256", "")),
+			"entries": entries,
+		}
+	return true
+
+
+## Raw-byte lane: validate one program's optional vmBytecode field against
+## the program's pinned byte identity (tamper detection) and stage the
+## decoded segments for execution. Absence is valid (rows-only synthesis).
+func _validate_vm_bytecode_field(program_id: String, program: Dictionary) -> bool:
+	if not program.has("vmBytecode"):
+		return true
+	var raw_value: Variant = program.get("vmBytecode")
+	if typeof(raw_value) != TYPE_DICTIONARY or not bool(program.get("supported", false)):
+		return _fail("Palantir VM raw-byte field is invalid: %s" % program_id)
+	var raw := raw_value as Dictionary
+	var entry_offset := int(raw.get("entryOffset", -1))
+	var byte_length := int(raw.get("byteLength", -1))
+	var byte_space_size := int(raw.get("byteSpaceSize", -1))
+	var movie_key := String(program.get("movie", "")).to_lower()
+	if (
+		int(raw.get("version", -1)) != EXPECTED_VM_BYTECODE_VERSION
+		or entry_offset != int(program.get("instructionOffset", -2))
+		or byte_length != int(program.get("byteLength", -2))
+		or String(raw.get("sha256", "")) != String(program.get("sha256", "invalid"))
+		or byte_space_size <= 0
+		or byte_space_size > MAX_VM_BYTE_SPACE
+		or entry_offset + byte_length > byte_space_size
+		or typeof(raw.get("segments", null)) != TYPE_ARRAY
+	):
+		return _fail("Palantir VM raw-byte identity changed: %s" % program_id)
+	if (
+		not _vm_constants.has(movie_key)
+		or String(raw.get("constantsSha256", "")) != String((_vm_constants[movie_key] as Dictionary).get("sha256", "invalid"))
+	):
+		return _fail("Palantir VM raw-byte constants are missing or changed: %s" % program_id)
+	var segments_value := raw.get("segments") as Array
+	if segments_value.is_empty():
+		return _fail("Palantir VM raw-byte segments are empty: %s" % program_id)
+	var segments: Array = []
+	var previous_end := -1
+	var entry_slice := PackedByteArray()
+	for segment_value in segments_value:
+		if typeof(segment_value) != TYPE_DICTIONARY:
+			return _fail("Palantir VM raw-byte segment is invalid: %s" % program_id)
+		var segment := segment_value as Dictionary
+		var segment_offset := int(segment.get("offset", -1))
+		var segment_length := int(segment.get("byteLength", -1))
+		if (
+			segment_offset < 0
+			or segment_length <= 0
+			or segment_offset <= previous_end
+			or segment_offset + segment_length > byte_space_size
+			or not _is_sha256(String(segment.get("sha256", "")))
+		):
+			return _fail("Palantir VM raw-byte segment range changed: %s" % program_id)
+		var segment_bytes := Marshalls.base64_to_raw(String(segment.get("bytesBase64", "")))
+		if (
+			segment_bytes.size() != segment_length
+			or _sha256_hex(segment_bytes) != String(segment.get("sha256", ""))
+		):
+			return _fail("Palantir VM raw-byte segment bytes were tampered: %s" % program_id)
+		if segment_offset <= entry_offset and entry_offset + byte_length <= segment_offset + segment_length:
+			entry_slice = segment_bytes.slice(entry_offset - segment_offset, entry_offset - segment_offset + byte_length)
+		previous_end = segment_offset + segment_length - 1
+		segments.append({"offset": segment_offset, "bytes": segment_bytes})
+	if entry_slice.size() != byte_length or _sha256_hex(entry_slice) != String(program.get("sha256", "")):
+		return _fail("Palantir VM raw program bytes were tampered: %s" % program_id)
+	_vm_raw_programs[program_id] = {
+		"entry": entry_offset,
+		"size": byte_space_size,
+		"movieKey": movie_key,
+		"segments": segments,
+	}
+	return true
+
+
+func _sha256_hex(data: PackedByteArray) -> String:
+	var context := HashingContext.new()
+	context.start(HashingContext.HASH_SHA256)
+	context.update(data)
+	return context.finish().hex_encode()
 
 
 func _validate_typed_side_command_program(script_id: String, program: Dictionary) -> bool:
@@ -2185,15 +2320,36 @@ func _execute_timeline_effects(effects: Array, timeline_state: Dictionary) -> bo
 func _execute_supported_program(program_id: String, program: Dictionary, timeline_state: Dictionary) -> bool:
 	if _execute_program_via_vm(program_id, program, timeline_state):
 		return true
-	return _execute_timeline_effects(program.get("effects", []) as Array, timeline_state)
+	if _execute_timeline_effects(program.get("effects", []) as Array, timeline_state):
+		legacy_executed_program_count += 1
+		return true
+	return false
 
 
-## Tier-3 VM lane: re-synthesize the proven instruction rows into bytecode
-## and execute through AptVm bound to an AptRuntimeHost. Fail-closed: only
-## a clean end-to-End run with zero out-of-contract host calls mutates the
-## timeline state; anything else records a diagnostic and reports false so
-## the caller keeps the legacy behavior.
+## VM lane: prefer the exact retail bytes (raw-byte lane) when the program
+## document carries them, otherwise re-synthesize the proven instruction
+## rows into bytecode (tier-3 synthesis lane). Fail-closed: only a clean
+## end-to-End run with zero out-of-contract host calls mutates the timeline
+## state; anything else records a diagnostic and reports false so the
+## caller keeps the legacy behavior.
 func _execute_program_via_vm(program_id: String, program: Dictionary, timeline_state: Dictionary) -> bool:
+	var raw_value: Variant = _vm_raw_programs.get(program_id, {})
+	if typeof(raw_value) == TYPE_DICTIONARY and not (raw_value as Dictionary).is_empty():
+		var raw := raw_value as Dictionary
+		var raw_constants: Array = (
+			(_vm_constants.get(String(raw.get("movieKey", "")), {}) as Dictionary).get("entries", [])
+		)
+		if _execute_vm_bytecode(
+			program_id,
+			_build_vm_byte_space(raw),
+			raw_constants,
+			int(raw.get("entry", 0)),
+			timeline_state,
+			true
+		):
+			vm_raw_byte_executed_program_count += 1
+			vm_executed_program_count += 1
+			return true
 	var rows_value: Variant = program.get("instructions", [])
 	if typeof(rows_value) != TYPE_ARRAY:
 		_note_vm_fallback(program_id, "instructions-missing")
@@ -2201,6 +2357,46 @@ func _execute_program_via_vm(program_id: String, program: Dictionary, timeline_s
 	var bytecode := _synthesize_vm_bytecode(rows_value as Array)
 	if bytecode.is_empty():
 		_note_vm_fallback(program_id, "not-synthesizable")
+		return false
+	if _execute_vm_bytecode(program_id, bytecode, [], 0, timeline_state, false):
+		vm_synthesized_executed_program_count += 1
+		vm_executed_program_count += 1
+		return true
+	return false
+
+
+## Reconstruct the sparse movie byte space from the validated raw segments.
+## Absolute offsets are preserved so aligned operands and string pointers
+## resolve exactly as in the retail APT file.
+func _build_vm_byte_space(raw: Dictionary) -> PackedByteArray:
+	var space := PackedByteArray()
+	# Segments are validated sorted and non-overlapping; zero-fill the gaps.
+	for segment_value in raw.get("segments", []) as Array:
+		var segment := segment_value as Dictionary
+		var gap := int(segment.get("offset", 0)) - space.size()
+		if gap > 0:
+			var padding := PackedByteArray()
+			padding.resize(gap)
+			space.append_array(padding)
+		space.append_array(segment.get("bytes", PackedByteArray()))
+	if space.size() < int(raw.get("size", 0)):
+		space.resize(int(raw.get("size", 0)))
+	return space
+
+
+## Execute one bytecode image through AptVm bound to an AptRuntimeHost and
+## apply the resulting playback/property/audio events. Only a clean run
+## (completed, no recorded out-of-contract host calls, PlaySound-only
+## FSCommands) mutates any state.
+func _execute_vm_bytecode(
+	program_id: String,
+	bytecode: PackedByteArray,
+	constants: Array,
+	entry_offset: int,
+	timeline_state: Dictionary,
+	raw_lane: bool
+) -> bool:
+	if bytecode.is_empty():
 		return false
 	var vm = APT_VM_SCRIPT.new()
 	var host = APT_RUNTIME_HOST_SCRIPT.new(0, "clip")
@@ -2216,18 +2412,18 @@ func _execute_program_via_vm(program_id: String, program: Dictionary, timeline_s
 			"_visible": item.visible,
 		})
 	vm.host = host
-	var result: Dictionary = vm.execute(bytecode, [], 0)
+	var result: Dictionary = vm.execute(bytecode, constants, entry_offset)
 	if not bool(result.get("completed", false)):
-		_note_vm_fallback(program_id, "halted:%s" % String(result.get("halted_reason", "")))
+		_note_vm_lane_failure(program_id, "halted:%s" % String(result.get("halted_reason", "")), raw_lane)
 		return false
 	if not (host.recorded as Array).is_empty():
-		_note_vm_fallback(program_id, "recorded-host-call")
+		_note_vm_lane_failure(program_id, "recorded-host-call", raw_lane)
 		return false
 	# The measured HOST_BRIDGE FSCommand is PlaySound; anything else fails
 	# closed to the legacy path before any state is applied.
 	for fs_value in host.fs_log as Array:
 		if String((fs_value as Dictionary).get("command", "")) != "PlaySound":
-			_note_vm_fallback(program_id, "unmeasured-fscommand:%s" % String((fs_value as Dictionary).get("command", "")))
+			_note_vm_lane_failure(program_id, "unmeasured-fscommand:%s" % String((fs_value as Dictionary).get("command", "")), raw_lane)
 			return false
 	_apply_vm_playback_events(host.playback_events() as Array, timeline_state)
 	_apply_vm_property_events(host.events as Array, program_id)
@@ -2237,8 +2433,56 @@ func _execute_program_via_vm(program_id: String, program: Dictionary, timeline_s
 			"dispatch": "FSCommand:PlaySound",
 			"sourceScriptId": program_id,
 		})
-	vm_executed_program_count += 1
 	return true
+
+
+func _note_vm_lane_failure(program_id: String, reason: String, raw_lane: bool) -> void:
+	if not raw_lane:
+		_note_vm_fallback(program_id, reason)
+		return
+	vm_raw_fallback_program_count += 1
+	if _vm_raw_fallback_program_ids.has(program_id):
+		return
+	_vm_raw_fallback_program_ids[program_id] = true
+	diagnostics.append({
+		"code": "apt-vm-raw-lane-fallback",
+		"programId": program_id,
+		"reason": reason,
+	})
+
+
+## Raw-byte lane public surface: execute a program's exact retail bytes
+## through AptVm against a caller-provided AptRuntimeHost, so script-defined
+## handler families (SetFlashEffectState, the palantir:169224 lifecycle
+## block, the palantir:169256 button methods) register from the real
+## bytecode bodies. Returns {} unless the run completes cleanly. The
+## returned "vm" owns the handler bodies; the host keeps it referenced for
+## later dispatch.
+func execute_program_retail_bytes(program_id: String, external_host: RefCounted) -> Dictionary:
+	if external_host == null:
+		return {}
+	var raw_value: Variant = _vm_raw_programs.get(program_id, {})
+	if typeof(raw_value) != TYPE_DICTIONARY or (raw_value as Dictionary).is_empty():
+		return {}
+	var raw := raw_value as Dictionary
+	var raw_constants: Array = (
+		(_vm_constants.get(String(raw.get("movieKey", "")), {}) as Dictionary).get("entries", [])
+	)
+	var vm = APT_VM_SCRIPT.new()
+	vm.host = external_host
+	var result: Dictionary = vm.execute(
+		_build_vm_byte_space(raw), raw_constants, int(raw.get("entry", 0))
+	)
+	if not bool(result.get("completed", false)):
+		_note_vm_lane_failure(program_id, "halted:%s" % String(result.get("halted_reason", "")), true)
+		return {}
+	vm_raw_byte_executed_program_count += 1
+	return {"result": result, "vm": vm}
+
+
+## Whether a bound program document carries validated retail raw bytes.
+func has_vm_raw_bytes(program_id: String) -> bool:
+	return _vm_raw_programs.has(program_id)
 
 
 ## Bind a host widget name to a real display node so VM-lane _x/_y/_alpha/
@@ -2600,6 +2844,8 @@ func _validate_clip_actions(programs_value: Variant, bindings_value: Variant, ti
 			supported_clip_action_program_count += 1
 		elif TYPED_INITIALIZE_PROGRAMS.has(program_id) or (unsupported_value as Array).is_empty() or not (effects_value as Array).is_empty():
 			_fail("Palantir blocked clip action lost exact opcode evidence")
+			return {}
+		if not _validate_vm_bytecode_field(program_id, program):
 			return {}
 		program_ids[program_id] = true
 		_clip_action_programs[program_id] = program
@@ -3958,7 +4204,14 @@ func _reset() -> void:
 	wnd_typed_callback_count = 0
 	vm_executed_program_count = 0
 	vm_fallback_program_count = 0
+	vm_raw_byte_executed_program_count = 0
+	vm_synthesized_executed_program_count = 0
+	vm_raw_fallback_program_count = 0
+	legacy_executed_program_count = 0
 	_vm_fallback_program_ids.clear()
+	_vm_raw_fallback_program_ids.clear()
+	_vm_constants.clear()
+	_vm_raw_programs.clear()
 	vm_audio_intents.clear()
 	_vm_audio_intent_callback = Callable()
 	_vm_display_bindings.clear()

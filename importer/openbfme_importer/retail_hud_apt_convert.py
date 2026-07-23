@@ -11,6 +11,7 @@ event dispatch, and every opcode outside that exact subset remain blockers.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
@@ -1425,6 +1426,125 @@ def _flatten_action_instructions(
     return rows
 
 
+# Version tag for the additive per-program raw-byte contract. Consumers that
+# do not know the field ignore it; the Godot raw-byte VM lane requires exactly
+# this version and falls back to row synthesis / legacy effects otherwise.
+VM_BYTECODE_VERSION = 1
+MAX_VM_BYTE_SPACE = 4 * 1024 * 1024
+
+
+def _vm_segment_string(reader: _Reader, pointer: int, context: str) -> tuple[int, int]:
+    """Exact [start,end) byte range of one NUL-terminated operand string."""
+
+    if not 0 <= pointer < len(reader.data):
+        raise HudAptConvertError(f"{reader.label} {context} string is out of bounds")
+    end = reader.data.find(b"\0", pointer, min(len(reader.data), pointer + 4097))
+    if end < 0:
+        raise HudAptConvertError(f"{reader.label} {context} string is unterminated")
+    return pointer, end + 1
+
+
+def _collect_vm_segment_ranges(
+    movie: _Movie,
+    instructions: list[dict[str, Any]],
+    start: int,
+    end: int,
+) -> list[tuple[int, int]]:
+    """Every byte range the VM addresses while executing [start,end).
+
+    APT operand pointers (strings, constant-index tables, function parameter
+    tables) are absolute within the movie byte space and usually live outside
+    the instruction range, so the raw-byte contract must carry them too.
+    """
+
+    reader = movie.reader
+    ranges: list[tuple[int, int]] = [(start, end)]
+
+    def add_string(pointer: int, context: str) -> None:
+        ranges.append(_vm_segment_string(reader, pointer, context))
+
+    for row in _flatten_action_instructions(instructions):
+        opcode = int(row["opcode"])
+        aligned = (int(row["offset"]) + 1 + 3) & ~3
+        if "operandPointer" in row:
+            add_string(int(row["operandPointer"]), "VM segment operand")
+        if "tablePointer" in row:
+            table = int(row["tablePointer"])
+            count = len(row.get("constants", []))
+            if count:
+                ranges.append((table, table + count * 4))
+        if opcode == 0x83:
+            add_string(reader.u32(aligned, "VM segment URL"), "VM segment URL")
+            add_string(
+                reader.u32(aligned + 4, "VM segment URL target"),
+                "VM segment URL target",
+            )
+        if opcode in (0x8E, 0x9B):
+            add_string(
+                reader.u32(aligned, "VM segment function name"),
+                "VM segment function name",
+            )
+            parameters = row.get("parameters", [])
+            count = len(parameters)
+            if count:
+                if opcode == 0x8E:
+                    table = reader.u32(aligned + 12, "VM segment parameter table")
+                    stride, name_offset = 8, 4
+                else:
+                    table = reader.u32(aligned + 8, "VM segment parameter table")
+                    stride, name_offset = 4, 0
+                ranges.append((table, table + count * stride))
+                for index in range(count):
+                    add_string(
+                        reader.u32(
+                            table + index * stride + name_offset,
+                            "VM segment parameter name",
+                        ),
+                        "VM segment parameter name",
+                    )
+    merged: list[tuple[int, int]] = []
+    for range_start, range_end in sorted(ranges):
+        if merged and range_start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], range_end))
+        else:
+            merged.append((range_start, range_end))
+    return merged
+
+
+def _vm_bytecode_contract(
+    movie: _Movie,
+    instructions: list[dict[str, Any]],
+    start: int,
+    end: int,
+) -> dict[str, Any]:
+    """Additive raw-byte execution contract for one supported program."""
+
+    merged = _collect_vm_segment_ranges(movie, instructions, start, end)
+    byte_space_size = merged[-1][1]
+    if byte_space_size > MAX_VM_BYTE_SPACE:
+        raise HudAptConvertError("VM byte space exceeds bounds")
+    segments = [
+        {
+            "offset": range_start,
+            "byteLength": range_end - range_start,
+            "sha256": _sha(movie.reader.data[range_start:range_end]),
+            "bytesBase64": base64.b64encode(
+                movie.reader.data[range_start:range_end]
+            ).decode("ascii"),
+        }
+        for range_start, range_end in merged
+    ]
+    return {
+        "version": VM_BYTECODE_VERSION,
+        "entryOffset": start,
+        "byteLength": end - start,
+        "sha256": _sha(movie.reader.data[start:end]),
+        "byteSpaceSize": byte_space_size,
+        "constantsSha256": str(movie.constants["sha256"]),
+        "segments": segments,
+    }
+
+
 def _evaluate_timeline_action_subset(
     instructions: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], int, int, list[dict[str, Any]]]:
@@ -1862,6 +1982,12 @@ def _decode_action_program(movie: _Movie, row: Mapping[str, Any]) -> dict[str, A
         "terminalStackDepth": terminal,
         "unsupportedInstructions": unsupported,
     }
+    if program["supported"]:
+        # Additive raw-byte contract: exact retail bytes, byte-space offsets,
+        # and the movie CONST identity for the real-VM execution lane.
+        program["vmBytecode"] = _vm_bytecode_contract(
+            movie, instructions, instruction_offset, end
+        )
     return program
 
 
@@ -4972,6 +5098,26 @@ def _make_contract(
         flattener.button_instances,
         key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
     )
+    vm_bytecode_programs = [
+        program
+        for program in (*action_programs, *clip_action_programs)
+        if "vmBytecode" in program
+    ]
+    vm_constants: dict[str, Any] = {}
+    for program in vm_bytecode_programs:
+        movie_key = str(program["movie"]).casefold()
+        if movie_key in vm_constants:
+            continue
+        movie = movies[movie_key]
+        vm_constants[movie_key] = {
+            "movie": movie.name,
+            "sha256": str(movie.constants["sha256"]),
+            "entries": [
+                {"type": int(entry["type"]), "value": entry.get("value")}
+                for entry in movie.constants["entries"]
+            ],
+        }
+    vm_constants = {key: vm_constants[key] for key in sorted(vm_constants)}
     contract: dict[str, Any] = {
         "schema": OUTPUT_SCHEMA,
         "schemaVersion": 0,
@@ -5052,6 +5198,7 @@ def _make_contract(
         ),
         "actionScripts": action_programs,
         "clipActionPrograms": clip_action_programs,
+        "vmConstants": vm_constants,
         "clipActions": clip_actions,
         "fonts": font_definitions,
         "texts": text_definitions,
@@ -5083,6 +5230,8 @@ def _make_contract(
             "typedPalantirCommandActionScriptCount": len(
                 palantir_command_topology["typedScriptIds"]
             ),
+            "vmBytecodeProgramCount": len(vm_bytecode_programs),
+            "vmConstantsMovieCount": len(vm_constants),
             "clipActionProgramCount": len(clip_action_programs),
             "supportedClipActionProgramCount": sum(
                 bool(program["supported"]) for program in clip_action_programs

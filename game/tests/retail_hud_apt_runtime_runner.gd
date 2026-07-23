@@ -288,6 +288,67 @@ func _run() -> void:
 	_check("vm_lane_binding_gap_diagnosed_once", bool(vm_lane_runtime.execute_action_script("palantir:147", vm_property_state)) and _count_diagnostic(vm_lane_runtime.diagnostics, "apt-vm-display-binding-gap") == 1)
 	vm_lane_runtime.reset_runtime()
 	_check("vm_lane_counters_reset_atomically", int(vm_lane_runtime.vm_executed_program_count) == 0 and int(vm_lane_runtime.vm_fallback_program_count) == 0 and (vm_lane_runtime.vm_audio_intents as Array).is_empty())
+
+	# Raw-byte lane: programs carrying exact byte ranges execute through the
+	# real VM with no synthesis; rows-only programs keep the synthesis lane;
+	# raw faults fall back exactly as today; tampered bytes fail closed at
+	# configure time.
+	var raw_document := document.duplicate(true)
+	(raw_document.actionScripts as Array).append_array(_raw_byte_fixture_programs())
+	raw_document["vmConstants"] = _raw_fixture_vm_constants()
+	(raw_document.summary as Dictionary)["actionScriptCount"] = 7
+	(raw_document.summary as Dictionary)["supportedActionScriptCount"] = 6
+	(raw_document.summary as Dictionary)["unsupportedActionScriptCount"] = 1
+	var raw_runtime = runtime_script.new()
+	root.add_child(raw_runtime)
+	_check("raw_byte_fixture_binds", bool(raw_runtime.configure_document(raw_document, fixture_root, true)), String(raw_runtime.error))
+	_check("raw_byte_inventory_staged", bool(raw_runtime.has_vm_raw_bytes("palantir:150")) and bool(raw_runtime.has_vm_raw_bytes("palantir:152")) and not bool(raw_runtime.has_vm_raw_bytes("palantir:151")))
+	var raw_stop_state := {"playing": true}
+	var synth_stop_state := {"playing": true}
+	_check("raw_byte_stop_executes_retail_bytes", bool(raw_runtime.execute_action_script("palantir:150", raw_stop_state)) and not bool(raw_stop_state.playing) and int(raw_runtime.vm_raw_byte_executed_program_count) == 1 and int(raw_runtime.vm_synthesized_executed_program_count) == 0)
+	_check("rows_only_program_keeps_synthesis_lane", bool(raw_runtime.execute_action_script("palantir:151", synth_stop_state)) and int(raw_runtime.vm_synthesized_executed_program_count) == 1 and int(raw_runtime.vm_raw_byte_executed_program_count) == 1)
+	_check("raw_and_synth_stop_states_identical", raw_stop_state == synth_stop_state)
+	var raw_goto_state := {"label": ""}
+	var synth_goto_state := {"label": ""}
+	_check("raw_byte_goto_label_resolves_sparse_string", bool(raw_runtime.execute_action_script("palantir:152", raw_goto_state)) and String(raw_goto_state.label) == "_show" and int(raw_runtime.vm_raw_byte_executed_program_count) == 2)
+	_check("raw_and_synth_goto_states_identical", bool(raw_runtime.execute_action_script("palantir:153", synth_goto_state)) and raw_goto_state == synth_goto_state)
+	var raw_fault_state := {"playing": false}
+	_check("raw_byte_fault_falls_back_to_legacy", bool(raw_runtime.execute_action_script("palantir:154", raw_fault_state)) and bool(raw_fault_state.playing) and int(raw_runtime.vm_raw_fallback_program_count) == 1 and int(raw_runtime.legacy_executed_program_count) == 1 and _has_diagnostic(raw_runtime.diagnostics, "apt-vm-raw-lane-fallback"))
+	_check("raw_byte_counter_totals_distinguish_lanes", int(raw_runtime.vm_executed_program_count) == 4 and int(raw_runtime.vm_raw_byte_executed_program_count) == 2 and int(raw_runtime.vm_synthesized_executed_program_count) == 2 and int(raw_runtime.vm_fallback_program_count) == 1 and int(raw_runtime.legacy_executed_program_count) == 1)
+	var host_script_resource = load("res://src/apt/apt_runtime_host.gd")
+	var raw_host_a = host_script_resource.new(0, "clip")
+	var raw_host_b = host_script_resource.new(0, "clip")
+	var raw_exec_a := raw_runtime.execute_program_retail_bytes("palantir:150", raw_host_a) as Dictionary
+	var raw_exec_b := raw_runtime.execute_program_retail_bytes("palantir:150", raw_host_b) as Dictionary
+	_check("raw_byte_external_host_execution_completes", not raw_exec_a.is_empty() and bool((raw_exec_a.get("result", {}) as Dictionary).get("completed", false)) and (raw_host_a.playback_events() as Array).size() == 1 and String(((raw_host_a.playback_events() as Array)[0] as Dictionary).get("op", "")) == "stop")
+	_check("raw_byte_external_host_execution_deterministic", not raw_exec_b.is_empty() and String(raw_host_a.state_digest()) == String(raw_host_b.state_digest()))
+	raw_runtime.reset_runtime()
+	_check("raw_byte_counters_reset_atomically", int(raw_runtime.vm_raw_byte_executed_program_count) == 0 and int(raw_runtime.vm_synthesized_executed_program_count) == 0 and int(raw_runtime.vm_raw_fallback_program_count) == 0 and int(raw_runtime.legacy_executed_program_count) == 0 and not bool(raw_runtime.has_vm_raw_bytes("palantir:150")))
+
+	var tampered_raw := raw_document.duplicate(true)
+	for program_value in tampered_raw.actionScripts as Array:
+		if String((program_value as Dictionary).get("scriptId", "")) == "palantir:150":
+			var tampered_segment := ((((program_value as Dictionary).vmBytecode as Dictionary).segments as Array)[0]) as Dictionary
+			tampered_segment["bytesBase64"] = Marshalls.raw_to_base64(PackedByteArray([0x06, 0x00]))
+	var tampered_raw_runtime = runtime_script.new()
+	root.add_child(tampered_raw_runtime)
+	_check("tampered_raw_bytes_fail_closed", not bool(tampered_raw_runtime.configure_document(tampered_raw, fixture_root, true)) and String(tampered_raw_runtime.error).contains("tampered"), String(tampered_raw_runtime.error))
+
+	var moved_raw := raw_document.duplicate(true)
+	for program_value in moved_raw.actionScripts as Array:
+		if String((program_value as Dictionary).get("scriptId", "")) == "palantir:150":
+			((program_value as Dictionary).vmBytecode as Dictionary)["entryOffset"] = 68
+	var moved_raw_runtime = runtime_script.new()
+	root.add_child(moved_raw_runtime)
+	_check("moved_raw_entry_offset_fails_closed", not bool(moved_raw_runtime.configure_document(moved_raw, fixture_root, true)) and String(moved_raw_runtime.error).contains("identity changed"), String(moved_raw_runtime.error))
+
+	var wrong_const_raw := raw_document.duplicate(true)
+	for program_value in wrong_const_raw.actionScripts as Array:
+		if String((program_value as Dictionary).get("scriptId", "")) == "palantir:150":
+			((program_value as Dictionary).vmBytecode as Dictionary)["constantsSha256"] = "0".repeat(64)
+	var wrong_const_runtime = runtime_script.new()
+	root.add_child(wrong_const_runtime)
+	_check("changed_raw_constants_identity_fails_closed", not bool(wrong_const_runtime.configure_document(wrong_const_raw, fixture_root, true)) and String(wrong_const_runtime.error).contains("constants"), String(wrong_const_runtime.error))
 	_run_private_contract_if_requested()
 	_finish()
 
@@ -467,6 +528,110 @@ func _run_private_contract_if_requested() -> void:
 	_check("private_resource_flash_dynamic_gates_are_narrow", _count_blocker((value as Dictionary).get("unsupportedSemantics", []), "resource-flash-native-trigger-capture-not-passed") == 1 and _count_blocker((value as Dictionary).get("unsupportedSemantics", []), "resource-flash-mixer-overlap-capture-not-passed") == 1 and _count_blocker((value as Dictionary).get("unsupportedSemantics", []), "action-script-unsupported-opcodes") == 8)
 	_check("private_external_slots_bind", bool(private_runtime.external_movie_slots_ready) and int(private_runtime.external_movie_slot_count) == 4 and not bool(private_runtime.external_movie_slot_state("HeroSelectUI").get("visible", true)))
 
+	# --- Raw-byte lane against the real retail contract ----------------------
+	var private_vm_constants := validation_document.get("vmConstants", {}) as Dictionary
+	_check("private_vm_constants_present", private_vm_constants.has("palantir") and private_vm_constants.has("ingamesidecommandbar"))
+	var private_raw_program_count := 0
+	for program_value in (validation_document.get("actionScripts", []) as Array) + (validation_document.get("clipActionPrograms", []) as Array):
+		if (program_value as Dictionary).has("vmBytecode"):
+			private_raw_program_count += 1
+	_check("private_raw_byte_program_count_is_71", private_raw_program_count == 71, str(private_raw_program_count))
+	_check("private_measured_handler_programs_carry_raw_bytes", bool(private_runtime.has_vm_raw_bytes("palantir:169224")) and bool(private_runtime.has_vm_raw_bytes("palantir:169256")) and bool(private_runtime.has_vm_raw_bytes("ingamesidecommandbar:clip-event:13680")))
+	# Digest equality: the same retail stop program through the raw-byte lane
+	# and through row synthesis mutates identical timeline state.
+	var private_stop_script_id := ""
+	for program_value in validation_document.get("actionScripts", []) as Array:
+		var program := program_value as Dictionary
+		var program_instructions := program.get("instructions", []) as Array
+		if bool(program.get("supported", false)) and program_instructions.size() == 2 and String((program_instructions[0] as Dictionary).get("name", "")) == "stop":
+			private_stop_script_id = String(program.get("scriptId", ""))
+			break
+	_check("private_retail_stop_program_found", private_stop_script_id != "")
+	var private_rows_only := validation_document.duplicate(true)
+	for program_value in private_rows_only.actionScripts as Array:
+		(program_value as Dictionary).erase("vmBytecode")
+	for program_value in private_rows_only.clipActionPrograms as Array:
+		(program_value as Dictionary).erase("vmBytecode")
+	var private_rows_runtime = runtime_script.new()
+	root.add_child(private_rows_runtime)
+	_check("private_rows_only_document_binds", bool(private_rows_runtime.configure_document(private_rows_only, pack_root, true)), String(private_rows_runtime.error))
+	var private_raw_before := int(private_runtime.vm_raw_byte_executed_program_count)
+	var private_raw_state := {"playing": true}
+	var private_synth_state := {"playing": true}
+	_check("private_raw_stop_executes_retail_bytes", bool(private_runtime.execute_action_script(private_stop_script_id, private_raw_state)) and int(private_runtime.vm_raw_byte_executed_program_count) == private_raw_before + 1)
+	_check("private_synth_stop_executes_rows", bool(private_rows_runtime.execute_action_script(private_stop_script_id, private_synth_state)) and int(private_rows_runtime.vm_raw_byte_executed_program_count) == 0 and int(private_rows_runtime.vm_synthesized_executed_program_count) == 1)
+	_check("private_raw_vs_synth_state_digest_equal", JSON.stringify(private_raw_state, "", true) == JSON.stringify(private_synth_state, "", true), "%s vs %s" % [JSON.stringify(private_raw_state), JSON.stringify(private_synth_state)])
+	# The measured SetFlashEffectState handler registers from the exact
+	# retail bytes and dispatches through the real bytecode body with the
+	# same dispatch contract as tier-4's test-assembled bodies.
+	var private_host_script = load("res://src/apt/apt_runtime_host.gd")
+	var flash_pass_digests: Array[String] = []
+	var flash_pass_ok := true
+	var flash_order_ok := true
+	var flash_detail := ""
+	for _pass in range(2):
+		var flash_host = private_host_script.new(0, "_root")
+		var side_bar: String = flash_host.add_clip("_root", "bar")
+		var side_button: String = flash_host.add_clip(side_bar, "3")
+		var side_flash_clip: String = flash_host.add_clip(side_button, "flash")
+		var effects_collection: String = flash_host.add_clip(side_bar, "flashEffects")
+		flash_host.add_clip(effects_collection, "3", {"labels": {"_flash": 3}, "total_frames": 6})
+		flash_host.set_scope(side_flash_clip)
+		var registration := private_runtime.execute_program_retail_bytes("ingamesidecommandbar:clip-event:13680", flash_host) as Dictionary
+		var registered: bool = not registration.is_empty() and bool(flash_host.has_clip_handler(side_flash_clip, "SetFlashEffectState"))
+		var dispatch := flash_host.dispatch_clip_handler(side_flash_clip, "SetFlashEffectState", ["_flash"]) as Dictionary
+		var flash_target := flash_host.widget_state(effects_collection + ".3") as Dictionary
+		flash_pass_ok = flash_pass_ok and registered and bool(dispatch.get("completed", false)) \
+			and String(flash_target.label) == "_flash" and int(flash_target.frame) == 3 \
+			and bool(flash_target.playing) and (flash_host.recorded as Array).is_empty()
+		if not flash_pass_ok and flash_detail == "":
+			flash_detail = "reg=%s handler=%s dispatch=%s target=%s recorded=%s log=%s" % [
+				not registration.is_empty(), flash_host.has_clip_handler(side_flash_clip, "SetFlashEffectState"),
+				JSON.stringify(dispatch), JSON.stringify(flash_target),
+				JSON.stringify(flash_host.recorded), JSON.stringify(flash_host.handler_log),
+			]
+		var dispatch_index := -1
+		var playback_index := -1
+		for index in (flash_host.events as Array).size():
+			var event := (flash_host.events as Array)[index] as Dictionary
+			if String(event.get("family", "")) == "dispatch" and dispatch_index < 0:
+				dispatch_index = index
+			if String(event.get("family", "")) == "playback" and playback_index < 0:
+				playback_index = index
+		flash_order_ok = flash_order_ok and dispatch_index >= 0 and playback_index > dispatch_index
+		flash_pass_digests.append(String(flash_host.state_digest()))
+	_check("private_retail_bytes_register_and_dispatch_flash_handler", flash_pass_ok, flash_detail)
+	_check("private_retail_flash_dispatch_precedes_effect", flash_order_ok)
+	_check("private_retail_flash_dispatch_deterministic", flash_pass_digests.size() == 2 and flash_pass_digests[0] == flash_pass_digests[1])
+	# palantir:169224 registers the six lifecycle handlers from retail bytes.
+	var lifecycle_host = private_host_script.new(0, "_root")
+	var command_clip: String = lifecycle_host.add_clip("_root", "CommandUI")
+	lifecycle_host.set_scope(command_clip)
+	var lifecycle_registration := private_runtime.execute_program_retail_bytes("palantir:169224", lifecycle_host) as Dictionary
+	var lifecycle_names := [
+		"OnMovieClipFrameLoaded", "OnMovieClipFrameUnloaded",
+		"OnCommandButtonSubMenuLoaded", "OnCommandButtonSubMenuUnloaded",
+		"OnCommandButtonToggleFlashLoaded", "OnCommandButtonToggleFlashUnloaded",
+	]
+	var lifecycle_registered := not lifecycle_registration.is_empty()
+	for lifecycle_name in lifecycle_names:
+		lifecycle_registered = lifecycle_registered and bool(lifecycle_host.has_clip_handler(command_clip, String(lifecycle_name)))
+	_check("private_retail_bytes_register_lifecycle_handlers", lifecycle_registered and (lifecycle_host.recorded as Array).is_empty() and (lifecycle_host.handler_log as Array).size() == 6)
+	# palantir:169256 registers the three button methods on each of the six
+	# numeric button children from retail bytes.
+	var methods_host = private_host_script.new(0, "_root")
+	var buttons_clip: String = methods_host.add_clip("_root", "CommandButtons")
+	var button_paths: Array[String] = []
+	for index in range(6):
+		button_paths.append(String(methods_host.add_clip(buttons_clip, str(index))))
+	methods_host.set_scope(buttons_clip)
+	var methods_registration := private_runtime.execute_program_retail_bytes("palantir:169256", methods_host) as Dictionary
+	var methods_registered := not methods_registration.is_empty()
+	for button_path in button_paths:
+		for method_name in ["SetAutoAbilityOverlayState", "SetFlashEffectState", "SetGlassState"]:
+			methods_registered = methods_registered and bool(methods_host.has_clip_handler(String(button_path), String(method_name)))
+	_check("private_retail_bytes_register_button_methods", methods_registered and (methods_host.recorded as Array).is_empty() and (methods_host.handler_log as Array).size() == 18, "reg=%s recorded=%s log=%s" % [not methods_registration.is_empty(), (methods_host.recorded as Array).size(), (methods_host.handler_log as Array).size()])
+
 
 ## Three supported generic programs for the tier-3 VM lane: a synthesizable
 ## goto-frame, a synthesizable goto-label, and a deliberately
@@ -576,6 +741,107 @@ func _vm_lane_fixture_programs() -> Array:
 		})
 		source_offset += 1
 	return rows
+
+
+## Raw-byte lane fixtures. 150/152 carry hand-assembled retail-format byte
+## spaces (absolute offsets, aligned operands, out-of-range string segment);
+## 151/153 are the rows-only synthesized equivalents; 154 carries raw bytes
+## that fault (stack underflow) and rows that cannot synthesize, so it must
+## fall back to the legacy declarative path.
+const RAW_FIXTURE_CONSTANTS_SHA := "7777777777777777777777777777777777777777777777777777777777777777"
+
+
+func _raw_fixture_vm_constants() -> Dictionary:
+	return {
+		"palantir": {
+			"movie": "Palantir",
+			"sha256": RAW_FIXTURE_CONSTANTS_SHA,
+			"entries": [{"type": 1, "value": "_show"}],
+		},
+	}
+
+
+func _sha256_hex(data: PackedByteArray) -> String:
+	var context := HashingContext.new()
+	context.start(HashingContext.HASH_SHA256)
+	context.update(data)
+	return context.finish().hex_encode()
+
+
+func _raw_segment(offset: int, data: PackedByteArray) -> Dictionary:
+	return {
+		"offset": offset,
+		"byteLength": data.size(),
+		"sha256": _sha256_hex(data),
+		"bytesBase64": Marshalls.raw_to_base64(data),
+	}
+
+
+func _raw_byte_fixture_programs() -> Array:
+	var stop_bytes := PackedByteArray([0x07, 0x00])
+	var goto_bytes := PackedByteArray([0x8C, 0, 0, 0, 40, 0, 0, 0, 0x00])
+	var label_bytes := "_show".to_utf8_buffer()
+	label_bytes.append(0)
+	var fault_bytes := PackedByteArray([0x17, 0x00])
+	var stop_rows := [
+		{"offset": 64, "nextOffset": 65, "opcode": 0x07, "name": "stop", "body": []},
+		{"offset": 65, "nextOffset": 66, "opcode": 0, "name": "end", "body": []},
+	]
+	var goto_rows := [
+		{"offset": 96, "nextOffset": 104, "opcode": 0x8C, "name": "goto-label", "operand": "_show", "body": []},
+		{"offset": 104, "nextOffset": 105, "opcode": 0, "name": "end", "body": []},
+	]
+	var rows: Array = [
+		_raw_fixture_program("palantir:150", 150, 64, stop_rows,
+			[{"kind": "stop"}], stop_bytes, {
+				"version": 1, "entryOffset": 64, "byteLength": stop_bytes.size(),
+				"sha256": _sha256_hex(stop_bytes), "byteSpaceSize": 66,
+				"constantsSha256": RAW_FIXTURE_CONSTANTS_SHA,
+				"segments": [_raw_segment(64, stop_bytes)],
+			}),
+		_raw_fixture_program("palantir:151", 151, 64, stop_rows,
+			[{"kind": "stop"}], stop_bytes, {}),
+		_raw_fixture_program("palantir:152", 152, 96, goto_rows,
+			[{"kind": "goto", "targetType": "label", "target": "_show"}], goto_bytes, {
+				"version": 1, "entryOffset": 96, "byteLength": goto_bytes.size(),
+				"sha256": _sha256_hex(goto_bytes), "byteSpaceSize": 105,
+				"constantsSha256": RAW_FIXTURE_CONSTANTS_SHA,
+				"segments": [_raw_segment(40, label_bytes), _raw_segment(96, goto_bytes)],
+			}),
+		_raw_fixture_program("palantir:153", 153, 96, goto_rows,
+			[{"kind": "goto", "targetType": "label", "target": "_show"}], goto_bytes, {}),
+		_raw_fixture_program("palantir:154", 154, 64, [
+			{"offset": 64, "nextOffset": 65, "opcode": 0x17, "name": "pop", "body": []},
+			{"offset": 65, "nextOffset": 66, "opcode": 0, "name": "end", "body": []},
+		], [{"kind": "play"}], fault_bytes, {
+			"version": 1, "entryOffset": 64, "byteLength": fault_bytes.size(),
+			"sha256": _sha256_hex(fault_bytes), "byteSpaceSize": 66,
+			"constantsSha256": RAW_FIXTURE_CONSTANTS_SHA,
+			"segments": [_raw_segment(64, fault_bytes)],
+		}),
+	]
+	return rows
+
+
+func _raw_fixture_program(script_id: String, source_offset: int, instruction_offset: int, instructions: Array, effects: Array, code_bytes: PackedByteArray, vm_bytecode: Dictionary) -> Dictionary:
+	var program := {
+		"scriptId": script_id,
+		"movie": "Palantir",
+		"actionKind": "action-script",
+		"sourceOffset": source_offset,
+		"instructionOffset": instruction_offset,
+		"byteLength": code_bytes.size(),
+		"sha256": _sha256_hex(code_bytes),
+		"instructions": instructions,
+		"supported": true,
+		"effects": effects,
+		"maximumStackDepth": 0,
+		"terminalStackDepth": 0,
+		"unsupportedInstructions": [],
+	}
+	if not vm_bytecode.is_empty():
+		program["vmBytecode"] = vm_bytecode
+	return program
 
 
 func _minlod_fixture_programs() -> Array:

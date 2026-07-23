@@ -127,6 +127,7 @@ func _run() -> void:
 	# Tier-4 suite: script-defined handler dispatch, attach/remove content,
 	# and the converted-movie allowlist.
 	_test_tier4_handler_registration_and_dispatch()
+	_test_tier4_member_assigned_handler_registration()
 	_test_tier4_reentrant_handler_dispatch()
 	_test_tier4_attach_and_remove_movie()
 	_test_tier4_create_delete_content()
@@ -1538,6 +1539,123 @@ func _test_tier4_handler_registration_and_dispatch() -> void:
 	_check("t4_unregistered_dispatch_fails_closed",
 		not bool(unregistered.get("completed", true))
 		and (host.recorded as Array).size() == 1)
+
+
+## The retail HUD registration form: an ANONYMOUS DefineFunction assigned to
+## a member of `this` (e.g. `this.SetFlashEffectState = function(state)...`,
+## ingamesidecommandbar clip-event 13680 / palantir:169224 family). The
+## member assignment must register the measured handler at the scope clip;
+## unmeasured names fail closed into handler_log; plain script objects keep
+## pure in-VM member semantics.
+func _build_member_assign_asm(handler_name_pool_id: int) -> Asm:
+	# Pool ids: 0="state", 1=<handler name>, 2="gotoAndPlay".
+	var asm := Asm.new()
+	var pool_patch := _emit_constant_pool(asm, 3)
+	asm.op(0x70)  # this (scope object)
+	asm.op(0xA2)  # member name from pool
+	asm.u8(handler_name_pool_id)
+	# Anonymous DefineFunction(state) { this.gotoAndPlay(state) }
+	asm.op_aligned(0x9B)
+	var name_patch := asm.mark()
+	asm.u32(0)
+	asm.u32(1)  # param count
+	var table_patch := asm.mark()
+	asm.u32(0)
+	var size_patch := asm.mark()
+	asm.i32(0)
+	asm.u32(0)
+	asm.u32(0)
+	var body_start := asm.mark()
+	asm.op(0xAE)  # value of param "state"
+	asm.u8(0)
+	asm.op(0x5A)  # argc = 1
+	asm.op(0x70)  # this
+	asm.op(0xB2)  # EA_CallNamedMethodPop "gotoAndPlay"
+	asm.u8(2)
+	asm.op(0x00)
+	asm.patch_i32(size_patch, asm.mark() - body_start)
+	asm.op(0x4F)  # SetMember: this.<name> = fn
+	asm.op(0x00)
+	var empty_name_off := asm.cstring("")
+	var state_off := asm.cstring("state")
+	asm.patch_u32(name_patch, empty_name_off)
+	asm.patch_u32(table_patch, asm.index_table([state_off]))
+	asm.patch_u32(pool_patch, asm.index_table([0, 1, 2]))
+	return asm
+
+
+func _test_tier4_member_assigned_handler_registration() -> void:
+	var host = host_script.new(0, "_root")
+	var clip: String = host.add_clip("_root", "flashClip", {"labels": {"_flash": 3}, "total_frames": 6})
+	host.set_scope(clip)
+	var vm = AptVmScript.new()
+	vm.host = host
+	var result: Dictionary = vm.execute(
+		_build_member_assign_asm(1).bytes,
+		_string_constants(["state", "SetFlashEffectState", "gotoAndPlay"]))
+	_check("t4_member_assign_script_completes",
+		bool(result["completed"]) and (host.recorded as Array).is_empty())
+	_check("t4_member_assign_registers_measured_handler",
+		host.has_clip_handler(clip, "SetFlashEffectState")
+		and (host.handler_log as Array).size() == 1
+		and String(((host.handler_log as Array)[0] as Dictionary).get("kind", "")) == "assign")
+	var dispatch: Dictionary = host.dispatch_clip_handler(clip, "SetFlashEffectState", ["_flash"])
+	var state: Dictionary = host.widget_state(clip)
+	_check("t4_member_assign_dispatch_executes_real_body",
+		bool(dispatch.get("completed", false)) and String(state.label) == "_flash"
+		and int(state.frame) == 3 and bool(state.playing))
+	# Unmeasured member-assigned names fail closed and never dispatch.
+	var weird_host = host_script.new(0, "_root")
+	var weird_clip: String = weird_host.add_clip("_root", "weirdClip")
+	weird_host.set_scope(weird_clip)
+	var weird_vm = AptVmScript.new()
+	weird_vm.host = weird_host
+	var weird_result: Dictionary = weird_vm.execute(
+		_build_member_assign_asm(1).bytes,
+		_string_constants(["state", "DoWeirdThing", "gotoAndPlay"]))
+	_check("t4_member_assign_unmeasured_fails_closed",
+		bool(weird_result["completed"])
+		and not weird_host.has_clip_handler(weird_clip, "DoWeirdThing")
+		and (weird_host.handler_log as Array).size() == 1
+		and String(((weird_host.handler_log as Array)[0] as Dictionary).get("kind", "")) == "unmeasured-assign"
+		and (weird_host.recorded as Array).is_empty())
+	# A plain script object keeps pure in-VM member semantics: no host
+	# registration, no handler_log entry.
+	var object_host = host_script.new(0, "_root")
+	var object_vm = AptVmScript.new()
+	object_vm.host = object_host
+	var object_asm := Asm.new()
+	var object_pool_patch := _emit_constant_pool(object_asm, 3)
+	object_asm.op(0x59)  # 0 pairs
+	object_asm.op(0x43)  # InitObject -> plain object
+	object_asm.op(0xA2)  # member name "SetFlashEffectState"
+	object_asm.u8(1)
+	object_asm.op_aligned(0x9B)
+	var object_name_patch := object_asm.mark()
+	object_asm.u32(0)
+	object_asm.u32(0)
+	var object_table_patch := object_asm.mark()
+	object_asm.u32(0)
+	var object_size_patch := object_asm.mark()
+	object_asm.i32(0)
+	object_asm.u32(0)
+	object_asm.u32(0)
+	var object_body_start := object_asm.mark()
+	object_asm.op(0x00)
+	object_asm.patch_i32(object_size_patch, object_asm.mark() - object_body_start)
+	object_asm.op(0x4F)  # SetMember on the plain object
+	object_asm.op(0x00)
+	var object_empty_off := object_asm.cstring("")
+	object_asm.patch_u32(object_name_patch, object_empty_off)
+	object_asm.patch_u32(object_table_patch, object_asm.index_table([]))
+	object_asm.patch_u32(object_pool_patch, object_asm.index_table([0, 1, 2]))
+	var object_result: Dictionary = object_vm.execute(
+		object_asm.bytes,
+		_string_constants(["state", "SetFlashEffectState", "gotoAndPlay"]))
+	_check("t4_member_assign_plain_object_stays_in_vm",
+		bool(object_result["completed"])
+		and (object_host.handler_log as Array).is_empty()
+		and (object_host.recorded as Array).is_empty())
 
 
 ## A single script defines SetGlassState then calls it on a host clip path;

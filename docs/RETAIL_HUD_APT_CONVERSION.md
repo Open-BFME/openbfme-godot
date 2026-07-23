@@ -397,3 +397,35 @@ aggregate contract SHA-256
 `3e108f701d214427ee8b635cea950ccdde23c5647ffc4c8c868907e30fc9909c`,
 and scene-file SHA-256
 `7b812cfb3c3d25f9b2807670081ca3465b41cb9c7a7cc501167bd87a5d1572ff`.
+(Those two contract hashes predate the raw-byte field below and are
+superseded by any conversion after 2026-07-23.)
+
+### Raw-byte execution contract (2026-07-23)
+
+Every supported program (the 66 executable frame scripts and the five
+executable clip-action programs, including the measured handler bodies
+`palantir:169224`, `palantir:169256`, and
+`ingamesidecommandbar:clip-event:13680`) now additionally carries an
+additive, versioned `vmBytecode` field: the exact raw byte range from the
+source APT (base64, per-segment SHA-256), its absolute byte-space offset,
+every out-of-range operand segment the VM addresses (strings, constant-index
+tables, function name/parameter tables), and the movie CONST identity. The
+CONST tables themselves are emitted once per movie in the top-level
+`vmConstants` section. `summary.vmBytecodeProgramCount` is 71 and
+`summary.vmConstantsMovieCount` is 3 for the production closure. Existing
+consumers that ignore the new fields are unaffected; the schema stays
+`openbfme.retail-hud-apt-runtime` / version 0.
+
+`RetailHudAptRuntime` executes raw-byte programs through the real
+AptVm + AptRuntimeHost with no bytecode synthesis, after re-verifying every
+segment hash and the per-program SHA-256 (tampered bytes fail closed at
+configure time). Rows-only documents keep the tier-3 synthesis lane, and any
+clean-contract failure still falls back to the legacy declarative path.
+Counters distinguish the lanes: `vm_raw_byte_executed_program_count`,
+`vm_synthesized_executed_program_count`, `vm_raw_fallback_program_count`,
+and `legacy_executed_program_count`. Script-defined handler families
+register from the retail bytes (named DefineFunction2 at clip scope and the
+retail anonymous-function member-assignment form) and dispatch through the
+real bytecode bodies; the private runtime gate proves raw-vs-synthesized
+state equality and retail-byte handler registration/dispatch for all three
+measured handler programs.

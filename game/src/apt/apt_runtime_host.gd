@@ -229,6 +229,26 @@ func on_function_defined(fn_name: String, fn: RefCounted, vm: RefCounted) -> voi
 	handler_log.append({"kind": "define", "name": fn_name, "path": _scope_path})
 
 
+## Tier-4 raw-byte hook: a script assigned an anonymous function to a member
+## of `this` or of a host clip path (the retail HUD registration form, e.g.
+## `this.SetFlashEffectState = function(state)...`). Measured handler
+## families register at the resolved clip; everything else fails closed into
+## handler_log and is never dispatchable.
+func on_member_function_assigned(target: String, fn_name: String, fn: RefCounted, vm: RefCounted) -> void:
+	var path := _resolve_widget(target)
+	if path == "" or not MEASURED_SCRIPT_HANDLERS.has(fn_name):
+		handler_log.append({
+			"kind": "unmeasured-assign",
+			"name": fn_name,
+			"path": path if path != "" else target,
+		})
+		return
+	if not _clip_handlers.has(path):
+		_clip_handlers[path] = {}
+	(_clip_handlers[path] as Dictionary)[fn_name] = {"fn": fn, "vm": vm}
+	handler_log.append({"kind": "assign", "name": fn_name, "path": path})
+
+
 func has_clip_handler(path: String, handler_name: String) -> bool:
 	return _clip_handlers.has(path) \
 		and (_clip_handlers[path] as Dictionary).has(handler_name)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import struct
@@ -19,6 +20,8 @@ from openbfme_importer.retail_hud_apt_convert import (
     OUTPUT_SCHEMA,
     HudAptConvertError,
     _Reader,
+    _collect_vm_segment_ranges,
+    _decode_action_program,
     _decode_action_sequence,
     _evaluate_timeline_action_subset,
     _parse_geometry_text,
@@ -375,6 +378,130 @@ def test_action_decoder_rejects_unknown_opcode() -> None:
         _decode_action_sequence(movie, 0)
 
 
+def _vm_fixture_movie() -> SimpleNamespace:
+    """Miniature movie byte space: goto-label program at 8, label at 32."""
+
+    data = bytearray(48)
+    data[8] = 0x8C  # goto-label; aligned u32 pointer at 12
+    struct.pack_into("<I", data, 12, 32)
+    data[16] = 0x00  # end
+    data[32:38] = b"_show\0"
+    reader = _Reader(bytes(data), "fixture.apt")
+    return SimpleNamespace(
+        name="Fixture",
+        data=bytes(data),
+        reader=reader,
+        constants={
+            "entries": [{"index": 0, "type": 1, "value": "_show"}],
+            "sha256": "ab" * 32,
+        },
+    )
+
+
+def test_vm_bytecode_contract_pins_exact_ranges_and_round_trips() -> None:
+    movie = _vm_fixture_movie()
+    program = _decode_action_program(
+        movie, {"kind": "action-script", "sourceOffset": 4, "instructionsOffset": 8}
+    )
+
+    assert program["supported"] is True
+    contract = program["vmBytecode"]
+    assert contract["version"] == 1
+    assert contract["entryOffset"] == 8
+    assert contract["byteLength"] == 9
+    assert contract["sha256"] == program["sha256"]
+    assert contract["sha256"] == hashlib.sha256(movie.data[8:17]).hexdigest()
+    assert contract["constantsSha256"] == "ab" * 32
+    assert contract["byteSpaceSize"] == 38
+    assert [
+        (segment["offset"], segment["byteLength"]) for segment in contract["segments"]
+    ] == [(8, 9), (32, 6)]
+    for segment in contract["segments"]:
+        raw = base64.b64decode(segment["bytesBase64"])
+        assert len(raw) == segment["byteLength"]
+        assert hashlib.sha256(raw).hexdigest() == segment["sha256"]
+        assert (
+            raw
+            == movie.data[segment["offset"] : segment["offset"] + segment["byteLength"]]
+        )
+    assert contract["segments"][1]["bytesBase64"] == base64.b64encode(
+        b"_show\0"
+    ).decode("ascii")
+
+
+def test_vm_bytecode_contract_detects_tampered_source_bytes() -> None:
+    baseline = _vm_fixture_movie()
+    tampered_bytes = bytearray(baseline.data)
+    tampered_bytes[33] ^= 0x01  # flip one label byte
+    tampered = SimpleNamespace(
+        name="Fixture",
+        data=bytes(tampered_bytes),
+        reader=_Reader(bytes(tampered_bytes), "fixture.apt"),
+        constants=baseline.constants,
+    )
+
+    original = _decode_action_program(
+        baseline, {"kind": "action-script", "sourceOffset": 4, "instructionsOffset": 8}
+    )["vmBytecode"]
+    changed = _decode_action_program(
+        tampered, {"kind": "action-script", "sourceOffset": 4, "instructionsOffset": 8}
+    )["vmBytecode"]
+
+    # The program range is untouched, so the per-program hash matches...
+    assert changed["sha256"] == original["sha256"]
+    # ...but the referenced label segment hash pins the tamper.
+    assert changed["segments"][1]["sha256"] != original["segments"][1]["sha256"]
+
+
+def test_vm_bytecode_blocked_program_carries_no_raw_bytes() -> None:
+    data = bytearray(16)
+    data[0] = 0x99  # branch-always: outside the supported timeline subset
+    struct.pack_into("<i", data, 4, 0)
+    data[8] = 0x00
+    movie = SimpleNamespace(
+        name="Fixture",
+        data=bytes(data),
+        reader=_Reader(bytes(data), "fixture.apt"),
+        constants={"entries": [], "sha256": "cd" * 32},
+    )
+    program = _decode_action_program(
+        movie, {"kind": "action-script", "sourceOffset": 0, "instructionsOffset": 0}
+    )
+    assert program["supported"] is False
+    assert "vmBytecode" not in program
+
+
+def test_vm_segment_ranges_cover_function_name_and_parameter_tables() -> None:
+    data = bytearray(96)
+    # DefineFunction (0x9B) at 0: aligned header at 4.
+    data[0] = 0x9B
+    struct.pack_into("<III", data, 4, 64, 1, 48)  # name ptr, param count, table
+    struct.pack_into("<i", data, 16, 1)  # body size
+    data[20:28] = bytes.fromhex("3254769878563412")
+    data[28] = 0x00  # function body: end
+    data[29] = 0x00  # root end
+    struct.pack_into("<I", data, 48, 72)  # parameter name pointer
+    data[64:70] = b"MyFxn\0"
+    data[72:78] = b"state\0"
+    movie = SimpleNamespace(
+        name="Fixture",
+        data=bytes(data),
+        reader=_Reader(bytes(data), "fixture.apt"),
+        constants={"entries": [], "sha256": "ef" * 32},
+    )
+    instructions, end = _decode_action_sequence(movie, 0)
+
+    ranges = _collect_vm_segment_ranges(movie, instructions, 0, end)
+
+    assert (0, end) in ranges or ranges[0][0] == 0
+    flat = set()
+    for start, stop in ranges:
+        flat.update(range(start, stop))
+    assert set(range(64, 70)) <= flat  # function name string
+    assert set(range(48, 52)) <= flat  # parameter table
+    assert set(range(72, 78)) <= flat  # parameter name string
+
+
 def test_private_retail_contract_is_deterministic_and_fail_closed(
     tmp_path: Path,
 ) -> None:
@@ -465,6 +592,71 @@ def test_private_retail_contract_is_deterministic_and_fail_closed(
     assert contract_a["summary"]["actionScriptCount"] == 74
     assert contract_a["summary"]["supportedActionScriptCount"] == 66
     assert contract_a["summary"]["unsupportedActionScriptCount"] == 8
+    # Raw-byte lane: every supported script/handler program ships its exact
+    # retail bytes; blocked programs never do.
+    supported_programs = [
+        program for program in contract_a["actionScripts"] if program["supported"]
+    ]
+    supported_clip_programs = [
+        program
+        for program in contract_a["clipActionPrograms"]
+        if program["supported"]
+    ]
+    assert all("vmBytecode" in program for program in supported_programs)
+    assert all("vmBytecode" in program for program in supported_clip_programs)
+    assert all(
+        "vmBytecode" not in program
+        for program in (
+            *contract_a["actionScripts"],
+            *contract_a["clipActionPrograms"],
+        )
+        if not program["supported"]
+    )
+    assert contract_a["summary"]["vmBytecodeProgramCount"] == 66 + 5
+    assert contract_a["summary"]["vmConstantsMovieCount"] == len(
+        contract_a["vmConstants"]
+    )
+    for program in (*supported_programs, *supported_clip_programs):
+        raw = program["vmBytecode"]
+        assert raw["version"] == 1
+        assert raw["entryOffset"] == program["instructionOffset"]
+        assert raw["byteLength"] == program["byteLength"]
+        assert raw["sha256"] == program["sha256"]
+        covering = next(
+            segment
+            for segment in raw["segments"]
+            if segment["offset"] <= raw["entryOffset"]
+            and raw["entryOffset"] + raw["byteLength"]
+            <= segment["offset"] + segment["byteLength"]
+        )
+        blob = base64.b64decode(covering["bytesBase64"])
+        assert hashlib.sha256(blob).hexdigest() == covering["sha256"]
+        inner = raw["entryOffset"] - covering["offset"]
+        assert (
+            hashlib.sha256(blob[inner : inner + raw["byteLength"]]).hexdigest()
+            == program["sha256"]
+        )
+        movie_key = program["movie"].casefold()
+        assert (
+            contract_a["vmConstants"][movie_key]["sha256"] == raw["constantsSha256"]
+        )
+        assert contract_a["vmConstants"][movie_key]["entries"]
+    handler_scripts = {
+        program["scriptId"]: program["vmBytecode"]
+        for program in supported_programs
+        if program["scriptId"] in {"palantir:169224", "palantir:169256"}
+    }
+    assert set(handler_scripts) == {"palantir:169224", "palantir:169256"}
+    clip_13680 = next(
+        program
+        for program in supported_clip_programs
+        if program["programId"] == "ingamesidecommandbar:clip-event:13680"
+    )
+    assert clip_13680["vmBytecode"]["entryOffset"] == 13944
+    assert clip_13680["vmBytecode"]["byteLength"] == 59
+    assert clip_13680["vmBytecode"]["sha256"] == (
+        "782d8458e3a04ea8fc4a0563665053035b92d6bfd14e978f6e4b6d1f72873fbc"
+    )
     assert contract_a["summary"]["typedSideCommandActionScriptCount"] == 3
     assert contract_a["summary"]["typedMenFordsSideCommandFadeRuntimeCount"] == 1
     assert contract_a["summary"]["typedPalantirCommandActionScriptCount"] == 2
