@@ -253,38 +253,40 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 				"reason": "ring-hero-summon-not-trained",
 			})
 			continue
+		# Per-route resolution: a dead binding (missing producer, out-of-scope
+		# ally producer) drops that route with a recorded reason; the unit is
+		# excluded only when ZERO of its authored routes resolve. Corrupt
+		# composite evidence stays a hard manifest error regardless of other
+		# routes — that is data corruption, not a missing structure.
+		var resolved_route_count := 0
+		var roster_dropped_routes: Array = []
 		for producer in PlayableUnitAdapter.producer_bindings(unit_document):
 			var producer_source := String(producer.get("producer_source_object_id", ""))
 			if producer_kinds_folded.has(producer_source.to_lower()):
+				resolved_route_count += 1
 				continue
 			if (
 				slug == DEFAULT_FACTION
 				and unit_id.to_lower().begins_with("rohan")
 				and not (producer_source.to_lower().begins_with("men") or producer_source.to_lower().begins_with("gondor"))
 			):
-				ally_excluded_units[unit_id] = true
-				production_exclusions.append({
-					"object_id": unit_id,
-					"category": String(unit_document.get("category", "")),
+				roster_dropped_routes.append({
+					"producer_source_object_id": producer_source,
 					"reason": "producer-outside-faction-scope:%s" % producer_source,
 				})
-				break
-			if ally_excluded_units.has(unit_id):
 				continue
 			var composite: Dictionary = excluded_structures.get(producer_source.to_lower(), {}) as Dictionary
 			if composite.is_empty():
-				# A unit whose producer structure never converted (retail authors
-				# IsengardBallista at the not-yet-converted IsengardSiegeWorks) is
-				# that structure's content, not a faction-wide defect: exclude the
-				# unit with a recorded reason instead of failing the manifest, the
-				# same contract the production-rules pass applies below.
-				ally_excluded_units[unit_id] = true
-				production_exclusions.append({
-					"object_id": unit_id,
-					"category": String(unit_document.get("category", "")),
+				# A route whose producer structure never converted (retail once
+				# authored IsengardBallista at the not-yet-converted
+				# IsengardSiegeWorks) is that structure's content, not a
+				# faction-wide defect: drop the route with a recorded reason —
+				# the same contract the production-rules pass applies below.
+				roster_dropped_routes.append({
+					"producer_source_object_id": producer_source,
 					"reason": "producer-not-loaded:%s" % producer_source,
 				})
-				break
+				continue
 			var composite_evidence := String(composite.get("evidence", ""))
 			if composite_evidence != "engine-spawned-composite":
 				return {"_error": "unit '%s' is produced by '%s', whose recorded production evidence '%s' cannot produce units for faction '%s'" % [unit_id, producer_source, composite_evidence, slug]}
@@ -295,7 +297,19 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 			producer_kind_registry[composite_id] = "fortress"
 			producer_kinds_folded[producer_source.to_lower()] = composite_id
 			pack_roots[String(composite_document.get("_pack_root", ""))] = true
-		if ally_excluded_units.has(unit_id):
+			resolved_route_count += 1
+		if resolved_route_count == 0 and not roster_dropped_routes.is_empty():
+			ally_excluded_units[unit_id] = true
+			var roster_exclusion := {
+				"object_id": unit_id,
+				"category": String(unit_document.get("category", "")),
+				"reason": String((roster_dropped_routes[0] as Dictionary).get("reason", "")),
+			}
+			# Single-route exclusions keep their historical shape; the per-route
+			# record only appears when more than one authored route was dropped.
+			if roster_dropped_routes.size() > 1:
+				roster_exclusion["dropped_routes"] = roster_dropped_routes.duplicate(true)
+			production_exclusions.append(roster_exclusion)
 			continue
 		pack_roots[String(unit_document.get("_pack_root", ""))] = true
 
@@ -426,24 +440,33 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 			continue
 		var resolved_producers: Array = []
 		var resolved_producer_kinds: Array = []
-		var producer_resolution_error := ""
+		var rule_dropped_routes: Array = []
 		for binding in bindings:
 			var binding_source := String(binding.get("producer_source_object_id", ""))
 			var binding_producer_id := String(producer_kinds_folded.get(binding_source.to_lower(), ""))
 			if binding_producer_id == "":
-				producer_resolution_error = "producer-not-loaded:%s" % binding_source
-				break
+				# Dead route: this producer never loaded. The unit keeps its
+				# other resolved routes (mirroring the roster pass above); only
+				# a unit with zero resolved routes is excluded.
+				rule_dropped_routes.append({
+					"producer_source_object_id": binding_source,
+					"reason": "producer-not-loaded:%s" % binding_source,
+				})
+				continue
 			var route: Dictionary = (binding as Dictionary).duplicate(true)
 			route["producer_kind"] = String(producer_kind_registry.get(binding_producer_id, ""))
 			resolved_producers.append(route)
 			if not resolved_producer_kinds.has(String(route["producer_kind"])):
 				resolved_producer_kinds.append(String(route["producer_kind"]))
-		if producer_resolution_error != "" or resolved_producers.is_empty():
-			excluded_units.append({
+		if resolved_producers.is_empty():
+			var rule_exclusion := {
 				"object_id": unit_id,
 				"category": category,
-				"reason": producer_resolution_error if producer_resolution_error != "" else "no-producer-route",
-			})
+				"reason": String((rule_dropped_routes[0] as Dictionary).get("reason", "")) if not rule_dropped_routes.is_empty() else "no-producer-route",
+			}
+			if rule_dropped_routes.size() > 1:
+				rule_exclusion["dropped_routes"] = rule_dropped_routes.duplicate(true)
+			excluded_units.append(rule_exclusion)
 			continue
 		var primary_producer: Dictionary = resolved_producers[0]
 		var unit_type := String(simulation.get("unit_type", ""))
@@ -468,6 +491,11 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 			"image_id": String(hud_spec.get("image_id", "")),
 			"portrait_image_id": String(hud_spec.get("portrait_image_id", "")),
 		}
+		# Recorded dead routes for a kept unit: present ONLY when at least one
+		# authored route was actually dropped, so fully-resolving factions keep
+		# a byte-identical rule shape.
+		if not rule_dropped_routes.is_empty():
+			rule["dropped_routes"] = rule_dropped_routes.duplicate(true)
 		if unit_production_rules.has(unit_type) and String((unit_production_rules[unit_type] as Dictionary).get("object_id", "")) != String(rule["object_id"]):
 			return {"_error": "units '%s' and '%s' collide on runtime unit type '%s'" % [String((unit_production_rules[unit_type] as Dictionary).get("object_id", "")), String(rule["object_id"]), unit_type]}
 		unit_production_rules[unit_type] = rule
