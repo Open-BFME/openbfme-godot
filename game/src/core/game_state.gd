@@ -104,6 +104,25 @@ func reset_match() -> void:
 	game_over = false
 	winner_side = -1
 	paused = false
+	# Retail menu-to-match selection seam: every field the skirmish setup, RULES
+	# tab, and NETWORK lobby write must return to its declared default so a
+	# relaunched match can never inherit a previous session's roster, rules, or
+	# multiplayer mode. Defaults mirror the var declarations above exactly.
+	retail_mp_mode = ""
+	retail_mp_address = "127.0.0.1"
+	retail_mp_port = 26015
+	retail_player_faction = "men"
+	retail_enemy_faction = "men"
+	retail_initial_resources = -1
+	retail_command_point_factor = 1.0
+	retail_build_plots_only = false
+	retail_player_start_index = 0
+	retail_player_color = Color(0.176, 0.302, 0.675)
+	retail_enemy_color = Color(0.651, 0.125, 0.110)
+	retail_map_id = ""
+	retail_team_setup = []
+	retail_mp_player_name = "Player"
+	retail_mp_peer_name = "Challenger"
 	resources = {
 		0: float(ContentDB.globals.get("start_resources", 1500)),
 		1: float(ContentDB.globals.get("start_resources", 1500)),
