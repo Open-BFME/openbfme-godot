@@ -5323,10 +5323,11 @@ func _step_structure_weapons() -> void:
 		attack["cooldown"] = tick_index + int(attack.get("period_ticks", 1)) + int(attack.get("pre_attack_ticks", 0))
 
 
-func validate_construct_site(builder_ids: Array[int], structure_kind: String, point: Vector2) -> Dictionary:
+func validate_construct_site(builder_ids: Array[int], structure_kind: String, point: Vector2, team: int = PLAYER_TEAM) -> Dictionary:
 	# Non-mutating dry run of issue_construct's admission checks so the
-	# placement ghost can tint valid/invalid while the player aims.
-	return issue_construct(builder_ids, structure_kind, point, true)
+	# placement ghost can tint valid/invalid while the player aims. The team is
+	# the REQUESTING seat's: a lockstep guest probes its own faction's tables.
+	return issue_construct(builder_ids, structure_kind, point, true, team)
 
 
 # --- Fortress expansion pads (engine-spawned build plots) -------------------

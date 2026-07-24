@@ -552,8 +552,11 @@ func _initialize_content_and_match() -> void:
 		command_costs[unit_type] = simulation._production_rule_value(String(unit_type), "cost_rule", "default_cost")
 	if not ranger_runtime.is_empty() and String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)) == FactionManifestScript.DEFAULT_FACTION:
 		command_costs["Upgrade_GondorArcheryRangeLevel2"] = int((ranger_runtime.get("prerequisite", {}) as Dictionary).get("cost", 0))
-	for structure_kind in simulation.structure_build_rule_ids():
-		command_costs[structure_kind] = int(simulation.structure_build_rule(structure_kind).get("cost", 0))
+	# Structure costs come from the LOCAL seat's faction tables so a lockstep
+	# guest's build strip prices its own buildings (team 0 aliases the globals).
+	var local_structure_build_rules: Dictionary = simulation.structure_build_rules_for_team(local_team)
+	for structure_kind in local_structure_build_rules:
+		command_costs[structure_kind] = int((local_structure_build_rules[structure_kind] as Dictionary).get("cost", 0))
 	for expansion_kind_value in simulation._expansion_build_rules.keys():
 		var expansion_kind := String(expansion_kind_value)
 		command_costs[expansion_kind] = int(simulation._expansion_build_rules[expansion_kind].get("cost", 0))
@@ -565,8 +568,8 @@ func _initialize_content_and_match() -> void:
 	var command_build_seconds: Dictionary = {}
 	for unit_type in simulation.production_rule_ids():
 		command_build_seconds[unit_type] = float(simulation._production_rule_value(String(unit_type), "build_time_rule", "default_build_ticks")) * SimScript.TICK_SECONDS
-	for structure_kind in simulation.structure_build_rule_ids():
-		command_build_seconds[structure_kind] = float(simulation.structure_build_rule(structure_kind).get("seconds", 0.0))
+	for structure_kind in local_structure_build_rules:
+		command_build_seconds[structure_kind] = float((local_structure_build_rules[structure_kind] as Dictionary).get("seconds", 0.0))
 	for expansion_kind_value in simulation._expansion_build_rules.keys():
 		var expansion_kind := String(expansion_kind_value)
 		command_build_seconds[expansion_kind] = float(simulation._expansion_build_rules[expansion_kind].get("seconds", 0.0))
@@ -3944,15 +3947,30 @@ func _arm_attack_move() -> void:
 	hud.set_feedback("Attack Move armed: right-click a destination.")
 
 
+func _local_faction_manifest() -> Dictionary:
+	## The LOCAL seat's manifest: team 0 for host/solo, the guest's own team in
+	## a lockstep match. Presentation only — sim rules stay on the per-team map.
+	return _team_faction_manifests.get(local_team, faction_manifest) as Dictionary
+
+
+func _local_structure_build_rule(structure_kind: String) -> Dictionary:
+	if simulation == null:
+		return {}
+	return (simulation.structure_build_rules_for_team(local_team).get(structure_kind, {}) as Dictionary).duplicate(true)
+
+
 func _arm_construction(structure_kind: String) -> void:
-	if simulation == null or simulation.selected_ids.is_empty() or simulation.structure_build_rule(structure_kind).is_empty():
+	# The LOCAL seat's faction tables: a lockstep guest arms its own faction's
+	# buildings, not the host's (the "goblins can only build the lumber mill"
+	# bug — every kind absent from the host's table was rejected here).
+	if simulation == null or simulation.selected_ids.is_empty() or _local_structure_build_rule(structure_kind).is_empty():
 		hud.set_feedback("Builder construction command rejected.", true)
 		return
 	construction_kind_armed = structure_kind
 	attack_move_armed = false
 	ability_cast_armed = {}
 	_spawn_construction_ghost()
-	var rule: Dictionary = simulation.structure_build_rule(structure_kind)
+	var rule: Dictionary = _local_structure_build_rule(structure_kind)
 	hud.set_feedback("Place %s: left-click a clear site (right-click cancels). Cost %d." % [structure_kind.replace("_", " ").capitalize(), int(rule["cost"])])
 
 
@@ -3968,7 +3986,9 @@ func _spawn_construction_ghost() -> void:
 	construction_ghost.visible = false
 	add_child(construction_ghost)
 	var kind := construction_kind_armed
-	var object_id := String((faction_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
+	# The LOCAL seat's manifest owns the ghost model: a lockstep guest previews
+	# its own faction's building, not the host's (or a missing one).
+	var object_id := String((_local_faction_manifest().get("structure_object_ids", {}) as Dictionary).get(kind, ""))
 	var ghost_model: Node3D = null
 	if object_id != "":
 		var definition := ContentDB.get_bundle_object(object_id)
@@ -4114,7 +4134,7 @@ func _update_construction_ghost() -> void:
 	construction_ghost.visible = true
 	construction_ghost.global_position = Vector3(ground.x, ground.y + 0.15, ground.z)
 	var probe := simulation.validate_construct_site(
-		simulation.selected_ids.duplicate(), construction_kind_armed, Vector2(ground.x, ground.z)
+		simulation.selected_ids.duplicate(), construction_kind_armed, Vector2(ground.x, ground.z), local_team
 	)
 	var valid := bool(probe.get("ok", false))
 	# Validity rides the footprint ring color; the 3D ghost keeps the mesh's

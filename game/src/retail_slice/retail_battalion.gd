@@ -948,17 +948,31 @@ func _retail_presentation_pack_root(definition: Dictionary) -> String:
 	return String(definition.get("_pack_root", ""))
 
 
-## True when the unit's own pack ships the retail SHADOW_MERGE_DECAL selection
+## True when this pack root ships the retail SHADOW_MERGE_DECAL selection
 ## contract (every converted faction pack carries the identical one). The
 ## decal's configure still validates fail-closed; this only decides whether the
 ## attempt replaces the synthetic fallback rings.
-func _selection_decal_pack_supported(definition: Dictionary) -> bool:
-	var pack_root := String(definition.get("_pack_root", ""))
+func _pack_ships_selection_decal(pack_root: String) -> bool:
 	if pack_root == "" or pack_root.begins_with("res://"):
 		return false
 	var contract_path := ProjectSettings.globalize_path(pack_root).replace("\\", "/").simplify_path().path_join("effects/men-selection-decal.json").simplify_path()
 	var pack_base := ProjectSettings.globalize_path(pack_root).replace("\\", "/").simplify_path().trim_suffix("/")
 	return contract_path.to_lower().begins_with(pack_base.to_lower() + "/") and FileAccess.file_exists(contract_path)
+
+
+## The pack root whose decal contract this unit binds: its own pack when the
+## contract shipped there, otherwise the first mounted pack that carries the
+## universal contract (a faction converted before the decal emitter landed —
+## rotwk-angmar — borrows it exactly like the Ranger overlay borrows Men's).
+func _selection_decal_source_root(definition: Dictionary) -> String:
+	var own := String(definition.get("_pack_root", ""))
+	if _pack_ships_selection_decal(own):
+		return own
+	for root_value in ContentDB.pack_roots:
+		var root := String(root_value)
+		if _pack_ships_selection_decal(root):
+			return root
+	return ""
 
 
 func _configure_combat_visual_contract(definition: Dictionary) -> void:
@@ -999,11 +1013,14 @@ func _configure_combat_visual_contract(definition: Dictionary) -> void:
 
 
 func _configure_source_selection_decal(definition: Dictionary) -> void:
-	# Retail selection presentation is universal: any faction pack that ships
+	# Retail selection presentation is universal: any mounted pack that ships
 	# the SHADOW_MERGE_DECAL contract binds the leafy squiggly ring (the elven
-	# porter's giant blue/green synthetic ellipses were the men-less fallback).
-	# Packs without the contract keep the legal-safe synthetic overlay.
-	if not private_parity_mode_active and not _selection_decal_pack_supported(definition):
+	# porter's giant blue/green synthetic ellipses were the men-less fallback,
+	# and the Angmar porter's until it learned to borrow a shipped contract).
+	# When no mounted pack has the contract, keep the legal-safe synthetic
+	# overlay.
+	var decal_root := _selection_decal_source_root(definition)
+	if not private_parity_mode_active and decal_root == "":
 		return
 	var positions: Array[Vector3] = []
 	for member_index in range(member_count):
@@ -1013,7 +1030,9 @@ func _configure_source_selection_decal(definition: Dictionary) -> void:
 	source_selection_decal = SelectionDecalScript.new()
 	source_selection_decal.name = "RetailMenSelectionDecal"
 	add_child(source_selection_decal)
-	var pack_root := String(definition.get("_pack_root", ""))
+	# Private parity (Men) stays strict: only its OWN pack's contract counts,
+	# fail-closed. Non-parity factions may borrow a shipped copy.
+	var pack_root := String(definition.get("_pack_root", "")) if private_parity_mode_active else decal_root
 	if object_id == RANGER_OBJECT_ID:
 		# The bounded Ranger overlay owns the unit model and rules only. Reuse the
 		# selected retail Men pack's shared selection-decal contract explicitly.
