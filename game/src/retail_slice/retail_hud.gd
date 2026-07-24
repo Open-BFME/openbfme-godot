@@ -19,6 +19,8 @@ signal formation_requested
 signal command_cap_changed(value: int)
 signal weak_fortress_toggled(value: bool)
 signal cheat_resources_requested
+signal cheat_finish_work_requested
+signal cheat_level_up_requested
 signal power_purchase_requested(power_id: String, cost: int)
 signal power_cast_requested(cast_kind: String)
 signal ability_cast_requested(unit_id: String, ability_id: String)
@@ -4101,6 +4103,8 @@ func _build_dev_console(column: VBoxContainer) -> void:
 	weak_fortress_toggle.toggled.connect(func(value: bool) -> void: weak_fortress_toggled.emit(value))
 	column.add_child(weak_fortress_toggle)
 	_add_action_button(column, "Testing: +50,000 resources (F7)", func() -> void: cheat_resources_requested.emit())
+	_add_action_button(column, "Testing: finish builds/queues/cooldowns (F6)", func() -> void: cheat_finish_work_requested.emit())
+	_add_action_button(column, "Testing: level up selected units (F4)", func() -> void: cheat_level_up_requested.emit())
 
 
 func set_match_clock_seconds(seconds: float) -> void:

@@ -2775,6 +2775,14 @@ func _unhandled_input(event: InputEvent) -> void:
 				_grant_test_resources()
 				get_viewport().set_input_as_handled()
 				return
+			if key.keycode == KEY_F6 and ready_ok and simulation != null and HudScript.dev_hud_enabled():
+				_cheat_finish_work()
+				get_viewport().set_input_as_handled()
+				return
+			if key.keycode == KEY_F4 and ready_ok and simulation != null and HudScript.dev_hud_enabled():
+				_cheat_level_up_selected()
+				get_viewport().set_input_as_handled()
+				return
 			# Retail order hotkeys (rebindable through the project input map):
 			# A = attack-move, S = stop, Z = cycle stance.
 			if ready_ok and not simulation.selected_ids.is_empty():
@@ -5227,6 +5235,8 @@ func _build_hud() -> void:
 		_sync_presentation()
 	)
 	hud.cheat_resources_requested.connect(_grant_test_resources)
+	hud.cheat_finish_work_requested.connect(_cheat_finish_work)
+	hud.cheat_level_up_requested.connect(_cheat_level_up_selected)
 	hud.construct_requested.connect(_arm_construction)
 	hud.hero_recall_requested.connect(_on_hero_recall_requested)
 	hud.expansion_requested.connect(_on_expansion_requested)
@@ -5328,8 +5338,50 @@ func _update_hover_cursor() -> void:
 		Input.set_default_cursor_shape(shape)
 
 
-func _grant_test_resources() -> void:
+## Dev cheats mutate sim state directly and never travel the lockstep codec:
+## in multiplayer a one-sided mutation would desync the peers instantly, so
+## every cheat entry point refuses there with an honest message.
+func _cheats_blocked() -> bool:
 	if simulation == null:
+		return true
+	if lockstep_session != null:
+		hud.set_feedback("Dev cheats are disabled in multiplayer (one-sided state would desync).", true)
+		return true
+	return false
+
+
+func _cheat_finish_work() -> void:
+	if _cheats_blocked():
+		return
+	var report: Dictionary = simulation.debug_finish_team_work(local_team)
+	hud.refresh_powers(simulation.power_points(local_team), simulation.purchased_powers[local_team], simulation.spellbook_ui_state(local_team))
+	hud.set_feedback("Cheat: fast-forwarded %d construction site%s and %d queued job%s; cooldowns cleared." % [
+		int(report.get("constructions", 0)), "" if int(report.get("constructions", 0)) == 1 else "s",
+		int(report.get("jobs", 0)), "" if int(report.get("jobs", 0)) == 1 else "s",
+	])
+	_sync_presentation()
+
+
+func _cheat_level_up_selected() -> void:
+	if _cheats_blocked():
+		return
+	if simulation.selected_ids.is_empty():
+		hud.set_feedback("Cheat: select battalions or heroes to level up first.", true)
+		return
+	var report: Dictionary = simulation.debug_level_up_battalions(simulation.selected_ids.duplicate())
+	var message := "Cheat: leveled up %d battalion%s" % [
+		int(report.get("leveled", 0)), "" if int(report.get("leveled", 0)) == 1 else "s",
+	]
+	if int(report.get("capped", 0)) > 0:
+		message += ", %d already at max rank" % int(report.get("capped", 0))
+	if int(report.get("unauthored", 0)) > 0:
+		message += ", %d with no authored experience chain" % int(report.get("unauthored", 0))
+	hud.set_feedback(message + ".")
+	_sync_presentation()
+
+
+func _grant_test_resources() -> void:
+	if _cheats_blocked():
 		return
 	var grant := 50000
 	simulation.team_resources[0] = int(simulation.team_resources.get(0, 0)) + grant

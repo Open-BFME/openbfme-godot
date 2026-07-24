@@ -9259,6 +9259,81 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 	return {"ok": true, "builder_id": builder_id, "structure_id": structure_id, "cost": cost, "build_ticks": build_ticks}
 
 
+# --- Dev playtest cheats -----------------------------------------------------
+# Direct state mutation for the dev HUD (OPENBFME_DEV_HUD). Never routed
+# through the lockstep command codec — the presentation layer blocks these in
+# multiplayer, where a one-sided mutation would desync the peers.
+
+
+func debug_finish_team_work(team: int) -> Dictionary:
+	## Fast-forwards every in-progress job the team owns: construction sites,
+	## production queues, structure/battalion upgrade queues, spellbook power
+	## cooldowns, and hero ability cooldowns. Jobs are only rescheduled to
+	## complete now — the REAL step paths still run, so every authored side
+	## effect (pad seeding, events, upgrade effects) fires normally.
+	var constructions := 0
+	var jobs := 0
+	for structure_id in structure_ids():
+		var building: Dictionary = structures[structure_id]
+		if int(building.get("team", -1)) != team:
+			continue
+		if float(building.get("construction_progress", 1.0)) < 1.0:
+			building["construction_elapsed_ticks"] = maxi(0, int(building.get("construction_build_ticks", 1)) - 1)
+			constructions += 1
+		for item_value in building.get("queue", []) as Array:
+			(item_value as Dictionary)["complete_tick"] = tick_index
+			jobs += 1
+		for item_value in building.get("upgrade_queue", []) as Array:
+			(item_value as Dictionary)["complete_tick"] = tick_index
+			jobs += 1
+	_power_cooldown_until[team] = {}
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if int(row.get("team", -1)) != team:
+			continue
+		for item_value in row.get("upgrade_queue", []) as Array:
+			(item_value as Dictionary)["complete_tick"] = tick_index
+			jobs += 1
+		var states: Dictionary = row.get("ability_states", {}) as Dictionary
+		for ability_id in states:
+			(states[ability_id] as Dictionary)["cooldown_ready_tick"] = 0
+	return {"constructions": constructions, "jobs": jobs}
+
+
+func debug_level_up_battalions(ids: Array) -> Dictionary:
+	## +1 authored rank per selected battalion/hero: awards exactly the XP
+	## delta to the next authored threshold through the real experience
+	## pipeline, so every authored level effect applies at true magnitudes.
+	var leveled := 0
+	var capped := 0
+	var unauthored := 0
+	for id_value in ids:
+		var id := int(id_value)
+		if not entities.has(id):
+			continue
+		var row: Dictionary = entities[id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		var rule: Dictionary = _unit_experience_rules.get(String(row.get("unit_type", "")), {})
+		if rule.is_empty():
+			unauthored += 1
+			continue
+		var level := int(row.get("level", 1))
+		var next_row: Dictionary = {}
+		for row_value in Array(rule.get("levels", [])):
+			var candidate := row_value as Dictionary
+			if int(candidate.get("rank", 0)) > level:
+				next_row = candidate
+				break
+		if level >= int(rule.get("max_level", 1)) or next_row.is_empty():
+			capped += 1
+			continue
+		var needed := int(next_row.get("required_experience", 0)) - int(row.get("experience_xp", 0))
+		_award_experience(row, maxi(1, needed))
+		leveled += 1
+	return {"leveled": leveled, "capped": capped, "unauthored": unauthored}
+
+
 func _step_construction() -> void:
 	for structure_id in structure_ids():
 		var site: Dictionary = structures[structure_id]
