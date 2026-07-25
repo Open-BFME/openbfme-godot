@@ -1177,6 +1177,11 @@ var _completed_hero_identities: Dictionary = {}
 var _production_unit_order: Array[String] = []
 var _ai_production_plan: Array[String] = []
 var _unit_damage_types: Dictionary = {}
+## member object id -> compiled damageComponents rows, for retail weapons whose
+## DamageNuggets author different types (ArwenSword: HERO + SLASH). Each row is
+## {"damage_type": String, "value": float}; an empty type means the nugget
+## authors none and resolves against the victim's DEFAULT armor column.
+var _unit_damage_components: Dictionary = {}
 ## member object id -> compiled armor contract (fractions, upgrade tables).
 var _unit_armor: Dictionary = {}
 ## member object id -> upgrade id -> compiled WeaponSetUpgrade effect.
@@ -1551,6 +1556,9 @@ func _configure_faction_manifest() -> bool:
 	_structure_max_health = (manifest.get("structure_max_health", STRUCTURE_MAX_HEALTH) as Dictionary).duplicate(true)
 	_structure_build_rules = (manifest.get("structure_build_rules", STRUCTURE_BUILD_RULES) as Dictionary).duplicate(true)
 	_unit_damage_types = (manifest.get("unit_damage_types", UNIT_DAMAGE_TYPES) as Dictionary).duplicate(true)
+	# Repopulated from the loaded documents' compiled combat blocks; no manifest
+	# constant mirrors it, so it must not survive a previous configure.
+	_unit_damage_components = {}
 	# Compiled per-kind structure armor (armor.ini via each structure document).
 	# Legacy manifests without it keep the FortressArmor mirror with per-line
 	# armor.ini provenance; kinds outside the mirror are recorded provisionals.
@@ -1837,7 +1845,60 @@ func _damage_scalar_factor(scalars: Array, target: Dictionary, target_kind: Stri
 	return 1.0
 
 
-func _member_armor_scalar(target: Dictionary, damage_type: String) -> float:
+func _compiled_damage_components(combat: Dictionary) -> Array:
+	## Normalize the compiler's damageComponents rows. [] when the weapon has a
+	## single authored damageType (the ordinary path) or authors none at all.
+	var rows: Array = []
+	for row_value in combat.get("damageComponents", []) as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := row_value as Dictionary
+		var value := float(row.get("value", 0.0))
+		if value <= 0.0:
+			continue
+		rows.append({
+			"damage_type": String(row.get("damageType", "")).to_lower(),
+			"value": value,
+		})
+	return rows
+
+
+func _damage_components_for(attacker_id: int, damage_type_override: String) -> Array:
+	## The attacker's authored multi-type damage mix. An explicit override
+	## (an ability or projectile that names its own type) replaces the mix
+	## outright rather than blending into it.
+	if damage_type_override != "" or not entities.has(attacker_id):
+		return []
+	return (entities[attacker_id] as Dictionary).get("damage_components", []) as Array
+
+
+func _weighted_armor_scalar(scalars: Dictionary, components: Array, damage_type: String) -> float:
+	## Damage-weighted mean of each component's own armor column. Because the
+	## armor scalar is a linear multiplier, sum(dmg_i * scalar_i) equals
+	## total_damage * this mean -- so one hit reproduces retail's per-nugget
+	## resolution exactly without splitting into several hits.
+	##
+	## For Arwen (HERO 180 + SLASH 20) into RivendellLancerArmor (HERO 200%,
+	## SLASH 40%) that is (180*2.0 + 20*0.4) / 200 = 1.84, i.e. 368 of 200 raw
+	## -- the retail intent, where the untyped lump previously scored 200.
+	var total := 0.0
+	var weighted := 0.0
+	for row_value in components:
+		var row := row_value as Dictionary
+		var value := float(row.get("value", 0.0))
+		if value <= 0.0:
+			continue
+		total += value
+		# An untyped component keeps falling to DEFAULT: never invent a type
+		# weapon.ini does not author.
+		var key := String(row.get("damage_type", ""))
+		weighted += value * float(scalars.get(key, scalars.get("default", 1.0)))
+	if total <= 0.0:
+		return float(scalars.get(damage_type.to_lower(), scalars.get("default", 1.0)))
+	return weighted / total
+
+
+func _member_armor_scalar(target: Dictionary, damage_type: String, components: Array = []) -> float:
 	## Compiled armor.ini scalar: attacker damage type vs the victim's set
 	## (its recorded applied armor upgrade swaps the set, last applied wins).
 	var rule: Dictionary = _unit_armor.get(String(target.get("object_id", "")), {})
@@ -1850,6 +1911,8 @@ func _member_armor_scalar(target: Dictionary, damage_type: String) -> float:
 		if (target.get("applied_upgrades", {}) as Dictionary).has(active) and upgrades.has(active):
 			table = upgrades[active]
 	var scalars: Dictionary = table.get("scalars", {})
+	if not components.is_empty():
+		return float(table.get("damage_scalar", 1.0)) * _weighted_armor_scalar(scalars, components, damage_type)
 	var key := damage_type.to_lower()
 	return float(table.get("damage_scalar", 1.0)) * float(scalars.get(key, scalars.get("default", 1.0)))
 
@@ -2045,13 +2108,22 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			}
 			unit_rule["provenance"] = override_provenance
 		configured_unit_rules[member_id] = unit_rule
-		var doc_damage_type := String((simulation.get("combat", {}) as Dictionary).get("damageType", "")).to_lower()
+		var doc_combat: Dictionary = simulation.get("combat", {}) as Dictionary
+		var doc_damage_type := String(doc_combat.get("damageType", "")).to_lower()
+		var doc_damage_components := _compiled_damage_components(doc_combat)
+		if not doc_damage_components.is_empty():
+			# A multi-nugget weapon whose nuggets author different types
+			# (ArwenSword: HERO ARWEN_DAMAGE + SLASH 20) carries no single
+			# authored damageType. Each component keeps its own type and is
+			# weighted against its own armor column instead of collapsing the
+			# whole hit onto DEFAULT.
+			_unit_damage_components[member_id] = doc_damage_components
 		if doc_damage_type != "":
 			# Source-authored BFME2 damage type (SLASH/PIERCE/CAVALRY/...);
 			# fortress armor consumes it through the same scalar table the
 			# historical Men constants use, unknown types keep the default.
 			_unit_damage_types[member_id] = doc_damage_type
-		elif not missing_damage_type_units.has(member_id):
+		elif doc_damage_components.is_empty() and not missing_damage_type_units.has(member_id):
 			# A combat unit whose document authors no damageType is recorded at
 			# configure — never only when it happens to spawn (retail Arwen
 			# carries powers but no weapon); its structure damage falls to each
@@ -2974,6 +3046,7 @@ func _add_battalion(
 		"vision_range": float(unit_rule["vision_range"]),
 		"vision_range_source": float(unit_rule["vision_range_source"]),
 		"damage_type": _recorded_damage_type(object_id, unit_rule),
+		"damage_components": (_unit_damage_components.get(object_id, []) as Array).duplicate(true),
 		"delay_between_shots_ms": float(unit_rule["delay_between_shots_ms"]),
 		"pre_attack_delay_ms": float(unit_rule["pre_attack_delay_ms"]),
 		"firing_duration_ms": float(unit_rule["firing_duration_ms"]),
@@ -3063,6 +3136,10 @@ func _recorded_damage_type(object_id: String, unit_rule: Dictionary) -> String:
 	## No silent slash default: a combat unit without authored damageType is
 	## recorded, and its structure damage falls to the kind's DEFAULT scalar.
 	var damage_type := String((_unit_damage_types if not _unit_damage_types.is_empty() else UNIT_DAMAGE_TYPES).get(object_id, ""))
+	# A weapon whose nuggets author several types has no single damageType by
+	# construction; it is typed per component, not missing a type.
+	if damage_type == "" and not (_unit_damage_components.get(object_id, []) as Array).is_empty():
+		return damage_type
 	if damage_type == "" and not bool(unit_rule.get("is_builder", false)) and not missing_damage_type_units.has(object_id):
 		missing_damage_type_units.append(object_id)
 		print("[RetailSliceSim] unit '%s' has no authored damageType; its structure damage uses each kind's DEFAULT armor scalar" % object_id)
@@ -10331,7 +10408,8 @@ func _apply_damage(attacker_id: int, target_id: int, amount: int, target_kind: S
 		# Each member must receive exactly the raw amount its compiled factors
 		# reduce to a kill; capping at current member health would grind
 		# geometrically against sub-1.0 armor and stall short of lethal.
-		var factor := _incoming_damage_factor(attacker_id, target, "battalion", damage_type)
+		# No override on this path: the attacker's own authored mix applies.
+		var factor := _incoming_damage_factor(attacker_id, target, "battalion", damage_type, _damage_components_for(attacker_id, ""))
 		if factor <= 0.0:
 			# A 0% armor match (e.g. LOGICAL_FIRE vs fortress) makes the hit a
 			# retail no-op; the remaining raw damage has no path through.
@@ -10341,7 +10419,7 @@ func _apply_damage(attacker_id: int, target_id: int, amount: int, target_kind: S
 		remaining -= applied
 
 
-func _incoming_damage_factor(attacker_id: int, target: Dictionary, target_kind: String, damage_type: String) -> float:
+func _incoming_damage_factor(attacker_id: int, target: Dictionary, target_kind: String, damage_type: String, components: Array = []) -> float:
 	## The full compiled multiplier an incoming hit applies before rounding:
 	## weapon DamageScalar target filters, the armor.ini set (with recorded
 	## applied armor upgrades), stance, formation, and ability/aura factors.
@@ -10352,7 +10430,7 @@ func _incoming_damage_factor(attacker_id: int, target: Dictionary, target_kind: 
 			weapon_factor = _damage_scalar_factor(attacker_effect.get("scalars", []) as Array, target, target_kind)
 	return (
 		weapon_factor
-		* _member_armor_scalar(target, damage_type)
+		* _member_armor_scalar(target, damage_type, components)
 		* float(_stance_state(target).get("incomingDamageMultiplier", 1.0))
 		* float(_formation_effects(target).get("incoming_damage_multiplier", 1.0))
 		* _ability_incoming_multiplier(target)
@@ -10390,6 +10468,9 @@ func _apply_member_damage(
 	# armor.ini, compiled end-to-end: attacker damage type vs the victim's
 	# authored ArmorSet (a recorded applied armor upgrade swaps the set).
 	var damage_type := damage_type_override
+	# A multi-nugget weapon resolves each component against its own armor
+	# column; an explicit override replaces the mix rather than blending in.
+	var damage_components := _damage_components_for(attacker_id, damage_type_override)
 	var weapon_factor := 1.0
 	if entities.has(attacker_id):
 		var attacker: Dictionary = entities[attacker_id]
@@ -10400,7 +10481,7 @@ func _apply_member_damage(
 			weapon_factor = _damage_scalar_factor(attacker_effect.get("scalars", []) as Array, target, target_kind)
 	var stance_adjusted_amount := maxi(0, roundi(
 		float(amount)
-		* _incoming_damage_factor(attacker_id, target, target_kind, damage_type)
+		* _incoming_damage_factor(attacker_id, target, target_kind, damage_type, damage_components)
 	))
 	if entities.has(attacker_id) and tick_index < int((entities[attacker_id] as Dictionary).get("rally_until_tick", -1)):
 		# Rallying Call: the converted SpellBookRallyingCallModifier leaf
@@ -10426,7 +10507,7 @@ func _apply_member_damage(
 		"target_member_health": int(health_values[target_member]),
 		"target_object_id": String(target.get("object_id", "")),
 		"damage_type": damage_type,
-		"armor_scalar": _member_armor_scalar(target, damage_type),
+		"armor_scalar": _member_armor_scalar(target, damage_type, damage_components),
 		"weapon_factor": weapon_factor,
 	})
 	if prior_health > 0 and int(health_values[target_member]) == 0:
@@ -10521,10 +10602,15 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 	if int(target.get("health", 0)) <= 0:
 		return
 	var damage_type := damage_type_override
+	var damage_components := _damage_components_for(attacker_id, damage_type_override)
 	if damage_type == "":
 		damage_type = "default"
 		if entities.has(attacker_id):
 			damage_type = String((entities[attacker_id] as Dictionary).get("damage_type", "default"))
+			if damage_type == "" and not damage_components.is_empty():
+				# Typed per component, not untyped: name the mix so the
+				# per-type remainder accumulator keeps it separate.
+				damage_type = "mixed"
 	# Every structure kind scales by its own compiled armor.ini table; kinds
 	# without one use the recorded provisional (logged once at configure).
 	var kind := String(target.get("structure_kind", ""))
@@ -10532,7 +10618,10 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 	var scalar := STRUCTURE_ARMOR_PROVISIONAL_SCALAR
 	if not table.is_empty():
 		var scalars: Dictionary = table.get("scalars", {})
-		scalar = float(table.get("damage_scalar", 1.0)) * float(scalars.get(damage_type.to_lower(), scalars.get("default", 1.0)))
+		if not damage_components.is_empty():
+			scalar = float(table.get("damage_scalar", 1.0)) * _weighted_armor_scalar(scalars, damage_components, damage_type)
+		else:
+			scalar = float(table.get("damage_scalar", 1.0)) * float(scalars.get(damage_type.to_lower(), scalars.get("default", 1.0)))
 	var weapon_factor := 1.0
 	if entities.has(attacker_id):
 		var attacker_effect := _applied_weapon_effect(entities[attacker_id] as Dictionary)
@@ -12056,7 +12145,8 @@ func _state_hash_static_keys() -> Array[String]:
 	return [
 		"source_map_configured", "ford_gates", "source_player_starts", "playable_outline",
 		"spawn_positions", "home_layout", "rules", "unit_production_rules",
-		"production_unit_order", "ai_production_plan", "unit_damage_types", "unit_armor",
+		"production_unit_order", "ai_production_plan", "unit_damage_types",
+		"unit_damage_components", "unit_armor",
 		"unit_weapon_upgrades", "structure_armor", "spawn_roster", "structure_kinds",
 		"seed_structure_kinds", "structure_max_health", "structure_build_rules",
 		"unit_prerequisites", "structure_upgrade_contracts", "structure_upgrade_effects",
@@ -12090,6 +12180,7 @@ func _authoritative_state() -> Dictionary:
 		"production_unit_order": _production_unit_order,
 		"ai_production_plan": _ai_production_plan,
 		"unit_damage_types": _unit_damage_types,
+		"unit_damage_components": _unit_damage_components,
 		"unit_armor": _unit_armor,
 		"unit_weapon_upgrades": _unit_weapon_upgrades,
 		"structure_armor": _structure_armor,
@@ -12202,6 +12293,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_production_unit_order = state["production_unit_order"]
 	_ai_production_plan = state["ai_production_plan"]
 	_unit_damage_types = state["unit_damage_types"]
+	_unit_damage_components = state["unit_damage_components"]
 	_unit_armor = state["unit_armor"]
 	_unit_weapon_upgrades = state["unit_weapon_upgrades"]
 	_structure_armor = state["structure_armor"]

@@ -12,6 +12,20 @@ const ARCHER_PROJECTILE_CONTROLLER_PATH := "res://src/retail_slice/retail_archer
 ## Pinned deterministic battle signatures per faction (see
 ## battle_signature_matches_pinned_constant). Repository policy: a drifted pin
 ## must be EXPLAINED before it is moved, never silently refreshed.
+##
+## PENDING RE-PIN -- multi-nugget weapon damage types.
+## Retail weapons whose DamageNuggets author different types (ArwenSword: HERO
+## ARWEN_DAMAGE + SLASH 20) previously compiled to an untyped damage lump, so
+## the whole hit resolved against the victim's DEFAULT armor column. The
+## compiler now publishes damageComponents and the sim weights each component
+## against its own column, so those units deal retail-correct damage (Arwen
+## into RivendellLancerArmor: 368 rather than 200). Kill order and tick counts
+## therefore move, and these constants must shift with them.
+##
+## The values below are the PRE-fix signatures and are deliberately left as-is:
+## re-pinning requires a pack re-cook (the packs on disk predate the compiler
+## change and carry no damageComponents), which the repo owner orchestrates.
+## Re-pin from a post-cook run rather than assuming the drift.
 const EXPECTED_BATTLE_SIGNATURES := {
 	"men": "3CB9CA98",
 	"elves": "2521173F",
@@ -1036,7 +1050,15 @@ func _run() -> void:
 		var member_id := String(rule_row.get("object_id", ""))
 		if manifest_builders_for_armor.has(member_id):
 			continue
-		if not sim_damage_types.has(member_id) and not roster_sim.missing_damage_type_units.has(member_id):
+		# A unit is accounted for by a single authored damageType, by a
+		# per-component mix (a multi-nugget weapon like ArwenSword authors HERO
+		# and SLASH but no one weapon-level type), or by being recorded as
+		# genuinely untyped. Only an unaccounted unit fails.
+		if (
+			not sim_damage_types.has(member_id)
+			and not roster_sim._unit_damage_components.has(member_id)
+			and not roster_sim.missing_damage_type_units.has(member_id)
+		):
 			armor_recorded = false
 		if not roster_sim._unit_armor.has(member_id) and not roster_sim.missing_armor_units.has(member_id):
 			armor_recorded = false

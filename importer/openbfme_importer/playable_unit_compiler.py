@@ -906,6 +906,70 @@ def _base_weapon_damage(
     return result
 
 
+def _typed_damage_components(damage: object) -> list[dict[str, object]] | None:
+    """Per-nugget (damageType, value) rows of an aggregated damage block.
+
+    None when the block is not a nugget aggregate or a component carries no
+    resolvable value -- callers then leave the damage untyped rather than
+    guessing.  A nugget with no authored DamageType keeps an empty type: the
+    runtime resolves that component against the victim's DEFAULT armor column,
+    which is what an untyped retail nugget does.
+    """
+
+    if not isinstance(damage, Mapping):
+        return None
+    components = damage.get("components")
+    if not isinstance(components, Sequence) or isinstance(components, (str, bytes)):
+        return None
+    rows: list[dict[str, object]] = []
+    for component in components:
+        if not isinstance(component, Mapping):
+            return None
+        value = component.get("value")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        rows.append(
+            {"damageType": str(component.get("damageType", "")), "value": value}
+        )
+    return rows or None
+
+
+def _apply_nugget_damage_types(combat: dict[str, object]) -> None:
+    """Type a weapon whose DamageType rides its DamageNuggets, not a flat row.
+
+    Retail multi-nugget weapons (ArwenSword: HERO ARWEN_DAMAGE plus SLASH 20)
+    author no Weapon-level DamageType at all.  Summing those nuggets into one
+    untyped lump made the whole hit resolve against the victim's DEFAULT armor
+    column -- for Arwen into RivendellLancerArmor that is 200 damage where
+    retail intends 180*HERO + 20*SLASH.
+
+    One authored type across every component wins outright.  A genuine mix is
+    published as ``damageComponents`` so the runtime can weight each component
+    against its own armor column; no single ``damageType`` is claimed for it,
+    because none is authored.  Nothing is invented either way.
+    """
+
+    rows = _typed_damage_components(combat.get("damage"))
+    if rows is None:
+        return
+    authored = {str(row["damageType"]) for row in rows if row["damageType"]}
+    if not authored:
+        return
+    if len(authored) == 1 and all(row["damageType"] for row in rows):
+        combat["damageType"] = next(iter(authored))
+        combat["damageTypeSemantic"] = (
+            "the weapon authors no flat DamageType; every base DamageNugget "
+            "authors the same type"
+        )
+        return
+    combat["damageComponents"] = rows
+    combat["damageComponentsSemantic"] = (
+        "the weapon authors no flat DamageType and its base DamageNuggets "
+        "author different types; each component resolves against its own "
+        "armor column (an untyped component falls to DEFAULT)"
+    )
+
+
 def _hero_secondary_weapon_target(ancestry: Sequence[SageObject]) -> str | None:
     """Hero standard weapon when the default set reserves PRIMARY for powers."""
 
@@ -1199,6 +1263,10 @@ def _simulation_contract(
         }
         if len(unique_damage_types) == 1:
             combat["damageType"] = next(iter(unique_damage_types.values()))
+        elif not unique_damage_types:
+            # No flat Weapon-level DamageType row: the type rides the
+            # DamageNuggets the damage total was aggregated from.
+            _apply_nugget_damage_types(combat)
         for output_name, source_name in (
             ("clipSize", "ClipSize"),
             ("clipReloadTimeMs", "ClipReloadTime"),

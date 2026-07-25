@@ -8,6 +8,7 @@ import pytest
 
 from openbfme_importer.playable_unit_compiler import (
     PlayableUnitCompilerError,
+    _apply_nugget_damage_types,
     _numeric_defines,
     compile_playable_unit_descriptor,
     playable_object_kind_of,
@@ -4330,4 +4331,69 @@ def test_descriptor_portraits_are_select_portraits_only() -> None:
     assert result["presentation"]["ui"]["portraitImageIds"] == [
         "UPInfantryHorde",
         "UPInfantryMember",
+    ]
+
+
+def _nugget_typed_combat(components: list[dict[str, object]]) -> dict[str, object]:
+    combat: dict[str, object] = {
+        "damage": {
+            "value": sum(float(row.get("value", 0)) for row in components),
+            "components": components,
+        }
+    }
+    _apply_nugget_damage_types(combat)
+    return combat
+
+
+def test_multi_nugget_weapon_keeps_each_authored_damage_type() -> None:
+    # Retail ArwenSword authors no flat DamageType: HERO ARWEN_DAMAGE plus
+    # SLASH 20. Summing them into one untyped lump resolved the whole hit
+    # against the victim's DEFAULT armor column.
+    combat = _nugget_typed_combat(
+        [
+            {"damageType": "HERO", "value": 180},
+            {"damageType": "SLASH", "value": 20},
+        ]
+    )
+
+    assert "damageType" not in combat
+    assert combat["damageComponents"] == [
+        {"damageType": "HERO", "value": 180},
+        {"damageType": "SLASH", "value": 20},
+    ]
+
+
+def test_multi_nugget_weapon_of_one_type_publishes_that_type() -> None:
+    combat = _nugget_typed_combat(
+        [
+            {"damageType": "SLASH", "value": 10},
+            {"damageType": "SLASH", "value": 5},
+        ]
+    )
+
+    assert combat["damageType"] == "SLASH"
+    assert "damageComponents" not in combat
+
+
+def test_untyped_nuggets_never_invent_a_damage_type() -> None:
+    combat = _nugget_typed_combat([{"damageType": "", "value": 10}])
+
+    assert "damageType" not in combat
+    assert "damageComponents" not in combat
+
+
+def test_partially_typed_nuggets_do_not_spread_the_authored_type() -> None:
+    # One authored type plus an untyped nugget is not a single-type weapon:
+    # claiming HERO for the untyped component would invent authorship.
+    combat = _nugget_typed_combat(
+        [
+            {"damageType": "HERO", "value": 10},
+            {"value": 5},
+        ]
+    )
+
+    assert "damageType" not in combat
+    assert combat["damageComponents"] == [
+        {"damageType": "HERO", "value": 10},
+        {"damageType": "", "value": 5},
     ]
