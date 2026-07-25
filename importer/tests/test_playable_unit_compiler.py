@@ -1809,6 +1809,10 @@ def test_hero_abilities_emit_each_effect_kind_with_evidence() -> None:
             "line": summon["effect"]["objects"][0]["line"],
         }
     ]
+    # This fixture's effective INI view carries no FXList/particle/upgrade
+    # documents, so the shared leaf resolver cannot run and the effect stays
+    # byte-identical to the pre-closure shape (import-unit lane).
+    assert "leaves" not in summon["effect"]
 
     rage = abilities["Command_FixtureRage"]
     assert rage["targeting"] == "self"
@@ -2316,7 +2320,19 @@ def test_experience_member_name_matches_the_horde_chain() -> None:
     assert descriptor["experience"]["maxLevel"] == 3
 
 
-def test_experience_specific_chain_wins_over_define_chain() -> None:
+def test_experience_specific_row_wins_only_at_its_own_rank() -> None:
+    """A narrower TargetNames list overrides that RANK, not the whole chain.
+
+    SAGE grants experience per object name and applies every authored
+    ExperienceLevel whose TargetNames covers the object, so a specific block
+    can only outrank a general one at the rank they share. Retail depends on
+    this: `EvilLevel1` (experiencelevels.ini:9444) comments out its
+    `EVIL_TROOPS` macro and repeats it as a literal 40-name list while
+    EvilLevel2..5 keep the 42-name macro. Treating the narrow list as a
+    replacement chain capped every EVIL_TROOPS horde at rank 1, which
+    contradicts the retail game where Uruk-hai reach rank 5.
+    """
+
     documents = _experience_documents(
         _TROOP_CHAIN
         + """
@@ -2335,9 +2351,42 @@ End
 
     validate_playable_unit_descriptor(descriptor)
     experience = descriptor["experience"]
-    assert experience["maxLevel"] == 1
+    # Rank 1 comes from the narrow list; ranks 2..3 still come from the define
+    # chain instead of being discarded with it.
+    assert experience["maxLevel"] == 3
     assert experience["levels"][0]["experienceId"] == "InfantryOwnLevel1"
     assert experience["levels"][0]["experienceAward"] == 9
+
+
+def test_experience_narrow_subset_list_keeps_the_general_higher_ranks() -> None:
+    """Regression for the retail EVIL_TROOPS shape, in miniature.
+
+    A narrow rank-1 list that is a strict SUBSET of the general chain's target
+    set must not swallow the chain: the unit keeps every rank the general
+    blocks author.
+    """
+
+    documents = _experience_documents(
+        _TROOP_CHAIN
+        + """
+ExperienceLevel NarrowLevel1
+  TargetNames = InfantryHorde RangedHorde
+  RequiredExperience = 1
+  ExperienceAward = 9
+  Rank = 1
+End
+""",
+        defines=_TROOP_DEFINES,
+        modifiers=_TROOP_MODIFIERS,
+    )
+
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    experience = descriptor["experience"]
+    assert experience["maxLevel"] == 3
+    assert [level["rank"] for level in experience["levels"]] == [1, 2, 3]
+    assert experience["levels"][0]["experienceId"] == "NarrowLevel1"
 
 
 def test_experience_unauthored_chain_is_recorded_not_invented() -> None:

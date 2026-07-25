@@ -4730,12 +4730,21 @@ func _fire_power_summon(effect: Dictionary) -> void:
 	## Hatch: spawn each converted summon target with its summon lifetime.
 	var team := int(effect.get("team", -1))
 	var point := Vector2(effect.get("point", Vector2.ZERO))
+	var spawned := _spawn_summon_targets(team, point, Array(effect.get("targets", [])))
+	_emit_event("power.summon", 0, 0, {"team": team, "point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)], "spawned": spawned})
+
+
+func _spawn_summon_targets(team: int, point: Vector2, targets: Array) -> Array:
+	## Shared summon spawn: register each converted summon rule as a live unit
+	## rule and place its battalions with the authored summon lifetime. Used by
+	## BOTH the spellbook OCL powers and the hero egg-chain abilities so the two
+	## lanes cannot drift apart.
 	var unit_rules_value: Variant = _rules.get("unit_rules", {})
 	if typeof(unit_rules_value) != TYPE_DICTIONARY:
-		return
+		return []
 	var unit_rules := unit_rules_value as Dictionary
 	var spawned: Array = []
-	for target_value in Array(effect.get("targets", [])):
+	for target_value in targets:
 		var target := target_value as Dictionary
 		var rule: Dictionary = (target.get("rule", {}) as Dictionary).duplicate(true)
 		var object_id := String(target.get("object_id", ""))
@@ -4761,7 +4770,7 @@ func _fire_power_summon(effect: Dictionary) -> void:
 				_summon_despawn_ticks[entity_id] = tick_index + lifetime_ticks
 			spawned.append(entity_id)
 	_rules["unit_rules"] = unit_rules
-	_emit_event("power.summon", 0, 0, {"team": team, "point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)], "spawned": spawned})
+	return spawned
 
 
 func _step_summon_despawns() -> void:
@@ -6603,6 +6612,16 @@ func _apply_ability_summon(hero_row: Dictionary, effect: Dictionary, point: Vect
 	## Converted ObjectCreationList summon: each created object must resolve to
 	## a converted unit rule or the cast fails closed (never a stand-in).
 	var team := int(hero_row.get("team", -1))
+	# Retail hero summons hatch: the ability's ObjectCreationList creates a
+	# model-less egg (AragornArmyofTheDeadSmallEgg) whose SlowDeathBehavior OCL
+	# spawns the real battalions. `effect.objects` names only that egg, and no
+	# playable-unit document ever describes it, so the legacy lookup below
+	# always failed closed and the power did nothing at all. When the converter
+	# published the ability's leaf closure, walk the same egg -> hatch -> horde
+	# -> member chain the spellbook powers already walk.
+	var chained := _apply_ability_summon_chain(team, effect, point)
+	if not chained.is_empty():
+		return chained
 	var summoned: Array = []
 	var ordinal := 0
 	for entry_value in effect.get("objects", []) as Array:
@@ -6627,6 +6646,60 @@ func _apply_ability_summon(hero_row: Dictionary, effect: Dictionary, point: Vect
 			_emit_event("unit.summoned", new_id, 0, {"team": team, "object_id": member_id, "unit_type": unit_type})
 			summoned.append(new_id)
 	return {"ok": true, "reason": "", "effect": "summon", "affected": summoned.size(), "summoned": summoned}
+
+
+func _apply_ability_summon_chain(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
+	## Resolve a hero summon through its converted leaf closure with the proven
+	## spellbook OCL machinery. Returns {} when the ability carries no closure
+	## (older documents) so the caller keeps its playable-unit lookup, and a
+	## fail-closed result carrying the exact leaf gap when the closure is
+	## present but the chain does not convert — never a stand-in summon.
+	var leaves: Dictionary = effect.get("leaves", {}) as Dictionary
+	if leaves.is_empty():
+		return {}
+	var ocl_id := String(effect.get("oclId", ""))
+	if ocl_id == "":
+		return {}
+	var object_leaves: Dictionary = {}
+	for object_value in Array(leaves.get("objects", [])):
+		if typeof(object_value) == TYPE_DICTIONARY:
+			object_leaves[String((object_value as Dictionary).get("id", ""))] = object_value
+	var ocl_leaves: Dictionary = {}
+	for ocl_value in Array(leaves.get("objectCreationLists", [])):
+		if typeof(ocl_value) == TYPE_DICTIONARY:
+			ocl_leaves[String((ocl_value as Dictionary).get("id", ""))] = ocl_value
+	var weapon_leaves: Dictionary = {}
+	for weapon_value in Array(leaves.get("weapons", [])):
+		if typeof(weapon_value) == TYPE_DICTIONARY:
+			weapon_leaves[String((weapon_value as Dictionary).get("id", ""))] = weapon_value
+	var support := _spellbook_ocl_support(
+		{}, {"objectCreationLists": [ocl_id]}, object_leaves, ocl_leaves, weapon_leaves
+	)
+	if not bool(support.get("ok", false)):
+		return {"ok": false, "reason": "summon-chain-unconverted:%s" % String(support.get("reason", ""))}
+	var resolved: Dictionary = support.get("effect", {}) as Dictionary
+	if String(resolved.get("kind", "")) != "summon":
+		# Fire-weapon receptacles and structure spawns are other powers' shapes;
+		# a hero summon button never presents them.
+		return {"ok": false, "reason": "summon-chain-unsupported-kind:%s" % String(resolved.get("kind", ""))}
+	var targets: Array = Array(resolved.get("targets", []))
+	if targets.is_empty():
+		return {"ok": false, "reason": "summon-chain-has-no-targets"}
+	# The egg's authored SlowDeathBehavior DestructionDelay is the summon's
+	# rise time (4000ms for the Army of the Dead). Schedule through the same
+	# pending-effect queue the spellbook summons use so both lanes hatch on the
+	# authored beat instead of popping in instantly.
+	var pending := 0
+	for target_value in targets:
+		pending += maxi(1, int((target_value as Dictionary).get("count", 1)))
+	_pending_power_effects.append({
+		"kind": "summon",
+		"fire_tick": tick_index + int(resolved.get("hatch_delay_ticks", 0)),
+		"team": team,
+		"point": point,
+		"targets": targets.duplicate(true),
+	})
+	return {"ok": true, "reason": "", "effect": "summon", "affected": pending, "summoned": []}
 
 
 func _summon_unit_type_for(source_object_id: String) -> String:
@@ -7249,8 +7322,13 @@ func _step_entity(id: int) -> void:
 		row["current_speed"] = 0.0
 		if knockdown_ticks <= 0:
 			row["knocked_down"] = false
-			row["state"] = "idle"
 			_emit_event("combat.stand_up", id, 0)
+			# Standing back up resumes the order the charge interrupted, from
+			# the spot the battalion was thrown to. Without this a trampled
+			# battalion stands up ownerless and idle, so the player's attack
+			# order is destroyed by the first hoof that touches it.
+			if not _resume_order_after_knockdown(row):
+				row["state"] = "idle"
 		else:
 			row["state"] = "knocked_down"
 		return
@@ -8129,6 +8207,33 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 	_apply_knockback(origin, TRAMPLE_COLLISION_RADIUS, TRAMPLE_KNOCKBACK_STRENGTH, team, 0, "trample", int(row.get("id", 0)))
 
 
+func _resume_order_after_knockdown(row: Dictionary) -> bool:
+	## Re-path a battalion that just stood up back onto the order it was
+	## carrying when it was knocked down: its live attack target first, then a
+	## pending move destination. Returns false when there is nothing left to
+	## resume (order complete, target dead, or the route is now unreachable),
+	## in which case the caller settles it into idle.
+	var target_id := int(row.get("target_id", 0))
+	if target_id != 0:
+		var target: Dictionary = {}
+		if String(row.get("target_kind", "battalion")) == "structure":
+			target = structures.get(target_id, {}) as Dictionary
+		else:
+			target = entities.get(target_id, {}) as Dictionary
+		if not target.is_empty() and int(target.get("health", 0)) > 0:
+			if _assign_route(row, Vector2(target["position"])):
+				row["state"] = "run"
+				return true
+		row["target_id"] = 0
+		row["target_kind"] = "battalion"
+	var destination := Vector2(row.get("destination", row["position"]))
+	if destination.distance_to(Vector2(row["position"])) > 0.001 and _assign_route(row, destination):
+		row["state"] = "run"
+		return true
+	_clear_pending_route(row, true)
+	return false
+
+
 func _apply_knockback(center: Vector2, radius: float, strength: float, source_team: int, damage: int, damage_reason: String, source_id: int = 0) -> int:
 	## Deterministic radial knockback: sweep enemy battalions in ascending id
 	## order, throw each away from the center (clamped to walkable ground),
@@ -8146,6 +8251,18 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 		var distance := position.distance_to(center)
 		if distance > radius:
 			continue
+		if int(row.get("knockdown_ticks", 0)) > 0:
+			# Already sprawled on the ground: a charge cannot fling a battalion
+			# that is still lying there, and it cannot refresh the timer either.
+			# KNOCKDOWN_DURATION_TICKS(25) outlives TRAMPLE_COOLDOWN_TICKS(10)
+			# and TRAMPLE_KNOCKBACK_STRENGTH(2.0) throws the victim less far
+			# than TRAMPLE_COLLISION_RADIUS(2.5), so without this guard a single
+			# cavalry battalion re-downs the same clump every 10 ticks forever:
+			# the victims never stand, never retaliate, and are ground to dust
+			# for free. Damage still lands on a prone target.
+			if damage > 0:
+				_apply_damage(source_id, id, damage, "battalion")
+			continue
 		var direction := (position - center) / distance if distance > 0.001 else Vector2.RIGHT
 		# Try the full throw first, then shorter deterministic fractions so a
 		# victim near water/cliff lands on the nearest walkable spot instead
@@ -8161,12 +8278,14 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 		row["knocked_down"] = true
 		row["current_speed"] = 0.0
 		row["attack_windup"] = 0
-		row["target_id"] = 0
-		row["target_kind"] = "battalion"
-		row["attack_move"] = false
+		# The order survives the fall. Being bowled over interrupts a battalion,
+		# it does not make it forget what it was told to do; the route is
+		# dropped (the victim was displaced) and re-pathed on stand-up. Wiping
+		# target_id/destination here made every knockdown a permanent
+		# disarm, because nothing ever re-issues the player's order.
 		_clear_member_attack_schedule(row)
 		_clear_member_targets(row)
-		_clear_pending_route(row, true)
+		_clear_pending_route(row, false)
 		row["state"] = "knocked_down"
 		if damage > 0:
 			_apply_damage(source_id, id, damage, "battalion")

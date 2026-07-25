@@ -40,6 +40,7 @@ ALLOWED_CONVERTERS = {
     "map",
     "sage-map",
     "sage-apt-runtime",
+    "sage-apt-shell-runtime",
     "retail-unit-rules",
     "sage-particle-definition",
     "sage-scripts",

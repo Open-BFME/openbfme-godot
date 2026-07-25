@@ -5,6 +5,7 @@ extends Control
 const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 const NavDiamondsScript = preload("res://src/ui/openbfme_nav_diamonds.gd")
 const ShellFlyoutScript = preload("res://src/ui/openbfme_shell_flyout.gd")
+const ShellAptRuntimeScript = preload("res://src/ui/retail_shell_apt_runtime.gd")
 const SliceScript = preload("res://src/retail_slice/retail_vertical_slice.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 const MultiplayerLobbyScript = preload("res://src/ui/multiplayer_lobby.gd")
@@ -170,6 +171,10 @@ var multiplayer_lobby: Panel
 var _lobby_session
 ## Upward shell flyouts keyed by their anchor button's bar id.
 var _shell_flyouts: Dictionary = {}
+## Retail APT shell presentation layer; null until a mounted pack ships the
+## `shellScene` bundle. The hand-built chrome stays authoritative otherwise.
+var _shell_apt_runtime: Control = null
+var _shell_apt_metadata: Dictionary = {}
 
 
 func _ready() -> void:
@@ -196,6 +201,7 @@ func _ready() -> void:
 	_populate_color_options()
 	_collect_stage_buttons()
 	_apply_converted_backdrop()
+	_configure_shell_apt_presentation()
 	_build_shell_flyouts()
 	_connect_actions()
 	options_screen.configure({"font": _shell_font})
@@ -280,6 +286,56 @@ func _bar_buttons() -> Array[Button]:
 	return [tutorials_btn, solo_btn, multiplayer_btn, options_btn, my_heroes_btn, quit_btn]
 
 
+func _configure_shell_apt_presentation() -> bool:
+	## Retail's shell is an APT movie (MainMenu.apt + the MenuExport library),
+	## exactly like the in-game palantir. When a mounted pack ships the cooked
+	## `shellScene` bundle we present those retail triangles; when no pack does
+	## -- the state of every pack that predates the shell ingress lane -- the
+	## hand-built chrome below stays authoritative. This is additive: a missing
+	## or rejected contract never removes the fallback shell.
+	_shell_apt_metadata = {}
+	if _shell_apt_runtime != null:
+		_shell_apt_runtime.queue_free()
+		_shell_apt_runtime = null
+	var runtime: Control = ShellAptRuntimeScript.new()
+	runtime.name = "RetailShellApt"
+	runtime.set_anchors_preset(Control.PRESET_FULL_RECT)
+	runtime.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	runtime.visible = false
+	# Behind the authored chrome so a partial static subset never hides the
+	# working shell; it is promoted to the front only once it presents.
+	add_child(runtime)
+	move_child(runtime, 0)
+	var presented := false
+	for pack_root in _font_pack_root_candidates():
+		if not runtime.call("configure_from_pack", pack_root, true):
+			continue
+		if not bool(runtime.get("presentation_ready")):
+			continue
+		presented = true
+		_shell_apt_metadata = runtime.call("runtime_metadata") as Dictionary
+		break
+	if not presented:
+		runtime.queue_free()
+		return false
+	_shell_apt_runtime = runtime
+	runtime.visible = true
+	# Ordering, deliberately: the retail draws sit above the backdrop and below
+	# `Center`. Two things force that. The retail backdrop is a live 3D shellmap
+	# behind a native View3D gadget with no APT payload, so the authored
+	# backdrop must stay underneath rather than be replaced by nothing; and the
+	# cooked contract binds no button action programs (`parityReady` is false),
+	# so the authored bar remains the interactive surface. Once the contract
+	# reports parity the authored chrome can step aside.
+	var center_index := center.get_index()
+	move_child(runtime, maxi(0, center_index))
+	return true
+
+
+func shell_apt_metadata() -> Dictionary:
+	return _shell_apt_metadata.duplicate(true)
+
+
 func _apply_converted_backdrop() -> void:
 	## Retail renders a live 3D shellmap behind the bar (REF-07, the Argonath).
 	## Open BFME never copies a retail screenshot in: if a mounted pack publishes
@@ -354,6 +410,33 @@ func _on_shell_flyout_item(item_id: String, bar_id: String) -> void:
 			push_warning("OpenBFME shell: unhandled flyout route %s/%s" % [bar_id, item_id])
 
 
+func _skirmish_map_choices() -> Array[Dictionary]:
+	## A pack that publishes a map catalog owns the map list, in authored order,
+	## however many maps it ships. Without a catalog the authored vertical-slice
+	## list stands, so a host pack that only declares an entryMap never collapses
+	## the menu to a single row.
+	var catalog_rows: Array = []
+	if _content_db != null and _content_db.has_method("list_catalog_maps"):
+		var listed: Variant = _content_db.call("list_catalog_maps")
+		if typeof(listed) == TYPE_ARRAY:
+			catalog_rows = listed as Array
+	if catalog_rows.is_empty():
+		return RETAIL_MAP_CHOICES
+	var choices: Array[Dictionary] = []
+	for value in catalog_rows:
+		if typeof(value) != TYPE_DICTIONARY:
+			continue
+		var row := value as Dictionary
+		var map_id := String(row.get("id", ""))
+		if map_id == "":
+			continue
+		var name := String(row.get("name", ""))
+		choices.append({"id": map_id, "name": name if name != "" else map_id})
+	if choices.is_empty():
+		return RETAIL_MAP_CHOICES
+	return choices
+
+
 func _populate_skirmish_options() -> void:
 	# Mirror the slice's leading fail-closed gate: when the men pack's bundle
 	# content is absent, reload once before judging faction availability.
@@ -368,8 +451,9 @@ func _populate_skirmish_options() -> void:
 	# host Fords entry). Maps the slice cannot resolve stay listed but are
 	# disabled with the honest reason the slice would refuse them.
 	_skirmish_map_notes.clear()
-	for map_index in RETAIL_MAP_CHOICES.size():
-		var choice: Dictionary = RETAIL_MAP_CHOICES[map_index]
+	var map_choices := _skirmish_map_choices()
+	for map_index in map_choices.size():
+		var choice: Dictionary = map_choices[map_index]
 		var map_id := String(choice["id"])
 		var note := retail_map_availability(map_id)
 		_skirmish_map_notes[map_id] = note
@@ -870,7 +954,7 @@ func _retail_faction_display_name(faction_id: String) -> String:
 
 
 func _retail_map_display_name(map_id: String) -> String:
-	for map_choice in RETAIL_MAP_CHOICES:
+	for map_choice in _skirmish_map_choices():
 		if String(map_choice["id"]) == map_id:
 			return String(map_choice["name"])
 	return map_id.trim_prefix("bfme2.map.").capitalize()

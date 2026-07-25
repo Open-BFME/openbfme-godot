@@ -39,7 +39,7 @@ from .sage_video import convert_videos
 from .tools import discover_executable
 from .faction_profile import build_men_leaf_profile
 from .faction_slice_profile import compose_faction_profile
-from .map_profile import build_five_map_profile
+from .map_profile import build_five_map_profile, build_skirmish_map_profile
 from .map_census import census_multiplayer_maps
 from .profile import ImportProfile, profile_path, resolve_profile
 from .retail_visual_closure import (
@@ -318,11 +318,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     map_profile = sub.add_parser(
         "generate-map-profile",
-        help="generate the private BFME2 1.06 five-map source/terrain profile",
+        help="generate a private map source/terrain profile from retail bytes",
     )
     map_profile.add_argument("--install", required=True)
     _add_game_argument(map_profile)
     map_profile.add_argument("--reindex", action="store_true")
+    map_profile.add_argument(
+        "--map-set",
+        choices=("five-map", "skirmish"),
+        default="five-map",
+        help=(
+            "five-map: the legacy private BFME2 1.06 development set; "
+            "skirmish: every official multiplayer map this install ships, "
+            "discovered from maps/mapcache.ini"
+        ),
+    )
+    map_profile.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "skirmish only: abort instead of recording a rejection when a "
+            "shipped map cannot be parsed"
+        ),
+    )
 
     import_unit = sub.add_parser(
         "import-unit",
@@ -1143,22 +1161,37 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "generate-map-profile":
-            if args.game != "bfme2":
-                raise ValueError("generate-map-profile currently supports BFME2 only")
-            profile = build_five_map_profile(catalog)
-            generated_path = (
-                _workspace_root(args) / "profiles" / "five-maps.generated.json"
-            )
+            map_set = getattr(args, "map_set", "five-map")
+            if map_set == "five-map":
+                if args.game != "bfme2":
+                    raise ValueError(
+                        "the five-map development set is BFME2 only; use "
+                        "--map-set skirmish for other editions"
+                    )
+                profile = build_five_map_profile(catalog)
+                generated_name = "five-maps.generated.json"
+            else:
+                profile = build_skirmish_map_profile(
+                    catalog, game=args.game, strict=bool(getattr(args, "strict", False))
+                )
+                generated_name = f"{args.game}-skirmish-maps.generated.json"
+            generated_path = _workspace_root(args) / "profiles" / generated_name
             write_json_atomic(generated_path, profile)
             payload = (
                 json.dumps(profile, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
             )
+            evidence = profile.get("planning_evidence", {})
             value = {
                 "ready": True,
                 "profile": str(generated_path),
                 "profile_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
                 "resource_count": len(profile["resources"]),
                 "map_count": len(profile["runtime_data"]["data/maps.json"]["maps"]),
+                "rejected_map_count": len(evidence.get("rejectedMaps", [])),
+                "unbound_object_type_count": sum(
+                    int(row["count"])
+                    for row in evidence.get("unboundObjectTypes", {}).values()
+                ),
             }
             _render(value, args.json)
             return 0

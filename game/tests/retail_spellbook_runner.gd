@@ -19,7 +19,15 @@ const EXPECTED_POWER_ORDER := [
 const EXPECTED_COSTS := [5, 5, 5, 10, 10, 10, 10, 15, 15, 15, 25, 25]
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _initialize() -> void:
+	_runner_watchdog.start(self, "RETAIL_SPELLBOOK_RUNNER")
 	OS.set_environment("OPENBFME_STARTER_ARMY", "1")
 	call_deferred("_run")
 

@@ -16,7 +16,15 @@ var passed := 0
 var failed := 0
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _initialize() -> void:
+	_runner_watchdog.start(self, "RETAIL_NTEAM_SETUP_RUNNER")
 	# The menu is the source of truth here: force the env overrides off so the
 	# slice seam reads the injected GameState, not a headless faction pin.
 	OS.set_environment("OPENBFME_SLICE_FACTION", "")

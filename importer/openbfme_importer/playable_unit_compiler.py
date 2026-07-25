@@ -2646,47 +2646,69 @@ def _select_experience_chain(
         candidates.items(),
         key=lambda item: (len(item[0]), sorted(item[0])),
     )
-    if len(ordered) > 1 and len(ordered[0][0]) == len(ordered[1][0]):
-        tied = [
-            item for item in ordered if len(item[0]) == len(ordered[0][0])
-        ]
-        own_name = primary_name.strip().casefold()
+    own_name = primary_name.strip().casefold()
+
+    def _tie_break(tied: list[tuple[frozenset[str], list[Mapping[str, object]]]]):
+        """Resolve equal-size target sets: own name first, then container."""
         own_matched = (
             [item for item in tied if own_name in item[0]] if own_name else []
         )
-        container_matched = [
-            item for item in tied if item[0] & container_names
-        ]
         if len(own_matched) == 1:
-            ordered = own_matched + [
-                item for item in ordered if item is not own_matched[0]
-            ]
-        elif len(container_matched) == 1:
-            ordered = container_matched + [
-                item for item in ordered if item is not container_matched[0]
-            ]
-        else:
-            raise PlayableUnitCompilerError(
-                f"{label} matches two ExperienceLevel chains of equal specificity: "
-                f"{sorted(ordered[0][0])} vs {sorted(ordered[1][0])}"
-            )
-    chain_targets, chain_rows = ordered[0]
+            return own_matched[0]
+        container_matched = [item for item in tied if item[0] & container_names]
+        if len(container_matched) == 1:
+            return container_matched[0]
+        return None
+
+    # The engine grants experience per object name and applies EVERY authored
+    # ExperienceLevel whose TargetNames covers the object, so specificity only
+    # decides ties AT THE SAME RANK — it must not discard the other ranks.
+    # Retail relies on this: `EvilLevel1` (experiencelevels.ini:9444) comments
+    # out its `EVIL_TROOPS` macro and repeats it as a literal 40-name list,
+    # while EvilLevel2..5 keep the 42-name macro. Picking one bucket by size
+    # made the 40-name literal win as a one-row chain and silently threw away
+    # ranks 2..5 for every EVIL_TROOPS horde — Isengard/Mordor/Wild infantry
+    # could never level past rank 1.
+    by_rank: dict[int, list[tuple[frozenset[str], Mapping[str, object]]]] = {}
+    for targets, bucket_rows in ordered:
+        seen_in_bucket: set[int] = set()
+        for row in bucket_rows:
+            rank = row.get("rank")
+            if not isinstance(rank, int) or rank < 1 or rank in seen_in_bucket:
+                raise PlayableUnitCompilerError(
+                    f"{label} ExperienceLevel {row.get('id')} has a duplicate or "
+                    f"invalid Rank: {row.get('rank')}"
+                )
+            seen_in_bucket.add(rank)
+            by_rank.setdefault(rank, []).append((targets, row))
+    if len(by_rank) > _MAX_EXPERIENCE_LEVELS:
+        raise PlayableUnitCompilerError(
+            f"{label} exceeds the ExperienceLevel chain limit"
+        )
+
     ranked: list[Mapping[str, object]] = []
-    seen_ranks: set[int] = set()
-    for row in chain_rows:
-        rank = row.get("rank")
-        if not isinstance(rank, int) or rank < 1 or rank in seen_ranks:
-            raise PlayableUnitCompilerError(
-                f"{label} ExperienceLevel {row.get('id')} has a duplicate or "
-                f"invalid Rank: {row.get('rank')}"
-            )
-        seen_ranks.add(rank)
-        ranked.append(row)
-    ranked.sort(key=lambda row: int(row["rank"]))
+    row_targets: dict[int, frozenset[str]] = {}
+    for rank in sorted(by_rank):
+        supplying = by_rank[rank]
+        best_size = min(len(targets) for targets, _ in supplying)
+        tied = [item for item in supplying if len(item[0]) == best_size]
+        if len(tied) == 1:
+            chosen_targets, chosen_row = tied[0]
+        else:
+            resolved = _tie_break([(t, [r]) for t, r in tied])
+            if resolved is None:
+                raise PlayableUnitCompilerError(
+                    f"{label} matches two ExperienceLevel chains of equal specificity: "
+                    f"{sorted(tied[0][0])} vs {sorted(tied[1][0])}"
+                )
+            chosen_targets = resolved[0]
+            chosen_row = resolved[1][0]
+        row_targets[rank] = chosen_targets
+        ranked.append(chosen_row)
     # Retail chains are rank-ascending but not always 1..N: ring heroes and
     # Treebeard author a single rank-10 row (they enter at the top rank).
     # The contract keeps the authored ranks verbatim instead of renumbering.
-    return tuple((row, chain_targets) for row in ranked)
+    return tuple((row, row_targets[int(row["rank"])]) for row in ranked)
 
 
 def _level_modifier_leaf(
@@ -2879,6 +2901,78 @@ def _experience_contract(
         # recomputes effective stats from the base plus every earned level.
         "modifierApplication": "cumulative-per-level",
         "levels": levels,
+    }
+
+
+_SUMMON_LEAF_DOCUMENTS = (
+    "data/ini/objectcreationlist.ini",
+    "data/ini/weapon.ini",
+    "data/ini/fxlist.ini",
+    "data/ini/attributemodifier.ini",
+    "data/ini/upgrade.ini",
+    "data/ini/fxparticlesystem.ini",
+    "data/ini/gamedata.ini",
+)
+
+
+def _summon_leaf_closure(
+    ocl_id: str,
+    objects: Mapping[str, SageObject],
+    documents: Mapping[str, bytes],
+    constants: Mapping[str, int | float],
+) -> dict[str, object] | None:
+    """Resolve one ability ObjectCreationList into spellbook-shaped leaves.
+
+    Retail summons an army through an egg: the ability's ObjectCreationList
+    creates a short-lived, deliberately model-less egg whose
+    ``SlowDeathBehavior`` OCL hatches the real battalions
+    (goodfactionsubobjects.ini AragornArmyofTheDeadSmallEgg -> MIDPOINT
+    SUPERWEAPON_SpawnAragornOathbreakers).  The summon effect on its own names
+    only the egg, which no playable-unit document ever describes, so the
+    runtime cannot spawn anything from it.  This resolves the SAME leaf
+    families the spellbook lane already publishes (objects, object-creation
+    lists, weapons) over the ability's OCL, so the runtime can walk the egg ->
+    hatch -> horde -> member chain with the proven spellbook machinery instead
+    of a second summon mechanism.
+
+    Returns ``None`` when the effective INI view this compilation was handed
+    does not carry every document the shared leaf resolver requires (the
+    single-unit ``import-unit`` lane), leaving the effect byte-identical to the
+    pre-closure shape.
+    """
+
+    if any(path not in documents for path in _SUMMON_LEAF_DOCUMENTS):
+        return None
+    # Deferred import: spellbook_compiler imports this module at load time.
+    from types import SimpleNamespace
+
+    from .spellbook_compiler import SpellbookCompilerError, _LeafResolver
+
+    try:
+        resolver = _LeafResolver(
+            documents,
+            SimpleNamespace(objects=objects),  # type: ignore[arg-type]
+            constants,
+            {},
+        )
+        resolver.object_creation_list(ocl_id, f"summon ability {ocl_id}")
+    except (SpellbookCompilerError, ValueError, KeyError):
+        # Evidence is never invented: an unresolvable leaf chain leaves the
+        # effect exactly as authored so the runtime gate reports the gap.
+        return None
+    return {
+        "objectCreationLists": sorted(
+            (deepcopy(row) for row in resolver.ocls.values()),
+            key=lambda row: str(row["id"]).casefold(),
+        ),
+        "objects": sorted(
+            (deepcopy(row) for row in resolver.objects.values()),
+            key=lambda row: str(row["id"]).casefold(),
+        ),
+        "weapons": sorted(
+            (deepcopy(row) for row in resolver.weapons.values()),
+            key=lambda row: str(row["id"]).casefold(),
+        ),
     }
 
 
@@ -4564,6 +4658,11 @@ def _hero_ability_effect(
             "objects": summon_objects,
             "sourceIni": OBJECT_CREATION_LIST_PATH,
         }
+        summon_leaves = _summon_leaf_closure(
+            ocl_tokens[0], objects, documents, constants
+        )
+        if summon_leaves is not None:
+            effect["leaves"] = summon_leaves
         create_location = _first(block.values("CreateLocation"))
         if create_location is not None:
             effect["createLocation"] = create_location

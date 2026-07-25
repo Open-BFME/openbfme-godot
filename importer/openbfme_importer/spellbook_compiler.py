@@ -681,6 +681,34 @@ def _nested_named_blocks(
     return result
 
 
+_PARTICLE_SYS_BONE_FIELD = re.compile(r'"([^"]*)"|(\S+)')
+
+
+def _particle_sys_bone_fields(value: str) -> tuple[str, str] | None:
+    """Split one ``ParticleSysBone`` value into its bone and system fields.
+
+    The authored grammar is ``<bone> <system> [Key:Value ...]``, and the bone
+    field may be a DOUBLE-QUOTED string containing spaces — retail RotWK
+    authors ``ParticleSysBone = "Bip L Finger2" SoWolf_Ambient_fog
+    FollowBone:YES`` on AngmarShadeWolf (neutralunits.ini:5969).  Splitting
+    that on whitespace makes the second field ``L``, i.e. a bone-name fragment
+    read as a particle-system name, so the quoting has to be honoured here
+    rather than by the generic identifier tokenizer.
+
+    Returns ``None`` when the value does not carry both fields.
+    """
+
+    fields: list[str] = []
+    for match in _PARTICLE_SYS_BONE_FIELD.finditer(value):
+        quoted, bare = match.group(1), match.group(2)
+        fields.append(quoted if quoted is not None else bare)
+        if len(fields) == 2:
+            break
+    if len(fields) < 2 or not fields[1]:
+        return None
+    return fields[0], fields[1]
+
+
 def _fx_field_values(section: Mapping[str, object], field: str) -> list[str]:
     values: list[str] = []
     for assignment in section.get("assignments", []):
@@ -728,6 +756,8 @@ class _LeafResolver:
         self._census_upgrades = census_upgrades
         particle_source = _required_document(documents, FX_PARTICLE_PATH)
         self._particle_definitions = list(parse_particle_definitions(particle_source))
+        # Lazily filled by _particle_family; classification evidence only.
+        self._legacy_particle_names: set[str] | None = None
         self._documents = documents
         self._text_defines = _text_defines(
             _required_document(documents, "data/ini/gamedata.ini")
@@ -814,6 +844,9 @@ class _LeafResolver:
                 variation_ids.append(self.objects[token.casefold()]["id"])
             if variation_ids:
                 leaf["buildVariations"] = variation_ids
+        draw = self._project_draw(lineage)
+        if draw:
+            leaf["draw"] = draw
         unconverted: set[str] = set()
         for block in _effective_top_blocks(lineage):
             if (block.header_key or "").casefold() != "behavior":
@@ -836,6 +869,159 @@ class _LeafResolver:
         if unconverted:
             leaf["unconvertedBehaviors"] = sorted(unconverted, key=str.casefold)
         return leaf
+
+    def _particle_family(self, identifier: str) -> str:
+        """Classify a particle system this lane could not bind.
+
+        Retail ships TWO particle families and this lane indexes only
+        ``FXParticleSystem``.  Some authored ParticleSysBone systems
+        (``RainOfFireProjectileSmoke``, ``InfantryDustTrails``) are defined
+        only in the legacy ``data/ini/particlesystem.ini``; others
+        (``BalrogSword``, ``GoblinKingTaint``) are in neither file and are
+        simply absent from the corpus.  Both are recorded, but they are
+        different gaps and only the first is fixable by widening the lookup —
+        so the evidence has to say which.  Classification only: this never
+        binds a definition.
+        """
+
+        legacy = self._documents.get("data/ini/particlesystem.ini")
+        if legacy is None:
+            # The spellbook document view does not carry the legacy family at
+            # all, so this lane cannot tell "absent from retail" from "defined
+            # in the family we never load". Say exactly that instead of
+            # asserting an absence that was never checked.
+            return "unknown-legacy-family-not-in-view"
+        if self._legacy_particle_names is None:
+            try:
+                self._legacy_particle_names = {
+                    definition.name.casefold()
+                    for definition in parse_particle_definitions(legacy)
+                }
+            except ValueError:
+                self._legacy_particle_names = set()
+        if identifier.casefold() in self._legacy_particle_names:
+            return "ParticleSystem"
+        return "none"
+
+    def _project_draw(self, lineage: Sequence[SageObject]) -> list[dict[str, object]]:
+        """Record the authored Draw evidence of one effect-referenced Object.
+
+        Spellbook leaves used to carry gameplay only, so every summoned unit,
+        grove, tree, and sunbeam reached the runtime with no art binding at all
+        and presented as synthetic kit geometry (or as nothing).  Retail
+        authors that art in the object's Draw modules, and it comes in two
+        distinct channels that must both be recorded:
+
+        * ``Model`` in a (Default)ModelConditionState — real geometry, e.g.
+          goodfactionsubobjects.ini ElvenWoodTree ``Model = PTElvnWood01`` and
+          neutralunits.ini RohanOathbreaker ``Model = RUPsnt_1_SKN``.
+        * ``ParticleSysBone`` — the ONLY visual some objects have.  Retail
+          authors ``Model = None`` for CloudBreakSunbeam
+          (goodfactionprops.ini) and for ElvenGrove (structures/elven/
+          grove.ini); their entire appearance is the bone-attached particle
+          system (``CloudBreakRays`` / ``TaintHCPing``).
+
+        ``Model = None`` is recorded as the authored absence it is (``models``
+        stays empty for that state) — retail authoring is never replaced by an
+        invented stand-in.  Each referenced particle system is resolved through
+        the same particle leaf family the FXList lane uses, so a converted
+        definition and its textures ride the pack.
+        """
+
+        states: list[dict[str, object]] = []
+        for block in _effective_top_blocks(lineage):
+            if (block.header_key or "").casefold() != "draw":
+                continue
+            for state in block.blocks:
+                kind = state.kind.casefold()
+                if kind not in {
+                    "defaultmodelconditionstate",
+                    "modelconditionstate",
+                }:
+                    continue
+                models: list[str] = []
+                particles: list[dict[str, str]] = []
+                unresolved_particles: list[dict[str, object]] = []
+                for assignment in state.assignments:
+                    key = assignment.key.casefold()
+                    if key == "model":
+                        token = _first(_tokens(assignment.value))
+                        if token is not None and token.casefold() not in _NULL_TOKENS:
+                            models.append(token)
+                    elif key == "particlesysbone":
+                        fields = _particle_sys_bone_fields(assignment.value)
+                        if fields is None:
+                            continue
+                        bone, system = fields
+                        if system.casefold() in _NULL_TOKENS:
+                            continue
+                        try:
+                            self.particle_reference(
+                                system, f"{block.kind} ParticleSysBone"
+                            )
+                        except SpellbookCompilerError as exc:
+                            # Retail ships ParticleSysBone lines whose system
+                            # name does not exist — neutralunits.ini:6016
+                            # authors `SoWolf_Ambient_snowFollowBone:YES`, one
+                            # missing space away from the real
+                            # `SoWolf_Ambient_snow`.  SAGE looks that name up,
+                            # misses, and draws nothing.  Record the authored
+                            # reference verbatim with its source line (same
+                            # source-null precedent as the census' missing
+                            # audio samples) rather than either inventing a
+                            # definition or costing the whole faction its
+                            # spellbook over one retail typo.
+                            unresolved_particles.append(
+                                {
+                                    "bone": bone,
+                                    "authoredValue": assignment.value.strip(),
+                                    "particleSystem": system,
+                                    "authoredFamily": self._particle_family(system),
+                                    "reason": str(exc),
+                                    "sourceIni": assignment.source_virtual_path,
+                                    "line": assignment.line,
+                                }
+                            )
+                            continue
+                        particles.append(
+                            {
+                                "bone": bone,
+                                "particleSystem": self.particles[system.casefold()][
+                                    "id"
+                                ],
+                            }
+                        )
+                if not models and not particles and not unresolved_particles:
+                    continue
+                row: dict[str, object] = {
+                    "drawModule": block.kind,
+                    "conditions": [
+                        token
+                        for token in state.model_condition_tokens
+                        or state.header_tokens
+                    ],
+                }
+                if models:
+                    row["models"] = models
+                if particles:
+                    row["particleSysBones"] = particles
+                if unresolved_particles:
+                    row["unresolvedParticleSysBones"] = sorted(
+                        unresolved_particles,
+                        key=lambda item: (
+                            str(item["sourceIni"]).casefold(),
+                            int(item["line"]),  # type: ignore[arg-type]
+                        ),
+                    )
+                states.append(row)
+        states.sort(
+            key=lambda row: (
+                str(row["drawModule"]).casefold(),
+                tuple(str(item).casefold() for item in row["conditions"]),
+                tuple(str(item).casefold() for item in row.get("models", [])),
+            )
+        )
+        return states
 
     def _block_numeric(
         self, block: SageBlock, field: str

@@ -91,6 +91,9 @@ def _parse_terrain_ini_bytes(
         raise ValueError("terrain.ini has an unsupported text encoding") from exc
 
     definitions: dict[str, _TerrainDefinition] = {}
+    # Duplicate Terrain symbols retail authors more than once; last record wins
+    # and the superseded one is recorded (see the shadowing note below).
+    shadowed: list[dict[str, object]] = []
     current_symbol: str | None = None
     current_line = 0
     current_textures: list[str] = []
@@ -133,9 +136,24 @@ def _parse_terrain_ini_bytes(
                 current_line = 0
                 current_textures = []
                 continue
+            # Retail authors the same Terrain symbol twice with DIFFERENT
+            # textures: `SnowType6` at terrain.ini:2056 (TXSnow05a.tga) and
+            # again at :2061 (TMSnow02a.tga), and `SandMediumType2` at :1756.
+            # Failing closed here blocked six skirmish maps (grey-mountains,
+            # withered-heath, tournament-gundabad, tournament-rhudaur, ...).
+            # EA's prepend-based lookup and OpenSAGE's dictionary overwrite
+            # both select the LAST source record for an exact duplicate name —
+            # the same rule `sage_map.py` already applies to duplicate player
+            # -start waypoints. Take the last record and record the shadowing
+            # so the decision stays auditable rather than silent.
             if key in definitions:
-                raise ValueError(
-                    f"duplicate terrain definition for {current_symbol!r} at line {current_line}"
+                shadowed.append(
+                    {
+                        "symbol": current_symbol,
+                        "supersededTexture": definitions[key].texture,
+                        "supersededLine": definitions[key].line,
+                        "line": current_line,
+                    }
                 )
             if len(current_textures) != 1:
                 raise ValueError(

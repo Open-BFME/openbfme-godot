@@ -107,6 +107,7 @@ RESOURCE_BUNDLE_CONVERTERS = {
     "w3d-static",
     "sage-terrain-materials",
     "sage-apt-runtime",
+    "sage-apt-shell-runtime",
     "retail-unit-rules",
     "texture-atlas-crops",
 }
@@ -3159,6 +3160,26 @@ class ImportPipeline:
                     if resource.rule.required and not allow_incomplete:
                         raise
                     bundle_outputs = []
+            elif (
+                resource.rule.converter == "sage-apt-shell-runtime"
+                and resource.entries
+            ):
+                try:
+                    bundle_outputs = self._convert_shell_apt_runtime_bundle(
+                        resource,
+                        extracted,
+                        resource.rule.output,
+                        resource.rule.options,
+                        staging,
+                    )
+                except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                    bundle_error = str(exc)
+                    incomplete.append(
+                        {"resource": resource.rule.id, "reason": bundle_error}
+                    )
+                    if resource.rule.required and not allow_incomplete:
+                        raise
+                    bundle_outputs = []
             elif resource.rule.converter == "retail-unit-rules" and resource.entries:
                 try:
                     bundle_outputs = self._convert_retail_unit_rules_bundle(
@@ -3936,6 +3957,138 @@ class ImportPipeline:
             expected,
             object_bindings,
         )
+
+    def _convert_shell_apt_runtime_bundle(
+        self,
+        resource: ResolvedResource,
+        extracted: Mapping[tuple[str, str], Mapping[str, Any]],
+        output: str | None,
+        options: dict[str, Any],
+        pack_root: Path,
+    ) -> list[Path]:
+        """Cook the retail main-menu shell APT closure into pack outputs.
+
+        Mirrors :meth:`_convert_hud_apt_runtime_bundle`.  The shell closure is
+        not size-pinned the way the palantir closure is, so the guard here is
+        structural: exact output identity, no duplicate virtual paths, no
+        output collisions, and a contract that never claims parity while the
+        native View3D backdrop and timeline playback stay unbound.
+        """
+
+        from .retail_shell_apt_convert import (
+            OUTPUT_SCHEMA,
+            OUTPUT_SCHEMA_VERSION,
+            RUNTIME_OUTPUT_PATH,
+            SCENE_ID,
+            convert_shell_apt_bundle,
+        )
+
+        if output != RUNTIME_OUTPUT_PATH:
+            raise ValueError(
+                f"sage-apt-shell-runtime output must be {RUNTIME_OUTPUT_PATH!r}"
+            )
+        allowed_options = {"expectedSourceAggregateSha256"}
+        unsupported = sorted(set(options) - allowed_options)
+        if unsupported:
+            raise ValueError(
+                "sage-apt-shell-runtime has unsupported option(s): "
+                + ", ".join(unsupported)
+            )
+        expected_aggregate = options.get("expectedSourceAggregateSha256")
+        if expected_aggregate is not None and not (
+            isinstance(expected_aggregate, str)
+            and len(expected_aggregate) == 64
+            and all(value in "0123456789abcdef" for value in expected_aggregate)
+        ):
+            raise ValueError(
+                "sage-apt-shell-runtime expectedSourceAggregateSha256 must be "
+                "lowercase hex"
+            )
+        if resource.count_error is not None or not resource.entries:
+            raise ValueError("sage-apt-shell-runtime requires resolved sources")
+
+        sources: dict[str, Path] = {}
+        seen_paths: set[str] = set()
+        for entry in resource.entries:
+            cached = extracted.get((entry.archive.casefold(), entry.name.casefold()))
+            if cached is None:
+                raise RuntimeError(
+                    f"shell APT bundle input was not extracted: {entry.name}"
+                )
+            folded = entry.name.casefold()
+            if folded in seen_paths:
+                raise ValueError(
+                    f"shell APT bundle has duplicate virtual path: {entry.name}"
+                )
+            seen_paths.add(folded)
+            sources[entry.name] = Path(cached["source_path"])
+
+        temporary = pack_root / f".shell-apt-runtime-{resource.rule.id}"
+        if temporary.exists():
+            raise RuntimeError("shell APT temporary output already exists")
+        try:
+            contract = convert_shell_apt_bundle(
+                sources,
+                temporary,
+                expected_source_aggregate_sha256=expected_aggregate,
+            )
+            summary = contract.get("summary")
+            source_proof = contract.get("source")
+            policy = contract.get("renderPolicy")
+            if (
+                contract.get("schema") != OUTPUT_SCHEMA
+                or contract.get("schemaVersion") != OUTPUT_SCHEMA_VERSION
+                or contract.get("sceneId") != SCENE_ID
+                or not isinstance(summary, dict)
+                or not isinstance(policy, dict)
+                or policy.get("actionScriptExecuted") is not False
+                or policy.get("syntheticFallbackAllowed") is not False
+                or summary.get("parityReady") is not False
+                or summary.get("staticSubsetReady") is not True
+                or int(summary.get("drawCount", 0)) <= 0
+                or not isinstance(source_proof, dict)
+                or source_proof.get("sourceCount") != len(sources)
+            ):
+                raise RuntimeError("shell APT runtime contract changed")
+
+            temporary_files = sorted(
+                (path for path in temporary.rglob("*") if path.is_file()),
+                key=lambda path: path.relative_to(temporary).as_posix().casefold(),
+            )
+            if len(temporary_files) != int(summary.get("atlasCount", -1)) + 1:
+                raise RuntimeError("shell APT runtime output count changed")
+            output_pairs = [
+                (
+                    source_path,
+                    _safe_output(
+                        pack_root,
+                        source_path.relative_to(temporary).as_posix(),
+                    ),
+                )
+                for source_path in temporary_files
+            ]
+            collisions = [
+                target.relative_to(pack_root).as_posix()
+                for _, target in output_pairs
+                if target.exists()
+            ]
+            if collisions:
+                raise RuntimeError(
+                    "shell APT runtime output collides with pack output: "
+                    + ", ".join(collisions)
+                )
+            outputs: list[Path] = []
+            for source_path, target in output_pairs:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(source_path), str(target))
+                outputs.append(target)
+            if RUNTIME_OUTPUT_PATH not in {
+                path.relative_to(pack_root).as_posix() for path in outputs
+            }:
+                raise RuntimeError("shell APT runtime contract output is missing")
+        finally:
+            shutil.rmtree(temporary, ignore_errors=True)
+        return outputs
 
     def _convert_hud_apt_runtime_bundle(
         self,

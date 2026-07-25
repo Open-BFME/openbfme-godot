@@ -12,11 +12,16 @@ from openbfme_importer.sage_scb import SageScbError
 from openbfme_importer.sage_scripts import (
     MAP_SCRIPTS_SCHEMA,
     MAP_SCRIPTS_SCHEMA_VERSION,
+    RECORDED_ACTION_OPCODES,
+    RECORDED_CONDITION_OPCODES,
+    SEMANTIC_ACTION_OPCODES,
+    SEMANTIC_CONDITION_OPCODES,
     map_scripts_document,
 )
 
 
 ROOT = Path(__file__).resolve().parents[2]
+RUNTIME_GDSCRIPT = ROOT / "game/src/retail_slice/retail_map_scripts.gd"
 CATALOG = ROOT / ".private/retail-work/catalog/rotwk.json"
 CONTRACT = (
     ROOT
@@ -28,6 +33,8 @@ CONTRACT = (
 # skirmish contract scope (both present in the RotWK 2.01 catalog).
 REAL_MAP = "maps/map mp adorn river/map mp adorn river.map"
 REAL_SCB = "libraries/power restrictions.scb"
+# One real campaign mission (RotWK Angmar campaign, mission 2).
+REAL_CAMPAIGN_MAP = "maps/map ang fornost/map ang fornost.map"
 
 
 def _pipeline() -> ImportPipeline:
@@ -157,6 +164,79 @@ class SageScriptsConverterTests(unittest.TestCase):
             map_scripts_document(_fixture(), container="ini")
 
 
+def _gdscript_opcode_set(source: str, constant: str) -> frozenset[str]:
+    """Read one ``const NAME := { "OPCODE": true, ... }`` block from GDScript."""
+
+    marker = f"const {constant} := {{"
+    start = source.index(marker) + len(marker)
+    end = source.index("}", start)
+    body = source[start:end]
+    return frozenset(
+        line.split('"')[1]
+        for line in body.splitlines()
+        if line.strip().startswith('"')
+    )
+
+
+@unittest.skipUnless(
+    RUNTIME_GDSCRIPT.is_file(), "runtime interpreter source is not present"
+)
+class RuntimeOpcodeContractTests(unittest.TestCase):
+    """The census may never claim coverage the runtime does not implement.
+
+    ``sage_scripts.py`` declares which opcodes are honoured, and the coverage
+    section of every converted document is computed from those declarations.
+    The Godot interpreter is the thing that actually honours them, so the two
+    declarations are asserted identical here; drift fails the build rather
+    than silently inflating reported campaign coverage.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = RUNTIME_GDSCRIPT.read_text(encoding="utf-8")
+
+    def test_semantic_condition_tables_match(self) -> None:
+        self.assertEqual(
+            _gdscript_opcode_set(self.source, "SEMANTIC_CONDITIONS"),
+            SEMANTIC_CONDITION_OPCODES,
+        )
+
+    def test_semantic_action_tables_match(self) -> None:
+        self.assertEqual(
+            _gdscript_opcode_set(self.source, "SEMANTIC_ACTIONS"),
+            SEMANTIC_ACTION_OPCODES,
+        )
+
+    def test_recorded_action_tables_match(self) -> None:
+        self.assertEqual(
+            _gdscript_opcode_set(self.source, "RECORDED_ACTIONS"),
+            RECORDED_ACTION_OPCODES,
+        )
+
+    def test_no_opcode_is_both_semantic_and_recorded(self) -> None:
+        self.assertEqual(
+            SEMANTIC_ACTION_OPCODES & RECORDED_ACTION_OPCODES, frozenset()
+        )
+        self.assertEqual(
+            SEMANTIC_CONDITION_OPCODES & RECORDED_CONDITION_OPCODES,
+            frozenset(),
+        )
+
+    def test_every_declared_action_has_a_runtime_branch(self) -> None:
+        # Semantic actions must appear in the action match statement; recorded
+        # actions are dispatched through the RECORDED_ACTIONS fallback.
+        body = self.source[self.source.index("func _execute_action") :]
+        body = body[: body.index("\nfunc _set_counter")]
+        for opcode in SEMANTIC_ACTION_OPCODES:
+            self.assertIn(f'"{opcode}"', body, f"{opcode} has no runtime branch")
+
+    def test_every_declared_condition_has_a_runtime_branch(self) -> None:
+        body = self.source[self.source.index("func _evaluate_condition(") :]
+        body = body[: body.index("\nfunc _execute_action")]
+        for opcode in SEMANTIC_CONDITION_OPCODES:
+            self.assertIn(f'"{opcode}"', body, f"{opcode} has no runtime branch")
+
+
 @unittest.skipUnless(
     CATALOG.is_file() and CONTRACT.is_file(),
     "RotWK catalog or skirmish script contract is not present",
@@ -223,6 +303,66 @@ class SageScriptsRealCorpusTests(unittest.TestCase):
 
     def test_real_library_scb_matches_the_contract(self) -> None:
         self._assert_matches_contract(REAL_SCB)
+
+    def test_real_campaign_map_extracts_a_resolvable_script_world(self) -> None:
+        entry = self.winners.get(REAL_CAMPAIGN_MAP.casefold())
+        if entry is None:
+            self.skipTest(f"{REAL_CAMPAIGN_MAP} is not in the catalog")
+        document = self._convert_real_entry(REAL_CAMPAIGN_MAP)
+
+        world = document["world"]
+        self.assertTrue(world["available"])
+        # A campaign mission's scripts are unrunnable without these; the
+        # skirmish-era document carried none of them.
+        for section in ("players", "teams", "waypoints", "triggerAreas"):
+            self.assertGreater(len(world[section]), 0, section)
+        self.assertTrue(
+            all(path["waypointIds"] for path in world["waypointPaths"])
+        )
+
+        # Scripts stay attributed to their owning SidesList player.
+        player_count = len(world["players"])
+        indices = {row["playerIndex"] for row in document["scripts"]}
+        self.assertTrue(indices)
+        self.assertTrue(all(0 <= index < player_count for index in indices))
+
+        # Coverage partitions the census exactly; nothing is unaccounted for.
+        for kind, histogram_key, slot_key in (
+            ("actions", "actionOpcodes", "actionSlots"),
+            ("conditions", "conditionOpcodes", "conditionSlots"),
+        ):
+            coverage = document["coverage"][kind]
+            self.assertEqual(
+                coverage["totalSlots"], document["counts"][slot_key]
+            )
+            self.assertEqual(
+                coverage["semanticSlots"]
+                + coverage["recordedSlots"]
+                + coverage["unsupportedSlots"],
+                coverage["totalSlots"],
+            )
+            missing = coverage["unsupportedByFrequency"]
+            self.assertEqual(len(missing), coverage["distinctUnsupported"])
+            self.assertEqual(
+                sum(row["slots"] for row in missing),
+                coverage["unsupportedSlots"],
+            )
+            # Descending frequency order survives the key-sorting JSON writer.
+            self.assertEqual(
+                [row["slots"] for row in missing],
+                sorted((row["slots"] for row in missing), reverse=True),
+            )
+            names = {row["opcode"] for row in missing}
+            self.assertEqual(
+                names
+                & (
+                    SEMANTIC_ACTION_OPCODES
+                    if kind == "actions"
+                    else SEMANTIC_CONDITION_OPCODES
+                ),
+                set(),
+            )
+            self.assertTrue(names <= set(document[histogram_key]))
 
 
 if __name__ == "__main__":

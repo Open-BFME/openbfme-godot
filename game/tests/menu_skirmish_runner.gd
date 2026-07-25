@@ -14,7 +14,15 @@ var passed := 0
 var failed := 0
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _initialize() -> void:
+	_runner_watchdog.start(self, "MENU_SKIRMISH_RUNNER")
 	call_deferred("_run")
 
 
@@ -552,6 +560,78 @@ func _run() -> void:
 
 	# The legacy prototype skirmish entry point is gone for good.
 	_check("legacy_grid_removed", menu.get_node_or_null("Center/LegacyGrid") == null and menu.get_node_or_null("Center/Start") == null)
+
+	# A pack that publishes a map catalog owns the skirmish map list: however
+	# many maps it ships, in its authored order, with the player count each map
+	# document carries. This runs last because it swaps the content root.
+	var catalog_fixture := "user://menu-catalog-fixture"
+	var catalog_pack := catalog_fixture.path_join("skirmish-maps-fixture")
+	var fixture_maps := [
+		{"slug": "alpha", "name": "Alpha Vale", "players": 2},
+		{"slug": "bravo", "name": "Bravo Ridge", "players": 6},
+		{"slug": "charlie", "name": "Charlie Fen", "players": 8},
+	]
+	var catalog_rows: Array = []
+	DirAccess.make_dir_recursive_absolute(catalog_pack.path_join("data"))
+	for entry in fixture_maps:
+		var slug := String(entry["slug"])
+		var relative := "maps/%s/map.json" % slug
+		DirAccess.make_dir_recursive_absolute(catalog_pack.path_join("maps/%s" % slug))
+		var doc := FileAccess.open(catalog_pack.path_join(relative), FileAccess.WRITE)
+		doc.store_string(JSON.stringify({
+			"schema": "openbfme.map", "schemaVersion": 0,
+			"id": "bfme2.map.%s" % slug,
+			"displayName": String(entry["name"]),
+			"playerCount": int(entry["players"]),
+		}))
+		doc.close()
+		catalog_rows.append({"id": "bfme2.map.%s" % slug, "map": relative})
+	var pack_file := FileAccess.open(catalog_pack.path_join("pack.json"), FileAccess.WRITE)
+	pack_file.store_string(JSON.stringify({
+		"schema": "openbfme.content-pack", "schemaVersion": 0,
+		"id": "skirmish-maps-fixture", "version": "fixture-v0", "priority": 905,
+		"files": {"mapCatalog": "data/maps.json"},
+	}))
+	pack_file.close()
+	var catalog_doc := FileAccess.open(catalog_pack.path_join("data/maps.json"), FileAccess.WRITE)
+	catalog_doc.store_string(JSON.stringify({
+		"schema": "openbfme.map-catalog", "schemaVersion": 0, "maps": catalog_rows,
+	}))
+	catalog_doc.close()
+	var restore_content_root := OS.get_environment("OPENBFME_CONTENT")
+	OS.set_environment("OPENBFME_CONTENT", ProjectSettings.globalize_path(catalog_fixture))
+	content_db.call("reload")
+	var listed: Array = content_db.call("list_catalog_maps") as Array
+	var listed_ids: Array = []
+	var listed_players: Array = []
+	for row in listed:
+		listed_ids.append(String((row as Dictionary).get("id", "")))
+		listed_players.append(int((row as Dictionary).get("players", -1)))
+	_check(
+		"catalog_maps_enumerated_in_authored_order",
+		listed_ids == ["bfme2.map.alpha", "bfme2.map.bravo", "bfme2.map.charlie"],
+		str(listed_ids)
+	)
+	_check(
+		"catalog_map_player_counts_come_from_map_documents",
+		listed_players == [2, 6, 8],
+		str(listed_players)
+	)
+	var catalog_choices: Array = menu._skirmish_map_choices()
+	var choice_ids: Array = []
+	for choice in catalog_choices:
+		choice_ids.append(String((choice as Dictionary).get("id", "")))
+	_check(
+		"map_list_follows_the_pack_catalog_not_a_fixed_list",
+		choice_ids == listed_ids,
+		str(choice_ids)
+	)
+	OS.set_environment("OPENBFME_CONTENT", restore_content_root)
+	content_db.call("reload")
+	_check(
+		"map_list_falls_back_to_authored_choices_without_a_catalog",
+		menu._skirmish_map_choices().size() == menu.RETAIL_MAP_CHOICES.size()
+	)
 
 	game_state.set("retail_player_faction", "men")
 	game_state.set("retail_enemy_faction", "men")

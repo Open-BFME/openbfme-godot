@@ -145,13 +145,57 @@ def _documents(*, legacy: bool = False) -> dict[str, bytes]:
     return documents
 
 
-def _closure(fx_ids, *, legacy: bool = False, namespace: str = "GondorGandalf"):
+def _closure(
+    fx_ids,
+    *,
+    legacy: bool = False,
+    namespace: str = "GondorGandalf",
+    particle_ids=(),
+):
     return build_ability_fx_closure(
         _documents(legacy=legacy),
         fx_ids,
         namespace=namespace,
         texture_index=TEXTURE_INDEX,
+        particle_ids=particle_ids,
     )
+
+
+class TestDrawModuleParticleSeeds:
+    """ParticleSysBone systems: an object's own art, named outside any FXList.
+
+    Retail authors CloudBreakSunbeam and ElvenGrove with ``Model = None`` and a
+    single ``ParticleSysBone`` (goodfactionprops.ini / structures/elven/
+    grove.ini): the particle system IS the object. Those ids reach no FXList,
+    so the closure has to accept them as explicit seeds.
+    """
+
+    def test_seeded_system_converts_without_any_fx_list(self) -> None:
+        closure = _closure([], particle_ids=["LightningStrike"])
+        bindings = closure["runtimeBindings"]
+        assert bindings["authoredParticleSystemIds"] == ["LightningStrike"]
+        assert bindings["presentableParticleSystemIds"] == ["LightningStrike"]
+        assert [
+            row["definitionId"] for row in bindings["definitionRegistry"]
+        ] == ["LightningStrike"]
+
+    def test_seeds_are_absent_when_none_are_authored(self) -> None:
+        # Byte-identical to the pre-seed lane for every owner without a
+        # ParticleSysBone.
+        bindings = _closure(["FX_Telekinesis"])["runtimeBindings"]
+        assert "authoredParticleSystemIds" not in bindings
+        assert "presentableParticleSystemIds" not in bindings
+
+    def test_w3d_geometry_emitter_is_recorded_as_a_gap_not_invented(self) -> None:
+        # EXLightRing.W3D is mesh geometry, not a render leaf: the emitter has
+        # no convertible texture, so it must stay an explicit unresolved row.
+        bindings = _closure([], particle_ids=["GeometryEmitter"])["runtimeBindings"]
+        assert bindings["authoredParticleSystemIds"] == ["GeometryEmitter"]
+        assert bindings["presentableParticleSystemIds"] == []
+        assert {row["kind"] for row in bindings["unresolved"]} == {
+            "particle-system",
+            "particle-texture",
+        }
 
 
 class TestKeyedValues:

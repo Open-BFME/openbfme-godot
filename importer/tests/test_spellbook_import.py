@@ -8,6 +8,7 @@ from openbfme_importer.sage_gameplay import _digest as _gameplay_digest
 from openbfme_importer.sage_ini import parse_flat_named_blocks
 from openbfme_importer.spellbook_compiler import (
     SpellbookCompilerError,
+    _particle_sys_bone_fields,
     compile_spellbook_descriptor,
     validate_spellbook_descriptor,
 )
@@ -254,6 +255,12 @@ Object TestSpellBook
 End
 
 Object TestHealPing
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    DefaultModelConditionState
+      Model = None
+      ParticleSysBone = None TestHealParticles
+    End
+  End
   EditorSorting = SYSTEM
   KindOf = NO_COLLIDE IMMOBILE INERT
 End
@@ -291,6 +298,11 @@ Object TestSummonedHorde
 End
 
 Object TestSummonedMember
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    DefaultModelConditionState
+      Model = TestMember_SKN
+    End
+  End
   EditorSorting = UNIT
   KindOf = INFANTRY SELECTABLE
   Body = ActiveBody ModuleTag_Body
@@ -569,6 +581,31 @@ def test_descriptor_resolves_tree_costs_prerequisites_and_effect_leaves() -> Non
     assert horde["immortal"] is True
     assert horde["commandPoints"] == 0
     member = object_rows["TestSummonedMember"]
+    # Authored Draw evidence rides every effect leaf: without it a summoned
+    # battalion reaches the runtime with no art and presents as synthetic kit
+    # geometry.
+    assert member["draw"] == [
+        {
+            "drawModule": "W3DScriptedModelDraw",
+            "conditions": [],
+            "models": ["TestMember_SKN"],
+        }
+    ]
+    # ``Model = None`` is the authored absence, recorded as such; the object's
+    # only art is its ParticleSysBone system (retail CloudBreakSunbeam /
+    # ElvenGrove shape).
+    assert object_rows["TestHealPing"]["draw"] == [
+        {
+            "drawModule": "W3DScriptedModelDraw",
+            "conditions": [],
+            "particleSysBones": [
+                {"bone": "None", "particleSystem": "TestHealParticles"}
+            ],
+        }
+    ]
+    assert "models" not in object_rows["TestHealPing"]["draw"][0]
+    # Objects retail authors with no Draw module at all carry no invented one.
+    assert "draw" not in object_rows["TestVolleyReceptacle"]
     assert member["maxHealth"] == 450
     assert member["weaponId"] == "TestVolleyWeapon"
     assert member["locomotor"] == {
@@ -981,3 +1018,116 @@ def test_distinct_images_colliding_on_logical_name_fail_closed() -> None:
     descriptor = _compile_with(documents, graph)
     with pytest.raises(SpellbookPackCompilerError, match="collide"):
         compile_spellbook_pack_recipe(descriptor)
+
+
+class TestParticleSysBoneFields:
+    """RotWK authors bone names as quoted strings containing spaces.
+
+    ``data/ini/object/neutral/neutralunits.ini:5969`` (AngmarShadeWolf, the
+    Angmar spellbook's summoned Shade Wolf) authors
+    ``ParticleSysBone = "Bip L Finger2" SoWolf_Ambient_fog FollowBone:YES``.
+    Splitting that on whitespace makes the second field ``L`` — a fragment of
+    the BONE name read as a particle-system name — which fails the definition
+    lookup and costs the whole faction its spellbook object.
+    """
+
+    def test_quoted_bone_with_spaces_keeps_the_real_system_name(self) -> None:
+        assert _particle_sys_bone_fields(
+            '"Bip L Finger2" SoWolf_Ambient_fog FollowBone:YES'
+        ) == ("Bip L Finger2", "SoWolf_Ambient_fog")
+        assert _particle_sys_bone_fields(
+            '"Bip R Finger2" SoWolf_Ambient_EmbersHero FollowBone:YES'
+        ) == ("Bip R Finger2", "SoWolf_Ambient_EmbersHero")
+
+    def test_unquoted_form_is_unchanged(self) -> None:
+        assert _particle_sys_bone_fields("None SoWolf_Ambient_fog01") == (
+            "None",
+            "SoWolf_Ambient_fog01",
+        )
+        assert _particle_sys_bone_fields(
+            "STAFF GandalfMoriaLight FollowBone:Yes"
+        ) == ("STAFF", "GandalfMoriaLight")
+
+    def test_value_without_both_fields_binds_nothing(self) -> None:
+        assert _particle_sys_bone_fields("None") is None
+        assert _particle_sys_bone_fields("") is None
+        assert _particle_sys_bone_fields('"Bip L Finger2"') is None
+
+
+def test_unresolvable_particle_sys_bone_is_recorded_with_its_source_line():
+    """A system retail names but never defines is evidence, not an invention.
+
+    ``neutralunits.ini:6016`` authors ``SoWolf_Ambient_snowFollowBone:YES`` —
+    one missing space away from the real ``SoWolf_Ambient_snow``. SAGE looks
+    that name up, misses, and draws nothing. The leaf keeps the authored
+    reference with its source line so the gap is quotable, and no definition
+    is substituted.
+    """
+
+    documents = _documents()
+    documents["data/ini/object/system/test_system.ini"] = documents[
+        "data/ini/object/system/test_system.ini"
+    ].replace(
+        b"      ParticleSysBone = None TestHealParticles\n",
+        b"      ParticleSysBone = None TestHealParticles\n"
+        b"      ParticleSysBone = None TestHealParticlesFollowBone:YES\n",
+    )
+    descriptor = _compile_with(documents, _graph(documents))
+    ping = {row["id"]: row for row in descriptor["leaves"]["objects"]}["TestHealPing"]
+    state = ping["draw"][0]
+    # The well-formed line still binds.
+    assert state["particleSysBones"] == [
+        {"bone": "None", "particleSystem": "TestHealParticles"}
+    ]
+    unresolved = state["unresolvedParticleSysBones"]
+    assert len(unresolved) == 1
+    assert unresolved[0]["particleSystem"] == "TestHealParticlesFollowBone:YES"
+    assert (
+        unresolved[0]["authoredValue"] == "None TestHealParticlesFollowBone:YES"
+    )
+    assert unresolved[0]["sourceIni"] == "data/ini/object/system/test_system.ini"
+    assert isinstance(unresolved[0]["line"], int)
+    # The legacy family is not in this view, so the record says so rather than
+    # asserting an absence it never checked.
+    assert unresolved[0]["authoredFamily"] == "unknown-legacy-family-not-in-view"
+    # The unresolved name is never promoted into the converted particle leaves.
+    assert {row["id"] for row in descriptor["leaves"]["particles"]} == {
+        "TestHealParticles"
+    }
+
+
+def test_unresolvable_particle_is_classified_against_the_legacy_family():
+    """When the legacy family IS in view, the record names it exactly.
+
+    Retail ships two particle families; this lane binds only
+    ``FXParticleSystem``. ``RainOfFireProjectileSmoke`` and
+    ``InfantryDustTrails`` exist only in ``data/ini/particlesystem.ini``,
+    while ``BalrogSword`` and ``GoblinKingTaint`` are in neither file. Those
+    are different gaps and the evidence has to distinguish them.
+    """
+
+    documents = _documents()
+    documents["data/ini/particlesystem.ini"] = b"""
+ParticleSystem LegacyOnlyParticles
+  Priority = AREA_EFFECT
+  ParticleName = EXSmoke.tga
+End
+"""
+    documents["data/ini/object/system/test_system.ini"] = documents[
+        "data/ini/object/system/test_system.ini"
+    ].replace(
+        b"      ParticleSysBone = None TestHealParticles\n",
+        b"      ParticleSysBone = None TestHealParticles\n"
+        b"      ParticleSysBone = None LegacyOnlyParticles\n"
+        b"      ParticleSysBone = None NotAnywhereParticles\n",
+    )
+    descriptor = _compile_with(documents, _graph(documents))
+    ping = {row["id"]: row for row in descriptor["leaves"]["objects"]}["TestHealPing"]
+    families = {
+        row["particleSystem"]: row["authoredFamily"]
+        for row in ping["draw"][0]["unresolvedParticleSysBones"]
+    }
+    assert families == {
+        "LegacyOnlyParticles": "ParticleSystem",
+        "NotAnywhereParticles": "none",
+    }

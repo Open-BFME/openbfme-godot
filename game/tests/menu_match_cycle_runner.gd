@@ -38,7 +38,15 @@ var failed := 0
 var _faction_manifest_script = null
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _initialize() -> void:
+	_runner_watchdog.start(self, "MENU_MATCH_CYCLE_RUNNER")
 	# The menu is the source of truth: env overrides off so the slice reads the
 	# GameState selection, exactly like a real launch.
 	for env_name in [

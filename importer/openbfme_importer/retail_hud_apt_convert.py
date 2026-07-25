@@ -2340,7 +2340,12 @@ def _parse_button_character(reader: _Reader, offset: int) -> dict[str, Any]:
         position = action_table + index * 8
         flags = reader.data[position]
         reserved = reader.data[position + 3]
-        if flags == 0 or reserved != 0:
+        key_code = reader.u16(position + 1, "button action key code")
+        # A zero transition mask is legal when the record is a key-press-only
+        # handler (the retail BFME2 shell authors one such action on
+        # ``MainMenu`` character 103).  A record with neither a transition nor
+        # a key code carries no trigger at all and still fails closed.
+        if (flags == 0 and key_code == 0) or reserved != 0:
             raise HudAptConvertError("button action flags or reserved byte changed")
         actions.append(
             {

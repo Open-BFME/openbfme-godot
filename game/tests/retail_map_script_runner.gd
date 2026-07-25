@@ -14,6 +14,15 @@ const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const MapScriptsScript = preload("res://src/retail_slice/retail_map_scripts.gd")
 
 const CONTRACT_RELATIVE_PATH := ".private/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
+const CAMPAIGN_RELATIVE_DIR := ".private/retail-work/reports/campaign-map-scripts"
+# Real converted campaign missions: one BFME2 Good campaign mission, one RotWK
+# Angmar campaign mission, one tutorial. Skip-if-absent, since .private is not
+# present on every checkout.
+const CAMPAIGN_DOCUMENTS := [
+	"map_good_erebor",
+	"map_ang_fornost",
+	"map_beginner_tutorial",
+]
 const COUNTER_MONEY := 987654
 const TIMER_MONEY := 765432
 const TIMER_MILLISECONDS := 2500.0
@@ -22,7 +31,15 @@ var passed := 0
 var failed := 0
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _initialize() -> void:
+	_runner_watchdog.start(self, "RETAIL_MAP_SCRIPT_RUNNER")
 	call_deferred("_run")
 
 
@@ -185,7 +202,11 @@ func _run() -> void:
 	_test_true_false_and_inversion()
 	_test_twin_run_determinism()
 	_test_unimplemented_accounting()
+	_test_script_control_flow()
+	_test_random_counter_is_deterministic()
+	_test_presentation_recording()
 	_test_real_contract_payload()
+	_test_real_campaign_missions()
 	print("RETAIL_MAP_SCRIPT_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -304,6 +325,282 @@ func _test_unimplemented_accounting() -> void:
 		"runtime=%s" % str(scripts.runtime_unimplemented))
 
 
+func _bucketed_slots(scripts) -> int:
+	var total := 0
+	for histogram: Dictionary in [scripts.implemented, scripts.recorded, scripts.unimplemented]:
+		for count: Variant in histogram.values():
+			total += int(count)
+	return total
+
+
+func _subroutine_script(name: String, records: Array) -> Dictionary:
+	var payload := _script(name, records, false)
+	payload["isSubroutine"] = true
+	return payload
+
+
+func _test_script_control_flow() -> void:
+	# ENABLE_SCRIPT / DISABLE_SCRIPT / CALL_SUBROUTINE are the three highest
+	# frequency control opcodes in the retail campaign corpus (1463 / 540 / 137
+	# slots across the 28 campaign missions), so they are proven directly.
+	var sim = _make_sim()
+	var scripts = MapScriptsScript.new()
+	scripts.load_script_payloads([
+		# Starts inactive; "Gate" enables it on the first tick.
+		_inactive(_script("Worker", [
+			_or_condition([_condition("CONDITION_TRUE", [])]),
+			_action("INCREMENT_COUNTER", [
+				_argument(MapScriptsScript.ARGUMENT_INTEGER, 1),
+				_argument(MapScriptsScript.ARGUMENT_COUNTER_NAME, 0, 0.0, "work"),
+			]),
+		], false)),
+		_script("Gate", [
+			_or_condition([_condition("CONDITION_TRUE", [])]),
+			_action("ENABLE_SCRIPT", [
+				_argument(MapScriptsScript.ARGUMENT_SCRIPT_NAME, 0, 0.0, "Worker"),
+			]),
+			_action("CALL_SUBROUTINE", [
+				_argument(MapScriptsScript.ARGUMENT_SUBROUTINE, 0, 0.0, "Sub"),
+			]),
+		], true),
+		# Subroutines never self-schedule; they only run when called.
+		_subroutine_script("Sub", [
+			_or_condition([_condition("CONDITION_TRUE", [])]),
+			_action("INCREMENT_COUNTER", [
+				_argument(MapScriptsScript.ARGUMENT_INTEGER, 5),
+				_argument(MapScriptsScript.ARGUMENT_COUNTER_NAME, 0, 0.0, "sub"),
+			]),
+		]),
+		_script("Stopper", [
+			_or_condition([_condition("COUNTER", [
+				_argument(MapScriptsScript.ARGUMENT_COUNTER_NAME, 0, 0.0, "work"),
+				_argument(MapScriptsScript.ARGUMENT_COMPARISON, MapScriptsScript.COMPARE_GREATER_EQUAL),
+				_argument(MapScriptsScript.ARGUMENT_INTEGER, 4),
+			])]),
+			_action("DISABLE_SCRIPT", [
+				_argument(MapScriptsScript.ARGUMENT_SCRIPT_NAME, 0, 0.0, "Worker"),
+			]),
+		], true),
+	])
+	for tick in range(1, 21):
+		sim.tick()
+		scripts.step(sim)
+	# Gate runs on tick 1 and retires. Worker is enabled during tick 1 but the
+	# tick loop has already passed its index, so it first runs on tick 2 and
+	# is disabled by Stopper once "work" reaches 4 (tick 5).
+	_check("enable_script_activates_a_dormant_script",
+		int(scripts.counters.get("work", 0)) == 4,
+		"work=%d" % int(scripts.counters.get("work", 0)))
+	_check("call_subroutine_runs_a_subroutine_exactly_once",
+		int(scripts.counters.get("sub", 0)) == 5,
+		"sub=%d" % int(scripts.counters.get("sub", 0)))
+	_check("disable_script_retires_a_running_script",
+		not scripts.active_script_names().has("Worker"),
+		"active=%s" % str(scripts.active_script_names()))
+	_check("unknown_script_names_are_counted_not_ignored",
+		int(scripts.bounds_hit.get("unknown_script_name", 0)) == 0,
+		"bounds=%s" % str(scripts.bounds_hit))
+
+
+func _inactive(payload: Dictionary) -> Dictionary:
+	payload["isActive"] = false
+	return payload
+
+
+func _test_random_counter_is_deterministic() -> void:
+	# SET_RANDOM_COUNTER must draw from the interpreter's own integer stream,
+	# never from engine RNG, or lockstep desyncs.
+	var payloads := [
+		_script("Draw", [
+			_or_condition([_condition("CONDITION_TRUE", [])]),
+			_action("SET_RANDOM_COUNTER", [
+				_argument(MapScriptsScript.ARGUMENT_COUNTER_NAME, 0, 0.0, "r"),
+				_argument(MapScriptsScript.ARGUMENT_INTEGER, 1),
+				_argument(MapScriptsScript.ARGUMENT_INTEGER, 6),
+			]),
+		], false),
+	]
+	var draws_a: Array[int] = []
+	var draws_b: Array[int] = []
+	for run in range(2):
+		var sim = _make_sim()
+		var scripts = MapScriptsScript.new()
+		scripts.load_script_payloads(payloads)
+		for tick in range(40):
+			sim.tick()
+			scripts.step(sim)
+			var value := int(scripts.counters.get("r", 0))
+			if run == 0:
+				draws_a.append(value)
+			else:
+				draws_b.append(value)
+	var in_range := true
+	for value in draws_a:
+		if value < 1 or value > 6:
+			in_range = false
+	var varies := false
+	for value in draws_a:
+		if value != draws_a[0]:
+			varies = true
+	_check("random_counter_draws_are_reproducible", draws_a == draws_b)
+	_check("random_counter_draws_respect_the_inclusive_range", in_range,
+		"draws=%s" % str(draws_a.slice(0, 8)))
+	_check("random_counter_draws_actually_vary", varies,
+		"draws=%s" % str(draws_a.slice(0, 8)))
+
+
+func _test_presentation_recording() -> void:
+	# Recorded opcodes must produce a deterministic ordered event log and must
+	# not touch the simulation, so they can never perturb lockstep.
+	var sim = _make_sim()
+	var control = _make_sim()
+	var scripts = MapScriptsScript.new()
+	scripts.load_script_payloads([
+		_script("Briefing", [
+			_or_condition([_condition("CONDITION_TRUE", [])]),
+			_action("SHOW_MISSION_OBJECTIVE", [_argument(MapScriptsScript.ARGUMENT_INTEGER, 2)]),
+			_action("DISPLAY_NOTIFICATION_BOX", [
+				_argument(77, 0, 0.0, "Instructional"),
+				_argument(MapScriptsScript.ARGUMENT_LOCALIZED_STRING, 0, 0.0, "SCRIPT:Test01"),
+				_argument(MapScriptsScript.ARGUMENT_INTEGER, 0),
+			]),
+			_action("DISABLE_INPUT", []),
+			_action("CAMERA_LETTERBOX_BEGIN", []),
+			_action("MARK_MISSION_OBJECTIVE_COMPLETED", [_argument(MapScriptsScript.ARGUMENT_INTEGER, 2)]),
+			_action("VICTORY", []),
+		], true),
+	])
+	for tick in range(5):
+		sim.tick()
+		control.tick()
+		scripts.step(sim)
+	_check("recorded_opcodes_do_not_touch_the_simulation",
+		sim.state_hash() == control.state_hash())
+	_check("recorded_opcodes_are_bucketed_apart_from_implemented",
+		int(scripts.recorded.get("VICTORY", 0)) == 1
+			and not scripts.implemented.has("VICTORY")
+			and not scripts.unimplemented.has("VICTORY"),
+		"recorded=%s" % str(scripts.recorded))
+	_check("recorded_opcodes_emit_an_ordered_event_log",
+		scripts.events.size() == 6 and String(scripts.events[0]["opcode"]) == "SHOW_MISSION_OBJECTIVE"
+			and String(scripts.events[5]["opcode"]) == "VICTORY",
+		"events=%d" % scripts.events.size())
+	_check("mission_objective_state_tracks_show_and_complete",
+		scripts.mission_objectives.has(2)
+			and bool((scripts.mission_objectives[2] as Dictionary)["shown"])
+			and bool((scripts.mission_objectives[2] as Dictionary)["completed"]),
+		"objectives=%s" % str(scripts.mission_objectives))
+	_check("outcome_and_input_state_are_tracked",
+		scripts.outcome == "victory" and not scripts.input_enabled and scripts.letterbox_active,
+		"outcome=%s input=%s letterbox=%s" % [scripts.outcome, str(scripts.input_enabled), str(scripts.letterbox_active)])
+
+
+func _campaign_dir() -> String:
+	var game_root := ProjectSettings.globalize_path("res://")
+	return game_root.rstrip("/").get_base_dir().path_join(CAMPAIGN_RELATIVE_DIR)
+
+
+func _test_real_campaign_missions() -> void:
+	var directory := _campaign_dir()
+	var ran := 0
+	for stem: String in CAMPAIGN_DOCUMENTS:
+		var path := directory.path_join("%s.scripts.json" % stem)
+		if not FileAccess.file_exists(path):
+			continue
+		_run_campaign_document(stem, path)
+		ran += 1
+	if ran == 0:
+		_check("real_campaign_missions_load", true, "SKIP no converted campaign documents at %s" % directory)
+
+
+func _run_campaign_document(stem: String, path: String) -> void:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not (parsed is Dictionary):
+		_check("campaign_%s_parses" % stem, false, "document JSON did not parse")
+		return
+	var document: Dictionary = parsed
+	var scripts = MapScriptsScript.new()
+	var loaded := scripts.load_document(document)
+	var counts: Dictionary = document.get("counts", {})
+	var expected_slots := int(counts.get("actionSlots", -1)) + int(counts.get("conditionSlots", -1))
+
+	_check("campaign_%s_loads_every_script" % stem,
+		loaded == int(counts.get("scripts", -1)) and loaded > 0,
+		"loaded=%d expected=%s" % [loaded, str(counts.get("scripts"))])
+	_check("campaign_%s_buckets_every_opcode_slot" % stem,
+		_bucketed_slots(scripts) == expected_slots and expected_slots > 0,
+		"bucketed=%d expected=%d" % [_bucketed_slots(scripts), expected_slots])
+	_check("campaign_%s_binds_a_resolvable_world" % stem,
+		not scripts.world.is_empty()
+			and Array(scripts.world.get("waypoints", [])).size() > 0
+			and Array(scripts.world.get("triggerAreas", [])).size() > 0,
+		"waypoints=%d areas=%d" % [
+			Array(scripts.world.get("waypoints", [])).size(),
+			Array(scripts.world.get("triggerAreas", [])).size(),
+		])
+
+	# The interpreter's own coverage must equal the converter's declared
+	# coverage; if the two ever disagree the census is lying.
+	var coverage: Dictionary = document.get("coverage", {})
+	var declared := (
+		int((coverage.get("actions", {}) as Dictionary).get("semanticSlots", -1))
+		+ int((coverage.get("conditions", {}) as Dictionary).get("semanticSlots", -1))
+	)
+	var declared_recorded := (
+		int((coverage.get("actions", {}) as Dictionary).get("recordedSlots", -1))
+		+ int((coverage.get("conditions", {}) as Dictionary).get("recordedSlots", -1))
+	)
+	var summary: Dictionary = scripts.coverage_summary()
+	_check("campaign_%s_runtime_coverage_matches_the_converter" % stem,
+		int(summary["implementedSlots"]) == declared
+			and int(summary["recordedSlots"]) == declared_recorded,
+		"runtime=%s declared=%d/%d" % [str(summary), declared, declared_recorded])
+
+	# Twin run: 600 ticks, two independent interpreters, identical sim hashes
+	# and identical interpreter state at every step.
+	var sim_a = _make_sim()
+	var sim_b = _make_sim()
+	var twin_b = MapScriptsScript.new()
+	twin_b.load_document(document)
+	var divergence := -1
+	for tick in range(1, 601):
+		sim_a.tick()
+		sim_b.tick()
+		scripts.step(sim_a)
+		twin_b.step(sim_b)
+		if divergence < 0 and (
+			sim_a.state_hash() != sim_b.state_hash()
+			or scripts.counters != twin_b.counters
+			or scripts.flags != twin_b.flags
+			or scripts.timers != twin_b.timers
+			or scripts.events.size() != twin_b.events.size()
+		):
+			divergence = tick
+	_check("campaign_%s_twin_run_is_deterministic_600_ticks" % stem,
+		divergence < 0, "first_divergence=%d" % divergence)
+	_check("campaign_%s_stays_within_its_bounds" % stem,
+		scripts.events_dropped == 0
+			and int(scripts.bounds_hit.get("subroutine_depth", 0)) == 0
+			and int(scripts.bounds_hit.get("subroutine_calls", 0)) == 0
+			and int(scripts.bounds_hit.get("counters", 0)) == 0
+			and int(scripts.bounds_hit.get("flags", 0)) == 0
+			and int(scripts.bounds_hit.get("timers", 0)) == 0,
+		"dropped=%d bounds=%s" % [scripts.events_dropped, str(scripts.bounds_hit)])
+	print("RETAIL_MAP_SCRIPT campaign %s scripts=%d coverage=%s" % [stem, loaded, str(summary)])
+	print("RETAIL_MAP_SCRIPT campaign %s after600 counters=%d flags=%d timers=%d objectlists=%d events=%d objectives=%d outcome=%s bounds=%s" % [
+		stem,
+		scripts.counters.size(),
+		scripts.flags.size(),
+		scripts.timers.size(),
+		scripts.object_lists.size(),
+		scripts.events.size(),
+		scripts.mission_objectives.size(),
+		scripts.outcome if scripts.outcome != "" else "<none>",
+		str(scripts.bounds_hit),
+	])
+	print("RETAIL_MAP_SCRIPT campaign %s runtime_unimplemented_distinct=%d" % [stem, scripts.runtime_unimplemented.size()])
+
+
 func _contract_path() -> String:
 	var game_root := ProjectSettings.globalize_path("res://")
 	return game_root.rstrip("/").get_base_dir().path_join(CONTRACT_RELATIVE_PATH)
@@ -331,11 +628,7 @@ func _test_real_contract_payload() -> void:
 		expected_slots += int(count)
 	for count: Variant in (source.get("conditionOpcodes", {}) as Dictionary).values():
 		expected_slots += int(count)
-	var counted := 0
-	for count: Variant in scripts.implemented.values():
-		counted += int(count)
-	for count: Variant in scripts.unimplemented.values():
-		counted += int(count)
+	var counted := _bucketed_slots(scripts)
 	var sim = _make_sim()
 	var stepped_ok := true
 	for tick in range(10):

@@ -678,14 +678,51 @@ def _ability_fx_closure(
     """
 
     fx_ids = harvest_fx_ids(descriptor)
-    if not fx_ids:
+    particle_ids = _draw_particle_system_ids(descriptor)
+    if not fx_ids and not particle_ids:
         return None
     return build_ability_fx_closure(
         documents,
         fx_ids,
         namespace=namespace,
         texture_index=texture_index_for(effective_root, assets_fp),
+        particle_ids=particle_ids,
     )
+
+
+def _draw_particle_system_ids(descriptor: Mapping[str, object]) -> list[str]:
+    """Return every ParticleSysBone system the descriptor's leaves author.
+
+    Some effect objects have no model at all: their whole appearance is a
+    Draw-module bone particle system (CloudBreakSunbeam -> ``CloudBreakRays``,
+    ElvenGrove -> ``TaintHCPing``).  Those ids never appear in an FXList, so
+    they have to be seeded into the FX closure explicitly or the object
+    converts with nothing to draw.
+    """
+
+    found: list[str] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                folded = str(key).casefold()
+                if folded == "unresolvedparticlesysbones":
+                    # Authored references with no definition behind them. They
+                    # are kept as evidence on the leaf, never seeded into the
+                    # closure — seeding one would ask the FX lane to convert a
+                    # system that does not exist.
+                    continue
+                if folded == "particlesystem" and isinstance(item, str):
+                    if item.strip():
+                        found.append(item.strip())
+                else:
+                    walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(descriptor.get("leaves"))
+    return sorted(set(found), key=lambda value: (value.casefold(), value))
 
 
 def _convert_one_plan_object(

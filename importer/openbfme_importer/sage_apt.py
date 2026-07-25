@@ -28,13 +28,18 @@ MAX_CONSTANTS = 4096
 MAX_CHARACTERS = 4096
 MAX_FRAMES = 8192
 MAX_FRAME_ITEMS = 16_384
-MAX_IMPORTS = 16
+MAX_IMPORTS = 64
 MAX_EXPORTS = 4096
 MAX_STRING_BYTES = 1024
 MAX_WINDOWS = 256
 MAX_WINDOW_DEPTH = 16
 
 _SAFE_MOVIE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+# Import/export symbol identities are never used as filesystem paths, and the
+# retail BFME2 shell authors at least one symbol with a trailing space
+# (``MenuExport::ButtonMed_Down``).  Symbols therefore admit interior spaces
+# while movie names -- which do resolve to source files -- stay strict.
+_SAFE_SYMBOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\- ]{0,127}$")
 _SAFE_CALLBACK = re.compile(r"^[A-Za-z_][A-Za-z0-9_:.-]{0,127}$")
 _SAFE_WND_NAME = re.compile(r"^[A-Za-z0-9_.:-]{0,255}$")
 _FLOAT = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?"
@@ -394,7 +399,7 @@ def parse_apt_movie(
         offset = import_table + index * 16
         movie_name = reader.string(reader.u32(offset, "import movie"), "import movie")
         symbol = reader.string(reader.u32(offset + 4, "import name"), "import name")
-        if not _SAFE_MOVIE.fullmatch(movie_name) or not _SAFE_MOVIE.fullmatch(symbol):
+        if not _SAFE_MOVIE.fullmatch(movie_name) or not _SAFE_SYMBOL.fullmatch(symbol):
             raise AptParseError(f"{virtual_path} import contains an unsafe identity")
         imports.append(
             {
@@ -413,7 +418,7 @@ def parse_apt_movie(
     for index in range(export_count):
         offset = export_table + index * 8
         name = reader.string(reader.u32(offset, "export name"), "export name")
-        if not _SAFE_MOVIE.fullmatch(name):
+        if not _SAFE_SYMBOL.fullmatch(name):
             raise AptParseError(f"{virtual_path} export contains an unsafe identity")
         export_rows.append(
             {

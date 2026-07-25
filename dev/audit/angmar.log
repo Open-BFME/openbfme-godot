@@ -1,0 +1,63 @@
+Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+WARNING: [ModLoader] Using workspace content root (no OPENBFME_CONTENT set): C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _diagnose (res://src/content/mod_loader.gd:500)
+       [1] list_pack_roots (res://src/content/mod_loader.gd:72)
+       [2] reload (res://src/content/content_db.gd:145)
+       [3] _ready (res://src/content/content_db.gd:103)
+[ContentDB] packs=4 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
+RETAIL_SLICE PASS archer_projectile_controller_script_loads
+RETAIL_SLICE PASS archer_projectile_exact_contract_fixture_validates
+RETAIL_SLICE PASS archer_projectile_contract_fixture_fails_closed_on_streak_drift
+RETAIL_SLICE PASS scene_parses
+RETAIL_INIT_PHASE name=ready delta_ms=685 total_ms=685
+RETAIL_INIT_PHASE name=environment delta_ms=141 total_ms=826
+WARNING: [ModLoader] Using workspace content root (no OPENBFME_CONTENT set): C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _diagnose (res://src/content/mod_loader.gd:500)
+       [1] list_pack_roots (res://src/content/mod_loader.gd:72)
+       [2] _faction_spellbook_document (res://src/retail_slice/retail_vertical_slice.gd:4491)
+       [3] _build_hud (res://src/retail_slice/retail_vertical_slice.gd:4962)
+       [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:273)
+       [5] _run (res://tests/retail_slice_runner.gd:96)
+RETAIL_INIT_PHASE name=hud delta_ms=96 total_ms=922
+WARNING: [ModLoader] Using workspace content root (no OPENBFME_CONTENT set): C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _diagnose (res://src/content/mod_loader.gd:500)
+       [1] list_pack_roots (res://src/content/mod_loader.gd:72)
+       [2] _faction_spellbook_document (res://src/retail_slice/retail_vertical_slice.gd:4491)
+       [3] _initialize_content_and_match (res://src/retail_slice/retail_vertical_slice.gd:342)
+       [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:275)
+       [5] _run (res://tests/retail_slice_runner.gd:96)
+RETAIL_INIT_PHASE name=content delta_ms=858 total_ms=1780
+WARNING: [ModLoader] Using workspace content root (no OPENBFME_CONTENT set): C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _diagnose (res://src/content/mod_loader.gd:500)
+       [1] list_pack_roots (res://src/content/mod_loader.gd:72)
+       [2] _pack_root_for_id (res://src/retail_slice/retail_vertical_slice.gd:1948)
+       [3] _initialize_content_and_match (res://src/retail_slice/retail_vertical_slice.gd:367)
+       [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:275)
+       [5] _run (res://tests/retail_slice_runner.gd:96)
+WARNING: [ModLoader] Using workspace content root (no OPENBFME_CONTENT set): C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _diagnose (res://src/content/mod_loader.gd:500)
+       [1] list_pack_roots (res://src/content/mod_loader.gd:72)
+       [2] _pack_root_hosting_faction (res://src/retail_slice/retail_vertical_slice.gd:1964)
+       [3] _initialize_content_and_match (res://src/retail_slice/retail_vertical_slice.gd:374)
+       [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:275)
+       [5] _run (res://tests/retail_slice_runner.gd:96)
+RETAIL_SLICE FAIL slice_ready (Slice map 'bfme2.map.fords-of-isen-ii' is unavailable: it is neither in the registered content nor in the bfme2-five-maps-106-private pack catalog.)
+RETAIL_SLICE FAIL initialization_completes_before_watchdog (-1 ms)
+RETAIL_SLICE PASS external_private_pack
+RETAIL_SLICE FAIL terrain_is_source_driven
+RETAIL_SLICE FAIL three_ford_crossings (0)
+RETAIL_SLICE FAIL imported_map_preview
+RETAIL_SLICE FAIL imported_map_art
+RETAIL_SLICE FAIL cooked_source_map_mounted (missing)
+RETAIL_SLICE_RESULT passed=5 failed=7

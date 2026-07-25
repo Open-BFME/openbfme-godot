@@ -190,14 +190,6 @@ End
                 "unresolved",
             ),
             (
-                "duplicate-definition",
-                base_ini + "Terrain gRaSs\n Texture = grass.tga\nEnd\n",
-                ["Grass"],
-                ["grass.tga"],
-                {},
-                "duplicate terrain definition",
-            ),
-            (
                 "ambiguous-texture",
                 "Terrain Grass\n Texture = grass.tga\n Texture = other.tga\nEnd\n",
                 ["Grass"],
@@ -427,3 +419,25 @@ End
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TerrainMaterialDuplicateTests(unittest.TestCase):
+    """Retail authors some Terrain symbols twice with different textures.
+
+    `terrain.ini` declares `SnowType6` at line 2056 (TXSnow05a.tga) and again
+    at 2061 (TMSnow02a.tga), and `SandMediumType2` at 1756. EA's prepend-based
+    lookup and OpenSAGE's dictionary overwrite both take the LAST record, which
+    is the rule `sage_map.py` already applies to duplicate player-start
+    waypoints. Failing closed here blocked six skirmish maps.
+    """
+
+    def test_duplicate_definition_takes_the_last_record(self) -> None:
+        source = (
+            b"Terrain Grass\n Texture = first.tga\nEnd\n"
+            b"Terrain gRaSs\n Texture = second.tga\nEnd\n"
+        )
+
+        resolved = resolve_terrain_material_references(source, ["Grass"])
+
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0].texture, "second.tga")

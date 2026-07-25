@@ -828,7 +828,28 @@ class SageMapTests(unittest.TestCase):
                 digest.update(payload)
             self.assertEqual(
                 digest.hexdigest(),
-                "effc225323c5e8ec3eae38843962e2c0f76e38753e45344a2899128c7a70636b",
+                "bb2e75d74d3b551ae91ef01056e9336a5942a9d76eb97f4a7ab604b00eb1434e",
+            )
+            # The map document publishes its own lobby capacity so a runtime
+            # map list never has to depend on an optional catalog row.
+            map_data = json.loads((output / "map.json").read_text(encoding="utf-8"))
+            self.assertEqual(map_data["playerCount"], 1)
+            self.assertEqual(
+                map_data["playerCapacity"],
+                {
+                    "playerStartCount": 1,
+                    "declaredPlayerCount": 1,
+                    "lobbySlotCount": 8,
+                    "scenarioPlayerCount": 1,
+                    "source": "authored-player-start-waypoints",
+                    "startBindings": [
+                        {
+                            "playerIndex": 1,
+                            "waypointId": 7,
+                            "waypointName": "Player_1_Start",
+                        }
+                    ],
+                },
             )
 
     def test_blend_v8_v9_v11_preserve_exact_16_bit_layouts_and_present_grids(

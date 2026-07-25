@@ -1,0 +1,299 @@
+Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+WARNING: [ModLoader] Using workspace content root (no OPENBFME_CONTENT set): C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _diagnose (res://src/content/mod_loader.gd:500)
+       [1] list_pack_roots (res://src/content/mod_loader.gd:72)
+       [2] reload (res://src/content/content_db.gd:140)
+       [3] _ready (res://src/content/content_db.gd:99)
+[ContentDB] packs=4 units=33 buildings=42 factions=4 powers=10 research=7 maps=4
+RETAIL_SLICE PASS archer_projectile_controller_script_loads
+RETAIL_SLICE PASS archer_projectile_exact_contract_fixture_validates
+RETAIL_SLICE PASS archer_projectile_contract_fixture_fails_closed_on_streak_drift
+RETAIL_SLICE PASS scene_parses
+RETAIL_INIT_PHASE name=ready delta_ms=709 total_ms=709
+RETAIL_INIT_PHASE name=environment delta_ms=139 total_ms=848
+WARNING: [ModLoader] Using workspace content root (no OPENBFME_CONTENT set): C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _diagnose (res://src/content/mod_loader.gd:500)
+       [1] list_pack_roots (res://src/content/mod_loader.gd:72)
+       [2] _faction_spellbook_document (res://src/retail_slice/retail_vertical_slice.gd:4491)
+       [3] _build_hud (res://src/retail_slice/retail_vertical_slice.gd:4962)
+       [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:273)
+       [5] _run (res://tests/retail_slice_runner.gd:45)
+RETAIL_INIT_PHASE name=hud delta_ms=130 total_ms=978
+WARNING: [ModLoader] Using workspace content root (no OPENBFME_CONTENT set): C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _diagnose (res://src/content/mod_loader.gd:500)
+       [1] list_pack_roots (res://src/content/mod_loader.gd:72)
+       [2] _faction_spellbook_document (res://src/retail_slice/retail_vertical_slice.gd:4491)
+       [3] _initialize_content_and_match (res://src/retail_slice/retail_vertical_slice.gd:342)
+       [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:275)
+       [5] _run (res://tests/retail_slice_runner.gd:45)
+RETAIL_INIT_PHASE name=content delta_ms=890 total_ms=1868
+WARNING: [ModLoader] Using workspace content root (no OPENBFME_CONTENT set): C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _diagnose (res://src/content/mod_loader.gd:500)
+       [1] list_pack_roots (res://src/content/mod_loader.gd:72)
+       [2] _pack_root_for_id (res://src/retail_slice/retail_vertical_slice.gd:1948)
+       [3] _initialize_content_and_match (res://src/retail_slice/retail_vertical_slice.gd:367)
+       [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:275)
+       [5] _run (res://tests/retail_slice_runner.gd:45)
+WARNING: [ModLoader] Using workspace content root (no OPENBFME_CONTENT set): C:/Users/Jonathan/Desktop/open-bfme/.private/content-packs
+   at: push_warning (core/variant/variant_utility.cpp:1033)
+   GDScript backtrace (most recent call first):
+       [0] _diagnose (res://src/content/mod_loader.gd:500)
+       [1] list_pack_roots (res://src/content/mod_loader.gd:72)
+       [2] _pack_root_hosting_faction (res://src/retail_slice/retail_vertical_slice.gd:1964)
+       [3] _initialize_content_and_match (res://src/retail_slice/retail_vertical_slice.gd:374)
+       [4] _ready (res://src/retail_slice/retail_vertical_slice.gd:275)
+       [5] _run (res://tests/retail_slice_runner.gd:45)
+RETAIL_INIT_PHASE name=retail_command_ui delta_ms=24525 total_ms=26393
+RETAIL_INIT_PHASE name=map_art delta_ms=4 total_ms=26397
+RETAIL_INIT_PHASE name=map_data delta_ms=1677 total_ms=28074
+RETAIL_INIT_PHASE name=battlefield delta_ms=2343 total_ms=30417
+RETAIL_INIT_PHASE name=simulation delta_ms=48 total_ms=30465
+RETAIL_INIT_PHASE name=presentations delta_ms=145 total_ms=30610
+RETAIL_INIT_PHASE name=audio delta_ms=888 total_ms=31498
+RETAIL_INIT_PHASE name=ready_complete delta_ms=11 total_ms=31509
+RETAIL_SLICE PASS slice_ready
+RETAIL_SLICE FAIL initialization_completes_before_watchdog (31509 ms)
+RETAIL_SLICE PASS external_private_pack
+RETAIL_SLICE PASS terrain_is_source_driven
+RETAIL_SLICE PASS three_ford_crossings
+RETAIL_SLICE PASS imported_map_preview
+RETAIL_SLICE PASS imported_map_art
+RETAIL_SLICE PASS cooked_source_map_mounted
+RETAIL_SLICE PASS source_heightmap_exact
+RETAIL_SLICE PASS source_passability_exact
+RETAIL_SLICE PASS source_terrain_symbols_exact
+RETAIL_SLICE PASS source_terrain_cell_arrays_loaded
+RETAIL_SLICE PASS source_terrain_description_tables_loaded
+RETAIL_SLICE PASS source_terrain_nonzero_layers_recomputed
+RETAIL_SLICE PASS source_terrain_material_catalog_loaded
+RETAIL_SLICE PASS representative_terrain_tile_samples_exact
+RETAIL_SLICE PASS source_objects_exact
+RETAIL_SLICE PASS source_roads_are_exact_separate_pairs
+RETAIL_SLICE PASS source_road_material_closure_exact
+RETAIL_SLICE PASS source_road_topology_exact
+RETAIL_SLICE PASS source_waypoints_and_starts_exact
+RETAIL_SLICE PASS source_water_geometry_exact
+RETAIL_SLICE PASS source_binary_not_packaged
+RETAIL_SLICE PASS source_start_transform_exact
+RETAIL_SLICE PASS source_ford_names_drive_gates
+RETAIL_SLICE PASS source_ford_ids_exact
+RETAIL_SLICE PASS source_unbound_generic_props_exact
+RETAIL_SLICE PASS terrain_semantic_ranges_recomputed
+RETAIL_SLICE PASS passability_full_popcount_recomputed
+RETAIL_SLICE PASS cooked_binary_digests_exact
+RETAIL_SLICE PASS representative_height_samples_exact
+RETAIL_SLICE PASS declared_playable_inset_exact
+RETAIL_SLICE PASS playable_polygon_uses_declared_border
+RETAIL_SLICE PASS bounded_navigation_built_once
+RETAIL_SLICE PASS reviewed_ford2_cell_stays_blocked
+RETAIL_SLICE PASS retail_unit_rules_content_db_loaded
+RETAIL_SLICE PASS retail_unit_world_scale_exact
+RETAIL_SLICE PASS isengard_lurtz_sim_row_matches_document
+RETAIL_SLICE PASS isengard_lurtz_formation_slots_match_document
+RETAIL_SLICE PASS isengard_ballista_sim_row_matches_document
+RETAIL_SLICE PASS isengard_ballista_formation_slots_match_document
+RETAIL_SLICE PASS isengard_lurtz_sim_row_matches_document
+RETAIL_SLICE PASS isengard_lurtz_formation_slots_match_document
+RETAIL_SLICE PASS isengard_ballista_sim_row_matches_document
+RETAIL_SLICE PASS isengard_ballista_formation_slots_match_document
+RETAIL_SLICE PASS isengard_beserker_sim_row_matches_document
+RETAIL_SLICE PASS isengard_beserker_formation_slots_match_document
+RETAIL_SLICE PASS spawn_roster_rows_all_document_backed
+RETAIL_SLICE PASS retail_unit_speeds_match_documents
+RETAIL_SLICE PASS retail_attack_ranges_match_documents
+RETAIL_SLICE PASS simulation_uses_source_map_configuration
+RETAIL_SLICE PASS battalion_spawns_derive_from_source_starts
+RETAIL_SLICE PASS source_battlefield_built
+RETAIL_SLICE PASS source_height_mesh_uses_every_exact_sample_and_quad
+RETAIL_SLICE PASS source_passability_colors_cover_full_terrain
+RETAIL_SLICE PASS retail_terrain_material_is_source_driven
+RETAIL_SLICE PASS retail_terrain_texture_array_has_66_layers
+RETAIL_SLICE PASS retail_terrain_tile_data_bound
+RETAIL_SLICE PASS retail_terrain_blend_and_cliff_data_bound
+RETAIL_SLICE PASS retail_terrain_primary_three_way_and_cliffs_active
+RETAIL_SLICE PASS retail_roads_are_provenance_textured_and_grouped
+RETAIL_SLICE PASS retail_road_topology_and_curve_formula_exact
+RETAIL_SLICE PASS retail_road_mesh_is_adaptive_and_terrain_draped
+RETAIL_SLICE PASS source_water_mesh_built
+RETAIL_SLICE PASS source_ford_gates_are_nonrendered_diagnostics
+RETAIL_SLICE PASS unresolved_props_are_nonrendered_diagnostics
+RETAIL_SLICE PASS world_builder_only_farm_templates_are_hidden_in_play
+RETAIL_SLICE PASS initial_battalions_include_retail_defined_builders
+RETAIL_SLICE PASS seeded_structures_match_manifest_seed_kinds
+RETAIL_SLICE PASS every_manifest_structure_kind_has_health_and_build_rule
+RETAIL_SLICE PASS battalion_1_mounts_document_glb
+RETAIL_SLICE PASS battalion_2_mounts_document_glb
+RETAIL_SLICE PASS battalion_101_mounts_document_glb
+RETAIL_SLICE PASS battalion_102_mounts_document_glb
+RETAIL_SLICE PASS battalion_103_mounts_document_glb
+RETAIL_SLICE PASS structure_1001_starts_exact_private_lifecycle
+RETAIL_SLICE PASS structure_2001_starts_exact_private_lifecycle
+RETAIL_SLICE PASS home_layout_uses_source_navigation
+RETAIL_SLICE PASS hud_uses_declared_headless_viewport
+RETAIL_SLICE PASS hud_tracks_logical_viewport_under_window_resize
+RETAIL_SLICE PASS palantir_is_bottom_left
+RETAIL_SLICE PASS palantir_radar_draws_above_opaque_frame
+RETAIL_SLICE PASS command_panel_attaches_to_palantir
+RETAIL_SLICE PASS minimap_is_centered_in_retail_left_circle
+RETAIL_SLICE PASS command_panel_is_centered_in_retail_right_circle
+RETAIL_SLICE PASS control_group_strip_has_nine_slots
+RETAIL_SLICE PASS retail_shadow_decal_equivalence_present
+RETAIL_SLICE PASS outcome_layer_exists
+RETAIL_SLICE PASS audio_controls_exist_in_pause
+RETAIL_SLICE PASS source_mapping_not_preview_texture
+RETAIL_SLICE PASS snappy_radar_zoom_contract
+RETAIL_SLICE PASS camera_starts_from_source_fortress_with_exact_constraint
+RETAIL_SLICE PASS equipment_proof_loaded
+RETAIL_SLICE PASS validated_capabilities_cover_fieldable_units
+RETAIL_SLICE PASS battalion_1_exists
+RETAIL_SLICE PASS battalion_1_has_document_member_glbs
+RETAIL_SLICE PASS battalion_1_has_document_member_rigs
+RETAIL_SLICE PASS battalion_1_has_animation_players
+RETAIL_SLICE PASS battalion_1_meshes_face_authoritative_forward
+RETAIL_SLICE PASS battalion_2_exists
+RETAIL_SLICE PASS battalion_2_has_document_member_glbs
+RETAIL_SLICE PASS battalion_2_has_document_member_rigs
+RETAIL_SLICE PASS battalion_2_has_animation_players
+RETAIL_SLICE PASS battalion_2_meshes_face_authoritative_forward
+RETAIL_SLICE PASS battalion_101_exists
+RETAIL_SLICE PASS battalion_101_has_document_member_glbs
+RETAIL_SLICE PASS battalion_101_has_document_member_rigs
+RETAIL_SLICE PASS battalion_101_has_animation_players
+RETAIL_SLICE PASS battalion_101_meshes_face_authoritative_forward
+RETAIL_SLICE PASS battalion_102_exists
+RETAIL_SLICE PASS battalion_102_has_document_member_glbs
+RETAIL_SLICE PASS battalion_102_has_document_member_rigs
+RETAIL_SLICE PASS battalion_102_has_animation_players
+RETAIL_SLICE PASS battalion_102_meshes_face_authoritative_forward
+RETAIL_SLICE PASS private_battalion_1_has_no_synthetic_overlays
+RETAIL_SLICE PASS private_battalion_2_has_no_synthetic_overlays
+RETAIL_SLICE PASS private_battalion_3_has_no_synthetic_overlays
+RETAIL_SLICE PASS private_battalion_101_has_no_synthetic_overlays
+RETAIL_SLICE PASS private_battalion_102_has_no_synthetic_overlays
+RETAIL_SLICE PASS private_battalion_103_has_no_synthetic_overlays
+RETAIL_SLICE PASS private_battalion_104_has_no_synthetic_overlays
+RETAIL_SLICE PASS gondor_archer_projectile_impact_closure_blocker_is_explicit
+RETAIL_SLICE PASS idle_clip_mapping_from_capability
+RETAIL_SLICE PASS run_clip_mapping_from_capability
+RETAIL_SLICE PASS attack_clip_mapping_from_capability
+RETAIL_SLICE PASS death_clip_mapping_from_capability
+RETAIL_SLICE PASS idle_phase_variation_deterministic
+RETAIL_SLICE PASS idle_variants_active
+RETAIL_SLICE PASS member_equipment_rides_converted_glbs
+RETAIL_SLICE PASS all_animation_tracks_resolved
+RETAIL_SLICE PASS house_color_pack_contract_resolves
+RETAIL_SLICE PASS invented_team_tint_is_suppressed_in_private_parity
+RETAIL_SLICE PASS retail_textures_survive_without_invented_tint
+RETAIL_SLICE PASS private_retail_surface_colors_remain_source_neutral
+RETAIL_SLICE PASS private_retail_overlays_use_source_contracts
+RETAIL_SLICE PASS adaptive_music_closure
+RETAIL_SLICE PASS strict_roster_audio_closure
+RETAIL_SLICE PASS defeat_music_closure
+RETAIL_SLICE PASS select_voice_closure
+RETAIL_SLICE PASS attack_voice_closure
+RETAIL_SLICE PASS every_roster_unit_has_select_voice
+RETAIL_SLICE PASS starts_explore_music
+RETAIL_SLICE PASS cross_river_route_is_bounded_astar
+RETAIL_SLICE PASS cross_river_route_uses_nearest_valid_named_ford
+RETAIL_SLICE PASS cross_river_route_respects_source_cells
+RETAIL_SLICE PASS cross_river_route_avoids_non_ford_water
+RETAIL_SLICE PASS cross_river_route_avoids_blocked_ford2_cell
+RETAIL_SLICE PASS named_ford1_corridor_crosses_opposite_banks
+RETAIL_SLICE PASS named_ford2_corridor_crosses_opposite_banks
+RETAIL_SLICE PASS named_ford3_corridor_crosses_opposite_banks
+RETAIL_SLICE PASS select_player_battalion
+RETAIL_SLICE PASS selection_visible_in_sim
+RETAIL_SLICE PASS outside_playable_move_rejected
+RETAIL_SLICE PASS outside_rejection_does_not_move
+RETAIL_SLICE PASS source_blocked_move_rejected
+RETAIL_SLICE PASS move_order_accepted
+RETAIL_SLICE PASS same_side_route_respects_source_cells
+RETAIL_SLICE PASS move_changes_position
+RETAIL_SLICE PASS move_uses_run_state
+RETAIL_SLICE PASS run_variants_active
+RETAIL_SLICE PASS private_route_uses_exact_retail_move_hint_without_synthetic_flag
+RETAIL_SLICE PASS retail_stop_command_clears_route_and_target
+RETAIL_SLICE PASS retail_attack_move_command_arms_source_vision_acquisition
+RETAIL_SLICE PASS retail_control_group_assigns_sorted
+RETAIL_SLICE PASS retail_control_group_recall
+RETAIL_SLICE PASS manifest_auto_populates_production_rules
+RETAIL_SLICE PASS manifest_records_document_damage_types
+RETAIL_SLICE PASS unresolved_units_stay_out_with_recorded_reasons
+RETAIL_SLICE PASS porter_available_for_construction
+RETAIL_SLICE PASS porter_constructs_siegeworks
+RETAIL_SLICE PASS porter_constructs_urukpit
+RETAIL_SLICE PASS porter_constructs_wargpit
+RETAIL_SLICE PASS fortress_declares_document_units
+RETAIL_SLICE PASS siegeworks_declares_document_units
+RETAIL_SLICE PASS urukpit_declares_document_units
+RETAIL_SLICE PASS wargpit_declares_document_units
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_ballista
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_battering_ram
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_beserker
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_fighter_horde
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_lurtz
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_pikeman_horde
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_saruman
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_sharku
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_uruk_crossbow_horde
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_warg_rider_horde
+RETAIL_SLICE PASS wrong_producer_rejects_isengard_worm_tongue
+RETAIL_SLICE PASS isengard_saruman_queues_from_document_producer
+RETAIL_SLICE PASS isengard_saruman_charges_document_values
+RETAIL_SLICE PASS isengard_saruman_completes_with_document_identity
+RETAIL_SLICE PASS isengard_battering_ram_queues_from_document_producer
+RETAIL_SLICE PASS isengard_battering_ram_charges_document_values
+RETAIL_SLICE PASS isengard_battering_ram_completes_with_document_identity
+RETAIL_SLICE PASS isengard_fighter_horde_queues_from_document_producer
+RETAIL_SLICE PASS isengard_fighter_horde_charges_document_values
+RETAIL_SLICE PASS isengard_fighter_horde_completes_with_document_identity
+RETAIL_SLICE PASS isengard_warg_rider_horde_queues_from_document_producer
+RETAIL_SLICE PASS isengard_warg_rider_horde_charges_document_values
+RETAIL_SLICE PASS isengard_warg_rider_horde_completes_with_document_identity
+RETAIL_SLICE PASS living_spawn_hero_identity_cannot_requeue
+RETAIL_SLICE PASS distinct_hero_identity_trained
+RETAIL_SLICE PASS fallen_hero_identity_trains_again
+RETAIL_SLICE PASS retrained_hero_completes_with_document_identity
+RETAIL_SLICE PASS living_hero_identity_cannot_requeue
+RETAIL_SLICE PASS produced_hero_death_releases_identity_for_revival
+RETAIL_SLICE PASS prerequisites_fail_closed_without_upgrade
+RETAIL_SLICE PASS manifest_projects_doc_structure_upgrade_chains
+RETAIL_SLICE PASS siegeworks_exposes_authored_purchase_command
+RETAIL_SLICE PASS siegeworks_level_two_purchase_uses_doc_cost_and_duration
+RETAIL_SLICE PASS siegeworks_level_two_completes_with_doc_level_and_command_set
+RETAIL_SLICE PASS siegeworks_level_two_applies_authored_level_effects
+RETAIL_SLICE PASS siegeworks_level_two_unlocks_document_unit
+RETAIL_SLICE PASS siegeworks_level_two_production_speed_uses_authored_factor
+RETAIL_SLICE PASS siegeworks_level_three_purchases_after_level_two
+RETAIL_SLICE PASS siegeworks_level_three_completes_and_effects_compound
+RETAIL_SLICE PASS siegeworks_chain_exhausted_exposes_no_further_purchase
+RETAIL_SLICE PASS urukpit_exposes_authored_purchase_command
+RETAIL_SLICE PASS urukpit_level_two_purchase_uses_doc_cost_and_duration
+RETAIL_SLICE PASS urukpit_level_two_completes_with_doc_level_and_command_set
+RETAIL_SLICE PASS urukpit_level_two_applies_authored_level_effects
+RETAIL_SLICE PASS urukpit_level_two_unlocks_document_unit
+RETAIL_SLICE PASS urukpit_level_two_production_speed_uses_authored_factor
+RETAIL_SLICE PASS urukpit_level_three_purchases_after_level_two
+RETAIL_SLICE PASS urukpit_level_three_completes_and_effects_compound
+RETAIL_SLICE PASS urukpit_chain_exhausted_exposes_no_further_purchase
+RETAIL_SLICE PASS wargpit_exposes_authored_purchase_command
+RETAIL_SLICE PASS wargpit_level_two_purchase_uses_doc_cost_and_duration
+RETAIL_SLICE PASS wargpit_level_two_completes_with_doc_level_and_command_set
+RETAIL_SLICE PASS wargpit_level_two_applies_authored_level_effects
+RETAIL_SLICE PASS wargpit_level_three_purchases_after_level_two
+RETAIL_SLICE PASS wargpit_level_three_completes_and_effects_compound
+RETAIL_SLICE PASS wargpit_chain_exhausted_exposes_no_further_purchase
+RETAIL_SLICE PASS spawn_roster_units_carry_compiled_experience
+SCRIPT ERROR: Out of bounds get index '1' (on base: 'Array[Dictionary]')
+   at: _run (res://tests/retail_slice_runner.gd:904)
+   GDScript backtrace (most recent call first):
+       [0] _run (res://tests/retail_slice_runner.gd:904)

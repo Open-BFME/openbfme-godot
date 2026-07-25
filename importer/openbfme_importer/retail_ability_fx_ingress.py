@@ -408,16 +408,27 @@ def build_ability_fx_closure(
     *,
     namespace: str,
     texture_index: Mapping[str, str],
+    particle_ids: Sequence[str] = (),
 ) -> dict[str, object]:
     """Seal one owner's authored FX closure into resources and runtime bindings.
 
     ``namespace`` scopes every emitted resource id to the owning unit or
     spellbook slug, because a playable-unit profile extension requires each
     resource to have exactly one runtime owner.
+
+    ``particle_ids`` seeds the closure with particle systems an owner names
+    OUTSIDE any FXList.  Retail attaches some objects' entire appearance to a
+    Draw module bone rather than to a cast FXList — CloudBreakSunbeam authors
+    ``Model = None`` plus ``ParticleSysBone = None CloudBreakRays``, and
+    ElvenGrove the same with ``TaintHCPing`` — so without this seed those
+    powers convert with no art at all and present as nothing.
     """
 
     namespace_slug = _slug(namespace)
     roots = _sorted_unique(str(value).strip() for value in fx_ids if str(value).strip())
+    seeded_systems = _sorted_unique(
+        str(value).strip() for value in particle_ids if str(value).strip()
+    )
     if len(roots) > MAX_FX_ROOTS:
         raise AbilityFxIngressError("authored FX root set is unreasonably large")
 
@@ -474,9 +485,12 @@ def build_ability_fx_closure(
         queue.extend(nested)
 
     directly_named = _sorted_unique(
-        system
-        for record in selected_fx.values()
-        for system in record["particleSystemIds"]  # type: ignore[union-attr]
+        [
+            system
+            for record in selected_fx.values()
+            for system in record["particleSystemIds"]  # type: ignore[union-attr]
+        ]
+        + seeded_systems
     )
     # Close over child emitters (PerParticleAttachedSystem) so a carrier system
     # never converts without the system that actually draws.
@@ -689,6 +703,17 @@ def build_ability_fx_closure(
         "presentableFxListIds": resolved_fx_ids,
         "unresolved": unresolved,
     }
+    if seeded_systems:
+        # Draw-module (ParticleSysBone) systems: recorded separately from the
+        # FXList roots so the runtime can tell "this object's own appearance"
+        # from "this cast's effect", and so an authored-but-unconvertible
+        # system stays visible as a gap instead of vanishing.
+        bindings["authoredParticleSystemIds"] = seeded_systems
+        bindings["presentableParticleSystemIds"] = [
+            converted_systems[key]
+            for key in sorted(converted_systems)
+            if key in {value.casefold() for value in seeded_systems}
+        ]
 
     closure: dict[str, object] = {
         "schema": SCHEMA,

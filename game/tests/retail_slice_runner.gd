@@ -2,20 +2,66 @@ extends SceneTree
 ## Deterministic behavior/asset gate for the playable private retail slice.
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
+const WatchdogScript = preload("res://tests/runner_watchdog.gd")
 # Capture-measured dock geometry (bfme2-ref-120s.png); mirrors
 # retail_hud.gd RETAIL_RADAR_CENTER / RETAIL_DISH_CENTER.
 const EXPECTED_RADAR_CENTER := Vector2(225.0, 198.0)
 const EXPECTED_DISH_CENTER := Vector2(587.0, 219.0)
 const ARCHER_PROJECTILE_CONTROLLER_PATH := "res://src/retail_slice/retail_archer_projectile_controller.gd"
 ## Pinned deterministic battle signatures per faction (see
-## battle_signature_matches_pinned_constant).
+## battle_signature_matches_pinned_constant). Repository policy: a drifted pin
+## must be EXPLAINED before it is moved, never silently refreshed. Each entry
+## below carries the reason its current value is the correct one.
 const EXPECTED_BATTLE_SIGNATURES := {
+	# Unchanged since it was first pinned. Men field no cavalry in the scripted
+	# battle, so the 2026-07-25 knockdown-lifecycle fix left this byte-identical.
 	"men": "3CB9CA98",
-	"elves": "2521173F",
-	"dwarves": "DEF53068",
-	"isengard": "E35938E4",
+	# Repinned 2026-07-25, was 2521173F. Two compounding causes, both explained:
+	# (1) the converter-gap batch changed the elven roster and economy, and
+	# (2) the elven enemy reserve (slot 103) is the Rivendell Lancer cavalry
+	#     horde, so this is the only verified faction whose scripted battle
+	#     exercises cavalry trample. It was the faction that exposed the
+	#     knockdown chain-lock (_apply_knockback re-downing prone battalions and
+	#     wiping their standing order), which wiped the player army and left the
+	#     battle unfinishable. The new value is the signature of a battle that
+	#     completes in victory, and deterministic_replay_signature reproduces it
+	#     independently through _run_reference_battle.
+	"elves": "62557258",
+	# Repinned 2026-07-25, was DEF53068. Pure content drift from the
+	# converter-gap batch (new units/structures shift the roster and economy).
+	# No behavioural regression is hiding here: every other battle assertion
+	# passes, deterministic_replay_signature reproduces the value, and the
+	# signature measured identical (A9D057B7) both before and after the
+	# knockdown fix, so the drift is entirely attributable to pack content.
+	"dwarves": "A9D057B7",
+	# Repinned 2026-07-25, was E35938E4. Content drift from the converter-gap
+	# batch, established by A/B measurement rather than assumed: the knockdown
+	# fix was reverted in place (only its hunks) and isengard re-measured
+	# 55C88199 BOTH with and without it, so the trample/knockdown lane is inert
+	# in isengard's scripted battle despite the faction fielding Warg Riders —
+	# the reference battle's line unit and enemy reserve are infantry. Every
+	# other assertion in the run passes (303/1, the pin being the only red),
+	# battle_reaches_victory and battle_reaches_defeat both hold, and
+	# deterministic_replay_signature reproduces the value independently.
+	"isengard": "55C88199",
+	# NOT REPINNED, deliberately. Mordor currently measures F33794AF (identical
+	# with and without the knockdown fix, so its drift from C3BFD21C is content
+	# too), but the same run reports 55 failures: mordor's structure-upgrade
+	# lane compiles no chains (orcpit/tavern/trollcage/siegeworks/haradrimpalace
+	# all fail their purchase commands), and Mouth of Sauron, Mountain Troll and
+	# Haradrim Archers are missing from their producers' declared unit sets.
+	# Repository policy is to explain drift, not to bless a number measured
+	# while the faction is demonstrably under-converted — moving the pin now
+	# would certify a run that cannot be certified. Leave it red until the pack
+	# converts mordor completely, then repin against a healthy run.
 	"mordor": "C3BFD21C",
-	"wild": "D2892DA6",
+	# Repinned 2026-07-25, was D2892DA6. Same evidence shape as isengard: the
+	# knockdown fix was reverted in place and wild re-measured B6D34749 both
+	# with and without it, so the drift is entirely the converter-gap batch's
+	# content change. The run is 301/1 with the pin as its only failure, both
+	# victory and defeat outcomes hold, and deterministic_replay_signature
+	# reproduces the value.
+	"wild": "B6D34749",
 }
 # This is a deadlock/watchdog bound, not a frame-time optimization gate. The
 # vertical-slice DoD currently prioritizes source-correct gameplay and assets.
@@ -24,12 +70,17 @@ const INITIALIZATION_WATCHDOG_MS := 30000
 
 var passed := 0
 var failed := 0
+# A GDScript runtime error inside `_run` unwinds past every `quit()` in this
+# file, so without this the headless process idles forever instead of failing.
+var _watchdog := WatchdogScript.new()
 
 
 func _initialize() -> void:
 	# The gate's combat checks are written against the legacy pre-spawned
 	# battalions; retail play starts from fortress + porter only.
 	OS.set_environment("OPENBFME_STARTER_ARMY", "1")
+	_watchdog.start(self, "RETAIL_SLICE", 0, 0, true)
+	_watchdog.set_result_provider(func() -> Vector2i: return Vector2i(passed, failed))
 	call_deferred("_run")
 
 
@@ -898,7 +949,37 @@ func _run() -> void:
 		not xp_rule.is_empty() or not faction_requires_experience,
 		"faction=%s unit=%s" % [String(slice.faction_manifest.get("faction", "")), String(xp_attacker.get("unit_type", ""))]
 	)
-	if not xp_rule.is_empty():
+	# The rank-2 assertions below only apply to a unit retail actually lets
+	# level. A one-row chain is authored, not truncated: data/ini/
+	# experiencelevels.ini heads its siege section ";---- NO LEVELING UNITS"
+	# and gives IsengardBallista / IsengardBatteringRam / GondorTrebuchet /
+	# DwarvenCatapult / MordorCatapult / every porter exactly one
+	# ExperienceLevel block (`IsengardBallistaLevel1`, TargetNames =
+	# IsengardBallista, Rank = 1, and no Level2). Ring heroes and Treebeard are
+	# the mirror case: one row whose authored Rank is already their max (10).
+	# Isengard's spawn-roster slot 2 is the ballista, so this branch is the
+	# whole reason `steps[1]`/`xp_levels[1]` used to run off the end of the
+	# array and abort `_run` — the assertion adapts to the authored chain
+	# length instead of assuming two ranks.
+	var authored_levels: Array = xp_rule.get("levels", [])
+	if not xp_rule.is_empty() and authored_levels.size() < 2:
+		var only_level: Dictionary = authored_levels[0]
+		var single_rank_state: Dictionary = roster_sim.experience_state(xp_attacker_id)
+		_check(
+			"single_rank_unit_fields_at_its_authored_top_rank",
+			int(only_level.get("rank", 0)) == int(xp_rule.get("max_level", -1))
+				and int(single_rank_state.get("level", 0)) == int(only_level.get("rank", 0))
+				and int(single_rank_state.get("max_level", -1)) == int(xp_rule.get("max_level", -1))
+				and int(only_level.get("experience_award", -1)) >= 0,
+			"faction=%s unit=%s rank=%d max_level=%d state=%s" % [
+				String(slice.faction_manifest.get("faction", "")),
+				String(xp_attacker.get("unit_type", "")),
+				int(only_level.get("rank", 0)),
+				int(xp_rule.get("max_level", -1)),
+				str(single_rank_state),
+			]
+		)
+	elif not xp_rule.is_empty():
 		var xp_levels: Array = xp_rule.get("levels", [])
 		var rank_one_award := int((xp_levels[0] as Dictionary).get("experience_award", 0))
 		var rank_two: Dictionary = xp_levels[1]
@@ -1401,7 +1482,12 @@ func _run() -> void:
 		var doc_button_hud = load("res://src/retail_slice/retail_hud.gd").new()
 		doc_button_hud.build()
 		doc_button_hud.set_production_state([], true, 0, [], [], [], [], String(line_unit.get("producer_kind", "")), offered)
-		var doc_button: Button = (doc_button_hud._doc_upgrade_buttons.get(first_upgrade, {}) as Button)
+		# `as Button` on the old `{}` fallback is a hard cast error, not a null:
+		# a faction whose HUD never bound this upgrade aborted `_run` outright
+		# (mordor did). Resolve it as a Variant and let the check report the
+		# missing binding.
+		var doc_button_value: Variant = doc_button_hud._doc_upgrade_buttons.get(first_upgrade, null)
+		var doc_button: Button = doc_button_value as Button if doc_button_value is Button else null
 		_check(
 			"doc_upgrade_button_binds_at_authored_slot",
 			doc_button != null
@@ -2588,6 +2674,7 @@ func _armor_rule_for_set(sim, set_id: String) -> Dictionary:
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:
+	_watchdog.note(name)
 	if condition:
 		passed += 1
 		print("RETAIL_SLICE PASS %s" % name)
@@ -2597,5 +2684,6 @@ func _check(name: String, condition: bool, detail: String = "") -> void:
 
 
 func _finish() -> void:
+	_watchdog.stop()
 	print("RETAIL_SLICE_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)

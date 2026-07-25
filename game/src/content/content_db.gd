@@ -68,6 +68,10 @@ var skipped_playable_unit_documents: Array[String] = []
 var playable_structure_runtimes: Dictionary = {}
 var animation_capabilities: Dictionary = {}
 var bundle_maps: Dictionary = {}
+## Map ids that a pack published through a `mapCatalog` document, in authored
+## order. Empty when no loaded pack ships a catalog, which is what keeps the
+## skirmish menu on its authored fallback list instead of a one-entry list.
+var catalog_map_ids: Array[String] = []
 var retail_ui_images: Dictionary = {}
 var retail_strings: Dictionary = {}
 var retail_audio_events: Dictionary = {}
@@ -127,6 +131,7 @@ func reload() -> void:
 	playable_structure_runtimes.clear()
 	animation_capabilities.clear()
 	bundle_maps.clear()
+	catalog_map_ids.clear()
 	retail_ui_images.clear()
 	retail_strings.clear()
 	retail_audio_events.clear()
@@ -300,6 +305,11 @@ func _load_map_catalog(root: String, relative: String) -> bool:
 			bundle_maps[map_id] = existing
 		else:
 			bundle_maps[map_id] = row
+		# Authored catalog order is the map list's order; a map reached only
+		# through a pack's entryMap is deliberately not enumerable, because a
+		# host pack's entry map is not a skirmish menu offering.
+		if not catalog_map_ids.has(map_id):
+			catalog_map_ids.append(map_id)
 	return true
 
 
@@ -1803,6 +1813,23 @@ func get_animation_capability(id: String) -> Dictionary:
 
 func get_bundle_map(id: String) -> Dictionary:
 	return bundle_maps.get(id, {})
+
+
+func list_catalog_maps() -> Array[Dictionary]:
+	## Every catalog-published map, in authored order, as
+	## {"id", "name", "players"}. Fails closed per row: a map whose document
+	## carries no authored player count reports 0 rather than a guess.
+	var rows: Array[Dictionary] = []
+	for map_id in catalog_map_ids:
+		var document := bundle_maps.get(map_id, {}) as Dictionary
+		if document.is_empty():
+			continue
+		rows.append({
+			"id": map_id,
+			"name": String(document.get("displayName", map_id)),
+			"players": int(document.get("playerCount", 0)),
+		})
+	return rows
 
 
 func get_retail_ui_image(id: String) -> Dictionary:
