@@ -36,61 +36,17 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("2")
 
-[node name="UpperSteel" type="ColorRect" parent="."]
+[node name="BackdropArt" type="TextureRect" parent="."]
+visible = false
 layout_mode = 1
-anchors_preset = 10
-anchor_right = 1.0
-offset_bottom = 186.0
-grow_horizontal = 2
-mouse_filter = 2
-color = Color(0.015, 0.04, 0.06, 0.52)
-
-[node name="UpperGold" type="ColorRect" parent="."]
-layout_mode = 1
-anchors_preset = 10
-anchor_right = 1.0
-offset_top = 184.0
-offset_bottom = 186.0
-grow_horizontal = 2
-mouse_filter = 2
-color = Color(0.72, 0.56, 0.27, 0.52)
-
-[node name="LowerSteel" type="ColorRect" parent="."]
-layout_mode = 1
-anchors_preset = 12
-anchor_top = 1.0
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_top = -142.0
 grow_horizontal = 2
-grow_vertical = 0
+grow_vertical = 2
 mouse_filter = 2
-color = Color(0.01, 0.025, 0.035, 0.72)
-
-[node name="LowerGold" type="ColorRect" parent="."]
-layout_mode = 1
-anchors_preset = 12
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_top = -144.0
-offset_bottom = -142.0
-grow_horizontal = 2
-grow_vertical = 0
-mouse_filter = 2
-color = Color(0.72, 0.56, 0.27, 0.72)
-
-[node name="MenuFrame" type="Panel" parent="."]
-layout_mode = 1
-anchors_preset = 12
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_top = -142.0
-grow_horizontal = 2
-grow_vertical = 0
-mouse_filter = 2
-theme_type_variation = "NavigationPanel"
+expand_mode = 1
+stretch_mode = 6
 
 [node name="Center" type="Control" parent="."]
 layout_mode = 1
@@ -102,37 +58,41 @@ grow_vertical = 2
 
 [node name="Title" type="Label" parent="Center"]
 layout_mode = 1
-anchors_preset = 10
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -560.0
-offset_top = 36.0
-offset_right = 560.0
-offset_bottom = 116.0
-grow_horizontal = 2
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -900.0
+offset_top = 74.0
+offset_right = -80.0
+offset_bottom = 158.0
+grow_horizontal = 0
 theme_override_colors/font_color = Color(0.91, 0.80, 0.50, 1)
 theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.92)
 theme_override_constants/shadow_offset_x = 4
 theme_override_constants/shadow_offset_y = 5
-theme_override_font_sizes/font_size = 66
-text = "OPENBFME"
-horizontal_alignment = 1
+theme_override_font_sizes/font_size = 62
+text = "OPEN BFME"
+horizontal_alignment = 2
 vertical_alignment = 1
 
 [node name="Subtitle" type="Label" parent="Center"]
 layout_mode = 1
-anchors_preset = 10
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -500.0
-offset_top = 119.0
-offset_right = 500.0
-offset_bottom = 157.0
-grow_horizontal = 2
-theme_override_colors/font_color = Color(0.69, 0.82, 0.87, 1)
-theme_override_font_sizes/font_size = 18
-text = "FORDS OF ISEN II   |   MEN VS MEN"
-horizontal_alignment = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -900.0
+offset_top = 40.0
+offset_right = -80.0
+offset_bottom = 70.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(0.83, 0.87, 0.78, 0.86)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 21
+text = "THE BATTLE FOR MIDDLE-EARTH II"
+horizontal_alignment = 2
+vertical_alignment = 1
 
 [node name="SoloFlyout" type="Panel" parent="Center"]
 visible = false
@@ -181,31 +141,31 @@ grow_vertical = 2
 mouse_filter = 1
 theme_type_variation = "OverlayPanel"
 
-[node name="MainHeading" type="Label" parent="Center"]
-layout_mode = 1
-anchors_preset = 10
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -360.0
-offset_top = 190.0
-offset_right = 360.0
-offset_bottom = 232.0
-grow_horizontal = 2
-theme_override_colors/font_color = Color(0.72, 0.82, 0.86, 0.84)
-theme_override_font_sizes/font_size = 20
-text = "THE BATTLE AWAITS"
-horizontal_alignment = 1
-
-[node name="Solo" type="Button" parent="Center"]
+[node name="Tutorials" type="Button" parent="Center"]
 layout_mode = 1
 anchors_preset = 12
 anchor_top = 1.0
-anchor_right = 0.25
+anchor_right = 0.166667
 anchor_bottom = 1.0
-offset_left = 24.0
-offset_top = -118.0
-offset_right = -8.0
-offset_bottom = -24.0
+offset_left = 22.0
+offset_top = -102.0
+offset_right = -10.0
+offset_bottom = -44.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_type_variation = "NavButton"
+text = "TUTORIALS"
+
+[node name="Solo" type="Button" parent="Center"]
+layout_mode = 1
+anchor_left = 0.166667
+anchor_top = 1.0
+anchor_right = 0.333333
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = -102.0
+offset_right = -10.0
+offset_bottom = -44.0
 grow_horizontal = 2
 grow_vertical = 0
 theme_type_variation = "NavButton"
@@ -213,14 +173,14 @@ text = "SOLO PLAY"
 
 [node name="Multiplayer" type="Button" parent="Center"]
 layout_mode = 1
-anchor_left = 0.25
+anchor_left = 0.333333
 anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
-offset_left = 8.0
-offset_top = -118.0
-offset_right = -8.0
-offset_bottom = -24.0
+offset_left = 10.0
+offset_top = -102.0
+offset_right = -10.0
+offset_bottom = -44.0
 grow_horizontal = 2
 grow_vertical = 0
 theme_type_variation = "NavButton"
@@ -230,82 +190,42 @@ text = "MULTIPLAYER"
 layout_mode = 1
 anchor_left = 0.5
 anchor_top = 1.0
-anchor_right = 0.75
-anchor_bottom = 1.0
-offset_left = 8.0
-offset_top = -118.0
-offset_right = -8.0
-offset_bottom = -24.0
-grow_horizontal = 2
-grow_vertical = 0
-theme_type_variation = "NavButton"
-text = "OPTIONS"
-
-[node name="Quit" type="Button" parent="Center"]
-layout_mode = 1
-anchor_left = 0.75
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 8.0
-offset_top = -118.0
-offset_right = -24.0
-offset_bottom = -24.0
-grow_horizontal = 2
-grow_vertical = 0
-theme_type_variation = "NavButton"
-text = "QUIT"
-
-[node name="SubpageNav" type="Control" parent="Center"]
-visible = false
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 1
-
-[node name="Solo" type="Button" parent="Center/SubpageNav"]
-layout_mode = 1
-anchors_preset = 12
-anchor_top = 1.0
-anchor_right = 0.333333
-anchor_bottom = 1.0
-offset_left = 24.0
-offset_top = -118.0
-offset_right = -8.0
-offset_bottom = -24.0
-grow_horizontal = 2
-grow_vertical = 0
-theme_type_variation = "NavButton"
-text = "SOLO PLAY"
-
-[node name="Options" type="Button" parent="Center/SubpageNav"]
-layout_mode = 1
-anchor_left = 0.333333
-anchor_top = 1.0
 anchor_right = 0.666667
 anchor_bottom = 1.0
-offset_left = 8.0
-offset_top = -118.0
-offset_right = -8.0
-offset_bottom = -24.0
+offset_left = 10.0
+offset_top = -102.0
+offset_right = -10.0
+offset_bottom = -44.0
 grow_horizontal = 2
 grow_vertical = 0
 theme_type_variation = "NavButton"
 text = "OPTIONS"
 
-[node name="Quit" type="Button" parent="Center/SubpageNav"]
+[node name="MyHeroes" type="Button" parent="Center"]
 layout_mode = 1
 anchor_left = 0.666667
 anchor_top = 1.0
+anchor_right = 0.833333
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = -102.0
+offset_right = -10.0
+offset_bottom = -44.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_type_variation = "NavButton"
+text = "MY HEROES"
+
+[node name="Quit" type="Button" parent="Center"]
+layout_mode = 1
+anchor_left = 0.833333
+anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 8.0
-offset_top = -118.0
-offset_right = -24.0
-offset_bottom = -24.0
+offset_left = 10.0
+offset_top = -102.0
+offset_right = -22.0
+offset_bottom = -44.0
 grow_horizontal = 2
 grow_vertical = 0
 theme_type_variation = "NavButton"

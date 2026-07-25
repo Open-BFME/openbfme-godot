@@ -151,15 +151,14 @@ func retail_visual_node_count() -> int:
 
 
 func _private_retail_pack_selected(pack_root: String = "") -> bool:
+	## Retail order hints require a converted retail pack, which is a property of
+	## the pack's import provenance — not of its id. Composed multi-faction packs
+	## carry id `bfme2-<a>-<b>-…-vslice`, so the historical literal match here
+	## dropped the retail hint for every cross-faction match.
 	if pack_root != "":
-		var pack_value: Variant = ModLoader._read_json(ModLoader.resolve_pack_path(pack_root, "pack.json"))
-		return typeof(pack_value) == TYPE_DICTIONARY and String((pack_value as Dictionary).get("id", "")) == "bfme2-men-vslice"
+		return ModLoader.pack_is_retail_import(pack_root)
 	var definition: Dictionary = ContentDB.get_bundle_object("bfme2.object.gondor-fighter")
-	var selected_root := String(definition.get("_pack_root", ""))
-	if selected_root == "" or selected_root.begins_with("res://"):
-		return false
-	var pack_value: Variant = ModLoader._read_json(ModLoader.resolve_pack_path(selected_root, "pack.json"))
-	return typeof(pack_value) == TYPE_DICTIONARY and String((pack_value as Dictionary).get("id", "")) == "bfme2-men-vslice"
+	return ModLoader.pack_is_retail_import(String(definition.get("_pack_root", "")))
 
 
 func _build_retail_hint() -> void:

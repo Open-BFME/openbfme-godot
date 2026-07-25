@@ -416,9 +416,15 @@ def build_parser() -> argparse.ArgumentParser:
     publish_faction.add_argument(
         "--faction",
         required=True,
+        action="append",
         # BFME2's six factions plus the RotWK 2.01 data-driven expansion
         # factions (faction_slice_profile validates the game/faction pair).
         choices=("men", "elves", "dwarves", "isengard", "mordor", "wild", "angmar"),
+        help=(
+            "faction to compose; repeat to cook one multi-faction pack "
+            "(compose_faction_profile has always accepted a sequence, and a "
+            "cross-faction skirmish needs every side in the active pack)"
+        ),
     )
     publish_faction.add_argument(
         "--base-profile",
@@ -515,6 +521,15 @@ def _restore_env(prior: Mapping[str, str | None]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # `default_state_root()` is consulted directly by helpers that never see
+    # `args` (tool discovery is the load-bearing one: it resolves the pinned
+    # ffmpeg/blender under <state-root>/tools). Without this, an explicit
+    # --state-root left those helpers pointing at the checkout's own .private,
+    # and a missing pinned ffmpeg silently fell through to whatever is on PATH
+    # — which then fails the pinned-hash attest on every audio conversion.
+    os.environ["OPENBFME_IMPORT_ROOT"] = str(
+        Path(args.state_root).expanduser().resolve()
+    )
     dev_env_prior: dict[str, str | None] | None = None
     try:
         if getattr(args, "dev", False):
@@ -813,12 +828,19 @@ def main(argv: list[str] | None = None) -> int:
                 args.coverage_root
                 or (workspace / "reports" / "faction-import")
             ).expanduser()
-            coverage_path = coverage_root / f"{args.faction}-coverage.json"
-            if not coverage_path.is_file():
-                raise FileNotFoundError(
-                    f"faction coverage missing at {coverage_path}; "
-                    f"run: openbfme-import import-faction --faction {args.faction} --convert"
-                )
+            # `--faction` is repeatable; compose order is the order given so a
+            # multi-faction profile id stays reproducible for the same request.
+            factions: list[str] = list(args.faction)
+            if len(set(factions)) != len(factions):
+                raise ValueError(f"--faction repeated with a duplicate: {factions}")
+            for faction in factions:
+                coverage_path = coverage_root / f"{faction}-coverage.json"
+                if not coverage_path.is_file():
+                    raise FileNotFoundError(
+                        f"faction coverage missing at {coverage_path}; "
+                        f"run: openbfme-import import-faction --faction {faction} --convert"
+                    )
+            faction_slug = "-".join(factions)
             base_profile_path = Path(
                 args.base_profile
                 or (workspace / "profiles" / "men-fords-v1.generated.json")
@@ -833,25 +855,33 @@ def main(argv: list[str] | None = None) -> int:
                 or (
                     workspace
                     / "profiles"
-                    / f"faction-slice-{args.faction}.generated.json"
+                    / f"faction-slice-{faction_slug}.generated.json"
                 )
             ).expanduser()
             progress_emit(
                 "compose",
-                f"composing {args.faction} coverage into pack profile",
+                f"composing {', '.join(factions)} coverage into pack profile",
             )
             base = json.loads(base_profile_path.read_text(encoding="utf-8"))
             if not isinstance(base, dict):
                 raise ValueError(f"base profile root is not an object: {base_profile_path}")
             composed, receipt = compose_faction_profile(
-                base, coverage_root, [args.faction], game=args.game
+                base, coverage_root, factions, game=args.game
             )
             # Keep the host pack id stable so the vertical slice host pack
             # assertion (bfme2-men-vslice) continues to pass for Men.
             pack = composed.get("pack")
-            if isinstance(pack, dict) and args.faction == "men":
+            if isinstance(pack, dict) and factions == ["men"]:
                 pack["id"] = "bfme2-men-vslice"
                 composed["title"] = "BFME2 Men full faction vertical slice"
+            elif isinstance(pack, dict) and len(factions) > 1:
+                # compose_faction_profile only owns the pack id for a
+                # single-faction publish; a multi-faction pack would otherwise
+                # inherit the base profile's (Men) id and stray-bundle under it.
+                pack["id"] = f"{args.game}-{faction_slug}-vslice"
+                composed["title"] = (
+                    f"{args.game.upper()} {', '.join(factions)} faction slice"
+                )
             # Freshly composed profiles bind to the catalog they were composed
             # against; inherited m3 markers otherwise fail the build's source
             # catalog identity check with no stamping path.
@@ -894,7 +924,8 @@ def main(argv: list[str] | None = None) -> int:
             value["pack"] = str(pack_root)
             value["profile"] = str(profile_output)
             value["receipt"] = str(receipt_path)
-            value["faction"] = args.faction
+            value["faction"] = factions[0] if len(factions) == 1 else faction_slug
+            value["factions"] = factions
             value["composed_objects"] = len(receipt.get("objects", []))
             if light_audit:
                 value["bundle_sha256"] = "dev-skipped"
@@ -912,7 +943,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
             progress_complete(
-                f"faction={args.faction} pack={pack_root} slice path ready"
+                f"faction={faction_slug} pack={pack_root} slice path ready"
             )
             _render(value, args.json)
             return 0 if value.get("valid", False) else 3

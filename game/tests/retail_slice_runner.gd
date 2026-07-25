@@ -49,7 +49,21 @@ func _run() -> void:
 	_check("slice_ready", bool(slice.ready_ok), String(slice.failure_reason))
 	var initialization_total_ms := int(slice.initialization_metrics_ms.get("ready_complete", -1))
 	_check("initialization_completes_before_watchdog", initialization_total_ms >= 0 and initialization_total_ms <= INITIALIZATION_WATCHDOG_MS, "%d ms" % initialization_total_ms)
-	_check("external_private_pack", String(slice.selected_pack_root).contains("bfme2-men-vslice") and not String(slice.selected_pack_root).begins_with("res://"), String(slice.selected_pack_root))
+	# The host pack must be an external private converted pack that provides the
+	# slice's faction. It is NOT required to be the historical single-faction
+	# `bfme2-men-vslice`: a composed pack is id'd `bfme2-<a>-<b>-…-vslice` and
+	# hosts every faction its pack.json `factionImportCoverage` lists.
+	var host_pack_root := String(slice.selected_pack_root)
+	var host_faction := String((slice.faction_manifest as Dictionary).get("faction", ""))
+	var host_mod_loader := root.get_node("/root/ModLoader")
+	_check(
+		"external_private_pack",
+		host_pack_root != ""
+			and not host_pack_root.begins_with("res://")
+			and bool(host_mod_loader.call("pack_is_retail_import", host_pack_root))
+			and bool(host_mod_loader.call("pack_provides_faction", host_pack_root, host_faction)),
+		"%s (faction=%s)" % [host_pack_root, host_faction]
+	)
 	_check("terrain_is_source_driven", bool(slice.source_driven_terrain))
 	_check("three_ford_crossings", int(slice.crossing_count) == 3, str(slice.crossing_count))
 	_check("imported_map_preview", bool(slice.map_preview_loaded))

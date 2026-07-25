@@ -11,6 +11,8 @@ from importer.tests.test_playable_unit_compiler import _documents
 from openbfme_importer.playable_unit_compiler import compile_playable_unit_descriptor
 from openbfme_importer.playable_unit_pack_compiler import (
     PlayableUnitPackCompilerError,
+    _ability_animation_key,
+    _ability_animations,
     compile_playable_unit_pack_recipe,
     validate_playable_unit_pack_recipe,
 )
@@ -1793,3 +1795,159 @@ def test_rehashed_randomizer_shell_exclusions_are_rejected() -> None:
             PlayableUnitPackCompilerError, match="core animation exclusions"
         ):
             validate_playable_unit_pack_recipe(recipe)
+
+
+def test_ability_animation_key_names_special_weapon_states() -> None:
+    # gandalf.ini:305 authors `AnimationState = SPECIAL_WEAPON_TWO` for
+    # GUGandalfG_SKL.GUGandalfG_SPCL, the staff-lowering wizard blast pose.
+    assert _ability_animation_key(["SPECIAL_WEAPON_TWO"]) == ("specialWeaponTwo", "cast")
+    assert _ability_animation_key(["SPECIAL_WEAPON_ONE"]) == ("specialWeaponOne", "cast")
+    assert _ability_animation_key(["SPECIAL_WEAPON_THREE"]) == (
+        "specialWeaponThree",
+        "cast",
+    )
+    # theoden.ini:135 is the Men set's only literal USING_SPECIAL_ABILITY.
+    assert _ability_animation_key(["MOUNTED", "MOVING", "USING_SPECIAL_ABILITY"]) == (
+        "usingSpecialAbility",
+        "cast",
+    )
+
+
+def test_ability_animation_key_names_the_four_phase_envelope() -> None:
+    # boromir.ini:127-178 authors UNPACKING / PREPARING / PACKING / bare for
+    # SPECIAL_POWER_1 (HRNA, HRNB, HRNC, HRNB).
+    assert _ability_animation_key(["UNPACKING", "SPECIAL_POWER_1"]) == (
+        "specialPower1",
+        "unpack",
+    )
+    assert _ability_animation_key(["PREPARING", "SPECIAL_POWER_1"]) == (
+        "specialPower1",
+        "prepare",
+    )
+    assert _ability_animation_key(["PACKING", "SPECIAL_POWER_1"]) == (
+        "specialPower1",
+        "pack",
+    )
+    assert _ability_animation_key(["SPECIAL_POWER_1"]) == ("specialPower1", "cast")
+    # gandalf.ini:343-370 authors the lightning-sword envelope against
+    # PACKING_TYPE_1, which ArrowStormUpdate selects via UnpackingVariation = 1.
+    assert _ability_animation_key(["PACKING_TYPE_1", "UNPACKING"]) == (
+        "packingType1",
+        "unpack",
+    )
+
+
+def test_ability_animation_key_refuses_ambiguous_rows() -> None:
+    assert _ability_animation_key([]) is None
+    assert _ability_animation_key(["MOVING", "ATTACKING"]) is None
+    # Two ability tokens, or two envelope phases, cannot be addressed.
+    assert _ability_animation_key(["SPECIAL_WEAPON_ONE", "SPECIAL_POWER_2"]) is None
+    assert _ability_animation_key(["UNPACKING", "PACKING", "SPECIAL_POWER_1"]) is None
+
+
+def test_ability_animations_index_authored_rows_and_skip_exclusions() -> None:
+    rows = [
+        {
+            "identifier": "GUGandalfG_SKL.GUGandalfG_SPCL",
+            "conditions": ["SPECIAL_WEAPON_TWO"],
+            "sourceW3d": "art/w3d/gu/gugandalfg_spcl.w3d",
+            "modelSourceW3d": "art/w3d/gu/gugandalfg_skn.w3d",
+            "ownerObjectId": "GondorGandalf",
+            "runtimeSupport": "generic-core",
+        },
+        {
+            "identifier": "GUBoromir_SKL.GUBoromir_HRNA",
+            "conditions": ["UNPACKING", "SPECIAL_POWER_1"],
+            "sourceW3d": "art/w3d/gu/guboromir_hrna.w3d",
+            "modelSourceW3d": "art/w3d/gu/guboromir_skn.w3d",
+            "ownerObjectId": "GondorBoromir",
+            "runtimeSupport": "packaged-unimplemented",
+        },
+        {
+            "identifier": "GUGandalfG_SKL.GUGandalfG_SPCK",
+            "conditions": ["SPECIAL_WEAPON_ONE"],
+            "sourceW3d": "art/w3d/gu/gugandalfg_spck.w3d",
+            "modelSourceW3d": "art/w3d/gu/gugandalfg_skn.w3d",
+            "ownerObjectId": "GondorGandalf",
+            "runtimeSupport": "excluded-zero-byte-placeholder",
+        },
+        {
+            "identifier": "GUManMocap_ATKA",
+            "conditions": ["ATTACKING"],
+            "sourceW3d": "art/w3d/gu/gumanmocap_atka.w3d",
+            "modelSourceW3d": "art/w3d/gu/gumanmocap_skn.w3d",
+            "ownerObjectId": "GondorFighter",
+            "runtimeSupport": "generic-core",
+        },
+    ]
+    result = _ability_animations(rows)
+    assert sorted(result) == ["specialPower1", "specialWeaponTwo"]
+    assert list(result["specialPower1"]) == ["unpack"]
+    assert result["specialWeaponTwo"]["cast"][0]["identifier"] == (
+        "GUGandalfG_SKL.GUGandalfG_SPCL"
+    )
+    # An excluded row never becomes addressable, and a generic combat pose is
+    # not an ability.
+    assert "specialWeaponOne" not in result
+
+
+def test_ability_animations_are_phase_ordered_and_deterministic() -> None:
+    rows = [
+        {
+            "identifier": "GUBoromir_SKL.GUBoromir_HRN%s" % suffix,
+            "conditions": conditions + ["SPECIAL_POWER_1"],
+            "sourceW3d": "art/w3d/gu/guboromir_hrn%s.w3d" % suffix.lower(),
+            "modelSourceW3d": "art/w3d/gu/guboromir_skn.w3d",
+            "ownerObjectId": "GondorBoromir",
+            "runtimeSupport": "packaged-unimplemented",
+        }
+        for suffix, conditions in (
+            ("C", ["PACKING"]),
+            ("B", []),
+            ("A", ["UNPACKING"]),
+            ("B", ["PREPARING"]),
+        )
+    ]
+    result = _ability_animations(rows)
+    assert list(result["specialPower1"]) == ["unpack", "prepare", "cast", "pack"]
+    assert _ability_animations(list(reversed(rows))) == result
+
+
+def test_donor_source_retention_never_lands_under_assets() -> None:
+    # A pack must not ship raw retail `.w3d` at a runtime path. An auxiliary
+    # visual leaf whose converter is unimplemented keeps its donor payload for
+    # provenance, but under the source-only `sources/` root the pack audit
+    # excludes — never under `assets/`, which is runtime content.
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    member = descriptor["composition"]["primaryMemberObjectId"]
+    source = "art/w3d/fi/hero_banner.w3d"
+    closure["exactLeaves"].append(
+        _leaf(
+            member,
+            "HeroBanner",
+            "attachment",
+            source,
+            ["USER_1"],
+            "ModelConditionState USER_1",
+        )
+    )
+    _rehash_closure(closure)
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    leaf = next(
+        row
+        for row in recipe["runtimeRegistration"]["visual"]["authoredVisualLeaves"]
+        if row["source"] == source
+    )
+    assert leaf["runtimeSupport"] == "source-retained-unimplemented"
+    assert leaf["output"].startswith("sources/units/")
+    assert not leaf["output"].startswith("assets/")
+    resource = next(
+        row for row in recipe["resources"] if row["id"] == leaf["resourceId"]
+    )
+    assert resource["converter"] == "copy"
+    assert resource["output"] == leaf["output"]
+    for row in recipe["resources"]:
+        output = str(row.get("output", ""))
+        if PurePosixPath(output).suffix.casefold() == ".w3d":
+            assert not output.startswith("assets/"), output

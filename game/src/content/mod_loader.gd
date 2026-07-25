@@ -11,6 +11,9 @@ const PACK_CACHE_SETTING := "openbfme/content/user_pack_cache"
 const PACK_SELECTION_SETTING := "openbfme/content/user_pack_selection"
 const SELECTION_SCHEMA := "openbfme.pack-selection"
 const SELECTION_VERSION := 0
+## Levels to climb from `res://` when probing for `.private/content-packs`.
+## `<repo>/game` needs 1; `<repo>/.claude/worktrees/<name>/game` needs 4.
+const WORKSPACE_PROBE_DEPTH := 6
 
 var diagnostics: Array[String] = []
 
@@ -23,10 +26,17 @@ var diagnostics: Array[String] = []
 var _link_status_cache: Dictionary = {}
 var _link_cache_mutex := Mutex.new()
 
+# Memoized pack.json identity facts (retail-import flag, composed faction
+# coverage). Presentation code asks these per unit definition, so an uncached
+# read would re-parse pack.json thousands of times per frame batch. Flushed
+# with the link cache whenever the pack set is re-scanned or reselected.
+var _pack_identity_cache: Dictionary = {}
+
 
 func clear_path_caches() -> void:
 	_link_cache_mutex.lock()
 	_link_status_cache.clear()
+	_pack_identity_cache.clear()
 	_link_cache_mutex.unlock()
 
 
@@ -41,6 +51,25 @@ func list_pack_roots() -> Array[String]:
 
 	# Developer/CI override. This remains ephemeral; normal installs use the
 	var external := OS.get_environment("OPENBFME_CONTENT")
+	if external == "":
+		# Workspace-first. A developer checkout keeps the live pack under the
+		# repository's ignored `.private/content-packs`, which is newer than the
+		# durable user cache every time a faction is republished. Without this
+		# probe an env-less run silently loads whatever was last published to
+		# `user://` — in a git worktree (no `.private` of its own) that was a
+		# months-old bundle with no playable-unit documents, and every
+		# roster-dependent assertion failed for a reason that had nothing to do
+		# with the code under test.
+		# An explicit pack-cache override is a deliberate selection of a specific
+		# cache root (harness/CI fixtures set it; a normal boot never does, the
+		# setting is absent from project.godot). Implicit workspace discovery
+		# must not silently outrank it — otherwise a fixture that mounts a
+		# stripped pack set still sees the developer's live `.private` packs and
+		# its gate assertions become meaningless.
+		if not _has_explicit_pack_cache_override():
+			external = _discover_workspace_content_root()
+			if external != "":
+				_diagnose("Using workspace content root (no OPENBFME_CONTENT set): %s" % external)
 	var external_selected := ""
 	if external != "":
 		if DirAccess.dir_exists_absolute(external):
@@ -79,6 +108,13 @@ func list_pack_roots() -> Array[String]:
 	if external_selected == "":
 		var selected := selected_user_pack_root()
 		if selected != "":
+			# Name the durable fallback out loud. Loading a pack is the single
+			# largest determinant of what every downstream assertion sees, so a
+			# run must never have to guess which bundle it got.
+			_diagnose(
+				"Loading DURABLE user pack (no workspace or OPENBFME_CONTENT root found): %s"
+				% selected
+			)
 			roots.append(selected)
 			roots.append_array(selected_pack_supplements())
 
@@ -111,6 +147,34 @@ func list_pack_roots() -> Array[String]:
 		return _comparison_path(a) < _comparison_path(b)
 	)
 	return unique
+
+
+func _has_explicit_pack_cache_override() -> bool:
+	## True when a caller pinned the durable pack cache through ProjectSettings.
+	## Absent from project.godot, so only fixtures/harnesses ever set it.
+	if not ProjectSettings.has_setting(PACK_CACHE_SETTING):
+		return false
+	var value: Variant = ProjectSettings.get_setting(PACK_CACHE_SETTING)
+	return typeof(value) == TYPE_STRING and String(value).strip_edges() != ""
+
+
+## Walks up from the project directory looking for an ignored private workspace
+## content root. The walk has to climb several levels because a git worktree
+## lives at `<repo>/.claude/worktrees/<name>/`, and the `.private` tree it
+## should read belongs to the repository above it — the worktree has none of
+## its own. Returns "" when no workspace selection exists, which is the normal
+## shape for a shipped install.
+func _discover_workspace_content_root() -> String:
+	var dir := ProjectSettings.globalize_path("res://").rstrip("/\\")
+	for _depth in range(WORKSPACE_PROBE_DEPTH):
+		var parent := dir.get_base_dir()
+		if parent == "" or parent == dir:
+			break
+		dir = parent
+		var candidate := dir.path_join(".private").path_join("content-packs")
+		if FileAccess.file_exists(candidate.path_join("selection.json")):
+			return candidate
+	return ""
 
 
 func user_pack_cache_root() -> String:
@@ -346,6 +410,64 @@ func _is_strict_completion_pack(pack_root: String) -> bool:
 		typeof(data) == TYPE_DICTIONARY
 		and bool((data as Dictionary).get("profile_build_complete", false))
 	)
+
+
+func pack_identity(pack_root: String) -> Dictionary:
+	## Cached identity facts from a pack's pack.json. Returned shape:
+	##   {"id": String, "retail_import": bool, "factions": PackedStringArray}
+	## `factions` comes from `factionImportCoverage`, the array the importer's
+	## `compose_faction_profile` writes with one row per composed faction. This
+	## is the property every "is the right pack selected?" gate actually cares
+	## about — a v-slice pack id is `bfme2-<a>-<b>-…-vslice`, so matching the
+	## historical single-faction literal `bfme2-men-vslice` rejected every
+	## multi-faction pack even when it carried Men in full.
+	_link_cache_mutex.lock()
+	var cached: Variant = _pack_identity_cache.get(pack_root, null)
+	_link_cache_mutex.unlock()
+	if typeof(cached) == TYPE_DICTIONARY:
+		return cached as Dictionary
+	var identity := {"id": "", "retail_import": false, "factions": PackedStringArray()}
+	var data: Variant = _read_json(resolve_pack_path(pack_root, "pack.json"))
+	if typeof(data) == TYPE_DICTIONARY:
+		var pack := data as Dictionary
+		identity["id"] = String(pack.get("id", ""))
+		identity["retail_import"] = (
+			bool(pack.get("local_retail_import", false))
+			or String(pack.get("provenance_contract", "")) == "openbfme.retail-import-provenance-v1"
+		)
+		var factions := PackedStringArray()
+		var coverage: Variant = pack.get("factionImportCoverage", [])
+		if typeof(coverage) == TYPE_ARRAY:
+			for row_value in coverage as Array:
+				if typeof(row_value) != TYPE_DICTIONARY:
+					continue
+				var slug := String((row_value as Dictionary).get("faction", "")).strip_edges().to_lower()
+				if slug != "" and not factions.has(slug):
+					factions.append(slug)
+		identity["factions"] = factions
+	_link_cache_mutex.lock()
+	_pack_identity_cache[pack_root] = identity
+	_link_cache_mutex.unlock()
+	return identity
+
+
+func pack_provides_faction(pack_root: String, faction: String) -> bool:
+	## True when the pack's `factionImportCoverage` lists this faction, so the
+	## pack supplies both that faction's content and the shared host surfaces.
+	var slug := faction.strip_edges().to_lower()
+	if slug == "":
+		return false
+	return (pack_identity(pack_root)["factions"] as PackedStringArray).has(slug)
+
+
+func pack_is_retail_import(pack_root: String) -> bool:
+	## True for a private converted retail pack (an importer-cooked v-slice or
+	## one of its supplements) as opposed to the synthetic res:// stub content.
+	## Fails closed on res:// and on any pack.json that declares neither the
+	## retail-import flag nor the retail provenance contract.
+	if pack_root == "" or pack_root.begins_with("res://"):
+		return false
+	return bool(pack_identity(pack_root)["retail_import"])
 
 
 func _read_json(path: String) -> Variant:

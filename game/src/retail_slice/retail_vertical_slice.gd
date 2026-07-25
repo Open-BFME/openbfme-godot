@@ -15,6 +15,7 @@ const BattlefieldScript = preload("res://src/retail_slice/retail_fords_battlefie
 const HudScript = preload("res://src/retail_slice/retail_hud.gd")
 const LinearFogScript = preload("res://src/retail_slice/fords_linear_fog.gd")
 const MemberHealthOverlayScript = preload("res://src/retail_slice/retail_member_health_overlay.gd")
+const AbilityFxControllerScript = preload("res://src/retail_slice/retail_ability_fx_controller.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 const HouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
@@ -140,6 +141,10 @@ var battalion_nodes: Dictionary = {}
 var structure_nodes: Dictionary = {}
 var order_indicators: Dictionary = {}
 var attack_target_indicator: RetailAttackTargetIndicator
+## Shared cast-cue presenter for hero abilities and spellbook powers. Typed as
+## Node3D like the sibling particle controller: the script is loaded through its
+## preloaded constant, so headless runs never need the global class-name cache.
+var ability_fx_controller: Node3D
 var audio_system: RetailSliceAudio
 var source_map_data: RetailMapData
 var selected_pack_root := ""
@@ -352,7 +357,7 @@ func _initialize_content_and_match() -> void:
 	var soldier_capability_id := String(member_definition.get("animationCapabilityId", ""))
 	var soldier_capability := ContentDB.get_animation_capability(soldier_capability_id)
 	if member_definition.is_empty() or horde_definition.is_empty() or soldier_capability.is_empty():
-		_fail("The private bfme2-men-vslice pack is not selected. Run run_importer.bat to build and select it.")
+		_fail("No private converted content pack providing the host base surfaces is selected. Run run_importer.bat to build and select one.")
 		return
 	# Resolve the asserted host pack by id, not through the member document's
 	# pack root: supplements carry their own copy of the shared base bundle
@@ -360,6 +365,15 @@ func _initialize_content_and_match() -> void:
 	# another pack while the host assertion must stay pinned to pack_id.
 	var expected_pack_id := String(faction_manifest.get("pack_id", "bfme2-men-vslice"))
 	selected_pack_root = _pack_root_for_id(expected_pack_id)
+	if selected_pack_root == "":
+		# A multi-faction pack is its own host: it carries the Men base surfaces
+		# (map, HUD dock) plus every composed faction, so its id is
+		# `bfme2-<a>-<b>-…-vslice` rather than the historical single-faction
+		# literal. Accept it by the faction coverage its pack.json records,
+		# which is the property the assertion actually cares about.
+		selected_pack_root = _pack_root_hosting_faction(
+			String(faction_manifest.get("faction", ""))
+		)
 	if selected_pack_root == "":
 		_fail("The selected content pack is not %s." % expected_pack_id)
 		return
@@ -1938,6 +1952,24 @@ func _pack_root_for_id(pack_id: String) -> String:
 	return ""
 
 
+func _pack_root_hosting_faction(faction: String) -> String:
+	## Host resolution for composed multi-faction packs. `compose_faction_profile`
+	## records every composed faction in pack.json's `factionImportCoverage`, so a
+	## pack that lists this faction provides its content and the shared host
+	## surfaces alike. Returns "" when no registered pack claims the faction,
+	## which keeps the caller's failure closed.
+	var slug := faction.strip_edges().to_lower()
+	if slug == "":
+		return ""
+	for root in ModLoader.list_pack_roots():
+		var data := ModLoader._read_json(root.path_join("pack.json")) as Dictionary
+		for row_value in Array(data.get("factionImportCoverage", [])):
+			var row := row_value as Dictionary
+			if String(row.get("faction", "")).strip_edges().to_lower() == slug:
+				return root
+	return ""
+
+
 func _resolve_slice_map_id() -> String:
 	## Map selection mirrors faction selection: OPENBFME_SLICE_MAP always wins;
 	## otherwise the main menu's GameState.retail_map_id applies; unset keeps
@@ -3167,6 +3199,7 @@ func _sync_presentation() -> void:
 		battalion.set_authoritative_position(Vector3(position.x, _presentation_height(position), position.y))
 		battalion.set_health(int(entity["health"]), int(entity["maximum_health"]))
 		battalion.set_experience_level(int(entity.get("level", 1)))
+		battalion.set_knocked_down(bool(entity.get("knocked_down", false)))
 		battalion.set_production_exit_progress(float(entity.get("production_exit_progress", 1.0)))
 		battalion.set_selected(simulation.selected_ids.has(id))
 		var attack_target := _attack_target_node(entity)
@@ -4421,6 +4454,24 @@ func _configure_simulation_expansions() -> void:
 	simulation.configure_expansion_rules(rules)
 
 
+func _fx_binding_documents() -> Array:
+	## Every converted runtime document that may carry an `fxBindings` block:
+	## the loaded playableUnit.* documents plus the current faction's spellbook.
+	var documents: Array = []
+	if ContentDB != null and ContentDB.has_method("get_playable_unit_runtimes"):
+		for document_value in (ContentDB.get_playable_unit_runtimes() as Dictionary).values():
+			if typeof(document_value) == TYPE_DICTIONARY:
+				documents.append(document_value)
+	# The spellbook lookup needs a resolved pack root and faction; during early
+	# scene build neither is guaranteed, and a missing block only costs the
+	# power cues their authored colour (they stay in the unresolved ledger).
+	if selected_pack_root != "" and String(faction_manifest.get("faction", "")) != "":
+		var spellbook := _faction_spellbook_document()
+		if not spellbook.is_empty():
+			documents.append(spellbook)
+	return documents
+
+
 func _faction_spellbook_document(faction_override: String = "") -> Dictionary:
 	## Resolve the CURRENT faction's spellbook from the packs, never by slot
 	## position: the content registry's spellbook slot is last-pack-wins across
@@ -4717,6 +4768,26 @@ func _build_environment() -> void:
 	camera.fov = rad_to_deg(FORDS_CAMERA_NAMED_FOV_RADIANS)
 	camera.current = true
 	add_child(camera)
+	ability_fx_controller = AbilityFxControllerScript.new()
+	ability_fx_controller.name = "RetailAbilityFxController"
+	add_child(ability_fx_controller)
+	# The resolved-FXList registry comes from the importer's ability-FX ingress
+	# lane: every converted unit and spellbook runtime document carries an
+	# `fxBindings` block naming the FXLists whose particle definitions and
+	# textures the pack actually converted, with their authored ground
+	# alignment and Color1. Ids no block claims stay in the unresolved ledger
+	# and keep the neutral geometric cue — nothing is coloured from art the
+	# pack does not ship.
+	# The caster-pose registry comes from the same documents: each hero ability
+	# carries the `WhichSpecialWeapon` / `UnpackingVariation` number retail uses
+	# to select the AnimationState it animates the cast with, so the cue and the
+	# caster now come from one evidence source instead of the cue alone.
+	var fx_documents := _fx_binding_documents()
+	ability_fx_controller.configure(
+		_presentation_height,
+		AbilityFxControllerScript.collect_fx_registry(fx_documents),
+		AbilityFxControllerScript.collect_ability_animation_registry(fx_documents)
+	)
 
 
 func _configure_source_environment() -> String:
@@ -5009,6 +5080,10 @@ func _build_hud() -> void:
 		_sync_presentation()
 	)
 	hud.cheat_resources_requested.connect(_grant_test_resources)
+	hud.playtest_resources_requested.connect(_playtest_set_resources)
+	hud.playtest_power_points_requested.connect(_playtest_grant_power_points)
+	hud.playtest_max_level_requested.connect(_playtest_max_level)
+	hud.playtest_heal_requested.connect(_playtest_heal_selected)
 	hud.construct_requested.connect(_arm_construction)
 	hud.hero_recall_requested.connect(_on_hero_recall_requested)
 	hud.expansion_requested.connect(_on_expansion_requested)
@@ -5124,48 +5199,165 @@ func _grant_test_resources() -> void:
 	hud.set_feedback("Cheat: +%d resources and +10 power points (both teams)." % grant)
 
 
+## Playtest tools. Every one of these mutates only the local player's side so a
+## test never accidentally hands the AI a levelled army, and each refreshes the
+## HUD immediately (the panel is open over a paused battle).
+func _playtest_set_resources(amount: int) -> void:
+	if simulation == null:
+		return
+	simulation.team_resources[local_team] = amount
+	_refresh_playtest_hud()
+	hud.set_feedback("Playtest: resources set to %s." % _grouped(amount))
+
+
+func _playtest_grant_power_points(amount: int) -> void:
+	if simulation == null or not (simulation.team_power_points is Dictionary):
+		return
+	simulation.team_power_points[local_team] = int(
+		simulation.team_power_points.get(local_team, 0)
+	) + amount
+	_refresh_playtest_hud()
+	hud.set_feedback("Playtest: +%d power points (now %d)." % [
+		amount, simulation.power_points(local_team),
+	])
+
+
+func _playtest_max_level(scope: String) -> void:
+	if simulation == null:
+		return
+	var ids: Array = []
+	if scope == "selected":
+		ids = Array(simulation.selected_ids)
+	else:
+		for row_value in simulation.battalions.values():
+			var row := row_value as Dictionary
+			if int(row.get("team", -1)) == local_team and int(row.get("health", 0)) > 0:
+				ids.append(int(row.get("id", 0)))
+	var levelled := simulation.debug_force_max_level(ids)
+	_refresh_playtest_hud()
+	if levelled == 0:
+		hud.set_feedback("Playtest: nothing to level (no live selection?).")
+	else:
+		hud.set_feedback("Playtest: %d unit(s) raised to their authored max rank." % levelled)
+
+
+func _playtest_heal_selected() -> void:
+	if simulation == null:
+		return
+	var healed := simulation.debug_restore_health(Array(simulation.selected_ids))
+	_refresh_playtest_hud()
+	hud.set_feedback("Playtest: %d unit(s) restored to full health." % healed)
+
+
+func _refresh_playtest_hud() -> void:
+	hud.set_resources(
+		simulation.resources_for_team(local_team),
+		simulation.command_points_for_team(local_team),
+		simulation.command_point_cap,
+	)
+	hud.refresh_powers(
+		simulation.power_points(local_team),
+		simulation.purchased_powers[local_team],
+		simulation.spellbook_ui_state(local_team),
+	)
+
+
+func _grouped(value: int) -> String:
+	var text := str(value)
+	var out := ""
+	var count := 0
+	for index in range(text.length() - 1, -1, -1):
+		out = text[index] + out
+		count += 1
+		if count % 3 == 0 and index > 0:
+			out = "," + out
+	return out
+
+
 var _power_fx_event_index := 0
 
 
 func _consume_power_fx_events() -> void:
-	## Spellbook casts get a visible world cue at the target point (retail
-	## plays authored FX lists; this is the provisional stand-in).
+	## One pump for every cast-shaped presentation event. Hero abilities
+	## (`ability.cast`) previously had no consumer here at all and spellbook
+	## powers (`power.cast`) all collapsed onto one hardcoded ring; both now go
+	## through the shared cue controller, which sizes each cue from the radius
+	## the sim actually acted over and records the authored FXList ids that
+	## still have no converted particle definition. `combat.knockback` drives
+	## the victim-side toss on the battalion presenters.
 	var events: Array = simulation.events
 	while _power_fx_event_index < events.size():
 		var event: Dictionary = events[_power_fx_event_index]
 		_power_fx_event_index += 1
-		if String(event.get("kind", "")) != "power.cast":
-			continue
-		var point_value: Variant = event.get("point")
-		if typeof(point_value) != TYPE_ARRAY or (point_value as Array).size() < 2:
-			continue
-		var point := Vector2(float((point_value as Array)[0]), float((point_value as Array)[1]))
-		var is_heal := String(event.get("power_id", "")) == "SpellBookHeal"
-		_spawn_power_flash(point, Color(0.45, 1.0, 0.55) if is_heal else Color(1.0, 0.85, 0.4))
+		match String(event.get("kind", "")):
+			"power.cast":
+				if ability_fx_controller != null:
+					ability_fx_controller.present_power_cast(event)
+			"ability.cast":
+				if ability_fx_controller != null:
+					ability_fx_controller.present_ability_cast(event)
+					_present_cast_animation(event)
+			"combat.knockback":
+				_present_knockback(event)
 
 
-func _spawn_power_flash(point: Vector2, color: Color) -> void:
-	if DisplayServer.get_name() == "headless":
+## Casts whose caster played its own authored pose, and casts that found none.
+## Read by the presentation audit and the runners.
+var cast_animations_presented := 0
+var casts_without_authored_animation: Array[String] = []
+
+
+func _present_cast_animation(event: Dictionary) -> void:
+	## Play the caster's authored ability pose, if the pack bound one.
+	##
+	## This is the missing half of the owner's Gandalf report: the wizard-blast
+	## FX cue was already presented from converted particle evidence, but the
+	## caster kept playing a generic swing because the pack compiler folds every
+	## SPECIAL_WEAPON_* AnimationState into the "attack" semantic state. The FX
+	## controller resolves the retail-authored join (`WhichSpecialWeapon` /
+	## `UnpackingVariation` -> `SPECIAL_WEAPON_<N>` / `PACKING_TYPE_<N>`); the
+	## battalion refuses any state its capability did not bind, so an ability
+	## with no converted pose changes nothing at all.
+	var caster_id := int(event.get("entity_id", 0))
+	if not battalion_nodes.has(caster_id):
 		return
-	var ring := MeshInstance3D.new()
-	var mesh := TorusMesh.new()
-	mesh.inner_radius = 2.3
-	mesh.outer_radius = 2.6
-	ring.mesh = mesh
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.albedo_color = color
-	material.emission_enabled = true
-	material.emission = color
-	ring.material_override = material
-	ring.position = Vector3(point.x, _presentation_height(point) + 0.15, point.y)
-	add_child(ring)
-	var tween := create_tween()
-	tween.set_parallel(true)
-	tween.tween_property(ring, "scale", Vector3(2.4, 1.0, 2.4), 0.9).from(Vector3(0.3, 1.0, 0.3))
-	tween.tween_property(material, "albedo_color:a", 0.0, 0.9).from(0.9)
-	tween.chain().tween_callback(ring.queue_free)
+	var battalion: RetailBattalion = battalion_nodes[caster_id]
+	if battalion == null:
+		return
+	for state in ability_fx_controller.resolve_cast_animation_states(event):
+		if battalion.play_ability_animation(state, 0.0):
+			cast_animations_presented += 1
+			return
+	var ability_id := String(event.get("ability_id", ""))
+	if ability_id != "" and not casts_without_authored_animation.has(ability_id):
+		casts_without_authored_animation.append(ability_id)
+
+
+func _present_knockback(event: Dictionary) -> void:
+	## The sim resolved this knockback as a single position change from the
+	## blast centre outward; hand the victim's presenter the point it launched
+	## from so the toss renders as an arc instead of a slide. The landing point
+	## stays whatever the sim chose.
+	var victim_id := int(event.get("target_id", 0))
+	if not battalion_nodes.has(victim_id):
+		return
+	var landed_value: Variant = event.get("landed")
+	var center_value: Variant = event.get("center")
+	if typeof(landed_value) != TYPE_ARRAY or typeof(center_value) != TYPE_ARRAY:
+		return
+	if (landed_value as Array).size() < 2 or (center_value as Array).size() < 2:
+		return
+	var landed := Vector2(float((landed_value as Array)[0]), float((landed_value as Array)[1]))
+	var center := Vector2(float((center_value as Array)[0]), float((center_value as Array)[1]))
+	# The launch point is the victim's pre-throw stance: the sim threw it
+	# radially outward from the centre, so the launch point is the landing
+	# point pulled back along that same ray by the throw distance it was given.
+	var battalion: RetailBattalion = battalion_nodes[victim_id]
+	var direction := landed - center
+	if direction.length() <= 0.001:
+		return
+	var launch := Vector2(battalion.position.x, battalion.position.z)
+	battalion.begin_knockback_arc(Vector3(launch.x, _presentation_height(launch), launch.y))
 
 
 func _issue_order_at(world_point: Vector2) -> void:

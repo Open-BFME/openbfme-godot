@@ -19,6 +19,7 @@ from .profile import (
     SLUG_PATTERN,
     normalize_texture_atlas_crops,
 )
+from .retail_ability_fx_ingress import AbilityFxIngressError, fx_recipe_parts
 
 
 SCHEMA = "openbfme.playable-unit-pack-recipe"
@@ -38,6 +39,41 @@ _ATTACK_TOKENS = {
     "SPECIAL_WEAPON_TWO",
     "SPECIAL_WEAPON_THREE",
 }
+# Retail model conditions that name an *addressable* special ability rather
+# than a generic combat pose. `_state()` deliberately still folds the
+# SPECIAL_WEAPON_* rows into "attack" so a hero whose only attack pose is a
+# special weapon (retail Drogoth) keeps a resolved core attack state; this
+# vocabulary is the parallel, additive lane that makes the same clip
+# *distinguishable* so an ability cast can request its own authored animation.
+#
+# The join back to a specific ability is authored in the retail INI:
+#   * `WeaponFireSpecialAbilityUpdate.WhichSpecialWeapon = N`  -> SPECIAL_WEAPON_<N>
+#     (gandalf.ini:1297-1312 binds SpecialAbilityWizardBlast to
+#      WhichSpecialWeapon 2, and gandalf.ini:305 binds SPECIAL_WEAPON_TWO to
+#      GUGandalfG_SKL.GUGandalfG_SPCL — the staff-lowering wizard blast pose.)
+#   * `ArrowStormUpdate.UnpackingVariation = N`                -> PACKING_TYPE_<N>
+#     (gandalf.ini:1327-1330 binds SpecialAbilityLightningSword to
+#      UnpackingVariation 1, and gandalf.ini:343-370 authors the
+#      PACKING_TYPE_1 UNPACKING/PREPARING/PACKING envelope.)
+_ABILITY_STATE_TOKENS = {
+    "SPECIAL_WEAPON_ONE": "specialWeaponOne",
+    "SPECIAL_WEAPON_TWO": "specialWeaponTwo",
+    "SPECIAL_WEAPON_THREE": "specialWeaponThree",
+    "USING_SPECIAL_ABILITY": "usingSpecialAbility",
+}
+# Retail channels a special ability through a four-phase envelope: the
+# UNPACKING wind-up, the PREPARING channel, the PACKING recovery, and the bare
+# condition for the fire frame itself (boromir.ini:127-178 authors all four for
+# SPECIAL_POWER_1 — HRNA/HRNB/HRNC/HRNB).
+_ABILITY_PHASE_TOKENS = {
+    "UNPACKING": "unpack",
+    "PREPARING": "prepare",
+    "PACKING": "pack",
+}
+_ABILITY_DEFAULT_PHASE = "cast"
+_ABILITY_PHASE_ORDER = ("unpack", "prepare", "cast", "pack")
+_SPECIAL_POWER_CONDITION = re.compile(r"^SPECIAL_POWER_(\d+)$")
+_PACKING_TYPE_CONDITION = re.compile(r"^PACKING_TYPE_(\d+)$")
 _EXCLUDED_HERO_FORM_CONDITIONS = {
     "hero",
     "mounted",
@@ -152,6 +188,88 @@ def _state(row: Mapping[str, object]) -> str | None:
     if not conditions and "IDLEANIMATIONSTATE" in scope_text.replace(" ", ""):
         return "idle"
     return None
+
+
+def _ability_animation_key(conditions: Iterable[object]) -> tuple[str, str] | None:
+    """Ability state and envelope phase named by one AnimationState's conditions.
+
+    Returns ``None`` when the row names no addressable ability, and also when it
+    names more than one — two ability tokens on a single AnimationState cannot
+    be addressed unambiguously, so the row stays a packaged-unimplemented clip
+    rather than being guessed at.
+    """
+    tokens = {str(item).upper() for item in conditions}
+    state = ""
+    for token in sorted(tokens):
+        mapped = _ABILITY_STATE_TOKENS.get(token)
+        if mapped is None:
+            power = _SPECIAL_POWER_CONDITION.match(token)
+            if power is not None:
+                mapped = f"specialPower{int(power.group(1))}"
+        if mapped is None:
+            packing = _PACKING_TYPE_CONDITION.match(token)
+            if packing is not None:
+                mapped = f"packingType{int(packing.group(1))}"
+        if mapped is None:
+            continue
+        if state and state != mapped:
+            return None
+        state = mapped
+    if not state:
+        return None
+    phase = _ABILITY_DEFAULT_PHASE
+    for token, mapped_phase in _ABILITY_PHASE_TOKENS.items():
+        if token in tokens:
+            if phase != _ABILITY_DEFAULT_PHASE:
+                return None
+            phase = mapped_phase
+    return state, phase
+
+
+def _ability_animations(
+    authored_rows: Iterable[Mapping[str, object]],
+) -> dict[str, dict[str, list[dict[str, object]]]]:
+    """Addressable ability clips, keyed by ability state then envelope phase.
+
+    Built from the same authored animation rows the core lane consumes, so a
+    clip excluded there (zero-byte retail placeholder, unsupported rig) is
+    excluded here too. Purely additive: nothing is removed from
+    `coreAnimations`, and a unit with no authored ability pose emits nothing.
+    """
+    result: dict[str, dict[str, list[dict[str, object]]]] = {}
+    for row in authored_rows:
+        if str(row.get("runtimeSupport", "")).startswith("excluded"):
+            continue
+        conditions = row.get("conditions", [])
+        if not isinstance(conditions, list):
+            continue
+        key = _ability_animation_key(conditions)
+        if key is None:
+            continue
+        state, phase = key
+        result.setdefault(state, {}).setdefault(phase, []).append(
+            {
+                "identifier": str(row.get("identifier", "")),
+                "conditions": [str(item) for item in conditions],
+                "sourceW3d": str(row.get("sourceW3d", "")),
+                "modelSourceW3d": str(row.get("modelSourceW3d", "")),
+                "ownerObjectId": str(row.get("ownerObjectId", "")),
+            }
+        )
+    for phases in result.values():
+        for bindings in phases.values():
+            bindings.sort(
+                key=lambda binding: (
+                    str(binding["sourceW3d"]).casefold(),
+                    str(binding["identifier"]).casefold(),
+                )
+            )
+    return {
+        state: {
+            phase: phases[phase] for phase in _ABILITY_PHASE_ORDER if phase in phases
+        }
+        for state, phases in sorted(result.items())
+    }
 
 
 def _semantic_effect(reason: str) -> str:
@@ -611,11 +729,25 @@ def _validate_resource_values(resources: list[Mapping[str, object]]) -> None:
 
 
 def compile_playable_unit_pack_recipe(
-    descriptor: Mapping[str, object], visual_closure: Mapping[str, object]
+    descriptor: Mapping[str, object],
+    visual_closure: Mapping[str, object],
+    fx_closure: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    """Compile conversion resources and generic runtime registration for one unit."""
+    """Compile conversion resources and generic runtime registration for one unit.
+
+    ``fx_closure`` is the optional sealed ability-FX closure from
+    :mod:`retail_ability_fx_ingress`: the converted particle definitions and
+    textures behind this unit's authored ability FXLists.  Omitting it leaves
+    the recipe byte-identical to the pre-FX lane.
+    """
 
     validate_playable_unit_descriptor(descriptor)
+    try:
+        fx_resources, fx_bindings = fx_recipe_parts(
+            fx_closure, str(descriptor["objectId"])
+        )
+    except AbilityFxIngressError as exc:
+        raise PlayableUnitPackCompilerError(str(exc)) from exc
     if (
         visual_closure.get("schema") != "openbfme.retail-visual-closure"
         or visual_closure.get("schemaVersion") != 1
@@ -1220,6 +1352,7 @@ def compile_playable_unit_pack_recipe(
             str(row["identifier"]).casefold(),
         )
     )
+    ability_animations = _ability_animations(authored_animation_states)
     all_animations = {path for paths in animations_by_model.values() for path in paths}
     hierarchies = set(_hierarchy_dependencies(all_animations, scanned))
     death_swap_w3d: set[str] = set()
@@ -1486,7 +1619,16 @@ def compile_playable_unit_pack_recipe(
                     }
                     runtime_support = "converted-unbound"
                 else:
-                    output = f"assets/source/units/{slug}/{fingerprint}{suffix}"
+                    # Donor-retention lane, not a runtime asset. An auxiliary
+                    # visual leaf whose converter is not implemented yet keeps
+                    # its donor payload for provenance, but the payload must
+                    # never land under `assets/` — everything there is runtime
+                    # content, and a pack must not ship raw retail `.w3d`
+                    # alongside it. `sources/` is the established source-only
+                    # root (see retail_fords_environment_profile's
+                    # `sources/environment/fords/new_skybox.w3d`), which the
+                    # pack audit deliberately excludes from its runtime sweep.
+                    output = f"sources/units/{slug}/{fingerprint}{suffix}"
                     resource = {
                         "id": resource_id,
                         "kind": "model" if suffix == ".w3d" else "other",
@@ -1734,6 +1876,7 @@ def compile_playable_unit_pack_recipe(
                 audio_resources_by_source[source_key] = output
             outputs.append(output)
         audio_bindings[str(identifier)] = sorted(set(outputs), key=str.casefold)
+    resources.extend(fx_resources)
     _validate_resource_values(resources)
 
     core_animations: dict[str, object] = {
@@ -1754,6 +1897,7 @@ def compile_playable_unit_pack_recipe(
         "visualClosureSha256": closure_digest,
         "resources": resources,
         "runtimeRegistration": {
+            **({"fxBindings": fx_bindings} if fx_bindings is not None else {}),
             "production": deepcopy(descriptor["production"]),
             "composition": deepcopy(descriptor["composition"]),
             "gameplay": deepcopy(descriptor["gameplay"]),
@@ -1794,6 +1938,11 @@ def compile_playable_unit_pack_recipe(
                     else {}
                 ),
                 "authoredAnimationStates": authored_animation_states,
+                **(
+                    {"abilityAnimations": ability_animations}
+                    if ability_animations
+                    else {}
+                ),
                 "authoredVisualLeaves": authored_visual_leaves,
                 "authoredVisualSemantics": authored_visual_semantics,
                 "unsupportedVisualReferences": deepcopy(

@@ -34,6 +34,10 @@ _COMPILER_SALT_MODULES = (
     "spellbook_compiler.py",
     "spellbook_pack_compiler.py",
     "spellbook_import.py",
+    # The ability/spellbook FX ingress lane feeds resources and runtime
+    # bindings straight into unit and spellbook pack recipes, so its source
+    # must invalidate cached objects exactly like the compilers it feeds.
+    "retail_ability_fx_ingress.py",
     "faction_census.py",
     "sage_string.py",
     "retail_visual_closure.py",

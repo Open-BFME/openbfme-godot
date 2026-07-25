@@ -21,6 +21,18 @@ const TEXT_LEAF := Color("#cfe0b0")
 const TEXT_LEAF_BRIGHT := Color("#eaf7d0")
 const TEXT_ON_LIME := Color("#12300f")
 const EDGE_LEAF := Color(0.55, 0.80, 0.45, 0.95)
+## Retail shell button language (REF-01..REF-07): pale-gold small-caps labels
+## over a dark green-glass body inside a metallic green-gold rim.
+const TEXT_PALE_GOLD := Color("#ddd6a8")
+const TEXT_PALE_GOLD_BRIGHT := Color("#f4eecb")
+const RIM_GOLD_GREEN := Color("#89a55c")
+const RIM_GOLD_GREEN_DARK := Color("#3c5a33")
+const GLASS_TOP := Color(0.23, 0.38, 0.20, 0.90)
+const GLASS_BOTTOM := Color(0.05, 0.13, 0.06, 0.92)
+## Flyout item bars (REF-02/04/05): translucent dark bars with a lit top-left
+## bevel; the hovered bar turns bright lime like the source button.
+const ITEM_BAR := Color(0.045, 0.115, 0.055, 0.62)
+const ITEM_BAR_EDGE := Color(0.78, 0.90, 0.66, 0.55)
 
 
 static func create_theme(retail_font: Font = null) -> Theme:
@@ -94,8 +106,8 @@ static func create_theme(retail_font: Font = null) -> Theme:
 	result.set_stylebox("panel", "ColumnHeader", _column_header_box())
 
 	result.set_type_variation("NavButton", "Button")
-	result.set_font_size("font_size", "NavButton", 24)
-	result.set_color("font_color", "NavButton", TEXT_LEAF)
+	result.set_font_size("font_size", "NavButton", 19)
+	result.set_color("font_color", "NavButton", TEXT_PALE_GOLD)
 	result.set_color("font_hover_color", "NavButton", TEXT_ON_LIME)
 	result.set_color("font_pressed_color", "NavButton", TEXT_LEAF_BRIGHT)
 	result.set_color("font_focus_color", "NavButton", TEXT_LEAF_BRIGHT)
@@ -105,6 +117,34 @@ static func create_theme(retail_font: Font = null) -> Theme:
 	result.set_stylebox("pressed", "NavButton", _cap_box(button_states["pressed"]))
 	result.set_stylebox("focus", "NavButton", _cap_box(button_states["focus"]))
 	result.set_stylebox("disabled", "NavButton", _cap_box(button_states["disabled"]))
+
+	# Flyout item bars (REF-02/04/05): flat translucent rows inside the flyout
+	# frame, a lit top edge and gold left accent, lime hover with dark text.
+	result.set_type_variation("FlyoutItem", "Button")
+	result.set_font_size("font_size", "FlyoutItem", 17)
+	result.set_color("font_color", "FlyoutItem", TEXT_PALE_GOLD)
+	result.set_color("font_hover_color", "FlyoutItem", TEXT_ON_LIME)
+	result.set_color("font_pressed_color", "FlyoutItem", TEXT_ON_LIME)
+	result.set_color("font_focus_color", "FlyoutItem", TEXT_PALE_GOLD_BRIGHT)
+	result.set_color("font_disabled_color", "FlyoutItem", Color(0.62, 0.62, 0.50, 0.42))
+	result.set_stylebox("normal", "FlyoutItem", _flyout_item_box("normal"))
+	result.set_stylebox("hover", "FlyoutItem", _flyout_item_box("hover"))
+	result.set_stylebox("pressed", "FlyoutItem", _flyout_item_box("pressed"))
+	result.set_stylebox("focus", "FlyoutItem", _flyout_item_box("focus"))
+	result.set_stylebox("disabled", "FlyoutItem", _flyout_item_box("disabled"))
+
+	# Hover tooltips (REF-06 "Quit to desktop"): a small dark parchment-text box.
+	var tooltip_box := StyleBoxFlat.new()
+	tooltip_box.bg_color = Color(0.03, 0.06, 0.04, 0.94)
+	tooltip_box.border_color = Color(GOLD, 0.75)
+	tooltip_box.set_border_width_all(1)
+	tooltip_box.content_margin_left = 10.0
+	tooltip_box.content_margin_right = 10.0
+	tooltip_box.content_margin_top = 5.0
+	tooltip_box.content_margin_bottom = 5.0
+	result.set_stylebox("panel", "TooltipPanel", tooltip_box)
+	result.set_color("font_color", "TooltipLabel", PARCHMENT)
+	result.set_font_size("font_size", "TooltipLabel", 15)
 
 	result.set_type_variation("PrimaryButton", "Button")
 	result.set_font_size("font_size", "PrimaryButton", 21)
@@ -171,18 +211,26 @@ static func _cap_box(texture: Texture2D) -> StyleBoxTexture:
 
 
 static func _generate_cap_texture(top: Color, bottom: Color, edge: Color, glow: Color) -> ImageTexture:
-	## 104x56 nine-slice button: pointed 18px end caps, a vertical metallic
-	## gradient inside the cap polygon, a 2px bright edge, and a soft outer
-	## glow baked around the silhouette. Procedural repository-authored art.
-	var width := 104
+	## 120x56 nine-slice button matching the retail stone-glass treatment
+	## (REF-01..REF-07): a chamfered-corner slab with pointed side caps, a
+	## metallic green-gold double rim (dark outer line, lit inner line), a
+	## vertical glass gradient with a sheen across the upper half, and a soft
+	## outer glow baked around the silhouette. Procedural repository-authored
+	## art; no retail bytes.
+	var width := 120
 	var height := 56
-	var cap := 18.0
+	var chamfer := 10.0
+	var side_point := 6.0
 	var image := Image.create_empty(width, height, false, Image.FORMAT_RGBA8)
 	image.fill(Color(0, 0, 0, 0))
 	var center := Vector2(width, height) * 0.5
 	var polygon := PackedVector2Array([
-		Vector2(cap, 2), Vector2(width - cap, 2), Vector2(width - 2, height * 0.5),
-		Vector2(width - cap, height - 2), Vector2(cap, height - 2), Vector2(2, height * 0.5),
+		Vector2(chamfer + side_point, 2), Vector2(width - chamfer - side_point, 2),
+		Vector2(width - side_point - 2, chamfer), Vector2(width - 2, height * 0.5),
+		Vector2(width - side_point - 2, height - chamfer),
+		Vector2(width - chamfer - side_point, height - 2), Vector2(chamfer + side_point, height - 2),
+		Vector2(side_point + 2, height - chamfer), Vector2(2, height * 0.5),
+		Vector2(side_point + 2, chamfer),
 	])
 	for layer in range(3, 0, -1):
 		var glow_color := glow
@@ -191,14 +239,56 @@ static func _generate_cap_texture(top: Color, bottom: Color, edge: Color, glow: 
 	for y in range(height):
 		var t := float(y) / float(height - 1)
 		var row := top.lerp(bottom, t)
+		# Glass sheen: the upper half carries a soft highlight that fades out by
+		# mid-height, echoing the retail buttons' lit top edge.
+		if t < 0.48:
+			var sheen := (0.48 - t) / 0.48
+			row = row.lightened(sheen * 0.16)
 		for x in range(width):
 			if Geometry2D.is_point_in_polygon(Vector2(x + 0.5, y + 0.5), polygon):
 				image.set_pixel(x, y, row)
+	# Double rim: a dark metallic outer line under a lit inner line reads as the
+	# retail gold-green frame at shell scale.
+	var rim_dark := Color(edge.r * 0.35, edge.g * 0.40, edge.b * 0.30, minf(1.0, edge.a + 0.05))
 	for edge_index in range(polygon.size()):
 		var a := polygon[edge_index]
 		var b := polygon[(edge_index + 1) % polygon.size()]
-		_stroke_segment(image, a, b, edge, 2)
+		_stroke_segment(image, a, b, rim_dark, 3)
+	var inner := _dilate_polygon(polygon, -2.0, center)
+	for edge_index in range(inner.size()):
+		var a := inner[edge_index]
+		var b := inner[(edge_index + 1) % inner.size()]
+		_stroke_segment(image, a, b, edge, 1)
 	return ImageTexture.create_from_image(image)
+
+
+static func _flyout_item_box(state: String) -> StyleBoxFlat:
+	## One flyout row (REF-02/04/05): a translucent dark bar with a lit top
+	## edge and a gold left accent; hover/pressed swap to the bright lime bar.
+	var box := StyleBoxFlat.new()
+	match state:
+		"hover":
+			box.bg_color = Color(0.55, 0.76, 0.36, 0.95)
+			box.border_color = Color(0.88, 1.0, 0.68, 0.95)
+		"pressed":
+			box.bg_color = Color(0.44, 0.64, 0.29, 0.97)
+			box.border_color = Color(0.88, 1.0, 0.68, 0.95)
+		"disabled":
+			box.bg_color = Color(0.035, 0.075, 0.045, 0.48)
+			box.border_color = Color(ITEM_BAR_EDGE, 0.22)
+		"focus":
+			box.bg_color = ITEM_BAR
+			box.border_color = Color(GOLD_BRIGHT, 0.8)
+		_:
+			box.bg_color = ITEM_BAR
+			box.border_color = ITEM_BAR_EDGE
+	box.border_width_top = 1
+	box.border_width_left = 3
+	box.content_margin_left = 14.0
+	box.content_margin_right = 14.0
+	box.content_margin_top = 7.0
+	box.content_margin_bottom = 7.0
+	return box
 
 
 static func _dilate_polygon(polygon: PackedVector2Array, amount: float, center: Vector2) -> PackedVector2Array:

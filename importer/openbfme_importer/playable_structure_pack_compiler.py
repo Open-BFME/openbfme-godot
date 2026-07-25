@@ -653,6 +653,24 @@ def compile_structure_visual_recipe(
         # discards the embedded pose actions with recorded report evidence
         # when external clips are declared, so a model that mixes both is a
         # regular bundle of its attached clips — not a failure.
+        #
+        # With no external clips attached, the reverse is retail's second way
+        # of authoring a build-up: the motion lives inside the model's own
+        # W3D as compressed animation channels and the state names the model
+        # as its own clip (``AnimationName = GBWell_A.GBWell_A``, backed by
+        # eight keyed channels in gbwell_a.w3d). ``options["animations"]``
+        # below declares the model as its own animation source, which is the
+        # adapter's embedded-model-animation shape: it imports the file once
+        # and captures the clip it carries. Those captured clips are bundled
+        # in the GLB exactly like attached ones, so they must be declared as
+        # bundled clip ids or the phase animation cannot resolve the clip the
+        # conversion actually produced.
+        if embedded_animation and not animations:
+            clip_ids.update(
+                identifier.split(".", 1)[1]
+                for identifier in embedded_animation_ids
+                if "." in identifier
+            )
         pivot_only = (
             model_mesh_counts[model_path] is not None
             and model_mesh_counts[model_path] == 0
@@ -762,6 +780,23 @@ def compile_structure_visual_recipe(
         resource_id, animations, clip_ids = _compile_model(
             model_path, output=output, bind_animations=True
         )
+        # A model's own animation chunk only keys motion when it carries
+        # channels; a header-only chunk is vacuous evidence (see the embedded
+        # animation rule in _compile_model). Recording the keyed embedded clip
+        # ids lets a failure say whether the model carries motion at all, so
+        # "this model keys nothing" never reads the same as "this model keys
+        # motion that the conversion did not bundle".
+        embedded_clip_ids = (
+            sorted(
+                {
+                    identifier.split(".", 1)[1]
+                    for identifier in model_animation_ids[model_path]
+                    if "." in identifier
+                }
+            )
+            if row_channel_counts[model_path.casefold()] > 0
+            else []
+        )
         states.append(
             {
                 "phases": list(phases),
@@ -772,6 +807,7 @@ def compile_structure_visual_recipe(
                 "drawModules": sorted(model_draw_modules.get(model_path, set())),
                 "animations": animations,
                 "animationClipIds": clip_ids,
+                "embeddedAnimationClipIds": embedded_clip_ids,
                 "resourceId": resource_id,
                 "output": output,
             }
@@ -1413,12 +1449,60 @@ def _phase_evidence_clips(
     return clips, idle_family
 
 
+def _assert_self_referential_construction_clip(
+    unbundled: Sequence[Mapping[str, str]],
+    *,
+    phase_model_source: str,
+    embedded_clip_ids: frozenset[str],
+) -> None:
+    """Fail closed, precisely, on an unresolved self-referential build-up.
+
+    Retail authors a structure's construction animation two ways. The split
+    shape names a separate asset (``GBBarracks_ASKL.GBBarracks_ABLD``, motion
+    in gbbarracks_abld.w3d). The embedded shape names the construction model
+    as its own clip (``GBWell_A.GBWell_A``) and keys the motion inside that
+    model's own W3D as compressed animation channels; the conversion declares
+    the model as its own animation source and bundles the captured clip.
+
+    Reaching this function means an embedded-shape name did not resolve, so
+    the clip is genuinely unusable rather than merely unbound. Say which of
+    the two ways it failed instead of reporting a bare clip count.
+    """
+
+    stem = PurePosixPath(phase_model_source).stem.casefold()
+    if not stem:
+        return
+    manual_unbundled = sorted(
+        {
+            str(row["clip"])
+            for row in unbundled
+            if str(row.get("rawMode", "")).upper() == "MANUAL"
+        }
+    )
+    if manual_unbundled != [stem]:
+        return
+    if stem in embedded_clip_ids:
+        # The model keys motion, but externally attached clips displaced it in
+        # the conversion, so which clip drives the build is ambiguous.
+        raise PlayableStructurePackCompilerError(
+            "structure construction phase names a self-referential MANUAL clip "
+            "whose keyed embedded animation was displaced by externally bound "
+            "clips: " + stem
+        )
+    raise PlayableStructurePackCompilerError(
+        "structure construction phase names a self-referential MANUAL clip "
+        "whose model embeds no keyed animation channels: " + stem
+    )
+
+
 def _phase_animation(
     evidence_states: Sequence[Mapping[str, object]],
     phase: str,
     bundled_clip_ids: set[str],
     notes: list[dict[str, object]],
     state_draw_modules: frozenset[str] = frozenset(),
+    phase_model_source: str = "",
+    embedded_clip_ids: frozenset[str] = frozenset(),
 ) -> dict[str, object]:
     """Derive one phase's declared animation from state evidence, fail closed."""
 
@@ -1429,9 +1513,11 @@ def _phase_animation(
         # contract); retained rubble is static.
         return {"clip": None, "mode": "none"}
     available: list[dict[str, object]] = []
+    unbundled: list[dict[str, str]] = []
     for clip in clips:
         name = str(clip["clip"])
         if name not in bundled_clip_ids:
+            unbundled.append({"clip": name, "rawMode": str(clip["rawMode"])})
             notes.append(
                 {
                     "kind": "animation-clip",
@@ -1486,6 +1572,12 @@ def _phase_animation(
                     }
                 )
                 manual = preferred
+        if not manual:
+            _assert_self_referential_construction_clip(
+                unbundled,
+                phase_model_source=phase_model_source,
+                embedded_clip_ids=embedded_clip_ids,
+            )
         if len(manual) != 1:
             raise PlayableStructurePackCompilerError(
                 "structure construction phase requires exactly one bundled "
@@ -2096,6 +2188,11 @@ def compose_structure_runtime_document(
             state_draw_modules=frozenset(
                 str(module).casefold()
                 for module in state.get("drawModules", [])
+            ),
+            phase_model_source=str(state.get("sourceW3d", "")),
+            embedded_clip_ids=frozenset(
+                str(clip).casefold()
+                for clip in state.get("embeddedAnimationClipIds", [])
             ),
         )
         condition_sets = (

@@ -19,6 +19,13 @@ signal formation_requested
 signal command_cap_changed(value: int)
 signal weak_fortress_toggled(value: bool)
 signal cheat_resources_requested
+## Playtest tools. Unlike the OPENBFME_DEV_HUD console these are always
+## reachable from the pause screen: iterating on powers/abilities needs power
+## points and levelled units in seconds, not in ten minutes of real economy.
+signal playtest_resources_requested(amount: int)
+signal playtest_power_points_requested(amount: int)
+signal playtest_max_level_requested(scope: String)
+signal playtest_heal_requested
 signal power_purchase_requested(power_id: String, cost: int)
 signal power_cast_requested(cast_kind: String)
 signal ability_cast_requested(unit_id: String, ability_id: String)
@@ -338,6 +345,9 @@ var retail_control_bar_frame: RetailPalantirFrame
 var retail_apt_runtime: RetailHudAptRuntime
 var group_buttons: Dictionary = {}
 var pause_panel: PanelContainer
+var playtest_panel: PanelContainer
+var playtest_command_cap_slider: HSlider
+var playtest_command_cap_label: Label
 var failure_panel: PanelContainer
 var outcome_layer: Control
 var outcome_title: Label
@@ -990,6 +1000,7 @@ func build() -> void:
 	_build_feedback()
 	_build_diagnostics()
 	_build_pause_panel()
+	_build_playtest_panel()
 	_build_outcome_layer()
 	_build_failure_panel()
 	_build_side_command_bar()
@@ -2633,6 +2644,9 @@ func show_diagnostics(text: String, visible: bool) -> void:
 
 func show_pause(value: bool) -> void:
 	pause_panel.visible = value
+	# Unpausing must not leave the playtest sheet floating over the battle.
+	if not value and playtest_panel != null:
+		playtest_panel.visible = false
 	if value:
 		outcome_layer.visible = false
 
@@ -4049,10 +4063,117 @@ func _build_pause_panel() -> void:
 	# flipped for a dev build); the retail pause screen stays clean.
 	if dev_hud_enabled():
 		_build_dev_console(column)
+	_add_action_button(column, "Playtest Tools", func() -> void: show_playtest(true))
 	_add_action_button(column, "Resume", func() -> void: pause_requested.emit())
 	_add_action_button(column, "Restart Battle", func() -> void: restart_requested.emit())
 	_add_action_button(column, "Return to Main Menu", func() -> void: main_menu_requested.emit())
 	_add_action_button(column, "Quit", func() -> void: quit_requested.emit())
+
+
+func _build_playtest_panel() -> void:
+	## Always-available playtest surface (pause → Playtest Tools). It sits on
+	## top of the pause panel and closes back to it, so nothing here can be
+	## reached mid-battle by accident.
+	playtest_panel = PanelContainer.new()
+	playtest_panel.name = "PlaytestPanel"
+	playtest_panel.set_anchors_preset(Control.PRESET_CENTER)
+	playtest_panel.offset_left = -260
+	playtest_panel.offset_top = -300
+	playtest_panel.offset_right = 260
+	playtest_panel.offset_bottom = 300
+	playtest_panel.add_theme_stylebox_override("panel", _panel)
+	playtest_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	playtest_panel.visible = false
+	playtest_panel.z_index = 20
+	add_child(playtest_panel)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 8)
+	playtest_panel.add_child(column)
+	var heading := Label.new()
+	heading.text = "PLAYTEST TOOLS"
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 26)
+	heading.add_theme_color_override("font_color", Color("d9c996"))
+	column.add_child(heading)
+	var note := Label.new()
+	note.text = "Development aids. These bypass the retail economy and do not\nproduce evidence usable for a parity gate."
+	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	note.add_theme_font_size_override("font_size", 12)
+	note.add_theme_color_override("font_color", Color("8fa3ad"))
+	column.add_child(note)
+
+	_add_section_label(column, "Economy")
+	_add_action_button(column, "Resources → 999,999", func() -> void:
+		playtest_resources_requested.emit(999999)
+	)
+	_add_action_button(column, "Resources +50,000 (F7)", func() -> void:
+		cheat_resources_requested.emit()
+	)
+	playtest_command_cap_label = Label.new()
+	playtest_command_cap_label.name = "PlaytestCommandCapLabel"
+	playtest_command_cap_label.text = "Command point cap: 200"
+	playtest_command_cap_label.add_theme_color_override("font_color", Color("c8dbe4"))
+	column.add_child(playtest_command_cap_label)
+	playtest_command_cap_slider = HSlider.new()
+	playtest_command_cap_slider.name = "PlaytestCommandCapSlider"
+	playtest_command_cap_slider.min_value = 100
+	playtest_command_cap_slider.max_value = 5000
+	playtest_command_cap_slider.step = 50
+	playtest_command_cap_slider.value = 200
+	playtest_command_cap_slider.value_changed.connect(func(value: float) -> void:
+		playtest_command_cap_label.text = "Command point cap: %d" % int(value)
+		command_cap_changed.emit(int(value))
+	)
+	column.add_child(playtest_command_cap_slider)
+
+	_add_section_label(column, "Spellbook")
+	_add_action_button(column, "Power points +10", func() -> void:
+		playtest_power_points_requested.emit(10)
+	)
+	_add_action_button(column, "Power points +100 (buy the whole tree)", func() -> void:
+		playtest_power_points_requested.emit(100)
+	)
+
+	_add_section_label(column, "Units")
+	_add_action_button(column, "Max level: selected", func() -> void:
+		playtest_max_level_requested.emit("selected")
+	)
+	_add_action_button(column, "Max level: all my units", func() -> void:
+		playtest_max_level_requested.emit("all")
+	)
+	_add_action_button(column, "Full health: selected", func() -> void:
+		playtest_heal_requested.emit()
+	)
+
+	_add_action_button(column, "Back", func() -> void: show_playtest(false))
+
+
+func _add_section_label(parent: VBoxContainer, text: String) -> void:
+	var label := Label.new()
+	label.text = text.to_upper()
+	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_color_override("font_color", Color("8fa3ad"))
+	parent.add_child(label)
+
+
+func show_playtest(value: bool) -> void:
+	if playtest_panel == null:
+		return
+	playtest_panel.visible = value
+	# The pause panel stays built but hidden underneath, so "Back" returns to
+	# it rather than dropping the player into an unpaused battle.
+	if pause_panel != null:
+		pause_panel.visible = not value
+
+
+## Keeps the playtest command-cap slider in step with the live cap (the dev
+## console owns the same signal, and the slice can change the cap on load).
+func set_playtest_command_cap(value: int) -> void:
+	if playtest_command_cap_slider == null:
+		return
+	playtest_command_cap_slider.set_value_no_signal(float(value))
+	if playtest_command_cap_label != null:
+		playtest_command_cap_label.text = "Command point cap: %d" % value
 
 
 ## Dev-console gate: env flag (per-run) or constant (dev builds). Default OFF.

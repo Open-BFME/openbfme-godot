@@ -15,6 +15,7 @@ import hashlib
 import json
 
 from .playable_unit_pack_compiler import _resource_id, _safe_path, _slug
+from .retail_ability_fx_ingress import AbilityFxIngressError, fx_recipe_parts
 from .spellbook_compiler import (
     SpellbookCompilerError,
     validate_spellbook_descriptor,
@@ -207,8 +208,29 @@ def _audio_leaves(
     return resources, bindings, resolution
 
 
-def compile_spellbook_pack_recipe(descriptor: Mapping[str, object]) -> dict[str, object]:
-    """Compile one spellbook's source-backed pack recipe or fail closed."""
+def _fx_leaves(
+    fx_closure: Mapping[str, object] | None, slug: str
+) -> tuple[list[dict[str, object]], dict[str, object] | None]:
+    try:
+        return fx_recipe_parts(fx_closure, slug)
+    except AbilityFxIngressError as exc:
+        raise SpellbookPackCompilerError(str(exc)) from exc
+
+
+def compile_spellbook_pack_recipe(
+    descriptor: Mapping[str, object],
+    fx_closure: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Compile one spellbook's source-backed pack recipe or fail closed.
+
+    ``fx_closure`` is the optional sealed ability-FX closure from
+    :mod:`retail_ability_fx_ingress`.  When present its conversion resources
+    ride the recipe and its payload-free bindings ride the runtime
+    registration, so a power's authored FXList finally has converted particle
+    definitions and textures behind it.  When absent the recipe is byte-identical
+    to the pre-FX lane, which keeps ``import-spellbook`` and every fixture that
+    has no effective-assets root working unchanged.
+    """
 
     try:
         validate_spellbook_descriptor(descriptor)
@@ -239,6 +261,8 @@ def compile_spellbook_pack_recipe(descriptor: Mapping[str, object]) -> dict[str,
         descriptor, slug, audio_ids
     )
 
+    fx_resources, fx_bindings = _fx_leaves(fx_closure, slug)
+
     recipe: dict[str, object] = {
         "schema": SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
@@ -246,7 +270,7 @@ def compile_spellbook_pack_recipe(descriptor: Mapping[str, object]) -> dict[str,
         "spellBookObjectId": object_id,
         "slug": slug,
         "descriptorSha256": descriptor["descriptorSha256"],
-        "resources": [*image_resources, *audio_resources],
+        "resources": [*image_resources, *audio_resources, *fx_resources],
         "runtimeRegistration": {
             "spellBook": deepcopy(dict(spellbook)),
             "sciences": deepcopy(descriptor["sciences"]),
@@ -259,6 +283,7 @@ def compile_spellbook_pack_recipe(descriptor: Mapping[str, object]) -> dict[str,
             },
             "audioBindings": audio_bindings,
             "audioResolution": audio_resolution,
+            **({"fxBindings": fx_bindings} if fx_bindings is not None else {}),
         },
     }
     recipe["recipeSha256"] = _digest(recipe)
@@ -333,6 +358,13 @@ def compose_spellbook_runtime_document(
                 "stringBindings": deepcopy(dict(registration["stringBindings"])),  # type: ignore[arg-type]
                 "audioBindings": deepcopy(dict(registration["audioBindings"])),  # type: ignore[arg-type]
                 "audioResolution": deepcopy(dict(registration["audioResolution"])),  # type: ignore[arg-type]
+                # Present only when the FX ingress lane ran; the runtime treats
+                # its absence as "no converted power art", never as an error.
+                **(
+                    {"fxBindings": deepcopy(dict(registration["fxBindings"]))}  # type: ignore[arg-type]
+                    if isinstance(registration.get("fxBindings"), Mapping)
+                    else {}
+                ),
             },
             "resourceIds": sorted(str(row["id"]) for row in resources),
         },

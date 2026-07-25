@@ -571,7 +571,18 @@ func _hud_integration_checks(content_db, doc: Dictionary) -> void:
 		return
 	var soldier_definition: Dictionary = content_db.get_bundle_object("bfme2.object.gondor-fighter")
 	var selected_pack_root := String(soldier_definition.get("_pack_root", ""))
-	_check("private_men_pack_selected", selected_pack_root != "" and selected_pack_root.contains("bfme2-men-vslice"), selected_pack_root)
+	# The host pack must be an external converted pack that provides Men; it is
+	# NOT required to be the single-faction `bfme2-men-vslice`. A composed pack
+	# is id'd `bfme2-<a>-<b>-…-vslice` and lists its factions in pack.json
+	# `factionImportCoverage`.
+	var host_mod_loader = root.get_node("/root/ModLoader")
+	_check(
+		"private_men_pack_selected",
+		selected_pack_root != ""
+			and bool(host_mod_loader.call("pack_is_retail_import", selected_pack_root))
+			and bool(host_mod_loader.call("pack_provides_faction", selected_pack_root, "men")),
+		selected_pack_root
+	)
 	var hud = HudScript.new()
 	root.add_child(hud)
 	hud.build()
@@ -810,7 +821,9 @@ func _per_faction_checks(content_db) -> void:
 		var doc := _faction_spellbook_doc(mod_loader, pack_roots, faction, String(spec["fragment"]))
 		_check(
 			"%s_spellbook_doc_resolves_from_own_pack" % faction.to_lower(),
-			not doc.is_empty() and String((doc.get("target", {}) as Dictionary).get("faction", "")) == faction and String(doc.get("_pack_root", "")).contains(String(spec["fragment"])),
+			not doc.is_empty()
+				and String((doc.get("target", {}) as Dictionary).get("faction", "")) == faction
+				and bool(mod_loader.call("pack_provides_faction", String(doc.get("_pack_root", "")), faction)),
 			String(doc.get("_pack_root", "missing"))
 		)
 		if doc.is_empty():
@@ -942,9 +955,18 @@ func _faction_cast_check(faction: String, doc: Dictionary, spec: Dictionary) -> 
 
 
 func _faction_spellbook_doc(mod_loader, pack_roots: Array, faction: String, fragment: String) -> Dictionary:
+	## `fragment` is the historical single-faction pack-id fragment (e.g.
+	## "mordor-vslice"). It is no longer a filter: a composed pack is named
+	## `bfme2-men-elves-…-wild-vslice`, so only the LAST faction's fragment would
+	## ever match the root path. The pack that owns a faction's spellbook is the
+	## one whose pack.json declares the faction in `factionImportCoverage`; the
+	## document's own `target.faction` still decides which doc is returned.
 	for pack_root_value in pack_roots:
 		var pack_root := String(pack_root_value)
-		if not pack_root.contains(fragment):
+		if not (
+			pack_root.contains(fragment)
+			or bool(mod_loader.call("pack_provides_faction", pack_root, faction))
+		):
 			continue
 		var pack_document := mod_loader._read_json(pack_root.path_join("pack.json")) as Dictionary
 		var files: Dictionary = pack_document.get("files", {}) as Dictionary

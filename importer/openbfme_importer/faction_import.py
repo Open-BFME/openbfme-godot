@@ -62,6 +62,11 @@ from .spellbook_import import (
     _resolved_spellbook_strings,
     spellbook_source_documents,
 )
+from .retail_ability_fx_ingress import (
+    build_ability_fx_closure,
+    harvest_fx_ids,
+    texture_index_for,
+)
 from .spellbook_pack_compiler import (
     SpellbookPackCompilerError,
     compile_spellbook_pack_recipe,
@@ -656,6 +661,33 @@ def _source_null_command_set_ids(faction_graph: Mapping[str, object]) -> tuple[s
     )
 
 
+def _ability_fx_closure(
+    descriptor: Mapping[str, object],
+    documents: Mapping[str, bytes],
+    effective_root: Path,
+    assets_fp: str,
+    namespace: str,
+) -> dict[str, object] | None:
+    """Seal the authored ability/power FX closure for one compiled descriptor.
+
+    Returns ``None`` only when the descriptor authored no FXList at all, so a
+    unit without abilities keeps exactly its previous recipe bytes.  Ids that
+    do not resolve are recorded inside the closure as unresolved rows, never
+    substituted; a corpus-level failure raises and turns the object into an
+    explicit converter-gap row rather than shipping invented art.
+    """
+
+    fx_ids = harvest_fx_ids(descriptor)
+    if not fx_ids:
+        return None
+    return build_ability_fx_closure(
+        documents,
+        fx_ids,
+        namespace=namespace,
+        texture_index=texture_index_for(effective_root, assets_fp),
+    )
+
+
 def _convert_one_plan_object(
     plan_row: Mapping[str, object],
     *,
@@ -808,7 +840,16 @@ def _convert_one_plan_object(
                 resolved_strings=strings,
                 prepared=prepared,
             )
-            recipe = compile_spellbook_pack_recipe(descriptor)
+            recipe = compile_spellbook_pack_recipe(
+                descriptor,
+                _ability_fx_closure(
+                    descriptor,
+                    documents,
+                    effective_root,
+                    assets_fp,
+                    str(descriptor["spellBook"]["objectId"]),  # type: ignore[index]
+                ),
+            )
             runtime = compose_spellbook_runtime_document(descriptor, recipe)
         except (
             SpellbookCompilerError,
@@ -865,7 +906,17 @@ def _convert_one_plan_object(
             closure = build_retail_visual_closure(
                 effective_root, sorted(targets, key=str.casefold)
             )
-            recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+            recipe = compile_playable_unit_pack_recipe(
+                descriptor,
+                closure,
+                _ability_fx_closure(
+                    descriptor,
+                    documents,
+                    effective_root,
+                    assets_fp,
+                    str(descriptor["objectId"]),
+                ),
+            )
         except (
             PlayableUnitCompilerError,
             PlayableUnitPackCompilerError,

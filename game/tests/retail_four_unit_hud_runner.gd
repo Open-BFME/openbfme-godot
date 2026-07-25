@@ -107,7 +107,18 @@ func _run() -> void:
 		return
 	var soldier_definition: Dictionary = content_db.get_bundle_object("bfme2.object.gondor-fighter")
 	var selected_pack_root := String(soldier_definition.get("_pack_root", ""))
-	_check("private_men_pack_selected", selected_pack_root != "" and selected_pack_root.contains("bfme2-men-vslice"), selected_pack_root)
+	# The host pack must be an external converted pack that provides Men; it is
+	# NOT required to be the single-faction `bfme2-men-vslice`. A composed pack
+	# is id'd `bfme2-<a>-<b>-…-vslice` and lists its factions in pack.json
+	# `factionImportCoverage`.
+	var host_mod_loader = root.get_node("/root/ModLoader")
+	_check(
+		"private_men_pack_selected",
+		selected_pack_root != ""
+			and bool(host_mod_loader.call("pack_is_retail_import", selected_pack_root))
+			and bool(host_mod_loader.call("pack_provides_faction", selected_pack_root, "men")),
+		selected_pack_root
+	)
 	if selected_pack_root == "":
 		_finish()
 		return

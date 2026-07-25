@@ -2886,7 +2886,12 @@ class ImportPipeline:
         resolved: ResolvedProfile,
         *,
         force: bool = False,
-        max_files: int = 10_000,
+        # Extraction bound, not a pack-content limit. 10_000 was sized when a
+        # profile held a single faction; all six BFME2 factions select 10_626,
+        # so the old ceiling made a cross-faction pack un-cookable by a margin
+        # of 6%. The byte bound below is the one that actually protects the
+        # disk and is left alone.
+        max_files: int = 65_536,
         max_bytes: int = 4 * 1024 * 1024 * 1024,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         self._validate_source_catalog_binding(resolved)

@@ -43,6 +43,13 @@ var member_overlay_status := ""
 var clip_map: Dictionary = {}
 var clip_sets: Dictionary = {}
 var clip_modes: Dictionary = {}
+## Authored ability poses, keyed `ability:<abilityState>:<phase>` (see
+## ContentDB's playable-unit projection). Held for the authored envelope so the
+## per-frame sim state sync does not stamp a generic swing back over the cast.
+var ability_animation_states: Dictionary = {}
+var ability_animations_presented := 0
+var _ability_animation_state := ""
+var _ability_animation_remaining := 0.0
 var attack_uses_weapon_timing := false
 var equipment_contract: Dictionary = {}
 var equipment_contract_ready := false
@@ -93,6 +100,19 @@ var _authoritative_position_from := Vector3.ZERO
 var _authoritative_position_to := Vector3.ZERO
 var _authoritative_position_elapsed := PRESENTATION_TICK_SECONDS
 var _authoritative_position_ready := false
+# Blast toss presentation. The sim resolves a knockback as one instantaneous
+# position change (center -> landed) plus a knockdown timer; without this the
+# authoritative lerp above renders that as a fast ground slide. While an arc is
+# active the root follows a ballistic path between the same two sim-authored
+# endpoints, so the presentation never disagrees with the simulation about
+# where the battalion is when the toss ends.
+var _knockback_arc_active := false
+var _knockback_arc_elapsed := 0.0
+var _knockback_arc_duration := 0.0
+var _knockback_arc_from := Vector3.ZERO
+var _knockback_arc_apex := 0.0
+var _knocked_down := false
+var knockback_arcs_presented := 0
 var _selection_layout_state := ""
 var _next_archer_presentation_token := 1
 var archer_projectiles_presented := 0
@@ -152,6 +172,22 @@ func _build_clip_map(capability: Dictionary) -> void:
 	equipment_contract = (capability.get("equipment", {}) as Dictionary).duplicate(true)
 	equipment_contract_ready = bool(equipment_contract.get("validated", false))
 	unresolved_animation_track_count = int(capability.get("unresolvedAnimationTracks", 0))
+	# Authored ability poses. `capability.states` carries one entry per
+	# `ability:<abilityState>:<phase>` the pack could address (Gandalf's
+	# SPECIAL_WEAPON_TWO staff-lower, Boromir's SPECIAL_POWER_1 horn envelope,
+	# …). They ride the same clip_sets/clip_map tables as the core states, so
+	# `set_action_state` can request one without any special casing.
+	ability_animation_states.clear()
+	for state_key_value in states.keys():
+		var state_key := String(state_key_value)
+		if not state_key.begins_with("ability:"):
+			continue
+		var ability_clips := _clips(states.get(state_key, {}))
+		if ability_clips.is_empty():
+			continue
+		clip_sets[state_key] = ability_clips
+		clip_modes[state_key] = String((states[state_key] as Dictionary).get("mode", "once"))
+		ability_animation_states[state_key] = true
 	clip_map.clear()
 	for state in clip_sets.keys():
 		var values: Array = clip_sets[state]
@@ -471,6 +507,16 @@ func sync_member_states(
 ) -> void:
 	var maximum := maxi(1, member_maximum_health)
 	var normalized_state := battalion_state if clip_map.has(battalion_state) else "idle"
+	# An ability cast owns the caster's pose for the authored envelope. The sim
+	# does not model a cast as a locomotion state (most ability handlers never
+	# touch `row["state"]`), so without this hold the very next presentation
+	# sync would stamp idle/attack straight back over the ability animation.
+	# Death always wins — a hero killed mid-cast falls over.
+	if _ability_animation_remaining > 0.0 and clip_map.has(_ability_animation_state):
+		if battalion_state == "death":
+			_clear_ability_animation()
+		else:
+			normalized_state = _ability_animation_state
 	var battalion_state_changed := normalized_state != current_state
 	current_state = normalized_state
 	current_clip = String(clip_map.get(normalized_state, ""))
@@ -774,6 +820,44 @@ func set_action_state(state: String, force: bool = false, action_token: int = -1
 	_refresh_label()
 
 
+func has_ability_animation(state: String) -> bool:
+	return ability_animation_states.has(state) and String(clip_map.get(state, "")) != ""
+
+
+func play_ability_animation(state: String, hold_seconds: float) -> bool:
+	## Play the authored caster pose for an ability cast, held for the authored
+	## envelope. Returns false — and changes nothing — when the pack bound no
+	## clip for this ability state, so an unconverted ability keeps whatever
+	## the sim state would have shown rather than borrowing another pose.
+	if not has_ability_animation(state):
+		return false
+	if current_state == "death":
+		return false
+	_ability_animation_state = state
+	# Hold for the authored envelope when the ability's INI names one
+	# (UnpackTime + PreparationTime + PackTime), otherwise for exactly as long
+	# as the authored clip runs. Nothing is invented either way.
+	_ability_animation_remaining = maxf(0.05, hold_seconds)
+	ability_animations_presented += 1
+	set_action_state(state, true)
+	if hold_seconds <= 0.0:
+		var longest := 0.0
+		for member_index in range(member_count):
+			for player_value in member_animation_players.get(member_index, []):
+				longest = maxf(longest, (player_value as AnimationPlayer).current_animation_length)
+		_ability_animation_remaining = maxf(0.05, longest)
+	return true
+
+
+func ability_animation_active() -> bool:
+	return _ability_animation_remaining > 0.0
+
+
+func _clear_ability_animation() -> void:
+	_ability_animation_state = ""
+	_ability_animation_remaining = 0.0
+
+
 func set_facing_direction(direction: Vector2, turn_rate_degrees_per_second: float = DEFAULT_TURN_RATE_DEGREES_PER_SECOND) -> void:
 	if direction.length_squared() <= 0.000001:
 		return
@@ -803,6 +887,47 @@ func set_authoritative_position(world_position: Vector3, snap: bool = false) -> 
 	_authoritative_position_from = position
 	_authoritative_position_to = world_position
 	_authoritative_position_elapsed = 0.0
+
+
+func begin_knockback_arc(launch_world_position: Vector3) -> void:
+	## Present a sim knockback as a ballistic toss instead of a slide.
+	##
+	## The sim owns both endpoints: `launch_world_position` is where the
+	## battalion stood when the blast landed, and the authoritative position it
+	## has already been given is the landing spot it chose. Everything else here
+	## is projectile motion over those two points, not authored art: a 45-degree
+	## launch puts the apex at a quarter of the horizontal throw distance, and
+	## the flight time follows from that apex under gravity. Recorded
+	## provisional: retail plays a FLAILING/knockdown clip during the toss and
+	## while the victim is down; the converted animation capability set carries
+	## only idle/move/attack/death, so no such clip exists to play here.
+	if not _authoritative_position_ready:
+		return
+	var throw := Vector2(
+		_authoritative_position_to.x - launch_world_position.x,
+		_authoritative_position_to.z - launch_world_position.z
+	).length()
+	if not is_finite(throw) or throw <= 0.001:
+		return
+	var apex := throw * 0.25
+	var gravity := 9.8
+	_knockback_arc_from = launch_world_position
+	_knockback_arc_apex = apex
+	_knockback_arc_duration = 2.0 * sqrt(2.0 * apex / gravity)
+	_knockback_arc_elapsed = 0.0
+	_knockback_arc_active = _knockback_arc_duration > 0.0
+	if _knockback_arc_active:
+		knockback_arcs_presented += 1
+
+
+func knockback_arc_active() -> bool:
+	return _knockback_arc_active
+
+
+func set_knocked_down(knocked_down: bool) -> void:
+	## Sim-authored knockdown flag. The sim owns how long the battalion stays
+	## down; presentation only stops it turning while it is off its feet.
+	_knocked_down = knocked_down
 
 
 func facing_direction() -> Vector2:
@@ -921,15 +1046,13 @@ func synthetic_overlay_node_count() -> int:
 
 
 func _is_private_retail_pack(definition: Dictionary) -> bool:
-	var pack_root := String(definition.get("_pack_root", ""))
-	if pack_root == "" or pack_root.begins_with("res://"):
-		return false
-	var pack_path := ModLoader.resolve_pack_path(pack_root, "pack.json")
-	var pack_value: Variant = ModLoader._read_json(pack_path)
-	return (
-		typeof(pack_value) == TYPE_DICTIONARY
-		and String((pack_value as Dictionary).get("id", "")) in ["bfme2-men-vslice", "bfme2-men-ranger-overlay"]
-	)
+	## Converted-retail-pack test by import provenance rather than by pack id:
+	## the previous literal list ("bfme2-men-vslice", "bfme2-men-ranger-overlay")
+	## excluded every composed multi-faction pack, whose id is
+	## `bfme2-<a>-<b>-…-vslice`, so non-Men battalions fell back to synthetic
+	## overlays. The ranger overlay supplement still qualifies — it declares the
+	## same retail import provenance.
+	return ModLoader.pack_is_retail_import(String(definition.get("_pack_root", "")))
 
 
 ## True when the unit's own pack ships the retail SHADOW_MERGE_DECAL selection
@@ -1059,6 +1182,10 @@ func _play_member_clip(player: AnimationPlayer, requested: String, state: String
 
 
 func _process(_delta: float) -> void:
+	if _ability_animation_remaining > 0.0:
+		_ability_animation_remaining -= _delta
+		if _ability_animation_remaining <= 0.0:
+			_clear_ability_animation()
 	_update_root_presentation(_delta)
 	_update_member_positions(_delta)
 	_settle_finished_corpses()
@@ -1125,14 +1252,36 @@ func _settle_finished_corpses() -> void:
 func _update_root_presentation(delta: float) -> void:
 	if not is_finite(delta) or delta <= 0.0:
 		return
-	if _authoritative_position_ready and _authoritative_position_elapsed < PRESENTATION_TICK_SECONDS:
+	if _knockback_arc_active:
+		_update_knockback_arc(delta)
+	elif _authoritative_position_ready and _authoritative_position_elapsed < PRESENTATION_TICK_SECONDS:
 		_authoritative_position_elapsed = minf(PRESENTATION_TICK_SECONDS, _authoritative_position_elapsed + delta)
 		var weight := _authoritative_position_elapsed / PRESENTATION_TICK_SECONDS
 		position = _authoritative_position_from.lerp(_authoritative_position_to, weight)
-	if _facing_sample_ready:
+	# A knocked-down battalion holds its facing: the sim has cleared its orders
+	# and target, so there is nothing for it to turn towards until it recovers.
+	if _facing_sample_ready and not _knockback_arc_active and not _knocked_down:
 		var difference := wrapf(_target_facing_yaw - rotation.y, -PI, PI)
 		var step := _turn_rate_radians_per_second * delta
 		rotation.y += clampf(difference, -step, step)
+
+
+func _update_knockback_arc(delta: float) -> void:
+	## Ballistic interpolation between the sim's launch and landing points. The
+	## horizontal track is the same straight line the authoritative lerp would
+	## have used; only the vertical offset is added, and it returns to zero
+	## exactly when the arc lands on the sim's chosen position.
+	_knockback_arc_elapsed = minf(_knockback_arc_duration, _knockback_arc_elapsed + delta)
+	var weight := _knockback_arc_elapsed / _knockback_arc_duration if _knockback_arc_duration > 0.0 else 1.0
+	var ground := _knockback_arc_from.lerp(_authoritative_position_to, weight)
+	# 4t(1-t) is the unit parabola: zero at both ends, 1.0 at the midpoint.
+	ground.y += _knockback_arc_apex * 4.0 * weight * (1.0 - weight)
+	position = ground
+	if _knockback_arc_elapsed >= _knockback_arc_duration:
+		_knockback_arc_active = false
+		position = _authoritative_position_to
+		_authoritative_position_from = _authoritative_position_to
+		_authoritative_position_elapsed = PRESENTATION_TICK_SECONDS
 
 
 func _update_member_positions(delta: float) -> void:

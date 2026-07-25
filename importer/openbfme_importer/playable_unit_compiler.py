@@ -2603,17 +2603,30 @@ def _select_experience_chain(
     unit_names: frozenset[str],
     label: str,
     container_names: frozenset[str] = frozenset(),
+    primary_name: str = "",
 ) -> tuple[tuple[Mapping[str, object], frozenset[str]], ...]:
     """Pick the most specific authored chain targeting one of the unit names.
 
     Returns the chain's rows sorted by rank, each paired with the resolved
     target set it was matched through.  A unit covered by two different
-    chains of equal specificity is ambiguous and fails closed, unless exactly
-    one of the tied chains targets the fielded container object itself
-    (``container_names``): the engine grants experience per object name, so
-    the chain naming the fielded unit is the authored truth when retail
-    splits a horde and its members across different target lists (RotWK
-    AngmarNecromancerHorde vs its AngmarNecroAcolyte members).
+    chains of equal specificity is ambiguous and fails closed, unless the tie
+    resolves through one of two authored facts.
+
+    First, the object's own name (``primary_name``) beats an inherited
+    ancestor's.  ``unit_names`` spans the whole inheritance lineage, so a
+    ``ChildObject`` inherits every chain that targets its parent: retail
+    authors ``ChildObject MordorBatteringRam IsengardBatteringRam`` alongside
+    both ``IsengardBatteringRamLevel1`` (TargetNames = IsengardBatteringRam)
+    and ``MordorBatteringRamLevel1`` (TargetNames = MordorBatteringRam), and
+    both match this unit with one name each.  The engine grants experience per
+    object name, so the chain naming the fielded object is the authored truth
+    and the parent's chain belongs to the parent.
+
+    Second, and only when the first does not decide it, exactly one of the
+    tied chains targeting the fielded container object (``container_names``)
+    wins, for the case where retail splits a horde and its members across
+    different target lists (RotWK AngmarNecromancerHorde vs its
+    AngmarNecroAcolyte members).
     """
 
     candidates: dict[frozenset[str], list[Mapping[str, object]]] = {}
@@ -2637,10 +2650,18 @@ def _select_experience_chain(
         tied = [
             item for item in ordered if len(item[0]) == len(ordered[0][0])
         ]
+        own_name = primary_name.strip().casefold()
+        own_matched = (
+            [item for item in tied if own_name in item[0]] if own_name else []
+        )
         container_matched = [
             item for item in tied if item[0] & container_names
         ]
-        if len(container_matched) == 1:
+        if len(own_matched) == 1:
+            ordered = own_matched + [
+                item for item in ordered if item is not own_matched[0]
+            ]
+        elif len(container_matched) == 1:
             ordered = container_matched + [
                 item for item in ordered if item is not container_matched[0]
             ]
@@ -2755,6 +2776,9 @@ def _experience_contract(
         container_names=frozenset(
             item.name.casefold() for item in target_lineage
         ),
+        # Lineage runs ancestor -> descendant, so the last entry is the
+        # fielded object itself.
+        primary_name=target_lineage[-1].name if target_lineage else "",
     )
     if not chain:
         return {
@@ -4732,6 +4756,17 @@ def _hero_ability_effect(
         )
         if start_range is not None and float(start_range) > 0.0:
             effect["startAbilityRange"] = start_range
+        # `UnpackingVariation = N` selects the authored PACKING_TYPE_<N>
+        # AnimationState envelope for this ability's caster pose
+        # (gandalf.ini:1330 -> the PACKING_TYPE_1 UNPACKING/PREPARING/PACKING
+        # LightningSword clips at gandalf.ini:343-370). Carrying it lets the
+        # runtime request the ability's own animation instead of a generic
+        # attack swing.
+        unpacking_variation = _resolved_expression(
+            (block.values("UnpackingVariation") or ("",))[-1], constants
+        )
+        if unpacking_variation is not None and int(unpacking_variation) > 0:
+            effect["unpackingVariation"] = int(unpacking_variation)
         if leaf.get("damageScalarAuthored"):
             limitations.append(
                 "weapon authors DamageScalar target-type scaling (not applied)"

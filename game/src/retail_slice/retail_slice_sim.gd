@@ -4369,6 +4369,12 @@ func cast_power(team: int, power_id: String, point: Vector2) -> Dictionary:
 		"sound_id": String(row.get("sound_id", "")),
 		"effect_kind": String(effect.get("kind", "")),
 		"radius_source": float(effect.get("radius_source", effect.get("range_source", 0.0))),
+		# Map-scaled twin of radius_source so the presentation cue can cover the
+		# ground the power actually affected without re-deriving the scale.
+		"fx_radius": snappedf(
+			float(effect.get("radius_source", effect.get("range_source", 0.0))) * _spellbook_world_scale(),
+			0.001
+		),
 		"fx_lists": row.get("fx_lists", []),
 		"ocls": row.get("ocls", []),
 		"battalions": int(result.get("battalions", 0)),
@@ -5786,10 +5792,12 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				var range_source := float(effect.get("attackRange", effect.get("startAbilityRange", 0.0)))
 				effect["range"] = range_source * scale
 				# Converter-emitted knockback magnitudes (source units) bind to
-				# map scale like every other range. No compiled Men ability
-				# carries these yet (MetaImpactNugget extraction is importer
-				# follow-up); until then the keys stay 0 and the blast deals
-				# damage without a shockwave — fail-closed, nothing invented.
+				# map scale like every other range. Gandalf's Wizard Blast is
+				# the compiled Men ability that carries them today
+				# (knockbackRadius 110, knockbackStrength 70); abilities whose
+				# MetaImpactNugget extraction is still importer follow-up keep
+				# these keys at 0 and deal damage without a shockwave —
+				# fail-closed, nothing invented.
 				effect["knockback_radius"] = float(effect.get("knockbackRadius", 0.0)) * scale
 				effect["knockback_strength"] = float(effect.get("knockbackStrength", 0.0)) * scale
 			"heal":
@@ -5899,6 +5907,63 @@ func _attach_experience_state(row: Dictionary) -> void:
 	row["level"] = int(rule.get("initial_rank", 1))
 	row["experience_xp"] = 0
 	row["experience_max_level"] = int(rule.get("max_level", 1))
+
+
+func debug_force_max_level(entity_ids: Array) -> int:
+	## Playtest aid: walk each entity up its own authored ExperienceLevel chain
+	## by awarding the XP the chain itself demands, so every rank's authored
+	## level effects apply exactly as they would in a real match. It never
+	## fabricates a rank the source does not author.
+	var levelled := 0
+	for id_value in entity_ids:
+		var entity_id := int(id_value)
+		if not entities.has(entity_id):
+			continue
+		var row: Dictionary = entities[entity_id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		var rule: Dictionary = _unit_experience_rules.get(String(row.get("unit_type", "")), {})
+		if rule.is_empty():
+			continue
+		var before := int(row.get("level", 1))
+		var required := 0
+		for level_value in Array(rule.get("levels", [])):
+			required = maxi(required, int((level_value as Dictionary).get("required_experience", 0)))
+		var deficit := required - int(row.get("experience_xp", 0))
+		if deficit > 0:
+			_award_experience(row, deficit)
+		if int(row.get("level", 1)) != before:
+			levelled += 1
+	return levelled
+
+
+func debug_restore_health(entity_ids: Array) -> int:
+	## Playtest aid: refill an entity and every living horde member. Dead
+	## members stay dead — resurrecting them would change horde size, which is
+	## a simulation fact rather than a convenience.
+	var healed := 0
+	for id_value in entity_ids:
+		var entity_id := int(id_value)
+		if not entities.has(entity_id):
+			continue
+		var row: Dictionary = entities[entity_id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		var member_max := int(row.get("member_maximum_health", 0))
+		var members: Array = Array(row.get("member_health", []))
+		if member_max > 0 and not members.is_empty():
+			for index in range(members.size()):
+				if int(members[index]) > 0:
+					members[index] = member_max
+			row["member_health"] = members
+			var total := 0
+			for value in members:
+				total += int(value)
+			row["health"] = total
+		else:
+			row["health"] = int(row.get("maximum_health", row.get("health", 0)))
+		healed += 1
+	return healed
 
 
 func experience_rule_for_unit(unit_type: String) -> Dictionary:
@@ -6161,9 +6226,39 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 		"affected": int(result.get("affected", 0)),
 		"summoned": result.get("summoned", []),
 		"sound_id": String(rule.get("initiate_sound_id", rule.get("unit_specific_sound_id", ""))),
+		# Authored FX identity and the map-scaled radii the converted leaf gave
+		# this cast. The presentation layer had no way to tell one ability's
+		# cue from another's before this; spellbook casts already carried their
+		# fx_lists on power.cast, hero abilities carried nothing.
+		"fx_lists": _ability_fx_list_ids(effect),
+		"fx_radius": snappedf(_ability_fx_radius(effect), 0.001),
+		"damage_type": String(effect.get("damageType", "")),
 		"point": [snappedf(target_point.x, 0.001), snappedf(target_point.y, 0.001)],
 	})
 	return result
+
+
+func _ability_fx_list_ids(effect: Dictionary) -> Array:
+	## Authored FXList ids on a converted ability leaf, in a stable order. The
+	## converter emits these under kind-specific keys (fireFxId on weapon
+	## leaves, healFxId on heals, levelFxId on level grants); nothing is
+	## synthesised when a leaf authors none.
+	var ids: Array = []
+	for key in ["fireFxId", "healFxId", "levelFxId", "fxId"]:
+		var value := String(effect.get(key, ""))
+		if value != "" and not ids.has(value):
+			ids.append(value)
+	return ids
+
+
+func _ability_fx_radius(effect: Dictionary) -> float:
+	## The largest map-scaled radius this ability actually acts over, so the
+	## presentation cue covers exactly the ground the sim affected. Ability
+	## kinds that author no radius return 0 and get no radial cue.
+	var radius := 0.0
+	for key in ["knockback_radius", "damage_radius", "radius_scaled", "target_radius_scaled"]:
+		radius = maxf(radius, float(effect.get(key, 0.0)))
+	return radius
 
 
 func _ability_enemies_near(team: int, point: Vector2, radius: float) -> Array[int]:

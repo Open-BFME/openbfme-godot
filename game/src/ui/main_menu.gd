@@ -4,6 +4,7 @@ extends Control
 
 const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 const NavDiamondsScript = preload("res://src/ui/openbfme_nav_diamonds.gd")
+const ShellFlyoutScript = preload("res://src/ui/openbfme_shell_flyout.gd")
 const SliceScript = preload("res://src/retail_slice/retail_vertical_slice.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 const MultiplayerLobbyScript = preload("res://src/ui/multiplayer_lobby.gd")
@@ -77,17 +78,66 @@ const TEAM_ID_POOL: Array[int] = [0, 1, 3, 4, 5, 6, 7, 8]
 const CONTROLLER_HUMAN := "human"
 const CONTROLLER_AI := "ai"
 
+## Retail shell bar (REF-07): six stone caps along the bottom edge in the retail
+## order TUTORIALS / SOLO PLAY / MULTIPLAYER / OPTIONS / MY HEROES / QUIT. Each
+## carries the hover tooltip retail shows (REF-06 documents the QUIT one
+## verbatim); entries whose feature does not exist in Open BFME are present but
+## disabled with the honest reason, never a button that silently does nothing.
+const BAR_TOOLTIPS := {
+	"tutorials": "Guided tutorial missions",
+	"solo": "Play by yourself against the computer",
+	"multiplayer": "Play against other people over a network",
+	"options": "Change your audio and video settings",
+	"my_heroes": "Create and manage custom heroes",
+	"quit": "Quit to desktop",
+}
+## Upward flyout contents (REF-02 SOLO PLAY, REF-04 TUTORIALS, REF-05 OPTIONS).
+## Retail's row set is reproduced in full; `enabled` reflects what Open BFME has
+## actually converted, and every disabled row states why.
+const TUTORIALS_FLYOUT_ITEMS: Array = [
+	{"id": "basic", "label": "BASIC TUTORIAL", "enabled": false,
+		"tooltip": "No tutorial mission scripting has been converted yet"},
+	{"id": "advanced", "label": "ADVANCED TUTORIAL", "enabled": false,
+		"tooltip": "No tutorial mission scripting has been converted yet"},
+	{"id": "wotr", "label": "WAR OF THE RING TUTORIAL", "enabled": false,
+		"tooltip": "War of the Ring is not implemented, so its tutorial cannot run"},
+]
+const SOLO_FLYOUT_ITEMS: Array = [
+	{"id": "skirmish", "label": "SKIRMISH", "enabled": true,
+		"tooltip": "Set up a skirmish against the computer"},
+	{"id": "wotr", "label": "WAR OF THE RING", "enabled": false,
+		"tooltip": "The War of the Ring campaign layer is not implemented"},
+	{"id": "evil_campaign", "label": "EVIL CAMPAIGN", "enabled": false,
+		"tooltip": "No campaign missions have been converted"},
+	{"id": "good_campaign", "label": "GOOD CAMPAIGN", "enabled": false,
+		"tooltip": "No campaign missions have been converted"},
+	{"id": "load_game", "label": "LOAD GAME", "enabled": false,
+		"tooltip": "Saved games exist in the simulation but no load browser is wired into the shell yet"},
+]
+const OPTIONS_FLYOUT_ITEMS: Array = [
+	{"id": "settings", "label": "SETTINGS", "enabled": true,
+		"tooltip": "Change your audio and video settings"},
+	{"id": "custom_settings", "label": "CUSTOM SETTINGS", "enabled": false,
+		"tooltip": "The per-detail graphics sliders (REF-15) are not implemented; SETTINGS exposes the quality preset instead"},
+	{"id": "credits", "label": "CREDITS", "enabled": false,
+		"tooltip": "No credits screen has been authored yet"},
+]
+## Content-pack ids a converted retail shell backdrop would register under in a
+## pack's uiManifest. No converted pack ships one today (the men v-slice
+## manifest carries only HUD atlas crops), so the procedural Atmosphere drawing
+## stands in; the first pack to publish one takes over automatically.
+const BACKDROP_IMAGE_IDS: Array[String] = [
+	"shellmapbackdrop", "mainmenubackdrop", "shellbackdrop", "mainmenu",
+]
+
 @onready var center: Control = $Center
-@onready var menu_frame: Panel = $MenuFrame
-@onready var main_heading: Label = $Center/MainHeading
+@onready var backdrop_art: TextureRect = $BackdropArt
+@onready var tutorials_btn: Button = $Center/Tutorials
 @onready var solo_btn: Button = $Center/Solo
 @onready var multiplayer_btn: Button = $Center/Multiplayer
 @onready var options_btn: Button = $Center/Options
+@onready var my_heroes_btn: Button = $Center/MyHeroes
 @onready var quit_btn: Button = $Center/Quit
-@onready var subpage_nav: Control = $Center/SubpageNav
-@onready var sub_solo_btn: Button = $Center/SubpageNav/Solo
-@onready var sub_options_btn: Button = $Center/SubpageNav/Options
-@onready var sub_quit_btn: Button = $Center/SubpageNav/Quit
 
 @onready var solo_flyout: Panel = $Center/SoloFlyout
 @onready var multiplayer_flyout: Panel = $Center/MultiplayerFlyout
@@ -118,6 +168,8 @@ var _game_state: Node
 ## polls it — the menu never does.
 var multiplayer_lobby: Panel
 var _lobby_session
+## Upward shell flyouts keyed by their anchor button's bar id.
+var _shell_flyouts: Dictionary = {}
 
 
 func _ready() -> void:
@@ -143,6 +195,8 @@ func _ready() -> void:
 	_populate_rules_options()
 	_populate_color_options()
 	_collect_stage_buttons()
+	_apply_converted_backdrop()
+	_build_shell_flyouts()
 	_connect_actions()
 	options_screen.configure({"font": _shell_font})
 	options_screen.closed.connect(func(_applied: bool) -> void: _show_page(PAGE_MAIN))
@@ -211,12 +265,93 @@ func _font_pack_root_candidates() -> Array[String]:
 
 
 func _build_nav_diamonds() -> void:
+	## Retail draws a small upward triangle above every bar button that opens a
+	## sub-surface (REF-07: TUTORIALS / SOLO PLAY / MULTIPLAYER / OPTIONS carry
+	## one; MY HEROES and QUIT act immediately and do not).
 	_nav_diamonds = NavDiamondsScript.new()
 	_nav_diamonds.name = "NavDiamonds"
 	_nav_diamonds.z_index = 3
 	add_child(_nav_diamonds)
-	var nav_buttons: Array[Button] = [solo_btn, options_btn, quit_btn, sub_solo_btn, sub_options_btn, sub_quit_btn]
+	var nav_buttons: Array[Button] = [tutorials_btn, solo_btn, multiplayer_btn, options_btn]
 	_nav_diamonds.watch(nav_buttons)
+
+
+func _bar_buttons() -> Array[Button]:
+	return [tutorials_btn, solo_btn, multiplayer_btn, options_btn, my_heroes_btn, quit_btn]
+
+
+func _apply_converted_backdrop() -> void:
+	## Retail renders a live 3D shellmap behind the bar (REF-07, the Argonath).
+	## Open BFME never copies a retail screenshot in: if a mounted pack publishes
+	## a converted shell backdrop the TextureRect displays it and the procedural
+	## Atmosphere drawing steps aside; otherwise the authored placeholder stands,
+	## visibly a placeholder rather than a silent substitute for private art.
+	for image_id in BACKDROP_IMAGE_IDS:
+		var path := String(_content_db.call("resolve_retail_ui_image_path", image_id))
+		if path == "" or not FileAccess.file_exists(path):
+			continue
+		var image := Image.load_from_file(path)
+		if image == null or image.is_empty():
+			continue
+		backdrop_art.texture = ImageTexture.create_from_image(image)
+		backdrop_art.visible = true
+		var atmosphere := get_node_or_null("Atmosphere") as Control
+		if atmosphere != null:
+			atmosphere.visible = false
+		return
+
+
+func _build_shell_flyouts() -> void:
+	## One upward flyout per bar button that owns a list in retail. They are
+	## siblings of the bar buttons inside Center so OpenBFMEShellFlyout's
+	## anchor-relative placement resolves in the same coordinate space, and they
+	## re-anchor themselves on every viewport resize (no fixed pixel layout).
+	_add_shell_flyout("tutorials", tutorials_btn, TUTORIALS_FLYOUT_ITEMS)
+	_add_shell_flyout("solo", solo_btn, SOLO_FLYOUT_ITEMS)
+	_add_shell_flyout("options", options_btn, OPTIONS_FLYOUT_ITEMS)
+
+
+func _add_shell_flyout(bar_id: String, anchor: Button, items: Array) -> void:
+	var flyout = ShellFlyoutScript.build(anchor, items)
+	center.add_child(flyout)
+	flyout.item_selected.connect(_on_shell_flyout_item.bind(bar_id))
+	_shell_flyouts[bar_id] = flyout
+
+
+func _toggle_shell_flyout(bar_id: String) -> void:
+	var target = _shell_flyouts.get(bar_id, null)
+	var reopen: bool = target != null and not target.visible
+	_close_shell_flyouts()
+	if reopen:
+		target.open()
+		if _nav_diamonds != null:
+			_nav_diamonds.set_active(target.anchor_button)
+
+
+func _close_shell_flyouts() -> void:
+	for flyout in _shell_flyouts.values():
+		flyout.visible = false
+	if _nav_diamonds != null:
+		_nav_diamonds.set_active(null)
+
+
+func _shell_flyout_is_open() -> bool:
+	for flyout in _shell_flyouts.values():
+		if flyout.visible:
+			return true
+	return false
+
+
+func _on_shell_flyout_item(item_id: String, bar_id: String) -> void:
+	_close_shell_flyouts()
+	match [bar_id, item_id]:
+		["solo", "skirmish"]:
+			_show_page(PAGE_SOLO)
+		["options", "settings"]:
+			_on_options()
+		_:
+			# Every other retail row is listed but disabled, so it cannot emit.
+			push_warning("OpenBFME shell: unhandled flyout route %s/%s" % [bar_id, item_id])
 
 
 func _populate_skirmish_options() -> void:
@@ -609,6 +744,29 @@ func _mounted_pack_root_for_id(pack_id: String) -> String:
 	return ""
 
 
+func _mounted_pack_root_hosting_faction(faction: String) -> String:
+	## Loaded-state twin of the slice's _pack_root_hosting_faction. A composed
+	## multi-faction pack is its own host: it carries the shared base surfaces
+	## (map, HUD dock, soldier capability) plus every faction it was built from,
+	## so its id is `bfme2-<a>-<b>-…-vslice` rather than the historical
+	## single-faction literal. `factionImportCoverage` in pack.json — which
+	## pack_meta carries verbatim — is the property the gate actually needs.
+	var slug := faction.strip_edges().to_lower()
+	if slug == "":
+		return ""
+	for meta_value in (_content_db.get("pack_meta") as Array):
+		var meta := meta_value as Dictionary
+		var coverage: Variant = meta.get("factionImportCoverage", [])
+		if typeof(coverage) != TYPE_ARRAY:
+			continue
+		for row_value in coverage as Array:
+			if typeof(row_value) != TYPE_DICTIONARY:
+				continue
+			if String((row_value as Dictionary).get("faction", "")).strip_edges().to_lower() == slug:
+				return String(meta.get("root", ""))
+	return ""
+
+
 func _men_pack_gate_error() -> String:
 	## The first fail-closed checks retail_vertical_slice runs for the default
 	## Men manifest: soldier/horde/map bundle documents, the soldier animation
@@ -617,18 +775,27 @@ func _men_pack_gate_error() -> String:
 	var horde := _content_db.call("get_bundle_object", SliceScript.SOLDIER_HORDE_ID) as Dictionary
 	var map_definition := _content_db.call("get_bundle_map", SliceScript.MAP_ID) as Dictionary
 	if member.is_empty() or horde.is_empty() or map_definition.is_empty():
-		return "the private bfme2-men-vslice pack is not selected (run run_importer.bat)"
+		return "no host content pack providing the %s faction is selected (run run_importer.bat)" % FactionManifestScript.DEFAULT_FACTION
 	var capability := _content_db.call("get_animation_capability", String(member.get("animationCapabilityId", ""))) as Dictionary
 	if capability.is_empty():
-		return "the bfme2-men-vslice pack soldier animation capability is missing"
+		return "the host pack soldier animation capability is missing"
 	# Host-pack assertion mirrors the slice (retail_vertical_slice.gd, "Resolve
-	# the asserted host pack by id"): the pack resolves BY ID over the mounted
-	# set, never through the member document's pack root. Supplements and other
+	# the asserted host pack by id"): the pack resolves over the mounted set,
+	# never through the member document's pack root. Supplements and other
 	# active faction packs legitimately carry their own copy of the shared base
 	# bundle objects, so the shared-id winner can be another mounted pack while
-	# the men host pack is present and the slice boots fine.
-	if _mounted_pack_root_for_id(FactionManifestScript.DEFAULT_PACK_ID) == "":
-		return "the %s pack is not mounted by the current content selection" % FactionManifestScript.DEFAULT_PACK_ID
+	# the host pack is present and the slice boots fine.
+	#
+	# The id `bfme2-men-vslice` is only the single-faction pack's name; a
+	# composed pack is `bfme2-men-elves-…-vslice` and hosts Men just as fully.
+	# Match on the id first (fast path for the historical pack), then fall back
+	# to pack.json's `factionImportCoverage`, which is what "this pack provides
+	# the faction and its host surfaces" actually means.
+	if (
+		_mounted_pack_root_for_id(FactionManifestScript.DEFAULT_PACK_ID) == ""
+		and _mounted_pack_root_hosting_faction(FactionManifestScript.DEFAULT_FACTION) == ""
+	):
+		return "the %s faction is not mounted by the current content selection (no mounted pack declares it)" % FactionManifestScript.DEFAULT_FACTION
 	return ""
 
 
@@ -960,18 +1127,31 @@ func _collect_stage_buttons() -> void:
 
 
 func _connect_actions() -> void:
-	solo_btn.pressed.connect(func() -> void: _show_page(PAGE_SOLO))
-	multiplayer_btn.pressed.connect(func() -> void: _show_page(PAGE_MULTIPLAYER))
-	options_btn.pressed.connect(_on_options)
+	tutorials_btn.tooltip_text = BAR_TOOLTIPS["tutorials"]
+	solo_btn.tooltip_text = BAR_TOOLTIPS["solo"]
+	multiplayer_btn.tooltip_text = BAR_TOOLTIPS["multiplayer"]
+	options_btn.tooltip_text = BAR_TOOLTIPS["options"]
+	quit_btn.tooltip_text = BAR_TOOLTIPS["quit"]
+	# MY HEROES is a retail bar entry with no Open BFME feature behind it. It
+	# stays on the bar (REF-07 order is part of the shell's shape) but is
+	# visibly disabled and says why rather than doing nothing when clicked.
+	my_heroes_btn.disabled = true
+	my_heroes_btn.tooltip_text = "%s - Create-A-Hero is not implemented in Open BFME yet" % BAR_TOOLTIPS["my_heroes"]
+	tutorials_btn.pressed.connect(_toggle_shell_flyout.bind("tutorials"))
+	solo_btn.pressed.connect(_toggle_shell_flyout.bind("solo"))
+	options_btn.pressed.connect(_toggle_shell_flyout.bind("options"))
+	# MULTIPLAYER opens the NETWORK panel directly: REPLAYS and ONLINE (REF-01)
+	# have no converted implementation and NETWORK is the sole live route, so a
+	# one-live-row flyout would only add a click.
+	multiplayer_btn.pressed.connect(func() -> void:
+		_close_shell_flyouts()
+		_show_page(PAGE_MULTIPLAYER))
 	quit_btn.pressed.connect(func() -> void: get_tree().quit())
 	multiplayer_flyout.host_requested.connect(_on_multiplayer_host)
 	multiplayer_flyout.join_requested.connect(_on_multiplayer_join)
 	multiplayer_flyout.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
 	multiplayer_lobby.launch_confirmed.connect(_on_lobby_launch_confirmed)
 	multiplayer_lobby.leave_requested.connect(_on_lobby_leave)
-	sub_solo_btn.pressed.connect(func() -> void: _show_page(PAGE_SOLO))
-	sub_options_btn.pressed.connect(_on_options)
-	sub_quit_btn.pressed.connect(func() -> void: get_tree().quit())
 	solo_flyout.army_changed.connect(_refresh_skirmish_launch_state)
 	solo_flyout.color_changed.connect(_on_color_changed)
 	solo_flyout.rows_changed.connect(_on_rows_changed)
@@ -1014,10 +1194,8 @@ func _show_page(page: String) -> void:
 	_set_nodes_visible(_options_page_nodes(), page == PAGE_OPTIONS)
 	_set_nodes_visible(_developer_page_nodes(), page == PAGE_DEVELOPER)
 	_set_nodes_visible(_stats_page_nodes(), page == PAGE_STATS)
-	menu_frame.visible = page != PAGE_DEVELOPER
-	# Subpage nav is a thin alternate strip — keep it off when the main bottom
-	# bar is the intended chrome so both bars never stack and fight input.
-	subpage_nav.visible = false
+	# Upward flyouts belong to the bar; any page change dismisses them.
+	_close_shell_flyouts()
 	if _nav_diamonds != null:
 		_nav_diamonds.queue_redraw()
 	# Developer tools remain deliberately absent from the player-facing surface;
@@ -1049,7 +1227,10 @@ func _show_page(page: String) -> void:
 
 
 func _main_page_nodes() -> Array[Control]:
-	return [main_heading, solo_btn, multiplayer_btn, options_btn, quit_btn]
+	var nodes: Array[Control] = []
+	for button in _bar_buttons():
+		nodes.append(button)
+	return nodes
 
 
 func _solo_page_nodes() -> Array[Control]:
@@ -1227,10 +1408,31 @@ func _on_tests() -> void:
 	print(report)
 
 
+func _unhandled_input(event: InputEvent) -> void:
+	## Clicking the backdrop dismisses an open bar flyout, matching retail where
+	## the list closes as soon as the pointer commits anywhere else. Presses that
+	## land on a flyout row or a bar button are consumed by those buttons and
+	## never reach here.
+	if not _shell_flyout_is_open():
+		return
+	var mouse := event as InputEventMouseButton
+	if mouse == null or not mouse.pressed:
+		return
+	for button in _bar_buttons():
+		if button.visible and button.get_global_rect().has_point(mouse.global_position):
+			return
+	_close_shell_flyouts()
+	get_viewport().set_input_as_handled()
+
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event.pressed or event.echo:
 		return
-	if event.keycode == KEY_ESCAPE and current_page == PAGE_MP_LOBBY:
+	if event.keycode == KEY_ESCAPE and _shell_flyout_is_open():
+		# An open bar flyout is the innermost surface; ESC dismisses it first.
+		_close_shell_flyouts()
+		get_viewport().set_input_as_handled()
+	elif event.keycode == KEY_ESCAPE and current_page == PAGE_MP_LOBBY:
 		# Escaping the lobby is a LEAVE, never a silent page swap: the session
 		# must close (notified disconnect) or the peer would wait forever.
 		multiplayer_lobby._on_leave_pressed()

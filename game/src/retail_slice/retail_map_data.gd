@@ -7,10 +7,15 @@ extends RefCounted
 ## this class validates those files and exposes a small source-derived runtime
 ## view to the private retail slice.
 
-# 8 MiB: the provenance manifest scales with pack file count (the M3 full-Men
-# pack's 2,362-file inventory is ~2.2 MiB); keep the bound fail-closed but
-# leave headroom for the remaining faction growth.
-const MAX_DOCUMENT_BYTES := 8 * 1024 * 1024
+# 64 MiB: the largest pack document is provenance/manifest.json, which scales
+# linearly with composed faction count (~2.6 MiB and ~1,730 cooked files per
+# faction). Measured: single-faction Men v-slice = 5,087,289 bytes over 5,277
+# files; the six-faction (men/elves/dwarves/isengard/mordor/wild) v-slice =
+# 15,501,461 bytes over 15,657 files. The old 8 MiB bound already sat at 64%
+# with Men alone and rejected any second faction ("invalid or unbounded retail
+# provenance document"). 64 MiB is a resource-exhaustion guard, not a semantic
+# limit: it still fails closed, with room for roughly 24 composed factions.
+const MAX_DOCUMENT_BYTES := 64 * 1024 * 1024
 const MAX_TERRAIN_CELLS := 1_000_000
 const MAX_TERRAIN_BINARY_BYTES := MAX_TERRAIN_CELLS * 4
 const MAX_TERRAIN_TEXTURES := 256
@@ -35,7 +40,12 @@ const MAX_ROAD_MATERIALS := 256
 const MAX_ROAD_TEXTURE_DIMENSION := 4096
 const MAX_ROAD_TEXTURE_BYTES := 16 * 1024 * 1024
 const MAX_ROAD_TEXTURE_TOTAL_BYTES := 64 * 1024 * 1024
-const MAX_PROVENANCE_BUNDLE_FILES := 20_000
+# Bundle inventory scales with composed faction count: measured 5,277 rows for
+# the single-faction Men v-slice and 15,655 for the six-faction v-slice
+# (~1,730 files per added faction). 20,000 would have run out at ~8 factions;
+# 65,536 keeps the guard hard while covering a full 7-faction pack plus the
+# remaining maps.
+const MAX_PROVENANCE_BUNDLE_FILES := 65_536
 const LOCAL_START_SEPARATION := 76.0
 const FORD_CORRIDOR_DILATION_CELLS := 5
 const MAX_ROUTE_CELLS := 1024

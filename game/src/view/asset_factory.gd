@@ -514,9 +514,11 @@ static func _is_private_retail_definition(definition: Dictionary) -> bool:
 		return false
 	if _private_retail_pack_cache.has(pack_root):
 		return bool(_private_retail_pack_cache[pack_root])
-	var pack_path := ModLoader.resolve_pack_path(pack_root, "pack.json")
-	var pack_value: Variant = ModLoader._read_json(pack_path)
-	var result := typeof(pack_value) == TYPE_DICTIONARY and String((pack_value as Dictionary).get("id", "")) == "bfme2-men-vslice"
+	# The question is "did this definition come from a converted retail pack?",
+	# not "is the pack id the historical single-faction literal". A composed
+	# multi-faction pack is id'd `bfme2-<a>-<b>-…-vslice`, so the old literal
+	# match silently demoted every non-Men faction to synthetic kit art.
+	var result := ModLoader.pack_is_retail_import(pack_root)
 	_private_retail_pack_cache[pack_root] = result
 	return result
 

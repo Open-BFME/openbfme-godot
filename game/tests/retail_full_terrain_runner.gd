@@ -38,7 +38,18 @@ func _run() -> void:
 	var selected_map_value: Variant = mod_loader._read_json(selected_map_path) if selected_map_path != "" else null
 	var selected_map_definition: Dictionary = (selected_map_value as Dictionary).duplicate(true) if typeof(selected_map_value) == TYPE_DICTIONARY else {}
 	_check("currently_selected_private_map_pack", selected_pack_root != "" and not selected_pack_root.begins_with("res://") and DirAccess.dir_exists_absolute(selected_pack_root) and selected_map_path != "" and mod_loader.path_is_within(selected_pack_root, selected_map_path), selected_pack_root)
-	_check("selected_pack_is_men_vertical_slice", typeof(selected_pack_value) == TYPE_DICTIONARY and String((selected_pack_value as Dictionary).get("id", "")) == "bfme2-men-vslice" and String(selected_map_definition.get("id", "")) == MAP_ID)
+	# Host identity is "the selected pack is a converted retail pack that
+	# provides Men", not "its id is the single-faction literal": composed packs
+	# are id'd `bfme2-<a>-<b>-…-vslice` and declare their factions in pack.json
+	# `factionImportCoverage`.
+	_check(
+		"selected_pack_hosts_men_vertical_slice",
+		typeof(selected_pack_value) == TYPE_DICTIONARY
+			and bool(mod_loader.call("pack_is_retail_import", selected_pack_root))
+			and bool(mod_loader.call("pack_provides_faction", selected_pack_root, "men"))
+			and String(selected_map_definition.get("id", "")) == MAP_ID,
+		selected_pack_root
+	)
 	if selected_map_definition.is_empty() or selected_pack_root == "" or typeof(selected_pack_value) != TYPE_DICTIONARY:
 		_finish()
 		return

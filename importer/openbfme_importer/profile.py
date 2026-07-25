@@ -46,13 +46,25 @@ ALLOWED_CONVERTERS = {
     "sage-terrain-materials",
 }
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-MAX_PROFILE_BYTES = 16 * 1024 * 1024
+# Resource-exhaustion bound on profile JSON parsing, not a semantic limit on
+# how much a pack may contain. A single-faction slice profile is ~5-6 MB, so
+# the old 16 MiB ceiling silently capped a pack at roughly three factions; one
+# composed from all six BFME2 factions is ~22 MB and a cross-faction skirmish
+# needs every side in the same pack. 64 MiB keeps the guard meaningful against
+# a hostile file while leaving headroom for a full six-faction compose.
+MAX_PROFILE_BYTES = 64 * 1024 * 1024
 # The exact Fords closure alone is now larger than the original provisional
 # 256-rule ceiling once neutral lifecycles and particle definitions are kept as
 # independent, auditable resources.  Keep a hard bound, but size it for one
 # complete retail map/faction expansion instead of forcing unrelated leaves
 # into ambiguous wildcard owners. The byte bound remains independent.
-MAX_RESOURCES = 4_096
+# Raised from 4_096 once packs stopped being single-faction. That ceiling was
+# sized for "one complete retail map/faction expansion" and a single faction
+# already spends ~3_167 of it (Men), so any two-faction compose blew it —
+# which is why a cross-faction skirmish was never cookable. All six BFME2
+# factions compose to ~12_570. Still a hard bound, just sized for the pack
+# shape the project actually needs. The byte bound remains independent.
+MAX_RESOURCES = 32_768
 MAX_PATTERNS_PER_RESOURCE = 256
 MAX_PATH_LENGTH = 512
 W3D_DEPENDENCY_CONVERTERS = {
