@@ -12,6 +12,7 @@ from openbfme_importer.map_profile import (
     _slug,
     build_five_map_profile,
     build_skirmish_map_profile,
+    classify_map_directory,
     discover_registry_map_targets,
 )
 from openbfme_importer.profile import ImportProfile, resolve_profile
@@ -80,10 +81,27 @@ class FiveMapProfileTests(unittest.TestCase):
             "art/terrain/testgrass.tga",
         ])
 
-    def test_missing_exact_companion_fails_closed(self) -> None:
+    def test_absent_optional_companion_is_omitted_never_substituted(self) -> None:
+        # Only the map binary is required. 24 of the 68 BFME2 map directories
+        # and 60 of the 179 RotWK ones ship no ``_pic.tga`` at all, so a missing
+        # preview drops its resource and its catalog field instead of rejecting
+        # the map or pointing at another map's art.
         with tempfile.TemporaryDirectory() as raw:
-            with self.assertRaisesRegex(ValueError, "map preview"):
-                build_five_map_profile(_catalog(Path(raw), omit_preview=True))
+            profile = build_five_map_profile(_catalog(Path(raw), omit_preview=True))
+
+        self.assertEqual(len(profile["resources"]), 20)
+        rows = profile["runtime_data"]["data/maps.json"]["maps"]
+        without_preview = [row for row in rows if "preview" not in row]
+        self.assertEqual(len(without_preview), 1)
+        self.assertEqual(len(rows), 5)
+        previews = {
+            row["output"]
+            for row in profile["resources"]
+            if str(row["id"]).endswith("-preview")
+        }
+        self.assertNotIn(
+            f"assets/ui/maps/{FIVE_MAP_TARGETS[0].slug}-preview.png", previews
+        )
 
 
 def _mapcache_record(path: str, *, players: int, official: bool = True) -> str:
@@ -134,9 +152,32 @@ class SkirmishMapDiscoveryTests(unittest.TestCase):
     def test_slug_and_display_name_strip_the_retail_directory_prefix(self) -> None:
         self.assertEqual(_slug("map mp fords of isen ii"), "fords-of-isen-ii")
         self.assertEqual(_display_name("map mp fords of isen ii"), "Fords of Isen II")
-        self.assertEqual(_slug("map wor mount doom"), "mount-doom")
         self.assertEqual(_display_name("map wor mount doom"), "Mount Doom")
         self.assertEqual(_display_name("map mp grey mountains"), "Grey Mountains")
+        # Only the skirmish set keeps a bare slug, because retail reuses map
+        # names across categories: BFME2 ships good/evil/wor Erebor, and RotWK
+        # ships both ``map ang fornost`` and ``map wor ang fornost``.
+        self.assertEqual(_slug("map wor mount doom"), "wor-mount-doom")
+        self.assertEqual(_slug("map good erebor"), "good-erebor")
+        self.assertEqual(_slug("map evil erebor"), "evil-erebor")
+        self.assertEqual(_slug("map ang fornost"), "ang-fornost")
+        self.assertEqual(_slug("map wor ang fornost"), "wor-ang-fornost")
+        self.assertEqual(_slug("cin fornost - witchking fire"), "cin-fornost-witchking-fire")
+        self.assertEqual(_slug("map advanced tutorial"), "advanced-tutorial")
+
+    def test_every_retail_directory_family_classifies(self) -> None:
+        self.assertEqual(classify_map_directory("map mp evendim"), "skirmish")
+        self.assertEqual(classify_map_directory("map wor rivendell"), "wotr-battle")
+        self.assertEqual(classify_map_directory("map wor ang fornost"), "wotr-battle")
+        self.assertEqual(classify_map_directory("map good erebor"), "campaign")
+        self.assertEqual(classify_map_directory("map evil shire"), "campaign")
+        self.assertEqual(classify_map_directory("map ang carn dum"), "campaign")
+        self.assertEqual(
+            classify_map_directory("cin barrow downs - sorcerer"), "cinematic"
+        )
+        self.assertEqual(classify_map_directory("map beginner tutorial"), "tutorial")
+        self.assertEqual(classify_map_directory("shellmap1"), "shell")
+        self.assertEqual(classify_map_directory("createahero"), "system")
 
     def test_discovery_takes_the_map_set_from_the_registry_and_records_stale_rows(
         self,
@@ -158,14 +199,34 @@ class SkirmishMapDiscoveryTests(unittest.TestCase):
             ],
         )
 
-    def test_missing_preview_rejects_only_the_map_that_lacks_it(self) -> None:
+    def test_missing_preview_keeps_the_map_and_drops_only_its_preview(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             catalog = _skirmish_catalog(Path(raw), drop_preview_for="map mp alpha vale")
             targets, rejections = discover_registry_map_targets(catalog)
+            profile = build_skirmish_map_profile(catalog)
 
-        self.assertEqual([target.slug for target in targets], ["bravo-ridge-ii"])
-        statuses = {row["status"] for row in rejections}
-        self.assertIn("missing-required-companion", statuses)
+        self.assertEqual(
+            [target.slug for target in targets], ["alpha-vale", "bravo-ridge-ii"]
+        )
+        self.assertNotIn("missing-required-companion", {row["status"] for row in rejections})
+        rows = {
+            str(row["id"]): row
+            for row in profile["runtime_data"]["data/maps.json"]["maps"]
+        }
+        self.assertNotIn("preview", rows["bfme2.map.alpha-vale"])
+        self.assertIn("preview", rows["bfme2.map.bravo-ridge-ii"])
+
+    def test_non_skirmish_categories_are_discoverable_and_labelled(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            catalog = _skirmish_catalog(Path(raw))
+            wotr, _ = discover_registry_map_targets(
+                catalog, categories=("wotr-battle",)
+            )
+
+        # The WOTR battle map is registered isMultiplayer and was previously
+        # invisible only because discovery filtered on the ``map mp`` prefix.
+        self.assertEqual([target.slug for target in wotr], ["wor-scenario-keep"])
+        self.assertEqual([target.category for target in wotr], ["wotr-battle"])
 
     def test_skirmish_profile_publishes_a_catalog_with_authored_player_counts(
         self,

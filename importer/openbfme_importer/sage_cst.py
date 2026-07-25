@@ -344,10 +344,17 @@ _STATE_BLOCK_KEYS = frozenset(
         # SoundUpgrade blocks (voice overrides gated on an upgrade).
         "soundupgrade",
         "soundstate",
+        # RotWK 2.01 units carry an End-terminated auto-resolve threat
+        # breakdown (``ThreatBreakdown = X`` wrapping ``AIKindOf``), which is
+        # assignment-shaped and appears in 31 shipped object files.
+        "threatbreakdown",
         "transitionstate",
         "weaponset",
     }
 )
+#: Assignment values that name an End-terminated block type instead of a scalar
+#: (``Radius = FCurve`` in object/system/system.ini's PartTheHeavensUpdate).
+_BLOCK_VALUED_TYPES = frozenset({"fcurve"})
 _BARE_BLOCK_KINDS = frozenset(
     {
         "defaultmodelconditionstate",
@@ -639,13 +646,24 @@ def _looks_like_module(key: str, tokens: tuple[str, ...]) -> bool:
 def _assignment_is_block(
     key: str,
     tokens: tuple[str, ...],
+    line: _Line | None = None,
+    following: _Line | None = None,
 ) -> bool:
     folded = key.casefold()
-    return (
+    if (
         folded in _STATE_BLOCK_KEYS
         or (folded == "addemotion" and bool(tokens) and tokens[0].casefold() == "override")
         or _looks_like_module(key, tokens)
-    )
+    ):
+        return True
+    # Retail authors a handful of assignment-shaped sub-blocks whose *value*
+    # names the block type rather than the key: the animation curves inside
+    # PartTheHeavensUpdate (``Radius = FCurve``, ``Opacity = FCurve``,
+    # ``Angle = FCurve``) carry End-terminated ``Key = T:.. V:..`` bodies.  The
+    # value is the only deterministic signal; a generic indentation guess was
+    # measured to misfire on retail whitespace noise and is deliberately not
+    # used here.
+    return len(tokens) == 1 and tokens[0].casefold() in _BLOCK_VALUED_TYPES
 
 
 def _bare_is_block(tokens: tuple[str, ...], line: _Line, following: _Line | None) -> bool:
@@ -858,7 +876,7 @@ def _parse_scope(
         if assignment is not None:
             key, value = assignment
             tokens = _split_header_tokens(value, virtual_path=virtual_path, line=line.number)
-            if _assignment_is_block(key, tokens):
+            if _assignment_is_block(key, tokens, line, following):
                 kind, instance_tag, header_key, header_tokens, conditions = _make_block_header(
                     line.text, virtual_path=virtual_path, line=line.number
                 )
@@ -988,6 +1006,52 @@ def _parse_scope(
         index += 1
 
 
+def _skip_foreign_top_level(
+    lines: list[_Line],
+    start: int,
+    *,
+    virtual_path: str,
+) -> int:
+    """Skip one non-Object top-level SAGE declaration and return the next index.
+
+    Retail INIs freely mix Object definitions with other top-level families
+    (``FXParticleSystem``, ``FXList``, ``Armor``, ``CommandButton``,
+    ``AIData``...).  Those families are ``End``-terminated and may nest their
+    own ``End``-terminated sub-blocks, for example the ``System`` /
+    ``Color = DefaultColor`` / ``Update = DefaultUpdate`` sub-blocks inside an
+    ``FXParticleSystem``.  Advancing one line at a time therefore leaks those
+    inner ``End`` tokens into the top level, where they were misreported as a
+    stray ``End`` (the historic
+    ``object/cinematic/cinematicobjects.ini:1695`` failure, which is the
+    ``System`` sub-block terminator, not an unbalanced file).
+
+    This reader deliberately extracts no semantics from foreign families, so it
+    only has to find where one ends.  Retail authors terminate a top-level
+    declaration with an ``End`` at the declaration's own indent and indent every
+    nested ``End`` further, so the region ends at the first ``End`` whose indent
+    does not exceed the header's.  An Object-family header or include directive
+    at that same outer indent also ends the region without being consumed, so a
+    family whose ``End`` is absent or misindented can never swallow a real
+    Object definition.
+    """
+
+    header = lines[start]
+    index = start + 1
+    while index < len(lines):
+        line = lines[index]
+        if line.indent > header.indent:
+            index += 1
+            continue
+        if line.text.casefold() == "end":
+            return index + 1
+        if _OBJECT_HEADER.fullmatch(line.text) or _INCLUDE_DIRECTIVE.fullmatch(
+            line.text
+        ):
+            return index
+        index += 1
+    return index
+
+
 def parse_sage_document(
     source: bytes,
     virtual_path: str,
@@ -1067,11 +1131,17 @@ def parse_sage_document(
                 f"stray script delimiter at {normalized_path}:{line.number}: "
                 f"{line.text}"
             )
-        # Other top-level SAGE families and preprocessor declarations are not
-        # object definitions.  They remain outside this deliberately bounded
-        # CST and cannot affect object End balancing because parsing begins only
-        # after an Object-family header.
-        index += 1
+        # Other top-level SAGE families are not object definitions and stay
+        # outside this deliberately bounded CST, but they are End-terminated and
+        # nest their own End-terminated sub-blocks.  Skipping the whole balanced
+        # region keeps those inner End tokens from surfacing as a stray End at
+        # the top level.  Preprocessor directives are single lines.
+        if line.text.startswith("#"):
+            index += 1
+            continue
+        index = _skip_foreign_top_level(
+            lines, index, virtual_path=normalized_path
+        )
 
     return SageDocument(normalized_path, tuple(items))
 

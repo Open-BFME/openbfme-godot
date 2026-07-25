@@ -1,12 +1,13 @@
 # Engine design notes — scaling Open-BFME to a full port
 
-> **Superseded:** accepted boundaries live in `docs/ARCHITECTURE.md` and
-> `docs/SIMULATION_PROTOCOL.md`. These notes are not an implementation plan.
+> **Scaling doctrine, not an implementation plan.** Accepted system boundaries
+> live in [ARCHITECTURE.md](ARCHITECTURE.md) and
+> [SIMULATION_PROTOCOL.md](SIMULATION_PROTOCOL.md); this document is the
+> performance and data-shape reasoning behind them.
 
 **Updated:** 2026-07-16
-**Scope:** architecture and performance doctrine for growing the Men/Fords
-vertical slice into a full multi-faction BFME2 port. These are standing
-decisions; deviations need a written reason.
+**Scope:** architecture and performance doctrine for the multi-faction port.
+These are standing decisions; deviations need a written reason.
 
 ## 1. The prime directive: factions are data, not code
 

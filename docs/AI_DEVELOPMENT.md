@@ -45,7 +45,7 @@ implementation from proof.
 
 A compatibility claim may require several forms of evidence:
 
-- effective BFME2 1.06 source and dependency evidence;
+- effective retail source and dependency evidence;
 - deterministic importer output and provenance;
 - focused regression or malicious-input tests;
 - runtime behavior;

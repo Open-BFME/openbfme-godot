@@ -1131,3 +1131,120 @@ End
         "LegacyOnlyParticles": "ParticleSystem",
         "NotAnywhereParticles": "none",
     }
+
+
+def test_effect_geometry_rides_the_recipe_and_the_runtime_document() -> None:
+    """A summoned member's model reaches the runtime as a real pack GLB.
+
+    Before this lane the spellbook recipe had no W3D stage at all, so a
+    summoned battalion arrived at the presentation bridge with no mesh path and
+    fell back to the synthetic multi-part kit. The horde container the OCL
+    actually creates draws nothing itself, so it binds to its authored
+    MemberObject's model; the particle-only ping stays invisible.
+    """
+
+    from openbfme_importer.playable_unit_pack_compiler import _digest as _closure_digest
+
+    descriptor = _compile()
+    closure: dict[str, object] = {
+        "schema": "openbfme.retail-visual-closure",
+        "schemaVersion": 1,
+        "targets": [{"name": "TestSummonedMember", "status": "resolved"}],
+        "exactLeaves": [
+            {
+                "targetObject": "TestSummonedMember",
+                "identifier": "TestMember_SKN",
+                "kind": "model",
+                "usage": "model",
+                "status": "resolved",
+                "conditions": [],
+                "physicalVirtualPaths": ["art/w3d/tt/testmember_skn.w3d"],
+                "provenance": {
+                    "definingObject": "TestSummonedMember",
+                    "virtualPath": "data/ini/object/system/test_system.ini",
+                    "line": 1,
+                    "scopePath": ["W3DScriptedModelDraw ModuleTag_01"],
+                },
+            }
+        ],
+        "semanticLeaves": [],
+        "unresolved": {"graphDiagnostics": [], "references": []},
+        "scannedW3d": [
+            {
+                "virtualPath": "art/w3d/tt/testmember_skn.w3d",
+                "byteLength": 2048,
+                "headerIds": {"hierarchyIds": ["TESTMEMBER_SKL"], "animationIds": []},
+                "modelHierarchyIdentifiers": [],
+                "embeddedAnimationChannelCount": 0,
+            }
+        ],
+        "w3dDependencyClosure": {
+            "embeddedTextures": [
+                {
+                    "sourceW3dVirtualPath": "art/w3d/tt/testmember_skn.w3d",
+                    "identifier": "testmember.tga",
+                    "status": "resolved",
+                    "physicalVirtualPaths": ["art/textures/testmember.tga"],
+                }
+            ]
+        },
+        "summary": {"ready": True},
+    }
+    closure["aggregateSha256"] = _closure_digest(closure)
+
+    baseline = compile_spellbook_pack_recipe(descriptor)
+    recipe = compile_spellbook_pack_recipe(
+        descriptor, visual_closures={"TestSummonedMember": closure}
+    )
+    validate_spellbook_pack_recipe(recipe)
+    # Absent closures keep the pre-visual bytes exactly.
+    assert "visualBindings" not in baseline["runtimeRegistration"]
+    assert len(recipe["resources"]) == len(baseline["resources"]) + 2
+
+    model = next(
+        row
+        for row in recipe["resources"]
+        if row["kind"] == "model"
+    )
+    assert model["converter"] == "w3d-hierarchical"
+    assert model["output"] == (
+        "assets/models/spellbook/testspellbook/testsummonedmember.glb"
+    )
+
+    objects = recipe["runtimeRegistration"]["visualBindings"]["objects"]
+    assert objects["TestSummonedMember"]["status"] == "model"
+    assert objects["TestSummonedHorde"] == {
+        "status": "horde-member",
+        "memberObjectId": "TestSummonedMember",
+        "resourceId": model["id"],
+        "model": model["output"],
+        "sourceW3d": "art/w3d/tt/testmember_skn.w3d",
+        "converter": "w3d-hierarchical",
+    }
+    assert objects["TestHealPing"]["status"] == "authored-invisible"
+
+    runtime = compose_spellbook_runtime_document(descriptor, recipe)
+    presented = runtime["registration"]["presentation"]["visualBindings"]["objects"]
+    assert presented["TestSummonedHorde"]["model"] == model["output"]
+
+
+def test_recipe_rejects_a_visual_binding_with_no_owning_resource() -> None:
+    descriptor = _compile()
+    recipe = compile_spellbook_pack_recipe(descriptor)
+    tampered = deepcopy(recipe)
+    tampered["runtimeRegistration"]["visualBindings"] = {
+        "objects": {
+            "TestSummonedMember": {
+                "status": "model",
+                "resourceId": "not-a-resource",
+                "model": "assets/models/spellbook/testspellbook/x.glb",
+            }
+        },
+        "summary": {},
+    }
+    tampered.pop("recipeSha256")
+    from openbfme_importer.spellbook_pack_compiler import _digest as _recipe_digest
+
+    tampered["recipeSha256"] = _recipe_digest(tampered)
+    with pytest.raises(SpellbookPackCompilerError):
+        validate_spellbook_pack_recipe(tampered)

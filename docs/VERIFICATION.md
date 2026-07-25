@@ -12,7 +12,7 @@
 Compilation, asset presence, parsed INI values and passing helper assertions are not
 parity by themselves. A claim is supported by the smallest relevant combination of:
 
-- original BFME2 1.06 observation;
+- original-game observation;
 - retail source/effective-view evidence;
 - language-independent command/state trace;
 - focused reproduced-defect test;

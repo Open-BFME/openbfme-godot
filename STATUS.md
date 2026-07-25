@@ -1,141 +1,136 @@
-Owner: Integration owner
-Owns: Volatile repository state, selected private-pack identity, active blockers, and latest verified gate results.
-Does not own: Product scope, architecture, milestone definitions, or historical evidence.
-Last audited base commit: `ad370cc9b02bdec600564cf1c606e70833faa97a`
-Audit date: 2026-07-22
-Update trigger: Selection, worktree state, blocker, capability, or gate result changes.
-Validation: Compare this file with the current commit, private selection and oracle metadata, and the named focused runners.
-
 # OpenBFME status
 
-## Evidence boundary
+**Owns:** what is verified right now, and what is blocked.
+**Does not own:** product scope ([DIRECTION.md](DIRECTION.md)) or engineering
+sequence ([PLAN.md](PLAN.md)).
+**Audited:** 2026-07-25, on branch `claude/rts-codebase-audit-overhaul-0be13f`.
 
-This is an audit of a large, dirty development working tree based on
-`ad370cc9`. Kimi's UI rewrite is actively changing covered files, so there is no
-stable current runtime identity. Results below are explicitly diagnostic and
-must not approve a milestone, release, or parity claim.
+Every number on this page was produced by running the command shown, in this
+worktree, during this audit. Nothing is carried forward from an older status
+document. If a figure is not here, it was not measured — treat any number found
+elsewhere in the tree as historical, including the counts preserved inside the
+consolidated `docs/RETAIL_*` references.
 
-The product target is BFME2 1.06 skirmish compatibility. Campaign material and
-War of the Ring are outside project scope.
+## Gate results
 
-## Audited identity
+Run as `<godot> --headless --path game --script res://tests/<runner>.gd`. All
+runs resolved content through the workspace root
+(`[ModLoader] Using workspace content root`), **not** a stale durable user pack.
 
-- Base commit: `ad370cc9b02bdec600564cf1c606e70833faa97a`.
-- Active private pack recorded on 2026-07-22:
-  `bfme2-men-vslice/91f1b104bdc70c72c026b2577e98bb75411f5747cf4cbc8c64d91fc933bcd6cf`.
-- Selection SHA-256:
-  `6BA7B1CB8073DE9A0448228CEA720C4C0F78139B9AEE80C65DA82C8957D00FF2`.
-- Godot: `4.7.stable.official.5b4e0cb0f`, executable SHA-256
-  `D8055FB8C7E7F5010D7439EC69BE051554055DAE55A265F8647BD7301C34161C`.
-- A retained diagnostic run began with code snapshot
-  `500313D6EA50A1D159B8D761259F30ADF37AB6DD25BEDBFECD4D6E766748BA20`
-  and ended with
-  `632B6972ECA2732D26FAE0F64BCB205705856A5A593721411C5171FB2764DA82`.
-  Because those digests differ, the run is invalid as current verification.
+| Runner | Passed | Failed |
+|---|---:|---:|
+| `retail_slice_runner.gd` | 352 | 0 |
+| `retail_spellbook_runner.gd` | 195 | 0 |
+| `retail_pack_runner.gd` | 178 | 0 |
+| `retail_hero_ability_runner.gd` | 134 | 0 |
+| `retail_map_script_runner.gd` | 85 | 0 |
+| `menu_skirmish_runner.gd` | 80 | **2** |
+| `options_pause_runner.gd` | 15 | 0 |
+| `retail_builder_construction_runner.gd` | 12 | 0 |
 
-The raw logs and machine-readable receipt remain under the ignored private job
-workspace and are not public-release inputs.
+Importer suite — `python -m pytest importer/tests -q`:
 
-## Surfaces observed in recent code
+```
+2 failed, 1711 passed, 131 skipped, 916 subtests passed
+```
 
-- A skirmish shell modeled on BFME2, six faction entries, five map entries,
-  player colors, start positions, resources, command-point factor, and persistent
-  display/audio/gameplay options.
-- Document-driven faction manifests, rosters, structures, production, upgrades,
-  heroes, powers, and spellbooks.
-- Construction, rally points, production cancellation, combat, stances,
-  formations, cavalry trample, experience, hero abilities/death/revival,
-  selection, commands, control groups, AI production/attacks, and outcomes.
-- Source map plumbing for Fords of Isen II, Rivendell, Mount Doom, Dagorlad, and
-  Mordor, including terrain, water, navigation, minimaps, start positions, and
-  fortress placement.
-- Importer commands for faction census/import/conversion, individual units,
-  spellbooks, five-map profiles, and publication into the private slice.
+## Known failures
 
-Code presence is not runtime success or parity. The active rewrite must settle
-before these surfaces are reverified together.
+Four failing assertions, all long-standing and all honest signals rather than
+flaky tests.
 
-## Unbound diagnostic results
+| Failure | Where |
+|---|---|
+| `map_list_player_counts_from_pack` — the pack reports player counts `[2, 0, 0, 0, 0]` | `menu_skirmish_runner.gd` |
+| `registered_maps_available` | `menu_skirmish_runner.gd` |
+| `test_conversion_converts_units_and_structures_and_is_deterministic` | `importer/tests/test_faction_import.py` |
+| `test_foundation_without_visuals_is_excluded_with_descriptor_evidence` | `importer/tests/test_faction_import.py` |
 
-Before the active UI rewrite moved the covered source identity, the same
-2026-07-22 working session observed the following totals. Exact code and pack
-digests were not retained for each row, so these are historical diagnostics,
-not current verified results:
+The two menu failures are map-content gaps, not shell defects: the maps the menu
+enumerates do not all carry the player-count metadata the shell asks for.
 
-| Runner | Result | Interpretation |
-|---|---:|---|
-| Menu/skirmish shell with selected private packs | 74 passed, 0 failed | The tested shell represented six factions and five maps at that unbound identity |
-| Men retail slice | 337 passed, 3 failed | Broad exercised coverage; armor-counter matrix, ambient idle loop, and early production timing failed |
-| Elves retail slice | 289 passed, 7 failed | Substantial runtime coverage; suite is not green |
-| Dwarves retail slice | 262 passed, 4 failed | Substantial runtime coverage; suite is not green |
-| Isengard retail slice | 263 passed, 5 failed | Substantial runtime coverage; suite is not green |
-| Mordor retail slice | 282 passed, 4 failed | Substantial runtime coverage; suite is not green |
-| Goblins/Wild retail slice | 262 passed, 4 failed | Substantial runtime coverage; suite is not green |
-| Retail spellbook runner | 180 passed, 3 failed | Men tree and casts were broadly exercised; War Chant setup failed for Isengard, Mordor, and Wild |
-| Ranger playable surface | 3 passed, 2 failed | Scene and clips load; typed registration and level-one HUD locking fail |
-| Options/pause surface | 15 passed, 0 failed | Focused assertions pass, but teardown diagnostics remain |
+## Content
 
-Every non-Men faction reproduced its own deterministic replay inside those runs,
-but every pinned battle signature differed from the expected constant. These are
-test failures, not values to repin without review.
+Four packs are present under the workspace content root:
 
-During the identity-bound audit attempt, covered code changed between the start
-and end digests. The Men runner reported `5 passed, 7 failed` after slice
-initialization stopped at faction-roster presentation validation; the menu runner
-reported `74 passed, 0 failed`. Both are retained as race diagnostics only.
+| Pack | Contents |
+|---|---|
+| `bfme2-men-elves-dwarves-isengard-mordor-wild-vslice` | The six BFME2 factions, composed |
+| `rotwk-angmar-vslice` | Angmar, from RotWK 2.01 |
+| `bfme2-skirmish-maps-private` | The cooked skirmish maps |
+| `bfme2-men-vslice` | The original single-faction pack, retained |
 
-## Map state
+**Seven faction slugs** are declared in
+`game/src/retail_slice/retail_faction_manifest.gd`: `men`, `elves`, `dwarves`,
+`isengard`, `mordor`, `wild`, `angmar`.
 
-At an unbound pre-rewrite identity, all five selected maps booted through their focused source-map runner with zero
-map assertions failing. Fords loaded terrain, roads, water, navigation, 1,249
-bound props, and the expected starting structures. Rivendell, Mount Doom,
-Dagorlad, and Mordor loaded source terrain/navigation/start structures but bound
-zero props while reporting large unresolved prop counts. They are bootable
-development maps, not five equally polished battlefields.
+**Eight skirmish maps are cooked**: Evendim, Fords of Isen II, Grey Mountains,
+Harlindon, Tournament Hills, Tournament Udun, Weather Hills, Withered Heath.
 
-## Open blockers
+Coverage across the seven factions is uneven. **Mordor is the largest known
+conversion gap** — its per-faction slice suite carries real failures where the
+other six run clean. No figure is quoted here because the per-faction suites
+were not re-run during this audit; run them to get a current number rather than
+trusting a written one.
 
-- The Men suite is not green and the five other faction suites each fail.
-- The ongoing UI rewrite currently prevents a stable whole-surface verification
-  identity; no public “works today” claim should be promoted until it settles.
-- Pinned battle signatures for all five non-Men factions have drifted.
-- The spellbook and Ranger runners have real failures.
-- Godot reports RID/ObjectDB/instance teardown leaks across the gameplay and map
-  runners, plus animation diagnostics in some runs.
-- Fords is materially ahead of the other four maps in presentation binding.
-- Cross-faction skirmish launch is currently rejected; the shell launches
-  same-faction matchups only.
-- The statistics screen is a visible placeholder rather than tracked gameplay
-  statistics.
-- Final original-game visual approval and the identity-bound long-running
-  reliability gate are not complete.
-- The generated BFME2-wide feature graph, evidence catalog, and coverage matrix
-  are not implemented.
-- Deterministic production networking/dedicated servers and the planned pure C#
-  simulation cutover are not complete.
+## Bounds that used to be single-faction sized
 
-Under repository policy, any required warning, error, leak, or failed assertion
-makes the applicable gate a failure. A runner exiting zero does not override its
-own reported failures.
+Cross-faction skirmish was blocked for a long time by limits sized for one
+faction's content. Those have been raised. Current values in
+`importer/openbfme_importer/profile.py`:
 
-## Next bounded work
+- `MAX_RESOURCES` = 32,768
+- `MAX_PROFILE_BYTES` = 64 MiB
 
-1. Let the active UI rewrite reach a stable owner-approved identity, then rerun
-   the menu, Men, faction, map, spellbook, Ranger, options, and teardown gates
-   with retained logs and exact code/pack/tool digests.
-2. Reconcile the Men armor matrix, ambient idle loop, and production-timing
-   failures against source/original evidence.
-3. Explain rather than blindly repin each faction signature drift, then close
-   the remaining faction-specific failures.
-4. Repair the spellbook and Ranger contract failures and make every runner return
-   a failing process code when it reports failures.
-5. Eliminate teardown leaks and animation errors on required paths.
-6. Bind and validate presentation props for the four non-Fords maps.
-7. Complete identity-bound human visual review and reliability evidence before
-   declaring the first milestone frozen.
+Composed packs are identified as `bfme2-<a>-<b>-…-vslice`. Note that
+`DEFAULT_PACK_ID` in `retail_faction_manifest.gd` is still the literal
+`bfme2-men-vslice`.
 
-## Status discipline
+## Where the implementation differs from the stated target
 
-Changing counts, hashes, timings, benchmark values, and gate outcomes belong
-here or in generated private reports. Architecture and product documents define
-how to measure them but do not copy volatile results.
+Real gaps between [DIRECTION.md](DIRECTION.md)'s product constraints and the
+shipped tree. These are unfinished sequencing, not bugs, and they are recorded
+so nobody reads the direction document as a description of today.
+
+| Direction says | Tree does |
+|---|---|
+| Deterministic authoritative simulation, separable from presentation | The simulation is GDScript under `game/src/retail_slice/`. The C# solution in `engine/` is a parallel lane that the Godot project does not load — `game/` contains no `.csproj`. |
+| Presentation-independent simulation at the production rate | `game/src/core/sim_clock.gd` runs a fixed 10 Hz tick (`TICK_HZ := 10.0`). |
+| RotWK 2.01 is the baseline; campaigns are in scope | `contracts/bfme2-106-product-scope.json` is still the 1.06 contract and still marks `retail-campaigns` as `excluded`. It carries a policy digest and validation tooling, so retargeting it is a deliberate, separate change. |
+
+## Legacy scaffolding still wired in
+
+`game/src/stage1..stage9`, `game/src/proof_stage3..proof_stage9`, the nine
+`scenes/stage*_{arena,lab}.tscn`, and the stage 1-9 proof/visual runners are the
+original proof ladder — roughly 13,000 lines of `game/src`. They are **not**
+dead code:
+
+- `tools/gate-stage10.ps1` chains `gate-stage9.ps1` → … → `gate-stage1.ps1`, and
+  each of those invokes its stage's proof and visual runners.
+- `game/scenes/boot.tscn` carries `Center/Stage1`…`Center/Stage9` buttons.
+  `main_menu.gd::_collect_stage_buttons()` requires them to exist (it uses
+  `get_node`, not `get_node_or_null`) and `_on_stage()` navigates straight to
+  the stage scenes.
+- `tests/stage10_boot_runner.gd` asserts every one of those nine buttons loads
+  its real scene with a script attached.
+
+Retiring this ladder is a legitimate cleanup, but it has to start at the boot
+menu and the gate chain, not at the source directories.
+
+Note that `tests/stage15_menu_runner.gd` is a *current* menu test despite its
+name, and is part of `tools/gate-retail.ps1`. So are `stage11_12_runner.gd`,
+`stage14_15_sim_runner.gd`, and `cli_runner.gd`.
+
+## How to re-verify
+
+```bat
+set OPENBFME_GODOT=C:\Tools\Godot\Godot_v4.7-stable_win64_console.exe
+%OPENBFME_GODOT% --headless --path game --script res://tests/retail_slice_runner.gd
+%OPENBFME_GODOT% --headless --path game --script res://tests/menu_skirmish_runner.gd
+%OPENBFME_GODOT% --headless --path game --script res://tests/options_pause_runner.gd
+python -m pytest importer/tests -q
+```
+
+A runner that prints `Loading DURABLE user pack` instead of
+`Using workspace content root` is reading stale content and its numbers are
+void. A runner reporting failures is a failure even when it exits 0.

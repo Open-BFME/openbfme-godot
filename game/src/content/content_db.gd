@@ -45,6 +45,18 @@ var retail_unit_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
 var trebuchet_runtime: Dictionary = {}
 var spellbook_runtime: Dictionary = {}
+## Effect-object presentation rows registered from every admitted spellbook
+## runtime document's `presentation.visualBindings`: object id -> the binding
+## row the importer emitted (status / model / sourceW3d / memberObjectId).
+## Summoned units, groves and trees are NOT playable-unit documents, so the
+## roster projection never registers them; without this table every summoned
+## object reached AssetFactory with no mesh path and fell back to the synthetic
+## multi-part kit (the "blue units"). Objects retail authors with `Model = None`
+## are recorded here too, as `authored-invisible`, and stay invisible.
+var spellbook_visual_bindings: Dictionary = {}
+## Effect objects a spellbook bound to no converted model, with the importer's
+## verbatim reason. Surfaced for the runners rather than silently substituted.
+var spellbook_unconverted_visuals: Array[String] = []
 var playable_unit_runtimes: Dictionary = {}
 ## Every admitted copy of a playableUnit.* document: casefolded object id to
 ## the load-ordered list of per-pack documents. Shared retail units (the
@@ -123,6 +135,8 @@ func reload() -> void:
 	ranger_runtime.clear()
 	trebuchet_runtime.clear()
 	spellbook_runtime.clear()
+	spellbook_visual_bindings.clear()
+	spellbook_unconverted_visuals.clear()
 	playable_unit_runtimes.clear()
 	playable_unit_runtime_pack_index.clear()
 	bundle_object_pack_index.clear()
@@ -436,8 +450,62 @@ func _load_spellbook_runtimes(root: String, declared: Dictionary) -> void:
 		document["_source"] = ModLoader.resolve_pack_path(root, relative)
 		document["_pack_root"] = root
 		document["_pack_file_key"] = key
+		_register_spellbook_visual_bindings(root, document)
 		spellbook_runtime = document
 		# Last valid wins across packs (matches other registry overwrite policy).
+
+
+func _register_spellbook_visual_bindings(root: String, document: Dictionary) -> void:
+	## Publish one spellbook's converted effect geometry as ordinary bundle
+	## objects so the existing presentation bridge can find it.
+	##
+	## A power's summoned objects are not playable units and have no
+	## playableUnit.* document, so nothing ever put their models in
+	## `bundle_objects`; every summon presented as the synthetic kit mesh. The
+	## importer now converts the models retail authors on those objects and
+	## records them here, including the horde-container rows whose presented art
+	## is their authored MemberObject's (a horde marker draws nothing).
+	##
+	## Registration NEVER overwrites a row an objects.json or playableUnit.*
+	## document already owns: those carry animation capabilities this static
+	## effect binding does not.
+	var presentation: Dictionary = (document.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary
+	var bindings: Dictionary = presentation.get("visualBindings", {}) as Dictionary
+	var objects: Dictionary = bindings.get("objects", {}) as Dictionary
+	for object_id_value in objects.keys():
+		var object_id := String(object_id_value)
+		var row_value: Variant = objects[object_id_value]
+		if object_id == "" or typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := (row_value as Dictionary).duplicate(true)
+		row["_pack_root"] = root
+		spellbook_visual_bindings[object_id] = row
+		var status := String(row.get("status", ""))
+		if status == "unconverted":
+			var note := "%s:%s" % [object_id, String(row.get("reason", ""))]
+			if not spellbook_unconverted_visuals.has(note):
+				spellbook_unconverted_visuals.append(note)
+			continue
+		if status != "model" and status != "horde-member":
+			continue  # authored-invisible stays invisible
+		var model := String(row.get("model", ""))
+		if model == "" or not ModLoader.is_safe_relative_path(model):
+			continue
+		if bundle_objects.has(object_id):
+			continue
+		bundle_objects[object_id] = {
+			"id": object_id,
+			"kind": "member",
+			"displayName": object_id,
+			"presentation": {"model": model},
+			"_pack_root": root,
+			"_source": ModLoader.resolve_pack_path(root, model),
+			"_spellbookEffectObject": true,
+			"_spellbookVisualStatus": status,
+		}
+		if not bundle_object_pack_index.has(object_id):
+			bundle_object_pack_index[object_id] = []
+		(bundle_object_pack_index[object_id] as Array).append(bundle_objects[object_id])
 
 
 func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
@@ -1815,19 +1883,31 @@ func get_bundle_map(id: String) -> Dictionary:
 	return bundle_maps.get(id, {})
 
 
-func list_catalog_maps() -> Array[Dictionary]:
-	## Every catalog-published map, in authored order, as
-	## {"id", "name", "players"}. Fails closed per row: a map whose document
-	## carries no authored player count reports 0 rather than a guess.
+## Retail map categories a lobby may offer. Campaign, cinematic, tutorial,
+## shell and system maps are cooked and catalogued, but they are not skirmish
+## offerings and must never be mixed into the map list.
+const LOBBY_MAP_CATEGORIES: Array[String] = ["skirmish", "wotr-battle"]
+
+
+func list_catalog_maps(categories: Array = LOBBY_MAP_CATEGORIES) -> Array[Dictionary]:
+	## Every catalog-published map of the requested categories, in authored
+	## order, as {"id", "name", "players", "category"}. Fails closed per row: a
+	## map whose document carries no authored player count reports 0 rather than
+	## a guess. A row that declares no category predates categorised discovery
+	## and is retained, so an already-cooked pack keeps its list.
 	var rows: Array[Dictionary] = []
 	for map_id in catalog_map_ids:
 		var document := bundle_maps.get(map_id, {}) as Dictionary
 		if document.is_empty():
 			continue
+		var category := String(document.get("category", ""))
+		if category != "" and not categories.has(category):
+			continue
 		rows.append({
 			"id": map_id,
 			"name": String(document.get("displayName", map_id)),
 			"players": int(document.get("playerCount", 0)),
+			"category": category,
 		})
 	return rows
 

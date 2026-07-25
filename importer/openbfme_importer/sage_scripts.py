@@ -76,16 +76,49 @@ SEMANTIC_CONDITION_OPCODES = frozenset(
         "COUNTER_COUNTER",
         "COUNTER_SECONDS",
         "FLAG",
+        "HAS_FINISHED_AUDIO",
+        "NAMED_DESTROYED",
+        "NAMED_DISCOVERED",
+        "NAMED_INSIDE_AREA",
+        "NAMED_NOT_DESTROYED",
+        "NAMED_OWNED_BY_PLAYER",
+        "PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA",
+        "PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_COMPLETELY_BUILT",
+        "SKIRMISH_PLAYER_HAS_UNITS_IN_AREA",
+        "TEAM_DESTROYED",
+        "TEAM_DISCOVERED",
+        "TEAM_HAS_UNITS",
+        "TEAM_INSIDE_AREA_ENTIRELY",
+        "TEAM_INSIDE_AREA_PARTIALLY",
         "TIMER_EXPIRED",
     }
 )
 
 SEMANTIC_ACTION_OPCODES = frozenset(
     {
+        "ATTACK_MOVE_NAMED_UNIT_TO",
+        "ATTACK_MOVE_TEAM_TO",
         "CALL_SUBROUTINE",
+        "CREATE_NAMED_ON_TEAM_AT_WAYPOINT",
+        "CREATE_REINFORCEMENT_TEAM",
+        "CREATE_UNNAMED_ON_TEAM_AT_WAYPOINT",
         "DISABLE_SCRIPT",
         "ENABLE_SCRIPT",
         "INCREMENT_COUNTER",
+        "MAP_REVEAL_ALL_PERM",
+        "MAP_REVEAL_ALL_UNDO_PERM",
+        "MAP_REVEAL_PERMANENTLY_AT_WAYPOINT",
+        "MAP_REVEAL_PERMANENTLY_IN_TRIGGER",
+        "MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT",
+        "MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER",
+        "MOVE_NAMED_UNIT_TO",
+        "MOVE_TEAM_TO",
+        "NAMED_ATTACK_FOLLOW_WAYPOINTS",
+        "NAMED_DELETE",
+        "NAMED_FOLLOW_WAYPOINTS",
+        "NAMED_FOLLOW_WAYPOINTS_EXACT",
+        "NAMED_HUNT",
+        "NAMED_SET_ATTITUDE",
         "NO_OP",
         "OBJECTLIST_ADDOBJECTTYPE",
         "PLAYER_SET_MONEY",
@@ -94,33 +127,97 @@ SEMANTIC_ACTION_OPCODES = frozenset(
         "SET_MILLISECOND_TIMER",
         "SET_RANDOM_COUNTER",
         "SET_TIMER",
+        "TEAM_ATTACK_MOVE_FOLLOW_WAYPOINTS",
+        "TEAM_ATTACK_NAMED",
+        "TEAM_FACE_WAYPOINT",
+        "TEAM_FOLLOW_WAYPOINTS",
+        "TEAM_FOLLOW_WAYPOINTS_EXACT",
+        "TEAM_HUNT",
+        "TEAM_MERGE_INTO_TEAM",
+        "TEAM_SET_ATTITUDE",
+        "TEAM_TRANSFER_TO_PLAYER",
+        "UNIT_SET_TEAM",
     }
 )
 
 RECORDED_ACTION_OPCODES = frozenset(
     {
+        "AUDIO_FADE_VOLUME",
+        "AUDIO_MAKE_SOUND_IMMUNE_TO_FADE",
+        "AUDIO_PUSH_MUSIC",
+        "AUDIO_SET_REVERB_ROOM_TYPE",
+        "AUDIO_SET_REVERB_SUPPRESSION_POLYGON",
+        "CAMEO_FLASH",
+        "CAMERA_FADE_ADD",
+        "CAMERA_FADE_MULTIPLY",
+        "CAMERA_FADE_SUBTRACT",
+        "CAMERA_FOLLOW_NAMED",
         "CAMERA_LETTERBOX_BEGIN",
         "CAMERA_LETTERBOX_END",
+        "CAMERA_LOOK_TOWARD_OBJECT",
+        "CAMERA_LOOK_TOWARD_WAYPOINT",
+        "CAMERA_MOD_LOOK_TOWARD",
+        "CAMERA_MOVE_HOME",
+        "CAMERA_RESTRICT_TO_AREA",
+        "CAMERA_STOP_FOLLOW",
         "CLOSE_OBJECTIVES_SCREEN",
         "DEFEAT",
+        "DISABLE_COUNTDOWN_TIMER_DISPLAY",
         "DISABLE_INPUT",
         "DISPLAY_COUNTDOWN_TIMER",
+        "DISPLAY_COUNTER",
         "DISPLAY_NOTIFICATION_BOX",
+        "DISPLAY_NOTIFICATION_BOX_WITH_OBJECT_TYPE_IMAGE_OVERRIDE",
+        "ENABLE_COUNTDOWN_TIMER_DISPLAY",
+        "ENABLE_HOUSE_COLOR",
         "ENABLE_INPUT",
         "ENABLE_OBJECTIVES_SCREEN",
+        "ENABLE_OBJECT_SOUND",
+        "EVA_SET_ENABLED_DISABLED",
         "FLASH_OBJECTIVES_BUTTON",
+        "FLASH_SPELL_STORE_BUTTON",
+        "FOCAL_LENGTH_CAMERA",
+        "HERO_SELECT_BUTTON_FLASH",
+        "HIDE_COUNTDOWN_TIMER",
+        "HIDE_COUNTER",
         "HIDE_MISSION_OBJECTIVE",
+        "HIDE_UI",
+        "LOCK_CAMERA",
         "MARK_MISSION_OBJECTIVE_COMPLETED",
+        "MOVE_CAMERA_ALONG_SPLINE_PATH",
+        "MOVE_CAMERA_BY_ANIMATION",
         "MOVE_CAMERA_TO",
+        "MUSIC_PLAY_TRACK_FINITE_TIMES",
+        "MUSIC_PLAY_TRACK_FINITE_TIMES_AND_NOTIFY",
+        "MUSIC_RESET_MUSIC_SCRIPTING_SYSTEM",
+        "MUSIC_RETURN_TO_MUSIC_SCRIPTING",
+        "MUSIC_SET_VOLUME",
+        "NAMED_FLASH",
+        "NAMED_FLASH_WHITE",
+        "OBJECT_CREATE_RADAR_EVENT",
+        "PITCH_CAMERA",
+        "PLAY_MOVIE_IN_GAME",
         "PLAY_SOUND_EFFECT",
         "PLAY_SOUND_EFFECT_AT",
         "PLAY_SOUND_EFFECT_AT_TEAM",
         "QUICKVICTORY",
+        "RADAR_CREATE_EVENT",
+        "REFRESH_RADAR",
         "RESET_CAMERA",
+        "RESUME_BACKGROUND_SOUNDS",
+        "ROTATE_CAMERA",
+        "SCREEN_SHAKE",
+        "SELECT_BUILDER_BUTTON_FLASH",
+        "SETUP_CAMERA",
         "SHOW_MILITARY_CAPTION",
         "SHOW_MISSION_OBJECTIVE",
+        "SOUND_DISABLE_TYPE",
         "SOUND_PLAY_NAMED",
         "SPEECH_PLAY",
+        "SUSPEND_BACKGROUND_SOUNDS",
+        "TEAM_CREATE_RADAR_EVENT",
+        "TEAM_FLASH",
+        "TEAM_FLASH_WHITE",
         "VICTORY",
         "VICTORY_SCREEN",
         "ZOOM_CAMERA",
@@ -131,7 +228,70 @@ RECORDED_CONDITION_OPCODES: frozenset[str] = frozenset()
 
 # Object properties naming an authored map object that scripts address by name.
 _OBJECT_NAME_PROPERTY = "objectName"
+_OBJECT_OWNER_PROPERTY = "originalOwner"
 _WAYPOINT_TYPE_NAME = "*Waypoints/Waypoint"
+
+# Authored team unit composition.  WorldBuilder writes a Teams entry's
+# reinforcement template as seven parallel property triples
+# ``teamUnitType<N>`` / ``teamUnitMinCount<N>`` / ``teamUnitMaxCount<N>``;
+# ``CREATE_REINFORCEMENT_TEAM`` instantiates exactly that template at a
+# waypoint, so without it the opcode has nothing to create.  Slot ordinals run
+# 1..7 in every retail map observed (the eighth is never authored).
+_TEAM_UNIT_SLOTS = range(1, 8)
+
+
+def _team_property(team: dict[str, Any], name: str) -> Any:
+    for item in team.get("properties", []):
+        if item.get("name") == name:
+            return item.get("value")
+    return None
+
+
+def _team_units(team: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read one Teams entry's authored unit composition, in slot order.
+
+    A slot with no type name is not authored and is skipped.  Counts are
+    clamped to be non-negative and ordered (``max >= min``) rather than
+    guessed at; a slot whose max is zero creates nothing, which is what retail
+    does with an empty template.
+    """
+
+    units: list[dict[str, Any]] = []
+    for slot in _TEAM_UNIT_SLOTS:
+        type_name = _team_property(team, f"teamUnitType{slot}")
+        if not isinstance(type_name, str) or not type_name:
+            continue
+        minimum = _team_property(team, f"teamUnitMinCount{slot}")
+        maximum = _team_property(team, f"teamUnitMaxCount{slot}")
+        low = max(0, int(minimum) if isinstance(minimum, int) else 0)
+        high = max(0, int(maximum) if isinstance(maximum, int) else 0)
+        units.append(
+            {
+                "slot": slot,
+                "type": type_name,
+                "minCount": min(low, high),
+                "maxCount": max(low, high),
+            }
+        )
+    return units
+
+
+def _split_owner(value: Any) -> tuple[str, str]:
+    """Split an authored ``originalOwner`` into (player, team).
+
+    WorldBuilder writes object ownership as ``<player>/<team>`` (for example
+    ``PlyrDwarves/Dale Buildings``); the default team of the nameless player
+    is written ``/team``.  Team names are unique within a map, so the team
+    half is the key script ``TEAM_*`` opcodes address.  A value without a
+    separator is a bare team name and carries no player.
+    """
+
+    if not isinstance(value, str) or not value:
+        return "", ""
+    player, separator, team = value.partition("/")
+    if not separator:
+        return "", player
+    return player, team
 
 
 def _map_chunks_and_world(
@@ -322,11 +482,38 @@ def _build_world(
         }
         for index, player in enumerate(sides.get("players", []))
     ]
+    # Authored team membership.  Every non-waypoint object on the map belongs
+    # to exactly one team through its ``originalOwner`` property, and retail
+    # ``TEAM_HAS_UNITS`` / ``TEAM_DESTROYED`` answer over all of them, not just
+    # the named ones.  Named members are listed individually because scripts
+    # move them between teams; the rest are counted, because the runtime can
+    # only track a bounded roster and an unnamed object is unaddressable.
+    team_named_members: dict[str, list[str]] = {}
+    team_object_counts: Counter = Counter()
+    for item in objects:
+        if item.get("typeName") == _WAYPOINT_TYPE_NAME:
+            continue
+        properties = item.get("properties", {})
+        _player, team_name = _split_owner(properties.get(_OBJECT_OWNER_PROPERTY))
+        if not team_name:
+            continue
+        team_object_counts[team_name] += 1
+        object_name = properties.get(_OBJECT_NAME_PROPERTY)
+        if isinstance(object_name, str) and object_name:
+            team_named_members.setdefault(team_name, []).append(object_name)
+
     team_rows = [
         {
             "index": int(team.get("index", index)),
             "name": str(team.get("name", "")),
             "owner": str(team.get("owner", "")),
+            "objectCount": int(
+                team_object_counts.get(str(team.get("name", "")), 0)
+            ),
+            "namedMembers": sorted(
+                team_named_members.get(str(team.get("name", "")), [])
+            ),
+            "units": _team_units(team),
         }
         for index, team in enumerate(teams.get("teams", []))
     ]
@@ -354,13 +541,17 @@ def _build_world(
             continue
         if item.get("typeName") == _WAYPOINT_TYPE_NAME:
             continue
+        owner_value = properties.get(_OBJECT_OWNER_PROPERTY, "") or ""
+        player_name, team_name = _split_owner(owner_value)
         named_objects.append(
             {
                 "name": object_name,
                 "typeName": str(item.get("typeName", "")),
                 "godotPosition": list(item["godotPosition"]),
                 "godotYawRadians": float(item["godotYawRadians"]),
-                "originalOwner": str(properties.get("originalOwner", "") or ""),
+                "originalOwner": str(owner_value),
+                "owner": player_name,
+                "team": team_name,
             }
         )
     named_objects.sort(key=lambda row: (row["name"], row["typeName"]))

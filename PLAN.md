@@ -9,8 +9,10 @@
 
 ## Decisions
 
-- BFME2 1.06 skirmish compatibility is the product target.
-- Campaign material and War of the Ring are excluded from the product roadmap.
+- RotWK 2.01 skirmish compatibility is the product target; BFME2 1.06 is the
+  base game underneath it.
+- The Good and Evil campaigns are in scope; see docs/CAMPAIGN_PLAN.md.
+- War of the Ring is excluded from the product roadmap.
 - Eight players maximum.
 - Python/pinned tools for conversion, pure C# for deterministic simulation,
   Godot/GDScript for presentation.

@@ -38,6 +38,9 @@ _COMPILER_SALT_MODULES = (
     # bindings straight into unit and spellbook pack recipes, so its source
     # must invalidate cached objects exactly like the compilers it feeds.
     "retail_ability_fx_ingress.py",
+    # Same reasoning for the effect-geometry lane: it emits the model resources
+    # and visual bindings that ride the spellbook recipe/runtime.
+    "spellbook_visual_ingress.py",
     "faction_census.py",
     "sage_string.py",
     "retail_visual_closure.py",

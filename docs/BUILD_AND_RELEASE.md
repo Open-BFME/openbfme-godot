@@ -1,5 +1,15 @@
 # Build and release proof
 
+> [!NOTE]
+> **Toolchain pins and release gates. Parts of this describe the retired
+> Stage-10 gate train.**
+>
+> The current retail gate is `tools/gate-retail.ps1`. The `run_stage10_tests.bat`
+> wrapper this document names no longer exists in the tree, but
+> `tools/gate-stage10.ps1` asserts that this file mentions it, so the reference
+> is kept until that check is updated. Live gate results belong in
+> [STATUS.md](../STATUS.md), never here.
+
 > **Superseded:** use `docs/VERIFICATION.md` and `docs/RELEASE_POLICY.md`.
 > Stage-era commands below are retained only until their useful checks migrate.
 

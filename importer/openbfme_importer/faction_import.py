@@ -72,6 +72,10 @@ from .spellbook_pack_compiler import (
     compile_spellbook_pack_recipe,
     compose_spellbook_runtime_document,
 )
+from .spellbook_visual_ingress import (
+    SpellbookVisualIngressError,
+    build_spellbook_visual_closures,
+)
 
 
 SCHEMA = "openbfme.faction-import-plan"
@@ -690,6 +694,26 @@ def _ability_fx_closure(
     )
 
 
+def _spellbook_visual_row(recipe: Mapping[str, object]) -> dict[str, object]:
+    """Surface the effect-geometry outcome on the coverage row.
+
+    Operators need to see, without opening the recipe, how many effect objects
+    got real converted geometry, how many retail authors invisible, and how many
+    still have no converted model — the last number is the honest gap list.
+    """
+
+    registration = recipe.get("runtimeRegistration")
+    if not isinstance(registration, Mapping):
+        return {}
+    bindings = registration.get("visualBindings")
+    if not isinstance(bindings, Mapping):
+        return {}
+    summary = bindings.get("summary")
+    if not isinstance(summary, Mapping):
+        return {}
+    return {"effectVisuals": dict(summary)}
+
+
 def _draw_particle_system_ids(descriptor: Mapping[str, object]) -> list[str]:
     """Return every ParticleSysBone system the descriptor's leaves author.
 
@@ -877,6 +901,14 @@ def _convert_one_plan_object(
                 resolved_strings=strings,
                 prepared=prepared,
             )
+            # Effect geometry: every model the spellbook's leaf objects author
+            # (summoned units, groves, trees, dragons) converts through the same
+            # generic W3D stack the unit lane uses.  Without this the runtime
+            # has no art binding for a summoned object at all and falls back to
+            # the synthetic kit mesh — the "blue units" symptom.
+            visual_closures, visual_failures = build_spellbook_visual_closures(
+                descriptor, effective_root
+            )
             recipe = compile_spellbook_pack_recipe(
                 descriptor,
                 _ability_fx_closure(
@@ -886,11 +918,14 @@ def _convert_one_plan_object(
                     assets_fp,
                     str(descriptor["spellBook"]["objectId"]),  # type: ignore[index]
                 ),
+                visual_closures=visual_closures,
+                visual_closure_failures=visual_failures,
             )
             runtime = compose_spellbook_runtime_document(descriptor, recipe)
         except (
             SpellbookCompilerError,
             SpellbookPackCompilerError,
+            SpellbookVisualIngressError,
             ValueError,
         ) as exc:
             row.update({"status": "converter-gap", "reason": str(exc)})
@@ -909,6 +944,7 @@ def _convert_one_plan_object(
                     "recipeSha256": recipe["recipeSha256"],
                     "runtimeSha256": runtime["runtimeSha256"],
                     "resourceCount": len(recipe["resources"]),
+                    **_spellbook_visual_row(recipe),
                 }
             )
     elif status == "descriptor-ready":

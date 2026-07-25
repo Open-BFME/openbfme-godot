@@ -5,11 +5,11 @@ Last verified commit: `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
 Update trigger: Scope policy, discovery rules, evidence lanes, staleness rules, or completeness criteria change.
 Validation: `python tools/check-product-contracts.py --check`; once implemented, the private report generator must also reject unclassified, unresolved, stale, or unevidenced required rows.
 
-# BFME2 1.06 skirmish parity
+# Parity
 
 ## What parity means
 
-Parity is an evidence-backed match to observable BFME2 1.06 behavior and presentation for an explicitly scoped requirement. Parsed INI fields, converted assets, compiler success, or a launchable scene are inputs to verification; none alone proves parity.
+Parity is an evidence-backed match to the observable behavior and presentation of the original game (RotWK 2.01, on the BFME2 1.06 base) for an explicitly scoped requirement. Parsed INI fields, converted assets, compiler success, or a launchable scene are inputs to verification; none alone proves parity.
 
 Retail/original-game observation is the behavioral and audiovisual oracle. Repository-authored contracts define OpenBFME requirements only where the retail game has no corresponding feature, such as the modern mod-pack boundary.
 
@@ -18,8 +18,8 @@ Retail/original-game observation is the behavioral and audiovisual oracle. Repos
 `contracts/bfme2-106-product-scope.json` is the tracked policy input. It declares
 the game and patch, included/deferred/excluded domains, reproducible
 root-discovery queries, required evidence lanes, and reasoned exclusions. The
-product target is BFME2 1.06 skirmish compatibility. Campaign material and War
-of the Ring are explicitly excluded.
+product target is RotWK 2.01 skirmish compatibility. War of the Ring is
+outside project scope; the campaigns are in scope and sequenced separately.
 
 The policy and its deterministic checker exist now. The full feature-graph/report
 generator does not. Until that generator and current validated reports exist, the
@@ -68,13 +68,13 @@ Generated views must keep the following independently visible:
 - Every winning map payload classified by its product role.
 - Create-a-Hero source and behavior when that optional roadmap phase begins.
 - Included shell, skirmish, replay, and observer UI/audio.
-- Excluded campaign and War of the Ring domains, so they cannot be mistaken for
+- The excluded War of the Ring domain, so it cannot be mistaken for
   missing work inside the skirmish-complete claim.
 - Modern OpenBFME modding requirements in a separate OpenBFME-owned lane.
 
 ## Completeness claim
 
-OpenBFME may claim BFME2 1.06 skirmish compatibility only when:
+OpenBFME may claim skirmish compatibility only when:
 
 1. Every effective retail winner is classified.
 2. Every product-domain root query is frozen and reproducible.
@@ -85,7 +85,7 @@ OpenBFME may claim BFME2 1.06 skirmish compatibility only when:
    independently auditable where applicable.
 7. Modern OpenBFME features are excluded from retail-parity completion calculations.
 
-The target profile is `bfme2-106-skirmish-complete`. Campaign and War of the Ring
+The target profile is the RotWK 2.01 catalog. War of the Ring
 domains are excluded and cannot contribute to that claim. The contract retains a
 fail-closed `bfme2-106-complete` profile only to make a whole-game claim
 mechanically impossible while excluded retail domains remain. Create-a-Hero is

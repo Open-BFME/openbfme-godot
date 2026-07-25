@@ -410,6 +410,9 @@ var retail_side_command_bar: RetailSideCommandBar
 var _retail_command_costs: Dictionary = {}
 var _retail_command_build_seconds: Dictionary = {}
 var _tooltip_hover_button: Button = null
+## Monotonic hover id: the pending SceneTreeTimer callback binds this int (never
+## the Button object) so a freed button can never become a dangling capture.
+var _tooltip_hover_token: int = 0
 var _retail_command_specs: Array = RETAIL_COMMAND_SPECS.duplicate(true)
 var _retail_portrait_specs: Array = RETAIL_PORTRAIT_SPECS.duplicate(true)
 var _retail_action_specs: Array = RETAIL_UNIT_ACTION_SPECS.duplicate(true)
@@ -3676,13 +3679,17 @@ func push_event_feed(text: String) -> void:
 	_event_feed_gold_next = not _event_feed_gold_next
 	event_feed.add_child(label)
 	if is_inside_tree():
-		var tween := create_tween()
+		# The tween is bound to the LABEL, not the HUD: when a line is evicted
+		# early by the EVENT_FEED_MAX_LINES trim above, the tween dies with it.
+		# A HUD-bound tween would outlive the freed label and (with a lambda
+		# capturing it) raise "Lambda capture at index 0 was freed" every time a
+		# line is evicted -- which is constantly during a busy battle. The
+		# callback is a method Callable on the label for the same reason: Tween
+		# validity-checks a Callable's object, but never a lambda's captures.
+		var tween := label.create_tween()
 		tween.tween_interval(EVENT_FEED_SECONDS)
 		tween.tween_property(label, "modulate:a", 0.0, 1.2)
-		tween.tween_callback(func() -> void:
-			if is_instance_valid(label):
-				label.queue_free()
-		)
+		tween.tween_callback(label.queue_free)
 
 
 func event_feed_lines() -> Array[String]:
@@ -4648,11 +4655,24 @@ func _begin_tooltip_hover(button: Button) -> void:
 	_tooltip_hover_button = button
 	if not is_inside_tree():
 		return
+	# A SceneTreeTimer outlives the hovered button (hero-bar and spellbook-dock
+	# buttons are freed and rebuilt while the pointer rests on them), so the
+	# callback must NOT be a lambda capturing the button: Godot validates lambda
+	# captures before the body runs, so an inner is_instance_valid() guard cannot
+	# suppress "Lambda capture at index 0 was freed". Bind an int token instead
+	# and re-resolve the button from the member on the way out.
+	_tooltip_hover_token += 1
 	var timer := get_tree().create_timer(RETAIL_TOOLTIP_HOVER_DELAY)
-	timer.timeout.connect(func() -> void:
-		if _tooltip_hover_button == button and is_instance_valid(button):
-			show_retail_tooltip(button)
-	)
+	timer.timeout.connect(_on_tooltip_hover_elapsed.bind(_tooltip_hover_token))
+
+
+func _on_tooltip_hover_elapsed(token: int) -> void:
+	if token != _tooltip_hover_token:
+		return
+	if not is_instance_valid(_tooltip_hover_button):
+		_tooltip_hover_button = null
+		return
+	show_retail_tooltip(_tooltip_hover_button)
 
 
 func _end_tooltip_hover(button: Button) -> void:

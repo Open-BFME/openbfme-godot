@@ -18,7 +18,7 @@ tree and selected-package digests belong in generated tool/provenance manifests 
 | `middle-earth-rts` project assets | Repository-authored/legal-safe 3D, UI and audio donor material | Original or AI-generated for that project; provenance must be reviewed per asset | May support legal-safe development/fallback content; cannot prove retail parity or silently fill strict-retail gaps |
 | Generated OBJ meshes | Tools-authored stand-in geometry | Repository-authored output; generator/input provenance required | Legal-safe development lane only unless separately approved for release |
 | Generated WAV music beds | Adaptive explore/battle/victory stand-ins | Procedural output; generator/input provenance required | Legal-safe development lane only; not retail audiovisual parity evidence |
-| User-owned BFME2 1.06 installation | Private compatibility extraction, conversion and oracle observation | Proprietary retail content; non-redistributable project lane | Inputs and all derived payloads remain below `.private`; never shipped, committed or transferred by a server |
+| User-owned BFME2 1.06 / RotWK 2.01 installation | Private compatibility extraction, conversion and oracle observation | Proprietary retail content; non-redistributable project lane | Inputs and all derived payloads remain below `.private`; never shipped, committed or transferred by a server |
 
 Donor material is accepted only through a bounded provenance review. No donor runtime
 types or source are copied merely because a format tool is used for observation.

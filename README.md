@@ -5,22 +5,22 @@
 <h1 align="center">OpenBFME Engine</h1>
 
 <p align="center">
-  An experimental open-source Godot RTS project targeting BFME2 skirmish play,<br>
-  powered by content converted locally from a game installation you own.
+  An experimental open-source Godot RTS project targeting BFME2 / Rise of the<br>
+  Witch-king play, powered by content converted locally from a game you own.
 </p>
 
 <p align="center">
   <img alt="Status: experimental alpha" src="https://img.shields.io/badge/status-experimental%20alpha-c58b31">
   <img alt="Godot 4.7" src="https://img.shields.io/badge/Godot-4.7-478cbf?logo=godotengine&logoColor=white">
-  <img alt="BFME2 1.06" src="https://img.shields.io/badge/compatibility-BFME2%201.06-40513b">
+  <img alt="RotWK 2.01" src="https://img.shields.io/badge/compatibility-RotWK%202.01-40513b">
   <img alt="License: GPL v3" src="https://img.shields.io/badge/license-GPLv3-663399">
 </p>
 
 > [!IMPORTANT]
 > OpenBFME is an experimental engine project, not a finished game or a download
 > of BFME2. It does not distribute EA's game assets. The compatibility workflow
-> requires a lawfully acquired BFME2 1.06 installation and converts content
-> locally on your computer.
+> requires a lawfully acquired BFME2 1.06 or Rise of the Witch-king 2.01
+> installation and converts content locally on your computer.
 
 > [!NOTE]
 > The public GitHub repository is currently a documentation preview. Engine,
@@ -30,11 +30,11 @@
 
 ## What is OpenBFME?
 
-OpenBFME is rebuilding the skirmish side of *The Battle for Middle-earth II* in
-Godot. The project has three goals:
+OpenBFME is rebuilding *The Battle for Middle-earth II* and *The Rise of the
+Witch-king* in Godot. The project has three goals:
 
-1. Reproduce BFME2 skirmish behavior and presentation through measured
-   comparison with the original game.
+1. Reproduce the original game's behavior and presentation through measured
+   comparison with it.
 2. Replace the aging proprietary runtime with an understandable, deterministic,
    self-hostable modern engine.
 3. Give RTS developers and BFME modders a practical base for new factions, maps,
@@ -52,12 +52,11 @@ is not a completion or parity claim:
 
 - a skirmish shell modeled on BFME2, with a main menu, N-player setup screen
   (multiple factions, alliances, per-AI difficulty), persistent graphics/audio
-  options, seven faction choices, five map choices, colors, starting positions,
+  options, seven faction choices, map selection, colors, starting positions,
   starting resources, and command-point rules;
-- local conversion and runtime manifests for all six BFME2 factions — Men,
-  Elves, Dwarves, Isengard, Mordor, and Goblins/Wild — plus Angmar, imported
-  from a user-owned Rise of the Witch-king 2.01 installation through the same
-  data-driven, fail-closed pipeline;
+- local conversion and runtime manifests for seven playable factions - Men,
+  Elves, Dwarves, Isengard, Mordor, Goblins/Wild, and Angmar - all through
+  the same data-driven, fail-closed pipeline;
 - construction, production and cancellation, rally points, combat, armor and
   weapon upgrades, stances, formations, cavalry trample and knockback, hero
   experience, hero abilities (leadership auras, mounts, weapon toggles, and
@@ -73,29 +72,30 @@ is not a completion or parity claim:
   in a deterministic VM (all measured opcode tiers), alongside WND runtime
   semantics;
 - source-derived terrain, roads, water, navigation, minimaps, start positions,
-  and fortress placement for a five-map development set, plus an optional
+  and fortress placement for the cooked skirmish maps, plus an optional
   BFME1-style build-plot-only mode (default off);
 - deterministic state signatures pinned per faction and enforced by headless
   gate runners (the Men battle signature is an asserted constant), with
   hundreds of focused runtime assertions per suite.
 
-That breadth is real, but it is not a finished game. Men versus Men on Fords of
-Isen II remains the most deeply verified slice; the other factions and maps have
-substantial but uneven coverage, and presentation, reliability, and visual-oracle
-work remain open. See [STATUS.md](STATUS.md) for the current audited evidence
-and known failures.
+That breadth is real, but it is not a finished game. Cross-faction skirmish
+runs, but coverage across the seven factions is uneven - Mordor is materially
+behind the others - and presentation, reliability, and visual-oracle work remain
+open. See [STATUS.md](STATUS.md) for the current audited evidence and the known
+failures.
 
 | Capability | Current state |
 |---|---|
-| BFME2 1.06 discovery, extraction, conversion, and provenance | Implemented across the active private packs |
-| Men versus Men on Fords of Isen II | Most deeply verified developer-playable slice |
-| Seven faction runtime surfaces (six BFME2 + Angmar) | Converted, selectable, and exercised under per-faction gates |
-| Five-map development set | All boot from source data; Fords has the strongest prop coverage |
+| Discovery, extraction, conversion, and provenance | Implemented across the active private packs |
+| Cross-faction skirmish | Playable: any of the seven factions against any other |
+| Seven faction runtime surfaces | Converted, selectable, and exercised under per-faction gates |
+| Cooked skirmish maps | Eight boot from source data; Fords of Isen II has the strongest prop coverage |
 | Main menu, N-player skirmish setup, options, HUD, and audio | Implemented under focused tests |
 | Multiplayer | Deterministic lockstep + ENet with an in-game lobby; early and gate-verified, not yet a hardened production service |
 | Skirmish AI | Five deterministic difficulty tiers, per-team controllers |
-| Campaigns and War of the Ring | Explicitly outside project scope |
-| Rise of the Witch-king | RotWK 2.01 is a supported optional import source (Angmar); RotWK campaign content remains out of scope |
+| Campaigns | In scope and in progress; sequenced in [docs/CAMPAIGN_PLAN.md](docs/CAMPAIGN_PLAN.md) |
+| War of the Ring | Out of scope |
+| Rise of the Witch-king | RotWK 2.01 is the product baseline; Angmar is a playable faction |
 | Public binary or polished installer | Not available |
 
 ## Why this project exists
@@ -114,7 +114,7 @@ original game.
 ## How it works
 
 ```text
-Lawfully owned BFME2 1.06 installation
+Lawfully owned BFME2 1.06 / RotWK 2.01 install
               |
               v
   Python importer + pinned converters
@@ -141,8 +141,8 @@ repository-wide fallback auditing remains release work.
 ## Try the development build
 
 The current workflow is Windows-first and intended for developers. You need a
-lawfully acquired BFME2 1.06 installation, Godot 4.7, Python 3.12, and the .NET
-SDK selected by `global.json`.
+lawfully acquired BFME2 1.06 or RotWK 2.01 installation, Godot 4.7, Python
+3.12, and the .NET SDK selected by `global.json`.
 
 The guided onboarding wizard checks prerequisites, validates your install
 fail-closed, converts or verifies the Men content pack, and runs the headless
@@ -167,38 +167,35 @@ run_importer.bat "D:\Games\BFME2"
 run_retail_slice.bat
 ```
 
-Use your actual Godot and BFME2 paths. Read the
-[onboarding guide](docs/ONBOARDING.md) for the ten-minute walkthrough and the
-[getting-started guide](docs/GETTING_STARTED.md) for the full background before
-importing.
+Use your actual Godot and game paths. Read the
+[onboarding guide](docs/ONBOARDING.md) for the walkthrough, the manual command
+path, and troubleshooting.
 
 ## Roadmap
 
-1. Finish and freeze Men versus Men on Fords of Isen II.
-2. Harden the full Men roster across the selected five-map set.
-3. Bring all six BFME2 factions (and the Angmar import) and official skirmish
-   systems to green runtime and original-game evidence.
-4. Harden the deterministic, self-hosted multiplayer foundations (lockstep +
+1. Bring all seven factions and the official skirmish systems to green runtime
+   and original-game evidence, on the official skirmish and multiplayer maps.
+2. Deliver the Good and Evil campaigns: maps, scripting, objectives, cinematics.
+3. Harden the deterministic, self-hosted multiplayer foundations (lockstep +
    lobby exist today) toward reliable play for up to eight players.
-5. Complete the skirmish shell, replays, observers, Create-a-Hero, and broader
-   map and modding tools.
-6. Add accessibility, HD presentation packs, safe updates, rollback, and a
+4. Complete the skirmish shell, saves, replays, observers, Create-a-Hero, and
+   broader map and modding tools.
+5. Add accessibility, HD presentation packs, safe updates, rollback, and a
    polished installer without weakening compatibility checks.
 
-Campaign material and War of the Ring are not part of this roadmap. The stable
-scope and non-goals live in [DIRECTION.md](DIRECTION.md).
+War of the Ring is not part of this roadmap. The stable scope and non-goals live
+in [DIRECTION.md](DIRECTION.md).
 
 ## Find your way around
 
 | If you want to... | Start here |
 |---|---|
 | Understand the project in five minutes | [Documentation hub](docs/README.md) |
-| Set up a fresh machine in ten minutes | [Onboarding](docs/ONBOARDING.md) |
-| Install and run the developer build | [Getting started](docs/GETTING_STARTED.md) |
+| Set up a fresh machine and run the developer build | [Onboarding](docs/ONBOARDING.md) |
 | Check current passes and failures | [Status](STATUS.md) |
 | Understand the engine boundaries | [Architecture](docs/ARCHITECTURE.md) |
 | Learn how retail conversion stays private | [Content pipeline](docs/CONTENT_PIPELINE.md) |
-| Understand the parity standard | [BFME2 parity](docs/BFME2_PARITY.md) |
+| Understand the parity standard | [Parity](docs/BFME2_PARITY.md) |
 | Read the modding direction | [Modding](docs/MODDING.md) |
 | Contribute safely | [Contributing](CONTRIBUTING.md) |
 | Understand the use of AI | [AI development](docs/AI_DEVELOPMENT.md) |
@@ -240,6 +237,6 @@ or sponsored by Electronic Arts, Middle-earth Enterprises, the Tolkien Estate,
 Embracer Group, or their licensors. Related names, trademarks, characters, and
 original game assets belong to their respective owners.
 
-Users must supply their own lawfully acquired copy of BFME2. Retail and converted
+Users must supply their own lawfully acquired copy of the game. Retail and converted
 retail assets must never be committed, uploaded, bundled, or redistributed with
 this project.

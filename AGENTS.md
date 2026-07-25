@@ -9,7 +9,7 @@ Validation: Compare this file with `docs/AGENT_WORKFLOW.md` and validate the app
 
 ## Active objective
 
-Complete the private BFME2 1.06 Men-versus-Men Fords of Isen II milestone in
+Close the remaining cross-faction skirmish parity gaps against RotWK 2.01 in
 `docs/MILESTONE_CURRENT.md`. `DIRECTION.md` owns product scope; `STATUS.md` owns
 current evidence. Do not substitute obsolete proof-stage documents.
 

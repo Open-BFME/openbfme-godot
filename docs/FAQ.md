@@ -28,43 +28,48 @@ requires license, provenance, trademark, and clean-export review.
 
 As a private developer-playable alpha, yes; as a finished release, no. The
 current tree offers a skirmish shell with N-player setup, seven selectable
-faction surfaces (the six BFME2 factions plus an Angmar import from RotWK
-2.01), five source maps, five AI difficulty tiers, per-team spellbooks, hero
-abilities, optional creep lairs, and early lockstep multiplayer with an
-in-game lobby. Men versus Men on Fords of Isen II remains the most deeply
-verified slice; coverage across the other factions and maps is substantial but
-uneven, and presentation and reliability work remains open. Use
-[STATUS.md](../STATUS.md) for the exact evidence boundary.
+factions (Men, Elves, Dwarves, Isengard, Mordor, Goblins/Wild, Angmar), eight
+cooked skirmish maps, five AI difficulty tiers, per-team spellbooks, hero
+abilities, optional creep lairs, and early lockstep multiplayer with an in-game
+lobby. Cross-faction matches run. Coverage is uneven across factions - Mordor
+is materially behind the others - and presentation and reliability work remains
+open. Use [STATUS.md](../STATUS.md) for the exact evidence boundary.
 
 ## Is the whole game implemented?
 
 No. Full skirmish parity, hardened production multiplayer, replays, and several
 shell and presentation systems remain unfinished. All seven faction surfaces
 exist and are exercised by per-faction gates, but coverage depth still varies
-by faction. Campaigns and War of the Ring are not
-later milestones: they are explicitly outside project scope. Create-a-Hero may
-be considered after the core skirmish and multiplayer work.
+by faction. The campaigns are in scope and in progress. War of the Ring is not
+a later milestone: it is explicitly outside project scope. Create-a-Hero may be
+considered after the core skirmish and multiplayer work.
 
-## Why start with Men versus Men on one map?
+## Why did the project start with one faction on one map?
 
-Because a credible small slice is more valuable than broad shallow coverage. The
-first milestone forces the importer, simulation, rendering, UI, audio, gameplay,
-original-game comparison, and reliability processes to work together.
+Because a credible small slice is more valuable than broad shallow coverage.
+Proving Men against Men on Fords of Isen II end to end forced the importer,
+simulation, rendering, UI, audio, gameplay, original-game comparison, and
+reliability processes to work together before any of them was scaled out. That
+slice has since been generalised to seven factions and eight maps.
 
-## Why BFME2 rather than Rise of the Witch-king?
+## BFME2 or Rise of the Witch-king?
 
-BFME2 1.06 remains the primary compatibility target because it is the smaller,
-better-measured baseline. Rise of the Witch-king 2.01 is now a supported
-*optional* import source: users who also own RotWK can import Angmar as a
-seventh faction through the same fail-closed pipeline. RotWK content is
-isolated from BFME2 state and cannot silently change BFME2 compatibility
-evidence, and RotWK campaign material stays out of scope.
+Rise of the Witch-king 2.01 is the product baseline. BFME2 1.06 is the base game
+underneath it and remains the source of evidence for everything 2.01 does not
+change. Angmar is a playable faction, not an optional extension.
+
+The project started against 1.06 alone because it was the smaller, better
+measured baseline; that ordering is history, not the current target.
 
 ## Are campaigns or War of the Ring planned?
 
-No. OpenBFME is scoped to skirmish, multiplayer, and the engine/modding platform.
-The Good and Evil campaigns, campaign maps and scripting, and War of the Ring
-are not part of the product roadmap.
+The Good and Evil campaigns are in scope and being built - maps, scripting,
+objectives, and cinematics. The lane has its own plan in
+[CAMPAIGN_PLAN.md](CAMPAIGN_PLAN.md).
+
+War of the Ring is not planned. The strategic layer lives in `livingworld*.ini`
+data that nothing in the pipeline imports, and its maps carry almost no
+scripting. That is a scope decision rather than a sequencing one.
 
 ## Why Godot?
 

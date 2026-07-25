@@ -3270,6 +3270,7 @@ func _sync_presentation() -> void:
 	if audio_system != null:
 		audio_system.sync_events(simulation.events)
 	_consume_power_fx_events()
+	_expire_grove_trees()
 	if _profile_sync:
 		presentation_profile["audio_us"] = presentation_profile.get("audio_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
@@ -5229,7 +5230,10 @@ func _playtest_max_level(scope: String) -> void:
 	if scope == "selected":
 		ids = Array(simulation.selected_ids)
 	else:
-		for row_value in simulation.battalions.values():
+		# The sim keeps live battalions in `entities`; there is no `battalions`
+		# collection. `debug_force_max_level` skips anything without an
+		# authored ExperienceLevel chain, so passing structures is harmless.
+		for row_value in simulation.entities.values():
 			var row := row_value as Dictionary
 			if int(row.get("team", -1)) == local_team and int(row.get("health", 0)) > 0:
 				ids.append(int(row.get("id", 0)))
@@ -5299,6 +5303,8 @@ func _consume_power_fx_events() -> void:
 					_present_cast_animation(event)
 			"combat.knockback":
 				_present_knockback(event)
+			"power.grove":
+				_present_grove_trees(event)
 
 
 ## Casts whose caster played its own authored pose, and casts that found none.
@@ -5331,6 +5337,85 @@ func _present_cast_animation(event: Dictionary) -> void:
 	var ability_id := String(event.get("ability_id", ""))
 	if ability_id != "" and not casts_without_authored_animation.has(ability_id):
 		casts_without_authored_animation.append(ability_id)
+
+
+## Grove geometry currently on the battlefield: [root, expire_msec] rows.
+var grove_tree_nodes: Array = []
+## Groves whose authored tree chain converted but whose model the selected pack
+## did not bind, recorded rather than substituted with stand-in geometry.
+var groves_without_bound_trees: Array[String] = []
+var grove_trees_presented := 0
+
+
+func _present_grove_trees(event: Dictionary) -> void:
+	## Plant the Elven Wood grove's authored trees.
+	##
+	## Terrain powers used to place no geometry at all: ElvenGrove itself
+	## authors `Model = None` (its whole appearance is a ParticleSysBone), and
+	## the trees a player actually sees come from the power's authored
+	## ObjectCreationList chain, which nothing converted. The sim now resolves
+	## that chain and the importer converts the tree's model, so this presents
+	## exactly the authored object, count and spread radius. A pack that bound
+	## no model for it plants nothing and records why.
+	var trees: Dictionary = event.get("trees", {}) as Dictionary
+	var object_id := String(trees.get("object_id", ""))
+	if object_id == "":
+		return
+	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
+	if definition.is_empty() or ContentDB.resolve_mesh_path(definition) == "":
+		var note := "grove:%s:no-bound-model" % object_id
+		if not groves_without_bound_trees.has(note):
+			groves_without_bound_trees.append(note)
+		return
+	var point_value: Variant = event.get("point", [])
+	if typeof(point_value) != TYPE_ARRAY or (point_value as Array).size() < 2:
+		return
+	var center := Vector2(float((point_value as Array)[0]), float((point_value as Array)[1]))
+	var count := maxi(1, int(trees.get("count", 1)))
+	var scale_value := source_map_data.local_transform_scale
+	var minimum := float(trees.get("min_radius_source", 0.0)) * scale_value
+	var maximum := maxf(minimum, float(trees.get("max_radius_source", 0.0)) * scale_value)
+	# The grove's own authored deletion window bounds the geometry. Retail's
+	# final ElvenWoodTreeOpt is a permanent map tree; the runtime has no owner
+	# for permanent power-placed props yet, so the trees live exactly as long as
+	# the aura the same power authored rather than accumulating forever.
+	var lifetime_ticks := maxi(0, int(event.get("lifetime_ticks", 0)))
+	var expire_msec := Time.get_ticks_msec() + int(round(float(lifetime_ticks) * SimScript.TICK_SECONDS * 1000.0))
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	for index in range(count):
+		# Authored spread band, evenly walked so the same cast plants the same
+		# grove on every peer. The band's bounds are retail's; the walk is the
+		# same deterministic ring the summon spawner already uses.
+		var angle := TAU * float(index) / float(count)
+		var radius := minimum if count <= 1 else lerpf(minimum, maximum, float(index) / float(count - 1))
+		var spot := center + Vector2(cos(angle), sin(angle)) * radius
+		var visual: Node3D = asset_factory.make_bundle_object_visual(object_id, int(event.get("team", 0)), scale_value)
+		if visual == null:
+			continue
+		visual.name = "GroveTree_%d_%d" % [grove_trees_presented, index]
+		visual.position = Vector3(spot.x, _presentation_height(spot), spot.y)
+		visual.rotate_y(angle)
+		add_child(visual)
+		_assign_geometry_light_layer(visual, OBJECT_LIGHT_LAYER)
+		grove_tree_nodes.append([visual, expire_msec])
+		grove_trees_presented += 1
+
+
+func _expire_grove_trees() -> void:
+	if grove_tree_nodes.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	var living: Array = []
+	for row_value in grove_tree_nodes:
+		var row := row_value as Array
+		var node_value: Variant = row[0]
+		if not (node_value is Node) or not is_instance_valid(node_value):
+			continue
+		if now >= int(row[1]):
+			(node_value as Node).queue_free()
+			continue
+		living.append(row)
+	grove_tree_nodes = living
 
 
 func _present_knockback(event: Dictionary) -> void:
@@ -5499,6 +5584,11 @@ func _clear_presentations() -> void:
 			if node_value is Node and is_instance_valid(node_value):
 				(node_value as Node).queue_free()
 		(collection as Dictionary).clear()
+	for row_value in grove_tree_nodes:
+		var node_value: Variant = (row_value as Array)[0]
+		if node_value is Node and is_instance_valid(node_value):
+			(node_value as Node).queue_free()
+	grove_tree_nodes.clear()
 
 
 func cleanup_for_test() -> void:

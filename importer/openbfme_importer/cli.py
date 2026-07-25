@@ -39,7 +39,12 @@ from .sage_video import convert_videos
 from .tools import discover_executable
 from .faction_profile import build_men_leaf_profile
 from .faction_slice_profile import compose_faction_profile
-from .map_profile import build_five_map_profile, build_skirmish_map_profile
+from .map_profile import (
+    MAP_SETS,
+    build_category_map_profile,
+    build_five_map_profile,
+    make_effective_assets_binder,
+)
 from .map_census import census_multiplayer_maps
 from .profile import ImportProfile, profile_path, resolve_profile
 from .retail_visual_closure import (
@@ -53,6 +58,68 @@ from .version import __version__
 
 
 PROFILES_ROOT = Path(__file__).resolve().parents[1] / "profiles"
+
+
+def _conversion_failure_report(pack_root: Path) -> dict[str, Any]:
+    """Summarise per-resource conversion failures recorded in the pack.
+
+    build() records every converter failure in provenance ``incomplete`` but
+    nothing ever showed it to the operator: an --allow-incomplete run could
+    lose hundreds of conversions and still print a clean, valid, exit-0
+    result. That is the exact shape of the historical bug where every audio
+    job failed a pinned-tool attest and the run produced a silently
+    audio-less pack. The count and a per-converter breakdown now ride the
+    command result, and a non-empty list is echoed to stderr regardless of
+    --json so it cannot be scrolled past.
+    """
+
+    manifest_path = Path(pack_root) / "provenance" / "manifest.json"
+    try:
+        with manifest_path.open("r", encoding="utf-8") as stream:
+            manifest = json.load(stream)
+    except (OSError, json.JSONDecodeError):
+        return {"conversion_failures": None}
+    incomplete = manifest.get("incomplete")
+    if not isinstance(incomplete, list) or not incomplete:
+        return {"conversion_failures": 0}
+
+    converter_by_resource: dict[str, str] = {}
+    for entry in manifest.get("entries", []):
+        if isinstance(entry, dict):
+            converter_by_resource[str(entry.get("resource_id"))] = str(
+                entry.get("converter", "?")
+            )
+    by_converter: dict[str, int] = {}
+    for item in incomplete:
+        if not isinstance(item, dict):
+            continue
+        resource = str(item.get("resource", "?"))
+        by_converter[converter_by_resource.get(resource, "?")] = (
+            by_converter.get(converter_by_resource.get(resource, "?"), 0) + 1
+        )
+
+    print(
+        f"WARNING: {len(incomplete)} resource(s) did not convert; the pack is "
+        "incomplete. Breakdown by converter: "
+        + ", ".join(f"{name}={count}" for name, count in sorted(by_converter.items())),
+        file=sys.stderr,
+    )
+    for item in incomplete[:10]:
+        if isinstance(item, dict):
+            print(
+                f"  - {item.get('resource', '?')}: {item.get('reason', '?')}",
+                file=sys.stderr,
+            )
+    if len(incomplete) > 10:
+        print(
+            f"  ... {len(incomplete) - 10} more; full list in "
+            f"{manifest_path}",
+            file=sys.stderr,
+        )
+    return {
+        "conversion_failures": len(incomplete),
+        "conversion_failures_by_converter": by_converter,
+    }
 
 
 def _render(value: Any, as_json: bool) -> None:
@@ -325,12 +392,23 @@ def build_parser() -> argparse.ArgumentParser:
     map_profile.add_argument("--reindex", action="store_true")
     map_profile.add_argument(
         "--map-set",
-        choices=("five-map", "skirmish"),
+        choices=("five-map", *sorted(MAP_SETS)),
         default="five-map",
         help=(
-            "five-map: the legacy private BFME2 1.06 development set; "
-            "skirmish: every official multiplayer map this install ships, "
-            "discovered from maps/mapcache.ini"
+            "five-map: the legacy private BFME2 1.06 development set; every "
+            "other value selects a retail map category discovered from "
+            "maps/mapcache.ini (skirmish, wotr-battle, campaign, cinematic, "
+            "tutorial, playable, single-player, all)"
+        ),
+    )
+    map_profile.add_argument(
+        "--effective-assets",
+        type=Path,
+        default=None,
+        help=(
+            "extracted effective-assets root; enables automatic per-map prop "
+            "binding through the visual-closure planners. Without it no "
+            "objectBindings are declared."
         ),
     )
     map_profile.add_argument(
@@ -951,13 +1029,22 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 value["bundle_sha256"] = bundle_digest(pack_root)
             value["conversion_cache"] = pipeline.conversion_cache_stats
+            value.update(_conversion_failure_report(pack_root))
             if not args.no_publish:
                 progress_emit("publish", "selecting pack for Godot vertical slice")
+                # A full (non-light) audit plus bundle_digest just ran over
+                # this exact pack above; publication would otherwise repeat
+                # both full passes. Only hand the digest over when the audit
+                # really was full and clean - dev/light runs must re-verify.
+                reusable_digest = None
+                if not light_audit and value.get("valid", False):
+                    reusable_digest = value["bundle_sha256"]
                 value.update(
                     pipeline.publish_to_godot(
                         pack_root,
                         args.godot_content_root,
                         allow_incomplete=bool(args.allow_incomplete),
+                        verified_digest=reusable_digest,
                     )
                 )
             progress_complete(
@@ -1171,10 +1258,22 @@ def main(argv: list[str] | None = None) -> int:
                 profile = build_five_map_profile(catalog)
                 generated_name = "five-maps.generated.json"
             else:
-                profile = build_skirmish_map_profile(
-                    catalog, game=args.game, strict=bool(getattr(args, "strict", False))
+                assets_root = getattr(args, "effective_assets", None)
+                binder = None
+                if assets_root is not None:
+                    from .map_prop_bindings import load_effective_assets_manifest
+
+                    binder = make_effective_assets_binder(
+                        assets_root, load_effective_assets_manifest(assets_root)
+                    )
+                profile = build_category_map_profile(
+                    catalog,
+                    game=args.game,
+                    map_set=map_set,
+                    strict=bool(getattr(args, "strict", False)),
+                    **({"binder": binder} if binder is not None else {}),
                 )
-                generated_name = f"{args.game}-skirmish-maps.generated.json"
+                generated_name = f"{args.game}-{map_set}-maps.generated.json"
             generated_path = _workspace_root(args) / "profiles" / generated_name
             write_json_atomic(generated_path, profile)
             payload = (
@@ -1242,6 +1341,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 value["bundle_sha256"] = bundle_digest(pack)
             value["conversion_cache"] = pipeline.conversion_cache_stats
+            value.update(_conversion_failure_report(pack_root))
             if not args.no_publish:
                 progress_emit("assemble", "publishing pack to Godot content root")
                 value.update(

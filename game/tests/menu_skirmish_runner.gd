@@ -58,7 +58,8 @@ func _run() -> void:
 	var retail_btn := menu.find_child("Retail", true, false) as Button
 	var setup := menu.get_node("Center/SoloFlyout")
 	var map_rows: Array = setup.get("map_rows")
-	_check("skirmish_controls_present", player_opt != null and enemy_opt != null and retail_btn != null and map_rows.size() == 5)
+	# The map list length follows the selected pack's catalog, not a literal.
+	_check("skirmish_controls_present", player_opt != null and enemy_opt != null and retail_btn != null and not map_rows.is_empty())
 	if player_opt == null or enemy_opt == null or retail_btn == null or map_rows.is_empty():
 		menu.queue_free()
 		await process_frame
@@ -81,18 +82,52 @@ func _run() -> void:
 			ids_match = false
 	_check("faction_ids_and_display_names", ids_match)
 
-	# The map list carries every cooked map with its authored player count;
-	# Fords of Isen II remains the default selection.
-	_check("map_list_offers_five_choices", map_rows.size() == 5, "got %d maps" % map_rows.size())
-	var expected_players := [2, 3, 4, 6, 8]
+	# The map list carries every lobby-category cooked map with its authored
+	# player count; Fords of Isen II remains the default selection. The counts
+	# are re-derived from the selected pack's own catalog rather than asserted
+	# as a literal: a skirmish pack ships whatever counts BFME2 and RotWK
+	# actually author, and neither edition ships a three-player skirmish map, so
+	# the old [2, 3, 4, 6, 8] literal (the five-map WOTR dev set) could never be
+	# satisfied by one.
+	var lobby_catalog_rows: Array = content_db.call("list_catalog_maps")
+	var expected_players: Array = []
+	if lobby_catalog_rows.is_empty():
+		# No pack in this selection publishes a map catalog, so the menu falls
+		# back to its authored vertical-slice list. Each row's count must still
+		# come from that map's own cooked document, which is 0 for a map the
+		# selection does not ship -- the honest, still-open content gap.
+		for row in map_rows:
+			var doc := content_db.call("get_bundle_map", String((row as Dictionary).get("map_id", ""))) as Dictionary
+			expected_players.append(int(doc.get("playerCount", 0)))
+	else:
+		_check(
+			"map_list_offers_every_lobby_catalog_map",
+			map_rows.size() == lobby_catalog_rows.size(),
+			"rows=%d catalog=%d" % [map_rows.size(), lobby_catalog_rows.size()]
+		)
+		for value in lobby_catalog_rows:
+			expected_players.append(int((value as Dictionary).get("players", 0)))
 	var players_match := map_rows.size() == expected_players.size()
 	for index in range(mini(expected_players.size(), map_rows.size())):
 		var row_button := map_rows[index]["button"] as Button
+		# Zero means no cooked map document authored a player count for this
+		# row. That is a real content gap, never a passing row.
+		if expected_players[index] <= 0:
+			players_match = false
 		if int(map_rows[index].get("players", -1)) != expected_players[index]:
 			players_match = false
 		if row_button != null and row_button.get_meta("player_count", -1) != expected_players[index]:
 			players_match = false
 	_check("map_list_player_counts_from_pack", players_match, str(expected_players))
+	# Mirrors ContentDB.LOBBY_MAP_CATEGORIES: campaign, cinematic, tutorial,
+	# shell and system maps are cooked and catalogued but never lobby offerings.
+	var lobby_categories := ["skirmish", "wotr-battle"]
+	var lobby_only := true
+	for value in lobby_catalog_rows:
+		var category := String((value as Dictionary).get("category", ""))
+		if category != "" and not lobby_categories.has(category):
+			lobby_only = false
+	_check("map_list_excludes_non_lobby_categories", lobby_only)
 	var first_row := map_rows[0]["button"] as Button
 	_check(
 		"map_default_is_fords",

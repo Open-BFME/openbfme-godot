@@ -3732,7 +3732,7 @@ func _spellbook_effect_support(power_row: Dictionary, fields: Array, references:
 		"OCLSpecialPower":
 			return _spellbook_ocl_support(power_row, references, object_leaves, ocl_leaves, weapon_leaves)
 		"ElvenWoodSpecialPower":
-			return _spellbook_grove_support(field_values, field_resolved, references, modifier_leaves, object_leaves)
+			return _spellbook_grove_support(field_values, field_resolved, references, modifier_leaves, object_leaves, ocl_leaves)
 		"CloudBreakSpecialPower":
 			return _spellbook_cloudbreak_support(field_values, field_resolved)
 		_:
@@ -4036,7 +4036,77 @@ func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, 
 	return {"ok": true, "rule": rule, "lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / TICK_SECONDS))}
 
 
-func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary) -> Dictionary:
+func _spellbook_grove_chain(references: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary) -> Dictionary:
+	## Resolve Elven Wood's authored geometry chain, or return {} for "none".
+	##
+	## Retail plants the grove through an ObjectCreationList, not through the
+	## ElvenGrove object (which authors `Model = None` and is pure particle):
+	## OCL_ElvenWoodSeed creates N ElvenWoodTreeSeed at an authored spread
+	## radius, each seed's SlowDeath hatches OCL_ElvenWoodTree -> ElvenWoodTree,
+	## which itself hatches OCL_ElvenWoodTreeSpawn -> ElvenWoodTreeOpt (the tree
+	## that stays). Every number below is read off that chain; nothing is
+	## assumed, and an unresolvable link simply yields no trees rather than an
+	## invented grove.
+	var ocl_ids: Array = references.get("objectCreationLists", []) as Array
+	if ocl_ids.is_empty():
+		return {}
+	var ocl: Dictionary = ocl_leaves.get(String(ocl_ids[0]), {}) as Dictionary
+	if ocl.is_empty():
+		return {}
+	var creates: Array = ocl.get("createObjects", []) as Array
+	if creates.is_empty() or typeof(creates[0]) != TYPE_DICTIONARY:
+		return {}
+	var create := creates[0] as Dictionary
+	var names: Array = create.get("objects", []) as Array
+	if names.is_empty():
+		return {}
+	var count := 1
+	var min_radius := 0.0
+	var max_radius := 0.0
+	for field_value in Array(create.get("fields", [])):
+		if typeof(field_value) != TYPE_DICTIONARY:
+			continue
+		var field_row := field_value as Dictionary
+		match String(field_row.get("key", "")):
+			"Count":
+				count = maxi(1, int(field_row.get("resolved", 1)))
+			"MinDistanceAFormation":
+				min_radius = float(field_row.get("resolved", 0.0))
+			"MaxDistanceFormation":
+				max_radius = float(field_row.get("resolved", 0.0))
+	# Follow every authored hatch to the object that actually remains standing.
+	var object_id := String(names[0])
+	var guard := 0
+	while guard < 4:
+		guard += 1
+		var leaf: Dictionary = object_leaves.get(object_id, {}) as Dictionary
+		if leaf.is_empty():
+			return {}
+		var hatch: Dictionary = leaf.get("hatch", {}) as Dictionary
+		var hatch_ocl_id := String(hatch.get("ocl", ""))
+		if hatch_ocl_id == "":
+			break
+		var hatch_ocl: Dictionary = ocl_leaves.get(hatch_ocl_id, {}) as Dictionary
+		var hatch_creates: Array = hatch_ocl.get("createObjects", []) as Array
+		if hatch_creates.is_empty() or typeof(hatch_creates[0]) != TYPE_DICTIONARY:
+			break
+		var hatch_names: Array = (hatch_creates[0] as Dictionary).get("objects", []) as Array
+		if hatch_names.is_empty():
+			break
+		object_id = String(hatch_names[0])
+	if object_id == "" or not object_leaves.has(object_id):
+		return {}
+	if max_radius <= 0.0:
+		max_radius = min_radius
+	return {
+		"object_id": object_id,
+		"count": count,
+		"min_radius_source": min_radius,
+		"max_radius_source": max_radius,
+	}
+
+
+func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary = {}) -> Dictionary:
 	## Elven Wood: the converted ElvenGrove leaf carries the taint aura —
 	## modifier leaf, refresh, range, filter, and the grove lifetime.
 	var grove_id := String(field_values.get("ElvenGroveObject", ""))
@@ -4078,6 +4148,9 @@ func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictiona
 		"lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / TICK_SECONDS)),
 		"filter": filter,
 		"modifier": modifier_id,
+		# Presentation-only: the authored tree chain behind the grove. Absent
+		# when the chain does not fully convert, and then no geometry is placed.
+		"trees": _spellbook_grove_chain(references, object_leaves, ocl_leaves),
 	}}
 
 
@@ -4597,7 +4670,15 @@ func _cast_spellbook_grove(team: int, effect: Dictionary, point: Vector2) -> Dic
 		"despawn_tick": tick_index + int(effect.get("lifetime_ticks", 1)),
 		"filter": String(effect.get("filter", "")),
 	})
-	_emit_event("power.grove", 0, 0, {"team": team, "point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)], "lifetime_ticks": int(effect.get("lifetime_ticks", 0))})
+	var grove_trees: Dictionary = effect.get("trees", {}) as Dictionary
+	_emit_event("power.grove", 0, 0, {
+		"team": team,
+		"point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)],
+		"lifetime_ticks": int(effect.get("lifetime_ticks", 0)),
+		# The presenter plants the authored tree object; an empty block means
+		# the chain did not convert and nothing is drawn.
+		"trees": grove_trees.duplicate(true),
+	})
 	return {"ok": true, "reason": "", "battalions": 0}
 
 
@@ -4771,6 +4852,47 @@ func _spawn_summon_targets(team: int, point: Vector2, targets: Array) -> Array:
 			spawned.append(entity_id)
 	_rules["unit_rules"] = unit_rules
 	return spawned
+
+
+func spawn_script_object(object_type: String, team: int, at: Vector2) -> int:
+	## Map-script object creation (campaign B4). Instantiates one battalion of
+	## the retail object type `object_type` for `team` at `at` and returns its
+	## entity id.
+	##
+	## Returns -1, and creates nothing, when this simulation cannot honestly
+	## produce the type: the loaded content carries no unit rule for it, or the
+	## team is not in the roster. That is the ordinary case for a campaign map
+	## object whose retail type is not in the loaded faction slice, and the
+	## caller (RetailMapScripts) keeps the object as registry state only rather
+	## than substituting a different unit for it.
+	##
+	## Nothing inside the simulation calls this, so a match whose scripts never
+	## create objects is byte-identical to one compiled before it existed.
+	if object_type == "":
+		return -1
+	var unit_rules_value: Variant = _rules.get("unit_rules", {})
+	if typeof(unit_rules_value) != TYPE_DICTIONARY:
+		return -1
+	var rule: Dictionary = (unit_rules_value as Dictionary).get(object_type, {}) as Dictionary
+	if rule.is_empty():
+		return -1
+	if not _next_dynamic_id.has(team):
+		# Allocating outside the seeded per-team id ranges would collide with
+		# another team's ids, so an unseeded team refuses rather than inventing
+		# an id space.
+		return -1
+	var entity_id := int(_next_dynamic_id[team])
+	_next_dynamic_id[team] = entity_id + 1
+	_add_battalion(
+		entity_id,
+		team,
+		at,
+		String(rule.get("horde_id", object_type)),
+		object_type,
+		object_type,
+		0
+	)
+	return entity_id if entities.has(entity_id) else -1
 
 
 func _step_summon_despawns() -> void:

@@ -85,9 +85,23 @@ func fade_out_and_free() -> void:
 	if _fading:
 		return
 	_fading = true
+	# This node is a CanvasLayer, which has no `modulate` — tweening it raised
+	# "the tweened property does not exist" on every launch and the screen
+	# vanished instantly instead of fading. Fade the CanvasItem children in
+	# parallel, which is where the visible content actually lives.
+	var faded: Array[CanvasItem] = []
+	for child in get_children():
+		if child is CanvasItem:
+			faded.append(child as CanvasItem)
 	var tween := create_tween()
 	tween.tween_interval(0.15)
-	tween.tween_property(self, "modulate", Color(1, 1, 1, 0), 0.35)
+	if faded.is_empty():
+		tween.tween_callback(queue_free)
+		return
+	tween.set_parallel(true)
+	for item in faded:
+		tween.tween_property(item, "modulate", Color(1, 1, 1, 0), 0.35)
+	tween.set_parallel(false)
 	tween.tween_callback(queue_free)
 
 

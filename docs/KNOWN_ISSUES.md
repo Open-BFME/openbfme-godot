@@ -1,5 +1,14 @@
 # Known issues and product boundaries
 
+> [!NOTE]
+> **Limitations register. Current results live in [STATUS.md](../STATUS.md).**
+>
+> Entries below were written against the original single-faction slice and their
+> specifics have moved on. The standing compatibility boundaries — the soak
+> requirement and the statement that this project is not a declaration of
+> complete BFME2 compatibility — remain accurate and are asserted by
+> `tools/gate-stage10.ps1`, which is why this file is not merged away.
+
 > **Superseded:** current capabilities, blockers, identities, and gate results
 > belong only in `STATUS.md`. This snapshot must not direct new work.
 

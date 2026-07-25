@@ -20,7 +20,7 @@ Three lanes must remain distinct:
 | Lane | Purpose | Fallback behavior | Parity evidence |
 |---|---|---|---|
 | Loose legacy | Local development and legal-safe user mods | Priority-based definition overrides may be accepted | Never BFME2 parity evidence |
-| Strict private retail | Exact selected BFME2 1.06 compatibility pack | Fail closed; no loose/base substitution | Eligible when oracle and gates pass |
+| Strict private retail | Exact selected retail compatibility pack | Fail closed; no loose/base substitution | Eligible when oracle and gates pass |
 | Production mods | Versioned simulation and/or presentation packs | Manifest- and category-governed | Depends on declared profile, never silently retail parity |
 
 Strict retail selection is controlled by the private content pipeline. A missing retail

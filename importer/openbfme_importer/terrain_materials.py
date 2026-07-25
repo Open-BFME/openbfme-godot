@@ -21,7 +21,12 @@ MAX_TERRAIN_INI_BYTES = 4 * 1024 * 1024
 MAX_TERRAIN_TEXTURE_BYTES = 256 * 1024 * 1024
 MAX_TERRAIN_IMAGE_DIMENSION = 16_384
 MAX_TERRAIN_IMAGE_PIXELS = 64 * 1024 * 1024
-_TERRAIN_HEADER = re.compile(r"^Terrain\s+([A-Za-z0-9][A-Za-z0-9._-]{0,127})$", re.IGNORECASE)
+# The symbol grammar matches TERRAIN_MATERIAL_SYMBOL_PATTERN, including the one
+# retail symbol that carries ``&`` (``Terrain SandLargeType3Rocky&Grassy`` at
+# data/ini/terrain.ini:1931, used by three WOTR battle maps).
+_TERRAIN_HEADER = re.compile(
+    r"^Terrain\s+([A-Za-z0-9][A-Za-z0-9._&-]{0,127})$", re.IGNORECASE
+)
 _TEXTURE_ASSIGNMENT = re.compile(
     r'^Texture\s*=\s*(?:"([^"]+)"|([^\s]+))$', re.IGNORECASE
 )
