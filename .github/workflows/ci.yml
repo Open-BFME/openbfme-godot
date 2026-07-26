@@ -93,7 +93,7 @@ jobs:
       # --require-hashes: every dependency must match a pinned digest, so a
       # compromised or yanked-and-replaced PyPI artifact fails closed.
       - name: Install hash-pinned importer dependencies
-        run: python -m pip install --require-hashes --only-binary=:all: -r importer/requirements-win.txt
+        run: python -m pip install --require-hashes --only-binary=":all:" -r importer/requirements-win.txt
 
       # Oracle tests that need a retail install skip themselves when
       # BFME2_INSTALL is unset, which is always the case on a public runner.
