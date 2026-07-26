@@ -47,10 +47,35 @@ public class DualRunOracleTests
     [Fact]
     public void ReplayMatchesGdScriptTraceOnTheSupportedOverlap()
     {
+        // A missing trace must never look like a pass. xunit 2.9 has no dynamic
+        // skip, so the only honest options are "ran and asserted" or "failed
+        // loudly". Silence is what let this report Passed while executing
+        // nothing, on every CI run, because /.private/ is gitignored.
+        var explicitOverride = Environment.GetEnvironmentVariable("OPENBFME_DUALRUN_TRACE");
         var tracePath = LocateTrace();
         if (tracePath == null)
         {
-            _output.WriteLine($"SKIPPED: no trace at {TraceRelativePath}; run game/tests/retail_dualrun_trace_runner.gd first.");
+            if (!string.IsNullOrEmpty(explicitOverride))
+            {
+                Assert.Fail(
+                    $"OPENBFME_DUALRUN_TRACE points at '{explicitOverride}', which does not exist. " +
+                    "An explicitly requested oracle that cannot be loaded is a failure, not a skip.");
+            }
+
+            var optional = Environment.GetEnvironmentVariable("OPENBFME_DUALRUN_OPTIONAL");
+            if (!string.Equals(optional, "1", StringComparison.Ordinal))
+            {
+                Assert.Fail(
+                    $"No dual-run trace at {TraceRelativePath}. This oracle did NOT run. " +
+                    "Produce the trace with game/tests/retail_dualrun_trace_runner.gd, point " +
+                    "OPENBFME_DUALRUN_TRACE at one, or set OPENBFME_DUALRUN_OPTIONAL=1 to declare " +
+                    "in the caller that the trace is intentionally unavailable (public CI has no " +
+                    "access to .private). Do not make this silent again.");
+            }
+
+            _output.WriteLine(
+                $"NOT RUN: no trace at {TraceRelativePath}; OPENBFME_DUALRUN_OPTIONAL=1 was set, " +
+                "so the caller has accepted that this cross-language oracle is unverified here.");
             return;
         }
         var trace = DualRunTrace.Load(tracePath);

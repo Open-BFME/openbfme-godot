@@ -119,6 +119,14 @@ jobs:
         with:
           dotnet-version: "8.0.x"
       - name: Run OpenBfme.Sim test suite
+        # The dual-run oracle compares the C# sim against a GDScript trace that
+        # lives under /.private/ and is therefore absent here by design. It used
+        # to return early and report Passed, so this job has been claiming a
+        # cross-language guarantee it never checked. The test now fails closed;
+        # this variable is the explicit, auditable declaration that public CI
+        # cannot verify that oracle. Remove it on a runner that has the trace.
+        env:
+          OPENBFME_DUALRUN_OPTIONAL: "1"
         run: dotnet test engine/OpenBfme.Engine.sln --nologo --configuration Release
 
   godot-exports:
