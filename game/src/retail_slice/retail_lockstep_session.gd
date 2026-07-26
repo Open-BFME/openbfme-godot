@@ -1,17 +1,87 @@
 class_name RetailLockstepSession
 extends RefCounted
 
+## Deterministic lockstep session for up to MAX_SEATS players (F3).
+##
+## TOPOLOGY. Star, host-relayed. The host binds one ENet host that accepts up to
+## MAX_GUESTS peers; guests connect only to the host. A guest's tick bundle
+## therefore travels guest -> host -> every other guest. A full mesh was
+## rejected: it needs N*(N-1)/2 NAT traversals for a product whose whole
+## internet story is "one host forwards one port" (see upnp_port_mapping.gd),
+## and it gives no ordering benefit, because ordering is not derived from
+## arrival (see below).
+##
+## SEATS AND TEAMS. A SEAT is the network identity (0..MAX_SEATS-1; the host is
+## always seat 0). A TEAM is the simulation's player id. They are NOT the same
+## number: RetailSliceSim reserves team 2 for neutral/capturable owners, so
+## seats map through SEAT_TEAM_IDS, the same ladder main_menu.gd calls
+## TEAM_ID_POOL. The mapping is fixed, total, and strictly increasing.
+##
+## CANONICAL COMMAND ORDER. Every peer must apply every peer's commands for
+## tick T in one identical order. That order is:
+##
+##     (team ascending, then seq ascending)
+##
+## which RetailSliceSim._apply_pending_commands_for_tick already imposes when it
+## drains a tick, so the order is a property of the SIM, not of the network.
+## It is total and arrival-order-independent because:
+##   * every seat maps to a distinct team, so two commands from different seats
+##     always differ in `team` and never need a tie-break;
+##   * `seq` is a per-seat monotonically increasing counter, so two commands
+##     from the SAME seat always differ in `seq`;
+##   * a bundle for tick T is immutable once sent, and a peer cannot advance to
+##     T until it holds the bundle from every participating seat, so the set of
+##     commands being sorted is identical everywhere.
+## Because SEAT_TEAM_IDS is strictly increasing, ordering by team is the same as
+## ordering by seat index; the ladder can gain entries but must never be
+## reordered.
+##
+## WIRE SCHEMA. PROTOCOL_VERSION is checked on the very first envelope and a
+## mismatch is refused with a stated reason instead of being tolerated. Every
+## envelope is validated fail-closed (exact key count, exact types, range
+## checks) before it can touch sim or lobby state; anything else increments a
+## rejection counter and is dropped without pushing an error, because this runs
+## on unauthenticated wire data.
+##
+## OUT OF SCOPE: late join. Once the host has sent its first tick bundle the
+## door is shut, and a peer that arrives afterwards is refused with a reason.
+
 const CommandScript = preload("res://src/retail_slice/retail_command.gd")
-const PROTOCOL_VERSION := 1
+
+## Bumped 1 -> 2 for the N-player handshake (join/welcome replace the old
+## symmetric hello) and the relay envelopes. A v1 peer is refused, not guessed at.
+const PROTOCOL_VERSION := 2
 const MAX_PACKET_BYTES := 256 * 1024
 const MAX_COMMANDS_PER_BUNDLE := 256
 const HASH_INTERVAL_TICKS := 30
+## How many already-executed ticks of command history ordered_commands_for_tick()
+## can still answer for. Bounds the memory the record costs; it exists for
+## assertions and desync forensics, not for replay.
+const COMMAND_HISTORY_TICKS := 64
+
+## Player capacity. MAX_GUESTS is the ENet peer allowance on the host.
+const MAX_SEATS := 8
+const MAX_GUESTS := MAX_SEATS - 1
+const HOST_SEAT := 0
+const ENET_CHANNELS := 1
+## ENet peer slots the host binds. One MORE than the seats it can fill, so a
+## peer arriving at a full or already-started game still gets a connection —
+## and therefore a stated reason — instead of being dropped at the transport
+## layer and left staring at a timeout. The spare slot is released as soon as
+## the refusal is delivered.
+const ENET_PEER_ALLOWANCE := MAX_GUESTS + 1
+
+## Seat -> simulation team id. RetailSliceSim.NEUTRAL_TEAM == 2 owns capturable
+## and prop entities, so the ladder skips 2; this is index-aligned with
+## main_menu.gd TEAM_ID_POOL. MUST stay strictly increasing (see the ordering
+## note above) — append only, never reorder.
+const SEAT_TEAM_IDS: Array[int] = [0, 1, 3, 4, 5, 6, 7, 8]
 
 ## --- Pre-game lobby protocol constants --------------------------------------
 ## The lobby runs on this same reliable-ordered transport before a sim exists
-## (sim == null). Every lobby envelope is validated fail-closed; settings and
-## launch are HOST-authoritative (a host never accepts them from the guest).
-## The value ladders mirror the menu's GAME SETUP constants so both peers can
+## (sim == null). Every lobby envelope is validated fail-closed; the seat table,
+## settings and launch are HOST-authoritative (a host never accepts them from a
+## guest). The value ladders mirror the menu's GAME SETUP constants so peers can
 ## only ever agree on states the setup screen itself can express.
 const LOBBY_NAME_MAX := 24
 const LOBBY_CHAT_MAX := 200
@@ -34,46 +104,88 @@ const LOBBY_HOUSE_COLORS: Array[Color] = [
 	Color8(45, 77, 172), Color8(166, 32, 28), Color8(46, 125, 50), Color8(214, 198, 46),
 	Color8(217, 124, 30), Color8(124, 63, 160), Color8(46, 158, 155), Color8(214, 107, 168),
 ]
+## Alliance ids a host may assign. Default is seat + 1, i.e. free-for-all: every
+## seat in its own alliance, which is what a 1v1 already produced (1 vs 2).
+const LOBBY_ALLIANCE_MIN := 1
+const LOBBY_ALLIANCE_MAX := MAX_SEATS
 
 signal lobby_updated
 signal lobby_chat_received(team: int, text: String)
 signal lobby_launch_accepted(roster: Array)
+## A guest was refused (game full, protocol mismatch, match already running).
+## Carries the host's stated reason so the UI never has to invent one.
+signal join_refused(reason: String)
 
 var input_delay_ticks := 3
 var sim: RetailSliceSim
+## Network identity of this peer. local_seat is -1 until a guest is welcomed.
+var local_seat := -1
 var local_team := -1
+## Legacy 1v1 mirror: the "primary" remote seat's team (the host for a guest,
+## the lowest-numbered occupied guest seat for the host). Kept because the
+## 2-player callers and runners read it; N-player code should use
+## remote_seats() / lobby_seats instead.
 var peer_team := -1
 var connected := false
 var handshake_complete := false
 var desynced := false
 var desync_tick := -1
+## Seat whose state hash diverged, -1 when none. With more than two players
+## this is the actionable half of a desync report.
+var desync_seat := -1
 var bound_port := 0
 var remote_ack_tick := 0
 var rejected_packets := 0
 var rejected_remote_commands := 0
 var pause_command_tick := -1
 var pause_command_state := false
+## Host's stated reason when this peer's join was refused ("" when it was not).
+var join_refused_reason := ""
+## Number of seats that must be occupied before ticking may begin. 0 means "no
+## explicit requirement, use whoever is connected"; an accepted lobby launch
+## sets it from the roster so a peer can never start a match short-handed.
+var required_seat_count := 0
 
 var _connection: ENetConnection
+## Guest side: the host peer. Host side: the primary guest peer, kept so the
+## legacy single-peer helpers (_send_envelope) still mean something.
 var _peer: ENetPacketPeer
 var _is_host := false
 var _next_local_seq := 0
-var _hello_sent := false
+var _join_sent := false
 var _local_commands_by_tick: Dictionary = {}
-var _remote_bundles: Dictionary = {}
 var _bundle_sent_through := 0
+## Legacy 1v1 mirror of the per-seat contiguous watermark: the MINIMUM across
+## every remote seat, i.e. the tick through which EVERY remote seat has been
+## received contiguously. With one remote seat it is that seat's watermark.
 var _remote_bundle_contiguous := 0
-var _last_remote_seq := -1
 var _hash_barrier_tick := -1
 var _hash_sent := false
 var _local_hash := ""
-var _remote_hashes: Dictionary = {}
 var _pause_commands_by_tick: Dictionary = {}
 var _deferred_local_submissions: Array[Dictionary] = []
+## tick -> {seat -> Array[command]}, pruned to COMMAND_HISTORY_TICKS. Backs
+## ordered_commands_for_tick(); see canonical_command_order().
+var _commands_by_tick: Dictionary = {}
 
-## Lobby state (pre-game phase, sim == null). Profiles are canonical dicts
-## {name, faction, color, ready}; settings is the host-authoritative canonical
-## dict {map_id, resources, cp_factor, build_plots}.
+## Per-remote-seat lockstep state. Keys are seat ints.
+var _remote_bundles: Dictionary = {}      ## seat -> {tick: true}
+var _remote_contiguous: Dictionary = {}   ## seat -> int
+var _remote_last_seq: Dictionary = {}     ## seat -> int
+var _remote_ack: Dictionary = {}          ## seat -> int
+var _remote_hashes: Dictionary = {}       ## seat -> {tick: String}
+
+## Seat bookkeeping. _seats is the occupancy + profile table (authoritative on
+## the host, a mirror of the host's broadcast on a guest).
+var _seats: Dictionary = {}               ## seat -> seat record
+var _seat_peers: Dictionary = {}          ## host only: seat -> ENetPacketPeer
+var _peer_seats: Dictionary = {}          ## host only: peer id -> seat
+
+## Lobby state (pre-game phase, sim == null). lobby_seats is the canonical
+## host-authoritative table both sides derive the launch roster from.
+## lobby_local_profile / lobby_remote_profile are the 1v1 mirrors kept for the
+## existing two-player callers.
+var lobby_seats: Array = []
 var lobby_local_profile: Dictionary = {}
 var lobby_remote_profile: Dictionary = {}
 var lobby_settings: Dictionary = {}
@@ -87,31 +199,137 @@ func _init(simulation: RetailSliceSim = null) -> void:
 	sim = simulation
 
 
+# --- seat/team mapping -------------------------------------------------------
+
+## Simulation team id for a seat, or -1 for a seat outside the ladder.
+static func team_for_seat(seat: int) -> int:
+	if seat < 0 or seat >= SEAT_TEAM_IDS.size():
+		return -1
+	return SEAT_TEAM_IDS[seat]
+
+
+## Inverse of team_for_seat; -1 when the team is not a player seat (e.g. the
+## sim's neutral team).
+static func seat_for_team(team: int) -> int:
+	return SEAT_TEAM_IDS.find(team)
+
+
+## Occupied seats other than this peer's, ascending. These are exactly the
+## seats a tick bundle must be received from before the sim may advance.
+func remote_seats() -> Array[int]:
+	var seats: Array[int] = []
+	for seat in _seats:
+		if int(seat) != local_seat:
+			seats.append(int(seat))
+	seats.sort()
+	return seats
+
+
+func occupied_seats() -> Array[int]:
+	var seats: Array[int] = []
+	for seat in _seats:
+		seats.append(int(seat))
+	seats.sort()
+	return seats
+
+
+func seat_count() -> int:
+	return _seats.size()
+
+
+# --- canonical command order -------------------------------------------------
+
+## THE ordering rule, in one place: team ascending, then seq ascending.
+##
+## Deterministic and total for a lockstep tick, because within one tick every
+## command carries the (team, seq) pair of its author, every seat maps to a
+## distinct team, and seq is a per-seat monotonic counter — so no two commands
+## can ever compare equal and no tie-break is needed. It is also independent of
+## arrival order: the input array may be in any order at all and the output is
+## the same. RetailSliceSim imposes exactly this order when it drains a tick,
+## so this function describes the sim's behaviour rather than competing with it.
+static func canonical_command_order(commands: Array) -> Array:
+	var ordered := commands.duplicate(true)
+	ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var a_team := int(a.get("team", -1))
+		var b_team := int(b.get("team", -1))
+		if a_team != b_team:
+			return a_team < b_team
+		return int(a.get("seq", -1)) < int(b.get("seq", -1))
+	)
+	return ordered
+
+
+## Every command this peer holds for `tick`, in canonical order. Two peers that
+## have both received the full bundle set for `tick` must return byte-identical
+## arrays; that equality is the lockstep invariant. Returns [] for a tick
+## outside the retained history window.
+func ordered_commands_for_tick(tick: int) -> Array:
+	if not _commands_by_tick.has(tick):
+		return []
+	var by_seat := _commands_by_tick[tick] as Dictionary
+	var flattened: Array = []
+	for seat in by_seat:
+		for command in (by_seat[seat] as Array):
+			flattened.append((command as Dictionary).duplicate(true))
+	return canonical_command_order(flattened)
+
+
+func _record_commands(tick: int, seat: int, commands: Array) -> void:
+	if commands.is_empty():
+		return
+	var by_seat := _commands_by_tick.get(tick, {}) as Dictionary
+	var stored: Array = []
+	for command in commands:
+		stored.append((command as Dictionary).duplicate(true))
+	by_seat[seat] = stored
+	_commands_by_tick[tick] = by_seat
+
+
+func _prune_command_history(current_tick: int) -> void:
+	var oldest := current_tick - COMMAND_HISTORY_TICKS
+	if oldest <= 0:
+		return
+	for tick in _commands_by_tick.keys():
+		if int(tick) < oldest:
+			_commands_by_tick.erase(tick)
+
+
+# --- connection --------------------------------------------------------------
+
 func host(port: int) -> Error:
 	close()
 	_is_host = true
-	local_team = 0
-	peer_team = 1
+	local_seat = HOST_SEAT
+	local_team = team_for_seat(HOST_SEAT)
+	# Legacy 1v1 mirror: with no guest yet, the first seat a guest will take.
+	peer_team = team_for_seat(HOST_SEAT + 1)
 	_connection = ENetConnection.new()
-	var error := _connection.create_host_bound("*", port, 1, 1)
+	var error := _connection.create_host_bound("*", port, ENET_PEER_ALLOWANCE, ENET_CHANNELS)
 	if error != OK:
 		_connection = null
 		return error
 	bound_port = _connection.get_local_port()
+	_seats[HOST_SEAT] = _seat_record(HOST_SEAT, "", "men", 0, HOST_SEAT + 1, false, false)
 	return OK
 
 
 func join(address: String, port: int) -> Error:
 	close()
 	_is_host = false
-	local_team = 1
-	peer_team = 0
+	# Provisional identity so a caller that reads local_team before the welcome
+	# lands sees the overwhelmingly common value; the host's welcome is
+	# authoritative and overwrites it. No command may be submitted before
+	# handshake_complete, so a provisional value can never reach the wire.
+	local_seat = HOST_SEAT + 1
+	local_team = team_for_seat(local_seat)
+	peer_team = team_for_seat(HOST_SEAT)
 	_connection = ENetConnection.new()
-	var error := _connection.create_host(1, 1)
+	var error := _connection.create_host(1, ENET_CHANNELS)
 	if error != OK:
 		_connection = null
 		return error
-	_peer = _connection.connect_to_host(address, port, 1)
+	_peer = _connection.connect_to_host(address, port, ENET_CHANNELS)
 	if _peer == null:
 		close()
 		return ERR_CANT_CONNECT
@@ -133,63 +351,97 @@ var _graceful_close_done := false
 
 
 func begin_graceful_close() -> void:
-	if _connection == null or _peer == null or not _peer.is_active():
+	if _connection == null:
+		_graceful_close_done = true
+		return
+	var peers := _active_peers()
+	if peers.is_empty():
 		_graceful_close_done = true
 		return
 	_graceful_close_requested = true
-	_peer.peer_disconnect_later(0)
+	for peer in peers:
+		peer.peer_disconnect_later(0)
 
 
 func poll_graceful_close() -> bool:
-	## True once ENet confirmed the deferred disconnect (all queued reliable
+	## True once ENet confirmed the deferred disconnects (all queued reliable
 	## packets delivered) or there is nothing left to drain.
 	if _graceful_close_done or not _graceful_close_requested or _connection == null:
 		return true
+	var outstanding := _active_peers().size()
 	for _index in range(64):
 		var event := _connection.service(0)
 		if event.is_empty() or int(event[0]) == ENetConnection.EVENT_NONE:
-			return false
+			return outstanding == 0
 		if int(event[0]) == ENetConnection.EVENT_DISCONNECT:
-			_graceful_close_done = true
-			return true
+			outstanding -= 1
+			if outstanding <= 0:
+				_graceful_close_done = true
+				return true
 	return false
 
 
+func _active_peers() -> Array:
+	var peers: Array = []
+	if _is_host:
+		for seat in _seat_peers:
+			var peer := _seat_peers[seat] as ENetPacketPeer
+			if peer != null and peer.is_active():
+				peers.append(peer)
+	elif _peer != null and _peer.is_active():
+		peers.append(_peer)
+	return peers
+
+
 func close() -> void:
-	if _peer != null and _peer.is_active():
-		# Immediate but NOTIFIED disconnect: the remote peer receives the ENet
-		# disconnect event right away (a lobby LEAVE must be visible to the
-		# other side), unlike reset() which drops silently into a timeout.
-		_peer.peer_disconnect_now(0)
+	# Immediate but NOTIFIED disconnect: the remote peer receives the ENet
+	# disconnect event right away (a lobby LEAVE must be visible to the other
+	# side), unlike reset() which drops silently into a timeout.
+	for peer in _active_peers():
+		(peer as ENetPacketPeer).peer_disconnect_now(0)
 	if _connection != null:
 		_connection.destroy()
 	_connection = null
 	_peer = null
+	local_seat = -1
+	# local_team / peer_team are deliberately NOT reset here: host()/join() set
+	# them immediately after their own close(), and out-of-tree readers (the
+	# vertical slice's HUD/control path) sample them after a session ends.
 	connected = false
 	handshake_complete = false
 	desynced = false
 	desync_tick = -1
+	desync_seat = -1
 	bound_port = 0
 	remote_ack_tick = 0
 	rejected_packets = 0
 	rejected_remote_commands = 0
 	pause_command_tick = -1
 	pause_command_state = false
+	join_refused_reason = ""
+	required_seat_count = 0
 	_graceful_close_requested = false
 	_graceful_close_done = false
 	_next_local_seq = 0
-	_hello_sent = false
+	_join_sent = false
 	_local_commands_by_tick.clear()
-	_remote_bundles.clear()
 	_bundle_sent_through = 0
 	_remote_bundle_contiguous = 0
-	_last_remote_seq = -1
 	_hash_barrier_tick = -1
 	_hash_sent = false
 	_local_hash = ""
-	_remote_hashes.clear()
 	_pause_commands_by_tick.clear()
 	_deferred_local_submissions.clear()
+	_commands_by_tick.clear()
+	_remote_bundles.clear()
+	_remote_contiguous.clear()
+	_remote_last_seq.clear()
+	_remote_ack.clear()
+	_remote_hashes.clear()
+	_seats.clear()
+	_seat_peers.clear()
+	_peer_seats.clear()
+	lobby_seats = []
 	lobby_local_profile = {}
 	lobby_remote_profile = {}
 	lobby_settings = {}
@@ -199,8 +451,14 @@ func close() -> void:
 	lobby_launch_received = false
 
 
+# --- local input -------------------------------------------------------------
+
 func submit_local(type: String, args: Dictionary) -> void:
 	if sim == null or desynced or input_delay_ticks <= 0:
+		return
+	# A seat is only final once the host has welcomed this peer; a command
+	# stamped with a provisional team would be rejected by everyone else.
+	if not handshake_complete or local_seat < 0:
 		return
 	if _hash_barrier_tick >= 0:
 		_deferred_local_submissions.append({"type": type, "args": args.duplicate(true)})
@@ -227,26 +485,24 @@ func _submit_local_now(type: String, args: Dictionary) -> void:
 	var commands: Array = _local_commands_by_tick.get(command_tick, [])
 	commands.append(command)
 	_local_commands_by_tick[command_tick] = commands
+	_record_commands(command_tick, local_seat, commands)
 	if type == "pause" or type == "resume":
 		var pause_commands: Array = _pause_commands_by_tick.get(command_tick, [])
 		pause_commands.append(command)
 		_pause_commands_by_tick[command_tick] = pause_commands
 
 
+# --- pump --------------------------------------------------------------------
+
 func poll() -> void:
 	if _connection == null:
 		return
 	_service_events()
-	if not connected or _peer == null:
+	if not connected:
 		return
-	if not _hello_sent:
-		_send_envelope({
-			"kind": "hello",
-			"version": PROTOCOL_VERSION,
-			"team": local_team,
-			"peer_team": peer_team,
-		})
-		_hello_sent = true
+	if not _is_host and not _join_sent and _peer != null and _peer.is_active():
+		_send_to_peer(_peer, {"kind": "join", "version": PROTOCOL_VERSION})
+		_join_sent = true
 	if handshake_complete and sim != null:
 		_send_ready_bundles()
 		_maybe_send_hash()
@@ -260,20 +516,38 @@ func poll() -> void:
 func can_advance() -> bool:
 	if sim == null or not handshake_complete or desynced or _hash_barrier_tick >= 0:
 		return false
+	# A match must never start (or continue) with fewer seats than the agreed
+	# roster: a missing seat's commands would silently never arrive.
+	if required_seat_count > 0 and _seats.size() < required_seat_count:
+		return false
 	if sim.clock_paused and not sim._has_pending_resume_command():
 		return false
 	var next_tick := sim.tick_index + 1
-	return next_tick <= _bundle_sent_through and _remote_bundles.has(next_tick)
+	if next_tick > _bundle_sent_through:
+		return false
+	# EVERY participating seat's bundle for the next tick, without exception.
+	var seats := remote_seats()
+	if seats.is_empty():
+		return false
+	for seat in seats:
+		var bundles := _remote_bundles.get(seat, {}) as Dictionary
+		if not bundles.has(next_tick):
+			return false
+	return true
 
 
 func advance_if_ready() -> bool:
 	if not can_advance():
 		return false
 	var next_tick := sim.tick_index + 1
-	_remote_bundles.erase(next_tick)
+	for seat in remote_seats():
+		var bundles := _remote_bundles.get(seat, {}) as Dictionary
+		bundles.erase(next_tick)
+		_remote_bundles[seat] = bundles
 	sim.tick()
 	if sim.tick_index != next_tick:
 		return false
+	_prune_command_history(sim.tick_index)
 	if _pause_commands_by_tick.has(next_tick):
 		pause_command_tick = next_tick
 		pause_command_state = sim.clock_paused
@@ -293,23 +567,119 @@ func _service_events() -> void:
 		var event_peer := event[1] as ENetPacketPeer
 		match int(event[0]):
 			ENetConnection.EVENT_CONNECT:
-				if _peer != null and event_peer != _peer:
-					event_peer.reset()
-					continue
-				_peer = event_peer
-				connected = true
+				_on_peer_connect(event_peer)
 			ENetConnection.EVENT_DISCONNECT:
-				if event_peer == _peer:
-					connected = false
-					handshake_complete = false
+				_on_peer_disconnect(event_peer)
 			ENetConnection.EVENT_RECEIVE:
-				if event_peer != _peer:
-					rejected_packets += 1
-					continue
-				_receive_packet(event_peer.get_packet())
+				_receive_packet(event_peer, event_peer.get_packet())
 
+
+func _on_peer_connect(event_peer: ENetPacketPeer) -> void:
+	if not _is_host:
+		if _peer != null and event_peer != _peer:
+			event_peer.reset()
+			return
+		_peer = event_peer
+		connected = true
+		return
+	# The seat is not assigned here: it is assigned when the peer identifies
+	# itself with a `join` envelope carrying a protocol version we accept.
+	connected = true
+
+
+func _on_peer_disconnect(event_peer: ENetPacketPeer) -> void:
+	if not _is_host:
+		if event_peer == _peer:
+			connected = false
+			handshake_complete = false
+		return
+	var key := event_peer.get_instance_id()
+	if not _peer_seats.has(key):
+		# A peer that was refused before it was ever seated (full game, wrong
+		# protocol, match already running). It still has to stop counting
+		# towards "somebody is connected".
+		if _seat_peers.is_empty():
+			connected = false
+			handshake_complete = false
+			_peer = null
+		return
+	var seat := int(_peer_seats[key])
+	_peer_seats.erase(key)
+	_seat_peers.erase(seat)
+	_release_seat(seat)
+	if _peer == event_peer:
+		_peer = null
+	if _seat_peers.is_empty():
+		connected = false
+		handshake_complete = false
+		_peer = null
+	else:
+		_peer = _seat_peers[_seat_peers.keys().min()] as ENetPacketPeer
+	_refresh_primary_remote()
+	_broadcast_seat_table()
+	lobby_updated.emit()
+
+
+func _release_seat(seat: int) -> void:
+	_seats.erase(seat)
+	_remote_bundles.erase(seat)
+	_remote_contiguous.erase(seat)
+	_remote_last_seq.erase(seat)
+	_remote_ack.erase(seat)
+	_remote_hashes.erase(seat)
+	_recompute_watermarks()
+	_rebuild_lobby_seats()
+
+
+func _lowest_free_seat() -> int:
+	for seat in range(HOST_SEAT + 1, MAX_SEATS):
+		if not _seats.has(seat):
+			return seat
+	return -1
+
+
+# --- send helpers ------------------------------------------------------------
+
+func _send_to_peer(peer: ENetPacketPeer, envelope: Dictionary) -> void:
+	if peer == null or not peer.is_active():
+		return
+	var packet := var_to_bytes(envelope)
+	if packet.is_empty() or packet.size() > MAX_PACKET_BYTES:
+		return
+	peer.send(0, packet, ENetPacketPeer.FLAG_RELIABLE)
+
+
+## Legacy single-peer send, retained because runners inject raw envelopes with
+## it. On a guest it targets the host; on a host it reaches every guest.
+func _send_envelope(envelope: Dictionary) -> void:
+	if _is_host:
+		_broadcast(envelope)
+		return
+	_send_to_peer(_peer, envelope)
+
+
+func _broadcast(envelope: Dictionary, except_seat: int = -1) -> void:
+	for seat in _seat_peers:
+		if int(seat) == except_seat:
+			continue
+		_send_to_peer(_seat_peers[seat] as ENetPacketPeer, envelope)
+
+
+func _send_to_seat(seat: int, envelope: Dictionary) -> void:
+	if not _seat_peers.has(seat):
+		return
+	_send_to_peer(_seat_peers[seat] as ENetPacketPeer, envelope)
+
+
+# --- lockstep send -----------------------------------------------------------
 
 func _send_ready_bundles() -> void:
+	# The clock does not start until the agreed roster is actually seated.
+	# Without this a host would begin ticking the instant the FIRST guest
+	# handshakes, and every later guest would then be turned away by the
+	# late-join guard — an eight-player match could never assemble.
+	if required_seat_count > 0 and _seats.size() < required_seat_count:
+		return
 	# At tick T, T + delay remains open for input until the sim leaves T.
 	# This also preserves an exact delayed slot for a later resume while paused.
 	var send_through := sim.tick_index + input_delay_ticks - 1
@@ -337,16 +707,9 @@ func _maybe_send_hash() -> void:
 	_compare_hash_if_ready(_hash_barrier_tick)
 
 
-func _send_envelope(envelope: Dictionary) -> void:
-	if _peer == null or not _peer.is_active():
-		return
-	var packet := var_to_bytes(envelope)
-	if packet.is_empty() or packet.size() > MAX_PACKET_BYTES:
-		return
-	_peer.send(0, packet, ENetPacketPeer.FLAG_RELIABLE)
+# --- receive -----------------------------------------------------------------
 
-
-func _receive_packet(packet: PackedByteArray) -> void:
+func _receive_packet(event_peer: ENetPacketPeer, packet: PackedByteArray) -> void:
 	if packet.is_empty() or packet.size() > MAX_PACKET_BYTES:
 		rejected_packets += 1
 		return
@@ -358,17 +721,45 @@ func _receive_packet(packet: PackedByteArray) -> void:
 	if typeof(envelope.get("kind")) != TYPE_STRING:
 		rejected_packets += 1
 		return
-	match String(envelope["kind"]):
-		"hello":
-			_receive_hello(envelope)
+	var kind := String(envelope["kind"])
+	# A guest only ever hears from the host; a host only ever hears from a peer
+	# it has already seated (the sole exception being that peer's own `join`).
+	if not _is_host and event_peer != _peer:
+		rejected_packets += 1
+		return
+	var sender_seat := -1
+	if _is_host:
+		if kind == "join":
+			_receive_join(event_peer, envelope)
+			return
+		var key := event_peer.get_instance_id()
+		if not _peer_seats.has(key):
+			rejected_packets += 1
+			return
+		sender_seat = int(_peer_seats[key])
+	else:
+		sender_seat = HOST_SEAT
+	match kind:
+		"welcome":
+			_receive_welcome(envelope)
+		"refuse":
+			_receive_refuse(envelope)
 		"bundle":
-			_receive_bundle(envelope)
+			_receive_bundle(sender_seat, envelope)
+		"relay":
+			_receive_relay(envelope)
 		"hash":
-			_receive_hash(envelope)
+			_receive_hash(sender_seat, envelope)
+		"relay.hash":
+			_receive_relay_hash(envelope)
 		"lobby.profile":
-			_receive_lobby_profile(envelope)
+			_receive_lobby_profile(sender_seat, envelope)
 		"lobby.chat":
-			_receive_lobby_chat(envelope)
+			_receive_lobby_chat(sender_seat, envelope)
+		"relay.chat":
+			_receive_relay_chat(envelope)
+		"lobby.seats":
+			_receive_lobby_seats(envelope)
 		"lobby.settings":
 			_receive_lobby_settings(envelope)
 		"lobby.launch":
@@ -377,24 +768,125 @@ func _receive_packet(packet: PackedByteArray) -> void:
 			rejected_packets += 1
 
 
-func _receive_hello(envelope: Dictionary) -> void:
-	if envelope.size() != 4 \
-		or typeof(envelope.get("version")) != TYPE_INT \
-		or typeof(envelope.get("team")) != TYPE_INT \
-		or typeof(envelope.get("peer_team")) != TYPE_INT \
-		or int(envelope["version"]) != PROTOCOL_VERSION \
-		or int(envelope["team"]) != peer_team \
-		or int(envelope["peer_team"]) != local_team:
+## Host side. Seats a guest, or refuses it with a stated reason.
+func _receive_join(event_peer: ENetPacketPeer, envelope: Dictionary) -> void:
+	if envelope.size() != 2 or typeof(envelope.get("version")) != TYPE_INT:
 		rejected_packets += 1
 		return
+	var key := event_peer.get_instance_id()
+	if _peer_seats.has(key):
+		# Re-announcing an already-seated peer is a protocol violation.
+		rejected_packets += 1
+		return
+	if int(envelope["version"]) != PROTOCOL_VERSION:
+		_refuse(event_peer, "Different game version (needs protocol v%d, this host speaks v%d)." % [
+			int(envelope["version"]), PROTOCOL_VERSION,
+		])
+		return
+	# Late join is out of scope: once the first tick bundle has gone out the
+	# match is running and a new seat could never be made consistent.
+	if _bundle_sent_through > 0 or lobby_launch_received:
+		_refuse(event_peer, "That match has already started.")
+		return
+	var seat := _lowest_free_seat()
+	if seat < 0:
+		_refuse(event_peer, "The game is full (%d of %d seats taken)." % [_seats.size(), MAX_SEATS])
+		return
+	_peer_seats[key] = seat
+	_seat_peers[seat] = event_peer
+	_seats[seat] = _seat_record(seat, "", "men", seat % LOBBY_HOUSE_COLORS.size(), seat + 1, false, false)
+	_remote_bundles[seat] = {}
+	_remote_contiguous[seat] = 0
+	_remote_last_seq[seat] = -1
+	_remote_ack[seat] = 0
+	_remote_hashes[seat] = {}
+	if _peer == null:
+		_peer = event_peer
+	handshake_complete = true
+	if lobby_settings.is_empty():
+		lobby_settings = lobby_default_settings()
+	_recompute_watermarks()
+	_rebuild_lobby_seats()
+	_refresh_primary_remote()
+	_send_to_peer(event_peer, {
+		"kind": "welcome",
+		"version": PROTOCOL_VERSION,
+		"seat": seat,
+		"seats": lobby_seats.duplicate(true),
+	})
+	# Everyone (including the newcomer) gets the authoritative table, and the
+	# newcomer additionally needs the current settings.
+	_broadcast_seat_table()
+	if not lobby_settings.is_empty():
+		_send_to_peer(event_peer, {
+			"kind": "lobby.settings",
+			"map_id": String(lobby_settings["map_id"]),
+			"resources": int(lobby_settings["resources"]),
+			"cp_factor": float(lobby_settings["cp_factor"]),
+			"build_plots": bool(lobby_settings["build_plots"]),
+		})
+	# The host's own announced profile is not part of the table until it has
+	# been announced; if it already was, replay it to the newcomer so its 1v1
+	# mirror (lobby_remote_profile) fills in exactly as in a two-player game.
+	if not lobby_local_profile.is_empty():
+		_send_to_peer(event_peer, {
+			"kind": "lobby.profile",
+			"name": String(lobby_local_profile["name"]),
+			"faction": String(lobby_local_profile["faction"]),
+			"color": int(lobby_local_profile["color"]),
+			"ready": bool(lobby_local_profile["ready"]),
+		})
+	lobby_updated.emit()
+
+
+func _refuse(event_peer: ENetPacketPeer, reason: String) -> void:
+	_send_to_peer(event_peer, {"kind": "refuse", "reason": reason})
+	if _connection != null:
+		_connection.flush()
+	event_peer.peer_disconnect_later(0)
+
+
+func _receive_refuse(envelope: Dictionary) -> void:
+	if _is_host or envelope.size() != 2 or typeof(envelope.get("reason")) != TYPE_STRING:
+		rejected_packets += 1
+		return
+	join_refused_reason = _clean_lobby_text(String(envelope["reason"]), 160)
+	handshake_complete = false
+	join_refused.emit(join_refused_reason)
+
+
+func _receive_welcome(envelope: Dictionary) -> void:
+	if _is_host or envelope.size() != 4 \
+		or typeof(envelope.get("version")) != TYPE_INT \
+		or typeof(envelope.get("seat")) != TYPE_INT \
+		or typeof(envelope.get("seats")) != TYPE_ARRAY \
+		or int(envelope["version"]) != PROTOCOL_VERSION:
+		rejected_packets += 1
+		return
+	var seat := int(envelope["seat"])
+	if seat <= HOST_SEAT or seat >= MAX_SEATS:
+		rejected_packets += 1
+		return
+	var table := _validated_seat_table(envelope["seats"] as Array)
+	if table.is_empty() or not table.has(seat):
+		rejected_packets += 1
+		return
+	local_seat = seat
+	local_team = team_for_seat(seat)
+	peer_team = team_for_seat(HOST_SEAT)
+	_adopt_seat_table(table)
 	handshake_complete = true
 	# Both peers seed identical default lobby settings at handshake so a host
 	# launch without an explicit settings change still verifies byte-equal.
 	if lobby_settings.is_empty():
 		lobby_settings = lobby_default_settings()
+	lobby_updated.emit()
 
 
-func _receive_bundle(envelope: Dictionary) -> void:
+## Applies a bundle authored by `sender_seat`. On the host this also relays it
+## to every other guest, which is the only path a guest's input takes to its
+## fellow guests.
+func _receive_bundle(sender_seat: int, envelope: Dictionary) -> void:
 	# Command bundles are meaningless before a simulation is attached (lobby
 	# phase); fail closed instead of dereferencing a null sim.
 	if sim == null:
@@ -406,72 +898,189 @@ func _receive_bundle(envelope: Dictionary) -> void:
 		or typeof(envelope.get("ack")) != TYPE_INT:
 		rejected_packets += 1
 		return
-	var bundle_tick := int(envelope["tick"])
-	var ack_tick := int(envelope["ack"])
-	var commands := envelope["commands"] as Array
+	if not _apply_bundle(sender_seat, int(envelope["tick"]), envelope["commands"] as Array, int(envelope["ack"])):
+		return
+	if _is_host:
+		_broadcast({
+			"kind": "relay",
+			"seat": sender_seat,
+			"tick": int(envelope["tick"]),
+			"commands": envelope["commands"],
+			"ack": int(envelope["ack"]),
+		}, sender_seat)
+
+
+## Guest side: another guest's bundle, forwarded by the host.
+func _receive_relay(envelope: Dictionary) -> void:
+	if _is_host or sim == null:
+		rejected_packets += 1
+		return
+	if envelope.size() != 5 \
+		or typeof(envelope.get("seat")) != TYPE_INT \
+		or typeof(envelope.get("tick")) != TYPE_INT \
+		or typeof(envelope.get("commands")) != TYPE_ARRAY \
+		or typeof(envelope.get("ack")) != TYPE_INT:
+		rejected_packets += 1
+		return
+	var seat := int(envelope["seat"])
+	# A relay may only ever describe a seat that is not us and not the host
+	# (the host speaks for itself with `bundle`).
+	if seat == local_seat or seat == HOST_SEAT or not _seats.has(seat):
+		rejected_packets += 1
+		return
+	_apply_bundle(seat, int(envelope["tick"]), envelope["commands"] as Array, int(envelope["ack"]))
+
+
+## Shared bundle admission for both the direct and the relayed path. Returns
+## false (having counted a rejection) when the bundle was not accepted.
+func _apply_bundle(seat: int, bundle_tick: int, commands: Array, ack_tick: int) -> bool:
+	if not _seats.has(seat) or seat == local_seat:
+		rejected_packets += 1
+		return false
+	var seat_team := team_for_seat(seat)
+	if seat_team < 0:
+		rejected_packets += 1
+		return false
+	var contiguous := int(_remote_contiguous.get(seat, 0))
 	if bundle_tick <= 0 or ack_tick < 0 or ack_tick > _bundle_sent_through or commands.size() > MAX_COMMANDS_PER_BUNDLE:
 		rejected_packets += 1
-		return
-	if bundle_tick <= _remote_bundle_contiguous:
-		return
-	if bundle_tick != _remote_bundle_contiguous + 1 or bundle_tick <= sim.tick_index:
+		return false
+	if bundle_tick <= contiguous:
+		return false
+	if bundle_tick != contiguous + 1 or bundle_tick <= sim.tick_index:
 		rejected_packets += 1
-		return
+		return false
 	var seen_sequences: Dictionary = {}
-	var last_sequence := _last_remote_seq
+	var last_sequence := int(_remote_last_seq.get(seat, -1))
 	for command_value in commands:
 		if typeof(command_value) != TYPE_DICTIONARY:
 			rejected_packets += 1
-			return
+			return false
 		var command := command_value as Dictionary
 		if not CommandScript.validate(command) \
 			or int(command["tick"]) != bundle_tick \
-			or int(command["team"]) != peer_team \
+			or int(command["team"]) != seat_team \
 			or seen_sequences.has(int(command["seq"])) \
 			or int(command["seq"]) <= last_sequence:
 			rejected_remote_commands += 1
-			return
+			return false
 		seen_sequences[int(command["seq"])] = true
 		last_sequence = int(command["seq"])
 	for command_value in commands:
 		if not sim.submit_command((command_value as Dictionary).duplicate(true)):
 			rejected_packets += 1
-			return
+			return false
 		var command := command_value as Dictionary
 		if String(command["type"]) == "pause" or String(command["type"]) == "resume":
 			var pause_commands: Array = _pause_commands_by_tick.get(bundle_tick, [])
 			pause_commands.append(command.duplicate(true))
 			_pause_commands_by_tick[bundle_tick] = pause_commands
-	_remote_bundles[bundle_tick] = true
-	_last_remote_seq = last_sequence
-	remote_ack_tick = maxi(remote_ack_tick, ack_tick)
-	while _remote_bundles.has(_remote_bundle_contiguous + 1):
-		_remote_bundle_contiguous += 1
+	_record_commands(bundle_tick, seat, commands)
+	var bundles := _remote_bundles.get(seat, {}) as Dictionary
+	bundles[bundle_tick] = true
+	_remote_bundles[seat] = bundles
+	_remote_last_seq[seat] = last_sequence
+	_remote_ack[seat] = maxi(int(_remote_ack.get(seat, 0)), ack_tick)
+	while bundles.has(contiguous + 1):
+		contiguous += 1
+	_remote_contiguous[seat] = contiguous
+	_recompute_watermarks()
+	return true
 
 
-func _receive_hash(envelope: Dictionary) -> void:
+## _remote_bundle_contiguous and remote_ack_tick are MINIMA across every remote
+## seat: the lockstep clock can only be as far along as its slowest peer.
+func _recompute_watermarks() -> void:
+	var seats := remote_seats()
+	if seats.is_empty():
+		_remote_bundle_contiguous = 0
+		remote_ack_tick = 0
+		return
+	var lowest_contiguous := -1
+	var lowest_ack := -1
+	for seat in seats:
+		var contiguous := int(_remote_contiguous.get(seat, 0))
+		var ack := int(_remote_ack.get(seat, 0))
+		if lowest_contiguous < 0 or contiguous < lowest_contiguous:
+			lowest_contiguous = contiguous
+		if lowest_ack < 0 or ack < lowest_ack:
+			lowest_ack = ack
+	_remote_bundle_contiguous = maxi(0, lowest_contiguous)
+	remote_ack_tick = maxi(remote_ack_tick, maxi(0, lowest_ack))
+
+
+func _receive_hash(sender_seat: int, envelope: Dictionary) -> void:
 	if envelope.size() != 3 \
 		or typeof(envelope.get("tick")) != TYPE_INT \
 		or typeof(envelope.get("hash")) != TYPE_STRING:
 		rejected_packets += 1
 		return
-	var hash_tick := int(envelope["tick"])
-	var hash_value := String(envelope["hash"])
-	if hash_tick <= 0 or hash_tick % HASH_INTERVAL_TICKS != 0 or hash_value.length() != 64 or not hash_value.is_valid_hex_number(false):
+	if not _record_remote_hash(sender_seat, int(envelope["tick"]), String(envelope["hash"])):
+		return
+	if _is_host:
+		_broadcast({
+			"kind": "relay.hash",
+			"seat": sender_seat,
+			"tick": int(envelope["tick"]),
+			"hash": String(envelope["hash"]),
+		}, sender_seat)
+	_compare_hash_if_ready(int(envelope["tick"]))
+
+
+func _receive_relay_hash(envelope: Dictionary) -> void:
+	if _is_host or envelope.size() != 4 \
+		or typeof(envelope.get("seat")) != TYPE_INT \
+		or typeof(envelope.get("tick")) != TYPE_INT \
+		or typeof(envelope.get("hash")) != TYPE_STRING:
 		rejected_packets += 1
 		return
-	_remote_hashes[hash_tick] = hash_value.to_lower()
-	_compare_hash_if_ready(hash_tick)
+	var seat := int(envelope["seat"])
+	if seat == local_seat or seat == HOST_SEAT or not _seats.has(seat):
+		rejected_packets += 1
+		return
+	if not _record_remote_hash(seat, int(envelope["tick"]), String(envelope["hash"])):
+		return
+	_compare_hash_if_ready(int(envelope["tick"]))
 
 
+func _record_remote_hash(seat: int, hash_tick: int, hash_value: String) -> bool:
+	if not _seats.has(seat) or seat == local_seat:
+		rejected_packets += 1
+		return false
+	if hash_tick <= 0 or hash_tick % HASH_INTERVAL_TICKS != 0 \
+		or hash_value.length() != 64 or not hash_value.is_valid_hex_number(false):
+		rejected_packets += 1
+		return false
+	var seat_hashes := _remote_hashes.get(seat, {}) as Dictionary
+	seat_hashes[hash_tick] = hash_value.to_lower()
+	_remote_hashes[seat] = seat_hashes
+	return true
+
+
+## The barrier clears only when EVERY remote seat has reported the barrier tick
+## and every report matches. A single mismatch stops this peer immediately and
+## names the seat that diverged.
 func _compare_hash_if_ready(hash_tick: int) -> void:
-	if not _hash_sent or hash_tick != _hash_barrier_tick or not _remote_hashes.has(hash_tick):
+	if not _hash_sent or hash_tick != _hash_barrier_tick:
 		return
-	if String(_remote_hashes[hash_tick]) != _local_hash.to_lower():
-		desynced = true
-		desync_tick = hash_tick
+	var seats := remote_seats()
+	if seats.is_empty():
 		return
-	_remote_hashes.erase(hash_tick)
+	for seat in seats:
+		var seat_hashes := _remote_hashes.get(seat, {}) as Dictionary
+		if not seat_hashes.has(hash_tick):
+			return
+	for seat in seats:
+		var seat_hashes := _remote_hashes.get(seat, {}) as Dictionary
+		if String(seat_hashes[hash_tick]) != _local_hash.to_lower():
+			desynced = true
+			desync_tick = hash_tick
+			desync_seat = seat
+			return
+	for seat in seats:
+		var seat_hashes := _remote_hashes.get(seat, {}) as Dictionary
+		seat_hashes.erase(hash_tick)
+		_remote_hashes[seat] = seat_hashes
 	_hash_barrier_tick = -1
 	_hash_sent = false
 	_local_hash = ""
@@ -539,43 +1148,235 @@ static func _canonical_profile(player_name: String, faction: String, color: int,
 	return {"name": player_name, "faction": faction, "color": color, "ready": ready}
 
 
-static func lobby_roster_from_profiles(host_profile: Dictionary, guest_profile: Dictionary) -> Array:
-	## The launch descriptor list, in the exact retail_team_setup shape the menu's
-	## GAME SETUP writes ({team, faction, controller, difficulty, alliance, color,
-	## start_index}). Construction order and every default are fixed here so both
-	## peers derive byte-identical lists from the same pair of profiles — the
-	## roster feeds the deterministic sim seed. Host is always team 0, guest team
-	## 1; alliances 1 vs 2 (mutually hostile); start_index 0 keeps the authored
-	## start assignment on both machines.
+## Canonical seat record. Fixed key order: the table is byte-compared between
+## host and guest, so field order is part of the contract. `announced` is false
+## until that seat's player has actually sent a profile; an unannounced seat
+## holds a place on the wire but is never treated as a known player.
+static func _seat_record(seat: int, player_name: String, faction: String, color: int, alliance: int, ready: bool, announced: bool) -> Dictionary:
+	return {
+		"seat": seat,
+		"team": team_for_seat(seat),
+		"name": player_name,
+		"faction": faction,
+		"color": color,
+		"alliance": alliance,
+		"ready": ready,
+		"announced": announced,
+	}
+
+
+static func _clean_lobby_text(text: String, limit: int) -> String:
+	var cleaned := ""
+	for index in mini(text.length(), limit):
+		var code := text.unicode_at(index)
+		if code >= 32 and code < 127:
+			cleaned += char(code)
+	return cleaned.strip_edges()
+
+
+# --- seat table --------------------------------------------------------------
+
+func _rebuild_lobby_seats() -> void:
+	var seats: Array = []
+	for seat in occupied_seats():
+		seats.append((_seats[seat] as Dictionary).duplicate(true))
+	lobby_seats = seats
+
+
+func _adopt_seat_table(table: Dictionary) -> void:
+	_seats = {}
+	for seat in table:
+		_seats[int(seat)] = (table[seat] as Dictionary).duplicate(true)
+	for seat in remote_seats():
+		if not _remote_bundles.has(seat):
+			_remote_bundles[seat] = {}
+			_remote_contiguous[seat] = 0
+			_remote_last_seq[seat] = -1
+			_remote_ack[seat] = 0
+			_remote_hashes[seat] = {}
+	for seat in _remote_bundles.keys():
+		if not _seats.has(seat) or int(seat) == local_seat:
+			_remote_bundles.erase(seat)
+			_remote_contiguous.erase(seat)
+			_remote_last_seq.erase(seat)
+			_remote_ack.erase(seat)
+			_remote_hashes.erase(seat)
+	_recompute_watermarks()
+	_rebuild_lobby_seats()
+	_refresh_primary_remote()
+
+
+func _broadcast_seat_table() -> void:
+	if not _is_host:
+		return
+	_rebuild_lobby_seats()
+	_broadcast({"kind": "lobby.seats", "seats": lobby_seats.duplicate(true)})
+
+
+## Keeps the 1v1 mirrors (peer_team, lobby_remote_profile) pointing at the
+## primary remote seat: the host for a guest, the lowest-numbered occupied
+## guest seat for the host.
+func _refresh_primary_remote() -> void:
+	var primary := -1
+	if _is_host:
+		var seats := remote_seats()
+		primary = seats[0] if not seats.is_empty() else -1
+	else:
+		primary = HOST_SEAT if _seats.has(HOST_SEAT) else -1
+	if primary < 0:
+		peer_team = team_for_seat(HOST_SEAT + 1) if _is_host else team_for_seat(HOST_SEAT)
+		lobby_remote_profile = {}
+		return
+	peer_team = team_for_seat(primary)
+	var record := _seats[primary] as Dictionary
+	if not bool(record.get("announced", false)):
+		lobby_remote_profile = {}
+		return
+	lobby_remote_profile = _canonical_profile(
+		String(record["name"]), String(record["faction"]), int(record["color"]), bool(record["ready"])
+	)
+
+
+## Validates a whole seat table off the wire. Returns {} for anything that is
+## not fully well-formed: {seat: record} on success.
+func _validated_seat_table(rows: Array) -> Dictionary:
+	if rows.is_empty() or rows.size() > MAX_SEATS:
+		return {}
+	var table: Dictionary = {}
+	var previous_seat := -1
+	for row_value in rows:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return {}
+		var row := row_value as Dictionary
+		if row.size() != 8 \
+			or typeof(row.get("seat")) != TYPE_INT \
+			or typeof(row.get("team")) != TYPE_INT \
+			or typeof(row.get("name")) != TYPE_STRING \
+			or typeof(row.get("faction")) != TYPE_STRING \
+			or typeof(row.get("color")) != TYPE_INT \
+			or typeof(row.get("alliance")) != TYPE_INT \
+			or typeof(row.get("ready")) != TYPE_BOOL \
+			or typeof(row.get("announced")) != TYPE_BOOL:
+			return {}
+		var seat := int(row["seat"])
+		if seat < 0 or seat >= MAX_SEATS or seat <= previous_seat:
+			return {}
+		if int(row["team"]) != team_for_seat(seat):
+			return {}
+		if not LOBBY_FACTION_IDS.has(String(row["faction"])):
+			return {}
+		if int(row["color"]) < 0 or int(row["color"]) >= LOBBY_HOUSE_COLORS.size():
+			return {}
+		if int(row["alliance"]) < LOBBY_ALLIANCE_MIN or int(row["alliance"]) > LOBBY_ALLIANCE_MAX:
+			return {}
+		if bool(row["announced"]) and not lobby_name_valid(String(row["name"])):
+			return {}
+		previous_seat = seat
+		table[seat] = _seat_record(
+			seat, String(row["name"]), String(row["faction"]), int(row["color"]),
+			int(row["alliance"]), bool(row["ready"]), bool(row["announced"])
+		)
+	if not table.has(HOST_SEAT):
+		return {}
+	return table
+
+
+# --- launch roster -----------------------------------------------------------
+
+## The launch descriptor list, in the exact retail_team_setup shape the menu's
+## GAME SETUP writes ({team, faction, controller, difficulty, alliance, color,
+## start_index}). Construction order and every default are fixed here so every
+## peer derives a byte-identical list from the same seat table — the roster
+## feeds the deterministic sim seed. Seats are emitted in ascending seat order;
+## team comes from SEAT_TEAM_IDS; alliance is the host-assigned value, which
+## defaults to seat + 1 (free-for-all) and reproduces the historical 1v1 pair
+## of alliances 1 and 2 exactly.
+static func lobby_roster_from_seats(seats: Array) -> Array:
 	var descriptors: Array = []
-	var profiles := [host_profile, guest_profile]
-	for team in profiles.size():
-		var profile := profiles[team] as Dictionary
+	for row_value in seats:
+		var row := row_value as Dictionary
+		var seat := int(row.get("seat", 0))
 		descriptors.append({
-			"team": team,
-			"faction": String(profile.get("faction", "men")),
+			"team": team_for_seat(seat),
+			"faction": String(row.get("faction", "men")),
 			"controller": "human",
 			"difficulty": "medium",
-			"alliance": team + 1,
-			"color": LOBBY_HOUSE_COLORS[clampi(int(profile.get("color", 0)), 0, LOBBY_HOUSE_COLORS.size() - 1)],
+			"alliance": int(row.get("alliance", seat + 1)),
+			"color": LOBBY_HOUSE_COLORS[clampi(int(row.get("color", 0)), 0, LOBBY_HOUSE_COLORS.size() - 1)],
 			"start_index": 0,
 		})
 	return descriptors
 
 
-func build_lobby_roster() -> Array:
-	## Local view of the agreed roster; [] until both profiles are known.
-	if lobby_local_profile.is_empty() or lobby_remote_profile.is_empty():
-		return []
-	var host_profile := lobby_local_profile if _is_host else lobby_remote_profile
-	var guest_profile := lobby_remote_profile if _is_host else lobby_local_profile
-	return lobby_roster_from_profiles(host_profile, guest_profile)
+## Two-player convenience retained for existing callers: host profile first,
+## guest second, default free-for-all alliances.
+static func lobby_roster_from_profiles(host_profile: Dictionary, guest_profile: Dictionary) -> Array:
+	var seats: Array = []
+	var profiles := [host_profile, guest_profile]
+	for seat in profiles.size():
+		var profile := profiles[seat] as Dictionary
+		seats.append(_seat_record(
+			seat,
+			String(profile.get("name", "")),
+			String(profile.get("faction", "men")),
+			int(profile.get("color", 0)),
+			seat + 1,
+			bool(profile.get("ready", false)),
+			true
+		))
+	return lobby_roster_from_seats(seats)
 
+
+func build_lobby_roster() -> Array:
+	## Local view of the agreed roster; [] until every occupied seat has
+	## announced a profile (a placeholder seat must never reach the sim).
+	if lobby_seats.size() < 2:
+		return []
+	for row_value in lobby_seats:
+		if not bool((row_value as Dictionary).get("announced", false)):
+			return []
+	return lobby_roster_from_seats(lobby_seats)
+
+
+## True when every occupied seat has announced a profile AND ticked ready.
+## This is the "all seats confirm" gate on starting a match.
+func all_seats_ready() -> bool:
+	if lobby_seats.size() < 2:
+		return false
+	for row_value in lobby_seats:
+		var row := row_value as Dictionary
+		if not bool(row.get("announced", false)) or not bool(row.get("ready", false)):
+			return false
+	return true
+
+
+## Seats that are still holding the match up, as a player-facing list of names
+## (or "Seat N" for a seat that has not announced yet). Empty when ready.
+func seats_not_ready() -> Array[String]:
+	var pending: Array[String] = []
+	for row_value in lobby_seats:
+		var row := row_value as Dictionary
+		if bool(row.get("announced", false)) and bool(row.get("ready", false)):
+			continue
+		var label := String(row.get("name", ""))
+		if not bool(row.get("announced", false)) or label == "":
+			label = "Seat %d" % (int(row.get("seat", 0)) + 1)
+		pending.append(label)
+	return pending
+
+
+# --- lobby send --------------------------------------------------------------
 
 func send_lobby_profile(player_name: String, faction: String, color: int, ready: bool) -> bool:
-	if not handshake_complete or not _lobby_profile_fields_valid(player_name, faction, color):
+	if not handshake_complete or local_seat < 0 or not _lobby_profile_fields_valid(player_name, faction, color):
 		return false
 	lobby_local_profile = _canonical_profile(player_name, faction, color, ready)
+	if _seats.has(local_seat):
+		var record := _seats[local_seat] as Dictionary
+		_seats[local_seat] = _seat_record(
+			local_seat, player_name, faction, color, int(record.get("alliance", local_seat + 1)), ready, true
+		)
+		_rebuild_lobby_seats()
 	_send_envelope({
 		"kind": "lobby.profile",
 		"name": player_name,
@@ -583,6 +1384,8 @@ func send_lobby_profile(player_name: String, faction: String, color: int, ready:
 		"color": color,
 		"ready": ready,
 	})
+	if _is_host:
+		_broadcast_seat_table()
 	_connection.flush()
 	return true
 
@@ -618,16 +1421,54 @@ func send_lobby_settings(map_id: String, resource_amount: int, cp_factor: float,
 	return true
 
 
+## HOST-ONLY. Assigns a seat's alliance (which side it fights on). Alliance is
+## host-authoritative for the same reason settings are: it must be one agreed
+## value, not a negotiation.
+func send_lobby_seat_alliance(seat: int, alliance: int) -> bool:
+	if not _is_host or not handshake_complete or not _seats.has(seat):
+		return false
+	if alliance < LOBBY_ALLIANCE_MIN or alliance > LOBBY_ALLIANCE_MAX:
+		return false
+	var record := _seats[seat] as Dictionary
+	_seats[seat] = _seat_record(
+		seat, String(record["name"]), String(record["faction"]), int(record["color"]),
+		alliance, bool(record["ready"]), bool(record["announced"])
+	)
+	# Changing which side a player is on invalidates everyone's ready flag: the
+	# match they agreed to is not the match they would now be starting.
+	_clear_all_ready()
+	_broadcast_seat_table()
+	_refresh_primary_remote()
+	lobby_updated.emit()
+	_connection.flush()
+	return true
+
+
+func _clear_all_ready() -> void:
+	for seat in _seats:
+		var record := _seats[seat] as Dictionary
+		if not bool(record.get("ready", false)):
+			continue
+		_seats[seat] = _seat_record(
+			int(seat), String(record["name"]), String(record["faction"]), int(record["color"]),
+			int(record["alliance"]), false, bool(record["announced"])
+		)
+		if int(seat) == local_seat and not lobby_local_profile.is_empty():
+			lobby_local_profile["ready"] = false
+	_rebuild_lobby_seats()
+
+
 func send_lobby_launch() -> bool:
-	## HOST-ONLY. Requires both sides ready; echoes the full agreed roster and
-	## settings so the guest can verify byte-equality before accepting. The host
+	## HOST-ONLY. Requires EVERY occupied seat to have announced and confirmed;
+	## echoes the full agreed roster and settings so each guest can verify
+	## byte-equality against its own derived view before accepting. The host
 	## treats its own send as the accepted launch (same roster object).
 	if not _is_host or not handshake_complete:
 		return false
-	if not bool(lobby_local_profile.get("ready", false)) or not bool(lobby_remote_profile.get("ready", false)):
+	if not all_seats_ready():
 		return false
 	var roster := build_lobby_roster()
-	if roster.size() != 2 or lobby_settings.is_empty():
+	if roster.size() < 2 or roster.size() > MAX_SEATS or lobby_settings.is_empty():
 		return false
 	_send_envelope({
 		"kind": "lobby.launch",
@@ -638,6 +1479,7 @@ func send_lobby_launch() -> bool:
 	lobby_launch_roster = roster.duplicate(true)
 	lobby_launch_settings = lobby_settings.duplicate(true)
 	lobby_launch_received = true
+	required_seat_count = roster.size()
 	lobby_launch_accepted.emit(lobby_launch_roster.duplicate(true))
 	return true
 
@@ -648,7 +1490,9 @@ func _append_lobby_chat(team: int, text: String) -> void:
 		lobby_chat_log.pop_front()
 
 
-func _receive_lobby_profile(envelope: Dictionary) -> void:
+# --- lobby receive -----------------------------------------------------------
+
+func _receive_lobby_profile(sender_seat: int, envelope: Dictionary) -> void:
 	if not handshake_complete or envelope.size() != 5 \
 		or typeof(envelope.get("name")) != TYPE_STRING \
 		or typeof(envelope.get("faction")) != TYPE_STRING \
@@ -657,23 +1501,80 @@ func _receive_lobby_profile(envelope: Dictionary) -> void:
 		or not _lobby_profile_fields_valid(String(envelope["name"]), String(envelope["faction"]), int(envelope["color"])):
 		rejected_packets += 1
 		return
-	lobby_remote_profile = _canonical_profile(
+	if not _seats.has(sender_seat):
+		rejected_packets += 1
+		return
+	var record := _seats[sender_seat] as Dictionary
+	_seats[sender_seat] = _seat_record(
+		sender_seat,
 		String(envelope["name"]),
 		String(envelope["faction"]),
 		int(envelope["color"]),
-		bool(envelope["ready"])
+		int(record.get("alliance", sender_seat + 1)),
+		bool(envelope["ready"]),
+		true
 	)
+	_rebuild_lobby_seats()
+	_refresh_primary_remote()
+	if _is_host:
+		# The host is the only writer of the table, so every other guest learns
+		# about this profile from the authoritative broadcast.
+		_broadcast_seat_table()
+		if _connection != null:
+			_connection.flush()
 	lobby_updated.emit()
 
 
-func _receive_lobby_chat(envelope: Dictionary) -> void:
+func _receive_lobby_seats(envelope: Dictionary) -> void:
+	## Seat table is host-authoritative: the host never accepts one from a guest.
+	if _is_host or not handshake_complete or envelope.size() != 2 \
+		or typeof(envelope.get("seats")) != TYPE_ARRAY:
+		rejected_packets += 1
+		return
+	var table := _validated_seat_table(envelope["seats"] as Array)
+	if table.is_empty() or not table.has(local_seat):
+		rejected_packets += 1
+		return
+	_adopt_seat_table(table)
+	# The local profile mirror follows the authoritative table for our own seat.
+	var own := _seats[local_seat] as Dictionary
+	if bool(own.get("announced", false)):
+		lobby_local_profile = _canonical_profile(
+			String(own["name"]), String(own["faction"]), int(own["color"]), bool(own["ready"])
+		)
+	lobby_updated.emit()
+
+
+func _receive_lobby_chat(sender_seat: int, envelope: Dictionary) -> void:
 	if not handshake_complete or envelope.size() != 2 \
 		or typeof(envelope.get("text")) != TYPE_STRING \
 		or not lobby_chat_valid(String(envelope["text"])):
 		rejected_packets += 1
 		return
-	_append_lobby_chat(peer_team, String(envelope["text"]))
-	lobby_chat_received.emit(peer_team, String(envelope["text"]))
+	var sender_team := team_for_seat(sender_seat)
+	_append_lobby_chat(sender_team, String(envelope["text"]))
+	lobby_chat_received.emit(sender_team, String(envelope["text"]))
+	if _is_host:
+		_broadcast({"kind": "relay.chat", "seat": sender_seat, "text": String(envelope["text"])}, sender_seat)
+		if _connection != null:
+			_connection.flush()
+	lobby_updated.emit()
+
+
+func _receive_relay_chat(envelope: Dictionary) -> void:
+	if _is_host or not handshake_complete or envelope.size() != 3 \
+		or typeof(envelope.get("seat")) != TYPE_INT \
+		or typeof(envelope.get("text")) != TYPE_STRING \
+		or not lobby_chat_valid(String(envelope["text"])):
+		rejected_packets += 1
+		return
+	var seat := int(envelope["seat"])
+	if seat == local_seat or not _seats.has(seat):
+		rejected_packets += 1
+		return
+	var sender_team := team_for_seat(seat)
+	_append_lobby_chat(sender_team, String(envelope["text"]))
+	lobby_chat_received.emit(sender_team, String(envelope["text"]))
 	lobby_updated.emit()
 
 
@@ -699,19 +1600,20 @@ func _receive_lobby_settings(envelope: Dictionary) -> void:
 
 
 func _receive_lobby_launch(envelope: Dictionary) -> void:
-	## Guest-side final gate. The echoed roster and settings must byte-match the
+	## Guest-side final gate. The echoed roster and settings must byte-match this
 	## guest's own derived view (reliable-ordered delivery guarantees every prior
-	## profile/settings update arrived first), and both sides must be ready.
+	## seat-table and settings update arrived first), and every seat must be
+	## confirmed ready.
 	if _is_host or not handshake_complete or envelope.size() != 3 \
 		or typeof(envelope.get("roster")) != TYPE_ARRAY \
 		or typeof(envelope.get("settings")) != TYPE_DICTIONARY:
 		rejected_packets += 1
 		return
-	if not bool(lobby_local_profile.get("ready", false)) or not bool(lobby_remote_profile.get("ready", false)):
+	if not all_seats_ready():
 		rejected_packets += 1
 		return
 	var expected_roster := build_lobby_roster()
-	if expected_roster.size() != 2 or lobby_settings.is_empty():
+	if expected_roster.size() < 2 or lobby_settings.is_empty():
 		rejected_packets += 1
 		return
 	var roster := envelope["roster"] as Array
@@ -723,4 +1625,5 @@ func _receive_lobby_launch(envelope: Dictionary) -> void:
 	lobby_launch_roster = expected_roster.duplicate(true)
 	lobby_launch_settings = lobby_settings.duplicate(true)
 	lobby_launch_received = true
+	required_seat_count = expected_roster.size()
 	lobby_launch_accepted.emit(lobby_launch_roster.duplicate(true))

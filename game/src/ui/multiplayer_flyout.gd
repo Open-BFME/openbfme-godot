@@ -15,19 +15,27 @@ extends Panel
 ## Radmin is a third-party product: it is referred to in PLAIN TEXT only, with
 ## no logo or brand asset, and rows are marked with the shell's own gold/green
 ## palette rather than any vendor colour.
+##
+## UPnP (UpnpScript) is the third additive layer: pressing HOST GAME also asks
+## the router to forward the game port, and the OUTCOME IS ALWAYS SHOWN — a
+## mapped external address, or the concrete reason there is none. UPnP being
+## unavailable is an ordinary environment condition, not an error state and not
+## something to hide: LAN and Radmin hosting are unaffected either way.
 
 signal host_requested(port: int)
 signal join_requested(address: String, port: int)
 signal back_requested
 
 const LanDiscoveryScript = preload("res://src/net/lan_discovery.gd")
+const UpnpScript = preload("res://src/net/upnp_port_mapping.gd")
 
 const DEFAULT_PORT := 26015
 const PORT_MIN := 1024
 const PORT_MAX := 65535
 const DEFAULT_MAP_NAME := "Fords of Isen II"
 const DEFAULT_HOST_NAME := "Player"
-const MAX_PLAYERS := 2
+## Lockstep seats a host can accept (RetailLockstepSession.MAX_SEATS).
+const MAX_PLAYERS := 8
 
 var host_port_edit: LineEdit
 var join_address_edit: LineEdit
@@ -38,6 +46,7 @@ var back_button: Button
 var status_label: Label
 var local_address_edit: LineEdit
 var network_hint_label: Label
+var upnp_label: Label
 var games_list: ItemList
 var games_hint_label: Label
 
@@ -45,14 +54,23 @@ var games_hint_label: Label
 ## order (ItemList metadata would be lost on the rebuilds below).
 var discovery
 var _listed_keys: Array[String] = []
+## Automatic port forwarding for the hosted port. Owned here rather than by the
+## menu so the whole host-side network story lives on one page.
+var upnp
 ## Session whose lobby is being advertised, so a game that has filled up stops
 ## appearing in everyone else's list. Set by the menu at host time.
 var _advertised_session = null
 var _advertised_full := false
+var _advertised_players := 0
+## Last payload handed to start_advertising, so the occupancy field can be
+## refreshed without the caller having to re-send everything.
+var _advertise_fields: Dictionary = {}
 
 
 func _ready() -> void:
 	_build()
+	upnp = UpnpScript.new()
+	upnp.finished.connect(_on_upnp_finished)
 	discovery = LanDiscoveryScript.new()
 	discovery.game_added.connect(func(_key: String, _record: Dictionary) -> void: _refresh_games_list())
 	discovery.game_updated.connect(_on_game_record_updated)
@@ -68,17 +86,40 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	if discovery != null:
 		discovery.close()
+	if upnp != null:
+		upnp.close()
 
 
 func _process(delta: float) -> void:
+	if upnp != null:
+		upnp.poll()
 	if discovery == null:
 		return
-	# A filled lobby is not joinable: stop beaconing so the entry ages out of
-	# every browser within the normal 5s timeout.
-	if _advertised_session != null and not _advertised_full and bool(_advertised_session.get("connected")):
+	_sync_advertised_player_count()
+	discovery.poll(delta)
+
+
+## Keeps the beacon's occupancy honest while the lobby fills, and stops
+## beaconing altogether once every seat is taken (a full game is not joinable,
+## so the entry ages out of every browser within the normal 5s timeout).
+func _sync_advertised_player_count() -> void:
+	if _advertised_session == null or _advertised_full:
+		return
+	var players := 1
+	if _advertised_session.has_method("seat_count"):
+		players = maxi(1, int(_advertised_session.seat_count()))
+	elif bool(_advertised_session.get("connected")):
+		players = 2
+	if players >= MAX_PLAYERS:
 		_advertised_full = true
 		discovery.stop_advertising()
-	discovery.poll(delta)
+		return
+	if players == _advertised_players:
+		return
+	_advertised_players = players
+	var fields: Dictionary = _advertise_fields.duplicate(true)
+	fields["players"] = players
+	discovery.update_advertisement(fields)
 
 
 func _build() -> void:
@@ -94,7 +135,7 @@ func _build() -> void:
 
 	var subtitle := Label.new()
 	subtitle.name = "Subtitle"
-	subtitle.text = "Deterministic lockstep - 2 players - Fords of Isen II"
+	subtitle.text = "Deterministic lockstep - up to %d players - Fords of Isen II" % MAX_PLAYERS
 	subtitle.position = Vector2(0, 52)
 	subtitle.size = Vector2(size.x, 24)
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -103,56 +144,67 @@ func _build() -> void:
 	add_child(subtitle)
 
 	# --- HOST GAME block -----------------------------------------------------
-	var host_heading := _section_label("HostHeading", "HOST GAME", 84)
+	var host_heading := _section_label("HostHeading", "HOST GAME", 80)
 	add_child(host_heading)
-	add_child(_field_label("HostPortLabel", "Port", Vector2(60, 118)))
-	host_port_edit = _line_edit("HostPort", str(DEFAULT_PORT), Vector2(150, 112), 120)
+	add_child(_field_label("HostPortLabel", "Port", Vector2(60, 112)))
+	host_port_edit = _line_edit("HostPort", str(DEFAULT_PORT), Vector2(150, 106), 120)
 	add_child(host_port_edit)
 	host_button = Button.new()
 	host_button.name = "HostButton"
 	host_button.text = "HOST GAME"
-	host_button.position = Vector2(size.x - 260, 110)
-	host_button.size = Vector2(200, 40)
+	host_button.position = Vector2(size.x - 260, 104)
+	host_button.size = Vector2(200, 38)
 	host_button.theme_type_variation = "NavButton"
 	host_button.pressed.connect(_on_host_pressed)
 	add_child(host_button)
 
 	# The address guests actually need, read-only but selectable so the host can
 	# copy it straight out of the field (REF-13 IP field shape).
-	add_child(_field_label("LocalAddressLabel", "Your IP", Vector2(60, 160)))
-	local_address_edit = _line_edit("LocalAddress", "127.0.0.1", Vector2(150, 154), 300)
+	add_child(_field_label("LocalAddressLabel", "Your IP", Vector2(60, 150)))
+	local_address_edit = _line_edit("LocalAddress", "127.0.0.1", Vector2(150, 144), 300)
 	local_address_edit.editable = false
 	add_child(local_address_edit)
 
 	network_hint_label = Label.new()
 	network_hint_label.name = "NetworkHint"
 	network_hint_label.text = ""
-	network_hint_label.position = Vector2(60, 196)
-	network_hint_label.size = Vector2(size.x - 120, 22)
+	network_hint_label.position = Vector2(60, 182)
+	network_hint_label.size = Vector2(size.x - 120, 20)
 	network_hint_label.add_theme_font_size_override("font_size", 12)
 	network_hint_label.add_theme_color_override("font_color", Color(0.66, 0.76, 0.7, 0.85))
 	add_child(network_hint_label)
 
+	# Automatic port forwarding, reported whatever the outcome (F2).
+	upnp_label = Label.new()
+	upnp_label.name = "UpnpStatus"
+	upnp_label.text = UpnpScript.status_text(UpnpScript.STATE_IDLE, "", 0, "")
+	upnp_label.position = Vector2(60, 206)
+	upnp_label.size = Vector2(size.x - 120, 34)
+	upnp_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	upnp_label.add_theme_font_size_override("font_size", 12)
+	upnp_label.add_theme_color_override("font_color", Color(0.66, 0.76, 0.7, 0.85))
+	add_child(upnp_label)
+
 	# --- JOIN GAME block -----------------------------------------------------
-	var join_heading := _section_label("JoinHeading", "JOIN GAME", 224)
+	var join_heading := _section_label("JoinHeading", "JOIN GAME", 242)
 	add_child(join_heading)
-	add_child(_field_label("JoinAddressLabel", "Host IP", Vector2(60, 264)))
-	join_address_edit = _line_edit("JoinAddress", "127.0.0.1", Vector2(150, 258), 220)
+	add_child(_field_label("JoinAddressLabel", "Host IP", Vector2(60, 278)))
+	join_address_edit = _line_edit("JoinAddress", "127.0.0.1", Vector2(150, 272), 220)
 	add_child(join_address_edit)
-	add_child(_field_label("JoinPortLabel", "Port", Vector2(392, 264)))
-	join_port_edit = _line_edit("JoinPort", str(DEFAULT_PORT), Vector2(444, 258), 120)
+	add_child(_field_label("JoinPortLabel", "Port", Vector2(392, 278)))
+	join_port_edit = _line_edit("JoinPort", str(DEFAULT_PORT), Vector2(444, 272), 120)
 	add_child(join_port_edit)
 	join_button = Button.new()
 	join_button.name = "JoinButton"
 	join_button.text = "JOIN GAME"
-	join_button.position = Vector2(size.x - 260, 256)
-	join_button.size = Vector2(200, 40)
+	join_button.position = Vector2(size.x - 260, 270)
+	join_button.size = Vector2(200, 38)
 	join_button.theme_type_variation = "NavButton"
 	join_button.pressed.connect(_on_join_pressed)
 	add_child(join_button)
 
 	# --- discovered games ----------------------------------------------------
-	var games_heading := _section_label("GamesHeading", "GAMES ON YOUR NETWORK", 306)
+	var games_heading := _section_label("GamesHeading", "GAMES ON YOUR NETWORK", 314)
 	games_heading.size = Vector2(300, 24)
 	games_heading.add_theme_font_size_override("font_size", 15)
 	add_child(games_heading)
@@ -160,7 +212,7 @@ func _build() -> void:
 	games_hint_label = Label.new()
 	games_hint_label.name = "GamesHint"
 	games_hint_label.text = ""
-	games_hint_label.position = Vector2(360, 308)
+	games_hint_label.position = Vector2(360, 316)
 	games_hint_label.size = Vector2(size.x - 420, 22)
 	games_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	games_hint_label.add_theme_font_size_override("font_size", 12)
@@ -169,8 +221,8 @@ func _build() -> void:
 
 	games_list = ItemList.new()
 	games_list.name = "GamesList"
-	games_list.position = Vector2(60, 332)
-	games_list.size = Vector2(size.x - 120, 60)
+	games_list.position = Vector2(60, 340)
+	games_list.size = Vector2(size.x - 120, 44)
 	games_list.allow_reselect = true
 	games_list.add_theme_font_size_override("font_size", 13)
 	games_list.item_selected.connect(_on_game_selected)
@@ -181,8 +233,8 @@ func _build() -> void:
 	status_label = Label.new()
 	status_label.name = "Status"
 	status_label.text = "Pick a listed game, or share the host IP and enter it by hand."
-	status_label.position = Vector2(60, 396)
-	status_label.size = Vector2(size.x - 120, 28)
+	status_label.position = Vector2(60, 388)
+	status_label.size = Vector2(size.x - 120, 30)
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status_label.add_theme_font_size_override("font_size", 13)
 	status_label.add_theme_color_override("font_color", Color(0.66, 0.76, 0.7, 0.85))
@@ -266,23 +318,64 @@ func start_advertising(game_port: int, host_name: String, map_name: String, sess
 		return
 	_advertised_session = session
 	_advertised_full = false
-	discovery.start_advertising({
+	_advertised_players = 1
+	_advertise_fields = {
 		"host_name": host_name if host_name.strip_edges() != "" else DEFAULT_HOST_NAME,
 		"map_name": map_name if map_name.strip_edges() != "" else DEFAULT_MAP_NAME,
 		"faction_name": "Men",
 		"players": 1,
 		"max_players": MAX_PLAYERS,
 		"game_port": game_port,
-	})
+	}
+	discovery.start_advertising(_advertise_fields.duplicate(true))
 
 
 func stop_advertising() -> void:
 	_advertised_session = null
 	_advertised_full = false
+	_advertised_players = 0
+	_advertise_fields = {}
+	# The port forward exists for the hosted game; it goes away with it rather
+	# than being left behind in the router's table.
+	if upnp != null:
+		upnp.release()
+		_refresh_upnp_label()
 	if discovery != null:
 		discovery.stop_advertising()
 		if not visible:
 			discovery.stop_browsing()
+
+
+# --- UPnP (F2) -----------------------------------------------------------------
+
+## Asks the router to forward `port`. The result — mapped, unavailable, or
+## refused — always ends up on upnp_label; there is no silent path.
+func begin_upnp(port: int) -> void:
+	if upnp == null:
+		return
+	upnp.start(port)
+	_refresh_upnp_label()
+
+
+func _on_upnp_finished(_state: String, _detail: String) -> void:
+	_refresh_upnp_label()
+
+
+func _refresh_upnp_label() -> void:
+	if upnp_label == null or upnp == null:
+		return
+	upnp_label.text = upnp.status_line()
+	var color := Color(0.66, 0.76, 0.7, 0.85)
+	match upnp.state:
+		UpnpScript.STATE_MAPPED:
+			color = Color(0.55, 0.85, 0.55)
+		UpnpScript.STATE_FAILED:
+			color = Color(0.9, 0.45, 0.4)
+		UpnpScript.STATE_UNAVAILABLE:
+			# An expected environment condition, not an error: stated plainly in
+			# the shell's own amber rather than dressed up as a failure.
+			color = Color(0.85, 0.78, 0.5)
+	upnp_label.add_theme_color_override("font_color", color)
 
 
 ## "Your IP" + the Radmin line. Radmin VPN is named in plain text only; the
@@ -410,10 +503,12 @@ func _on_host_pressed() -> void:
 		set_status(port_error, true)
 		return
 	_refresh_local_address()
-	set_status("Hosting on %s:%s - waiting for a challenger..." % [
-		local_address_edit.text, host_port_edit.text.strip_edges(),
+	var port := int(host_port_edit.text.strip_edges())
+	set_status("Hosting on %s:%d - waiting for players (up to %d)..." % [
+		local_address_edit.text, port, MAX_PLAYERS,
 	])
-	host_requested.emit(int(host_port_edit.text.strip_edges()))
+	begin_upnp(port)
+	host_requested.emit(port)
 
 
 func _on_join_pressed() -> void:
