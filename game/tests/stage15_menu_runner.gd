@@ -29,7 +29,6 @@ func _run() -> void:
 	_check("repository_theme_applied", menu.theme != null and menu.theme.has_stylebox("normal", "Button"))
 	_check("main_page_is_default", String(menu.get_current_page()) == "main")
 	_check("main_page_is_uncluttered", _visible(menu, "Center/Solo") and _visible(menu, "Center/Options") and _visible(menu, "Center/Quit"))
-	_check("proof_stages_hidden_by_default", _all_stages_visible(menu, false))
 	_check("retail_launch_hidden_until_solo", not _retail_launch_visible(menu))
 
 	_check("solo_page_accepts_navigation", bool(menu.show_page("solo")))
@@ -38,8 +37,6 @@ func _run() -> void:
 	_check("solo_page_hides_main_actions", not _visible(menu, "Center/Solo") and not _visible(menu, "Center/Options"))
 
 	_check("developer_page_accepts_navigation", bool(menu.show_page("developer")))
-	_check("developer_page_preserves_all_stages", _all_stages_visible(menu, true))
-	_check("developer_page_preserves_tests", _visible(menu, "Center/Tests"))
 	_check("developer_page_is_not_main_clutter", not _visible(menu, "Center/Solo") and not _visible(menu, "DeveloperAccess"))
 	_check("unknown_page_rejected", not bool(menu.show_page("missing")) and String(menu.get_current_page()) == "developer")
 
@@ -93,13 +90,6 @@ func _retail_launch_visible(menu: Node) -> bool:
 func _visible(root_node: Node, path: String) -> bool:
 	var control := root_node.get_node_or_null(path) as Control
 	return control != null and control.visible
-
-
-func _all_stages_visible(menu: Node, expected: bool) -> bool:
-	for stage_index in range(1, 10):
-		if _visible(menu, "Center/Stage%d" % stage_index) != expected:
-			return false
-	return true
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:

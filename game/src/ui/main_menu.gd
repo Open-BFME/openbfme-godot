@@ -97,13 +97,11 @@ const CONTROLLER_AI := "ai"
 
 @onready var developer_frame: Panel = $Center/DeveloperFrame
 @onready var developer_heading: Label = $Center/DeveloperHeading
-@onready var tests_btn: Button = $Center/Tests
 @onready var developer_back_btn: Button = $Center/DeveloperBack
 @onready var developer_access_btn: Button = $DeveloperAccess
 @onready var status: Label = $Center/Status
 
 var current_page := PAGE_MAIN
-var stage_buttons: Array[Button] = []
 var _skirmish_availability: Dictionary = {}
 var _skirmish_map_notes: Dictionary = {}
 var _nav_diamonds: Control
@@ -142,7 +140,6 @@ func _ready() -> void:
 	_populate_skirmish_options()
 	_populate_rules_options()
 	_populate_color_options()
-	_collect_stage_buttons()
 	_connect_actions()
 	options_screen.configure({"font": _shell_font})
 	options_screen.closed.connect(func(_applied: bool) -> void: _show_page(PAGE_MAIN))
@@ -947,18 +944,6 @@ func _read_bounded_json(path: String, maximum_bytes: int) -> Dictionary:
 	return (value as Dictionary) if typeof(value) == TYPE_DICTIONARY else {}
 
 
-func _collect_stage_buttons() -> void:
-	stage_buttons.clear()
-	for stage_index in range(1, 10):
-		var button := get_node("Center/Stage%d" % stage_index) as Button
-		# Retain a concrete hidden-page hit/readability rectangle for the Stage 10
-		# compatibility gate, which intentionally invokes these developer routes
-		# without first presenting the developer page.
-		button.custom_minimum_size = Vector2(620.0, 44.0)
-		button.size = Vector2(maxf(button.size.x, 620.0), maxf(button.size.y, 44.0))
-		stage_buttons.append(button)
-
-
 func _connect_actions() -> void:
 	solo_btn.pressed.connect(func() -> void: _show_page(PAGE_SOLO))
 	multiplayer_btn.pressed.connect(func() -> void: _show_page(PAGE_MULTIPLAYER))
@@ -987,9 +972,6 @@ func _connect_actions() -> void:
 	stats_screen.back_pressed.connect(func() -> void: _show_page(PAGE_SOLO))
 	developer_access_btn.pressed.connect(func() -> void: _show_page(PAGE_DEVELOPER))
 	developer_back_btn.pressed.connect(func() -> void: _show_page(PAGE_MAIN))
-	tests_btn.pressed.connect(_on_tests)
-	for stage_index in range(stage_buttons.size()):
-		stage_buttons[stage_index].pressed.connect(_on_stage.bind(stage_index + 1))
 
 
 func show_page(page: String) -> bool:
@@ -1041,8 +1023,8 @@ func _show_page(page: String) -> void:
 			if options_screen.visible and options_screen.window_mode_opt != null:
 				options_screen.window_mode_opt.grab_focus()
 		PAGE_DEVELOPER:
-			if not stage_buttons.is_empty() and stage_buttons[0].visible:
-				stage_buttons[0].grab_focus()
+			if developer_back_btn.visible:
+				developer_back_btn.grab_focus()
 		PAGE_STATS:
 			if stats_screen.back_btn.visible:
 				stats_screen.back_btn.grab_focus()
@@ -1074,8 +1056,6 @@ func _stats_page_nodes() -> Array[Control]:
 
 func _developer_page_nodes() -> Array[Control]:
 	var nodes: Array[Control] = [developer_frame, developer_heading]
-	nodes.append_array(stage_buttons)
-	nodes.append(tests_btn)
 	nodes.append(developer_back_btn)
 	nodes.append(status)
 	return nodes
@@ -1220,22 +1200,6 @@ func _on_retail() -> void:
 		# immediately, fetches the slice scene on a thread, and the slice then
 		# adopts the same screen for its real per-phase progress.
 		get_tree().change_scene_to_file("res://scenes/retail_loading_boot.tscn")
-
-
-func _on_stage(stage_index: int) -> void:
-	var suffix := "arena" if stage_index <= 2 else "lab"
-	get_tree().change_scene_to_file("res://scenes/stage%d_%s.tscn" % [stage_index, suffix])
-
-
-func _on_tests() -> void:
-	var runner := load("res://tests/run_stage_tests.gd")
-	if runner == null:
-		status.text = "Self-test runner is unavailable."
-		return
-	var instance = runner.new()
-	var report: String = instance.run_all()
-	status.text = report
-	print(report)
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
