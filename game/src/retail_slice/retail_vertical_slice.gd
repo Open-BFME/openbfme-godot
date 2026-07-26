@@ -21,6 +21,7 @@ const HouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
 const OptionsScreenScript = preload("res://src/ui/options_screen.gd")
 const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 const ControlServerScript = preload("res://src/debug/retail_control_server.gd")
+const MemberRenderBatcherScript = preload("res://src/view/member_render_batcher.gd")
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const SOLDIER_HORDE_ID := "bfme2.object.gondor-fighter-horde"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -184,6 +185,10 @@ var equipment_proof_loaded := false
 var simulation_paused := false
 var accumulator := 0.0
 var camera: Camera3D
+## Presentation-only rendering scalability layer: MultiMesh instancing of distant
+## members, distance LOD for per-member decals/overlays, and skeletal animation
+## culling. Reads presentation nodes only; never touches simulation state.
+var member_render_batcher: MemberRenderBatcher
 var camera_focus := Vector2.ZERO
 var camera_zoom := 1.0
 var camera_zoom_target := 1.0
@@ -2368,11 +2373,25 @@ func _spawn_battalion(id: int, expected_members: int) -> void:
 	# units near-black.
 	_assign_geometry_light_layer(battalion, INFANTRY_LIGHT_LAYER | OBJECT_LIGHT_LAYER)
 	battalion_nodes[id] = battalion
+	_ensure_member_render_batcher().register_battalion(battalion)
 	var indicator: RetailOrderIndicator = OrderIndicatorScript.new()
 	indicator.name = "OrderIndicator_%d" % id
 	indicator.configure(selected_pack_root, source_map_data.local_transform_scale)
 	add_child(indicator)
 	order_indicators[id] = indicator
+
+
+## Create the member render batcher on first use and keep it pointed at the
+## gameplay camera. Created lazily because battalions can spawn before the
+## tactical camera exists, and the batcher is inert without registrations.
+func _ensure_member_render_batcher() -> MemberRenderBatcher:
+	if member_render_batcher == null or not is_instance_valid(member_render_batcher):
+		member_render_batcher = MemberRenderBatcherScript.new()
+		member_render_batcher.name = "MemberRenderBatcher"
+		add_child(member_render_batcher)
+	if camera != null and is_instance_valid(camera):
+		member_render_batcher.set_camera(camera)
+	return member_render_batcher
 
 
 func _spawn_structure(id: int) -> void:
@@ -3204,6 +3223,8 @@ func _sync_presentation() -> void:
 		var battalion := battalion_nodes[id] as Node
 		var indicator := order_indicators.get(id) as Node
 		if battalion != null:
+			if member_render_batcher != null:
+				member_render_batcher.unregister_battalion(battalion as Node3D)
 			battalion.queue_free()
 		if indicator != null:
 			indicator.queue_free()
@@ -3213,6 +3234,14 @@ func _sync_presentation() -> void:
 		order_indicators.erase(id)
 	if _profile_sync:
 		presentation_profile["battalions_us"] = presentation_profile.get("battalions_us", 0) + (Time.get_ticks_usec() - _profile_mark)
+		_profile_mark = Time.get_ticks_usec()
+	# Presentation scalability pass. Driven from here rather than _process so
+	# that every caller of _sync_presentation (including the perf soak runner,
+	# which disables _process) exercises the same path the game does.
+	if member_render_batcher != null:
+		member_render_batcher.update(get_process_delta_time())
+	if _profile_sync:
+		presentation_profile["member_lod_us"] = presentation_profile.get("member_lod_us", 0) + (Time.get_ticks_usec() - _profile_mark)
 		_profile_mark = Time.get_ticks_usec()
 	for id in simulation.structure_ids():
 		if int(simulation.structure(id).get("team", -1)) == SimScript.CREEP_TEAM:

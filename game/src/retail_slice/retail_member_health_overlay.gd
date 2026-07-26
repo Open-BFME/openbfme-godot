@@ -22,12 +22,20 @@ const CHEVRON_HEIGHT_PIXELS := 3.0
 const CHEVRON_SPACING_PIXELS := 2.0
 const CHEVRON_LIFT_PIXELS := 2.0
 const CHEVRON_COLOR := Color(0.95, 0.85, 0.35, 0.95)
+## Distance LOD. Past this range a three-pixel bar is sub-pixel on screen, but
+## building its rows still costs one Dictionary allocation per living member per
+## frame - the dominant cost of this overlay at large army sizes. Whole
+## battalions are therefore rejected before their rows are built, matching the
+## tier at which src/view/member_lod_policy.gd drops per-member decoration.
+const SOURCE_MAXIMUM_OVERLAY_DISTANCE := 150.0
 
 var tactical_view: Node
 var tactical_camera: Camera3D
 var battalions: Dictionary
 var rendered_bar_count := 0
 var rendered_chevron_count := 0
+## Battalions skipped by the distance gate on the last draw. Diagnostic only.
+var distance_culled_battalion_count := 0
 
 
 func configure(view: Node, camera: Camera3D, battalion_nodes: Dictionary) -> void:
@@ -46,8 +54,10 @@ func _process(_delta: float) -> void:
 func _draw() -> void:
 	rendered_bar_count = 0
 	rendered_chevron_count = 0
+	distance_culled_battalion_count = 0
 	if tactical_camera == null or not is_instance_valid(tactical_camera):
 		return
+	var camera_position := tactical_camera.global_position
 	var zoom := 1.0
 	if tactical_view != null and is_instance_valid(tactical_view):
 		zoom = float(tactical_view.get("camera_zoom"))
@@ -60,6 +70,13 @@ func _draw() -> void:
 		var battalion_team := int(battalion.get("team"))
 		if not should_show_battalion(battalion_team, bool(battalion.get("selected"))):
 			continue
+		# Distance gate before member_health_overlay_rows(), which allocates one
+		# Dictionary per living member each frame.
+		if battalion is Node3D:
+			var battalion_origin := (battalion as Node3D).global_position
+			if not should_draw_battalion_at_distance(camera_position.distance_to(battalion_origin)):
+				distance_culled_battalion_count += 1
+				continue
 		var chevron_anchor := Vector2.INF
 		var chevron_pips := 0
 		for row_value in battalion.call("member_health_overlay_rows"):
@@ -142,6 +159,14 @@ static func source_health_colors(health_ratio: float) -> Dictionary:
 
 static func should_show_battalion(team: int, is_selected: bool) -> bool:
 	return team != 0 or is_selected
+
+
+## Distance LOD gate. An unknown/negative distance draws, so a camera that has
+## not produced a usable position yet never silently blanks the overlay.
+static func should_draw_battalion_at_distance(distance: float) -> bool:
+	if not is_finite(distance) or distance < 0.0:
+		return true
+	return distance <= SOURCE_MAXIMUM_OVERLAY_DISTANCE
 
 
 static func source_health_width_for_zoom(tactical_zoom: float) -> float:

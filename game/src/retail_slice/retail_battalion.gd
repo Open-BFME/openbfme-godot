@@ -64,6 +64,12 @@ var member_health_fills: Dictionary = {}
 var member_health_ratios: Dictionary = {}
 var member_health_anchor_heights: Dictionary = {}
 var experience_level := 1
+## Presentation detail level published by the view-side distance LOD
+## (src/view/member_render_batcher.gd). 0 = full detail. Above 0 the per-member
+## selection rings and health bars stop drawing, because this battalion rewrites
+## their visibility every frame and would otherwise immediately undo the LOD.
+## Presentation-only: nothing here feeds the simulation.
+var presentation_detail_level := 0
 var member_attack_tokens: Dictionary = {}
 var member_attack_release_tokens: Dictionary = {}
 var member_attack_target_globals: Dictionary = {}
@@ -694,14 +700,15 @@ func _remove_archer_impact(event_token: int) -> void:
 
 
 func _refresh_member_overlays() -> void:
+	var overlay_detail_allowed := presentation_detail_level == 0
 	for member_index in range(member_count):
 		var ratio := float(member_health_ratios.get(member_index, 1.0))
 		var living := ratio > 0.0
 		var ring: MeshInstance3D = member_selection_rings.get(member_index)
 		if ring != null:
-			ring.visible = visual_is_emerged(member_index) and living and selected
+			ring.visible = overlay_detail_allowed and visual_is_emerged(member_index) and living and selected
 		var emerged := visual_is_emerged(member_index)
-		var show_health := emerged and living and (selected or ratio < 0.999)
+		var show_health := overlay_detail_allowed and emerged and living and (selected or ratio < 0.999)
 		var back: MeshInstance3D = member_health_backs.get(member_index)
 		if back != null:
 			back.visible = show_health
@@ -1146,6 +1153,10 @@ func _update_member_positions(delta: float) -> void:
 
 func _update_legal_safe_member_overlays() -> void:
 	if private_parity_mode_active:
+		return
+	if presentation_detail_level > 0:
+		# Overlays are hidden by distance LOD; do not pay to track their
+		# positions until they are drawn again.
 		return
 	for member_index in range(member_count):
 		var visual := member_visuals.get(member_index) as Node3D
