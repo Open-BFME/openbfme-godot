@@ -49,6 +49,6 @@
 - No engine/content license has been selected by the proof stages. Public distribution
   still requires the legal and donor review documented in `docs/legal_assets.md` and
   `docs/THIRD_PARTY.md`.
-- Stage 10 uses an accelerated deterministic 30-minute simulation soak. A real-time
-  human play-session soak remains a release-candidate task once the production slice is
-  approved.
+- A real-time human play-session soak remains a release-candidate task once the
+  production slice is approved. The retired Stage 0-10 synthetic prototype's accelerated
+  30-minute simulation soak no longer stands in for it.
