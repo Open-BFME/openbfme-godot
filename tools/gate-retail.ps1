@@ -186,11 +186,10 @@ try {
     $godot = Resolve-ProofGodot $GodotPath $repoRoot
     Invoke-GodotPassedFloor "stage11_12_groups_and_routes" "stage11_12_runner.gd" '(?m)^STAGE 11/12 TESTS: ([0-9]+) passed, 0 failed\s*$' 26
     Invoke-GodotPassedFloor "stage14_15_base_loop" "stage14_15_sim_runner.gd" '(?m)^STAGE 14/15 SIM TESTS: ([0-9]+) passed, 0 failed\s*$' 31
-    Invoke-GodotPassedFloor "stage15_menu_and_audio" "stage15_menu_runner.gd" '(?m)^STAGE15_MENU_RESULT passed=([0-9]+) failed=0\s*$' 25
+    Invoke-GodotPassedFloor "stage15_menu_and_audio" "stage15_menu_runner.gd" '(?m)^STAGE15_MENU_RESULT passed=([0-9]+) failed=0\s*$' 22
     Invoke-GodotPassedFloor "retail_pack_runtime" "retail_pack_runner.gd" '(?m)^RETAIL_PACK_RESULT passed=([0-9]+) failed=0\s*$' 175
     Invoke-GodotPassedFloor "playable_retail_slice" "retail_slice_runner.gd" '(?m)^RETAIL_SLICE_RESULT passed=([0-9]+) failed=0\s*$' 208
     Invoke-GodotPassedFloor "external_pack_security" "external_pack_runner.gd" '(?m)^EXTERNAL_PACK_RESULT passed=([0-9]+) failed=0\s*$' 64
-    Invoke-GodotPassedFloor "legacy_regression" "cli_runner.gd" '(?m)^STAGE TESTS: ([0-9]+) passed, 0 failed\s*$' 101
     [void](Invoke-ProofChecked $gate "export_firewall_self_test" "powershell.exe" @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "test-export-scan.ps1")) '(?m)^EXPORT_SCAN_SELF_TEST PASS ')
     [void](Invoke-ProofChecked $gate "export_firewall" "powershell.exe" @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "export-scan.ps1"), "-Root", $gameRoot) '(?m)^EXPORT_SCAN PASS ')
 

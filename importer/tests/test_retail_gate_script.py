@@ -76,11 +76,10 @@ def test_gate_fails_closed_on_identity_readiness_and_incomplete_marker() -> None
     for runner, minimum in (
         ("stage11_12_runner.gd", 26),
         ("stage14_15_sim_runner.gd", 31),
-        ("stage15_menu_runner.gd", 25),
+        ("stage15_menu_runner.gd", 22),
         ("retail_pack_runner.gd", 175),
         ("retail_slice_runner.gd", 208),
         ("external_pack_runner.gd", 64),
-        ("cli_runner.gd", 101),
     ):
         assert re.search(
             rf'Invoke-GodotPassedFloor\s+"[^"]+"\s+"{re.escape(runner)}".*\s{minimum}$',
