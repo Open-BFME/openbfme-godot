@@ -30,6 +30,7 @@ func _run() -> void:
 	root.size = Vector2i(1920, 1080)
 	var faction_manifest_script = load("res://src/retail_slice/retail_faction_manifest.gd")
 	var slice_script = load("res://src/retail_slice/retail_vertical_slice.gd")
+	var menu_script = load("res://src/ui/main_menu.gd")
 	_check("slice_scripts_load", faction_manifest_script != null and slice_script != null)
 	if faction_manifest_script == null or slice_script == null:
 		_finish()
@@ -256,6 +257,19 @@ func _run() -> void:
 			availability_matches_slice_signals = false
 			continue
 		if faction_id == String(faction_manifest_script.DEFAULT_FACTION):
+			continue
+		if menu_script.FACTIONS_BLOCKED_FROM_PLAY.has(faction_id):
+			# A blocked faction deliberately reports a product-policy note that
+			# the slice's conversion signal does not produce: its content DOES
+			# convert, it just cannot complete a match yet. Assert the menu is
+			# blocking it for the recorded reason instead of asserting parity
+			# with a signal that is, correctly, empty.
+			_check(
+				"blocked_faction_reports_policy_note_%s" % faction_id,
+				String(availability.get(faction_id, "")) == String(
+					menu_script.FACTIONS_BLOCKED_FROM_PLAY[faction_id]
+				)
+			)
 			continue
 		slice_probe._classify_faction_units(faction_id)
 		var expected_note := String(faction_manifest_script.from_registries(

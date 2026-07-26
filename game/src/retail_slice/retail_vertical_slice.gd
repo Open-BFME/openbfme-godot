@@ -148,6 +148,10 @@ var ability_fx_controller: Node3D
 var audio_system: RetailSliceAudio
 var source_map_data: RetailMapData
 var selected_pack_root := ""
+## Set only when the selected faction pack is a lean supplement that borrows the
+## map and shared HUD chrome from another mounted pack. Empty for a host pack
+## that provides its own surfaces, which is every BFME2 faction.
+var host_surface_pack_root := ""
 var map_id := MAP_ID
 var map_pack_root := ""
 var faction_manifest: Dictionary = {}
@@ -416,6 +420,10 @@ func _initialize_content_and_match() -> void:
 	for chrome_root_value in chrome_manifest.get("faction_pack_roots", []) as Array:
 		if not ui_pack_roots.has(chrome_root_value):
 			ui_pack_roots.append(chrome_root_value)
+	# An expansion faction's own pack ships no shared chrome, so the host that
+	# provided the entry map has to be an accepted image source too.
+	if host_surface_pack_root != "" and not ui_pack_roots.has(host_surface_pack_root):
+		ui_pack_roots.append(host_surface_pack_root)
 	var prefetched_count := ContentDB.prefetch_retail_ui_assets([selected_pack_root] + ui_pack_roots)
 	if profile_boot:
 		print("BOOT_PROFILE ui_prefetch_count=%d slice.ui_prefetch_ms=%d" % [prefetched_count, Time.get_ticks_msec() - boot_mark])
@@ -2004,7 +2012,29 @@ func _resolve_slice_map_definition(resolved_map_id: String) -> Dictionary:
 	## come from the registered content first, then from the five-maps pack
 	## catalog (the pack is not yet registered in selection.json).
 	if resolved_map_id == MAP_ID:
-		return _resolve_pack_entry_map_definition(selected_pack_root, resolved_map_id)
+		var entry := _resolve_pack_entry_map_definition(selected_pack_root, resolved_map_id)
+		if not entry.is_empty():
+			return entry
+		# An expansion faction cooks as a LEAN supplemental pack: it carries its
+		# own units and structures and deliberately no map, because the BFME2
+		# host payload is pinned to 1.06 bytes and cannot resolve against an
+		# expansion catalog. Selecting Angmar therefore made selected_pack_root
+		# the Angmar pack, which has no entryMap, and the boot failed with
+		# "Slice map ... is unavailable" even though the host pack beside it
+		# carries the map. Fall back to whichever mounted pack does declare it.
+		# Iteration order is ModLoader's deterministic pack order, so the chosen
+		# host is stable across runs.
+		for root in ModLoader.list_pack_roots():
+			if root == selected_pack_root:
+				continue
+			var hosted := _resolve_pack_entry_map_definition(root, resolved_map_id)
+			if not hosted.is_empty():
+				# Remember who really owns the host surfaces. The same pack that
+				# carries the entry map also carries the shared HUD chrome the
+				# lean supplement borrows, and image validation has to accept it.
+				host_surface_pack_root = root
+				return hosted
+		return {}
 	var registered := ContentDB.get_bundle_map(resolved_map_id)
 	if not registered.is_empty():
 		return registered

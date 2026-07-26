@@ -7,11 +7,12 @@ run/flush_stdout_on_print=true
 
 config/name="Open BFME"
 config/description="Desktop BFME2-inspired skirmish RTS (moddable)"
+config/version="0.1.0-alpha.1"
 run/main_scene="res://scenes/boot.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 boot_splash/show_image=false
 boot_splash/bg_color=Color(0, 0, 0, 1)
-config/icon="res://icon.svg"
+config/icon="res://icon_ring.png"
 
 [autoload]
 

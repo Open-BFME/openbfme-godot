@@ -33,6 +33,20 @@ const RETAIL_FACTIONS: Array[Dictionary] = [
 ]
 const RETAIL_MAP_NAME := "Fords of Isen II"
 const NOT_CONVERTED_SUFFIX := " (not converted)"
+## Factions whose content converts but which cannot complete a match yet. They
+## stay listed and disabled with the real reason rather than being hidden, so a
+## tester can see the roster exists and knows why it will not start. Delete a
+## row the moment its slice runs clean — this list is a promise to remove, not a
+## permanent gate.
+##   angmar: its lean supplemental pack does not resolve structure lifecycle
+##           visuals; the slice reaches 37/2 and fails during load.
+##   mordor: converts and loads, but structure upgrade chains compile to nothing
+##           and Mouth of Sauron, Mountain Troll and Haradrim Archers are absent
+##           from their producers (slice 280/55).
+const FACTIONS_BLOCKED_FROM_PLAY := {
+	"angmar": "structure lifecycle visuals do not resolve from the supplemental pack yet",
+	"mordor": "structure upgrade chains and three producer units are still unconverted",
+}
 ## Selectable retail vertical-slice maps (five-maps pack + host entry map).
 const RETAIL_MAP_CHOICES: Array[Dictionary] = [
 	{"id": "bfme2.map.fords-of-isen-ii", "name": "Fords of Isen II"},
@@ -181,6 +195,7 @@ func _ready() -> void:
 	# Guard: any scene arriving here must find an unpaused tree (a pause-open
 	# exit from the slice must never leave the menu frozen).
 	get_tree().paused = false
+	_build_version_label()
 	_content_db = get_node_or_null("/root/ContentDB")
 	_game_state = get_node_or_null("/root/GameState")
 	if _content_db == null or _game_state == null:
@@ -779,6 +794,9 @@ func _retail_faction_availability(faction_id: String) -> String:
 	## slice runs over the slice's own fieldable-unit classification, so the
 	## menu never errors on a unit the slice would exclude nor passes one the
 	## slice cannot field.
+	var blocked := String(FACTIONS_BLOCKED_FROM_PLAY.get(faction_id, ""))
+	if blocked != "":
+		return blocked
 	if faction_id == FactionManifestScript.DEFAULT_FACTION:
 		var pack_error := _men_pack_gate_error()
 		if pack_error != "":
@@ -1527,3 +1545,29 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	elif event.keycode == KEY_F10:
 		_show_page(PAGE_MAIN if current_page == PAGE_DEVELOPER else PAGE_DEVELOPER)
 		get_viewport().set_input_as_handled()
+
+
+func _build_version_label() -> void:
+	## Build identity, bottom-left of the shell. A playtester filing a report has
+	## to be able to say which build they were on without guessing, so the
+	## version is read from project.godot rather than duplicated here.
+	if center == null or center.has_node("BuildVersion"):
+		return
+	var version := String(ProjectSettings.get_setting("application/config/version", ""))
+	if version.strip_edges() == "":
+		return
+	var label := Label.new()
+	label.name = "BuildVersion"
+	label.text = "v%s" % version
+	label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	label.offset_left = 18.0
+	label.offset_top = -104.0
+	label.offset_right = 420.0
+	label.offset_bottom = -84.0
+	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_color_override("font_color", Color(0.72, 0.78, 0.70, 0.75))
+	label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	label.add_theme_constant_override("shadow_offset_x", 1)
+	label.add_theme_constant_override("shadow_offset_y", 1)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(label)

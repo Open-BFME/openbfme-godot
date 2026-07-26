@@ -165,15 +165,36 @@ func _has_explicit_pack_cache_override() -> bool:
 ## its own. Returns "" when no workspace selection exists, which is the normal
 ## shape for a shipped install.
 func _discover_workspace_content_root() -> String:
-	var dir := ProjectSettings.globalize_path("res://").rstrip("/\\")
-	for _depth in range(WORKSPACE_PROBE_DEPTH):
-		var parent := dir.get_base_dir()
-		if parent == "" or parent == dir:
-			break
-		dir = parent
-		var candidate := dir.path_join(".private").path_join("content-packs")
-		if FileAccess.file_exists(candidate.path_join("selection.json")):
-			return candidate
+	# Two starting points, because they disagree in the two builds that matter.
+	# In the editor `res://` globalizes to the project directory. In an EXPORTED
+	# build the project lives inside the .pck, so globalize_path() is not a
+	# usable anchor — the executable's own directory is. Probing both keeps one
+	# code path for `run_game.bat`, a worktree run, and a shipped exe alike.
+	var seeds: Array[String] = []
+	var project_dir := ProjectSettings.globalize_path("res://").rstrip("/\\")
+	if project_dir != "" and not project_dir.begins_with("res:"):
+		seeds.append(project_dir)
+	var exe_dir := OS.get_executable_path().get_base_dir()
+	if exe_dir != "" and not seeds.has(exe_dir):
+		seeds.append(exe_dir)
+	for seed_dir in seeds:
+		var dir := seed_dir
+		# Check the seed itself first: a shipped build keeps its packs beside
+		# the executable, with no parent to climb to.
+		var here := dir.path_join(".private").path_join("content-packs")
+		if FileAccess.file_exists(here.path_join("selection.json")):
+			return here
+		var beside := dir.path_join("content-packs")
+		if FileAccess.file_exists(beside.path_join("selection.json")):
+			return beside
+		for _depth in range(WORKSPACE_PROBE_DEPTH):
+			var parent := dir.get_base_dir()
+			if parent == "" or parent == dir:
+				break
+			dir = parent
+			var candidate := dir.path_join(".private").path_join("content-packs")
+			if FileAccess.file_exists(candidate.path_join("selection.json")):
+				return candidate
 	return ""
 
 
@@ -312,7 +333,16 @@ func resolve_pack_path(pack_root: String, relative_path: String) -> String:
 	var candidate := root.path_join(relative_path.replace("\\", "/")).simplify_path()
 	if not path_is_within(root, candidate):
 		return ""
-	if _path_has_link_component(root, candidate):
+	# The physical link check exists to stop an untrusted external pack escaping
+	# its root through a symlink or junction. It cannot apply to `res://`: in an
+	# exported build those files live inside the .pck, so globalize_path() yields
+	# a path beside the executable that does not exist on disk, every segment
+	# check fails, and the shipped base pack is rejected as if it were hostile.
+	# That is exactly what made an exported build report packs=1 units=0
+	# factions=0 while the .pck demonstrably contained all of it. Bundled
+	# resources cannot contain links, so the check is skipped for them; every
+	# user:// and absolute external path is still fully checked.
+	if not root.begins_with("res://") and _path_has_link_component(root, candidate):
 		return ""
 	return candidate
 

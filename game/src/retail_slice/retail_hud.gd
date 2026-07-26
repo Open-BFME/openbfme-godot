@@ -1844,6 +1844,20 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 	if retail_apt_runtime == null:
 		return "The retail Palantir APT runtime has not been built."
 	var apt_configured := retail_apt_runtime.configure_from_pack(expected_pack_root, true)
+	if not apt_configured or not retail_apt_runtime.contract_declared:
+		# The HUD APT bundle is host-pack payload. An expansion faction's lean
+		# supplemental pack ships only its own units, structures and spellbook,
+		# so the runtime configures against it "successfully" while declaring no
+		# contract, and the HUD then falls back to a manifest path demanding
+		# images (SGCommandBar) that no pack carries. Retry against the recorded
+		# host/faction roots; a genuine host declares its contract on the first
+		# attempt, so this costs a BFME2 faction nothing.
+		for root in _allowed_image_pack_roots:
+			if _same_pack_root(root, expected_pack_root):
+				continue
+			if retail_apt_runtime.configure_from_pack(root, true) and retail_apt_runtime.contract_declared:
+				apt_configured = true
+				break
 	var use_apt := retail_apt_runtime.contract_declared
 	if not apt_configured:
 		return "Private retail HUD APT is incomplete: %s" % retail_apt_runtime.error
@@ -2258,8 +2272,16 @@ func _validate_retail_image(
 		# pack root, and fail closed when the image has no pack backing at all.
 		if not _pack_root_allowed(image_pack_root):
 			return {"error": "Required UI image '%s' did not come from the selected or faction private packs." % image_id}
-	elif expected_pack_root == "" or not _same_pack_root(image_pack_root, expected_pack_root):
-		return {"error": "Required UI image '%s' did not come from the selected private pack." % image_id}
+	elif not _same_pack_root(image_pack_root, expected_pack_root) and not _pack_root_allowed(image_pack_root):
+		# Shared HUD chrome (the command-bar buttons, fortress expansion icons,
+		# SGCommandBar) is host-pack payload. An expansion faction cooks as a
+		# LEAN supplemental pack that deliberately ships none of it — the host
+		# pinned to BFME2 1.06 bytes owns those surfaces and the supplement
+		# borrows them. Requiring strict equality with the selected pack made
+		# every Angmar match fail HUD validation on images the mounted host pack
+		# was already providing. Accept the recorded host/faction roots, and
+		# still fail closed for an image with no pack backing at all.
+		return {"error": "Required UI image '%s' did not come from the selected or faction private packs." % image_id}
 
 	var image_path := ""
 	if structure_object_id != "":
