@@ -53,8 +53,12 @@ internal static class BundleInventory
             var info = new FileInfo(pair.Value);
             if (info.Length != entry.Size)
                 throw new InvalidDataException("Bundled runtime file size mismatch.");
-            var actual = SHA256.HashData(File.ReadAllBytes(pair.Value));
-            if (!CryptographicOperations.FixedTimeEquals(actual, Convert.FromHexString(entry.Sha256)))
+            // Streamed, not ReadAllBytes: that caps out at 2 GiB and would allocate the
+            // largest bundled file on every verification.
+            using var stream = new FileStream(pair.Value, FileMode.Open, FileAccess.Read,
+                FileShare.Read, 1024 * 1024, FileOptions.SequentialScan);
+            if (!CryptographicOperations.FixedTimeEquals(
+                    SHA256.HashData(stream), Convert.FromHexString(entry.Sha256)))
                 throw new InvalidDataException("Bundled runtime file hash mismatch.");
         }
     }

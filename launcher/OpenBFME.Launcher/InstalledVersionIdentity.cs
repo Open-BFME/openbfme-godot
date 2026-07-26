@@ -26,9 +26,7 @@ internal sealed record InstalledVersionIdentity(
         {
             var info = new FileInfo(pair.Value);
             return new InstalledFileIdentity(
-                pair.Key,
-                info.Length,
-                Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(pair.Value))).ToLowerInvariant());
+                pair.Key, info.Length, Convert.ToHexString(HashFile(pair.Value)).ToLowerInvariant());
         }).ToArray();
         var identity = new InstalledVersionIdentity(
             ExpectedSchema, 1, manifest.Version, manifest.Commit, package.Sha256, rows);
@@ -37,20 +35,61 @@ internal sealed record InstalledVersionIdentity(
             new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    /// <summary>
+    /// Read and shape-check the identity record a version directory keeps about itself.
+    /// </summary>
+    private static InstalledVersionIdentity Read(string root)
+    {
+        var path = Path.Combine(root, FileName);
+        if (!File.Exists(path)) throw new InvalidDataException("Installed version identity is missing.");
+        if (new FileInfo(path).Length > 64 * 1024 * 1024)
+            throw new InvalidDataException("Installed version identity is too large.");
+        InstalledVersionIdentity identity;
+        try
+        {
+            identity = JsonSerializer.Deserialize<InstalledVersionIdentity>(File.ReadAllBytes(path),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = false })
+                ?? throw new InvalidDataException("Installed version identity is empty.");
+        }
+        catch (JsonException error)
+        {
+            // A truncated or scrambled identity file is damage like any other, and must
+            // read as damage rather than escaping as a JsonException that callers
+            // deciding whether a directory is repairable would not recognise.
+            throw new InvalidDataException(
+                $"Installed version identity is not valid JSON: {error.Message}", error);
+        }
+        if (identity.Schema != ExpectedSchema || identity.SchemaVersion != 1 ||
+            !SafeVersion(identity.Version) || !FullSha1(identity.Commit) || !Sha256(identity.PackageSha256))
+            throw new InvalidDataException("Installed version identity is invalid.");
+        return identity;
+    }
+
+    /// <summary>
+    /// Establish that a version directory is one the launcher installed and that it
+    /// names itself as <paramref name="expectedVersion"/> — without hashing its contents.
+    ///
+    /// This is the gate for deleting an obsolete version. Ownership is the question there;
+    /// intactness is not, because the answer is used to delete the directory either way.
+    /// The reparse-point and duplicate-path scan is kept, since those do affect what a
+    /// recursive delete would touch.
+    /// </summary>
+    internal static void VerifyOwnership(string root, string expectedVersion)
+    {
+        var identity = Read(root);
+        if (identity.Version != expectedVersion)
+            throw new InvalidDataException(
+                "Installed version identity does not match the directory it is stored in.");
+        Inventory(root);
+    }
+
     internal static void Verify(
         string root,
         string? expectedVersion = null,
         string? expectedCommit = null,
         string? expectedPackageSha256 = null)
     {
-        var path = Path.Combine(root, FileName);
-        if (!File.Exists(path)) throw new InvalidDataException("Installed version identity is missing.");
-        var identity = JsonSerializer.Deserialize<InstalledVersionIdentity>(File.ReadAllBytes(path),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = false })
-            ?? throw new InvalidDataException("Installed version identity is empty.");
-        if (identity.Schema != ExpectedSchema || identity.SchemaVersion != 1 ||
-            !SafeVersion(identity.Version) || !FullSha1(identity.Commit) || !Sha256(identity.PackageSha256))
-            throw new InvalidDataException("Installed version identity is invalid.");
+        var identity = Read(root);
         if (expectedVersion is not null && identity.Version != expectedVersion ||
             expectedCommit is not null && identity.Commit != expectedCommit ||
             expectedPackageSha256 is not null && identity.PackageSha256 != expectedPackageSha256)
@@ -71,10 +110,26 @@ internal sealed record InstalledVersionIdentity(
             var info = new FileInfo(pair.Value);
             if (info.Length != entry.Size)
                 throw new InvalidDataException("Installed version file size changed.");
-            var hash = SHA256.HashData(File.ReadAllBytes(pair.Value));
-            if (!CryptographicOperations.FixedTimeEquals(hash, Convert.FromHexString(entry.Sha256)))
+            if (!CryptographicOperations.FixedTimeEquals(
+                    HashFile(pair.Value), Convert.FromHexString(entry.Sha256)))
                 throw new InvalidDataException("Installed version file hash changed.");
         }
+    }
+
+    /// <summary>
+    /// Hash a file without materialising it in memory.
+    ///
+    /// <c>File.ReadAllBytes</c> refuses outright at 2 GiB — the shipped game data file is
+    /// a single Godot .pck expected to pass that — so reading whole files to hash them
+    /// meant verification would start failing on exactly the installs it most needs to
+    /// check, with an I/O error rather than anything a player could act on. It also made
+    /// every verification allocate the largest file in the install.
+    /// </summary>
+    private static byte[] HashFile(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+            1024 * 1024, FileOptions.SequentialScan);
+        return SHA256.HashData(stream);
     }
 
     private static Dictionary<string, string> Inventory(string root)
