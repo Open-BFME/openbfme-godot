@@ -7,11 +7,20 @@ Last verified commit: `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
 Update trigger: A repeated, approved repository-wide failure needs a durable rule, or a stale rule can be deleted.
 Validation: Compare this file with `docs/AGENT_WORKFLOW.md` and validate the applicable task packet before work begins.
 
-## Active objective
+## Product target and active objective
 
-Complete the private BFME2 1.06 Men-versus-Men Fords of Isen II milestone in
-`docs/MILESTONE_CURRENT.md`. `DIRECTION.md` owns product scope; `STATUS.md` owns
-current evidence. Do not substitute obsolete proof-stage documents.
+The product target is the full game: all BFME2 and RotWK factions, both
+campaigns, Create-a-Hero, War of the Ring, skirmish, and multiplayer. The
+scope ladder in `DIRECTION.md` is authoritative and runs to step 8.
+
+The active acceptance milestone is the private BFME2 1.06 Men-versus-Men Fords
+of Isen II gate in `docs/MILESTONE_CURRENT.md`. That is the next step on the
+ladder, not the end of it. Do not read the active milestone as the product
+scope, and do not reject work as out-of-scope because it belongs to a later
+ladder step — later is not excluded.
+
+`DIRECTION.md` owns product scope; `STATUS.md` owns current evidence. Do not
+substitute obsolete proof-stage documents.
 
 ## Required workflow
 
