@@ -535,6 +535,17 @@ var _by_name: Dictionary = {}
 var _rng_state: int = 0x9E3779B97F4A7C15
 var _subroutine_calls_this_tick: int = 0
 var _stealth_shortfall_noted: bool = false
+# Per-tick sight index for the discovery predicates: simulation team -> the
+# living entities of that team as (x, z, radius squared) in document space. A
+# mission can ask hundreds of discovery questions per tick and the answer to
+# all of them is the same index, so it is built at most once per team per tick
+# and thrown away whenever the entity set can have changed - each tick, and
+# each time this interpreter itself spawns or removes an entity.
+var _sight_generation: int = 0
+var _sight_cache_generation: int = -1
+var _sight_cache: Dictionary = {}
+# Teams whose sight index overran MAX_DISCOVERY_QUERY_SCAN this generation.
+var _sight_unavailable: Dictionary = {}
 
 
 # --- Loading ---------------------------------------------------------------
@@ -820,6 +831,7 @@ func step(sim) -> void:
 	_subroutine_calls_this_tick = 0
 	_area_queries_this_tick = 0
 	_discovery_queries_this_tick = 0
+	_sight_generation += 1
 	_reconcile_bound_objects(sim)
 	# Iterate by index over a snapshot size: ENABLE_SCRIPT may only flip
 	# activity flags on already-loaded scripts, never append, so the bound is
@@ -1480,6 +1492,7 @@ func _named_delete(object_name: String, sim) -> void:
 			sim.entities.erase(entity_id)
 			sim.selected_ids.erase(entity_id)
 			sim.prune_control_groups()
+			_sight_generation += 1
 
 
 func _set_named_attitude(object_name: String, attitude: int) -> void:
@@ -1647,6 +1660,7 @@ func _instantiate_row(row: Dictionary, sim) -> bool:
 		return false
 	row["entity_id"] = entity_id
 	_bound_object_count += 1
+	_sight_generation += 1
 	return true
 
 
@@ -2308,26 +2322,15 @@ func _position_discovered(player: String, point: Vector2, sim) -> int:
 			)
 			if _point_inside_polygon(point, polygon):
 				return 1
-	# Sight of the player's own living entities. `vision_range` is compiled in
-	# simulation units, so it is lifted into document space before comparison.
+	# Sight of the player's own living entities.
 	var team := int(player_team_bindings.get(player, -1)) if sim != null else -1
 	if team >= 0:
-		var scanned := 0
-		for entity_id: int in sim.entity_ids():
-			scanned += 1
-			if scanned > MAX_DISCOVERY_QUERY_SCAN:
-				_note_bound("discovery_query_scan")
-				return -1
-			var entity: Dictionary = sim.entity(entity_id)
-			if entity.is_empty() or int(entity.get("health", 0)) <= 0:
-				continue
-			if int(entity.get("team", -1)) != team:
-				continue
-			var sight := float(entity.get("vision_range", 0.0)) * world_scale
-			if sight <= 0.0:
-				continue
-			var origin := _document_space(entity.get("position", Vector2.ZERO))
-			if (point - origin).length_squared() <= sight * sight:
+		var sight_index := _player_sight(team, sim)
+		if _sight_unavailable.has(team):
+			# The index could not be built within its scan bound.
+			return -1
+		for disc: Vector3 in sight_index:
+			if (point - Vector2(disc.x, disc.y)).length_squared() <= disc.z:
 				return 1
 	# Nothing this interpreter can see reveals the point. Say so, but count the
 	# sight the world was unable to contribute. The test is deliberately the
@@ -2339,6 +2342,43 @@ func _position_discovered(player: String, point: Vector2, sim) -> int:
 	elif _bound_object_count < named_objects.size():
 		_note_bound("discovery_vision_unavailable")
 	return 0
+
+
+func _player_sight(team: int, sim) -> PackedVector3Array:
+	## The sight index of one simulation team, as (x, z, radius squared) discs
+	## in document space, built at most once per team per sight generation.
+	## `vision_range` is compiled in simulation units, so it is lifted into
+	## document space here rather than at every comparison.
+	if _sight_cache_generation != _sight_generation:
+		_sight_cache.clear()
+		_sight_unavailable.clear()
+		_sight_cache_generation = _sight_generation
+	if _sight_cache.has(team):
+		return _sight_cache[team]
+	var discs := PackedVector3Array()
+	if sim == null:
+		_sight_cache[team] = discs
+		return discs
+	var scanned := 0
+	for entity_id: int in sim.entity_ids():
+		scanned += 1
+		if scanned > MAX_DISCOVERY_QUERY_SCAN:
+			_note_bound("discovery_query_scan")
+			_sight_unavailable[team] = true
+			_sight_cache[team] = PackedVector3Array()
+			return _sight_cache[team]
+		var entity: Dictionary = sim.entity(entity_id)
+		if entity.is_empty() or int(entity.get("health", 0)) <= 0:
+			continue
+		if int(entity.get("team", -1)) != team:
+			continue
+		var sight := float(entity.get("vision_range", 0.0)) * world_scale
+		if sight <= 0.0:
+			continue
+		var origin := _document_space(entity.get("position", Vector2.ZERO))
+		discs.append(Vector3(origin.x, origin.y, sight * sight))
+	_sight_cache[team] = discs
+	return discs
 
 
 func _team_discovered(team: Dictionary, player: String, sim) -> bool:

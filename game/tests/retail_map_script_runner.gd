@@ -1565,20 +1565,12 @@ func _test_shroud_and_discovery() -> void:
 	# Raider sits at (100, 100), inside the Outfield area and on top of the Far
 	# waypoint; nothing else in the fixture world is near it, so a discovery
 	# there can only come from a reveal or from a unit's sight.
+	# The reveal scripts are loaded ahead of the predicates that read them, so
+	# each tick files its reveal before the same tick's discovery question - the
+	# retail script list is evaluated in source order and this fixture relies on
+	# exactly that.
 	var scripts = MapScriptsScript.new()
 	scripts.load_document(_world_document([
-		_discovery_script("Good Sees Raider", "Raider", "PlyrGood", "good_sees"),
-		_discovery_script("Good Sees Captain", "Captain", "PlyrGood", "good_sees_captain"),
-		_script("Team Seen", [
-			_or_condition([_condition("TEAM_DISCOVERED", [
-				_argument(MapScriptsScript.ARGUMENT_TEAM, 0, 0.0, "Raider Team"),
-				_argument(MapScriptsScript.ARGUMENT_PLAYER, 0, 0.0, "PlyrGood"),
-			])]),
-			_action("INCREMENT_COUNTER", [
-				_argument(MapScriptsScript.ARGUMENT_INTEGER, 1),
-				_argument(MapScriptsScript.ARGUMENT_COUNTER_NAME, 0, 0.0, "team_seen"),
-			]),
-		], false),
 		_inactive(_script("Reveal", [
 			_or_condition([_condition("CONDITION_TRUE", [])]),
 			_reveal_area_action("Outfield", "PlyrGood", "Reveal Outfield"),
@@ -1610,6 +1602,17 @@ func _test_shroud_and_discovery() -> void:
 				_argument(MapScriptsScript.ARGUMENT_REVEAL_NAME, 0, 0.0, "Reveal Far"),
 			]),
 		], true)),
+		_discovery_script("Good Sees Raider", "Raider", "PlyrGood", "good_sees"),
+		_script("Team Seen", [
+			_or_condition([_condition("TEAM_DISCOVERED", [
+				_argument(MapScriptsScript.ARGUMENT_TEAM, 0, 0.0, "Raider Team"),
+				_argument(MapScriptsScript.ARGUMENT_PLAYER, 0, 0.0, "PlyrGood"),
+			])]),
+			_action("INCREMENT_COUNTER", [
+				_argument(MapScriptsScript.ARGUMENT_INTEGER, 1),
+				_argument(MapScriptsScript.ARGUMENT_COUNTER_NAME, 0, 0.0, "team_seen"),
+			]),
+		], false),
 	]))
 	scripts.player_team_bindings["PlyrGood"] = 0
 	scripts.player_team_bindings["PlyrEvil"] = 1
@@ -1666,7 +1669,6 @@ func _test_shroud_and_discovery() -> void:
 	# Raider, so only a unit created next to the Raider can see it.
 	var sighted = MapScriptsScript.new()
 	sighted.load_document(_world_document([
-		_discovery_script("Good Sees Raider", "Raider", "PlyrGood", "good_sees"),
 		_script("Post A Guard", [
 			_or_condition([_condition("CONDITION_TRUE", [])]),
 			_action("CREATE_NAMED_ON_TEAM_AT_WAYPOINT", [
@@ -1676,6 +1678,7 @@ func _test_shroud_and_discovery() -> void:
 				_argument(MapScriptsScript.ARGUMENT_WAYPOINT, 0, 0.0, "Far"),
 			]),
 		], true),
+		_discovery_script("Good Sees Raider", "Raider", "PlyrGood", "good_sees"),
 	]))
 	sighted.player_team_bindings["PlyrGood"] = 0
 	sighted.player_team_bindings["PlyrEvil"] = 1
@@ -1691,36 +1694,46 @@ func _test_shroud_and_discovery() -> void:
 
 	var everything = MapScriptsScript.new()
 	everything.load_document(_world_document([
-		_discovery_script("Evil Sees Captain", "Captain", "PlyrEvil", "evil_sees"),
-		_script("Reveal Everything", [
+		_inactive(_script("Reveal Everything", [
 			_or_condition([_condition("CONDITION_TRUE", [])]),
 			_action("MAP_REVEAL_ALL_PERM", [
-				_argument(MapScriptsScript.ARGUMENT_PLAYER, 0, 0.0, "PlyrEvil"),
+				_argument(MapScriptsScript.ARGUMENT_PLAYER, 0, 0.0, "PlyrGood"),
 			]),
-		], true),
+		], true)),
 		_inactive(_script("Shroud Everything", [
 			_or_condition([_condition("CONDITION_TRUE", [])]),
 			_action("MAP_REVEAL_ALL_UNDO_PERM", [
-				_argument(MapScriptsScript.ARGUMENT_PLAYER, 0, 0.0, "PlyrEvil"),
+				_argument(MapScriptsScript.ARGUMENT_PLAYER, 0, 0.0, "PlyrGood"),
 			]),
 		], true)),
+		_discovery_script("Good Sees The Far Corner", "Raider", "PlyrGood", "far_corner_seen"),
 	]))
 	everything.player_team_bindings["PlyrGood"] = 0
 	everything.player_team_bindings["PlyrEvil"] = 1
 	var everything_sim = _make_sim()
+	# Tick 1: nothing revealed, so the far corner of the map is shrouded even to
+	# the player who owns what stands there.
+	everything_sim.tick()
+	everything.step(everything_sim)
+	var shrouded_before := int(everything.counters.get("far_corner_seen", 0)) == 0
+	# Tick 2: the whole-map permanent reveal, filed before the predicate reads it.
+	everything._set_script_active("Reveal Everything", true)
 	everything_sim.tick()
 	everything.step(everything_sim)
 	var revealed_after_perm := bool(
-		everything.permanently_revealed_players.get("PlyrEvil", false))
+		everything.permanently_revealed_players.get("PlyrGood", false))
+	# Tick 3: the undo, likewise filed before the predicate reads it.
 	everything._set_script_active("Shroud Everything", true)
 	everything_sim.tick()
 	everything.step(everything_sim)
 	_check("a_whole_map_permanent_reveal_can_be_undone",
-		int(everything.counters.get("evil_sees", 0)) == 1
+		shrouded_before
 			and revealed_after_perm
-			and not everything.permanently_revealed_players.has("PlyrEvil"),
-		"counters=%s revealed=%s" % [
-			str(everything.counters), str(everything.permanently_revealed_players)])
+			and int(everything.counters.get("far_corner_seen", 0)) == 1
+			and not everything.permanently_revealed_players.has("PlyrGood"),
+		"shrouded_before=%s counters=%s revealed=%s" % [
+			str(shrouded_before), str(everything.counters),
+			str(everything.permanently_revealed_players)])
 
 
 func _test_registry_twin_run_determinism() -> void:

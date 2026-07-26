@@ -15,6 +15,11 @@ imported) and shares almost nothing with this work.
 - Script coverage: **19.1%** of campaign scripts (1,056 of 5,536) can execute
   every opcode they use. One unsupported condition fails a whole script closed,
   so this script-level figure is the honest one; slot percentages flatter it.
+  It has since gone 19.1% -> 35.5% -> 45.9% -> **62.7%** (3,468 of 5,535).
+  Of the 24,371 opcode slots the campaign corpus authors, 15,501 are
+  gameplay-semantic, 4,171 are `recorded` presentation, and 4,699 are still
+  unsupported. The recorded slots are reported apart from the semantic ones and
+  are never counted as gameplay coverage.
 - Maps: only `fords-of-isen-ii` is cooked. Phase A has since closed the
   planning side — every shipped map in both editions plans, and prop binding is
   automatic — but no maps pack has been cooked yet.
@@ -94,11 +99,38 @@ B3. **Trigger-area spatial predicates** — `SKIRMISH_PLAYER_HAS_UNITS_IN_AREA` 
 B4. **Spawn and order actions** — `CREATE_NAMED_ON_TEAM_AT_WAYPOINT` 429,
     `CREATE_REINFORCEMENT_TEAM` 341, `SET_ATTACK_PRIORITY_THING` 231.
 B5. **Per-player state** — `PLAYER_SCIENCE_AVAILABILITY` 299,
-    `ALLOW_DISALLOW_ONE_BUILDING` 162, player relations, command points.
-B6. **Audio completion tracking** — `HAS_FINISHED_AUDIO` 229. Campaign pacing
-    depends on it; missions stall without it.
-B7. **Camera and cinematics** — required for the 22 RotWK `cin` maps and every
-    mission intro.
+    `ALLOW_DISALLOW_ONE_BUILDING` 162, player relations, command points. Still
+    open; measured at +114 scripts (+2.0 points) once done.
+B6. **Audio completion tracking** — **done.** `HAS_FINISHED_AUDIO` 229.
+    Retail's condition is not paired with the action that played the sound: on
+    its first evaluation it files the named audio event against
+    `now + authored length` and answers false, and on a later evaluation past
+    that tick it answers true and retires the entry so the next wait re-arms.
+    That is what the runtime implements, from an injectable length table
+    (`set_audio_event_durations`) and the tick index — never from playback
+    state, so the presentation bucket stays a pure sink. An event with no
+    authored length reads as zero-length and therefore completes on its first
+    evaluation, exactly as retail treats an event the loaded content does not
+    carry; every one of those is counted in
+    `bounds_hit["audio_event_length_unknown"]`. **No shipped pack carries
+    campaign audio lengths yet**, so today every wait completes immediately and
+    missions run unpaced-but-not-stalled. Closing that is a pack-data job
+    (audio event durations in `data/audio_events.json`), not a runtime one.
+B7. **Camera and cinematics** — the camera opcodes are all in the `recorded`
+    bucket now (a bounded ordered event each, zero simulation state); what is
+    still missing is a presentation layer that consumes those events. Required
+    for the 22 RotWK `cin` maps and every mission intro.
+B8. **Shroud and discovery** — **done for the permanent family.** Per-player
+    shroud is the union of named permanent reveals
+    (`MAP_REVEAL_PERMANENTLY_AT_WAYPOINT` / `_IN_TRIGGER`, each filed under the
+    handle its `MAP_UNDO_REVEAL_PERMANENTLY_*` sibling removes, plus the
+    whole-map `MAP_REVEAL_ALL_PERM`) and the sight of the player's living
+    simulation entities, read from the compiled `vision_range`.
+    `NAMED_DISCOVERED` and `TEAM_DISCOVERED` answer over it. The
+    non-permanent reveal family (`MAP_REVEAL_AT_WAYPOINT`, `MAP_REVEAL_ALL`,
+    `MAP_SHROUD_*`, 26 slots) needs an explored-but-not-visible layer that
+    decays, which this world has no representation for, and is deliberately
+    left unimplemented.
 
 ## Phase C — campaign shell
 
@@ -115,4 +147,16 @@ C4. Campaign-only units, heroes and objects that appear in no faction roster.
 - Deterministic. Script execution is tick-deterministic, bounded, and must never
   draw from engine RNG — the project runs deterministic lockstep.
 - Presentation opcodes stay in the `recorded` bucket and change zero simulation
-  state, so they can never be miscounted as gameplay coverage.
+  state, so they can never be miscounted as gameplay coverage. That claim is
+  proved, not asserted: `retail_map_script_runner` drives **every** declared
+  recorded opcode in one script and asserts the simulation hash still equals a
+  scriptless control's.
+- Opcodes left unsupported on purpose, because declaring them would be a false
+  claim rather than a missing branch: `TEAM_UPGRADE` (185) and
+  `SET_ATTACK_PRIORITY_THING` (231) — storing the value changes no unit state;
+  `DESELECT` (27) — selection is simulation state, not presentation; the
+  `*_FORCE_EMOTION` family (135) — BFME emotions drive fear and terror
+  behaviour; `UNIT_SET_MODELCONDITION*` (21) — model conditions can gate weapon
+  and armor states; `FREEZE_TIME` / `UNFREEZE_TIME` / `CAMERA_MOD_FREEZE_TIME`
+  (12) — they stop the logic clock; and the non-permanent reveal family (26),
+  which needs a shroud layer that decays.
