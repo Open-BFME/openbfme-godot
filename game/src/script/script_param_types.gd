@@ -74,7 +74,38 @@ const PAYLOAD_FIELD_FOR_PARAM := {
 	"AI_MOOD": "integer",
 	"SURFACE_TYPE": "integer",
 	"COORD3D": "position",
+	# Every remaining ENUMS member. An enum is a named integer by definition, so
+	# omitting one here silently routed it to the "text" default and a handler
+	# read an empty string where the map authored a number - with no error, since
+	# sage_scb.py populates integer, real AND text for every argument. Ten of the
+	# sixteen enums were missing; ENUMS_HAVE_PAYLOAD_ROWS below keeps that from
+	# happening again rather than relying on the next person noticing.
+	"BUILDABILITY_TYPE": "integer",
+	"EMOTION": "integer",
+	"MISSION_OBJECTIVE_STATUS": "integer",
+	"NEAR_OR_FAR": "integer",
+	"PRODUCTION_QUEUE_TAB": "integer",
+	"RADAR_EVENT": "integer",
+	"SCRIPT_EVENT": "integer",
+	"SHAKE_INTENSITY": "integer",
+	"SKIRMISH_APPROACH_PATH": "integer",
+	"STANCE_TYPE": "integer",
+	# Not an enum, but numeric: a packed colour value, white = -1.
+	"COLOR": "integer",
 }
+
+## Every ENUMS member must have a PAYLOAD_FIELD_FOR_PARAM row, because an enum
+## is a named integer and the table's default is "text". Call this from a test:
+## the failure it prevents is silent, since sage_scb.py fills integer, real and
+## text for every argument, so a wrong-field read yields "" rather than an error.
+static func enums_missing_payload_rows() -> Array:
+	var absent: Array = []
+	for key in ENUMS.keys():
+		if not PAYLOAD_FIELD_FOR_PARAM.has(key):
+			absent.append(key)
+	absent.sort()
+	return absent
+
 
 ## SAGE comparison operator enum.
 ## PROVENANCE: reference section "PARAMETER TYPES", COMPARISON table.
