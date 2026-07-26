@@ -129,6 +129,35 @@ jobs:
           OPENBFME_DUALRUN_OPTIONAL: "1"
         run: dotnet test engine/OpenBfme.Engine.sln --nologo --configuration Release
 
+  launcher:
+    name: launcher security suite
+    needs: publication-boundary
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.0.0
+        with:
+          dotnet-version: "8.0.x"
+
+      # These tests guard the code that decides what lands on a player's disk:
+      # signed-manifest verification against a pinned key, hash and size checks
+      # before extraction, archive traversal and symlink rejection, atomic
+      # selection, repair and rollback. Until now they ran only in release.yml,
+      # so every push and pull request went unchecked on exactly the surface
+      # where a defect is a security defect.
+      #
+      # `dotnet run`, NOT `dotnet test`: the test project is a plain console app
+      # with no test adapter, so `dotnet test` executes ZERO tests and still
+      # exits 0 - a green tick for nothing. Same invocation as release.yml:132.
+      - name: Run launcher installer and updater tests
+        run: dotnet run --project launcher/OpenBFME.Launcher.Tests/OpenBFME.Launcher.Tests.csproj --configuration Release
+
+      # Release tooling negative cases: manifest validation, version rules,
+      # and the packaging path.
+      - name: Test release tooling
+        shell: powershell
+        run: ./tools/release/Test-ReleaseTools.ps1
+
   godot-exports:
     name: godot export (windows + linux)
     runs-on: ubuntu-latest
