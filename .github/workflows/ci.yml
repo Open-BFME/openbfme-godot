@@ -230,3 +230,92 @@ jobs:
           path: |
             dist/linux/
             dist/SHA256SUMS.txt
+
+  # The GDScript simulation is the one that actually runs the game, and it has
+  # no cross-platform determinism proof. Every existing assertion compares two
+  # sims inside ONE process, which cannot detect a platform-dependent result.
+  # The C# engine has CrossPlatformPinTests; the shipping simulation has had
+  # nothing. This job runs a frozen 3000-tick scenario on Windows and Ubuntu
+  # and fails if the authoritative state hashes differ.
+  #
+  # COVERAGE GAP, read before trusting a green result: the pin scenario injects
+  # no route_provider, so routing takes the bounded direct fallback and Godot's
+  # AStarGrid2D is never exercised. AStarGrid2D uses float32 costs and engine-
+  # internal tie-breaking with no cross-platform stability guarantee, and is the
+  # most likely divergence source. Green here proves the simulation's own float
+  # math, ordering and trigonometry agree. It proves nothing about pathing.
+  sim-state-pin:
+    name: sim state pin (${{ matrix.os }})
+    needs: publication-boundary
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: Godot_v4.7-stable_linux.x86_64.zip
+            bin: Godot_v4.7-stable_linux.x86_64
+          - os: windows-latest
+            asset: Godot_v4.7-stable_win64.exe.zip
+            bin: Godot_v4.7-stable_win64_console.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      GODOT_RELEASE: "4.7-stable"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download and verify Godot headless
+        run: |
+          set -euo pipefail
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_RELEASE}"
+          mkdir -p "$HOME/godot" && cd "$HOME/godot"
+          curl -fsSL --retry 5 --retry-all-errors --retry-max-time 120 \
+            -o SHA512-SUMS.txt "${base}/SHA512-SUMS.txt"
+          curl -fsSL --retry 5 --retry-all-errors --retry-max-time 120 \
+            -o "${{ matrix.asset }}" "${base}/${{ matrix.asset }}"
+          # `test -s` stops an upstream rename turning verification into a no-op.
+          grep -E "${{ matrix.asset }}$" SHA512-SUMS.txt > expected-sums.txt
+          test -s expected-sums.txt
+          sha512sum -c expected-sums.txt
+          # Python rather than unzip: unzip is not guaranteed on the Windows
+          # runner image, and a missing tool here would fail late and obscurely.
+          python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall('.')" "${{ matrix.asset }}"
+          chmod +x "${{ matrix.bin }}" || true
+          test -f "${{ matrix.bin }}"
+      - name: Emit authoritative state pin
+        run: |
+          set -euo pipefail
+          "$HOME/godot/${{ matrix.bin }}" --headless --path game \
+            -s res://tests/retail_state_pin_runner.gd | tee pin-output.txt
+          grep -oE 'hash=[0-9a-f]{64}' pin-output.txt | cut -d= -f2 > pin-hash.txt
+          test -s pin-hash.txt
+          echo "pin: $(cat pin-hash.txt)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sim-state-pin-${{ matrix.os }}
+          path: pin-hash.txt
+
+  sim-state-pin-compare:
+    name: sim state pin agrees across platforms
+    needs: sim-state-pin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: pins
+      - name: Compare Windows and Linux authoritative state
+        run: |
+          set -euo pipefail
+          win=$(cat pins/sim-state-pin-windows-latest/pin-hash.txt)
+          lin=$(cat pins/sim-state-pin-ubuntu-latest/pin-hash.txt)
+          echo "windows: $win"
+          echo "linux:   $lin"
+          if [ "$win" != "$lin" ]; then
+            echo "::error::Authoritative simulation state diverges across platforms."
+            echo "The GDScript simulation is not deterministic across OSes, so"
+            echo "cross-platform lockstep multiplayer cannot work as built."
+            echo "Bisect with retail_state_pin_runner.gd by lowering PIN_TICKS."
+            exit 1
+          fi
+          echo "Authoritative state is bit-identical on Windows and Linux."
