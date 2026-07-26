@@ -2,8 +2,10 @@
 
 > **Superseded:** use `docs/MILESTONE_CURRENT.md`, `PLAN.md`, and generated
 > compatibility coverage. This mixed remediation/expansion plan cannot assign work.
-> Its former campaign/War of the Ring expansion phase was removed after the
-> owner explicitly excluded both domains from the product scope.
+> Its former campaign/War of the Ring expansion phase was removed in July 2026
+> when those domains were out of scope. That exclusion was REVERSED by the owner
+> on 2026-07-26 (commit db20e8e): campaigns and War of the Ring are now ladder
+> steps 6 and 7 in `DIRECTION.md`. Do not read this file's scope statements.
 
 **Date:** 2026-07-15  
 **Scope authority:** `DIRECTION.md` and `docs/M2_MEN_FORDS_DOD.md`  

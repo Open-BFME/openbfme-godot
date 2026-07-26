@@ -15,8 +15,9 @@ This is an audit of a large, dirty development working tree based on
 stable current runtime identity. Results below are explicitly diagnostic and
 must not approve a milestone, release, or parity claim.
 
-The product target is BFME2 1.06 skirmish compatibility. Campaign material and
-War of the Ring are outside project scope.
+The product target is the full game. BFME2 1.06 skirmish compatibility is the
+active acceptance milestone, not the scope; campaigns and War of the Ring are
+ladder steps 6 and 7 in DIRECTION.md.
 
 ## Audited identity
 

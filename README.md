@@ -94,7 +94,7 @@ and known failures.
 | Main menu, N-player skirmish setup, options, HUD, and audio | Implemented under focused tests |
 | Multiplayer | Deterministic lockstep + ENet with an in-game lobby; early and gate-verified, not yet a hardened production service |
 | Skirmish AI | Five deterministic difficulty tiers, per-team controllers |
-| Campaigns and War of the Ring | Explicitly outside project scope |
+| Campaigns and War of the Ring | In scope, ladder steps 6 and 7; not started |
 | Rise of the Witch-king | RotWK 2.01 is a supported optional import source (Angmar); RotWK campaign content remains out of scope |
 | Public binary or polished installer | Not available |
 
@@ -185,8 +185,9 @@ importing.
 6. Add accessibility, HD presentation packs, safe updates, rollback, and a
    polished installer without weakening compatibility checks.
 
-Campaign material and War of the Ring are not part of this roadmap. The stable
-scope and non-goals live in [DIRECTION.md](DIRECTION.md).
+Campaigns and War of the Ring are in scope as ladder steps 6 and 7; they are
+late because they depend on the faction, hero and scripting work beneath them.
+The stable scope and non-goals live in [DIRECTION.md](DIRECTION.md).
 
 ## Find your way around
 

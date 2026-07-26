@@ -10,7 +10,7 @@
 ## Decisions
 
 - BFME2 1.06 skirmish compatibility is the product target.
-- Campaign material and War of the Ring are excluded from the product roadmap.
+- Campaigns and War of the Ring are in scope, as ladder steps 6 and 7.
 - Eight players maximum.
 - Python/pinned tools for conversion, pure C# for deterministic simulation,
   Godot/GDScript for presentation.

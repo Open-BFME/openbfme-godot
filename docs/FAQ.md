@@ -41,9 +41,9 @@ uneven, and presentation and reliability work remains open. Use
 No. Full skirmish parity, hardened production multiplayer, replays, and several
 shell and presentation systems remain unfinished. All seven faction surfaces
 exist and are exercised by per-faction gates, but coverage depth still varies
-by faction. Campaigns and War of the Ring are not
-later milestones: they are explicitly outside project scope. Create-a-Hero may
-be considered after the core skirmish and multiplayer work.
+by faction. Campaigns and War of the Ring are in
+scope as ladder steps 6 and 7 - late, because they depend on the faction, hero
+and scripting work beneath them. Create-a-Hero is ladder step 5.
 
 ## Why start with Men versus Men on one map?
 

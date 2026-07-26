@@ -18,8 +18,9 @@ Retail/original-game observation is the behavioral and audiovisual oracle. Repos
 `contracts/bfme2-106-product-scope.json` is the tracked policy input. It declares
 the game and patch, included/deferred/excluded domains, reproducible
 root-discovery queries, required evidence lanes, and reasoned exclusions. The
-product target is BFME2 1.06 skirmish compatibility. Campaign material and War
-of the Ring are explicitly excluded.
+product target is the full game; BFME2 1.06 skirmish compatibility is the active
+acceptance milestone. Campaigns and War of the Ring are in scope as later ladder
+steps and are outside THIS document's parity lane.
 
 The policy and its deterministic checker exist now. The full feature-graph/report
 generator does not. Until that generator and current validated reports exist, the
