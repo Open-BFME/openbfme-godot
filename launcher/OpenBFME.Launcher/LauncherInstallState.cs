@@ -19,8 +19,17 @@ internal sealed record LauncherInstallState(
     {
         var path = Path.Combine(root, StateName);
         if (!File.Exists(path)) return null;
-        var state = JsonSerializer.Deserialize<LauncherInstallState>(File.ReadAllBytes(path))
-            ?? throw new InvalidDataException("Launcher install state is empty.");
+        LauncherInstallState state;
+        try
+        {
+            state = JsonSerializer.Deserialize<LauncherInstallState>(File.ReadAllBytes(path))
+                ?? throw new InvalidDataException("Launcher install state is empty.");
+        }
+        catch (JsonException error)
+        {
+            throw new InvalidDataException(
+                $"Launcher install state is not valid JSON: {error.Message}", error);
+        }
         state.Validate();
         return state;
     }
@@ -63,12 +72,8 @@ internal sealed record LauncherInstallState(
     {
         state.Validate();
         Directory.CreateDirectory(root);
-        var path = Path.Combine(root, StateName);
-        var temporary = path + $".{Environment.ProcessId}.tmp";
-        File.WriteAllBytes(temporary, JsonSerializer.SerializeToUtf8Bytes(
+        AtomicFile.Write(Path.Combine(root, StateName), JsonSerializer.SerializeToUtf8Bytes(
             state, new JsonSerializerOptions { WriteIndented = true }));
-        if (File.Exists(path)) File.Replace(temporary, path, null);
-        else File.Move(temporary, path);
     }
 
     private void Validate()
