@@ -9,7 +9,8 @@ extends RefCounted
 ##   sets        [abc] [^abc] [a-z] with %-escapes inside
 ##   quantifiers *  (greedy)  +  (greedy, >=1)  -  (lazy)  ?  (optional)
 ##   anchors     ^ at the start of the pattern, $ at the end
-##   captures    ( ... ), position capture (), back-references %1 .. %9
+##   captures    ( ... ), back-references %1 .. %9. NOT position captures:
+##               "()" is a 5.0 feature; in 4.0 it is an empty capture.
 ##   balance     %bxy
 ##
 ## Explicitly NOT implemented, because they postdate 4.0.1:
@@ -28,7 +29,11 @@ extends RefCounted
 
 const MAX_CAPTURES := 32
 const CAP_UNFINISHED := -1
-const CAP_POSITION := -2
+## NOTE: there is deliberately no CAP_POSITION. Position captures - the pattern
+## "()" yielding a 1-based index rather than a string - are a Lua 5.0 feature.
+## 4.0's lstrlib.c has no such case: "(" followed immediately by ")" simply
+## starts an ordinary capture that closes at once, so it yields the empty
+## string. strfind("abc", "()") is 1, 0, "" in 4.0, not 1, 0, 1.
 
 ## Character code constants, spelled out so the matching logic reads as
 ## characters rather than magic numbers.
@@ -198,11 +203,11 @@ func _match(s_in: int, p_in: int) -> int:
 
 		var pc := _pattern.unicode_at(p)
 		if pc == CH_OPEN:
-			var result := 0
-			if p + 1 < _plen and _pattern.unicode_at(p + 1) == CH_CLOSE:
-				result = _start_capture(s, p + 2, CAP_POSITION)
-			else:
-				result = _start_capture(s, p + 1, CAP_UNFINISHED)
+			# No special case for "()" - see the CAP_POSITION note at the top.
+			# 4.0 starts a normal capture here; a ")" at p + 1 is then handled by
+			# the CH_CLOSE branch below on the very next step, closing it with
+			# length zero and yielding "".
+			var result := _start_capture(s, p + 1, CAP_UNFINISHED)
 			_depth -= 1
 			return result
 		if pc == CH_CLOSE:
@@ -480,10 +485,7 @@ func _collect_captures(s: int, e: int, whole_when_empty: bool) -> Array:
 		return [_src.substr(s, e - s)] if whole_when_empty else []
 	var out: Array = []
 	for i in range(_level):
-		if _capture_len[i] == CAP_POSITION:
-			# Position captures are 1-based numbers, matching Lua's indices.
-			out.append(float(_capture_init[i] + 1))
-		elif _capture_len[i] == CAP_UNFINISHED:
+		if _capture_len[i] == CAP_UNFINISHED:
 			_fail("unfinished capture in pattern")
 			return out
 		else:

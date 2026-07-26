@@ -702,17 +702,38 @@ func _parse_table_constructor() -> Variant:
 	var hash_items: Array = []
 	var in_keyed_section := _starts_keyed_field()
 
+	# 4.0's grammar is
+	#   fieldlist -> lfieldlist | ffieldlist
+	#              | lfieldlist ';' ffieldlist | ffieldlist ';' lfieldlist
+	# so BOTH orders are legal. lparser.c's constructor() parses one part, then
+	# after an optional ';' parses the other, requiring only that the two differ
+	# in kind ("invalid constructor syntax" otherwise). {x = 1; 1, 2} is valid
+	# Lua 4.0 and used to be rejected here.
 	if not _is_symbol("}"):
 		if in_keyed_section:
 			if not _parse_keyed_fields(hash_items):
 				return null
+			if _accept_symbol(";") and not _is_symbol("}"):
+				if _starts_keyed_field():
+					_fail("Lua 4.0.1 table constructors take at most two "
+						+ "sections and they must differ in kind - "
+						+ "{1, 2; x = 3} or {x = 3; 1, 2}, never two keyed "
+						+ "sections")
+					return null
+				if not _parse_positional_fields(array_items):
+					return null
 		else:
 			if not _parse_positional_fields(array_items):
 				return null
-			if _accept_symbol(";"):
-				if not _is_symbol("}"):
-					if not _parse_keyed_fields(hash_items):
-						return null
+			if _accept_symbol(";") and not _is_symbol("}"):
+				if not _starts_keyed_field():
+					_fail("Lua 4.0.1 table constructors take at most two "
+						+ "sections and they must differ in kind - "
+						+ "{1, 2; x = 3} or {x = 3; 1, 2}, never two "
+						+ "positional sections")
+					return null
+				if not _parse_keyed_fields(hash_items):
+					return null
 	if not _expect_symbol("}"):
 		return null
 	return {

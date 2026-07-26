@@ -473,6 +473,72 @@ func _test_tag_methods() -> void:
 		return x .. 'tail'
 	""", "joined")
 
+	# 4.0 passes the EVENT NAME as a third argument to every binary tag method.
+	# lvm.c's call_binTM pushes luaT_eventname[event] unconditionally, and the
+	# manual's 4.8 pseudo-code is tm(op1, op2, "concat") / tm(op1, op2, "lt").
+	# These two events were missing it while add/sub/mul/unm already had it, so
+	# a handler shared across events could not tell which one fired.
+	_check_string("concat_tag_method_receives_the_event_name", """
+		local mytag = newtag()
+		settagmethod(mytag, 'concat', function(a, b, event) return event end)
+		local x = {} settag(x, mytag)
+		return x .. 'tail'
+	""", "concat")
+
+	_check_string("lt_tag_method_receives_the_event_name", """
+		local mytag = newtag()
+		-- `seen` is deliberately GLOBAL: Lua 4.0 has no lexical closures over
+		-- locals, so a local here would not be visible inside the handler.
+		seen = 'none'
+		settagmethod(mytag, 'lt', function(a, b, event) seen = event return 1 end)
+		local x = {} settag(x, mytag)
+		local y = {} settag(y, mytag)
+		local ignored = x < y
+		return seen
+	""", "lt")
+
+	# All four ordering operators are rewritten in terms of `lt` before reaching
+	# the handler, so the event name is "lt" even for `>`. That is 4.0 behaviour,
+	# not an artefact of the rewrite.
+	_check_string("greater_than_still_reports_lt", """
+		local mytag = newtag()
+		-- `seen` is deliberately GLOBAL: Lua 4.0 has no lexical closures over
+		-- locals, so a local here would not be visible inside the handler.
+		seen = 'none'
+		settagmethod(mytag, 'lt', function(a, b, event) seen = event return 1 end)
+		local x = {} settag(x, mytag)
+		local y = {} settag(y, mytag)
+		local ignored = x > y
+		return seen
+	""", "lt")
+
+	# 4.0's grammar allows the two constructor halves in EITHER order:
+	#   fieldlist -> lfieldlist | ffieldlist
+	#              | lfieldlist ';' ffieldlist | ffieldlist ';' lfieldlist
+	# lparser.c's constructor() requires only that the two parts differ in kind.
+	_check_number("constructor_keyed_then_positional", """
+		local t = {x = 1; 10, 20}
+		return t.x * 1000 + t[1] * 10 + t[2]
+	""", 1120.0)
+
+	_check_number("constructor_positional_then_keyed_still_works", """
+		local t = {10, 20; x = 1}
+		return t.x * 1000 + t[1] * 10 + t[2]
+	""", 1120.0)
+
+	_check_number("constructor_single_keyed_section_still_works",
+		"local t = {a = 2, b = 3} return t.a * 10 + t.b", 23.0)
+
+	# Two sections of the SAME kind stay rejected, matching 4.0's
+	# "invalid constructor syntax" check.
+	_check_refused("constructor_rejects_two_keyed_sections",
+		"local t = {x = 1; y = 2} return t.x", "differ in kind")
+	_check_refused("constructor_rejects_two_positional_sections",
+		"local t = {1, 2; 3, 4} return t[1]", "differ in kind")
+	# And the 5.0 comma-mixed form stays rejected.
+	_check_refused("constructor_rejects_the_5_0_mixed_form",
+		"local t = {1, 2, x = 3} return t.x", "Lua 5.0")
+
 	# All four ordering operators route through `lt`: 4.0 defines a>b as b<a,
 	# a<=b as not (b<a) and a>=b as not (a<b).
 	_check_number("all_ordering_routes_through_lt", """

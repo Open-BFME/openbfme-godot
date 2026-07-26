@@ -534,7 +534,22 @@ func _concat(a: Variant, b: Variant, line: int) -> Variant:
 		return String(sa) + String(sb)
 	var handler: Variant = _binary_tag_method(a, b, "concat")
 	if handler != null:
-		return _call_tag_method(handler, [a, b], line)
+		# KNOWN DEVIATION, deliberate and not implemented: 4.0's call_binTM does
+		# a THIRD lookup, luaT_getim(L, 0, event), falling back to a tag-0
+		# "global method" when neither operand's tag carries a handler.
+		# _binary_tag_method consults only the two operands' tags. A script that
+		# installs a handler on tag 0 as a catch-all for every value in the
+		# program will not see it fire here. Nothing in the retail corpus does
+		# that, and adding it would make an unrelated tag-0 handler intercept
+		# every failed concat/compare in the sandbox, so the narrower lookup is
+		# the safer default until a real script needs otherwise.
+		#
+		# 4.0 passes the event name as a third argument to EVERY binary tag
+		# method - lvm.c's call_binTM pushes luaT_eventname[event]
+		# unconditionally, and the manual's 4.8 pseudo-code is
+		# tm(op1, op2, "concat"). A handler shared between events reads that
+		# argument to tell which one fired.
+		return _call_tag_method(handler, [a, b, "concat"], line)
 	var offender: Variant = a if sa == null else b
 	_raise("attempt to concatenate a %s value" % LuaValue.type_name(offender), line)
 	return null
@@ -552,8 +567,12 @@ func _less_than(a: Variant, b: Variant, line: int) -> Variant:
 		return LuaValue.from_bool(String(a) < String(b))
 	var handler: Variant = _binary_tag_method(a, b, "lt")
 	if handler != null:
+		# As above: manual 4.8 gives tm(op1, op2, "lt"). Note the handler sees
+		# "lt" for all four comparisons, because >, <= and >= are rewritten in
+		# terms of < before reaching here - so a handler cannot distinguish
+		# `a > b` from `b < a`, which is 4.0's behaviour, not a shortcut.
 		return LuaValue.from_bool(LuaValue.truthy(
-			_call_tag_method(handler, [a, b], line)))
+			_call_tag_method(handler, [a, b, "lt"], line)))
 	_raise("attempt to compare %s with %s"
 		% [LuaValue.type_name(a), LuaValue.type_name(b)], line)
 	return null

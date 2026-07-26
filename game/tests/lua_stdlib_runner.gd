@@ -200,8 +200,18 @@ func _test_patterns() -> void:
 		local s, e, a, b = strfind('key=value', '(%w+)=(%w+)')
 		return a .. '/' .. b
 	""", "key/value")
-	_check_number("position_capture",
-		"local s, e, p = strfind('abcd', 'b()') return p", 3.0)
+	# Lua 4.0 has NO position captures - lstrlib.c has no CAP_POSITION case.
+	# "()" is an ordinary capture that closes immediately, so it yields the
+	# empty string. This test previously asserted 5.0's behaviour (the 1-based
+	# index 3) and so pinned the VM to the wrong language version.
+	_check_string("empty_capture_is_not_a_position_capture",
+		"local s, e, p = strfind('abcd', 'b()') return type(p) .. '/' .. p",
+		"string/")
+	_check_number("empty_capture_leaves_the_match_bounds_alone",
+		"local s, e = strfind('abcd', 'b()') return s * 10 + e", 22.0)
+	_check_string("bare_empty_capture_at_string_start",
+		"local s, e, c = strfind('abc', '()') return s .. '/' .. e .. '/' .. c",
+		"1/0/")
 	_check_number("back_reference",
 		"strfind('abcabc', '(abc)%1')", 1.0)
 	_check_number("balanced_match",
