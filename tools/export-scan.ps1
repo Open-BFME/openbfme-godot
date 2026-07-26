@@ -156,8 +156,6 @@ $allowList = @{
     "game/tests/menu_match_cycle_runner.gd" = @("private LAN address")
     # The scanner's own pattern table.
     "tools/export-scan.ps1"                 = @("home directory", "private retail drive", "private LAN address", "credential-shaped token", "hardcoded release target")
-    # A regression guard that asserts a developer path is absent.
-    "tools/gate-stage10.ps1"                = @("home directory")
     # THE one file allowed to name the publish target. Everything else must
     # resolve it at runtime via tools/release_source.py or release-source.mjs.
     "config/release-source.json"            = @("hardcoded release target")
