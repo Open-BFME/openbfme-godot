@@ -96,6 +96,12 @@ extends RefCounted
 ## gate script execution, and script execution is simulation. In a single-player
 ## cutscene that is what retail does; in lockstep multiplayer it is a desync. The
 ## surface these need is reported alongside this package.
+##
+## That tension is now an explicit OWNER RULING: camera read-back is open, and
+## these conditions are to stay gap-registered under that reason until it is
+## settled. Neither wiring them to local view state nor inventing sink state to
+## make them evaluate is permitted, so the gap reason names the pending decision
+## rather than implying somebody merely has not got to it.
 
 const PACKAGE := "WP05-camera"
 
@@ -223,10 +229,12 @@ const BLOCKED_CONDITIONS := [
 ]
 
 const CONDITION_SUBSYSTEM := (
-	"camera state read-back (SageScriptWorld exposes camera as a one-way "
-	+ "presentation sink with no query surface, so camera position, movement "
-	+ "completion, spline progress and player scroll/zoom/rotate distance cannot "
-	+ "be read by anything)"
+	"camera read-back pending owner decision (SageScriptWorld exposes camera as "
+	+ "a one-way presentation sink with no query surface, so camera position, "
+	+ "movement completion, spline progress and player scroll/zoom/rotate "
+	+ "distance cannot be read by anything; wiring these to LOCAL view state "
+	+ "would gate script execution on per-client state, which is correct in a "
+	+ "single-player cutscene and a desync in lockstep)"
 )
 
 ## Parameter type tokens that appear in this package's 74 signatures and carry a

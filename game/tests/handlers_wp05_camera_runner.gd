@@ -38,6 +38,7 @@ const Env := preload("res://src/script/script_env.gd")
 const WorldStub := preload("res://src/script/script_world_stub.gd")
 const GapLog := preload("res://src/script/script_gaps.gd")
 const ParamTypes := preload("res://src/script/script_param_types.gd")
+const Vocabulary := preload("res://src/script/script_vocabulary.gd")
 const Args := preload("res://src/script/script_args.gd")
 const Wp05 := preload("res://src/script/handlers/wp05_camera.gd")
 
@@ -67,6 +68,7 @@ func _run() -> void:
 	_test_registration()
 	_test_every_action_reaches_its_channel()
 	_test_positional_argument_traps()
+	_test_decode_agrees_with_the_payload_field_table()
 	_test_values_are_forwarded_verbatim()
 	_test_bad_arguments_are_refused()
 	_test_a_world_without_an_adapter_refuses()
@@ -646,6 +648,96 @@ func _test_positional_argument_traps() -> void:
 	)
 
 
+# --- 3b. Agreement with the repo's payload-field table ---------------------
+
+
+func _test_decode_agrees_with_the_payload_field_table() -> void:
+	## This package decodes each parameter type with an explicit `match` rather
+	## than by looking the type up in PAYLOAD_FIELD_FOR_PARAM. That is only safe
+	## while the two AGREE, and they silently disagreed once already: ten enums
+	## were missing from the table and were routed to the "text" default, which
+	## returns an empty string rather than erroring because sage_scb.py fills
+	## integer, real AND text for every argument. SHAKE_INTENSITY - this
+	## package's SCREEN_SHAKE argument - was one of them.
+	##
+	## So the agreement is asserted here instead of assumed, for every parameter
+	## type the package's 74 signatures actually use, with the token list
+	## discovered from the vocabulary so that a signature change is caught too.
+	_check(
+		"every_parameter_enum_has_a_payload_field_row",
+		ParamTypes.enums_missing_payload_rows().is_empty(),
+		str(ParamTypes.enums_missing_payload_rows())
+	)
+
+	# Distinct values in all three payload fields: whichever comes back names the
+	# field that was read.
+	const PROBE_INT := 11
+	const PROBE_REAL := 22.5
+	const PROBE_TEXT := "thirty-three"
+	var probe := [_slot(UNOBSERVED_CODE, PROBE_INT, PROBE_REAL, PROBE_TEXT)]
+
+	var tokens := _tokens_used_by_this_package()
+	_check(
+		"the_package_signatures_use_the_tokens_this_file_documents",
+		tokens == [
+			"BOOLEAN", "CAMERA", "CAMERA_ANIMATION", "INT", "PERCENT", "REAL",
+			"SHAKE_INTENSITY", "TRIGGER_AREA", "UNIT", "WAYPOINT", "WAYPOINT_PATH",
+		],
+		str(tokens)
+	)
+
+	var disagreed: Array[String] = []
+	for token: String in tokens:
+		var args := Args.create({"params": [token]}, probe)
+		var decoded: Variant = Wp05._decode(args, 0, token)
+		var field := ParamTypes.payload_field_for_param(token)
+		var expected: Variant = null
+		match field:
+			"integer":
+				# BOOLEAN is an integer field read as a truth value; 11 is not 0.
+				expected = true if token == "BOOLEAN" else PROBE_INT
+			"real":
+				expected = PROBE_REAL
+			_:
+				expected = PROBE_TEXT
+		if decoded != expected:
+			disagreed.append(
+				"%s: table says '%s' so expected %s, decoded %s"
+				% [token, field, str(expected), str(decoded)]
+			)
+	_check(
+		"every_token_decodes_from_the_field_the_repo_table_names",
+		disagreed.is_empty(), str(disagreed)
+	)
+
+	# The specific regression: SCREEN_SHAKE's enum must be a number, never the
+	# empty string the pre-fix table would have produced.
+	var shake_args := Args.create({"params": ["SHAKE_INTENSITY"]}, probe)
+	var shake: Variant = Wp05._decode(shake_args, 0, "SHAKE_INTENSITY")
+	_check(
+		"shake_intensity_decodes_as_an_int_not_as_text",
+		shake is int and shake == PROBE_INT,
+		str(shake)
+	)
+
+
+func _tokens_used_by_this_package() -> Array[String]:
+	## The sorted set of parameter type tokens across all 74 members, read from
+	## the vocabulary tables that the handler walks at run time.
+	var seen := {}
+	for name: String in Wp05.CAMERA_ACTIONS + Wp05.UI_ACTIONS:
+		for token: Variant in (Vocabulary.action_by_name(name).get("params", []) as Array):
+			seen[String(token)] = true
+	for name: String in Wp05.BLOCKED_CONDITIONS:
+		for token: Variant in (Vocabulary.condition_by_name(name).get("params", []) as Array):
+			seen[String(token)] = true
+	var out: Array[String] = []
+	for token: Variant in seen:
+		out.append(String(token))
+	out.sort()
+	return out
+
+
 # --- 4. Verbatim values ---------------------------------------------------
 
 
@@ -824,7 +916,7 @@ func _test_blocked_conditions() -> void:
 	var detail := String((dispatch.gaps.entries[key] as Dictionary)["detail"])
 	_check(
 		"the_blocked_gap_names_the_missing_camera_read_surface",
-		detail.contains("camera state read-back"),
+		detail.contains("camera read-back pending owner decision"),
 		detail
 	)
 
