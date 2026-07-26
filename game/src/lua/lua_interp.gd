@@ -534,22 +534,30 @@ func _concat(a: Variant, b: Variant, line: int) -> Variant:
 		return String(sa) + String(sb)
 	var handler: Variant = _binary_tag_method(a, b, "concat")
 	if handler != null:
-		# KNOWN DEVIATION, deliberate and not implemented: 4.0's call_binTM does
-		# a THIRD lookup, luaT_getim(L, 0, event), falling back to a tag-0
-		# "global method" when neither operand's tag carries a handler.
-		# _binary_tag_method consults only the two operands' tags. A script that
-		# installs a handler on tag 0 as a catch-all for every value in the
-		# program will not see it fire here. Nothing in the retail corpus does
-		# that, and adding it would make an unrelated tag-0 handler intercept
-		# every failed concat/compare in the sandbox, so the narrower lookup is
-		# the safer default until a real script needs otherwise.
-		#
 		# 4.0 passes the event name as a third argument to EVERY binary tag
 		# method - lvm.c's call_binTM pushes luaT_eventname[event]
 		# unconditionally, and the manual's 4.8 pseudo-code is
 		# tm(op1, op2, "concat"). A handler shared between events reads that
 		# argument to tell which one fired.
 		return _call_tag_method(handler, [a, b, "concat"], line)
+	# KNOWN DEVIATION, deliberate. 4.0's call_binTM tries a THIRD lookup before
+	# giving up - luaT_gettm(L, 0, event), i.e. the handler registered against
+	# tag 0 - and only errors if that is also absent. _binary_tag_method consults
+	# the two operands' tags and stops.
+	#
+	# Note what tag 0 is and is not: in 4.0 `#define LUA_TUSERDATA 0`, so it is
+	# the DEFAULT USERDATA TAG, not a universal catch-all. This VM agrees
+	# (LuaValue.TAG_USERDATA == 0), so settagmethod(0, 'concat', f) already
+	# fires whenever an operand is default-tagged userdata. What is missing is
+	# only the neither-operand-matched fallback.
+	#
+	# The same gap exists in _arith and _negate, which share _binary_tag_method /
+	# _tag_method_for, because 4.0 routes add/sub/mul/div/pow and unm through
+	# call_arith -> call_binTM as well.
+	#
+	# Not implemented because a tag-0 handler would then intercept every failed
+	# concat, compare and arithmetic op in the sandbox, and nothing in the retail
+	# corpus registers one.
 	var offender: Variant = a if sa == null else b
 	_raise("attempt to concatenate a %s value" % LuaValue.type_name(offender), line)
 	return null
@@ -1005,23 +1013,46 @@ func _build_table(node: Dictionary, frame: Frame) -> Variant:
 	# multret in constructors is Lua 5.0. Using _eval_list here (which expands
 	# the tail, correctly, for call arguments and return statements) would
 	# quietly give `{f()}` extra elements.
+	# Evaluation order follows SOURCE order, not a fixed array-then-hash walk.
+	# lparser.c emits constructor_part #1 completely before #2, and emission
+	# order is execution order, so `{x = f(); g(), h()}` runs f, g, h. Walking
+	# the arrays in a fixed order would run g, h, f and silently reorder side
+	# effects in the keyed-first form this parser now accepts.
+	if bool(node.get("keyed_first", false)):
+		if not _build_table_hash(node, table, frame):
+			return null
+		if not _build_table_array(node, table, frame):
+			return null
+	else:
+		if not _build_table_array(node, table, frame):
+			return null
+		if not _build_table_hash(node, table, frame):
+			return null
+	return table
+
+
+func _build_table_array(node: Dictionary, table: LuaTable, frame: Frame) -> bool:
 	var array_items: Array = node["array"]
 	for i in range(array_items.size()):
 		var item: Variant = _eval(array_items[i], frame)
 		if _failed():
-			return null
+			return false
 		table.rawset(float(i + 1), item)
+	return true
+
+
+func _build_table_hash(node: Dictionary, table: LuaTable, frame: Frame) -> bool:
 	for pair in node["hash"]:
 		var key: Variant = _eval(pair[0], frame)
 		if _failed():
-			return null
+			return false
 		var value: Variant = _eval(pair[1], frame)
 		if _failed():
-			return null
+			return false
 		if reject_bad_key(key, int(node["line"])):
-			return null
+			return false
 		table.rawset(key, value)
-	return table
+	return true
 
 
 # --- tostring ----------------------------------------------------------------

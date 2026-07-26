@@ -529,12 +529,32 @@ func _test_tag_methods() -> void:
 	_check_number("constructor_single_keyed_section_still_works",
 		"local t = {a = 2, b = 3} return t.a * 10 + t.b", 23.0)
 
+	# lparser.c emits constructor_part #1 completely before #2, and emission
+	# order IS evaluation order. So the half written FIRST runs first. A fixed
+	# array-then-hash walk would give "ABK" here and reorder side effects.
+	_check_string("constructor_keyed_first_evaluates_keyed_first", """
+		log = ''
+		function f(c) log = log .. c return 1 end
+		local t = {x = f('K'); f('A'), f('B')}
+		return log
+	""", "KAB")
+
+	_check_string("constructor_positional_first_evaluates_positional_first", """
+		log = ''
+		function f(c) log = log .. c return 1 end
+		local t = {f('A'), f('B'); x = f('K')}
+		return log
+	""", "ABK")
+
 	# Two sections of the SAME kind stay rejected, matching 4.0's
 	# "invalid constructor syntax" check.
+	# Match the branch-SPECIFIC half of each message. Both messages contain
+	# "differ in kind", so matching that alone would stay green even if the two
+	# branches were swapped - the test could not tell them apart.
 	_check_refused("constructor_rejects_two_keyed_sections",
-		"local t = {x = 1; y = 2} return t.x", "differ in kind")
+		"local t = {x = 1; y = 2} return t.x", "never two keyed sections")
 	_check_refused("constructor_rejects_two_positional_sections",
-		"local t = {1, 2; 3, 4} return t[1]", "differ in kind")
+		"local t = {1, 2; 3, 4} return t[1]", "never two positional sections")
 	# And the 5.0 comma-mixed form stays rejected.
 	_check_refused("constructor_rejects_the_5_0_mixed_form",
 		"local t = {1, 2, x = 3} return t.x", "Lua 5.0")

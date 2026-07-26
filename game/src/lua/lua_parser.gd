@@ -688,12 +688,17 @@ func _parse_call_arguments() -> Variant:
 	return args
 
 
-## Lua 4.0's constructor grammar is strictly
-##     '{' [ lfieldlist [ ';' ffieldlist ] | ffieldlist ] '}'
-## so positional and keyed fields are separated by ';', never by ','. The 5.0
-## mixed form `{1, 2, x = 3}` is a syntax error in 4.0, and we say so rather
-## than quietly accepting it - a script relying on 5.0 constructor syntax is
-## almost certainly relying on other 5.0 behaviour too.
+## Lua 4.0's constructor grammar is
+##     fieldlist -> lfieldlist | ffieldlist
+##                | lfieldlist ';' ffieldlist | ffieldlist ';' lfieldlist
+## so the positional and keyed halves may appear in EITHER order, separated by
+## ';', never by ','. The 5.0 mixed form `{1, 2, x = 3}` is a syntax error in
+## 4.0, and we say so rather than quietly accepting it - a script relying on 5.0
+## constructor syntax is almost certainly relying on other 5.0 behaviour too.
+##
+## The parse records which half came first ("keyed_first"), because lparser.c
+## emits constructor_part #1 in full before #2 and emission order IS evaluation
+## order: `{x = f(); g(), h()}` runs f, g, h - not g, h, f.
 func _parse_table_constructor() -> Variant:
 	var line := _line()
 	if not _expect_symbol("{"):
@@ -738,6 +743,7 @@ func _parse_table_constructor() -> Variant:
 		return null
 	return {
 		"k": E_TABLE, "line": line, "array": array_items, "hash": hash_items,
+		"keyed_first": in_keyed_section,
 	}
 
 

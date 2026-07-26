@@ -207,8 +207,12 @@ func _test_patterns() -> void:
 	_check_string("empty_capture_is_not_a_position_capture",
 		"local s, e, p = strfind('abcd', 'b()') return type(p) .. '/' .. p",
 		"string/")
-	_check_number("empty_capture_leaves_the_match_bounds_alone",
-		"local s, e = strfind('abcd', 'b()') return s * 10 + e", 22.0)
+	# A back-reference to an empty capture. This also covers a bug the removal
+	# fixed incidentally: the old CAP_POSITION sentinel was -2, which slipped
+	# past the CAP_UNFINISHED guard in _match_capture and did substr(init, -2).
+	_check_number("back_reference_to_an_empty_capture", "strfind('abc', '()%1')", 1.0)
+	_check_string("empty_capture_in_a_gsub_replacement",
+		"gsub('abc', '()', '[%1]')", "[]a[]b[]c[]")
 	_check_string("bare_empty_capture_at_string_start",
 		"local s, e, c = strfind('abc', '()') return s .. '/' .. e .. '/' .. c",
 		"1/0/")
