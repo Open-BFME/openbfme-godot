@@ -131,6 +131,23 @@ try {
         throw "Generated release manifest is invalid."
     }
 
+    # A version the launcher cannot order must be refused here, while it is still a
+    # local failure rather than a signed release that every launcher rejects.
+    $unorderable = $false
+    try {
+        & (Join-Path $PSScriptRoot "New-ReleaseManifest.ps1") `
+            -ReleaseRoot $temp `
+            -Version "beta1" `
+            -Commit "0123456789abcdef0123456789abcdef01234567" `
+            -ReleaseHost ([string]$releaseSource.host) `
+            -Repository ([string]$releaseSource.repository) `
+            -Output (Join-Path $temp "unorderable-manifest.json")
+    }
+    catch { $unorderable = $true }
+    if (-not $unorderable) {
+        throw "Release manifest generator accepted a version the launcher cannot order."
+    }
+
     $badPayload = Join-Path $temp "bad-payload"
     [void](New-Item -ItemType Directory -Path $badPayload)
     [IO.File]::WriteAllBytes((Join-Path $badPayload "retail.big"), [byte[]](1, 2, 3))

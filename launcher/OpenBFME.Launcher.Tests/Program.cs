@@ -15,6 +15,12 @@ var tests = new (string Name, Func<Task> Run)[]
     ("install update rollback", TestInstallAndRollback),
     ("version retention", TestVersionRetention),
     ("channel and downgrade policy", TestChannelAndDowngrade),
+    ("abandoned update scratch", TestAbandonedScratch),
+    ("damaged obsolete version pruning", TestDamagedObsoletePruning),
+    ("self update degradation", TestSelfUpdateDegradation),
+    ("orderable release version", TestOrderableVersion),
+    ("bounded release metadata", TestBoundedMetadata),
+    ("declared entry size", TestDeclaredEntrySize),
     ("zip traversal", TestTraversal),
     ("Windows zip aliases", TestWindowsArchiveAliases),
     ("hash mismatch", TestHashMismatch),
@@ -272,20 +278,31 @@ static async Task TestInstallAndRollback()
         Check(File.Exists(Path.Combine(root, "launcher-current.json")), "launcher update pointer missing");
         Check(Directory.Exists(Path.Combine(root, "launcher-versions", "1.1.0")),
             "launcher version was not installed side-by-side");
-        File.WriteAllBytes(Path.Combine(root, "versions", "1.1.0", "OpenBFME.exe"), new byte[80_001]);
-        await ThrowsAsync<InvalidDataException>(() => new ReleaseInstaller().InstallAsync(
-            second.Manifest, root, null, default,
-            (item, _) => Task.FromResult<Stream>(new MemoryStream(second.BytesFor(item)))));
-        File.WriteAllBytes(Path.Combine(root, "versions", "1.1.0", "OpenBFME.exe"), new byte[80_000]);
-        File.WriteAllBytes(
-            Path.Combine(root, "launcher-versions", "1.1.0", "OpenBFME.Launcher.exe"),
-            new byte[70_001]);
-        await ThrowsAsync<InvalidDataException>(() => new ReleaseInstaller().InstallAsync(
-            second.Manifest, root, null, default,
-            (item, _) => Task.FromResult<Stream>(new MemoryStream(second.BytesFor(item)))));
-        File.WriteAllBytes(
-            Path.Combine(root, "launcher-versions", "1.1.0", "OpenBFME.Launcher.exe"),
-            new byte[70_000]);
+        // Damage to an installed version must be detected and then *repaired* by
+        // reinstalling over it. Refusing the update instead — which is what this did —
+        // left the player with no way out at all: updating was the only thing that could
+        // rewrite a damaged version directory, and it declined to run while the damage
+        // was there. The assertion is deliberately stronger than "it threw": the tampered
+        // bytes have to be gone afterwards, which can only happen if the damage was seen.
+        var gameExe = Path.Combine(root, "versions", "1.1.0", "OpenBFME.exe");
+        var launcherExe = Path.Combine(root, "launcher-versions", "1.1.0", "OpenBFME.Launcher.exe");
+        File.WriteAllBytes(gameExe, new byte[80_001]);
+        File.WriteAllBytes(launcherExe, new byte[70_001]);
+        var phases = new List<string>();
+        await new ReleaseInstaller().InstallAsync(
+            second.Manifest, root, new Progress<TransferProgress>(item => { lock (phases) phases.Add(item.Phase); }),
+            default, (item, _) => Task.FromResult<Stream>(new MemoryStream(second.BytesFor(item))));
+        Check(new FileInfo(gameExe).Length == 80_000, "a damaged game version was not repaired");
+        Check(new FileInfo(launcherExe).Length == 70_000, "a damaged launcher version was not repaired");
+        // Repair is never quiet: the player is told their install was rebuilt.
+        Check(phases.Any(phase => phase.StartsWith("Repairing", StringComparison.Ordinal)),
+            "a repair was performed without reporting it");
+        ReleaseInstaller.VerifyInstalledVersion(
+            Path.Combine(root, "versions", "1.1.0"), "1.1.0", second.Manifest.Commit);
+        Check(Directory.GetDirectories(Path.Combine(root, "versions"))
+                .All(item => !Path.GetFileName(item).Contains(".replaced-", StringComparison.Ordinal)),
+            "the replaced copy of a repaired version was left behind");
+
         var rolled = ReleaseInstaller.Rollback(root);
         Check(rolled.CurrentVersion == "1.0.0" && rolled.PreviousVersion == "1.1.0", "rollback pointer wrong");
         Check(rolled.Commit == first.Manifest.Commit && rolled.PreviousCommit == second.Manifest.Commit,
@@ -353,6 +370,246 @@ static async Task TestVersionRetention()
             "current rollback pair was pruned");
     }
     finally { Directory.Delete(root, true); }
+}
+
+// A launcher killed mid-update (Alt+F4, power loss, the host process exiting) leaves a
+// staging tree and a part-written archive behind. Those used to be fatal to every later
+// update on that machine: the pruner saw a directory whose name looked like a version,
+// found no identity file in it, and threw — for good, since nothing ever removed it.
+static async Task TestAbandonedScratch()
+{
+    var root = NewRoot("scratch");
+    try
+    {
+        var first = Package("1.0.0", "0123456789abcdef0123456789abcdef01234567", 70_000);
+        await new ReleaseInstaller().InstallAsync(first.Manifest, root, null, default,
+            (item, _) => Task.FromResult<Stream>(new MemoryStream(first.BytesFor(item))));
+
+        // Exactly what a killed update leaves: a half-extracted staging tree, a
+        // superseded tree that was moved aside, and the archive being hashed.
+        var versions = Path.Combine(root, "versions");
+        var staging = Path.Combine(versions, "1.1.0.staging-" + new string('a', 32));
+        var replaced = Path.Combine(versions, "1.0.0.replaced-" + new string('b', 32));
+        Directory.CreateDirectory(staging);
+        Directory.CreateDirectory(replaced);
+        File.WriteAllBytes(Path.Combine(staging, "OpenBFME.exe"), new byte[17]);
+        var strayArchive = Path.Combine(versions, "." + new string('c', 32) + ".zip");
+        File.WriteAllBytes(strayArchive, new byte[4096]);
+        Directory.CreateDirectory(Path.Combine(
+            root, "launcher-versions", "1.0.0.staging-" + new string('d', 32)));
+
+        var second = Package("1.1.0", "1123456789abcdef0123456789abcdef01234567", 80_000);
+        await new ReleaseInstaller().InstallAsync(second.Manifest, root, null, default,
+            (item, _) => Task.FromResult<Stream>(new MemoryStream(second.BytesFor(item))));
+
+        Check(InstallState.Load(root)?.CurrentVersion == "1.1.0",
+            "abandoned update scratch blocked a later update");
+        Check(!Directory.Exists(staging) && !Directory.Exists(replaced),
+            "abandoned staging directories were not reclaimed");
+        Check(!File.Exists(strayArchive), "an abandoned download archive was not reclaimed");
+        Check(!Directory.Exists(Path.Combine(
+                root, "launcher-versions", "1.0.0.staging-" + new string('d', 32))),
+            "abandoned launcher staging was not reclaimed");
+        // The selection pointers must not leave write scratch next to themselves either.
+        Check(Directory.GetFiles(root, "*.tmp").Length == 0, "a selection pointer left scratch behind");
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+// The pruner deletes superseded versions. It used to hash every byte of one first and
+// throw if anything had rotted — refusing to remove precisely the damaged directory it
+// was about to delete, and blocking all further updates in the process.
+static async Task TestDamagedObsoletePruning()
+{
+    var root = NewRoot("prune-damaged");
+    try
+    {
+        foreach (var (version, commit) in new[]
+        {
+            ("1.0.0", "0123456789abcdef0123456789abcdef01234567"),
+            ("1.1.0", "1123456789abcdef0123456789abcdef01234567")
+        })
+        {
+            var seed = Package(version, commit, 70_000);
+            await new ReleaseInstaller().InstallAsync(seed.Manifest, root, null, default,
+                (item, _) => Task.FromResult<Stream>(new MemoryStream(seed.BytesFor(item))));
+        }
+
+        // Rot the version that the next update will retire.
+        File.WriteAllBytes(Path.Combine(root, "versions", "1.0.0", "OpenBFME.pck"), new byte[999]);
+
+        var newest = Package("1.2.0", "2123456789abcdef0123456789abcdef01234567", 70_000);
+        await new ReleaseInstaller().InstallAsync(newest.Manifest, root, null, default,
+            (item, _) => Task.FromResult<Stream>(new MemoryStream(newest.BytesFor(item))));
+        Check(!Directory.Exists(Path.Combine(root, "versions", "1.0.0")),
+            "a damaged obsolete version was not pruned");
+
+        // Ownership is still required: a directory that is not ours is never deleted,
+        // it stops the prune loudly.
+        var foreign = Path.Combine(root, "versions", "0.9.0");
+        Directory.CreateDirectory(foreign);
+        File.WriteAllBytes(Path.Combine(foreign, "something.txt"), new byte[3]);
+        var next = Package("1.3.0", "3123456789abcdef0123456789abcdef01234567", 70_000);
+        await ThrowsAsync<InvalidDataException>(() => new ReleaseInstaller().InstallAsync(
+            next.Manifest, root, null, default,
+            (item, _) => Task.FromResult<Stream>(new MemoryStream(next.BytesFor(item)))));
+        Check(Directory.Exists(foreign), "an unowned directory was deleted by version retention");
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+// A selected launcher update that will not verify used to stop the launcher from opening
+// at all — and the only controls that can repair it (Update, Roll back) live inside the
+// window that then never opened. It must degrade to the executable the player ran, and
+// say so.
+static Task TestSelfUpdateDegradation()
+{
+    var root = NewRoot("self-update");
+    try
+    {
+        // Points at a launcher version whose directory does not exist.
+        File.WriteAllText(Path.Combine(root, "launcher-current.json"), """
+        {"schema":"openbfme.launcher-install-state","currentVersion":"9.9.9",
+         "previousVersion":null,
+         "commit":"0123456789abcdef0123456789abcdef01234567","previousCommit":null,
+         "packageSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         "previousPackageSha256":null}
+        """);
+        var options = new LauncherOptions("playtest", null, root, true, false, true, null, null);
+
+        var (relaunched, warning) = InvokeSelfUpdate(options);
+        Check(!relaunched, "a launcher update that cannot be verified must not be started");
+        Check(warning is not null, "a refused launcher update was handled silently");
+        Check(warning!.Contains("9.9.9", StringComparison.Ordinal),
+            "the warning does not name the launcher version that failed");
+
+        // A corrupt pointer is the same story: report it, keep running.
+        File.WriteAllText(Path.Combine(root, "launcher-current.json"), "{ not json");
+        var corrupt = InvokeSelfUpdate(options);
+        Check(!corrupt.Relaunched && corrupt.Warning is not null,
+            "an unreadable launcher pointer must degrade with a warning, not stop startup");
+
+        // The relaunched child is marked so a path spelled two ways cannot fork forever.
+        var guard = (string)typeof(ReleaseInstaller).Assembly
+            .GetType("OpenBFME.Launcher.LauncherSelfUpdate")!
+            .GetField("RelaunchGuardVariable",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .GetRawConstantValue()!;
+        Environment.SetEnvironmentVariable(guard, "1");
+        try
+        {
+            var guarded = InvokeSelfUpdate(options);
+            Check(!guarded.Relaunched && guarded.Warning is null,
+                "an already-relaunched launcher must not consider relaunching again");
+        }
+        finally { Environment.SetEnvironmentVariable(guard, null); }
+    }
+    finally { Directory.Delete(root, true); }
+    return Task.CompletedTask;
+}
+
+static (bool Relaunched, string? Warning) InvokeSelfUpdate(LauncherOptions options)
+{
+    var type = typeof(ReleaseInstaller).Assembly.GetType("OpenBFME.Launcher.LauncherSelfUpdate")!;
+    var method = type.GetMethod("RelaunchSelected",
+        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+    var outcome = method.Invoke(null, new object[] { options, Array.Empty<string>() })!;
+    var shape = outcome.GetType();
+    return ((bool)shape.GetProperty("Relaunched")!.GetValue(outcome)!,
+        (string?)shape.GetProperty("Warning")!.GetValue(outcome));
+}
+
+// The installer orders releases to refuse downgrades, and that ordering needs SemVer.
+// A manifest whose version could not be ordered used to validate, install on a clean
+// machine, and then make every subsequent update throw — permanently, because the
+// unusable version was by then recorded in the install state.
+static Task TestOrderableVersion()
+{
+    var repository = ReleaseSource.Repository;
+    string Manifest(string version) => $$"""
+    {
+      "schema":"openbfme.release-manifest","schemaVersion":1,
+      "repository":"{{repository}}","version":"{{version}}","channel":"playtest",
+      "commit":"0123456789abcdef0123456789abcdef01234567",
+      "packages":[{
+        "name":"game.zip",
+        "url":"https://github.com/{{repository}}/releases/download/v{{version}}/game.zip",
+        "sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size":123,"expandedSize":456,"kind":"game-windows-x64"
+      },{
+        "name":"launcher.zip",
+        "url":"https://github.com/{{repository}}/releases/download/v{{version}}/launcher.zip",
+        "sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size":456,"expandedSize":789,"kind":"launcher-windows-x64"
+      }]
+    }
+    """;
+    // Accepted shapes, including a pre-release, which is what a playtest build is.
+    foreach (var good in new[] { "1.0.0", "0.1.0-alpha.1", "10.20.30-rc.2" })
+        Check(ReleaseManifest.Parse(Encoding.UTF8.GetBytes(Manifest(good))).Version == good,
+            $"SemVer release '{good}' was refused");
+    // Refused before anything is installed, which is the only recoverable moment.
+    foreach (var bad in new[] { "beta1", "1.0", "1.0.0.0", "v1.0.0", "1234567890.0.0" })
+        Throws<InvalidDataException>(() => ReleaseManifest.Parse(Encoding.UTF8.GetBytes(Manifest(bad))));
+    return Task.CompletedTask;
+}
+
+// The manifest and its signature are small by definition. Buffering the response first
+// and checking its size afterwards left the one case the Content-Length check cannot
+// cover — a host that declares no length at all — able to allocate without limit.
+static async Task TestBoundedMetadata()
+{
+    using var http = new HttpClient(new EndlessHandler());
+    var installer = new ReleaseInstaller(http);
+    await ThrowsAsync<InvalidDataException>(() =>
+        installer.FetchManifestAsync(ReleaseSource.LatestManifestUri, default));
+}
+
+// An archive entry's declared uncompressed size bounds what it may actually expand to.
+// Without that, the whole-package expansion budget is worthless: it is computed from the
+// very numbers the entries declare, so an entry that lies about its size sails past
+// every check and writes until the disk is full.
+static async Task TestDeclaredEntrySize()
+{
+    var root = NewRoot("entry-size");
+    try
+    {
+        var bytes = Zip(archive =>
+        {
+            Write(archive, "OpenBFME.exe", new byte[70_000]);
+            Write(archive, "OpenBFME.pck", new byte[4096]);
+        });
+        // Understate what OpenBFME.pck expands to, exactly as a crafted package would.
+        UnderstateEntrySize(bytes, "OpenBFME.pck", 16);
+        var package = ManifestFor(bytes, "2.5.0", "5123456789abcdef0123456789abcdef01234567");
+        await ThrowsAsync<InvalidDataException>(() => new ReleaseInstaller().InstallAsync(
+            package.Manifest, root, null, default,
+            (item, _) => Task.FromResult<Stream>(new MemoryStream(package.BytesFor(item)))));
+        Check(!Directory.Exists(Path.Combine(root, "versions", "2.5.0")),
+            "a package whose entry overran its declared size was installed");
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+/// <summary>
+/// Rewrite the uncompressed size a zip's central directory records for one entry,
+/// leaving the stored bytes alone — the shape of a package that under-declares how much
+/// it expands to.
+/// </summary>
+static void UnderstateEntrySize(byte[] archive, string entryName, uint declared)
+{
+    var name = Encoding.ASCII.GetBytes(entryName);
+    for (var index = 0; index + 46 <= archive.Length; index++)
+    {
+        if (archive[index] != 0x50 || archive[index + 1] != 0x4B ||
+            archive[index + 2] != 0x01 || archive[index + 3] != 0x02) continue;
+        var nameLength = BitConverter.ToUInt16(archive, index + 28);
+        if (nameLength != name.Length ||
+            !archive.AsSpan(index + 46, nameLength).SequenceEqual(name)) continue;
+        BitConverter.GetBytes(declared).CopyTo(archive, index + 24);
+        return;
+    }
+    throw new InvalidOperationException($"Central directory entry '{entryName}' was not found.");
 }
 
 static async Task TestTraversal()
@@ -547,6 +804,42 @@ static async Task ThrowsAsync<T>(Func<Task> action) where T : Exception
     try { await action(); }
     catch (T) { return; }
     throw new InvalidOperationException($"Expected {typeof(T).Name}.");
+}
+
+/// <summary>
+/// Answers every request with an unbounded body and no declared length — a host that
+/// never stops sending. A real one need not be hostile to behave this way.
+/// </summary>
+sealed class EndlessHandler : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken) =>
+        Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            RequestMessage = request,
+            Content = new StreamContent(new EndlessStream())
+        });
+}
+
+sealed class EndlessStream : Stream
+{
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+    public override void Flush() { }
+    public override int Read(byte[] buffer, int offset, int count) => count;
+    public override ValueTask<int> ReadAsync(
+        Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(buffer.Length);
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }
 
 delegate void ManifestVerifier(
