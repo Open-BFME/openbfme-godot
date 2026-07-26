@@ -472,6 +472,311 @@ func _hostile_living_structure_ids(team: int) -> Array[int]:
 	return result
 
 
+# ---------------------------------------------------------------------------
+# Uniform spatial index over battalion positions.
+#
+# Why: acquisition used to scan every hostile battalion for every acquiring
+# battalion, which is O(n^2) and was measured at 95% of tick cost at 4000 units
+# (see tests/sim_scale_bench_runner.gd). A uniform grid is the right shape here:
+# battalions are roughly uniformly dense, the rebuild is a cheap O(n) sweep, and
+# integer cell keys keep it exactly reproducible across machines. A quadtree
+# would buy nothing on a uniform density field and costs determinism review.
+#
+# DETERMINISM CONTRACT. The index is a lookup accelerator only - it never
+# decides an outcome:
+#   * Cell buckets are UNORDERED. Nothing may depend on bucket order. Callers
+#     that need id order sort the gathered ids; callers that pick a "best"
+#     candidate use an order-independent total order (distance ascending, then
+#     id descending) that provably reproduces the old ascending-id scan with
+#     its `distance <= best` tie-break, where the LAST (highest) id wins ties.
+#   * Cell membership is derived from float positions by floori(), which is
+#     bit-exact for identical inputs, so every client files every unit in the
+#     same cell.
+#   * The exact distance test is always re-applied to the LIVE row position, so
+#     a conservative (over-wide) cell sweep can never change a result - only
+#     cost. Every sweep here is conservative by construction.
+#   * The index carries no state into entity rows, so state_hash()/snapshot()
+#     are untouched.
+#
+# Liveness: the index is rebuilt at the top of every tick (self-healing after
+# restore(), setup(), spawns and corpse cleanup) and kept live inside the tick
+# by _spatial_sync() at every position write. Removals are not hooked; queries
+# re-validate against `entities` and re-apply the health filter, exactly as the
+# old _hostile_living_ids() scan did.
+const SPATIAL_CELL_SIZE := 8.0
+## Cell indices are clamped to this magnitude so a corrupt position can never
+## produce an absurd key. Real map coordinates are orders of magnitude inside it.
+const SPATIAL_CELL_LIMIT := 30000
+const SPATIAL_CELL_STRIDE := 65536
+
+## Candidate filters for _spatial_nearest_hostile, matching the predicate sets
+## the pre-index scans applied.
+const SPATIAL_FILTER_ENGAGE := 1  # _can_engage_battalion(source, candidate)
+const SPATIAL_FILTER_STEALTH := 2  # skip candidates whose stealth is active
+const SPATIAL_FILTER_NOT_FLYING := 4  # skip airborne candidates
+
+# Buckets are partitioned by team: team -> {cell_key -> Array[int]}. Acquisition
+# asks for hostiles, so filing by team lets a sweep skip every friendly bucket
+# outright instead of loading each allied row only to reject it. In a two-team
+# match that halves the rows a sweep touches and removes the per-candidate
+# hostility test from the inner loop entirely.
+var _spatial_cells: Dictionary = {}
+var _spatial_entity_cell: Dictionary = {}
+var _spatial_entity_team: Dictionary = {}
+# Inclusive bounding box of occupied cells per team. Used only to skip provably
+# empty regions of a sweep; it may be wider than the true occupancy (removals
+# never shrink it) which is safe because it is a superset.
+var _spatial_team_box: Dictionary = {}
+# Cached hostile-team lists, keyed by the asking team. Rebuilt with the index;
+# team relationships never change inside a tick.
+var _spatial_hostile_teams: Dictionary = {}
+# Ring offsets are a pure function of the ring index, so they are built once and
+# shared. Interleaved [dx0, dy0, dx1, dy1, ...] in a packed array: rebuilding
+# these per query was allocating tens of thousands of vectors per tick.
+var _spatial_ring_cache: Array[PackedInt32Array] = []
+
+
+func _spatial_axis_cell(value: float) -> int:
+	return clampi(floori(value / SPATIAL_CELL_SIZE), -SPATIAL_CELL_LIMIT, SPATIAL_CELL_LIMIT)
+
+
+func _spatial_key(cx: int, cy: int) -> int:
+	return cx * SPATIAL_CELL_STRIDE + cy
+
+
+func _spatial_rebuild() -> void:
+	## Full O(n) rebuild. Runs once per tick before anything queries, so the
+	## index cannot drift from `entities` across restore/spawn/despawn seams.
+	_spatial_cells.clear()
+	_spatial_entity_cell.clear()
+	_spatial_entity_team.clear()
+	_spatial_team_box.clear()
+	_spatial_hostile_teams.clear()
+	for key in entities.keys():
+		_spatial_sync(entities[key] as Dictionary)
+
+
+func _spatial_sync(row: Dictionary) -> void:
+	## File `row` under the cell its current position falls in, moving it out of
+	## its previous cell if it changed. Called after every position write.
+	var id := int(row.get("id", 0))
+	if id == 0:
+		return
+	var team := int(row.get("team", -1))
+	var position := Vector2(row.get("position", Vector2.ZERO))
+	var cx := _spatial_axis_cell(position.x)
+	var cy := _spatial_axis_cell(position.y)
+	var key := _spatial_key(cx, cy)
+	var previous: Variant = _spatial_entity_cell.get(id)
+	if previous != null:
+		var previous_team := int(_spatial_entity_team.get(id, team))
+		if int(previous) == key and previous_team == team:
+			return
+		var previous_cells: Dictionary = _spatial_cells.get(previous_team, {}) as Dictionary
+		var old_bucket: Array = previous_cells.get(int(previous), []) as Array
+		old_bucket.erase(id)
+		if old_bucket.is_empty():
+			previous_cells.erase(int(previous))
+	if not _spatial_cells.has(team):
+		_spatial_cells[team] = {}
+		# A team appearing for the first time (first summon, first creep spawn)
+		# invalidates the cached hostile-team lists: a battalion stepped later in
+		# this same tick must be able to acquire it, exactly as the old full scan
+		# over `entities` would have.
+		_spatial_hostile_teams.clear()
+	var cells: Dictionary = _spatial_cells[team]
+	if not cells.has(key):
+		cells[key] = []
+	(cells[key] as Array).append(id)
+	_spatial_entity_cell[id] = key
+	_spatial_entity_team[id] = team
+	var box: Variant = _spatial_team_box.get(team)
+	if box == null:
+		_spatial_team_box[team] = [cx, cx, cy, cy]
+	else:
+		var extents: Array = box as Array
+		extents[0] = mini(int(extents[0]), cx)
+		extents[1] = maxi(int(extents[1]), cx)
+		extents[2] = mini(int(extents[2]), cy)
+		extents[3] = maxi(int(extents[3]), cy)
+
+
+func _spatial_hostile_team_list(team: int) -> Array:
+	## Teams hostile to `team` that currently have indexed battalions. Cached per
+	## rebuild; _is_hostile() is then paid once per team rather than per candidate.
+	var cached: Variant = _spatial_hostile_teams.get(team)
+	if cached != null:
+		return cached as Array
+	var result: Array = []
+	for other_value in _spatial_cells.keys():
+		var other := int(other_value)
+		if _is_hostile(team, other):
+			result.append(other)
+	result.sort()
+	_spatial_hostile_teams[team] = result
+	return result
+
+
+func _spatial_gather(point: Vector2, radius: float) -> Array[int]:
+	## Every indexed id, on any team, whose cell overlaps the axis-aligned box
+	## around the disc. A conservative superset: callers re-apply the exact
+	## distance test. The returned order is unspecified - sort it when order is
+	## observable.
+	var result: Array[int] = []
+	if radius < 0.0:
+		return result
+	for team_value in _spatial_cells.keys():
+		var box: Variant = _spatial_team_box.get(int(team_value))
+		if box == null:
+			continue
+		var extents: Array = box as Array
+		var low_cx := maxi(_spatial_axis_cell(point.x - radius), int(extents[0]))
+		var high_cx := mini(_spatial_axis_cell(point.x + radius), int(extents[1]))
+		var low_cy := maxi(_spatial_axis_cell(point.y - radius), int(extents[2]))
+		var high_cy := mini(_spatial_axis_cell(point.y + radius), int(extents[3]))
+		var cells: Dictionary = _spatial_cells[int(team_value)]
+		for cx in range(low_cx, high_cx + 1):
+			for cy in range(low_cy, high_cy + 1):
+				var bucket: Variant = cells.get(_spatial_key(cx, cy))
+				if bucket == null:
+					continue
+				for id in bucket as Array:
+					result.append(int(id))
+	return result
+
+
+func _spatial_gather_sorted(point: Vector2, radius: float) -> Array[int]:
+	## _spatial_gather() in ascending id order, for callers whose visit order is
+	## observable (damage application, event emission, modifier grants).
+	var result := _spatial_gather(point, radius)
+	result.sort()
+	return result
+
+
+func _spatial_nearest_hostile(
+	source: Dictionary, team: int, origin: Vector2, limit: float, filters: int
+) -> int:
+	## Nearest living hostile battalion within `limit` of `origin`, reproducing
+	## the old full scan exactly.
+	##
+	## The old scans walked ascending ids with `if distance <= best`, so the
+	## winner is the minimum distance with the HIGHEST id among exact ties, and
+	## `best` starting at `limit` means a candidate at exactly `limit` is
+	## accepted. The update rule below encodes that as a total order, which makes
+	## the result independent of visit order and therefore safe to compute from
+	## an expanding ring sweep.
+	if limit <= 0.0:
+		return 0
+	var hostile_teams := _spatial_hostile_team_list(team)
+	if hostile_teams.is_empty():
+		return 0
+	# Union of the hostile teams' occupied boxes: nothing outside it can match,
+	# so the sweep is clipped to it and the ring count is capped by it.
+	var box_min_cx := 0
+	var box_max_cx := -1
+	var box_min_cy := 0
+	var box_max_cy := -1
+	for team_value in hostile_teams:
+		var extents: Array = _spatial_team_box.get(int(team_value), []) as Array
+		if extents.is_empty():
+			continue
+		if box_max_cx < box_min_cx:
+			box_min_cx = int(extents[0])
+			box_max_cx = int(extents[1])
+			box_min_cy = int(extents[2])
+			box_max_cy = int(extents[3])
+		else:
+			box_min_cx = mini(box_min_cx, int(extents[0]))
+			box_max_cx = maxi(box_max_cx, int(extents[1]))
+			box_min_cy = mini(box_min_cy, int(extents[2]))
+			box_max_cy = maxi(box_max_cy, int(extents[3]))
+	if box_max_cx < box_min_cx:
+		return 0
+
+	var best_id := 0
+	var best_distance := limit
+	var origin_cx := _spatial_axis_cell(origin.x)
+	var origin_cy := _spatial_axis_cell(origin.y)
+	# Hoisted filter state: _can_engage_battalion() only consults the candidate's
+	# `flying` flag when the source is a melee attacker, and _stealth_active() is
+	# a tick comparison. Both are resolved once here so the inner loop over
+	# candidates makes no function calls beyond the distance itself.
+	var reject_flyers := (filters & SPATIAL_FILTER_NOT_FLYING) != 0
+	if (filters & SPATIAL_FILTER_ENGAGE) != 0 and _is_melee_attacker(source):
+		reject_flyers = true
+	var check_stealth := (filters & SPATIAL_FILTER_STEALTH) != 0
+	# Rings beyond this are entirely outside `limit` or outside the occupied box.
+	var ring_limit := floori(limit / SPATIAL_CELL_SIZE) + 2
+	ring_limit = mini(ring_limit, maxi(
+		maxi(absi(origin_cx - box_min_cx), absi(origin_cx - box_max_cx)),
+		maxi(absi(origin_cy - box_min_cy), absi(origin_cy - box_max_cy))
+	))
+	for ring in range(0, ring_limit + 1):
+		# Every point of a ring-`ring` cell is at least (ring - 1) * cell away
+		# from `origin`, so once that floor passes the best distance found, no
+		# further ring can contain a candidate that wins the tie-break.
+		if ring > 0 and float(ring - 1) * SPATIAL_CELL_SIZE > best_distance:
+			break
+		var offsets := _spatial_ring_offsets(ring)
+		var offset_index := 0
+		var offset_count := offsets.size()
+		while offset_index < offset_count:
+			var cx: int = origin_cx + offsets[offset_index]
+			var cy: int = origin_cy + offsets[offset_index + 1]
+			offset_index += 2
+			if cx < box_min_cx or cx > box_max_cx:
+				continue
+			if cy < box_min_cy or cy > box_max_cy:
+				continue
+			var cell_key := _spatial_key(cx, cy)
+			for team_value in hostile_teams:
+				var bucket: Variant = (_spatial_cells[int(team_value)] as Dictionary).get(cell_key)
+				if bucket == null:
+					continue
+				for id_value in bucket as Array:
+					var candidate := int(id_value)
+					var candidate_row: Variant = entities.get(candidate)
+					if candidate_row == null:
+						continue
+					var candidate_dict: Dictionary = candidate_row
+					if int(candidate_dict.get("health", 0)) <= 0:
+						continue
+					if reject_flyers and bool(candidate_dict.get("flying", false)):
+						continue
+					if check_stealth and tick_index < int(candidate_dict.get("stealth_until_tick", -1)):
+						continue
+					var distance := origin.distance_to(Vector2(candidate_dict.get("position", Vector2.ZERO)))
+					if distance < best_distance or (distance == best_distance and candidate > best_id):
+						best_distance = distance
+						best_id = candidate
+	return best_id
+
+
+func _spatial_ring_offsets(ring: int) -> PackedInt32Array:
+	## Cell offsets at Chebyshev distance exactly `ring`, as interleaved dx/dy.
+	## Walked as a perimeter so the sweep stays O(ring) per ring rather than
+	## O(ring^2), and cached because the table never varies.
+	while _spatial_ring_cache.size() <= ring:
+		var index := _spatial_ring_cache.size()
+		var offsets := PackedInt32Array()
+		if index == 0:
+			offsets.append(0)
+			offsets.append(0)
+		else:
+			for dx in range(-index, index + 1):
+				offsets.append(dx)
+				offsets.append(-index)
+				offsets.append(dx)
+				offsets.append(index)
+			for dy in range(-index + 1, index):
+				offsets.append(-index)
+				offsets.append(dy)
+				offsets.append(index)
+				offsets.append(dy)
+		_spatial_ring_cache.append(offsets)
+	return _spatial_ring_cache[ring]
+
+
 func _seed_team_map(default_value: Variant) -> Dictionary:
 	## Seed a per-team dict with a fresh copy of default_value per rostered team,
 	## in roster order. Arrays/dicts are duplicated so teams never share mutable
@@ -2649,6 +2954,10 @@ func _add_battalion(
 		# extraction is an importer follow-up; absent means not resistant).
 		"fear_resistant": bool(unit_rule.get("fear_resistant", false)),
 	}
+	# File the new battalion immediately: units spawned mid-tick (production
+	# exits, summons) must be acquirable by battalions stepped later in the same
+	# tick, exactly as the old full scans saw them.
+	_spatial_sync(entities[id])
 	for tech_id_value in (team_upgrades.get(team, {}) as Dictionary).keys():
 		_apply_equipment_to_horde(entities[id], _equipment_ids_for_forge_upgrade(String(tech_id_value)))
 	if String(unit_rule.get("category", "")) == "hero":
@@ -4803,8 +5112,14 @@ func _step_grove_auras() -> void:
 		var team := int(grove.get("team", -1))
 		var point := Vector2(grove.get("point", Vector2.ZERO))
 		var range_sim := float(grove.get("range_sim", 0.0))
-		for id in living_ids(team):
+		# A grove buffs a bounded disc, so this is a neighbourhood query over the
+		# owning team rather than a sweep of its whole army.
+		for id in _spatial_gather_sorted(point, range_sim):
+			if not entities.has(id):
+				continue
 			var row: Dictionary = entities[id]
+			if int(row.get("team", -1)) != team or int(row.get("health", 0)) <= 0:
+				continue
 			if Vector2(row.get("position", Vector2.ZERO)).distance_to(point) > range_sim:
 				continue
 			if not _spellbook_member_affects(row, String(grove.get("filter", ""))):
@@ -5610,6 +5925,12 @@ func tick() -> void:
 		# command ticks only after a deterministic resume has been scheduled.
 		return
 	tick_index += 1
+	# Refile every battalion before anything queries. This is the index's
+	# self-healing seam: it absorbs whatever happened between ticks (restore,
+	# corpse cleanup, direct roster edits) so no query can read stale cells.
+	# Inside the tick the index is kept live by _spatial_sync() at each position
+	# write, because acquisition must observe moves made earlier in the same tick.
+	_spatial_rebuild()
 	_apply_pending_commands_for_tick(tick_index)
 	if clock_paused:
 		# A lockstep pause still consumes deterministic command ticks so a
@@ -5658,6 +5979,11 @@ func _has_pending_resume_command() -> bool:
 # engagements or construction.
 const BATTALION_SEPARATION_RADIUS := 1.4
 const BATTALION_SEPARATION_PUSH := 0.35
+## How far past the separation radius the neighbourhood query reaches, so that a
+## battalion drifting under its own pushes stays inside the set it gathered. This
+## is a performance margin, not a correctness one: exceeding it falls back to the
+## full sweep (see _step_battalion_separation).
+const BATTALION_SEPARATION_QUERY_SLACK := 16.0 * BATTALION_SEPARATION_PUSH
 
 
 func _step_battalion_separation() -> void:
@@ -5668,8 +5994,42 @@ func _step_battalion_separation() -> void:
 		# around mid-route disrupts ford crossings and formation moves.
 		if int(a.get("health", 0)) <= 0 or String(a.get("state", "")) != "idle" or bool(a.get("flying", false)):
 			continue
-		for other_index in range(index + 1, ids.size()):
-			var b: Dictionary = entities[ids[other_index]]
+		# Only battalions overlapping `a` can be pushed by it, so the old
+		# all-pairs inner sweep is a neighbourhood query over ids above `a`.
+		#
+		# `a` also moves as it separates. The gather covers everything within
+		# BATTALION_SEPARATION_QUERY_SLACK of where `a` started, so while its
+		# drift stays inside that slack the candidate set is a superset of what
+		# the all-pairs loop would have tested. If a pile-up ever pushes `a`
+		# further than that, the sweep falls back to the full id list for the
+		# rest of this battalion rather than silently skipping a partner.
+		# Partners are consumed in ascending id order from either list, so the
+		# fallback resumes by id and every pair is still visited exactly once.
+		var gather_origin := Vector2(a["position"])
+		var neighbours := _spatial_gather_sorted(
+			gather_origin, BATTALION_SEPARATION_RADIUS + BATTALION_SEPARATION_QUERY_SLACK
+		)
+		var widened := false
+		var previous_id: int = ids[index]
+		var cursor := 0
+		while true:
+			# Validate the candidate list before it is used to pick the next
+			# partner, so a drifted `a` never selects from a set that no longer
+			# covers its neighbourhood.
+			if not widened \
+					and gather_origin.distance_to(Vector2(a["position"])) > BATTALION_SEPARATION_QUERY_SLACK:
+				widened = true
+				neighbours = ids
+				cursor = 0
+			while cursor < neighbours.size() and neighbours[cursor] <= previous_id:
+				cursor += 1
+			if cursor >= neighbours.size():
+				break
+			var other_id: int = neighbours[cursor]
+			previous_id = other_id
+			if not entities.has(other_id):
+				continue
+			var b: Dictionary = entities[other_id]
 			if int(b.get("health", 0)) <= 0 or String(b.get("state", "")) != "idle" or bool(b.get("flying", false)):
 				continue
 			var a_position := Vector2(a["position"])
@@ -5689,8 +6049,10 @@ func _step_battalion_separation() -> void:
 			var b_target := b_position + push
 			if _position_walkable(a_target):
 				a["position"] = a_target
+				_spatial_sync(a)
 			if _position_walkable(b_target):
 				b["position"] = b_target
+				_spatial_sync(b)
 
 
 func _position_walkable(position: Vector2) -> bool:
@@ -6168,7 +6530,11 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 
 func _ability_enemies_near(team: int, point: Vector2, radius: float) -> Array[int]:
 	var result: Array[int] = []
-	for id in entity_ids():
+	# Ability blasts cover a bounded disc, so this is a neighbourhood query.
+	# Sorted, because callers apply damage in the returned order.
+	for id in _spatial_gather_sorted(point, radius):
+		if not entities.has(id):
+			continue
 		var row: Dictionary = entities[id]
 		if int(row.get("team", -1)) == team or int(row.get("health", 0)) <= 0:
 			continue
@@ -6489,6 +6855,7 @@ func _apply_fear_scatter(center: Vector2, row: Dictionary, strength: float) -> v
 			landed = candidate
 			break
 	row["position"] = landed
+	_spatial_sync(row)
 	row["current_speed"] = 0.0
 	row["attack_windup"] = 0
 	row["target_id"] = 0
@@ -6726,6 +7093,7 @@ func _apply_ability_teleport(hero_row: Dictionary, effect: Dictionary, point: Ve
 	if not _position_walkable(point):
 		return {"ok": false, "reason": "destination-unwalkable"}
 	hero_row["position"] = point
+	_spatial_sync(hero_row)
 	hero_row["target_id"] = 0
 	hero_row["target_kind"] = "battalion"
 	hero_row["attack_windup"] = 0
@@ -6905,8 +7273,15 @@ func _recompute_leadership_auras() -> void:
 				continue
 			var filter_text := String(effect.get("affects", ""))
 			var expiry := tick_index + ABILITY_AURA_INTERVAL_TICKS
-			for ally_id in living_ids(team):
+			# An aura reaches a bounded radius, so only that neighbourhood of the
+			# owning team can receive a grant. The hero itself always lands in
+			# the gathered set (distance zero), preserving the AffectsSelf seam.
+			for ally_id in _spatial_gather_sorted(origin, range_limit):
+				if not entities.has(ally_id):
+					continue
 				var ally: Dictionary = entities[ally_id]
+				if int(ally.get("team", -1)) != team or int(ally.get("health", 0)) <= 0:
+					continue
 				if ally_id == id:
 					if not bool(effect.get("affectsSelf", false)):
 						continue
@@ -7498,18 +7873,10 @@ func _step_construction() -> void:
 func _nearest_attack_move_target(row: Dictionary) -> int:
 	var origin := Vector2(row.get("position", Vector2.ZERO))
 	var limit := maxf(float(row.get("attack_range", 1.0)), float(row.get("vision_range", 17.5)) * _ability_vision_multiplier(row))
-	var result := 0
-	var best := limit
-	for candidate in _hostile_living_ids(int(row.get("team", PLAYER_TEAM))):
-		if not _can_engage_battalion(row, entities[candidate] as Dictionary):
-			continue
-		if _stealth_active(entities[candidate] as Dictionary):
-			continue
-		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
-		if distance <= best:
-			best = distance
-			result = candidate
-	return result
+	return _spatial_nearest_hostile(
+		row, int(row.get("team", PLAYER_TEAM)), origin, limit,
+		SPATIAL_FILTER_ENGAGE | SPATIAL_FILTER_STEALTH
+	)
 
 
 func _nearest_auto_target(row: Dictionary) -> Dictionary:
@@ -7527,17 +7894,21 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 	var best_id := 0
 	var best_kind := ""
 	var best_distance := limit
-	for candidate in _hostile_living_ids(self_team):
-		if not _can_engage_battalion(row, entities[candidate] as Dictionary):
-			continue
-		if _stealth_active(entities[candidate] as Dictionary):
-			# InvisibilityUpdate: a cloaked battalion is never auto-acquired.
-			continue
-		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
-		if distance <= best_distance:
-			best_distance = distance
-			best_id = candidate
-			best_kind = "battalion"
+	# InvisibilityUpdate: a cloaked battalion is never auto-acquired, so the
+	# stealth filter travels with the neighbourhood query.
+	var nearest_battalion := _spatial_nearest_hostile(
+		row, self_team, origin, limit, SPATIAL_FILTER_ENGAGE | SPATIAL_FILTER_STEALTH
+	)
+	if nearest_battalion != 0:
+		best_distance = origin.distance_to(
+			Vector2((entities[nearest_battalion] as Dictionary).get("position", Vector2.ZERO))
+		)
+		best_id = nearest_battalion
+		best_kind = "battalion"
+	# Structures are not indexed: their count does not grow with army size, so
+	# this loop is linear in map furniture rather than in units. It still runs
+	# against the battalion result above, preserving the original precedence
+	# where an equidistant structure examined later wins the tie.
 	for candidate in _hostile_living_structure_ids(self_team):
 		if bool((structures[candidate] as Dictionary).get("not_auto_acquirable", false)):
 			# holes.ini NOT_AUTOACQUIRABLE: an exposed rebuild hole is only ever
@@ -7563,6 +7934,7 @@ func _step_production_exit(row: Dictionary) -> bool:
 	var exit_origin := Vector2(row.get("production_exit_origin", row.get("position", Vector2.ZERO)))
 	var exit_destination := Vector2(row.get("production_exit_destination", exit_origin))
 	row["position"] = exit_origin.lerp(exit_destination, smoothstep(0.0, 1.0, progress))
+	_spatial_sync(row)
 	var exit_direction := exit_origin.direction_to(exit_destination)
 	if exit_direction.length_squared() > 0.000001:
 		row["facing"] = exit_direction
@@ -7741,10 +8113,15 @@ func _apply_hero_cleave(attacker_id: int, row: Dictionary, primary_target_id: in
 		return
 	var cleave_damage := maxi(1, roundi(float(swing_damage) * HERO_CLEAVE_DAMAGE_FRACTION))
 	var origin := Vector2(row.get("position", Vector2.ZERO))
-	for candidate in _hostile_living_ids(int(row.get("team", PLAYER_TEAM))):
-		if candidate == primary_target_id:
+	# Cleave only reaches a small disc, so the old full hostile scan is a
+	# neighbourhood query. Sorted: damage lands in ascending id order.
+	var team := int(row.get("team", PLAYER_TEAM))
+	for candidate in _spatial_gather_sorted(origin, HERO_CLEAVE_RADIUS):
+		if candidate == primary_target_id or not entities.has(candidate):
 			continue
 		var candidate_row: Dictionary = entities[candidate]
+		if int(candidate_row.get("health", 0)) <= 0 or not _is_hostile(team, int(candidate_row.get("team", -1))):
+			continue
 		if origin.distance_to(Vector2(candidate_row.get("position", Vector2.ZERO))) > HERO_CLEAVE_RADIUS:
 			continue
 		_apply_member_damage(attacker_id, -1, candidate, cleave_damage, "battalion", int(row.get("attack_sequence", 0)))
@@ -7990,6 +8367,7 @@ func _step_route(row: Dictionary) -> void:
 	else:
 		row["route_stall_ticks"] = 0
 	row["position"] = position
+	_spatial_sync(row)
 	row["route"] = route
 	# Minimal cavalry trample while charging into enemies at speed.
 	if String(row.get("category", "")) == "cavalry" and current_speed > max_speed * 0.4:
@@ -8012,15 +8390,9 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 		return
 	var team := int(row.get("team", PLAYER_TEAM))
 	var origin := Vector2(row.get("position", Vector2.ZERO))
-	var best_id := 0
-	var best_distance := TRAMPLE_COLLISION_RADIUS
-	for candidate in _hostile_living_ids(team):
-		if bool((entities[candidate] as Dictionary).get("flying", false)):
-			continue
-		var distance := origin.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
-		if distance <= best_distance:
-			best_distance = distance
-			best_id = candidate
+	var best_id := _spatial_nearest_hostile(
+		row, team, origin, TRAMPLE_COLLISION_RADIUS, SPATIAL_FILTER_NOT_FLYING
+	)
 	if best_id == 0:
 		return
 	var damage := maxi(1, int(round(float(row.get("member_damage", 1)) * float(row.get("member_count", 1)) * TRAMPLE_DAMAGE_FACTOR * _timed_modifier_product(row, "CRUSH"))))
@@ -8040,7 +8412,12 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 	## knock them down for KNOCKDOWN_DURATION_TICKS, and apply the optional
 	## damage through the existing damage path. Allies and flyers are immune.
 	var affected := 0
-	for id in entity_ids():
+	# Only battalions inside the blast disc can be thrown, so the old full sweep
+	# is a neighbourhood query. Sorted to keep the documented ascending-id order,
+	# which damage application and event emission both observe.
+	for id in _spatial_gather_sorted(center, radius):
+		if not entities.has(id):
+			continue
 		var row: Dictionary = entities[id]
 		if int(row.get("team", -1)) == source_team or int(row.get("health", 0)) <= 0:
 			continue
@@ -8062,6 +8439,7 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 				landed = candidate
 				break
 		row["position"] = landed
+		_spatial_sync(row)
 		row["knockdown_ticks"] = KNOCKDOWN_DURATION_TICKS
 		row["knocked_down"] = true
 		row["current_speed"] = 0.0
@@ -8666,15 +9044,9 @@ func _step_creep_guard(guard_id: int) -> void:
 	# Aggro: CREEP_VISION acquisition against any rostered team's battalion.
 	var vision := float(row.get("vision_range", 0.0))
 	if vision > 0.0:
-		var best_id := 0
-		var best_distance := vision
-		for candidate in _hostile_living_ids(CREEP_TEAM):
-			if not _can_engage_battalion(row, entities[candidate] as Dictionary):
-				continue
-			var distance := position.distance_to(Vector2((entities[candidate] as Dictionary).get("position", Vector2.ZERO)))
-			if distance <= best_distance:
-				best_distance = distance
-				best_id = candidate
+		var best_id := _spatial_nearest_hostile(
+			row, CREEP_TEAM, position, vision, SPATIAL_FILTER_ENGAGE
+		)
 		if best_id != 0:
 			row["target_id"] = best_id
 			row["target_kind"] = "battalion"
