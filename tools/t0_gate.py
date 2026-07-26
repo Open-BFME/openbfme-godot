@@ -94,6 +94,14 @@ RUNNABLE_PREFIXES = (
 )
 RUNNABLE_SUFFIXES = (".bat", ".ps1", ".sh", ".py")
 
+# A broad or final gate on a worker packet. AGENTS.md: workers do not run
+# broad/final gates, because a broad worker gate can mutate shared selection.
+BROAD_GATE = re.compile(
+    r"\bfull\b[^.\n]*\b(suite|pytest|test)\b|\bentire\b[^.\n]*\bsuite\b|"
+    r"\ball tests\b|run_m2_acceptance|IntegrationOwnerPublish",
+    re.IGNORECASE,
+)
+
 EVIDENCE_KEYS = [
     "commit", "os", "command", "exit_status", "expected_marker_observed",
     "content_pack_id", "artifact_hashes", "unresolved_risks",
@@ -295,6 +303,45 @@ def check_contract(task, rep, strict_acceptance):
         rep.fail("C9 reviewer count", "at least one reviewer required")
     else:
         rep.ok("C9 reviewer count", str(reviewers))
+
+
+def check_authority(task, repo, rep):
+    """Packet-level authority checks.
+
+    These enforce rules already written in AGENTS.md and docs/AGENT_WORKFLOW.md.
+    Measured against the 101 packets on disk: 38 declare an owner-only path in
+    allowed_paths (53 correctly place them in forbidden_paths instead), and 5
+    require a broad suite from a worker.
+    """
+    allowed = task.get("allowed_paths") or []
+    owner_grants = [p for p in allowed if under_any(p, OWNER_ONLY)]
+    if owner_grants:
+        rep.fail("A4 owner-only grant",
+                 f"allowed_paths claims owner-only state {owner_grants[:6]} - "
+                 f"AGENTS.md reserves canonical publication and queue state to the "
+                 f"integration owner. Move these to forbidden_paths")
+    else:
+        rep.ok("A4 owner-only grant", "no owner-only path claimed")
+
+    acceptance = task.get("acceptance") or []
+    broad = [a for a in acceptance if BROAD_GATE.search(str(a))]
+    if broad:
+        rep.fail("A5 broad-gate",
+                 f"worker packet requires a broad or final gate: {broad[:3]} - "
+                 f"AGENTS.md: workers do not run broad/final gates. A broad worker "
+                 f"gate can mutate shared selection state")
+    else:
+        rep.ok("A5 broad-gate", "focused checks only")
+
+    unresolved = []
+    for entry in task.get("source_of_truth") or []:
+        match = re.search(r"((?:docs|contracts)/[A-Za-z0-9_./-]+\.(?:md|json))", str(entry))
+        if match and not (Path(repo) / match.group(1)).exists():
+            unresolved.append(match.group(1))
+    if unresolved:
+        rep.fail("A7 source_of_truth", f"cites path that does not exist: {unresolved}")
+    else:
+        rep.ok("A7 source_of_truth", "all cited paths resolve")
 
 
 def check_repo_state(repo, task, rep):
@@ -560,6 +607,7 @@ def main(argv=None):
 
     rep = Report()
     check_contract(task, rep, args.strict_acceptance)
+    check_authority(task, repo, rep)
     check_repo_state(worktree, task, rep)
     check_locks(repo, task, rep)
     paths = check_diff(worktree, task, rep)
