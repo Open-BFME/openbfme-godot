@@ -71,7 +71,7 @@ accepted by the runtime loader:
 
 ```powershell
 $env:OPENBFME_CONTENT = (Resolve-Path '.private\content-packs').Path
-& 'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
+& '<HOME>\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
   --headless --path game --script res://tests/retail_environment_runner.gd
 ```
 

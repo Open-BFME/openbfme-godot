@@ -61,7 +61,7 @@ Invoke the census directly without Blender, Godot, extraction caches, or convers
 
 ```powershell
 .private\retail-work\tools\python-3.12-env\Scripts\python.exe `
-  tools\openbfme_import.py --json census-maps --install F:\BFME2
+  tools\openbfme_import.py --json census-maps --install <BFME2>
 ```
 
 The report is written inside the ignored private workspace at:

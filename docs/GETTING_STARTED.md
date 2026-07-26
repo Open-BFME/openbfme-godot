@@ -31,10 +31,18 @@ ignored `.private/retail-work` workspace. The repository pins the .NET SDK in
 
 ## 1. Clone the source
 
+`config/release-source.json` is the single place the repository target is
+written down. Read it from there rather than copying a URL, because the target
+has already changed twice and the retired names must never be reintroduced — a
+retired GitHub name can be claimed by someone else, which turns a stale clone
+URL into a supply-chain problem rather than a broken link.
+
 ```bat
-git clone https://github.com/Ancalgonn/open-bfme-engine.git
-cd open-bfme-engine
+git clone https://<host>/<repository>.git
 ```
+
+Substitute `host` and `repository` from `config/release-source.json`, or resolve
+them programmatically with `tools/release_source.py`.
 
 Do not place a BFME installation, extracted archive, or converted pack inside a
 tracked repository directory. The importer owns the private workspace.

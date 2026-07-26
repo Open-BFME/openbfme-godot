@@ -9,7 +9,7 @@ conversion, and use of the owner's retail install are in scope now. Legal/public
 release review is deferred until the game works, at which point the deliverable
 is rebuilt as code-only with every `.private` payload removed.
 
-## Lane A — BFME2 install (`F:\BFME2`)
+## Lane A — BFME2 install (`<BFME2>`)
 
 - **Active private scope:** complete effective-view extraction, conversion, private
   playtests, design measurement, and user-owned caches created by the retail importer.

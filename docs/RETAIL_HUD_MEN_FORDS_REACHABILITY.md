@@ -118,7 +118,7 @@ python -m openbfme_importer.retail_hud_men_fords_reachability_oracle `
   --frame-contract .private/scratch/hud-frame-selection/contract-a.json `
   --map .private/content-packs/bfme2-five-maps-106-private/maps/fords-of-isen-ii/map.json `
   --setup .private/content-packs/bfme2-five-maps-106-private/maps/fords-of-isen-ii/setup.json `
-  --game-dat F:/BFME2/game.dat `
+  --game-dat <BFME2>/game.dat `
   --side-apt .private/retail-work/cache/effective-assets/InGameSideCommandBar.apt `
   --output .private/scratch/hud-men-fords-reachability/contract.json
 python -m pytest -q importer/tests/test_retail_hud_men_fords_reachability_oracle.py

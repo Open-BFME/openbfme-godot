@@ -77,7 +77,7 @@ Once the composed main pack containing road materials is selected, run:
 ```powershell
 $env:OPENBFME_CONTENT = (Resolve-Path '.private\content-packs').Path
 Remove-Item Env:OPENBFME_TERRAIN_PACK -ErrorAction SilentlyContinue
-& 'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
+& '<HOME>\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
   --headless --path game --script res://tests/retail_full_terrain_runner.gd
 ```
 
@@ -91,7 +91,7 @@ selected pack:
 $env:OPENBFME_CONTENT = (Resolve-Path '.private\content-packs').Path
 $env:OPENBFME_TERRAIN_PACK = (Resolve-Path `
   '.private\retail-work\packs\bfme2-men-vslice-roads-private').Path
-& 'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
+& '<HOME>\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
   --headless --path game --script res://tests/retail_full_terrain_runner.gd
 ```
 

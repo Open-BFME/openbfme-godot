@@ -69,8 +69,8 @@ python -m pytest importer/tests/test_retail_hud_apt_convert.py -q
 python -m ruff check importer/openbfme_importer/retail_hud_apt_convert.py importer/tests/test_retail_hud_apt_convert.py
 python -m ruff format --check importer/openbfme_importer/retail_hud_apt_convert.py importer/tests/test_retail_hud_apt_convert.py
 
-& 'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' --headless --path game --script res://tests/retail_hud_apt_runtime_runner.gd
-& 'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' --headless --editor --path game --quit
+& '<HOME>\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' --headless --path game --script res://tests/retail_hud_apt_runtime_runner.gd
+& '<HOME>\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' --headless --editor --path game --quit
 ```
 
 The private runtime gate uses the same runner plus

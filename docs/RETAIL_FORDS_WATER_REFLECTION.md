@@ -93,7 +93,7 @@ From the repository root:
 
 ```powershell
 $env:PYTHONPATH = 'importer'
-$python = 'C:\Users\Jonathan\AppData\Local\Programs\Python\Python312\python.exe'
+$python = '<HOME>\AppData\Local\Programs\Python\Python312\python.exe'
 & $python -m openbfme_importer.retail_fords_water_reflection_oracle `
   --effective-assets-root .private\retail-work\cache\effective-assets `
   --manifest .private\retail-work\cache\effective-assets\.openbfme\manifest.json `

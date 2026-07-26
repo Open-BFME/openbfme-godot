@@ -107,7 +107,7 @@ building contract:
 Run the legal-safe lifecycle gate from the repository root:
 
 ```powershell
-& C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe `
+& <HOME>\Downloads\godot47\Godot_v4.7-stable_win64_console.exe `
   --headless --path game `
   --script res://tests/retail_structure_lifecycle_runner.gd
 ```
@@ -160,7 +160,7 @@ translation is not implemented.
 Run the damage-route gate:
 
 ```powershell
-& C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe `
+& <HOME>\Downloads\godot47\Godot_v4.7-stable_win64_console.exe `
   --headless --path game `
   --script res://tests/retail_structure_damage_effects_runner.gd
 ```

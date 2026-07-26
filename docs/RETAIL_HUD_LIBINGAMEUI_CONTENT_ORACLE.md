@@ -86,7 +86,7 @@ All values are `byte length / SHA-256` in `.apt`, `.const`, `.dat` order.
 $env:PYTHONPATH = "importer"
 python -m openbfme_importer.retail_hud_libingameui_content_oracle `
   .private/retail-work/cache/effective-assets `
-  F:/BFME2/game.dat `
+  <BFME2>/game.dat `
   --output .private/scratch/hud-libingameui-content-oracle/contract.json
 python -m pytest -q importer/tests/test_retail_hud_libingameui_content_oracle.py
 python -m ruff check `

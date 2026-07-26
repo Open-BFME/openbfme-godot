@@ -57,7 +57,7 @@ generic line, particle, hit flash, or sound.
 
 ```powershell
 $env:PYTHONPATH = 'importer'
-$python = 'C:/Users/Jonathan/AppData/Local/Programs/Python/Python312/python.exe'
+$python = '<HOME>/AppData/Local/Programs/Python/Python312/python.exe'
 & $python -m openbfme_importer.retail_archer_projectile_profile `
   --effective-assets .private/retail-work/cache/effective-assets `
   --catalog .private/retail-work/catalog/bfme2.json `

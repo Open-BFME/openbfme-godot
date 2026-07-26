@@ -32,7 +32,7 @@ profile SHA-256
 `1cc78a8b3a2c08b655862387e569301ec592908379d66f543b8f49919fd84914`,
 and canonical plan aggregate SHA-256
 `d8850c6033b8ae3041e044246ab216550b6eabb1d8cce0397006f936066c36c4`.
-The `F:\BFME2` import plan resolves all 374 completion resources with zero
+The `<BFME2>` import plan resolves all 374 completion resources with zero
 missing required inputs. The completion profile remains 374 resources / 2,532
 unique retail files and now has SHA-256
 `cc5af254e0787cf135bd1cf8574b94dd19991741a6eda6ccc346aa304b78c588`.

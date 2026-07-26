@@ -48,7 +48,7 @@ digests may appear only as non-payload provenance metadata in contained reports.
 The supported operator entry point is:
 
 ```bat
-run_importer.bat F:\BFME2
+run_importer.bat <BFME2>
 ```
 
 The underlying flow is:

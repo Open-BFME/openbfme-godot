@@ -50,7 +50,7 @@ python -m openbfme_importer.retail_hud_resource_flash_oracle `
   --scene-contract .private/scratch/hud-apt-clip-actions/bundle-a/data/ui/palantir/scene-contract.json `
   --effective-assets .private/retail-work/cache/effective-assets `
   --manifest .private/retail-work/cache/effective-assets/.openbfme/manifest.json `
-  --game-dat F:/BFME2/game.dat `
+  --game-dat <BFME2>/game.dat `
   --output .private/scratch/hud-resource-flash-oracle/contract-a.json
 python -m pytest importer/tests/test_retail_hud_resource_flash_oracle.py -q
 python -m ruff check importer/openbfme_importer/retail_hud_resource_flash_oracle.py importer/tests/test_retail_hud_resource_flash_oracle.py

@@ -92,12 +92,12 @@ From the repository root:
 
 ```powershell
 $env:PYTHONPATH = 'importer'
-$python = 'C:\Users\Jonathan\AppData\Local\Programs\Python\Python312\python.exe'
+$python = '<HOME>\AppData\Local\Programs\Python\Python312\python.exe'
 $common = @(
   '--effective-assets-root', '.private\retail-work\cache\effective-assets',
   '--manifest', '.private\retail-work\cache\effective-assets\.openbfme\manifest.json',
   '--catalog', '.private\retail-work\catalog\bfme2.json',
-  '--game-dat', 'F:\BFME2\game.dat'
+  '--game-dat', '<BFME2>\game.dat'
 )
 & $python -m openbfme_importer.retail_fords_skybox_oracle @common `
   --output '.private\scratch\fords-skybox-oracle\contract-a.json'

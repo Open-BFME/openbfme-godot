@@ -66,7 +66,7 @@ The wizard walks four fail-closed steps:
 Non-interactive mode for CI or scripted setup:
 
 ```bat
-python tools\onboard.py --install F:\BFME2 --godot C:\Tools\Godot\Godot_v4.7-stable_win64_console.exe --yes
+python tools\onboard.py --install <BFME2> --godot C:\Tools\Godot\Godot_v4.7-stable_win64_console.exe --yes
 ```
 
 Useful flags: `--rotwk PATH` (validate a RotWK 2.01 install), `--skip-gates`
@@ -98,9 +98,9 @@ run_doctor.bat
 
 :: 2. Validate the install and build/publish the Men pack
 set "PY=.private\retail-work\tools\python-3.12-env\Scripts\python.exe"
-%PY% tools\openbfme_import.py doctor --install F:\BFME2
-%PY% tools\openbfme_import.py import-faction --install F:\BFME2 --faction men --convert
-%PY% tools\openbfme_import.py publish-faction-to-slice --install F:\BFME2 --faction men
+%PY% tools\openbfme_import.py doctor --install <BFME2>
+%PY% tools\openbfme_import.py import-faction --install <BFME2> --faction men --convert
+%PY% tools\openbfme_import.py publish-faction-to-slice --install <BFME2> --faction men
 
 :: 3. Verify with the headless gates
 set OPENBFME_CONTENT=%CD%\.private\content-packs

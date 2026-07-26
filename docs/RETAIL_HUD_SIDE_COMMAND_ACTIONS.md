@@ -58,8 +58,8 @@ match their sealed identities and native code-range hashes.
 
 ```powershell
 $env:PYTHONPATH = "importer"
-& "C:\Users\Jonathan\AppData\Local\Programs\Python\Python312\python.exe" -m pytest importer/tests/test_retail_hud_side_command_oracle.py -q
-& "C:\Users\Jonathan\AppData\Local\Programs\Python\Python312\python.exe" -m ruff check importer/openbfme_importer/retail_hud_side_command_oracle.py importer/tests/test_retail_hud_side_command_oracle.py
+& "<HOME>\AppData\Local\Programs\Python\Python312\python.exe" -m pytest importer/tests/test_retail_hud_side_command_oracle.py -q
+& "<HOME>\AppData\Local\Programs\Python\Python312\python.exe" -m ruff check importer/openbfme_importer/retail_hud_side_command_oracle.py importer/tests/test_retail_hud_side_command_oracle.py
 ```
 
 To emit the payload-free contract directly:
@@ -68,6 +68,6 @@ To emit the payload-free contract directly:
 $env:PYTHONPATH = "importer"
 python -m openbfme_importer.retail_hud_side_command_oracle `
   .private/retail-work/cache/effective-assets `
-  F:/BFME2/game.dat `
+  <BFME2>/game.dat `
   --output .private/scratch/hud-side-command-oracle/contract.json
 ```

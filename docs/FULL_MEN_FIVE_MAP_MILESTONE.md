@@ -39,7 +39,7 @@ Run:
 
 ```powershell
 .private\retail-work\tools\python-3.12-env\Scripts\python.exe `
-  tools\openbfme_import.py --json census-faction --install F:\BFME2 --faction men
+  tools\openbfme_import.py --json census-faction --install <BFME2> --faction men
 ```
 
 The payload-free report is in the ignored private workspace at:

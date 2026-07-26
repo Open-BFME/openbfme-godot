@@ -53,9 +53,9 @@ surface alone is not a 1:1 fog-parity claim:
 ## Focused acceptance
 
 ```powershell
-& 'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
+& '<HOME>\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
   --headless --editor --quit --path game
-& 'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
+& '<HOME>\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
   --headless --path game --script res://tests/retail_linear_fog_runner.gd
 ```
 

@@ -26,7 +26,7 @@ The exact private inputs are:
 - `window/controlbar.wnd`: 289,881 bytes, 87 windows, 21 callback identities;
 - `data/ini/controlbarresizer.ini`: 9,398 bytes, 84 exact
   `ControlBar.wnd:*` control references;
-- `F:\BFME2\game.dat`: SHA-256
+- `<BFME2>\game.dat`: SHA-256
   `f008b587570bad693981dc7218588c81d192a1e064b0f7f861539c51156a7640`.
 
 The payload-free A/B contracts and report live under

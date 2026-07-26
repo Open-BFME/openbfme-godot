@@ -68,7 +68,7 @@ python -m openbfme_importer.retail_hud_text_raster_oracle `
   --const .private/retail-work/cache/effective-assets/Palantir.const `
   --dat .private/retail-work/cache/effective-assets/Palantir.dat `
   --otf .private/retail-work/cache/effective-assets/albertusmt.otf `
-  --game-dat F:/BFME2/game.dat `
+  --game-dat <BFME2>/game.dat `
   --opensage-root .private/scratch/opensage-hud-semantics `
   --output .private/scratch/hud-text-raster-oracle/contract.json
 ```

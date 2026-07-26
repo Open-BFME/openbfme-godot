@@ -154,6 +154,11 @@ $allowList = @{
     # These are documentation-style example addresses, not real hosts.
     "game/tests/retail_mp_menu_runner.gd"   = @("private LAN address")
     "game/tests/menu_match_cycle_runner.gd" = @("private LAN address")
+    # Same rationale: classify_address() must be proven to sort RFC1918 ranges
+    # into NETWORK_LAN and the Radmin 26.0.0.0/8 range into NETWORK_RADMIN, so
+    # the literals ARE the test inputs. Substituting non-RFC1918 addresses would
+    # invert what the assertion proves.
+    "game/tests/lan_discovery_runner.gd"    = @("private LAN address")
     # The scanner's own pattern table.
     "tools/export-scan.ps1"                 = @("home directory", "private retail drive", "private LAN address", "credential-shaped token", "hardcoded release target")
     # THE one file allowed to name the publish target. Everything else must

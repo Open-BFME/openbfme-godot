@@ -92,6 +92,6 @@ python -m ruff check importer/openbfme_importer/retail_hud_palantir_command_orac
 
 python -m openbfme_importer.retail_hud_palantir_command_oracle `
   .private/retail-work/cache/effective-assets `
-  F:/BFME2/game.dat `
+  <BFME2>/game.dat `
   --output .private/scratch/hud-palantir-command-oracle/contract.json
 ```

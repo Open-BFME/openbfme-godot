@@ -97,7 +97,7 @@ not depend on `ContentDB` selection order:
 $env:OPENBFME_ROAD_PACK = (Resolve-Path `
   '.private\retail-work\packs\bfme2-men-vslice-roads-private').Path
 
-& 'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
+& '<HOME>\Downloads\godot47\Godot_v4.7-stable_win64_console.exe' `
   --headless --path game --script res://tests/retail_road_visual_runner.gd
 ```
 

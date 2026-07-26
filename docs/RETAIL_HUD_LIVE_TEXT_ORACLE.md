@@ -20,7 +20,7 @@ Generate the private evidence contract with:
 ```powershell
 $env:PYTHONPATH = 'importer'
 python -m openbfme_importer.retail_hud_live_text_oracle `
-  F:\BFME2\game.dat `
+  <BFME2>\game.dat `
   --output .private\scratch\hud-live-text\contract.json
 ```
 

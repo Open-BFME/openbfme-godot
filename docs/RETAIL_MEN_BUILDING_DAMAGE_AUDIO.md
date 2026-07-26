@@ -74,9 +74,9 @@ $env:PYTHONPATH = 'importer'
   --complete-profile .private\scratch\men-damage-audio\preintegration-profile.json `
   --output .private\scratch\men-damage-audio\contract-a.json
 
-C:\Users\Jonathan\AppData\Local\Programs\Python\Python312\python.exe `
+<HOME>\AppData\Local\Programs\Python\Python312\python.exe `
   -m pytest importer\tests\test_retail_men_damage_audio.py -q
-C:\Users\Jonathan\AppData\Local\Programs\Python\Python312\python.exe `
+<HOME>\AppData\Local\Programs\Python\Python312\python.exe `
   -m ruff check importer\openbfme_importer\retail_men_damage_audio.py `
   importer\tests\test_retail_men_damage_audio.py
 ```

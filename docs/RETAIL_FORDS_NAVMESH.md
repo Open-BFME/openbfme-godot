@@ -110,7 +110,7 @@ $env:PYTHONPATH = 'importer'
 & .private/retail-work/tools/python-3.12-env/Scripts/python.exe `
   -m unittest importer.tests.test_retail_fords_navmesh -v
 
-& C:/Users/Jonathan/AppData/Local/Programs/Python/Python312/python.exe `
+& <HOME>/AppData/Local/Programs/Python/Python312/python.exe `
   -m ruff check importer/openbfme_importer/retail_fords_navmesh.py `
   importer/tests/test_retail_fords_navmesh.py
 ```

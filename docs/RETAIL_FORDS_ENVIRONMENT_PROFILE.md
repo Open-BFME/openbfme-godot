@@ -80,9 +80,9 @@ Get-FileHash -Algorithm SHA256 `
   '.private\scratch\fords-environment-profile\plan-a.json', `
   '.private\scratch\fords-environment-profile\plan-b.json'
 
-& 'C:\Users\Jonathan\AppData\Local\Programs\Python\Python312\python.exe' `
+& '<HOME>\AppData\Local\Programs\Python\Python312\python.exe' `
   -m pytest importer\tests\test_retail_fords_environment_profile.py -q
-& 'C:\Users\Jonathan\AppData\Local\Programs\Python\Python312\python.exe' `
+& '<HOME>\AppData\Local\Programs\Python\Python312\python.exe' `
   -m ruff check `
   importer\openbfme_importer\retail_fords_environment_profile.py `
   importer\tests\test_retail_fords_environment_profile.py

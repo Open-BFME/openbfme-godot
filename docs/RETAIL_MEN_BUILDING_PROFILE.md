@@ -129,7 +129,7 @@ it does not call those pixels bit-identical. Proving encoded PNG digest equality
 independently would require running a second clean Blender conversion for every
 override, which the production pipeline does not currently duplicate.
 
-A live BFME2 catalog audit against `F:\BFME2` currently reports:
+A live BFME2 catalog audit against `<BFME2>` currently reports:
 
 - 40,216 catalog entries;
 - 80 profile resources and 315 resolved selections;

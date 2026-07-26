@@ -22,7 +22,7 @@ dependency census are recorded in
 ## One-command flow
 
 ```bat
-run_importer.bat F:\BFME2
+run_importer.bat <BFME2>
 ```
 
 Equivalent explicit commands:
@@ -31,11 +31,11 @@ Equivalent explicit commands:
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\bootstrap-importer-python.ps1
 set IMPORT_PY=.private\retail-work\tools\python-3.12-env\Scripts\python.exe
 "%IMPORT_PY%" tools\openbfme_import.py bootstrap-tools
-"%IMPORT_PY%" tools\openbfme_import.py doctor --install F:\BFME2 --deep
-"%IMPORT_PY%" tools\openbfme_import.py index --install F:\BFME2
-"%IMPORT_PY%" tools\openbfme_import.py census-faction --install F:\BFME2 --faction men
-"%IMPORT_PY%" tools\openbfme_import.py plan --install F:\BFME2 --profile men-fords-v0
-"%IMPORT_PY%" tools\openbfme_import.py build --install F:\BFME2 --profile men-fords-v0
+"%IMPORT_PY%" tools\openbfme_import.py doctor --install <BFME2> --deep
+"%IMPORT_PY%" tools\openbfme_import.py index --install <BFME2>
+"%IMPORT_PY%" tools\openbfme_import.py census-faction --install <BFME2> --faction men
+"%IMPORT_PY%" tools\openbfme_import.py plan --install <BFME2> --profile men-fords-v0
+"%IMPORT_PY%" tools\openbfme_import.py build --install <BFME2> --profile men-fords-v0
 ```
 
 Place `--json` before the subcommand for machine-readable output. `plan` resolves only

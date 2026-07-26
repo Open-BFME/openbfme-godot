@@ -88,6 +88,6 @@ python -m ruff check `
 
 python -m openbfme_importer.retail_hud_libingameui_action_oracle `
   .private/retail-work/cache/effective-assets `
-  F:/BFME2/game.dat `
+  <BFME2>/game.dat `
   --output .private/scratch/hud-libingameui-action-oracle/contract.json
 ```
