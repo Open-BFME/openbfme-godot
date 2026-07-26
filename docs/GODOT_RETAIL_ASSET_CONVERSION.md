@@ -249,8 +249,7 @@ For every new model family:
    its `conversionProof` to that resource's exact
    `provenance/conversion/<resource-id>.json` path. Do not retain a legacy generic
    filename after splitting a converter into per-resource reports.
-10. Run the focused test, then `run_retail_pipeline_tests.bat`, then
-    `run_stage10_tests.bat`.
+10. Run the focused test, then `run_retail_pipeline_tests.bat`.
 
 ## Remaining conversion work
 

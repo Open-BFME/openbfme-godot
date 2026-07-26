@@ -112,9 +112,8 @@ consume the decoded values directly without checking them into this repository.
 Completion requires all five maps to run full Men skirmishes without fallback or silent
 omission, deterministic replay hashes across render rates, exact command/UI/audio
 routing, map-specific routing tests, BFME2 oracle comparisons, viewport coverage,
-performance/leak checks, a 30-minute soak, and both repository gates:
+performance/leak checks, a 30-minute soak, and the repository gate:
 
 ```bat
 run_retail_pipeline_tests.bat
-run_stage10_tests.bat
 ```

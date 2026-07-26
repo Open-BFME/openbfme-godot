@@ -61,7 +61,6 @@ Run the smallest relevant check first. Examples include:
 ```bat
 run_importer_tests.bat
 run_retail_slice.bat --test
-run_tests.bat
 ```
 
 Not every change needs every command. A contributor should report the exact
