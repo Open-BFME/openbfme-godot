@@ -37,6 +37,10 @@ build/
 **/bin/
 **/obj/
 
+# Release staging. Contains packaged builds and converted retail content-packs
+# (dist/bundle/*/content-packs). Never commit-reachable — release firewall.
+/dist/
+
 # Claude Code session state (worktrees, local settings)
 .claude/
 
