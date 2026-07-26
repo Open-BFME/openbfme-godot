@@ -156,15 +156,31 @@ func _test_registration_is_deterministic() -> void:
 		int(outcome["modules"]) == paths.size(),
 		"modules=%d paths=%d" % [int(outcome["modules"]), paths.size()]
 	)
+	# Open-world on purpose. This runner is the registration pilot, not a census:
+	# 17 handler packages are landing incrementally, so asserting an exact package
+	# list would make every new package fail a test it has nothing to do with, and
+	# the obvious "fix" is to keep editing this list - which teaches everyone to
+	# edit assertions when they go red. Assert the tranche-1 four are present and
+	# that the set is sorted (deterministic load order); later arrivals are fine.
+	var packages: Array = outcome["packages"]
+	var required := [
+		"WP01-core-script-state",
+		"WP02-blocked-fog-of-war",
+		"WP03-blocked-transport-garrison",
+		"WP04-blocked-misc-missing",
+	]
+	var absent_packages: Array = required.filter(func(name): return not packages.has(name))
 	_check(
-		"the_four_packages_are_present",
-		outcome["packages"] == [
-			"WP01-core-script-state",
-			"WP02-blocked-fog-of-war",
-			"WP03-blocked-transport-garrison",
-			"WP04-blocked-misc-missing",
-		],
-		str(outcome["packages"])
+		"the_tranche_one_packages_are_present",
+		absent_packages.is_empty(),
+		"missing=%s present=%s" % [str(absent_packages), str(packages)]
+	)
+	var sorted_packages: Array = packages.duplicate()
+	sorted_packages.sort()
+	_check(
+		"packages_register_in_deterministic_order",
+		packages == sorted_packages,
+		str(packages)
 	)
 
 	# Two runs must produce identical registration, or handler order could differ
@@ -581,10 +597,29 @@ func _test_blocked_packages() -> void:
 		+ Wp03.BLOCKED_ACTIONS.size() + Wp03.BLOCKED_CONDITIONS.size()
 		+ Wp04.BLOCKED_ACTIONS.size() + Wp04.BLOCKED_CONDITIONS.size()
 	)
+	# Assert the tranche-1 blocked members are ALL registered, not that they are
+	# the only ones. Later packages gap-register their own blocked members, so a
+	# `== 32` equality turns every future package into a false failure here.
+	# The property that matters is that nothing in WP02/03/04 goes missing.
 	_check(
-		"all_thirty_two_blocked_members_are_registered",
-		dispatch.blocked_names().size() == expected_blocked and expected_blocked == 32,
-		"registered=%d expected=%d" % [dispatch.blocked_names().size(), expected_blocked]
+		"every_tranche_one_blocked_member_is_registered",
+		dispatch.blocked_names().size() >= expected_blocked and expected_blocked == 32,
+		"registered=%d tranche_one_expected=%d" % [
+			dispatch.blocked_names().size(), expected_blocked
+		]
+	)
+	var tranche_one_blocked: Array = (
+		Wp02.BLOCKED_ACTIONS
+		+ Wp03.BLOCKED_ACTIONS + Wp03.BLOCKED_CONDITIONS
+		+ Wp04.BLOCKED_ACTIONS + Wp04.BLOCKED_CONDITIONS
+	)
+	var absent: Array = tranche_one_blocked.filter(
+		func(name): return not dispatch.blocked_names().has(name)
+	)
+	_check(
+		"no_tranche_one_blocked_member_went_missing",
+		absent.is_empty(),
+		"absent=%s" % str(absent)
 	)
 
 	var status := _act(harness, "MAP_SHROUD_ALL", [_player_arg(PLAYER)])
@@ -621,7 +656,11 @@ func _test_blocked_packages() -> void:
 	_check("blocked_members_are_not_counted_as_implemented", overlap.is_empty(), str(overlap))
 	_check(
 		"coverage_reports_the_blocked_set_separately",
-		(dispatch.coverage()["blocked_on_subsystem"] as Array).size() == 32
+		# >= 32, not == 32: the point is that blocked members are counted in their
+		# own bucket rather than inflating implemented coverage. Pinning the total
+		# would make this fail every time a later package registers a blocked
+		# member, which is exactly the behaviour we want it to keep doing.
+		(dispatch.coverage()["blocked_on_subsystem"] as Array).size() >= 32
 	)
 
 
