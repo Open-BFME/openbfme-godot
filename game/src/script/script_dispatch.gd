@@ -54,6 +54,7 @@ enum Status {
 	BAD_ARGUMENTS,    ## arguments disagree with the declared signature
 	WORLD_REFUSED,    ## world does not implement the needed capability
 	DELIBERATE,       ## implementable, refused on purpose (e.g. desync-prone)
+	BLOCKED,          ## the simulation subsystem it needs does not exist yet
 }
 
 ## Canonical name -> Callable.
@@ -65,6 +66,17 @@ var condition_handlers: Dictionary = {}
 ## implemented counts, because counting a refusal as coverage is exactly the
 ## kind of flattering arithmetic this repo's accounting exists to prevent.
 var deliberate_refusals: Dictionary = {}
+
+## Names that are KNOWN, are named by a work package, and cannot be implemented
+## because the simulation subsystem they need does not exist (fog of war,
+## passenger transport, unit capture). name -> subsystem description.
+##
+## Registering these is not busywork. Without it a map that shrouds the terrain
+## produces an `unimplemented` gap indistinguishable from "nobody got to it
+## yet", and the coverage denominator quietly counts 32 actions as backlog when
+## they are actually waiting on a product decision. Like deliberate refusals,
+## they are NEVER counted as implemented.
+var blocked_registrations: Dictionary = {}
 
 var gaps: SageScriptGapLog = GapLog.new()
 
@@ -108,10 +120,44 @@ func register_deliberate_refusal(name: String, handler: Callable) -> bool:
 	return true
 
 
+func register_blocked(
+	kind: int, name: String, subsystem: String, handler: Callable
+) -> bool:
+	## Registers a name as blocked on a missing simulation subsystem. One shared
+	## handler serves all of them (see handlers/_registry.gd); there is
+	## deliberately no per-name stub function, because 32 hand-written bodies
+	## that all refuse would read like 32 implementations.
+	var accepted := (
+		register_action(name, handler)
+		if kind == Vocabulary.Kind.ACTION
+		else register_condition(name, handler)
+	)
+	if not accepted:
+		return false
+	blocked_registrations[name] = subsystem
+	return true
+
+
+func blocked_subsystem_for(name: String) -> String:
+	return String(blocked_registrations.get(name, ""))
+
+
+func blocked_names() -> Array[String]:
+	var out: Array[String] = []
+	for name: Variant in blocked_registrations:
+		out.append(String(name))
+	out.sort()
+	return out
+
+
+func _is_counted_as_coverage(name: Variant) -> bool:
+	return not deliberate_refusals.has(name) and not blocked_registrations.has(name)
+
+
 func implemented_actions() -> Array[String]:
 	var out: Array[String] = []
 	for name: Variant in action_handlers:
-		if not deliberate_refusals.has(name):
+		if _is_counted_as_coverage(name):
 			out.append(String(name))
 	out.sort()
 	return out
@@ -120,7 +166,7 @@ func implemented_actions() -> Array[String]:
 func implemented_conditions() -> Array[String]:
 	var out: Array[String] = []
 	for name: Variant in condition_handlers:
-		if not deliberate_refusals.has(name):
+		if _is_counted_as_coverage(name):
 			out.append(String(name))
 	out.sort()
 	return out
@@ -137,6 +183,7 @@ func deliberately_refused() -> Array[String]:
 func coverage() -> Dictionary:
 	var result := Vocabulary.coverage(implemented_actions(), implemented_conditions())
 	result["deliberately_refused"] = deliberately_refused()
+	result["blocked_on_subsystem"] = blocked_names()
 	return result
 
 
@@ -297,4 +344,6 @@ func _reason_for_status(status: int) -> String:
 			return GapLog.REASON_WORLD_REFUSED
 		Status.DELIBERATE:
 			return GapLog.REASON_DELIBERATE
+		Status.BLOCKED:
+			return GapLog.REASON_BLOCKED_SUBSYSTEM
 	return GapLog.REASON_UNIMPLEMENTED

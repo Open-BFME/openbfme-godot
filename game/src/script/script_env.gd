@@ -43,8 +43,38 @@ var tick_index: int = 0
 var frame_conversions: int = 0
 
 
+## Installed by whatever actually runs scripts, so CALL_SUBROUTINE can run one.
+##
+## Signature: func(subroutine_name: String) -> bool, returning whether the
+## subroutine was found and executed. It is a Callable rather than a hard
+## reference because the interpreter that owns script bodies does not exist yet
+## and the environment must not grow a dependency on it.
+##
+## If nothing installs one, CALL_SUBROUTINE reports UNSUPPORTED and the
+## dispatcher records a gap. It deliberately does NOT queue the call for a
+## consumer that may never arrive: a queue nobody drains is a silent no-op
+## wearing a data structure.
+var subroutine_runner: Callable = Callable()
+
+
 func milliseconds_per_tick() -> float:
 	return 1000.0 / ticks_per_second
+
+
+func ticks_from_seconds(seconds: float) -> int:
+	## Seconds -> interpreter ticks, rounded up, matching the timer conversion so
+	## a counter set to N seconds and a timer set to N seconds agree exactly.
+	return int(ceil(seconds * ticks_per_second))
+
+
+func has_subroutine_runner() -> bool:
+	return subroutine_runner.is_valid()
+
+
+func call_subroutine(name: String) -> bool:
+	if not has_subroutine_runner():
+		return false
+	return bool(subroutine_runner.call(name))
 
 
 func advance() -> void:

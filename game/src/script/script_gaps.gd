@@ -23,6 +23,13 @@ const REASON_ID_NAME_MISMATCH := "id-name-mismatch"    # id table is for another
 const REASON_BAD_ARGUMENTS := "bad-arguments"          # arity / type disagreement
 const REASON_WORLD_REFUSED := "world-refused"          # world lacks the capability
 const REASON_DELIBERATE := "deliberate"                # implementable, refused on purpose
+const REASON_BLOCKED_SUBSYSTEM := "blocked-subsystem"  # named, but the subsystem does not exist
+
+## `blocked-subsystem` is distinct from `unimplemented` on purpose. "Nobody has
+## written the handler yet" and "the simulation has no fog of war for the
+## handler to talk to" are different states with different owners: the first is
+## scheduling, the second is a product decision. Folding them together would
+## hide 32 actions behind a number that looks like backlog.
 
 ## Insertion-ordered "kind|name|reason" -> aggregated record.
 var entries: Dictionary = {}
