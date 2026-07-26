@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import {
   APPROVED_LAUNCHER_SHA256,
+  PROCESS_NAMES,
+  PROCESS_QUERY_TIMEOUT_MS,
   buildElevatedDiscoveryStopScript,
   buildHelperReceiptScript,
   buildVerifiedLaunchScript,
@@ -12,6 +14,7 @@ import {
   classifyProcesses,
   configureLauncher,
   fixedPaths,
+  getLauncherStatus,
   helperOutcomeHistory,
   lastHelperOutcome,
   launchBfme2,
@@ -227,6 +230,87 @@ test("a helper that ends without a receipt is reported, never assumed successful
   assert.notEqual(lastHelperOutcome().state, "running");
   assert.match(lastHelperOutcome().error, /without recording a result/);
   assert.equal(lastHelperOutcome().pid, outcome.pid);
+});
+
+// The process query is filtered by WMI itself rather than by a PowerShell pipeline. Piping
+// every process on the machine through Where-Object forces the CIM provider to materialise
+// and marshal all of them, ExecutablePath included, before three are kept -- work slow
+// enough on some hosts to outlast the query timeout. The filter must therefore stay in the
+// query, and must cover every name the classifier knows about.
+test("the process query filters by name inside WMI, not in a PowerShell pipeline", async () => {
+  const paths = await fixture();
+  let observed;
+  const runner = async (exe, args) => {
+    assert.equal(exe, paths.powershellExe);
+    observed = args.join(" ");
+    return { stdout: "", stderr: "" };
+  };
+  await getLauncherStatus(paths, runner);
+
+  assert.match(observed, /Get-CimInstance Win32_Process -Filter/);
+  assert.doesNotMatch(observed, /Where-Object/);
+  for (const name of PROCESS_NAMES) assert.ok(observed.includes(name), `filter omits ${name}`);
+});
+
+test("a successful process query reports a real state and no query error", async () => {
+  const paths = await fixture();
+  const runner = async () => ({
+    stdout: JSON.stringify({ ProcessId: 7, ParentProcessId: 1, Name: "game.dat", ExecutablePath: paths.gameExe }),
+    stderr: "",
+  });
+  const status = await getLauncherStatus(paths, runner);
+
+  assert.deepEqual(status.process_query, { ok: true, error: null });
+  assert.equal(status.processes[0].verified, true);
+  assert.equal(status.state, "game_running");
+});
+
+// A status call must not be all-or-nothing. Whether WMI answered is independent of whether
+// the launcher is installed and how it is configured, and on hosts with slow WMI -- the
+// GitHub Windows runners among them -- the Win32_Process query exceeds its timeout every
+// single run. That used to fail the whole tool, so a perfectly healthy install reported
+// nothing at all and the caller could not even learn where the launcher was.
+test("a failed process query degrades the status loudly instead of failing it", async () => {
+  const paths = await fixture();
+  // Exactly what Node reports when execFile's own timeout kills the child: no exit code, no
+  // stderr, and a message that never mentions a timeout.
+  const killed = Object.assign(new Error("Command failed: powershell.exe -NoProfile ...\n"), {
+    killed: true,
+    signal: "SIGTERM",
+    code: null,
+    stderr: "",
+  });
+  const status = await getLauncherStatus(paths, async () => { throw killed; });
+
+  // Everything that does not depend on WMI is still reported.
+  assert.equal(status.paths.launcher, paths.launcherExe);
+  assert.equal(status.installed.launcher, true);
+  assert.equal(status.settings.launch_with_affinity_1, false);
+
+  // The failure is data, and specific enough to act on -- unlike the raw rejection.
+  assert.equal(status.process_query.ok, false);
+  assert.match(status.process_query.error, new RegExp(`timed out after ${PROCESS_QUERY_TIMEOUT_MS} ms`));
+  assert.match(status.process_query.error, /WMI/);
+
+  // The invariant that matters: "I could not look" must never be reported as "nothing is
+  // running". An empty process list is only allowed to mean "stopped" after a query that
+  // actually succeeded.
+  assert.deepEqual(status.processes, []);
+  assert.equal(status.state, "process_state_unknown");
+});
+
+// Only the timeout is reinterpreted. Every other rejection has to reach terminateBfmeTree
+// with its original message and stderr intact, or the access-denied detection that triggers
+// the elevation path stops recognising them.
+test("a non-timeout process query failure is reported verbatim", async () => {
+  const paths = await fixture();
+  const denied = Object.assign(new Error("Access is denied"), { stderr: "Access is denied" });
+  const status = await getLauncherStatus(paths, async () => { throw denied; });
+
+  assert.equal(status.process_query.ok, false);
+  assert.equal(status.process_query.error, "Access is denied");
+  assert.doesNotMatch(status.process_query.error, /timed out/);
+  assert.equal(status.state, "process_state_unknown");
 });
 
 test("termination elevates when the non-elevated process query is denied", async () => {

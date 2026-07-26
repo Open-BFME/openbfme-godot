@@ -175,18 +175,62 @@ export function parseProcessJson(stdout) {
   }));
 }
 
+/** How long the non-elevated Win32_Process query is allowed to take. */
+export const PROCESS_QUERY_TIMEOUT_MS = 5000;
+
+/**
+ * The BFME names as a WQL WHERE clause, built from the one list that defines them.
+ *
+ * The filter is pushed into the query instead of being applied afterwards with
+ * `Where-Object`. Piping every process through PowerShell makes the CIM provider
+ * materialise and marshal all of them first — including `ExecutablePath`, which it has to
+ * open each process to read — only for the pipeline to discard all but three. On a host
+ * with slow WMI that work alone can outlast the timeout above. WQL compares strings
+ * case-insensitively, so this matches exactly what the pipeline filter matched.
+ *
+ * Wrapped in a PowerShell single-quoted literal so the command line carries no double
+ * quotes: what survives Windows command-line quoting is the recurring hazard in this file.
+ */
+const PROCESS_QUERY_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  `$rows = @(Get-CimInstance Win32_Process -Filter ${psLiteral(
+    [...PROCESS_NAMES].map((name) => `Name='${name}'`).join(" OR "),
+  )} | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath)`,
+  "if ($rows.Count -gt 0) { $rows | ConvertTo-Json -Compress }",
+].join("; ");
+
+/**
+ * Explain an execFile rejection that was actually our own timeout firing.
+ *
+ * A timeout kill arrives as `Command failed: <the entire command line>` with an empty
+ * stderr and no mention of a timeout anywhere — the least informative error in this
+ * module. Only that case is rewritten; every other rejection is rethrown untouched, so the
+ * elevation detection in `terminateBfmeTree` still sees the original message and stderr.
+ */
+function describeProcessQueryFailure(error, paths) {
+  if (error?.killed !== true) return error;
+  const described = new Error(
+    `The BFME process query timed out after ${PROCESS_QUERY_TIMEOUT_MS} ms and was killed. ` +
+    `${paths.powershellExe} started, but its Get-CimInstance Win32_Process query did not ` +
+    "answer in time; that is a property of this host's WMI service, not of the launcher.",
+  );
+  described.code = "ETIMEDOUT";
+  described.cause = error;
+  described.stderr = error.stderr ?? "";
+  return described;
+}
+
 export async function queryProcesses(paths = fixedPaths(), runner = execFileAsync) {
-  const script = [
-    "$ErrorActionPreference = 'Stop'",
-    "$names = @('AllInOneLauncher.exe','lotrbfme2.exe','game.dat')",
-    "$rows = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -in $names } | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath)",
-    "if ($rows.Count -gt 0) { $rows | ConvertTo-Json -Compress }",
-  ].join("; ");
-  const { stdout } = await runner(paths.powershellExe, ["-NoProfile", "-NonInteractive", "-Command", script], {
-    windowsHide: true,
-    timeout: 5000,
-    maxBuffer: 1024 * 1024,
-  });
+  let stdout;
+  try {
+    ({ stdout } = await runner(paths.powershellExe, ["-NoProfile", "-NonInteractive", "-Command", PROCESS_QUERY_SCRIPT], {
+      windowsHide: true,
+      timeout: PROCESS_QUERY_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    }));
+  } catch (error) {
+    throw describeProcessQueryFailure(error, paths);
+  }
   return parseProcessJson(stdout);
 }
 
@@ -208,18 +252,41 @@ export function classifyProcesses(processes, paths = fixedPaths()) {
   });
 }
 
+/**
+ * Run the process query, reporting a failure as data rather than throwing.
+ *
+ * Whether WMI answered is a separate question from whether the launcher is installed and
+ * how it is configured. Letting a slow or blocked Win32_Process query fail the entire tool
+ * threw away the two facts a caller can always be told, and made `get_launcher_status`
+ * unusable on any host whose WMI is slow — GitHub's Windows runners among them, where the
+ * query exceeds its budget on every run.
+ *
+ * Degrading is not the same as pretending. An empty `processes` list here means "could not
+ * look", and the caller is told so twice: `process_query.ok` is false with the reason, and
+ * `state` becomes "process_state_unknown" so nothing can read it as "nothing is running".
+ */
+async function attemptProcessQuery(paths, runner) {
+  try {
+    return { ok: true, error: null, processes: await queryProcesses(paths, runner) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[bfme-launcher] process query failed: ${message}`);
+    return { ok: false, error: message, processes: [] };
+  }
+}
+
 export async function getLauncherStatus(paths = fixedPaths(), processRunner = execFileAsync) {
-  const [launcherExists, wrapperExists, gameExists, settings, processes] = await Promise.all([
+  const [launcherExists, wrapperExists, gameExists, settings, query] = await Promise.all([
     exists(paths.launcherExe),
     exists(paths.wrapperExe),
     exists(paths.gameExe),
     readSettings(paths),
-    queryProcesses(paths, processRunner),
+    attemptProcessQuery(paths, processRunner),
     // launch_bfme2 and the elevated stop both return before their helper finishes, so
     // this poll is where their real outcome becomes visible.
     refreshHelperOutcomes(),
   ]);
-  const classified = classifyProcesses(processes, paths);
+  const classified = classifyProcesses(query.processes, paths);
   return {
     paths: {
       launcher: paths.launcherExe,
@@ -232,20 +299,26 @@ export async function getLauncherStatus(paths = fixedPaths(), processRunner = ex
       windowed_bfme2: Boolean(settings.WindowedModeBfme2),
     },
     processes: classified,
+    // Whether the machine could be asked at all. When `ok` is false the list above is
+    // empty because the query failed, not because nothing is running — see the note on
+    // attemptProcessQuery. Only a query that succeeded may report "stopped".
+    process_query: { ok: query.ok, error: query.error },
     // The outcome of the last detached helper. `launch_bfme2` and the elevated stop
     // path both return immediately by design, so this is where their real result
     // becomes visible: a helper that threw reports state "failed" with its reason, and
     // one that ended without a receipt (a dismissed UAC prompt) reports "vanished".
     last_helper: lastHelperOutcome(),
-    state: classified.some((item) => item.name.toLowerCase() === "game.dat" && item.verified)
-      ? "game_running"
-      : classified.some((item) => item.name.toLowerCase() === "lotrbfme2.exe" && item.verified)
-        ? "wrapper_running"
-        : classified.some((item) => item.name.toLowerCase() === "allinonelauncher.exe" && item.verified)
-          ? "launcher_running"
-          : classified.length > 0
-            ? "unverified_matching_process"
-            : "stopped",
+    state: !query.ok
+      ? "process_state_unknown"
+      : classified.some((item) => item.name.toLowerCase() === "game.dat" && item.verified)
+        ? "game_running"
+        : classified.some((item) => item.name.toLowerCase() === "lotrbfme2.exe" && item.verified)
+          ? "wrapper_running"
+          : classified.some((item) => item.name.toLowerCase() === "allinonelauncher.exe" && item.verified)
+            ? "launcher_running"
+            : classified.length > 0
+              ? "unverified_matching_process"
+              : "stopped",
   };
 }
 

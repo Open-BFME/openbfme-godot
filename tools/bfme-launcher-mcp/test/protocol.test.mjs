@@ -59,7 +59,10 @@ test("stdio MCP initializes and exposes only the four bounded tools", async () =
       "terminate_bfme_tree",
     ]);
     const status = await client.callTool({ name: "get_launcher_status", arguments: {} });
-    assert.notEqual(status.isError, true);
+    // Report what the server actually said. This assertion once failed on CI with nothing
+    // but "expected true", and the cause -- a Win32_Process query that had hit its timeout
+    // -- was nowhere in the log, so the message costs one line and saves an investigation.
+    assert.notEqual(status.isError, true, `get_launcher_status failed: ${status.content?.[0]?.text}`);
     const payload = JSON.parse(status.content[0].text);
     // Prove the injected root is the one the server actually resolved. Without
     // this, a host that happens to have a real launcher installed would satisfy
@@ -67,6 +70,21 @@ test("stdio MCP initializes and exposes only the four bounded tools", async () =
     assert.equal(payload.paths.launcher, path.join(install.launcherRoot, "AllInOneLauncher.exe"));
     assert.equal(payload.installed.launcher, true);
     assert.equal(payload.settings.launch_with_affinity_1, true);
+
+    // Whether this host's WMI answers within the query timeout is not what this test is
+    // about, and it genuinely differs between a desktop and a CI runner. What must hold
+    // everywhere is that the two are never conflated: a query that failed reports an
+    // unknown state, and only a query that succeeded may claim nothing is running.
+    // core.test.mjs pins both branches exactly, with the runner injected.
+    assert.equal(typeof payload.process_query.ok, "boolean");
+    if (payload.process_query.ok) {
+      assert.equal(payload.process_query.error, null);
+      assert.notEqual(payload.state, "process_state_unknown");
+    } else {
+      assert.ok(payload.process_query.error.length > 0, "a failed query must say why");
+      assert.deepEqual(payload.processes, []);
+      assert.equal(payload.state, "process_state_unknown");
+    }
     const invalid = await client.callTool({ name: "get_launcher_status", arguments: { executable: "C:\\evil.exe" } });
     assert.equal(invalid.isError, true);
   } finally {
