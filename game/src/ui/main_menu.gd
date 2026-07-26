@@ -1162,6 +1162,15 @@ func _launch_multiplayer(mode: String, address: String, port: int) -> void:
 		)
 		return
 	_lobby_session = session
+	if mode == "host":
+		# Only a bound host advertises: the beacon promises a joinable game, so
+		# it starts after host() succeeded and stops the moment the lobby ends.
+		multiplayer_flyout.start_advertising(
+			port,
+			String(_game_state.get("retail_mp_player_name")),
+			multiplayer_lobby.MAP_NAMES[0],
+			session
+		)
 	multiplayer_flyout.set_busy(true)
 	multiplayer_lobby.open(session, mode == "host", String(_game_state.get("retail_mp_player_name")))
 	_show_page(PAGE_MP_LOBBY)
@@ -1173,6 +1182,7 @@ func _on_lobby_launch_confirmed() -> void:
 	if _launch_in_progress:
 		return
 	_launch_in_progress = true
+	multiplayer_flyout.stop_advertising()
 	multiplayer_lobby.close_lobby()
 	if _lobby_session != null:
 		# Graceful, frame-async drain: a hard close here provably drops the
@@ -1194,6 +1204,7 @@ func _on_lobby_leave() -> void:
 	# The lobby already closed the session (notified disconnect) before
 	# emitting leave_requested.
 	_lobby_session = null
+	multiplayer_flyout.stop_advertising()
 	multiplayer_flyout.set_busy(false)
 	_show_page(PAGE_MULTIPLAYER)
 
