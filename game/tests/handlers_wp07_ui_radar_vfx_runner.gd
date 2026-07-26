@@ -528,11 +528,33 @@ func _test_values_are_positional_and_literal() -> void:
 
 
 func _test_enum_and_position_arguments_read_the_right_field() -> void:
-	## RADAR_EVENT and COLOR are numeric in the reference but absent from
-	## ParamTypes.PAYLOAD_FIELD_FOR_PARAM, so the shared table would default
-	## them to text. These assertions pin the deliberate departure: the
-	## recording must carry the NUMBER, not a string.
+	## RADAR_EVENT and COLOR are numeric in the reference. Both were missing
+	## from ParamTypes.PAYLOAD_FIELD_FOR_PARAM when this package was written,
+	## which would have defaulted them to the text field; 45b0b43 added the
+	## rows. These assertions pin the recording to the NUMBER, and the shared
+	## table to the rows this package depends on - a revert of either fails
+	## here rather than silently emptying a value, which is the whole failure
+	## mode, since sage_scb.py fills every field so a wrong read yields "".
 	var harness := _harness()
+
+	_check(
+		"the_shared_table_reads_radar_event_and_colour_as_integers",
+		ParamTypes.payload_field_for_param("RADAR_EVENT") == "integer"
+		and ParamTypes.payload_field_for_param("COLOR") == "integer",
+		"RADAR_EVENT=%s COLOR=%s"
+		% [
+			ParamTypes.payload_field_for_param("RADAR_EVENT"),
+			ParamTypes.payload_field_for_param("COLOR"),
+		]
+	)
+	# An enum is a named integer, so every ENUMS member needs a payload row or
+	# it silently falls through to text. WP07 only uses RADAR_EVENT, but the
+	# invariant is cheap to assert and the bug it catches is invisible.
+	_check(
+		"every_parameter_enum_still_has_a_payload_row",
+		(ParamTypes.enums_missing_payload_rows() as Array).is_empty(),
+		str(ParamTypes.enums_missing_payload_rows())
+	)
 
 	# RADAR_EVENT: UnderAttack = 3.
 	var radar := _emitted(
@@ -765,14 +787,23 @@ func _test_the_match_outcome_family_is_blocked() -> void:
 		not dispatch.gaps.has("action", "VICTORY", GapLog.REASON_UNIMPLEMENTED),
 		str(dispatch.gaps.to_lines())
 	)
+	var victory_detail := String(
+		dispatch.gaps.entries[
+			"action|VICTORY|%s" % GapLog.REASON_BLOCKED_SUBSYSTEM
+		]["detail"]
+	)
 	_check(
 		"the_outcome_gap_names_the_missing_subsystem",
-		String(
-			dispatch.gaps.entries[
-				"action|VICTORY|%s" % GapLog.REASON_BLOCKED_SUBSYSTEM
-			]["detail"]
-		).contains("match outcome"),
-		str(dispatch.gaps.to_lines())
+		victory_detail.contains("match outcome"),
+		victory_detail
+	)
+	# The ruling's own words, so the gap a map produces says why it is blocked
+	# and who has to decide - not merely that something is missing.
+	_check(
+		"the_outcome_gap_states_the_pending_owner_decision",
+		victory_detail.contains("no match-end routing in Meta")
+		and victory_detail.contains("owner decision pending"),
+		victory_detail
 	)
 
 

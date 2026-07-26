@@ -64,18 +64,20 @@ extends RefCounted
 ##   TEAM, HERO_UNIT, COUNTER, DIALOG,
 ##   LOCALIZED_TEXT, NOTIFICATION_BOX_TYPE  -> text
 ##
-## RADAR_EVENT and COLOR are read as INTEGERS deliberately, and they are the one
-## place this file departs from SageScriptParamTypes.PAYLOAD_FIELD_FOR_PARAM,
-## which lists neither and therefore defaults both to "text". That default is
-## justified in its own comment by "every remaining SAGE parameter type names a
-## game asset and is carried as a string" - which is true of UNIT and TEAM and
-## false of these two. RADAR_EVENT is an enum the reference numbers
-## (Information=0 ... Banner=5) and which ParamTypes.ENUMS already carries;
-## COLOR is a packed value the reference numbers (normal=0, blue=255, red=1,
-## purple=50, yellow=-256, white=-1). Reading either as text would hand the
-## presentation adapter a string where the reference defines a number. The
-## missing PAYLOAD_FIELD_FOR_PARAM rows are reported as a finding rather than
-## added here: that table is shared by all 17 packages.
+## RADAR_EVENT and COLOR are read as INTEGERS. RADAR_EVENT is an enum the
+## reference numbers (Information=0 ... Banner=5) and which ParamTypes.ENUMS
+## carries; COLOR is a packed value the reference numbers (normal=0, blue=255,
+## red=1, purple=50, yellow=-256, white=-1).
+##
+## When this package was written, SageScriptParamTypes.PAYLOAD_FIELD_FOR_PARAM
+## had a row for NEITHER, so the shared table would have defaulted both to
+## "text" - and reading the wrong field fails silently, because sage_scb.py
+## fills integer, real AND text for every argument, so the handler would have
+## received "" where the map authored 3. That was reported rather than worked
+## around, and 45b0b43 added the missing rows (ten of the sixteen ENUMS members
+## were affected, not just these two). The reads below now AGREE with the shared
+## table instead of departing from it, and the runner asserts that agreement so
+## a revert of those rows fails here rather than silently emptying a value.
 ##
 ##
 ## BLOCKED 1/2: THE MATCH-OUTCOME FAMILY (4 actions)
@@ -89,16 +91,19 @@ extends RefCounted
 ## header says "WP08 (campaign, LivingWorld, victory/defeat, game mode)". But
 ## the only outcome-shaped members it exposes are `declare_local_defeat`
 ## (documented WP08 LOCALDEFEAT, a different action) and `multiplayer_outcome`
-## (a read). There is no world command that ends the match for these four, so
-## they are declared blocked and the exact signatures wanted are in the report.
+## (a read). There is no world command that ends the match for these four.
+##
+## RULED AND CONFIRMED: no match-end routing exists in Meta, and the decision is
+## the owner's. All four stay blocked; the exact signatures wanted are in the
+## report.
 ##
 ## VICTORY_SCREEN is the one the owner may want to move. Its catalog entry is
 ## high-confidence and explicit - "Shows the victory screen, but does not behave
 ## as a victory" - which reads as pure presentation, i.e. a legitimate
 ## ui().emit("VICTORY_SCREEN", []). It is blocked here anyway because the owner
 ## reserved the whole outcome family, and a wrong sink routing is silent while a
-## blocked declaration is loud. Flipping it is a one-line change if the owner
-## agrees it is presentation.
+## blocked declaration is loud. That flip is the OWNER'S call, not this
+## package's; it is a one-line change if and when they make it.
 ##
 ##
 ## BLOCKED 2/2: THE THREE UI-STATE CONDITIONS
@@ -121,8 +126,9 @@ const Dispatch := preload("res://src/script/script_dispatch.gd")
 
 ## Match outcome. See "BLOCKED 1/2" above.
 const OUTCOME_SUBSYSTEM := (
-	"match outcome (announcing a win or loss and ending the match); the Meta "
-	+ "facet offers only declare_local_defeat (WP08 LOCALDEFEAT) and the "
+	"match outcome (announcing a win or loss and ending the match): no "
+	+ "match-end routing in Meta; owner decision pending. The facet offers only "
+	+ "declare_local_defeat (WP08 LOCALDEFEAT, a different action) and the "
 	+ "multiplayer_outcome read"
 )
 
