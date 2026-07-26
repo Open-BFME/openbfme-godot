@@ -79,6 +79,27 @@ func list_pack_roots() -> Array[String]:
 	if external_selected == "":
 		var selected := selected_user_pack_root()
 		if selected != "":
+			# LOUD ON PURPOSE. This is the durable pack in the user data
+			# directory, reached only because OPENBFME_CONTENT named nothing
+			# usable. It can be months old while the repository's real pack has
+			# moved on, and a stale pack producing confidently wrong results
+			# that pass review is a recorded failure in this project - the
+			# reason run_worktree_game.bat exists at all.
+			#
+			# Until now this path said nothing. The only message was the
+			# upstream "OPENBFME_CONTENT does not exist", which does not name
+			# what replaced it, and push_warning alone is invisible when the
+			# windowed Godot binary is launched. So this also prints to stdout,
+			# which reaches the console binary and the user:// log either way.
+			var age := _pack_age_description(selected)
+			var notice := (
+				"Falling back to the DURABLE pack in user data because "
+				+ "OPENBFME_CONTENT selected nothing: %s%s. " % [selected, age]
+				+ "If you are testing repository content, set OPENBFME_CONTENT "
+				+ "to the pack root (see run_worktree_game.bat)."
+			)
+			_diagnose(notice)
+			print("[ModLoader] %s" % notice)
 			roots.append(selected)
 			roots.append_array(selected_pack_supplements())
 
@@ -371,6 +392,26 @@ func _absolute_path(path: String) -> String:
 func _comparison_path(path: String) -> String:
 	var normalized := path.replace("\\", "/").simplify_path()
 	return normalized.to_lower() if OS.get_name() == "Windows" else normalized
+
+
+## Human-readable age of a pack root, for the durable-fallback notice. The age
+## is the point: "stale pack" is only actionable if you can see HOW stale.
+## Returns "" when the timestamp cannot be read, rather than inventing one.
+func _pack_age_description(pack_root: String) -> String:
+	var manifest := pack_root.path_join("pack.json")
+	if not FileAccess.file_exists(manifest):
+		return ""
+	var modified := FileAccess.get_modified_time(manifest)
+	if modified <= 0:
+		return ""
+	var age_seconds := int(Time.get_unix_time_from_system()) - int(modified)
+	if age_seconds < 0:
+		return ""
+	var days := age_seconds / 86400
+	var stamp := Time.get_datetime_string_from_unix_time(int(modified), true)
+	if days >= 1:
+		return " (built %s, %d day%s ago)" % [stamp, days, "" if days == 1 else "s"]
+	return " (built %s, today)" % stamp
 
 
 func _diagnose(message: String) -> void:
