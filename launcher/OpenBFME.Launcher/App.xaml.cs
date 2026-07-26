@@ -14,19 +14,26 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        // A self-update that cannot be honoured degrades to running this executable and
+        // says so; it must never stop the launcher from opening, because the controls
+        // that repair a broken update are inside it. Only an unexpected fault here is
+        // fatal.
+        SelfUpdateOutcome selfUpdate;
         try
         {
-            if (LauncherSelfUpdate.RelaunchSelected(options, e.Args))
-            {
-                Shutdown(0);
-                return;
-            }
+            selfUpdate = LauncherSelfUpdate.RelaunchSelected(options, e.Args);
         }
         catch (Exception error)
         {
             Fail($"Selected launcher update is invalid: {error.Message}", 1, options.Headless);
             return;
         }
+        if (selfUpdate.Relaunched)
+        {
+            Shutdown(0);
+            return;
+        }
+        if (selfUpdate.Warning is not null) Warn(selfUpdate.Warning, options.Headless);
 
         if (!options.Headless)
         {
@@ -112,6 +119,20 @@ public partial class App : System.Windows.Application
     /// A GUI launch has no console attached, so stderr alone would be invisible; a
     /// headless run has no desktop, so a modal dialog would hang the job forever.
     /// </summary>
+    /// <summary>
+    /// Report something the player needs to know about but that does not stop the run.
+    /// Same reasoning as <see cref="Fail"/> about where the message has to appear, minus
+    /// the exit — a headless job must not be blocked by a modal nobody can dismiss.
+    /// </summary>
+    private static void Warn(string message, bool headless)
+    {
+        Console.Error.WriteLine(message);
+        if (!headless)
+            System.Windows.MessageBox.Show(
+                message, "OpenBFME launcher",
+                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+    }
+
     private void Fail(string message, int exitCode, bool headless)
     {
         Console.Error.WriteLine(message);
