@@ -24,23 +24,26 @@ const Vocabulary := preload("res://src/script/script_vocabulary.gd")
 const ParamTypes := preload("res://src/script/script_param_types.gd")
 const World := preload("res://src/script/script_world.gd")
 
-## UNRESOLVED UNIT QUESTION - read before changing.
+## UNIT OF THE MSEC TIMER FAMILY - SETTLED BY MEASUREMENT, NOT BY THE NAME.
 ##
-## The SET_MILLISECOND_TIMER / SET_RANDOM_MSEC_TIMER / ADD_TO_MSEC_TIMER /
-## SUB_FROM_MSEC_TIMER family is named in milliseconds but the community
-## reference describes every one of them in SECONDS ("Set timer <COUNTER> to
-## expire in <REAL> seconds", WorldBuilder menu "Seconds countdown timer"). The
-## most likely explanation is that the engine stores milliseconds internally
-## while WorldBuilder authors seconds - which leaves open which of the two a
-## decoded .map argument actually carries.
+## SET_MILLISECOND_TIMER / SET_RANDOM_MSEC_TIMER / ADD_TO_MSEC_TIMER /
+## SUB_FROM_MSEC_TIMER are named in milliseconds and carry SECONDS.
 ##
-## This repo has no decoded sample to settle it (the skirmish contract JSON is
-## not present on a plain checkout), so the unit is a NAMED CHOICE rather than a
-## silent assumption. The default matches the behaviour already shipped in
-## game/src/retail_slice/retail_map_scripts.gd, so nothing changes meaning; set
-## `MSEC_FAMILY_UNIT_IS_SECONDS = true` if a real map ever proves otherwise, and
-## expect every timer in the game to change duration by 1000x when you do.
-const MSEC_FAMILY_UNIT_IS_SECONDS := false
+## Evidence, from 1,510 decoded msec-family actions across 142 retail .map
+## files:
+##   * values mass at 3 / 5 / 10 / 60 / 300 / 1800 and top out at 2100; nothing
+##     anywhere near the 30000 a 30-second timer would need in milliseconds
+##   * player-visible countdowns cross-referenced through the countdown display
+##     only parse as seconds ("Timer - Daybreak" = 1800 = 30 minutes)
+##   * fractional values (0.1, 10.5, 14.5) exist and the vocabulary table
+##     declares the parameter REAL, which also rules out frames
+##
+## This file previously read the argument as milliseconds. That divided every
+## retail timer by 1000, and SageScriptEnv's one-tick floor then collapsed all
+## of them to a single tick - a 30-minute timer expiring in 0.1 seconds. The
+## constant is kept (rather than inlined) so the decision stays greppable and
+## reversible, but flipping it back requires new evidence, not a preference.
+const MSEC_FAMILY_UNIT_IS_SECONDS := true
 
 
 static func milliseconds_from_argument(value: float) -> float:

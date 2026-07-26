@@ -16,7 +16,16 @@ const MapScriptsScript = preload("res://src/retail_slice/retail_map_scripts.gd")
 const CONTRACT_RELATIVE_PATH := ".private/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
 const COUNTER_MONEY := 987654
 const TIMER_MONEY := 765432
-const TIMER_MILLISECONDS := 2500.0
+## SET_MILLISECOND_TIMER carries SECONDS despite its name - see
+## SageScriptCoreHandlers.MSEC_FAMILY_UNIT_IS_SECONDS for the measurement this
+## was settled by. 3.0 s at the interpreter's 0.1 s tick is 30 ticks.
+##
+## This is a SYNTHETIC value chosen by this test, not a duration lifted from
+## retail content. That matters: the .scb script libraries and the .map-embedded
+## ScriptLists are different revisions of the same scripts and disagree on
+## several durations, so an assertion pinned to a corpus duration would look
+## verified while depending on which revision happened to load.
+const TIMER_SECONDS := 3.0
 
 var passed := 0
 var failed := 0
@@ -165,7 +174,7 @@ func _gameplay_fixture_payloads() -> Array:
 		_or_condition([_condition("CONDITION_TRUE", [])]),
 		_action("SET_MILLISECOND_TIMER", [
 			_argument(MapScriptsScript.ARGUMENT_COUNTER_NAME, 0, 0.0, "t"),
-			_argument(MapScriptsScript.ARGUMENT_REAL, 0, TIMER_MILLISECONDS),
+			_argument(MapScriptsScript.ARGUMENT_REAL, 0, TIMER_SECONDS),
 		]),
 	], true)
 	var timer_gate := _script("Timer Gate", [
@@ -194,9 +203,17 @@ func _test_counter_and_timer_gating() -> void:
 	var sim = _make_sim()
 	var scripts = MapScriptsScript.new()
 	scripts.load_script_payloads(_gameplay_fixture_payloads())
-	# SET_MILLISECOND_TIMER fires on interpreter tick 1, so the expiry tick is
-	# 1 + ceil(2500 ms / 100 ms-per-tick) = 26.
-	var expected_timer_tick := 1 + int(ceil(TIMER_MILLISECONDS / (MapScriptsScript.TICK_SECONDS * 1000.0)))
+	# The timer is armed on interpreter tick 1 for TIMER_SECONDS (3.0 s). At the
+	# interpreter's 10 ticks per second that is 30 ticks, so it expires on tick
+	# 31 - written out as a literal below.
+	#
+	# It used to be computed as `1 + ceil(ms / (TICK_SECONDS * 1000))`, which is
+	# the implementation's own conversion formula. That assertion compared the
+	# code to itself and therefore held whether the argument was seconds or
+	# milliseconds; it passed for the entire lifetime of a 1000x unit error.
+	# Expected values here must stay literal constants derived from the retail
+	# MEANING, never expressions sharing terms with the code under test.
+	var expected_timer_tick := 31
 	var counter_fire_tick := -1
 	var timer_fire_tick := -1
 	for tick in range(1, 61):

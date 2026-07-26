@@ -530,17 +530,57 @@ func _test_timer_handlers() -> void:
 	var harness := _harness()
 	var env: SageScriptEnv = harness["env"]
 
-	# Millisecond timer parity with the existing tier-1 interpreter: armed on
-	# tick 1 for 2500 ms at 10 ticks/s, it must report expired on tick 26.
+	# UNIT CHECK for the msec-timer family. The argument is SECONDS (see
+	# SageScriptCoreHandlers.MSEC_FAMILY_UNIT_IS_SECONDS for the measurement).
+	#
+	# Every expected tick below is a LITERAL derived from the retail meaning,
+	# never an expression built from the implementation's own conversion. The
+	# assertion this replaced computed `1 + ceil(ms / (TICK_SECONDS * 1000))` -
+	# the formula under test - so it agreed with the code whatever the unit was,
+	# and a 1000x error passed it for as long as it existed. A test that cannot
+	# fail is not a test.
+	#
+	# 2.5 seconds at 10 interpreter ticks per second is 25 ticks. Armed on tick
+	# 1, it expires on tick 26.
 	env.advance()
-	_act(harness, "SET_MILLISECOND_TIMER", [_counter_arg("t"), _real_arg(2500.0)])
+	_act(harness, "SET_MILLISECOND_TIMER", [_counter_arg("t"), _real_arg(2.5)])
 	var expiry_tick := -1
 	for _step in range(60):
 		env.advance()
 		if env.timer_expired("t") and expiry_tick < 0:
 			expiry_tick = env.tick_index
 	_check("millisecond_timer_expires_on_the_expected_tick", expiry_tick == 26,
-		"tick=%d" % expiry_tick)
+		"tick=%d expected=26" % expiry_tick)
+
+	# Retail-scale check, at the value that made the old unit indefensible: the
+	# "Timer - Daybreak" style 1800 is thirty minutes, which at 10 ticks/s is
+	# 18000 ticks. Under the old millisecond reading this armed for 18 ticks and
+	# was then floored to 1. 18000 is written out, not computed.
+	var daybreak := _harness()
+	_act(daybreak, "SET_MILLISECOND_TIMER", [_counter_arg("daybreak"), _real_arg(1800.0)])
+	_check(
+		"half_hour_timer_arms_for_half_an_hour_of_ticks",
+		is_equal_approx(
+			(daybreak["env"] as SageScriptEnv).timer_remaining_ticks("daybreak"), 18000.0
+		),
+		"remaining=%f expected=18000" % (daybreak["env"] as SageScriptEnv).timer_remaining_ticks(
+			"daybreak"
+		)
+	)
+
+	# A sub-second value must not be floored away to nothing either: 0.1 s is
+	# exactly one tick, and fractional values do occur in retail data.
+	var fractional := _harness()
+	_act(fractional, "SET_MILLISECOND_TIMER", [_counter_arg("blink"), _real_arg(0.1)])
+	_check(
+		"fractional_second_timer_arms_for_one_tick",
+		is_equal_approx(
+			(fractional["env"] as SageScriptEnv).timer_remaining_ticks("blink"), 1.0
+		),
+		"remaining=%f expected=1" % (fractional["env"] as SageScriptEnv).timer_remaining_ticks(
+			"blink"
+		)
+	)
 
 	# Unset timers have not expired.
 	_check("unset_timer_has_not_expired", not env.timer_expired("never_armed"))
@@ -565,7 +605,13 @@ func _test_timer_handlers() -> void:
 	var control := _harness()
 	var control_env: SageScriptEnv = control["env"]
 	control_env.advance()
-	_act(control, "SET_MILLISECOND_TIMER", [_counter_arg("t"), _real_arg(1000.0)])
+	# 1.0 second = 10 ticks (literal, not recomputed).
+	_act(control, "SET_MILLISECOND_TIMER", [_counter_arg("t"), _real_arg(1.0)])
+	_check(
+		"one_second_timer_arms_for_ten_ticks",
+		is_equal_approx(control_env.timer_remaining_ticks("t"), 10.0),
+		"remaining=%f expected=10" % control_env.timer_remaining_ticks("t")
+	)
 	_act(control, "STOP_TIMER", [_counter_arg("t")])
 	for _step in range(20):
 		control_env.advance()
@@ -578,18 +624,22 @@ func _test_timer_handlers() -> void:
 	var adjust := _harness()
 	var adjust_env: SageScriptEnv = adjust["env"]
 	adjust_env.advance()
-	_act(adjust, "SET_MILLISECOND_TIMER", [_counter_arg("t"), _real_arg(1000.0)])
-	_act(adjust, "ADD_TO_MSEC_TIMER", [_real_arg(500.0), _counter_arg("t")])
+	# 1.0 s = 10 ticks; +0.5 s = 15 ticks; -0.5 s = back to 10. All literals.
+	# These also pin the ARGUMENT ORDER: ADD_TO_MSEC_TIMER(REAL, COUNTER) puts
+	# the value first and the timer name second, so a type-searching reader
+	# would silently adjust the wrong timer.
+	_act(adjust, "SET_MILLISECOND_TIMER", [_counter_arg("t"), _real_arg(1.0)])
+	_act(adjust, "ADD_TO_MSEC_TIMER", [_real_arg(0.5), _counter_arg("t")])
 	_check(
 		"add_to_msec_timer_reads_value_first",
 		is_equal_approx(adjust_env.timer_remaining_ticks("t"), 15.0),
-		"remaining=%f" % adjust_env.timer_remaining_ticks("t")
+		"remaining=%f expected=15" % adjust_env.timer_remaining_ticks("t")
 	)
-	_act(adjust, "SUB_FROM_MSEC_TIMER", [_real_arg(500.0), _counter_arg("t")])
+	_act(adjust, "SUB_FROM_MSEC_TIMER", [_real_arg(0.5), _counter_arg("t")])
 	_check(
 		"sub_from_msec_timer_reads_value_first",
 		is_equal_approx(adjust_env.timer_remaining_ticks("t"), 10.0),
-		"remaining=%f" % adjust_env.timer_remaining_ticks("t")
+		"remaining=%f expected=10" % adjust_env.timer_remaining_ticks("t")
 	)
 
 	# Adjusting a timer that was never armed is an error, not a quiet create.

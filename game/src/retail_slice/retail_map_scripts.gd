@@ -242,9 +242,22 @@ func _execute_action(action: Dictionary, sim) -> void:
 		"SET_FLAG":
 			flags[_argument_text(arguments, ARGUMENT_FLAG_NAME)] = _argument_integer(arguments, ARGUMENT_BOOLEAN, 1) != 0
 		"SET_MILLISECOND_TIMER":
+			# UNIT: the argument is SECONDS despite the action's name.
+			#
+			# Measured, not assumed: across 1,510 decoded msec-family actions in
+			# 142 retail .map files the values mass at 3/5/10/60/300/1800 and
+			# never approach 30000, and the player-visible countdowns only make
+			# sense as seconds (a "Timer - Daybreak" of 1800 is 30 minutes, not
+			# 1.8). Fractional values (0.1, 10.5) also rule out frames, and the
+			# vocabulary table declares the parameter REAL.
+			#
+			# Reading it as milliseconds - which this file did until the
+			# measurement was made - divides every retail timer by 1000, and the
+			# maxi(1, ...) floor then collapses all of them to a single tick. The
+			# 30-minute daybreak timer expired in 0.1 seconds.
 			var name := _argument_text(arguments, ARGUMENT_COUNTER_NAME)
-			var milliseconds := _argument_real(arguments, ARGUMENT_REAL, 0.0)
-			timers[name] = tick_index + maxi(1, int(ceil(milliseconds / (TICK_SECONDS * 1000.0))))
+			var seconds := _argument_real(arguments, ARGUMENT_REAL, 0.0)
+			timers[name] = tick_index + maxi(1, int(ceil(seconds / TICK_SECONDS)))
 		"PLAYER_SET_MONEY":
 			var player := _argument_text(arguments, ARGUMENT_PLAYER)
 			var amount := _argument_integer(arguments, ARGUMENT_INTEGER, 0)
