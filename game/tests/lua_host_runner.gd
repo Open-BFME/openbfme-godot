@@ -51,6 +51,8 @@ func _run() -> void:
 	_test_error_containment()
 	_test_determinism()
 	_test_no_host_access()
+	_test_resource_containment()
+	_test_reentrancy()
 	_finish()
 
 
@@ -555,6 +557,111 @@ func _test_no_host_access() -> void:
 			and not bool(denied["ok"])
 			and String(denied["error"]).contains("call a nil value"),
 		"%s / %s" % [str(allowed["values"]), String(denied["error"])])
+
+
+# --- review regressions: resource containment and re-entrancy ----------------
+##
+## The fidelity review cleared this VM of information escape - no filesystem,
+## OS, clock or Godot reach - but found the sandbox escapable on RESOURCES and
+## corruptible on RE-ENTRY. These pin both.
+
+func _test_resource_containment() -> void:
+	# THE `n` LOOPHOLE. getn() honours a table's `n` field, which the script
+	# controls. Setting t.n = 1e9 costs one step but makes tremove/tinsert/
+	# sort/call run billion-iteration loops entirely inside GDScript, where the
+	# per-AST-node budget never sees them - a script could stall a lockstep
+	# tick without ever exceeding its step count.
+	var cases := {
+		"tremove": "local t = {} t.n = 100000000 tremove(t)",
+		"tinsert": "local t = {} t.n = 100000000 tinsert(t, 'x')",
+		"sort": "local t = {} t.n = 100000000 sort(t)",
+		"call": "local t = {} t.n = 100000000 call(function() end, t)",
+		"foreachi": "local t = {} t.n = 100000000 foreachi(t, function() end)",
+	}
+	var all_stopped := true
+	var details := PackedStringArray()
+	for label in cases:
+		var box := LuaSandbox.new("n_loophole")
+		box.step_budget = 50000
+		var outcome := box.do_string(String(cases[label]), "n")
+		if bool(outcome["ok"]) or String(outcome["error_kind"]) != "budget":
+			all_stopped = false
+			details.append("%s -> ok=%s kind=%s" % [label, str(outcome["ok"]),
+				String(outcome["error_kind"])])
+	_check("host_side_loops_cannot_outrun_the_step_budget",
+		all_stopped, ", ".join(details))
+
+	# ...and honest table work still runs.
+	var honest := LuaSandbox.new("honest")
+	var fine := honest.do_string(
+		"local t = {} for i = 1, 50 do tinsert(t, i) end sort(t) return getn(t)", "h")
+	_check("ordinary_table_work_is_unaffected_by_the_charge",
+		bool(fine["ok"]) and float(fine["values"][0]) == 50.0, String(fine["error"]))
+
+
+func _test_reentrancy() -> void:
+	# A host function that runs more script is the obvious way to implement an
+	# "execute script" game action. Before this fix every nested entry reset
+	# _steps and cleared _frames, so the nested call corrupted the frame stack
+	# it was unwinding into AND handed itself a brand new budget - a script
+	# could loop "call a host action that runs a script" forever.
+	var box := LuaSandbox.new("reentry")
+	box.step_budget = 40000
+	box.register_function("run_script", func(sandbox, args):
+		var nested: Dictionary = sandbox.do_string(String(args[0]), "nested")
+		return 1 if bool(nested["ok"]) else 0, true)
+
+	var nested_ok := box.do_string("marker = 0 run_script('marker = 7') return marker", "outer")
+	_check("a_host_function_can_run_nested_script",
+		bool(nested_ok["ok"]) and float(nested_ok["values"][0]) == 7.0,
+		"%s %s" % [String(nested_ok["error"]), str(nested_ok["values"])])
+
+	# The outer frame stack survives the nested run: execution continues in the
+	# right place and the outer chunk still returns its own value.
+	var survives := box.do_string("""
+		function outer()
+			local before = 5
+			run_script('return 1')
+			return before + 1
+		end
+		return outer()
+	""", "outer")
+	_check("the_outer_frame_survives_a_nested_run",
+		bool(survives["ok"]) and float(survives["values"][0]) == 6.0,
+		"%s %s" % [String(survives["error"]), str(survives["values"])])
+
+	# THE BUDGET IS SHARED. Measured against the work itself rather than
+	# against a number this VM happened to produce: run one unit of work and
+	# note the cost, set a budget that comfortably fits ONE unit, then run two
+	# units where the first is nested. If nesting reset the leash the second
+	# unit would fit too; because the budget is shared, it does not.
+	const UNIT := "local s = 0 for i = 1, 500 do s = s + i end"
+	var meter := LuaSandbox.new("meter")
+	meter.register_function("run_script", func(sandbox, args):
+		var nested: Dictionary = sandbox.do_string(String(args[0]), "nested")
+		return 1 if bool(nested["ok"]) else 0, true)
+	var one_unit := meter.do_string(UNIT, "one")
+	_check("one_unit_of_work_succeeds_and_reports_a_cost",
+		bool(one_unit["ok"]) and int(one_unit["steps"]) > 0, str(one_unit["steps"]))
+
+	meter.step_budget = int(one_unit["steps"]) * 2
+	var two_units := meter.do_string(
+		"run_script([[%s]]) %s" % [UNIT, UNIT], "two")
+	_check("nested_runs_share_the_budget_instead_of_resetting_it",
+		not bool(two_units["ok"]) and String(two_units["error_kind"]) == "budget",
+		"two units of work (one nested) must not fit a budget sized for one: "
+			+ "%s / %s" % [str(two_units["ok"]), String(two_units["error_kind"])])
+
+	# is_running() lets a host function tell script-initiated calls from
+	# host-initiated ones.
+	var flags: Array = []
+	var probe := LuaSandbox.new("probe")
+	probe.register_function("note", func(sandbox, _args):
+		flags.append(sandbox.is_running())
+		return [], true)
+	probe.do_string("note()", "p")
+	_check("is_running_reports_script_context",
+		flags.size() == 1 and bool(flags[0]), str(flags))
 
 
 func _finish() -> void:

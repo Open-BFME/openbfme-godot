@@ -136,6 +136,11 @@ func _next_token() -> Variant:
 		return {"t": TK_NAME, "v": word, "line": line}
 
 	if _is_digit(c) or (c == 46 and _is_digit(_peek(1))):  # digit or ".5"
+		if c == 48 and (_peek(1) == 120 or _peek(1) == 88):  # 0x / 0X
+			_fail("hexadecimal literals were added in Lua 5.1; Lua 4.0.1 reads "
+				+ "only decimal numerals with an optional fraction and exponent",
+				LuaValue.Err.KIND_UNSUPPORTED)
+			return null
 		return _read_number(line)
 
 	if c == 34 or c == 39:  # " or '
@@ -167,26 +172,21 @@ func _next_token() -> Variant:
 
 func _read_number(line: int) -> Variant:
 	var start := _pos
-	if _matches("0x") or _matches("0X"):
-		_pos += 2
-		while _pos < _len and _is_hex_digit(_peek()):
-			_pos += 1
-	else:
+	while _pos < _len and _is_digit(_peek()):
+		_pos += 1
+	if _peek() == 46:  # '.'
+		_pos += 1
 		while _pos < _len and _is_digit(_peek()):
 			_pos += 1
-		if _peek() == 46:  # '.'
+	if _peek() == 101 or _peek() == 69:  # e E
+		_pos += 1
+		if _peek() == 43 or _peek() == 45:
 			_pos += 1
-			while _pos < _len and _is_digit(_peek()):
-				_pos += 1
-		if _peek() == 101 or _peek() == 69:  # e E
+		if not _is_digit(_peek()):
+			_fail("malformed number near '%s'" % _src.substr(start, _pos - start))
+			return null
+		while _pos < _len and _is_digit(_peek()):
 			_pos += 1
-			if _peek() == 43 or _peek() == 45:
-				_pos += 1
-			if not _is_digit(_peek()):
-				_fail("malformed number near '%s'" % _src.substr(start, _pos - start))
-				return null
-			while _pos < _len and _is_digit(_peek()):
-				_pos += 1
 	var text := _src.substr(start, _pos - start)
 	# A name character glued to a number ("3abc") is malformed, not two tokens.
 	if _pos < _len and _is_name_part(_peek()):
@@ -258,8 +258,15 @@ func _read_quoted_string(line: int) -> Variant:
 						return null
 					out += String.chr(code)
 				else:
-					_fail("invalid escape sequence '\\%s'" % _src.substr(_pos, 1))
-					return null
+					# read_string's `default: save_and_next(...)` takes an
+					# unrecognised escape LITERALLY - the backslash is dropped
+					# and the character kept, so "\q" is "q". That is also how
+					# 4.0 spells an escaped per cent or bracket. Only \x and \z
+					# are refused (above), deliberately: their 4.0 reading
+					# ("x41", "z") is silently wrong rather than merely
+					# different, and both are Lua 5.2 constructs.
+					out += _src.substr(_pos, 1)
+					_pos += 1
 	return {"t": TK_STRING, "v": out, "line": line}
 
 
@@ -267,10 +274,12 @@ func _read_quoted_string(line: int) -> Variant:
 func _read_long_string(line: int) -> Variant:
 	_pos += 2
 	var depth := 1
-	# "If the first character after [[ is a newline it is not included."
-	if _peek() == 10:
-		_line += 1
-		_pos += 1
+	# NO newline skip. Lua 4.0.1's read_long_string switches on each character
+	# and its '\n' case does `save(L, '\n', l)` - the newline immediately after
+	# the opening [[ is KEPT. Dropping it is Lua 5.0's rule (5.0 added an
+	# explicit `if (currIsNewline(ls)) inclinenumber(ls);` before the loop), and
+	# getting this backwards silently shortens every multi-line literal by one
+	# leading newline.
 	var out := ""
 	while true:
 		if _pos >= _len:
@@ -297,10 +306,6 @@ func _read_long_string(line: int) -> Variant:
 
 static func _is_digit(c: int) -> bool:
 	return c >= 48 and c <= 57
-
-
-static func _is_hex_digit(c: int) -> bool:
-	return _is_digit(c) or (c >= 97 and c <= 102) or (c >= 65 and c <= 70)
 
 
 static func _is_name_start(c: int) -> bool:

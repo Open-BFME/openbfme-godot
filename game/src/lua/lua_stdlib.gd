@@ -29,10 +29,14 @@ extends RefCounted
 ## failure says WHY.
 ##
 ## DETERMINISM CAVEAT, stated plainly: sin/cos/tan/asin/acos/atan/exp/log/
-## log10 delegate to Godot's math, which delegates to the platform libm. IEEE
-## does not require libm transcendentals to be correctly rounded, so these are
-## the one place in this VM where two platforms could in principle disagree in
-## the last ulp. That is the same exposure the rest of the simulation already
+## log10, and '^' with a NON-INTEGER exponent, delegate to Godot's math, which
+## delegates to the platform libm. IEEE does not require libm transcendentals
+## to be correctly rounded, so these are the one place in this VM where two
+## platforms could in principle disagree in the last ulp. ('^' with an integer
+## exponent does NOT go to libm - see _lua_pow - because it is a core operator
+## that ordinary gameplay math reaches, unlike the transcendentals.)
+##
+## That residual exposure is the same one the rest of the simulation already
 ## carries (see the coverage note in tests/retail_state_pin_runner.gd), and it
 ## is inherited rather than introduced here. sqrt IS correctly rounded by IEEE
 ## and is safe. Everything else in this VM - arithmetic, comparison, string
@@ -209,6 +213,15 @@ func _arg(args: Array, index: int) -> Variant:
 	return args[index] if index < args.size() else null
 
 
+## EVERY Lua-number -> GDScript-int conversion in this library goes through
+## here. A bare int(x) on an out-of-range double is undefined in C and
+## genuinely differs between x86_64 (INT64_MIN) and ARM64 (saturate), so a
+## script passing 1e30 as a string index or a table position could desync two
+## peers of a lockstep match. LuaNumber.to_c_int saturates explicitly.
+static func _to_int(value: Variant) -> int:
+	return LuaNumber.to_c_int(float(value))
+
+
 func _bad_argument(sandbox: Object, position: int, function_name: String,
 		expected: String, got: Variant) -> LuaValue.Err:
 	return sandbox.error("bad argument #%d to `%s' (%s expected, got %s)"
@@ -259,12 +272,15 @@ func _lua_tonumber(sandbox: Object, args: Array) -> Variant:
 	var base: Variant = _opt_number(sandbox, args, 1, "tonumber", 10.0)
 	if base is LuaValue.Err:
 		return base
-	if int(base) == 10:
+	if _to_int(base) == 10:
+		# Base 10 only. Lua 4.0.1's read_numeral has no 0x path and its
+		# tonumber leans on C89 strtod, which does not accept hex either -
+		# accepting it here would make tonumber disagree with the lexer.
 		return LuaValue.coerce_to_number(value)
 	var text: Variant = LuaValue.coerce_to_string(value)
 	if text == null:
 		return null
-	return LuaNumber.parse(String(text), int(base))
+	return LuaNumber.parse(String(text), _to_int(base))
 
 
 func _lua_print(sandbox: Object, args: Array) -> Variant:
@@ -285,9 +301,12 @@ func _lua_error(sandbox: Object, args: Array) -> Variant:
 	return err
 
 
+## luaB_assert `return 0` - Lua 4.0's assert yields NO values on success. The
+## familiar `local x = assert(f())` idiom that passes the value through is Lua
+## 5.0's assert, and writing it against 4.0 silently produces nil.
 func _lua_assert(sandbox: Object, args: Array) -> Variant:
 	if LuaValue.truthy(_arg(args, 0)):
-		return args
+		return []
 	var message: Variant = _arg(args, 1)
 	if message == null:
 		return sandbox.error("assertion failed!")
@@ -305,6 +324,10 @@ func _lua_call(sandbox: Object, args: Array) -> Variant:
 	var call_args: Array = []
 	if argument_table is LuaTable:
 		var count := _getn(argument_table)
+		# getn honours an `n` field the script controls, so this loop length is
+		# script-chosen and must be paid for before it runs.
+		if sandbox.charge_steps(count):
+			return null
 		for i in range(1, count + 1):
 			call_args.append(argument_table.rawget(float(i)))
 	elif argument_table != null:
@@ -316,7 +339,11 @@ func _lua_call(sandbox: Object, args: Array) -> Variant:
 			return _bad_argument(sandbox, 3, "call", "string", _arg(args, 2))
 		mode = String(mode_text)
 	var protected := mode.contains("x")
-	var packed := mode.contains("p")
+	if mode.contains("p"):
+		# luaB_call: `lua_error(L, "deprecated option `p' in `call'")`. Packing
+		# results into a table was removed in 4.0; accepting it here would hand
+		# a script a table where 4.0 gives it an error.
+		return sandbox.error("deprecated option `p' in `call'")
 
 	var outcome: Dictionary = sandbox.call_value_protected(fn, call_args)
 	if not bool(outcome["ok"]):
@@ -330,14 +357,7 @@ func _lua_call(sandbox: Object, args: Array) -> Variant:
 			if bool(handled["ok"]) and not handled["values"].is_empty():
 				return handled["values"][0]
 		return null
-	var results: Array = outcome["values"]
-	if packed:
-		var table := LuaTable.new()
-		for i in range(results.size()):
-			table.rawset(float(i + 1), results[i])
-		table.rawset("n", float(results.size()))
-		return table
-	return results
+	return outcome["values"]
 
 
 func _lua_dostring(sandbox: Object, args: Array) -> Variant:
@@ -351,17 +371,23 @@ func _lua_dostring(sandbox: Object, args: Array) -> Variant:
 			name = String(supplied)
 	var outcome: Dictionary = sandbox.do_string_nested(String(source), name)
 	if not bool(outcome["ok"]):
-		# Lua 4.0's dostring returns nil on failure rather than propagating the
-		# error. The message would otherwise vanish entirely, so it goes to the
-		# host's output channel instead of being swallowed.
-		sandbox.emit_output("dostring failed: %s" % outcome["error"].text())
-		return null
+		# passresults() on failure pushes TWO values: nil and an error-name
+		# string from {"ok", "run-time error", "file error", "syntax error",
+		# "memory error", "error in error handling"}. Returning only nil would
+		# lose the kind, which is the sole diagnostic a 4.0 script gets. The
+		# full message also goes to the host's output channel so it is not
+		# swallowed entirely.
+		# The record's "error" is the FORMATTED string; the Err object lives
+		# under "err".
+		var err: LuaValue.Err = outcome["err"]
+		sandbox.emit_output("dostring failed: %s" % err.text())
+		var kind := "syntax error" if err.kind == LuaValue.Err.KIND_SYNTAX 			else "run-time error"
+		return [null, kind]
 	var values: Array = outcome["values"]
-	# Lua 4.0's passresults() pushes "at least one result to signal no errors"
-	# when the chunk itself returned nothing, so that `if dostring(s) then`
-	# distinguishes success from failure. 4.0 pushes a NULL userdata; we use
-	# the number 1, which is truthy the same way and is inspectable.
-	return values if not values.is_empty() else [1.0]
+	# passresults() pushes "at least one result to signal no errors" when the
+	# chunk returned nothing - a NULL userdata - so that `if dostring(s) then`
+	# separates success from failure.
+	return values if not values.is_empty() 		else [LuaValue.Userdata.new(null, "dostring-ok")]
 
 
 ## A deterministic no-op. GDScript owns memory here; exposing a real collector
@@ -396,7 +422,7 @@ func _lua_settag(sandbox: Object, args: Array) -> Variant:
 	var tag: Variant = _check_number(sandbox, args, 1, "settag")
 	if tag is LuaValue.Err:
 		return tag
-	table.tag = int(tag)
+	table.tag = _to_int(tag)
 	return table
 
 
@@ -419,8 +445,8 @@ func _lua_settagmethod(sandbox: Object, args: Array) -> Variant:
 	var method: Variant = _arg(args, 2)
 	if method != null and not LuaValue.is_callable_value(method):
 		return _bad_argument(sandbox, 3, "settagmethod", "function or nil", method)
-	var previous: Variant = sandbox.tag_method(int(tag), name)
-	sandbox.set_tag_method(int(tag), name, method)
+	var previous: Variant = sandbox.tag_method(_to_int(tag), name)
+	sandbox.set_tag_method(_to_int(tag), name, method)
 	return previous
 
 
@@ -431,7 +457,7 @@ func _lua_gettagmethod(sandbox: Object, args: Array) -> Variant:
 	var event: Variant = _check_string(sandbox, args, 1, "gettagmethod")
 	if event is LuaValue.Err:
 		return event
-	return sandbox.tag_method(int(tag), String(event))
+	return sandbox.tag_method(_to_int(tag), String(event))
 
 
 func _lua_copytagmethods(sandbox: Object, args: Array) -> Variant:
@@ -441,7 +467,7 @@ func _lua_copytagmethods(sandbox: Object, args: Array) -> Variant:
 	var from_tag: Variant = _check_number(sandbox, args, 1, "copytagmethods")
 	if from_tag is LuaValue.Err:
 		return from_tag
-	sandbox.copy_tag_methods(int(to_tag), int(from_tag))
+	sandbox.copy_tag_methods(_to_int(to_tag), _to_int(from_tag))
 	return to_tag
 
 
@@ -487,9 +513,11 @@ func _lua_rawset(sandbox: Object, args: Array) -> Variant:
 	var table: Variant = _check_table(sandbox, args, 0, "rawset")
 	if table is LuaValue.Err:
 		return table
+	# Same key validation as an ordinary assignment - rawset bypasses TAG
+	# METHODS, not the rules about what can be a key.
 	var key: Variant = _arg(args, 1)
-	if key == null:
-		return sandbox.error("table index is nil")
+	if sandbox.reject_bad_key(key):
+		return null
 	table.rawset(key, _arg(args, 2))
 	return table
 
@@ -502,7 +530,7 @@ func _lua_rawset(sandbox: Object, args: Array) -> Variant:
 func _getn(table: LuaTable) -> int:
 	var n: Variant = table.rawget("n")
 	if LuaValue.is_number(n):
-		return int(n)
+		return _to_int(n)
 	return table.border()
 
 
@@ -540,6 +568,8 @@ func _lua_foreach(sandbox: Object, args: Array) -> Variant:
 		return _bad_argument(sandbox, 2, "foreach", "function", fn)
 	# Snapshot the key order so mutating the table inside the callback cannot
 	# make the traversal itself non-deterministic.
+	if sandbox.charge_steps(table.count()):
+		return null
 	for key in table.keys_in_order():
 		var value: Variant = table.rawget(key)
 		if value == null:
@@ -549,7 +579,9 @@ func _lua_foreach(sandbox: Object, args: Array) -> Variant:
 			return null
 		if not results.is_empty() and results[0] != null:
 			return results[0]
-	return null
+	# luaB_foreach `return 0` when the traversal completes without an early
+	# result.
+	return []
 
 
 func _lua_foreachi(sandbox: Object, args: Array) -> Variant:
@@ -560,13 +592,15 @@ func _lua_foreachi(sandbox: Object, args: Array) -> Variant:
 	if not LuaValue.is_callable_value(fn):
 		return _bad_argument(sandbox, 2, "foreachi", "function", fn)
 	var count := _getn(table)
+	if sandbox.charge_steps(count):
+		return null
 	for i in range(1, count + 1):
 		var results: Array = sandbox.call_value(fn, [float(i), table.rawget(float(i))])
 		if sandbox.has_error():
 			return null
 		if not results.is_empty() and results[0] != null:
 			return results[0]
-	return null
+	return []
 
 
 func _lua_tinsert(sandbox: Object, args: Array) -> Variant:
@@ -574,22 +608,25 @@ func _lua_tinsert(sandbox: Object, args: Array) -> Variant:
 	if table is LuaValue.Err:
 		return table
 	var n := _getn(table) + 1
+	if sandbox.charge_steps(n):
+		return null
+	# luaB_tinsert:
+	#     n = lua_getn(t) + 1 ; t.n = n  (ALWAYS, never grown to pos)
+	#     v = the LAST argument, not necessarily the third
+	# Growing `n` to reach `pos` is Lua 5.0's table.insert, not 4.0's - in 4.0
+	# tinsert(t, 5, x) on an empty table leaves getn(t) == 1, with x parked at
+	# index 5 outside the counted run.
 	var position := n
-	var value: Variant = null
-	if args.size() <= 2:
-		value = _arg(args, 1)
-	else:
+	var value: Variant = _arg(args, args.size() - 1)
+	if args.size() > 2:
 		var supplied: Variant = _check_number(sandbox, args, 1, "tinsert")
 		if supplied is LuaValue.Err:
 			return supplied
-		position = int(supplied)
-		if position > n:
-			n = position
-		value = _arg(args, 2)
+		position = _to_int(supplied)
 	_setn(table, n)
-	var cursor := n
-	while cursor > position:
-		table.rawset(float(cursor), table.rawget(float(cursor - 1)))
+	var cursor := n - 1
+	while cursor >= position:
+		table.rawset(float(cursor + 1), table.rawget(float(cursor)))
 		cursor -= 1
 	table.rawset(float(position), value)
 	return []
@@ -600,14 +637,18 @@ func _lua_tremove(sandbox: Object, args: Array) -> Variant:
 	if table is LuaValue.Err:
 		return table
 	var n := _getn(table)
+	if sandbox.charge_steps(n):
+		return null
 	var position := n
 	if args.size() > 1 and args[1] != null:
 		var supplied: Variant = _check_number(sandbox, args, 1, "tremove")
 		if supplied is LuaValue.Err:
 			return supplied
-		position = int(supplied)
+		position = _to_int(supplied)
 	if n <= 0:
-		return null
+		# luaB_tremove `return 0` - no values at all, which is distinguishable
+		# from returning nil when the caller counts results.
+		return []
 	_setn(table, n - 1)
 	var removed: Variant = table.rawget(float(position))
 	var cursor := position
@@ -633,6 +674,17 @@ func _lua_sort(sandbox: Object, args: Array) -> Variant:
 		return _bad_argument(sandbox, 2, "sort", "function", comparator)
 	var count := _getn(table)
 	if count < 2:
+		return []
+	# Merge sort is O(n log n) comparisons and allocates O(n); both are paid
+	# for up front so `t.n = 1e9` cannot buy a billion-element sort for one
+	# step. (log2 is approximated by the bit length - no libm, and an
+	# over-estimate is the safe direction.)
+	var log_factor := 1
+	var span := count
+	while span > 1:
+		span >>= 1
+		log_factor += 1
+	if sandbox.charge_steps(count * log_factor):
 		return []
 	var items: Array = []
 	for i in range(1, count + 1):
@@ -716,8 +768,8 @@ func _lua_strsub(sandbox: Object, args: Array) -> Variant:
 	var raw_stop: Variant = _opt_number(sandbox, args, 2, "strsub", -1.0)
 	if raw_stop is LuaValue.Err:
 		return raw_stop
-	var start := _relative_position(int(raw_start), length)
-	var stop := _relative_position(int(raw_stop), length)
+	var start := _relative_position(_to_int(raw_start), length)
+	var stop := _relative_position(_to_int(raw_stop), length)
 	if start < 1:
 		start = 1
 	if stop > length:
@@ -748,7 +800,7 @@ func _lua_strrep(sandbox: Object, args: Array) -> Variant:
 	var count: Variant = _check_number(sandbox, args, 1, "strrep")
 	if count is LuaValue.Err:
 		return count
-	var times := int(count)
+	var times := _to_int(count)
 	if times <= 0:
 		return ""
 	var produced := String(text).length() * times
@@ -767,9 +819,12 @@ func _lua_strbyte(sandbox: Object, args: Array) -> Variant:
 	var raw_index: Variant = _opt_number(sandbox, args, 1, "strbyte", 1.0)
 	if raw_index is LuaValue.Err:
 		return raw_index
-	var index := _relative_position(int(raw_index), subject.length())
+	# str_byte: luaL_arg_check(0 < pos && pos <= l, 2, "out of range"). Lua 4.0
+	# RAISES here; returning nil is 5.1's behaviour and would turn a bad index
+	# into a silent nil that only surfaces further downstream.
+	var index := _relative_position(_to_int(raw_index), subject.length())
 	if index < 1 or index > subject.length():
-		return null
+		return sandbox.error("bad argument #2 to `strbyte' (out of range)")
 	return float(subject.unicode_at(index - 1))
 
 
@@ -779,7 +834,7 @@ func _lua_strchar(sandbox: Object, args: Array) -> Variant:
 		var code: Variant = _check_number(sandbox, args, i, "strchar")
 		if code is LuaValue.Err:
 			return code
-		out += String.chr(int(code))
+		out += String.chr(_to_int(code))
 	return out
 
 
@@ -794,12 +849,15 @@ func _lua_strfind(sandbox: Object, args: Array) -> Variant:
 	var raw_init: Variant = _opt_number(sandbox, args, 2, "strfind", 1.0)
 	if raw_init is LuaValue.Err:
 		return raw_init
-	var init := _relative_position(int(raw_init), subject.length()) - 1
-	if init < 0:
-		init = 0
-	elif init > subject.length():
-		init = subject.length()
-	var plain := LuaValue.truthy(_arg(args, 3))
+	# str_find: luaL_arg_check(0 <= init && init <= l1, 3, "out of range") -
+	# 4.0 raises rather than clamping.
+	var init := _relative_position(_to_int(raw_init), subject.length()) - 1
+	if init < 0 or init > subject.length():
+		return sandbox.error("bad argument #3 to `strfind' (out of range)")
+	# The plain search triggers on the PRESENCE of a fourth argument
+	# (lua_gettop(L) > 3), not on its truthiness - strfind(s, p, 1, nil) is a
+	# plain search in 4.0.
+	var plain := args.size() > 3
 
 	var matcher := LuaPatterns.new(sandbox.pattern_step_budget)
 	var found: Variant = matcher.find(subject, String(pattern), init, plain)
@@ -829,7 +887,7 @@ func _lua_gsub(sandbox: Object, args: Array) -> Variant:
 		var supplied: Variant = _check_number(sandbox, args, 3, "gsub")
 		if supplied is LuaValue.Err:
 			return supplied
-		max_count = int(supplied)
+		max_count = _to_int(supplied)
 
 	var replacement_string := ""
 	var replacement_function: Variant = null
@@ -849,19 +907,23 @@ func _lua_gsub(sandbox: Object, args: Array) -> Variant:
 		if abort[0] != null:
 			return ""
 		if replacement_function != null:
-			var call_args: Array = captures if not captures.is_empty() else [whole]
-			var results: Array = sandbox.call_value(replacement_function, call_args)
+			# add_s calls the replacement with EXACTLY push_captures(cap)
+			# arguments, and 4.0's push_captures pushes cap->level of them with
+			# no special case for level == 0. So a pattern with no captures
+			# calls the function with NO arguments. The implicit whole-match
+			# capture everyone expects is Lua 5.0's; in 4.0 you must write the
+			# capture yourself: gsub(s, "(%a)", f), not gsub(s, "%a", f).
+			var results: Array = sandbox.call_value(replacement_function, captures)
 			if sandbox.has_error():
 				abort[0] = sandbox.current_error()
 				return ""
-			if results.is_empty() or results[0] == null:
-				return null
-			var produced: Variant = LuaValue.coerce_to_string(results[0])
-			if produced == null:
-				abort[0] = sandbox.error("invalid replacement value (a %s)"
-					% LuaValue.type_name(results[0]))
+			# `if (lua_isstring(L,-1)) addvalue else pop` - anything that is not
+			# a string or number contributes the EMPTY STRING. It does not keep
+			# the original match (that is 5.x) and it does not raise.
+			if results.is_empty():
 				return ""
-			return produced
+			var produced: Variant = LuaValue.coerce_to_string(results[0])
+			return produced if produced != null else ""
 		return _expand_replacement(sandbox, replacement_string, whole, captures, abort)
 
 	var outcome: Variant = matcher.gsub(subject, String(pattern), max_count, applier)
@@ -874,7 +936,11 @@ func _lua_gsub(sandbox: Object, args: Array) -> Variant:
 
 ## Expands %0..%9 in a gsub replacement string. %0 is the whole match, %1..%9
 ## are captures, and %% is a literal per cent.
-func _expand_replacement(sandbox: Object, template: String, whole: String,
+## Expands %1..%9 in a gsub replacement string. NOTE there is no %0: see the
+## check_capture note below. `whole` is unused for that reason and is kept in
+## the signature only so the call site reads symmetrically with the function
+## replacement path.
+func _expand_replacement(sandbox: Object, template: String, _whole: String,
 		captures: Array, abort: Array) -> String:
 	var out := ""
 	var i := 0
@@ -893,17 +959,20 @@ func _expand_replacement(sandbox: Object, template: String, whole: String,
 			out += template.substr(i, 1)
 			i += 1
 			continue
+		# check_capture does `l -= '1'` and then requires 0 <= l < level. So
+		# %0 is INVALID in 4.0 (it becomes -1), and %1 with no captures is
+		# invalid too - Lua 4.0 has no implicit whole-match capture anywhere.
+		# %0 meaning "the whole match" arrived in Lua 5.0.
 		var index := next_char - 48
-		if index == 0:
-			out += whole
-		elif index <= captures.size():
-			var capture: Variant = captures[index - 1]
-			var as_text: Variant = LuaValue.coerce_to_string(capture)
-			out += String(as_text) if as_text != null else ""
-		else:
-			abort[0] = sandbox.error("invalid capture index %%%d in replacement string"
-				% index)
+		if index < 1 or index > captures.size():
+			abort[0] = sandbox.error(
+				"invalid capture index `%%%d' in replacement string" % index
+				+ (" (Lua 4.0.1 has no %0 whole-match reference; capture it "
+					+ "explicitly with parentheses)" if index == 0 else ""))
 			return out
+		var capture: Variant = captures[index - 1]
+		var as_text: Variant = LuaValue.coerce_to_string(capture)
+		out += String(as_text) if as_text != null else ""
 		i += 1
 	return out
 
@@ -1072,7 +1141,7 @@ func _lua_ldexp(sandbox: Object, args: Array) -> Variant:
 	if exponent is LuaValue.Err:
 		return exponent
 	var result := float(mantissa)
-	var steps := int(exponent)
+	var steps := _to_int(exponent)
 	# Repeated exact doubling/halving instead of pow(2, e): same value, no libm.
 	while steps > 0:
 		result *= 2.0
@@ -1085,6 +1154,18 @@ func _lua_ldexp(sandbox: Object, args: Array) -> Variant:
 
 ## The `pow` tag method the math library installs on the number tag. Lua 4.0's
 ## core never computes '^' itself, so this IS exponentiation for the VM.
+##
+## DETERMINISM: integer exponents are evaluated by binary exponentiation over
+## IEEE multiplies rather than handed to libm. pow() is not required to be
+## correctly rounded and implementations differ in the last ulp, and '^' is a
+## core operator that retail gameplay math uses directly - a one-ulp
+## disagreement between two peers is a desync, not a rounding curiosity.
+## Multiplication IS exactly specified, so the integer path is bit-identical
+## everywhere. Non-integer exponents still go to libm; see the caveat at the
+## top of this file.
+const POW_INTEGER_LIMIT := 4096
+
+
 func _lua_pow(sandbox: Object, args: Array) -> Variant:
 	var base: Variant = LuaValue.coerce_to_number(_arg(args, 0))
 	var exponent: Variant = LuaValue.coerce_to_number(_arg(args, 1))
@@ -1092,7 +1173,29 @@ func _lua_pow(sandbox: Object, args: Array) -> Variant:
 		var offender: Variant = _arg(args, 0) if base == null else _arg(args, 1)
 		return sandbox.error("attempt to perform arithmetic on a %s value in `^'"
 			% LuaValue.type_name(offender))
-	return pow(float(base), float(exponent))
+	var b := float(base)
+	var e := float(exponent)
+	if e == floorf(e) and absf(e) <= float(POW_INTEGER_LIMIT):
+		return _integer_power(b, int(e))
+	return pow(b, e)
+
+
+## Binary exponentiation. Deterministic by construction: only IEEE multiplies
+## and one divide, both exactly specified.
+static func _integer_power(base: float, exponent: int) -> float:
+	if exponent == 0:
+		return 1.0
+	var negative := exponent < 0
+	var remaining: int = absi(exponent)
+	var result := 1.0
+	var factor := base
+	while remaining > 0:
+		if remaining & 1 == 1:
+			result *= factor
+		remaining >>= 1
+		if remaining > 0:
+			factor *= factor
+	return 1.0 / result if negative else result
 
 
 func _lua_random(sandbox: Object, args: Array) -> Variant:
@@ -1119,5 +1222,5 @@ func _lua_randomseed(sandbox: Object, args: Array) -> Variant:
 	var seed_value: Variant = _check_number(sandbox, args, 0, "randomseed")
 	if seed_value is LuaValue.Err:
 		return seed_value
-	sandbox.seed_random(int(seed_value))
+	sandbox.seed_random(_to_int(seed_value))
 	return []

@@ -212,6 +212,7 @@ func new_table() -> LuaTable:
 ## Compiles without running. Returns a result record whose "closure" holds a
 ## reusable LuaValue.Closure on success.
 func compile(source: String, chunk_name: String = "") -> Dictionary:
+	_sync_limits()
 	var chunk := chunk_name if chunk_name != "" else name
 	var parser := LuaParser.new(chunk)
 	var proto: Variant = parser.parse(source)
@@ -236,6 +237,7 @@ func do_string(source: String, chunk_name: String = "") -> Dictionary:
 
 ## Runs an already-compiled closure with a fresh step budget.
 func call_closure(closure: LuaValue.Closure, args: Array = []) -> Dictionary:
+	_sync_limits()
 	var converted: Array = []
 	for value in args:
 		converted.append(LuaValue.from_host(value))
@@ -248,6 +250,7 @@ func call_closure(closure: LuaValue.Closure, args: Array = []) -> Dictionary:
 ## Calls a global script function by name, with a fresh step budget. This is
 ## the host->script direction: event hooks, map triggers, object callbacks.
 func call_function(function_name: String, args: Array = []) -> Dictionary:
+	_sync_limits()
 	var target: Variant = _globals.rawget(function_name)
 	if not LuaValue.is_callable_value(target):
 		var err := LuaValue.Err.new(LuaValue.Err.KIND_RUNTIME,
@@ -316,6 +319,35 @@ func new_tag() -> int:
 ## Calls a Lua value during an active run. Used by foreach, sort and gsub.
 func call_value(fn: Variant, args: Array) -> Array:
 	return _interp.call_value(fn, args)
+
+
+## Charges `count` steps for host-side work the script asked for, returning
+## true when the budget is spent and the caller should abandon the operation.
+##
+## A registered host function that loops over a script-supplied size MUST call
+## this before the loop. Otherwise the work is invisible to the leash: the
+## script pays one step for `t.n = 1e9` and the host pays a billion iterations.
+func charge_steps(count: int) -> bool:
+	return _interp.charge_steps(count)
+
+
+## Validates a table key on behalf of host code (rawset and friends). Returns
+## true when the key was rejected and an error is already pending.
+func reject_bad_key(key: Variant) -> bool:
+	return _interp.reject_bad_key(key, 0)
+
+
+## True while a script is executing in this sandbox. A host function can use it
+## to tell whether it was called from script or directly by the host.
+func is_running() -> bool:
+	return _interp.is_running()
+
+
+## Pushes host-tunable limits into the interpreter. Called at every entry point
+## because they are plain ints, so the interpreter cannot share them by
+## reference the way it shares globals and tag methods.
+func _sync_limits() -> void:
+	_interp.max_string_length = max_string_length
 
 
 ## Protected variant used by call(f, args, "x") and dostring.

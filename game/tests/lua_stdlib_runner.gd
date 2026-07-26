@@ -28,6 +28,7 @@ func _run() -> void:
 	_test_deterministic_iteration()
 	_test_math_library()
 	_test_random()
+	_test_review_regressions()
 	_finish()
 
 
@@ -101,7 +102,9 @@ func _test_basic_library() -> void:
 	_check_number("tonumber_trims_whitespace", "tonumber('  7  ')", 7.0)
 	_check_number("tonumber_float", "tonumber('3.5')", 3.5)
 	_check_number("tonumber_exponent", "tonumber('2e3')", 2000.0)
-	_check_number("tonumber_hex", "tonumber('0x1F')", 31.0)
+	# read_numeral has no 0x path and tonumber leans on C89 strtod, so hex is
+	# simply not a number in 4.0.1. Hex literals arrived in Lua 5.1.
+	_check_nil("tonumber_rejects_hex", "tonumber('0x1F')")
 	_check_number("tonumber_with_base", "tonumber('ff', 16)", 255.0)
 	_check_number("tonumber_binary_base", "tonumber('1011', 2)", 11.0)
 	_check_nil("tonumber_rejects_words", "tonumber('hello')")
@@ -150,7 +153,10 @@ func _test_string_library() -> void:
 	_check_string("strrep_zero_is_empty", "strrep('ab', 0)", "")
 	_check_number("strbyte_default_index", "strbyte('A')", 65.0)
 	_check_number("strbyte_at_index", "strbyte('ABC', 3)", 67.0)
-	_check_nil("strbyte_out_of_range", "strbyte('ABC', 9)")
+	# str_byte: luaL_arg_check(0 < pos && pos <= l, 2, "out of range"). 4.0
+	# RAISES; returning nil is 5.1's behaviour.
+	_check_refused("strbyte_out_of_range_raises", "return strbyte('ABC', 9)",
+		"out of range")
 	_check_string("strchar", "strchar(72, 105)", "Hi")
 	_check_string("strchar_of_nothing", "strchar()", "")
 
@@ -208,13 +214,35 @@ func _test_patterns() -> void:
 	_check_string("gsub_respects_max_count", "gsub('aaaa', 'a', 'b', 2)", "bbaa")
 	_check_string("gsub_capture_reference",
 		"gsub('hello world', '(%w+)', '<%1>')", "<hello> <world>")
-	_check_string("gsub_whole_match_reference",
-		"gsub('abc', '%a', '[%0]')", "[a][b][c]")
+	# check_capture does `l -= '1'` then requires 0 <= l < level, so %0 is
+	# invalid in 4.0 and %1 is invalid when the pattern captured nothing. Lua
+	# 4.0 has no implicit whole-match capture; %0 arrived in 5.0.
+	_check_refused("gsub_percent_zero_is_invalid",
+		"return gsub('abc', '%a', '[%0]')", "invalid capture index")
+	_check_refused("gsub_capture_reference_without_a_capture_is_invalid",
+		"return gsub('abc', '%a', '[%1]')", "invalid capture index")
+	_check_string("gsub_capture_reference_needs_an_explicit_capture",
+		"gsub('abc', '(%a)', '[%1]')", "[a][b][c]")
 	_check_string("gsub_escaped_percent", "gsub('a', 'a', '100%%')", "100%")
-	_check_string("gsub_function_replacement",
-		"gsub('abc', '%a', function(c) return strupper(c) end)", "ABC")
-	_check_string("gsub_function_returning_nil_keeps_the_match",
-		"gsub('abc', '%a', function(c) if c == 'b' then return 'B' end end)", "aBc")
+	# add_s calls the replacement with push_captures(cap) arguments, and 4.0's
+	# push_captures pushes cap->level with NO level==0 special case. A pattern
+	# without captures therefore calls the function with NO arguments - the
+	# implicit whole-match argument is Lua 5.0's.
+	_check_string("gsub_function_replacement_needs_an_explicit_capture",
+		"gsub('abc', '(%a)', function(c) return strupper(c) end)", "ABC")
+	_check_number("gsub_function_gets_no_argument_without_a_capture",
+		"n = 0 gsub('abc', '%a', function(c) if c == nil then n = n + 1 end return '' end) return n",
+		3.0)
+	# `if (lua_isstring(L,-1)) addvalue else pop` - a non-string result (nil
+	# included) contributes the EMPTY STRING. Keeping the original match is
+	# 5.x behaviour, and would have hidden a deletion bug here.
+	_check_string("gsub_function_returning_nil_yields_the_empty_string",
+		"gsub('abc', '(%a)', function(c) if c == 'b' then return 'B' end end)", "B")
+	_check_string("gsub_function_returning_a_table_yields_the_empty_string",
+		"gsub('abc', '(%a)', function(c) if c == 'b' then return 'B' end return {} end)",
+		"B")
+	_check_string("gsub_function_returning_a_number_is_coerced",
+		"gsub('ab', '(%a)', function(c) return 7 end)", "77")
 	_check_string("gsub_empty_pattern_inserts_between",
 		"gsub('abc', '', '-')", "-a-b-c-")
 	_check_string("gsub_balanced", "gsub('f(a(b))g', '%b()', 'X')", "fXg")
@@ -300,8 +328,13 @@ func _test_table_library() -> void:
 		"local t = {} tinsert(t, 1) return t.n", 1.0)
 	_check_string("tinsert_at_a_position_shifts_up",
 		"local t = {'a', 'b'} tinsert(t, 1, 'z') return t[1] .. t[2] .. t[3]", "zab")
-	_check_number("tinsert_beyond_the_end_grows",
-		"local t = {} tinsert(t, 5, 'x') return getn(t)", 5.0)
+	# luaB_tinsert always sets t.n = getn(t) + 1 and never grows it to reach
+	# `pos`. Growing n is Lua 5.0's table.insert; in 4.0 the value lands at
+	# index 5 but the counted run is still 1.
+	_check_number("tinsert_beyond_the_end_does_not_grow_n",
+		"local t = {} tinsert(t, 5, 'x') return getn(t)", 1.0)
+	_check_string("tinsert_beyond_the_end_still_stores_the_value",
+		"local t = {} tinsert(t, 5, 'x') return t[5]", "x")
 
 	_check_string("tremove_returns_the_last", "local t = {'a', 'b'} return tremove(t)", "b")
 	_check_number("tremove_shrinks_n",
@@ -533,6 +566,80 @@ func _test_random() -> void:
 	""", 1.0)
 	_check_refused("random_rejects_an_empty_interval", "return random(5, 1)",
 		"interval is empty")
+
+
+# --- review regressions: determinism and remaining 4.0 fidelity -------------
+##
+## Expected values come from the lua-4.0.1 reference (named C function or the
+## manual), never from observing this implementation.
+
+func _test_review_regressions() -> void:
+	# '^' with an INTEGER exponent must not go through libm. pow() is not
+	# required to be correctly rounded and implementations differ by an ulp,
+	# and '^' is a core operator gameplay math reaches - a one-ulp
+	# disagreement between two peers is a desync. Binary exponentiation over
+	# IEEE multiplies is exact for these, so exact equality is the assertion.
+	_check_number("integer_power_is_exact", "2 ^ 10", 1024.0)
+	_check_number("large_integer_power_is_exact", "10 ^ 15", 1.0e15)
+	_check_number("negative_base_integer_power", "(0 - 2) ^ 3", -8.0)
+	_check_number("negative_integer_exponent", "2 ^ (0 - 2)", 0.25)
+	_check_number("zero_exponent_is_one", "7 ^ 0", 1.0)
+	_check_string("integer_power_has_no_rounding_dust",
+		"return format('%.17g', 10 ^ 15)", "1000000000000000")
+	# Fractional exponents still work (they do go to libm; see the caveat in
+	# lua_stdlib.gd).
+	_check_number("fractional_power_still_works", "9 ^ 0.5", 3.0)
+
+	# Out-of-range double->int is UNDEFINED in C and the hardware disagrees:
+	# x86_64 returns INT64_MIN for every overflow, ARM64 saturates. Saturating
+	# explicitly makes the answer a property of this VM, not of the CPU.
+	_check_string("huge_positive_converts_by_saturating",
+		"return format('%d', 1e30)", "9223372036854775807")
+	_check_string("huge_negative_converts_by_saturating",
+		"return format('%d', -1e30)", "-9223372036854775808")
+	_check_string("nan_converts_to_zero", "return format('%d', 0/0)", "0")
+	_check_number("huge_index_does_not_crash_strsub",
+		"return strlen(strsub('abc', 1e30))", 0.0)
+
+	# luaB_call: `lua_error(L, "deprecated option `p' in `call'")`. Packing
+	# results into a table was removed in 4.0.
+	_check_refused("call_rejects_the_deprecated_p_option",
+		"return call(function() return 1 end, {}, 'p')", "deprecated option")
+	_check_number("call_without_options_still_returns_results",
+		"return call(function() return 42 end, {})", 42.0)
+
+	# passresults(): on failure dostring pushes nil AND an error-name string,
+	# so a 4.0 script can tell a syntax error from a run-time one.
+	_check_string("dostring_failure_reports_an_error_kind",
+		"local ok, kind = dostring('this is not lua') return kind", "syntax error")
+	_check_string("dostring_runtime_failure_reports_its_kind",
+		"local ok, kind = dostring('error(\"boom\")') return kind", "run-time error")
+	_check_nil("dostring_failure_first_value_is_nil",
+		"local ok, kind = dostring('this is not lua') return ok")
+	# ...and on success with no results it pushes a truthy sentinel, so
+	# `if dostring(s) then` separates the two.
+	_check_string("dostring_success_without_results_is_truthy",
+		"local r = dostring('local x = 1') return type(r)", "userdata")
+
+	# str_find: the plain search triggers on the PRESENCE of a fourth argument
+	# (lua_gettop(L) > 3), not on its truthiness.
+	_check_number("strfind_plain_triggers_on_a_present_nil_fourth_argument",
+		"return strfind('a.c', '.', 1, nil)", 2.0)
+	_check_number("strfind_without_a_fourth_argument_is_a_pattern",
+		"return strfind('a.c', '.', 1)", 1.0)
+	# ...and an out-of-range init raises rather than clamping.
+	_check_refused("strfind_init_out_of_range_raises",
+		"return strfind('abc', 'a', 99)", "out of range")
+
+	# getn honours `n`, so tinsert/tremove keep it consistent the 4.0 way.
+	_check_number("tremove_on_an_empty_table_returns_no_values",
+		"local t = {} local a, b = tremove(t), 5 return b", 5.0)
+	_check_number("tinsert_sets_n_to_getn_plus_one",
+		"local t = {'a', 'b'} tinsert(t, 1, 'z') return t.n", 3.0)
+
+	# foreach/foreachi return NO values when the traversal completes.
+	_check_number("foreach_returns_no_values_when_it_completes",
+		"local t = {1} local a, b = foreach(t, function() end), 9 return b", 9.0)
 
 
 func _finish() -> void:

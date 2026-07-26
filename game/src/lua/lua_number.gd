@@ -295,11 +295,30 @@ static func to_lua_string(value: float) -> String:
 	return format_general(value, TOSTRING_PRECISION, false)
 
 
-## printf "%d" / "%i" - C truncates toward zero when converting a double to int.
+## Largest/smallest int64. Written as expressions rather than literals because
+## 9223372036854775808 does not fit a signed 64-bit literal.
+const INT64_MAX := 9223372036854775807
+const INT64_MIN := -9223372036854775807 - 1
+
+## Truncates a Lua number toward zero into a GDScript int, CLAMPING first.
+##
+## The clamp is not defensive tidiness, it is a determinism requirement. In C,
+## converting a double whose value is outside the integer range is UNDEFINED
+## behaviour, and the hardware disagrees about it: x86_64's cvttsd2si returns
+## INT64_MIN ("integer indefinite") for every out-of-range input including
+## +1e30, while ARM64's fcvtzs SATURATES to INT64_MAX. Two peers of a lockstep
+## match on different CPUs would therefore disagree about format("%d", 1e30),
+## and any script arithmetic derived from it. Saturating explicitly makes the
+## result a property of this VM instead of a property of the machine.
 static func to_c_int(value: float) -> int:
-	if is_nan(value) or is_inf(value):
+	if is_nan(value):
 		return 0
-	# int() on a float truncates toward zero, which is C's double->int rule.
+	# 9223372036854775807.0 rounds to 2^63 as a double, so >= is the correct
+	# test for "at or beyond the positive limit".
+	if value >= 9223372036854775807.0:
+		return INT64_MAX
+	if value <= -9223372036854775808.0:
+		return INT64_MIN
 	return int(value)
 
 
@@ -329,22 +348,11 @@ static func parse(text: String, base: int = 10) -> Variant:
 				return null
 			acc = acc * float(base) + float(digit)
 		return -acc if negative else acc
-	var lower := trimmed.to_lower()
-	var hex_body := lower
-	var hex_negative := false
-	if hex_body.begins_with("-"):
-		hex_negative = true
-		hex_body = hex_body.substr(1)
-	elif hex_body.begins_with("+"):
-		hex_body = hex_body.substr(1)
-	if hex_body.begins_with("0x") and hex_body.length() > 2:
-		var value := 0.0
-		for i in range(2, hex_body.length()):
-			var digit := _digit_value(hex_body.unicode_at(i))
-			if digit < 0 or digit >= 16:
-				return null
-			value = value * 16.0 + float(digit)
-		return -value if hex_negative else value
+	# NO hex path. Lua 4.0.1's lexer (llex.c read_numeral) reads only decimal
+	# digits with an optional fraction and exponent, and its tonumber relies on
+	# C89 strtod, which predates hex float parsing. "0x1F" is therefore not a
+	# number in 4.0.1 and tonumber returns nil for it - hex literals arrived in
+	# Lua 5.1.
 	if not trimmed.is_valid_float():
 		return null
 	return trimmed.to_float()

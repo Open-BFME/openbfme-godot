@@ -89,7 +89,10 @@ static func format(spec: String, args: Array, tostring_fn: Callable) -> Dictiona
 				var whole := LuaNumber.to_c_int(float(value))
 				if whole < 0:
 					sign = "-"
-				body = str(absi(whole))
+				# NOT absi(): |INT64_MIN| is not representable, so absi leaves
+				# it negative and str() then emits a second '-'. Stripping the
+				# sign from the decimal text is exact at every magnitude.
+				body = str(whole).trim_prefix("-")
 				if precision >= 0:
 					body = _pad_left_zeros(body, precision)
 			"o", "x", "X":
@@ -98,9 +101,11 @@ static func format(spec: String, args: Array, tostring_fn: Callable) -> Dictiona
 					return _error(_number_error(arg_index, argument))
 				var base_int := LuaNumber.to_c_int(float(value_base))
 				var base := 8 if conversion == "o" else 16
-				body = _to_base(absi(base_int), base, conversion == "X")
 				if base_int < 0:
 					sign = "-"
+				# Same INT64_MIN trap as %d: build the magnitude by halving
+				# once rather than negating a value that cannot be negated.
+				body = _to_base_magnitude(base_int, base, conversion == "X")
 				if precision >= 0:
 					body = _pad_left_zeros(body, precision)
 				if flags["hash"] and base_int != 0:
@@ -193,6 +198,19 @@ static func _pad_left_zeros(body: String, precision: int) -> String:
 	if body.length() >= precision:
 		return body
 	return "0".repeat(precision - body.length()) + body
+
+
+## Renders |value| in `base`. Handles INT64_MIN, whose magnitude does not fit
+## a signed 64-bit int, by peeling one digit off before negating.
+static func _to_base_magnitude(value: int, base: int, upper: bool) -> String:
+	if value >= 0:
+		return _to_base(value, base, upper)
+	if value > LuaNumber.INT64_MIN:
+		return _to_base(-value, base, upper)
+	var last: int = -(value % base)
+	var rest: int = -(value / base)
+	var digits := "0123456789ABCDEF" if upper else "0123456789abcdef"
+	return _to_base(rest, base, upper) + digits.substr(last, 1)
 
 
 static func _to_base(value: int, base: int, upper: bool) -> String:

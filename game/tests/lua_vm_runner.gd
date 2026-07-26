@@ -32,6 +32,7 @@ func _run() -> void:
 	_test_tag_methods()
 	_test_error_model()
 	_test_loud_refusals()
+	_test_review_regressions()
 	_finish()
 
 
@@ -129,7 +130,10 @@ func _test_literals_and_coercion() -> void:
 	_check_string("escape_sequences", "\"a\\tb\\nc\"", "a\tb\nc")
 	_check_string("decimal_escape", "\"\\65\\66\"", "AB")
 	_check_string("long_string", "[[raw \\n not an escape]]", "raw \\n not an escape")
-	_check_string("long_string_drops_first_newline", "[[\nline]]", "line")
+	# 4.0 KEEPS a newline that immediately follows [[ - see the
+	# long_string_keeps_the_leading_newline regression below for the source
+	# citation. Dropping it is Lua 5.0's rule.
+	_check_string("long_string_keeps_first_newline", "[[\nline]]", "\nline")
 	_check_string("nested_long_string", "[[a [[b]] c]]", "a [[b]] c")
 	_check_nil("nil_literal", "nil")
 
@@ -216,8 +220,20 @@ func _test_control_flow() -> void:
 		"local s = 0 local i = 1 while i <= 10 do s = s + i i = i + 1 end return s", 55.0)
 	_check_number("repeat_until_runs_at_least_once",
 		"local n = 0 repeat n = n + 1 until n >= 3 return n", 3.0)
-	_check_number("repeat_condition_sees_body_locals",
-		"local n = 0 repeat local done = n >= 2 n = n + 1 until done return n", 3.0)
+	# lparser.c repeatstat: block(ls) then cond(ls, &v). block() runs
+	# removelocalvars() on the way out, so the until-expression is compiled
+	# AFTER the body's locals have left scope and `done` resolves to the global
+	# (nil) - the loop never ends on its own. Lua 5.1 moved the condition
+	# inside the body scope; asserting the 5.1 reading here would have made a
+	# script that hangs on retail look correct.
+	_check("repeat_condition_cannot_see_body_locals",
+		String(_value("local n = 0 repeat local done = 1 n = n + 1 until done return n"))
+			.contains("LUA_STEP_BUDGET_EXCEEDED"),
+		"a body local must not satisfy the until-condition")
+	# Reading a GLOBAL of the same name does terminate it, which is how 4.0
+	# code has to be written.
+	_check_number("repeat_condition_reads_a_global",
+		"n = 0 repeat done = n >= 2 n = n + 1 until done return n", 3.0)
 	_check_number("numeric_for", "local s = 0 for i = 1, 5 do s = s + i end return s", 15.0)
 	_check_number("numeric_for_with_step",
 		"local s = 0 for i = 1, 10, 3 do s = s + i end return s", 22.0)
@@ -387,8 +403,18 @@ func _test_tables() -> void:
 	_check_number("semicolon_separated_sections",
 		"local t = {1, 2; x = 3} return t[1] + t[2] + t.x", 6.0)
 	_check_number("empty_constructor", "local t = {} return 1", 1.0)
-	_check_number("constructor_expands_last_call",
-		"function two() return 8, 9 end local t = {two()} return t[2]", 9.0)
+	# listfields reaches every element through exp1(), i.e. luaK_tostack(..., 1),
+	# so the last positional field is closed to ONE value. Multret inside a
+	# constructor is Lua 5.0.
+	_check_number("constructor_closes_last_call_to_one_value",
+		"function two() return 8, 9 end local t = {two()} return t[1]", 8.0)
+	_check_nil("constructor_does_not_expand_multiple_returns",
+		"function two() return 8, 9 end local t = {two()} return t[2]")
+	# Call arguments and return statements DO still expand - the restriction is
+	# specific to constructors.
+	_check_number("call_arguments_still_expand",
+		"function two() return 8, 9 end function add(a, b) return a + b end return add(two())",
+		17.0)
 	_check_number("nested_tables", "local t = {a = {b = {c = 4}}} return t.a.b.c", 4.0)
 	_check_number("assignment_creates_fields",
 		"local t = {} t.x = 1 t['y'] = 2 t[3] = 3 return t.x + t.y + t[3]", 6.0)
@@ -552,8 +578,12 @@ func _test_error_model() -> void:
 			and String(bare_assert["error"]).contains("assertion failed"),
 		String(bare_assert["error"]))
 
-	_check_number("assert_passes_its_value_through",
-		"return assert(7)", 7.0)
+	# luaB_assert `return 0`: Lua 4.0's assert yields NOTHING on success. The
+	# `local x = assert(f())` pass-through idiom is 5.0's assert and silently
+	# produces nil here.
+	_check_nil("assert_returns_no_values_on_success", "return assert(7)")
+	_check_number("assert_still_lets_execution_continue",
+		"assert(1) return 5", 5.0)
 
 	# A protected call contains the error and lets the script keep going.
 	_check_number("protected_call_contains_an_error", """
@@ -643,6 +673,105 @@ func _test_loud_refusals() -> void:
 		"no boolean type")
 	_check_refused("false_is_not_a_keyword", "return false", "no boolean type")
 
+
+# --- review regressions: one test per source-verified finding ----------------
+##
+## Every expected value below is derived from the lua-4.0.1 REFERENCE (the
+## manual, or the named C function in the 4.0.1 sources), never from running
+## this VM and recording what it did. Several of these findings - repeat-until
+## scope, {f()} multret, the unm argument list - are exactly the kind a test
+## written against the implementation would have confirmed rather than caught.
+
+func _test_review_regressions() -> void:
+	# ltm/lvm: a table consults `gettable`/`settable` only when it carries a
+	# NON-DEFAULT tag that has the method. luaV_gettable takes the raw path
+	# when (htag == LUA_TTABLE || gettm(GETTABLE) == NULL).
+	_check_number("gettable_tag_method_fires_on_a_custom_tagged_table", """
+		local mytag = newtag()
+		settagmethod(mytag, 'gettable', function(t, k) return 55 end)
+		local t = {}
+		settag(t, mytag)
+		t.present = 1
+		return t.present
+	""", 55.0)
+	_check_number("settable_tag_method_fires_on_a_custom_tagged_table", """
+		seen = nil
+		local mytag = newtag()
+		settagmethod(mytag, 'settable', function(t, k, v) seen = k .. '=' .. v end)
+		local t = {}
+		settag(t, mytag)
+		t.hp = 7
+		if rawget(t, 'hp') then return -1 end
+		if seen == 'hp=7' then return 1 end
+		return 0
+	""", 1.0)
+	# ...and a DEFAULT-tagged table never fires it, however the method is set.
+	_check_number("gettable_tag_method_does_not_fire_on_a_plain_table", """
+		settagmethod(tag({}), 'gettable', function(t, k) return 55 end)
+		local t = {}
+		t.present = 1
+		return t.present
+	""", 1.0)
+
+	# The 4.0 manual's unm_event pseudo-code is tm(op, nil, "unm"): operand,
+	# NIL, event name. Passing (op, op) looks harmless until a tag method
+	# inspects its second argument.
+	_check_string("unm_tag_method_receives_operand_nil_and_event", """
+		local mytag = newtag()
+		settagmethod(mytag, 'unm', function(a, b, event)
+			if b then return 'second-arg-not-nil' end
+			return event
+		end)
+		local x = {} settag(x, mytag)
+		return -x
+	""", "unm")
+	# Arithmetic events DO get the event name as a third argument.
+	_check_string("arithmetic_tag_method_receives_the_event_name", """
+		local mytag = newtag()
+		settagmethod(mytag, 'add', function(a, b, event) return event end)
+		local x = {} settag(x, mytag)
+		return x + x
+	""", "add")
+
+	# llex.c read_long_string switches on each character and its '\n' case does
+	# save(L, '\n', l) - the newline right after [[ is KEPT. The skip is Lua
+	# 5.0's (it added an explicit inclinenumber before the loop).
+	_check_number("long_string_keeps_the_leading_newline",
+		"return strlen([[\nab]])", 3.0)
+	_check_string("long_string_leading_newline_is_the_first_character",
+		"return strsub([[\nab]], 1, 1)", "\n")
+
+	# read_string's `default: save_and_next(...)` takes an unrecognised escape
+	# literally - the backslash is dropped and the character kept.
+	_check_string("unknown_escape_is_taken_literally", "return \"a\\qb\"", "aqb")
+	_check_string("escaped_percent_is_just_a_percent", "return \"100\\%\"", "100%")
+	# \x and \z stay refused on purpose: their 4.0 reading ("x41", "z") is
+	# silently wrong rather than merely different.
+	_check_refused("hex_escape_stays_refused", "return \"\\x41\"", "hex escapes")
+
+	# read_numeral has no 0x branch; hex literals are Lua 5.1.
+	_check_refused("hex_literal_is_refused", "return 0x1F",
+		"hexadecimal literals", "unsupported")
+
+	# The NaN guard must hold on EVERY write path, not just assignment.
+	_check_refused("nan_key_refused_in_a_constructor",
+		"local t = {[0/0] = 1}", "NaN")
+	_check_refused("nan_key_refused_through_rawset",
+		"rawset({}, 0/0, 1)", "NaN")
+	_check_refused("nil_key_refused_through_rawset",
+		"rawset({}, nil, 1)", "index is nil")
+
+	# Concatenation is the cheapest memory bomb in the language; the cap is
+	# checked before allocating.
+	var bomb := LuaSandbox.new("bomb")
+	bomb.max_string_length = 4096
+	var bombed := bomb.do_string(
+		"local s = 'x' for i = 1, 60 do s = s .. s end return strlen(s)", "bomb")
+	_check("runaway_concatenation_is_stopped",
+		not bool(bombed["ok"]) and String(bombed["error"]).contains("character limit"),
+		String(bombed["error"]))
+	_check_number("ordinary_concatenation_still_works",
+		"return strlen('abc' .. 'de')", 5.0)
 
 func _finish() -> void:
 	print("LUA_VM_RESULT passed=%d failed=%d" % [passed, failed])

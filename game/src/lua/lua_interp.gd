@@ -59,6 +59,10 @@ class Frame extends RefCounted:
 var globals: LuaTable = null
 var tag_methods: Dictionary = {}
 
+## Ceiling on any single string this VM will build. Set by the sandbox; 0
+## disables the check.
+var max_string_length: int = 1 << 20
+
 ## WEAK reference to the owning LuaSandbox.
 ##
 ## It has to be weak. The sandbox owns this interpreter, so a strong pointer
@@ -92,7 +96,24 @@ func _box() -> Object:
 # --- public entry points -----------------------------------------------------
 
 ## Runs a callable with a FRESH budget. Returns {"ok", "values", "error"}.
+##
+## RE-ENTRANCY. A host function invoked BY a script may legitimately want to
+## run more script (an "execute script" game action is the obvious case), and
+## it reaches that through the same public sandbox methods that land here. If
+## this always reset the leash it would (a) clear _frames out from under the
+## call that is still unwinding, and (b) hand every nesting level a brand new
+## budget - so a script could loop "call a host action that runs a script" and
+## never exhaust anything. Nested entry therefore SHARES the running budget and
+## preserves the frame stack; only a top-level entry resets. The nested call is
+## still protected, so an inner failure is reported rather than tearing down
+## the outer run.
 func run(fn: Variant, args: Array, budget: int, max_depth: int) -> Dictionary:
+	if not _frames.is_empty():
+		var nested := call_protected(fn, args)
+		return {
+			"ok": nested["ok"], "values": nested["values"],
+			"error": nested["error"], "steps": _steps,
+		}
 	_error = null
 	_steps = 0
 	_step_budget = budget
@@ -102,6 +123,28 @@ func run(fn: Variant, args: Array, budget: int, max_depth: int) -> Dictionary:
 	if _error != null:
 		return {"ok": false, "values": [], "error": _error, "steps": _steps}
 	return {"ok": true, "values": values, "error": null, "steps": _steps}
+
+
+## True while a script is executing, so the sandbox can tell a top-level entry
+## from a re-entrant one.
+func is_running() -> bool:
+	return not _frames.is_empty()
+
+
+## Charges `count` steps for work a HOST function is about to do on the
+## script's behalf, and reports whether the budget is now spent.
+##
+## This closes the loophole where O(n) work costs O(1) steps. `t.n = 1e9` is
+## one step, but it makes getn() report a billion, and tremove/tinsert/sort/
+## call then run billion-iteration loops entirely inside GDScript where the
+## per-node budget never sees them - a script could stall a lockstep tick
+## without ever exceeding its step count. Charging BEFORE the loop means the
+## error fires instead of the work happening.
+func charge_steps(count: int, line: int = 0) -> bool:
+	if count <= 0:
+		return _failed()
+	_steps += count - 1
+	return _charge(line)
 
 
 ## Calls a value and CATCHES any error it raises, leaving the budget and the
@@ -331,11 +374,20 @@ func _call_tag_method(handler: Variant, args: Array, line: int) -> Variant:
 
 func _gettable(obj: Variant, key: Variant, line: int) -> Variant:
 	if obj is LuaTable:
+		# lvm.c luaV_gettable takes the raw path when
+		#     ttype(t) == LUA_TTABLE && (htag == LUA_TTABLE || gettm(GETTABLE) == NULL)
+		# so a table with the DEFAULT tag never fires `gettable`, but one given
+		# a custom tag that has the method does - and then `index` is not
+		# consulted at all.
+		var custom_handler: Variant = null
+		if obj.tag != LuaValue.TAG_TABLE:
+			custom_handler = _tag_method_for(obj, "gettable")
+		if custom_handler != null:
+			return _call_tag_method(custom_handler, [obj, key], line)
 		var value: Variant = obj.rawget(key)
 		if value != null:
 			return value
-		# Only a MISS consults `index`; a present field never does. (Tables use
-		# `index`, not `gettable` - see the 4.0 manual's event list.)
+		# Only a MISS consults `index`; a present field never does.
 		var index_handler: Variant = _tag_method_for(obj, "index")
 		if index_handler != null:
 			return _call_tag_method(index_handler, [obj, key], line)
@@ -350,16 +402,39 @@ func _gettable(obj: Variant, key: Variant, line: int) -> Variant:
 	return null
 
 
+## The ONE place a table key is validated. Every write path - assignment,
+## table constructor and rawset - routes through it, because a guard that only
+## one of the three consults is not a guard: t[0/0] would be refused by
+## `t[k] = v` and quietly accepted by `{[0/0] = v}` and `rawset`.
+## Returns true when the key is bad and an error has been raised.
+func reject_bad_key(key: Variant, line: int) -> bool:
+	if key == null:
+		_raise("table index is nil", line)
+		return true
+	if key is float and is_nan(key):
+		_raise("table index is NaN: NaN never equals itself, so the entry "
+			+ "could never be read back - Lua 4.0 permitted this, this VM "
+			+ "refuses it because a silently unreachable field is a defect",
+			line, LuaValue.Err.KIND_UNSUPPORTED)
+		return true
+	return false
+
+
 func _settable(obj: Variant, key: Variant, value: Variant, line: int) -> void:
+	# A table consults `settable` only when it carries a NON-DEFAULT tag that
+	# actually has the method - lvm.c luaV_settable tests
+	#     ttype(t) == LUA_TTABLE && (htag == LUA_TTABLE || gettm(SETTABLE) == NULL)
+	# for the raw path. A plain {} therefore never fires it, but a settag'd
+	# table does. Getting this wrong made settagmethod(tag, "settable") a
+	# silent no-op even though settagmethod accepted the registration.
 	if obj is LuaTable:
-		if key == null:
-			_raise("table index is nil", line)
+		var custom_handler: Variant = null
+		if obj.tag != LuaValue.TAG_TABLE:
+			custom_handler = _tag_method_for(obj, "settable")
+		if custom_handler != null:
+			call_value(custom_handler, [obj, key, value], line)
 			return
-		if key is float and is_nan(key):
-			_raise("table index is NaN: NaN never equals itself, so the entry "
-				+ "could never be read back - Lua 4.0 permitted this, this VM "
-				+ "refuses it because a silently unreachable field is a defect",
-				line, LuaValue.Err.KIND_UNSUPPORTED)
+		if reject_bad_key(key, line):
 			return
 		obj.rawset(key, value)
 		return
@@ -432,7 +507,10 @@ func _negate(value: Variant, line: int) -> Variant:
 		return -float(number)
 	var handler: Variant = _tag_method_for(value, "unm")
 	if handler != null:
-		return _call_tag_method(handler, [value, value], line)
+		# The 4.0 manual's unm_event pseudo-code is tm(op, nil, "unm") - the
+		# operand, then NIL, then the event name. Passing (op, op) instead
+		# looks harmless until a tag method inspects its second argument.
+		return _call_tag_method(handler, [value, null, "unm"], line)
 	_raise("attempt to perform arithmetic on a %s value"
 		% LuaValue.type_name(value), line)
 	return null
@@ -442,6 +520,17 @@ func _concat(a: Variant, b: Variant, line: int) -> Variant:
 	var sa: Variant = LuaValue.coerce_to_string(a)
 	var sb: Variant = LuaValue.coerce_to_string(b)
 	if sa != null and sb != null:
+		# Concatenation is the cheapest memory bomb in the language: `s = s..s`
+		# doubles per statement, so about forty statements - forty steps, well
+		# inside any budget - reaches terabyte scale and takes the host down
+		# with an allocation failure the VM cannot contain. The size is checked
+		# BEFORE allocating, so the refusal costs nothing.
+		var combined: int = String(sa).length() + String(sb).length()
+		if max_string_length > 0 and combined > max_string_length:
+			_raise("concatenation would produce a %d character string, over "
+				% combined + "this sandbox's %d character limit" % max_string_length,
+				line)
+			return null
 		return String(sa) + String(sb)
 	var handler: Variant = _binary_tag_method(a, b, "concat")
 	if handler != null:
@@ -551,22 +640,26 @@ func _exec_statement(statement: Dictionary, frame: Frame) -> int:
 			return FLOW_NORMAL
 
 		LuaParser.S_REPEAT:
-			# The until-expression is evaluated INSIDE the body's scope, so it
-			# can see locals the body declared. That is Lua's rule and it is
-			# why this cannot reuse _exec_block.
+			# The until-expression is evaluated OUTSIDE the body's scope, so it
+			# CANNOT see locals the body declared. lparser.c repeatstat calls
+			#     block(ls); check_match(ls, TK_UNTIL, ...); cond(ls, &v);
+			# and block() runs removelocalvars() as it leaves - the body's
+			# locals are gone by the time the condition is compiled, so
+			#     repeat local done = f() until done
+			# reads the GLOBAL `done` in Lua 4.0. Letting the condition see the
+			# body's scope is Lua 5.1's rule and would make that loop terminate
+			# when 4.0 spins forever.
 			while true:
 				if _charge(line):
 					return FLOW_ERROR
 				frame.scopes.append({})
 				var flow := _exec_statements(statement["body"], frame)
+				frame.scopes.pop_back()
 				if flow == FLOW_BREAK:
-					frame.scopes.pop_back()
 					return FLOW_NORMAL
 				if flow == FLOW_RETURN or flow == FLOW_ERROR:
-					frame.scopes.pop_back()
 					return flow
 				var condition: Variant = _eval(statement["cond"], frame)
-				frame.scopes.pop_back()
 				if _failed():
 					return FLOW_ERROR
 				if LuaValue.truthy(condition):
@@ -886,12 +979,19 @@ func _lookup_for_capture(name: String, frame: Frame, line: int) -> Variant:
 
 func _build_table(node: Dictionary, frame: Frame) -> Variant:
 	var table := LuaTable.new()
+	# Each positional field is closed to ONE value, including the last.
+	# lparser.c's listfields reaches every element through exp1(), which calls
+	# luaK_tostack(ls, &v, 1) - there is no LUA_MULTRET in 4.0's constructor
+	# path. So `{f()}` holds exactly one element even when f returns three;
+	# multret in constructors is Lua 5.0. Using _eval_list here (which expands
+	# the tail, correctly, for call arguments and return statements) would
+	# quietly give `{f()}` extra elements.
 	var array_items: Array = node["array"]
-	var values := _eval_list(array_items, frame)
-	if _failed():
-		return null
-	for i in range(values.size()):
-		table.rawset(float(i + 1), values[i])
+	for i in range(array_items.size()):
+		var item: Variant = _eval(array_items[i], frame)
+		if _failed():
+			return null
+		table.rawset(float(i + 1), item)
 	for pair in node["hash"]:
 		var key: Variant = _eval(pair[0], frame)
 		if _failed():
@@ -899,8 +999,7 @@ func _build_table(node: Dictionary, frame: Frame) -> Variant:
 		var value: Variant = _eval(pair[1], frame)
 		if _failed():
 			return null
-		if key == null:
-			_raise("table index is nil", int(node["line"]))
+		if reject_bad_key(key, int(node["line"])):
 			return null
 		table.rawset(key, value)
 	return table
