@@ -28,10 +28,14 @@ public distribution contains project-authored code and legal-safe fixtures only.
    players using deterministic lockstep.
 5. Complete Create-a-Hero, the skirmish shell, saves, replays, observers, and
    custom-map/scenario tooling.
-6. Add modern accessibility, HD presentation packs, mod management, safe mode,
+6. Complete the Good and Evil campaigns, including campaign maps, mission
+   scripting, objectives, and cinematics.
+7. Complete War of the Ring: the strategic layer, territories, armies, and the
+   strategic-to-tactical handoff, single-player and multiplayer.
+8. Add modern accessibility, HD presentation packs, mod management, safe mode,
    diagnostics, and rollback updates without changing the parity profile.
 
-RotWK is a separate future overlay and cannot change BFME2 1.06 evidence.
+RotWK is a layered overlay and cannot change BFME2 1.06 evidence.
 
 The ladder orders acceptance, not code presence. The development tree already
 carries unaccepted surfaces from steps 2 and 3 — six faction runtimes, a
@@ -60,7 +64,9 @@ unsupported, substituted, or unclassified requirements fail closed.
 - Gameplay and presentation mods are versioned and hashed separately.
 - Private parity never silently uses synthetic or generic replacement art.
 - The Good and Evil campaigns, campaign maps and scripting, and War of the Ring
-  are outside the OpenBFME product scope. They are not later roadmap promises.
+  are in scope. Owner decision, 2026-07-26, reversing the previous exclusion.
+  They sit late in the scope ladder because they depend on the faction, hero,
+  and scripting work below them, not because they are optional.
 
 ## Active milestone
 
@@ -70,8 +76,9 @@ Current evidence and blockers live only in [STATUS.md](STATUS.md).
 ## Non-goals before M2 acceptance
 
 - New synthetic proof-stage features.
-- Multiplayer or RotWK implementation.
-- Campaign or War of the Ring implementation at any milestone.
-- Broad importer, presentation, or architecture refactors.
+- Campaign or War of the Ring implementation before their scope-ladder steps
+  are reached. They are in scope; they are not the active milestone.
+- Broad importer, presentation, or architecture refactors, except under an
+  authorized cleanup packet with two reviewers.
 - Public-release automation beyond containment checks.
 - Declaring completion without the identity-bound oracle and reliability gate.
