@@ -1,7 +1,10 @@
 # Engine design notes — scaling Open-BFME to a full port
 
-> **Superseded:** accepted boundaries live in `docs/ARCHITECTURE.md` and
-> `docs/SIMULATION_PROTOCOL.md`. These notes are not an implementation plan.
+> **Partly superseded — do not delete on the strength of this banner.** The
+> ACCEPTED boundaries live in `docs/ARCHITECTURE.md` and
+> `docs/SIMULATION_PROTOCOL.md`, and this file is not an implementation plan.
+> The doctrine below is still live and still referenced, so a sweep that
+> removes files by banner text would take working guidance with it.
 
 **Updated:** 2026-07-16
 **Scope:** architecture and performance doctrine for growing the Men/Fords

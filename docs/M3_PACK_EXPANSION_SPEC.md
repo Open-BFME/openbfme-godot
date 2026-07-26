@@ -1,6 +1,16 @@
 # M3 pack expansion — full Men of the West faction content
 
-Owner: Codex (importer lane only). Game-side wiring is explicitly OUT of scope.
+> **Historical — this spec has been executed and its scope rules no longer
+> apply.** It reads as forward-looking work but the body is finished, and its
+> instruction below to "not modify anything under `game/`" was a boundary for
+> ONE importer-lane task in July 2026, not a standing rule. Taken as current it
+> would stop legitimate runtime work. Retained for the conversion detail, which
+> is still accurate; do not take scope or ownership direction from it.
+>
+> Current scope authority: `DIRECTION.md`. Current milestone:
+> `docs/MILESTONE_CURRENT.md`.
+
+Owner (at time of writing): Codex, importer lane only.
 
 ## Goal
 
@@ -68,6 +78,8 @@ supersedes it). Raw source lives in `.private/retail-work/cache/effective-assets
 - No retail-derived bytes committed to the git repo — only profile JSON,
   importer source, tests, and docs. `.private` stays gitignored.
 - **Do NOT modify anything under `game/`** — runtime wiring happens separately.
+  (Historical constraint on this one task; see the banner at the top. It is not
+  a current rule and must not be read as one.)
 - Do not run any Godot gates; they pin the old bundle identity and are updated
   by the game-side owner after wiring.
 
