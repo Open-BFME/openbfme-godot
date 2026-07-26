@@ -1,12 +1,20 @@
-# OpenBFME CI: engine determinism gates + Godot exports.
+# OpenBFME CI — the gate that stands between this repository and the public.
 #
-# Public-safe by design: no job touches retail content. The engine suite runs
-# on BOTH Windows and Linux — the pinned-hash test proves the fixed-point
-# kernel is bit-identical across platforms (the 8-player lockstep guarantee).
+# Job ordering is deliberate. `publication-boundary` runs first and the build
+# jobs need it: if a retail-derived byte or a developer-machine path is present
+# there is no point building anything, and no artifact should be produced.
+#
+# Public-safe by design: no job touches retail content. The engine suite runs on
+# BOTH Windows and Linux — the pinned-hash test proves the fixed-point kernel is
+# bit-identical across platforms (the 8-player lockstep guarantee).
+#
 # Pack-gated Godot runners (retail_slice_runner etc.) need the private content
-# root and belong on self-hosted NAS runners later: give those jobs
+# root and belong on self-hosted runners: give those jobs
 #   runs-on: [self-hosted, openbfme-private]
 # and they will only ever run on the owner's hardware.
+#
+# Actions are pinned by commit SHA, not tag, so a compromised or retagged action
+# cannot silently change what runs here.
 
 name: ci
 
@@ -16,74 +24,201 @@ on:
     tags: ["v*"]
   pull_request:
 
+# Least privilege by default; no job here needs write access.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  engine-tests:
+  publication-boundary:
+    name: publication boundary (release firewall)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Prove the scanner itself still detects what it claims to detect before
+      # trusting its verdict. A scanner that silently stopped working would
+      # otherwise report a clean pass forever.
+      - name: Self-test the export scanner
+        shell: powershell
+        run: ./tools/test-export-scan.ps1
+
+      # Phase 1 scans the exported game tree; phase 2 scans every tracked file
+      # in the repository for retail formats, private paths, home directories
+      # and credential-shaped strings. Both must pass.
+      - name: Scan for retail bytes and developer-machine specifics
+        shell: powershell
+        run: ./tools/export-scan.ps1
+
+  launcher-mcp:
+    name: launcher MCP surface
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: tools/bfme-launcher-mcp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tools/bfme-launcher-mcp/package-lock.json
+
+      # `npm ci` (not `npm install`) so the committed lockfile is authoritative
+      # and its integrity hashes are enforced.
+      - run: npm.cmd ci
+
+      # Known-vulnerable transitive dependencies fail the build. Fixes are
+      # applied via the `overrides` block in package.json.
+      - name: Audit dependencies
+        run: npm.cmd audit --audit-level=moderate
+
+      # Every suite, not just the dependency-free one. core.test.mjs covers the
+      # launcher identity pin, path resolution and the elevation flow.
+      - name: Test launcher core, protocol, and raw protocol
+        run: node --test test/core.test.mjs test/protocol.test.mjs test/raw-protocol.test.mjs
+
+  importer:
+    name: importer suite
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.10"
+
+      # --require-hashes: every dependency must match a pinned digest, so a
+      # compromised or yanked-and-replaced PyPI artifact fails closed.
+      - name: Install hash-pinned importer dependencies
+        run: python -m pip install --require-hashes --only-binary=:all: -r importer/requirements-win.txt
+
+      # Oracle tests that need a retail install skip themselves when
+      # BFME2_INSTALL is unset, which is always the case on a public runner.
+      - name: Run importer tests
+        env:
+          PYTHONPATH: importer
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TMPDIR: ${{ runner.temp }}
+        run: python -m pytest importer/tests -q
+
+  engine:
     name: engine determinism (${{ matrix.os }})
+    needs: publication-boundary
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.0.0
         with:
           dotnet-version: "8.0.x"
       - name: Run OpenBfme.Sim test suite
-        run: dotnet test engine/OpenBfme.Engine.sln --nologo
+        run: dotnet test engine/OpenBfme.Engine.sln --nologo --configuration Release
 
   godot-exports:
     name: godot export (windows + linux)
     runs-on: ubuntu-latest
-    needs: engine-tests
+    needs: [publication-boundary, engine]
     env:
       GODOT_VERSION: "4.7"
       GODOT_RELEASE: "4.7-stable"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache Godot + export templates
         id: godot-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/godot
             ~/.local/share/godot/export_templates
           key: godot-${{ env.GODOT_RELEASE }}
-      - name: Download Godot headless + export templates
+
+      # Integrity: Godot publishes SHA512-SUMS.txt alongside each release and we
+      # verify both downloads against it. This catches truncated, corrupted and
+      # CDN-substituted artifacts.
+      #
+      # LIMITATION, read before trusting this: the sums file comes from the same
+      # release as the binaries, so it does NOT protect against a compromised
+      # upstream release. Pinning the two digests as literals here (as the
+      # release branch's release.yml does) is strictly stronger and should be
+      # done once the owner has verified them out-of-band.
+      - name: Download and verify Godot headless + export templates
         if: steps.godot-cache.outputs.cache-hit != 'true'
         run: |
+          set -euo pipefail
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_RELEASE}"
           mkdir -p ~/godot
-          curl -fsSL -o ~/godot/godot.zip \
-            "https://github.com/godotengine/godot/releases/download/${GODOT_RELEASE}/Godot_v${GODOT_RELEASE}_linux.x86_64.zip"
-          unzip -q ~/godot/godot.zip -d ~/godot
-          curl -fsSL -o ~/godot/templates.tpz \
-            "https://github.com/godotengine/godot/releases/download/${GODOT_RELEASE}/Godot_v${GODOT_RELEASE}_export_templates.tpz"
-          mkdir -p ~/.local/share/godot/export_templates
-          unzip -q ~/godot/templates.tpz -d ~/godot/templates-extract
+          cd ~/godot
+          curl -fsSL --retry 5 --retry-all-errors --retry-max-time 120 \
+            -o SHA512-SUMS.txt "${base}/SHA512-SUMS.txt"
+          curl -fsSL --retry 5 --retry-all-errors --retry-max-time 120 \
+            -o "Godot_v${GODOT_RELEASE}_linux.x86_64.zip" \
+            "${base}/Godot_v${GODOT_RELEASE}_linux.x86_64.zip"
+          curl -fsSL --retry 5 --retry-all-errors --retry-max-time 120 \
+            -o "Godot_v${GODOT_RELEASE}_export_templates.tpz" \
+            "${base}/Godot_v${GODOT_RELEASE}_export_templates.tpz"
+          # Keep only the lines for the two files we actually fetched, then
+          # verify. `-c` fails the step on any mismatch; the `test -s` guard
+          # stops an upstream rename from turning this into a silent no-op.
+          grep -E "(Godot_v${GODOT_RELEASE}_linux\.x86_64\.zip|Godot_v${GODOT_RELEASE}_export_templates\.tpz)$" \
+            SHA512-SUMS.txt > expected-sums.txt
+          test -s expected-sums.txt
+          sha512sum -c expected-sums.txt
+          unzip -q "Godot_v${GODOT_RELEASE}_linux.x86_64.zip" -d ~/godot
+          mkdir -p ~/.local/share/godot/export_templates ~/godot/templates-extract
+          unzip -q "Godot_v${GODOT_RELEASE}_export_templates.tpz" -d ~/godot/templates-extract
           mv ~/godot/templates-extract/templates \
-            ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+            "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+
+      # NOTE: this step previously ended in `|| true`, which meant a broken
+      # project "imported successfully" and the real failure only surfaced later
+      # as a confusing export error. Import failures now fail the build.
       - name: Import project (first headless run builds .godot cache)
-        run: ~/godot/Godot_v${GODOT_RELEASE}_linux.x86_64 --headless --path game --import || true
+        run: ~/godot/Godot_v${GODOT_RELEASE}_linux.x86_64 --headless --path game --import
+
       - name: Export Windows build
         run: |
+          set -euo pipefail
           mkdir -p dist/windows
           ~/godot/Godot_v${GODOT_RELEASE}_linux.x86_64 --headless --path game \
             --export-release "windows" "$(pwd)/dist/windows/OpenBFME.exe"
+
       - name: Export Linux build
         run: |
+          set -euo pipefail
           mkdir -p dist/linux
           ~/godot/Godot_v${GODOT_RELEASE}_linux.x86_64 --headless --path game \
             --export-release "linux" "$(pwd)/dist/linux/OpenBFME.x86_64"
+
       - name: Verify artifacts exist and are non-trivial
         run: |
+          set -euo pipefail
           test -s dist/windows/OpenBFME.exe
           test -s dist/linux/OpenBFME.x86_64
           ls -la dist/windows dist/linux
-      - uses: actions/upload-artifact@v4
+
+      # Record what was actually produced so a release can be traced back to it.
+      - name: Record artifact digests
+        run: |
+          set -euo pipefail
+          sha256sum dist/windows/OpenBFME.exe dist/linux/OpenBFME.x86_64 \
+            | tee dist/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: openbfme-windows
-          path: dist/windows/
-      - uses: actions/upload-artifact@v4
+          path: |
+            dist/windows/
+            dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: openbfme-linux
-          path: dist/linux/
+          path: |
+            dist/linux/
+            dist/SHA256SUMS.txt

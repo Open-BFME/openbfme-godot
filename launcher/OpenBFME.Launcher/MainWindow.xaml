@@ -1,0 +1,107 @@
+<Window x:Class="OpenBFME.Launcher.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="OpenBFME Launcher" Width="980" Height="700"
+        MinWidth="820" MinHeight="620" WindowStartupLocation="CenterScreen"
+        Background="#101616" Foreground="#F4E8C8">
+  <Window.Resources>
+    <Style TargetType="Button">
+      <Setter Property="Padding" Value="14,7"/>
+      <Setter Property="Margin" Value="0,0,10,8"/>
+      <Setter Property="MinWidth" Value="112"/>
+    </Style>
+  </Window.Resources>
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <Border Padding="28,22" BorderBrush="#D5B66F" BorderThickness="0,0,0,1">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <StackPanel>
+          <TextBlock Text="OPENBFME" FontSize="32" FontWeight="Bold" Foreground="#D5B66F"/>
+          <TextBlock Text="A modern engine for your locally owned Battle for Middle-earth II assets"
+                     FontSize="14" Opacity=".82"/>
+        </StackPanel>
+        <Border Grid.Column="1" Background="#1D2525" CornerRadius="4" Padding="14,8">
+          <TextBlock x:Name="VersionText" Text="Not installed" FontWeight="SemiBold"/>
+        </Border>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" Margin="28">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="2*"/>
+        <ColumnDefinition Width="18"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <Border Background="#182020" Padding="24" CornerRadius="6">
+        <StackPanel>
+          <TextBlock Text="Playtest build" FontSize="24" FontWeight="SemiBold"/>
+          <TextBlock Margin="0,8,0,20" TextWrapping="Wrap" Opacity=".82"
+                     Text="OpenBFME ships no copyrighted game data. Import from your own installation on this PC, then launch the selected immutable build."/>
+          <ProgressBar x:Name="Progress" Height="18" Minimum="0" Maximum="100"
+                       Foreground="#D5B66F" Background="#0C1010"/>
+          <TextBlock x:Name="StatusText" Margin="0,12,0,6" Text="Ready" TextWrapping="Wrap"/>
+          <!-- Long-form failure detail. Collapsed until there is something to say, so a
+               successful run stays quiet and a failure is impossible to miss. -->
+          <Border x:Name="DetailPanel" Visibility="Collapsed" Background="#26191A"
+                  BorderBrush="#8A4B4B" BorderThickness="1" CornerRadius="4"
+                  Padding="12,10" Margin="0,0,0,14">
+            <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
+              <TextBlock x:Name="DetailText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
+            </ScrollViewer>
+          </Border>
+          <WrapPanel Margin="0,10,0,0">
+            <Button x:Name="PlayButton" Content="Play OpenBFME" Click="Play_Click"/>
+            <Button x:Name="UpdateButton" Content="Check for update" Click="Update_Click"/>
+            <Button x:Name="RollbackButton" Content="Roll back" Click="Rollback_Click"/>
+            <!-- Always clickable while an operation runs: the whole point of Cancel is
+                 that it works when nothing else does. -->
+            <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" IsEnabled="False"/>
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+
+      <Border Grid.Column="2" Background="#1D2525" Padding="22" CornerRadius="6">
+        <StackPanel>
+          <TextBlock Text="Local game assets" FontSize="20" FontWeight="SemiBold"/>
+          <TextBlock Margin="0,6,0,14" TextWrapping="Wrap" Opacity=".75"
+                     Text="The importer writes only to the private local state directory. Nothing is uploaded."/>
+
+          <TextBlock Text="BFME II installation"/>
+          <TextBox x:Name="BfmePath" Margin="0,5,0,4" Padding="8"/>
+          <TextBlock x:Name="BfmeDetectText" Margin="0,0,0,8" FontSize="11" Opacity=".7" TextWrapping="Wrap"/>
+          <WrapPanel>
+            <Button x:Name="BrowseBfmeButton" Content="Browse…" Click="BrowseBfme_Click" MinWidth="86"/>
+            <Button x:Name="ImportBfmeButton" Content="Import BFME II" Click="ImportBfme_Click"/>
+          </WrapPanel>
+
+          <TextBlock Text="Rise of the Witch-king installation" Margin="0,14,0,0"/>
+          <TextBox x:Name="RotwkPath" Margin="0,5,0,4" Padding="8"/>
+          <TextBlock x:Name="RotwkDetectText" Margin="0,0,0,8" FontSize="11" Opacity=".7" TextWrapping="Wrap"/>
+          <WrapPanel>
+            <Button x:Name="BrowseRotwkButton" Content="Browse…" Click="BrowseRotwk_Click" MinWidth="86"/>
+            <Button x:Name="ImportRotwkButton" Content="Import RotWK" Click="ImportRotwk_Click"/>
+          </WrapPanel>
+
+          <TextBlock Margin="0,10,0,0" Opacity=".65" TextWrapping="Wrap"
+                     Text="Campaign and War of the Ring are not part of the current project scope."/>
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="2" BorderBrush="#35413D" BorderThickness="0,1,0,0" Padding="28,13">
+      <DockPanel>
+        <TextBlock Text="Code-only playtest • Bring your own legally owned game installation" Opacity=".68"/>
+        <TextBlock x:Name="ChannelText" DockPanel.Dock="Right" HorizontalAlignment="Right" Opacity=".68"/>
+      </DockPanel>
+    </Border>
+  </Grid>
+</Window>

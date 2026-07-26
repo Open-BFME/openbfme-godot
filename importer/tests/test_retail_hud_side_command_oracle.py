@@ -11,11 +11,12 @@ from openbfme_importer.retail_hud_side_command_oracle import (
     frame_label_for_neighbors,
     show_target_names,
 )
+from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
-GAME_DAT = Path("F:/BFME2/game.dat")
+GAME_DAT = retail_file("game.dat")
 SOURCE_NAMES = (
     "InGameSideCommandBar.apt",
     "InGameSideCommandBar.const",

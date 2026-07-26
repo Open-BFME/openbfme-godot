@@ -42,3 +42,6 @@ build/
 
 # Retail-derived reference captures stay out of git (release firewall)
 /reference/
+
+# Local Codex/MCP wiring is machine-specific (absolute node + checkout paths).
+.codex/

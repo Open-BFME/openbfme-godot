@@ -1,7 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, statSync } from "node:fs";
 import { access, lstat, open, readFile, rename, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -15,12 +16,75 @@ export const PROCESS_NAMES = new Set([
   "game.dat",
 ]);
 
+// Locations a stock BFME2 install is normally found at, relative to a probe
+// root. Kept in step with importer/openbfme_importer/paths.py.
+const RETAIL_RELATIVE_DIRS = [
+  "Electronic Arts\\The Battle for Middle-earth II",
+  "EA Games\\The Battle for Middle-earth II",
+  "Steam\\steamapps\\common\\The Battle for Middle-earth II",
+  "GOG Galaxy\\Games\\The Battle for Middle-earth II",
+];
+
+/**
+ * Candidate retail install directories for this machine, most likely first.
+ * Every entry is derived from the environment — never from a developer's disk.
+ */
+export function retailInstallCandidates(environment = process.env) {
+  const roots = [];
+  for (const name of ["ProgramFiles(x86)", "ProgramFiles", "ProgramW6432"]) {
+    if (environment[name]) {
+      roots.push(environment[name]);
+    }
+  }
+  for (const letter of ["C", "D", "E", "F", "G"]) {
+    roots.push(`${letter}:\\`, `${letter}:\\Games`);
+  }
+  const candidates = [];
+  for (const root of roots) {
+    for (const relative of RETAIL_RELATIVE_DIRS) {
+      candidates.push(path.win32.join(root, relative));
+    }
+  }
+  return candidates;
+}
+
+/**
+ * Resolve the retail game root.
+ *
+ * BFME2_INSTALL always wins so a player can point this anywhere. Otherwise the
+ * first candidate directory that actually contains game.dat is used. If none
+ * matches we fall back to the first candidate so callers still get a concrete
+ * path to report in their "not installed" diagnostics.
+ */
+export function resolveGameRoot(environment = process.env, probe = existsSyncSafe) {
+  const configured = (environment.BFME2_INSTALL ?? "").trim();
+  if (configured) {
+    return path.win32.normalize(configured);
+  }
+  const candidates = retailInstallCandidates(environment);
+  for (const candidate of candidates) {
+    if (probe(path.win32.join(candidate, "game.dat"))) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
+
+function existsSyncSafe(file) {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
 export function fixedPaths(environment = process.env) {
   if (!environment.APPDATA) {
     throw new Error("APPDATA is unavailable; the BFME launcher location cannot be resolved.");
   }
   const launcherRoot = path.join(environment.APPDATA, "BFME All In One Launcher");
-  const gameRoot = "F:\\BFME2";
+  const gameRoot = resolveGameRoot(environment);
+  const systemRoot = environment.SystemRoot || environment.windir || "C:\\Windows";
   return Object.freeze({
     launcherRoot,
     launcherExe: path.join(launcherRoot, "AllInOneLauncher.exe"),
@@ -28,7 +92,7 @@ export function fixedPaths(environment = process.env) {
     gameRoot,
     wrapperExe: path.join(gameRoot, "lotrbfme2.exe"),
     gameExe: path.join(gameRoot, "game.dat"),
-    powershellExe: "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    powershellExe: path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
   });
 }
 
@@ -151,6 +215,9 @@ export async function getLauncherStatus(paths = fixedPaths(), processRunner = ex
     exists(paths.gameExe),
     readSettings(paths),
     queryProcesses(paths, processRunner),
+    // launch_bfme2 and the elevated stop both return before their helper finishes, so
+    // this poll is where their real outcome becomes visible.
+    refreshHelperOutcomes(),
   ]);
   const classified = classifyProcesses(processes, paths);
   return {
@@ -165,6 +232,11 @@ export async function getLauncherStatus(paths = fixedPaths(), processRunner = ex
       windowed_bfme2: Boolean(settings.WindowedModeBfme2),
     },
     processes: classified,
+    // The outcome of the last detached helper. `launch_bfme2` and the elevated stop
+    // path both return immediately by design, so this is where their real result
+    // becomes visible: a helper that threw reports state "failed" with its reason, and
+    // one that ended without a receipt (a dismissed UAC prompt) reports "vanished".
+    last_helper: lastHelperOutcome(),
     state: classified.some((item) => item.name.toLowerCase() === "game.dat" && item.verified)
       ? "game_running"
       : classified.some((item) => item.name.toLowerCase() === "lotrbfme2.exe" && item.verified)
@@ -177,14 +249,185 @@ export async function getLauncherStatus(paths = fixedPaths(), processRunner = ex
   };
 }
 
+/**
+ * Diagnostics for the most recent detached helper, newest last.
+ *
+ * A detached helper is the only way to survive the UAC prompt, but it used to be
+ * spawned with `stdio: "ignore"`, so a helper that failed to start, threw, or was
+ * denied elevation left no trace anywhere: the MCP call returned a cheerful
+ * "launch_requested" and nothing ever happened. Silent degradation is the worst
+ * outcome this project can ship, so every helper's outcome is now recorded and
+ * surfaced through `get_launcher_status` and the launch/stop results.
+ *
+ * States: "running", "completed", "failed" (the helper ran and reported why it
+ * failed), "spawn_failed" (nothing started), "vanished" (the process ended without
+ * recording anything — what a dismissed UAC prompt looks like).
+ */
+const helperOutcomes = [];
+const HELPER_HISTORY_LIMIT = 8;
+
+/** The most recent detached-helper outcome, or null if none has run. */
+export function lastHelperOutcome() {
+  return helperOutcomes.length === 0 ? null : helperOutcomes[helperOutcomes.length - 1];
+}
+
+/** Every recorded detached-helper outcome, oldest first. */
+export function helperOutcomeHistory() {
+  return helperOutcomes.slice();
+}
+
+/** The recorded outcome for a specific helper pid, or null when it was not ours. */
+export function helperOutcomeFor(pid) {
+  if (pid === undefined || pid === null) return null;
+  for (let index = helperOutcomes.length - 1; index >= 0; index -= 1) {
+    if (helperOutcomes[index].pid === pid) return helperOutcomes[index];
+  }
+  return null;
+}
+
+/** Test seam: forget recorded helper outcomes. */
+export function resetHelperOutcomes() {
+  helperOutcomes.length = 0;
+}
+
+function recordHelperOutcome(outcome) {
+  helperOutcomes.push(outcome);
+  if (helperOutcomes.length > HELPER_HISTORY_LIMIT) helperOutcomes.shift();
+  return outcome;
+}
+
+/** Where detached helpers drop their outcome receipts. */
+export function helperReceiptRoot() {
+  return path.join(os.tmpdir(), "openbfme-launcher-helpers");
+}
+
+/**
+ * Wrap a helper script so it records its own outcome on disk.
+ *
+ * This indirection is not decoration. On Windows a `detached: true` child's exit code
+ * and piped stderr are NOT observable from Node: a helper that exits 3 after writing to
+ * stderr is reported to the parent as exit 0 with no output. Believing that would be
+ * worse than the original bug, because it would actively assert success. The helper
+ * therefore writes its own result, and the parent reads the receipt.
+ */
+export function buildHelperReceiptScript(script, receiptPath) {
+  // Joined with newlines, not "; ": `try { } ; catch { }` is a PowerShell parse error,
+  // and a wrapper that fails to parse writes no receipt at all.
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$openbfmeReceipt = ${psLiteral(receiptPath)}`,
+    "$openbfmeResult = [ordered]@{ state = 'failed'; error = 'The helper did not run.' }",
+    "try {",
+    `  ${script}`,
+    "  $openbfmeResult.state = 'completed'",
+    "  $openbfmeResult.error = $null",
+    "} catch {",
+    "  $openbfmeResult.state = 'failed'",
+    "  $openbfmeResult.error = $_.Exception.Message",
+    "} finally {",
+    "  New-Item -ItemType Directory -Force -Path (Split-Path $openbfmeReceipt -Parent) | Out-Null",
+    "  [IO.File]::WriteAllText($openbfmeReceipt, ($openbfmeResult | ConvertTo-Json -Compress))",
+    "}",
+  ].join("\n");
+}
+
 export function spawnDetachedPowerShell(script, paths = fixedPaths()) {
-  const child = spawn(paths.powershellExe, ["-NoProfile", "-NonInteractive", "-Command", script], {
+  const receipt = path.join(
+    helperReceiptRoot(),
+    `helper-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.json`,
+  );
+  // -EncodedCommand (base64 UTF-16LE), not -Command: the wrapper is multi-line, and a
+  // multi-line -Command string does not survive Windows command-line quoting intact —
+  // PowerShell then exits before writing any receipt. Encoding sidesteps quoting
+  // entirely, and is the same mechanism the elevated stop helper already uses.
+  const wrapped = Buffer.from(
+    buildHelperReceiptScript(script, receipt),
+    "utf16le",
+  ).toString("base64");
+
+  const child = spawn(paths.powershellExe, ["-NoProfile", "-NonInteractive", "-EncodedCommand", wrapped], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
   });
+
+  // spawn() reports ENOENT asynchronously, but an unspawnable child has no pid at all,
+  // so this is a reliable synchronous signal that nothing was started.
+  if (child.pid === undefined) {
+    const message = `The helper process could not be started: ${paths.powershellExe} did not launch.`;
+    const failure = recordHelperOutcome({
+      pid: null,
+      receipt,
+      started_at: new Date().toISOString(),
+      state: "spawn_failed",
+      error: message,
+    });
+    // The 'error' event still arrives on a later tick. It must be consumed here, or
+    // Node raises it as an uncaught exception and takes the MCP server down with it.
+    child.on("error", (error) => {
+      failure.error = `${message} (${error?.message ?? error})`;
+    });
+    throw new Error(message);
+  }
+
+  const outcome = recordHelperOutcome({
+    pid: child.pid,
+    receipt,
+    started_at: new Date().toISOString(),
+    state: "running",
+    error: null,
+  });
+
+  child.on("error", (error) => {
+    outcome.state = "spawn_failed";
+    outcome.error = error?.message ?? String(error);
+    console.error(`[bfme-launcher] helper failed to start: ${outcome.error}`);
+  });
+
   child.unref();
   return child.pid;
+}
+
+/**
+ * Bring recorded helper outcomes up to date from their receipts.
+ *
+ * A helper that is gone with no receipt is reported as `vanished` rather than assumed
+ * to have succeeded — that state is what a dismissed UAC prompt looks like, and it is
+ * precisely the outcome the old `stdio: "ignore"` code threw away.
+ */
+export async function refreshHelperOutcomes() {
+  for (const outcome of helperOutcomes) {
+    if (outcome.state !== "running") continue;
+    let receipt;
+    try {
+      receipt = JSON.parse(await readFile(outcome.receipt, "utf8"));
+    } catch {
+      if (isProcessAlive(outcome.pid)) continue; // still working; nothing to report yet
+      outcome.state = "vanished";
+      outcome.error =
+        "The helper process ended without recording a result. On Windows this normally " +
+        "means the User Account Control prompt was dismissed or denied, so nothing ran.";
+      console.error(`[bfme-launcher] ${outcome.error}`);
+      continue;
+    }
+    outcome.state = receipt?.state === "completed" ? "completed" : "failed";
+    outcome.error = receipt?.error ?? null;
+    if (outcome.state === "failed") {
+      console.error(`[bfme-launcher] helper failed: ${outcome.error ?? "no reason was recorded"}`);
+    }
+    await rm(outcome.receipt, { force: true }).catch(() => {});
+  }
+  return helperOutcomes.slice();
+}
+
+function isProcessAlive(pid) {
+  if (typeof pid !== "number") return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM"; // alive, but owned by another user
+  }
 }
 
 function psLiteral(value) {
@@ -210,28 +453,46 @@ export async function verifyLauncherIdentity(paths = fixedPaths()) {
   return observed;
 }
 
-export async function launchBfme2(paths = fixedPaths(), detachedRunner = spawnDetachedPowerShell) {
-  if (!(await exists(paths.launcherExe))) {
-    throw new Error(`The fixed launcher executable is missing: ${paths.launcherExe}`);
-  }
-  const identity = await verifyLauncherIdentity(paths);
-  const launcher = psLiteral(paths.launcherExe);
+/**
+ * Build the PowerShell that launches the approved launcher.
+ *
+ * Pure and exported so the generated script can be asserted on any machine,
+ * without needing the proprietary launcher binary present on disk.
+ *
+ * The script re-checks the hash immediately before Start-Process: the
+ * verification in launchBfme2 happens in this process, and the file could be
+ * swapped between then and execution.
+ */
+export function buildVerifiedLaunchScript(launcherExe) {
+  const launcher = psLiteral(launcherExe);
   const approvedHash = psLiteral(APPROVED_LAUNCHER_SHA256);
-  const script = [
+  return [
     `$item = Get-Item -LiteralPath ${launcher} -Force`,
     "if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Launcher path is a reparse point.' }",
     `$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath ${launcher}).Hash`,
     `if ($hash -ne ${approvedHash}) { throw 'Launcher identity changed before execution.' }`,
     `Start-Process -FilePath ${launcher}`,
   ].join("; ");
+}
+
+export async function launchBfme2(paths = fixedPaths(), detachedRunner = spawnDetachedPowerShell) {
+  if (!(await exists(paths.launcherExe))) {
+    throw new Error(`The fixed launcher executable is missing: ${paths.launcherExe}`);
+  }
+  const identity = await verifyLauncherIdentity(paths);
+  const script = buildVerifiedLaunchScript(paths.launcherExe);
   const helperPid = detachedRunner(script, paths);
   return {
     state: "launch_requested",
     helper_pid: helperPid ?? null,
+    helper: helperOutcomeFor(helperPid),
     target: paths.launcherExe,
     launcher_sha256: identity,
     approval_required: true,
-    message: "Windows may show a UAC prompt. Approve it on the desktop, then poll get_launcher_status.",
+    message:
+      "Windows may show a UAC prompt. Approve it on the desktop, then poll get_launcher_status. " +
+      "If the game does not appear, read last_helper in that status: a failed or dismissed " +
+      "helper is reported there rather than being silently discarded.",
   };
 }
 
@@ -272,6 +533,7 @@ function requestElevatedStop(paths, detachedRunner, reason) {
     state: "elevation_requested",
     approval_required: true,
     helper_pid: helperPid ?? null,
+    helper: helperOutcomeFor(helperPid),
     reason,
     message: "Approve the Windows UAC prompt. The elevated helper discovers only the fixed BFME names and revalidates every executable path before stopping it.",
   };

@@ -8,6 +8,7 @@ from openbfme_importer.retail_hud_text_raster_oracle import (
     HudTextRasterOracleError,
     build_contract,
 )
+from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,7 +17,7 @@ APT = ASSETS / "Palantir.apt"
 CONST = ASSETS / "Palantir.const"
 DAT = ASSETS / "Palantir.dat"
 OTF = ASSETS / "albertusmt.otf"
-GAME_DAT = Path("F:/BFME2/game.dat")
+GAME_DAT = retail_file("game.dat")
 OPENSAGE = ROOT / ".private" / "scratch" / "opensage-hud-semantics"
 
 pytestmark = pytest.mark.skipif(

@@ -9,7 +9,8 @@ if /I "%~1"=="--print-paths" (
   exit /b 0
 )
 if not "%~1"=="" set "BFME2_INSTALL=%~1"
-if not defined BFME2_INSTALL set "BFME2_INSTALL=F:\BFME2"
+call "%~dp0tools\resolve-retail-install.bat"
+if errorlevel 1 exit /b 1
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools\bootstrap-importer-python.ps1 -StateRoot "%OPENBFME_IMPORT_ROOT%"
 if errorlevel 1 exit /b %errorlevel%
 "%PYTHON%" tools\openbfme_import.py bootstrap-tools

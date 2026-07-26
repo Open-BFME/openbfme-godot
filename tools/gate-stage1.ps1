@@ -530,8 +530,8 @@ function Resolve-GodotExecutable {
     $candidates += @(
         (Join-Path $repoRoot '.tools\godot\Godot_v4.7-stable_win64_console.exe'),
         (Join-Path $repoRoot '.tools\godot\Godot_v4.7-stable_win64.exe'),
-        'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe',
-        'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64.exe'
+        "$env:USERPROFILE\Downloads\godot47\Godot_v4.7-stable_win64_console.exe",
+        "$env:USERPROFILE\Downloads\godot47\Godot_v4.7-stable_win64.exe"
     )
 
     foreach ($candidateValue in $candidates) {

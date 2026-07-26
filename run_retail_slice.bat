@@ -8,14 +8,14 @@ if /I "%~1"=="--print-paths" (
   exit /b 0
 )
 set "GODOT=%OPENBFME_GODOT%"
-if not defined GODOT set "GODOT=C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64.exe"
+if not defined GODOT set "GODOT=%USERPROFILE%\Downloads\godot47\Godot_v4.7-stable_win64.exe"
 if not exist "%GODOT%" (
   echo RETAIL_SLICE FAIL Godot 4.7 not found. Set OPENBFME_GODOT.
   exit /b 1
 )
 if /I "%~1"=="--test" (
   set "CONSOLE=%GODOT%"
-  if exist "C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe" set "CONSOLE=C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe"
+  if exist "%USERPROFILE%\Downloads\godot47\Godot_v4.7-stable_win64_console.exe" set "CONSOLE=%USERPROFILE%\Downloads\godot47\Godot_v4.7-stable_win64_console.exe"
   "!CONSOLE!" --headless --path game --script res://tests/retail_slice_runner.gd
   exit /b !ERRORLEVEL!
 )

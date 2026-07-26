@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from openbfme_importer.retail_hud_external_movies_oracle import build_contract
+from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,7 +15,7 @@ ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
 MANIFEST = ASSETS / ".openbfme" / "manifest.json"
 CATALOG = ROOT / ".private" / "retail-work" / "catalog" / "bfme2.json"
 PROFILE = ROOT / ".private" / "retail-work" / "profiles" / "men-fords-v0-complete.generated.json"
-GAME_DAT = Path("F:/BFME2/game.dat")
+GAME_DAT = retail_file("game.dat")
 OPENSAGE = ROOT / ".private" / "scratch" / "opensage-source"
 
 pytestmark = pytest.mark.skipif(

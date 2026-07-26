@@ -1,0 +1,54 @@
+{
+  "$comment": [
+    "THE single place the publish/update target is written down.",
+    "",
+    "Nothing in code, CI, or the launcher may hardcode a repository owner or",
+    "name. Everything resolves this file at runtime (see tools/release_source.py",
+    "and tools/bfme-launcher-mcp/src/release-source.mjs), and every field can be",
+    "overridden by an environment variable so a build or a player can retarget",
+    "without editing a tracked file.",
+    "",
+    "The value below is a DEFAULT, not a constant. It has already changed",
+    "twice. If 'repository' is ever null the resolvers raise a clear error",
+    "instead of guessing a URL, so a publish or update path fails loudly",
+    "rather than silently pointing at the wrong host.",
+    "",
+    "Overrides, highest precedence first:",
+    "  OPENBFME_RELEASE_REPOSITORY  e.g. my-org/my-repo",
+    "  OPENBFME_RELEASE_HOST        default github.com",
+    "  OPENBFME_RELEASE_CHANNEL     default stable"
+  ],
+
+  "schema": "openbfme.release-source",
+  "schemaVersion": 1,
+
+  "host": "github.com",
+
+  "repository": "Open-BFME/openbfme-godot",
+
+  "channel": "stable",
+
+  "$retiredComment": [
+    "Targets that must never be used again, in machine-readable form.",
+    "",
+    "This list is not documentation. The launcher refuses to build or run against any",
+    "repository named here, so a stale config or a bad merge fails loudly instead of",
+    "pointing the updater at a dead or reassigned repository. A retired GitHub name can",
+    "be claimed by someone else, which makes silently updating from one a supply-chain",
+    "problem, not just a broken link.",
+    "",
+    "This is also the ONE file allowed to name a release target at all (see the",
+    "allow-list in tools/export-scan.ps1), which is why the names live here and are",
+    "read from here rather than repeated in code or tests."
+  ],
+  "retiredRepositories": [
+    "Ancalgonn/open-bfme-engine",
+    "Open-BFME/openbmfe-godot"
+  ],
+
+  "notes": {
+    "visibility": "PRIVATE repo. Retail-derived bytes still must never be uploaded to a third-party host regardless of visibility.",
+    "retired": "Ancalgonn/open-bfme-engine (retired) and Open-BFME/openbmfe-godot (typo, dead) must never be reintroduced as fallbacks.",
+    "existingHistory": "Target main already has an auto-init commit (README only). A publish must reconcile with it, not assume an empty repo."
+  }
+}

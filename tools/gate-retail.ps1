@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Install = "F:\BFME2",
+    [string]$Install = "$env:BFME2_INSTALL",
     [string]$GodotPath = "",
     [switch]$IntegrationOwnerPublish
 )

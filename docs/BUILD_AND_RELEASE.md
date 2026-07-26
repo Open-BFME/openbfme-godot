@@ -1,136 +1,281 @@
-# Build and release proof
+# Build and release OpenBFME for Windows
 
-> **Superseded:** use `docs/VERIFICATION.md` and `docs/RELEASE_POLICY.md`.
-> Stage-era commands below are retained only until their useful checks migrate.
+The `windows release` workflow in `.github/workflows/release.yml` is the
+authoritative distributable-build path. It produces code-only Windows packages.
+It never packages a retail BFME II install or a converted retail content pack.
 
-OpenBFME currently ships proof-stage source, not a public retail-content build. The
-Stage 10 gate is the authoritative local hardening command:
+## Release assets
 
-```bat
-run_stage10_tests.bat
+A published GitHub Release contains exactly these five assets:
+
+- `OpenBFME-<version>-windows-x64.zip`: the Godot game executable and PCK.
+- `OpenBFME-Launcher-<version>-windows-x64.zip`: the self-contained WPF
+  launcher, bundled importer source, pinned Python runtime, and bundle inventory.
+- `release-manifest.json`: repository, version, channel, commit, package names,
+  package URLs, compressed and expanded sizes, and SHA-256 hashes.
+- `release-manifest.json.sig`: a base64-encoded detached RSA/SHA-256 PKCS#1 v1.5
+  signature over the exact manifest bytes.
+- `SHA256SUMS.txt`: SHA-256 hashes for both ZIP files.
+
+The GitHub Actions build artifact has a sixth, internal distinction:
+`openbfme-<version>-windows-unsigned` is produced by the ungated build job and
+does not contain `release-manifest.json.sig`. The final
+`openbfme-<version>-windows` Actions artifact is created only by the gated
+signing job.
+
+## What the workflow does
+
+The workflow has two entry points:
+
+- `workflow_dispatch` performs a validation build. By default it stops after the
+  unsigned Actions artifact and never requests the signing key.
+- A protected, signed, annotated tag matching `v*` performs the complete
+  build, signing, packaged-VM acceptance, and publication path.
+
+The jobs run in this order:
+
+1. `build` checks out the exact commit with full history, resolves the release
+   target through `tools/release_source.py`, and requires that it equal
+   `${{ github.repository }}`. This prevents a manifest from naming one
+   repository while the workflow publishes to another.
+2. A tag build asks the GitHub API to verify that the tag is annotated and
+   cryptographically signed. It then proves the tagged commit is an ancestor of
+   the repository's default branch.
+3. Source gates run the importer, engine, launcher, release-tool,
+   export-firewall, reproducibility-comparator, dependency-audit, and launcher
+   protocol checks.
+4. The job downloads the exact Godot 4.7 editor and templates named in the
+   workflow and checks both archives against fixed SHA-512 values before use.
+5. `Build-CodeOnlyExport.ps1` stages `game/` outside the checkout while
+   excluding `game/data/base`, `.godot`, captures, screenshots, and import
+   metadata. Godot imports, exports, and launches the code-only game headlessly;
+   logged warnings or errors fail the job even when Godot exits zero.
+6. `dotnet publish` creates a self-contained, single-file, `win-x64` WPF
+   launcher. The job archives the importer sources from the exact commit,
+   writes `release-identity.json`, constructs the shipped Python runtime, writes
+   `openbfme-bundle-inventory.json`, and runs the launcher headlessly.
+7. Both ZIPs pass `Test-ReleaseArtifact.ps1`, which rejects unsafe or duplicate
+   archive paths, retail-format files, private state, game packs, agent
+   instructions, credentials, private keys, developer paths, links, Python
+   startup customization, bytecode, and oversized opaque entries.
+8. The build job creates the unsigned manifest and checksums, uploads the
+   unsigned Actions artifact, and records GitHub build-provenance attestations
+   for both ZIPs, the manifest, and the checksum file. This job has no signing
+   environment and no signing secret.
+9. `sign` can run only for a protected ref and either a tag build or an explicit
+   protected-ref manual acceptance run. It enters the `release-signing`
+   environment, downloads the unsigned artifact, signs the manifest, and
+   verifies the new signature against `tools/release/release-manifest-public.pem`
+   before uploading the final signed artifact.
+10. `windows-vm-acceptance` downloads that signed artifact on the dedicated
+    runner. It verifies the signature, verifies both ZIP hashes against both
+    metadata files, scans both ZIPs again, runs the packaged launcher twice from
+    empty state against BFME II, compares the complete generated packs
+    byte-for-byte and by required asset-family counts, and smoke-launches the
+    packaged game with the selected pack.
+11. `publish` enters the separate `production-release` environment only after
+    build, signing, and VM acceptance pass. Its `contents: write` token invokes
+    `gh release create` with `--verify-tag`; prerelease versions receive
+    `--prerelease`.
+
+## Security gates: YAML versus GitHub settings
+
+The YAML enforces all of the following:
+
+- the build job cannot reference `OPENBFME_RELEASE_SIGNING_KEY`;
+- the signing secret is referenced exactly once, on the signing step;
+- signing, VM acceptance, and publication require `github.ref_protected`;
+- ordinary manual validation creates a useful unsigned artifact without signing;
+- the signing job declares `environment: release-signing`;
+- the publication job declares `environment: production-release`;
+- only the publication job receives `contents: write`;
+- publication depends on the successful signed artifact and Windows VM result.
+
+Those declarations are not sufficient on their own. A repository writer can
+edit workflow YAML on an unprotected branch. Before the first release, the
+owner must configure the following controls in GitHub's web UI:
+
+1. Open **Repository Settings > Rules > Rulesets**. Create an active branch
+   ruleset for the default branch (currently `main`) that requires reviewed pull
+   requests and prevents unreviewed direct changes to the release workflow.
+2. In **Repository Settings > Rules > Rulesets**, create an active tag ruleset
+   covering `v*`. Restrict who can create or update those tags, and prevent tag
+   deletion or non-fast-forward changes. The pushed release tag must make
+   `github.ref_protected` evaluate to `true`.
+3. Open **Repository Settings > Environments > New environment** and create
+   `release-signing`. Add required reviewers, enable prevention of self-review,
+   disallow administrator bypass, and choose selected deployment branches and
+   tags: the protected default branch plus protected `v*` tags. Under that
+   environment's **Environment secrets**, create
+   `OPENBFME_RELEASE_SIGNING_KEY` containing the complete private PEM.
+4. Delete any repository-level or organization-level
+   `OPENBFME_RELEASE_SIGNING_KEY`. If a copy remains at either broader scope, an
+   untrusted workflow can request that broader secret without entering the
+   signing environment.
+5. Under **Repository Settings > Environments**, create `production-release`.
+   Add required reviewers, enable prevention of self-review, disallow
+   administrator bypass, and choose selected deployment tags matching protected
+   `v*`. This gate controls the job that receives `contents: write` and creates
+   the GitHub Release.
+
+An environment with no required reviewer and no deployment branch/tag
+restriction is only a name. Do not approve a release until both environments
+show the configured protection rules.
+
+The configured release target is currently described as a private repository.
+GitHub plan availability matters: GitHub documents required reviewers on private
+repositories as unavailable on Free, Pro, and Team plans. If the environment UI
+does not offer required reviewers for this private repository, this design does
+not meet the required signing-key boundary. Move to a plan/repository visibility
+that supports the protection or use an independently reviewed external signing
+service; do not cut a release with an unreviewed signing environment.
+
+GitHub supplies `GITHUB_TOKEN`; no owner-created token or PAT is required.
+
+## Create or validate the manifest signing key
+
+`Sign-ReleaseManifest.ps1` requires an unencrypted PKCS#8 PEM beginning with
+`-----BEGIN PRIVATE KEY-----`. The launcher verifies RSA/SHA-256 PKCS#1 v1.5
+signatures. The tracked public key is 3072-bit and is pinned in two places:
+
+- `tools/release/release-manifest-public.pem`;
+- `ProductionPublicKey` in
+  `launcher/OpenBFME.Launcher/ManifestSignature.cs`.
+
+The launcher test fails if those two public copies differ.
+
+Important: a newly generated private key cannot be made to match the public key
+already in the repository. If the owner has the existing corresponding private
+key, validate it as shown below. If that private key does not exist, generate a
+new pair, replace both public-key pins, run the launcher tests, review and commit
+that rotation, and only then cut the first tag. The current pipeline cannot sign
+a valid manifest without the private half of the pinned key.
+
+Generate a new pair outside the checkout:
+
+```powershell
+$OpenSsl = "C:\Program Files\Git\usr\bin\openssl.exe"
+$SecureRoot = "D:\OpenBFME-release-key"
+New-Item -ItemType Directory -Path $SecureRoot
+& $OpenSsl genpkey `
+  -algorithm RSA `
+  -pkeyopt rsa_keygen_bits:3072 `
+  -out (Join-Path $SecureRoot "openbfme-release-signing-private.pem")
+& $OpenSsl pkey `
+  -in (Join-Path $SecureRoot "openbfme-release-signing-private.pem") `
+  -pubout `
+  -out (Join-Path $SecureRoot "release-manifest-public.pem")
 ```
 
-It checks the pinned toolchain, every earlier deterministic and visual stage gate, the
-legacy skirmish regression suite, both boot paths, the accelerated 30-minute simulation
-soak, and the Lane A export scan. A successful run ends with `STAGE10_GATE PASS`.
+Never create the private file inside the repository, commit it, attach it to a
+release, or paste it into an issue or Actions log. Keep a protected offline
+backup.
 
-## Toolchain
+For a key rotation, copy the generated public PEM to
+`tools/release/release-manifest-public.pem`, then replace the complete
+`ProductionPublicKey` PEM value in
+`launcher/OpenBFME.Launcher/ManifestSignature.cs` with those exact bytes. The
+two copies must be identical after normalizing CRLF to LF. The private PEM never
+goes into either file.
 
-- Godot 4.7 stable, selected with `OPENBFME_GODOT` when it is not in the documented
-  local location.
-- .NET SDK 10.0.100, pinned by `global.json`.
-- Python 3.12.10 for deterministic data generation utilities; private retail builds
-  additionally bind the venv launcher, base interpreter DLL, and bounded standard
-  library/runtime tree rather than trusting the version string alone.
-- For private retail import only: portable Blender 4.2.0, the pinned OpenSAGE W3D
-  plugin, FFmpeg 8.1.1, Pillow, fontTools, and defusedxml. `openbfme-import
-  bootstrap-tools` provisions or verifies the external pins; none is a runtime
-  dependency.
+Validate an existing private key against the tracked public key:
 
-Run `run_doctor.bat` for exact detected versions and executable paths.
-
-## Optional MCP operator tooling
-
-The per-user Codex configuration has optional `godot`, `blender`, `ludo`, and
-`elevenlabs` MCP servers. They help inspect the running editor and create reviewed
-content, but they are not build dependencies or sources of truth. They must not bypass
-`run_retail_pipeline_tests.bat`, `run_stage10_tests.bat`, provenance checks, or the
-external-retail-content boundary.
-
-- Godot MCP uses `Coding-Solo/godot-mcp` commit
-  `1209744fad78f3998f98c7394fd0f6ef50da5281` with a locally hardened lock
-  (`@modelcontextprotocol/sdk` 1.26.0 and Axios 1.16.0).
-- Blender MCP uses `ahujasid/blender-mcp` add-on commit
-  `6e99eb5a442b83766a5796975ec7bb5bfc791341` and the pinned 1.6.4 server package;
-  telemetry and optional third-party asset services stay disabled.
-- ElevenLabs MCP uses official commit
-  `afc22357432db9e8b33991a83d41906001f6d759` and package 0.11.0. Its base path is
-  external to the checkout, and setup verification must not generate billable audio.
-- Ludo uses `https://mcp.ludo.ai/mcp`; it is an optional design/reference aid only.
-
-Secrets live in the Windows user environment as `LUDO_API_KEY` and
-`ELEVENLABS_API_KEY`; never copy their values into this repository or `config.toml`.
-All four servers default to prompt-before-tool-use. Restart Codex after changing MCP
-configuration so the desktop app inherits the user-scoped credentials.
-
-## Rebuild repository-authored content
-
-The legal-safe proof bundle in `content/openbfme-test` is maintained directly and
-validated by the cumulative gates. The older default skirmish pack can be regenerated
-from repository-authored definitions with:
-
-```bat
-python tools\build_base_content.py
+```powershell
+$OpenSsl = "C:\Program Files\Git\usr\bin\openssl.exe"
+$PrivateKey = "D:\OpenBFME-release-key\openbfme-release-signing-private.pem"
+$DerivedPublic = Join-Path $env:TEMP "openbfme-derived-public.pem"
+& $OpenSsl pkey -in $PrivateKey -pubout -out $DerivedPublic
+if ($LASTEXITCODE -ne 0) { throw "The private signing key is invalid." }
+$derived = (Get-Content -LiteralPath $DerivedPublic -Raw).Replace("`r`n", "`n").Trim()
+$tracked = (Get-Content -LiteralPath tools\release\release-manifest-public.pem -Raw).
+  Replace("`r`n", "`n").Trim()
+Remove-Item -LiteralPath $DerivedPublic -Force
+if ($derived -cne $tracked) { throw "The private key does not match the pinned release key." }
+dotnet run `
+  --project launcher\OpenBFME.Launcher.Tests\OpenBFME.Launcher.Tests.csproj `
+  --configuration Release
 ```
 
-The optional `tools\port_mert_config.py` path consumes only the committed
-`tools\mert_export\full_config.json` snapshot. Both utilities resolve paths relative to
-the checkout and do not require the original author's desktop layout.
+After validation, paste the complete private PEM into the
+`OPENBFME_RELEASE_SIGNING_KEY` secret under the `release-signing` environment.
 
-After any content rebuild, run `run_stage10_tests.bat`; do not distribute a build that
-fails provenance, path-containment, or export scanning.
+## Dedicated Windows acceptance runner
 
-## Stage 11-15 focused checkpoints
+Open **Repository Settings > Actions > Runners** to register one online
+self-hosted Windows runner. The `windows-vm-acceptance` job requires all of
+these labels:
 
-Stages 11-15 are focused private-retail implementation checks, not a second release
-train and not evidence that the vertical slice is complete.
-
-| Stage | Focused evidence surface |
-|---|---|
-| 11-12 | `game/tests/stage11_12_runner.gd` checks control groups, pending route/destination/order state, transactional rejection, arrival cleanup, and deterministic signatures. |
-| 13 | `run_importer_tests.bat` covers fail-closed helper/ambiguous-box filtering and mandatory right-hand weapon/left-hand shield evidence; the private playable check consumes the sanitized capability report. |
-| 14-15 simulation | `game/tests/stage14_15_sim_runner.gd` checks the symmetric five-role base authority, one-Soldier economy/production contract, source-timed attack impact, shared enemy queue behavior, and Fortress outcomes. |
-| 15 menu/settings | `game/tests/stage15_menu_runner.gd` checks the uncluttered page flow and persistent music, voice/SFX, and mute controls without requiring retail content. |
-| 15 integration | `run_retail_slice.bat --test` checks the mounted private Soldier/Fords scene, fallback structures, HUD/order feedback, production, combat, and outcome presentation together. |
-
-The focused Godot runners can be invoked with the same Godot 4.7 executable selected by
-`run_doctor.bat`, for example:
-
-```bat
-"%OPENBFME_GODOT%" --headless --path game --script res://tests/stage11_12_runner.gd
-"%OPENBFME_GODOT%" --headless --path game --script res://tests/stage14_15_sim_runner.gd
-"%OPENBFME_GODOT%" --headless --path game --script res://tests/stage15_menu_runner.gd
+```text
+self-hosted
+windows
+x64
+openbfme-release-vm
 ```
 
-These runners do not replace the handoff order: run the smallest focused check first,
-then `run_retail_pipeline_tests.bat`, then `run_stage10_tests.bat`. Godot terrain-layer
-rendering, remaining Fords object bindings, playable Archer/Tower Guard/Knight
-integration, five completed retail building lifecycles, placement/construction, full building-aware navigation, the complete
-Men AI/economy/production loop, and oracle coverage remain release blockers. The retail
-profile therefore remains `vertical_slice_complete: false`.
+The runner account must be able to read a lawful BFME II 1.06 installation.
+Define `BFME2_RETAIL_PATH` in the runner service's environment as the installation
+directory. If the runner is installed as a Windows service, restart the service
+after adding or changing the variable so the worker process inherits it. The job
+fails immediately when the variable is missing or the directory is unavailable.
 
-## Private launch
+Do not place retail files in the checkout, an Actions artifact, a runner
+diagnostic upload, or a GitHub Release. The acceptance receipt contains counts,
+hashes, and release identity, not retail payload bytes.
 
-`run_stage10.bat` opens the full stage menu. Stages 5 through 9 also have direct launch
-scripts for focused inspection. Retail BFME2 data and locally converted retail data
-must stay outside this repository and outside any exported build.
+## Python versions
 
-## Private retail-content gate
+The contributor bootstrap and shipped-player runtime have separate destination
+trees but share one interpreter identity:
 
-With a user-owned BFME II 1.06 install at `F:\BFME2`:
+- both start from the hash-pinned `python-build-standalone` 3.12.13+20260718
+  distribution provisioned by `tools/Install-PinnedPython.ps1`;
+- contributor setup keeps it under `.private/retail-work/tools/`;
+- the Windows release workflow installs the same archive under
+  `RUNNER_TEMP`, creates a fresh venv from it, and passes that venv interpreter
+  to `New-PinnedPythonRuntime.ps1`;
+- `New-PinnedPythonRuntime.ps1` does not trust the version string alone. It
+  checks the version, launcher hash, base DLL hash, bounded runtime-tree hash,
+  dependency hashes, startup behavior, and final bundle inventory.
 
-```bat
-run_importer.bat F:\BFME2
-run_importer_tests.bat
-run_retail_pack_tests.bat
-run_retail_slice.bat --test
-run_retail_pipeline_tests.bat
+The earlier contributor 3.12.13 versus shipped-player 3.12.10 skew was a real
+defect after `bootstrap.py` adopted the 3.12.13 runtime hashes: the launcher
+would reject the 3.12.10 bundle during `bootstrap-tools`. The release lane now
+uses 3.12.13 as well. `actions/setup-python` remains only on the VM acceptance
+runner as a 3.12.13 standard-library host for
+`compare_import_bundles.py`; it is not copied into the launcher.
+
+## Local preflight
+
+From PowerShell in the repository root:
+
+```powershell
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass `
+  -File tools\release\Test-ReleaseTools.ps1
+dotnet run `
+  --project launcher\OpenBFME.Launcher.Tests\OpenBFME.Launcher.Tests.csproj `
+  --configuration Release
+python -m unittest tools.release.test_compare_import_bundles -v
 ```
 
-The importer publishes an immutable directory named by its canonical bundle SHA-256.
-The runtime selection contains only a contained relative path. The retail pack gate
-loads all four scoped unit GLBs, portraits, object/horde buttons, and production
-buttons, the Soldier's 23-clip closure, four core
-clips for each additional unit, five intact structure GLBs, exact terrain layers and
-66 converted terrain materials, the first exact `PTGrass15` prop binding, UI textures,
-PCM voices, and MP3 music without Godot import metadata or retail-source access. The
-playable gate also consumes the stricter
-Soldier equipment proof, derives attack timing from imported rules, and verifies that
-the cooked map facts drive bounded terrain/water presentation, exact starts, named-ford
-named-ford routing, generic placement markers, and the source-coordinate minimap. Its integrated
-base loop uses five pre-placed structure roles per team; incomplete lifecycle visuals may be
-repository-authored procedural/legal-safe fallbacks, and only Gondor Soldiers can be
-trained. `run_retail_pipeline_tests.bat` is the authoritative private-content gate; it
-proves repeat-build identity before the runtime, legacy, and export checks. Launch the
-playable private battle with `run_retail_slice.bat`. This content must never be part of
-a public/export artifact assembly.
+The workflow is the packaging source of truth. Local checks do not exercise
+GitHub environment protections, GitHub tag verification, provenance issuance,
+the hosted build image, or the dedicated retail VM, and do not authorize
+publication.
+
+## Cut a release
+
+After all owner setup and milestone approval are complete:
+
+```powershell
+git tag -s v0.1.0 -m "OpenBFME 0.1.0"
+git push origin v0.1.0
+```
+
+The tag must point to a commit on the protected default-branch ancestry.
+Versions with a suffix, such as `v0.1.0-playtest.1`, are published as GitHub
+prereleases and receive the `playtest` manifest channel. Versions without a
+suffix receive the `stable` channel.
+
+The launcher executables are not Authenticode-signed by this workflow. Windows
+may display an unknown-publisher warning. Manifest signing protects update
+integrity but is not a substitute for Windows publisher identity.

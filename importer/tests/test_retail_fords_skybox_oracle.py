@@ -2,6 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 import unittest
+from tests.retail_inputs import retail_file
 
 try:
     from openbfme_importer.retail_fords_skybox_oracle import (
@@ -81,7 +82,7 @@ class FordsSkyboxOraclePrivateIntegrationTests(unittest.TestCase):
             "manifest_path": cls.repo
             / ".private/retail-work/cache/effective-assets/.openbfme/manifest.json",
             "catalog_path": cls.repo / ".private/retail-work/catalog/bfme2.json",
-            "game_dat_path": Path("F:/BFME2/game.dat"),
+            "game_dat_path": retail_file("game.dat"),
         }
         if not all(path.exists() for path in cls.paths.values()):
             raise unittest.SkipTest("private BFME2 retail skybox evidence is unavailable")

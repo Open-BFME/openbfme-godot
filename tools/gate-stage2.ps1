@@ -73,8 +73,8 @@ function Resolve-Godot {
         if (-not [string]::IsNullOrWhiteSpace($value)) { $candidates += $value }
     }
     $candidates += @(
-        'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe',
-        'C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64.exe'
+        "$env:USERPROFILE\Downloads\godot47\Godot_v4.7-stable_win64_console.exe",
+        "$env:USERPROFILE\Downloads\godot47\Godot_v4.7-stable_win64.exe"
     )
     foreach ($candidateValue in $candidates) {
         $candidate = ([string]$candidateValue).Trim().Trim('"')

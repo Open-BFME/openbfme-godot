@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>OpenBFME.Launcher</AssemblyName>
+    <RootNamespace>OpenBFME.Launcher</RootNamespace>
+    <ApplicationIcon />
+    <Authors>OpenBFME contributors</Authors>
+    <Description>Code-only launcher and local importer front end for OpenBFME.</Description>
+  </PropertyGroup>
+
+  <!--
+    The publish/update target is baked in from the single source of truth rather
+    than written as a literal anywhere in launcher code. See ReleaseSource.cs.
+    A missing file must fail the build, not silently ship an unconfigured exe.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\..\config\release-source.json"
+                      LogicalName="OpenBFME.Launcher.release-source.json" />
+  </ItemGroup>
+
+  <Target Name="VerifyEmbeddedReleaseSource" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)..\..\config\release-source.json')"
+           Text="config/release-source.json is missing. The launcher must not be built without an embedded release target; see ReleaseSource.cs." />
+  </Target>
+</Project>

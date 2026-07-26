@@ -8,6 +8,7 @@ from openbfme_importer.retail_hud_men_fords_reachability_oracle import (
     _validate_native,
     build_contract,
 )
+from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,7 +23,7 @@ MAP = (
     / "map.json"
 )
 SETUP = MAP.with_name("setup.json")
-GAME_DAT = Path("F:/BFME2/game.dat")
+GAME_DAT = retail_file("game.dat")
 SIDE_APT = (
     ROOT
     / ".private"

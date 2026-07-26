@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from openbfme_importer.retail_hud_resource_flash_oracle import build_contract
+from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,7 +24,7 @@ SCENE = (
 )
 ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
 MANIFEST = ASSETS / ".openbfme" / "manifest.json"
-GAME_DAT = Path("F:/BFME2/game.dat")
+GAME_DAT = retail_file("game.dat")
 
 pytestmark = pytest.mark.skipif(
     not SCENE.is_file() or not MANIFEST.is_file() or not GAME_DAT.is_file(),

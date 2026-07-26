@@ -3,11 +3,12 @@ import json
 from pathlib import Path
 import pytest
 from openbfme_importer.retail_hud_wnd_draw_semantics import build_contract
+from tests.retail_inputs import retail_file
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
 MANIFEST = ASSETS / ".openbfme" / "manifest.json"
-GAME_DAT = Path("F:/BFME2/game.dat")
+GAME_DAT = retail_file("game.dat")
 pytestmark = pytest.mark.skipif(
     not MANIFEST.is_file() or not GAME_DAT.is_file(), reason="private inputs absent"
 )

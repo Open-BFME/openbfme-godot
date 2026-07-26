@@ -17,9 +17,9 @@ import onboard  # noqa: E402
 class TestArgumentParsing(unittest.TestCase):
     def test_non_interactive_flags(self) -> None:
         args = onboard.parse_args(
-            ["--install", r"F:\BFME2", "--godot", r"C:\godot\godot.exe", "--yes"]
+            ["--install", r"D:\Games\BFME2", "--godot", r"C:\godot\godot.exe", "--yes"]
         )
-        self.assertEqual(args.install, Path(r"F:\BFME2"))
+        self.assertEqual(args.install, Path(r"D:\Games\BFME2"))
         self.assertEqual(args.godot, Path(r"C:\godot\godot.exe"))
         self.assertTrue(args.yes)
         self.assertFalse(args.skip_gates)
@@ -39,7 +39,7 @@ class TestArgumentParsing(unittest.TestCase):
         args = onboard.parse_args(
             [
                 "--rotwk",
-                r"F:\RotWK",
+                r"D:\Games\RotWK",
                 "--state-root",
                 r"D:\state",
                 "--content-root",
@@ -48,7 +48,7 @@ class TestArgumentParsing(unittest.TestCase):
                 "--force-convert",
             ]
         )
-        self.assertEqual(args.rotwk, Path(r"F:\RotWK"))
+        self.assertEqual(args.rotwk, Path(r"D:\Games\RotWK"))
         self.assertEqual(args.state_root, Path(r"D:\state"))
         self.assertEqual(args.content_root, Path(r"D:\packs"))
         self.assertTrue(args.skip_gates)
@@ -65,11 +65,11 @@ class TestConfigRoundTrip(unittest.TestCase):
             path = Path(tmp) / "onboard.config.json"
             onboard.save_config(
                 path,
-                {"godotExe": r"C:\godot\godot.exe", "bfme2Install": r"F:\BFME2"},
+                {"godotExe": r"C:\godot\godot.exe", "bfme2Install": r"D:\Games\BFME2"},
             )
             loaded = onboard.load_config(path)
             self.assertEqual(loaded["godotExe"], r"C:\godot\godot.exe")
-            self.assertEqual(loaded["bfme2Install"], r"F:\BFME2")
+            self.assertEqual(loaded["bfme2Install"], r"D:\Games\BFME2")
             self.assertEqual(loaded["schema"], onboard.CONFIG_SCHEMA)
             self.assertEqual(loaded["schemaVersion"], onboard.CONFIG_VERSION)
             # No stray staging file left behind.

@@ -29,6 +29,11 @@ BLENDER_URL = "https://download.blender.org/release/Blender4.2/blender-4.2.0-win
 BLENDER_ZIP_SHA256 = "b6e72874f8cb5c4ed77f9b03d7f1fde851b9455a7ff02a1e1119c876318ebc65"
 BLENDER_EXE_SHA256 = "80fb653019a0afb3bda0947ec74e84dc0a94d0d388f9b3849433c0e1a4efdabe"
 BLENDER_TREE_SHA256 = "81e0cfb0d56ff5e33c2c562b13cc88257b9b34e072efa7ae054a6c87f13f2aa4"
+PYTHON_VERSION = "3.12.13"
+PYTHON_BUILD_TAG = "20260718"
+PYTHON_URL = "https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.12.13%2B20260718-x86_64-pc-windows-msvc-install_only.tar.gz"
+PYTHON_ARCHIVE_SHA256 = "56c9dd9681c4810cb8bfdec277ee2606d8ab17e678e5bc2bd138eb8098e330b6"
+PYTHON_EXE_SHA256 = "32783151cd5dcf5196ff2fa342c11fc0909436531d4deec7824cbc29fd8c1a0c"
 PLUGIN_REPOSITORY = "https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin.git"
 PLUGIN_COMMIT = "2de84023cb632a79a853b2a52f97c8002ed85142"
 PLUGIN_SUBMODULE_COMMIT = "981aa2984117a1c686b7fa40d086794ce1c7665e"
@@ -40,10 +45,9 @@ FONTTOOLS_VERSION = "4.61.1"
 FONTTOOLS_TREE_SHA256 = "7903daa0e6e9be7c6d7bed6e39eed52fe2ba0f17107f4e398cd806f54dafecc3"
 DEFUSEDXML_VERSION = "0.7.1"
 DEFUSEDXML_TREE_SHA256 = "4a5bc129bad371fd21f6bb07621d2d331a1d2b192fef9b2bf78656b928c7738d"
-PYTHON_VERSION = "3.12.10"
-PYTHON_LAUNCHER_SHA256 = "0b471133e110cfb53a061cad528ce8e517d7b9ac41a0a396c39ad795a487fc14"
-PYTHON_BASE_DLL_SHA256 = "9a0e3435aaa680d868150f87ab3e388ad2eebc22f87e036155c7b4eda8cd2120"
-PYTHON_RUNTIME_TREE_SHA256 = "98348e31da2e14c684372bf02fee52b71984d28d8a91b82dbe0fe9aa2f6561d7"
+PYTHON_LAUNCHER_SHA256 = "4ee5a32ca0fbfc6f4dd604fde80185cb0039d5a4bdca02ca698fffc5d9da52c7"
+PYTHON_BASE_DLL_SHA256 = "60a12f6f0bdc0363544fcb3c824decf97d843ea7c3a9732f4ba02fa8b33cd6df"
+PYTHON_RUNTIME_TREE_SHA256 = "af162c36194d692391e2a972537bfa57d6576d8ffd701b731aee1ee282b6b013"
 PYTHON_RUNTIME_MAX_FILES = 20_000
 PYTHON_RUNTIME_MAX_BYTES = 512 * 1024 * 1024
 BLENDER_CACHE_PURGE_MAX_FILES = 10_000
@@ -608,7 +612,7 @@ def bootstrap_tools(state_root: Path, ffmpeg_source: Path | None = None) -> dict
         or python_runtime["tree_sha256"] != PYTHON_RUNTIME_TREE_SHA256
     ):
         raise RuntimeError(
-            "Python base runtime differs from the pinned 3.12.10 surface; "
+            f"Python base runtime differs from the pinned {PYTHON_VERSION} surface; "
             "reinstall the pinned interpreter before recreating the importer environment"
         )
     pillow_root = Path(PIL.__file__).resolve().parent

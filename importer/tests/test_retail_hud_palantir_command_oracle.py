@@ -10,11 +10,12 @@ from openbfme_importer.retail_hud_palantir_command_oracle import (
     build_contract_from_payloads,
     write_contract,
 )
+from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
-GAME_DAT = Path("F:/BFME2/game.dat")
+GAME_DAT = retail_file("game.dat")
 SOURCE_NAMES = (
     "Palantir.apt",
     "Palantir.const",

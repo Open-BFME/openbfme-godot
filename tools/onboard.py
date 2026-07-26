@@ -21,7 +21,7 @@ The wizard walks four fail-closed steps:
 Everything retail-derived stays under the ignored ``.private`` workspace; the
 wizard never copies or distributes retail bytes. Non-interactive mode for CI:
 
-    python tools/onboard.py --install F:\\BFME2 --godot C:\\path\\Godot.exe --yes
+    python tools/onboard.py --install D:\\Games\\BFME2 --godot C:\\path\\Godot.exe --yes
 
 All state the wizard persists lives in ``.private/onboard.config.json``
 (untracked; override with ``--config``).
@@ -651,7 +651,7 @@ def step_retail_install(ctx: WizardContext) -> None:
     install = args.install or _config_path_value(ctx.config, "bfme2Install")
     if install is None:
         answer = _prompt(
-            "Path to your BFME2 1.06 installation (e.g. F:\\BFME2)",
+            "Path to your BFME2 1.06 installation (e.g. D:\\Games\\BFME2)",
             non_interactive=args.yes,
             flag_hint="--install PATH",
         )

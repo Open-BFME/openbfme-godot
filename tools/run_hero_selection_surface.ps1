@@ -11,7 +11,7 @@ if ([string]::IsNullOrWhiteSpace($GodotPath)) {
     $GodotPath = $env:OPENBFME_GODOT
 }
 if ([string]::IsNullOrWhiteSpace($GodotPath)) {
-    $GodotPath = "C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe"
+    $GodotPath = "$env:USERPROFILE\Downloads\godot47\Godot_v4.7-stable_win64_console.exe"
 }
 if (-not (Test-Path -LiteralPath $GodotPath -PathType Leaf)) {
     throw "Godot console executable not found: $GodotPath"

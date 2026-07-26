@@ -26,7 +26,11 @@ from .bootstrap import (
 from .catalog import doctor_install
 from .big import sha256_file
 from .game import retail_game
-from .paths import default_godot_content_root, default_state_root
+from .paths import (
+    default_godot_content_root,
+    default_retail_install,
+    default_state_root,
+)
 
 
 CheckItem = dict[str, Any]
@@ -71,10 +75,11 @@ def _discover_godot() -> tuple[Path | None, str]:
         path = Path(env).expanduser()
         if path.is_file():
             return path.resolve(), "OPENBFME_GODOT"
-    # Common private defaults used by the GUI / slice runner.
+    # Machine-neutral fallbacks, relative to the current user's profile.
+    # Set OPENBFME_GODOT to point at any other location.
     candidates = [
-        Path(r"C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64.exe"),
         Path.home() / "Downloads" / "godot47" / "Godot_v4.7-stable_win64.exe",
+        Path.home() / "Downloads" / "godot47" / "Godot_v4.7-stable_win64_console.exe",
     ]
     which = shutil.which("godot")
     if which:
@@ -266,7 +271,7 @@ def check_dependencies(
     install_path = (
         Path(install).expanduser()
         if install is not None
-        else Path(os.environ.get("BFME2_INSTALL", r"F:\BFME2"))
+        else default_retail_install()
     )
     state = (
         Path(state_root).expanduser().resolve()

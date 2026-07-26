@@ -3,7 +3,8 @@ setlocal
 cd /d "%~dp0"
 
 if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0.private\retail-work"
-if not defined BFME2_INSTALL set "BFME2_INSTALL=F:\BFME2"
+call "%~dp0tools\resolve-retail-install.bat"
+if errorlevel 1 exit /b 1
 
 set "PY_DIR=%OPENBFME_IMPORT_ROOT%\tools\python-3.12-env\Scripts"
 set "PYTHONW=%PY_DIR%\pythonw.exe"

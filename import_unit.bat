@@ -4,7 +4,8 @@ cd /d "%~dp0"
 
 if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%~dp0.private\retail-work"
 if not defined OPENBFME_CONTENT set "OPENBFME_CONTENT=%~dp0.private\content-packs"
-if not defined BFME2_INSTALL set "BFME2_INSTALL=F:\BFME2"
+call "%~dp0tools\resolve-retail-install.bat"
+if errorlevel 1 exit /b 1
 
 set "UNIT_OBJECT=%~1"
 if not defined UNIT_OBJECT set /p "UNIT_OBJECT=BFME2 Object or horde id: "

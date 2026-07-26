@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.retail_inputs import rotwk_install
+
 from openbfme_importer.sage_video import (
     SageVideoError,
     VideoSource,
@@ -16,7 +18,7 @@ from openbfme_importer.sage_video import (
 from openbfme_importer.tools import discover_executable
 
 ROOT = Path(__file__).resolve().parents[2]
-ROTWK_INSTALL = Path("F:/RotWK")
+ROTWK_INSTALL = rotwk_install()
 
 
 def _fake_install(tmp_path: Path) -> Path:

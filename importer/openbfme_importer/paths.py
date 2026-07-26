@@ -96,6 +96,84 @@ def repo_root_from_module() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+#: Locations a stock BFME2 / RotWK install is normally found at on Windows.
+#: Relative to each of the drives/roots probed by :func:`retail_install_candidates`.
+_RETAIL_RELATIVE_DIRS: tuple[str, ...] = (
+    "Electronic Arts/The Battle for Middle-earth II",
+    "EA Games/The Battle for Middle-earth II",
+    "Electronic Arts/The Lord of the Rings, The Rise of the Witch-king",
+    "EA Games/The Lord of the Rings, The Rise of the Witch-king",
+    "Steam/steamapps/common/The Battle for Middle-earth II",
+    "GOG Galaxy/Games/The Battle for Middle-earth II",
+)
+
+#: A file that must exist for a directory to be accepted as a retail install.
+RETAIL_INSTALL_MARKER = "game.dat"
+
+
+def retail_install_candidates() -> list[Path]:
+    """Machine-neutral guesses for where a player's retail install lives.
+
+    Deliberately contains no developer-specific path: every entry is derived
+    from this machine's own environment (program-files roots, fixed drives).
+    """
+
+    roots: list[Path] = []
+    for variable in ("ProgramFiles(x86)", "ProgramFiles", "ProgramW6432"):
+        value = os.environ.get(variable, "").strip()
+        if value:
+            roots.append(Path(value))
+    # Games are commonly installed to a secondary data drive rather than C:.
+    if os.name == "nt":
+        for letter in "CDEFGH":
+            drive = Path(f"{letter}:/")
+            if drive.exists():
+                roots.append(drive)
+                roots.append(drive / "Games")
+
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        for relative in _RETAIL_RELATIVE_DIRS:
+            candidate = root / relative
+            if candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+    return candidates
+
+
+def discover_retail_install() -> Path | None:
+    """Return the first plausible retail install, or ``None`` if none is found.
+
+    ``BFME2_INSTALL`` always wins so a player (or CI) can point at any path.
+    """
+
+    configured = os.environ.get("BFME2_INSTALL", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    for candidate in retail_install_candidates():
+        try:
+            if (candidate / RETAIL_INSTALL_MARKER).is_file():
+                return candidate.resolve()
+        except OSError:
+            continue
+    return None
+
+
+def default_retail_install() -> Path:
+    """Best-effort retail install path for callers that require *some* path.
+
+    Prefer :func:`discover_retail_install` and handle ``None`` where you can
+    report a useful error; this exists only for legacy positional defaults.
+    """
+
+    found = discover_retail_install()
+    if found is not None:
+        return found
+    candidates = retail_install_candidates()
+    return candidates[0] if candidates else Path("BFME2")
+
+
 def default_godot_content_root() -> Path:
     configured = os.environ.get("OPENBFME_CONTENT_ROOT", "").strip()
     if configured:

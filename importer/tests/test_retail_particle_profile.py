@@ -14,6 +14,7 @@ from openbfme_importer.retail_visual_profile import (
     _effective_asset_aggregate,
 )
 from openbfme_importer.sage_particles import parse_particle_definitions
+from tests.retail_inputs import retail_file
 
 
 _PARTICLE_NAMES = {
@@ -586,7 +587,7 @@ def make_inputs(root: Path) -> tuple[dict, dict, dict]:
         )
     oracle_sources.append(
         {
-            "path": "F:/BFME2/game.dat",
+            "path": str(retail_file("game.dat")),
             "bytes": 10,
             "sha256": "c" * 64,
             "file_version": "1.6.2429.30210",

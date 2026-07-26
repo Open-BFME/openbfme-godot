@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import struct
 import unittest
+from tests.retail_inputs import retail_file
 
 try:
     from openbfme_importer.retail_fords_world_sky_trace import (
@@ -55,7 +56,7 @@ class FordsWorldSkyTracePrivateIntegrationTests(unittest.TestCase):
             "manifest_path": cls.repo
             / ".private/retail-work/cache/effective-assets/.openbfme/manifest.json",
             "catalog_path": cls.repo / ".private/retail-work/catalog/bfme2.json",
-            "game_dat_path": Path("F:/BFME2/game.dat"),
+            "game_dat_path": retail_file("game.dat"),
             "skybox_oracle_path": cls.repo
             / ".private/scratch/fords-skybox-oracle/contract-a.json",
             "water_reflection_contract_path": cls.repo

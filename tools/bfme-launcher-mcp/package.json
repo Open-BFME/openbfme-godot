@@ -13,5 +13,16 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.26.0"
+  },
+  "//overrides": [
+    "Transitive security fixes pulled in under @modelcontextprotocol/sdk.",
+    "@hono/node-server <2.0.5  GHSA-frvp-7c67-39w9 (moderate) path traversal via encoded backslash.",
+    "fast-uri 3.0.0-3.1.3     GHSA-v2hh-gcrm-f6hx (high) host confusion via backslash authority delimiter.",
+    "Both are dev-only here: src/server.mjs has no runtime dependencies.",
+    "Remove an entry once the SDK ships a version that resolves it directly."
+  ],
+  "overrides": {
+    "@hono/node-server": "2.0.11",
+    "fast-uri": "3.1.4"
   }
 }

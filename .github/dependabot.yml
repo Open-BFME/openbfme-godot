@@ -1,0 +1,31 @@
+# Dependency updates for the public repository.
+#
+# Scope note: the Python importer pins every dependency with a hash in
+# importer/requirements-win.txt (installed with --require-hashes). Dependabot
+# can raise the version but CANNOT regenerate that hash, so pip ecosystem PRs
+# always need a human to verify the digest against PyPI before merge. See
+# docs/RELEASE_POLICY.md.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /tools/bfme-launcher-mcp
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for routine bumps; security fixes still come through separately.
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: pip
+    directory: /importer
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3

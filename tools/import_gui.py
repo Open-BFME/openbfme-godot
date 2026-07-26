@@ -12,6 +12,7 @@ from pathlib import Path
 import queue
 import re
 import subprocess
+import shutil
 import sys
 import threading
 import time
@@ -26,7 +27,16 @@ _IMPORTER = REPO_ROOT / "importer"
 if str(_IMPORTER) not in sys.path:
     sys.path.insert(0, str(_IMPORTER))
 
-DEFAULT_INSTALL = Path(os.environ.get("BFME2_INSTALL", r"F:\BFME2"))
+try:
+    from openbfme_importer.paths import default_retail_install as _default_retail_install
+except ImportError:  # pragma: no cover - degraded UI without package
+
+    def _default_retail_install() -> Path:
+        return Path(os.environ.get("BFME2_INSTALL", "")) or Path.cwd()
+
+
+# Auto-detected from this machine; override with BFME2_INSTALL.
+DEFAULT_INSTALL = _default_retail_install()
 DEFAULT_STATE = Path(
     os.environ.get(
         "OPENBFME_IMPORT_ROOT",
@@ -39,12 +49,19 @@ DEFAULT_CONTENT = Path(
         str(REPO_ROOT / ".private" / "content-packs"),
     )
 )
-GODOT_DEFAULT = Path(
-    os.environ.get(
-        "OPENBFME_GODOT",
-        r"C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64.exe",
-    )
-)
+def _default_godot() -> Path:
+    """Machine-neutral Godot guess; override with OPENBFME_GODOT."""
+
+    configured = os.environ.get("OPENBFME_GODOT", "").strip()
+    if configured:
+        return Path(configured)
+    on_path = shutil.which("godot")
+    if on_path:
+        return Path(on_path)
+    return Path.home() / "Downloads" / "godot47" / "Godot_v4.7-stable_win64.exe"
+
+
+GODOT_DEFAULT = _default_godot()
 
 try:
     from openbfme_importer.dependency_check import (

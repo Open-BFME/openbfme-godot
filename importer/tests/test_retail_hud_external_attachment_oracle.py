@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from openbfme_importer.retail_hud_external_attachment_oracle import build_contract
+from tests.retail_inputs import retail_file
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,7 +15,7 @@ ASSETS = ROOT / ".private" / "retail-work" / "cache" / "effective-assets"
 PLAN = ROOT / ".private" / "scratch" / "hud-261-source-conversion" / "plan-a.json"
 EXTERNAL = ROOT / ".private" / "scratch" / "hud-external-movies" / "contract-a.json"
 WND = ROOT / ".private" / "scratch" / "hud-wnd-activation-oracle" / "contract-a.json"
-GAME_DAT = Path("F:/BFME2/game.dat")
+GAME_DAT = retail_file("game.dat")
 
 pytestmark = pytest.mark.skipif(
     not all(path.is_file() for path in (PLAN, EXTERNAL, WND, GAME_DAT)),

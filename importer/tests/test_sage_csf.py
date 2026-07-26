@@ -6,6 +6,7 @@ import struct
 from pathlib import Path
 
 import pytest
+from tests.retail_inputs import retail_file, rotwk_file
 
 try:
     from openbfme_importer.big import BigArchive
@@ -26,8 +27,8 @@ except ModuleNotFoundError:  # Supports the repository-root acceptance command.
 
 
 REAL_INSTALLS = {
-    "bfme2": Path("F:/BFME2/lang/english.big"),
-    "rotwk": Path("F:/RotWK/lang/english.big"),
+    "bfme2": retail_file("lang", "english.big"),
+    "rotwk": rotwk_file("lang", "english.big"),
 }
 MAX_REAL_CSF_BYTES = 32 * 1024 * 1024
 

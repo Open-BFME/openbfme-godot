@@ -337,7 +337,7 @@ def test_cli_exposes_one_command_import_surface() -> None:
         [
             "import-unit",
             "--install",
-            "F:/BFME2",
+            "D:/Games/BFME2",
             "--object",
             "GondorRangerHorde",
             "--faction",
