@@ -1,5 +1,15 @@
 * text=auto
 
+# Godot-generated sidecars are always written with LF, but `text=auto` asks for
+# CRLF in a Windows working tree, so every editor run or `--import` leaves the
+# whole set "modified" with zero content change. That churn is not harmless: it
+# buried real edits in `git status`, and agents working in this tree repeatedly
+# had to prove a 237-file diff was only line endings before they could trust it.
+# Pinning the generated formats to LF makes what Godot writes and what Git
+# expects the same thing.
+*.import text eol=lf
+*.uid    text eol=lf
+
 # Keep large binary game assets out of regular Git object history.
 *.glb filter=lfs diff=lfs merge=lfs -text
 *.png filter=lfs diff=lfs merge=lfs -text
