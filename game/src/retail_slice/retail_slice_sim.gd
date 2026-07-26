@@ -653,8 +653,15 @@ func _spatial_gather_sorted(point: Vector2, radius: float) -> Array[int]:
 	return result
 
 
+## Effectively unbounded search range for callers that scanned every hostile.
+## The sweep is still cheap: ring_limit below is clamped to the union of the
+## hostile teams' occupied cell boxes, so this bounds the tie-break, not the work.
+const SPATIAL_UNBOUNDED_RANGE := 1.0e9
+
+
 func _spatial_nearest_hostile(
-	source: Dictionary, team: int, origin: Vector2, limit: float, filters: int
+	source: Dictionary, team: int, origin: Vector2, limit: float, filters: int,
+	prefer_lowest_id: bool = false
 ) -> int:
 	## Nearest living hostile battalion within `limit` of `origin`, reproducing
 	## the old full scan exactly.
@@ -746,7 +753,13 @@ func _spatial_nearest_hostile(
 					if check_stealth and tick_index < int(candidate_dict.get("stealth_until_tick", -1)):
 						continue
 					var distance := origin.distance_to(Vector2(candidate_dict.get("position", Vector2.ZERO)))
-					if distance < best_distance or (distance == best_distance and candidate > best_id):
+					var wins := distance < best_distance
+					if not wins and distance == best_distance:
+						# Exact equality, never is_equal_approx: a tolerance
+						# comparison is not transitive, so it cannot define the
+						# total order a ring sweep needs.
+						wins = (candidate < best_id or best_id == 0) if prefer_lowest_id else (candidate > best_id)
+					if wins:
 						best_distance = distance
 						best_id = candidate
 	return best_id
@@ -9373,13 +9386,28 @@ func _run_ai_for_team(team: int, profile: Dictionary, ai_state: Dictionary) -> v
 			target_id = enemy_fortress
 			target_kind = "structure"
 		else:
-			target_id = hostiles[0]
-			var closest_distance := Vector2(row["position"]).distance_to(Vector2((entities[target_id] as Dictionary)["position"]))
-			for candidate in hostiles:
-				var distance := Vector2(row["position"]).distance_to(Vector2((entities[candidate] as Dictionary)["position"]))
-				if distance < closest_distance or (is_equal_approx(distance, closest_distance) and candidate < target_id):
-					target_id = candidate
-					closest_distance = distance
+			# Nearest hostile, ties to the lowest id. This was the last quadratic
+			# term in the tick: an all-pairs scan of every wave member against
+			# every hostile, unbounded in range, once per team every
+			# AI_CONTROLLER_BASE_INTERVAL ticks.
+			#
+			# Converting it required NORMALISING the tie-break first, which is a
+			# deliberate behaviour change. The old rule was
+			#   distance < closest or (is_equal_approx(distance, closest) and candidate < target_id)
+			# and it could not be reproduced from a neighbourhood query for two
+			# reasons: is_equal_approx is a tolerance comparison and therefore not
+			# transitive, and on an approximate tie the rule reassigned
+			# `closest_distance` to a value that could be slightly LARGER than the
+			# current best, so the running minimum drifted upward. Both make the
+			# winner depend on sequential visit order. The replacement keeps the
+			# same intent - closest, lowest id wins - as an exact total order.
+			target_id = _spatial_nearest_hostile(
+				row, team, Vector2(row["position"]), SPATIAL_UNBOUNDED_RANGE, 0, true
+			)
+			if target_id == 0:
+				# hostiles is non-empty here, so the sweep always finds one; this
+				# only guards a hostile whose row moved out from under the index.
+				target_id = hostiles[0]
 		var target_position := _target_position(target_id, target_kind)
 		var target_distance := Vector2(row["position"]).distance_to(target_position)
 		if target_kind == "structure":
