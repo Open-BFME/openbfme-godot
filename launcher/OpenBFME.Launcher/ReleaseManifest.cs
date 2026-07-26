@@ -22,6 +22,24 @@ public sealed record ReleaseManifest(
 {
     public const string ExpectedSchema = "openbfme.release-manifest";
 
+    /// <summary>
+    /// The version shape the launcher can actually order.
+    ///
+    /// This is enforced at parse time because the installer compares versions to decide
+    /// whether an update is a downgrade, and that comparison requires SemVer. A manifest
+    /// carrying, say, "beta1" used to validate here and install fine on a clean machine,
+    /// and then every later update threw "Installed release version is not SemVer" —
+    /// permanently, because the unusable version was by then written into the install
+    /// state. Rejecting it while nothing has been installed keeps the failure in the one
+    /// place it is recoverable. Components are digit-bounded so the parse below cannot
+    /// overflow on a manifest that declares a 40-digit major.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex OrderableVersion =
+        new(@"^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(?:-[0-9A-Za-z.-]+)?$",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    public static bool IsOrderableVersion(string value) => OrderableVersion.IsMatch(value);
+
     public static ReleaseManifest Parse(ReadOnlySpan<byte> json)
     {
         var manifest = JsonSerializer.Deserialize<ReleaseManifest>(json,
@@ -43,6 +61,11 @@ public sealed record ReleaseManifest(
                 $"updates from '{ReleaseSource.Repository}'.");
         if (!System.Text.RegularExpressions.Regex.IsMatch(Version, @"^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$"))
             throw new InvalidDataException("Unsafe release version.");
+        if (!IsOrderableVersion(Version))
+            throw new InvalidDataException(
+                $"Release version '{Version}' is not SemVer (major.minor.patch[-prerelease]). " +
+                "The launcher orders releases by version to refuse downgrades, so a release " +
+                "it cannot order is refused before anything is installed.");
         if (!System.Text.RegularExpressions.Regex.IsMatch(Commit, @"^[0-9a-f]{40}$"))
             throw new InvalidDataException("Release commit must be a full lowercase SHA-1.");
         if (Channel is not ("stable" or "playtest" or "nightly"))

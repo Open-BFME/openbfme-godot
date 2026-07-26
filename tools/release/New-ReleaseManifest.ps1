@@ -13,6 +13,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression
 if ($Version -cnotmatch '^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$') { throw "Unsafe version." }
+# Mirrors ReleaseManifest.IsOrderableVersion in the launcher. The launcher orders
+# releases by version to refuse downgrades, so a version it cannot order is refused at
+# parse time — publishing one would produce a signed manifest that every launcher
+# rejects, discovered only after the release went out.
+if ($Version -cnotmatch '^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(-[0-9A-Za-z.-]+)?$') {
+    throw "Version '$Version' is not SemVer (major.minor.patch[-prerelease]); the launcher cannot order it."
+}
 if ($Commit -cnotmatch '^[0-9a-f]{40}$') { throw "Commit must be a full lowercase SHA-1." }
 if ($ReleaseHost -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$') {
     throw "Unsafe release host."

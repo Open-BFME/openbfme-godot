@@ -77,10 +77,22 @@ public sealed class ReleaseInstaller
                 ?? throw new InvalidDataException("Release response URL is missing."));
             if (response.Content.Headers.ContentLength is long length && length > maximumBytes)
                 throw new InvalidDataException("Release metadata is too large.");
-            var bytes = await response.Content.ReadAsByteArrayAsync(deadline.Token);
-            if (bytes.Length > maximumBytes)
-                throw new InvalidDataException("Release metadata is too large.");
-            return bytes;
+            // Read against the bound rather than buffering first and measuring after.
+            // ReadAsByteArrayAsync would happily allocate whatever the host sent when it
+            // declared no Content-Length at all, which is the one case the header check
+            // above cannot cover — the bound is meant to hold even then.
+            await using var body = await response.Content.ReadAsStreamAsync(deadline.Token);
+            using var buffer = new MemoryStream();
+            var chunk = new byte[16 * 1024];
+            while (true)
+            {
+                var read = await body.ReadAsync(chunk, deadline.Token);
+                if (read == 0) break;
+                if (buffer.Length + read > maximumBytes)
+                    throw new InvalidDataException("Release metadata is too large.");
+                buffer.Write(chunk, 0, read);
+            }
+            return buffer.ToArray();
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -145,6 +157,9 @@ public sealed class ReleaseInstaller
             throw new InvalidDataException("Automatic release downgrade is not allowed; use rollback.");
         var versions = Path.Combine(fullRoot, "versions");
         Directory.CreateDirectory(versions);
+        // Reclaim what a killed update left behind before measuring free space: an
+        // abandoned staging tree and its part-written archive can be several gigabytes.
+        RemoveAbandonedScratch(versions);
         var game = manifest.Packages.SingleOrDefault(p => p.Kind == "game-windows-x64")
             ?? throw new InvalidDataException("Windows game package is missing.");
         var launcher = manifest.Packages.SingleOrDefault(p => p.Kind == "launcher-windows-x64")
@@ -159,12 +174,25 @@ public sealed class ReleaseInstaller
         var final = Path.Combine(versions, manifest.Version);
         if (Directory.Exists(final))
         {
-            VerifyInstalledVersion(final, manifest.Version, manifest.Commit, game.Sha256);
-            await InstallLauncherAsync(
-                manifest, launcher, fullRoot, progress, cancellationToken, packageStream);
-            SelectVersion(fullRoot, manifest);
-            PruneObsoleteVersions(fullRoot);
-            return;
+            // A version directory that is present and intact is reused as-is: version
+            // directories are immutable, so re-downloading it would change nothing.
+            // A present-but-damaged one (antivirus quarantine, bad sector, a half-written
+            // tree from a killed update) used to make this throw and stay thrown — the
+            // update path was the only way to repair an install, and it refused to run
+            // while the damage existed, so "check for an update to reinstall it" could
+            // never succeed. It is now reinstalled over, loudly.
+            var damage = DescribeVersionDamage(
+                () => VerifyInstalledVersion(final, manifest.Version, manifest.Commit, game.Sha256));
+            if (damage is null)
+            {
+                await InstallLauncherAsync(
+                    manifest, launcher, fullRoot, progress, cancellationToken, packageStream);
+                SelectVersion(fullRoot, manifest);
+                PruneObsoleteVersions(fullRoot);
+                return;
+            }
+            progress?.Report(new TransferProgress(
+                $"Repairing {manifest.Version} ({damage})", 0, 1));
         }
 
         var staging = final + $".staging-{Guid.NewGuid():N}";
@@ -178,7 +206,7 @@ public sealed class ReleaseInstaller
             VerifyPayloadShape(staging);
             InstalledVersionIdentity.Write(staging, manifest, game);
             VerifyInstalledVersion(staging, manifest.Version, manifest.Commit, game.Sha256);
-            Directory.Move(staging, final);
+            ReplaceVersionDirectory(staging, final);
             await InstallLauncherAsync(
                 manifest, launcher, fullRoot, progress, cancellationToken, packageStream);
             SelectVersion(fullRoot, manifest);
@@ -194,6 +222,10 @@ public sealed class ReleaseInstaller
     {
         static (Version Core, string? Pre) Parse(string value)
         {
+            // Shape-checked against the same rule the manifest is validated with, so a
+            // release can never be accepted for install and then be unorderable here.
+            if (!ReleaseManifest.IsOrderableVersion(value))
+                throw new InvalidDataException($"Release version '{value}' is not SemVer.");
             var match = System.Text.RegularExpressions.Regex.Match(
                 value, @"^([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z.-]+))?$");
             if (!match.Success) throw new InvalidDataException("Installed release version is not SemVer.");
@@ -235,12 +267,20 @@ public sealed class ReleaseInstaller
     {
         var versions = Path.Combine(installRoot, "launcher-versions");
         Directory.CreateDirectory(versions);
+        RemoveAbandonedScratch(versions);
         var final = Path.Combine(versions, manifest.Version);
         if (Directory.Exists(final))
         {
-            VerifyLauncherVersion(final, manifest, package);
-            LauncherInstallState.Select(installRoot, manifest, package);
-            return;
+            // Same reasoning as the game payload: a damaged launcher directory must be
+            // repairable by updating, not a permanent refusal to update.
+            var damage = DescribeVersionDamage(() => VerifyLauncherVersion(final, manifest, package));
+            if (damage is null)
+            {
+                LauncherInstallState.Select(installRoot, manifest, package);
+                return;
+            }
+            progress?.Report(new TransferProgress(
+                $"Repairing launcher {manifest.Version} ({damage})", 0, 1));
         }
         var staging = final + $".staging-{Guid.NewGuid():N}";
         Directory.CreateDirectory(staging);
@@ -254,12 +294,121 @@ public sealed class ReleaseInstaller
             BundleInventory.Verify(staging);
             InstalledVersionIdentity.Write(staging, manifest, package);
             VerifyLauncherVersion(staging, manifest, package);
-            Directory.Move(staging, final);
+            ReplaceVersionDirectory(staging, final);
             LauncherInstallState.Select(installRoot, manifest, package);
         }
         finally
         {
             if (Directory.Exists(staging)) Directory.Delete(staging, true);
+        }
+    }
+
+    /// <summary>
+    /// Names the launcher gives its own scratch under a version root: a tree being
+    /// staged, a superseded tree waiting to be dropped, and the archive being hashed.
+    /// All three carry a GUID this process generated, so they are unmistakably ours.
+    ///
+    /// They matter because <see cref="PruneVersionRoot"/> walks the same directory. A
+    /// launcher killed mid-update (Alt+F4, power loss, the installer's own host process
+    /// exiting) leaves a staging tree behind, whose name passes the "looks like a
+    /// version" check but which has no identity file — so the pruner threw, and kept
+    /// throwing, permanently blocking every later update on that machine.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex ScratchDirectoryName =
+        new(@"\.(?:staging|replaced)-[0-9a-f]{32}$",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static readonly System.Text.RegularExpressions.Regex ScratchArchiveName =
+        new(@"^\.[0-9a-f]{32}\.zip$",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static bool IsLauncherScratch(string name) => ScratchDirectoryName.IsMatch(name);
+
+    /// <summary>
+    /// Drop scratch left by an update that never finished.
+    ///
+    /// Failure is tolerated rather than fatal, and deliberately so: the only way a
+    /// delete fails here is that a second launcher process is using that scratch right
+    /// now, in which case it is not abandoned and is not ours to remove. Nothing depends
+    /// on the removal succeeding — scratch is never selected, launched, or verified — so
+    /// leaving it costs disk, whereas throwing would reintroduce the update-blocking bug
+    /// this exists to fix.
+    /// </summary>
+    private static void RemoveAbandonedScratch(string versionRoot)
+    {
+        if (!Directory.Exists(versionRoot)) return;
+        foreach (var directory in Directory.EnumerateDirectories(versionRoot))
+            if (IsLauncherScratch(Path.GetFileName(directory)))
+                TryRemoveScratch(directory);
+        foreach (var file in Directory.EnumerateFiles(versionRoot))
+            if (ScratchArchiveName.IsMatch(Path.GetFileName(file)))
+                try { File.Delete(file); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
+
+    private static void TryRemoveScratch(string directory)
+    {
+        try { Directory.Delete(directory, true); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// Swap a verified staging tree into its final, immutable location.
+    ///
+    /// When the destination already exists it is damaged (an intact one is reused and
+    /// never reaches here), so it is moved aside first and dropped only once the new
+    /// tree is in place. The old tree is restored if the second move fails, so the
+    /// window in which neither exists is a single rename, and a process killed inside
+    /// that window leaves the version simply absent — which the next run reinstalls —
+    /// rather than half-replaced.
+    /// </summary>
+    private static void ReplaceVersionDirectory(string staging, string final)
+    {
+        if (!Directory.Exists(final))
+        {
+            Directory.Move(staging, final);
+            return;
+        }
+        var replaced = final + $".replaced-{Guid.NewGuid():N}";
+        try
+        {
+            Directory.Move(final, replaced);
+        }
+        catch (IOException error)
+        {
+            throw new IOException(
+                $"The damaged copy of {Path.GetFileName(final)} could not be replaced because " +
+                "something is still using it. Close OpenBFME (and any running launcher) and " +
+                $"try again. Details: {error.Message}", error);
+        }
+        try
+        {
+            Directory.Move(staging, final);
+        }
+        catch
+        {
+            Directory.Move(replaced, final);
+            throw;
+        }
+        TryRemoveScratch(replaced);
+    }
+
+    /// <summary>
+    /// Run a verification and return why it failed, or <c>null</c> when it passed.
+    /// Only the launcher's own integrity failures are treated as damage; anything else
+    /// (an unreadable disk, a permissions problem) is left to propagate, because
+    /// reinstalling over it would not fix it and would hide the real cause.
+    /// </summary>
+    private static string? DescribeVersionDamage(Action verify)
+    {
+        try
+        {
+            verify();
+            return null;
+        }
+        catch (InvalidDataException error)
+        {
+            return error.Message.TrimEnd('.');
         }
     }
 
@@ -390,7 +539,7 @@ public sealed class ReleaseInstaller
                 await using var input = entry.Open();
                 await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write,
                     FileShare.None, 1024 * 1024, FileOptions.Asynchronous);
-                await input.CopyToAsync(output, token);
+                await CopyExactAsync(input, output, entry.Length, entry.FullName, token);
                 progress?.Report(new TransferProgress("Installing", expanded, expandedTotal));
             }
         }
@@ -398,6 +547,38 @@ public sealed class ReleaseInstaller
         {
             if (File.Exists(archivePath)) File.Delete(archivePath);
         }
+    }
+
+    /// <summary>
+    /// Copy exactly the number of bytes the archive's own directory declared for an
+    /// entry, refusing both more and fewer.
+    ///
+    /// A plain CopyToAsync writes whatever the deflate stream yields, which is not
+    /// bounded by the declared length at all: the whole-archive budget checked before
+    /// this point is built from those same declared lengths, so a package whose entries
+    /// decompress to more than they claim would sail past every size check and fill the
+    /// disk. The short case matters as much — a truncated entry would otherwise be
+    /// hashed into the installed identity as if it were correct, making a damaged
+    /// install verify perfectly against its own record of the damage.
+    /// </summary>
+    private static async Task CopyExactAsync(
+        Stream input, Stream output, long declaredLength, string entryName, CancellationToken token)
+    {
+        var buffer = new byte[128 * 1024];
+        long written = 0;
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer, token);
+            if (read == 0) break;
+            written += read;
+            if (written > declaredLength)
+                throw new InvalidDataException(
+                    $"Archive entry '{entryName}' expands beyond the size it declares.");
+            await output.WriteAsync(buffer.AsMemory(0, read), token);
+        }
+        if (written != declaredLength)
+            throw new InvalidDataException(
+                $"Archive entry '{entryName}' is shorter than the size it declares.");
     }
 
     private static void ValidateArchivePath(string path)
@@ -467,22 +648,24 @@ public sealed class ReleaseInstaller
             ?? throw new InvalidDataException("Selected launcher state is missing.");
         PruneVersionRoot(
             Path.Combine(root, "versions"),
-            new[] { gameState.CurrentVersion, gameState.PreviousVersion },
-            directory => VerifyInstalledVersion(directory, Path.GetFileName(directory)));
+            new[] { gameState.CurrentVersion, gameState.PreviousVersion });
         PruneVersionRoot(
             Path.Combine(root, "launcher-versions"),
-            new[] { launcherState.CurrentVersion, launcherState.PreviousVersion },
-            directory =>
-            {
-                InstalledVersionIdentity.Verify(directory, Path.GetFileName(directory));
-                BundleInventory.Verify(directory);
-            });
+            new[] { launcherState.CurrentVersion, launcherState.PreviousVersion });
     }
 
-    private static void PruneVersionRoot(
-        string root,
-        IEnumerable<string?> retainedVersions,
-        Action<string> verifyOwnedVersion)
+    /// <summary>
+    /// Delete the version directories no longer reachable from the selection pointers.
+    ///
+    /// The gate on deleting anything is ownership, not intactness. Requiring a full
+    /// hash-for-hash verification before removing an obsolete directory was strictly
+    /// worse in both directions: a superseded tree that had picked up any damage —
+    /// exactly the tree we want gone — made this throw and blocked every future update,
+    /// while re-hashing gigabytes bought nothing, since the very next statement deletes
+    /// what was hashed. The directory must still be ours (our identity file, naming
+    /// itself), inside this root, and free of reparse points.
+    /// </summary>
+    private static void PruneVersionRoot(string root, IEnumerable<string?> retainedVersions)
     {
         if (!Directory.Exists(root)) return;
         var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) +
@@ -498,10 +681,15 @@ public sealed class ReleaseInstaller
                 throw new InvalidDataException("Version retention encountered an unsafe directory.");
             var name = Path.GetFileName(fullDirectory);
             if (retained.Contains(name)) continue;
+            if (IsLauncherScratch(name))
+            {
+                TryRemoveScratch(fullDirectory);
+                continue;
+            }
             if (!System.Text.RegularExpressions.Regex.IsMatch(
                     name, "^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$"))
                 throw new InvalidDataException("Version retention encountered an unknown directory.");
-            verifyOwnedVersion(fullDirectory);
+            InstalledVersionIdentity.VerifyOwnership(fullDirectory, name);
             Directory.Delete(fullDirectory, true);
         }
     }
