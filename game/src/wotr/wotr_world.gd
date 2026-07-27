@@ -284,6 +284,15 @@ func _read_regions(rows: Array) -> bool:
 			"bonuses": _read_int_map(source.get("bonuses", {}) as Dictionary),
 			"cp_limit": int(source.get("cpLimit", -1)),
 			"ally_cp_limit": int(source.get("allyCpLimit", -1)),
+			# AUTHORED MAP POSITION, carried through verbatim as opaque numbers -
+			# this file still draws nothing. `has_center_point` is false when
+			# retail left `CustomCenterPoint` off, in which case the engine derives
+			# the marker from the region's map mesh, which no pack ships. A view
+			# layer must SAY SO for those regions rather than invent a coordinate:
+			# one BFME2 region (Rhun) is in exactly that state.
+			"has_center_point": (source.get("centerPoint", null) is Dictionary),
+			"center_x": int((source.get("centerPoint", {}) as Dictionary).get("x", 0)) if (source.get("centerPoint", null) is Dictionary) else 0,
+			"center_y": int((source.get("centerPoint", {}) as Dictionary).get("y", 0)) if (source.get("centerPoint", null) is Dictionary) else 0,
 			"create_auto_fort": bool(source.get("createAutoFort", false)),
 			"has_fortress": source.get("fortress", null) != null,
 			"neighbours": PackedStringArray(neighbour_ids),

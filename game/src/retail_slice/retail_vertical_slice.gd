@@ -3517,10 +3517,31 @@ func _refresh_hud() -> void:
 		hud.show_diagnostics("", false)
 	if simulation.winner != -1 and simulation.winner != _last_presented_winner:
 		_last_presented_winner = simulation.winner
+		_record_strategic_result(simulation.winner)
 		# The HUD renders 0 as VICTORY / non-zero as DEFEAT; map the winning
 		# team through the local perspective so a guest (team 1) win shows
 		# VICTORY on the guest's machine.
 		hud.show_outcome(0 if simulation.winner == local_team else 1)
+
+
+func _record_strategic_result(winner_team: int) -> void:
+	## A War of the Ring battle has a caller waiting for its result. Record the
+	## TACTICAL TEAM the simulation decided for - not a mapped-through-local-
+	## perspective "victory/defeat", which would be a per-machine reading of a
+	## shared fact - so the strategic layer can map it to a seat through the
+	## commitment it already holds.
+	##
+	## Written ONLY while a strategic handoff is pending, so an ordinary skirmish
+	## never touches these fields. Recording the result is all this does: the slice
+	## does not apply it, does not know which regions move, and never leaves the
+	## tactical layer.
+	var state = get_node_or_null("/root/GameState")
+	if state == null:
+		return
+	var handoff: Variant = state.get("wotr_handoff")
+	if typeof(handoff) != TYPE_DICTIONARY or (handoff as Dictionary).is_empty():
+		return
+	state.set("wotr_battle_winner", winner_team)
 
 
 var _score_cache := {"units_trained": 0, "units_lost": 0, "resources_gathered": 0}

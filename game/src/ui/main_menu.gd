@@ -8,11 +8,16 @@ const SliceScript = preload("res://src/retail_slice/retail_vertical_slice.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 const MultiplayerLobbyScript = preload("res://src/ui/multiplayer_lobby.gd")
 const LockstepSessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
+const WotrScreenScript = preload("res://src/ui/wotr_screen.gd")
+const WotrSessionScript = preload("res://src/wotr/wotr_session.gd")
+const WotrStateScript = preload("res://src/wotr/wotr_state.gd")
+const WotrBattleScript = preload("res://src/wotr/wotr_battle.gd")
 
 const PAGE_MAIN := "main"
 const PAGE_SOLO := "solo"
 const PAGE_MULTIPLAYER := "multiplayer"
 const PAGE_MP_LOBBY := "mp_lobby"
+const PAGE_WOTR := "wotr"
 const PAGE_OPTIONS := "options"
 const PAGE_DEVELOPER := "developer"
 const PAGE_STATS := "stats"
@@ -82,6 +87,7 @@ const CONTROLLER_AI := "ai"
 @onready var main_heading: Label = $Center/MainHeading
 @onready var solo_btn: Button = $Center/Solo
 @onready var multiplayer_btn: Button = $Center/Multiplayer
+@onready var wotr_btn: Button = $Center/WarOfTheRing
 @onready var options_btn: Button = $Center/Options
 @onready var quit_btn: Button = $Center/Quit
 @onready var subpage_nav: Control = $Center/SubpageNav
@@ -116,6 +122,18 @@ var _game_state: Node
 ## polls it — the menu never does.
 var multiplayer_lobby: Panel
 var _lobby_session
+## WAR OF THE RING. The screen is built over the SOLO flyout's rectangle; the
+## session is the live strategic campaign, and `_wotr_unavailable_reason` is the
+## honest sentence shown when no living-world document can be found. When that
+## reason is non-empty the menu entry REFUSES rather than opening an empty map -
+## a War of the Ring button that led to a fabricated Middle-earth would be
+## exactly the silent fallback this project has been removing.
+var wotr_screen: Panel
+var _wotr_session = null
+var _wotr_unavailable_reason := ""
+var _wotr_document: Dictionary = {}
+var _wotr_document_path := ""
+var _wotr_document_source := ""
 
 
 func _ready() -> void:
@@ -137,6 +155,16 @@ func _ready() -> void:
 	multiplayer_lobby.size = multiplayer_flyout.size
 	multiplayer_lobby.visible = false
 	center.add_child(multiplayer_lobby)
+	# WAR OF THE RING screen: the SOLO flyout's rectangle, hidden until the page
+	# is shown. Built before the skirmish options so `_refresh_wotr_entry()` can
+	# read the faction availability the next call fills in.
+	wotr_screen = WotrScreenScript.new()
+	wotr_screen.name = "WotrScreen"
+	wotr_screen.position = solo_flyout.position
+	wotr_screen.size = solo_flyout.size
+	wotr_screen.visible = false
+	wotr_screen.theme_type_variation = "FlyoutPanel"
+	center.add_child(wotr_screen)
 	_populate_skirmish_options()
 	_populate_rules_options()
 	_populate_color_options()
@@ -144,7 +172,13 @@ func _ready() -> void:
 	options_screen.configure({"font": _shell_font})
 	options_screen.closed.connect(func(_applied: bool) -> void: _show_page(PAGE_MAIN))
 	_build_nav_diamonds()
+	_locate_wotr_document()
+	_refresh_wotr_entry()
 	_show_page(PAGE_MAIN)
+	# A campaign returning from its tactical battle resumes on the strategic map,
+	# with the result applied, rather than dropping the player on the front page
+	# with a battle silently still in flight.
+	_resume_wotr_after_battle()
 	# Stored display/graphics settings apply from the first frame onward so the
 	# shell and the slice share one window/quality state.
 	call_deferred("_apply_boot_settings")
@@ -944,9 +978,250 @@ func _read_bounded_json(path: String, maximum_bytes: int) -> Dictionary:
 	return (value as Dictionary) if typeof(value) == TYPE_DICTIONARY else {}
 
 
+# --- War of the Ring ---------------------------------------------------------
+
+## "" when War of the Ring can be entered, else the player-facing reason it
+## cannot. The reason is the one the document search itself produced - it names
+## both places that were searched and the command that generates a document -
+## because "unavailable" alone sends nobody anywhere.
+func wotr_unavailable_reason() -> String:
+	return _wotr_unavailable_reason
+
+
+func _locate_wotr_document() -> void:
+	## Look for the living-world document in the packs the game actually mounted
+	## first, then the documented workspace/environment path. NO FALLBACK MAP
+	## EXISTS: when nothing is found this records the reason and War of the Ring
+	## stays shut. A fabricated strategic map is indistinguishable from a real one
+	## once it is on screen, which is what makes that failure mode so expensive.
+	var roots: Array = []
+	for meta_value in (_content_db.get("pack_meta") as Array):
+		roots.append(String((meta_value as Dictionary).get("root", "")))
+	roots.sort()
+	var found: Dictionary = WotrSessionScript.locate_document(roots)
+	if not bool(found.get("ok", false)):
+		_wotr_document = {}
+		_wotr_document_path = ""
+		_wotr_document_source = ""
+		_wotr_unavailable_reason = String(found.get("reason", "no living-world document is available"))
+		return
+	_wotr_document = found["document"] as Dictionary
+	_wotr_document_path = String(found["path"])
+	_wotr_document_source = String(found["source"])
+	_wotr_unavailable_reason = ""
+
+
+func _refresh_wotr_entry() -> void:
+	if wotr_btn == null:
+		return
+	var blocked := _wotr_unavailable_reason != ""
+	wotr_btn.disabled = blocked
+	wotr_btn.text = "WAR OF THE RING" if not blocked else "WAR OF THE RING (UNAVAILABLE)"
+	wotr_btn.tooltip_text = _wotr_unavailable_reason
+
+
+## Start a campaign on the located document. Fails closed and reports: seats come
+## from the document's own player templates, in sorted order, restricted to the
+## ones whose faction the tactical layer can actually field, and the scenario is
+## the campaign's first startable two-seat scenario.
+##
+## THE SEATING IS NOT A CHOICE YET, and that is a stated limit rather than a
+## hidden one: a faction chooser is a genuine feature this screen does not have,
+## and picking arbitrarily while pretending otherwise would be worse than saying
+## so. Seat 0 is the human seat, which is authoritative strategic state and rides
+## the hash - not a per-machine "which seat am I".
+func _start_wotr_session() -> bool:
+	if _wotr_document.is_empty():
+		return false
+	var probe = WotrSessionScript.new()
+	var probe_world = load("res://src/wotr/wotr_world.gd").new()
+	if not probe_world.load_from_dict(_wotr_document, ""):
+		_wotr_unavailable_reason = "the living-world document did not load: %s" % str(probe_world.errors)
+		return false
+	probe.world = probe_world
+	var seats: Array = []
+	for option in probe.seat_options(_skirmish_availability):
+		if String(option["unavailable_reason"]) != "":
+			continue
+		seats.append({
+			"template": String(option["template"]),
+			"team": seats.size() + 1,
+			"controller": WotrStateScript.CONTROLLER_HUMAN if seats.is_empty() else WotrStateScript.CONTROLLER_AI,
+		})
+		if seats.size() == 2:
+			break
+	if seats.size() < 2:
+		_wotr_unavailable_reason = "fewer than two of the campaign's factions are converted, so no War of the Ring session can be seated"
+		return false
+	var scenarios := probe.startable_scenarios(2)
+	if scenarios.is_empty():
+		_wotr_unavailable_reason = "the document's campaign carries no scenario that seats two players with authored territory"
+		return false
+	var session = WotrSessionScript.new()
+	if not session.begin(_wotr_document, probe_world.campaign_name, String(scenarios[0]), seats):
+		_wotr_unavailable_reason = "the strategic layer refused this campaign: %s" % ", ".join(Array(session.refusals))
+		return false
+	session.document_path = _wotr_document_path
+	session.document_source = _wotr_document_source
+	_wotr_session = session
+	return true
+
+
+## Pack map ids the tactical layer can actually boot, in sorted order. The screen
+## binds region maps to these; an empty list means no battle can be fought and
+## the commitment refuses by name rather than inventing a battlefield.
+func wotr_available_map_ids() -> Array:
+	var ids: Array = []
+	for choice in RETAIL_MAP_CHOICES:
+		var map_id := String(choice["id"])
+		if retail_map_availability(map_id) == "":
+			ids.append(map_id)
+	ids.sort()
+	return ids
+
+
+func _open_wotr() -> bool:
+	if _wotr_unavailable_reason != "":
+		return false
+	if _wotr_session == null and not _start_wotr_session():
+		_refresh_wotr_entry()
+		return false
+	wotr_screen.configure(_wotr_session, wotr_available_map_ids(), _wotr_unavailable_reason)
+	return true
+
+
+## A battle was admitted into the strategic state. Record the handoff, project
+## the COMMITMENT onto the slice's roster contract, and launch.
+##
+## Everything the tactical match is configured from comes out of the commitment:
+## the two factions, which side is machine-driven, and the battlefield. The
+## fields the slice needs that a commitment does not describe are FIXED
+## CONSTANTS here, not choices - the AI tier is the sim's own default and the
+## start spots are the map's authored ones in ascending order - because a per-
+## session choice would be a value reaching the simulation that the strategic
+## hash never saw.
+## The slice's N-team roster for a committed War of the Ring battle - a PURE
+## PROJECTION of the commitment plus the battlefield's own authored start spots.
+## Empty when the battlefield cannot seat two sides.
+##
+## Everything that decides the match comes out of `configured["team_roster"]`,
+## which `wotr_session.tactical_roster()` re-derived from the record inside the
+## strategic hash. The remaining descriptor fields are FIXED, not chosen: the AI
+## tier is the simulation's own default and the colours are the two authored slice
+## team colours. A chooser for either would put a per-session value in front of
+## the simulation that no hash ever saw.
+func wotr_team_descriptors(configured: Dictionary) -> Array:
+	var roster: Array = configured.get("team_roster", []) as Array
+	var commitment := configured.get("commitment", {}) as Dictionary
+	var battlefield := String(commitment.get("battlefield_map", ""))
+	if roster.size() != 2 or battlefield.is_empty():
+		return []
+	# The human start spot is reset FIRST: `_assign_start_indices` honours a
+	# previously chosen one, and a leftover skirmish choice must not decide where
+	# a War of the Ring army deploys.
+	_game_state.set("retail_player_start_index", 0)
+	var starts := _assign_start_indices(battlefield, 2)
+	if starts.is_empty():
+		return []
+	var descriptors: Array = []
+	for index in range(2):
+		var seat := roster[index] as Dictionary
+		descriptors.append({
+			"team": int(seat["team"]),
+			"faction": String(seat["faction"]),
+			"controller": CONTROLLER_AI if bool(seat["is_ai"]) else CONTROLLER_HUMAN,
+			"difficulty": RETAIL_AI_DEFAULT_DIFFICULTY,
+			"alliance": index + 1,
+			"color": HOUSE_COLORS[index]["color"],
+			"start_index": starts[index],
+		})
+	return descriptors
+
+
+func _on_wotr_battle_committed(configured: Dictionary) -> void:
+	if _launch_in_progress:
+		return
+	var commitment := configured["commitment"] as Dictionary
+	var battlefield := String(commitment.get("battlefield_map", ""))
+	if battlefield.is_empty():
+		wotr_screen.show_message("The commitment names no battlefield; the battle cannot be launched.")
+		return
+	var roster: Array = configured["team_roster"] as Array
+	if roster.size() != 2:
+		wotr_screen.show_message("The commitment did not authorise two sides.")
+		return
+	var descriptors := wotr_team_descriptors(configured)
+	if descriptors.is_empty():
+		wotr_screen.show_message(
+			"%s provides fewer than two authored player starts, so this battle cannot be seated." % battlefield)
+		return
+	_game_state.set("retail_mp_mode", "")
+	_game_state.set("retail_player_faction", String((roster[0] as Dictionary)["faction"]))
+	_game_state.set("retail_enemy_faction", String((roster[1] as Dictionary)["faction"]))
+	_game_state.set("retail_map_id", battlefield)
+	_game_state.set("retail_initial_resources", int((configured["gameplay_rules"] as Dictionary).get("starting_resources", -1)))
+	_game_state.set("retail_command_point_factor", 1.0)
+	_game_state.set("retail_build_plots_only", false)
+	_game_state.set("retail_team_setup", descriptors)
+	_game_state.set("wotr_handoff", _wotr_session.handoff_payload())
+	_game_state.set("wotr_battle_winner", -1)
+	_launch_in_progress = true
+	get_tree().change_scene_to_file("res://scenes/retail_loading_boot.tscn")
+
+
+## Come back from a tactical battle with its result. Three outcomes, all of them
+## reported: the battle decided and the map moves; the battle was left undecided
+## and NOTHING is applied (a player who quit did not lose the war); or the
+## handoff itself no longer makes sense, which is a refusal rather than a silent
+## fresh campaign.
+func _resume_wotr_after_battle() -> bool:
+	var payload: Variant = _game_state.get("wotr_handoff")
+	if typeof(payload) != TYPE_DICTIONARY or (payload as Dictionary).is_empty():
+		return false
+	var winner := int(_game_state.get("wotr_battle_winner"))
+	_game_state.set("wotr_handoff", {})
+	_game_state.set("wotr_battle_winner", -1)
+	var session = WotrSessionScript.new()
+	if not session.adopt_handoff(payload as Dictionary):
+		_wotr_unavailable_reason = "the War of the Ring session could not be resumed: %s" % ", ".join(Array(session.refusals))
+		_refresh_wotr_entry()
+		return false
+	_wotr_session = session
+	var message := ""
+	if winner == WotrBattleScript.UNDECIDED:
+		# NOT a defender victory. An undecided match has no result to apply, and
+		# treating -1 as a loss would destroy the attacking army for nothing.
+		session.abandon_battle()
+		message = "The battle was left undecided. Nothing was applied; the region did not change hands."
+	else:
+		var outcome: Dictionary = session.resolve_battle(winner)
+		if bool(outcome.get("ok", false)):
+			message = "%s: %s %s." % [
+				String(outcome["region"]),
+				_wotr_seat_name(session, int(outcome["winner_player"])),
+				"took the region" if bool(outcome["captured"]) else "held the region",
+			]
+		else:
+			message = "The result applied only in part: %s" % ", ".join(Array(outcome.get("refusals", PackedStringArray())))
+	if not _open_wotr():
+		return false
+	wotr_screen.show_message(message)
+	_show_page(PAGE_WOTR)
+	return true
+
+
+func _wotr_seat_name(session, seat: int) -> String:
+	if seat < 0 or seat >= session.state.players.size():
+		return "seat %d" % seat
+	return String((session.state.players[seat] as Dictionary).get("template", "seat %d" % seat))
+
+
 func _connect_actions() -> void:
 	solo_btn.pressed.connect(func() -> void: _show_page(PAGE_SOLO))
 	multiplayer_btn.pressed.connect(func() -> void: _show_page(PAGE_MULTIPLAYER))
+	wotr_btn.pressed.connect(_on_wotr_pressed)
+	wotr_screen.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
+	wotr_screen.battle_committed.connect(_on_wotr_battle_committed)
 	options_btn.pressed.connect(_on_options)
 	quit_btn.pressed.connect(func() -> void: get_tree().quit())
 	multiplayer_flyout.host_requested.connect(_on_multiplayer_host)
@@ -975,10 +1250,21 @@ func _connect_actions() -> void:
 
 
 func show_page(page: String) -> bool:
-	if page not in [PAGE_MAIN, PAGE_SOLO, PAGE_OPTIONS, PAGE_DEVELOPER, PAGE_STATS]:
+	if page not in [PAGE_MAIN, PAGE_SOLO, PAGE_WOTR, PAGE_OPTIONS, PAGE_DEVELOPER, PAGE_STATS]:
+		return false
+	# WAR OF THE RING REFUSES RATHER THAN OPENING EMPTY. With no living-world
+	# document there is no map to show, and showing a page anyway - blank, or
+	# worse, populated with something invented - is the failure this refusal
+	# exists to prevent. `wotr_unavailable_reason()` carries the why.
+	if page == PAGE_WOTR and not _open_wotr():
 		return false
 	_show_page(page)
 	return true
+
+
+func _on_wotr_pressed() -> void:
+	if not show_page(PAGE_WOTR):
+		status.text = "War of the Ring is unavailable: %s" % _wotr_unavailable_reason
 
 
 func get_current_page() -> String:
@@ -991,6 +1277,7 @@ func _show_page(page: String) -> void:
 	# retail shell where flyouts open above the persistent bottom bar (REF-01).
 	_set_nodes_visible(_main_page_nodes(), page == PAGE_MAIN or page == PAGE_MULTIPLAYER or page == PAGE_MP_LOBBY)
 	_set_nodes_visible(_solo_page_nodes(), page == PAGE_SOLO)
+	_set_nodes_visible(_wotr_page_nodes(), page == PAGE_WOTR)
 	_set_nodes_visible(_multiplayer_page_nodes(), page == PAGE_MULTIPLAYER)
 	_set_nodes_visible(_mp_lobby_page_nodes(), page == PAGE_MP_LOBBY)
 	_set_nodes_visible(_options_page_nodes(), page == PAGE_OPTIONS)
@@ -1013,6 +1300,9 @@ func _show_page(page: String) -> void:
 			_refresh_skirmish_launch_state()
 			if solo_flyout.player_army_opt.visible:
 				solo_flyout.player_army_opt.grab_focus()
+		PAGE_WOTR:
+			if wotr_screen.back_button != null and wotr_screen.back_button.visible:
+				wotr_screen.back_button.grab_focus()
 		PAGE_MULTIPLAYER:
 			if multiplayer_flyout.host_button != null and multiplayer_flyout.host_button.visible:
 				multiplayer_flyout.host_button.grab_focus()
@@ -1031,11 +1321,15 @@ func _show_page(page: String) -> void:
 
 
 func _main_page_nodes() -> Array[Control]:
-	return [main_heading, solo_btn, multiplayer_btn, options_btn, quit_btn]
+	return [main_heading, solo_btn, multiplayer_btn, wotr_btn, options_btn, quit_btn]
 
 
 func _solo_page_nodes() -> Array[Control]:
 	return [solo_flyout]
+
+
+func _wotr_page_nodes() -> Array[Control]:
+	return [wotr_screen]
 
 
 func _multiplayer_page_nodes() -> Array[Control]:

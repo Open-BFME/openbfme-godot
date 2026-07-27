@@ -66,6 +66,21 @@ var retail_team_setup: Array = []
 var retail_mp_player_name: String = "Player"
 var retail_mp_peer_name: String = "Challenger"
 
+## WAR OF THE RING handoff. `wotr_handoff` is the strategic session's own
+## payload (schema `openbfme.wotr-session-handoff`): the document it came from
+## and the strategic SNAPSHOT, which carries the battle in flight inside the
+## record the strategic hash covers. `wotr_battle_winner` is the tactical
+## simulation's `winner`, written by the slice when a match decides, and -1 means
+## UNDECIDED - a battle the player left rather than one the defender won.
+##
+## DELIBERATELY NOT CLEARED BY `reset_match()`. Every other field here is a
+## per-match selection that must not survive into the next match; these two are
+## the opposite - they exist precisely to survive the tactical match and carry
+## its result back to the strategic map. The menu clears them when it has applied
+## the result, which is the only moment they have done their job.
+var wotr_handoff: Dictionary = {}
+var wotr_battle_winner: int = -1
+
 var resources: Dictionary = {0: 1500.0, 1: 1500.0, 2: 0.0}
 var power_points: Dictionary = {0: 0.0, 1: 0.0}
 var power_spent_tiers: Dictionary = {0: 0, 1: 0} # count of powers purchased for tier unlock

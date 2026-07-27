@@ -34,6 +34,19 @@ const FACTION_BINDINGS := {
 	"FactionBeta": "mordor",
 }
 
+## The binding the strategic layer does not carry either: a region's authored
+## `MAP WOR *` map name to a PACK map id. No retail WOTR region map is cooked in
+## any pack, so every binding is a stated stand-in - see `_bind_battlefield` in
+## `wotr_battle.gd`. The fixture's region maps are `MAP TEST <region>`.
+const MAP_BINDINGS := {
+	"MAP TEST Ashfall": "bfme2.map.rivendell",
+	"MAP TEST Bramblewold": "bfme2.map.rivendell",
+	"MAP TEST Cinderfen": "bfme2.map.dagorlad",
+	"MAP TEST Dunmarch": "bfme2.map.mordor",
+	"MAP TEST Emberisle": "bfme2.map.mount-doom",
+	"MAP TEST Loneheath": "bfme2.map.mount-doom",
+}
+
 const ATTACKER := 0
 const DEFENDER := 1
 const TARGET_REGION := "Cinderfen"
@@ -44,7 +57,7 @@ const TARGET_REGION := "Cinderfen"
 ## (`passed=4 failed=0`, with eleven script errors above it). The expected count
 ## makes an inert run impossible to mistake for a passing one. Raise it
 ## deliberately when tests are added; never lower it to make a run go green.
-const EXPECTED_CHECKS := 123
+const EXPECTED_CHECKS := 132
 
 var passed := 0
 var failed := 0
@@ -97,7 +110,7 @@ func _test_brief_translates() -> void:
 	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
 	_check("a_staged_attack_produces_a_brief", not brief.is_empty())
 
-	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS)
+	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS, MAP_BINDINGS)
 	_check("translation_succeeds", bool(configured["ok"]), str(configured["refusals"]))
 
 	var roster: Array = configured["team_roster"]
@@ -152,7 +165,7 @@ func _test_translation_refuses_rather_than_guesses() -> void:
 
 	# An unbound faction must REFUSE BY NAME. It must never fall through to
 	# passing the strategic name along as though it were a pack id.
-	var unbound: Dictionary = BattleScript.configure(brief, {"FactionAlpha": "men"})
+	var unbound: Dictionary = BattleScript.configure(brief, {"FactionAlpha": "men"}, MAP_BINDINGS)
 	_check("an_unbound_faction_refuses", not bool(unbound["ok"]))
 	_check("the_refusal_names_the_unbound_faction",
 		_refusal_mentions(unbound, "FactionBeta"), str(unbound["refusals"]))
@@ -168,13 +181,13 @@ func _test_translation_refuses_rather_than_guesses() -> void:
 		neutral_state.world, neutral_state, ATTACKER, TARGET_REGION)
 	_check("attacking_an_unowned_region_still_produces_a_brief",
 		not neutral_brief.is_empty())
-	var neutral: Dictionary = BattleScript.configure(neutral_brief, FACTION_BINDINGS)
+	var neutral: Dictionary = BattleScript.configure(neutral_brief, FACTION_BINDINGS, MAP_BINDINGS)
 	_check("an_unowned_region_refuses_a_tactical_match", not bool(neutral["ok"]))
 	_check("the_refusal_explains_the_missing_defending_side",
 		_refusal_mentions(neutral, "unowned"), str(neutral["refusals"]))
 
 	_check("an_empty_brief_refuses",
-		not bool((BattleScript.configure({}, FACTION_BINDINGS) as Dictionary)["ok"]))
+		not bool((BattleScript.configure({}, FACTION_BINDINGS, MAP_BINDINGS) as Dictionary)["ok"]))
 
 	# UNAUTHORED IS NOT ZERO. `-1` is the world reader's "this document did not
 	# say" sentinel. Forwarding it clamps to 0 in `_apply_gameplay_rules` and
@@ -194,7 +207,7 @@ func _test_translation_refuses_rather_than_guesses() -> void:
 	_check("an_unauthored_purse_still_produces_a_brief", not silent_brief.is_empty())
 	_check("the_brief_reports_the_purse_as_unauthored",
 		int((silent_brief["settings"] as Dictionary)["starting_cash"]) == -1)
-	var silent_config: Dictionary = BattleScript.configure(silent_brief, FACTION_BINDINGS)
+	var silent_config: Dictionary = BattleScript.configure(silent_brief, FACTION_BINDINGS, MAP_BINDINGS)
 	_check("an_unauthored_purse_still_configures_a_match", bool(silent_config["ok"]),
 		str(silent_config["refusals"]))
 	_check("an_unauthored_purse_is_omitted_rather_than_sent_as_minus_one",
@@ -277,7 +290,7 @@ func _test_snapshot_carries_the_battle() -> void:
 func _test_end_to_end_attacker_wins() -> void:
 	var state := _staged_state()
 	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
-	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS)
+	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS, MAP_BINDINGS)
 	var committed := (configured["commitment"] as Dictionary)["committed_armies"] as PackedInt32Array
 	state.begin_battle(configured["commitment"])
 
@@ -313,7 +326,7 @@ func _test_end_to_end_attacker_wins() -> void:
 func _test_end_to_end_defender_wins() -> void:
 	var state := _staged_state()
 	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
-	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS)
+	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS, MAP_BINDINGS)
 	var committed := (configured["commitment"] as Dictionary)["committed_armies"] as PackedInt32Array
 	state.begin_battle(configured["commitment"])
 
@@ -384,7 +397,7 @@ func _test_nothing_outside_the_chain_reaches_the_tactical_configuration() -> voi
 	# hashed strategic record, because there is nowhere else for it to come from.
 	var state := _staged_state()
 	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
-	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS)
+	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS, MAP_BINDINGS)
 	var commitment := configured["commitment"] as Dictionary
 	_check("the_team_roster_is_a_pure_projection_of_the_commitment",
 		(configured["team_roster"] as Array) == BattleScript.team_roster_for(commitment),
@@ -397,7 +410,7 @@ func _test_nothing_outside_the_chain_reaches_the_tactical_configuration() -> voi
 	var swapped_brief := HandoffScript.build_request(
 		swapped_state.world, swapped_state, ATTACKER, TARGET_REGION)
 	var swapped: Dictionary = BattleScript.configure(
-		swapped_brief, {"FactionAlpha": "mordor", "FactionBeta": "men"})
+		swapped_brief, {"FactionAlpha": "mordor", "FactionBeta": "men"}, MAP_BINDINGS)
 	_check("a_swapped_binding_still_configures_a_match", bool(swapped["ok"]),
 		str(swapped["refusals"]))
 	_check("a_swapped_binding_sends_a_different_faction_to_the_simulation",
@@ -412,6 +425,41 @@ func _test_nothing_outside_the_chain_reaches_the_tactical_configuration() -> voi
 	_check("peers_whose_bindings_disagree_disagree_on_the_strategic_hash",
 		state.state_hash() != swapped_state.state_hash(),
 		"%s vs %s" % [state.state_hash(), swapped_state.state_hash()])
+
+	# AXIS 1b - THE BATTLEFIELD. The ground a battle is fought on decides the
+	# battle as surely as the factions on it, and no `MAP WOR *` map is cooked,
+	# so the WOTR screen has to substitute one. A substitution chosen outside the
+	# commitment and handed to the sim alongside the roster would be this same
+	# defect a third time; the bound map is recorded, so a peer with a different
+	# table disagrees on the STRATEGIC hash before a match exists.
+	var reground_state := _staged_state()
+	var reground_brief := HandoffScript.build_request(
+		reground_state.world, reground_state, ATTACKER, TARGET_REGION)
+	var reground: Dictionary = BattleScript.configure(
+		reground_brief, FACTION_BINDINGS, {"MAP TEST Cinderfen": "bfme2.map.mordor"})
+	_check("a_different_battlefield_binding_still_configures_a_match",
+		bool(reground["ok"]), str(reground["refusals"]))
+	_check("the_bound_battlefield_is_recorded_in_the_commitment",
+		String((reground["commitment"] as Dictionary)["battlefield_map"]) == "bfme2.map.mordor",
+		str(reground["commitment"]))
+	_check("the_commitment_still_records_the_regions_own_map_name",
+		String((reground["commitment"] as Dictionary)["map_name"]) == "MAP TEST Cinderfen",
+		"the stand-in must never erase what it stood in for")
+	_check("a_different_battlefield_cannot_mint_the_same_commitment",
+		StateScript.canonical_digest(reground["commitment"])
+			!= StateScript.canonical_digest(commitment))
+	var reground_peer := _staged_state()
+	reground_peer.begin_battle(reground["commitment"])
+	_check("peers_whose_battlefields_disagree_disagree_on_the_strategic_hash",
+		reground_peer.state_hash() != state.state_hash())
+	# And an unbound region map REFUSES rather than picking a plausible map.
+	var unground: Dictionary = BattleScript.configure(reground_brief, FACTION_BINDINGS, {})
+	_check("an_unbound_region_map_refuses", not bool(unground["ok"]))
+	_check("the_refusal_names_the_unbound_region_map",
+		_refusal_mentions(unground, "MAP TEST Cinderfen"), str(unground["refusals"]))
+	_check("an_unbound_region_map_yields_no_partial_configuration",
+		(unground["commitment"] as Dictionary).is_empty()
+			and (unground["team_roster"] as Array).is_empty())
 
 	# AXIS 2 - WHO IS HUMAN. `is_ai` reaches `_seed_team_ai_state()`, which seeds
 	# HASHED authoritative tactical state. It used to come from a `human_player`
@@ -573,6 +621,11 @@ func _test_begin_battle_validates_the_commitment() -> void:
 	_check("a_commitment_that_commits_nothing_is_refused",
 		not state.begin_battle(empty_force))
 
+	var no_ground := good.duplicate(true)
+	no_ground["battlefield_map"] = ""
+	_check("a_commitment_with_no_battlefield_is_refused",
+		not state.begin_battle(no_ground))
+
 	var same_side := good.duplicate(true)
 	same_side["defender"] = int(same_side["attacker"])
 	_check("a_commitment_seating_one_player_on_both_sides_is_refused",
@@ -710,7 +763,7 @@ func _staged_state_seated(
 
 func _configured_for(state: StateScript) -> Dictionary:
 	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
-	return BattleScript.configure(brief, FACTION_BINDINGS)
+	return BattleScript.configure(brief, FACTION_BINDINGS, MAP_BINDINGS)
 
 
 func _commitment_for(state: StateScript) -> Dictionary:

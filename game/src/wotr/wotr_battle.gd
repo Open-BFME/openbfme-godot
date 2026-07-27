@@ -61,6 +61,16 @@ const UNDECIDED := -1
 ## them today, and inventing the mapping here - by stripping a `Faction` prefix
 ## and lowercasing, say - would be a guess wearing the costume of a lookup.
 ##
+## `map_bindings` maps a REGION MAP NAME (the verbatim `MapName =` value on a
+## `LivingWorldRegion`, e.g. `MAP WOR Cair Andros`) to a PACK MAP id (e.g.
+## `bfme2.map.dagorlad`). It is required and has no default for the same reason
+## `faction_bindings` does, and it exists at all because of a measured gap: NO
+## `MAP WOR *` map is cooked in any content pack, so the map the region names
+## and the map the tactical simulation can actually boot are never the same map
+## today. A binding is therefore a STAND-IN, and the caller owes the player a
+## visible statement of which one it chose - it must never look like the region's
+## own battlefield.
+##
 ## THERE IS NO `human_player` ARGUMENT, and its removal is the point. See the
 ## note on `commitment_matches_brief()`: every value that reaches hashed tactical
 ## state must be reachable from the commitment, and a per-session seat number is
@@ -72,7 +82,8 @@ const UNDECIDED := -1
 ## a caller can never be handed a half-configured match.
 static func configure(
 	brief: Dictionary,
-	faction_bindings: Dictionary
+	faction_bindings: Dictionary,
+	map_bindings: Dictionary
 ) -> Dictionary:
 	var refusals := PackedStringArray()
 	if brief.is_empty():
@@ -106,6 +117,9 @@ static func configure(
 	var committed := _army_ids(attacker)
 	if committed.is_empty():
 		refusals.append("attacker commits no armies")
+
+	var region_row := brief.get("region", {}) as Dictionary
+	var battlefield := _bind_battlefield(region_row, map_bindings, refusals)
 
 	if not refusals.is_empty():
 		return {
@@ -149,6 +163,11 @@ static func configure(
 		# `team_roster_for()`.
 		"attacker_faction": attacker_faction,
 		"defender_faction": defender_faction,
+		# THE GROUND. The bound PACK map rather than the binding table, for the
+		# same reason the bound factions are here rather than their table: a
+		# different table mints a different commitment, and the strategic hashes
+		# part company before a match is ever built.
+		"battlefield_map": battlefield,
 		"attacker_is_ai": _is_ai(attacker),
 		"defender_is_ai": _is_ai(defender),
 		"staging_region": String(attacker.get("staging_region", "")),
@@ -245,8 +264,8 @@ static func team_roster_for(commitment: Dictionary) -> Array:
 ## that two correctly-synchronised peers NEVER agree. That trades a silent desync
 ## for a permanent false alarm.
 ##
-## Instead: `configure()` now takes two arguments, and neither can carry an
-## unhashed value into the sim.
+## Instead: `configure()` takes a brief plus RESOLUTION TABLES ONLY, and none of
+## them can carry an unhashed value into the sim.
 ##
 ##   * `is_ai` is derived from the seat's `controller`, which is authoritative
 ##     strategic state, hashed, and carried through the brief. This is what the
@@ -256,6 +275,11 @@ static func team_roster_for(commitment: Dictionary) -> Array:
 ##     state; but its RESULT - the two bound pack faction ids - is recorded in
 ##     the commitment, so a divergent table mints a divergent commitment and the
 ##     strategic hashes part company before a match is ever built.
+##   * `map_bindings` (schema version 2) follows the same rule for the same
+##     reason: a table in, the bound `battlefield_map` recorded. It was added
+##     because the ground a battle is fought on is as load-bearing as the
+##     factions fighting on it, and a UI that picked one and passed it to the sim
+##     alongside the roster would be the third instance of this defect.
 ##
 ## And the roster handed to the sim is `team_roster_for(commitment)`, a pure
 ## projection. The property is now mechanical: there is no code path by which a
@@ -408,6 +432,29 @@ static func _bind_faction(
 		refusals.append("%s faction '%s' binds to an empty pack faction" % [role, strategic])
 		return ""
 	return pack_faction
+
+
+## The pack map a region's battle is fought on, or "" with a NAMED refusal.
+## Never guesses a battlefield: an unbound region map refuses rather than
+## quietly picking whichever map happens to be first, because that choice
+## decides the battle and would then be a value the hash never saw.
+static func _bind_battlefield(
+	region: Dictionary,
+	map_bindings: Dictionary,
+	refusals: PackedStringArray
+) -> String:
+	var region_map := String(region.get("map_name", ""))
+	if region_map.is_empty():
+		refusals.append("region %s carries no map name" % String(region.get("id", "")))
+		return ""
+	if not map_bindings.has(region_map):
+		refusals.append("region map '%s' has no pack map binding" % region_map)
+		return ""
+	var pack_map := String(map_bindings[region_map])
+	if pack_map.is_empty():
+		refusals.append("region map '%s' binds to an empty pack map" % region_map)
+		return ""
+	return pack_map
 
 
 ## Whether a side's seat is machine-driven, from the seat's own `controller`.

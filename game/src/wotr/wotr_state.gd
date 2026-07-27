@@ -47,7 +47,18 @@ const CONTROLLER_AI := "ai"
 ## bridge (the bridge preloads this file). `wotr_battle.gd` aliases these
 ## constants rather than restating them, so there is one definition.
 const BATTLE_COMMITMENT_SCHEMA := "openbfme.wotr-battle-commitment"
-const BATTLE_COMMITMENT_SCHEMA_VERSION := 1
+## VERSION 2 adds `battlefield_map`: the PACK MAP the tactical match is actually
+## fought on, as opposed to `map_name`, which is the region's authored retail
+## `MAP WOR <region>` name. They are different things and today they are never
+## the same thing, because no `MAP WOR *` map is cooked in any content pack.
+##
+## It is IN THE COMMITMENT for exactly the reason `attacker_faction` is (see
+## `commitment_matches_brief()` in `wotr_battle.gd`): the battlefield decides
+## what the battle is, so a value chosen outside the hash and handed to the sim
+## as an extra argument is 867447e's desync with a different name on it. The
+## resolution table is an argument to `configure()`; its RESULT is recorded here,
+## so two peers whose strategic hashes agree fought on the same ground.
+const BATTLE_COMMITMENT_SCHEMA_VERSION := 2
 
 ## Every field a commitment may carry, and the type it must carry. Exhaustive in
 ## BOTH directions: a missing field is refused and so is an extra one. A field
@@ -58,6 +69,7 @@ const BATTLE_COMMITMENT_FIELDS := {
 	"attacker_faction": TYPE_STRING,
 	"attacker_is_ai": TYPE_BOOL,
 	"attacker_team": TYPE_INT,
+	"battlefield_map": TYPE_STRING,
 	"brief_digest": TYPE_STRING,
 	"committed_armies": TYPE_PACKED_INT32_ARRAY,
 	"defender": TYPE_INT,
@@ -582,6 +594,11 @@ func _battle_commitment_refusal(commitment: Dictionary) -> String:
 		return "battle commitment puts both sides on tactical team %d" % int(commitment["attacker_team"])
 	if (commitment["committed_armies"] as PackedInt32Array).is_empty():
 		return "battle commitment commits no attacking armies"
+	# A battle with no battlefield cannot be fought, and a commitment that
+	# carried an empty one would admit exactly the hole the field exists to
+	# close: the ground would then have to come from somewhere outside the hash.
+	if String(commitment["battlefield_map"]).strip_edges().is_empty():
+		return "battle commitment names no battlefield map"
 	var digest := String(commitment["brief_digest"])
 	if digest.length() != 64 or not digest.is_valid_hex_number():
 		return "battle commitment carries no well-formed brief digest"
