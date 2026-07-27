@@ -1210,6 +1210,16 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_event_digest = 0x811C9DC5
 	entities.clear()
 	structures.clear()
+	# MATCH-SCOPED base-loop state resets WITH the structures it pointed at.
+	# Stale expansion-pad keys would both survive a reset AND block re-seeding
+	# (_seed_expansion_pads_for early-returns on an existing key), leaving
+	# phantom pads for dead structure ids and stale pad occupancy inside the
+	# HASHED state - a reused sim would diverge from a freshly built one at
+	# tick 0. Script unit references are match state for the same reason.
+	expansion_pads.clear()
+	build_plots.clear()
+	_next_expansion_structure_id = 9000
+	script_unit_references.clear()
 	_completed_hero_identities.clear()
 	_next_event_sequence = 1
 	_next_order_sequence = 1
@@ -1266,7 +1276,10 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	if base_loop_enabled:
 		_initialize_base_loop()
 	# Base-flag CONFIG (position/cost/health) survives setup like the expansion
-	# rules; the dynamic unpack state resets with the structures it pointed at.
+	# rules. The dynamic unpack state is reset EXPLICITLY here (rows back to
+	# packed) and above (expansion pads, the expansion id counter and script
+	# unit references cleared with the structures they pointed at) - none of
+	# it resets by itself.
 	for base_name in unpackable_base_names():
 		var flag_row: Dictionary = unpackable_bases[base_name]
 		flag_row["unpacked_by"] = -1
@@ -5527,14 +5540,40 @@ func issue_expansion_construct(team: int, fortress_id: int, expansion_kind: Stri
 var unpackable_bases: Dictionary = {}
 
 
-func configure_unpackable_bases(bases: Dictionary) -> void:
+func configure_unpackable_bases(bases: Dictionary) -> bool:
 	## bases: {name: {"position": Vector2, "cost": int, "health": int}} - match
 	## configuration, set identically on every peer before the match starts.
 	## Every row resets to packed. An empty dict clears the subsystem (and its
 	## hash contribution disappears entirely - empty-is-absent).
-	unpackable_bases = {}
+	##
+	## THE FLAG-SHADOWING INVARIANT, second direction: a name may never be
+	## both a base flag and a bound script unit reference. Bind-time already
+	## refuses a reference that would shadow an existing flag (the adapter's
+	## _unit_reference_rejection); THIS is the other edge - configuring a flag
+	## whose name an existing reference already holds would let the stale
+	## reference eclipse the sim-owned flag on every later resolve. Such a
+	## configure is REFUSED WHOLE (false, push_error, nothing applied): a
+	## half-applied table would be worse than a loud refusal, and nothing
+	## enforces configure-before-bind ordering for the caller.
 	var names := bases.keys()
 	names.sort()
+	var collisions: Array[String] = []
+	var reference_teams := script_unit_references.keys()
+	reference_teams.sort()
+	for name_value in names:
+		for team in reference_teams:
+			if (script_unit_references[team] as Dictionary).has(String(name_value)):
+				collisions.append(String(name_value))
+				break
+	if not collisions.is_empty():
+		push_error(
+			"configure_unpackable_bases refused: %s already bound as script unit "
+			% ", ".join(collisions)
+			+ "reference(s); a flag of the same name would be eclipsed on every "
+			+ "resolve (the flag-shadowing invariant holds in both directions)"
+		)
+		return false
+	unpackable_bases = {}
 	for name_value in names:
 		var spec: Dictionary = bases[name_value]
 		unpackable_bases[String(name_value)] = {
@@ -5544,6 +5583,7 @@ func configure_unpackable_bases(bases: Dictionary) -> void:
 			"unpacked_by": -1,
 			"structure_id": 0,
 		}
+	return true
 
 
 func unpackable_base_names() -> Array[String]:
@@ -5624,6 +5664,59 @@ func unpack_base(team: int, base_name: String, free: bool) -> Dictionary:
 	row["structure_id"] = structure_id
 	_emit_event("base.unpacked", 0, structure_id, {"team": team, "base": base_name, "cost": cost, "free": free})
 	return {"ok": true, "structure_id": structure_id, "cost": cost}
+
+
+# --- Script unit references (the WP16 shared namespace, SIM-owned) ---------
+#
+# team:int -> {reference_name: structure_id}. Owned by the SIM rather than
+# the script-world adapter, DELIBERATELY: a bound reference changes what a
+# later script action does (build_base_building at "AI_REF" succeeds or
+# refuses on whether AI_REF is bound), which makes it sim-outcome-bearing
+# state - and no such state may live outside the snapshot/hash boundary that
+# save/load and late-join reproduce. A peer that adopts a snapshot must
+# resolve every reference exactly as the peer that minted it, or byte-equal
+# sims diverge on the very next scripted action.
+#
+# Keyed by TEAM because retail executes each AI player's script libraries in
+# that player's own context: one world instance per script player, each with
+# its own reference namespace. The team id is already authoritative state, so
+# the key introduces nothing platform- or load-order-dependent.
+#
+# HASH INERTNESS: participates in the authoritative state ONLY when non-empty
+# (empty-is-absent, the unpackable_bases discipline), so a match whose
+# scripts never bind a reference contributes zero bytes to state_hash() and
+# the frozen cross-platform pin stands untouched.
+
+## See the block comment above. setup() clears it (match state, not config).
+var script_unit_references: Dictionary = {}
+
+
+func bind_script_unit_reference(team: int, reference: String, structure_id: int) -> bool:
+	## Bind (or re-point) `reference` for `team` to a concrete structure id.
+	## References are mutable by design (retail re-points
+	## AI_CURRENT_CONSTRUCTION_SITE constantly). An empty reference binds
+	## nothing (vacuous true). A base-flag name is refused loudly - callers
+	## are expected to have cleared the shadow check BEFORE mutating the sim,
+	## so tripping this backstop means a caller skipped it.
+	if reference == "":
+		return true
+	if unpackable_bases.has(reference):
+		push_error(
+			"bind_script_unit_reference refused: '%s' names a base flag; " % reference
+			+ "flag names are owned by the unpackable-base table (callers must "
+			+ "check the shadow rejection before mutating the sim)"
+		)
+		return false
+	if not script_unit_references.has(team):
+		script_unit_references[team] = {}
+	(script_unit_references[team] as Dictionary)[reference] = structure_id
+	return true
+
+
+func script_unit_reference(team: int, reference: String) -> int:
+	## The structure id bound to `reference` for `team`; 0 when unbound
+	## (structure ids are never 0).
+	return int((script_unit_references.get(team, {}) as Dictionary).get(reference, 0))
 
 
 func expansion_kind_for_object_id(object_id: String) -> String:
@@ -10467,6 +10560,10 @@ func _authoritative_state() -> Dictionary:
 	# here would re-mint the pin for every scenario that never touches bases.
 	if not unpackable_bases.is_empty():
 		state["unpackable_bases"] = unpackable_bases
+	# Same discipline for the script unit references: a match whose scripts
+	# never bind one contributes zero bytes (see the store's block comment).
+	if not script_unit_references.is_empty():
+		state["script_unit_references"] = script_unit_references
 	return state
 
 
@@ -10540,6 +10637,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_pending_commands = state["pending_commands"]
 	# Absent when empty by construction (empty-is-absent hash discipline).
 	unpackable_bases = state.get("unpackable_bases", {})
+	script_unit_references = state.get("script_unit_references", {})
 	creep_lairs_enabled = bool(state.get("creep_lairs_enabled", false))
 	_creep_lair_placements = state.get("creep_lair_placements", [])
 	_next_creep_guard_id = int(state.get("next_creep_guard_id", 70001))

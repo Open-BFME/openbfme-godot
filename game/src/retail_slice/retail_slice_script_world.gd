@@ -54,10 +54,17 @@ extends SageScriptWorld
 ##     configuration; never rebindable);
 ##   * unit references - bound by actions that carry a UNIT_REF destination
 ##     (base_unpack, build_base_building), stored as handles RESOLVED AT
-##     CALL TIME ({"kind": "structure", "id": ...}), never as source
-##     strings, so a later rebinding of the source cannot silently re-aim
-##     an existing reference. References are mutable by design (retail
-##     re-points AI_CURRENT_CONSTRUCTION_SITE constantly).
+##     CALL TIME (structure ids), never as source strings, so a later
+##     rebinding of the source cannot silently re-aim an existing reference.
+##     References are mutable by design (retail re-points
+##     AI_CURRENT_CONSTRUCTION_SITE constantly).
+## The reference store LIVES IN THE SIM (script_unit_references, keyed by
+## this world's script-player team), NOT in this adapter: a bound reference
+## changes what a later script action does, which makes it sim-outcome-
+## bearing state that save/load and late-join must reproduce. A peer that
+## adopts a snapshot and rebuilds its worlds resolves every reference
+## exactly as the peer that minted them. This adapter holds no reference
+## state of its own - only configuration (the name bindings above).
 ## Everything else ("NAMED_..." vocabulary over map-placed units) still has
 ## no binding: sim entity rows carry display names, not script identities,
 ## so every other object-name-keyed method refuses. That remains the single
@@ -113,11 +120,6 @@ var _team_names: Dictionary = {}
 ## The player whose script libraries this world instance executes (see the
 ## class comment). "" until bind_script_player is called.
 var _script_player: String = ""
-
-## Unit-reference name -> resolved handle {"kind": "structure", "id": int}.
-## One namespace with the sim's base-flag names - resolve_script_object is
-## the single lookup; _bind_unit_reference is the single writer.
-var _unit_references: Dictionary = {}
 
 ## science id -> power id, derived once from the sim's GLOBAL spellbook
 ## document (authored order; deterministic). Rebuilt lazily so a world created
@@ -201,9 +203,18 @@ func resolve_script_object(name: String) -> Dictionary:
 	## ({"kind": "structure", "id": int}); a sim base-flag name answers
 	## {"kind": "base_flag", "name": String}; {} means unknown. Read-only -
 	## conditions resolve through here, so it may not mutate anything.
-	if _unit_references.has(name):
-		return (_unit_references[name] as Dictionary).duplicate(true)
-	if sim != null and sim.unpackable_bases.has(name):
+	## References are read from the SIM's store under this world's script-
+	## player team (a world with no script player bound can have bound
+	## nothing). The shadowing invariant guarantees a name is never both a
+	## reference and a flag, so the lookup order carries no meaning.
+	if sim == null:
+		return {}
+	var team := _script_player_team()
+	if team >= 0:
+		var reference_id: int = sim.script_unit_reference(team, name)
+		if reference_id != 0:
+			return {"kind": "structure", "id": reference_id}
+	if sim.unpackable_bases.has(name):
 		return {"kind": "base_flag", "name": name}
 	return {}
 
@@ -228,10 +239,12 @@ func _bind_unit_reference(reference: String, structure_id: int) -> void:
 	## Bind (or re-point) a unit reference to a concrete structure - resolved
 	## NOW, stored as a handle, never as a source string (class comment). An
 	## empty reference binds nothing. Only call after _unit_reference_rejection
-	## answered "".
+	## answered "". The handle is written into the SIM's authoritative store
+	## under this world's script-player team; both callers resolved that team
+	## before mutating the sim, so it is never -1 here.
 	if reference == "":
 		return
-	_unit_references[reference] = {"kind": "structure", "id": structure_id}
+	sim.bind_script_unit_reference(_script_player_team(), reference, structure_id)
 
 
 func _bound_player_team(player: String) -> int:
