@@ -54,6 +54,67 @@ KNOWN_SLICE_ARCHIVE_SHA256 = {
     "lang/englishpatch105.big": "ffdc7e390e9c3f3196b105d60ec067546844a946917d2b021e616bb75ad75e56",
 }
 
+class CatalogProvenanceError(RuntimeError):
+    """A catalog does not demonstrably come from the requested retail game.
+
+    Raised instead of silently rebuilding or silently accepting a catalog whose
+    contents belong to a different edition. Carries a structured ``diagnostic``
+    so ``--json`` callers get a machine-readable failure rather than content
+    that quietly came from the wrong game.
+    """
+
+    def __init__(self, diagnostic: Mapping[str, Any]) -> None:
+        self.diagnostic = dict(diagnostic)
+        super().__init__(str(self.diagnostic.get("message", "catalog provenance check failed")))
+
+
+def catalog_provenance_reason(
+    archive_paths: Iterable[str], game: str
+) -> str | None:
+    """Return why ``archive_paths`` contradict ``game``, else ``None``.
+
+    Rejects only on *affirmative contradiction*: the tree carries another
+    edition's patch archives and none of the requested edition's own. Matching
+    is by basename because a layered RotWK install keeps its patch archives in
+    per-layer subdirectories (``layer-0-rotwk/_patch201.big``).
+
+    Deliberately conservative, in both directions:
+
+    * Absence of evidence is not rejected. A freshly installed, never-patched
+      retail tree carries no patch archive at all, and refusing it would be a
+      false positive on legitimate retail input.
+    * A RotWK tree legitimately layers BFME2 and therefore *does* contain BFME2
+      patch archives, so BFME2 evidence alone never rejects.
+
+    What it does catch is the dangerous direction this project keeps hitting: a
+    BFME2 catalog served under the RotWK name. That tree carries 1.x patch
+    archives and no 2.x archive, so it is refused rather than silently
+    supplying BFME2 content to a RotWK request.
+    """
+
+    definition = retail_game(game)
+    present = {Path(item).name.casefold() for item in archive_paths}
+    own = {name.casefold() for name in definition.patch_archives}
+    if own & present:
+        return None
+    foreign: dict[str, set[str]] = {}
+    for other_id, other in RETAIL_GAMES.items():
+        if other_id == definition.id:
+            continue
+        matched = {name.casefold() for name in other.patch_archives} & present
+        if matched:
+            foreign[other.display_name] = matched
+    if not foreign:
+        return None
+    detail = "; ".join(
+        f"{name}: {sorted(matched)}" for name, matched in sorted(foreign.items())
+    )
+    return (
+        f"catalog carries no {definition.display_name} patch archive but does "
+        f"carry another edition's ({detail})"
+    )
+
+
 ARCHIVE_POLICY_SCHEMA = "openbfme.retail-archive-policy"
 ARCHIVE_POLICY_VERSION = 1
 DEFAULT_BFME2_ARCHIVE_POLICY = (

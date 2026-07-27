@@ -24,5 +24,10 @@ set "PYTHON=%OPENBFME_IMPORT_ROOT%\tools\python-3.12-env\Scripts\python.exe"
 "%PYTHON%" tools\openbfme_import.py bootstrap-tools
 if errorlevel 1 exit /b %errorlevel%
 
-"%PYTHON%" tools\openbfme_import.py import-faction --install "%BFME2_INSTALL%" --faction "%FACTION%" %MODE%
+rem BFME2_INSTALL resolves a flat retail tree. RotWK importing needs the
+rem LAYERED install root (layer-0-rotwk over layer-1-bfme2), which this
+rem wrapper cannot resolve, so it names --game bfme2 explicitly instead of
+rem riding the CLI default (now rotwk). Retargeting this wrapper to the
+rem RotWK baseline needs a layered-install resolver first.
+"%PYTHON%" tools\openbfme_import.py import-faction --game bfme2 --install "%BFME2_INSTALL%" --faction "%FACTION%" %MODE%
 exit /b %errorlevel%

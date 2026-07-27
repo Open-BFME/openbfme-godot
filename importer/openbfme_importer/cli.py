@@ -12,8 +12,10 @@ from typing import Any, Mapping
 
 from .catalog import (
     ArchivePolicy,
+    CatalogProvenanceError,
     DEFAULT_BFME2_ARCHIVE_POLICY,
     InstallCatalog,
+    catalog_provenance_reason,
     doctor_install,
 )
 from .bootstrap import bootstrap_tools, tool_status
@@ -81,12 +83,21 @@ def _workspace_root(args: argparse.Namespace) -> Path:
     return workspace_root(_state_root(args), args.game)
 
 
+DEFAULT_GAME = "rotwk"
+
+
 def _add_game_argument(command: argparse.ArgumentParser) -> None:
+    # RotWK is the content baseline (owner decision, 2026-07-27): it is a
+    # superset carrying 305 objects BFME2 lacks, only 72 of which are Angmar.
+    # BFME2 stays fully reachable via an explicit --game bfme2.
     command.add_argument(
         "--game",
         choices=RETAIL_GAME_IDS,
-        default="bfme2",
-        help="retail game identity; expansion state is isolated from BFME2",
+        default=DEFAULT_GAME,
+        help=(
+            "retail game identity (default: rotwk, the content baseline); "
+            "pass --game bfme2 for the base-game comparison baseline"
+        ),
     )
 
 
@@ -98,18 +109,59 @@ def _load_or_build_catalog(args: argparse.Namespace) -> InstallCatalog:
         if args.game == "bfme2"
         else None
     )
+    def _guard(catalog: InstallCatalog, origin: str) -> InstallCatalog:
+        # Fail closed: never let a catalog that cannot evidence the requested
+        # edition supply content under that edition's name.
+        reason = catalog_provenance_reason(
+            (archive.relative_path for archive in catalog.archives), args.game
+        )
+        if reason is not None:
+            raise CatalogProvenanceError(
+                {
+                    "error": "catalog-game-mismatch",
+                    "game": args.game,
+                    "catalog": str(path),
+                    "install_root": str(catalog.install_root),
+                    "origin": origin,
+                    "reason": reason,
+                    "message": (
+                        f"refusing to use a catalog that is not {args.game}: {reason}. "
+                        f"Point --install at a {args.game} install "
+                        f"(RotWK uses the layered install root) and re-run with --reindex."
+                    ),
+                }
+            )
+        return catalog
+
     if path.is_file() and not args.reindex:
         try:
             catalog = InstallCatalog.load(path)
-            if (
-                catalog.install_root == install
-                and catalog.source_policy == source_policy
-                and not catalog.stale_reasons()
-            ):
-                return catalog
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
-    catalog = InstallCatalog.build(install, source_policy=source_policy)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # A malformed catalog is a hard stop, not a cue to quietly rebuild.
+            # Silently rebuilding here is how a wrong --install turns into
+            # confidently wrong content with no diagnostic.
+            raise CatalogProvenanceError(
+                {
+                    "error": "catalog-unreadable",
+                    "game": args.game,
+                    "catalog": str(path),
+                    "reason": f"{type(exc).__name__}: {exc}",
+                    "message": (
+                        f"{args.game} catalog is unreadable or malformed: {path}. "
+                        "Re-run with --reindex to rebuild it deliberately."
+                    ),
+                }
+            ) from exc
+        _guard(catalog, "cached")
+        if (
+            catalog.install_root == install
+            and catalog.source_policy == source_policy
+            and not catalog.stale_reasons()
+        ):
+            return catalog
+    catalog = _guard(
+        InstallCatalog.build(install, source_policy=source_policy), "rebuilt"
+    )
     catalog.save(path)
     return catalog
 
@@ -1272,6 +1324,13 @@ def main(argv: list[str] | None = None) -> int:
             _render(value, args.json)
             return 0 if value["valid"] else 3
         parser.error(f"unknown command: {args.command}")
+    except CatalogProvenanceError as exc:
+        # Structured, never a silent fallback to another edition.
+        if args.json:
+            print(json.dumps(exc.diagnostic, indent=2, sort_keys=True), file=sys.stderr)
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     except (FileNotFoundError, ValueError, RuntimeError, OSError) as exc:
         if args.json:
             print(json.dumps({"error": str(exc)}, indent=2), file=sys.stderr)

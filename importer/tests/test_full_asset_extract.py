@@ -279,6 +279,11 @@ class FullAssetExtractTests(unittest.TestCase):
                         "--state-root",
                         str(state),
                         "extract-all-assets",
+                        # _make_install builds a BFME2-shaped tree (_patch106),
+                        # and this test patches the BFME2 archive policy, so the
+                        # edition is explicit rather than riding the CLI default.
+                        "--game",
+                        "bfme2",
                         "--install",
                         str(catalog.install_root),
                     ]

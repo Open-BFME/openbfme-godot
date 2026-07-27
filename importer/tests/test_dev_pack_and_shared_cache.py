@@ -412,7 +412,11 @@ class DevCliTests(unittest.TestCase):
             convert.assert_called_once()
             kwargs = convert.call_args.kwargs
             self.assertEqual(kwargs.get("convert_jobs"), 3)
-            self.assertEqual(kwargs.get("game"), "bfme2")
+            # No --game passed: this pins the CLI default that import-faction
+            # forwards. Re-minted bfme2 -> rotwk when RotWK became the content
+            # baseline; the assertion still guards "the resolved default is
+            # forwarded", it just guards the new baseline.
+            self.assertEqual(kwargs.get("game"), "rotwk")
             self.assertEqual(Path(kwargs["state_root"]), state_root)
             # --dev is scoped to main(): env restored after the command.
             self.assertNotEqual(os.environ.get("OPENBFME_DEV"), "1")

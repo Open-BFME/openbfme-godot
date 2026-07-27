@@ -328,6 +328,27 @@ def _importer_cmd() -> list[str]:
     ]
 
 
+def _game_arguments(install: Path) -> list[str]:
+    """Route a chosen install to its edition, mirroring onboard.classify_install.
+
+    RotWK is the content baseline and the importer's default, so this only
+    speaks up for the case the default would get wrong: a flat BFME2 tree,
+    identified by its own executable and the absence of the RotWK one. A
+    layered RotWK root carries no executable at its top level, so "undetected"
+    correctly falls through to the rotwk default. The importer still performs
+    the authoritative fail-closed identity check either way.
+    """
+
+    try:
+        if (install / "lotrbfme2.exe").is_file() and not (
+            install / "lotrbfme2ep1.exe"
+        ).is_file():
+            return ["--game", "bfme2"]
+    except OSError:
+        pass
+    return []
+
+
 def _fmt_duration(seconds: float | int) -> str:
     total = max(0, int(seconds))
     if total < 60:
@@ -1562,7 +1583,7 @@ class ImportGui(tk.Tk):
         self._show_success_bar(False)
 
         mode = self._mode_key
-        cmd = _importer_cmd()
+        cmd = _importer_cmd() + _game_arguments(install)
         if mode == "faction-plan":
             cmd += [
                 "import-faction",

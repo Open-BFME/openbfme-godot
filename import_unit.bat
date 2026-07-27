@@ -25,7 +25,9 @@ set "PYTHON=%OPENBFME_IMPORT_ROOT%\tools\python-3.12-env\Scripts\python.exe"
 "%PYTHON%" tools\openbfme_import.py bootstrap-tools
 if errorlevel 1 exit /b %errorlevel%
 
-"%PYTHON%" tools\openbfme_import.py import-unit --install "%BFME2_INSTALL%" --object "%UNIT_OBJECT%" --faction "%UNIT_FACTION%" --bootstrap-selection --godot-content-root "%OPENBFME_CONTENT%"
+rem import-unit is a BFME2-only capability (cli.py rejects other editions),
+rem so it names its edition explicitly rather than riding the CLI default.
+"%PYTHON%" tools\openbfme_import.py import-unit --game bfme2 --install "%BFME2_INSTALL%" --object "%UNIT_OBJECT%" --faction "%UNIT_FACTION%" --bootstrap-selection --godot-content-root "%OPENBFME_CONTENT%"
 if errorlevel 1 exit /b %errorlevel%
 
 call run_retail_slice.bat

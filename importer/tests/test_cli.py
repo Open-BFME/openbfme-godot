@@ -64,6 +64,8 @@ class CliTests(unittest.TestCase):
                         "--state-root",
                         str(state_root),
                         "import-faction",
+                        "--game",
+                        "bfme2",
                         "--install",
                         "C:/BFME2",
                         "--faction",
@@ -136,7 +138,15 @@ class CliTests(unittest.TestCase):
                 ),
             ):
                 result = cli.main(
-                    ["--state-root", raw, "living-world", "--install", "C:/BFME2"]
+                    [
+                        "--state-root",
+                        raw,
+                        "living-world",
+                        "--game",
+                        "bfme2",
+                        "--install",
+                        "C:/BFME2",
+                    ]
                 )
             written = json.loads(
                 (Path(raw) / "reports" / "bfme2-living-world.json").read_text(
@@ -164,7 +174,15 @@ class CliTests(unittest.TestCase):
                 ),
             ):
                 result = cli.main(
-                    ["--state-root", raw, "living-world", "--install", "C:/BFME2"]
+                    [
+                        "--state-root",
+                        raw,
+                        "living-world",
+                        "--game",
+                        "bfme2",
+                        "--install",
+                        "C:/BFME2",
+                    ]
                 )
             self.assertEqual(result, 1)
             self.assertFalse((Path(raw) / "reports" / "bfme2-living-world.json").exists())
@@ -212,6 +230,8 @@ class CliTests(unittest.TestCase):
                         "--state-root",
                         raw,
                         "census-factions",
+                        "--game",
+                        "bfme2",
                         "--install",
                         "C:/BFME2",
                     ]
@@ -328,6 +348,8 @@ class CliTests(unittest.TestCase):
                         "--state-root",
                         raw,
                         "census-faction",
+                        "--game",
+                        "bfme2",
                         "--install",
                         "C:/BFME2",
                         "--faction",
@@ -383,6 +405,8 @@ class CliTests(unittest.TestCase):
                         "--state-root",
                         str(state_root),
                         "generate-faction-profile",
+                        "--game",
+                        "bfme2",
                         "--install",
                         "C:/BFME2",
                     ]
@@ -430,6 +454,8 @@ class CliTests(unittest.TestCase):
                         "--state-root",
                         str(state_root),
                         "generate-map-profile",
+                        "--game",
+                        "bfme2",
                         "--install",
                         "C:/BFME2",
                     ]

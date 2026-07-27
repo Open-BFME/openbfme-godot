@@ -18,6 +18,9 @@ $profilePath = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\retail-work
 $expectedProfileId = "men-fords-v0-complete-generated"
 $expectedProfileSha256 = "0bc2e76708d3c13b0aeac45afe375e4f120acdf329344b79d683f42e5d667c9d"
 $expectedPackId = "bfme2-men-vslice"
+# This gate is the BFME2 lane end to end ($env:BFME2_INSTALL, bfme2-men-vslice),
+# so its importer calls name --game bfme2 rather than riding the CLI default,
+# which is now rotwk (the content baseline).
 $minimumImporterTestCount = 999
 $maximumImporterSkipCount = 5
 $publishRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot ".private\content-packs"))
@@ -83,9 +86,9 @@ try {
 
     $bootstrap = Invoke-ImporterJson "bootstrap" @("bootstrap-tools")
     Assert-ProofTrue ([bool]$bootstrap.ready) "Pinned external tools are not ready."
-    $doctor = Invoke-ImporterJson "doctor" @("doctor", "--install", $Install, "--deep")
+    $doctor = Invoke-ImporterJson "doctor" @("doctor", "--game", "bfme2", "--install", $Install, "--deep")
     Assert-ProofTrue ([bool]$doctor.ready) "Retail install doctor is not ready."
-    $plan = Invoke-ImporterJson "plan" @("plan", "--install", $Install, "--profile", $profilePath)
+    $plan = Invoke-ImporterJson "plan" @("plan", "--game", "bfme2", "--install", $Install, "--profile", $profilePath)
     Assert-ProofTrue (
         [bool]$plan.ready -and
         @($plan.missing_required).Count -eq 0 -and
@@ -99,7 +102,7 @@ try {
     ) "Exact generated completion profile did not resolve its pinned ready closure."
     Assert-ProofTrue (((Get-FileHash -LiteralPath $profilePath -Algorithm SHA256).Hash.ToLowerInvariant()) -eq $expectedProfileSha256) "Generated completion profile changed during planning."
 
-    $buildArguments = @("build", "--install", $Install, "--profile", $profilePath, "--force")
+    $buildArguments = @("build", "--game", "bfme2", "--install", $Install, "--profile", $profilePath, "--force")
     if ($IntegrationOwnerPublish) {
         $buildArguments += @("--godot-content-root", $publishRoot)
         Write-Host "$gate integration-owner publish explicitly enabled target=$publishRoot"
