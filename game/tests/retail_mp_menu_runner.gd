@@ -115,24 +115,28 @@ func _run() -> void:
 			game_state.set("retail_mp_mode", "host")
 			_check("solo_launch_clears_mp_mode", true)
 
-	# --- men-pack gate vs shared-object winners (playtest JOIN-blocked bug) -----
+	# --- host-pack gate vs shared-object winners (playtest JOIN-blocked bug) ----
 	# Faction packs legitimately ship their own copy of the shared base bundle
 	# objects, so a foreign ACTIVE pack wins the flat bundle_objects table
-	# (active loads last). The MP gate must resolve the host pack BY ID over the
-	# mounted set — exactly like the slice — and therefore pass while
-	# bfme2-men-vslice is genuinely mounted, in BOTH boot paths (OPENBFME_CONTENT
-	# and the durable user selection), and block with an honest message when the
-	# men pack truly is absent. Synthetic fixture packs only; the real user://
-	# selection is never read or written (the durable path is exercised through
-	# the project-settings cache override).
+	# (active loads last). The MP gate must resolve the host pack over the
+	# mounted set — exactly like the slice, through the same function — and
+	# therefore pass while a host-capable pack is genuinely mounted, in BOTH boot
+	# paths (OPENBFME_CONTENT and the durable user selection), and block with an
+	# honest message when no mounted pack can host. What identifies a host is the
+	# surfaces it provides, not its name: gating on the name refused the owner's
+	# own six-faction selection, so the men pack here is a supplement that
+	# happens to be capable rather than the thing being looked for. Synthetic
+	# fixture packs only; the real user:// selection is never read or written
+	# (the durable path is exercised through the project-settings cache
+	# override).
 	var content_db := root.get_node_or_null("ContentDB")
 	_check("content_db_autoload_present", content_db != null)
 	if content_db != null:
 		var former_content := OS.get_environment("OPENBFME_CONTENT")
 		var fixture_with_men := OS.get_cache_dir().path_join("openbfme-mp-menu-fixture-with-men")
-		var fixture_no_men := OS.get_cache_dir().path_join("openbfme-mp-menu-fixture-no-men")
+		var fixture_no_host := OS.get_cache_dir().path_join("openbfme-mp-menu-fixture-no-host")
 		_build_gate_fixture(fixture_with_men, true)
-		_build_gate_fixture(fixture_no_men, false)
+		_build_no_host_fixture(fixture_no_host)
 
 		# (1) env-selected content root: men mounted as a supplement behind a
 		# foreign active pack whose gondor-fighter copy wins the flat table.
@@ -144,6 +148,19 @@ func _run() -> void:
 			winner_root.contains("foreign-vslice") and env_gate == "",
 			"winner=%s gate=%s" % [winner_root, env_gate])
 
+		# Passing is not enough: with TWO capable packs mounted, the host must be
+		# the one whose documents actually won the flat table — the ACTIVE pack,
+		# which ModLoader loads last. Resolving the other capable pack would read
+		# six surfaces out of a root the live documents did not come from, which
+		# is the half-load this gate exists to prevent, and it would still report
+		# a clean pass. Only the reverse-load-order walk gets this right.
+		var pack_capability_script = load("res://src/content/pack_capability.gd")
+		var host_root := String(pack_capability_script.resolve_host_slice_pack(
+			content_db.get("pack_meta") as Array
+		).get("root", ""))
+		_check("host_resolves_to_active_pack_not_the_other_capable_supplement",
+			host_root == winner_root, "host=%s winner=%s" % [host_root, winner_root])
+
 		# (2) the same mounted set through the durable-selection boot path.
 		OS.set_environment("OPENBFME_CONTENT", "")
 		ProjectSettings.set_setting("openbfme/content/user_pack_cache", fixture_with_men)
@@ -153,14 +170,22 @@ func _run() -> void:
 		_check("durable_gate_passes_with_men_mounted_behind_foreign_active",
 			durable_gate == "", durable_gate)
 
-		# (3) men truly absent stays blocked with the honest mounted-set message
-		# (never the old shared-winner identity claim).
-		ProjectSettings.set_setting("openbfme/content/user_pack_cache", fixture_no_men)
-		ProjectSettings.set_setting("openbfme/content/user_pack_selection", fixture_no_men.path_join("selection.json"))
+		# (3) a mounted set where the shared-id winner is NOT a host: a faction
+		# supplement shipping its own copy of the shared base objects plus a
+		# maps-only pack. Every document the earlier gate steps look for is
+		# present, so the gate has to reach the surface question and refuse it,
+		# naming each mounted pack and what it lacks - never the old identity
+		# claim, and never a silent pass into a launch that dies at slice_ready.
+		ProjectSettings.set_setting("openbfme/content/user_pack_cache", fixture_no_host)
+		ProjectSettings.set_setting("openbfme/content/user_pack_selection", fixture_no_host.path_join("selection.json"))
 		content_db.call("reload")
 		var absent_gate := String(menu._men_pack_gate_error())
-		_check("gate_blocks_honestly_when_men_pack_absent",
-			absent_gate.contains("not mounted") and not absent_gate.contains("selected content pack is not"),
+		_check("gate_blocks_honestly_when_no_mounted_pack_can_host",
+			absent_gate.contains("No mounted content pack provides the host slice surfaces")
+				and absent_gate.contains("bfme2-supplement-vslice (missing:")
+				and absent_gate.contains("bfme2-fixture-maps (missing:")
+				and absent_gate.contains("palantirScene")
+				and not absent_gate.contains("selected content pack is not"),
 			absent_gate)
 
 		# Restore the ambient content configuration.
@@ -190,31 +215,98 @@ func _build_gate_fixture(cache: String, include_men: bool) -> void:
 	if include_men:
 		packs["men-vslice"] = "bfme2-men-vslice"
 	for dir_name in packs:
-		var pack_root := cache.path_join(String(dir_name))
-		DirAccess.make_dir_recursive_absolute(pack_root.path_join("data"))
-		_write_fixture_json(pack_root.path_join("pack.json"), {
-			"schema": "openbfme.content-pack", "schemaVersion": 0,
-			"id": packs[dir_name], "priority": 900,
-			"files": {
-				"objects": "data/objects.json",
-				"animationCapabilities": "data/caps.json",
-				"entryMap": "data/fords.json",
-			},
-		})
-		_write_fixture_json(pack_root.path_join("data/objects.json"), {"objects": [
-			{"id": "bfme2.object.gondor-fighter", "kind": "member", "animationCapabilityId": "cap.fixture"},
-			{"id": "bfme2.object.gondor-fighter-horde", "kind": "horde"},
-		]})
-		_write_fixture_json(pack_root.path_join("data/caps.json"), {"capabilities": [
-			{"id": "cap.fixture", "states": {}},
-		]})
-		_write_fixture_json(pack_root.path_join("data/fords.json"), {"id": "bfme2.map.fords-of-isen-ii"})
+		_write_host_capable_pack(cache.path_join(String(dir_name)), String(packs[dir_name]))
 	var supplements: Array = ["men-vslice"] if include_men else []
 	_write_fixture_json(cache.path_join("selection.json"), {
 		"schema": "openbfme.pack-selection", "schemaVersion": 0,
 		"activePack": "foreign-vslice",
 		"supplementalPacks": supplements,
 	})
+
+
+func _build_no_host_fixture(cache: String) -> void:
+	## A mounted set that supplies every DOCUMENT the gate's earlier steps read
+	## and still cannot host a match: an active faction supplement carrying its
+	## own copy of the shared base objects (what supplements really do, and what
+	## makes it win the flat bundle_objects table) plus a maps-only pack shaped
+	## like the real bfme2-skirmish-maps-private, which declares entryMap and
+	## nothing else. Neither declares the audio registry or the Palantir dock, so
+	## neither can host - measured on a real pack in pack_capability.gd.
+	var supplement := cache.path_join("supplement-vslice")
+	DirAccess.make_dir_recursive_absolute(supplement.path_join("data"))
+	_write_fixture_json(supplement.path_join("pack.json"), {
+		"schema": "openbfme.content-pack", "schemaVersion": 0,
+		"id": "bfme2-supplement-vslice", "priority": 900,
+		"files": {
+			"objects": "data/objects.json",
+			"animationCapabilities": "data/caps.json",
+		},
+	})
+	_write_fixture_soldier_documents(supplement)
+
+	var maps := cache.path_join("fixture-maps")
+	DirAccess.make_dir_recursive_absolute(maps.path_join("data"))
+	_write_fixture_json(maps.path_join("pack.json"), {
+		"schema": "openbfme.content-pack", "schemaVersion": 0,
+		"id": "bfme2-fixture-maps", "priority": 900,
+		"files": {"entryMap": "data/fords.json"},
+	})
+	_write_fixture_json(maps.path_join("data/fords.json"), {"id": "bfme2.map.fords-of-isen-ii"})
+
+	_write_fixture_json(cache.path_join("selection.json"), {
+		"schema": "openbfme.pack-selection", "schemaVersion": 0,
+		"activePack": "supplement-vslice",
+		"supplementalPacks": ["fixture-maps"],
+	})
+
+
+func _write_host_capable_pack(pack_root: String, pack_id: String) -> void:
+	## A pack shaped like a REAL converted faction pack as far as the launch gate
+	## can see: it declares every surface without which a match cannot run
+	## (objects, animationCapabilities, entryMap, audioEvents, palantirScene) and
+	## each declared file exists, because a declared-but-absent file is a broken
+	## pack rather than a capable one.
+	##
+	## menOrderHint is deliberately NOT declared. It is a presentation surface
+	## with its own probe and its own documented fallback: a real pack without it
+	## boots, plays and tears down (retail_slice_runner 351/1, the one failure
+	## being the order indicator honestly reporting the synthetic hint). A pack
+	## in exactly this shape must therefore be allowed to launch, and these
+	## fixtures are where that stays true.
+	DirAccess.make_dir_recursive_absolute(pack_root.path_join("data/ui/palantir"))
+	_write_fixture_json(pack_root.path_join("pack.json"), {
+		"schema": "openbfme.content-pack", "schemaVersion": 0,
+		"id": pack_id, "priority": 900,
+		"files": {
+			"objects": "data/objects.json",
+			"animationCapabilities": "data/caps.json",
+			"entryMap": "data/fords.json",
+			"audioEvents": "data/audio_events.json",
+			"palantirScene": "data/ui/palantir/scene-contract.json",
+		},
+	})
+	_write_fixture_soldier_documents(pack_root)
+	_write_fixture_json(pack_root.path_join("data/fords.json"), {"id": "bfme2.map.fords-of-isen-ii"})
+	# Schema-valid and empty: the registry loads cleanly and contributes no
+	# routes, so the fixture declares a real surface without inventing content.
+	_write_fixture_json(pack_root.path_join("data/audio_events.json"), {
+		"schema": "openbfme.audio-events", "schemaVersion": 1,
+		"events": {}, "multisounds": {}, "samples": {},
+	})
+	_write_fixture_json(pack_root.path_join("data/ui/palantir/scene-contract.json"), {
+		"authoredResolution": [1024, 768], "atlases": [], "draws": [],
+	})
+
+
+func _write_fixture_soldier_documents(pack_root: String) -> void:
+	DirAccess.make_dir_recursive_absolute(pack_root.path_join("data"))
+	_write_fixture_json(pack_root.path_join("data/objects.json"), {"objects": [
+		{"id": "bfme2.object.gondor-fighter", "kind": "member", "animationCapabilityId": "cap.fixture"},
+		{"id": "bfme2.object.gondor-fighter-horde", "kind": "horde"},
+	]})
+	_write_fixture_json(pack_root.path_join("data/caps.json"), {"capabilities": [
+		{"id": "cap.fixture", "states": {}},
+	]})
 
 
 func _finish() -> void:

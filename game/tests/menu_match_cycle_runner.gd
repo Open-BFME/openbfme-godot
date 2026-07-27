@@ -23,7 +23,7 @@ extends SceneTree
 ##    supplement paths (synthetic fixtures in the OS cache dir only — the real
 ##    user:// selection is never touched: every ModLoader call passes explicit
 ##    fixture roots), and the menu's mounted-set launch gate staying honest
-##    when the host pack id vanishes from the mounted set.
+##    when the pack that can host the match vanishes from the mounted set.
 ##
 ## Slice scripts are loaded lazily inside _run (never top-level preloaded) to
 ## dodge the --script autoload-compile-order trap, like the sibling runners.
@@ -143,15 +143,23 @@ func _section_cycles(game_state: Node, content_db: Node, menu_scene: PackedScene
 	await process_frame
 	_check("cycle1_menu_ready", menu.theme != null)
 
-	# Mounted-set launch gate negative: with the host pack id gone from the
-	# mounted set, the launch gate must block with the honest reason and
-	# recover as soon as the pack returns. (menu_skirmish_runner covers the
-	# registry-level signals; this covers _mounted_pack_root_for_id.)
+	# Mounted-set launch gate negative: with the host pack gone from the mounted
+	# set, the launch gate must block with the honest reason and recover as soon
+	# as the pack returns. (menu_skirmish_runner covers the registry-level
+	# signals; this covers the shared host resolution the gate runs.)
+	#
+	# The row to pull is the one the gate itself resolves as host, found the same
+	# way the gate finds it — by capability, in reverse load order. Looking it up
+	# by the literal bfme2-men-vslice id asserted a NAME the runtime no longer
+	# has any reason to care about, and would fail against the owner's own
+	# six-faction selection, where the host pack is mounted under a different id.
+	var pack_capability_script = load("res://src/content/pack_capability.gd")
 	var pack_meta: Array = content_db.get("pack_meta")
 	var removed_index := -1
 	var removed_entry = null
-	for index in range(pack_meta.size()):
-		if String((pack_meta[index] as Dictionary).get("id", "")) == String(_faction_manifest_script.DEFAULT_PACK_ID):
+	for index in range(pack_meta.size() - 1, -1, -1):
+		var root_path := String((pack_meta[index] as Dictionary).get("root", ""))
+		if root_path != "" and pack_capability_script.missing_host_slice_surfaces(root_path).is_empty():
 			removed_index = index
 			removed_entry = pack_meta[index]
 			break
@@ -160,7 +168,9 @@ func _section_cycles(game_state: Node, content_db: Node, menu_scene: PackedScene
 		pack_meta.remove_at(removed_index)
 		var gate_error := String(menu.retail_launch_error())
 		_check("unmounted_host_pack_blocks_launch_with_reason",
-			gate_error.contains("not mounted by the current content selection"), gate_error)
+			gate_error.contains("No mounted content pack provides the host slice surfaces")
+				and gate_error.contains("(missing:"),
+			gate_error)
 		pack_meta.insert(removed_index, removed_entry)
 		_check("remounted_host_pack_recovers_launch", String(menu.retail_launch_error()) == "",
 			String(menu.retail_launch_error()))

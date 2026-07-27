@@ -13,15 +13,48 @@ extends RefCounted
 ## a pack that cannot field the surface still fails, and every refusal names the
 ## surfaces that were missing rather than naming a pack that was expected.
 
-# pack.json "files" keys the vertical slice reads out of its HOST pack root,
-# each mapped to the call site that reads it. A pack missing any of these
-# cannot host a match: the read below it fails later and further from the cause.
+# pack.json "files" keys WITHOUT WHICH A MATCH CANNOT RUN, each mapped to the
+# call site that reads it. This is the admission contract: the slice resolves
+# its host pack against it, and the menu refuses to let the player press start
+# when no mounted pack can field it. The two must be the same question - a menu
+# that passes while the slice refuses is a launch that dies after the loading
+# screen - so both go through resolve_host_slice_pack() below.
+#
+# MEMBERSHIP IS MEASURED, NOT ASSUMED. Each key was removed from a real, working
+# pack.json (hard-linked mirror of bfme2-men-vslice, otherwise byte-identical)
+# and retail_slice_runner was re-run with the admission requirement relaxed so
+# the mirror was still chosen as host. Control: 352 passed / 0 failed.
+#   audioEvents removed    -> 35/5. slice_ready refuses: "buildingLifecycle
+#                             audio identifier is absent from selected-pack
+#                             runtime contracts: BuildingSink". No match.
+#   palantirScene removed  -> 5/8. slice_ready refuses: "Private retail HUD is
+#                             incomplete: Required UI manifest image
+#                             'SGCommandBar' is missing." No match.
+#   entryMap/objects/animationCapabilities: the boot path reads the map document
+#                             and the soldier/horde/capability documents out of
+#                             this root before anything else runs.
+# menOrderHint is DELIBERATELY ABSENT from this table; see below.
 const HOST_SLICE_SURFACES := {
 	"entryMap": "the slice entry map (retail_vertical_slice._resolve_pack_entry_map_definition)",
 	"objects": "the shared bundle objects (soldier/horde documents)",
 	"animationCapabilities": "the soldier animation capability table",
 	"audioEvents": "the retail audio event registry (retail_slice_audio.configure)",
 	"palantirScene": "the Palantir HUD dock contract (retail_hud_apt_runtime.configure_from_pack)",
+}
+
+# Surfaces that change how a match LOOKS but not whether it runs. They are
+# probed individually at their own call sites, each with a documented fallback,
+# and they are NOT admission requirements: refusing a launch over one of them
+# would block a match that plays.
+#
+# menOrderHint measured the same way as the table above: removed from the
+# mirror's pack.json, retail_slice_runner ran 351 passed / 1 failed - the match
+# booted, ticked and tore down, and the single failure was
+# private_route_uses_exact_retail_move_hint_without_synthetic_flag, which is the
+# order indicator correctly reporting that it fell back to the synthetic hint.
+# That is a presentation downgrade, not a blocked launch, so requiring it in the
+# admission contract was one surface too strict.
+const PRESENTATION_ONLY_SURFACES := {
 	"menOrderHint": "the SCMoveHint order-indicator contract (retail_order_indicator.configure)",
 }
 
@@ -127,6 +160,51 @@ static func missing_host_slice_surfaces(pack_root: String) -> Array:
 		if not declares_surface(pack_root, key):
 			missing.append(key)
 	return missing
+
+
+static func resolve_host_slice_pack(meta_rows: Array) -> Dictionary:
+	## THE host-pack question, asked once for every caller. Returns
+	## {"root": <pack root>} or {"error": <refusal naming the missing surfaces>}.
+	##
+	## Both the launch gate (main_menu._men_pack_gate_error) and the boot path
+	## (retail_vertical_slice._resolve_host_slice_pack) call this. They used to
+	## carry two copies of the walk, which is how they came to disagree about the
+	## same pack set; one function means they cannot disagree again.
+	##
+	## Judged over ContentDB.pack_meta - the pack set the loaded documents
+	## actually came from - never a fresh disk scan that could disagree with the
+	## loaded state. The set is walked in REVERSE load order because ModLoader
+	## sorts the active selection LAST so its documents win shared ids
+	## (mod_loader.list_pack_roots, "The active selection must load last"): the
+	## last capable pack is therefore the one whose surfaces are live. A
+	## supplement that merely wins a shared object id contributes no host
+	## surfaces and is passed over, which is the case this walk exists for.
+	##
+	## Fails closed and loudly. A pack set with nothing capable reports every
+	## mounted pack and the surfaces each one lacks, so an unsuitable pack is a
+	## named refusal instead of a half-loaded match.
+	var report: Array = []
+	for index in range(meta_rows.size() - 1, -1, -1):
+		var meta := meta_rows[index] as Dictionary
+		var root := String(meta.get("root", ""))
+		if root == "":
+			continue
+		var missing: Array = missing_host_slice_surfaces(root)
+		if missing.is_empty():
+			return {"root": root}
+		report.append("%s (missing: %s)" % [
+			String(meta.get("id", root.get_file())),
+			", ".join(PackedStringArray(missing)),
+		])
+	report.reverse()
+	var surface_names: Array = HOST_SLICE_SURFACES.keys()
+	surface_names.sort()
+	return {
+		"error": "No mounted content pack provides the host slice surfaces (%s). Mounted packs: %s." % [
+			", ".join(PackedStringArray(surface_names)),
+			"; ".join(PackedStringArray(report)) if not report.is_empty() else "none",
+		],
+	}
 
 
 static func provides_retail_presentation(pack_root: String) -> bool:

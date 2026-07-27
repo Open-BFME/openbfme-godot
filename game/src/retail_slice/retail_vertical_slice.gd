@@ -1966,42 +1966,10 @@ func _resolve_enemy_faction(player_faction: String) -> String:
 
 
 func _resolve_host_slice_pack() -> Dictionary:
-	## Deterministic host-pack resolution BY CAPABILITY. Returns
-	## {"root": <pack root>} or {"error": <refusal naming the missing surfaces>}.
-	##
-	## Judged over ContentDB.pack_meta - the pack set the loaded documents
-	## actually came from - never a fresh disk scan that could disagree with the
-	## loaded state. The set is walked in REVERSE load order because ModLoader
-	## sorts the active selection LAST so its documents win shared ids
-	## (mod_loader.list_pack_roots, "The active selection must load last"): the
-	## last capable pack is therefore the one whose surfaces are live.
-	##
-	## Fails closed and loudly. A pack set with nothing capable reports every
-	## mounted pack and the surfaces each one lacks, so an unsuitable pack is a
-	## named refusal instead of a half-loaded match.
-	var meta_rows: Array = ContentDB.pack_meta
-	var report: Array = []
-	for index in range(meta_rows.size() - 1, -1, -1):
-		var meta := meta_rows[index] as Dictionary
-		var root := String(meta.get("root", ""))
-		if root == "":
-			continue
-		var missing: Array = PackCapability.missing_host_slice_surfaces(root)
-		if missing.is_empty():
-			return {"root": root}
-		report.append("%s (missing: %s)" % [
-			String(meta.get("id", root.get_file())),
-			", ".join(PackedStringArray(missing)),
-		])
-	report.reverse()
-	var surface_names: Array = PackCapability.HOST_SLICE_SURFACES.keys()
-	surface_names.sort()
-	return {
-		"error": "No mounted content pack provides the host slice surfaces (%s). Mounted packs: %s." % [
-			", ".join(PackedStringArray(surface_names)),
-			"; ".join(PackedStringArray(report)) if not report.is_empty() else "none",
-		],
-	}
+	## Deterministic host-pack resolution BY CAPABILITY, asked through the one
+	## shared implementation the launch gate also uses (pack_capability.gd) so the
+	## menu and the boot path can never again disagree about the same pack set.
+	return PackCapability.resolve_host_slice_pack(ContentDB.pack_meta)
 
 
 func _resolve_slice_map_id() -> String:
