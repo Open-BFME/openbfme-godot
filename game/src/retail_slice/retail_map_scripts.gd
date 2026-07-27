@@ -3,6 +3,29 @@ extends RefCounted
 
 ## Deterministic tier-1 interpreter for decoded SAGE WorldBuilder map scripts.
 ##
+## ============================================================================
+## ARCHIVED REFERENCE - FROZEN, NOT A LIVE LANE. DO NOT EXTEND.
+## ============================================================================
+## Superseded by game/src/script/ (vocabulary-driven dispatch, script_executor.gd).
+## Kept, deliberately, because this is the ONLY code that ever demonstrated a
+## SAGE interpreter reaching into the simulation and changing it: the
+## PLAYER_SET_MONEY family writes team_resources, which feeds
+## RetailSliceSim.state_hash(). That worked example is the reason it is worth
+## more as a reference than as 308 deleted lines.
+##
+## Its condition model and load-time fail-closed accounting were carried over
+## into script_executor.gd. Its hand-rolled opcode switch was NOT, and must not
+## be: duplicating the vocabulary in a match statement is exactly what the
+## dispatch system exists to prevent.
+##
+## The proof runner (game/tests/retail_map_script_runner.gd) is kept GREEN on
+## purpose. If it ever fails, this reference has rotted and that is worth
+## knowing before anyone trusts it again.
+##
+## Full rationale: docs/reference/tier1-map-script-interpreter.md
+## Owner decision 2026-07-26: archive in place, do not delete.
+## ============================================================================
+##
 ## Input format: decoded Script payload dictionaries exactly as produced by
 ## the skirmish contract extractor
 ## (.private/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json,
