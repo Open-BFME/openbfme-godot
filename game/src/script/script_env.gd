@@ -20,6 +20,35 @@ extends RefCounted
 ## exposed as a field so a map or a measurement can override it, and any
 ## frame-denominated timer converted through it is reported by
 ## `frame_conversions` so the assumption is visible rather than buried.
+##
+## WHERE THE STATE LIVES (the snapshot/hash boundary)
+## --------------------------------------------------
+## counters, flags, timers, script_enabled and tick_index are SIM-OUTCOME-
+## BEARING STATE: script actions mutate them mid-match and later actions and
+## conditions read them, so under lockstep every peer must carry identical
+## values and a snapshot must reproduce them (the same defect class e56a0d4
+## closed for unit references). They are therefore exposed as properties over
+## ONE of two backings:
+##
+##   * STANDALONE (default): plain local dictionaries, exactly the historical
+##     behaviour. Tests and the executor construct the env with no simulation
+##     and nothing changes for them.
+##   * ATTACHED: after attach_state_store(store, key) - installed by
+##     RetailSliceSim.attach_script_env(env, team) - every read and write goes
+##     through the sim-owned `script_env_state[team]` entry, which the sim
+##     hashes, snapshots, restores and clears with the rest of its match
+##     state. Attachment holds the sim's Dictionary BY REFERENCE (Godot
+##     dictionaries are shared), so the env needs no object reference to the
+##     sim and the sim's setup()/restore() are visible to the env instantly -
+##     which is also why those sim paths must mutate the dictionary IN PLACE
+##     rather than rebinding the variable.
+##
+## ticks_per_second and retail_frames_per_second are match CONFIGURATION, not
+## state: nothing mutates them mid-match, and every tick count they produce
+## lands in `timers`, which IS hashed - so a misconfigured peer diverges
+## visibly on the first conversion rather than silently. frame_conversions is
+## a DIAGNOSTIC (nothing in script logic reads it back); it stays process-
+## local even when attached, like the executor's own tallies.
 
 ## Interpreter tick rate. Matches RetailSliceSim.TICK_SECONDS (0.1 s).
 var ticks_per_second: float = 10.0
@@ -27,16 +56,51 @@ var ticks_per_second: float = 10.0
 ## Assumed retail logic rate used to convert SET_TIMER frame counts to ticks.
 var retail_frames_per_second: float = 30.0
 
-var counters: Dictionary = {}
-var flags: Dictionary = {}
+## Standalone backing (see the class comment). Attached envs ignore these.
+var _local_state: Dictionary = {
+	"counters": {},
+	"flags": {},
+	"timers": {},
+	"script_enabled": {},
+}
+var _local_tick_index: int = 0
+
+## Sim-owned backing when attached: _shared_store[_shared_key] is this env's
+## entry ({"tick": int, "counters": {}, "flags": {}, "timers": {},
+## "script_enabled": {}}), materialized lazily so an untouched env leaves the
+## store byte-empty (the sim's empty-is-absent hash discipline).
+var _shared_store: Dictionary = {}
+var _shared_key: Variant = null
+var _attached := false
+
+var counters: Dictionary:
+	get:
+		return _collection("counters")
+
+var flags: Dictionary:
+	get:
+		return _collection("flags")
 
 ## name -> {"remaining": float ticks, "running": bool}
-var timers: Dictionary = {}
+var timers: Dictionary:
+	get:
+		return _collection("timers")
 
 ## script name -> bool. Absent means "the loader's own default applies".
-var script_enabled: Dictionary = {}
+var script_enabled: Dictionary:
+	get:
+		return _collection("script_enabled")
 
-var tick_index: int = 0
+var tick_index: int:
+	get:
+		if not _attached:
+			return _local_tick_index
+		return int((_shared_store.get(_shared_key, {}) as Dictionary).get("tick", 0))
+	set(value):
+		if _attached:
+			_shared_entry()["tick"] = value
+		else:
+			_local_tick_index = value
 
 ## How many timers were set in frame units and converted through the assumed
 ## retail logic rate. Non-zero means the assumption above is load-bearing.
@@ -55,6 +119,61 @@ var frame_conversions: int = 0
 ## consumer that may never arrive: a queue nobody drains is a silent no-op
 ## wearing a data structure.
 var subroutine_runner: Callable = Callable()
+
+
+# --- State backing (standalone vs sim-attached) ----------------------------
+
+
+## Route every counter/flag/timer/enable-bit read and write through a shared,
+## sim-owned store so the script engine's state sits inside the simulation's
+## snapshot/hash boundary. `store` is held by reference; `key` is this env's
+## namespace in it (the sim uses the script player's team id, matching the
+## per-player retail script context and script_unit_references' keying).
+##
+## Refuses (false + push_error) rather than guessing when:
+##   * the env is already attached - re-aiming an env would silently strand
+##     the state it wrote through the first store;
+##   * the env has local state - migrating it would smuggle unhashed history
+##     into the boundary; attach at construction time, before any script runs.
+## An EXISTING entry under `key` is adopted as-is: that is exactly the
+## restore-then-attach path a snapshot-adopting peer takes.
+func attach_state_store(store: Dictionary, key: Variant) -> bool:
+	if _attached:
+		push_error("SageScriptEnv: already attached to a shared state store")
+		return false
+	if _local_tick_index != 0 \
+			or not (_local_state["counters"] as Dictionary).is_empty() \
+			or not (_local_state["flags"] as Dictionary).is_empty() \
+			or not (_local_state["timers"] as Dictionary).is_empty() \
+			or not (_local_state["script_enabled"] as Dictionary).is_empty():
+		push_error(
+			"SageScriptEnv: refusing to attach an env that already holds local "
+			+ "state - attach before any script mutates it"
+		)
+		return false
+	_shared_store = store
+	_shared_key = key
+	_attached = true
+	return true
+
+
+func is_attached() -> bool:
+	return _attached
+
+
+func _shared_entry() -> Dictionary:
+	if not _shared_store.has(_shared_key):
+		_shared_store[_shared_key] = {}
+	return _shared_store[_shared_key]
+
+
+func _collection(name: String) -> Dictionary:
+	if not _attached:
+		return _local_state[name]
+	var entry := _shared_entry()
+	if not entry.has(name):
+		entry[name] = {}
+	return entry[name]
 
 
 func milliseconds_per_tick() -> float:

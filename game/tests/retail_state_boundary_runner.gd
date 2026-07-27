@@ -35,9 +35,25 @@ extends SceneTree
 ##      snapshotted empty-is-absent, restored by restore(), and cleared by
 ##      setup() so a reused sim hashes identically to a fresh one.
 ##
+## The fifth subject is the LARGEST instance of the class, the one e56a0d4
+## left open by name:
+##
+##   5. THE SCRIPT ENGINE'S OWN STATE (script_env_state): SageScriptEnv's
+##      counters, flags, timers, enable bits and tick counter - 64.7% of all
+##      retail-AI call sites read or write exactly this. The env now attaches
+##      to a sim-owned, team-keyed store (attach_script_env), hashed and
+##      snapshotted through a canonical pruned view (zero counters and false
+##      flags are absent; every level sorted), cleared by setup() IN PLACE so
+##      attached envs stay wired, and restored the same way. Timers are
+##      anchored to the interpreter tick that rides the same snapshot, so a
+##      peer adopting mid-match expires them on the same absolute tick as the
+##      peer that armed them. Without a sim the env keeps its historical
+##      standalone backing, byte-for-byte.
+##
 ## Every fixture is SYNTHETIC; no retail install or content pack is required.
-## NOTE: the shadowing tests intentionally trigger two push_error lines
-## (marked EXPECTED ERROR below) - they are the loud refusal under test.
+## NOTE: the shadowing and attach-refusal tests intentionally trigger
+## push_error lines (marked EXPECTED ERROR below) - they are the loud
+## refusals under test.
 ##
 ## Invocation:
 ##   Godot_v4.7-stable_win64_console.exe --headless --path game \
@@ -45,6 +61,9 @@ extends SceneTree
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const WorldScript = preload("res://src/retail_slice/retail_slice_script_world.gd")
+const ExecutorScript = preload("res://src/script/script_executor.gd")
+const EnvScript = preload("res://src/script/script_env.gd")
+const ParamTypes = preload("res://src/script/script_param_types.gd")
 
 const PLAYER := "PlayerOne"
 const ENEMY := "EnemyOne"
@@ -65,6 +84,9 @@ func _run() -> void:
 	_test_flag_shadowing_is_refused_in_both_directions()
 	_test_object_type_lists_live_inside_the_snapshot_boundary()
 	_test_object_type_lists_are_hash_inert_until_built_and_reset_by_setup()
+	_test_script_env_state_lives_inside_the_snapshot_boundary()
+	_test_script_env_state_is_hash_inert_until_used_and_reset_by_setup()
+	_test_script_env_degrades_without_a_sim_and_attach_refuses()
 	print("RETAIL_STATE_BOUNDARY_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -478,4 +500,334 @@ func _test_object_type_lists_are_hash_inert_until_built_and_reset_by_setup() -> 
 	_check(
 		"a reused sim hashes identically to a freshly built one after reset",
 		sim.state_hash() == fresh.state_hash()
+	)
+
+
+# --- Subject 5: the script engine's own state inside the boundary -----------
+#
+# Decoded-payload fixtures in the exact sage_scb.py shape (the executor
+# runner's builders, trimmed to what these tests need).
+
+
+func _argument(argument_type: int, integer: int = 0, real: float = 0.0, text: String = "") -> Dictionary:
+	return {"argumentType": argument_type, "integer": integer, "real": real, "text": text}
+
+
+func _condition(opcode: String, arguments: Array) -> Dictionary:
+	return {
+		"name": "Condition",
+		"version": 6,
+		"value": {
+			"contentType": 0,
+			"internalName": {"name": opcode, "wireTypeCode": 3},
+			"arguments": arguments,
+			"enabled": true,
+			"inverted": false,
+		},
+	}
+
+
+func _action(opcode: String, arguments: Array) -> Dictionary:
+	return {
+		"name": "ScriptAction",
+		"version": 3,
+		"value": {
+			"contentType": 0,
+			"internalName": {"name": opcode, "wireTypeCode": 3},
+			"arguments": arguments,
+			"enabled": true,
+		},
+	}
+
+
+func _or_condition(conditions: Array) -> Dictionary:
+	return {"name": "OrCondition", "version": 1, "value": {"records": conditions}}
+
+
+func _script(name: String, records: Array, options: Dictionary = {}) -> Dictionary:
+	return {
+		"name": name,
+		"comment": "",
+		"conditionsComment": "",
+		"actionsComment": "",
+		"isActive": bool(options.get("isActive", true)),
+		"deactivateUponSuccess": bool(options.get("deactivateUponSuccess", false)),
+		"activeInEasy": true,
+		"activeInMedium": true,
+		"activeInHard": true,
+		"isSubroutine": bool(options.get("isSubroutine", false)),
+		"evaluationInterval": 0,
+		"actionsFireSequentially": false,
+		"loopActions": false,
+		"loopCount": 0,
+		"sequentialTargetType": 1,
+		"sequentialTargetName": "",
+		"scope": "ALL",
+		"records": records,
+	}
+
+
+## The subject-5 fixture: every kind of env state the boundary must carry.
+## "Arm" fires ONCE (tick 1): a counter, a flag, a 2.0 s timer (20 interpreter
+## ticks at 10/s, so it expires on tick 21 - a LITERAL below, never
+## recomputed), and its own enable bit via deactivateUponSuccess. "Pump"
+## counts every tick. "Assault Gate" fires when the timer expires, then
+## deactivates. "Call Sub" tallies through CALL_SUBROUTINE every tick after
+## the assault flag rises - which also proves the env's subroutine seam (a
+## weakref Callable, deliberately unserializable) survives attachment.
+func _env_payloads() -> Array:
+	var counter_c := _argument(ParamTypes.ARGUMENT_COUNTER_NAME, 0, 0.0, "c")
+	var counter_war := _argument(ParamTypes.ARGUMENT_COUNTER_NAME, 0, 0.0, "war_chest")
+	var counter_timer := _argument(ParamTypes.ARGUMENT_COUNTER_NAME, 0, 0.0, "assault")
+	var counter_tally := _argument(ParamTypes.ARGUMENT_COUNTER_NAME, 0, 0.0, "tally")
+	var flag_mustered := _argument(ParamTypes.ARGUMENT_FLAG_NAME, 0, 0.0, "mustered")
+	var flag_launched := _argument(ParamTypes.ARGUMENT_FLAG_NAME, 0, 0.0, "assault_launched")
+	var true_arg := _argument(ParamTypes.ARGUMENT_BOOLEAN, 1)
+	return [
+		_script("Arm", [
+			_or_condition([_condition("CONDITION_TRUE", [])]),
+			_action("SET_COUNTER", [counter_war, _argument(ParamTypes.ARGUMENT_INTEGER, 3)]),
+			_action("SET_FLAG", [flag_mustered, true_arg]),
+			_action("SET_MILLISECOND_TIMER", [counter_timer, _argument(ParamTypes.ARGUMENT_REAL, 0, 2.0)]),
+		], {"deactivateUponSuccess": true}),
+		_script("Pump", [
+			_or_condition([_condition("CONDITION_TRUE", [])]),
+			_action("INCREMENT_COUNTER", [_argument(ParamTypes.ARGUMENT_INTEGER, 1), counter_c]),
+		]),
+		_script("Assault Gate", [
+			_or_condition([_condition("TIMER_EXPIRED", [counter_timer])]),
+			_action("SET_FLAG", [flag_launched, true_arg]),
+		], {"deactivateUponSuccess": true}),
+		_script("Call Sub", [
+			_or_condition([_condition("FLAG", [flag_launched, true_arg])]),
+			_action("CALL_SUBROUTINE", [_argument(99, 0, 0.0, "Sub Tally")]),
+		]),
+		_script("Sub Tally", [
+			_or_condition([_condition("CONDITION_TRUE", [])]),
+			_action("INCREMENT_COUNTER", [_argument(ParamTypes.ARGUMENT_INTEGER, 1), counter_tally]),
+		], {"isSubroutine": true}),
+	]
+
+
+func _make_attached_executor(sim: RetailSliceSim, world: RetailSliceScriptWorld) -> SageScriptExecutor:
+	var executor: SageScriptExecutor = ExecutorScript.new(world)
+	_check(
+		"fixture: the env attaches to the sim",
+		sim.attach_script_env(executor.env, SimScript.PLAYER_TEAM)
+	)
+	executor.load_script_payloads(_env_payloads())
+	return executor
+
+
+## The 2.0 s timer armed on tick 1 has 20 ticks remaining; env.advance()
+## decrements it on ticks 2..21, so TIMER_EXPIRED first answers true on
+## interpreter tick 21. Literals, per the timer-unit incident rule.
+const TIMER_EXPIRY_TICK := 21
+const ADOPTION_TICK := 7
+
+
+func _test_script_env_state_lives_inside_the_snapshot_boundary() -> void:
+	## Peer A's scripts write counters, flags, a timer and enable bits; peer B
+	## adopts A's snapshot mid-match and rebuilds its executor. Both then run
+	## the identical script stream: every read B's scripts make must come from
+	## the state A minted, the hashes must agree on EVERY tick, and the timer
+	## A armed must expire for both peers on the same absolute interpreter
+	## tick. Pre-fix, every one of those bits lived outside the snapshot: B
+	## restarted from zero while the hashes claimed agreement.
+	var sim_a := _make_sim()
+	var world_a := _make_world(sim_a)
+	var executor_a := _make_attached_executor(sim_a, world_a)
+	var pristine := sim_a.state_hash()
+	executor_a.run_ticks(ADOPTION_TICK)
+	_check(
+		"running scripts MOVES the hash (the state is not invisible)",
+		sim_a.state_hash() != pristine
+	)
+	_check(
+		"the script-engine state serializes",
+		(bytes_to_var(sim_a.snapshot()) as Dictionary).has("script_env_state")
+	)
+
+	var sim_b := _make_sim()
+	_check("fixture: peer B adopts A's snapshot", sim_b.restore(sim_a.snapshot()))
+	var world_b := _make_world(sim_b)
+	var executor_b := _make_attached_executor(sim_b, world_b)
+	_check("adopted snapshot agrees on the state hash", sim_a.state_hash() == sim_b.state_hash())
+	_check(
+		"the adopting peer reads the counters and flags the minting peer wrote",
+		executor_b.env.counter("c") == ADOPTION_TICK
+		and executor_b.env.counter("war_chest") == 3
+		and executor_b.env.flag("mustered")
+	)
+	_check(
+		# Armed on tick 1 at 20 remaining, decremented once per tick from tick
+		# 2: after the adoption tick (7) it holds 14 - which is also expiry
+		# minus adoption, since the last decrement (to 0) lands ON tick 21.
+		"the adopting peer sees the armed timer at its surviving remainder",
+		executor_b.env.timer_remaining_ticks("assault") == float(TIMER_EXPIRY_TICK - ADOPTION_TICK)
+	)
+	_check(
+		"the adopting peer sees the enable bit deactivateUponSuccess wrote",
+		not executor_b.env.is_script_enabled("Arm", true)
+	)
+
+	# Both peers now run the identical stream to past the expiry.
+	var expiry_a := -1
+	var expiry_b := -1
+	var first_divergence := -1
+	for _step in range(ADOPTION_TICK + 1, 31):
+		executor_a.tick()
+		executor_b.tick()
+		if expiry_a < 0 and executor_a.env.flag("assault_launched"):
+			expiry_a = executor_a.env.tick_index
+		if expiry_b < 0 and executor_b.env.flag("assault_launched"):
+			expiry_b = executor_b.env.tick_index
+		if first_divergence < 0 and sim_a.state_hash() != sim_b.state_hash():
+			first_divergence = executor_a.env.tick_index
+	_check(
+		"the timer expires on the same absolute tick for minter and adopter",
+		expiry_a == TIMER_EXPIRY_TICK and expiry_b == TIMER_EXPIRY_TICK
+	)
+	_check("peers agree on the state hash on every subsequent tick", first_divergence < 0)
+	_check(
+		"the post-expiry subroutine tallies identically on both peers",
+		executor_a.env.counter("tally") == executor_b.env.counter("tally")
+		and executor_a.env.counter("tally") == 30 - TIMER_EXPIRY_TICK + 1
+	)
+
+
+func _test_script_env_state_is_hash_inert_until_used_and_reset_by_setup() -> void:
+	## The empty-is-absent discipline (the state-pin property) plus the
+	## CANONICAL property: state returned to its pristine VALUES returns to
+	## the pristine HASH exactly (a zero counter and a false flag are
+	## indistinguishable from absent by every read, so they contribute no
+	## bytes), plus the match-reset and restore directions - both of which
+	## must mutate the shared store IN PLACE so attached envs stay wired.
+	var sim := _make_sim()
+	var pristine := sim.state_hash()
+	_check(
+		"an untouched sim snapshot carries NO script_env_state key",
+		not (bytes_to_var(sim.snapshot()) as Dictionary).has("script_env_state")
+	)
+	var env: SageScriptEnv = EnvScript.new()
+	_check("fixture: a bare env attaches", sim.attach_script_env(env, SimScript.PLAYER_TEAM))
+	_check("attaching alone does not move the hash", sim.state_hash() == pristine)
+	env.set_counter("gold", 7)
+	_check(
+		"writing a counter MOVES the hash (the state is not invisible)",
+		sim.state_hash() != pristine
+	)
+	_check(
+		"the written state serializes",
+		(bytes_to_var(sim.snapshot()) as Dictionary).has("script_env_state")
+	)
+	env.set_counter("gold", 0)
+	_check(
+		"a counter returned to zero returns to the pristine hash exactly",
+		sim.state_hash() == pristine
+	)
+	env.set_flag("rallied", true)
+	_check("writing a flag moves the hash", sim.state_hash() != pristine)
+	env.set_flag("rallied", false)
+	_check(
+		"a flag returned to false returns to the pristine hash exactly",
+		sim.state_hash() == pristine
+	)
+	# An EXPLICIT enable bit is state in BOTH polarities: absent means "the
+	# authored default applies", so false must NOT prune to absent.
+	env.set_script_enabled("Some Script", false)
+	_check("an explicit false enable bit is hash-visible state", sim.state_hash() != pristine)
+	env.set_timer_ticks("siege", 5.0)
+	env.advance()
+
+	# The reset direction: setup() clears the store IN PLACE.
+	sim.setup({}, {})
+	sim.ai_enabled = false  # the harness disables AI; setup() re-enables it
+	_check("setup() clears the script-engine state", sim.script_env_state.is_empty())
+	var fresh := _make_sim()
+	_check(
+		"a reused sim hashes identically to a freshly built one after reset",
+		sim.state_hash() == fresh.state_hash()
+	)
+	# Identity preserved THROUGH the reset: the attached env still writes into
+	# the sim's hashed store, not an orphan.
+	env.set_counter("after_reset", 1)
+	_check(
+		"an env attached before reset still writes inside the boundary",
+		not sim.script_env_state.is_empty() and sim.state_hash() != fresh.state_hash()
+	)
+
+	# Identity preserved through RESTORE the same way.
+	var mid := sim.snapshot()
+	env.set_counter("after_reset", 9)
+	_check("fixture: the sim restores its own snapshot", sim.restore(mid))
+	_check(
+		"an env attached before restore reads the restored state",
+		env.counter("after_reset") == 1
+	)
+	env.set_counter("after_reset", 2)
+	var team_entry: Dictionary = (
+		(bytes_to_var(sim.snapshot()) as Dictionary).get("script_env_state", {}) as Dictionary
+	).get(SimScript.PLAYER_TEAM, {})
+	_check(
+		"an env attached before restore still writes inside the boundary",
+		int((team_entry.get("counters", {}) as Dictionary).get("after_reset", 0)) == 2
+	)
+
+
+func _test_script_env_degrades_without_a_sim_and_attach_refuses() -> void:
+	## The env must keep TODAY'S behaviour with no sim attached - the executor
+	## and every handler runner construct it standalone - so a standalone
+	## executor and a sim-attached one fed the identical payloads must agree
+	## on the env's full order-stable snapshot at every step. And attachment
+	## refuses loudly rather than guessing: null envs, unrostered teams,
+	## double attachment, and an env that already holds local state.
+	var standalone: SageScriptExecutor = ExecutorScript.new()
+	standalone.load_script_payloads(_env_payloads())
+	var sim := _make_sim()
+	var world := _make_world(sim)
+	var attached := _make_attached_executor(sim, world)
+	var first_divergence := -1
+	for step in range(1, 26):
+		standalone.tick()
+		attached.tick()
+		if first_divergence < 0 and str(standalone.env.snapshot()) != str(attached.env.snapshot()):
+			first_divergence = step
+	_check("standalone and attached envs agree tick-for-tick", first_divergence < 0)
+	_check(
+		"the parity fixture is not vacuous",
+		standalone.env.flag("assault_launched")
+		and standalone.env.counter("tally") == 25 - TIMER_EXPIRY_TICK + 1
+		and standalone.env.counter("c") == 25
+	)
+	# The subroutine seam survives attachment as a live Callable (the weakref
+	# design from e6c9448); the tally above already proves it EXECUTES.
+	_check(
+		"both envs still hold a working subroutine runner",
+		standalone.env.has_subroutine_runner() and attached.env.has_subroutine_runner()
+	)
+
+	# EXPECTED ERROR: null env refused loudly.
+	_check("attaching a null env refuses", not sim.attach_script_env(null, SimScript.PLAYER_TEAM))
+	# EXPECTED ERROR: unrostered team refused loudly.
+	_check(
+		"attaching to an unrostered team refuses",
+		not sim.attach_script_env(EnvScript.new(), 99)
+	)
+	# EXPECTED ERROR: an env may attach exactly once.
+	_check(
+		"attaching an already-attached env refuses",
+		not sim.attach_script_env(attached.env, SimScript.PLAYER_TEAM)
+	)
+	# EXPECTED ERROR: an env that already holds unhashed local history must
+	# not smuggle it inside the boundary.
+	var used: SageScriptEnv = EnvScript.new()
+	used.set_counter("pre_attach", 1)
+	_check(
+		"attaching an env with local state refuses",
+		not sim.attach_script_env(used, SimScript.PLAYER_TEAM)
+	)
+	_check(
+		"the refused attaches stored nothing in the sim",
+		not sim.script_env_state.has(99) and used.counter("pre_attach") == 1
 	)

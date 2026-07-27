@@ -1224,6 +1224,11 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	# actions, persisted by retail save games), never configuration: a reused
 	# sim must not carry one match's lists into the next.
 	script_object_type_lists.clear()
+	# The script interpreter's memory (counters/flags/timers/enable bits/tick)
+	# is match state too. clear() IN PLACE, never rebind: attached
+	# SageScriptEnvs hold this dictionary by reference, and a rebind would
+	# leave them writing to an orphan outside the hash boundary.
+	script_env_state.clear()
 	_completed_hero_identities.clear()
 	_next_event_sequence = 1
 	_next_order_sequence = 1
@@ -5807,6 +5812,137 @@ func resolve_object_type_names(object_type_list: String) -> Array:
 	if script_object_type_lists.has(object_type_list):
 		return (script_object_type_lists[object_type_list] as Array).duplicate()
 	return [object_type_list]
+
+
+# --- Script-engine environment state (SageScriptEnv, SIM-owned) -------------
+#
+# The script interpreter's own mutable memory - counters, flags, timers,
+# per-script enable bits and its tick counter. This is the LARGEST instance of
+# the e56a0d4 defect class: FLAG/SET_FLAG/COUNTER/ENABLE_SCRIPT account for
+# 64.7% of all retail-AI call sites, every one a read or write of exactly this
+# state, mutated mid-match by script actions. Two peers whose counters diverge
+# run completely different AI while their sim hashes agree - unless the state
+# lives HERE, inside the snapshot/hash boundary.
+#
+# Keyed by TEAM (the script player's), like script_unit_references: retail
+# runs each AI player's script libraries in that player's own environment
+# (SageScriptEnv's own doc: "Counter and flag namespaces are global across all
+# loaded scripts, which matches the retail per-player script environment").
+#
+# HOW THE ENV REACHES IT: attach_script_env(env, team) hands the env this
+# Dictionary BY REFERENCE (see SageScriptEnv.attach_state_store); the env then
+# reads and writes script_env_state[team] directly. No object reference in
+# either direction, so no RefCounted cycle, and the env keeps working with no
+# sim at all (its standalone backing) - tests and the bare executor construct
+# it that way. BECAUSE the reference is shared, setup() and restore() must
+# mutate this dictionary IN PLACE (clear()/merge()), never rebind the
+# variable, or every attached env would silently keep writing to an orphan.
+#
+# WHAT EACH FIELD IS, decided deliberately:
+#   * counters/flags/timers/script_enabled - STATE (script actions write them,
+#     later conditions read them; the retail save persists the script engine).
+#   * "tick" - the interpreter's tick counter, STATE. It anchors every timer
+#     (a timer is {"remaining" ticks, decremented once per env.advance()}) and
+#     phases interval-gated scripts (tick % interval). It is deliberately NOT
+#     aliased to the sim's own tick_index: the executor<->sim tick cadence is
+#     not production-wired yet, and aliasing would bake in an unenforced
+#     "sim.step() exactly once before executor.tick()" contract whose
+#     violation would silently double- or zero-advance timers. Both clocks are
+#     authoritative state in the same snapshot, so they cannot drift APART
+#     between peers - a mid-match adopter inherits the interpreter tick with
+#     the timers anchored to it and expires them on the same absolute tick as
+#     the peer that armed them.
+#   * env.ticks_per_second / retail_frames_per_second - CONFIGURATION (never
+#     mutated mid-match; every tick count they produce lands in hashed timer
+#     state, so a misconfigured peer diverges visibly on first use).
+#   * env.frame_conversions - DIAGNOSTIC, process-local (nothing in script
+#     logic reads it; hashing observability would let a non-outcome counter
+#     desync a match).
+#
+# CANONICAL FORM AND HASH INERTNESS: the raw store is the env's working
+# memory; _script_env_state_view() below is what gets hashed and serialized.
+# The view prunes zero counters and false flags (indistinguishable from
+# absent by every read: counter() defaults 0, flag() defaults false), keeps
+# every explicit script_enabled bit (absent means "authored default", so
+# false is NOT absent), keeps every timer (an unset timer answers
+# timer_expired false; a set one answers from "remaining"), drops tick 0,
+# empty collections, and empty team entries, and sorts every level - so an
+# untouched match contributes ZERO bytes (the frozen pin stands), and state
+# that returns to pristine values returns to the pristine hash EXACTLY.
+# Enforcing this at the boundary (one choke point) rather than in every
+# mutator also keeps direct dictionary writes - which tests use - canonical.
+
+## team id -> {"tick": int, "counters": {}, "flags": {}, "timers": {},
+## "script_enabled": {}}. See the block comment above. setup() clears it;
+## hashed/serialized through _script_env_state_view (empty-is-absent).
+var script_env_state: Dictionary = {}
+
+
+func attach_script_env(env: SageScriptEnv, team: int) -> bool:
+	## Route `env`'s state through script_env_state[team] (see above). Refuses
+	## loudly for a null env or an unrostered team; SageScriptEnv itself
+	## refuses an env that is already attached or already holds local state.
+	if env == null:
+		push_error("attach_script_env refused: null env")
+		return false
+	if not _team_descriptors.has(team):
+		push_error("attach_script_env refused: team %d is not rostered" % team)
+		return false
+	return env.attach_state_store(script_env_state, team)
+
+
+func _script_env_state_view() -> Dictionary:
+	## Canonical, pruned, sorted copy of script_env_state for state_hash() and
+	## snapshot() - the boundary choke point described in the block comment.
+	var view := {}
+	var team_keys := script_env_state.keys()
+	team_keys.sort()
+	for team_key in team_keys:
+		var entry: Dictionary = script_env_state[team_key]
+		var entry_view := {}
+		var tick := int(entry.get("tick", 0))
+		if tick != 0:
+			entry_view["tick"] = tick
+		var counters: Dictionary = entry.get("counters", {})
+		var counters_view := {}
+		for name in _sorted_dictionary_keys(counters):
+			var count := int(counters[name])
+			if count != 0:
+				counters_view[name] = count
+		if not counters_view.is_empty():
+			entry_view["counters"] = counters_view
+		var flags: Dictionary = entry.get("flags", {})
+		var flags_view := {}
+		for name in _sorted_dictionary_keys(flags):
+			if bool(flags[name]):
+				flags_view[name] = true
+		if not flags_view.is_empty():
+			entry_view["flags"] = flags_view
+		var timers: Dictionary = entry.get("timers", {})
+		var timers_view := {}
+		for name in _sorted_dictionary_keys(timers):
+			var timer: Dictionary = timers[name]
+			timers_view[name] = {
+				"remaining": float(timer.get("remaining", 0.0)),
+				"running": bool(timer.get("running", false)),
+			}
+		if not timers_view.is_empty():
+			entry_view["timers"] = timers_view
+		var enabled: Dictionary = entry.get("script_enabled", {})
+		var enabled_view := {}
+		for name in _sorted_dictionary_keys(enabled):
+			enabled_view[name] = bool(enabled[name])
+		if not enabled_view.is_empty():
+			entry_view["script_enabled"] = enabled_view
+		if not entry_view.is_empty():
+			view[team_key] = entry_view
+	return view
+
+
+func _sorted_dictionary_keys(source: Dictionary) -> Array:
+	var keys := source.keys()
+	keys.sort()
+	return keys
 
 
 # --- Retail object-type identity (derived reads over existing hashed rows) --
@@ -10935,6 +11071,13 @@ func _authoritative_state() -> Dictionary:
 	# one (see the store's block comment).
 	if not script_object_type_lists.is_empty():
 		state["script_object_type_lists"] = script_object_type_lists
+	# And for the script interpreter's own memory: hashed and serialized
+	# through its canonical view (zero counters/false flags pruned, every
+	# level sorted), so an untouched match contributes zero bytes and state
+	# returned to pristine values returns to the pristine hash exactly.
+	var script_env_view := _script_env_state_view()
+	if not script_env_view.is_empty():
+		state["script_env_state"] = script_env_view
 	return state
 
 
@@ -11010,6 +11153,11 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	unpackable_bases = state.get("unpackable_bases", {})
 	script_unit_references = state.get("script_unit_references", {})
 	script_object_type_lists = state.get("script_object_type_lists", {})
+	# IN PLACE, never rebind: attached SageScriptEnvs share this dictionary by
+	# reference (see the script_env_state block comment), so a rebind here
+	# would silently detach every live script environment from the boundary.
+	script_env_state.clear()
+	script_env_state.merge(state.get("script_env_state", {}))
 	creep_lairs_enabled = bool(state.get("creep_lairs_enabled", false))
 	_creep_lair_placements = state.get("creep_lair_placements", [])
 	_next_creep_guard_id = int(state.get("next_creep_guard_id", 70001))
