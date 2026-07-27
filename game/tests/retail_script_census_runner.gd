@@ -27,6 +27,7 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const WorldScript = preload("res://src/retail_slice/retail_slice_script_world.gd")
 const ExecutorScript = preload("res://src/script/script_executor.gd")
+const ManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 
 const CONTRACT_RELATIVE_PATH := ".private/retail-work/reports/skirmish-script-contract/skirmish_script_contract.json"
 const CENSUS_TICKS := 600
@@ -103,6 +104,13 @@ func _run() -> void:
 	outcome_keys.sort()
 	for key in outcome_keys:
 		print("ACTIONS %s=%d" % [key, int(executor.action_outcomes[key])])
+	# The load-bearing pair this census exists to watch: the heaviest members
+	# in the retail AI sit behind the SKIRMISH_PLAYER_FACTION spell-system
+	# gates, so their execution counts state directly whether those gates
+	# opened (0 = the whole spell lane sat behind a closed gate).
+	print("EXECUTED condition SKIRMISH_PLAYER_FACTION=%d" % int(executor.condition_executions.get("SKIRMISH_PLAYER_FACTION", 0)))
+	print("EXECUTED condition PLAYER_CAN_PURCHASE_SCIENCE=%d" % int(executor.condition_executions.get("PLAYER_CAN_PURCHASE_SCIENCE", 0)))
+	print("EXECUTED action PLAYER_PURCHASE_SCIENCE=%d" % int(executor.action_executions.get("PLAYER_PURCHASE_SCIENCE", 0)))
 	var by_reason: Dictionary = executor.dispatch.gaps.by_reason()
 	var reason_keys: Array = by_reason.keys()
 	reason_keys.sort()
@@ -140,16 +148,17 @@ func _contract_path() -> String:
 func _make_sim():
 	var sim = SimScript.new()
 	sim._rules = _harness_rules()
-	# Factions ON the roster, like every real match (the vertical slice always
-	# resolves one per team). SKIRMISH_PLAYER_FACTION is the AI libraries'
-	# outermost gate - every "Enable <faction> Spell System" script polls it -
-	# and the default harness roster carries faction "", which turned the read
-	# into a no-faction refusal that masked what sat behind the gate. "Men" /
-	# "Isengard" are retail-authored side tokens straight from the corpus's
-	# FACTION slots.
+	# Factions ON the roster, PRODUCTION-SHAPED: the vertical slice's
+	# _menu_sim_team_roster stamps lowercase PACK FACTION IDS ("men",
+	# "isengard") on descriptors, and the sim translates them to retail side
+	# tokens through the retail_faction_sides rules table (the same table the
+	# slice injects). The census previously hand-fed the capitalised side
+	# tokens directly, which made SKIRMISH_PLAYER_FACTION pass HERE while
+	# every live match answered false - the census must never diverge from
+	# the production descriptor shape again.
 	sim.configure_team_roster([
-		{"team": SimScript.PLAYER_TEAM, "faction": "Men", "is_ai": false},
-		{"team": SimScript.ENEMY_TEAM, "faction": "Isengard", "is_ai": true},
+		{"team": SimScript.PLAYER_TEAM, "faction": "men", "is_ai": false},
+		{"team": SimScript.ENEMY_TEAM, "faction": "isengard", "is_ai": true},
 	])
 	sim.setup({}, {})
 	sim.ai_enabled = true
@@ -164,6 +173,10 @@ func _harness_rules() -> Dictionary:
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"ai_attack_delay_ticks": 100000,
+		# The pack-faction -> retail-side table the vertical slice injects into
+		# every real match's rules; the census loads the same versioned file so
+		# its faction gates exercise the production translation path.
+		"retail_faction_sides": ManifestScript.retail_faction_sides(),
 		"unit_rules": {
 			SimScript.SOLDIER_OBJECT_ID: _unit_rule(SimScript.SOLDIER_HORDE_ID, false),
 			SimScript.ARCHER_OBJECT_ID: _unit_rule(SimScript.ARCHER_OBJECT_ID, false),

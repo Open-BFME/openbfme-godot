@@ -363,6 +363,40 @@ func team_descriptor(team: int) -> Dictionary:
 	return (_team_descriptors.get(team, {}) as Dictionary).duplicate(true)
 
 
+func team_retail_side(team: int) -> Dictionary:
+	## The RETAIL SIDE TOKEN for a rostered team - the `Side =` value from
+	## playertemplate.ini, which is the vocabulary retail scripts compare
+	## (SKIRMISH_PLAYER_FACTION is `player->getSide() == <authored string>` in
+	## the retail engine, an exact match). Answers {"side": String} or
+	## {"reason": String}; it NEVER guesses. Resolution is two plain lookups,
+	## no iteration, so it is order-independent:
+	##
+	##   1. the team's pack faction id - roster descriptor first (the menu
+	##      path), then the team manifest (the legacy env-driven path, whose
+	##      default descriptors carry faction "");
+	##   2. that id through _rules["retail_faction_sides"], the versioned
+	##      pack-faction -> side table the match configuration injects (hashed
+	##      with the rest of the rules).
+	##
+	## A faction the table does not carry REFUSES with the faction named. It
+	## must never fall through to answering the pack id (or "") as though it
+	## were a side: every retail gate would then answer false-but-plausible
+	## instead of refusing visibly, which is this bug's original shape.
+	var descriptor := _team_descriptors.get(team, {}) as Dictionary
+	var pack_faction := String(descriptor.get("faction", ""))
+	if pack_faction == "":
+		pack_faction = String((_team_manifests.get(team, {}) as Dictionary).get("faction", ""))
+	if pack_faction == "":
+		return {"reason": "team %d carries no faction (neither its roster descriptor nor its team manifest names one)" % team}
+	var sides: Dictionary = _rules.get("retail_faction_sides", {}) as Dictionary
+	if not sides.has(pack_faction):
+		return {
+			"reason":
+			"pack faction '%s' (team %d) has no retail side mapping in retail_faction_sides; refusing rather than answering as a side that merely fails to match" % [pack_faction, team]
+		}
+	return {"side": String(sides[pack_faction])}
+
+
 func team_is_ai(team: int) -> bool:
 	return bool((_team_descriptors.get(team, {}) as Dictionary).get("is_ai", team != PLAYER_TEAM))
 

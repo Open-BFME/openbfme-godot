@@ -1469,6 +1469,12 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 		if not builder_only.is_empty():
 			manifest_for_rules["spawn_roster"] = builder_only
 	rules["faction_manifest"] = manifest_for_rules
+	# Pack faction id -> retail side token (playertemplate.ini `Side =`), the
+	# vocabulary retail scripts compare (SKIRMISH_PLAYER_FACTION and friends).
+	# Injected as match configuration so the sim owns it in hashed rules and
+	# team_retail_side() can refuse loudly for factions the table does not
+	# carry. Identical on every peer: the table is versioned repo data.
+	rules["retail_faction_sides"] = FactionManifestScript.retail_faction_sides()
 	# Overlay ranger contract only when the full pack did not already ship
 	# GondorRanger as a playableUnit runtime document.
 	if men_slice and not ranger_runtime.is_empty() and not _playable_has_ranger():

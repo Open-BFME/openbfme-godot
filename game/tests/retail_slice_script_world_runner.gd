@@ -57,6 +57,7 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const WorldScript = preload("res://src/retail_slice/retail_slice_script_world.gd")
 const ParamTypes = preload("res://src/script/script_param_types.gd")
+const ManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 
 const PLAYER := "PlayerOne"
 const ENEMY := "EnemyOne"
@@ -167,6 +168,9 @@ func _harness_rules() -> Dictionary:
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"ai_attack_delay_ticks": 100000,
+		# The versioned pack-faction -> retail-side table every real match's
+		# rules carry (players.faction answers SIDE TOKENS, never pack ids).
+		"retail_faction_sides": ManifestScript.retail_faction_sides(),
 		"unit_rules": {
 			SimScript.SOLDIER_OBJECT_ID: _unit_rule(SimScript.SOLDIER_HORDE_ID, false),
 			SimScript.ARCHER_OBJECT_ID: _unit_rule(SimScript.ARCHER_OBJECT_ID, false),
@@ -324,10 +328,60 @@ func _test_players_exists_and_faction() -> void:
 		{"team": 1, "faction": "men", "is_ai": true},
 	])
 	var faction_world := _make_world(faction_sim)
+	# players.faction answers the RETAIL SIDE TOKEN (playertemplate.ini
+	# `Side = Men`), never the lowercase pack id the descriptor carries:
+	# retail's SKIRMISH_PLAYER_FACTION compares player->getSide() by exact
+	# string, and the corpus authors "Men"/"Isengard"/... - a pack id answered
+	# here turns every live-match faction gate false-but-plausible.
 	_check_hit(
-		"players.faction answers the descriptor faction",
+		"players.faction answers the retail side token for the descriptor's pack faction",
 		faction_world.players().faction(PLAYER),
-		"men"
+		"Men"
+	)
+	var unmapped_sim := _make_sim([
+		{"team": 0, "faction": "modfolk", "is_ai": false},
+		{"team": 1, "faction": "men", "is_ai": true},
+	])
+	var unmapped_world := _make_world(unmapped_sim)
+	var unmapped_query := unmapped_world.players().faction(PLAYER)
+	_check_refused(
+		"players.faction refuses a pack faction with no retail side mapping",
+		unmapped_query
+	)
+	_check(
+		"the unmapped-faction refusal names the faction and the mapping table",
+		unmapped_query.detail.contains("modfolk")
+			and unmapped_query.detail.contains("retail_faction_sides")
+	)
+	# The mapping is data the match configuration must carry: a sim whose
+	# rules ship NO retail_faction_sides table refuses rather than passing
+	# the pack id through as if it were a side.
+	var tableless_sim: RetailSliceSim = SimScript.new()
+	var tableless_rules := _harness_rules()
+	tableless_rules.erase("retail_faction_sides")
+	tableless_sim._rules = tableless_rules
+	tableless_sim.configure_team_roster([
+		{"team": 0, "faction": "men", "is_ai": false},
+		{"team": 1, "faction": "men", "is_ai": true},
+	])
+	tableless_sim.setup({}, {})
+	tableless_sim.ai_enabled = false
+	var tableless_world := _make_world(tableless_sim)
+	_check_refused(
+		"players.faction refuses when the rules carry no retail_faction_sides table",
+		tableless_world.players().faction(PLAYER)
+	)
+	# Mapping resolution is exact on the pack id: the census's old hand-fed
+	# side-token descriptor ("Men") is NOT a pack faction id and must refuse,
+	# not silently pass through because it already looks like a side.
+	var side_token_sim := _make_sim([
+		{"team": 0, "faction": "Men", "is_ai": false},
+		{"team": 1, "faction": "men", "is_ai": true},
+	])
+	var side_token_world := _make_world(side_token_sim)
+	_check_refused(
+		"players.faction refuses a descriptor carrying a side token instead of a pack id",
+		side_token_world.players().faction(PLAYER)
 	)
 
 
@@ -1545,14 +1599,16 @@ func _test_single_player_token_routing() -> void:
 	## through _resolve_single_player_team, and the tokens that have no
 	## single-team answer keep refusing - each for its own stated reason.
 	var sim := _make_sim([
-		{"team": 0, "faction": "Men", "is_ai": false},
-		{"team": 1, "faction": "Isengard", "is_ai": true},
+		{"team": 0, "faction": "men", "is_ai": false},
+		{"team": 1, "faction": "isengard", "is_ai": true},
 	])
 	var world := _make_world(sim)
 	world.bind_script_player(PLAYER)
 	var this_player := RetailSliceScriptWorld.THIS_PLAYER_TOKEN
 
-	# The census's exact shape: players.faction("<This Player>").
+	# The census's exact shape: players.faction("<This Player>"). The roster
+	# carries the PRODUCTION descriptor shape (lowercase pack ids); the world
+	# answers the retail side token through the rules' side table.
 	_check_hit(
 		"players.faction resolves '<This Player>' (the 4,197-refusal shape)",
 		world.players().faction(this_player),

@@ -655,17 +655,25 @@ class SlicePlayers:
 		return SageWorldQuery.hit(w._bound_player_team(player) >= 0)
 
 	func faction(player: String) -> SageWorldQuery:
+		## Answers the RETAIL SIDE TOKEN (playertemplate.ini `Side =`: "Men",
+		## "Isengard", ...), NOT the lowercase pack faction id the descriptor
+		## carries. Retail's SKIRMISH_PLAYER_FACTION is an exact string match
+		## against player->getSide(), so answering the pack id here made every
+		## faction gate in a live match false-but-plausible - no faction's
+		## spell system ever enabled and the AI could buy nothing. The
+		## pack-id -> side translation is the sim's (team_retail_side, backed
+		## by the hashed retail_faction_sides rules table); an unmapped
+		## faction refuses loudly with the faction named.
 		var resolved := _team_or_refuse("players.faction", player)
 		if resolved.has("query"):
 			return resolved["query"]
-		var descriptor: Dictionary = _world().sim.team_descriptor(int(resolved["team"]))
-		var faction_name := String(descriptor.get("faction", ""))
-		if faction_name == "":
+		var side_result: Dictionary = _world().sim.team_retail_side(int(resolved["team"]))
+		if side_result.has("reason"):
 			return _refuse_query(
 				"players.faction",
-				"team descriptor for player '%s' carries no faction" % player
+				"player '%s': %s" % [player, String(side_result["reason"])]
 			)
-		return SageWorldQuery.hit(faction_name)
+		return SageWorldQuery.hit(String(side_result["side"]))
 
 	func command_points_available(player: String) -> SageWorldQuery:
 		## cap - committed - queue-reserved: exactly the headroom the sim's own

@@ -17,6 +17,12 @@ const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtim
 
 const DEFAULT_FACTION := "men"
 const DEFAULT_PACK_ID := "bfme2-men-vslice"
+## Pack faction id -> retail side token (playertemplate.ini `Side =`), the
+## vocabulary retail scripts compare with SKIRMISH_PLAYER_FACTION. Versioned
+## repo data with its evidence inline; see the file's $comment. Loaded once.
+const RETAIL_FACTION_SIDES_PATH := "res://data/retail_faction_sides.json"
+static var _retail_faction_sides_cache: Dictionary = {}
+static var _retail_faction_sides_loaded := false
 const FACTION_OBJECT_PREFIXES := {
 	"men": ["men", "gondor"],
 	"elves": ["elven", "eregion"],
@@ -47,6 +53,43 @@ const DEFAULT_PRODUCER_KIND_REGISTRY := {
 	"GondorStable": "stable",
 	"GondorWorkshop": "workshop",
 }
+
+
+static func retail_faction_sides() -> Dictionary:
+	## The pack-faction-id -> retail-side table, loaded once from versioned repo
+	## data. A missing or malformed file returns {} LOUDLY (push_error): every
+	## faction gate then refuses with "no retail side mapping" instead of
+	## answering false as though the faction simply did not match.
+	if _retail_faction_sides_loaded:
+		return _retail_faction_sides_cache.duplicate(true)
+	_retail_faction_sides_loaded = true
+	_retail_faction_sides_cache = {}
+	if not FileAccess.file_exists(RETAIL_FACTION_SIDES_PATH):
+		push_error("retail_faction_sides: %s is missing; every retail faction gate will refuse" % RETAIL_FACTION_SIDES_PATH)
+		return {}
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(RETAIL_FACTION_SIDES_PATH))
+	if typeof(parsed) != TYPE_DICTIONARY:
+		push_error("retail_faction_sides: %s did not parse as a JSON object; every retail faction gate will refuse" % RETAIL_FACTION_SIDES_PATH)
+		return {}
+	var document := parsed as Dictionary
+	if String(document.get("schema", "")) != "openbfme.retail-faction-sides" or int(document.get("schemaVersion", -1)) != 0:
+		push_error("retail_faction_sides: %s has schema '%s' v%s, expected openbfme.retail-faction-sides v0; every retail faction gate will refuse" % [
+			RETAIL_FACTION_SIDES_PATH, String(document.get("schema", "")), str(document.get("schemaVersion", "?")),
+		])
+		return {}
+	var sides: Dictionary = document.get("sides", {}) as Dictionary
+	var validated: Dictionary = {}
+	var keys := sides.keys()
+	keys.sort()
+	for key in keys:
+		var faction_id := String(key)
+		var side := String(sides[key])
+		if faction_id == "" or side == "" or faction_id != faction_id.to_lower():
+			push_error("retail_faction_sides: invalid row '%s' -> '%s' (faction ids are non-empty lowercase, sides non-empty); dropping the WHOLE table so nothing resolves from a half-valid file" % [faction_id, side])
+			return {}
+		validated[faction_id] = side
+	_retail_faction_sides_cache = validated
+	return _retail_faction_sides_cache.duplicate(true)
 
 
 static func default_manifest() -> Dictionary:

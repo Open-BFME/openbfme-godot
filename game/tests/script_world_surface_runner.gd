@@ -88,6 +88,7 @@ extends SceneTree
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const WorldScript = preload("res://src/retail_slice/retail_slice_script_world.gd")
+const ManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 
 const MAP_PATH := "res://data/script_world_surface.json"
 const CENSUS_PATH := "res://data/retail_ai_call_census.json"
@@ -209,6 +210,10 @@ func _harness_rules() -> Dictionary:
 		"enable_base_loop": true,
 		"starting_resources": 10000,
 		"ai_attack_delay_ticks": 100000,
+		# Production parity: every real match's rules carry the versioned
+		# pack-faction -> retail-side table (players.faction answers the retail
+		# side token "Men", the vocabulary SKIRMISH_PLAYER_FACTION compares).
+		"retail_faction_sides": ManifestScript.retail_faction_sides(),
 		"unit_rules": {
 			SimScript.SOLDIER_OBJECT_ID: _unit_rule(SimScript.SOLDIER_HORDE_ID, false),
 			SimScript.ARCHER_OBJECT_ID: _unit_rule(SimScript.ARCHER_OBJECT_ID, false),
