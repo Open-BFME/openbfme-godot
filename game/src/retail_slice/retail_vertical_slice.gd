@@ -22,6 +22,8 @@ const OptionsScreenScript = preload("res://src/ui/options_screen.gd")
 const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 const ControlServerScript = preload("res://src/debug/retail_control_server.gd")
 const MemberRenderBatcherScript = preload("res://src/view/member_render_batcher.gd")
+const ScriptWorldScript = preload("res://src/retail_slice/retail_slice_script_world.gd")
+const ScriptExecutorScript = preload("res://src/script/script_executor.gd")
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const SOLDIER_HORDE_ID := "bfme2.object.gondor-fighter-horde"
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
@@ -109,6 +111,12 @@ const FORDS_AFTERNOON_LIGHT_RIGS := {
 }
 
 var simulation: RetailSliceSim
+## Strong owner of this match's script runtimes ({team, world, executor} rows).
+## The sim holds registered executors by WEAKREF only (no RefCounted cycle
+## through executor -> world -> sim), so whoever wires a match must keep them
+## alive - in production that is this scene, for exactly as long as the sim.
+## Empty when the map ships no scripts.json: the inert default.
+var script_runtimes: Array = []
 var local_team := 0
 var _local_command_seq := 0
 var lockstep_session
@@ -493,6 +501,12 @@ func _initialize_content_and_match() -> void:
 			_fail("Lockstep %s failed (%s:%d, error %d)." % [_mp_mode, mp_address, mp_port, mp_error])
 			return
 	_configure_simulation_expansions()
+	# Map scripts wire AFTER every other sim configuration and BEFORE the
+	# first tick: bodies are match configuration; the sim steps the executors
+	# itself (see RetailSliceSim._step_script_executors). Both the single
+	# player loop and the lockstep session go through sim.tick(), so this one
+	# call covers every mode.
+	_install_map_scripts()
 	if OS.get_environment("OPENBFME_CONTROL_PORT").strip_edges() != "":
 		if _mp_mode != "":
 			# Control-API commands bypass the lockstep session and would desync
@@ -4448,6 +4462,108 @@ func _configure_simulation_expansions() -> void:
 		}
 	_expansion_object_ids = rules.duplicate(true)
 	simulation.configure_expansion_rules(rules)
+
+
+func _install_map_scripts() -> void:
+	## WHERE SCRIPT BODIES COME FROM, decided: decoded SAGE map scripts ship
+	## as `scripts.json` in the map's directory of the CONTENT PACK - the same
+	## channel as every other decoded map artifact (map.json, triggers.json),
+	## and the only channel whose bytes both lockstep peers have already
+	## agreed on (the lobby agrees on the pack, the pack pins the file). They
+	## are MATCH CONFIGURATION, not state: loaded once before the first tick,
+	## never mutated, identical on every peer - exactly like the roster and
+	## the gameplay rules. Everything the scripts DO at runtime lands in
+	## sim-owned hashed state (script_env_state and the sim's own rows), so
+	## the snapshot boundary never needs to carry the bodies.
+	##
+	## INERT DEFAULT: a map without scripts.json installs nothing - no env,
+	## no executor, no registration, zero state bytes (the b177804c pin's
+	## guarantee). No pack ships the file yet; this is the lane the importer's
+	## map-script emitter lands in.
+	##
+	## FAIL-CLOSED: a present-but-invalid file refuses the WHOLE install with
+	## its reason named - half a script layer running is worse than none, and
+	## two peers disagreeing on how much of the file "worked" is a desync.
+	##
+	## Document shape (schema "openbfme.map-scripts" v0):
+	##   players:  script player name -> sim team id (world.bind_player)
+	##   teams:    script team name  -> sim team id (world.bind_team)
+	##   sources:  [{player: <bound name>, scripts: [decoded payloads]}] -
+	##             one executor per source, running as that script player,
+	##             its env attached under that player's team (retail runs each
+	##             AI player's libraries in that player's own environment).
+	script_runtimes = []
+	if simulation == null or source_map_data == null or String(source_map_data.map_root) == "":
+		return
+	var path := String(ModLoader.resolve_pack_path(source_map_data.map_root, "scripts.json"))
+	if path == "" or not FileAccess.file_exists(path):
+		return
+	var document: Variant = ModLoader._read_json(path)
+	if typeof(document) != TYPE_DICTIONARY:
+		push_error("map scripts: %s is not a JSON object; installing NO scripts" % path)
+		return
+	var doc := document as Dictionary
+	if String(doc.get("schema", "")) != "openbfme.map-scripts" or int(doc.get("schemaVersion", -1)) != 0:
+		push_error("map scripts: %s has schema '%s' v%s, expected openbfme.map-scripts v0; installing NO scripts" % [path, String(doc.get("schema", "")), str(doc.get("schemaVersion", "?"))])
+		return
+	var runtimes: Array = []
+	var installed_teams: Array = []
+	var ok := true
+	for source_value in doc.get("sources", []) as Array:
+		if typeof(source_value) != TYPE_DICTIONARY:
+			push_error("map scripts: non-object source entry; installing NO scripts")
+			ok = false
+			break
+		var source := source_value as Dictionary
+		var player_name := String(source.get("player", ""))
+		var players: Dictionary = doc.get("players", {}) as Dictionary
+		if player_name == "" or not players.has(player_name):
+			push_error("map scripts: source player '%s' is not in the players table; installing NO scripts" % player_name)
+			ok = false
+			break
+		var team := int(players[player_name])
+		if installed_teams.has(team):
+			push_error("map scripts: two sources resolve to team %d (one executor per team); installing NO scripts" % team)
+			ok = false
+			break
+		var world: RetailSliceScriptWorld = ScriptWorldScript.new(simulation)
+		for bind_name in players.keys():
+			if not world.bind_player(String(bind_name), int(players[bind_name])):
+				push_error("map scripts: player binding '%s' -> %s refused; installing NO scripts" % [String(bind_name), str(players[bind_name])])
+				ok = false
+				break
+		if not ok:
+			break
+		var team_names: Dictionary = doc.get("teams", {}) as Dictionary
+		for team_name in team_names.keys():
+			if not world.bind_team(String(team_name), int(team_names[team_name])):
+				push_error("map scripts: team binding '%s' -> %s refused; installing NO scripts" % [String(team_name), str(team_names[team_name])])
+				ok = false
+				break
+		if not ok:
+			break
+		if not world.bind_script_player(player_name):
+			push_error("map scripts: bind_script_player('%s') refused; installing NO scripts" % player_name)
+			ok = false
+			break
+		var executor: SageScriptExecutor = ScriptExecutorScript.new(world)
+		if executor.load_script_payloads(source.get("scripts", []) as Array) <= 0:
+			push_error("map scripts: source for '%s' carries no loadable script payloads; installing NO scripts" % player_name)
+			ok = false
+			break
+		if not simulation.attach_script_env(executor.env, team) \
+				or not simulation.register_script_executor(executor, team):
+			# attach/register already push_error with the specific reason.
+			ok = false
+			break
+		installed_teams.append(team)
+		runtimes.append({"team": team, "world": world, "executor": executor})
+	if not ok:
+		# Tear down whatever half got wired so NOTHING runs: fail-closed.
+		for team_value in installed_teams:
+			simulation.unregister_script_executor(int(team_value))
+		return
+	script_runtimes = runtimes
 
 
 func _faction_spellbook_document(faction_override: String = "") -> Dictionary:

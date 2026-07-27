@@ -188,6 +188,13 @@ var action_outcomes: Dictionary = {}
 var conditions_evaluated: int = 0
 var scripts_fired: int = 0
 
+## Ticks refused because the env's backing simulation was freed (see
+## SageScriptEnv.attachment_stale). A refusal is counted every time and
+## reported by push_error once; running scripts against an orphaned store
+## would look healthy and be invisible to every hash.
+var stale_env_tick_refusals: int = 0
+var _stale_refusal_reported := false
+
 var subroutine_calls_served: int = 0
 var subroutine_misses: Dictionary = {}                  # name -> count
 var subroutine_recursion_refusals: Dictionary = {}      # name -> count
@@ -361,6 +368,20 @@ func _malformed(script_name: String, detail: String) -> void:
 func tick() -> void:
 	## One interpreter tick: advance the env (timers, tick counter) then
 	## evaluate every eligible non-subroutine script in load order.
+	##
+	## Refused whole when the env's state store is an orphan (its owning sim
+	## was freed): ticking would evaluate scripts against state no hash or
+	## snapshot can see. The refusal is loud (push_error, once) and counted
+	## (stale_env_tick_refusals, every time) rather than silent.
+	if env.attachment_stale():
+		stale_env_tick_refusals += 1
+		if not _stale_refusal_reported:
+			_stale_refusal_reported = true
+			push_error(
+				"SageScriptExecutor: refusing to tick - this executor's env is "
+				+ "attached to a state store whose owning simulation was freed"
+			)
+		return
 	env.advance()
 	for index in _scripts.size():
 		var script: Dictionary = _scripts[index]

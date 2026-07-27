@@ -73,6 +73,17 @@ var _shared_store: Dictionary = {}
 var _shared_key: Variant = null
 var _attached := false
 
+## Lifetime witness for the shared store's OWNER (installed by
+## RetailSliceSim.attach_script_env, absent when a test attaches a bare
+## dictionary). Godot dictionaries are refcounted, so when the owning sim is
+## freed the store this env holds stays alive as an ORPHAN: every read and
+## write would keep "working" against state that nothing hashes, snapshots or
+## clears any more - the exact silent-divergence shape this repo bans. The
+## witness is a WeakRef to the owner, checked on every attached access; a dead
+## witness makes the env refuse loudly instead of succeeding silently.
+var _witness: WeakRef = null
+var _stale_reported := false
+
 var counters: Dictionary:
 	get:
 		return _collection("counters")
@@ -95,9 +106,15 @@ var tick_index: int:
 	get:
 		if not _attached:
 			return _local_tick_index
+		if attachment_stale():
+			_report_stale()
+			return 0
 		return int((_shared_store.get(_shared_key, {}) as Dictionary).get("tick", 0))
 	set(value):
 		if _attached:
+			if attachment_stale():
+				_report_stale()
+				return
 			_shared_entry()["tick"] = value
 		else:
 			_local_tick_index = value
@@ -137,7 +154,13 @@ var subroutine_runner: Callable = Callable()
 ##     into the boundary; attach at construction time, before any script runs.
 ## An EXISTING entry under `key` is adopted as-is: that is exactly the
 ## restore-then-attach path a snapshot-adopting peer takes.
-func attach_state_store(store: Dictionary, key: Variant) -> bool:
+##
+## `witness` names the OBJECT whose lifetime the store is tied to (the sim).
+## When supplied, every attached access first proves the witness is still
+## alive; accessing the store of a freed owner refuses loudly (see _witness).
+## Held by WeakRef only - no strong reference, no RefCounted cycle, and no
+## layering dependency from the script engine onto the simulation.
+func attach_state_store(store: Dictionary, key: Variant, witness: Object = null) -> bool:
 	if _attached:
 		push_error("SageScriptEnv: already attached to a shared state store")
 		return false
@@ -153,12 +176,42 @@ func attach_state_store(store: Dictionary, key: Variant) -> bool:
 		return false
 	_shared_store = store
 	_shared_key = key
+	_witness = weakref(witness) if witness != null else null
 	_attached = true
 	return true
 
 
 func is_attached() -> bool:
 	return _attached
+
+
+## True when this env attached with `owner` as its lifetime witness and the
+## witness is still alive. The registration choke point
+## (RetailSliceSim.register_script_executor) uses this to refuse an executor
+## whose env is attached to a DIFFERENT sim - or to none at all.
+func attached_to(owner: Object) -> bool:
+	return _attached and _witness != null and _witness.get_ref() == owner
+
+
+## True when the object whose store this env writes has been freed: the store
+## is an orphan nothing hashes or snapshots. Every accessor below refuses
+## (loudly, once) while this holds. Always false for a standalone env and for
+## an attachment made without a witness (bare-dictionary test attachments).
+func attachment_stale() -> bool:
+	return _attached and _witness != null and _witness.get_ref() == null
+
+
+func _report_stale() -> void:
+	## push_error ONCE per env, not per access: the first orphaned access is
+	## the defect report; ten thousand copies of it would bury the log.
+	if _stale_reported:
+		return
+	_stale_reported = true
+	push_error(
+		"SageScriptEnv: the simulation owning this env's state store has been "
+		+ "freed; refusing every further read and write - the store is an "
+		+ "orphan outside any snapshot/hash boundary"
+	)
 
 
 func _shared_entry() -> Dictionary:
@@ -170,6 +223,11 @@ func _shared_entry() -> Dictionary:
 func _collection(name: String) -> Dictionary:
 	if not _attached:
 		return _local_state[name]
+	if attachment_stale():
+		# Refuse: hand back a throwaway dictionary so a write lands NOWHERE
+		# (visibly, via the error above) instead of mutating the orphan.
+		_report_stale()
+		return {}
 	var entry := _shared_entry()
 	if not entry.has(name):
 		entry[name] = {}

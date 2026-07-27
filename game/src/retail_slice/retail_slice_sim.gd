@@ -1229,6 +1229,12 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	# SageScriptEnvs hold this dictionary by reference, and a rebind would
 	# leave them writing to an orphan outside the hash boundary.
 	script_env_state.clear()
+	# Registered executors survive a match reset (their bodies are match
+	# configuration), but both clocks just moved: rebase the recorded env/sim
+	# offsets from the reset values and lift any quarantine - a reset match
+	# starts with consistent clocks again.
+	_script_executor_faults.clear()
+	_rebase_script_executor_offsets()
 	_completed_hero_identities.clear()
 	_next_event_sequence = 1
 	_next_order_sequence = 1
@@ -5888,7 +5894,10 @@ func attach_script_env(env: SageScriptEnv, team: int) -> bool:
 	if not _team_descriptors.has(team):
 		push_error("attach_script_env refused: team %d is not rostered" % team)
 		return false
-	return env.attach_state_store(script_env_state, team)
+	# This sim is the store's lifetime witness: if it is freed while the env
+	# lives on, the env's store becomes an orphan outside every hash and
+	# snapshot, and the env must refuse loudly instead of writing into it.
+	return env.attach_state_store(script_env_state, team, self)
 
 
 func _script_env_state_view() -> Dictionary:
@@ -5943,6 +5952,185 @@ func _sorted_dictionary_keys(source: Dictionary) -> Array:
 	var keys := source.keys()
 	keys.sort()
 	return keys
+
+
+# --- Script executors wired into the match loop (the production seam) -------
+#
+# THE SEAM. Registered SageScriptExecutors are stepped by tick() itself -
+# _step_script_executors() below - NOT by the vertical slice's frame loop or
+# the lockstep session. The sim is the only object every driving path (single
+# player _process, lockstep advance_if_ready, control-server save/load, every
+# test runner) already funnels through, so putting the step inside tick()
+# makes the cadence contract STRUCTURAL: no caller can double-step or skip
+# the script engine without also double-stepping or skipping the simulation.
+#
+# THE TICK-ORDERING CONTRACT, exact and enforced:
+#
+#   Each registered executor ticks EXACTLY ONCE per gameplay-advancing sim
+#   tick, in ascending team order, after that tick's commands are applied
+#   and before any gameplay subsystem (economy, production, AI controllers,
+#   entity stepping) runs. Ticks in which gameplay is frozen (clock paused,
+#   match decided) step NO scripts.
+#
+# "After commands, before gameplay" means a script evaluating on tick N sees
+# the world exactly as tick N-1 left it plus tick N's player commands, and
+# every mutation it makes is visible to all of tick N's gameplay - the same
+# slot the SAGE script engine occupies at the top of the logic frame.
+# 87cf636 deliberately refused to alias the env clock to the sim clock
+# because this contract was unenforced then; it is enforced now, two ways:
+#
+#   * STRUCTURALLY: the only production call site of executor.tick() is
+#     inside sim.tick(), behind the same pause/winner gates as gameplay.
+#   * MECHANICALLY: the sim tracks, per executor, the interpreter-tick value
+#     it last left that executor's env at (seeded from the env's hashed
+#     clock at registration, so an adopting peer derives the minter's
+#     value). Every step checks the env clock against that expectation
+#     BEFORE ticking (catches an out-of-band executor.tick() by any other
+#     caller) and re-checks AFTER (catches an executor whose tick advanced
+#     the clock by anything but 1). NOTE the expectation is a tracked value,
+#     not a constant offset from tick_index: decided-match and lockstep-
+#     paused ticks advance the sim clock while deliberately stepping no
+#     scripts, so the two clocks legitimately drift APART across frozen
+#     ticks - what must never happen is the ENV clock moving except under
+#     this function. A violation quarantines the executor loudly -
+#     push_error naming team, expected and actual, script_wiring_faults
+#     incremented, no further steps - rather than silently re-syncing,
+#     because by then the hashed env tick has already diverged from every
+#     correct peer and hiding it would be a silent desync. Both clocks ride
+#     the snapshot, so the hash barrier catches whatever the quarantine
+#     reports.
+#
+# WIRING, NOT STATE. The registration table is process-local plumbing like
+# frame_conversions: script BODIES are match configuration (identical bytes
+# on every peer, from the content pack), and everything the scripts DO lands
+# in script_env_state / the sim's own hashed rows. Registrations are held by
+# WEAKREF - the match owner (vertical slice, test runner) keeps the executor
+# alive - so sim -> executor -> world -> sim never forms a RefCounted cycle.
+# A registration whose executor was freed is reported loudly and dropped,
+# never skipped silently.
+#
+# INERT BY DEFAULT. With no registered executor _step_script_executors()
+# returns before touching anything, no env is attached, and no script state
+# key exists - a scriptless match is bit-identical to one built before this
+# seam existed, which the frozen b177804c pin proves on every run.
+
+## team id -> WeakRef of the SageScriptExecutor running that team's scripts.
+var _script_executors: Dictionary = {}
+## team id -> the env interpreter tick _step_script_executors last left that
+## executor at. Seeded from the env's hashed clock at registration and rebased
+## by setup()/restore() from the same hashed values every peer holds, so the
+## expectation is derived, deterministic, and identical on every peer.
+var _script_executor_expected_ticks: Dictionary = {}
+## team id -> true once quarantined by a cadence fault. Cleared by setup().
+var _script_executor_faults: Dictionary = {}
+## Diagnostic count of wiring faults (freed executor, stale env, cadence
+## violation). Process-local observability, never hashed.
+var script_wiring_faults: int = 0
+
+
+func register_script_executor(executor: SageScriptExecutor, team: int) -> bool:
+	## Wire `executor` to run team `team`'s scripts inside tick(). Refuses
+	## loudly rather than guessing: null executors, unrostered teams, a team
+	## that already has a live executor, and - the choke point that makes env
+	## lifetime detection airtight - an executor whose env is not attached to
+	## THIS sim's store (attach_script_env first; an env attached to another
+	## sim would run scripts against state this sim never hashes).
+	if executor == null:
+		push_error("register_script_executor refused: null executor")
+		return false
+	if not _team_descriptors.has(team):
+		push_error("register_script_executor refused: team %d is not rostered" % team)
+		return false
+	if _script_executors.has(team) and (_script_executors[team] as WeakRef).get_ref() != null:
+		push_error("register_script_executor refused: team %d already has a registered executor" % team)
+		return false
+	if executor.env == null or not executor.env.attached_to(self):
+		push_error(
+			"register_script_executor refused: the executor's env is not attached "
+			+ "to this sim's state store (call attach_script_env(executor.env, %d) first)" % team
+		)
+		return false
+	_script_executors[team] = weakref(executor)
+	_script_executor_expected_ticks[team] = executor.env.tick_index
+	_script_executor_faults.erase(team)
+	return true
+
+
+func unregister_script_executor(team: int) -> bool:
+	if not _script_executors.has(team):
+		return false
+	_script_executors.erase(team)
+	_script_executor_expected_ticks.erase(team)
+	_script_executor_faults.erase(team)
+	return true
+
+
+func registered_script_executor_teams() -> Array:
+	return _sorted_dictionary_keys(_script_executors)
+
+
+func _step_script_executors() -> void:
+	## The contract's enforcement point - see the block comment above.
+	if _script_executors.is_empty():
+		return
+	for team_key in _sorted_dictionary_keys(_script_executors):
+		var executor_ref: WeakRef = _script_executors[team_key]
+		var executor: SageScriptExecutor = executor_ref.get_ref()
+		if executor == null:
+			script_wiring_faults += 1
+			push_error(
+				"script wiring: the executor registered for team %s was freed while "
+				% str(team_key)
+				+ "registered; dropping the registration - its scripts stop HERE, loudly"
+			)
+			_script_executors.erase(team_key)
+			_script_executor_expected_ticks.erase(team_key)
+			_script_executor_faults.erase(team_key)
+			continue
+		if _script_executor_faults.get(team_key, false):
+			continue  # quarantined; the fault was reported once when it happened
+		if executor.env.attachment_stale():
+			_quarantine_script_executor(team_key, "its env's backing store owner was freed")
+			continue
+		var expected := int(_script_executor_expected_ticks[team_key])
+		var before := executor.env.tick_index
+		if before != expected:
+			_quarantine_script_executor(
+				team_key,
+				"cadence violation before the step: env tick %d, expected %d - something ticked this executor outside sim.tick()"
+				% [before, expected]
+			)
+			continue
+		executor.tick()
+		if executor.env.tick_index != before + 1:
+			_quarantine_script_executor(
+				team_key,
+				"cadence violation during the step: one executor tick moved the env clock %d -> %d (must be exactly +1)"
+				% [before, executor.env.tick_index]
+			)
+			continue
+		_script_executor_expected_ticks[team_key] = before + 1
+
+
+func _quarantine_script_executor(team_key: Variant, reason: String) -> void:
+	script_wiring_faults += 1
+	_script_executor_faults[team_key] = true
+	push_error(
+		"script wiring: quarantining team %s's executor - %s. Its scripts no "
+		% [str(team_key), reason]
+		+ "longer run; the hashed interpreter clock already carries the divergence."
+	)
+
+
+func _rebase_script_executor_offsets() -> void:
+	## The expected env clock is DERIVED wiring: the interpreter tick is
+	## hashed state, so whenever it moves out-of-band-but-legitimately
+	## (setup() zeroes it, restore() sets it from a snapshot) the expectation
+	## is recomputed from the same value every peer holds.
+	for team_key in _script_executors.keys():
+		var executor: SageScriptExecutor = (_script_executors[team_key] as WeakRef).get_ref()
+		if executor != null and not executor.env.attachment_stale():
+			_script_executor_expected_ticks[team_key] = executor.env.tick_index
 
 
 # --- Retail object-type identity (derived reads over existing hashed rows) --
@@ -6703,6 +6891,13 @@ func tick() -> void:
 	if winner != -1:
 		_cleanup_expired_corpses()
 		return
+	# THE SCRIPT SEAM: registered script executors step exactly here - once
+	# per gameplay-advancing tick, after this tick's commands, before any
+	# gameplay subsystem, frozen by the same pause/winner gates as gameplay.
+	# The full ordering contract and its enforcement live at
+	# _step_script_executors(); with nothing registered this is a no-op and
+	# the tick is byte-identical to the pre-wiring engine (the b177804c pin).
+	_step_script_executors()
 	if base_loop_enabled:
 		_step_economy()
 		_step_structure_upgrades()
@@ -11173,6 +11368,11 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	# which already carries the provisionals, so this is a no-op there and never
 	# mutates hashed state.
 	_register_forge_upgrade_contracts()
+	# Both clocks (sim tick and every attached env's interpreter tick) were
+	# just set from one snapshot: rebase the recorded executor offsets from
+	# those values - the same numbers every peer restoring this snapshot
+	# holds, so the derived offset stays peer-identical.
+	_rebase_script_executor_offsets()
 
 
 func _reseed_roster_from_state() -> void:
