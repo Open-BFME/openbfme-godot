@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -14,8 +15,10 @@ try:
         _geometry,
         _object_block,
         build_fords_navigation_contract,
+        build_map_navigation_contract,
         main,
     )
+    from openbfme_importer.sage_map import convert_sage_map
 except ModuleNotFoundError:  # pragma: no cover - direct discovery fallback
     from importer.openbfme_importer.retail_fords_navmesh import (
         _canonical_sha256,
@@ -24,8 +27,10 @@ except ModuleNotFoundError:  # pragma: no cover - direct discovery fallback
         _geometry,
         _object_block,
         build_fords_navigation_contract,
+        build_map_navigation_contract,
         main,
     )
+    from importer.openbfme_importer.sage_map import convert_sage_map
 
 
 class RetailFordsNavmeshUnitTests(unittest.TestCase):
@@ -226,6 +231,162 @@ class RetailFordsNavmeshPrivateIntegrationTests(unittest.TestCase):
                 hashlib.sha256(other.read_bytes()).hexdigest(),
             )
             loaded = json.loads(first.read_text("utf-8"))
+            self.assertEqual(
+                self.contract["aggregateSha256"], loaded["aggregateSha256"]
+            )
+
+
+class SecondMapNavigationContractIntegrationTests(unittest.TestCase):
+    """Cook a second retail map end to end and hold it to the same contract.
+
+    Tournament Udun is the smallest accepted retail multiplayer map; it has no
+    named ford crossings and four player starts, so it exercises exactly the
+    parameters the Fords wrapper hardcodes.
+    """
+
+    MAP_ID = "bfme2.map.tournament-udun"
+    SOURCE = "maps/map mp tournament udun/map mp tournament udun.map"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.repo = Path(__file__).resolve().parents[2]
+        override = os.environ.get("OPENBFME_EFFECTIVE_ASSETS_ROOT", "")
+        cls.effective_root = (
+            Path(override)
+            if override
+            else cls.repo / ".private/retail-work/cache/effective-assets"
+        )
+        source = cls.effective_root / cls.SOURCE
+        if not source.is_file():
+            raise unittest.SkipTest("private Tournament Udun retail map unavailable")
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.map_root = Path(cls._tmp.name) / "tournament-udun"
+        convert_sage_map(
+            source,
+            cls.map_root,
+            metadata={"id": cls.MAP_ID, "displayName": "Tournament Udun"},
+        )
+        cls.contract = build_map_navigation_contract(
+            cls.map_root,
+            cls.effective_root,
+            expected_map_id=cls.MAP_ID,
+            expected_player_start_count=4,
+        )
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    def test_second_map_satisfies_the_same_contract_shape(self) -> None:
+        self.assertEqual(self.MAP_ID, self.contract["mapId"])
+        terrain = self.contract["terrainPassability"]
+        self.assertEqual((460, 460), (terrain["width"], terrain["height"]))
+        self.assertEqual(30, terrain["borderWidth"])
+        self.assertEqual(20_838, terrain["impassableCount"])
+        self.assertEqual(
+            "5364ecb0eb5f6c38ff549df361bfcc563e785546b13dae934707700629edf6c8",
+            terrain["sha256"],
+        )
+        self.assertEqual(4, len(self.contract["playerStarts"]))
+        self.assertEqual([], self.contract["waterAndFords"]["namedFords"])
+        self.assertEqual(7, self.contract["summary"]["blockerCount"])
+        self.assertFalse(self.contract["summary"]["parityReady"])
+
+    def test_connectivity_covers_all_four_starts(self) -> None:
+        connectivity = self.contract["routing"]["passabilityOnlyConnectivity"]
+        self.assertEqual(6, connectivity["componentCount"])
+        self.assertEqual(144_528, connectivity["walkableCellCount"])
+        self.assertEqual(144_424, connectivity["componentSizesDescending"][0])
+        self.assertTrue(connectivity["playerStartsShareComponent"])
+        self.assertEqual(
+            [[100, 100], [300, 300], [100, 300], [301, 100]],
+            [row["gridCell"] for row in connectivity["startCells"]],
+        )
+        vectors = [row["id"] for row in self.contract["behavioralTestVectors"]]
+        self.assertEqual(
+            [
+                "passability-player-1-start",
+                "passability-player-2-start",
+                "passability-player-3-start",
+                "passability-player-4-start",
+            ],
+            vectors,
+        )
+
+    def test_cooked_evidence_paths_derive_from_the_map_id(self) -> None:
+        paths = [
+            row["virtualPath"]
+            for row in self.contract["sourceEvidence"]["cookedMapFiles"]
+        ]
+        self.assertEqual(6, len(paths))
+        self.assertTrue(
+            all(path.startswith("maps/tournament-udun/") for path in paths)
+        )
+
+    def test_contract_is_deterministic_and_digest_consistent(self) -> None:
+        second = build_map_navigation_contract(
+            self.map_root,
+            self.effective_root,
+            expected_map_id=self.MAP_ID,
+            expected_player_start_count=4,
+        )
+        self.assertEqual(self.contract, second)
+        payload = dict(self.contract)
+        declared = payload.pop("aggregateSha256")
+        self.assertEqual(declared, _canonical_sha256(payload))
+
+    def test_per_map_requirements_fail_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "player starts"):
+            build_map_navigation_contract(
+                self.map_root,
+                self.effective_root,
+                expected_map_id=self.MAP_ID,
+                expected_player_start_count=2,
+            )
+        with self.assertRaisesRegex(ValueError, "expected"):
+            build_map_navigation_contract(
+                self.map_root,
+                self.effective_root,
+                expected_map_id="bfme2.map.fords-of-isen-ii",
+                expected_player_start_count=4,
+            )
+        with self.assertRaisesRegex(ValueError, "required named ford"):
+            build_map_navigation_contract(
+                self.map_root,
+                self.effective_root,
+                expected_map_id=self.MAP_ID,
+                required_crossing_names=("ford1",),
+                expected_player_start_count=4,
+            )
+        with self.assertRaisesRegex(ValueError, "invalid map id"):
+            build_map_navigation_contract(
+                self.map_root,
+                self.effective_root,
+                expected_map_id="../escape",
+                expected_player_start_count=4,
+            )
+
+    def test_cli_cooks_the_second_map_with_explicit_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "contract.json"
+            self.assertEqual(
+                0,
+                main(
+                    [
+                        "--map-dir",
+                        str(self.map_root),
+                        "--effective-assets",
+                        str(self.effective_root),
+                        "--map-id",
+                        self.MAP_ID,
+                        "--expected-player-starts",
+                        "4",
+                        "--output",
+                        str(output),
+                    ]
+                ),
+            )
+            loaded = json.loads(output.read_text("utf-8"))
             self.assertEqual(
                 self.contract["aggregateSha256"], loaded["aggregateSha256"]
             )

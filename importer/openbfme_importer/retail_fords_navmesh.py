@@ -1,4 +1,11 @@
-"""Derive a zero-guess Fords navigation and footprint evidence contract.
+"""Derive a zero-guess per-map navigation and footprint evidence contract.
+
+Historically Fords-of-Isen-II-only; the contract logic is map-agnostic and
+``build_map_navigation_contract`` accepts any cooked multiplayer map, with the
+per-map authored facts (map id, required named crossings, exact player-start
+count, reviewed probe cells) supplied as parameters.
+``build_fords_navigation_contract`` preserves the exact historical Fords
+behavior and output.
 
 This module does not generate a Godot navmesh.  It attests the exact cooked
 SAGE passability/start/water facts, records exact Men roster collision and
@@ -27,6 +34,12 @@ MAX_JSON_BYTES = 16 * 1024 * 1024
 MAX_INI_BYTES = 8 * 1024 * 1024
 EXPECTED_MAP_ID = "bfme2.map.fords-of-isen-ii"
 REQUIRED_FORD_NAMES = ("ford1", "ford2", "ford3")
+# Human-reviewed source-passability probe cells, per map.  Fords of Isen II
+# carries the one reviewed ford2 corridor cell; other maps start with none.
+REVIEWED_PASSABILITY_CELLS: tuple[tuple[tuple[int, int], str], ...] = (
+    ((208, 142), "passability-reviewed-ford2-cell"),
+)
+_MAP_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:\.[a-z0-9-]+)+$")
 
 _UNIT_SPECS = (
     (
@@ -488,9 +501,12 @@ def _component_contract(
             }
         )
     same_component = (
-        len(start_rows) == 2
+        len(start_rows) >= 2
         and start_rows[0]["componentId"] is not None
-        and start_rows[0]["componentId"] == start_rows[1]["componentId"]
+        and all(
+            row["componentId"] == start_rows[0]["componentId"]
+            for row in start_rows[1:]
+        )
     )
     return {
         "componentCount": len(component_sizes),
@@ -547,6 +563,7 @@ def _ford_contract(
     water: Mapping[str, Any],
     payload: bytes,
     grid: Mapping[str, Any],
+    required_names: Sequence[str] = REQUIRED_FORD_NAMES,
 ) -> list[dict[str, Any]]:
     if water.get("schema") != "openbfme.sage-water":
         raise ValueError("unsupported water schema")
@@ -554,14 +571,14 @@ def _ford_contract(
     if not isinstance(rivers, list):
         raise ValueError("water document has invalid rivers")
     by_name = {str(row.get("name")): row for row in rivers if isinstance(row, dict)}
-    if any(name not in by_name for name in REQUIRED_FORD_NAMES):
+    if any(name not in by_name for name in required_names):
         raise ValueError("water document is missing a required named ford")
     width = int(grid["width"])
     height = int(grid["height"])
     stride = int(grid["rowStrideBytes"])
     scale = float(grid["horizontalScale"])
     result: list[dict[str, Any]] = []
-    for name in REQUIRED_FORD_NAMES:
+    for name in required_names:
         source = by_name[name]
         sections = source.get("crossSections")
         if not isinstance(sections, list) or len(sections) < 2:
@@ -720,6 +737,7 @@ def _test_vectors(
     grid: Mapping[str, Any],
     starts: Sequence[Mapping[str, Any]],
     fords: Sequence[Mapping[str, Any]],
+    reviewed_cells: Sequence[tuple[tuple[int, int], str]] = REVIEWED_PASSABILITY_CELLS,
 ) -> list[dict[str, Any]]:
     stride = int(grid["rowStrideBytes"])
     vectors: list[dict[str, Any]] = []
@@ -733,15 +751,17 @@ def _test_vectors(
                 "kind": "exact-source-passability-cell",
             }
         )
-    reviewed_cell = (208, 142)
-    vectors.append(
-        {
-            "expectedImpassable": _cell_is_impassable(payload, stride, *reviewed_cell),
-            "gridCell": list(reviewed_cell),
-            "id": "passability-reviewed-ford2-cell",
-            "kind": "exact-source-passability-cell",
-        }
-    )
+    for reviewed_cell, vector_id in reviewed_cells:
+        vectors.append(
+            {
+                "expectedImpassable": _cell_is_impassable(
+                    payload, stride, *reviewed_cell
+                ),
+                "gridCell": list(reviewed_cell),
+                "id": vector_id,
+                "kind": "exact-source-passability-cell",
+            }
+        )
     for ford in fords:
         probes = ford["midpointPassabilityProbes"]
         middle = probes[(len(probes) - 1) // 2]
@@ -764,8 +784,44 @@ def build_fords_navigation_contract(
     *,
     runtime_source: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Build a deterministic evidence contract without inventing nav semantics."""
+    """Build the Fords of Isen II contract (exact historical parameters)."""
 
+    return build_map_navigation_contract(
+        map_directory,
+        effective_assets_root,
+        expected_map_id=EXPECTED_MAP_ID,
+        required_crossing_names=REQUIRED_FORD_NAMES,
+        expected_player_start_count=2,
+        reviewed_passability_cells=REVIEWED_PASSABILITY_CELLS,
+        runtime_source=runtime_source,
+    )
+
+
+def build_map_navigation_contract(
+    map_directory: Path | str,
+    effective_assets_root: Path | str,
+    *,
+    expected_map_id: str,
+    required_crossing_names: Sequence[str] = (),
+    expected_player_start_count: int | None = None,
+    reviewed_passability_cells: Sequence[tuple[tuple[int, int], str]] = (),
+    runtime_source: Path | str | None = None,
+) -> dict[str, Any]:
+    """Build a deterministic evidence contract without inventing nav semantics.
+
+    The contract logic is map-agnostic: connectivity, starts, water crossings,
+    and roster evidence derive entirely from the cooked map documents and the
+    retail INI tree.  Per-map facts that cannot be derived — the map identity,
+    which named river crossings the authored map requires, how many player
+    starts it must declare, and any human-reviewed passability probe cells —
+    are explicit parameters rather than module constants.
+    """
+
+    if not isinstance(expected_map_id, str) or not _MAP_ID_PATTERN.match(
+        expected_map_id
+    ):
+        raise ValueError(f"invalid map id: {expected_map_id!r}")
+    map_slug = expected_map_id.rsplit(".", 1)[-1]
     map_root = Path(map_directory).expanduser().resolve()
     effective_root = Path(effective_assets_root).expanduser().resolve()
     if not map_root.is_dir():
@@ -781,8 +837,8 @@ def build_fords_navigation_contract(
     waypoints = documents["waypoints.json"]
     if map_document.get("schema") != "openbfme.map":
         raise ValueError("unsupported map schema")
-    if map_document.get("id") != EXPECTED_MAP_ID:
-        raise ValueError(f"expected {EXPECTED_MAP_ID}, got {map_document.get('id')!r}")
+    if map_document.get("id") != expected_map_id:
+        raise ValueError(f"expected {expected_map_id}, got {map_document.get('id')!r}")
     if terrain.get("schema") != "openbfme.sage-terrain":
         raise ValueError("unsupported terrain schema")
 
@@ -790,11 +846,18 @@ def build_fords_navigation_contract(
     height = terrain["height"]
     assert isinstance(height, dict)
     starts = _start_contract(waypoints, float(grid["horizontalScale"]))
-    if len(starts) != 2:
+    if expected_player_start_count is not None:
+        if len(starts) != expected_player_start_count:
+            raise ValueError(
+                f"navigation contract requires {expected_player_start_count} "
+                f"player starts, got {len(starts)}"
+            )
+    elif len(starts) < 2:
         raise ValueError(
-            f"Fords contract requires two player starts, got {len(starts)}"
+            f"multiplayer navigation contract requires at least two player "
+            f"starts, got {len(starts)}"
         )
-    fords = _ford_contract(water, payload, grid)
+    fords = _ford_contract(water, payload, grid, required_crossing_names)
     components = _component_contract(payload, grid, starts)
     roster, ini_sources = _roster_contract(effective_root)
 
@@ -806,18 +869,18 @@ def build_fords_navigation_contract(
         raise ValueError("terrain buildability evidence is missing")
 
     map_sources = [
-        _file_evidence(map_root / name, f"maps/fords-of-isen-ii/{name}")
+        _file_evidence(map_root / name, f"maps/{map_slug}/{name}")
         for name in document_names
     ]
     map_sources.extend(
         [
             _file_evidence(
                 map_root / str(height["heightmap"]["path"]),
-                "maps/fords-of-isen-ii/heightmap.r16",
+                f"maps/{map_slug}/heightmap.r16",
             ),
             _file_evidence(
                 map_root / str(grid["path"]),
-                "maps/fords-of-isen-ii/impassability.bit",
+                f"maps/{map_slug}/impassability.bit",
             ),
         ]
     )
@@ -829,7 +892,7 @@ def build_fords_navigation_contract(
     contract: dict[str, Any] = {
         "schema": SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
-        "mapId": EXPECTED_MAP_ID,
+        "mapId": expected_map_id,
         "sourceEvidence": {
             "cookedMapFiles": map_sources,
             "mapSourceBinaryPackaged": map_document.get("sourceBinaryPackaged"),
@@ -880,7 +943,9 @@ def build_fords_navigation_contract(
             "parityReady": False,
         },
         "currentRuntimeObservation": _runtime_observation(runtime_path),
-        "behavioralTestVectors": _test_vectors(payload, grid, starts, fords),
+        "behavioralTestVectors": _test_vectors(
+            payload, grid, starts, fords, reviewed_passability_cells
+        ),
         "blockers": [
             {
                 "id": "source-buildability-grid-absent",
@@ -943,19 +1008,48 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--effective-assets", type=Path, required=True)
     parser.add_argument("--runtime-source", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--map-id",
+        default=EXPECTED_MAP_ID,
+        help="cooked map id (default: the Fords of Isen II contract)",
+    )
+    parser.add_argument(
+        "--expected-player-starts",
+        type=int,
+        default=None,
+        help="exact required player-start count (default: 2 for Fords, "
+        "otherwise at-least-two)",
+    )
     return parser
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    contract = build_fords_navigation_contract(
-        args.map_dir,
-        args.effective_assets,
-        runtime_source=args.runtime_source,
-    )
+    if args.map_id == EXPECTED_MAP_ID:
+        contract = build_map_navigation_contract(
+            args.map_dir,
+            args.effective_assets,
+            expected_map_id=EXPECTED_MAP_ID,
+            required_crossing_names=REQUIRED_FORD_NAMES,
+            expected_player_start_count=(
+                2
+                if args.expected_player_starts is None
+                else args.expected_player_starts
+            ),
+            reviewed_passability_cells=REVIEWED_PASSABILITY_CELLS,
+            runtime_source=args.runtime_source,
+        )
+    else:
+        contract = build_map_navigation_contract(
+            args.map_dir,
+            args.effective_assets,
+            expected_map_id=args.map_id,
+            expected_player_start_count=args.expected_player_starts,
+            runtime_source=args.runtime_source,
+        )
     write_json_atomic(args.output, contract)
     print(
-        "Fords navigation contract: "
+        f"{contract['mapId']} navigation contract: "
         f"{contract['summary']['impassableCount']} impassable cells, "
         f"{contract['summary']['namedFordCount']} named fords, "
         f"{contract['summary']['blockerCount']} explicit blockers; "

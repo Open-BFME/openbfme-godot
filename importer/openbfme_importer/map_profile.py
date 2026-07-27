@@ -1,10 +1,16 @@
-"""Generate the exact private BFME2 1.06 five-map conversion profile."""
+"""Generate exact private BFME2 1.06 map conversion profiles.
+
+``build_map_profile`` composes a deterministic conversion profile for any
+sequence of retail map targets; ``build_five_map_profile`` is the historical
+five-map caller and produces exactly its previous output.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any
+import re
+from typing import Any, Sequence
 
 from .catalog import CatalogEntry, InstallCatalog
 from .sage_map import MAX_SOURCE_BYTES, ParsedSageMap, parse_sage_map_bytes
@@ -18,10 +24,16 @@ TERRAIN_INI_PATH = "data/ini/terrain.ini"
 
 
 @dataclass(frozen=True, slots=True)
-class FiveMapTarget:
+class MapTarget:
     slug: str
     display_name: str
     virtual_path: str
+
+
+# Historical name for the five-map targets; the shape is not five-map-specific.
+FiveMapTarget = MapTarget
+
+_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 FIVE_MAP_TARGETS = (
@@ -95,7 +107,58 @@ def _expected(parsed: ParsedSageMap) -> dict[str, Any]:
 
 
 def build_five_map_profile(catalog: InstallCatalog) -> dict[str, Any]:
-    """Return a deterministic profile generated only from exact retail facts."""
+    """Return the historical five-map profile (exact previous output)."""
+
+    return build_map_profile(
+        catalog,
+        FIVE_MAP_TARGETS,
+        profile_id="bfme2-five-maps-106-generated",
+        title="BFME II 1.06 five-map private generated pack",
+        pack_id="bfme2-five-maps-106-private",
+        priority=904,
+        terrain_materials_label="five-maps",
+    )
+
+
+def build_map_profile(
+    catalog: InstallCatalog,
+    targets: Sequence[MapTarget],
+    *,
+    profile_id: str,
+    title: str,
+    pack_id: str,
+    version: str = "1.06-generated-v0",
+    priority: int,
+    terrain_materials_label: str,
+    entry_slug: str | None = None,
+) -> dict[str, Any]:
+    """Return a deterministic profile generated only from exact retail facts.
+
+    ``targets`` may name any retail terrain maps; every target must resolve
+    its exact map source, ``map.ini``, art, and preview companions, and every
+    terrain symbol must resolve through ``terrain.ini`` to an existing texture
+    leaf, or the profile fails closed.
+    """
+
+    if not targets:
+        raise ValueError("map profile requires at least one map target")
+    slugs = [target.slug for target in targets]
+    if len(set(slugs)) != len(slugs):
+        raise ValueError("map profile targets declare duplicate slugs")
+    for slug in slugs:
+        if not _SLUG_PATTERN.match(slug):
+            raise ValueError(f"invalid map target slug: {slug!r}")
+    if not _SLUG_PATTERN.match(terrain_materials_label):
+        raise ValueError(
+            f"invalid terrain materials label: {terrain_materials_label!r}"
+        )
+    resolved_entry_slug = slugs[0] if entry_slug is None else entry_slug
+    if resolved_entry_slug not in set(slugs):
+        raise ValueError(f"entry slug is not a target: {resolved_entry_slug!r}")
+    terrain_materials_output = f"assets/terrain/{terrain_materials_label}"
+    terrain_materials_document = (
+        f"{terrain_materials_output}/terrain-materials.json"
+    )
 
     terrain_entry, terrain_source = _read(
         catalog, TERRAIN_INI_PATH, "terrain definition source", MAX_TERRAIN_INI_BYTES
@@ -107,7 +170,7 @@ def build_five_map_profile(catalog: InstallCatalog) -> dict[str, Any]:
     global_terrain_paths: list[str] = [terrain_entry.name]
     global_texture_keys: set[str] = set()
 
-    for target in FIVE_MAP_TARGETS:
+    for target in targets:
         map_entry, map_source = _read(
             catalog, target.virtual_path, f"{target.display_name} map", MAX_SOURCE_BYTES
         )
@@ -161,7 +224,7 @@ def build_five_map_profile(catalog: InstallCatalog) -> dict[str, Any]:
                             "displayName": target.display_name,
                             "preview": preview_output,
                             "art": art_output,
-                            "terrainMaterials": "assets/terrain/five-maps/terrain-materials.json",
+                            "terrainMaterials": terrain_materials_document,
                         },
                         "expected": _expected(parsed),
                     },
@@ -201,7 +264,7 @@ def build_five_map_profile(catalog: InstallCatalog) -> dict[str, Any]:
                 "map": f"{output_root}/map.json",
                 "preview": preview_output,
                 "art": art_output,
-                "terrainMaterials": "assets/terrain/five-maps/terrain-materials.json",
+                "terrainMaterials": terrain_materials_document,
                 "playerCount": len(parsed.player_starts),
                 "routingGraphStatus": (
                     "empty-no-authored-navmesh"
@@ -214,11 +277,11 @@ def build_five_map_profile(catalog: InstallCatalog) -> dict[str, Any]:
 
     resources.append(
         {
-            "id": "five-maps-terrain-materials",
+            "id": f"{terrain_materials_label}-terrain-materials",
             "kind": "texture",
             "converter": "sage-terrain-materials",
             "patterns": global_terrain_paths,
-            "output": "assets/terrain/five-maps",
+            "output": terrain_materials_output,
             "limit": len(global_terrain_paths),
             "expected_count": len(global_terrain_paths),
             "options": {"symbols": global_symbols},
@@ -227,14 +290,14 @@ def build_five_map_profile(catalog: InstallCatalog) -> dict[str, Any]:
 
     return {
         "format": 1,
-        "id": "bfme2-five-maps-106-generated",
-        "title": "BFME II 1.06 five-map private generated pack",
+        "id": profile_id,
+        "title": title,
         "pack": {
-            "id": "bfme2-five-maps-106-private",
-            "version": "1.06-generated-v0",
+            "id": pack_id,
+            "version": version,
             "schema": "openbfme.content-pack",
             "schemaVersion": 0,
-            "priority": 904,
+            "priority": priority,
             "vertical_slice_complete": False,
             "capability_maturity": "source-map-setup-terrain-cook-runtime-navigation-pending",
             "dataPolicy": {
@@ -242,7 +305,7 @@ def build_five_map_profile(catalog: InstallCatalog) -> dict[str, Any]:
                 "redistributable": False,
             },
             "files": {
-                "entryMap": "maps/fords-of-isen-ii/map.json",
+                "entryMap": f"maps/{resolved_entry_slug}/map.json",
                 "mapCatalog": "data/maps.json",
             },
         },
