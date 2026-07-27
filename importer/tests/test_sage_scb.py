@@ -79,6 +79,29 @@ def _indices() -> dict[str, int]:
     return {name: count - index for index, name in enumerate(_NAMES)}
 
 
+# Nested-record revisions.  "modern" is what retail .map/.scb files carry;
+# "legacy" is what retail's shipped script libraries carry.  Every fixture in
+# this module is repository-authored: no retail bytes are committed.
+_MODERN_VERSIONS = {
+    "ScriptGroup": 3,
+    "Script": 4,
+    "Condition": 6,
+    "ScriptAction": 3,
+    "ScriptActionFalse": 3,
+}
+_LEGACY_VERSIONS = {
+    "ScriptGroup": 2,
+    "Script": 2,
+    "Condition": 4,
+    "ScriptAction": 2,
+    "ScriptActionFalse": 2,
+}
+
+
+def _versions(overrides: dict[str, int] | None = None) -> dict[str, int]:
+    return {**_MODERN_VERSIONS, **(overrides or {})}
+
+
 def _u24(value: int) -> bytes:
     return value.to_bytes(3, "little")
 
@@ -100,39 +123,80 @@ def _argument(text: str) -> bytes:
     return _u32(10) + _i32(7) + _f32(1.25) + _ascii(text)
 
 
-def _condition(indices: dict[str, int]) -> bytes:
+def _condition(
+    indices: dict[str, int],
+    versions: dict[str, int] | None = None,
+    *,
+    enabled: int = 1,
+    inverted: int = 0,
+    extra: bytes = b"",
+) -> bytes:
+    version = (versions or _MODERN_VERSIONS)["Condition"]
+    # Condition v4 carries no trailing flags; v5 and v6 carry two bool32.
+    trailing = b"" if version == 4 else _u32(enabled) + _u32(inverted)
     payload = b"".join(
         (
             _u32(101),
             _property_key("internalKey", indices),
             _u32(1),
             _argument("condition-argument"),
-            _u32(1),
-            _u32(0),
+            trailing,
+            extra,
         )
     )
-    return _record("Condition", 6, payload, indices)
+    return _record("Condition", version, payload, indices)
 
 
-def _action(name: str, content_type: int, text: str, indices: dict[str, int]) -> bytes:
+def _action(
+    name: str,
+    content_type: int,
+    text: str,
+    indices: dict[str, int],
+    versions: dict[str, int] | None = None,
+    *,
+    enabled: int = 1,
+) -> bytes:
+    version = (versions or _MODERN_VERSIONS)[name]
+    # ScriptAction/ScriptActionFalse v2 carry no trailing flags; v3 carries one.
+    trailing = b"" if version == 2 else _u32(enabled)
     payload = b"".join(
         (
             _u32(content_type),
             _property_key("internalKey", indices),
             _u32(1),
             _argument(text),
-            _u32(1),
+            trailing,
         )
     )
-    return _record(name, 3, payload, indices)
+    return _record(name, version, payload, indices)
 
 
-def _script(name: str, indices: dict[str, int]) -> bytes:
+def _script(
+    name: str,
+    indices: dict[str, int],
+    versions: dict[str, int] | None = None,
+) -> bytes:
+    versions = versions or _MODERN_VERSIONS
     nested = b"".join(
         (
-            _record("OrCondition", 1, _condition(indices), indices),
-            _action("ScriptAction", 201, "true-argument", indices),
-            _action("ScriptActionFalse", 202, "false-argument", indices),
+            _record("OrCondition", 1, _condition(indices, versions), indices),
+            _action("ScriptAction", 201, "true-argument", indices, versions),
+            _action("ScriptActionFalse", 202, "false-argument", indices, versions),
+        )
+    )
+    # Script v2 stops after evaluationInterval; v4 continues with the
+    # sequential/loop/scope tail.
+    tail = (
+        b""
+        if versions["Script"] == 2
+        else b"".join(
+            (
+                bytes((1, 0)),
+                _i32(2),
+                b"\x00",
+                _ascii("fixture-team"),
+                _ascii("ALL"),
+            )
         )
     )
     payload = b"".join(
@@ -143,25 +207,26 @@ def _script(name: str, indices: dict[str, int]) -> bytes:
             _ascii("fixture actions"),
             bytes((1, 0, 1, 1, 1, 0)),
             _u32(3),
-            bytes((1, 0)),
-            _i32(2),
-            b"\x00",
-            _ascii("fixture-team"),
-            _ascii("ALL"),
+            tail,
             nested,
         )
     )
-    return _record("Script", 4, payload, indices)
+    return _record("Script", versions["Script"], payload, indices)
 
 
-def _script_list(indices: dict[str, int]) -> bytes:
+def _script_list(
+    indices: dict[str, int], versions: dict[str, int] | None = None
+) -> bytes:
+    versions = versions or _MODERN_VERSIONS
     group_payload = (
-        _ascii("fixture-group") + b"\x01\x00" + _script("duplicate-script", indices)
+        _ascii("fixture-group")
+        + b"\x01\x00"
+        + _script("duplicate-script", indices, versions)
     )
     payload = b"".join(
         (
-            _record("ScriptGroup", 3, group_payload, indices),
-            _script("duplicate-script", indices),
+            _record("ScriptGroup", versions["ScriptGroup"], group_payload, indices),
+            _script("duplicate-script", indices, versions),
         )
     )
     return _record("ScriptList", 1, payload, indices)
@@ -182,6 +247,8 @@ def _fixture(
     *,
     version_overrides: dict[str, int] | None = None,
     camera_animation_count: int = 0,
+    versions: dict[str, int] | None = None,
+    script_list: bytes | None = None,
 ) -> bytes:
     indices = _indices()
     overrides = version_overrides or {}
@@ -205,7 +272,10 @@ def _fixture(
     )
     chunks = (
         ("ScriptImportSize", _u32(11) + _u32(22)),
-        ("PlayerScriptsList", _script_list(indices)),
+        (
+            "PlayerScriptsList",
+            _script_list(indices, versions) if script_list is None else script_list,
+        ),
         ("NamedCameras", named_camera),
         ("CameraAnimationList", _u32(camera_animation_count)),
         (
@@ -251,6 +321,17 @@ def _chunk(native: dict[str, object], name: str) -> dict[str, object]:
     chunks = native["chunks"]
     assert isinstance(chunks, list)
     return next(item for item in chunks if item["name"] == name)
+
+
+def _direct_script(native: dict[str, object]) -> dict[str, object]:
+    """The ungrouped Script record of the fixture's single ScriptList."""
+
+    script_list = _chunk(native, "PlayerScriptsList")["value"]["records"][0]["value"]
+    return script_list["records"][1]["value"]
+
+
+def _first_condition(script: dict[str, object]) -> dict[str, object]:
+    return script["records"][0]["value"]["records"][0]["value"]
 
 
 def test_converts_ordered_duplicates_and_exactly_backtests() -> None:
@@ -407,3 +488,250 @@ def test_native_schema_rejects_extra_fields() -> None:
         reconstruct_sage_scb_body(native)
 
     assert exc_info.value.code == "invalid-native-schema"
+
+
+# --------------------------------------------------------------------------
+# Older record revisions (the layouts retail's shipped script libraries use).
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "versions",
+    [
+        pytest.param(_LEGACY_VERSIONS, id="all-legacy"),
+        pytest.param(_versions({"Script": 2}), id="script-v2"),
+        pytest.param(_versions({"ScriptGroup": 2}), id="scriptgroup-v2"),
+        pytest.param(_versions({"Condition": 4}), id="condition-v4"),
+        pytest.param(_versions({"Condition": 5}), id="condition-v5"),
+        pytest.param(_versions({"ScriptAction": 2}), id="scriptaction-v2"),
+        pytest.param(_versions({"ScriptActionFalse": 2}), id="scriptactionfalse-v2"),
+    ],
+)
+def test_older_record_versions_consume_their_payload_exactly(
+    versions: dict[str, int],
+) -> None:
+    """Each older revision decodes and reconstructs its bytes exactly.
+
+    A layout that read too few bytes would leave unexplained payload and be
+    rejected by the cursor; a layout that read too many would either overrun
+    or reconstruct different bytes.  The byte-exact reconstruction inside
+    ``convert_sage_scb_bytes`` plus the independent backtest below therefore
+    prove exact consumption, not merely "it did not crash".
+    """
+
+    source = _fixture(versions=versions)
+
+    native = convert_sage_scb_bytes(source)
+    backtest = backtest_sage_scb_native(source, native)
+
+    assert reconstruct_sage_scb_body(native) == source
+    assert backtest.to_dict()["exactWireMatch"] is True
+    assert backtest.decoded_body_sha256 == hashlib.sha256(source).hexdigest()
+
+    script = _direct_script(native)
+    assert script["records"][0]["value"]["records"][0]["version"] == (
+        versions["Condition"]
+    )
+    assert script["records"][1]["version"] == versions["ScriptAction"]
+    assert script["records"][2]["version"] == versions["ScriptActionFalse"]
+
+
+def test_older_versions_expose_the_same_native_shape_as_the_newest() -> None:
+    """Absent fields become documented defaults, never missing keys."""
+
+    modern = _direct_script(convert_sage_scb_bytes(_fixture()))
+    legacy = _direct_script(
+        convert_sage_scb_bytes(_fixture(versions=_LEGACY_VERSIONS))
+    )
+
+    assert set(legacy) == set(modern)
+    assert set(_first_condition(legacy)) == set(_first_condition(modern))
+    assert set(legacy["records"][1]["value"]) == set(modern["records"][1]["value"])
+
+    # Script v2 has no bytes for the sequential/loop/scope tail, so these are
+    # fixed by construction rather than assumed.
+    assert legacy["actionsFireSequentially"] is False
+    assert legacy["loopActions"] is False
+    assert legacy["loopCount"] == 0
+    assert legacy["sequentialTargetType"] == 0
+    assert legacy["sequentialTargetName"] == ""
+    assert legacy["scope"] == "ALL"
+    # Fields that do exist in v2 are still read from the wire.
+    assert legacy["evaluationInterval"] == 3
+    assert legacy["isActive"] is True
+
+    # Condition v4 has no enabled/inverted dwords; ScriptAction v2 has no
+    # enabled dword.  A record that cannot be switched off is enabled, and a
+    # record that cannot be negated is not inverted.
+    assert _first_condition(legacy)["enabled"] is True
+    assert _first_condition(legacy)["inverted"] is False
+    assert legacy["records"][1]["value"]["enabled"] is True
+    assert legacy["records"][2]["value"]["enabled"] is True
+
+
+def test_condition_v5_carries_both_trailing_flags() -> None:
+    """v5 has the same two bool32 as v6, so `inverted` survives the wire."""
+
+    indices = _indices()
+    versions = _versions({"Condition": 5})
+    script_bytes = _record(
+        "Script",
+        4,
+        b"".join(
+            (
+                _ascii("v5-script"),
+                _ascii(""),
+                _ascii(""),
+                _ascii(""),
+                bytes((1, 0, 1, 1, 1, 0)),
+                _u32(0),
+                bytes((0, 0)),
+                _i32(0),
+                b"\x00",
+                _ascii(""),
+                _ascii("ALL"),
+                _record(
+                    "OrCondition",
+                    1,
+                    _condition(indices, versions, enabled=0, inverted=1),
+                    indices,
+                ),
+            )
+        ),
+        indices,
+    )
+    source = _fixture(
+        script_list=_record("ScriptList", 1, script_bytes, indices),
+    )
+
+    native = convert_sage_scb_bytes(source)
+    backtest_sage_scb_native(source, native)
+
+    script_list = _chunk(native, "PlayerScriptsList")["value"]["records"][0]["value"]
+    condition = _first_condition(script_list["records"][0]["value"])
+    assert condition["enabled"] is False
+    assert condition["inverted"] is True
+    assert reconstruct_sage_scb_body(native) == source
+
+
+@pytest.mark.parametrize(
+    "versions",
+    [
+        pytest.param(_versions({"Script": 1}), id="script-v1"),
+        pytest.param(_versions({"Script": 3}), id="script-v3"),
+        pytest.param(_versions({"Script": 5}), id="script-v5"),
+        pytest.param(_versions({"ScriptGroup": 1}), id="scriptgroup-v1"),
+        pytest.param(_versions({"ScriptGroup": 4}), id="scriptgroup-v4"),
+        pytest.param(_versions({"Condition": 3}), id="condition-v3"),
+        pytest.param(_versions({"Condition": 7}), id="condition-v7"),
+        pytest.param(_versions({"ScriptAction": 1}), id="scriptaction-v1"),
+        pytest.param(_versions({"ScriptAction": 4}), id="scriptaction-v4"),
+        pytest.param(_versions({"ScriptActionFalse": 4}), id="scriptactionfalse-v4"),
+    ],
+)
+def test_unknown_nested_record_version_still_fails_loudly(
+    versions: dict[str, int],
+) -> None:
+    with pytest.raises(SageScbError, match="unsupported-version") as exc_info:
+        convert_sage_scb_bytes(_fixture(versions=versions))
+
+    assert exc_info.value.code == "unsupported-version"
+
+
+def test_unexplained_bytes_in_an_older_condition_are_rejected() -> None:
+    """Condition v4 declares zero trailing flags; extra bytes are not ignored."""
+
+    indices = _indices()
+    versions = _versions({"Condition": 4})
+    script_bytes = _record(
+        "Script",
+        4,
+        b"".join(
+            (
+                _ascii("padded-script"),
+                _ascii(""),
+                _ascii(""),
+                _ascii(""),
+                bytes((1, 0, 1, 1, 1, 0)),
+                _u32(0),
+                bytes((0, 0)),
+                _i32(0),
+                b"\x00",
+                _ascii(""),
+                _ascii("ALL"),
+                _record(
+                    "OrCondition",
+                    1,
+                    _condition(indices, versions, extra=_u32(0)),
+                    indices,
+                ),
+            )
+        ),
+        indices,
+    )
+    source = _fixture(script_list=_record("ScriptList", 1, script_bytes, indices))
+
+    with pytest.raises(SageScbError, match="malformed-wire") as exc_info:
+        convert_sage_scb_bytes(source)
+
+    assert exc_info.value.code == "malformed-wire"
+
+
+def test_older_condition_cannot_reconstruct_a_nondefault_flag() -> None:
+    """A v4 Condition has no byte for `inverted`; refuse rather than drop it."""
+
+    source = _fixture(versions=_versions({"Condition": 4}))
+    native = convert_sage_scb_bytes(source)
+    tampered = deepcopy(native)
+    _first_condition(_direct_script(tampered))["inverted"] = True
+    tampered["semanticSha256"] = canonical_sage_scb_semantic_sha256(tampered)
+
+    with pytest.raises(SageScbError, match="invalid-native-schema") as exc_info:
+        reconstruct_sage_scb_body(tampered)
+
+    assert exc_info.value.code == "invalid-native-schema"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("actionsFireSequentially", True),
+        ("loopActions", True),
+        ("loopCount", 5),
+        ("sequentialTargetType", 1),
+        ("sequentialTargetName", "someone"),
+        ("scope", "Planning"),
+    ],
+)
+def test_older_script_cannot_reconstruct_a_tail_field(
+    field: str, value: object
+) -> None:
+    """Script v2 has no tail bytes; a non-default tail value must not vanish."""
+
+    source = _fixture(versions=_versions({"Script": 2}))
+    native = convert_sage_scb_bytes(source)
+    tampered = deepcopy(native)
+    _direct_script(tampered)[field] = value
+    tampered["semanticSha256"] = canonical_sage_scb_semantic_sha256(tampered)
+
+    with pytest.raises(SageScbError, match="invalid-native-schema") as exc_info:
+        reconstruct_sage_scb_body(tampered)
+
+    assert exc_info.value.code == "invalid-native-schema"
+
+
+def test_diagnostic_reports_the_older_record_versions() -> None:
+    report = diagnose_sage_scb_sources([_fixture(versions=_LEGACY_VERSIONS)])
+
+    assert report["acceptedCount"] == 1
+    assert report["rejectedCount"] == 0
+    observed = {
+        (row["name"], row["version"]) for row in report["recordVersions"]
+    }
+    assert {
+        ("Script", 2),
+        ("ScriptGroup", 2),
+        ("Condition", 4),
+        ("ScriptAction", 2),
+        ("ScriptActionFalse", 2),
+    } <= observed

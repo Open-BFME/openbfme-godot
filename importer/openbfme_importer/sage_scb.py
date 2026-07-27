@@ -1,10 +1,12 @@
 """Fail-closed BFME script-container conversion and exact native backtesting.
 
 The supported wire layouts are the layouts independently observed in the
-standalone Rise of the Witch-king retail corpus.  Conversion preserves source
-order, repeated records, repeated player/team names, every script argument,
-and every property occurrence.  Unsupported non-empty map/camera layouts are
-rejected instead of being silently discarded.
+standalone Rise of the Witch-king retail corpus, plus the older record
+revisions that retail's shipped script ``libraries`` are authored in (see
+``_NESTED_VERSIONS`` and the layout tables beside it).  Conversion preserves
+source order, repeated records, repeated player/team names, every script
+argument, and every property occurrence.  Unsupported non-empty map/camera
+layouts are rejected instead of being silently discarded.
 
 The native representation is JSON-safe.  Its independent writer reconstructs
 the decoded ``CkMp`` body byte-for-byte; :func:`backtest_sage_scb_native` then
@@ -66,15 +68,69 @@ _TOP_LEVEL_VERSIONS = {
     "WaypointsList": frozenset({1}),
 }
 _REQUIRED_TOP_LEVEL_CHUNKS = frozenset(_TOP_LEVEL_VERSIONS)
+# Record revisions this converter admits.  ``ScriptGroup`` v2, ``Script`` v2,
+# ``Condition`` v4/v5 and ``ScriptAction``/``ScriptActionFalse`` v2 are the
+# revisions retail's shipped script ``libraries`` are authored in; the higher
+# revisions are what retail's own .map/.scb files use.  Every admitted layout
+# below was measured on the retail corpus by exact payload consumption, never
+# inferred: the record framing (asset-name index, version, payload length) is
+# version-independent, so each record's byte boundaries are known before any
+# field is interpreted, and a candidate layout is accepted only when it
+# consumes its declared payload precisely.
 _NESTED_VERSIONS = {
     "ScriptList": frozenset({1}),
-    "ScriptGroup": frozenset({3}),
-    "Script": frozenset({4}),
+    "ScriptGroup": frozenset({2, 3}),
+    "Script": frozenset({2, 4}),
     "OrCondition": frozenset({1}),
-    "Condition": frozenset({6}),
-    "ScriptAction": frozenset({3}),
-    "ScriptActionFalse": frozenset({3}),
+    "Condition": frozenset({4, 5, 6}),
+    "ScriptAction": frozenset({2, 3}),
+    "ScriptActionFalse": frozenset({2, 3}),
 }
+
+# Trailing 32-bit flags carried by ``Condition``/``ScriptAction``/
+# ``ScriptActionFalse``, in wire order, keyed by record version.  Measured as
+# ``payload length - bytes consumed by the version-independent prefix``
+# (contentType, internal-name key, argument vector); every trailing dword in
+# the corpus is 0 or 1, which ``_bool32`` re-checks per record.
+_CONDITION_TRAILING_FLAGS: dict[int, tuple[str, ...]] = {
+    4: (),
+    5: ("enabled", "inverted"),
+    6: ("enabled", "inverted"),
+}
+_ACTION_TRAILING_FLAGS: dict[int, tuple[str, ...]] = {
+    2: (),
+    3: ("enabled",),
+}
+
+# A flag the older wire does not carry is fixed *by construction*, not by
+# assumption: the record contains no byte that could express the other value.
+# A Condition v4 has no ``inverted`` dword, so it cannot be negated; a
+# Condition v4 / ScriptAction v2 has no ``enabled`` dword, so it cannot be
+# switched off.  The native record still carries the keys, so downstream
+# consumers see one stable shape across versions, and reconstruction refuses
+# any value other than the default for a version that cannot encode it.
+_SCRIPT_CONTENT_FLAG_DEFAULTS: dict[str, bool] = {"enabled": True, "inverted": False}
+
+# ``Script`` v2 ends at ``evaluationInterval``.  ``Script`` v4 continues with
+# the sequential/loop/scope tail.  ``ScriptGroup`` v2 and v3 share one field
+# set (ascii16 name, two bool8, then child records), so ScriptGroup needs no
+# per-version table.
+_SCRIPT_TAIL_VERSIONS = frozenset({4})
+
+# Defaults for the v4-only ``Script`` tail, again by construction: a v2 script
+# has no bytes for sequential firing, action looping, a sequential target or a
+# scope, so it fires all actions once, unbound to any target.  ``scope``
+# defaults to ``"ALL"`` -- the unrestricted scope, and the only value the
+# retail corpus ever writes in a v4 script.
+_SCRIPT_TAIL_DEFAULTS: dict[str, Any] = {
+    "actionsFireSequentially": False,
+    "loopActions": False,
+    "loopCount": 0,
+    "sequentialTargetType": 0,
+    "sequentialTargetName": "",
+    "scope": "ALL",
+}
+
 _PROPERTY_TYPES = frozenset(range(6))
 _SCRIPT_SCOPES = frozenset({"ALL", "Planning", "X"})
 _SEQUENTIAL_TARGET_TYPES = frozenset({0, 1})
@@ -240,6 +296,38 @@ def _parse_argument(cursor: _Cursor) -> dict[str, Any]:
     }
 
 
+def _content_flag_names(kind: str, version: int) -> tuple[str, ...]:
+    """Trailing flags this record version carries, in wire order.
+
+    Fails closed on an unknown version so that widening ``_NESTED_VERSIONS``
+    without also measuring a layout can never silently mis-parse.
+    """
+
+    table = _CONDITION_TRAILING_FLAGS if kind == "condition" else _ACTION_TRAILING_FLAGS
+    try:
+        return table[version]
+    except KeyError as exc:
+        raise SageScbError(
+            "unsupported-version", f"unsupported {kind} version {version}"
+        ) from exc
+
+
+def _content_flag_keys(kind: str) -> tuple[str, ...]:
+    """Flag keys every native record of this kind carries, in wire order."""
+
+    return ("enabled", "inverted") if kind == "condition" else ("enabled",)
+
+
+def _script_has_tail(version: int) -> bool:
+    """Whether this ``Script`` version carries the sequential/loop/scope tail."""
+
+    if version not in _NESTED_VERSIONS["Script"]:
+        raise SageScbError(
+            "unsupported-version", f"unsupported Script version {version}"
+        )
+    return version in _SCRIPT_TAIL_VERSIONS
+
+
 def _read_nested(
     cursor: _Cursor,
     names: Mapping[int, str],
@@ -269,14 +357,16 @@ def _parse_script_content(
             f"{kind} argument count exceeds {MAX_SCRIPT_ARGUMENTS}",
         )
     arguments = [_parse_argument(cursor) for _ in range(argument_count)]
+    present = _content_flag_names(kind, record.version)
+    read = {name: _bool32(cursor, f"{kind} {name}") for name in present}
     result: dict[str, Any] = {
         "contentType": content_type,
         "internalName": internal_name,
         "arguments": arguments,
-        "enabled": _bool32(cursor, f"{kind} enabled"),
     }
-    if kind == "condition":
-        result["inverted"] = _bool32(cursor, "condition inverted")
+    for name in _content_flag_keys(kind):
+        # Absent on the older wire: the documented, by-construction default.
+        result[name] = read.get(name, _SCRIPT_CONTENT_FLAG_DEFAULTS[name])
     cursor.finish()
     return result
 
@@ -336,22 +426,28 @@ def _parse_script(
         "activeInHard": cursor.bool8(),
         "isSubroutine": cursor.bool8(),
         "evaluationInterval": cursor.u32(),
-        "actionsFireSequentially": cursor.bool8(),
-        "loopActions": cursor.bool8(),
-        "loopCount": cursor.i32(),
     }
-    sequential_target_type = cursor.u8()
-    if sequential_target_type not in _SEQUENTIAL_TARGET_TYPES:
-        raise SageScbError(
-            "unsupported-sequential-target",
-            f"script target type is {sequential_target_type}",
-        )
-    result["sequentialTargetType"] = sequential_target_type
-    result["sequentialTargetName"] = cursor.ascii16()
-    scope = cursor.ascii16()
-    if scope not in _SCRIPT_SCOPES:
-        raise SageScbError("unsupported-script-scope", "script scope is unrecognized")
-    result["scope"] = scope
+    if _script_has_tail(record.version):
+        result["actionsFireSequentially"] = cursor.bool8()
+        result["loopActions"] = cursor.bool8()
+        result["loopCount"] = cursor.i32()
+        sequential_target_type = cursor.u8()
+        if sequential_target_type not in _SEQUENTIAL_TARGET_TYPES:
+            raise SageScbError(
+                "unsupported-sequential-target",
+                f"script target type is {sequential_target_type}",
+            )
+        result["sequentialTargetType"] = sequential_target_type
+        result["sequentialTargetName"] = cursor.ascii16()
+        scope = cursor.ascii16()
+        if scope not in _SCRIPT_SCOPES:
+            raise SageScbError(
+                "unsupported-script-scope", "script scope is unrecognized"
+            )
+        result["scope"] = scope
+    else:
+        # Absent on the older wire: the documented, by-construction defaults.
+        result.update(_SCRIPT_TAIL_DEFAULTS)
 
     records: list[dict[str, Any]] = []
     for child in _read_nested(cursor, names, label="Script"):
@@ -956,17 +1052,12 @@ def _pack_script_content(
     name_to_index: Mapping[str, int],
     *,
     kind: str,
+    version: int,
     label: str,
 ) -> bytes:
     item = _mapping(value, label=label)
-    expected = {
-        "contentType",
-        "internalName",
-        "arguments",
-        "enabled",
-    }
-    if kind == "condition":
-        expected.add("inverted")
+    expected = {"contentType", "internalName", "arguments"}
+    expected.update(_content_flag_keys(kind))
     _keys(item, frozenset(expected), label=label)
     arguments = _sequence(item["arguments"], label=f"{label}.arguments")
     if len(arguments) > MAX_SCRIPT_ARGUMENTS:
@@ -989,9 +1080,19 @@ def _pack_script_content(
     payload.extend(_u32(len(arguments)))
     for index, argument in enumerate(arguments):
         payload.extend(_pack_argument(argument, label=f"{label}.arguments[{index}]"))
-    payload.extend(_u32(_boolean(item["enabled"], label=f"{label}.enabled")))
-    if kind == "condition":
-        payload.extend(_u32(_boolean(item["inverted"], label=f"{label}.inverted")))
+    present = _content_flag_names(kind, version)
+    for name in _content_flag_keys(kind):
+        flag = _boolean(item[name], label=f"{label}.{name}")
+        if name in present:
+            payload.extend(_u32(flag))
+        elif flag != _SCRIPT_CONTENT_FLAG_DEFAULTS[name]:
+            # This version has no byte for the flag, so a non-default value
+            # could not be written back; refuse rather than silently drop it.
+            raise SageScbError(
+                "invalid-native-schema",
+                f"{label}.{name} must be "
+                f"{_SCRIPT_CONTENT_FLAG_DEFAULTS[name]} at {kind} version {version}",
+            )
     return bytes(payload)
 
 
@@ -1024,18 +1125,28 @@ def _pack_nested_record(
             data, name_to_index, label=f"{label}.value", depth=depth
         )
     elif name == "Script":
-        payload = _pack_script(data, name_to_index, label=f"{label}.value", depth=depth)
+        payload = _pack_script(
+            data, name_to_index, version=version, label=f"{label}.value", depth=depth
+        )
     elif name == "OrCondition":
         payload = _pack_or_condition(
             data, name_to_index, label=f"{label}.value", depth=depth
         )
     elif name == "Condition":
         payload = _pack_script_content(
-            data, name_to_index, kind="condition", label=f"{label}.value"
+            data,
+            name_to_index,
+            kind="condition",
+            version=version,
+            label=f"{label}.value",
         )
     elif name in ("ScriptAction", "ScriptActionFalse"):
         payload = _pack_script_content(
-            data, name_to_index, kind="action", label=f"{label}.value"
+            data,
+            name_to_index,
+            kind="action",
+            version=version,
+            label=f"{label}.value",
         )
     else:  # pragma: no cover - exhaustive
         raise AssertionError(name)
@@ -1123,6 +1234,7 @@ def _pack_script(
     value: object,
     name_to_index: Mapping[str, int],
     *,
+    version: int,
     label: str,
     depth: int,
 ) -> bytes:
@@ -1163,6 +1275,17 @@ def _pack_script(
     scope = _string(item["scope"], label=f"{label}.scope")
     if scope not in _SCRIPT_SCOPES:
         raise SageScbError("invalid-native-schema", f"{label}.scope is unsupported")
+    has_tail = _script_has_tail(version)
+    if not has_tail:
+        # This version has no bytes for the tail, so a non-default value could
+        # not be written back; refuse rather than silently drop it.
+        for key, default in _SCRIPT_TAIL_DEFAULTS.items():
+            actual = item[key]
+            if type(actual) is not type(default) or actual != default:
+                raise SageScbError(
+                    "invalid-native-schema",
+                    f"{label}.{key} must be {default!r} at Script version {version}",
+                )
     result = bytearray()
     for key in ("name", "comment", "conditionsComment", "actionsComment"):
         result.extend(_ascii16(item[key], label=f"{label}.{key}"))
@@ -1185,28 +1308,31 @@ def _pack_script(
             )
         )
     )
-    result.append(
-        _boolean(
-            item["actionsFireSequentially"],
-            label=f"{label}.actionsFireSequentially",
-        )
-    )
-    result.append(_boolean(item["loopActions"], label=f"{label}.loopActions"))
-    result.extend(
-        _i32(
-            _integer(
-                item["loopCount"],
-                label=f"{label}.loopCount",
-                minimum=-(2**31),
-                maximum=2**31 - 1,
+    if has_tail:
+        result.append(
+            _boolean(
+                item["actionsFireSequentially"],
+                label=f"{label}.actionsFireSequentially",
             )
         )
-    )
-    result.append(target_type)
-    result.extend(
-        _ascii16(item["sequentialTargetName"], label=f"{label}.sequentialTargetName")
-    )
-    result.extend(_ascii16(scope, label=f"{label}.scope"))
+        result.append(_boolean(item["loopActions"], label=f"{label}.loopActions"))
+        result.extend(
+            _i32(
+                _integer(
+                    item["loopCount"],
+                    label=f"{label}.loopCount",
+                    minimum=-(2**31),
+                    maximum=2**31 - 1,
+                )
+            )
+        )
+        result.append(target_type)
+        result.extend(
+            _ascii16(
+                item["sequentialTargetName"], label=f"{label}.sequentialTargetName"
+            )
+        )
+        result.extend(_ascii16(scope, label=f"{label}.scope"))
     result.extend(
         _pack_records(
             item["records"],
