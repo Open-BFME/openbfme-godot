@@ -477,6 +477,15 @@ def build_parser() -> argparse.ArgumentParser:
         "audit", help="verify every converted output against provenance hashes"
     )
     audit.add_argument("pack", type=Path)
+
+    describe = sub.add_parser(
+        "describe-pack",
+        help=(
+            "explain a pack's provenance in plain language: where it came "
+            "from, what produced it, what is in it, and what is not known"
+        ),
+    )
+    describe.add_argument("pack", type=Path)
     return parser
 
 
@@ -604,6 +613,16 @@ def main(argv: list[str] | None = None) -> int:
             value = audit_pack(args.pack)
             _render(value, args.json)
             return 0 if value["valid"] else 3
+
+        if args.command == "describe-pack":
+            from .pack_report import describe_pack, render_pack_report
+
+            report = describe_pack(args.pack)
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                print(render_pack_report(report))
+            return 0 if report["health"]["valid"] else 3
 
         if args.command == "visual-closure":
             assets_root = ensure_external_to_repo(
