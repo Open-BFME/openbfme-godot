@@ -58,3 +58,10 @@ KNOWN|0dce37e|The original AI scripts run but nothing registers them yet, so ene
 KNOWN|fa6fc3a|The AI can earn and spend power points in tests, but does not visibly use its spellbook in a match
 KNOWN|92917c4|Content now imports from Rise of the Witch-king, but the packs in this build predate that switch
 KNOWN|b95bee4|Creep lairs exist but no shipped map is confirmed to use them
+NEW|65c34f1|War of the Ring regions are now filled territories in the original game's own shapes, with their real names
+NEW|3007e73|Armies and build plots stand on the War of the Ring map as the original game's own 3D banners and foundations
+NEW|fb834f6|Added a War of the Ring setup screen: pick the scenario, review the rules, and set each seat's army and team before you play
+NEW|83b1959|The War of the Ring map now has a free camera - 34x zoom, orbit and tilt
+FIX|83b1959|Fixed War of the Ring map markers freezing in place instead of following the camera
+FIX|3007e73|Fixed army banners rendering as pale ghosts behind the territory colours
+FIX|3007e73|The War of the Ring screen now uses the whole window instead of a fixed small panel
