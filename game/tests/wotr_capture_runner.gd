@@ -31,6 +31,8 @@ var _out_dir := ""
 var _screen: Control = null
 var _frames := 0
 var _shot := 0
+## Whether this shot's action has already been applied. See `_process`.
+var _applied := false
 var _plan: Array[Dictionary] = []
 
 
@@ -66,6 +68,17 @@ func _initialize() -> void:
 		{"name": "01-opening", "action": ""},
 		{"name": "02-region-hovered", "action": "hover"},
 		{"name": "03-staged", "action": "stage"},
+		# The build plots and the ring of structures around one. Retail's screen
+		# is as much a builder as a map, and a capture set that never opens the
+		# ring cannot show whether the ring works.
+		{"name": "04-build-plot", "action": "plot"},
+		# THE CAMERA. The owner asked to "zoom around the 3d map and zoom way in
+		# and out like in a regular skirmish match", so the set has to show both
+		# ends of the range and an angle that is not the default one - a camera
+		# claim nobody photographed is a claim nobody checked.
+		{"name": "05-zoomed-in", "action": "zoom_in"},
+		{"name": "06-orbited", "action": "orbit"},
+		{"name": "07-zoomed-out", "action": "zoom_out"},
 	]
 	print("[capture] writing to %s" % _out_dir)
 
@@ -79,7 +92,17 @@ func _process(_delta: float) -> bool:
 		print("[capture] wrote %d image(s). This runner asserts nothing; it is a camera." % _plan.size())
 		return true
 	var step := _plan[_shot]
-	_apply(String(step["action"]))
+	# THE ACTION IS APPLIED A WHOLE SETTLE PERIOD BEFORE THE SHOT. `_process` runs
+	# before the frame is drawn, so `root.get_texture()` here still holds the
+	# PREVIOUS frame - applying and capturing in one visit photographed the state
+	# the screen was in before the action, and every shot in the first capture set
+	# this lane took was one step stale because of it. `_applied` makes the two
+	# halves separate visits.
+	if not _applied:
+		_apply(String(step["action"]))
+		_applied = true
+		return false
+	_applied = false
 	var image: Image = root.get_texture().get_image()
 	var path: String = _out_dir.path_join("%s.png" % String(step["name"]))
 	var error := image.save_png(path)
@@ -150,6 +173,40 @@ func _apply(action: String) -> void:
 				var targets: PackedStringArray = _screen.session.attack_targets(staging[0])
 				if not targets.is_empty():
 					_screen.select_target(targets[0])
+		"plot":
+			# The first region THE STATE says this seat owns that authors a build
+			# plot - chosen by the document, not written into this file.
+			# Prefer a region the seat can actually STAGE from, because
+			# `select_region` refuses anything else and the ring would then open
+			# over a region the screen is not looking at.
+			var owned: Array[String] = []
+			for region_id in _screen.session.staging_regions():
+				owned.append(String(region_id))
+			for region_id in _screen.session.state.regions_owned_by(
+					_screen.session.state.active_player()):
+				if not owned.has(String(region_id)):
+					owned.append(String(region_id))
+			for region_id in owned:
+				var region: Dictionary = _screen.session.world.region(String(region_id))
+				if int(region.get("building_spot_count", 0)) <= 0:
+					continue
+				_screen.select_region(String(region_id))
+				_screen._on_plot_clicked(String(region_id), 0)
+				print("[capture] build ring opened on %s plot 1 of %d" % [
+					String(region_id), int(region.get("building_spot_count", 0))])
+				break
+		"zoom_in":
+			# Onto the selected region, at the deep end of the range, so the shot
+			# shows what "zoom way in" actually looks like rather than a nudge.
+			_screen.map3d.focus_region(_screen.session.selected_region, 0.10)
+			print("[capture] camera %s" % str(_screen.map3d.camera_state()))
+		"orbit":
+			_screen.map3d.set_orbit(0.9, -24.0)
+			print("[capture] camera %s" % str(_screen.map3d.camera_state()))
+		"zoom_out":
+			_screen.map3d.set_orbit(0.0, -52.0)
+			_screen.map3d.focus_region("", 1.3)
+			print("[capture] camera %s" % str(_screen.map3d.camera_state()))
 
 
 func _argument(flag: String, fallback: String) -> String:

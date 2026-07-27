@@ -161,7 +161,12 @@ func are_adjacent(from_region: String, to_region: String) -> bool:
 ## The TERRITORY record a region belongs to, or `{}` when it belongs to none.
 ## Retail's region panel reads "Territory of Region: Mordor" above the unified
 ## bonus, and this is where that comes from. Deterministic: the first territory
-## in sorted order that lists the region, and retail never lists one twice.
+## IN DOCUMENT ORDER that lists the region. The document's order is retail's own
+## authoring order, which is fixed for a given document, so this is stable
+## without a sort - and retail never lists a region in two territories, so the
+## choice between the two orders has no observable difference today. (The
+## docstring used to claim sorted order, which the loop never did; the COMMENT
+## was the wrong one and is the half that changed.)
 func territory_of(region_id: String) -> Dictionary:
 	for territory in territories:
 		var members: PackedStringArray = territory.get("regions", PackedStringArray())

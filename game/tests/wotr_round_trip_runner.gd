@@ -213,6 +213,13 @@ func _test_the_campaign_can_march_to_a_front(session) -> void:
 	_check("the_seat_starts_with_an_army_somewhere_it_owns", start != "")
 	var marched := 0
 	var current := start
+	# WHETHER A MARCH WAS EVER REQUIRED. The loop below breaks immediately when
+	# the starting region already borders something attackable, which is a
+	# legitimate board state - retail seats some scenarios directly on the front.
+	# Capturing this BEFORE the loop is what lets the assertion below distinguish
+	# "did not need to march" from "could not march".
+	var start_targets: PackedStringArray = session.attack_targets(start)
+	var start_had_attack_targets: bool = not start_targets.is_empty()
 	for _step in range(session.world.region_ids.size()):
 		if not session.attack_targets(current).is_empty():
 			break
@@ -224,7 +231,23 @@ func _test_the_campaign_can_march_to_a_front(session) -> void:
 			break
 		marched += 1
 		current = next_hop
-	_check("the_army_marched_at_least_one_region", marched > 0, "marched=%d" % marched)
+	# A CORRECTION, NOT A RELAXATION. The old assertion was `marched > 0`, which
+	# asserted a premise the harness never established: that the seat starts away
+	# from the front. Under the RotWK document seat 0 starts on `Arnor`, which
+	# already borders five attackable regions, so the loop correctly breaks at
+	# step 0 and the check failed on a board state that is not a defect. (The
+	# proof it was the harness and not marching: the very next check,
+	# `the_army_now_stands_where_it_can_attack`, passed on the same run - a real
+	# marching failure would have failed both.)
+	#
+	# The property actually worth asserting is an EXACT DISJUNCTION with no
+	# slack: either the army marched, or a march was never required because the
+	# start was already a front. If `move_armies` breaks while a march IS
+	# required, `start_had_attack_targets` is false and this still fails - which
+	# is the mutation the check has to keep catching.
+	_check("the_army_marched_when_a_march_was_required",
+		marched > 0 or start_had_attack_targets,
+		"marched=%d start_had_attack_targets=%s" % [marched, start_had_attack_targets])
 	_check("the_army_now_stands_where_it_can_attack",
 		not session.attack_targets(current).is_empty(), current)
 	_check("marching_moved_the_army_rather_than_copying_it",

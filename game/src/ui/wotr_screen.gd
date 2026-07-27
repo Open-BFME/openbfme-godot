@@ -63,6 +63,8 @@ const BundleScript = preload("res://src/wotr/wotr_map_bundle.gd")
 const RegionGeometryScript = preload("res://src/wotr/wotr_region_geometry.gd")
 const StringsScript = preload("res://src/wotr/wotr_strings.gd")
 const MacrosScript = preload("res://src/wotr/wotr_macros.gd")
+const LivingWorldUiScript = preload("res://src/wotr/wotr_living_world_ui.gd")
+const ChromeScript = preload("res://src/wotr/wotr_chrome.gd")
 
 ## Retail's own region-bonus wording, keyed by the living-world document's own
 ## bonus field. The VALUE is a string-table key, so what the player reads is
@@ -125,6 +127,8 @@ var unavailable_reason := ""
 ## Pack map ids the tactical layer can actually boot, supplied by the menu.
 var available_map_ids: Array = []
 
+## The brass shell, painted under every other control. Presentation only.
+var chrome_layer: Control
 var heading_label: Label
 var status_label: Label
 ## The flat 2D region graph. Kept as the honest fallback for when no living-map
@@ -144,10 +148,23 @@ var strings_reason := ""
 ## Retail's gamedata `#define` table, so a macro bonus shows retail's number.
 var macros: MacrosScript = null
 var macros_reason := ""
+## Retail's UI surface: the buildable structures, the recruitable armies and the
+## atlas crop behind every icon. Null means banners carry no portrait and there
+## is no build menu, and the screen says so.
+var ui: LivingWorldUiScript = null
+var ui_reason := ""
+## The build plot the radial menu is open on, as `{region, index}` or `{}`.
+## PRESENTATION ONLY - it lives here, not on the session, and reaches nothing.
+var selected_plot: Dictionary = {}
 ## Why there is no 3D map, or "" when there is one.
 var map_reason := ""
 ## Whose turn it is, in one line, at the size a player reads first.
 var turn_banner: Label
+## RETAIL'S HEADER NUMBERS: the seat's purse and its command points. Retail puts
+## these across the top of its strategic shell; this is the same two facts read
+## out of the same data. There is NO PHASE BAR beside them and there will not be
+## one - see `_refresh_header()`.
+var header_label: Label
 ## What a click will do RIGHT NOW, given the current selection.
 var hint_label: Label
 ## The marker key: what each fill and each ring on the map means.
@@ -197,6 +214,17 @@ func report_map_availability() -> void:
 
 
 func build() -> void:
+	# THE FRAME, UNDER EVERYTHING. Retail's strategic screen is a warm brass shell
+	# with inset panels, not a set of labels on a black field. This Control paints
+	# that shell and ignores the mouse, so it changes how the screen looks and
+	# nothing about how it behaves.
+	chrome_layer = Control.new()
+	chrome_layer.name = "Chrome"
+	chrome_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	chrome_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chrome_layer.draw.connect(_draw_chrome)
+	add_child(chrome_layer)
+
 	heading_label = Label.new()
 	heading_label.name = "Heading"
 	heading_label.text = "WAR OF THE RING"
@@ -207,7 +235,9 @@ func build() -> void:
 
 	status_label = Label.new()
 	status_label.name = "Status"
-	status_label.position = Vector2(30, 50)
+	status_label.position = Vector2(330, 26)
+	status_label.custom_minimum_size = Vector2(1500, 20)
+	status_label.size = Vector2(1500, 20)
 	status_label.add_theme_font_size_override("font_size", 14)
 	status_label.add_theme_color_override("font_color", ThemeScript.PARCHMENT_DIM)
 	add_child(status_label)
@@ -219,10 +249,20 @@ func build() -> void:
 	turn_banner = Label.new()
 	turn_banner.name = "TurnBanner"
 	turn_banner.position = Vector2(30, 70)
-	turn_banner.custom_minimum_size = Vector2(1230, 22)
+	turn_banner.custom_minimum_size = Vector2(790, 22)
+	turn_banner.size = Vector2(790, 22)
 	turn_banner.add_theme_font_size_override("font_size", 19)
 	turn_banner.add_theme_color_override("font_color", ThemeScript.GOLD_BRIGHT)
 	add_child(turn_banner)
+
+	header_label = Label.new()
+	header_label.name = "Header"
+	header_label.position = Vector2(824, 70)
+	header_label.custom_minimum_size = Vector2(440, 22)
+	header_label.size = Vector2(440, 22)
+	header_label.add_theme_font_size_override("font_size", 17)
+	header_label.add_theme_color_override("font_color", ThemeScript.GOLD)
+	add_child(header_label)
 
 	hint_label = Label.new()
 	hint_label.name = "Hint"
@@ -250,6 +290,11 @@ func build() -> void:
 	map3d.visible = false
 	map3d.region_clicked.connect(_on_region_clicked)
 	map3d.region_hovered.connect(_on_region_hovered)
+	map3d.plot_clicked.connect(_on_plot_clicked)
+	# The mode line's banner and label counts only exist after the paint, so they
+	# are re-read here rather than during `refresh()`. Updating a Label does not
+	# ask the map to redraw, so this cannot loop.
+	map3d.overlay_painted.connect(_refresh_map_mode_label)
 	add_child(map3d)
 
 	# WHAT THE RINGS AND COLOURS MEAN. The map draws five different rings and one
@@ -290,8 +335,8 @@ func build() -> void:
 	standings_label.fit_content = false
 	standings_label.scroll_active = true
 	standings_label.position = Vector2(side_x, 70)
-	standings_label.custom_minimum_size = Vector2(548, 200)
-	standings_label.size = Vector2(548, 200)
+	standings_label.custom_minimum_size = Vector2(524, 196)
+	standings_label.size = Vector2(524, 196)
 	standings_label.add_theme_font_size_override("normal_font_size", 15)
 	add_child(standings_label)
 
@@ -301,8 +346,8 @@ func build() -> void:
 	detail_label.fit_content = false
 	detail_label.scroll_active = true
 	detail_label.position = Vector2(side_x, 280)
-	detail_label.custom_minimum_size = Vector2(548, 256)
-	detail_label.size = Vector2(548, 256)
+	detail_label.custom_minimum_size = Vector2(524, 252)
+	detail_label.size = Vector2(524, 252)
 	detail_label.add_theme_font_size_override("normal_font_size", 16)
 	add_child(detail_label)
 
@@ -479,6 +524,25 @@ func _load_strings(located: Dictionary, pack_roots: Array) -> void:
 		push_warning("[WotrStrings] %s" % strings_reason)
 		print("[WotrStrings] %s" % strings_reason)
 
+	# RETAIL'S UI SURFACE, looked for in the same places. Independent of the
+	# string table on purpose: names and portraits fail separately and a screen
+	# that reported one for the other would send a reader to the wrong bundle.
+	var ui_bundle := LivingWorldUiScript.new()
+	var ui_found: Dictionary = ui_bundle.locate_and_load(roots)
+	if bool(ui_found.get("ok", false)):
+		ui = ui_bundle
+		ui_reason = ""
+		print("[WotrUI] retail living-world UI bundle loaded from %s" % String(ui_found.get("path", "")))
+		for line in ui_bundle.describe_load():
+			print("[WotrUI]   %s" % line)
+	else:
+		ui = null
+		ui_reason = String(ui_found.get("reason", ""))
+		push_warning("[WotrUI] %s" % ui_reason)
+		for line in ui_reason.split("\n"):
+			print("[WotrUI] %s" % line)
+	map3d.set_ui(ui, ui_reason)
+
 	var macro_table := MacrosScript.new()
 	var macros_found: Dictionary = macro_table.locate_and_load(roots)
 	if bool(macros_found.get("ok", false)):
@@ -504,6 +568,7 @@ func refresh() -> void:
 	if session == null or session.state == null:
 		status_label.text = "UNAVAILABLE"
 		turn_banner.text = "WAR OF THE RING IS UNAVAILABLE"
+		header_label.text = ""
 		hint_label.text = unavailable_reason
 		standings_label.text = ""
 		detail_label.text = "[color=#e1c77d]War of the Ring is unavailable.[/color]\n\n%s" % unavailable_reason
@@ -541,6 +606,7 @@ func refresh() -> void:
 		state.armies.size(),
 	]
 	_refresh_turn_banner(state, seat, seat_row)
+	_refresh_header(state, seat, seat_row)
 	end_turn_button.disabled = not state.pending_battle.is_empty()
 	end_turn_button.tooltip_text = (
 		"A battle for %s is still in flight; it must resolve before the turn passes."
@@ -559,6 +625,8 @@ func refresh() -> void:
 	_rebuild_unplaced()
 	_refresh_detail()
 	legend_label.queue_redraw()
+	if chrome_layer != null:
+		chrome_layer.queue_redraw()
 
 
 ## Push the strategic picture into whichever map is showing. Strictly one-way:
@@ -573,6 +641,9 @@ func _refresh_map() -> void:
 		map3d.set_regions(
 			_rows, adjacency, _staging, _targets,
 			session.selected_region, session.selected_target)
+		map3d.set_overlays(
+			_army_stacks_by_region(), _plots_by_region(), _display_names(),
+			selected_plot, _radial_entries())
 		_refresh_map_mode_label()
 		return
 	map_view.queue_redraw()
@@ -609,6 +680,37 @@ func _refresh_map_mode_label() -> void:
 			strings.count(), strings.missing_keys.size()])
 	else:
 		notes.append("NAMES: NOT CONVERTED - regions carry retail's own ids")
+	# LABELS: how many names are on screen and how many were held back so the
+	# rest could be read. A label quietly dropped is exactly the kind of thing
+	# that looks like a rendering bug, so the count is stated.
+	notes.append("LABELS: %d drawn, %d held back where they would have overlapped a label already placed" % [
+		map3d.labels_drawn, map3d.labels_suppressed])
+	# PORTRAITS: what the banners are actually carrying.
+	if ui != null:
+		notes.append("BANNERS: %d army banner(s) drawn from retail MappedImage crops - %d of %d image ids resolved across %d atlases" % [
+			map3d.banners_drawn, int(ui.totals.get("imageIdsResolved", 0)),
+			int(ui.totals.get("imageIdsRequested", 0)), int(ui.totals.get("atlases", 0))])
+		var crops_missing: Array = ui.gaps.get("cropsWithoutAtlas", []) as Array
+		if not crops_missing.is_empty():
+			notes.append("NO ATLAS (%d): retail's own data names these images and ships no texture for them, so they are drawn as an empty slot - %s" % [
+				crops_missing.size(),
+				", ".join(crops_missing.map(func(v: Variant) -> String: return String(v)))])
+		if not map3d.banners_without_portrait.is_empty():
+			var bare: Array[String] = []
+			for key in map3d.banners_without_portrait.keys():
+				bare.append("%s (%s)" % [String(key), String(map3d.banners_without_portrait[key])])
+			bare.sort()
+			notes.append("BANNERS WITHOUT A PORTRAIT (%d), drawn as a bare faction plate: %s" % [
+				bare.size(), ", ".join(bare)])
+		if not ui.missing_images.is_empty():
+			var unresolved: Array[String] = []
+			for key in ui.missing_images.keys():
+				unresolved.append("%s - %s" % [String(key), String(ui.missing_images[key])])
+			unresolved.sort()
+			notes.append("IMAGE IDS ASKED FOR AND NOT DRAWN (%d): %s" % [
+				unresolved.size(), ", ".join(unresolved)])
+	else:
+		notes.append("BANNERS: NOT CONVERTED - army stacks carry no portrait. %s" % ui_reason.split("\n")[0])
 	if not map_bundle.warnings.is_empty():
 		notes.append("%d texture problem(s): %s" % [
 			map_bundle.warnings.size(), ", ".join(Array(map_bundle.warnings))])
@@ -664,6 +766,10 @@ func select_region(region_id: String) -> bool:
 		return false
 	session.selected_region = region_id
 	session.selected_target = ""
+	# The build ring belongs to a plot in a region; staging somewhere else closes
+	# it rather than leaving it hanging over ground the player has left.
+	if String(selected_plot.get("region", "")) != region_id:
+		selected_plot = {}
 	_message("")
 	refresh()
 	return true
@@ -735,6 +841,187 @@ func _refresh_turn_banner(state: StateScript, seat: int, seat_row: Dictionary) -
 		String(seat_row.get("template", "?")), controller]
 	turn_banner.add_theme_color_override("font_color", _owner_color(seat))
 	hint_label.text = _hint_text(state)
+
+
+## RETAIL'S HEADER NUMBERS, and only the ones that are real.
+##
+## The owner's screenshot reads "Player Bonuses 3000" across the top.
+## `ScenarioStartResources = 3000` is retail's own field on every playable
+## `LivingWorldPlayerTemplate`, and it is what this shows - labelled as the
+## STARTING purse, because no treasury is simulated and a bare "3000" beside a
+## turn counter would read as a live balance that goes up and down.
+##
+## The command-point pair is retail's own economy too: `MaxWorldCP = 4500` from
+## the template, against the command points this seat actually has standing on
+## the board, summed from the armies in the authoritative state.
+##
+## THERE IS NO PHASE BAR AND THERE WILL NOT BE ONE HERE.
+## `data/ini/livingworldlogic.ini` is 192 bytes of comment, there is no
+## `mprules.ini` anywhere in the archives, and retail's phase list lives in the
+## executable. There is nothing to convert, so building one would be fabrication;
+## it is named in the NOT CONVERTED line instead.
+func _refresh_header(state: StateScript, seat: int, seat_row: Dictionary) -> void:
+	if header_label == null:
+		return
+	if seat == StateScript.NEUTRAL:
+		header_label.text = ""
+		return
+	var template: Dictionary = session.world.player_templates.get(
+		String(seat_row.get("template", "")), {}) as Dictionary
+	var purse := int(template.get("scenario_start_resources", -1))
+	var max_cp := int(template.get("max_world_cp", -1))
+	var on_board := 0
+	for army_id in state.armies.keys():
+		var army := state.armies[army_id] as Dictionary
+		if int(army.get("owner", StateScript.NEUTRAL)) == seat:
+			on_board += int(army.get("command_points", 0))
+	var parts: Array[String] = []
+	parts.append("TREASURE %s" % (str(purse) if purse >= 0 else "not authored"))
+	parts.append("COMMAND POINTS %d/%s" % [on_board, str(max_cp) if max_cp >= 0 else "?"])
+	header_label.text = "   ".join(parts)
+	header_label.tooltip_text = (
+		"TREASURE is retail's ScenarioStartResources for this seat's "
+		+ "LivingWorldPlayerTemplate - the STARTING purse. No treasury is "
+		+ "simulated, so it does not move.\nCOMMAND POINTS is the total carried by "
+		+ "this seat's armies in the authoritative state, against retail's "
+		+ "MaxWorldCP for the template.\nThere is no turn-phase bar: retail's phase "
+		+ "list is hardcoded in the executable and livingworldlogic.ini ships empty.")
+
+
+# --- the army banners, the plots and the build menu ---------------------------
+
+## One row per army stack, keyed by region, with retail's own portrait id.
+##
+## THE PORTRAIT LINK IS RETAIL'S, never a resemblance: the recruit button that
+## builds that same `PlayerArmy`, failing that the one for that same
+## `HeroTemplateName`, failing that the owning template's
+## `GarrisonSelectionPortraitName`. All three are authored fields. An army none
+## of them reaches carries no portrait id at all and the map draws a bare plate.
+func _army_stacks_by_region() -> Dictionary:
+	var by_region: Dictionary = {}
+	if session == null or session.state == null:
+		return by_region
+	var army_ids: Array[int] = []
+	for key in session.state.armies.keys():
+		army_ids.append(int(key))
+	army_ids.sort()
+	for army_id in army_ids:
+		var army := session.state.armies[army_id] as Dictionary
+		var region_id := String(army.get("region", ""))
+		if region_id.is_empty():
+			continue
+		var owner := int(army.get("owner", StateScript.NEUTRAL))
+		var template := ""
+		if owner >= 0 and owner < session.state.players.size():
+			template = String((session.state.players[owner] as Dictionary).get("template", ""))
+		var roster := String(army.get("roster", ""))
+		var portrait: Dictionary = {"id": "", "source": ""}
+		if ui != null:
+			portrait = ui.army_portrait(roster, String(army.get("hero_template", "")), template)
+		var stacks: Array = by_region.get(region_id, []) as Array
+		stacks.append({
+			"owner": owner,
+			"template": template,
+			"kind": String(army.get("kind", "")),
+			"label": _army_label(roster),
+			"portrait_id": String(portrait.get("id", "")),
+			"portrait_source": String(portrait.get("source", "")),
+		})
+		by_region[region_id] = stacks
+	return by_region
+
+
+## The name an army stack is shown under: retail's own `DisplayNameTag` through
+## the string table, or the roster id when the table does not carry it. Never
+## derived from the id.
+func _army_label(roster: String) -> String:
+	if session == null or session.world == null:
+		return roster
+	var record: Dictionary = session.world.player_armies.get(roster, {}) as Dictionary
+	var key := String(record.get("display_name_tag", ""))
+	if key.is_empty() or strings == null:
+		return roster
+	var text := strings.text(key)
+	return text if not text.is_empty() else roster
+
+
+## Retail's own authored `BuildingSpot` points per region, as map coordinates.
+## Nothing is placed here - every point is one retail wrote down.
+func _plots_by_region() -> Dictionary:
+	var by_region: Dictionary = {}
+	if session == null or session.world == null:
+		return by_region
+	for region_id in session.world.region_ids:
+		var spots: Array = session.world.region(String(region_id)).get("building_spots", []) as Array
+		if spots.is_empty():
+			continue
+		var points: Array[Vector2] = []
+		for spot in spots:
+			var row := spot as Dictionary
+			points.append(Vector2(float(row.get("x", 0)), float(row.get("y", 0))))
+		by_region[String(region_id)] = points
+	return by_region
+
+
+func _display_names() -> Dictionary:
+	var labels: Dictionary = {}
+	for row in _rows:
+		var region_id := String(row["id"])
+		labels[region_id] = _display_of(region_id)
+	return labels
+
+
+## WHAT RETAIL OFFERS ON THE OPEN PLOT: every `LivingWorldBuilding` retail marks
+## `AvailableTo` the owning seat's template, with retail's own
+## `ConstructButtonImage`, `ConstructButtonTitle` and `StrategicResourceCost`.
+##
+## NOTHING HERE BUILDS. Construction is not in the simulation and this screen
+## says so beside the ring rather than letting a clickable icon imply otherwise.
+func _radial_entries() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	if ui == null or selected_plot.is_empty() or session == null or session.state == null:
+		return entries
+	var region_id := String(selected_plot.get("region", ""))
+	var owner := session.state.owner_of(region_id)
+	if owner == StateScript.NEUTRAL or owner < 0 or owner >= session.state.players.size():
+		return entries
+	var template := String((session.state.players[owner] as Dictionary).get("template", ""))
+	for row in ui.buildings_for(template):
+		entries.append({
+			"id": String(row.get("id", "")),
+			"image_id": String(row.get("constructButtonImage", "")),
+			"title": _string_or_key(String(row.get("constructButtonTitle", ""))),
+			"cost": _building_cost(String(row.get("strategicResourceCost", ""))),
+			"turns": String(row.get("turnsToBuild", "")),
+		})
+	return entries
+
+
+## A building's cost in retail's own numbers. Retail authors it as a macro
+## (`StrategicResourceCost = WOTR_FORTRESS_COST`), so it goes through the same
+## gamedata `#define` table the region bonuses do - and an unresolved macro is
+## shown BY NAME rather than filled in with a number nobody read.
+func _building_cost(raw: String) -> String:
+	if raw.is_empty():
+		return ""
+	if raw.is_valid_int():
+		return raw
+	if macros == null:
+		return "%s (no #define table)" % raw
+	var resolved: Dictionary = macros.resolve(raw)
+	if bool(resolved.get("ok", false)):
+		return str(int(float(resolved["value"])))
+	return "%s UNRESOLVED" % raw
+
+
+## Open or close the radial build menu on one plot. PRESENTATION ONLY: this
+## writes a field on the screen, nothing else, and reaches no simulation state.
+func _on_plot_clicked(region_id: String, index: int) -> void:
+	if selected_plot.get("region", "") == region_id and int(selected_plot.get("index", -1)) == index:
+		selected_plot = {}
+	else:
+		selected_plot = {"region": region_id, "index": index}
+	refresh()
 
 
 ## What clicking will do, spelled out. The click rule is genuinely two-sided -
@@ -828,9 +1115,15 @@ func _refresh_standings(state: StateScript) -> void:
 	if region_geometry == null:
 		absent.append("retail's region territory shapes (regions are markers, not filled territories)")
 	absent.append("retail's ~25 strategic APT movies (StrategicHUD, StrategicPalantir, StrategicDetails*, the radial build menu host) - none is read")
-	absent.append("army banner markers carrying unit and hero portraits")
-	absent.append("build plots and the radial build menu")
-	absent.append("the turn-phase bar (retail's phase list is hardcoded in the executable; livingworldlogic.ini ships EMPTY, 192 bytes of comment)")
+	if ui == null:
+		absent.append("army banner portraits and the build menu (retail's MappedImage atlases are not converted)")
+	else:
+		# CONVERTED, so not claimed absent - but what is still missing INSIDE them
+		# is named, because a half-converted surface reported as done is the same
+		# defect as one reported as absent.
+		absent.append("the 3D marker models retail draws these with - the 43 LivingWorldArmyIcon W3D banners, the 28 LivingWorldBuildingIcon structures and the 7 LivingWorldBuildPlotIcon foundation decals are all in the archives and NONE is converted; the map draws flat plates and rings in their place")
+		absent.append("construction itself - the build ring shows retail's real offer and changes no state, because no building system exists in the simulation")
+	absent.append("the turn-phase bar (retail's phase list is hardcoded in the executable; livingworldlogic.ini ships EMPTY, 192 bytes of comment, and there is no mprules.ini anywhere in the archives)")
 	absent.append("army models marching between regions")
 	lines.append("[color=#a9b39a]NOT CONVERTED, so not shown: %s.[/color]" % "; ".join(absent))
 	standings_label.text = "\n".join(lines)
@@ -843,41 +1136,85 @@ func _draw_legend() -> void:
 	var font := get_theme_default_font()
 	if font == null:
 		return
-	var x := 6.0
-	var y := 15.0
-	var swatches: Array = [
+	# CHIPS, NOT A WORD ROW. The old strip read `KEY: staged attackable selected`
+	# in flat text, which is what a debug overlay looks like. Same information,
+	# presented as the inset plates retail uses.
+	var chips: Array = [
 		["staged", Color(0.85, 0.92, 0.75, 0.9)],
 		["attackable", Color("#c8483f")],
 		["selected", ThemeScript.GOLD_BRIGHT],
 		["target", Color("#e8623f")],
 		["unclaimed", NEUTRAL_COLOR],
 	]
-	legend_label.draw_string(font, Vector2(x, y), "KEY:", HORIZONTAL_ALIGNMENT_LEFT,
-		-1, 13, ThemeScript.PARCHMENT_DIM)
-	x += 40.0
-	for entry in swatches:
+	if session != null and session.state != null:
+		for index in range(session.state.players.size()):
+			var seat_row := session.state.players[index] as Dictionary
+			chips.append([String(seat_row.get("template", "seat %d" % index)),
+				_owner_color(index)])
+	var x := 4.0
+	var height := 24.0
+	var y := (legend_label.size.y - height) * 0.5
+	for entry in chips:
 		var label := String((entry as Array)[0])
-		var color := (entry as Array)[1] as Color
-		legend_label.draw_circle(Vector2(x + 6.0, y - 4.0), 6.0, color)
-		legend_label.draw_string(font, Vector2(x + 17.0, y), label,
+		var tint := (entry as Array)[1] as Color
+		var width := 30.0 + font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+		var box := Rect2(Vector2(x, y), Vector2(width, height))
+		ChromeScript.draw_chip(legend_label, box, tint)
+		legend_label.draw_string(font, Vector2(x + 22.0, y + height * 0.5 + 4.5), label,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ThemeScript.TEXT_LEAF)
-		x += 24.0 + font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
-	# Seat colours, so a fill on the map names its owner without a hover.
-	if session == null or session.state == null:
-		return
-	x += 20.0
-	for index in range(session.state.players.size()):
-		var seat_row := session.state.players[index] as Dictionary
-		var name := String(seat_row.get("template", "seat %d" % index))
-		legend_label.draw_circle(Vector2(x + 6.0, y - 4.0), 6.0, _owner_color(index))
-		legend_label.draw_string(font, Vector2(x + 17.0, y), name,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ThemeScript.TEXT_LEAF)
-		x += 24.0 + font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
-	# A marker with an army is drawn larger; say so rather than letting it read as
-	# a rendering wobble.
-	legend_label.draw_string(font, Vector2(x + 10.0, y),
-		"| larger marker = an army stands there | label x2 = army count",
+		x += width + 7.0
+	# How to drive the camera. The owner asked for skirmish-style freedom; a
+	# control nobody can find is not a control, so the bindings are on the screen.
+	legend_label.draw_string(font, Vector2(x + 12.0, y + height * 0.5 + 4.5),
+		"WHEEL zoom  |  RIGHT-DRAG pan  |  MIDDLE-DRAG or SHIFT+DRAG orbit  |  banner = an army  |  ring = a build plot",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ThemeScript.PARCHMENT_DIM)
+
+
+## THE SHELL. Every rectangle here is hand-built in retail's language - warm
+## brass rules, inset fields, corner studs, a title plate with a gold rule under
+## it - and NONE of it is retail art. Retail's own frame images
+## (`FrameT`/`FrameB`/`FrameL`/`FrameR`/`FrameCorner*`) and its title rules
+## (`Ruler`, `MainMenuRuler`) all name textures that are IN NO ARCHIVE
+## (`SCShellUserInterface512_001.tga`, `MainMenuRuleruserinterface.tga`), so
+## there was nothing to convert and this project will not paint a picture and
+## call it retail's. What IS retail art is on the map - the portraits, the
+## faction standards, the radial ring - and the report line says which.
+func _draw_chrome() -> void:
+	var width := size.x if size.x > 0.0 else 1860.0
+	var height := size.y if size.y > 0.0 else 1000.0
+	chrome_layer.draw_rect(Rect2(Vector2.ZERO, Vector2(width, height)),
+		Color(0.045, 0.042, 0.036, 1.0))
+	# The title plate across the top, with the heading and the provenance in it.
+	ChromeScript.draw_title_plate(chrome_layer, Rect2(16.0, 8.0, width - 32.0, 52.0))
+	# The map, framed like a map table rather than floating in the dark.
+	var map_rect := Rect2(map_view.position - Vector2(6.0, 6.0),
+		map_view.size + Vector2(12.0, 12.0))
+	ChromeScript.draw_panel(chrome_layer, map_rect)
+	# The key strip and the report card under it.
+	ChromeScript.draw_panel(chrome_layer,
+		Rect2(legend_label.position - Vector2(6.0, 4.0),
+			legend_label.size + Vector2(12.0, 8.0)), 1)
+	ChromeScript.draw_panel(chrome_layer,
+		Rect2(map_mode_label.position - Vector2(8.0, 22.0),
+			map_mode_label.size + Vector2(16.0, 30.0)), 1)
+	var font := get_theme_default_font()
+	if font != null:
+		chrome_layer.draw_string(font,
+			map_mode_label.position + Vector2(2.0, -8.0),
+			"CONVERSION REPORT - WHAT IS RETAIL'S, AND WHAT IS NOT",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ThemeScript.GOLD)
+	# The side column: the seat table, the region card, and the buttons.
+	ChromeScript.draw_panel(chrome_layer,
+		Rect2(standings_label.position - Vector2(10.0, 8.0),
+			standings_label.size + Vector2(20.0, 16.0)))
+	ChromeScript.draw_panel(chrome_layer,
+		Rect2(detail_label.position - Vector2(10.0, 8.0),
+			detail_label.size + Vector2(20.0, 16.0)))
+	# The header's two numbers, each on its own recessed plate.
+	if header_label != null and not header_label.text.is_empty():
+		ChromeScript.draw_value_plate(chrome_layer,
+			Rect2(header_label.position - Vector2(10.0, 3.0),
+				Vector2(header_label.size.x + 20.0, header_label.size.y + 6.0)))
 
 
 # --- detail panel ------------------------------------------------------------
@@ -1026,6 +1363,60 @@ func _string_or_key(key: String) -> String:
 	return value if not value.is_empty() else key
 
 
+## THE OPEN BUILD PLOT, with the two counters retail puts beside it.
+##
+## Retail's plot panel carries a plots counter and a command-point counter. Both
+## are real here and both are read, not written: the plots figure is STRUCTURES
+## STANDING over the region's own authored `BuildingSpot` count, and structures
+## standing is zero because construction is not simulated - which is stated,
+## not hidden behind a plausible number. The command-point figure is the sum the
+## authoritative state carries for that region against the region's own
+## authored `CommandPointLimit`.
+func _build_plot_panel_lines() -> Array[String]:
+	var lines: Array[String] = []
+	if selected_plot.is_empty() or session == null or session.state == null:
+		return lines
+	var region_id := String(selected_plot.get("region", ""))
+	var index := int(selected_plot.get("index", -1))
+	var region := session.world.region(region_id)
+	if region.is_empty():
+		return lines
+	var total := int(region.get("building_spot_count", 0))
+	var owner := session.state.owner_of(region_id)
+	lines.append("[color=#e1c77d]BUILD PLOT %d of %d - %s[/color]" % [
+		index + 1, total, _display_of(region_id)])
+	# "0/3": structures standing over authored plots. The numerator is zero and
+	# says why, rather than being a number this screen made up.
+	lines.append("  structures %d / %d plots   [color=#a9b39a](no structure is standing anywhere: construction is NOT simulated, so the numerator is zero by construction, not by measurement)[/color]" % [
+		0, total])
+	var cp_used := session.state.command_points_in_region(region_id, owner) if owner != StateScript.NEUTRAL else 0
+	lines.append("  command points %d / %d   [color=#a9b39a](retail's own CommandPointLimit for this region)[/color]" % [
+		cp_used, session.world.region_cp_limit(region_id)])
+	var restrictions: Array = region.get("restrict_buildings", []) as Array
+	for restriction in restrictions:
+		var row := restriction as Dictionary
+		lines.append("  [color=#a9b39a]retail restricts this region to %d x %s[/color]" % [
+			int(row.get("numberAllowed", 0)),
+			", ".join(Array(row.get("buildings", [])).map(func(v: Variant) -> String: return String(v)))])
+	if ui == null:
+		lines.append("  [color=#c8483f]no build menu: retail's UI bundle is not converted, so there are no structure icons to offer.[/color]")
+		return lines
+	if owner == StateScript.NEUTRAL:
+		lines.append("  [color=#a9b39a]this region is unclaimed, and retail's structures are authored per faction (AvailableTo), so there is nothing to offer on it[/color]")
+		return lines
+	var entries := _radial_entries()
+	lines.append("  [color=#a9b39a]%d structure(s) retail marks AvailableTo this seat, drawn as a ring around the plot. NOTHING HERE BUILDS - construction is not in the simulation, and no click on the ring changes any state.[/color]" % entries.size())
+	var without_icon: Array[String] = []
+	for entry in entries:
+		if not ui.has_image(String(entry["image_id"])):
+			without_icon.append("%s (%s)" % [String(entry["id"]), String(entry["image_id"])])
+	if not without_icon.is_empty():
+		lines.append("  [color=#c8483f]%d structure(s) have NO icon and are drawn as an empty slot: %s[/color]" % [
+			without_icon.size(), ", ".join(without_icon)])
+	lines.append("")
+	return lines
+
+
 func _refresh_detail() -> void:
 	var lines: Array[String] = []
 	var state: StateScript = session.state
@@ -1036,6 +1427,10 @@ func _refresh_detail() -> void:
 		focus = session.hover_region
 	if focus.is_empty():
 		focus = session.selected_region
+	# THE OPEN PLOT FIRST when there is one. The detail panel scrolls, and a plot
+	# panel written under the region panel was below the fold the moment it was
+	# opened - which is the same as not writing it.
+	lines.append_array(_build_plot_panel_lines())
 	if not focus.is_empty() and _row_by_id.has(focus):
 		lines.append_array(_region_panel_lines(focus))
 		lines.append("")
