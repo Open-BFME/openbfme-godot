@@ -269,7 +269,18 @@ func resolve_pack_path(pack_root: String, relative_path: String) -> String:
 	var candidate := root.path_join(relative_path.replace("\\", "/")).simplify_path()
 	if not path_is_within(root, candidate):
 		return ""
-	if _path_has_link_component(root, candidate):
+	# EXPORTED BUILDS: a res:// path lives inside the .pck, not on disk, so
+	# DirAccess.open(globalize_path(...)) returns null and the link probe
+	# answers "yes, links" for every bundled root - rejecting the game's OWN
+	# base packs as if they were hostile symlinked content. That is exactly
+	# what made an exported build report packs=2 units=0 factions=0 while the
+	# .pck demonstrably contained all of it: game/data/base carries 33 unit
+	# and 4 faction documents, the precise counts a working build reports.
+	#
+	# Bundled resources cannot contain links, so the probe is skipped for
+	# them. Every user:// and absolute external path is still fully checked -
+	# the boundary this guard exists to defend is unchanged.
+	if not root.begins_with("res://") and _path_has_link_component(root, candidate):
 		return ""
 	return candidate
 
