@@ -36,6 +36,24 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 
 const PIN_TICKS := 3000
+
+## The frozen behavioural value, asserted in-runner.
+##
+## Until this constant existed the pin proved CROSS-PLATFORM DETERMINISM ONLY.
+## CI ran this runner on Windows and Ubuntu and failed if the two disagreed with
+## each other - so any change that moved the hash IDENTICALLY on both platforms
+## passed silently, and every occurrence of this value in the tree was a comment.
+## The property the commit history claims it proves - behavioural stability - was
+## being checked by humans reading a printed string.
+##
+## Both checks are kept because they catch different things: this one fails when
+## behaviour moves, the CI comparison fails when the platforms diverge. A change
+## can do either without the other.
+##
+## A DIFFERING HASH IS A DEFECT, NEVER A NEW BASELINE. Re-minting this value is
+## the owner's decision alone and must be stated explicitly as minting a new pin,
+## exactly as the frozen-fixture note above requires.
+const EXPECTED_HASH := "b177804c0457caccc670a6c8e3aa7f2cb74f76f8a1feeef93e3d0128feac0301"
 const SUBMIT_THROUGH_TICK := 1500
 
 
@@ -57,7 +75,22 @@ func _run() -> void:
 	for _tick in range(1, PIN_TICKS + 1):
 		sim.tick()
 
-	print("RETAIL_STATE_PIN ticks=%d hash=%s" % [PIN_TICKS, sim.state_hash()])
+	var hash := String(sim.state_hash())
+	# Emitted BEFORE the assertion so CI's cross-platform comparison job still
+	# has a line to read even on a behavioural failure - the two checks answer
+	# different questions and a failure of one must not blind the other.
+	print("RETAIL_STATE_PIN ticks=%d hash=%s" % [PIN_TICKS, hash])
+	if hash != EXPECTED_HASH:
+		printerr(
+			(
+				"RETAIL_STATE_PIN FAIL behaviour moved: got %s, pinned %s. "
+				+ "This is a DEFECT, not a new baseline - something changed the "
+				+ "simulation. Re-minting is the owner's decision alone."
+			) % [hash, EXPECTED_HASH]
+		)
+		quit(1)
+		return
+	print("RETAIL_STATE_PIN OK hash matches the pinned value")
 	quit(0)
 
 
