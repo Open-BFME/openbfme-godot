@@ -1,0 +1,6448 @@
+{
+	"$comment": "Retail module-type census. Regenerate with `python -m openbfme_importer.module_census`; do not hand-edit. The denominator for usage-weighted behaviour coverage. Module type NAMES and COUNTS only - no retail INI content or stat values. CAVEAT: status 'consumed' means the importer pipeline names the type and extracts from it, NOT that the behaviour runs; the runtime adapter reads the flattened description and names almost no behaviours itself. Class C members need simulation work no importer change can provide.",
+	"corpus": "Every effective data/ini/**.ini|.inc document (BIG-archive precedence winners) per tree; a module declaration is a carrier-key assignment (Behavior/Body/Draw/ClientUpdate/ClientBehavior/Flasher) or a ModuleTag-shaped assignment inside Object/ChildObject/ObjectReskin definitions.",
+	"classes": {
+		"A": "STATIC-FLATTENED: effect fully expressible in the existing normalised schema; importer-only work",
+		"B": "NEEDS-NEW-FIELD: flattenable, but the normalised schema has no key; importer work plus a runtime read",
+		"C": "NEEDS-RUNTIME-SYSTEM: behavioural over time or conditional; cannot be flattened into a static value; real simulation work",
+		"D": "PRESENTATION-ONLY: audio/visual/UI; no simulation semantics",
+		"E": "INERT/BROKEN: evidence says the authored declaration is dead"
+	},
+	"trees": {
+		"bfme2-retail": {
+			"documentCount": 665,
+			"objectCount": 4587,
+			"declarationSites": 16985,
+			"distinctModuleKinds": 242
+		},
+		"rotwk-retail": {
+			"documentCount": 792,
+			"objectCount": 5176,
+			"declarationSites": 21044,
+			"distinctModuleKinds": 244
+		}
+	},
+	"supportedScan": {
+		"method": "AST literal scan over the package import closure of the shipped pipeline roots; docstrings excluded; entries of UNSUPPORTED/UNIMPLEMENTED containers recorded as refusals",
+		"rootModules": [
+			"faction_import",
+			"m3_pack_expansion",
+			"pipeline"
+		],
+		"consumerFileCount": 52,
+		"consumerFiles": [
+			"armor_compiler",
+			"big",
+			"bootstrap",
+			"catalog",
+			"faction_census",
+			"faction_import",
+			"faction_object_cache",
+			"faction_policy",
+			"game",
+			"m3_pack_expansion",
+			"mapped_image",
+			"paths",
+			"pipeline",
+			"playable_structure_compiler",
+			"playable_structure_lifecycle_evidence",
+			"playable_structure_pack_compiler",
+			"playable_unit_compiler",
+			"playable_unit_import",
+			"playable_unit_pack_compiler",
+			"profile",
+			"progress",
+			"retail_building_lifecycle",
+			"retail_hud_apt_convert",
+			"retail_hud_frame_selection",
+			"retail_men_damage_effects",
+			"retail_men_lifecycle_profile",
+			"retail_unit_rules",
+			"retail_visual_closure",
+			"retail_visual_profile",
+			"sage_apt",
+			"sage_audio",
+			"sage_cst",
+			"sage_gameplay",
+			"sage_ini",
+			"sage_map",
+			"sage_particles",
+			"sage_scb",
+			"sage_scripts",
+			"sage_string",
+			"spellbook_compiler",
+			"spellbook_import",
+			"spellbook_pack_compiler",
+			"terrain_materials",
+			"tools",
+			"typed_visual_graph",
+			"util",
+			"version",
+			"visual_leaf",
+			"w3d_index",
+			"w3d_metadata",
+			"w3d_no_motion",
+			"w3d_secondary_skin"
+		]
+	},
+	"members": [
+		{
+			"name": "W3DScriptedModelDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "consumed",
+			"consumedBy": [
+				"m3_pack_expansion.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3733,
+				"rotwk-retail": 4080
+			},
+			"objectCount": {
+				"bfme2-retail": 3526,
+				"rotwk-retail": 3815
+			},
+			"families": [
+				"crate.ini",
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "ActiveBody",
+			"carriers": [
+				"body"
+			],
+			"classification": "A",
+			"classificationNote": "MaxHealth is flattened into the descriptor health contract",
+			"status": "consumed",
+			"consumedBy": [
+				"m3_pack_expansion.py",
+				"retail_men_lifecycle_profile.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1672,
+				"rotwk-retail": 1790
+			},
+			"objectCount": {
+				"bfme2-retail": 1672,
+				"rotwk-retail": 1790
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "SlowDeathBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "consumed",
+			"consumedBy": [
+				"m3_pack_expansion.py",
+				"spellbook_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1244,
+				"rotwk-retail": 1459
+			},
+			"objectCount": {
+				"bfme2-retail": 1043,
+				"rotwk-retail": 1201
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "StructureCollapseUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_structure_pack_compiler.py",
+				"retail_men_lifecycle_profile.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 607,
+				"rotwk-retail": 665
+			},
+			"objectCount": {
+				"bfme2-retail": 607,
+				"rotwk-retail": 665
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "PhysicsBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "physics/collision/projectile runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 453,
+				"rotwk-retail": 560
+			},
+			"objectCount": {
+				"bfme2-retail": 453,
+				"rotwk-retail": 560
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "AIUpdateInterface",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 429,
+				"rotwk-retail": 542
+			},
+			"objectCount": {
+				"bfme2-retail": 429,
+				"rotwk-retail": 542
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "AISpecialPowerUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 178,
+				"rotwk-retail": 732
+			},
+			"objectCount": {
+				"bfme2-retail": 72,
+				"rotwk-retail": 156
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "DestroyDie",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 353,
+				"rotwk-retail": 390
+			},
+			"objectCount": {
+				"bfme2-retail": 353,
+				"rotwk-retail": 390
+			},
+			"families": [
+				"crate.ini",
+				"default",
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "ProductionUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "production runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 305,
+				"rotwk-retail": 396
+			},
+			"objectCount": {
+				"bfme2-retail": 303,
+				"rotwk-retail": 394
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "SubObjectsUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "visual sub-object/model-condition toggle per upgrade",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_structure_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 284,
+				"rotwk-retail": 416
+			},
+			"objectCount": {
+				"bfme2-retail": 123,
+				"rotwk-retail": 189
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "SquishCollide",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "physics/collision/projectile runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 301,
+				"rotwk-retail": 374
+			},
+			"objectCount": {
+				"bfme2-retail": 301,
+				"rotwk-retail": 374
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "StructureBody",
+			"carriers": [
+				"body"
+			],
+			"classification": "A",
+			"classificationNote": "MaxHealth is flattened into the descriptor health contract",
+			"status": "consumed",
+			"consumedBy": [
+				"retail_men_lifecycle_profile.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 268,
+				"rotwk-retail": 365
+			},
+			"objectCount": {
+				"bfme2-retail": 268,
+				"rotwk-retail": 365
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "GettingBuiltBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 269,
+				"rotwk-retail": 350
+			},
+			"objectCount": {
+				"bfme2-retail": 269,
+				"rotwk-retail": 350
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "SpecialPowerModule",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 225,
+				"rotwk-retail": 340
+			},
+			"objectCount": {
+				"bfme2-retail": 114,
+				"rotwk-retail": 158
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "W3DTreeDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 267,
+				"rotwk-retail": 271
+			},
+			"objectCount": {
+				"bfme2-retail": 267,
+				"rotwk-retail": 271
+			},
+			"families": [
+				"object/nature"
+			]
+		},
+		{
+			"name": "AnimationSoundClientBehavior",
+			"carriers": [
+				"clientbehavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side audio; no simulation semantics",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_structure_pack_compiler.py",
+				"retail_men_lifecycle_profile.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 219,
+				"rotwk-retail": 302
+			},
+			"objectCount": {
+				"bfme2-retail": 219,
+				"rotwk-retail": 302
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "CommandSetUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "A",
+			"classificationNote": "flattened into upgrade-gated command-set / level / cost values",
+			"status": "consumed",
+			"consumedBy": [
+				"m3_pack_expansion.py",
+				"playable_structure_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 207,
+				"rotwk-retail": 311
+			},
+			"objectCount": {
+				"bfme2-retail": 71,
+				"rotwk-retail": 99
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "LargeGroupAudioUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side audio; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 220,
+				"rotwk-retail": 285
+			},
+			"objectCount": {
+				"bfme2-retail": 220,
+				"rotwk-retail": 285
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "KeepObjectDie",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 238,
+				"rotwk-retail": 266
+			},
+			"objectCount": {
+				"bfme2-retail": 238,
+				"rotwk-retail": 266
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "BezierProjectileBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "physics/collision/projectile runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"m3_pack_expansion.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 203,
+				"rotwk-retail": 240
+			},
+			"objectCount": {
+				"bfme2-retail": 203,
+				"rotwk-retail": 240
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "AttributeModifierAuraUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "aura/modifier ticking runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py",
+				"spellbook_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 198,
+				"rotwk-retail": 236
+			},
+			"objectCount": {
+				"bfme2-retail": 191,
+				"rotwk-retail": 227
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "ImmortalBody",
+			"carriers": [
+				"body"
+			],
+			"classification": "B",
+			"classificationNote": "static damage-resolution rule; needs a flag key honoured by combat",
+			"status": "consumed",
+			"consumedBy": [
+				"spellbook_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 183,
+				"rotwk-retail": 228
+			},
+			"objectCount": {
+				"bfme2-retail": 183,
+				"rotwk-retail": 228
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "LifetimeUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "consumed",
+			"consumedBy": [
+				"spellbook_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 163,
+				"rotwk-retail": 202
+			},
+			"objectCount": {
+				"bfme2-retail": 163,
+				"rotwk-retail": 202
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "W3DFloorDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_structure_lifecycle_evidence.py",
+				"retail_men_lifecycle_profile.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 156,
+				"rotwk-retail": 201
+			},
+			"objectCount": {
+				"bfme2-retail": 141,
+				"rotwk-retail": 186
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "EmotionTrackerUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 139,
+				"rotwk-retail": 197
+			},
+			"objectCount": {
+				"bfme2-retail": 139,
+				"rotwk-retail": 197
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "CastleMemberBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_structure_pack_compiler.py",
+				"retail_men_lifecycle_profile.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 145,
+				"rotwk-retail": 177
+			},
+			"objectCount": {
+				"bfme2-retail": 145,
+				"rotwk-retail": 177
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "UnpauseSpecialPowerUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "A",
+			"classificationNote": "flattened into ability gating inside the abilities contract",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 122,
+				"rotwk-retail": 186
+			},
+			"objectCount": {
+				"bfme2-retail": 42,
+				"rotwk-retail": 74
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "ModelConditionAudioLoopClientBehavior",
+			"carriers": [
+				"clientbehavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side audio; no simulation semantics",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_structure_pack_compiler.py",
+				"retail_men_lifecycle_profile.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 125,
+				"rotwk-retail": 169
+			},
+			"objectCount": {
+				"bfme2-retail": 125,
+				"rotwk-retail": 169
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "TransitionDamageFX",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side visual/UI update; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 144,
+				"rotwk-retail": 150
+			},
+			"objectCount": {
+				"bfme2-retail": 144,
+				"rotwk-retail": 150
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "AttributeModifierUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static per-upgrade stat modifier; the normalised schema has no key yet",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 122,
+				"rotwk-retail": 169
+			},
+			"objectCount": {
+				"bfme2-retail": 104,
+				"rotwk-retail": 147
+			},
+			"families": [
+				"default",
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "StancesBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "combat-stance/weapon-choice runtime behaviour",
+			"status": "consumed",
+			"consumedBy": [
+				"retail_unit_rules.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 113,
+				"rotwk-retail": 172
+			},
+			"objectCount": {
+				"bfme2-retail": 113,
+				"rotwk-retail": 172
+			},
+			"families": [
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "BuildingBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 127,
+				"rotwk-retail": 155
+			},
+			"objectCount": {
+				"bfme2-retail": 127,
+				"rotwk-retail": 155
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "WeaponSetUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "A",
+			"classificationNote": "flattened by the armor/upgrade lane into upgrade-gated static values",
+			"status": "consumed",
+			"consumedBy": [
+				"armor_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 120,
+				"rotwk-retail": 161
+			},
+			"objectCount": {
+				"bfme2-retail": 106,
+				"rotwk-retail": 142
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "TerrainResourceBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "resource-economy runtime behaviour",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_structure_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 114,
+				"rotwk-retail": 152
+			},
+			"objectCount": {
+				"bfme2-retail": 114,
+				"rotwk-retail": 152
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "StatusBitsUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "A",
+			"classificationNote": "flattened by the armor/upgrade lane into upgrade-gated static values",
+			"status": "consumed",
+			"consumedBy": [
+				"armor_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 96,
+				"rotwk-retail": 159
+			},
+			"objectCount": {
+				"bfme2-retail": 55,
+				"rotwk-retail": 95
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "LevelUpUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "A",
+			"classificationNote": "flattened into upgrade-gated command-set / level / cost values",
+			"status": "consumed",
+			"consumedBy": [
+				"m3_pack_expansion.py",
+				"playable_structure_compiler.py",
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 93,
+				"rotwk-retail": 139
+			},
+			"objectCount": {
+				"bfme2-retail": 68,
+				"rotwk-retail": 103
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "ModelConditionUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "visual sub-object/model-condition toggle per upgrade",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 95,
+				"rotwk-retail": 133
+			},
+			"objectCount": {
+				"bfme2-retail": 63,
+				"rotwk-retail": 94
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "HighlanderBody",
+			"carriers": [
+				"body"
+			],
+			"classification": "B",
+			"classificationNote": "static damage-resolution rule; needs a flag key honoured by combat",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 107,
+				"rotwk-retail": 118
+			},
+			"objectCount": {
+				"bfme2-retail": 107,
+				"rotwk-retail": 118
+			},
+			"families": [
+				"crate.ini",
+				"object/cinematic",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/neutral",
+				"object/system"
+			]
+		},
+		{
+			"name": "QueueProductionExitUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static production exit/rally geometry for the existing production lane",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 94,
+				"rotwk-retail": 121
+			},
+			"objectCount": {
+				"bfme2-retail": 94,
+				"rotwk-retail": 121
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "GeometryUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static upgrade-gated value with no schema key yet",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 87,
+				"rotwk-retail": 116
+			},
+			"objectCount": {
+				"bfme2-retail": 34,
+				"rotwk-retail": 45
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "W3DHordeModelDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 80,
+				"rotwk-retail": 120
+			},
+			"objectCount": {
+				"bfme2-retail": 80,
+				"rotwk-retail": 120
+			},
+			"families": [
+				"object/cinematic",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "AutoHealBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 88,
+				"rotwk-retail": 110
+			},
+			"objectCount": {
+				"bfme2-retail": 61,
+				"rotwk-retail": 79
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "HitReactionBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side visual/UI update; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 86,
+				"rotwk-retail": 112
+			},
+			"objectCount": {
+				"bfme2-retail": 86,
+				"rotwk-retail": 112
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "HordeContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py",
+				"retail_unit_rules.py",
+				"spellbook_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 75,
+				"rotwk-retail": 121
+			},
+			"objectCount": {
+				"bfme2-retail": 75,
+				"rotwk-retail": 121
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "W3DDefaultDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 95,
+				"rotwk-retail": 95
+			},
+			"objectCount": {
+				"bfme2-retail": 95,
+				"rotwk-retail": 95
+			},
+			"families": [
+				"default",
+				"object/civilian",
+				"object/system"
+			]
+		},
+		{
+			"name": "InactiveBody",
+			"carriers": [
+				"body"
+			],
+			"classification": "B",
+			"classificationNote": "static damage-resolution rule; needs a flag key honoured by combat",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 92,
+				"rotwk-retail": 96
+			},
+			"objectCount": {
+				"bfme2-retail": 92,
+				"rotwk-retail": 96
+			},
+			"families": [
+				"default",
+				"object/civilian",
+				"object/evilfaction",
+				"object/system"
+			]
+		},
+		{
+			"name": "AutoAbilityBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "combat-stance/weapon-choice runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 62,
+				"rotwk-retail": 87
+			},
+			"objectCount": {
+				"bfme2-retail": 46,
+				"rotwk-retail": 63
+			},
+			"families": [
+				"object/cinematic",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "W3DPropDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 74,
+				"rotwk-retail": 74
+			},
+			"objectCount": {
+				"bfme2-retail": 74,
+				"rotwk-retail": 74
+			},
+			"families": [
+				"object/civilian",
+				"object/nature"
+			]
+		},
+		{
+			"name": "HordeMemberCollide",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "physics/collision/projectile runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 52,
+				"rotwk-retail": 91
+			},
+			"objectCount": {
+				"bfme2-retail": 52,
+				"rotwk-retail": 91
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "ArmorUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "A",
+			"classificationNote": "flattened by the armor/upgrade lane into upgrade-gated static values",
+			"status": "consumed",
+			"consumedBy": [
+				"armor_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 56,
+				"rotwk-retail": 82
+			},
+			"objectCount": {
+				"bfme2-retail": 51,
+				"rotwk-retail": 75
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "HordeAIUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 54,
+				"rotwk-retail": 84
+			},
+			"objectCount": {
+				"bfme2-retail": 54,
+				"rotwk-retail": 84
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "WeaponFireSpecialAbilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 53,
+				"rotwk-retail": 84
+			},
+			"objectCount": {
+				"bfme2-retail": 39,
+				"rotwk-retail": 59
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "OCLSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 58,
+				"rotwk-retail": 77
+			},
+			"objectCount": {
+				"bfme2-retail": 18,
+				"rotwk-retail": 27
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "CastleBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "consumed",
+			"consumedBy": [
+				"retail_building_lifecycle.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 65,
+				"rotwk-retail": 69
+			},
+			"objectCount": {
+				"bfme2-retail": 65,
+				"rotwk-retail": 69
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/system"
+			]
+		},
+		{
+			"name": "FXListDie",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side visual/UI update; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 62,
+				"rotwk-retail": 66
+			},
+			"objectCount": {
+				"bfme2-retail": 62,
+				"rotwk-retail": 66
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/system"
+			]
+		},
+		{
+			"name": "FireWeaponWhenDeadBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 63,
+				"rotwk-retail": 63
+			},
+			"objectCount": {
+				"bfme2-retail": 46,
+				"rotwk-retail": 46
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "ObjectCreationUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "upgrade trigger with world side effects at runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 48,
+				"rotwk-retail": 65
+			},
+			"objectCount": {
+				"bfme2-retail": 18,
+				"rotwk-retail": 25
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "CreateObjectDie",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 40,
+				"rotwk-retail": 68
+			},
+			"objectCount": {
+				"bfme2-retail": 34,
+				"rotwk-retail": 62
+			},
+			"families": [
+				"crate.ini",
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "ReplaceSelfUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "upgrade trigger with world side effects at runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 39,
+				"rotwk-retail": 69
+			},
+			"objectCount": {
+				"bfme2-retail": 9,
+				"rotwk-retail": 15
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "RespawnUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "hero respawn runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 38,
+				"rotwk-retail": 58
+			},
+			"objectCount": {
+				"bfme2-retail": 38,
+				"rotwk-retail": 58
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "RespawnBody",
+			"carriers": [
+				"body"
+			],
+			"classification": "C",
+			"classificationNote": "hero respawn runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 37,
+				"rotwk-retail": 56
+			},
+			"objectCount": {
+				"bfme2-retail": 37,
+				"rotwk-retail": 56
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "PickupStuffUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "resource-economy runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 32,
+				"rotwk-retail": 59
+			},
+			"objectCount": {
+				"bfme2-retail": 32,
+				"rotwk-retail": 59
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "GrantUpgradeCreate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static spawn-time initial state; needs a key read at unit creation",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 43,
+				"rotwk-retail": 47
+			},
+			"objectCount": {
+				"bfme2-retail": 37,
+				"rotwk-retail": 39
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "W3DStreakDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 39,
+				"rotwk-retail": 41
+			},
+			"objectCount": {
+				"bfme2-retail": 30,
+				"rotwk-retail": 32
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "GiveUpgradeUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "conditional runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 39,
+				"rotwk-retail": 39
+			},
+			"objectCount": {
+				"bfme2-retail": 20,
+				"rotwk-retail": 20
+			},
+			"families": [
+				"object/cinematic",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "NotifyTargetsOfImminentProbableCrushingUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "physics/collision/projectile runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 34,
+				"rotwk-retail": 40
+			},
+			"objectCount": {
+				"bfme2-retail": 34,
+				"rotwk-retail": 40
+			},
+			"families": [
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "SpecialAbilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 32,
+				"rotwk-retail": 41
+			},
+			"objectCount": {
+				"bfme2-retail": 30,
+				"rotwk-retail": 39
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "FoundationAIUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 32,
+				"rotwk-retail": 39
+			},
+			"objectCount": {
+				"bfme2-retail": 32,
+				"rotwk-retail": 39
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "DualWeaponBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "combat-stance/weapon-choice runtime behaviour",
+			"status": "consumed",
+			"consumedBy": [
+				"retail_unit_rules.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 28,
+				"rotwk-retail": 40
+			},
+			"objectCount": {
+				"bfme2-retail": 28,
+				"rotwk-retail": 40
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "BannerCarrierUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "spawn/slave runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 26,
+				"rotwk-retail": 41
+			},
+			"objectCount": {
+				"bfme2-retail": 26,
+				"rotwk-retail": 41
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "AutoDepositUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "resource-economy runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 29,
+				"rotwk-retail": 37
+			},
+			"objectCount": {
+				"bfme2-retail": 29,
+				"rotwk-retail": 37
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "FireWeaponUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "consumed",
+			"consumedBy": [
+				"spellbook_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 29,
+				"rotwk-retail": 37
+			},
+			"objectCount": {
+				"bfme2-retail": 29,
+				"rotwk-retail": 37
+			},
+			"families": [
+				"object/cinematic",
+				"object/createahero",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/system"
+			]
+		},
+		{
+			"name": "SiegeDockingBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "conditional runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 33,
+				"rotwk-retail": 33
+			},
+			"objectCount": {
+				"bfme2-retail": 33,
+				"rotwk-retail": 33
+			},
+			"families": [
+				"object/civilian",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "InheritUpgradeCreate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static spawn-time initial state; needs a key read at unit creation",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 24,
+				"rotwk-retail": 40
+			},
+			"objectCount": {
+				"bfme2-retail": 24,
+				"rotwk-retail": 40
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "W3DLightDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 27,
+				"rotwk-retail": 37
+			},
+			"objectCount": {
+				"bfme2-retail": 27,
+				"rotwk-retail": 37
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/createahero",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "W3DTruckDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 29,
+				"rotwk-retail": 35
+			},
+			"objectCount": {
+				"bfme2-retail": 29,
+				"rotwk-retail": 35
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "DeletionUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "consumed",
+			"consumedBy": [
+				"spellbook_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 27,
+				"rotwk-retail": 34
+			},
+			"objectCount": {
+				"bfme2-retail": 27,
+				"rotwk-retail": 34
+			},
+			"families": [
+				"crate.ini",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/system"
+			]
+		},
+		{
+			"name": "GateOpenAndCloseBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 26,
+				"rotwk-retail": 32
+			},
+			"objectCount": {
+				"bfme2-retail": 26,
+				"rotwk-retail": 32
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "SlavedUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "spawn/slave runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 23,
+				"rotwk-retail": 30
+			},
+			"objectCount": {
+				"bfme2-retail": 23,
+				"rotwk-retail": 30
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "AudioLoopUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side audio; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 23,
+				"rotwk-retail": 29
+			},
+			"objectCount": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 10
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "MonitorConditionUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 23,
+				"rotwk-retail": 27
+			},
+			"objectCount": {
+				"bfme2-retail": 23,
+				"rotwk-retail": 27
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "ToggleMountedSpecialAbilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 19,
+				"rotwk-retail": 30
+			},
+			"objectCount": {
+				"bfme2-retail": 19,
+				"rotwk-retail": 30
+			},
+			"families": [
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "RefundDie",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_structure_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 18,
+				"rotwk-retail": 30
+			},
+			"objectCount": {
+				"bfme2-retail": 18,
+				"rotwk-retail": 30
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "CitadelSlaughterHordeContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 19,
+				"rotwk-retail": 28
+			},
+			"objectCount": {
+				"bfme2-retail": 19,
+				"rotwk-retail": 28
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "AnimalAIUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 22,
+				"rotwk-retail": 22
+			},
+			"objectCount": {
+				"bfme2-retail": 22,
+				"rotwk-retail": 22
+			},
+			"families": [
+				"object/nature",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "W3DBuffDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 21,
+				"rotwk-retail": 22
+			},
+			"objectCount": {
+				"bfme2-retail": 21,
+				"rotwk-retail": 22
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "WallHubBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 19,
+				"rotwk-retail": 23
+			},
+			"objectCount": {
+				"bfme2-retail": 15,
+				"rotwk-retail": 17
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "FlammableUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 20,
+				"rotwk-retail": 21
+			},
+			"objectCount": {
+				"bfme2-retail": 20,
+				"rotwk-retail": 21
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/nature",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "WorkerAIUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 22,
+				"rotwk-retail": 19
+			},
+			"objectCount": {
+				"bfme2-retail": 22,
+				"rotwk-retail": 19
+			},
+			"families": [
+				"object/cinematic",
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "CastleUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "upgrade trigger with world side effects at runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 15,
+				"rotwk-retail": 24
+			},
+			"objectCount": {
+				"bfme2-retail": 7,
+				"rotwk-retail": 10
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "InvisibilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "stealth/detection runtime system",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 18,
+				"rotwk-retail": 20
+			},
+			"objectCount": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 13
+			},
+			"families": [
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/system"
+			]
+		},
+		{
+			"name": "StealthDetectorUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "stealth/detection runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 20,
+				"rotwk-retail": 16
+			},
+			"objectCount": {
+				"bfme2-retail": 20,
+				"rotwk-retail": 16
+			},
+			"families": [
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete",
+				"object/system"
+			]
+		},
+		{
+			"name": "EvacuateDamage",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 16,
+				"rotwk-retail": 19
+			},
+			"objectCount": {
+				"bfme2-retail": 16,
+				"rotwk-retail": 19
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "SlaveWatcherBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "spawn/slave runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 15,
+				"rotwk-retail": 19
+			},
+			"objectCount": {
+				"bfme2-retail": 15,
+				"rotwk-retail": 19
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "HordeGarrisonContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 15,
+				"rotwk-retail": 18
+			},
+			"objectCount": {
+				"bfme2-retail": 15,
+				"rotwk-retail": 18
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "CostModifierUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "A",
+			"classificationNote": "flattened into upgrade-gated command-set / level / cost values",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_structure_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 13,
+				"rotwk-retail": 19
+			},
+			"objectCount": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 18
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "DynamicPortalBehaviour",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 14,
+				"rotwk-retail": 17
+			},
+			"objectCount": {
+				"bfme2-retail": 14,
+				"rotwk-retail": 17
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "HordeNotifyTargetsOfImminentProbableCrushingUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "physics/collision/projectile runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 20
+			},
+			"objectCount": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 20
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "HorseHordeContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py",
+				"retail_unit_rules.py",
+				"spellbook_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 10,
+				"rotwk-retail": 21
+			},
+			"objectCount": {
+				"bfme2-retail": 10,
+				"rotwk-retail": 21
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "AIGateUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 18
+			},
+			"objectCount": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 18
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "FakePathfindPortalBehaviour",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 18
+			},
+			"objectCount": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 18
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "DelayedDeathBody",
+			"carriers": [
+				"body"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 15,
+				"rotwk-retail": 14
+			},
+			"objectCount": {
+				"bfme2-retail": 15,
+				"rotwk-retail": 14
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "PassiveAreaEffectBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "aura/modifier ticking runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 13,
+				"rotwk-retail": 15
+			},
+			"objectCount": {
+				"bfme2-retail": 13,
+				"rotwk-retail": 15
+			},
+			"families": [
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "SpawnBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "spawn/slave runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 17
+			},
+			"objectCount": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 17
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "StealthUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "stealth/detection runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 16
+			},
+			"objectCount": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 16
+			},
+			"families": [
+				"object/cinematic",
+				"object/createahero",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "W3DSailModelDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 13,
+				"rotwk-retail": 13
+			},
+			"objectCount": {
+				"bfme2-retail": 7,
+				"rotwk-retail": 7
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "RebuildHoleExposeDie",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 14
+			},
+			"objectCount": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 14
+			},
+			"families": [
+				"object/evilfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "SalvageCrateCollide",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "crate pickup runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 13
+			},
+			"objectCount": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 13
+			},
+			"families": [
+				"crate.ini",
+				"object/civilian"
+			]
+		},
+		{
+			"name": "AimWeaponBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "combat-stance/weapon-choice runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 12
+			},
+			"objectCount": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 12
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "AttachUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "conditional runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 16
+			},
+			"objectCount": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 16
+			},
+			"families": [
+				"crate.ini",
+				"object/createahero",
+				"object/evilfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "ClearanceTestingSlowDeathBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 12
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "ModelConditionSoundSelectorClientBehavior",
+			"carriers": [
+				"clientbehavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side audio; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 13
+			},
+			"objectCount": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 13
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "RubbleRiseUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 10,
+				"rotwk-retail": 13
+			},
+			"objectCount": {
+				"bfme2-retail": 10,
+				"rotwk-retail": 13
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "TransportContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 12
+			},
+			"objectCount": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 12
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "EvaAnnounceClientCreate",
+			"carriers": [
+				"clientupdate"
+			],
+			"classification": "D",
+			"classificationNote": "client-side audio; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 11
+			},
+			"objectCount": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 11
+			},
+			"families": [
+				"crate.ini",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "RunOffMapBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "conditional runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 11
+			},
+			"objectCount": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 11
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "CommandButtonHuntUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 9,
+				"rotwk-retail": 12
+			},
+			"objectCount": {
+				"bfme2-retail": 9,
+				"rotwk-retail": 12
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "FireSpreadUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 10,
+				"rotwk-retail": 10
+			},
+			"objectCount": {
+				"bfme2-retail": 10,
+				"rotwk-retail": 10
+			},
+			"families": [
+				"object/nature"
+			]
+		},
+		{
+			"name": "HeroModeSpecialAbilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 7,
+				"rotwk-retail": 13
+			},
+			"objectCount": {
+				"bfme2-retail": 7,
+				"rotwk-retail": 13
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "ShipSlowDeathBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 10,
+				"rotwk-retail": 10
+			},
+			"objectCount": {
+				"bfme2-retail": 10,
+				"rotwk-retail": 10
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "DoCommandUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "upgrade trigger with world side effects at runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 13
+			},
+			"objectCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 8
+			},
+			"families": [
+				"object/createahero",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "RadiateFearUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "aura/modifier ticking runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 13
+			},
+			"objectCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 13
+			},
+			"families": [
+				"object/evilfaction",
+				"object/neutral",
+				"object/system"
+			]
+		},
+		{
+			"name": "ActivateModuleSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"module activation needs the module system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 12
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 6
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "AutoPickUpUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "resource-economy runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 9,
+				"rotwk-retail": 9
+			},
+			"objectCount": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "PorcupineFormationBodyModule",
+			"carriers": [
+				"body"
+			],
+			"classification": "C",
+			"classificationNote": "body with conditional runtime semantics beyond static health",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 12
+			},
+			"objectCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 12
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "LevelGrantSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 7,
+				"rotwk-retail": 10
+			},
+			"objectCount": {
+				"bfme2-retail": 7,
+				"rotwk-retail": 9
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "ModelConditionSpecialAbilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 9
+			},
+			"objectCount": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 9
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "HordeTransportContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"objectCount": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "ToggleHiddenSpecialAbilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"objectCount": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "DozerAIUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 8
+			},
+			"objectCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 8
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "TerrainResourceClientBehavior",
+			"carriers": [
+				"clientbehavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side audio; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 8
+			},
+			"objectCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 8
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "PlayerHealSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 8
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 7
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/neutral",
+				"object/system"
+			]
+		},
+		{
+			"name": "ClickReactionBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side visual/UI update; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"objectCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/evilfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "ExperienceLevelCreate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static spawn-time initial state; needs a key read at unit creation",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"objectCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "TooltipUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "UI text only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/civilian"
+			]
+		},
+		{
+			"name": "W3DTornadoDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"objectCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"families": [
+				"object/createahero",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "WeaponModeSpecialPowerUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"weapon-mode toggle needs the weapon-set system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 9
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 7
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "LargeGroupBonusUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "aura/modifier ticking runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 7
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 7
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "SiegeDeployHordeSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 7
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 7
+			},
+			"families": [
+				"object/civilian",
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "GiantBirdAIUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"objectCount": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"families": [
+				"object/cinematic",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "OathbreakersFadeAwayBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 4
+			},
+			"objectCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 4
+			},
+			"families": [
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "RadarMarkerClientUpdate",
+			"carriers": [
+				"clientupdate"
+			],
+			"classification": "D",
+			"classificationNote": "client-side visual/UI update; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 9
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 9
+			},
+			"families": [
+				"crate.ini"
+			]
+		},
+		{
+			"name": "DominateEnemySpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"domination needs the allegiance system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 5
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 5
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "FloodUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 6
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 6
+			},
+			"families": [
+				"object/goodfaction",
+				"object/neutral",
+				"object/system"
+			]
+		},
+		{
+			"name": "StructureToppleUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 5
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 5
+			},
+			"families": [
+				"object/civilian",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "TeleportSpecialAbilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 5
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 5
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "UpgradeDie",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 5
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 5
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "GrabPassengerSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"grab needs the passenger system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"families": [
+				"object/evilfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "SiegeEngineContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "TunnelContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"objectCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "BloodthirstyUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "aura/modifier ticking runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 5
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 5
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "SpawnPointProductionExitUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static production exit/rally geometry for the existing production lane",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 4
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 4
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "SymbioticStructuresBody",
+			"carriers": [
+				"body"
+			],
+			"classification": "C",
+			"classificationNote": "body with conditional runtime semantics beyond static health",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 4
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 4
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "ArrowStormUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "BoredUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/evilfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "LaserUpdate",
+			"carriers": [
+				"clientupdate"
+			],
+			"classification": "D",
+			"classificationNote": "client-side visual/UI update; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "OilSpillUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/createahero"
+			]
+		},
+		{
+			"name": "RemoveUpgradeUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "upgrade trigger with world side effects at runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"crate.ini",
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "SpawnUnitBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "spawn/slave runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "ToppleUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/cinematic",
+				"object/nature"
+			]
+		},
+		{
+			"name": "UpgradeSoundSelectorClientBehavior",
+			"carriers": [
+				"clientbehavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side audio; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/civilian",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "W3DLaserDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "W3DQuadrupedDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/cinematic",
+				"object/demotest",
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "AODCrushCollide",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "physics/collision/projectile runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/neutral"
+			]
+		},
+		{
+			"name": "AODHordeContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "consumed",
+			"consumedBy": [
+				"spellbook_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "CurseSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "FlingPassengerSpecialAbilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"fling needs the passenger system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/evilfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "GateProxyBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "HeroDie",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "OCLUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "RepairSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"repair needs the structure-repair system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/goodfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "RousingSpeechUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "aura/modifier ticking runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 3
+			},
+			"families": [
+				"object/cinematic",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "AnnounceBirthAndDeathBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side audio; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "BaseUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "upgrade trigger with world side effects at runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "BuildableHeroListUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static upgrade-gated value with no schema key yet",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "CivilianSpawnCollide",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "spawn/slave runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/civilian"
+			]
+		},
+		{
+			"name": "DetachableRiderBody",
+			"carriers": [
+				"body"
+			],
+			"classification": "C",
+			"classificationNote": "body with conditional runtime semantics beyond static health",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/cinematic"
+			]
+		},
+		{
+			"name": "DetachableRiderUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "spawn/slave runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/cinematic"
+			]
+		},
+		{
+			"name": "FellBeastSwoopPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "HordeDispatchSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"horde dispatch needs the horde-spawn system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/evilfaction",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "LockWeaponCreate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static spawn-time initial state; needs a key read at unit creation",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/cinematic",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "PillageModule",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "resource-economy runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/evilfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "PoisonedBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/cinematic"
+			]
+		},
+		{
+			"name": "ProductionQueueHordeContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/evilfaction",
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "ProductionSpeedBonus",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "resource-economy runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "RandomSoundSelectorClientBehavior",
+			"carriers": [
+				"clientbehavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side audio; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/neutral"
+			]
+		},
+		{
+			"name": "RebuildHoleBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/evilfaction",
+				"object/neutral"
+			]
+		},
+		{
+			"name": "SiegeAIUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "SiegeDeploySpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"siege deploy needs the deploy system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "SpecialEnemySenseUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "stealth/detection runtime system",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"enemy sense needs the detection system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/cinematic",
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "StopSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"stop needs the order-interrupt system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "SummonReplacementSpecialAbilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 0,
+				"rotwk-retail": 4
+			},
+			"objectCount": {
+				"bfme2-retail": 0,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "SwayClientUpdate",
+			"carriers": [
+				"clientupdate"
+			],
+			"classification": "D",
+			"classificationNote": "client-side visual/UI update; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/cinematic"
+			]
+		},
+		{
+			"name": "TaintSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "ThreatFinderUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "conditional runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "VeterancyCrateCollide",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "crate pickup runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"crate.ini"
+			]
+		},
+		{
+			"name": "WallUpgradeUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/civilian"
+			]
+		},
+		{
+			"name": "AllowBannerSpawnUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static upgrade-gated value with no schema key yet",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "DamageFilteredCreateObjectDie",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "death-event runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"default"
+			]
+		},
+		{
+			"name": "ElvenWoodSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "GarrisonContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "InvisibilitySpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "ManTheWallsSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"man-the-walls needs the garrison system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 2
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 2
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "AttributeModifierPoolUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "aura/modifier ticking runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"default"
+			]
+		},
+		{
+			"name": "BeaconClientUpdate",
+			"carriers": [
+				"clientupdate"
+			],
+			"classification": "D",
+			"classificationNote": "client-side visual/UI update; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/civilian"
+			]
+		},
+		{
+			"name": "BridgeBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "CivilianSpawnUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "spawn/slave runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/civilian"
+			]
+		},
+		{
+			"name": "CloudBreakSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "CommandPointsUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static upgrade-gated value with no schema key yet",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "CritterEmitterUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "spawn/slave runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/nature"
+			]
+		},
+		{
+			"name": "DamageFieldUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "DarknessSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "DefaultDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/cinematic"
+			]
+		},
+		{
+			"name": "DeflectSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"deflect needs the status-effect system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/obsolete"
+			]
+		},
+		{
+			"name": "DelayedLuaEventUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "DeployStyleAIUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "DestroyEnvironmentUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "DevastateSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "DynamicShroudClearingRangeUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "FadeAndDieOrnamentUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "D",
+			"classificationNote": "client-side visual/UI update; no simulation semantics",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "FreezingRainSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"freezing rain needs the weather system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "HordeSiegeEngineContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "PartTheHeavensUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "PlayerUpgradeSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "ProjectileStreamUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "physics/collision/projectile runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "ScavengerSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"scavenger needs the loot system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "ShareExperienceBehavior",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "aura/modifier ticking runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"default"
+			]
+		},
+		{
+			"name": "SlaughterHordeContain",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "container/garrison/transport runtime system",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/civilian"
+			]
+		},
+		{
+			"name": "SpecialDisguiseUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "stealth/detection runtime system",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"disguise needs the disguise system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "SpecialPowerTimerRefreshSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "consumed",
+			"consumedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "SpellRechargeModifierUpgrade",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static upgrade-gated value with no schema key yet",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/neutral"
+			]
+		},
+		{
+			"name": "SplitHordeSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"horde split needs the horde system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/cinematic"
+			]
+		},
+		{
+			"name": "StrafeAreaUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "per-tick or timer-driven simulation behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "SupplyCenterCreate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static spawn-time initial state; needs a key read at unit creation",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/civilian"
+			]
+		},
+		{
+			"name": "SupplyCenterDockUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "resource-economy runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/civilian"
+			]
+		},
+		{
+			"name": "SupplyCenterProductionExitUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "B",
+			"classificationNote": "static production exit/rally geometry for the existing production lane",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/civilian"
+			]
+		},
+		{
+			"name": "TemporarilyDefectUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "conditional runtime behaviour",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"default"
+			]
+		},
+		{
+			"name": "ToggleDeploySpecialAbilityUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-ability update; timed/conditional effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"deploy toggle needs the deploy system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/goodfaction"
+			]
+		},
+		{
+			"name": "UntamedAllegianceSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"allegiance change needs the allegiance system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "W3DDebrisDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/system"
+			]
+		},
+		{
+			"name": "W3DProjectileStreamDraw",
+			"carriers": [
+				"draw"
+			],
+			"classification": "D",
+			"classificationNote": "draw module: model/effect presentation only",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "WeaponChangeSpecialPowerModule",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "HordeTransportContainDamage",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "E",
+			"classificationNote": "authored once in RotWK with a misspelled ModuleTag; class absent from the BFME2 tree; suspected dead authoring artifact - verify against the engine before scheduling any work",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 0,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 0,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		},
+		{
+			"name": "HordeWorkerAIUpdate",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "AI/movement runtime system (movement is engine-baked in retail)",
+			"status": "unhandled",
+			"consumedBy": [],
+			"refusedBy": [],
+			"refusalReasons": [],
+			"declarationSites": {
+				"bfme2-retail": 0,
+				"rotwk-retail": 1
+			},
+			"objectCount": {
+				"bfme2-retail": 0,
+				"rotwk-retail": 1
+			},
+			"families": [
+				"object/neutral"
+			]
+		},
+		{
+			"name": "UnleashSpecialPower",
+			"carriers": [
+				"behavior"
+			],
+			"classification": "C",
+			"classificationNote": "special-power effect; the ability contract flattens, the effect needs runtime",
+			"status": "refused",
+			"consumedBy": [],
+			"refusedBy": [
+				"playable_unit_compiler.py"
+			],
+			"refusalReasons": [
+				"unleash needs the weapon-set system"
+			],
+			"declarationSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 0
+			},
+			"objectCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 0
+			},
+			"families": [
+				"object/evilfaction"
+			]
+		}
+	]
+}
