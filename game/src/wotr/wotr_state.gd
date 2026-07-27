@@ -53,6 +53,18 @@ var region_owner: Dictionary = {}
 ## army id (int) -> army record.
 var armies: Dictionary = {}
 
+## The battle currently in flight, or `{}` when none is.
+##
+## This IS authoritative state, and it is here rather than on the bridge for the
+## reason 87cf636 established the hard way: a battle in flight is a strategic
+## transaction that is half-applied. A peer that adopted a snapshot taken during
+## a battle without this record would not know a battle was happening, would
+## have nothing to apply the result to, and would silently diverge the moment the
+## result arrived. It is hashed EMPTY-IS-ABSENT (a state with no battle in
+## flight contributes zero bytes, so the between-battles hash is exactly what it
+## was before this field existed), and `setup()` clears it.
+var pending_battle: Dictionary = {}
+
 var _next_army_id := 1
 
 ## Non-authoritative: cleared by `restore()` and excluded from the hash, exactly
@@ -72,6 +84,7 @@ func setup(source_world: WorldScript, seats: Array) -> bool:
 	players = []
 	region_owner = {}
 	armies = {}
+	pending_battle = {}
 	events = []
 	turn_index = 0
 	_next_army_id = 1
@@ -285,6 +298,58 @@ func can_attack(player: int, region_id: String) -> bool:
 	return false
 
 
+## Remove an army from the world entirely - the losing side of a battle. Fails
+## closed on an unknown id so a double-remove can never look like a success.
+func remove_army(army_id: int) -> bool:
+	if not armies.has(army_id):
+		return _reject("unknown army %d" % army_id)
+	var region_id := String((armies[army_id] as Dictionary).get("region", ""))
+	armies.erase(army_id)
+	events.append({
+		"kind": "army_removed",
+		"army": army_id,
+		"region": region_id,
+		"turn": turn_index,
+	})
+	last_command_result = true
+	return true
+
+
+## Open the battle transaction. `commitment` is the record `wotr_battle.gd`
+## derives from a handoff brief; this file does not build it and does not
+## interpret it beyond the two invariants it must enforce itself.
+##
+## Strictly one battle at a time. A second `begin_battle()` over a live one is
+## refused rather than overwritten: overwriting would silently strand the first
+## battle's committed armies, which is a lost-update with no symptom until the
+## roster is counted much later.
+func begin_battle(commitment: Dictionary) -> bool:
+	if commitment.is_empty():
+		return _reject("battle commitment is empty")
+	if not pending_battle.is_empty():
+		return _reject("a battle is already in flight in %s" % String(pending_battle.get("region", "")))
+	var region_id := String(commitment.get("region", ""))
+	if world == null or not world.has_region(region_id):
+		return _reject("unknown region %s" % region_id)
+	pending_battle = commitment.duplicate(true)
+	events.append({"kind": "battle_begun", "region": region_id, "turn": turn_index})
+	last_command_result = true
+	return true
+
+
+## Close the battle transaction without applying a result. Used when a battle is
+## abandoned; the applied-result path lives in `wotr_battle.gd` because it needs
+## the tactical winner, which this file deliberately knows nothing about.
+func clear_battle() -> bool:
+	if pending_battle.is_empty():
+		return _reject("no battle is in flight")
+	var region_id := String(pending_battle.get("region", ""))
+	pending_battle = {}
+	events.append({"kind": "battle_cleared", "region": region_id, "turn": turn_index})
+	last_command_result = true
+	return true
+
+
 ## Mark a seat defeated. Idempotent-safe: reports false when already defeated.
 func set_defeated(player: int, defeated: bool = true) -> bool:
 	if player < 0 or player >= players.size():
@@ -302,7 +367,7 @@ func set_defeated(player: int, defeated: bool = true) -> bool:
 func state_hash() -> String:
 	var context := HashingContext.new()
 	context.start(HashingContext.HASH_SHA256)
-	context.update(var_to_bytes(_canonicalize(authoritative_state())))
+	context.update(var_to_bytes(canonicalize(authoritative_state())))
 	return context.finish().hex_encode()
 
 
@@ -337,6 +402,12 @@ func restore(bytes: PackedByteArray) -> bool:
 	for key in (state["armies"] as Dictionary).keys():
 		armies[int(key)] = ((state["armies"] as Dictionary)[key] as Dictionary).duplicate(true)
 	_next_army_id = int(state["next_army_id"])
+	# The battle in flight rides the snapshot. It is NOT in the required-key list
+	# above, because it is hashed empty-is-absent: a snapshot minted between
+	# battles legitimately carries no such key, and demanding one would refuse
+	# every ordinary strategic save. Absent therefore restores to `{}` - which is
+	# the same thing the absence meant to the hash.
+	pending_battle = (state.get("pending_battle", {}) as Dictionary).duplicate(true)
 	# Derived and view-facing state is rebuilt, never restored, so a snapshot
 	# can never smuggle in an event log that the hash does not cover.
 	events = []
@@ -357,7 +428,7 @@ func authoritative_state() -> Dictionary:
 	ids.sort()
 	for id in ids:
 		army_rows[id] = armies[id]
-	return {
+	var state := {
 		"schema": SCHEMA,
 		"schema_version": SCHEMA_VERSION,
 		"world_campaign": world.campaign_name if world != null else "",
@@ -368,6 +439,14 @@ func authoritative_state() -> Dictionary:
 		"armies": army_rows,
 		"next_army_id": _next_army_id,
 	}
+	# EMPTY-IS-ABSENT, the same discipline the retail slice applies to
+	# `script_env_state`: with no battle in flight the key contributes zero bytes,
+	# so a strategic state that has never fought - and one that has fought and
+	# resolved - hash identically to the pre-battle layer. No read can tell an
+	# absent record from an empty one, so the two must not hash differently.
+	if not pending_battle.is_empty():
+		state["pending_battle"] = pending_battle
+	return state
 
 
 # --- internals ---------------------------------------------------------------
@@ -395,22 +474,36 @@ func _sorted_strings(values: Array) -> PackedStringArray:
 
 ## Same canonical form the retail slice uses: dictionaries collapse to sorted
 ## key/value rows so insertion order can never leak into the hash.
-func _canonicalize(value: Variant) -> Variant:
+##
+## STATIC and shared on purpose. `wotr_battle.gd` digests the battle brief with
+## this exact function rather than a second copy: a canonicalizer that exists
+## twice is a canonicalizer that can drift, and the whole point of the digest is
+## that two peers derive the same bytes from the same input.
+static func canonicalize(value: Variant) -> Variant:
 	if typeof(value) == TYPE_DICTIONARY:
 		var source := value as Dictionary
 		var keys := source.keys()
 		keys.sort_custom(_canonical_key_less)
 		var rows: Array = []
 		for key in keys:
-			rows.append([_canonicalize(key), _canonicalize(source[key])])
+			rows.append([canonicalize(key), canonicalize(source[key])])
 		return rows
 	if typeof(value) == TYPE_ARRAY:
 		var rows: Array = []
 		for item in value as Array:
-			rows.append(_canonicalize(item))
+			rows.append(canonicalize(item))
 		return rows
 	return value
 
 
-func _canonical_key_less(a: Variant, b: Variant) -> bool:
+static func _canonical_key_less(a: Variant, b: Variant) -> bool:
 	return "%02d:%s" % [typeof(a), var_to_str(a)] < "%02d:%s" % [typeof(b), var_to_str(b)]
+
+
+## SHA-256 over the canonical form. `state_hash()` is exactly this over the
+## authoritative dictionary; the battle bridge is exactly this over a brief.
+static func canonical_digest(value: Variant) -> String:
+	var context := HashingContext.new()
+	context.start(HashingContext.HASH_SHA256)
+	context.update(var_to_bytes(canonicalize(value)))
+	return context.finish().hex_encode()
