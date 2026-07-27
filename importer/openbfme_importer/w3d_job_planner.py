@@ -56,9 +56,19 @@ _FORBIDDEN_IDENTIFIER_CHARACTERS = frozenset('/\\:*?"<>|')
 
 HIERARCHY_RESOLUTION_SAME_SOURCE = "same-source"
 HIERARCHY_RESOLUTION_SIBLING_PATH = "sibling-path"
+HIERARCHY_RESOLUTION_IDENTIFIER_PREFIX_PATH = "identifier-prefix-path"
 _HIERARCHY_RESOLUTION_MODES = frozenset(
-    {HIERARCHY_RESOLUTION_SAME_SOURCE, HIERARCHY_RESOLUTION_SIBLING_PATH}
+    {
+        HIERARCHY_RESOLUTION_SAME_SOURCE,
+        HIERARCHY_RESOLUTION_SIBLING_PATH,
+        HIERARCHY_RESOLUTION_IDENTIFIER_PREFIX_PATH,
+    }
 )
+
+# The engine's hierarchy pathing rule: OpenSAGE ``Bfme2W3dPathResolver``
+# resolves a hierarchy name to ``art/w3d/<name[:2]>/<name>.w3d`` from the
+# asset root.  It is consulted only when no sibling candidate file exists.
+_IDENTIFIER_PREFIX_PATH_ROOT = ("art", "w3d")
 
 
 class W3DJobPlannerError(ValueError):
@@ -667,6 +677,66 @@ def _hierarchy_path_index(
     }
 
 
+def _identifier_prefix_candidate_path(hierarchy_identifier: str) -> str | None:
+    """Return the engine's ``art/w3d/<id[:2]>/<id>.w3d`` candidate path.
+
+    A sub-two-character identifier cannot form the engine path and stays
+    unresolvable rather than being approximated.
+    """
+
+    if len(hierarchy_identifier) < 2:
+        return None
+    return "/".join(
+        (
+            *_IDENTIFIER_PREFIX_PATH_ROOT,
+            hierarchy_identifier[:2],
+            f"{hierarchy_identifier}.w3d",
+        )
+    )
+
+
+def _external_candidate_resolution(
+    physical_candidates: tuple[_SourceState, ...],
+    mode: str,
+) -> _HierarchyResolution:
+    """Evaluate one external physical candidate set exactly.
+
+    Authored hierarchy IDs in the candidate do not participate in selection;
+    the physical filename does.
+    """
+
+    if len(physical_candidates) != 1:
+        return _HierarchyResolution(status="ambiguous")
+    candidate = physical_candidates[0]
+    candidate_metadata = candidate.metadata
+    if candidate_metadata is None or not candidate_metadata.hierarchy_headers:
+        return _HierarchyResolution(
+            status="damaged",
+            source=candidate,
+            mode=mode,
+        )
+    if len(candidate_metadata.hierarchy_headers) != 1:
+        return _HierarchyResolution(
+            status="ambiguous",
+            source=candidate,
+            mode=mode,
+        )
+    header = candidate_metadata.hierarchy_headers[0]
+    if not _hierarchy_is_complete(candidate_metadata, header):
+        return _HierarchyResolution(
+            status="damaged",
+            source=candidate,
+            header=header,
+            mode=mode,
+        )
+    return _HierarchyResolution(
+        status="resolved",
+        source=candidate,
+        header=header,
+        mode=mode,
+    )
+
+
 def _resolve_hierarchy_source(
     state: _SourceState,
     hierarchy_identifier: str,
@@ -676,9 +746,13 @@ def _resolve_hierarchy_source(
     """Resolve the exact hierarchy source used by the pinned importer.
 
     An exact, complete hierarchy embedded in the source wins.  Otherwise the
-    only legal external candidate is the case-insensitive sibling
-    ``<source parent>/<hierarchy identifier>.w3d``.  Authored hierarchy IDs in
-    that sibling do not participate in selection; the physical filename does.
+    external candidate is the case-insensitive sibling
+    ``<source parent>/<hierarchy identifier>.w3d``; when no sibling candidate
+    file exists at all, the engine's identifier-prefix rule
+    ``art/w3d/<identifier[:2]>/<identifier>.w3d`` (OpenSAGE
+    ``Bfme2W3dPathResolver``) is consulted.  Corpus measurement found no file
+    where the two rules disagree.  Authored hierarchy IDs in a candidate do
+    not participate in selection; the physical filename does.
     """
 
     metadata = state.metadata
@@ -713,38 +787,21 @@ def _resolve_hierarchy_source(
         else (parent / candidate_name).as_posix()
     )
     physical_candidates = by_folded_path.get(candidate_path.casefold(), ())
-    if not physical_candidates:
-        return _HierarchyResolution(status="missing")
-    if len(physical_candidates) != 1:
-        return _HierarchyResolution(status="ambiguous")
+    if physical_candidates:
+        return _external_candidate_resolution(
+            physical_candidates,
+            HIERARCHY_RESOLUTION_SIBLING_PATH,
+        )
 
-    candidate = physical_candidates[0]
-    candidate_metadata = candidate.metadata
-    if candidate_metadata is None or not candidate_metadata.hierarchy_headers:
-        return _HierarchyResolution(
-            status="damaged",
-            source=candidate,
-            mode=HIERARCHY_RESOLUTION_SIBLING_PATH,
-        )
-    if len(candidate_metadata.hierarchy_headers) != 1:
-        return _HierarchyResolution(
-            status="ambiguous",
-            source=candidate,
-            mode=HIERARCHY_RESOLUTION_SIBLING_PATH,
-        )
-    header = candidate_metadata.hierarchy_headers[0]
-    if not _hierarchy_is_complete(candidate_metadata, header):
-        return _HierarchyResolution(
-            status="damaged",
-            source=candidate,
-            header=header,
-            mode=HIERARCHY_RESOLUTION_SIBLING_PATH,
-        )
-    return _HierarchyResolution(
-        status="resolved",
-        source=candidate,
-        header=header,
-        mode=HIERARCHY_RESOLUTION_SIBLING_PATH,
+    prefix_candidate_path = _identifier_prefix_candidate_path(hierarchy_identifier)
+    if prefix_candidate_path is None:
+        return _HierarchyResolution(status="missing")
+    prefix_candidates = by_folded_path.get(prefix_candidate_path.casefold(), ())
+    if not prefix_candidates:
+        return _HierarchyResolution(status="missing")
+    return _external_candidate_resolution(
+        prefix_candidates,
+        HIERARCHY_RESOLUTION_IDENTIFIER_PREFIX_PATH,
     )
 
 
@@ -1278,7 +1335,9 @@ def plan_w3d_batches(
     ownership is computed so dependent sources also fail closed.  Hierarchy
     ownership mirrors the pinned importer: an exact complete same-source
     hierarchy wins, otherwise one complete case-insensitive sibling physical
-    source is required.  Owners and clips share only that resolved source ID.
+    source, otherwise (when no sibling file exists) the engine's
+    identifier-prefix path ``art/w3d/<id[:2]>/<id>.w3d``.  Owners and clips
+    share only that resolved source ID.
     """
 
     if (

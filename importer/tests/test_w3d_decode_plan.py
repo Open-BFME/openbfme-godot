@@ -673,6 +673,204 @@ class W3DDecodePlanAnimationTests(unittest.TestCase):
         self.assertNotIn("private-zone", encoded)
         self.assertNotIn("identifier", encoded)
 
+    def test_identifier_prefix_resolves_cross_shard_skeleton_when_sibling_absent(
+        self,
+    ) -> None:
+        resolver = _sibling_resolver(
+            {"art/w3d/iu/iubanner_skl.w3d": _hierarchy("InternalName", pivots=3)}
+        )
+        channel = _chunk(0x202, struct.pack("<6Hf", 0, 0, 1, 0, 0, 0, 1.0))
+        animation = _raw_animation(channel, hierarchy="iubanner_skl", frames=1)
+
+        resolved = plan_w3d_stream_decode(
+            animation,
+            "art/w3d/mu/banner_wall.w3d",
+            external_hierarchy_resolver=resolver,
+        )
+
+        self.assertTrue(resolved.stream_decode_complete)
+        self.assertEqual(len(resolved.animation_streams), 1)
+        self.assertEqual(
+            resolved.animation_streams[0].attestation.owner_pivot_count, 3
+        )
+        self.assertIsNotNone(
+            resolved.animation_streams[0].external_hierarchy_proof_sha256
+        )
+        encoded = json.dumps(
+            {"plan": resolved.neutral(), "resolver": resolver.neutral()},
+            sort_keys=True,
+        ).casefold()
+        self.assertNotIn("iubanner", encoded)
+        self.assertNotIn("art/w3d", encoded)
+        self.assertNotIn("identifier", encoded)
+
+    def test_sibling_candidate_precedes_identifier_prefix(self) -> None:
+        resolver = _sibling_resolver(
+            {
+                "art/w3d/mu/rig.w3d": _hierarchy("SiblingRig", pivots=1),
+                "art/w3d/ri/rig.w3d": _hierarchy("PrefixRig", pivots=2),
+            }
+        )
+        channel = _chunk(0x202, struct.pack("<6Hf", 0, 0, 1, 0, 0, 0, 1.0))
+        animation = _raw_animation(channel, hierarchy="Rig", frames=1)
+
+        sibling_first = plan_w3d_stream_decode(
+            animation,
+            "art/w3d/mu/walk.w3d",
+            external_hierarchy_resolver=resolver,
+        )
+        prefix_only = plan_w3d_stream_decode(
+            animation,
+            "art/w3d/zz/walk.w3d",
+            external_hierarchy_resolver=resolver,
+        )
+
+        self.assertTrue(sibling_first.stream_decode_complete)
+        self.assertEqual(
+            sibling_first.animation_streams[0].attestation.owner_pivot_count, 1
+        )
+        self.assertTrue(prefix_only.stream_decode_complete)
+        self.assertEqual(
+            prefix_only.animation_streams[0].attestation.owner_pivot_count, 2
+        )
+        self.assertNotEqual(
+            sibling_first.animation_streams[0].external_hierarchy_proof_sha256,
+            prefix_only.animation_streams[0].external_hierarchy_proof_sha256,
+        )
+
+    def test_reference_authored_nowhere_stays_fail_closed_over_near_names(
+        self,
+    ) -> None:
+        # A skeleton named one character apart exists; using it would be a
+        # silently wrong model.  The reference must stay an explicit
+        # unresolved terminal.
+        resolver = _sibling_resolver(
+            {"art/w3d/cu/cusheep_skl.w3d": _hierarchy("SheepRig", pivots=2)}
+        )
+        channel = _chunk(0x202, struct.pack("<6Hf", 0, 0, 1, 0, 0, 0, 1.0))
+        animation = _raw_animation(channel, hierarchy="cugsheep_skl", frames=1)
+
+        missing = plan_w3d_stream_decode(
+            animation,
+            "art/w3d/cu/cusheep_dwna.w3d",
+            external_hierarchy_resolver=resolver,
+        )
+
+        self.assertFalse(missing.stream_decode_complete)
+        self.assertEqual(missing.animation_streams, ())
+        self.assertIn(
+            "missing-hierarchy-pivot-cardinality",
+            {item.code for item in missing.terminals},
+        )
+
+        short = plan_w3d_stream_decode(
+            _raw_animation(channel, hierarchy="R", frames=1),
+            "art/w3d/cu/short.w3d",
+            external_hierarchy_resolver=resolver,
+        )
+        self.assertIn(
+            "missing-hierarchy-pivot-cardinality",
+            {item.code for item in short.terminals},
+        )
+
+    def test_ambiguous_identifier_prefix_candidate_is_explicit(self) -> None:
+        resolver = _sibling_resolver(
+            {"art/w3d/ri/rig.w3d": _hierarchy("One") + _hierarchy("Two")}
+        )
+        channel = _chunk(0x202, struct.pack("<6Hf", 0, 0, 1, 0, 0, 0, 1.0))
+        ambiguous = plan_w3d_stream_decode(
+            _raw_animation(channel, hierarchy="Rig", frames=1),
+            "art/w3d/zz/walk.w3d",
+            external_hierarchy_resolver=resolver,
+        )
+
+        self.assertIn(
+            "ambiguous-external-hierarchy-pivot-cardinality",
+            {item.code for item in ambiguous.terminals},
+        )
+        self.assertEqual(ambiguous.animation_streams, ())
+
+
+class W3DDecodePlanCompletenessTests(unittest.TestCase):
+    def test_nothing_to_decode_is_vacuously_complete_and_marked(self) -> None:
+        skeleton = plan_w3d_stream_decode(_hierarchy("Rig", pivots=2))
+        self.assertEqual(skeleton.target_stream_chunk_count, 0)
+        self.assertTrue(skeleton.stream_decode_complete)
+        self.assertTrue(skeleton.stream_decode_vacuously_complete)
+        self.assertIs(skeleton.neutral()["streamDecodeCompleteVacuous"], True)
+
+        channel_less = plan_w3d_stream_decode(_raw_animation(frames=1))
+        self.assertEqual(channel_less.target_stream_chunk_count, 0)
+        self.assertTrue(channel_less.stream_decode_complete)
+        self.assertTrue(channel_less.stream_decode_vacuously_complete)
+        self.assertIs(channel_less.neutral()["streamDecodeCompleteVacuous"], True)
+
+    def test_decoded_completeness_is_never_marked_vacuous(self) -> None:
+        decoded = plan_w3d_stream_decode(
+            _mesh(_chunk(0x02, struct.pack("<6f", 0.0, 1.0, 2.0, 3.0, 4.0, 5.0)))
+        )
+        self.assertTrue(decoded.stream_decode_complete)
+        self.assertFalse(decoded.stream_decode_vacuously_complete)
+        self.assertNotIn("streamDecodeCompleteVacuous", decoded.neutral())
+        self.assertNotIn(
+            "streamdecodecompletevacuous",
+            json.dumps(decoded.neutral(), sort_keys=True).casefold(),
+        )
+
+    def test_zero_targets_with_a_blocking_terminal_stays_incomplete(self) -> None:
+        blocked = plan_w3d_stream_decode(_chunk(0x7777, b"opaque"))
+        self.assertEqual(blocked.target_stream_chunk_count, 0)
+        self.assertFalse(blocked.stream_decode_complete)
+        self.assertFalse(blocked.stream_decode_vacuously_complete)
+        self.assertNotIn("streamDecodeCompleteVacuous", blocked.neutral())
+
+    def test_vacuous_marker_is_sealed_into_the_plan_hash(self) -> None:
+        plan = plan_w3d_stream_decode(_hierarchy("Rig", pivots=1))
+        self.assertTrue(plan.stream_decode_vacuously_complete)
+        core = {
+            "schema": "openbfme.w3d-decode-plan",
+            "schemaVersion": 2,
+            "sourceByteLength": plan.source_byte_length,
+            "sourceSha256": plan.source_sha256,
+            "encounteredChunkCount": plan.encountered_chunk_count,
+            "targetStreamChunkCount": plan.target_stream_chunk_count,
+            "decodedStreams": [item.neutral() for item in plan.decoded_streams],
+            "terminals": [item.neutral() for item in plan.terminals],
+            "streamDecodeComplete": True,
+            "streamDecodeCompleteVacuous": True,
+        }
+
+        def sealed(value: dict[str, object]) -> str:
+            encoded = json.dumps(
+                value,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("ascii")
+            return hashlib.sha256(encoded).hexdigest()
+
+        self.assertEqual(plan.plan_sha256, sealed(core))
+        collapsed = {
+            key: value
+            for key, value in core.items()
+            if key != "streamDecodeCompleteVacuous"
+        }
+        self.assertNotEqual(plan.plan_sha256, sealed(collapsed))
+
+    def test_vacuous_and_decoded_completeness_have_distinct_plan_evidence(
+        self,
+    ) -> None:
+        vacuous = plan_w3d_stream_decode(_hierarchy("Rig", pivots=1))
+        decoded = plan_w3d_stream_decode(
+            _mesh(_chunk(0x02, struct.pack("<6f", 0.0, 1.0, 2.0, 3.0, 4.0, 5.0)))
+        )
+        self.assertTrue(vacuous.stream_decode_complete)
+        self.assertTrue(decoded.stream_decode_complete)
+        self.assertNotEqual(
+            vacuous.neutral().get("streamDecodeCompleteVacuous"),
+            decoded.neutral().get("streamDecodeCompleteVacuous"),
+        )
+
 
 class W3DDecodePlanAuxiliaryTests(unittest.TestCase):
     def test_all_nine_source_proven_auxiliary_layouts_are_owner_bound(self) -> None:

@@ -1,7 +1,7 @@
 {
-	"$comment": "Ranked retail W3D chunk-decode backlog. Regenerate with `PYTHONPATH=importer python -m openbfme_importer.w3d_chunk_backlog <effective-assets-root> <reports-dir> <output-json>`; do not hand-edit. Ranking is by DISTINCT FILES BLOCKED at the metadata-scanner level, not raw occurrences. `decodeLayer` quotes the sealed decode-corpus evidence for the same chunk ID: a non-null row with terminalCount 0 means the stream decoder already decodes every occurrence and only census accounting lags. anomalies.trimAdmitted counts files whose only index defect was retail fixed-width whitespace padding in an authored header identifier and whose trimmed ids are provably unique corpus-wide; a collision keeps the fail-closed rejection and is counted under anomalies.indexRejected instead. `provenance` blocks date this census and its decode-corpus input against the measuring code's import-closure fingerprint; a `status` other than `fresh` means the quoted figures were measured by code that has since changed and must be regenerated, and the committed-census test fails on it. Aggregate counts and hashes only - no retail paths, authored identifiers, payload bytes, or geometry.",
+	"$comment": "Ranked retail W3D chunk-decode backlog. Regenerate with `PYTHONPATH=importer python -m openbfme_importer.w3d_chunk_backlog <effective-assets-root> <reports-dir> <output-json>`; do not hand-edit. Ranking is by DISTINCT FILES BLOCKED at the metadata-scanner level, not raw occurrences. `decodeLayer` quotes the sealed decode-corpus evidence for the same chunk ID: a non-null row with terminalCount 0 means the stream decoder already decodes every occurrence and only census accounting lags. anomalies.decodeCorpus.vacuouslyStreamCompleteFileCount separates files that are stream-complete because there was nothing to stream-decode (pure skeletons and channel-less animation containers) from files whose target streams all decoded; the two are never collapsed. anomalies.trimAdmitted counts files whose only index defect was retail fixed-width whitespace padding in an authored header identifier and whose trimmed ids are provably unique corpus-wide; a collision keeps the fail-closed rejection and is counted under anomalies.indexRejected instead. `provenance` blocks date this census and its decode-corpus input against the measuring code's import-closure fingerprint; a `status` other than `fresh` means the quoted figures were measured by code that has since changed and must be regenerated, and the committed-census test fails on it. Aggregate counts and hashes only - no retail paths, authored identifiers, payload bytes, or geometry.",
 	"schema": "openbfme.retail-w3d-chunk-backlog",
-	"schemaVersion": 2,
+	"schemaVersion": 3,
 	"corpus": {
 		"game": "bfme2",
 		"manifestFileCount": 40129,
@@ -15,19 +15,19 @@
 			"schema": "openbfme.w3d-decode-corpus",
 			"schemaVersion": 2,
 			"hashes": {
-				"corpusSha256": "077c18b8bdd962cee56ce610a15a0c7d867f68ffce43e70c73475171c7b61595",
+				"corpusSha256": "fd148058b9ef4a1f159113af29cdeb18b6d1cbf857ffdb617757a906fea8bb12",
 				"hierarchyResolverSha256": "9101bac33b0c9011539d758ae056ab42e4c4c73b816b5a409d6a92a73e6e090a",
 				"inventorySha256": "679a2a983f8fdf3276c48a65102fc699701eecc39c06ae066d0c24c314cceae9",
 				"manifestAggregateSha256": "fbf3c7e03ed5fe841cd7b71c3b2ac7dac712f0ece212bdc3621c7c4e99053568",
 				"manifestSha256": "8ca034dbf551e5162778a54a849afd02022ef5b368e39474a89b3c1a28f6803f",
-				"planSetSha256": "2505fb35e15d9c49b4e7517d196f197b744ecb29dee575e1c800e5c528963e14"
+				"planSetSha256": "4ad8c4e8c125aa15fc5c7adb17488f3a7059350b9892ca0d50352bdf9b43bb1f"
 			},
 			"provenance": {
 				"status": "fresh",
 				"rootModule": "openbfme_importer.w3d_decode_corpus",
-				"recordedFingerprintSha256": "9c138422225cce191e6584db31658507cd23a22c307e74cb64c26c11d73f12fb",
-				"currentFingerprintSha256": "9c138422225cce191e6584db31658507cd23a22c307e74cb64c26c11d73f12fb",
-				"recordedGitCommit": "2bc91f17866331e28c8812aab34e0d92dfd524c0",
+				"recordedFingerprintSha256": "a8a8f26a38c1252ed7ebbfb12aff5b0819be2a22aa170a6b755afc492c0b3cc1",
+				"currentFingerprintSha256": "a8a8f26a38c1252ed7ebbfb12aff5b0819be2a22aa170a6b755afc492c0b3cc1",
+				"recordedGitCommit": "3466399c3224131e637e0f11490b1c8b8b56d0d1",
 				"staleModules": []
 			}
 		}
@@ -725,14 +725,16 @@
 		"decodeCorpus": {
 			"joinedBySourceSha256": true,
 			"unjoinedFileCount": 0,
-			"notStreamCompleteFileCount": 232,
-			"notStreamCompleteFactionReachableFileCount": 87,
+			"notStreamCompleteFileCount": 39,
+			"notStreamCompleteFactionReachableFileCount": 1,
+			"vacuouslyStreamCompleteFileCount": 185,
+			"vacuouslyStreamCompleteFactionReachableFileCount": 86,
 			"damagedFileCount": 33,
-			"incompleteFileCount": 232,
-			"unresolvedFileCount": 11,
+			"incompleteFileCount": 39,
+			"unresolvedFileCount": 3,
 			"unsupportedFileCount": 10,
 			"damagedFactionReachableFileCount": 1,
-			"incompleteFactionReachableFileCount": 87,
+			"incompleteFactionReachableFileCount": 1,
 			"unresolvedFactionReachableFileCount": 0,
 			"unsupportedFactionReachableFileCount": 0
 		},
@@ -763,7 +765,7 @@
 			},
 			{
 				"module": "w3d_chunk_backlog",
-				"sha256": "4b0ad1d8ef4fb4a2b2515bd74907ae24eefefc09111e41ef6e9e9cb2722005c6"
+				"sha256": "11bf93266fbf4f907da59d34e6ad475ed107d45641ac17a28962cc2948fd7eb7"
 			},
 			{
 				"module": "w3d_corpus",
@@ -778,8 +780,8 @@
 				"sha256": "abee460bf7d23acb77ad3d89d3eae8f5bc1785c3987ddf4ddf8497f694cf08b0"
 			}
 		],
-		"fingerprintSha256": "f8cdca32998ace2a39dfdb90a8421f706500ebbef99275042b6a349ca4c9e0d7",
-		"gitCommit": "b6a67c45d92e9c125ecd271480087fa5f4932676",
+		"fingerprintSha256": "a1cf03f4a7e43e479ba7bfbe5f368003a97bdcb8cb02a1c9790e75e12288cf3d",
+		"gitCommit": "3466399c3224131e637e0f11490b1c8b8b56d0d1",
 		"gitWorktreeClean": false
 	}
 }

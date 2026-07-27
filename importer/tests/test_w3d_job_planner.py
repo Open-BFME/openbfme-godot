@@ -888,6 +888,81 @@ class W3DJobPlannerTests(unittest.TestCase):
             damaged_model_terminal.reason_codes,
         )
 
+    def test_identifier_prefix_path_stages_cross_shard_skeleton(self) -> None:
+        # The skin lives in art/w3d/cu/ but its skeleton is authored under
+        # art/w3d/nu/ -- the engine finds it by identifier prefix
+        # (OpenSAGE Bfme2W3dPathResolver), not by sibling directory.
+        values = {
+            "art/w3d/cu/cuelk_skn.w3d": _model("CUElk", "NUHORSE_SKL"),
+            "art/w3d/nu/nuhorse_skl.w3d": _hierarchy("NUHORSE_SKL"),
+            "art/w3d/nu/nuhorse_runa.w3d": _animation("Run", "NUHORSE_SKL"),
+        }
+        report = scan_w3d_catalog(values)
+        plan = plan_w3d_batches(report, _mapping(values), index=report.index)
+
+        self.assertTrue(plan.source_accounting_complete)
+        self.assertEqual(len(plan.jobs), 1)
+        job = plan.jobs[0]
+        self.assertTrue(w3d_job_resolution_contract_is_valid(job))
+        self.assertEqual(job.asset_kind, "animated")
+        self.assertEqual(job.hierarchy_resolution_mode, "identifier-prefix-path")
+        self.assertEqual(
+            job.hierarchy_source_sha256,
+            hashlib.sha256(values["art/w3d/nu/nuhorse_skl.w3d"]).hexdigest(),
+        )
+        # The clip sits beside its skeleton, so it stays sibling-resolved.
+        self.assertEqual(job.animation_hierarchy_resolution_modes, ("sibling-path",))
+        neutral = job.neutral()
+        self.assertEqual(neutral["hierarchyResolutionMode"], "identifier-prefix-path")
+
+        # A prefix-mode job may never collapse onto its own model source.
+        self.assertFalse(
+            w3d_job_resolution_contract_is_valid(
+                replace(
+                    job,
+                    hierarchy=job.model,
+                    hierarchy_source_id=job.model_source_id,
+                    hierarchy_source_sha256=job.model_source_sha256,
+                )
+            )
+        )
+
+    def test_sibling_candidate_precedes_identifier_prefix_candidate(self) -> None:
+        values = {
+            "art/w3d/mu/model.w3d": _model("Model", "Rig"),
+            "art/w3d/mu/Rig.w3d": _hierarchy("SiblingRig"),
+            "art/w3d/ri/rig.w3d": _hierarchy("PrefixRig"),
+        }
+        report = scan_w3d_catalog(values)
+        plan = plan_w3d_batches(report, _mapping(values), index=report.index)
+        job = next(
+            item
+            for item in plan.jobs
+            if item.model_source_sha256
+            == hashlib.sha256(values["art/w3d/mu/model.w3d"]).hexdigest()
+        )
+        self.assertEqual(job.hierarchy_resolution_mode, "sibling-path")
+        self.assertEqual(
+            job.hierarchy_source_sha256,
+            hashlib.sha256(values["art/w3d/mu/Rig.w3d"]).hexdigest(),
+        )
+
+    def test_identifier_prefix_never_guesses_a_near_name(self) -> None:
+        # CUGSHEEP_SKL is authored nowhere; a one-character-different
+        # skeleton exists and must NOT be substituted.
+        values = {
+            "art/w3d/cu/cusheep_skn.w3d": _model("Sheep", "CUGSHEEP_SKL"),
+            "art/w3d/cu/cusheep_skl.w3d": _hierarchy("CUSHEEP_SKL"),
+        }
+        report = scan_w3d_catalog(values)
+        plan = plan_w3d_batches(report, _mapping(values), index=report.index)
+        model_sha = hashlib.sha256(values["art/w3d/cu/cusheep_skn.w3d"]).hexdigest()
+        model_terminal = next(
+            item for item in plan.terminals if item.source_sha256 == model_sha
+        )
+        self.assertFalse(plan.jobs)
+        self.assertIn("hierarchy-not-found", model_terminal.reason_codes)
+
     def test_sanitized_animation_name_collision_fails_closed(self) -> None:
         values = {
             "units/model.w3d": _model("Model", "Rig"),

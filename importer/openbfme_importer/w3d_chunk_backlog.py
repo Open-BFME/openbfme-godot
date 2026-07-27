@@ -40,7 +40,7 @@ from .w3d_metadata import W3DMetadata, scan_w3d_metadata
 
 
 RETAIL_W3D_CHUNK_BACKLOG_SCHEMA = "openbfme.retail-w3d-chunk-backlog"
-RETAIL_W3D_CHUNK_BACKLOG_SCHEMA_VERSION = 2
+RETAIL_W3D_CHUNK_BACKLOG_SCHEMA_VERSION = 3
 
 CENSUS_MEASUREMENT_MODULE = "openbfme_importer.w3d_chunk_backlog"
 DECODE_CORPUS_MEASUREMENT_MODULE = "openbfme_importer.w3d_decode_corpus"
@@ -280,6 +280,14 @@ def _validated_decode_states(
                     f"decode source state {flag!r} must be a boolean"
                 )
             row[flag] = value
+        # Optional marker: stream-complete because there was nothing to
+        # stream-decode.  Absent in reports predating the distinction.
+        vacuous = status.get("streamCompleteVacuous", False)
+        if not isinstance(vacuous, bool):
+            raise W3DChunkBacklogError(
+                "decode source state 'streamCompleteVacuous' must be a boolean"
+            )
+        row["streamCompleteVacuous"] = vacuous
         result[sha] = row
     return result
 
@@ -355,6 +363,7 @@ def build_w3d_chunk_backlog(
     logical_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
     status_files: dict[str, set[str]] = {flag: set() for flag in _STATUS_FLAGS}
     not_stream_complete: set[str] = set()
+    vacuously_stream_complete: set[str] = set()
     unjoined_decode_paths = 0
 
     for row in rows:
@@ -391,6 +400,8 @@ def build_w3d_chunk_backlog(
                         status_files[flag].add(row.path_key)
                 if not status["streamComplete"]:
                     not_stream_complete.add(row.path_key)
+                if status.get("streamCompleteVacuous"):
+                    vacuously_stream_complete.add(row.path_key)
 
     # Trim-and-prove-unique admission, corpus-wide half.  A trim-pending file
     # is admitted only when every trimmed identifier is claimed by no other
@@ -472,6 +483,11 @@ def build_w3d_chunk_backlog(
             "sealed decode-corpus evidence for the same chunk ID: a non-null "
             "row with terminalCount 0 means the stream decoder already "
             "decodes every occurrence and only census accounting lags. "
+            "anomalies.decodeCorpus.vacuouslyStreamCompleteFileCount separates "
+            "files that are stream-complete because there was nothing to "
+            "stream-decode (pure skeletons and channel-less animation "
+            "containers) from files whose target streams all decoded; the "
+            "two are never collapsed. "
             "anomalies.trimAdmitted counts files whose only index defect "
             "was retail fixed-width whitespace padding in an authored "
             "header identifier and whose trimmed ids are provably unique "
@@ -522,6 +538,12 @@ def build_w3d_chunk_backlog(
                 "notStreamCompleteFileCount": len(not_stream_complete),
                 "notStreamCompleteFactionReachableFileCount": reachable(
                     not_stream_complete
+                ),
+                "vacuouslyStreamCompleteFileCount": len(
+                    vacuously_stream_complete
+                ),
+                "vacuouslyStreamCompleteFactionReachableFileCount": reachable(
+                    vacuously_stream_complete
                 ),
                 **{
                     f"{flag}FileCount": len(status_files[flag])
@@ -599,6 +621,9 @@ def scan_w3d_chunk_backlog_tree(
             decode_states[sha] = {
                 **{flag: bool(status.get(flag)) for flag in _STATUS_FLAGS},
                 "streamComplete": bool(status.get("streamComplete")),
+                "streamCompleteVacuous": bool(
+                    status.get("streamCompleteVacuous", False)
+                ),
             }
         decode_rows = {}
         for chunk in chunks:

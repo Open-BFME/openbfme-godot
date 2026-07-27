@@ -239,6 +239,59 @@ class W3DChunkBacklogTests(unittest.TestCase):
             {"decodedStreamCount": 0, "terminalCount": 3},
         )
 
+    def test_vacuous_stream_completeness_is_separately_counted(self) -> None:
+        rows = _evidence_rows()
+        # The reachable deform file plays the vacuously complete role; the
+        # unreachable prop is complete-by-decoding; the clean file too.
+        states = {
+            row.source_sha256: {
+                "damaged": False,
+                "incomplete": False,
+                "unresolved": False,
+                "unsupported": False,
+                "streamComplete": True,
+                "streamCompleteVacuous": row.path_key == "art/w3d/gu/deform.w3d",
+            }
+            for row in rows
+        }
+        census = build_w3d_chunk_backlog(
+            rows,
+            faction_closures=_CLOSURES,
+            corpus_identity=_identity(),
+            decode_source_states=states,
+        )
+        decode = census["anomalies"]["decodeCorpus"]
+        self.assertEqual(decode["notStreamCompleteFileCount"], 0)
+        self.assertEqual(decode["vacuouslyStreamCompleteFileCount"], 1)
+        self.assertEqual(decode["vacuouslyStreamCompleteFactionReachableFileCount"], 1)
+
+        # A report predating the marker still aggregates, with zero vacuous.
+        legacy_states = {
+            sha: {key: value for key, value in row.items() if key != "streamCompleteVacuous"}
+            for sha, row in states.items()
+        }
+        legacy = build_w3d_chunk_backlog(
+            rows,
+            faction_closures=_CLOSURES,
+            corpus_identity=_identity(),
+            decode_source_states=legacy_states,
+        )
+        decode = legacy["anomalies"]["decodeCorpus"]
+        self.assertEqual(decode["vacuouslyStreamCompleteFileCount"], 0)
+
+        # The marker is validated fail-closed, never coerced.
+        tampered = {
+            sha: {**row, "streamCompleteVacuous": "yes"}
+            for sha, row in states.items()
+        }
+        with self.assertRaisesRegex(W3DChunkBacklogError, "streamCompleteVacuous"):
+            build_w3d_chunk_backlog(
+                rows,
+                faction_closures=_CLOSURES,
+                corpus_identity=_identity(),
+                decode_source_states=tampered,
+            )
+
     def test_trim_collisions_keep_the_fail_closed_rejection(self) -> None:
         def _hlod(identifier: str, path: str):
             return collect_w3d_backlog_file_evidence(

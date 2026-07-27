@@ -100,6 +100,7 @@ class W3DDecodeSourceEvidence:
     plan_sha256: str | None
     decode_evidence_sha256: str
     stream_complete: bool
+    stream_complete_vacuous: bool
     incomplete: bool
     damaged: bool
     unresolved: bool
@@ -108,20 +109,26 @@ class W3DDecodeSourceEvidence:
     primary_skipped_animation_stream_count: int
 
     def neutral(self) -> dict[str, object]:
+        status: dict[str, object] = {
+            "plannerAccepted": self.planner_accepted,
+            "streamComplete": self.stream_complete,
+            "incomplete": self.incomplete,
+            "damaged": self.damaged,
+            "unresolved": self.unresolved,
+            "unsupported": self.unsupported,
+        }
+        if self.stream_complete_vacuous:
+            # Complete because there was nothing to stream-decode, not
+            # because targets decoded.  Emitted only when true so every
+            # non-vacuous source row stays byte-identical.
+            status["streamCompleteVacuous"] = True
         result: dict[str, object] = {
             "sourceSha256": self.source_sha256,
             "pathContextSha256": self.path_context_sha256,
             "byteLength": self.byte_length,
             "manifestEntryCount": self.manifest_entry_count,
             "decodeEvidenceSha256": self.decode_evidence_sha256,
-            "status": {
-                "plannerAccepted": self.planner_accepted,
-                "streamComplete": self.stream_complete,
-                "incomplete": self.incomplete,
-                "damaged": self.damaged,
-                "unresolved": self.unresolved,
-                "unsupported": self.unsupported,
-            },
+            "status": status,
             "primaryImport": {
                 "boundAnimationStreamCount": (
                     self.primary_bound_animation_stream_count
@@ -208,6 +215,7 @@ class _PlanSummary:
     plan_sha256: str | None
     decode_evidence_sha256: str
     stream_complete: bool
+    stream_complete_vacuous: bool
     incomplete: bool
     damaged: bool
     unresolved: bool
@@ -231,6 +239,7 @@ class _PlanSummary:
             plan_sha256=self.plan_sha256,
             decode_evidence_sha256=self.decode_evidence_sha256,
             stream_complete=self.stream_complete,
+            stream_complete_vacuous=self.stream_complete_vacuous,
             incomplete=self.incomplete,
             damaged=self.damaged,
             unresolved=self.unresolved,
@@ -244,7 +253,7 @@ class _PlanSummary:
         )
 
     def identity(self) -> dict[str, object]:
-        return {
+        result = {
             "sourceSha256": self.source_sha256,
             "pathContextSha256": self.path_context_sha256,
             "byteLength": self.byte_length,
@@ -295,6 +304,9 @@ class _PlanSummary:
                 for domain, count, primary_bound, primary_skipped in self.domain_counts
             ],
         }
+        if self.stream_complete_vacuous:
+            result["streamCompleteVacuous"] = True
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,6 +324,7 @@ class W3DDecodeCorpusReport:
     unique_source_total_bytes: int
     plan_context_count: int
     stream_complete_file_count: int
+    vacuously_complete_file_count: int
     incomplete_file_count: int
     damaged_file_count: int
     unresolved_file_count: int
@@ -356,6 +369,9 @@ class W3DDecodeCorpusReport:
                 "uniqueSourceTotalBytes": self.unique_source_total_bytes,
                 "planContextCount": self.plan_context_count,
                 "streamCompleteFileCount": self.stream_complete_file_count,
+                "vacuouslyCompleteFileCount": (
+                    self.vacuously_complete_file_count
+                ),
                 "incompleteFileCount": self.incomplete_file_count,
                 "damagedFileCount": self.damaged_file_count,
                 "unresolvedFileCount": self.unresolved_file_count,
@@ -494,6 +510,11 @@ def _accepted_plan(
         "planSha256": plan.plan_sha256,
         "streamComplete": plan.stream_decode_complete,
         "incomplete": not plan.stream_decode_complete,
+        **(
+            {"streamCompleteVacuous": True}
+            if plan.stream_decode_vacuously_complete
+            else {}
+        ),
         "damaged": "damaged" in states,
         "unresolved": "unresolved" in states,
         "unsupported": "unsupported" in states,
@@ -538,6 +559,7 @@ def _accepted_plan(
         plan_sha256=plan.plan_sha256,
         decode_evidence_sha256=_canonical_sha256(core),
         stream_complete=plan.stream_decode_complete,
+        stream_complete_vacuous=plan.stream_decode_vacuously_complete,
         incomplete=not plan.stream_decode_complete,
         damaged="damaged" in states,
         unresolved="unresolved" in states,
@@ -607,6 +629,7 @@ def _rejected_plan(
         plan_sha256=None,
         decode_evidence_sha256=_canonical_sha256(core),
         stream_complete=False,
+        stream_complete_vacuous=False,
         incomplete=True,
         damaged=True,
         unresolved=False,
@@ -679,6 +702,7 @@ def _accounted_report(
     primary_skipped_animation_streams = 0
     terminal_count = 0
     stream_complete_files = 0
+    vacuously_complete_files = 0
     incomplete_files = 0
     damaged_files = 0
     unresolved_files = 0
@@ -698,6 +722,7 @@ def _accounted_report(
             plan.primary_skipped_animation_stream_count * multiplier
         )
         stream_complete_files += int(plan.stream_complete) * multiplier
+        vacuously_complete_files += int(plan.stream_complete_vacuous) * multiplier
         incomplete_files += int(plan.incomplete) * multiplier
         damaged_files += int(plan.damaged) * multiplier
         unresolved_files += int(plan.unresolved) * multiplier
@@ -778,6 +803,7 @@ def _accounted_report(
         "uniqueSourceCount": len(source_sizes),
         "planContextCount": len(ordered_plans),
         "streamCompleteFileCount": stream_complete_files,
+        "vacuouslyCompleteFileCount": vacuously_complete_files,
         "incompleteFileCount": incomplete_files,
         "damagedFileCount": damaged_files,
         "unresolvedFileCount": unresolved_files,
@@ -801,6 +827,7 @@ def _accounted_report(
         unique_source_total_bytes=sum(source_sizes.values()),
         plan_context_count=len(ordered_plans),
         stream_complete_file_count=stream_complete_files,
+        vacuously_complete_file_count=vacuously_complete_files,
         incomplete_file_count=incomplete_files,
         damaged_file_count=damaged_files,
         unresolved_file_count=unresolved_files,

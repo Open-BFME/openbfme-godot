@@ -125,8 +125,15 @@ ExternalHierarchyState: TypeAlias = Literal[
     "resolved", "ambiguous", "damaged", "missing"
 ]
 ExternalHierarchyResolutionMode: TypeAlias = Literal[
-    "sibling-path", "global-no-context-compatibility"
+    "sibling-path", "identifier-prefix-path", "global-no-context-compatibility"
 ]
+
+# The engine's hierarchy pathing rule: OpenSAGE ``Bfme2W3dPathResolver``
+# (PathResolvers.Bfme2W3d) maps a hierarchy name to
+# ``art/w3d/<name[:2]>/<name>.w3d`` from the asset root.  The sibling rule
+# only coincides with it when the referencing file lives in the same
+# two-letter shard directory as the skeleton.
+_IDENTIFIER_PREFIX_PATH_ROOT = ("art", "w3d")
 StreamAttestation: TypeAlias = (
     W3DGeometryStreamAttestation
     | W3DAnimationChannelAttestation
@@ -184,6 +191,30 @@ def _sibling_candidate_lookup_sha256(
         marker = "\0invalid-sibling-reference\0" + hierarchy_identifier.casefold()
         return hashlib.sha256(marker.encode("utf-8")).hexdigest()
     candidate = "/".join((*parts[:-1], f"{identifier_parts[0]}.w3d"))
+    return hashlib.sha256(candidate.casefold().encode("utf-8")).hexdigest()
+
+
+def _identifier_prefix_candidate_lookup_sha256(hierarchy_identifier: str) -> str:
+    """Hash the engine's identifier-prefix candidate path exactly.
+
+    The candidate is ``art/w3d/<identifier[:2]>/<identifier>.w3d``, the rule
+    OpenSAGE's ``Bfme2W3dPathResolver`` uses.  An unsafe or sub-two-character
+    identifier cannot form the engine path and remains a payload-free missing
+    lookup; the impossible marker cannot collide with any safe manifest path
+    hash.
+    """
+
+    try:
+        identifier_parts = safe_relative_parts(hierarchy_identifier)
+    except ValueError:
+        identifier_parts = ()
+    if len(identifier_parts) != 1 or len(identifier_parts[0]) < 2:
+        marker = "\0invalid-prefix-reference\0" + hierarchy_identifier.casefold()
+        return hashlib.sha256(marker.encode("utf-8")).hexdigest()
+    name = identifier_parts[0]
+    candidate = "/".join(
+        (*_IDENTIFIER_PREFIX_PATH_ROOT, name[:2], f"{name}.w3d")
+    )
     return hashlib.sha256(candidate.casefold().encode("utf-8")).hexdigest()
 
 
@@ -438,7 +469,38 @@ class W3DExternalHierarchyResolver:
     ) -> _W3DExternalHierarchyMatch:
         """Resolve ``<parent(virtual_path)>/<identifier>.w3d`` exactly."""
 
-        lookup_sha256 = _sibling_candidate_lookup_sha256(virtual_path, identifier)
+        return self._resolve_candidate_path(
+            identifier,
+            lookup_sha256=_sibling_candidate_lookup_sha256(virtual_path, identifier),
+            resolution_mode="sibling-path",
+        )
+
+    def resolve_identifier_prefix(
+        self,
+        identifier: str,
+    ) -> _W3DExternalHierarchyMatch:
+        """Resolve ``art/w3d/<identifier[:2]>/<identifier>.w3d`` exactly.
+
+        This is the engine's own hierarchy pathing rule (OpenSAGE
+        ``Bfme2W3dPathResolver``).  It consults only the same sealed
+        candidate table as :meth:`resolve_sibling`; a candidate authored
+        nowhere in the corpus stays a missing lookup and is never
+        approximated by a similarly named file.
+        """
+
+        return self._resolve_candidate_path(
+            identifier,
+            lookup_sha256=_identifier_prefix_candidate_lookup_sha256(identifier),
+            resolution_mode="identifier-prefix-path",
+        )
+
+    def _resolve_candidate_path(
+        self,
+        identifier: str,
+        *,
+        lookup_sha256: str,
+        resolution_mode: ExternalHierarchyResolutionMode,
+    ) -> _W3DExternalHierarchyMatch:
         matches = tuple(
             item
             for item in self.sibling_candidates
@@ -470,7 +532,7 @@ class W3DExternalHierarchyResolver:
                 "schema": "openbfme.w3d-external-hierarchy-match",
                 "schemaVersion": 1,
                 "resolverSha256": self.resolver_sha256,
-                "resolutionMode": "sibling-path",
+                "resolutionMode": resolution_mode,
                 "lookupSha256": lookup_sha256,
                 "state": state,
                 "pivotCount": pivot_count,
@@ -481,7 +543,7 @@ class W3DExternalHierarchyResolver:
             state=state,
             pivot_count=pivot_count,
             lookup_sha256=lookup_sha256,
-            resolution_mode="sibling-path",
+            resolution_mode=resolution_mode,
             evidence_sha256=evidence_sha256,
         )
 
@@ -635,7 +697,15 @@ class W3DChunkTerminal:
 
 @dataclass(frozen=True, slots=True)
 class W3DStreamDecodePlan:
-    """Immutable, deterministic container-to-stream planning evidence."""
+    """Immutable, deterministic container-to-stream planning evidence.
+
+    ``stream_decode_complete`` covers two provably different situations that
+    ``stream_decode_vacuously_complete`` keeps distinguishable: every target
+    stream decoded, or there was nothing to stream-decode and nothing
+    blocking (a pure skeleton or channel-less animation container).  The
+    vacuous case is additionally marked in the sealed neutral form, so a
+    reader of stored evidence can always tell the two apart.
+    """
 
     source_byte_length: int
     source_sha256: str
@@ -644,6 +714,7 @@ class W3DStreamDecodePlan:
     decoded_streams: tuple[W3DDecodedStream, ...]
     terminals: tuple[W3DChunkTerminal, ...]
     stream_decode_complete: bool
+    stream_decode_vacuously_complete: bool
     path_context_sha256: str | None
     external_hierarchy_resolver_sha256: str | None
     plan_sha256: str
@@ -708,6 +779,8 @@ class W3DStreamDecodePlan:
             "streamDecodeComplete": self.stream_decode_complete,
             "planSha256": self.plan_sha256,
         }
+        if self.stream_decode_vacuously_complete:
+            result["streamDecodeCompleteVacuous"] = True
         if self.external_hierarchy_resolver_sha256 is not None:
             result["externalHierarchyResolverSha256"] = (
                 self.external_hierarchy_resolver_sha256
@@ -773,7 +846,17 @@ def _final_plan(
     external_hierarchy_resolver_sha256: str | None = None,
 ) -> W3DStreamDecodePlan:
     blocker = any(item.state not in _NON_BLOCKING_STATES for item in terminals)
-    complete = (
+    # Vacuous completeness: nothing to stream-decode and nothing blocking.
+    # The resolver still consumes such files (pure skeletons, channel-less
+    # animation containers) as evidence; classifying them incomplete would
+    # claim a defect that does not exist.  The case stays distinguishable
+    # from "every target decoded": the sealed core carries an explicit
+    # marker, emitted only when the completeness is vacuous so every
+    # non-vacuous plan hash is unchanged by this schema addition.
+    vacuous = (
+        target_stream_chunk_count == 0 and not decoded_streams and not blocker
+    )
+    complete = vacuous or (
         target_stream_chunk_count > 0
         and len(decoded_streams) == target_stream_chunk_count
         and not blocker
@@ -789,6 +872,8 @@ def _final_plan(
         "terminals": [item.neutral() for item in terminals],
         "streamDecodeComplete": complete,
     }
+    if vacuous:
+        core["streamDecodeCompleteVacuous"] = True
     if external_hierarchy_resolver_sha256 is not None:
         core["externalHierarchyResolverSha256"] = external_hierarchy_resolver_sha256
     if path_context_sha256 is not None:
@@ -803,6 +888,7 @@ def _final_plan(
         decoded_streams=decoded_streams,
         terminals=terminals,
         stream_decode_complete=complete,
+        stream_decode_vacuously_complete=vacuous,
         path_context_sha256=path_context_sha256,
         external_hierarchy_resolver_sha256=(external_hierarchy_resolver_sha256),
         plan_sha256=_canonical_sha256(core),
@@ -2547,6 +2633,21 @@ def _animation_result(
                 header.hierarchy_identifier,
                 virtual_path,
             )
+            if match.state == "missing":
+                # The engine's identifier-prefix rule
+                # (art/w3d/<name[:2]>/<name>.w3d) is consulted only when no
+                # sibling candidate file exists at all.  Corpus measurement
+                # found no file where the two rules disagree: every sibling
+                # resolution is also the prefix resolution.  A prefix
+                # candidate that exists but is damaged or ambiguous keeps
+                # its explicit terminal rather than reverting to "missing".
+                prefix_match = (
+                    external_hierarchy_resolver.resolve_identifier_prefix(
+                        header.hierarchy_identifier
+                    )
+                )
+                if prefix_match.state != "missing":
+                    match = prefix_match
         else:
             match = external_hierarchy_resolver.resolve_global_no_context(
                 header.hierarchy_identifier

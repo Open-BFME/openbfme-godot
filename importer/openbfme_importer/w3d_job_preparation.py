@@ -27,6 +27,7 @@ import tempfile
 from typing import Literal
 
 from .w3d_job_planner import (
+    HIERARCHY_RESOLUTION_IDENTIFIER_PREFIX_PATH,
     HIERARCHY_RESOLUTION_SAME_SOURCE,
     HIERARCHY_RESOLUTION_SIBLING_PATH,
     MAX_BATCH_JOBS,
@@ -1041,6 +1042,7 @@ def _validate_plan(
             not in {
                 HIERARCHY_RESOLUTION_SAME_SOURCE,
                 HIERARCHY_RESOLUTION_SIBLING_PATH,
+                HIERARCHY_RESOLUTION_IDENTIFIER_PREFIX_PATH,
             }
             for mode in job.animation_hierarchy_resolution_modes
         ):
@@ -1097,7 +1099,11 @@ def _validate_plan(
                 job.hierarchy_resolution_mode == HIERARCHY_RESOLUTION_SAME_SOURCE
                 and not same_source_hierarchy
             ) or (
-                job.hierarchy_resolution_mode == HIERARCHY_RESOLUTION_SIBLING_PATH
+                job.hierarchy_resolution_mode
+                in {
+                    HIERARCHY_RESOLUTION_SIBLING_PATH,
+                    HIERARCHY_RESOLUTION_IDENTIFIER_PREFIX_PATH,
+                }
                 and not sibling_hierarchy
             ):
                 raise W3DJobPreparationError(
@@ -1106,6 +1112,7 @@ def _validate_plan(
             if job.hierarchy_resolution_mode not in {
                 HIERARCHY_RESOLUTION_SAME_SOURCE,
                 HIERARCHY_RESOLUTION_SIBLING_PATH,
+                HIERARCHY_RESOLUTION_IDENTIFIER_PREFIX_PATH,
             }:
                 raise W3DJobPreparationError(
                     "planned hierarchy resolution evidence is inconsistent"
@@ -1136,7 +1143,14 @@ def _validate_plan(
             )
             if (
                 mode == HIERARCHY_RESOLUTION_SAME_SOURCE and not same_source_animation
-            ) or (mode == HIERARCHY_RESOLUTION_SIBLING_PATH and not sibling_animation):
+            ) or (
+                mode
+                in {
+                    HIERARCHY_RESOLUTION_SIBLING_PATH,
+                    HIERARCHY_RESOLUTION_IDENTIFIER_PREFIX_PATH,
+                }
+                and not sibling_animation
+            ):
                 raise W3DJobPreparationError(
                     "planned animation hierarchy resolution is inconsistent"
                 )

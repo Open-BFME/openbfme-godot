@@ -304,6 +304,54 @@ class W3DDecodeCorpusCoverageTests(unittest.TestCase):
             sum(item.count for item in report.terminals), report.terminal_count
         )
 
+    def test_vacuous_completeness_is_counted_and_distinguishable(self) -> None:
+        files = {
+            "art/skeleton.w3d": _hierarchy("Rig", pivots=2),
+            "art/decoded.w3d": _complete_mesh(),
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _write_corpus(root, files)
+            report = scan_w3d_decode_corpus(root, strict=True)
+
+        self.assertTrue(report.complete)
+        self.assertEqual(report.stream_complete_file_count, 2)
+        self.assertEqual(report.vacuously_complete_file_count, 1)
+        self.assertEqual(report.incomplete_file_count, 0)
+        self.assertEqual(
+            report.neutral()["summary"]["vacuouslyCompleteFileCount"], 1
+        )
+        statuses = {
+            item.source_sha256: item.neutral()["status"] for item in report.sources
+        }
+        skeleton_sha = hashlib.sha256(files["art/skeleton.w3d"]).hexdigest()
+        decoded_sha = hashlib.sha256(files["art/decoded.w3d"]).hexdigest()
+        self.assertIs(statuses[skeleton_sha]["streamCompleteVacuous"], True)
+        self.assertTrue(statuses[skeleton_sha]["streamComplete"])
+        self.assertNotIn("streamCompleteVacuous", statuses[decoded_sha])
+        self.assertTrue(statuses[decoded_sha]["streamComplete"])
+
+    def test_zero_target_file_with_blocker_is_not_vacuously_complete(self) -> None:
+        files = {
+            "art/blocked.w3d": _chunk(0x7777, b"opaque"),
+            "art/decoded.w3d": _complete_mesh(),
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _write_corpus(root, files)
+            report = scan_w3d_decode_corpus(root)
+
+        self.assertFalse(report.complete)
+        self.assertEqual(report.vacuously_complete_file_count, 0)
+        self.assertEqual(report.incomplete_file_count, 1)
+        blocked_sha = hashlib.sha256(files["art/blocked.w3d"]).hexdigest()
+        blocked = next(
+            item for item in report.sources if item.source_sha256 == blocked_sha
+        )
+        self.assertFalse(blocked.stream_complete)
+        self.assertFalse(blocked.stream_complete_vacuous)
+        self.assertNotIn("streamCompleteVacuous", blocked.neutral()["status"])
+
     def test_planner_rejection_becomes_damaged_evidence_and_scan_continues(
         self,
     ) -> None:
