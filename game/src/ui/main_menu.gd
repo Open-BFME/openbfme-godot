@@ -6,6 +6,7 @@ const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 const NavDiamondsScript = preload("res://src/ui/openbfme_nav_diamonds.gd")
 const SliceScript = preload("res://src/retail_slice/retail_vertical_slice.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
+const PackCapabilityScript = preload("res://src/content/pack_capability.gd")
 const MultiplayerLobbyScript = preload("res://src/ui/multiplayer_lobby.gd")
 const LockstepSessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 const WotrScreenScript = preload("res://src/ui/wotr_screen.gd")
@@ -652,15 +653,33 @@ func _men_pack_gate_error() -> String:
 	var capability := _content_db.call("get_animation_capability", String(member.get("animationCapabilityId", ""))) as Dictionary
 	if capability.is_empty():
 		return "the bfme2-men-vslice pack soldier animation capability is missing"
-	# Host-pack assertion mirrors the slice (retail_vertical_slice.gd, "Resolve
-	# the asserted host pack by id"): the pack resolves BY ID over the mounted
-	# set, never through the member document's pack root. Supplements and other
-	# active faction packs legitimately carry their own copy of the shared base
-	# bundle objects, so the shared-id winner can be another mounted pack while
-	# the men host pack is present and the slice boots fine.
-	if _mounted_pack_root_for_id(FactionManifestScript.DEFAULT_PACK_ID) == "":
-		return "the %s pack is not mounted by the current content selection" % FactionManifestScript.DEFAULT_PACK_ID
-	return ""
+	# Ask the SAME question the slice's host resolver asks, walked in the same
+	# REVERSE load order (ModLoader sorts the active selection last so its
+	# documents win shared ids). Two gates that ask different questions can
+	# disagree, and a menu that passes while the slice refuses is a launch that
+	# dies after the loading screen - the half-load class this branch keeps
+	# removing. Gating on the literal id refused the owner's own six-faction
+	# selection, which is larger than the pack the id named.
+	var meta_rows: Array = (_content_db.get("pack_meta") as Array)
+	var report: Array = []
+	for index in range(meta_rows.size() - 1, -1, -1):
+		var meta := meta_rows[index] as Dictionary
+		var root := String(meta.get("root", ""))
+		if root == "":
+			continue
+		var missing: Array = PackCapabilityScript.missing_host_slice_surfaces(root)
+		if missing.is_empty():
+			return ""
+		report.append("%s (missing: %s)" % [
+			String(meta.get("id", root.get_file())),
+			", ".join(PackedStringArray(missing)),
+		])
+	# Fails closed and loudly: name every mounted pack and what each lacks, so
+	# an unsuitable selection is a named refusal the player can act on.
+	return (
+		"no mounted content pack provides the surfaces a match needs. Mounted packs: %s"
+		% "; ".join(PackedStringArray(report))
+	)
 
 
 func get_retail_faction_availability() -> Dictionary:
