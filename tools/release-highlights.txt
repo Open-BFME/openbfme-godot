@@ -16,7 +16,11 @@
 #              reachable - a menu entry, a dropdown, a screen. "It exists in the
 #              code" is not this section.
 #   FIX        something that was visibly broken for a player and now is not.
-#   UNCERTAIN  real work that landed which nobody has confirmed the player can
+#   KNOWN      a known issue: something a player will hit, or work that landed
+#              but that nobody has confirmed is reachable. Goes here rather than
+#              under NEW so it is neither hidden nor claimed.
+#   REMOVED    something a player could do before and now cannot.
+#   KNOWN  real work that landed which nobody has confirmed the player can
 #              reach in a packaged build. This section exists so such work is
 #              neither promoted nor hidden. When in doubt, it goes here.
 #
@@ -24,28 +28,33 @@
 # capability probes - say what changes on screen.
 
 # ---------------------------------------------------------------- NEW ----
-NEW|86a81a5|War of the Ring: a new entry on the main menu opens a strategic map of Middle-earth. Pick one of your regions that has an army, pick a neighbouring region, and attack; the battle is fought by the normal battle simulation and the winner takes the region. Armies can also march between your own regions, which you have to do on the first few turns because both sides start deep inside their own territory.
-NEW|4e15bff|Angmar is playable as a seventh faction, in skirmish and in the multiplayer lobby. Its fortress, its builder, twelve building types and thirteen of its fifteen units are in. Its four heroes come through the existing hero routes; the Necromancer horde is deliberately left out rather than shipped half-converted.
-NEW|1fa3b50|Skirmish setup now takes more than two sides: several factions in one match, alliances between them, and a separate difficulty setting for each AI.
-NEW|0456675|Every side in a match plays its own faction's spellbook, instead of everyone sharing one power tree.
-NEW|ef5b3fe|A multiplayer lobby: player names, chat, match settings, and each player picking their own faction before the game starts.
-NEW|0da0730|Games running on your LAN or over Radmin VPN now appear in a list in the NETWORK menu, with the address shown, instead of having to be typed in.
-NEW|b0c27b5|Up to eight players in one networked match, and the host can open its own port automatically instead of you configuring the router.
-NEW|e3a7a17|A first-run wizard walks you through setup the first time you start the game.
-NEW|f920f1e|Large battles no longer get slower as the army grows. Units used to check every other unit on the map to find a target; now they only look nearby.
-NEW|9fce940|Very large armies draw more cheaply, so the frame rate holds up better in a big fight.
 
 # ---------------------------------------------------------------- FIX ----
-FIX|1d822f8|Packaged builds reported no units, no buildings and no factions at all - the game was rejecting the content that shipped inside it as if it were untrusted. This is why a packaged build could look emptier than a development one.
-FIX|8f9a398|Starting a skirmish failed with "The selected content pack is not bfme2-men-vslice" when you had the larger six-faction pack installed. The game now looks at what a content pack actually provides instead of at its name, so a newer or bigger pack is accepted.
-FIX|c0c3c96|The above check was then too strict in the other direction and refused a launch that works. It was measured against real packs and loosened to exactly the parts a match needs.
-FIX|f11ba20|Starting a match between two different factions could fail to load.
-FIX|60948ba|Lobby chat refused messages, and the host reported a content mismatch that was not real.
-FIX|3466399|Angmar had no announcer voice; its lines are now routed correctly.
 
 # ---------------------------------------------- UNCERTAIN (not confirmed) ----
-UNCERTAIN|3c02f69|Retail's real 3D map of Middle-earth was converted from the game files and can be drawn under War of the Ring in place of the flat 2D region markers. The data ships in this build, but nobody has confirmed the packaged build draws the 3D version rather than falling back to the flat one - that is being worked on separately. Expect the flat map until it is confirmed.
-UNCERTAIN|0dce37e|The original game's AI scripts now run inside a live match. Nothing registers them by default, so this is groundwork rather than a change in how the computer opponent behaves.
-UNCERTAIN|fa6fc3a|The AI was proved able to earn power points from kills and spend them on a spell. That was demonstrated in a purpose-built test, not observed in a normal match, so do not expect the computer opponent to visibly use its spellbook yet.
-UNCERTAIN|92917c4|Content is now imported from Rise of the Witch-king rather than BFME2, which carries 305 objects BFME2 does not have. This changes what future content packs contain; the packs inside THIS build were converted before that switch.
-UNCERTAIN|b95bee4|Neutral creep lairs with guard AI exist and can be placed by a map. No map that ships here is confirmed to use them.
+
+NEW|86a81a5|Added War of the Ring: attack a neighbouring region from the strategic map and fight the battle for it
+NEW|4e15bff|Added Angmar as a seventh playable faction in skirmish and multiplayer
+NEW|1fa3b50|Added multi-faction skirmish with alliances and per-AI difficulty
+NEW|0456675|Each faction now plays its own spellbook instead of one shared power tree
+NEW|ef5b3fe|Added a multiplayer lobby with chat, match settings and per-player faction picking
+NEW|0da0730|LAN and Radmin games now show up in a list instead of typing an address
+NEW|b0c27b5|Added 8-player matches and automatic port opening for the host
+NEW|e3a7a17|Added a first-run setup wizard
+NEW|f920f1e|Big battles no longer slow down as the army grows
+NEW|9fce940|Large armies draw more cheaply, so the frame rate holds up in big fights
+NEW|bacfebe|Restored the retail main menu shell, with War of the Ring in the SOLO PLAY panel
+FIX|1d822f8|Fixed packaged builds reporting no units, buildings or factions
+FIX|8f9a398|Fixed skirmish refusing to start with the six-faction content pack installed
+FIX|c0c3c96|Fixed that same check being too strict and blocking a launch that works
+FIX|f11ba20|Fixed matches between two different factions failing to load
+FIX|60948ba|Fixed lobby chat rejecting messages and a false content-mismatch warning
+FIX|3466399|Fixed Angmar having no announcer voice
+FIX|bacfebe|Fixed the version number bottom-left never changing between builds
+FIX|a1e7b2e|Fixed the War of the Ring map rendering at a quarter size in black
+FIX|a1e7b2e|Fixed the 3D map falling back to the flat map silently, with no reason given
+KNOWN|3c02f69|The 3D Middle-earth map may still fall back to the flat region view; it now tells you why
+KNOWN|0dce37e|The original AI scripts run but nothing registers them yet, so enemy behaviour is unchanged
+KNOWN|fa6fc3a|The AI can earn and spend power points in tests, but does not visibly use its spellbook in a match
+KNOWN|92917c4|Content now imports from Rise of the Witch-king, but the packs in this build predate that switch
+KNOWN|b95bee4|Creep lairs exist but no shipped map is confirmed to use them

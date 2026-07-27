@@ -940,7 +940,7 @@ function Test-BundleWotrMap {
     return $true
 }
 
-$script:PatchNoteSections = @('NEW', 'FIX', 'UNCERTAIN')
+$script:PatchNoteSections = @('NEW', 'FIX', 'KNOWN', 'REMOVED')
 
 function Get-BundlePreviousRelease {
     <#
@@ -1183,8 +1183,13 @@ function New-BundleReleaseNotes {
         function Format-Section {
             param([string]$Key)
             $rows = @($highlights | Where-Object { $_.section -ceq $Key })
-            if ($rows.Count -eq 0) { return @('  (nothing recorded for this release)') }
-            return @($rows | ForEach-Object { "  - $($_.text)`n      [$($_.commit), $($_.date)]" })
+            if ($rows.Count -eq 0) { return @('-none') }
+            # One line per note, no commit citation in the OUTPUT. The citation
+            # still governs: a note whose commit is outside the range was already
+            # dropped upstream, so this file still cannot claim work the build
+            # does not contain - it just no longer makes the reader step over
+            # the proof to read the sentence.
+            return @($rows | ForEach-Object { "-$($_.text)" })
         }
 
         $first = ''
@@ -1209,85 +1214,44 @@ function New-BundleReleaseNotes {
 "@
         }
 
-        $wotrLine = '  War of the Ring data: not recorded by this build.'
+        $wotrLine = 'War of the Ring data: not recorded by this build.'
         if ($null -ne $WotrData) {
             if ([bool]$WotrData.staged) {
-                $wotrLine = @"
-  War of the Ring: the strategic map data IS in this build, inside
-  content-packs. Earlier builds shipped the button without its data and it read
-  WAR OF THE RING (UNAVAILABLE); this one does not.
-"@
+                $wotrLine = 'War of the Ring data ships inside this build - no setup needed.'
             } else {
-                $wotrLine = @"
-  War of the Ring: NOT IN THIS BUILD. The menu entry will read
-  WAR OF THE RING (UNAVAILABLE) and will not open. Reason:
-    $([string]$WotrData.reason)
-"@
+                $wotrLine = "War of the Ring is NOT in this build (menu entry reads UNAVAILABLE): $([string]$WotrData.reason)"
             }
         }
 
         $dirtyLine = ''
         if ($Source.dirty) {
-            $dirtyLine = @"
-
-  !! This build was made from a WORKING COPY with $($Source.dirtyFileCount) uncommitted files in it.
-     Those changes are in the build and are NOT in the list below, because the
-     list is made from committed history. Treat anything you see that is not
-     listed here as unlisted work, not as a surprise feature.
-
-"@
+            $dirtyLine = "`nBuilt from a working copy with $($Source.dirtyFileCount) uncommitted file(s). Those changes are in`nthe build but not in the lists below, which come from committed history.`n"
         }
 
         $notes = @"
-OPEN BFME - $BundleName
-$('=' * (11 + $BundleName.Length))
-  built            $BuiltAtUtc UTC
-  from             $($Source.shortCommit) on $($Source.branch)
-  content packs    $(@($PackRecords | ForEach-Object { $_.id }) -join ', ')
+OPEN BFME - $($Source.shortCommit)  ($BuiltAtUtc UTC)
 $dirtyLine
-HOW TO READ THIS
-  Every line below names the change it came from, in [brackets]. Nothing here is
-  written from memory or from what a feature is called - it is taken from the
-  recorded history of this build over a stated range.
+Bugfixes:
 
-  Because of that, this list errs towards being SHORT rather than flattering.
-  Work that landed but that nobody has confirmed you can actually reach from the
-  menu is listed under NOT CONFIRMED IN THIS BUILD instead of being promoted to
-  a feature. If something you expected is missing from the top two sections,
-  look there before concluding it was not done.
-
-$wotrLine
-WHAT YOU CAN DO NOW THAT YOU COULD NOT BEFORE
-$((Format-Section -Key 'NEW') -join "`n")
-
-THINGS THAT WERE BROKEN AND NOW ARE NOT
 $((Format-Section -Key 'FIX') -join "`n")
 
-NOT CONFIRMED IN THIS BUILD
-  Real work that landed in this range which this file cannot confirm reaches
-  you. It is listed so it is not hidden, and it is here rather than above so it
-  is not claimed.
-$((Format-Section -Key 'UNCERTAIN') -join "`n")
+Known Issues:
 
-EVERYTHING ELSE IN THIS RELEASE
-  $($commits.Count) changes in total. The ones above are the ones somebody wrote a
-  player-facing line for; the rest are engine, importer, tooling and test work
-  with no direct effect on what you see. By area:
+$((Format-Section -Key 'KNOWN') -join "`n")
 
-$($areaLines -join "`n")
+New
 
-  The complete list, one line per change, is in $($script:BundleChangeLog).
+$((Format-Section -Key 'NEW') -join "`n")
 
-WHAT RANGE THIS COVERS
-  previous release $previousLine$previousExtra
-  range basis      $rangeBasis
-  first change     $(if ($first -eq '') { '(none)' } else { $first })
-  last change      $(if ($last -eq '') { '(none)' } else { $last })
-$(if ($dropped.Count -gt 0) { "`n  $($dropped.Count) recorded note(s) were left out because the change they cite is not`n  in this range:`n" + (@($dropped | ForEach-Object { "    $_" }) -join "`n") } else { '' })
+Removed
 
-REPORTING A PROBLEM
-  Send run.log and BUILD-INFO.txt from this folder. Between them they say
-  exactly which build, which commit and which content produced the behaviour.
+$((Format-Section -Key 'REMOVED') -join "`n")
+
+
+---
+$wotrLine
+Covers $($commits.Count) change(s), $rangeBasis.
+Full list: $($script:BundleChangeLog). Problems: send run.log and BUILD-INFO.txt.
 "@
 
         $changeLines = @($commits | ForEach-Object { "$($_.date.Substring(0,10))  $($_.short)  $($_.subject)" })
