@@ -1258,6 +1258,12 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	# actions, persisted by retail save games), never configuration: a reused
 	# sim must not carry one match's lists into the next.
 	script_object_type_lists.clear()
+	# Team behavior state (TEAM_STATE + custom-state tokens) is match state by
+	# the same rule: mutated by script actions, save-persisted in retail
+	# (Team::xfer writes m_state), and one match's AI blackboard must never
+	# leak into the next - a reused sim would diverge from a fresh one on the
+	# first TEAM_STATE_IS the adopted AI evaluates.
+	team_behavior_states.clear()
 	# The logic random stream is match state too: cleared back to the
 	# never-drawn form so a reused sim re-derives the words from the (rules-
 	# configured) seed on first draw, exactly like a freshly built one.
@@ -5859,6 +5865,143 @@ func resolve_object_type_names(object_type_list: String) -> Array:
 	if script_object_type_lists.has(object_type_list):
 		return (script_object_type_lists[object_type_list] as Array).duplicate()
 	return [object_type_list]
+
+
+# --- Team behavior state (TEAM_STATE + custom-state tokens, SIM-owned) ------
+#
+# The retail AI's own blackboard: the per-team state token TEAM_SET_STATE
+# writes and TEAM_STATE_IS/_IS_NOT read, plus the custom-state token set
+# TEAM_SET_CUSTOM_STATE toggles and TEAM_HAS_CUSTOM_STATE tests. The attack
+# loops gate on these constantly (112 AI call sites across the six members).
+#
+# RETAIL SEMANTICS, SOURCED:
+#   * TEAM_STATE is one plain string per team - Team.h:200 in the GPL
+#     Generals/ZH reference declares `AsciiString m_state`, the BFME1
+#     decompilation's Team.cpp matches it field-for-field, and
+#     ScriptActions.cpp doSetTeamState is a bare setState(). No enum, no
+#     validation, no case folding (AsciiString::operator== is strcmp), and no
+#     engine consumer besides the two conditions - STORAGE IS THE ENTIRE
+#     SEMANTIC. The default is the empty string (m_state is absent from the
+#     Team constructor's initializer list), so a team never set IS in state ""
+#     and TEAM_STATE_IS against any non-empty token is a truthful false.
+#   * TEAM_STATE IS SAVE-PERSISTED: Team::xfer writes m_state right after the
+#     member-id list (BFME decomp Team.cpp:2677, identical in ZH). Mutable by
+#     script action plus save-file membership puts it inside the
+#     snapshot/hash boundary, the script_object_type_lists rule.
+#   * CUSTOM STATES: both engine source trees carry only the metadata (action
+#     id 490, parameter types [TEAM, TEAM_STATE, BOOLEAN]; condition id 143);
+#     the BFME implementation is not decompiled. The SET reading below -
+#     enabled inserts the token, disabled removes it, HAS is membership, a
+#     never-set token is false - is the inference the signature forces
+#     (retail authors the same token with both booleans: AI_ADVANCING is
+#     authored 34x enabled AND 34x disabled, independently of AI_ASSAULTING),
+#     recorded as an ASSUMPTION. What would falsify it: the custom-state
+#     handler in the retail BFME1 binary storing something other than a
+#     per-team token set. Custom-state save persistence is likewise
+#     unevidenced; outcome-bearing mutability alone puts it inside the
+#     boundary here regardless.
+#
+# The token vocabulary is CONTENT-DEFINED (AI_ATTACKING, AI_DEFENDING,
+# READY_TO_AMBUSH, ... and 46 distinct custom tokens in the retail AI
+# libraries); nothing here validates tokens against a table, exactly like
+# retail. Comparisons are exact and case-sensitive.
+#
+# CANONICAL FORM: a team's record holds "state" only when non-empty (setting
+# "" returns to the default and drops the key - retail's default IS "") and
+# "custom" only when tokens are enabled (sorted unique Array; disabling the
+# last token drops the key). A team whose record empties loses its team key,
+# so state returned to pristine values returns to the pristine hash exactly.
+#
+# HASH INERTNESS: participates in the authoritative state ONLY when non-empty
+# (empty-is-absent, the unpackable_bases discipline), so a match whose
+# scripts never touch team state contributes zero bytes to state_hash() and
+# the frozen cross-platform pin stands untouched. setup() clears it (match
+# state, exactly like the OBJECT_TYPE_LIST stores).
+
+## sim team id (int) -> {"state": String (present iff != ""),
+## "custom": sorted unique Array[String] (present iff non-empty)}.
+## See the block comment above. setup() clears it; hashed only when non-empty.
+var team_behavior_states: Dictionary = {}
+
+
+func set_team_behavior_state(team: int, token: String) -> Dictionary:
+	## TEAM_SET_STATE: overwrite the team's single state string. Any token is
+	## admitted, including ones no condition ever reads (retail validates
+	## nothing). Setting "" IS meaningful - it returns the team to the retail
+	## default - and canonically drops the key rather than storing "".
+	if not _is_combatant_team(team):
+		return {"ok": false, "reason": "team %d is not a rostered combatant team" % team}
+	if token == "":
+		_prune_team_behavior_key(team, "state")
+		return {"ok": true, "reason": ""}
+	var record: Dictionary = team_behavior_states.get(team, {})
+	record["state"] = token
+	team_behavior_states[team] = record
+	return {"ok": true, "reason": ""}
+
+
+func team_behavior_state(team: int) -> Dictionary:
+	## The team's current state string. {"ok": true, "state": String} - "" for
+	## a rostered team never set, which is retail's default, not a dodge.
+	if not _is_combatant_team(team):
+		return {"ok": false, "reason": "team %d is not a rostered combatant team" % team}
+	return {
+		"ok": true,
+		"state": String((team_behavior_states.get(team, {}) as Dictionary).get("state", "")),
+	}
+
+
+func set_team_custom_state(team: int, token: String, enabled: bool) -> Dictionary:
+	## TEAM_SET_CUSTOM_STATE: enable inserts `token` into the team's set,
+	## disable removes it. Duplicate enables and absent disables are
+	## successful no-ops (set semantics - the assumption block above). An
+	## empty token refuses: "" names nothing in the retail vocabulary and
+	## would mint an unreachable membership entry.
+	if not _is_combatant_team(team):
+		return {"ok": false, "reason": "team %d is not a rostered combatant team" % team}
+	if token == "":
+		return {"ok": false, "reason": "empty custom-state token names nothing"}
+	if enabled:
+		var record: Dictionary = team_behavior_states.get(team, {})
+		var tokens: Array = record.get("custom", [])
+		if not tokens.has(token):
+			tokens.append(token)
+			tokens.sort()
+		record["custom"] = tokens
+		team_behavior_states[team] = record
+		return {"ok": true, "reason": ""}
+	if team_behavior_states.has(team):
+		var record: Dictionary = team_behavior_states[team]
+		var tokens: Array = record.get("custom", [])
+		tokens.erase(token)
+		if tokens.is_empty():
+			_prune_team_behavior_key(team, "custom")
+		else:
+			record["custom"] = tokens
+	return {"ok": true, "reason": ""}
+
+
+func team_custom_states(team: int) -> Dictionary:
+	## The team's enabled custom-state tokens, sorted, as a defensive copy.
+	## {"ok": true, "tokens": Array} - empty for a team never toggled.
+	if not _is_combatant_team(team):
+		return {"ok": false, "reason": "team %d is not a rostered combatant team" % team}
+	return {
+		"ok": true,
+		"tokens": ((team_behavior_states.get(team, {}) as Dictionary).get("custom", []) as Array).duplicate(),
+	}
+
+
+func _prune_team_behavior_key(team: int, key: String) -> void:
+	## Drop `key` from the team's record, and the record itself when it
+	## empties - the canonical form the hash discipline requires (a lingering
+	## empty record would be a hash-visible phantom, the e56a0d4 class).
+	if not team_behavior_states.has(team):
+		return
+	var record: Dictionary = team_behavior_states[team]
+	record.erase(key)
+	if record.is_empty():
+		team_behavior_states.erase(team)
 
 
 # --- Logic random stream (SIM-owned, retail GameLogic generator) ------------
@@ -11545,6 +11688,13 @@ func _authoritative_state() -> Dictionary:
 	# one (see the store's block comment).
 	if not script_object_type_lists.is_empty():
 		state["script_object_type_lists"] = script_object_type_lists
+	# And for team behavior state (TEAM_STATE + custom-state token sets):
+	# retail save-persists m_state (Team::xfer), the conditions that gate the
+	# AI attack loops read it, and a peer adopting a snapshot must answer
+	# TEAM_STATE_IS exactly as the peer that wrote the state. Zero bytes until
+	# a script writes one (see the store's block comment).
+	if not team_behavior_states.is_empty():
+		state["team_behavior_states"] = team_behavior_states
 	# And for the logic random stream: the six generator words are the entire
 	# stream state (retail's theGameLogicSeed rides save games and its CRC is
 	# sync-checked - GetGameLogicRandomSeedCRC). Zero bytes until the first
@@ -11634,6 +11784,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	unpackable_bases = state.get("unpackable_bases", {})
 	script_unit_references = state.get("script_unit_references", {})
 	script_object_type_lists = state.get("script_object_type_lists", {})
+	team_behavior_states = state.get("team_behavior_states", {})
 	# Absent when the minter never drew (empty-is-absent): the adopter then
 	# also derives the words from the shared rules seed on ITS first draw.
 	_logic_random_state = state.get("logic_random_state", [])

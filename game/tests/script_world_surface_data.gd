@@ -221,10 +221,22 @@ const SUBSYSTEMS := {
 		+ "radius-scoped threat evaluation, threat finders."
 	),
 	"team-behavior-state": (
-		"Per-team behaviour state: TEAM_STATE tokens, custom-state token "
-		+ "sets, AI mood/attitude, emotions, panic. Missing even for the "
-		+ "bound default rosters, and the retail AI's attack loops gate on it "
-		+ "constantly (TEAM_SET_CUSTOM_STATE alone is 40 call sites)."
+		"Per-team behaviour state. Its AI-traffic slice is BUILT: the "
+		+ "TEAM_STATE string (retail's Team::m_state - one unvalidated "
+		+ "case-sensitive string per team, default \"\", save-persisted) and "
+		+ "the custom-state token SETS live in the sim "
+		+ "(team_behavior_states, hashed empty-is-absent), serving the six "
+		+ "members the attack loops gate on - TEAM_SET_CUSTOM_STATE's 40 "
+		+ "call sites included, now that the facet carries its enable flag. "
+		+ "Still missing here: attitude/mood CONSUMPTION (the retail write "
+		+ "is a per-member broadcast of the raw AI_MOOD int, but the AIUpdate "
+		+ "mood matrix that consumes it - idle-acquire modes, move-to-attack-"
+		+ "move conversion, INI-authored range adjustments - is unmodeled, "
+		+ "and a store-only serve would be a silent semantic no-op), the "
+		+ "EmotionTracker (undecompiled in the research tree, parse-only in "
+		+ "OpenSAGE, EMOTION ordinals unestablished), and the AI_PANIC state "
+		+ "machine (waypoint-path flight; the facet signature also lacks the "
+		+ "action's WAYPOINT_PATH argument)."
 	),
 	"team-registry": (
 		"The WorldBuilder sub-player team model: teams instantiated from "
@@ -348,7 +360,7 @@ const BLOCKED := {
 	"players.change_light_point_level": {"subsystem": "player-progression-state", "requires": "light-point levels"},
 	"players.eva_event_played_within": {"subsystem": "event-ledger", "requires": "EVA event timestamps per player (plus the seconds-vs-ticks defect from 005bcd8)"},
 	"players.exit_all_buildings": {"subsystem": "garrison-transport-capture", "requires": "garrisoned units to exit"},
-	"players.force_emotion": {"subsystem": "team-behavior-state", "requires": "an emotion/morale model"},
+	"players.force_emotion": {"subsystem": "team-behavior-state", "requires": "an EmotionTracker model: the tracker is undecompiled in the BFME research tree and parse-only in OpenSAGE, the EMOTION parameter's integer ordinals are established by neither source, and retail emotions are logic-affecting (RUN_AWAY_PANIC, PreventPlayerCommands) - serving any authored integer would guess which emotion it names. The facet's duration_ticks int is also a reported defect: the sourced action carries REAL seconds"},
 	"players.give_light_points": {"subsystem": "player-progression-state", "requires": "light points"},
 	"players.has_discovered": {"subsystem": "vision-and-discovery", "requires": "per-player discovery records"},
 	"players.has_prerequisite_to_build": {"subsystem": "production-controls", "requires": "tech-tree prerequisite evaluation per object type"},
@@ -405,28 +417,26 @@ const BLOCKED := {
 	"teams.command_points_to_build": {"subsystem": "team-registry", "requires": "CP costing over a team template"},
 	"teams.contained_count": {"subsystem": "garrison-transport-capture", "requires": "container membership per member"},
 	"teams.count_with_kindof": {"subsystem": "object-type-identity", "requires": "KindOf bit sets on rows - the importer extracts no KindOf into playable documents (only one capability-evidence string), so there is nothing authored to consult; deriving bits from the category field would be invention"},
-	"teams.custom_state": {"subsystem": "team-behavior-state", "requires": "custom-state token sets per team (the value-shape ambiguity WP15 reported also needs a ruling)"},
 	"teams.delete": {"subsystem": "team-registry", "requires": "sub-player teams to delete (living-only variant included)"},
 	"teams.enemy_sighted": {"subsystem": "vision-and-discovery", "requires": "sighting records per team"},
 	"teams.enter_object": {"subsystem": "garrison-transport-capture", "requires": "container entry"},
 	"teams.execute_sequential_script": {"subsystem": "sequential-scripts", "requires": "per-team sequential queues (24 AI sites drive every behaviour script through this)"},
 	"teams.exit_all": {"subsystem": "garrison-transport-capture", "requires": "container exit (buildings-only variant included)"},
-	"teams.force_emotion": {"subsystem": "team-behavior-state", "requires": "an emotion/morale model"},
+	"teams.force_emotion": {"subsystem": "team-behavior-state", "requires": "an EmotionTracker model (see players.force_emotion - same missing tracker, unestablished EMOTION ordinals, and the seconds-vs-ticks signature defect)"},
 	"teams.harvest": {"subsystem": "economy-model-extras", "requires": "a harvesting loop"},
 	"teams.leader": {"subsystem": "team-registry", "requires": "team leader designation"},
 	"teams.members": {"subsystem": "team-registry", "requires": "membership lists carrying script names (also needs the name registry to be useful)"},
 	"teams.merge_into": {"subsystem": "team-registry", "requires": "sub-player teams with transferable membership"},
-	"teams.panic": {"subsystem": "team-behavior-state", "requires": "a panic behaviour"},
+	"teams.panic": {"subsystem": "team-behavior-state", "requires": "the AI_PANIC state machine (retail: per-member flight along a WAYPOINT_PATH with logic-random wander offsets, the PANICKING model condition, save-persisted state) plus waypoint paths from map geometry - AND a facet signature fix: the sourced action is TEAM_PANIC(TEAM, WAYPOINT_PATH) and this method has no slot for the path, so serving it would drop where the team flees to"},
 	"teams.recruit": {"subsystem": "team-registry", "requires": "recruitment (and the gap-registered type-list parameter plus the INT-semantic ruling)"},
 	"teams.recruit_combo_units": {"subsystem": "team-registry", "requires": "combo-horde recruitment"},
 	"teams.remove_all_override_relations": {"subsystem": "diplomacy-overrides", "requires": "override relation storage"},
 	"teams.remove_override_relation": {"subsystem": "diplomacy-overrides", "requires": "override relation storage"},
 	"teams.repair_nearest": {"subsystem": "order-verbs", "requires": "a repair-nearest order"},
 	"teams.set_ai_recruitable": {"subsystem": "team-registry", "requires": "an AI-recruitable flag per team"},
-	"teams.set_attitude": {"subsystem": "team-behavior-state", "requires": "AI mood per team (retail authors -3 outside the documented 0..5 - open question travels with this)"},
+	"teams.set_attitude": {"subsystem": "team-behavior-state", "requires": "mood CONSUMPTION, not storage: the sourced write is a one-shot broadcast of the raw AI_MOOD int onto each member (no clamp; the authored -3 is stored verbatim, treated as NORMAL by the mood matrix default arm while raw >=AI_NORMAL comparisons fail), but retail consumes it through the AIUpdate mood matrix - idle-acquire modes per mood, move-to-attack-move conversion for ALERT/AGGRESSIVE, INI-authored range adjustments - which the sim does not model; a store-only serve would return OK and behave nothing like retail"},
 	"teams.set_available_for_recruitment": {"subsystem": "team-registry", "requires": "recruitment availability per team"},
 	"teams.set_close_range_weapon": {"subsystem": "entity-status-flags", "requires": "weapon-range toggles per member"},
-	"teams.set_custom_state": {"subsystem": "team-behavior-state", "requires": "custom-state token sets (and the gap-registered BOOLEAN enable flag - serving without it would invert 40 AI call sites)"},
 	"teams.set_emoticon": {"subsystem": "entity-status-flags", "requires": "emoticon state per team"},
 	"teams.set_flame_status": {"subsystem": "entity-status-flags", "requires": "flame status bits"},
 	"teams.set_house_color_enabled": {"subsystem": "entity-status-flags", "requires": "house-color flags"},
@@ -440,12 +450,10 @@ const BLOCKED := {
 	"teams.set_reference": {"subsystem": "team-registry", "requires": "a TEAM_REF store (destination-first signature; see WP15)"},
 	"teams.set_reference_to_nearest": {"subsystem": "spatial-queries", "requires": "nearest-team-of-type search (and the gap-registered anchor-team parameter)"},
 	"teams.set_repulsor": {"subsystem": "entity-status-flags", "requires": "repulsor flags"},
-	"teams.set_state": {"subsystem": "team-behavior-state", "requires": "TEAM_STATE token storage - 32 AI sites, the attack loops' backbone"},
 	"teams.set_stealth_enabled": {"subsystem": "entity-status-flags", "requires": "stealth flags the vision/combat rules consult"},
 	"teams.set_strict_control_enabled": {"subsystem": "entity-status-flags", "requires": "strict-control flags"},
 	"teams.set_threat_level": {"subsystem": "spatial-queries", "requires": "MIS-ATTRIBUTED per WP09's finding: retail uses TEAM_THREAT_LEVEL as a radius-scoped CONDITION, not a set command; nothing should ever call this - kept annotated so the mis-attribution stays visible"},
 	"teams.spin_for_ticks": {"subsystem": "order-verbs", "requires": "a timed spin/busy order"},
-	"teams.state": {"subsystem": "team-behavior-state", "requires": "TEAM_STATE token reads (TEAM_STATE_IS/_IS_NOT gate the AI's retreat logic)"},
 	"teams.stop_sequential_script": {"subsystem": "sequential-scripts", "requires": "stoppable per-team sequential queues"},
 	"teams.threat": {"subsystem": "spatial-queries", "requires": "team threat evaluation (the AI's real usage carries a radius - gap-registered signature)"},
 	"teams.transfer_to_player": {"subsystem": "team-registry", "requires": "team ownership transfer - 32 AI sites, ALL of them the multiplayer inherit path (ai_mp_inherit_management)"},
@@ -488,7 +496,7 @@ const BLOCKED := {
 	"units.exists": {"subsystem": "object-name-registry", "requires": "the script-name binding itself - existence is the registry's first answer"},
 	"units.exit": {"subsystem": "garrison-transport-capture", "requires": "container exit"},
 	"units.exit_specific_building": {"subsystem": "garrison-transport-capture", "requires": "targeted container exit"},
-	"units.force_emotion": {"subsystem": "team-behavior-state", "requires": "an emotion/morale model"},
+	"units.force_emotion": {"subsystem": "team-behavior-state", "requires": "an EmotionTracker model (see players.force_emotion), plus the object-name registry for the unit spelling"},
 	"units.gate_is_open": {"subsystem": "walls-and-siege", "requires": "gate state per named structure"},
 	"units.has_delayed_carryover_of_type": {"subsystem": "hero-revival-carryover", "requires": "carryover ledger queries by type"},
 	"units.has_object_status": {"subsystem": "entity-status-flags", "requires": "object-status bit reads per scope"},
@@ -501,7 +509,7 @@ const BLOCKED := {
 	"units.owner": {"subsystem": "object-name-registry", "requires": "the name binding; ownership is modelled (NAMED_OWNED_BY_PLAYER is 32 AI sites)"},
 	"units.position": {"subsystem": "object-name-registry", "requires": "the name binding; positions are modelled"},
 	"units.retract_siege": {"subsystem": "walls-and-siege", "requires": "siege detachment"},
-	"units.set_attitude": {"subsystem": "team-behavior-state", "requires": "AI mood per object"},
+	"units.set_attitude": {"subsystem": "team-behavior-state", "requires": "mood consumption (see teams.set_attitude) plus the object-name registry for the named spelling"},
 	"units.set_cave_index": {"subsystem": "garrison-transport-capture", "requires": "cave/tunnel network membership"},
 	"units.set_close_range_weapon": {"subsystem": "entity-status-flags", "requires": "weapon-range toggles"},
 	"units.set_emoticon": {"subsystem": "entity-status-flags", "requires": "emoticon state"},
@@ -563,6 +571,10 @@ const RESTRICTIONS := {
 	"progression.has_upgrade": "PLAYER scope, modelled upgrade ids only",
 	"players.can_build_at_base": "the player must resolve ('<This Player>' included); bases through the shared object namespace; a non-empty object type must have an expansion rule (false for an unmodeled type would be a guess)",
 	"progression.unit_count_with_upgrade": "modelled upgrade ids only (zero for an unknown id would be a guess)",
+	"teams.custom_state": "bound team names only; '<This Team>' - the spelling retail authors at essentially every call site - refuses until an executing-team (sequential-script) context exists, and the script player's whole roster would be the wrong team",
+	"teams.set_custom_state": "bound team names only (the '<This Team>' restriction above); an empty token refuses; writes refuse after match resolution",
+	"teams.set_state": "bound team names only (the '<This Team>' restriction above); writes refuse after match resolution",
+	"teams.state": "bound team names only (the '<This Team>' restriction above); an unbound name refuses rather than reproducing retail's nonexistent-team false (unbound is not proof of nonexistence while the sub-player team registry is unmodeled)",
 	"teams.stop": "disband=false only (no disband model)",
 	"units.has_command_points_to_build": "the player must resolve ('<This Player>' included); unit types with a production rule only (an unmodeled type's cost is unknowable, so it refuses)",
 	"world.player_money": "no refusal channel: an UNBOUND player reads 0 through this legacy path (reported base-class defect; economy.money is the honest surface)",
@@ -640,7 +652,7 @@ const VOCABULARY_ROUTING := {
 	"TEAM_EXIT_ALL_BUILDINGS": {"route": "blocked", "worldMethods": ["teams.exit_all"], "blockingSubsystem": "garrison-transport-capture", "mappingSource": "handler"},
 	"TEAM_GUARD_FOR_SECONDS": {"route": "blocked", "worldMethods": ["orders.guard"], "blockingSubsystem": "order-verbs", "mappingSource": "handler"},
 	"TEAM_GUARD_TEAM": {"route": "blocked", "worldMethods": ["orders.guard"], "blockingSubsystem": "order-verbs", "mappingSource": "handler"},
-	"TEAM_HAS_CUSTOM_STATE": {"route": "blocked", "worldMethods": ["teams.custom_state"], "blockingSubsystem": "team-behavior-state", "mappingSource": "handler"},
+	"TEAM_HAS_CUSTOM_STATE": {"route": "backed", "worldMethods": ["teams.custom_state"], "mappingSource": "handler", "note": "the value-shape ambiguity WP15 reported is RULED: the backed world answers the ARRAY of enabled tokens (the writer's boolean proves a set); the handler keeps its String tolerance for stub worlds"},
 	"TEAM_HUNT": {"route": "blocked", "worldMethods": ["orders.hunt"], "blockingSubsystem": "order-verbs", "mappingSource": "handler"},
 	"TEAM_IDLE_FOR_SECONDS": {"route": "blocked", "worldMethods": ["orders.idle_for_ticks"], "blockingSubsystem": "order-verbs", "mappingSource": "handler"},
 	"TEAM_IS_ATTACKED_AND_CANNOT_RETALIATE_ALL": {"route": "blocked", "worldMethods": ["teams.attacked_and_cannot_retaliate_count"], "blockingSubsystem": "event-ledger", "mappingSource": "declared"},
@@ -651,11 +663,11 @@ const VOCABULARY_ROUTING := {
 	"TEAM_RECRUIT_UNITS": {"route": "blocked", "worldMethods": ["teams.recruit"], "blockingSubsystem": "team-registry", "signatureGap": true, "mappingSource": "handler"},
 	"TEAM_RECRUIT_UNITS_FROM_TEAM": {"route": "blocked", "worldMethods": ["teams.recruit"], "blockingSubsystem": "team-registry", "signatureGap": true, "mappingSource": "handler"},
 	"TEAM_SET_ATTITUDE": {"route": "blocked", "worldMethods": ["teams.set_attitude"], "blockingSubsystem": "team-behavior-state", "mappingSource": "handler"},
-	"TEAM_SET_CUSTOM_STATE": {"route": "blocked", "worldMethods": ["teams.set_custom_state"], "blockingSubsystem": "team-behavior-state", "signatureGap": true, "mappingSource": "handler"},
-	"TEAM_SET_STATE": {"route": "blocked", "worldMethods": ["teams.set_state"], "blockingSubsystem": "team-behavior-state", "mappingSource": "handler"},
+	"TEAM_SET_CUSTOM_STATE": {"route": "backed", "worldMethods": ["teams.set_custom_state"], "mappingSource": "handler", "note": "served through the corrected signature carrying the BOOLEAN enable flag WP15's gap registration demanded; the flag reads from the payload integer field, both polarities delivered un-inverted"},
+	"TEAM_SET_STATE": {"route": "backed", "worldMethods": ["teams.set_state"], "mappingSource": "handler", "note": "retail's doSetTeamState is a bare Team::setState - storage IS the semantic; tokens are content-defined and stored unvalidated"},
 	"TEAM_STAND_GROUND": {"route": "blocked", "worldMethods": ["orders.stand_ground"], "blockingSubsystem": "facet-signature-packet", "signatureGap": true, "mappingSource": "handler", "note": "the method is BACKED but can only engage; both retail sites author the CLEAR the signature cannot carry"},
-	"TEAM_STATE_IS": {"route": "blocked", "worldMethods": ["teams.state"], "blockingSubsystem": "team-behavior-state", "mappingSource": "handler"},
-	"TEAM_STATE_IS_NOT": {"route": "blocked", "worldMethods": ["teams.state"], "blockingSubsystem": "team-behavior-state", "mappingSource": "handler"},
+	"TEAM_STATE_IS": {"route": "backed", "worldMethods": ["teams.state"], "mappingSource": "handler", "note": "exact case-sensitive comparison (AsciiString strcmp); the empty string is retail's default for a team never set"},
+	"TEAM_STATE_IS_NOT": {"route": "backed", "worldMethods": ["teams.state"], "mappingSource": "handler", "note": "not composed as the negation of TEAM_STATE_IS: a refused read must stay false for BOTH spellings (retail answers false to both for a nonexistent team)"},
 	"TEAM_STOP_SEQUENTIAL_SCRIPT": {"route": "blocked", "worldMethods": ["teams.stop_sequential_script"], "blockingSubsystem": "sequential-scripts", "mappingSource": "handler"},
 	"TEAM_THREAT_LEVEL": {"route": "blocked", "worldMethods": ["teams.threat"], "blockingSubsystem": "spatial-queries", "signatureGap": true, "mappingSource": "handler", "note": "condition, not action - WP09's mis-attribution finding"},
 	"TEAM_TRANSFER_TO_PLAYER": {"route": "blocked", "worldMethods": ["teams.transfer_to_player"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},

@@ -3,7 +3,7 @@ extends SceneTree
 ## Proof runner for WP15-teams, AI-critical subset (wp15_ai_teams.gd).
 ##
 ## Covers, in order:
-##   1. registration    - all 24 AI-used members accounted for, 18 served and 6
+##   1. registration    - all 24 AI-used members accounted for, 19 served and 5
 ##                        gap-registered, with no overlap and no silent absence
 ##   2. positional args - the two signatures that put the DESTINATION first and
 ##                        the one that puts two TEAMs side by side
@@ -17,8 +17,11 @@ extends SceneTree
 ##                        repeat refuses instead of looping forever
 ##   7. conditions      - true, false, and the third answer: a read the world
 ##                        cannot answer NEVER comes back as a plain false
-##   8. gap register    - the 6 blocked members report BLOCKED, name the missing
+##   8. gap register    - the 5 blocked members report BLOCKED, name the missing
 ##                        world signature, and are not counted as coverage
+##   9. custom state    - the formerly gap-registered TEAM_SET_CUSTOM_STATE is
+##                        served with its BOOLEAN read from the integer field,
+##                        both polarities delivered un-inverted
 ##
 ## Every fixture value is SYNTHETIC. The call SHAPES are modelled on the retail
 ## AI libraries (a team name with a slash, a behaviour-script name, an AI_MOOD
@@ -37,9 +40,11 @@ const GapLog := preload("res://src/script/script_gaps.gd")
 const ParamTypes := preload("res://src/script/script_param_types.gd")
 const Wp15 := preload("res://src/script/handlers/wp15_ai_teams.gd")
 
-## The 18 members this package serves and the 6 it gap-registers. Written out
+## The 19 members this package serves and the 5 it gap-registers. Written out
 ## rather than derived from the module, so that a member quietly disappearing
 ## from register() fails here instead of agreeing with itself.
+## TEAM_SET_CUSTOM_STATE moved from the gap list to the served list when the
+## facet gained the enable flag its gap registration demanded.
 const SERVED_ACTIONS := [
 	"SET_TEAM_REFERENCE",
 	"TEAM_DELETE",
@@ -49,6 +54,7 @@ const SERVED_ACTIONS := [
 	"TEAM_HUNT",
 	"TEAM_MERGE_INTO_TEAM",
 	"TEAM_SET_ATTITUDE",
+	"TEAM_SET_CUSTOM_STATE",
 	"TEAM_SET_STATE",
 	"TEAM_STOP",
 	"TEAM_STOP_SEQUENTIAL_SCRIPT",
@@ -69,7 +75,6 @@ const GAP_REGISTERED := [
 	"SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER",
 	"TEAM_RECRUIT_UNITS",
 	"TEAM_RECRUIT_UNITS_FROM_TEAM",
-	"TEAM_SET_CUSTOM_STATE",
 	"TEAM_STAND_GROUND",
 ]
 
@@ -80,7 +85,7 @@ const GAP_REGISTERED := [
 ## the exact count a HEALTHY run makes; if the run makes any other number,
 ## something aborted (or an assertion was added without updating this) and
 ## the result is not to be trusted.
-const EXPECTED_CHECKS := 61
+const EXPECTED_CHECKS := 62
 
 var passed := 0
 var failed := 0
@@ -103,6 +108,7 @@ func _run() -> void:
 	_test_conditions_have_no_side_effects()
 	_test_command_refusal_is_reported()
 	_test_arity_is_enforced()
+	_test_custom_state_write_is_served()
 	_test_gap_registered_members()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
@@ -227,7 +233,7 @@ func _test_registration_covers_the_ai_subset() -> void:
 			unblocked.append(name)
 	_check("every_gap_registered_member_is_blocked", unblocked.is_empty(), str(unblocked))
 
-	# 18 + 6 = 24, the exact AI-used membership the decoder measured. If a later
+	# 19 + 5 = 24, the exact AI-used membership the decoder measured. If a later
 	# edit serves a gap-registered member without removing it from the gap list,
 	# or vice versa, these two disagree.
 	_check(
@@ -250,7 +256,7 @@ func _test_registration_covers_the_ai_subset() -> void:
 	# The gap list this file asserts on must be the one the module actually
 	# declares, or the two could drift apart while both look right.
 	var declared: Array = (
-		Wp15.GAP_CUSTOM_STATE_ACTIONS + Wp15.GAP_TEAM_THREAT_ACTIONS
+		Wp15.GAP_TEAM_THREAT_ACTIONS
 		+ Wp15.GAP_RECRUIT_ACTIONS + Wp15.GAP_STAND_GROUND_ACTIONS
 		+ Wp15.GAP_REF_TO_NEAREST_ACTIONS
 	)
@@ -731,32 +737,57 @@ func _test_arity_is_enforced() -> void:
 # --- 9. Gap-registered members --------------------------------------------
 
 
+func _test_custom_state_write_is_served() -> void:
+	# TEAM_SET_CUSTOM_STATE, the most-called member of the package (40 AI call
+	# sites), formerly gap-registered because the facet had no slot for its
+	# BOOLEAN. Now that teams.set_custom_state carries the enable flag, the
+	# member is served - and the flag's polarity is the whole test: the retail
+	# AI authors BOTH values on the same token, so an inverted or dropped flag
+	# would not approximate the action, it would reverse 183 corpus-wide clear
+	# sites. The BOOLEAN lives in the `integer` payload field; the decoy text
+	# in the same slot is what a wrong-field read would produce.
+	var harness := _harness()
+	var world: TeamWorld = harness["world"]
+
+	var enabled_status := _act(harness, "TEAM_SET_CUSTOM_STATE", [
+		_name_arg("Assault"), _name_arg("AI_SYNTHETIC_A"),
+		_argument(ParamTypes.ARGUMENT_BOOLEAN, 1, 0.0, "DECOY_FALSE")
+	])
+	_check(
+		"custom_state_enable_reaches_the_world_as_true",
+		enabled_status == Dispatch.Status.OK
+		and world.calls.has("teams.set_custom_state|Assault|AI_SYNTHETIC_A|true"),
+		"status=%d calls=%s" % [enabled_status, str(world.calls)]
+	)
+
+	var disabled_status := _act(harness, "TEAM_SET_CUSTOM_STATE", [
+		_name_arg("Assault"), _name_arg("AI_SYNTHETIC_A"),
+		_argument(ParamTypes.ARGUMENT_BOOLEAN, 0, 0.0, "DECOY_TRUE")
+	])
+	_check(
+		"custom_state_clear_reaches_the_world_as_false_not_inverted",
+		disabled_status == Dispatch.Status.OK
+		and world.calls.has("teams.set_custom_state|Assault|AI_SYNTHETIC_A|false"),
+		"status=%d calls=%s" % [disabled_status, str(world.calls)]
+	)
+	_check(
+		"custom_state_token_is_carried_as_text",
+		not world.calls.has("teams.set_custom_state|Assault|424242|true")
+		and not world.calls.has("teams.set_custom_state|Assault|424242|false"),
+		str(world.calls)
+	)
+	# The member is no longer declared blocked anywhere.
+	_check(
+		"custom_state_is_not_registered_as_blocked",
+		not (harness["dispatch"] as SageScriptDispatch).blocked_names().has(
+			"TEAM_SET_CUSTOM_STATE"
+		)
+	)
+
+
 func _test_gap_registered_members() -> void:
 	var harness := _harness()
 	var dispatch: SageScriptDispatch = harness["dispatch"]
-	var world: TeamWorld = harness["world"]
-
-	# TEAM_SET_CUSTOM_STATE, the most-called member of the package, carries a
-	# BOOLEAN the world cannot accept. It must report BLOCKED and must not reach
-	# the world at all - serving it as a plain "set" would invert every call site
-	# that authored 0.
-	var status := _act(harness, "TEAM_SET_CUSTOM_STATE", [
-		_name_arg("Assault"), _name_arg("AI_SYNTHETIC_A"), _bool_arg(false)
-	])
-	_check("a_gap_registered_action_reports_blocked", status == Dispatch.Status.BLOCKED,
-		"status=%d" % status)
-	_check(
-		"a_gap_registered_action_never_reaches_the_world",
-		world.calls.is_empty(),
-		str(world.calls)
-	)
-	_check(
-		"the_gap_names_the_missing_world_signature",
-		_gap_detail(dispatch, "TEAM_SET_CUSTOM_STATE").contains(
-			"teams.set_custom_state(team: String, state: String, enabled: bool)"
-		),
-		str(dispatch.gaps.to_lines())
-	)
 
 	# The radius, the type list and the anchor team are each named in their own
 	# gap, so a reader of the gap log learns which argument is missing.
@@ -813,14 +844,14 @@ func _test_gap_registered_members() -> void:
 		str(dispatch.gaps.to_lines())
 	)
 
-	# Every one of the six reported BLOCKED above, so none of them silently
+	# Every one of the five reported BLOCKED above, so none of them silently
 	# degraded into BAD_ARGUMENTS or UNSUPPORTED on the way.
 	var not_gapped: Array[String] = []
 	for name: String in GAP_REGISTERED:
 		if not dispatch.gaps.has("action", name, GapLog.REASON_BLOCKED_SUBSYSTEM):
 			not_gapped.append(name)
 	_check(
-		"all_six_gap_registered_members_recorded_a_blocked_gap",
+		"all_five_gap_registered_members_recorded_a_blocked_gap",
 		not_gapped.is_empty(),
 		"missing=%s log=%s" % [str(not_gapped), str(dispatch.gaps.to_lines())]
 	)
@@ -830,7 +861,7 @@ func _test_gap_registered_members() -> void:
 	for name: String in GAP_REGISTERED:
 		if not dispatch.blocked_names().has(name):
 			not_blocked.append(name)
-	_check("all_six_gap_registered_members_are_declared", not_blocked.is_empty(), str(not_blocked))
+	_check("all_five_gap_registered_members_are_declared", not_blocked.is_empty(), str(not_blocked))
 
 
 # --- Stub world -----------------------------------------------------------
@@ -896,6 +927,11 @@ class StubTeams:
 
 	func set_state(team: String, team_state: String) -> bool:
 		return _log("teams.set_state|%s|%s" % [team, team_state])
+
+	func set_custom_state(team: String, team_state: String, enabled: bool) -> bool:
+		return _log(
+			"teams.set_custom_state|%s|%s|%s" % [team, team_state, str(enabled).to_lower()]
+		)
 
 	func merge_into(team: String, destination: String) -> bool:
 		return _log("teams.merge_into|%s|%s" % [team, destination])

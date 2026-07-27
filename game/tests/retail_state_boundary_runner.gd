@@ -60,6 +60,18 @@ extends SceneTree
 ##      the frozen pin stands), cleared by setup(), and carried to adopting
 ##      peers, who continue the IDENTICAL sequence from the adopted words.
 ##
+## The seventh subject is the retail AI's own blackboard, added in the same
+## shape BEFORE it could ship outside the boundary:
+##
+##   7. TEAM BEHAVIOR STATE (team_behavior_states): the per-team TEAM_STATE
+##      string (retail save-persists it - Team::xfer writes m_state) and the
+##      custom-state token sets, both mutated by script actions and read by
+##      the conditions gating the AI attack loops. Sim-owned, hashed and
+##      snapshotted empty-is-absent, canonical (retail's default state IS ""
+##      and an emptied token set drops its keys, so pristine values return
+##      the pristine hash exactly), cleared by setup(), and carried to
+##      adopting peers, who answer every read from the minting peer's state.
+##
 ## Every fixture is SYNTHETIC; no retail install or content pack is required.
 ## NOTE: the shadowing and attach-refusal tests intentionally trigger
 ## push_error lines (marked EXPECTED ERROR below) - they are the loud
@@ -77,6 +89,9 @@ const ParamTypes = preload("res://src/script/script_param_types.gd")
 
 const PLAYER := "PlayerOne"
 const ENEMY := "EnemyOne"
+## Script TEAM name for the player roster (subject-7 tests; the harness
+## worlds bind players only, so team-facet tests bind this themselves).
+const TEAM_NAME := "teamPlayerOne"
 
 ## LIVENESS. A GDScript runtime error aborts the enclosing function on the spot
 ## without propagating, so every `_check` after the error site never runs and
@@ -84,7 +99,7 @@ const ENEMY := "EnemyOne"
 ## exits 0. Pinning the number of checks a healthy run makes turns that silent
 ## abort into a loud failure. Raise it deliberately when tests are added; never
 ## lower it to make a run go green.
-const EXPECTED_CHECKS := 113
+const EXPECTED_CHECKS := 131
 
 var passed := 0
 var failed := 0
@@ -108,6 +123,8 @@ func _run() -> void:
 	_test_script_env_degrades_without_a_sim_and_attach_refuses()
 	_test_logic_random_stream_lives_inside_the_snapshot_boundary()
 	_test_logic_random_stream_is_hash_inert_until_drawn_and_reset_by_setup()
+	_test_team_behavior_state_lives_inside_the_snapshot_boundary()
+	_test_team_behavior_state_is_hash_inert_until_written_and_reset_by_setup()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
 		failed += 1
@@ -922,6 +939,117 @@ func _test_script_env_degrades_without_a_sim_and_attach_refuses() -> void:
 	_check(
 		"the refused attaches stored nothing in the sim",
 		not sim.script_env_state.has(99) and used.counter("pre_attach") == 1
+	)
+
+
+# --- Defect-class subject 7: team behavior state -----------------------------
+
+
+func _test_team_behavior_state_lives_inside_the_snapshot_boundary() -> void:
+	## The 867447e shape, applied BEFORE shipping instead of after a desync:
+	## TEAM_STATE and the custom-state token sets steer the AI attack loops
+	## (TEAM_STATE_IS gates retreat, TEAM_HAS_CUSTOM_STATE gates hunts), so a
+	## peer adopting a snapshot mid-match must answer every read from the
+	## state the minting peer wrote, and the identical follow-up write must
+	## land identically on both. Retail itself save-persists the state
+	## (Team::xfer writes m_state), so this is retail's boundary too.
+	var sim_a := _make_sim()
+	var world_a := _make_world(sim_a)
+	world_a.bind_team(TEAM_NAME, SimScript.PLAYER_TEAM)
+	var teams_a := world_a.teams()
+	_check(
+		"fixture: peer A writes team state and custom-state tokens",
+		teams_a.set_state(TEAM_NAME, "AI_SYNTH_ATTACKING")
+		and teams_a.set_custom_state(TEAM_NAME, "AI_SYNTH_ADVANCING", true)
+		and teams_a.set_custom_state(TEAM_NAME, "AI_SYNTH_ASSAULTING", true)
+	)
+
+	var sim_b := _make_sim()
+	_check("fixture: peer B adopts A's snapshot", sim_b.restore(sim_a.snapshot()))
+	var world_b := _make_world(sim_b)
+	world_b.bind_team(TEAM_NAME, SimScript.PLAYER_TEAM)
+	_check("adopted snapshot agrees on the state hash", sim_a.state_hash() == sim_b.state_hash())
+	_check(
+		"the adopting peer reads the TEAM_STATE the minting peer wrote",
+		world_b.teams().state(TEAM_NAME).ok
+		and world_b.teams().state(TEAM_NAME).value == world_a.teams().state(TEAM_NAME).value
+		and world_b.teams().state(TEAM_NAME).value == "AI_SYNTH_ATTACKING"
+	)
+	_check(
+		"the adopting peer reads the token set the minting peer built",
+		world_b.teams().custom_state(TEAM_NAME).ok
+		and world_b.teams().custom_state(TEAM_NAME).value
+		== world_a.teams().custom_state(TEAM_NAME).value
+		and world_b.teams().custom_state(TEAM_NAME).value
+		== ["AI_SYNTH_ADVANCING", "AI_SYNTH_ASSAULTING"]
+	)
+	# The identical follow-up write - the retail AI's own idiom, clearing one
+	# token while the other stands - lands identically on both peers.
+	var cleared_a: bool = world_a.teams().set_custom_state(TEAM_NAME, "AI_SYNTH_ADVANCING", false)
+	var cleared_b: bool = world_b.teams().set_custom_state(TEAM_NAME, "AI_SYNTH_ADVANCING", false)
+	_check("the identical follow-up write succeeds on both peers", cleared_a and cleared_b)
+	_check(
+		"peers agree on the state hash after the identical write",
+		sim_a.state_hash() == sim_b.state_hash()
+	)
+
+
+func _test_team_behavior_state_is_hash_inert_until_written_and_reset_by_setup() -> void:
+	## The empty-is-absent discipline (the frozen-pin property) in all four
+	## directions, the CANONICAL property (state returned to its pristine
+	## VALUES returns to the pristine HASH exactly - retail's default
+	## TEAM_STATE is "" and an emptied token set is no set at all, so neither
+	## may linger as hash-visible bytes), and the match-reset direction:
+	## setup() clears the store, so one match's AI blackboard can never leak
+	## into the next.
+	var sim := _make_sim()
+	var pristine := sim.state_hash()
+	_check(
+		"an untouched sim snapshot carries NO team_behavior_states key",
+		not (bytes_to_var(sim.snapshot()) as Dictionary).has("team_behavior_states")
+	)
+	var world := _make_world(sim)
+	world.bind_team(TEAM_NAME, SimScript.PLAYER_TEAM)
+	var teams := world.teams()
+	_check("fixture: a TEAM_STATE write lands", teams.set_state(TEAM_NAME, "AI_SYNTH_HOLD"))
+	_check(
+		"writing team state MOVES the hash (the state is not invisible)",
+		sim.state_hash() != pristine
+	)
+	_check(
+		"the written state serializes",
+		(bytes_to_var(sim.snapshot()) as Dictionary).has("team_behavior_states")
+	)
+	_check(
+		"setting the state back to retail's empty default returns to the pristine hash exactly",
+		teams.set_state(TEAM_NAME, "") and sim.state_hash() == pristine
+	)
+	_check(
+		"fixture: a custom-state token enables",
+		teams.set_custom_state(TEAM_NAME, "AI_SYNTH_ADVANCING", true)
+	)
+	_check("enabling a token moves the hash", sim.state_hash() != pristine)
+	_check(
+		"disabling the last token returns to the pristine hash exactly",
+		teams.set_custom_state(TEAM_NAME, "AI_SYNTH_ADVANCING", false)
+		and sim.state_hash() == pristine
+	)
+
+	# The reset direction: state left standing at reset must not survive -
+	# a reused sim must hash AND answer like a freshly built one.
+	teams.set_state(TEAM_NAME, "AI_SYNTH_HOLD")
+	teams.set_custom_state(TEAM_NAME, "AI_SYNTH_ADVANCING", true)
+	sim.setup({}, {})
+	sim.ai_enabled = false  # the harness disables AI; setup() re-enables it
+	_check("setup() clears the team-behavior-state store", sim.team_behavior_states.is_empty())
+	var fresh := _make_sim()
+	_check(
+		"a reused sim hashes identically to a freshly built one after reset",
+		sim.state_hash() == fresh.state_hash()
+	)
+	_check(
+		"a reused sim answers the retail default after reset, like a fresh one",
+		world.teams().state(TEAM_NAME).value == "" and world.teams().custom_state(TEAM_NAME).value == []
 	)
 
 

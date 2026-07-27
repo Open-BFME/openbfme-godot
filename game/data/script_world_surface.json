@@ -3,8 +3,8 @@
 	"surface": "Every public non-static script-declared instance method of the 16 facet objects of SageScriptWorld (the three presentation sinks counted per sink) plus the base world's own 7 surface methods under facet 'world'. simulationBacked is OBSERVED by calling each method against RetailSliceScriptWorld over a synthetic RetailSliceSim; blocking annotations are analysis, verified for coverage but not provable by a probe.",
 	"counts": {
 		"total": 319,
-		"simulationBacked": 45,
-		"refusing": 274
+		"simulationBacked": 49,
+		"refusing": 270
 	},
 	"subsystems": [
 		{
@@ -121,7 +121,7 @@
 		},
 		{
 			"id": "team-behavior-state",
-			"requires": "Per-team behaviour state: TEAM_STATE tokens, custom-state token sets, AI mood/attitude, emotions, panic. Missing even for the bound default rosters, and the retail AI's attack loops gate on it constantly (TEAM_SET_CUSTOM_STATE alone is 40 call sites)."
+			"requires": "Per-team behaviour state. Its AI-traffic slice is BUILT: the TEAM_STATE string (retail's Team::m_state - one unvalidated case-sensitive string per team, default \"\", save-persisted) and the custom-state token SETS live in the sim (team_behavior_states, hashed empty-is-absent), serving the six members the attack loops gate on - TEAM_SET_CUSTOM_STATE's 40 call sites included, now that the facet carries its enable flag. Still missing here: attitude/mood CONSUMPTION (the retail write is a per-member broadcast of the raw AI_MOOD int, but the AIUpdate mood matrix that consumes it - idle-acquire modes, move-to-attack-move conversion, INI-authored range adjustments - is unmodeled, and a store-only serve would be a silent semantic no-op), the EmotionTracker (undecompiled in the research tree, parse-only in OpenSAGE, EMOTION ordinals unestablished), and the AI_PANIC state machine (waypoint-path flight; the facet signature also lacks the action's WAYPOINT_PATH argument)."
 		},
 		{
 			"id": "team-registry",
@@ -2491,7 +2491,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "an emotion/morale model"
+			"requiredSimState": "an EmotionTracker model: the tracker is undecompiled in the BFME research tree and parse-only in OpenSAGE, the EMOTION parameter's integer ordinals are established by neither source, and retail emotions are logic-affecting (RUN_AWAY_PANIC, PreventPlayerCommands) - serving any authored integer would guess which emotion it names. The facet's duration_ticks int is also a reported defect: the sourced action carries REAL seconds"
 		},
 		{
 			"facet": "players",
@@ -3757,9 +3757,8 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "custom-state token sets per team (the value-shape ambiguity WP15 reported also needs a ruling)"
+			"simulationBacked": true,
+			"restrictions": "bound team names only; '<This Team>' - the spelling retail authors at essentially every call site - refuses until an executing-team (sequential-script) context exists, and the script player's whole roster would be the wrong team"
 		},
 		{
 			"facet": "teams",
@@ -3901,7 +3900,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "an emotion/morale model"
+			"requiredSimState": "an EmotionTracker model (see players.force_emotion - same missing tracker, unestablished EMOTION ordinals, and the seconds-vs-ticks signature defect)"
 		},
 		{
 			"facet": "teams",
@@ -3999,7 +3998,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "a panic behaviour"
+			"requiredSimState": "the AI_PANIC state machine (retail: per-member flight along a WAYPOINT_PATH with logic-random wander offsets, the PANICKING model condition, save-persisted state) plus waypoint paths from map geometry - AND a facet signature fix: the sourced action is TEAM_PANIC(TEAM, WAYPOINT_PATH) and this method has no slot for the path, so serving it would drop where the team flees to"
 		},
 		{
 			"facet": "teams",
@@ -4139,7 +4138,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "AI mood per team (retail authors -3 outside the documented 0..5 - open question travels with this)"
+			"requiredSimState": "mood CONSUMPTION, not storage: the sourced write is a one-shot broadcast of the raw AI_MOOD int onto each member (no clamp; the authored -3 is stored verbatim, treated as NORMAL by the mood matrix default arm while raw >=AI_NORMAL comparisons fail), but retail consumes it through the AIUpdate mood matrix - idle-acquire modes per mood, move-to-attack-move conversion for ALERT/AGGRESSIVE, INI-authored range adjustments - which the sim does not model; a store-only serve would return OK and behave nothing like retail"
 		},
 		{
 			"facet": "teams",
@@ -4192,14 +4191,17 @@
 				{
 					"name": "state",
 					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
 				}
 			],
-			"arity": 2,
+			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "custom-state token sets (and the gap-registered BOOLEAN enable flag - serving without it would invert 40 AI call sites)"
+			"simulationBacked": true,
+			"restrictions": "bound team names only (the '<This Team>' restriction above); an empty token refuses; writes refuse after match resolution"
 		},
 		{
 			"facet": "teams",
@@ -4521,9 +4523,8 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "TEAM_STATE token storage - 32 AI sites, the attack loops' backbone"
+			"simulationBacked": true,
+			"restrictions": "bound team names only (the '<This Team>' restriction above); writes refuse after match resolution"
 		},
 		{
 			"facet": "teams",
@@ -4617,9 +4618,8 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "TEAM_STATE token reads (TEAM_STATE_IS/_IS_NOT gate the AI's retreat logic)"
+			"simulationBacked": true,
+			"restrictions": "bound team names only (the '<This Team>' restriction above); an unbound name refuses rather than reproducing retail's nonexistent-team false (unbound is not proof of nonexistence while the sub-player team registry is unmodeled)"
 		},
 		{
 			"facet": "teams",
@@ -5456,7 +5456,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "an emotion/morale model"
+			"requiredSimState": "an EmotionTracker model (see players.force_emotion), plus the object-name registry for the unit spelling"
 		},
 		{
 			"facet": "units",
@@ -5703,7 +5703,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "AI mood per object"
+			"requiredSimState": "mood consumption (see teams.set_attitude) plus the object-name registry for the named spelling"
 		},
 		{
 			"facet": "units",
@@ -7038,12 +7038,12 @@
 		},
 		{
 			"member": "TEAM_HAS_CUSTOM_STATE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.custom_state"
 			],
-			"blockingSubsystem": "team-behavior-state",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "the value-shape ambiguity WP15 reported is RULED: the backed world answers the ARRAY of enabled tokens (the writer's boolean proves a set); the handler keeps its String tolerance for stub worlds"
 		},
 		{
 			"member": "TEAM_HAS_UNITS",
@@ -7149,22 +7149,21 @@
 		},
 		{
 			"member": "TEAM_SET_CUSTOM_STATE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.set_custom_state"
 			],
-			"blockingSubsystem": "team-behavior-state",
-			"signatureGap": true,
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "served through the corrected signature carrying the BOOLEAN enable flag WP15's gap registration demanded; the flag reads from the payload integer field, both polarities delivered un-inverted"
 		},
 		{
 			"member": "TEAM_SET_STATE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.set_state"
 			],
-			"blockingSubsystem": "team-behavior-state",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "retail's doSetTeamState is a bare Team::setState - storage IS the semantic; tokens are content-defined and stored unvalidated"
 		},
 		{
 			"member": "TEAM_STAND_GROUND",
@@ -7179,21 +7178,21 @@
 		},
 		{
 			"member": "TEAM_STATE_IS",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.state"
 			],
-			"blockingSubsystem": "team-behavior-state",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "exact case-sensitive comparison (AsciiString strcmp); the empty string is retail's default for a team never set"
 		},
 		{
 			"member": "TEAM_STATE_IS_NOT",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.state"
 			],
-			"blockingSubsystem": "team-behavior-state",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "not composed as the negation of TEAM_STATE_IS: a refused read must stay false for BOTH spellings (retail answers false to both for a nonexistent team)"
 		},
 		{
 			"member": "TEAM_STOP",

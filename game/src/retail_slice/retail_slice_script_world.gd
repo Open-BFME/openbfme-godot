@@ -162,8 +162,14 @@ func bind_player(player_name: String, team: int) -> bool:
 func bind_team(team_name: String, team: int) -> bool:
 	## Bind a script team name (a player's DEFAULT team - the whole roster) to
 	## a rostered sim team. Aliases are allowed; rebinding to a different team
-	## is not.
-	if sim == null or team_name == "" or not sim.team_ids().has(team):
+	## is not. Reserved token spellings are refused as names (a map that bound
+	## "<This Team>" literally would silently shadow token resolution).
+	if (
+		sim == null
+		or team_name == ""
+		or RESERVED_TEAM_TOKENS.has(team_name)
+		or not sim.team_ids().has(team)
+	):
 		return false
 	if _team_names.has(team_name):
 		return int(_team_names[team_name]) == team
@@ -218,6 +224,20 @@ const RESERVED_PLAYER_TOKENS: Array[String] = [
 	LOCAL_PLAYER_TOKEN,
 	LOCAL_PLAYERS_ENEMIES_TOKEN,
 ]
+
+## The one reserved token the decoded corpus authors in a TEAM slot - and it
+## authors it at essentially EVERY team-behavior call site (all 141
+## TEAM_SET_STATE sites, all 385 TEAM_SET_CUSTOM_STATE sites, 26 of the 27
+## TEAM_SET_ATTITUDE sites). In retail it resolves to the team the CURRENTLY
+## EXECUTING script is attached to - the sequential-script/calling-team
+## context the ScriptEngine carries while it evaluates a team's behaviour
+## scripts. This world has no such context (the sequential-scripts subsystem
+## is unbuilt), and the script player's WHOLE ROSTER would be the wrong
+## answer: retail's "<This Team>" is the individual attack team, not the
+## player. So the token REFUSES, naming the missing context, and bind_team
+## refuses the spelling as a name so a binding can never shadow the token.
+const THIS_TEAM_TOKEN := "<This Team>"
+const RESERVED_TEAM_TOKENS: Array[String] = [THIS_TEAM_TOKEN]
 
 
 func _resolve_single_player_team(player: String) -> Dictionary:
@@ -875,26 +895,90 @@ class SlicePlayers:
 class SliceTeams:
 	extends SageScriptWorld.Teams
 
-	## Implemented: exists, unit_count, owner, stop (non-disband). A bound
-	## script team is a player's whole roster; sub-player teams, team state
-	## machines, discovery, threat and recruitment all refuse.
+	## Implemented: exists, unit_count, owner, stop (non-disband), and the
+	## team-behavior-state four - state/set_state (the retail TEAM_STATE
+	## string, sim.team_behavior_state) and custom_state/set_custom_state
+	## (the custom-state token set, sim.team_custom_states). Sub-player
+	## teams, discovery, threat and recruitment still refuse.
+	##
+	## DELIBERATELY STILL REFUSING on this facet, with the evidence:
+	##   * set_attitude - the retail WRITE is sourced exactly (a one-shot
+	##     broadcast of the raw AI_MOOD int onto each member's
+	##     AIUpdateInterface::m_attitude, no clamp - ScriptActions.cpp:
+	##     1305-1319 + AIGroup::setAttitude), but retail CONSUMES it through
+	##     the AIUpdate mood matrix: idle-acquire modes per mood (sleep
+	##     ignores all, passive retaliates only against its last damager),
+	##     plain moves converted to attack-moves for ALERT/AGGRESSIVE, and
+	##     INI-authored per-mood range adjustments this simulation has no
+	##     data for. The retail AI authors 2 (aggressive) on its attack teams
+	##     precisely to get the move->attack-move conversion, and -2/-1 on
+	##     retreats to stop re-engagement; storing the int while the sim's
+	##     auto-acquire ignores it would return OK and then behave nothing
+	##     like retail - a silent semantic no-op, which is worse than the
+	##     refusal. (The famous authored -3 is sourced too: stored verbatim,
+	##     and the mood matrix's default arm treats it as NORMAL while raw
+	##     >=AI_NORMAL comparisons fail - AIUpdate.cpp:4480-4491, 4707.)
+	##   * force_emotion - the EmotionTracker is undecompiled in the BFME
+	##     research tree and parse-only in OpenSAGE; the EMOTION parameter's
+	##     integer ordinals are established by NEITHER tree, so serving any
+	##     authored integer would guess the emotion it names. Logic-affecting
+	##     in retail (RUN_AWAY_PANIC, PreventPlayerCommands), so not a
+	##     presentation shrug either.
 
 	func _world() -> RetailSliceScriptWorld:
 		return world as RetailSliceScriptWorld
 
-	func _team_or_refuse(method: String, team_name: String) -> Dictionary:
+	func _resolve_team(team_name: String) -> Dictionary:
+		## Shared TEAM-argument resolution: {"team": int} or {"reason": String}.
+		## "<This Team>" - the spelling the retail AI authors at essentially
+		## every team-behavior call site - refuses HERE with the missing
+		## context named (see RESERVED_TEAM_TOKENS).
 		var w := _world()
 		if w == null or w.sim == null:
-			return {"query": _refuse_query(method, "no simulation attached")}
+			return {"reason": "no simulation attached"}
+		if team_name == RetailSliceScriptWorld.THIS_TEAM_TOKEN:
+			return {"reason": (
+				"'<This Team>' cannot resolve: it names the team of the "
+				+ "currently executing script, a sequential-script context "
+				+ "this world does not carry (and the script player's whole "
+				+ "roster would be the wrong team)"
+			)}
 		var team := w._bound_team(team_name)
 		if team < 0:
-			return {"query": _refuse_query(method, "team '%s' is not bound to a simulation team" % team_name)}
+			return {"reason": "team '%s' is not bound to a simulation team" % team_name}
 		return {"team": team}
+
+	func _team_or_refuse(method: String, team_name: String) -> Dictionary:
+		var resolved := _resolve_team(team_name)
+		if resolved.has("reason"):
+			return {"query": _refuse_query(method, String(resolved["reason"]))}
+		return resolved
+
+	func _team_or_refuse_command(method: String, team_name: String) -> Dictionary:
+		## The command spelling: same resolution, refusals through
+		## _refuse_command (the boolean channel), plus the resolved-match
+		## guard every mutating team command applies (teams.stop precedent).
+		var resolved := _resolve_team(team_name)
+		if resolved.has("reason"):
+			return {"refused": _refuse_command(method, String(resolved["reason"]))}
+		if _world().sim.winner != -1:
+			return {"refused": _refuse_command(method, "the match is already resolved")}
+		return resolved
 
 	func exists(team: String) -> SageWorldQuery:
 		var w := _world()
 		if w == null or w.sim == null:
 			return _refuse_query("teams.exists", "no simulation attached")
+		if RetailSliceScriptWorld.RESERVED_TEAM_TOKENS.has(team):
+			# The token names a team that certainly exists in retail (the one
+			# executing the current script); answering false for want of the
+			# context would be a wrong answer, not a refusal.
+			var resolved := _resolve_team(team)
+			if resolved.has("reason"):
+				return _refuse_query("teams.exists", String(resolved["reason"]))
+			return SageWorldQuery.hit(true)
+		# Bindings are declared exhaustive (class comment), so an unbound name
+		# IS absent from the match - false is an answer here, not a dodge.
 		return SageWorldQuery.hit(w._bound_team(team) >= 0)
 
 	func unit_count(team: String) -> SageWorldQuery:
@@ -916,6 +1000,81 @@ class SliceTeams:
 				"teams.owner", "no player name is bound to simulation team %d" % sim_team
 			)
 		return SageWorldQuery.hit(String(w._team_players[sim_team]))
+
+	func state(team: String) -> SageWorldQuery:
+		## TEAM_STATE_IS / TEAM_STATE_IS_NOT read this. STRICTLY READ-ONLY -
+		## these conditions gate the AI's retreat logic and are polled an
+		## unpredictable number of times. The value is the sim's single
+		## per-team state string; "" for a bound team never set is RETAIL'S
+		## OWN DEFAULT (Team's m_state is a default-constructed AsciiString),
+		## so it is a truthful answer, never a dodge - TEAM_STATE_IS against
+		## any non-empty token is then correctly false and the handler's
+		## exact case-sensitive comparison matches AsciiString::operator==
+		## (strcmp). One retail asymmetry deliberately NOT reproduced here:
+		## for a NONEXISTENT team retail answers false to both IS and IS_NOT
+		## ("Non existent team isn't in any state"). An unbound name in this
+		## world is not proof of nonexistence (the sub-player team registry
+		## is unmodeled), so it refuses - the dispatcher's false-with-a-gap -
+		## rather than asserting a fact the sim cannot check.
+		var resolved := _team_or_refuse("teams.state", team)
+		if resolved.has("query"):
+			return resolved["query"]
+		var answer: Dictionary = _world().sim.team_behavior_state(int(resolved["team"]))
+		if not bool(answer.get("ok", false)):
+			return _refuse_query("teams.state", String(answer.get("reason", "")))
+		return SageWorldQuery.hit(String(answer.get("state", "")))
+
+	func set_state(team: String, state_token: String) -> bool:
+		## TEAM_SET_STATE: retail's doSetTeamState is a bare Team::setState -
+		## STORAGE IS THE ENTIRE SEMANTIC (nothing in the engine consumes
+		## m_state besides the two conditions). Any token is admitted
+		## unvalidated, exactly like retail; the sim stores it verbatim,
+		## case preserved.
+		var resolved := _team_or_refuse_command("teams.set_state", team)
+		if resolved.has("refused"):
+			return false
+		var result: Dictionary = _world().sim.set_team_behavior_state(
+			int(resolved["team"]), state_token
+		)
+		if not bool(result.get("ok", false)):
+			return _refuse_command("teams.set_state", String(result.get("reason", "")))
+		return true
+
+	func custom_state(team: String) -> SageWorldQuery:
+		## TEAM_HAS_CUSTOM_STATE reads this - STRICTLY READ-ONLY (condition
+		## path). Answers the ARRAY of enabled tokens (sorted, a defensive
+		## copy), which resolves the value-shape ambiguity WP15 reported: the
+		## writer's BOOLEAN argument proves a team holds a SET of independent
+		## tokens (retail authors AI_ADVANCING on and off independently of
+		## AI_ASSAULTING), so the membership-test reading is the correct one.
+		## An empty array for a team never toggled makes the handler's
+		## membership test a truthful false - retail's own answer for a token
+		## never set, per the sourced set semantics (an assumption, labeled
+		## as such in the sim store's block comment).
+		var resolved := _team_or_refuse("teams.custom_state", team)
+		if resolved.has("query"):
+			return resolved["query"]
+		var answer: Dictionary = _world().sim.team_custom_states(int(resolved["team"]))
+		if not bool(answer.get("ok", false)):
+			return _refuse_query("teams.custom_state", String(answer.get("reason", "")))
+		return SageWorldQuery.hit(answer.get("tokens", []) as Array)
+
+	func set_custom_state(team: String, state_token: String, enabled: bool) -> bool:
+		## TEAM_SET_CUSTOM_STATE(TEAM, TEAM_STATE, BOOLEAN) against the
+		## CORRECTED signature that carries the enable flag - the argument
+		## whose absence kept WP15's most-called member (40 AI call sites)
+		## gap-registered. Enable inserts the token into the team's set,
+		## disable removes it; an empty token refuses (it names nothing in
+		## the retail vocabulary).
+		var resolved := _team_or_refuse_command("teams.set_custom_state", team)
+		if resolved.has("refused"):
+			return false
+		var result: Dictionary = _world().sim.set_team_custom_state(
+			int(resolved["team"]), state_token, enabled
+		)
+		if not bool(result.get("ok", false)):
+			return _refuse_command("teams.set_custom_state", String(result.get("reason", "")))
+		return true
 
 	func stop(team: String, disband: bool) -> bool:
 		if disband:

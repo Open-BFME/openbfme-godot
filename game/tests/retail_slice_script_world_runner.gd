@@ -70,7 +70,7 @@ const ENEMY_TEAM_NAME := "teamEnemyOne"
 ## exits 0. Pinning the number of checks a healthy run makes turns that silent
 ## abort into a loud failure. Raise it deliberately when tests are added; never
 ## lower it to make a run go green.
-const EXPECTED_CHECKS := 377
+const EXPECTED_CHECKS := 410
 
 var passed := 0
 var failed := 0
@@ -90,6 +90,8 @@ func _run() -> void:
 	_test_players_relation_to()
 	_test_teams_reads()
 	_test_teams_stop()
+	_test_teams_behavior_state()
+	_test_teams_behavior_state_determinism()
 	_test_orders_move_and_attack_move()
 	_test_orders_scope_and_target_refusals()
 	_test_orders_attack_nearest()
@@ -661,6 +663,194 @@ func _test_teams_stop() -> void:
 	)
 	_check(
 		"teams.stop refuses an unbound team", not world.teams().stop("teamGhost", false)
+	)
+
+
+func _test_teams_behavior_state() -> void:
+	## The team-behavior-state surface: the retail TEAM_STATE string
+	## (default "", exact case-sensitive storage) and the custom-state token
+	## SET (sorted membership; the enable flag inserts/removes). Sourced
+	## semantics are documented on the sim store; this proves the adapter
+	## delivers them.
+	var sim := _make_sim()
+	var world := _make_world(sim)
+
+	# TEAM_STATE: retail's default for a team never set is the EMPTY string
+	# (Team's m_state is default-constructed), so "" here is a truthful
+	# answer, and TEAM_STATE_IS against any non-empty token is false.
+	_check_hit(
+		"teams.state answers retail's empty default for a never-set team",
+		world.teams().state(PLAYER_TEAM_NAME),
+		""
+	)
+	_check(
+		"teams.set_state is accepted for a bound team",
+		world.teams().set_state(PLAYER_TEAM_NAME, "AI_SYNTH_ATTACKING")
+	)
+	_check_hit(
+		"teams.state reads back the exact token, case preserved",
+		world.teams().state(PLAYER_TEAM_NAME),
+		"AI_SYNTH_ATTACKING"
+	)
+	_check(
+		"fixture: a second set_state overwrites (one string per team)",
+		world.teams().set_state(PLAYER_TEAM_NAME, "AI_SYNTH_RETREATING")
+	)
+	_check_hit(
+		"teams.state answers the overwritten token, not the first",
+		world.teams().state(PLAYER_TEAM_NAME),
+		"AI_SYNTH_RETREATING"
+	)
+	_check(
+		"setting the empty string returns the team to the retail default",
+		world.teams().set_state(PLAYER_TEAM_NAME, "")
+		and world.teams().state(PLAYER_TEAM_NAME).value == ""
+	)
+
+	# Custom states: a SET of independent tokens (the writer's boolean is
+	# what rules the shape), answered as a sorted Array.
+	_check_hit(
+		"teams.custom_state answers the empty set for a team never toggled",
+		world.teams().custom_state(PLAYER_TEAM_NAME),
+		[]
+	)
+	_check(
+		"fixture: two tokens enable (deliberately out of sorted order)",
+		world.teams().set_custom_state(PLAYER_TEAM_NAME, "AI_SYNTH_B", true)
+		and world.teams().set_custom_state(PLAYER_TEAM_NAME, "AI_SYNTH_A", true)
+	)
+	_check_hit(
+		"teams.custom_state answers the sorted token set",
+		world.teams().custom_state(PLAYER_TEAM_NAME),
+		["AI_SYNTH_A", "AI_SYNTH_B"]
+	)
+	_check(
+		"a duplicate enable is a set no-op",
+		world.teams().set_custom_state(PLAYER_TEAM_NAME, "AI_SYNTH_A", true)
+		and world.teams().custom_state(PLAYER_TEAM_NAME).value == ["AI_SYNTH_A", "AI_SYNTH_B"]
+	)
+	_check(
+		"disable removes exactly the named token",
+		world.teams().set_custom_state(PLAYER_TEAM_NAME, "AI_SYNTH_B", false)
+		and world.teams().custom_state(PLAYER_TEAM_NAME).value == ["AI_SYNTH_A"]
+	)
+	_check(
+		"disabling an absent token is a successful set no-op",
+		world.teams().set_custom_state(PLAYER_TEAM_NAME, "AI_SYNTH_NEVER_SET", false)
+	)
+	_check(
+		"an empty custom-state token refuses (it names nothing)",
+		not world.teams().set_custom_state(PLAYER_TEAM_NAME, "", true)
+	)
+	# The adapter's copies are defensive: mutating an answered array must not
+	# reach the authoritative store (a condition path could otherwise write).
+	var leaked: Array = world.teams().custom_state(PLAYER_TEAM_NAME).value
+	leaked.append("AI_SYNTH_INJECTED")
+	_check(
+		"the answered token array is a defensive copy",
+		world.teams().custom_state(PLAYER_TEAM_NAME).value == ["AI_SYNTH_A"]
+	)
+
+	# "<This Team>" - the spelling the retail AI authors at essentially every
+	# call site - refuses with the missing executing-team context named; the
+	# script player's whole roster would be the WRONG team. And the spelling
+	# can never be bound as a literal name to shadow the token.
+	_check_refused(
+		"teams.state refuses '<This Team>' (no executing-team context)",
+		world.teams().state("<This Team>")
+	)
+	_check(
+		"teams.set_state refuses '<This Team>' too",
+		not world.teams().set_state("<This Team>", "AI_SYNTH_X")
+	)
+	_check(
+		"bind_team refuses the reserved '<This Team>' spelling as a name",
+		not world.bind_team("<This Team>", SimScript.PLAYER_TEAM)
+	)
+	_check_refused(
+		"teams.exists refuses '<This Team>' rather than answering false",
+		world.teams().exists("<This Team>")
+	)
+
+	# Unbound names refuse (the sub-player team registry is unmodeled; an
+	# unbound name is not proof of nonexistence for a STATE read).
+	_check_refused(
+		"teams.state refuses an unbound team name",
+		world.teams().state("teamGhost")
+	)
+	_check(
+		"teams.set_custom_state refuses an unbound team name",
+		not world.teams().set_custom_state("teamGhost", "AI_SYNTH_A", true)
+	)
+
+	# Still refusing on this facet, deliberately (see the SliceTeams class
+	# comment): the attitude write without its mood-matrix consumption would
+	# be a silent semantic no-op, not a service.
+	_check(
+		"teams.set_attitude keeps its refusal (mood matrix unmodeled)",
+		not world.teams().set_attitude(PLAYER_TEAM_NAME, 2)
+	)
+
+	# Writes refuse once the match is resolved (the teams.stop precedent);
+	# reads still answer - the state is still a fact of the match.
+	var decided := _make_sim()
+	var decided_world := _make_world(decided)
+	_check(
+		"fixture: a pre-resolution write lands",
+		decided_world.teams().set_state(PLAYER_TEAM_NAME, "AI_SYNTH_HOLD")
+	)
+	decided.winner = 0
+	_check(
+		"team-state writes refuse after the match is resolved",
+		not decided_world.teams().set_state(PLAYER_TEAM_NAME, "AI_SYNTH_LATE")
+		and not decided_world.teams().set_custom_state(PLAYER_TEAM_NAME, "AI_SYNTH_A", true)
+	)
+	_check_hit(
+		"team-state reads still answer after resolution",
+		decided_world.teams().state(PLAYER_TEAM_NAME),
+		"AI_SYNTH_HOLD"
+	)
+
+
+func _test_teams_behavior_state_determinism() -> void:
+	## Requirement: two INDEPENDENTLY built sims driven through two
+	## independently built worlds by the identical write sequence agree on
+	## state_hash() and on every new query - the property lockstep peers
+	## depend on. Iteration order inside the store never reaches an answer
+	## (tokens are kept sorted; the state is a single string), and this is
+	## where that claim is enforced.
+	var sim_a := _make_sim()
+	var world_a := _make_world(sim_a)
+	var sim_b := _make_sim()
+	var world_b := _make_world(sim_b)
+	for world in [world_a, world_b]:
+		var teams := (world as RetailSliceScriptWorld).teams()
+		teams.set_state(PLAYER_TEAM_NAME, "AI_SYNTH_ATTACKING")
+		teams.set_state(ENEMY_TEAM_NAME, "AI_SYNTH_DEFENDING")
+		teams.set_custom_state(PLAYER_TEAM_NAME, "AI_SYNTH_B", true)
+		teams.set_custom_state(PLAYER_TEAM_NAME, "AI_SYNTH_A", true)
+		teams.set_custom_state(ENEMY_TEAM_NAME, "AI_SYNTH_C", true)
+		teams.set_custom_state(PLAYER_TEAM_NAME, "AI_SYNTH_B", false)
+	_check(
+		"independently built sims agree on the state hash after identical writes",
+		sim_a.state_hash() == sim_b.state_hash()
+	)
+	_check(
+		"independently built worlds agree on every team-state query",
+		world_a.teams().state(PLAYER_TEAM_NAME).value
+		== world_b.teams().state(PLAYER_TEAM_NAME).value
+		and world_a.teams().state(ENEMY_TEAM_NAME).value
+		== world_b.teams().state(ENEMY_TEAM_NAME).value
+		and world_a.teams().custom_state(PLAYER_TEAM_NAME).value
+		== world_b.teams().custom_state(PLAYER_TEAM_NAME).value
+		and world_a.teams().custom_state(ENEMY_TEAM_NAME).value
+		== world_b.teams().custom_state(ENEMY_TEAM_NAME).value
+	)
+	_check(
+		"the agreed answers are the authored ones, not a vacuous agreement",
+		world_a.teams().state(PLAYER_TEAM_NAME).value == "AI_SYNTH_ATTACKING"
+		and world_a.teams().custom_state(PLAYER_TEAM_NAME).value == ["AI_SYNTH_A"]
+		and world_a.teams().custom_state(ENEMY_TEAM_NAME).value == ["AI_SYNTH_C"]
 	)
 
 

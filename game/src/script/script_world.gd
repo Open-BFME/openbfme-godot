@@ -810,11 +810,23 @@ class Teams:
 		return _refuse_command("teams.set_state")
 
 	func custom_state(_team: String) -> SageWorldQuery:
-		## WP15 TEAM_HAS_CUSTOM_STATE.
+		## WP15 TEAM_HAS_CUSTOM_STATE. Value: the Array of custom-state tokens
+		## currently ENABLED on the team (sorted, unique). The writer's BOOLEAN
+		## argument is what rules the shape: retail authors the same token with
+		## both 1 and 0 (AI_ADVANCING x34 each way in the AI libraries), so a
+		## team holds a SET of independent tokens, not one current value.
 		return _refuse_query("teams.custom_state")
 
-	func set_custom_state(_team: String, _state: String) -> bool:
-		## WP15 TEAM_SET_CUSTOM_STATE.
+	func set_custom_state(_team: String, _state: String, _enabled: bool) -> bool:
+		## WP15 TEAM_SET_CUSTOM_STATE(TEAM, TEAM_STATE, BOOLEAN) - "<TEAM> set
+		## custom state <TEAM_STATE> to <BOOLEAN>". The BOOLEAN is `_enabled`,
+		## the action's own third argument (sourced: action id 490 takes
+		## parameter types [TEAM, TEAM_STATE, BOOLEAN] in the BFME1 script
+		## metadata, and every one of the 385 retail library call sites carries
+		## it in the payload's integer field as 0 or 1). It was MISSING from
+		## this signature originally - WP15 gap-registered the member because
+		## serving TEAM_SET_CUSTOM_STATE without the flag would invert the 183
+		## corpus-wide clear sites (40 of them in the AI census scope).
 		return _refuse_command("teams.set_custom_state")
 
 	func threat(_team: String) -> SageWorldQuery:

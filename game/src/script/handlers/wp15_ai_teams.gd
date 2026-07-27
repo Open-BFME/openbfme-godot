@@ -23,11 +23,15 @@ extends RefCounted
 ##
 ## WHAT IS SERVED AND WHAT IS NOT
 ## ==============================
-## 18 members are implemented. 6 are GAP-REGISTERED, every one of them for the
+## 19 members are implemented. 5 are GAP-REGISTERED, every one of them for the
 ## same class of reason: the action carries a LOAD-BEARING ARGUMENT that the
 ## SageScriptWorld facet surface has no parameter for. Those are recorded as
 ## findings against the world surface, not papered over here - see
 ## GAP_* below, which states the exact missing signature for each.
+## TEAM_SET_CUSTOM_STATE was the sixth: the facet-signature packet landed the
+## enable flag this file's original gap registration demanded
+## (teams.set_custom_state(team, state, enabled)), so the member is now
+## SERVED - see _set_custom_state.
 ##
 ## The rule applied throughout: an argument that changes the OUTCOME may never
 ## be dropped. Calling `orders.stand_ground(team)` for TEAM_STAND_GROUND(team,
@@ -83,7 +87,7 @@ const Dispatch := preload("res://src/script/script_dispatch.gd")
 # GAP-REGISTERED MEMBERS
 # ==========================================================================
 #
-# Six members whose world surface cannot carry an argument that changes the
+# Five members whose world surface cannot carry an argument that changes the
 # outcome. They are declared through `reg.blocked_actions()` rather than given a
 # body that returns OK, for two reasons: a body would count as coverage, and a
 # shared refusal cannot be mistaken for an implementation while skimming.
@@ -92,20 +96,12 @@ const Dispatch := preload("res://src/script/script_dispatch.gd")
 # of these needs a new simulation subsystem - the Teams and Orders facets both
 # exist. They need one more parameter each, which is a coordinated edit to
 # script_world.gd and therefore not this agent's to make.
-
-## TEAM_SET_CUSTOM_STATE(TEAM, TEAM_STATE, BOOLEAN) - 40 AI call sites, the
-## single most-called WP15 member.
-const GAP_CUSTOM_STATE := (
-	"team custom-state toggle (the action's third argument is a BOOLEAN - "
-	+ "'<TEAM> set custom state <TEAM_STATE> to <BOOLEAN>' - and the retail AI "
-	+ "libraries author BOTH values on the same token, e.g. AI_ADVANCING|1 and "
-	+ "AI_ADVANCING|0. The world offers only "
-	+ "teams.set_custom_state(team, state) with no enable flag, so a clear "
-	+ "cannot be expressed and serving it as a set would invert 40 retail call "
-	+ "sites. NEEDED: teams.set_custom_state(team: String, state: String, "
-	+ "enabled: bool) -> bool. The paired READ, TEAM_HAS_CUSTOM_STATE, needs no "
-	+ "new surface and IS implemented below)"
-)
+#
+# TEAM_SET_CUSTOM_STATE used to be the sixth entry here, gap-registered for
+# exactly this class of reason (its BOOLEAN enable flag had no parameter).
+# The demanded signature - teams.set_custom_state(team, state, enabled) -
+# has since landed, so the member is served above; the history stays in this
+# comment because the gap text was the specification the fix implemented.
 
 ## SET_COUNTER_TO_TEAM_THREAT(COUNTER, TEAM, REAL) - 13 AI call sites.
 const GAP_TEAM_THREAT := (
@@ -164,7 +160,6 @@ const GAP_REF_TO_NEAREST := (
 	+ "on the AI list, has the identical 4-parameter shape and the same gap)"
 )
 
-const GAP_CUSTOM_STATE_ACTIONS := ["TEAM_SET_CUSTOM_STATE"]
 const GAP_TEAM_THREAT_ACTIONS := ["SET_COUNTER_TO_TEAM_THREAT"]
 const GAP_RECRUIT_ACTIONS := ["TEAM_RECRUIT_UNITS", "TEAM_RECRUIT_UNITS_FROM_TEAM"]
 const GAP_STAND_GROUND_ACTIONS := ["TEAM_STAND_GROUND"]
@@ -173,6 +168,7 @@ const GAP_REF_TO_NEAREST_ACTIONS := ["SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PL
 
 static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 	# --- Served, in AI call-site order ------------------------------------
+	reg.action("TEAM_SET_CUSTOM_STATE", _set_custom_state)              # 40
 	reg.action("TEAM_TRANSFER_TO_PLAYER", _transfer_to_player)          # 32
 	reg.action("TEAM_SET_STATE", _set_state)                            # 32
 	reg.action("TEAM_EXECUTE_SEQUENTIAL_SCRIPT", _sequential_script)    # 24
@@ -194,7 +190,6 @@ static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 	reg.condition("TEAM_CREATED", _condition_created)                   #  1
 
 	# --- Gap-registered: the world surface cannot carry the argument ------
-	reg.blocked_actions(GAP_CUSTOM_STATE_ACTIONS, GAP_CUSTOM_STATE)     # 40
 	reg.blocked_actions(GAP_TEAM_THREAT_ACTIONS, GAP_TEAM_THREAT)       # 13
 	reg.blocked_actions(GAP_RECRUIT_ACTIONS, GAP_RECRUIT_UNITS)         # 7 + 3
 	reg.blocked_actions(GAP_STAND_GROUND_ACTIONS, GAP_STAND_GROUND)     #  2
@@ -253,6 +248,31 @@ static func _set_state(ctx: Dictionary) -> int:
 	return _served(
 		ctx, "teams.set_state",
 		(ctx["world"] as SageScriptWorld).teams().set_state(args.text(0), args.text(1))
+	)
+
+
+static func _set_custom_state(ctx: Dictionary) -> int:
+	# TEAM_SET_CUSTOM_STATE(TEAM, TEAM_STATE, BOOLEAN)
+	#   "<TEAM> set custom state <TEAM_STATE> to <BOOLEAN>"
+	#
+	# 40 AI call sites - the single most-called WP15 member, formerly
+	# gap-registered here because the facet had no slot for the BOOLEAN. The
+	# corrected signature carries it, so the member is served.
+	#
+	# THE BOOLEAN IS LOAD-BEARING AND LIVES IN THE INTEGER FIELD. The decoded
+	# corpus authors both polarities on the SAME tokens (AI_ADVANCING enabled
+	# at 34 sites and disabled at 34 others; corpus-wide 202 enables to 183
+	# disables), each carried as argumentType 8 with integer 0 or 1 and empty
+	# text/real. Reading the wrong field, or dropping the flag, would not
+	# approximate the action - it would INVERT the 183 clear sites, which is
+	# the exact outcome the original gap registration existed to prevent.
+	# The TEAM_STATE token itself is TEXT, like TEAM_SET_STATE's.
+	var args: SageScriptArgs = ctx["args"]
+	return _served(
+		ctx, "teams.set_custom_state",
+		(ctx["world"] as SageScriptWorld).teams().set_custom_state(
+			args.text(0), args.text(1), args.boolean(2)
+		)
 	)
 
 
@@ -497,8 +517,8 @@ static func _condition_state_is_not(ctx: Dictionary) -> int:
 static func _condition_has_custom_state(ctx: Dictionary) -> int:
 	# TEAM_HAS_CUSTOM_STATE(TEAM, TEAM_STATE)
 	#
-	# The READ half of the custom-state pair. Unlike the write (gap-registered
-	# above) this needs no argument the world lacks, so it is served.
+	# The READ half of the custom-state pair (the write is _set_custom_state
+	# above, served since the facet gained its enable flag).
 	#
 	# TWO SHAPES ARE ACCEPTED, AND ANYTHING ELSE REFUSES. The world declares
 	# teams.custom_state(team) -> SageWorldQuery without fixing the value type,
@@ -512,9 +532,12 @@ static func _condition_has_custom_state(ctx: Dictionary) -> int:
 	# Committing to one and silently mis-reading the other would produce a false
 	# `false`: a membership test against a String yields [] and answers "no" for
 	# a state that IS set. So both are handled explicitly, and a value that is
-	# neither refuses rather than defaulting. This is a genuine ambiguity in the
-	# world surface and is reported as one; it is safe to serve only because
-	# every branch is either correct or a refusal.
+	# neither refuses rather than defaulting. The ambiguity has since been
+	# RULED on the write's evidence (the simulation-backed world answers the
+	# ARRAY of enabled tokens - retail toggles tokens independently, so a team
+	# holds a set); the String branch stays because stub worlds legitimately
+	# answer the single-value shape and every branch here is either correct or
+	# a refusal.
 	var args: SageScriptArgs = ctx["args"]
 	var query := (ctx["world"] as SageScriptWorld).teams().custom_state(args.text(0))
 	if not query.ok:
