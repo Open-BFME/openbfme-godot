@@ -5,6 +5,7 @@ extends Node3D
 ## a readable BFME-style ground ribbon and destination banner.
 
 const AssetFactory = preload("res://src/view/asset_factory.gd")
+const PackCapability = preload("res://src/content/pack_capability.gd")
 const RETAIL_CONTRACT_PATH := "effects/men-order-hint.json"
 const RETAIL_CONTRACT_SCHEMA := "openbfme.men-order-hint"
 const RETAIL_MODEL_PATH := "assets/models/system/scmovehint.glb"
@@ -151,15 +152,15 @@ func retail_visual_node_count() -> int:
 
 
 func _private_retail_pack_selected(pack_root: String = "") -> bool:
+	## Parity mode swaps the synthetic line/flag for the pack's converted
+	## SCMoveHint. What that needs is the order-hint contract, not a pack named
+	## bfme2-men-vslice: _build_retail_hint below still validates the contract,
+	## its schema, its model path and the GLB itself fail-closed, so this only
+	## decides whether the attempt is made at all.
 	if pack_root != "":
-		var pack_value: Variant = ModLoader._read_json(ModLoader.resolve_pack_path(pack_root, "pack.json"))
-		return typeof(pack_value) == TYPE_DICTIONARY and String((pack_value as Dictionary).get("id", "")) == "bfme2-men-vslice"
+		return PackCapability.provides_order_hint(pack_root)
 	var definition: Dictionary = ContentDB.get_bundle_object("bfme2.object.gondor-fighter")
-	var selected_root := String(definition.get("_pack_root", ""))
-	if selected_root == "" or selected_root.begins_with("res://"):
-		return false
-	var pack_value: Variant = ModLoader._read_json(ModLoader.resolve_pack_path(selected_root, "pack.json"))
-	return typeof(pack_value) == TYPE_DICTIONARY and String((pack_value as Dictionary).get("id", "")) == "bfme2-men-vslice"
+	return PackCapability.provides_order_hint(String(definition.get("_pack_root", "")))
 
 
 func _build_retail_hint() -> void:

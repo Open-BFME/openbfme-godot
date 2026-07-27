@@ -18,6 +18,7 @@ const MemberHealthOverlayScript = preload("res://src/retail_slice/retail_member_
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 const HouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
+const PackCapability = preload("res://src/content/pack_capability.gd")
 const OptionsScreenScript = preload("res://src/ui/options_screen.gd")
 const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 const ControlServerScript = preload("res://src/debug/retail_control_server.gd")
@@ -365,16 +366,27 @@ func _initialize_content_and_match() -> void:
 	var soldier_capability_id := String(member_definition.get("animationCapabilityId", ""))
 	var soldier_capability := ContentDB.get_animation_capability(soldier_capability_id)
 	if member_definition.is_empty() or horde_definition.is_empty() or soldier_capability.is_empty():
-		_fail("The private bfme2-men-vslice pack is not selected. Run run_importer.bat to build and select it.")
+		var missing_documents: Array = []
+		if member_definition.is_empty():
+			missing_documents.append(SOLDIER_OBJECT_ID)
+		if horde_definition.is_empty():
+			missing_documents.append(SOLDIER_HORDE_ID)
+		if soldier_capability.is_empty():
+			missing_documents.append("animation capability '%s'" % soldier_capability_id)
+		_fail("The selected content does not provide the shared soldier documents the slice needs (missing: %s). Run run_importer.bat to build and select a converted pack." % ", ".join(PackedStringArray(missing_documents)))
 		return
-	# Resolve the asserted host pack by id, not through the member document's
-	# pack root: supplements carry their own copy of the shared base bundle
-	# objects, so the document merge can legitimately resolve a shared id from
-	# another pack while the host assertion must stay pinned to pack_id.
-	var expected_pack_id := String(faction_manifest.get("pack_id", "bfme2-men-vslice"))
-	selected_pack_root = _pack_root_for_id(expected_pack_id)
+	# Resolve the host slice pack by CAPABILITY, not by name. The host pack is
+	# whichever mounted pack ships the surfaces the boot path reads out of
+	# selected_pack_root (entry map, HUD dock, audio registry, order hint,
+	# bundle objects, animation capabilities). Resolving by id refused newer,
+	# larger packs purely for being named differently; resolving through the
+	# member document's pack root is also wrong, because supplements carry
+	# their own copy of the shared base bundle objects and can legitimately win
+	# a shared id while contributing no host surfaces at all.
+	var host_resolution := _resolve_host_slice_pack()
+	selected_pack_root = String(host_resolution.get("root", ""))
 	if selected_pack_root == "":
-		_fail("The selected content pack is not %s." % expected_pack_id)
+		_fail(String(host_resolution.get("error", "No mounted content pack can host the slice.")))
 		return
 	map_id = _resolve_slice_map_id()
 	if map_id == "":
@@ -1953,14 +1965,43 @@ func _resolve_enemy_faction(player_faction: String) -> String:
 	return selected if selected != "" else player_faction
 
 
-func _pack_root_for_id(pack_id: String) -> String:
-	## Deterministic host-pack resolution: the registered root whose pack.json
-	## declares the id, or "" when no registered pack carries it.
-	for root in ModLoader.list_pack_roots():
-		var data := ModLoader._read_json(root.path_join("pack.json")) as Dictionary
-		if String(data.get("id", "")) == pack_id:
-			return root
-	return ""
+func _resolve_host_slice_pack() -> Dictionary:
+	## Deterministic host-pack resolution BY CAPABILITY. Returns
+	## {"root": <pack root>} or {"error": <refusal naming the missing surfaces>}.
+	##
+	## Judged over ContentDB.pack_meta - the pack set the loaded documents
+	## actually came from - never a fresh disk scan that could disagree with the
+	## loaded state. The set is walked in REVERSE load order because ModLoader
+	## sorts the active selection LAST so its documents win shared ids
+	## (mod_loader.list_pack_roots, "The active selection must load last"): the
+	## last capable pack is therefore the one whose surfaces are live.
+	##
+	## Fails closed and loudly. A pack set with nothing capable reports every
+	## mounted pack and the surfaces each one lacks, so an unsuitable pack is a
+	## named refusal instead of a half-loaded match.
+	var meta_rows: Array = ContentDB.pack_meta
+	var report: Array = []
+	for index in range(meta_rows.size() - 1, -1, -1):
+		var meta := meta_rows[index] as Dictionary
+		var root := String(meta.get("root", ""))
+		if root == "":
+			continue
+		var missing: Array = PackCapability.missing_host_slice_surfaces(root)
+		if missing.is_empty():
+			return {"root": root}
+		report.append("%s (missing: %s)" % [
+			String(meta.get("id", root.get_file())),
+			", ".join(PackedStringArray(missing)),
+		])
+	report.reverse()
+	var surface_names: Array = PackCapability.HOST_SLICE_SURFACES.keys()
+	surface_names.sort()
+	return {
+		"error": "No mounted content pack provides the host slice surfaces (%s). Mounted packs: %s." % [
+			", ".join(PackedStringArray(surface_names)),
+			"; ".join(PackedStringArray(report)) if not report.is_empty() else "none",
+		],
+	}
 
 
 func _resolve_slice_map_id() -> String:

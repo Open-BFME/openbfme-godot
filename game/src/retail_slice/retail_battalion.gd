@@ -25,6 +25,7 @@ const SOURCE_HEALTH_GEOMETRY_HEIGHT := {
 const SOURCE_HEALTH_HEIGHT_OFFSET := 10.0
 const ArcherProjectileControllerScript = preload("res://src/retail_slice/retail_archer_projectile_controller.gd")
 const SelectionDecalScript = preload("res://src/retail_slice/retail_selection_decal.gd")
+const PackCapability = preload("res://src/content/pack_capability.gd")
 
 var entity_id := 0
 var team := 0
@@ -928,15 +929,23 @@ func synthetic_overlay_node_count() -> int:
 
 
 func _is_private_retail_pack(definition: Dictionary) -> bool:
-	var pack_root := String(definition.get("_pack_root", ""))
-	if pack_root == "" or pack_root.begins_with("res://"):
-		return false
-	var pack_path := ModLoader.resolve_pack_path(pack_root, "pack.json")
-	var pack_value: Variant = ModLoader._read_json(pack_path)
-	return (
-		typeof(pack_value) == TYPE_DICTIONARY
-		and String((pack_value as Dictionary).get("id", "")) in ["bfme2-men-vslice", "bfme2-men-ranger-overlay"]
-	)
+	## Parity mode suppresses the repository-authored legal-safe overlays
+	## (synthetic team/selection tori, health bars) in favour of the pack's own
+	## converted retail surfaces. What decides that is whether those retail
+	## surfaces EXIST for this unit, not what the pack is called: an id
+	## allowlist ("bfme2-men-vslice", "bfme2-men-ranger-overlay") refused every
+	## newer converted pack and would have admitted an empty same-named one.
+	return PackCapability.provides_retail_presentation(_retail_presentation_pack_root(definition))
+
+
+func _retail_presentation_pack_root(definition: Dictionary) -> String:
+	## The pack that owns this unit's retail presentation surfaces. Normally the
+	## unit's own pack; the bounded Ranger overlay ships rules + model only and
+	## explicitly borrows the host pack's shared contracts, which is the same
+	## borrow _configure_source_selection_decal already performs below.
+	if object_id == RANGER_OBJECT_ID:
+		return String(ContentDB.get_bundle_object(ARCHER_OBJECT_ID).get("_pack_root", ""))
+	return String(definition.get("_pack_root", ""))
 
 
 ## True when the unit's own pack ships the retail SHADOW_MERGE_DECAL selection

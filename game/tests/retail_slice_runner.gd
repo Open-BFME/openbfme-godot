@@ -2,6 +2,7 @@ extends SceneTree
 ## Deterministic behavior/asset gate for the playable private retail slice.
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
+const PackCapability = preload("res://src/content/pack_capability.gd")
 # Capture-measured dock geometry (bfme2-ref-120s.png); mirrors
 # retail_hud.gd RETAIL_RADAR_CENTER / RETAIL_DISH_CENTER.
 const EXPECTED_RADAR_CENTER := Vector2(225.0, 198.0)
@@ -67,7 +68,12 @@ func _run() -> void:
 	_check("slice_ready", bool(slice.ready_ok), String(slice.failure_reason))
 	var initialization_total_ms := int(slice.initialization_metrics_ms.get("ready_complete", -1))
 	_check("initialization_completes_before_watchdog", initialization_total_ms >= 0 and initialization_total_ms <= INITIALIZATION_WATCHDOG_MS, "%d ms" % initialization_total_ms)
-	_check("external_private_pack", String(slice.selected_pack_root).contains("bfme2-men-vslice") and not String(slice.selected_pack_root).begins_with("res://"), String(slice.selected_pack_root))
+	# The host pack is asserted by CAPABILITY: an external (non-res://) root
+	# that ships every surface the slice reads out of it. The old form asserted
+	# the literal id "bfme2-men-vslice", which failed on any newer pack while
+	# passing for a same-named pack that provided nothing.
+	var host_missing_surfaces: Array = PackCapability.missing_host_slice_surfaces(String(slice.selected_pack_root))
+	_check("external_private_pack", String(slice.selected_pack_root) != "" and not String(slice.selected_pack_root).begins_with("res://") and host_missing_surfaces.is_empty(), "%s missing=%s" % [String(slice.selected_pack_root), str(host_missing_surfaces)])
 	_check("terrain_is_source_driven", bool(slice.source_driven_terrain))
 	_check("three_ford_crossings", int(slice.crossing_count) == 3, str(slice.crossing_count))
 	_check("imported_map_preview", bool(slice.map_preview_loaded))

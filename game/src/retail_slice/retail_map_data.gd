@@ -7,9 +7,8 @@ extends RefCounted
 ## this class validates those files and exposes a small source-derived runtime
 ## view to the private retail slice.
 
-# 8 MiB: the provenance manifest scales with pack file count (the M3 full-Men
-# pack's 2,362-file inventory is ~2.2 MiB); keep the bound fail-closed but
-# leave headroom for the remaining faction growth.
+# 8 MiB for the per-map cooked documents (terrain, objects, roads, waypoints,
+# water). These are sized by ONE map and do not grow with the faction count.
 const MAX_DOCUMENT_BYTES := 8 * 1024 * 1024
 const MAX_TERRAIN_CELLS := 1_000_000
 const MAX_TERRAIN_BINARY_BYTES := MAX_TERRAIN_CELLS * 4
@@ -36,6 +35,20 @@ const MAX_ROAD_TEXTURE_DIMENSION := 4096
 const MAX_ROAD_TEXTURE_BYTES := 16 * 1024 * 1024
 const MAX_ROAD_TEXTURE_TOTAL_BYTES := 64 * 1024 * 1024
 const MAX_PROVENANCE_BUNDLE_FILES := 20_000
+## Byte bound for the PACK-WIDE provenance inventory, which - unlike the cooked
+## map documents above - grows with the number of converted factions. It is
+## derived from MAX_PROVENANCE_BUNDLE_FILES so the two guards cannot disagree:
+## previously the shared 8 MiB document bound refused inventories the 20,000-row
+## bound explicitly permits, and the pack that tripped it was the owner's own.
+##
+## Arithmetic. Measured record cost, path + sha256 + size per row:
+##   men v-slice (1 faction):   5,275 rows /  5,087,289 B = 964 B/row
+##   six-faction v-slice:      16,230 rows / 16,059,309 B = 989 B/row
+## 1,600 B/row is ~1.6x the observed worst case, covering longer object paths.
+## 20,000 x 1,600 = 32,000,000 B, so the byte bound is reached only by an
+## inventory the row bound would already refuse. Both stay fail-closed, and the
+## real 16.06 MB document is admitted with ~2x headroom.
+const MAX_PROVENANCE_MANIFEST_BYTES := MAX_PROVENANCE_BUNDLE_FILES * 1600
 const LOCAL_START_SEPARATION := 76.0
 const FORD_CORRIDOR_DILATION_CELLS := 5
 const MAX_ROUTE_CELLS := 1024
@@ -1135,7 +1148,9 @@ func _load_road_materials(document: Dictionary) -> bool:
 	if not _is_sha256(source_aggregate):
 		return _fail("road-material source aggregate is invalid")
 
-	var provenance := _read_pack_document("provenance/manifest.json", "retail provenance")
+	var provenance := _read_pack_document(
+		"provenance/manifest.json", "retail provenance", MAX_PROVENANCE_MANIFEST_BYTES
+	)
 	if provenance.is_empty():
 		return false
 	if String(provenance.get("contract", "")) != "openbfme.retail-import-provenance-v1" or typeof(provenance.get("bundle_files", null)) != TYPE_ARRAY:
@@ -1973,14 +1988,14 @@ func _read_document(relative: String, label: String) -> Dictionary:
 	return value as Dictionary
 
 
-func _read_pack_document(relative: String, label: String) -> Dictionary:
+func _read_pack_document(relative: String, label: String, max_bytes: int = MAX_DOCUMENT_BYTES) -> Dictionary:
 	var path := _resolve_pack_asset(relative)
 	if path == "" or not FileAccess.file_exists(path):
 		_fail("missing or unsafe %s document" % label)
 		return {}
 	var byte_count := _file_size(path)
-	if byte_count <= 0 or byte_count > MAX_DOCUMENT_BYTES:
-		_fail("invalid or unbounded %s document" % label)
+	if byte_count <= 0 or byte_count > max_bytes:
+		_fail("invalid or unbounded %s document (%d bytes, bound %d)" % [label, byte_count, max_bytes])
 		return {}
 	var value: Variant = ModLoader._read_json(path)
 	if typeof(value) != TYPE_DICTIONARY:

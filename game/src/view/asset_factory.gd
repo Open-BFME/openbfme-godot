@@ -3,6 +3,7 @@ extends RefCounted
 ## Resolve pack meshes into Node3D. OBJ is parsed into ArrayMesh (never fake BoxMesh stubs).
 
 const RetailHouseColorScript = preload("res://src/retail_slice/retail_house_color.gd")
+const PackCapability = preload("res://src/content/pack_capability.gd")
 
 static var _mesh_cache: Dictionary = {}
 static var _private_retail_pack_cache: Dictionary = {}
@@ -509,14 +510,16 @@ static func _duplicate_tinted_material(source: StandardMaterial3D, team_color: C
 
 
 static func _is_private_retail_definition(definition: Dictionary) -> bool:
+	## Decides house-color recolor (exact, mask-driven) vs the invented team
+	## tint. The branch below consumes the pack's converted HouseColor masks, so
+	## that is what is asked for here. Asking for the pack id instead sent every
+	## other converted pack down the invented-tint path.
 	var pack_root := String(definition.get("_pack_root", ""))
-	if pack_root == "" or pack_root.begins_with("res://"):
+	if pack_root == "":
 		return false
 	if _private_retail_pack_cache.has(pack_root):
 		return bool(_private_retail_pack_cache[pack_root])
-	var pack_path := ModLoader.resolve_pack_path(pack_root, "pack.json")
-	var pack_value: Variant = ModLoader._read_json(pack_path)
-	var result := typeof(pack_value) == TYPE_DICTIONARY and String((pack_value as Dictionary).get("id", "")) == "bfme2-men-vslice"
+	var result := PackCapability.provides_house_color(pack_root)
 	_private_retail_pack_cache[pack_root] = result
 	return result
 
