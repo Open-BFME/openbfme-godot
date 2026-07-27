@@ -44,7 +44,7 @@ const TARGET_REGION := "Cinderfen"
 ## (`passed=4 failed=0`, with eleven script errors above it). The expected count
 ## makes an inert run impossible to mistake for a passing one. Raise it
 ## deliberately when tests are added; never lower it to make a run go green.
-const EXPECTED_CHECKS := 71
+const EXPECTED_CHECKS := 123
 
 var passed := 0
 var failed := 0
@@ -63,6 +63,11 @@ func _run() -> void:
 	_test_end_to_end_attacker_wins()
 	_test_end_to_end_defender_wins()
 	_test_outcome_refuses_what_it_cannot_apply()
+	_test_nothing_outside_the_chain_reaches_the_tactical_configuration()
+	_test_a_refused_restore_changes_nothing()
+	_test_begin_battle_validates_the_commitment()
+	_test_the_defeated_garrison_does_not_survive_the_capture()
+	_test_a_partial_advance_is_reported_not_hidden()
 	_finish()
 
 
@@ -92,7 +97,7 @@ func _test_brief_translates() -> void:
 	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
 	_check("a_staged_attack_produces_a_brief", not brief.is_empty())
 
-	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS, ATTACKER)
+	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS)
 	_check("translation_succeeds", bool(configured["ok"]), str(configured["refusals"]))
 
 	var roster: Array = configured["team_roster"]
@@ -147,7 +152,7 @@ func _test_translation_refuses_rather_than_guesses() -> void:
 
 	# An unbound faction must REFUSE BY NAME. It must never fall through to
 	# passing the strategic name along as though it were a pack id.
-	var unbound: Dictionary = BattleScript.configure(brief, {"FactionAlpha": "men"}, ATTACKER)
+	var unbound: Dictionary = BattleScript.configure(brief, {"FactionAlpha": "men"})
 	_check("an_unbound_faction_refuses", not bool(unbound["ok"]))
 	_check("the_refusal_names_the_unbound_faction",
 		_refusal_mentions(unbound, "FactionBeta"), str(unbound["refusals"]))
@@ -163,7 +168,7 @@ func _test_translation_refuses_rather_than_guesses() -> void:
 		neutral_state.world, neutral_state, ATTACKER, TARGET_REGION)
 	_check("attacking_an_unowned_region_still_produces_a_brief",
 		not neutral_brief.is_empty())
-	var neutral: Dictionary = BattleScript.configure(neutral_brief, FACTION_BINDINGS, ATTACKER)
+	var neutral: Dictionary = BattleScript.configure(neutral_brief, FACTION_BINDINGS)
 	_check("an_unowned_region_refuses_a_tactical_match", not bool(neutral["ok"]))
 	_check("the_refusal_explains_the_missing_defending_side",
 		_refusal_mentions(neutral, "unowned"), str(neutral["refusals"]))
@@ -189,8 +194,7 @@ func _test_translation_refuses_rather_than_guesses() -> void:
 	_check("an_unauthored_purse_still_produces_a_brief", not silent_brief.is_empty())
 	_check("the_brief_reports_the_purse_as_unauthored",
 		int((silent_brief["settings"] as Dictionary)["starting_cash"]) == -1)
-	var silent_config: Dictionary = BattleScript.configure(
-		silent_brief, FACTION_BINDINGS, ATTACKER)
+	var silent_config: Dictionary = BattleScript.configure(silent_brief, FACTION_BINDINGS)
 	_check("an_unauthored_purse_still_configures_a_match", bool(silent_config["ok"]),
 		str(silent_config["refusals"]))
 	_check("an_unauthored_purse_is_omitted_rather_than_sent_as_minus_one",
@@ -273,7 +277,7 @@ func _test_snapshot_carries_the_battle() -> void:
 func _test_end_to_end_attacker_wins() -> void:
 	var state := _staged_state()
 	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
-	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS, ATTACKER)
+	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS)
 	var committed := (configured["commitment"] as Dictionary)["committed_armies"] as PackedInt32Array
 	state.begin_battle(configured["commitment"])
 
@@ -309,7 +313,7 @@ func _test_end_to_end_attacker_wins() -> void:
 func _test_end_to_end_defender_wins() -> void:
 	var state := _staged_state()
 	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
-	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS, ATTACKER)
+	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS)
 	var committed := (configured["commitment"] as Dictionary)["committed_armies"] as PackedInt32Array
 	state.begin_battle(configured["commitment"])
 
@@ -363,6 +367,311 @@ func _test_outcome_refuses_what_it_cannot_apply() -> void:
 		not bool((BattleScript.apply_outcome(state, BattleScript.ATTACKER_TEAM) as Dictionary)["ok"]))
 
 
+# --- the chain covers what configure() actually consumes ---------------------
+
+## THE TWO-PEER TEST. `configure()` used to take three arguments and digest one,
+## so two peers could hold identical strategic states, mint byte-identical
+## commitments, agree on their strategic hashes - and still build tactical sims
+## that hashed differently. That is e56a0d4's desync arriving through the
+## mechanism built to prevent it.
+##
+## The invariant asserted here is the contrapositive, which is the testable
+## direction: any input difference that can move the TACTICAL hash must already
+## have moved the STRATEGIC hash. Both demonstrated axes get their own peer pair.
+func _test_nothing_outside_the_chain_reaches_the_tactical_configuration() -> void:
+	# STRUCTURAL: the roster is a pure projection of the commitment. Nothing can
+	# reach the sim's team registry that a peer cannot read back out of the
+	# hashed strategic record, because there is nowhere else for it to come from.
+	var state := _staged_state()
+	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
+	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS)
+	var commitment := configured["commitment"] as Dictionary
+	_check("the_team_roster_is_a_pure_projection_of_the_commitment",
+		(configured["team_roster"] as Array) == BattleScript.team_roster_for(commitment),
+		str(configured["team_roster"]))
+
+	# AXIS 1 - THE FACTION BINDING. Swapping the table sends opposite factions to
+	# the sim. It used to mint a byte-identical commitment, so the strategic
+	# hashes agreed while the tactical ones could not.
+	var swapped_state := _staged_state()
+	var swapped_brief := HandoffScript.build_request(
+		swapped_state.world, swapped_state, ATTACKER, TARGET_REGION)
+	var swapped: Dictionary = BattleScript.configure(
+		swapped_brief, {"FactionAlpha": "mordor", "FactionBeta": "men"})
+	_check("a_swapped_binding_still_configures_a_match", bool(swapped["ok"]),
+		str(swapped["refusals"]))
+	_check("a_swapped_binding_sends_a_different_faction_to_the_simulation",
+		String(((swapped["team_roster"] as Array)[0] as Dictionary)["faction"])
+			!= String(((configured["team_roster"] as Array)[0] as Dictionary)["faction"]))
+	_check("a_swapped_binding_cannot_mint_the_same_commitment",
+		StateScript.canonical_digest(swapped["commitment"])
+			!= StateScript.canonical_digest(commitment),
+		str(swapped["commitment"]))
+	state.begin_battle(commitment)
+	swapped_state.begin_battle(swapped["commitment"])
+	_check("peers_whose_bindings_disagree_disagree_on_the_strategic_hash",
+		state.state_hash() != swapped_state.state_hash(),
+		"%s vs %s" % [state.state_hash(), swapped_state.state_hash()])
+
+	# AXIS 2 - WHO IS HUMAN. `is_ai` reaches `_seed_team_ai_state()`, which seeds
+	# HASHED authoritative tactical state. It used to come from a `human_player`
+	# argument - a per-session value the brief deliberately does not carry - so
+	# two peers of the same match, each naming its own seat, diverged at tick 0.
+	# It now comes from the seat's `controller`, which is strategic state.
+	var human_attacker := _staged_state_seated(
+		_world(), StateScript.CONTROLLER_HUMAN, StateScript.CONTROLLER_AI)
+	var human_defender := _staged_state_seated(
+		_world(), StateScript.CONTROLLER_AI, StateScript.CONTROLLER_HUMAN)
+	_check("who_drives_a_seat_is_inside_the_strategic_hash",
+		human_attacker.state_hash() != human_defender.state_hash(),
+		"%s vs %s" % [human_attacker.state_hash(), human_defender.state_hash()])
+
+	var attacker_config := _configured_for(human_attacker)
+	var defender_config := _configured_for(human_defender)
+	_check("the_human_seat_reaches_the_roster_as_not_ai",
+		not bool(((attacker_config["team_roster"] as Array)[0] as Dictionary)["is_ai"]),
+		str(attacker_config["team_roster"]))
+	_check("the_ai_seat_reaches_the_roster_as_ai",
+		bool(((attacker_config["team_roster"] as Array)[1] as Dictionary)["is_ai"]),
+		str(attacker_config["team_roster"]))
+	_check("moving_the_human_to_the_other_seat_moves_the_ai_flag_with_it",
+		bool(((defender_config["team_roster"] as Array)[0] as Dictionary)["is_ai"])
+			and not bool(((defender_config["team_roster"] as Array)[1] as Dictionary)["is_ai"]),
+		str(defender_config["team_roster"]))
+	_check("who_drives_a_seat_cannot_mint_the_same_commitment",
+		StateScript.canonical_digest(attacker_config["commitment"])
+			!= StateScript.canonical_digest(defender_config["commitment"]))
+
+	# THE PROPERTY ITSELF, stated over real simulations: the tactical hashes of
+	# these two configurations differ (25cf66b6... vs be06f4b1... in the original
+	# reproduction), and the strategic hashes that authorised them differ too. A
+	# peer can therefore detect the divergence BEFORE a match is built.
+	var attacker_sim := _tactical_match(attacker_config)
+	var defender_sim := _tactical_match(defender_config)
+	_check("the_two_configurations_really_do_hash_differently_as_simulations",
+		attacker_sim.state_hash() != defender_sim.state_hash())
+	human_attacker.begin_battle(attacker_config["commitment"])
+	human_defender.begin_battle(defender_config["commitment"])
+	_check("diverging_simulations_were_authorised_by_diverging_strategic_hashes",
+		human_attacker.state_hash() != human_defender.state_hash())
+
+	# AND THE POSITIVE DIRECTION, which is what a live match relies on: two peers
+	# that agree on strategic state build byte-identical tactical configurations
+	# with no session argument to disagree about.
+	var peer_a := _staged_state_seated(
+		_world(), StateScript.CONTROLLER_HUMAN, StateScript.CONTROLLER_AI)
+	var peer_b := _staged_state_seated(
+		_world(), StateScript.CONTROLLER_HUMAN, StateScript.CONTROLLER_AI)
+	_check("two_peers_of_the_same_match_agree_on_the_strategic_hash",
+		peer_a.state_hash() == peer_b.state_hash())
+	var config_a := _configured_for(peer_a)
+	var config_b := _configured_for(peer_b)
+	_check("agreeing_peers_mint_the_same_commitment",
+		StateScript.canonical_digest(config_a["commitment"])
+			== StateScript.canonical_digest(config_b["commitment"]))
+	_check("agreeing_peers_configure_the_same_tactical_match",
+		_tactical_match(config_a).state_hash() == _tactical_match(config_b).state_hash())
+
+
+# --- a refused restore leaves nothing behind ---------------------------------
+
+## `restore()` used to overwrite `turn_index`, `players`, `region_owner` and
+## `armies` and THEN raise `Invalid cast` on a non-Dictionary `pending_battle`,
+## returning false with the adopter already half-rebuilt: the donor's map under
+## the adopter's own stale battle, still in flight, still inside the hash. A
+## caller that checked the return value and refused to proceed was still holding
+## a state that never existed on any peer.
+func _test_a_refused_restore_changes_nothing() -> void:
+	var donor := _staged_state()
+	donor.advance_turn()
+	donor.transfer_region("Dunmarch", ATTACKER)
+	donor.begin_battle(_commitment_for(donor))
+	var poisoned_state := donor.authoritative_state().duplicate(true)
+	poisoned_state["pending_battle"] = "not a dictionary"
+
+	var adopter := _staged_state()
+	adopter.begin_battle(_commitment_for(adopter))
+	var before_hash := adopter.state_hash()
+	var before_turn := adopter.turn_index
+	var before_battle: Dictionary = adopter.pending_battle.duplicate(true)
+	var before_owner := adopter.owner_of("Dunmarch")
+
+	_check("a_snapshot_with_a_malformed_battle_is_refused",
+		not adopter.restore(var_to_bytes(poisoned_state)))
+	_check("a_refused_restore_leaves_the_turn_index_alone",
+		adopter.turn_index == before_turn, "%d vs %d" % [adopter.turn_index, before_turn])
+	_check("a_refused_restore_leaves_the_region_map_alone",
+		adopter.owner_of("Dunmarch") == before_owner)
+	_check("a_refused_restore_leaves_the_adopters_own_battle_alone",
+		adopter.pending_battle == before_battle, str(adopter.pending_battle))
+	# The hash is the whole claim: a refused restore must be indistinguishable
+	# from one that was never attempted.
+	_check("a_refused_restore_leaves_the_state_hash_alone",
+		adopter.state_hash() == before_hash,
+		"%s vs %s" % [adopter.state_hash(), before_hash])
+
+	# The same guard must not refuse legitimate snapshots.
+	var honest := _staged_state()
+	honest.begin_battle(_commitment_for(honest))
+	_check("a_well_formed_mid_battle_snapshot_still_restores",
+		adopter.restore(honest.snapshot()) and adopter.state_hash() == honest.state_hash())
+
+	# A malformed row anywhere else refuses just as atomically.
+	var wrong_players := _staged_state().authoritative_state().duplicate(true)
+	wrong_players["players"] = "not an array"
+	var guarded := _staged_state()
+	var guarded_hash := guarded.state_hash()
+	_check("a_snapshot_with_a_malformed_player_list_is_refused",
+		not guarded.restore(var_to_bytes(wrong_players)))
+	_check("that_refusal_is_atomic_too", guarded.state_hash() == guarded_hash)
+
+
+# --- begin_battle validates what it puts inside the hash ---------------------
+
+## The chain guarantee used to be worth exactly as much as caller discipline:
+## `begin_battle({"region": "Cinderfen", "junk": true})` returned true and put an
+## ad-hoc dictionary inside the strategic hash, with no schema, no sides and no
+## `brief_digest` to check any tactical configuration against.
+func _test_begin_battle_validates_the_commitment() -> void:
+	var state := _staged_state()
+	_check("an_ad_hoc_dictionary_naming_a_real_region_is_refused",
+		not state.begin_battle({"region": TARGET_REGION, "junk": true}))
+	_check("a_refused_commitment_starts_no_battle", state.pending_battle.is_empty())
+	_check("a_refused_commitment_stays_out_of_the_hash",
+		not state.authoritative_state().has("pending_battle"))
+
+	var good := _commitment_for(state)
+
+	var wrong_schema := good.duplicate(true)
+	wrong_schema["schema"] = "openbfme.something-else"
+	_check("a_foreign_schema_is_refused", not state.begin_battle(wrong_schema))
+
+	var wrong_version := good.duplicate(true)
+	wrong_version["schema_version"] = 99
+	_check("an_unsupported_schema_version_is_refused", not state.begin_battle(wrong_version))
+
+	var missing := good.duplicate(true)
+	missing.erase("brief_digest")
+	_check("a_commitment_missing_the_chain_link_is_refused", not state.begin_battle(missing))
+
+	var mistyped := good.duplicate(true)
+	mistyped["committed_armies"] = "one army, honest"
+	_check("a_mistyped_field_is_refused", not state.begin_battle(mistyped))
+
+	var extra := good.duplicate(true)
+	extra["smuggled"] = 1
+	# An unknown field would ride into the hash uninspected, which is the whole
+	# class of defect the hash exists to catch.
+	_check("an_unknown_field_is_refused", not state.begin_battle(extra))
+
+	var bad_digest := good.duplicate(true)
+	bad_digest["brief_digest"] = "not a sha256"
+	_check("a_malformed_brief_digest_is_refused", not state.begin_battle(bad_digest))
+
+	var empty_force := good.duplicate(true)
+	empty_force["committed_armies"] = PackedInt32Array()
+	_check("a_commitment_that_commits_nothing_is_refused",
+		not state.begin_battle(empty_force))
+
+	var same_side := good.duplicate(true)
+	same_side["defender"] = int(same_side["attacker"])
+	_check("a_commitment_seating_one_player_on_both_sides_is_refused",
+		not state.begin_battle(same_side))
+
+	var unseated := good.duplicate(true)
+	unseated["defender"] = 9
+	_check("a_commitment_naming_an_unseated_seat_is_refused",
+		not state.begin_battle(unseated))
+
+	_check("none_of_those_refusals_started_a_battle", state.pending_battle.is_empty())
+	_check("a_real_commitment_is_still_admitted", state.begin_battle(good))
+
+
+# --- the defeated side dies in both branches ---------------------------------
+
+## `defending_armies` was written by `configure()` and read by nothing. On an
+## attacker victory the region changed hands and the defeated garrison stayed
+## exactly where it was: inside a region its owner no longer held, still
+## answering to the defender, free to march away on the next command. The
+## defender-win branch destroyed the losers; the attacker-win branch did not.
+func _test_the_defeated_garrison_does_not_survive_the_capture() -> void:
+	var state := _staged_state()
+	var configured := _configured_for(state)
+	var commitment := configured["commitment"] as Dictionary
+	var defending: PackedInt32Array = commitment["defending_armies"]
+	_check("the_commitment_records_a_defending_garrison", defending.size() > 0,
+		str(defending))
+	state.begin_battle(commitment)
+
+	var outcome: Dictionary = BattleScript.apply_outcome(state, BattleScript.ATTACKER_TEAM)
+	_check("the_capture_applies", bool(outcome["ok"]), str(outcome["refusals"]))
+	_check("the_defeated_garrison_is_gone_from_the_world",
+		not state.armies.has(int(defending[0])), str(state.armies.keys()))
+	_check("the_outcome_reports_the_defeated_garrison_as_lost",
+		Array(outcome["armies_lost"] as PackedInt32Array) == Array(defending),
+		str(outcome["armies_lost"]))
+	# The symptom the review named: a ghost that still answers to the defender
+	# and can march out of a region the defender no longer owns.
+	for army_id in state.armies_in_region(TARGET_REGION):
+		_check("no_defender_owned_army_stands_in_the_captured_region",
+			int((state.armies[int(army_id)] as Dictionary)["owner"]) == ATTACKER,
+			"army %d" % int(army_id))
+	_check("the_transaction_closed_after_the_capture", state.pending_battle.is_empty())
+
+	# The defender-win branch is unchanged and still asymmetric in the other
+	# direction - the DEFENDING garrison survives a successful defence, which is
+	# correct: it was not defeated.
+	var held := _staged_state()
+	var held_configured := _configured_for(held)
+	var held_defending: PackedInt32Array = (held_configured["commitment"] as Dictionary)["defending_armies"]
+	held.begin_battle(held_configured["commitment"])
+	BattleScript.apply_outcome(held, BattleScript.DEFENDER_TEAM)
+	_check("a_successful_defence_leaves_the_defending_garrison_standing",
+		held.armies.has(int(held_defending[0])))
+
+
+# --- the documented partial-advance path, actually exercised -----------------
+
+## `apply_outcome`'s header promises that a capture whose committed force trips
+## the destination's command-point cap is REPORTED rather than rolled back or
+## hidden: `captured` true, the army absent from `armies_advanced`, `refusals`
+## naming it, `ok` false, transaction closed. Nothing exercised that branch.
+##
+## The fixture is a Cinderfen with a command-point cap of zero - an authored 0,
+## not the unauthored -1 sentinel that falls back to the retail default - so the
+## single committed army cannot legally arrive.
+func _test_a_partial_advance_is_reported_not_hidden() -> void:
+	var document := _document()
+	for region in (document["regionCampaigns"] as Array)[0]["regions"] as Array:
+		if String((region as Dictionary)["id"]) == TARGET_REGION:
+			(region as Dictionary)["cpLimit"] = 0
+	var capped_world := WorldScript.new()
+	capped_world.load_from_dict(document, "TestCampaign")
+	var state := _staged_state_in(capped_world)
+	_check("the_capped_region_reports_a_zero_command_point_cap",
+		capped_world.region_cp_limit(TARGET_REGION) == 0)
+
+	var configured := _configured_for(state)
+	var committed: PackedInt32Array = (configured["commitment"] as Dictionary)["committed_armies"]
+	state.begin_battle(configured["commitment"])
+	var outcome: Dictionary = BattleScript.apply_outcome(state, BattleScript.ATTACKER_TEAM)
+
+	_check("a_partial_advance_reports_not_ok", not bool(outcome["ok"]))
+	_check("a_partial_advance_still_captured_the_region", bool(outcome["captured"]))
+	_check("the_region_really_did_change_hands", state.owner_of(TARGET_REGION) == ATTACKER)
+	_check("the_refusal_names_the_army_that_could_not_advance",
+		_refusal_mentions(outcome, "army %d" % int(committed[0])), str(outcome["refusals"]))
+	_check("the_army_that_could_not_advance_is_absent_from_armies_advanced",
+		(outcome["armies_advanced"] as PackedInt32Array).is_empty(),
+		str(outcome["armies_advanced"]))
+	_check("the_army_is_still_standing_where_it_started",
+		String((state.armies[int(committed[0])] as Dictionary)["region"]) == "Bramblewold")
+	# Reported, not rolled back, and never left open: a caller polls
+	# pending_battle to know whether it may act.
+	_check("a_partial_advance_still_closes_the_transaction",
+		state.pending_battle.is_empty())
+
+
 # --- strategic fixture -------------------------------------------------------
 
 ## PlayerAlpha (seat 0) holds Ashfall+Bramblewold with a hero army; PlayerBeta
@@ -374,10 +683,21 @@ func _staged_state() -> StateScript:
 
 
 func _staged_state_in(world: WorldScript) -> StateScript:
+	return _staged_state_seated(world, StateScript.CONTROLLER_HUMAN, StateScript.CONTROLLER_AI)
+
+
+## The same fixture with the seats' CONTROLLERS chosen. Who drives a seat is
+## authoritative strategic state now, not a per-session argument, so the only way
+## to vary it is here.
+func _staged_state_seated(
+	world: WorldScript,
+	attacker_controller: String,
+	defender_controller: String
+) -> StateScript:
 	var state := StateScript.new()
 	state.setup(world, [
-		{"template": "PlayerAlpha", "team": 1},
-		{"template": "PlayerBeta", "team": 2},
+		{"template": "PlayerAlpha", "team": 1, "controller": attacker_controller},
+		{"template": "PlayerBeta", "team": 2, "controller": defender_controller},
 	])
 	state.apply_ownership_sets("TestScenario")
 	var hero := state.armies_in_region("Ashfall")
@@ -388,9 +708,13 @@ func _staged_state_in(world: WorldScript) -> StateScript:
 	return state
 
 
-func _commitment_for(state: StateScript) -> Dictionary:
+func _configured_for(state: StateScript) -> Dictionary:
 	var brief := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
-	return (BattleScript.configure(brief, FACTION_BINDINGS, ATTACKER) as Dictionary)["commitment"]
+	return BattleScript.configure(brief, FACTION_BINDINGS)
+
+
+func _commitment_for(state: StateScript) -> Dictionary:
+	return _configured_for(state)["commitment"] as Dictionary
 
 
 func _world() -> WorldScript:

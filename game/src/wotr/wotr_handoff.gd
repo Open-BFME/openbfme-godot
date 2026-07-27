@@ -134,6 +134,7 @@ static func _side(
 			"player": StateScript.NEUTRAL,
 			"faction": "",
 			"team": 0,
+			"controller": StateScript.CONTROLLER_AI,
 			"staging_region": region_id,
 			"armies": [],
 			"command_points": 0,
@@ -158,6 +159,11 @@ static func _side(
 		"player": player,
 		"faction": String(seat.get("faction", "")),
 		"team": int(seat.get("team", 0)),
+		# Who drives this seat, carried from AUTHORITATIVE strategic state. The
+		# tactical roster's `is_ai` is derived from this rather than from a
+		# per-session "which seat am I" argument, so it is inside the brief, inside
+		# the digest, and inside the strategic hash.
+		"controller": StateScript.normalized_controller(seat.get("controller", StateScript.CONTROLLER_AI)),
 		"staging_region": region_id,
 		"armies": rows,
 		"command_points": total,

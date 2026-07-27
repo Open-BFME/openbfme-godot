@@ -31,6 +31,48 @@ const SCHEMA_VERSION := 1
 
 const NEUTRAL := -1
 
+## Who drives a seat. This is AUTHORITATIVE STRATEGIC STATE, not a session
+## setting, and that placement is the whole point: it is the value the tactical
+## roster's `is_ai` is derived from, so it has to be identical on every peer and
+## inside the strategic hash. The retail menu path already works this way -
+## `_menu_sim_team_roster()` reads a shared lobby `controller` field rather than
+## a per-machine "which seat am I" number - and the normalisation rule below is
+## deliberately the same one: `human` means human, anything else means AI.
+const CONTROLLER_HUMAN := "human"
+const CONTROLLER_AI := "ai"
+
+## The schema of the battle commitment `wotr_battle.gd` mints and `begin_battle`
+## admits. It lives HERE rather than there because `begin_battle` has to validate
+## what it is about to put inside the hash, and this file cannot preload the
+## bridge (the bridge preloads this file). `wotr_battle.gd` aliases these
+## constants rather than restating them, so there is one definition.
+const BATTLE_COMMITMENT_SCHEMA := "openbfme.wotr-battle-commitment"
+const BATTLE_COMMITMENT_SCHEMA_VERSION := 1
+
+## Every field a commitment may carry, and the type it must carry. Exhaustive in
+## BOTH directions: a missing field is refused and so is an extra one. A field
+## outside this table would ride into `authoritative_state()` uninspected, which
+## is precisely the class of defect the hash exists to catch.
+const BATTLE_COMMITMENT_FIELDS := {
+	"attacker": TYPE_INT,
+	"attacker_faction": TYPE_STRING,
+	"attacker_is_ai": TYPE_BOOL,
+	"attacker_team": TYPE_INT,
+	"brief_digest": TYPE_STRING,
+	"committed_armies": TYPE_PACKED_INT32_ARRAY,
+	"defender": TYPE_INT,
+	"defender_faction": TYPE_STRING,
+	"defender_is_ai": TYPE_BOOL,
+	"defender_team": TYPE_INT,
+	"defending_armies": TYPE_PACKED_INT32_ARRAY,
+	"map_name": TYPE_STRING,
+	"region": TYPE_STRING,
+	"schema": TYPE_STRING,
+	"schema_version": TYPE_INT,
+	"staging_region": TYPE_STRING,
+	"turn": TYPE_INT,
+}
+
 ## Army kinds. A hero army carries a named hero and is capped by hero CP; a
 ## garrison army is ordinary troops capped by world CP.
 const ARMY_HERO := "hero"
@@ -41,7 +83,7 @@ const MAX_ARMIES := 4096
 var world: WorldScript = null
 
 ## Player seats, index-addressed. Each row: {index, template, faction, team,
-## world_cp, hero_cp, defeated}.
+## controller, world_cp, hero_cp, defeated}.
 var players: Array[Dictionary] = []
 ## Turn order as player indices. Never shuffled here; the caller supplies it.
 var turn_order: PackedInt32Array = PackedInt32Array()
@@ -98,6 +140,7 @@ func setup(source_world: WorldScript, seats: Array) -> bool:
 			"template": template_name,
 			"faction": String(template.get("faction", seat.get("faction", ""))),
 			"team": int(seat.get("team", index + 1)),
+			"controller": normalized_controller(seat.get("controller", CONTROLLER_AI)),
 			"world_cp": int(template.get("starting_world_cp", 0)),
 			"hero_cp": int(template.get("starting_hero_cp", 0)),
 			"defeated": false,
@@ -323,11 +366,26 @@ func remove_army(army_id: int) -> bool:
 ## refused rather than overwritten: overwriting would silently strand the first
 ## battle's committed armies, which is a lost-update with no symptom until the
 ## roster is counted much later.
+##
+## THE COMMITMENT IS VALIDATED, not merely stored. Everything admitted here
+## enters `authoritative_state()` and therefore the strategic hash, and it is the
+## record `wotr_battle.gd` will later read to decide which regions change hands
+## and which armies die. "The bridge only ever hands us a well-formed one" is
+## caller discipline, and caller discipline is not a guarantee: an ad-hoc
+## dictionary that merely names a real region used to be accepted, hash and all,
+## and would then have resolved a battle with no attacker, no sides and no digest
+## to check the tactical configuration against. `BATTLE_COMMITMENT_FIELDS` is
+## checked exhaustively in both directions and the invariants this file owns -
+## seated, distinct sides; distinct teams; a non-empty committed force; a
+## well-formed digest - are checked here too.
 func begin_battle(commitment: Dictionary) -> bool:
 	if commitment.is_empty():
 		return _reject("battle commitment is empty")
 	if not pending_battle.is_empty():
 		return _reject("a battle is already in flight in %s" % String(pending_battle.get("region", "")))
+	var schema_reason := _battle_commitment_refusal(commitment)
+	if schema_reason != "":
+		return _reject(schema_reason)
 	var region_id := String(commitment.get("region", ""))
 	if world == null or not world.has_region(region_id):
 		return _reject("unknown region %s" % region_id)
@@ -375,6 +433,19 @@ func snapshot() -> PackedByteArray:
 	return var_to_bytes(authoritative_state())
 
 
+## ALL-OR-NOTHING. Every field is decoded and type-checked into a local BEFORE
+## anything on `self` is written, and the writes then happen with no remaining
+## way to fail.
+##
+## The half-applied shape this replaces was not theoretical: a snapshot whose
+## `pending_battle` carried a non-Dictionary raised `Invalid cast` at the last
+## assignment, AFTER `turn_index`, `players`, `region_owner` and `armies` had
+## already been overwritten. `restore()` returned false, so a caller doing the
+## right thing - checking the return and refusing to proceed - was nonetheless
+## left holding a chimera: the donor's map and armies under the adopter's own
+## stale battle, still in flight, still inside the hash. A restore that reports
+## failure must leave the adopter exactly as it found it, or the report is worse
+## than useless.
 func restore(bytes: PackedByteArray) -> bool:
 	if bytes.is_empty():
 		return false
@@ -382,32 +453,55 @@ func restore(bytes: PackedByteArray) -> bool:
 	if typeof(decoded) != TYPE_DICTIONARY:
 		return false
 	var state := decoded as Dictionary
-	for required_key in [
-		"schema", "schema_version", "turn_index", "turn_order", "players",
-		"region_owner", "armies", "next_army_id",
+	for required in [
+		["schema", TYPE_STRING], ["schema_version", TYPE_INT],
+		["turn_index", TYPE_INT], ["turn_order", TYPE_PACKED_INT32_ARRAY],
+		["players", TYPE_ARRAY], ["region_owner", TYPE_DICTIONARY],
+		["armies", TYPE_DICTIONARY], ["next_army_id", TYPE_INT],
 	]:
-		if not state.has(required_key):
+		var key := String((required as Array)[0])
+		if not state.has(key):
+			return false
+		if typeof(state[key]) != int((required as Array)[1]):
 			return false
 	if String(state["schema"]) != SCHEMA:
 		return false
 	if int(state["schema_version"]) != SCHEMA_VERSION:
 		return false
-	turn_index = int(state["turn_index"])
-	turn_order = PackedInt32Array(state["turn_order"])
-	players = []
+
+	var staged_players: Array[Dictionary] = []
 	for row in state["players"] as Array:
-		players.append((row as Dictionary).duplicate(true))
-	region_owner = (state["region_owner"] as Dictionary).duplicate(true)
-	armies = {}
-	for key in (state["armies"] as Dictionary).keys():
-		armies[int(key)] = ((state["armies"] as Dictionary)[key] as Dictionary).duplicate(true)
-	_next_army_id = int(state["next_army_id"])
-	# The battle in flight rides the snapshot. It is NOT in the required-key list
+		if typeof(row) != TYPE_DICTIONARY:
+			return false
+		staged_players.append((row as Dictionary).duplicate(true))
+	var source_armies := state["armies"] as Dictionary
+	var staged_armies: Dictionary = {}
+	for key in source_armies.keys():
+		if typeof(key) != TYPE_INT and typeof(key) != TYPE_FLOAT:
+			return false
+		if typeof(source_armies[key]) != TYPE_DICTIONARY:
+			return false
+		staged_armies[int(key)] = (source_armies[key] as Dictionary).duplicate(true)
+	# The battle in flight rides the snapshot. It is NOT in the required list
 	# above, because it is hashed empty-is-absent: a snapshot minted between
 	# battles legitimately carries no such key, and demanding one would refuse
 	# every ordinary strategic save. Absent therefore restores to `{}` - which is
-	# the same thing the absence meant to the hash.
-	pending_battle = (state.get("pending_battle", {}) as Dictionary).duplicate(true)
+	# the same thing the absence meant to the hash. PRESENT-BUT-NOT-A-DICTIONARY,
+	# however, is a malformed snapshot and refuses the whole restore.
+	var staged_battle: Dictionary = {}
+	if state.has("pending_battle"):
+		if typeof(state["pending_battle"]) != TYPE_DICTIONARY:
+			return false
+		staged_battle = (state["pending_battle"] as Dictionary).duplicate(true)
+
+	# COMMIT. Nothing below can fail.
+	turn_index = int(state["turn_index"])
+	turn_order = PackedInt32Array(state["turn_order"])
+	players = staged_players
+	region_owner = (state["region_owner"] as Dictionary).duplicate(true)
+	armies = staged_armies
+	_next_army_id = int(state["next_army_id"])
+	pending_battle = staged_battle
 	# Derived and view-facing state is rebuilt, never restored, so a snapshot
 	# can never smuggle in an event log that the hash does not cover.
 	events = []
@@ -450,6 +544,49 @@ func authoritative_state() -> Dictionary:
 
 
 # --- internals ---------------------------------------------------------------
+
+## The seat-controller normalisation, shared so the strategic layer and anything
+## deriving a tactical roster from it can never disagree about what a value
+## means. Deliberately the same rule `_menu_sim_team_roster()` applies to the
+## lobby's `controller` field: trimmed, lowercased, `human` or else AI.
+static func normalized_controller(value: Variant) -> String:
+	return CONTROLLER_HUMAN if String(value).strip_edges().to_lower() == CONTROLLER_HUMAN else CONTROLLER_AI
+
+
+## Why `commitment` may not be admitted, or "" when it may. Sorted iteration:
+## the refusal a caller sees must not depend on dictionary insertion order.
+func _battle_commitment_refusal(commitment: Dictionary) -> String:
+	if String(commitment.get("schema", "")) != BATTLE_COMMITMENT_SCHEMA:
+		return "battle commitment schema is not %s" % BATTLE_COMMITMENT_SCHEMA
+	if int(commitment.get("schema_version", -1)) != BATTLE_COMMITMENT_SCHEMA_VERSION:
+		return "unsupported battle commitment schema_version %d" % int(commitment.get("schema_version", -1))
+	var expected := _sorted_strings(BATTLE_COMMITMENT_FIELDS.keys())
+	for field in expected:
+		if not commitment.has(field):
+			return "battle commitment is missing field '%s'" % field
+		if typeof(commitment[field]) != int(BATTLE_COMMITMENT_FIELDS[field]):
+			return "battle commitment field '%s' has the wrong type" % field
+	for field in _sorted_strings(commitment.keys()):
+		if not BATTLE_COMMITMENT_FIELDS.has(field):
+			return "battle commitment carries unknown field '%s'" % field
+
+	var attacker := int(commitment["attacker"])
+	var defender := int(commitment["defender"])
+	if attacker < 0 or attacker >= players.size():
+		return "battle commitment names an unseated attacker %d" % attacker
+	if defender < 0 or defender >= players.size():
+		return "battle commitment names an unseated defender %d" % defender
+	if attacker == defender:
+		return "battle commitment seats player %d on both sides" % attacker
+	if int(commitment["attacker_team"]) == int(commitment["defender_team"]):
+		return "battle commitment puts both sides on tactical team %d" % int(commitment["attacker_team"])
+	if (commitment["committed_armies"] as PackedInt32Array).is_empty():
+		return "battle commitment commits no attacking armies"
+	var digest := String(commitment["brief_digest"])
+	if digest.length() != 64 or not digest.is_valid_hex_number():
+		return "battle commitment carries no well-formed brief digest"
+	return ""
+
 
 func _reject(reason: String) -> bool:
 	last_command_result = false

@@ -33,8 +33,11 @@ extends RefCounted
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 const HandoffScript = preload("res://src/wotr/wotr_handoff.gd")
 
-const SCHEMA := "openbfme.wotr-battle-commitment"
-const SCHEMA_VERSION := 1
+## Aliased, not restated. `wotr_state.gd` owns the commitment schema because
+## `begin_battle()` has to validate what it admits into the hash and cannot
+## preload this file (this file preloads it).
+const SCHEMA := StateScript.BATTLE_COMMITMENT_SCHEMA
+const SCHEMA_VERSION := StateScript.BATTLE_COMMITMENT_SCHEMA_VERSION
 
 ## Tactical team assignment. FIXED, not derived from the strategic player
 ## indices, because the tactical sim's victory rule and its observer framing both
@@ -58,17 +61,18 @@ const UNDECIDED := -1
 ## them today, and inventing the mapping here - by stripping a `Faction` prefix
 ## and lowercasing, say - would be a guess wearing the costume of a lookup.
 ##
-## `human_player` is the strategic seat a human is playing, or NEUTRAL for an
-## all-AI battle. Which seat that is, is a session concern the brief does not and
-## should not carry.
+## THERE IS NO `human_player` ARGUMENT, and its removal is the point. See the
+## note on `commitment_matches_brief()`: every value that reaches hashed tactical
+## state must be reachable from the commitment, and a per-session seat number is
+## not. `is_ai` now comes from the seat's `controller`, which is authoritative
+## strategic state carried through the brief.
 ##
 ## Returns `{ok, refusals, team_roster, gameplay_rules, commitment}`. On refusal
 ## `ok` is false, `refusals` names every reason, and the other three are empty -
 ## a caller can never be handed a half-configured match.
 static func configure(
 	brief: Dictionary,
-	faction_bindings: Dictionary,
-	human_player: int = StateScript.NEUTRAL
+	faction_bindings: Dictionary
 ) -> Dictionary:
 	var refusals := PackedStringArray()
 	if brief.is_empty():
@@ -112,19 +116,6 @@ static func configure(
 			"commitment": {},
 		}
 
-	var team_roster: Array = [
-		{
-			"team": ATTACKER_TEAM,
-			"faction": attacker_faction,
-			"is_ai": attacker_player != human_player,
-		},
-		{
-			"team": DEFENDER_TEAM,
-			"faction": defender_faction,
-			"is_ai": defender_player != human_player,
-		},
-	]
-
 	# A PARTIAL rules overlay, carrying only what the strategic layer actually
 	# authorises. Unit rules, the faction manifest and the retail side table come
 	# from the content pack, not from a campaign map; merging them in here would
@@ -150,21 +141,57 @@ static func configure(
 		"defender": defender_player,
 		"attacker_team": ATTACKER_TEAM,
 		"defender_team": DEFENDER_TEAM,
+		# THE RESOLVED tactical seating, not the inputs it was resolved from. The
+		# bound PACK faction ids rather than the binding table, so a swapped
+		# binding mints a different commitment; the derived `is_ai` rather than a
+		# seat number, so it is a value both peers already agree on. `team_roster`
+		# below is a pure projection of these four fields - see
+		# `team_roster_for()`.
+		"attacker_faction": attacker_faction,
+		"defender_faction": defender_faction,
+		"attacker_is_ai": _is_ai(attacker),
+		"defender_is_ai": _is_ai(defender),
 		"staging_region": String(attacker.get("staging_region", "")),
 		"committed_armies": committed,
 		"defending_armies": _army_ids(defender),
 		# THE CHAIN LINK between the two hashes. See the note on
-		# `strategic_and_tactical_hashes_are_chained()` below.
+		# `commitment_matches_brief()` below.
 		"brief_digest": StateScript.canonical_digest(brief),
 	}
 
 	return {
 		"ok": true,
 		"refusals": PackedStringArray(),
-		"team_roster": team_roster,
+		"team_roster": team_roster_for(commitment),
 		"gameplay_rules": gameplay_rules,
 		"commitment": commitment,
 	}
+
+
+## The tactical team roster a commitment authorises - a PURE PROJECTION of the
+## commitment and nothing else, which is what makes the chain structural rather
+## than argued. Every field the sim reads out of a roster descriptor is a field
+## some peer can read back out of the hashed strategic record; a value that is
+## not in the commitment cannot reach the roster, because there is nowhere else
+## for this function to get one.
+##
+## Order is fixed (attacker first) so the sim's descriptor insertion order - and
+## therefore its own team ordering - is reproducible.
+static func team_roster_for(commitment: Dictionary) -> Array:
+	if commitment.is_empty():
+		return []
+	return [
+		{
+			"team": int(commitment.get("attacker_team", ATTACKER_TEAM)),
+			"faction": String(commitment.get("attacker_faction", "")),
+			"is_ai": bool(commitment.get("attacker_is_ai", true)),
+		},
+		{
+			"team": int(commitment.get("defender_team", DEFENDER_TEAM)),
+			"faction": String(commitment.get("defender_faction", "")),
+			"is_ai": bool(commitment.get("defender_is_ai", true)),
+		},
+	]
 
 
 ## ONE HASH OR TWO? Two, chained - and this function is the chain.
@@ -195,6 +222,46 @@ static func configure(
 ## upstream is checked, by a value inside the upstream hash, to imply identical
 ## downstream configuration. Either hash catches its own half.
 ##
+## THAT ARGUMENT WAS FALSE AS ORIGINALLY WRITTEN, and this note records why, so
+## the property is not re-lost. "The brief is the entire input to configure()"
+## was not true: `configure()` took three arguments, and only the brief was
+## digested. Both of the other two reached HASHED tactical state.
+##
+##   `human_player` decided each side's `is_ai`, which seeds `_team_ai_state` in
+##   the tactical sim. Two peers with identical strategic states, identical
+##   briefs, identical commitments and EQUAL STRATEGIC HASHES produced sim hashes
+##   25cf66b6... and be06f4b1... - one passing seat 0, the other seat 1, exactly
+##   as the argument's own documentation described it being used. That is
+##   e56a0d4's desync reproduced through the mechanism built to prevent it.
+##
+##   `faction_bindings` decided which pack faction each side fought as. Swapping
+##   the table minted a BYTE-IDENTICAL commitment while opposite factions reached
+##   the sim.
+##
+## The fix is not to digest the extra arguments. Digesting `human_player` would
+## be actively wrong: it is per-peer by construction (in a two-human War of the
+## Ring, seat 0's human is on one machine and seat 1's on the other), so putting
+## it in the commitment - which lives inside the strategic hash - would guarantee
+## that two correctly-synchronised peers NEVER agree. That trades a silent desync
+## for a permanent false alarm.
+##
+## Instead: `configure()` now takes two arguments, and neither can carry an
+## unhashed value into the sim.
+##
+##   * `is_ai` is derived from the seat's `controller`, which is authoritative
+##     strategic state, hashed, and carried through the brief. This is what the
+##     multiplayer path already does - `_menu_sim_team_roster()` reads a shared
+##     lobby `controller` field, never a per-machine seat number.
+##   * `faction_bindings` stays an argument because it is a resolution table, not
+##     state; but its RESULT - the two bound pack faction ids - is recorded in
+##     the commitment, so a divergent table mints a divergent commitment and the
+##     strategic hashes part company before a match is ever built.
+##
+## And the roster handed to the sim is `team_roster_for(commitment)`, a pure
+## projection. The property is now mechanical: there is no code path by which a
+## value reaches the tactical roster without first being in the record the
+## strategic hash covers.
+##
 ## Returns true when `commitment` was minted from `brief`.
 static func commitment_matches_brief(commitment: Dictionary, brief: Dictionary) -> bool:
 	if commitment.is_empty() or brief.is_empty():
@@ -217,13 +284,28 @@ static func player_for_team(commitment: Dictionary, team: int) -> int:
 ## Apply a decided tactical match back to strategic state, and close the
 ## transaction. `winner_team` is the tactical sim's `winner`.
 ##
-## Attacker won: the region changes hands and the committed armies advance into
-## it. Defender won: the committed armies are destroyed and the region does not
-## move. Either way the pending battle is cleared, so the same result can never
-## be applied twice.
+## Attacker won: the defending garrison is destroyed, the region changes hands,
+## and the committed armies advance into it. Defender won: the committed armies
+## are destroyed and the region does not move. Either way the pending battle is
+## cleared, so the same result can never be applied twice.
+##
+## THE LOSING SIDE DIES IN BOTH BRANCHES, and the asymmetry this replaces was a
+## bug rather than a named gap. `defending_armies` was written by `configure()`
+## and read by nothing: on an attacker victory the region changed hands and the
+## defeated garrison simply stayed where it was - inside a region its owner no
+## longer held, still answering to the defender, free to march away on the next
+## command. `battle_outcome_report` is listed unsupported, but that gap is about
+## SURVIVOR ROSTERS - which of the winner's units lived, and at what strength.
+## Total loss of the defeated side is not a survivor roster; it is the same
+## fidelity the defender-win branch already applied to the attacker, and applying
+## it in only one direction was not a simplification, it was two different
+## games depending on who won.
+##
+## Defenders are destroyed BEFORE attackers advance, so the region is emptied and
+## then occupied rather than briefly holding both sides.
 ##
 ## Returns `{ok, refusals, winner_player, region, captured, armies_advanced,
-## armies_lost}`.
+## armies_lost}`. `armies_lost` carries the defeated side in either branch.
 ##
 ## A PARTIAL application is REPORTED, not rolled back and not hidden. If the
 ## region changes hands but one committed army cannot advance - the destination's
@@ -264,6 +346,16 @@ static func apply_outcome(state: StateScript, winner_team: int) -> Dictionary:
 	var lost: Array[int] = []
 
 	if winner_player == attacker:
+		# Sorted ascending (the commitment stores them sorted), so the removal
+		# order is reproducible. An id already gone is REPORTED, not shrugged off:
+		# it means something removed a defender between the commitment and the
+		# result, which is a strategic-state divergence worth seeing.
+		var defending: PackedInt32Array = commitment.get("defending_armies", PackedInt32Array())
+		for army_id in defending:
+			if state.remove_army(int(army_id)):
+				lost.append(int(army_id))
+			else:
+				refusals.append("defending army %d could not be removed" % int(army_id))
 		captured = state.transfer_region(region_id, attacker)
 		if not captured:
 			refusals.append("region %s did not change hands" % region_id)
@@ -316,6 +408,15 @@ static func _bind_faction(
 		refusals.append("%s faction '%s' binds to an empty pack faction" % [role, strategic])
 		return ""
 	return pack_faction
+
+
+## Whether a side's seat is machine-driven, from the seat's own `controller`.
+## Normalised through `wotr_state.gd` rather than compared here, so the strategic
+## layer and the tactical roster can never disagree about what a value means.
+static func _is_ai(side: Dictionary) -> bool:
+	return StateScript.normalized_controller(
+		side.get("controller", StateScript.CONTROLLER_AI)
+	) != StateScript.CONTROLLER_HUMAN
 
 
 static func _army_ids(side: Dictionary) -> PackedInt32Array:
