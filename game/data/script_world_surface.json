@@ -85,7 +85,7 @@
 		},
 		{
 			"id": "object-type-identity",
-			"requires": "Retail object-type identity on sim rows. Its heaviest-traffic slice is BUILT: rows resolve retail type names through recorded rule provenance / runtime-id slugs / the manifest kind registries, the script-built OBJECT_TYPE_LIST stores live in the sim (hashed, empty-is-absent), and the type censuses plus nearest-of-type search serve PLAYER_HAS_OBJECT_COMPARISON's 100 AI call sites. Still missing here: KindOf bit sets (the importer extracts none into pack documents) and model-condition flags."
+			"requires": "Retail object-type identity on sim rows. Its heaviest-traffic slice is BUILT: rows resolve retail type names through recorded rule provenance / runtime-id slugs / the manifest kind registries, the script-built OBJECT_TYPE_LIST stores live in the sim (hashed, empty-is-absent), and the type censuses plus nearest-of-type search serve PLAYER_HAS_OBJECT_COMPARISON's 100 AI call sites. Still missing here: KindOf bit sets ON A ROW'S OWN IDENTITY, and model-condition flags. Precisely: pack documents DO carry KindOf arrays - 72 of them, in 6 hero documents, inside ability-effect summon leaves (registration/abilities[n]/effect/leaves/objects[m]/kindOf) - but none on the document's own object identity, which is what a row would need. 'The importer extracts none' was an overclaim; the conclusion is unchanged."
 		},
 		{
 			"id": "order-verbs",
@@ -2092,7 +2092,7 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "TEAM/PLAYER scope with POSITION or NEAREST_TYPE targets; UNIT scope needs object-name-registry; a NEAREST_TYPE naming only types the sim cannot field refuses (retail's authored targets are map-placed tactical markers, unmodeled), and waypoint/area targets need map geometry"
+			"restrictions": "TEAM/PLAYER scope with POSITION or NEAREST_TYPE targets; UNIT scope needs object-name-registry; a NEAREST_TYPE naming only types the sim cannot field refuses (retail's authored targets are mostly map-placed markers, but also plot flags, treasure and real siege unit types - the refusal is about fieldability, not about markers), and waypoint/area targets need map geometry"
 		},
 		{
 			"facet": "orders",
@@ -7114,7 +7114,7 @@
 			],
 			"blockingSubsystem": "base-building-ai",
 			"mappingSource": "handler",
-			"note": "NEAREST_TYPE targets now resolve over fieldable types, but every retail-authored target here is a map-placed tactical-marker type (CombatAreas, HighGround) no sim subsystem models - re-blocked on the marker gap, not on type identity"
+			"note": "NEAREST_TYPE resolves over fieldable types; blocked because no target type in this census scope is fieldable yet. Targets are MOSTLY map-placed markers (CombatAreas, HighGround) but NOT exclusively - Economy_Flags (EconomyPlotFlag) and Treasure_Chests appear here too, and outside this scope lib_defense_behaviors targets Artillery_Units (GondorTrebuchet/IsengardBallista/MordorCatapult), real unit types this path WILL serve once fieldable. Do not read this as 'markers only'"
 		},
 		{
 			"member": "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER",
@@ -7124,7 +7124,7 @@
 			],
 			"blockingSubsystem": "base-building-ai",
 			"mappingSource": "handler",
-			"note": "NEAREST_TYPE targets now resolve (owner tokens included), but the retail-authored targets are map-placed marker types (Center/Flank/Backdoor nodes) no sim subsystem models - re-blocked on the marker gap, not on type identity"
+			"note": "NEAREST_TYPE resolves including owner tokens; blocked because no target type in this census scope is fieldable yet. Predominantly marker types (Center/Flank/Backdoor nodes), but see the sibling member's note - the corpus also authors real unit-type targets, so the block is 'these types are not fieldable', not 'markers only'"
 		},
 		{
 			"member": "TEAM_RECRUIT_UNITS",

@@ -60,7 +60,16 @@ static func _change(ctx: Dictionary, add: bool) -> int:
 		args.text(0), args.text(1), add
 	):
 		return Dispatch.Status.OK
-	ctx["detail"] = "world does not implement meta.object_list_change"
+	# Deliberately does NOT say "the world does not implement this". A false
+	# refusal reads the same as a real gap in the log, and this method IS
+	# implemented by the sim-backed world - a refusal here usually means the
+	# call was rejected (an empty list or type name), not that the surface is
+	# missing. Naming both possibilities keeps the gap log honest.
+	ctx["detail"] = (
+		"meta.object_list_change refused list=%s type=%s: either the world "
+		+ "does not implement it, or it rejected these arguments (empty list "
+		+ "or type names are refused)"
+	) % [args.text(0), args.text(1)]
 	return Dispatch.Status.WORLD_REFUSED
 
 

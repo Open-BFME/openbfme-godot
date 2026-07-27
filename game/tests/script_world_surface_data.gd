@@ -169,8 +169,13 @@ const SUBSYSTEMS := {
 		+ "script-built OBJECT_TYPE_LIST stores live in the sim (hashed, "
 		+ "empty-is-absent), and the type censuses plus nearest-of-type "
 		+ "search serve PLAYER_HAS_OBJECT_COMPARISON's 100 AI call sites. "
-		+ "Still missing here: KindOf bit sets (the importer extracts none "
-		+ "into pack documents) and model-condition flags."
+		+ "Still missing here: KindOf bit sets ON A ROW'S OWN IDENTITY, and "
+		+ "model-condition flags. Precisely: pack documents DO carry KindOf "
+		+ "arrays - 72 of them, in 6 hero documents, inside ability-effect "
+		+ "summon leaves (registration/abilities[n]/effect/leaves/objects[m]/"
+		+ "kindOf) - but none on the document's own object identity, which is "
+		+ "what a row would need. 'The importer extracts none' was an "
+		+ "overclaim; the conclusion is unchanged."
 	),
 	"order-verbs": (
 		"Simulation order types beyond move/attack-move/attack/stance: guard "
@@ -556,7 +561,7 @@ const RESTRICTIONS := {
 	"meta.object_list_change": "non-empty list and type names only (\"\" names nothing in the retail vocabulary); set semantics, duplicate adds and absent removes succeed as retail no-ops",
 	"orders.attack": "TEAM/PLAYER scope attacking a bound TEAM target only",
 	"orders.attack_move_to": "TEAM/PLAYER scope with explicit POSITION targets only",
-	"orders.move_to": "TEAM/PLAYER scope with POSITION or NEAREST_TYPE targets; UNIT scope needs object-name-registry; a NEAREST_TYPE naming only types the sim cannot field refuses (retail's authored targets are map-placed tactical markers, unmodeled), and waypoint/area targets need map geometry",
+	"orders.move_to": "TEAM/PLAYER scope with POSITION or NEAREST_TYPE targets; UNIT scope needs object-name-registry; a NEAREST_TYPE naming only types the sim cannot field refuses (retail's authored targets are mostly map-placed markers, but also plot flags, treasure and real siege unit types - the refusal is about fieldability, not about markers), and waypoint/area targets need map geometry",
 	"players.object_count_of_types": "the player must resolve (bound names, '<This Player>', the plural enemies/allies aggregate tokens - aggregates SUM); the singular '<This Player's Enemy>' token refuses (no current-enemy model); creep-guard battalions and legacy synthetic ids without recorded provenance are not countable",
 	"orders.stand_ground": "TEAM/PLAYER scope, engage only - the vocabulary's boolean CLEAR is inexpressible (facet-signature-packet)",
 	"players.building_count": "empty class (count everything) or a structure kind this sim models",
@@ -647,8 +652,8 @@ const VOCABULARY_ROUTING := {
 	"TEAM_IS_ATTACKED_AND_CANNOT_RETALIATE_ALL": {"route": "blocked", "worldMethods": ["teams.attacked_and_cannot_retaliate_count"], "blockingSubsystem": "event-ledger", "mappingSource": "declared"},
 	"TEAM_LOAD_TRANSPORTS": {"route": "blocked", "worldMethods": ["transport.load_transports"], "blockingSubsystem": "garrison-transport-capture", "mappingSource": "handler"},
 	"TEAM_MERGE_INTO_TEAM": {"route": "blocked", "worldMethods": ["teams.merge_into"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},
-	"TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE": {"route": "blocked", "worldMethods": ["orders.move_to"], "blockingSubsystem": "base-building-ai", "mappingSource": "handler", "note": "NEAREST_TYPE targets now resolve over fieldable types, but every retail-authored target here is a map-placed tactical-marker type (CombatAreas, HighGround) no sim subsystem models - re-blocked on the marker gap, not on type identity"},
-	"TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER": {"route": "blocked", "worldMethods": ["orders.move_to"], "blockingSubsystem": "base-building-ai", "mappingSource": "handler", "note": "NEAREST_TYPE targets now resolve (owner tokens included), but the retail-authored targets are map-placed marker types (Center/Flank/Backdoor nodes) no sim subsystem models - re-blocked on the marker gap, not on type identity"},
+	"TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE": {"route": "blocked", "worldMethods": ["orders.move_to"], "blockingSubsystem": "base-building-ai", "mappingSource": "handler", "note": "NEAREST_TYPE resolves over fieldable types; blocked because no target type in this census scope is fieldable yet. Targets are MOSTLY map-placed markers (CombatAreas, HighGround) but NOT exclusively - Economy_Flags (EconomyPlotFlag) and Treasure_Chests appear here too, and outside this scope lib_defense_behaviors targets Artillery_Units (GondorTrebuchet/IsengardBallista/MordorCatapult), real unit types this path WILL serve once fieldable. Do not read this as 'markers only'"},
+	"TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER": {"route": "blocked", "worldMethods": ["orders.move_to"], "blockingSubsystem": "base-building-ai", "mappingSource": "handler", "note": "NEAREST_TYPE resolves including owner tokens; blocked because no target type in this census scope is fieldable yet. Predominantly marker types (Center/Flank/Backdoor nodes), but see the sibling member's note - the corpus also authors real unit-type targets, so the block is 'these types are not fieldable', not 'markers only'"},
 	"TEAM_RECRUIT_UNITS": {"route": "blocked", "worldMethods": ["teams.recruit"], "blockingSubsystem": "team-registry", "signatureGap": true, "mappingSource": "handler"},
 	"TEAM_RECRUIT_UNITS_FROM_TEAM": {"route": "blocked", "worldMethods": ["teams.recruit"], "blockingSubsystem": "team-registry", "signatureGap": true, "mappingSource": "handler"},
 	"TEAM_SET_ATTITUDE": {"route": "blocked", "worldMethods": ["teams.set_attitude"], "blockingSubsystem": "team-behavior-state", "mappingSource": "handler"},
