@@ -140,6 +140,17 @@ func _contract_path() -> String:
 func _make_sim():
 	var sim = SimScript.new()
 	sim._rules = _harness_rules()
+	# Factions ON the roster, like every real match (the vertical slice always
+	# resolves one per team). SKIRMISH_PLAYER_FACTION is the AI libraries'
+	# outermost gate - every "Enable <faction> Spell System" script polls it -
+	# and the default harness roster carries faction "", which turned the read
+	# into a no-faction refusal that masked what sat behind the gate. "Men" /
+	# "Isengard" are retail-authored side tokens straight from the corpus's
+	# FACTION slots.
+	sim.configure_team_roster([
+		{"team": SimScript.PLAYER_TEAM, "faction": "Men", "is_ai": false},
+		{"team": SimScript.ENEMY_TEAM, "faction": "Isengard", "is_ai": true},
+	])
 	sim.setup({}, {})
 	sim.ai_enabled = true
 	sim.expansion_pads.clear()

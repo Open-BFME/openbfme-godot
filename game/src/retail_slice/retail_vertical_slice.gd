@@ -4467,14 +4467,24 @@ func _configure_simulation_expansions() -> void:
 func _install_map_scripts() -> void:
 	## WHERE SCRIPT BODIES COME FROM, decided: decoded SAGE map scripts ship
 	## as `scripts.json` in the map's directory of the CONTENT PACK - the same
-	## channel as every other decoded map artifact (map.json, triggers.json),
-	## and the only channel whose bytes both lockstep peers have already
-	## agreed on (the lobby agrees on the pack, the pack pins the file). They
-	## are MATCH CONFIGURATION, not state: loaded once before the first tick,
-	## never mutated, identical on every peer - exactly like the roster and
-	## the gameplay rules. Everything the scripts DO at runtime lands in
-	## sim-owned hashed state (script_env_state and the sim's own rows), so
-	## the snapshot boundary never needs to carry the bodies.
+	## channel as every other decoded map artifact (map.json, triggers.json).
+	## They are MATCH CONFIGURATION, not state: loaded once before the first
+	## tick, never mutated, and ASSUMED identical on every peer - exactly like
+	## the roster and the gameplay rules. Everything the scripts DO at runtime
+	## lands in sim-owned hashed state (script_env_state and the sim's own
+	## rows), so the snapshot boundary never needs to carry the bodies.
+	##
+	## TRUST MODEL, stated honestly (0dce37e's message claimed pack bytes are
+	## "lobby-agreed"; they are not): the lockstep handshake exchanges the
+	## protocol version, the seat table and the per-tick state-hash barrier -
+	## it exchanges NO pack-byte digest, so nothing ENFORCES that two peers'
+	## same-named packs hold identical bytes. Script bodies therefore ride the
+	## same trust-the-install lane as map.json and the unit rules: peers whose
+	## packs diverge install divergent match configuration, and the hash
+	## barrier catches it at the first divergent WRITE, not in the lobby.
+	## (FINDING, deliberately not implemented here: a lobby pack-digest
+	## exchange would move that detection to match start for every
+	## configuration artifact at once.)
 	##
 	## INERT DEFAULT: a map without scripts.json installs nothing - no env,
 	## no executor, no registration, zero state bytes (the b177804c pin's

@@ -86,6 +86,7 @@ func _run() -> void:
 	_test_object_type_lists_are_hash_inert_until_built_and_reset_by_setup()
 	_test_script_env_state_lives_inside_the_snapshot_boundary()
 	_test_script_env_state_is_hash_inert_until_used_and_reset_by_setup()
+	_test_script_env_unknown_fields_cannot_escape_the_boundary()
 	_test_script_env_degrades_without_a_sim_and_attach_refuses()
 	print("RETAIL_STATE_BOUNDARY_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
@@ -773,6 +774,73 @@ func _test_script_env_state_is_hash_inert_until_used_and_reset_by_setup() -> voi
 		"an env attached before restore still writes inside the boundary",
 		int((team_entry.get("counters", {}) as Dictionary).get("after_reset", 0)) == 2
 	)
+
+
+func _test_script_env_unknown_fields_cannot_escape_the_boundary() -> void:
+	## Regression for the 0dce37e adversarial review: _script_env_state_view()
+	## was a field WHITELIST (tick/counters/flags/timers/script_enabled), so a
+	## write with an unrecognised shape was silently pruned from BOTH the hash
+	## and the snapshot - invisible to the desync barrier and dropped on peer
+	## adoption, the exact silent-fallback class e56a0d4 closed three instances
+	## of. Harmless while the env writes only those five fields; lethal the day
+	## a sixth is added without teaching the view. An unrecognised field must
+	## be LOUD (reported once) and CARRIED - into the hash, the snapshot, and
+	## an adopting peer - never dropped.
+	var sim := _make_sim()
+	var pristine := sim.state_hash()
+	# A future env collection nobody taught the view about.
+	sim.script_env_state[SimScript.PLAYER_TEAM] = {"ghost_collection": {"x": 1}}
+	# EXPECTED ERROR (once): the boundary names the field it does not know.
+	_check(
+		"an unrecognised env field MOVES the hash (never silently pruned)",
+		sim.state_hash() != pristine
+	)
+	_check("the unrecognised field is a counted view fault", sim.script_env_view_faults >= 1)
+	_check(
+		"the unrecognised field rides the snapshot",
+		(
+			((bytes_to_var(sim.snapshot()) as Dictionary).get("script_env_state", {}) as Dictionary)
+			.get(SimScript.PLAYER_TEAM, {}) as Dictionary
+		).has("ghost_collection")
+	)
+	# Peer adoption carries it: the adopting sim holds the same bytes and the
+	# same hash (and reports the same fault loudly on ITS side).
+	var twin := _make_sim()
+	# EXPECTED ERROR (once, on the twin): the adopted field is unrecognised
+	# there too.
+	_check("fixture: a peer adopts the snapshot", twin.restore(sim.snapshot()))
+	_check("the adopting peer carries the field (hash agreement)", twin.state_hash() == sim.state_hash())
+	_check("the report happens once per field, not once per hash", sim.script_env_view_faults == 1)
+
+	# The same discipline one level down: a timer row's extra field was pruned
+	# by the remaining/running projection.
+	var timer_sim := _make_sim()
+	timer_sim.script_env_state[SimScript.PLAYER_TEAM] = {
+		"timers": {"assault": {"remaining": 5.0, "running": true, "ghost": 42}},
+	}
+	var clean_sim := _make_sim()
+	clean_sim.script_env_state[SimScript.PLAYER_TEAM] = {
+		"timers": {"assault": {"remaining": 5.0, "running": true}},
+	}
+	# EXPECTED ERROR (once): the timer row's stray field is named.
+	_check(
+		"a timer row's unrecognised field moves the hash",
+		timer_sim.state_hash() != clean_sim.state_hash()
+	)
+	# The known five fields still take the canonical path: writes through the
+	# env prune back to the pristine hash exactly as before (the frozen-pin
+	# property is untouched by the loud path).
+	var canonical_sim := _make_sim()
+	var canonical_pristine := canonical_sim.state_hash()
+	var env: SageScriptEnv = EnvScript.new()
+	_check("fixture: an env attaches", canonical_sim.attach_script_env(env, SimScript.PLAYER_TEAM))
+	env.set_counter("gold", 3)
+	env.set_counter("gold", 0)
+	_check(
+		"known fields keep the canonical prune (pristine hash returns exactly)",
+		canonical_sim.state_hash() == canonical_pristine
+	)
+	_check("the canonical path reported no view fault", canonical_sim.script_env_view_faults == 0)
 
 
 func _test_script_env_degrades_without_a_sim_and_attach_refuses() -> void:

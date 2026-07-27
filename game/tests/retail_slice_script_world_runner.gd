@@ -99,6 +99,7 @@ func _run() -> void:
 	_test_reference_namespace()
 	_test_base_state_is_hash_inert()
 	_test_players_object_count_of_types()
+	_test_single_player_token_routing()
 	_test_object_type_list_editing()
 	_test_units_has_command_points_to_build()
 	_test_orders_move_to_nearest_type()
@@ -1531,6 +1532,135 @@ func _test_players_object_count_of_types() -> void:
 		tokenless.players().object_count_of_types(
 			RetailSliceScriptWorld.THIS_PLAYERS_ENEMIES_TOKEN, "SynthSoldierHorde", false
 		)
+	)
+
+
+func _test_single_player_token_routing() -> void:
+	## Regression for the 0dce37e execution census's 84% gap: every
+	## single-player facet slot resolved its argument through the literal
+	## binding table alone, so the retail-authored "<This Player>" token
+	## refused everywhere OUTSIDE the base-building surface - 4,197
+	## SKIRMISH_PLAYER_FACTION world-refusals in one 600-tick census run. The
+	## fix is ROUTING, not new capability: every single-player slot resolves
+	## through _resolve_single_player_team, and the tokens that have no
+	## single-team answer keep refusing - each for its own stated reason.
+	var sim := _make_sim([
+		{"team": 0, "faction": "Men", "is_ai": false},
+		{"team": 1, "faction": "Isengard", "is_ai": true},
+	])
+	var world := _make_world(sim)
+	world.bind_script_player(PLAYER)
+	var this_player := RetailSliceScriptWorld.THIS_PLAYER_TOKEN
+
+	# The census's exact shape: players.faction("<This Player>").
+	_check_hit(
+		"players.faction resolves '<This Player>' (the 4,197-refusal shape)",
+		world.players().faction(this_player),
+		"Men"
+	)
+	_check_hit(
+		"players.command_points_used resolves '<This Player>'",
+		world.players().command_points_used(this_player),
+		sim.command_points_for_team(0)
+	)
+	_check_hit(
+		"players.building_count resolves '<This Player>'",
+		world.players().building_count(this_player, ""),
+		sim.living_structure_ids(0).size()
+	)
+	_check_hit(
+		"players.relation_to resolves '<This Player>' in BOTH slots",
+		world.players().relation_to(this_player, this_player),
+		int((RetailSliceScriptWorld.ParamTypes.ENUMS["RELATION"] as Dictionary)["Friend"])
+	)
+	_check_hit(
+		"players.exists answers true for a resolvable '<This Player>'",
+		world.players().exists(this_player),
+		true
+	)
+	_check_hit(
+		"economy.money resolves '<This Player>'",
+		world.economy().money(this_player),
+		10000
+	)
+	_check(
+		"economy.set_money resolves '<This Player>'",
+		world.economy().set_money(this_player, 4321)
+	)
+	_check(
+		"the token money write landed on the SCRIPT PLAYER's team, no other",
+		sim.resources_for_team(0) == 4321 and sim.resources_for_team(1) == 10000
+	)
+	_check(
+		"legacy set_player_money resolves '<This Player>' (PLAYER_SET_MONEY's path)",
+		world.set_player_money(this_player, 1234) and sim.resources_for_team(0) == 1234
+	)
+	_check(
+		"legacy player_money resolves '<This Player>'",
+		world.player_money(this_player) == 1234
+	)
+	_check_hit(
+		"progression.science_purchase_points resolves '<This Player>'",
+		world.progression().science_purchase_points(this_player),
+		sim.power_points(0)
+	)
+	_check_hit(
+		"combat.player_all_destroyed resolves '<This Player>'",
+		world.combat().player_all_destroyed(this_player, false),
+		false
+	)
+	_check_hit(
+		"meta.multiplayer_outcome resolves '<This Player>'",
+		world.meta().multiplayer_outcome(this_player, "defeat"),
+		false
+	)
+	_check(
+		"orders PLAYER scope resolves '<This Player>'",
+		world.orders().stand_ground(SageScriptWorld.Scope.PLAYER, this_player)
+	)
+
+	# The refusals that MUST survive: turning any of these into an answer
+	# would be a guess, not a fix.
+	_check_refused(
+		"players.faction refuses the plural enemies token (a set, not one player)",
+		world.players().faction(RetailSliceScriptWorld.THIS_PLAYERS_ENEMIES_TOKEN)
+	)
+	_check_refused(
+		"players.faction refuses the allies-incl-self token (a set, not one player)",
+		world.players().faction(RetailSliceScriptWorld.THIS_PLAYERS_ALLIES_TOKEN)
+	)
+	_check_refused(
+		"players.faction refuses '<All Players>' (a set, not one player)",
+		world.players().faction(RetailSliceScriptWorld.ALL_PLAYERS_TOKEN)
+	)
+	_check_refused(
+		"players.faction refuses the singular current-enemy token (no current-enemy model)",
+		world.players().faction(RetailSliceScriptWorld.THIS_PLAYERS_ENEMY_TOKEN)
+	)
+	_check(
+		"economy.set_money refuses the singular current-enemy token",
+		not world.economy().set_money(RetailSliceScriptWorld.THIS_PLAYERS_ENEMY_TOKEN, 1)
+	)
+	_check_refused(
+		"players.faction refuses '<Local Player>' (per-seat, desync-bait under lockstep)",
+		world.players().faction(RetailSliceScriptWorld.LOCAL_PLAYER_TOKEN)
+	)
+	_check_refused(
+		"players.exists refuses an unresolvable token instead of answering false",
+		_make_world(_make_sim()).players().exists(this_player)
+	)
+	var tokenless := _make_world(_make_sim())
+	_check_refused(
+		"players.faction refuses '<This Player>' without a bound script player",
+		tokenless.players().faction(this_player)
+	)
+	# A binding may never shadow token resolution: on a world with NO existing
+	# bindings (so nothing else can reject the call), a reserved token spelling
+	# is refused as a player name.
+	var bare: RetailSliceScriptWorld = WorldScript.new(sim)
+	_check(
+		"bind_player rejects a reserved token spelling as a player name",
+		not bare.bind_player(RetailSliceScriptWorld.LOCAL_PLAYER_TOKEN, 1)
 	)
 
 

@@ -43,8 +43,10 @@ extends SageScriptWorld
 ##     world.bind_script_player("Player_1")   # a name bound via bind_player
 ##
 ## Playerless AI actions act as that player; the "<This Player>" token the
-## retail AI authors resolves to it too (see _player_team_for_token). Without
-## the binding both refuse - honestly, naming what is missing.
+## retail AI authors resolves to it too, on EVERY single-player facet slot
+## (see _resolve_single_player_team - the 0dce37e census caught the facet
+## helpers bypassing token resolution, 84% of all runtime gap volume).
+## Without the binding both refuse - honestly, naming what is missing.
 ##
 ## THE OBJECT / UNIT-REFERENCE NAMESPACE (WP16's contract). Script object
 ## names and unit references share ONE namespace, because retail binds
@@ -137,9 +139,16 @@ func _init(backing_sim: RetailSliceSim = null) -> void:
 
 func bind_player(player_name: String, team: int) -> bool:
 	## Bind a script player name to a rostered sim team. Rejects empty names,
-	## unknown teams, rebinding a name to a different team, and a second name
-	## on a team that already has one (owner() needs the mapping 1:1).
-	if sim == null or player_name == "" or not sim.team_ids().has(team):
+	## reserved token spellings (RESERVED_PLAYER_TOKENS - a binding must never
+	## shadow token resolution), unknown teams, rebinding a name to a
+	## different team, and a second name on a team that already has one
+	## (owner() needs the mapping 1:1).
+	if (
+		sim == null
+		or player_name == ""
+		or RESERVED_PLAYER_TOKENS.has(player_name)
+		or not sim.team_ids().has(team)
+	):
 		return false
 	if _player_teams.has(player_name):
 		return int(_player_teams[player_name]) == team
@@ -189,16 +198,85 @@ const THIS_PLAYERS_ENEMIES_TOKEN := "<This Player's Enemies>"
 const THIS_PLAYERS_ALLIES_TOKEN := "<This Player's Allies incl Self>"
 const THIS_PLAYERS_ENEMY_TOKEN := "<This Player's Enemy>"
 const ALL_PLAYERS_TOKEN := "<All Players>"
+## Per-seat presentation tokens (the corpus authors them on UI/EVA-flavoured
+## members): which player is "local" is a property of one machine's seat, not
+## of the match, so resolving either inside the lockstep simulation would
+## desync peers. Both refuse, with that reason.
+const LOCAL_PLAYER_TOKEN := "<Local Player>"
+const LOCAL_PLAYERS_ENEMIES_TOKEN := "<Local Player's Enemies>"
+
+## Every reserved token spelling the decoded corpus authors in a PLAYER slot.
+## bind_player refuses these as names, so a binding can never shadow token
+## resolution (a map that bound "<This Player>" as a literal player would
+## otherwise silently re-aim every token site).
+const RESERVED_PLAYER_TOKENS: Array[String] = [
+	THIS_PLAYER_TOKEN,
+	THIS_PLAYERS_ENEMIES_TOKEN,
+	THIS_PLAYERS_ALLIES_TOKEN,
+	THIS_PLAYERS_ENEMY_TOKEN,
+	ALL_PLAYERS_TOKEN,
+	LOCAL_PLAYER_TOKEN,
+	LOCAL_PLAYERS_ENEMIES_TOKEN,
+]
 
 
-func _player_team_for_token(player: String) -> int:
-	## Player-argument resolution for the base-building surface, where the
-	## retail AI authors the literal "<This Player>" token: the token resolves
-	## to the bound script player; anything else is a plain player-name
-	## binding. -1 when unresolvable.
-	if player == THIS_PLAYER_TOKEN:
-		return _bound_player_team(_script_player) if _script_player != "" else -1
-	return _bound_player_team(player)
+func _resolve_single_player_team(player: String) -> Dictionary:
+	## Player-argument resolution for EVERY facet slot that takes exactly one
+	## player. This is the routing seam the 0dce37e execution census exposed:
+	## script-authored PLAYER slots carry the retail tokens, and a slot that
+	## consults only the literal binding table refuses "<This Player>" - 4,197
+	## SKIRMISH_PLAYER_FACTION refusals (84% of all runtime gap volume) were
+	## this one bypass, not a missing capability. Answers {"team": int} or
+	## {"reason": String}. Read-only - condition paths resolve through here.
+	##
+	## Token verdicts, each deliberate:
+	##   * "<This Player>" resolves to the bound script player - the same rule
+	##     the base-building surface always applied.
+	##   * The SET tokens (enemies / allies-incl-self / all-players) refuse
+	##     HERE: a set is not a single player. Members that census over sets
+	##     resolve through _census_teams_for_player instead.
+	##   * The singular "<This Player's Enemy>" refuses: it names the AI's
+	##     current-enemy choice, a model this simulation does not carry, and
+	##     guessing which enemy would turn an honest refusal into a wrong
+	##     answer.
+	##   * The "<Local Player>" spellings refuse: per-seat presentation state,
+	##     desync-bait inside a lockstep simulation (see the constants above).
+	if sim == null:
+		return {"reason": "no simulation attached"}
+	match player:
+		THIS_PLAYER_TOKEN:
+			var script_team := _script_player_team()
+			if script_team < 0:
+				return {
+					"reason":
+					"'<This Player>' cannot resolve: no script player is bound (bind_script_player)"
+				}
+			return {"team": script_team}
+		THIS_PLAYERS_ENEMIES_TOKEN, THIS_PLAYERS_ALLIES_TOKEN, ALL_PLAYERS_TOKEN:
+			return {
+				"reason":
+				"'%s' names a SET of players; this member takes exactly one player" % player
+			}
+		THIS_PLAYERS_ENEMY_TOKEN:
+			return {
+				"reason":
+				"the singular '<This Player's Enemy>' token names the AI's "
+				+ "current-enemy choice, a model this simulation does not carry "
+				+ "(refusing rather than guessing which enemy)"
+			}
+		LOCAL_PLAYER_TOKEN, LOCAL_PLAYERS_ENEMIES_TOKEN:
+			return {
+				"reason":
+				(
+					"'%s' is per-seat presentation state (which player is 'local' "
+					+ "differs on every peer); resolving it inside the lockstep "
+					+ "simulation would desync"
+				) % player
+			}
+	var team := _bound_player_team(player)
+	if team < 0:
+		return {"reason": "player '%s' is not bound to a simulation team" % player}
+	return {"team": team}
 
 
 func _script_player_team() -> int:
@@ -261,6 +339,22 @@ func _census_teams_for_player(player: String) -> Dictionary:
 				"the singular '<This Player's Enemy>' token names the AI's "
 				+ "current-enemy choice, a model this simulation does not carry "
 				+ "(refusing rather than guessing which enemy)"
+			}
+		ALL_PLAYERS_TOKEN:
+			return {
+				"reason":
+				"whether retail's '<All Players>' census includes the neutral "
+				+ "and creep players is unpinned; refusing rather than guessing "
+				+ "the set"
+			}
+		LOCAL_PLAYER_TOKEN, LOCAL_PLAYERS_ENEMIES_TOKEN:
+			return {
+				"reason":
+				(
+					"'%s' is per-seat presentation state (which player is 'local' "
+					+ "differs on every peer); resolving it inside the lockstep "
+					+ "simulation would desync"
+				) % player
 			}
 	var bound_team := _bound_player_team(player)
 	if bound_team < 0:
@@ -445,20 +539,25 @@ func world_frame() -> int:
 
 
 func player_money(player: String) -> int:
-	## Pre-facet API without a refusal channel - see the class comment. Bound
-	## players answer real team resources; unbound players can only get 0
-	## here. economy() below is the honest surface.
-	var team := _bound_player_team(player)
-	if team < 0:
+	## Pre-facet API without a refusal channel - see the class comment.
+	## Resolvable players (bound names and the single-player tokens - the
+	## tranche 1 handlers pass script-authored PLAYER slots straight here)
+	## answer real team resources; anything else can only get 0.
+	## economy() below is the honest surface.
+	var resolved := _resolve_single_player_team(player)
+	if resolved.has("reason"):
 		return 0
-	return sim.resources_for_team(team)
+	return sim.resources_for_team(int(resolved["team"]))
 
 
 func set_player_money(player: String, amount: int) -> bool:
-	var team := _bound_player_team(player)
-	if team < 0:
+	## Token-aware like player_money: PLAYER_SET_MONEY's handler passes the
+	## script-authored slot straight here, and retail authors "<This Player>"
+	## in it (the census's Setup Player script).
+	var resolved := _resolve_single_player_team(player)
+	if resolved.has("reason"):
 		return false
-	sim.team_resources[team] = amount
+	sim.team_resources[int(resolved["team"])] = amount
 	return true
 
 
@@ -527,18 +626,30 @@ class SlicePlayers:
 		return world as RetailSliceScriptWorld
 
 	func _team_or_refuse(method: String, player: String) -> Dictionary:
+		## Single-player resolution for the whole facet: bound names AND the
+		## retail tokens, through _resolve_single_player_team (the 0dce37e
+		## census's 84% gap was this helper bypassing token resolution).
 		var w := _world()
 		if w == null or w.sim == null:
 			return {"query": _refuse_query(method, "no simulation attached")}
-		var team := w._bound_player_team(player)
-		if team < 0:
-			return {"query": _refuse_query(method, "player '%s' is not bound to a simulation team" % player)}
-		return {"team": team}
+		var resolved := w._resolve_single_player_team(player)
+		if resolved.has("reason"):
+			return {"query": _refuse_query(method, String(resolved["reason"]))}
+		return {"team": int(resolved["team"])}
 
 	func exists(player: String) -> SageWorldQuery:
 		var w := _world()
 		if w == null or w.sim == null:
 			return _refuse_query("players.exists", "no simulation attached")
+		if RetailSliceScriptWorld.RESERVED_PLAYER_TOKENS.has(player):
+			# A token is not a bindable name, so the exhaustive-bindings rule
+			# below does not apply to it: a token that RESOLVES names a player
+			# that certainly exists, and one that cannot resolve gets its
+			# refusal - never a false "not in this match".
+			var resolved := w._resolve_single_player_team(player)
+			if resolved.has("reason"):
+				return _refuse_query("players.exists", String(resolved["reason"]))
+			return SageWorldQuery.hit(true)
 		# Bindings are declared exhaustive (class comment), so an unbound name
 		# IS absent from the match - false is an answer here, not a dodge.
 		return SageWorldQuery.hit(w._bound_player_team(player) >= 0)
@@ -614,13 +725,12 @@ class SlicePlayers:
 		if resolved.has("query"):
 			return resolved["query"]
 		var w := _world()
-		var other_team := w._bound_player_team(other)
-		if other_team < 0:
-			return _refuse_query(
-				"players.relation_to",
-				"player '%s' is not bound to a simulation team" % other
-			)
-		return SageWorldQuery.hit(w._relation_between(int(resolved["team"]), other_team))
+		var other_resolved := w._resolve_single_player_team(other)
+		if other_resolved.has("reason"):
+			return _refuse_query("players.relation_to", String(other_resolved["reason"]))
+		return SageWorldQuery.hit(
+			w._relation_between(int(resolved["team"]), int(other_resolved["team"]))
+		)
 
 	func can_build_at_base(player: String, base: String, object_type: String) -> SageWorldQuery:
 		## CAN_BUILD_AT_BASE (empty object_type - "anything at all") /
@@ -644,14 +754,10 @@ class SlicePlayers:
 		var w := _world()
 		if w == null or w.sim == null:
 			return _refuse_query("players.can_build_at_base", "no simulation attached")
-		var team := w._player_team_for_token(player)
-		if team < 0:
-			return _refuse_query(
-				"players.can_build_at_base",
-				"player '%s' is not bound to a simulation team" % player
-				if player != RetailSliceScriptWorld.THIS_PLAYER_TOKEN
-				else "'<This Player>' cannot resolve: no script player is bound (bind_script_player)"
-			)
+		var resolved_player := w._resolve_single_player_team(player)
+		if resolved_player.has("reason"):
+			return _refuse_query("players.can_build_at_base", String(resolved_player["reason"]))
+		var team := int(resolved_player["team"])
 		var wanted_kind := ""
 		if object_type != "":
 			wanted_kind = w.sim.expansion_kind_for_object_id(object_type)
@@ -823,9 +929,10 @@ class SliceOrders:
 				if team < 0:
 					return {"reason": "team '%s' is not bound to a simulation team" % name}
 			SageScriptWorld.Scope.PLAYER:
-				team = w._bound_player_team(name)
-				if team < 0:
-					return {"reason": "player '%s' is not bound to a simulation team" % name}
+				var resolved := w._resolve_single_player_team(name)
+				if resolved.has("reason"):
+					return {"reason": String(resolved["reason"])}
+				team = int(resolved["team"])
 			_:
 				return {
 					"reason":
@@ -1020,10 +1127,7 @@ class SliceCombat:
 				"the simulation models special powers per player only (%s scope refused)"
 				% SageScriptWorld.scope_label(scope)
 			}
-		var team := w._bound_player_team(name)
-		if team < 0:
-			return {"reason": "player '%s' is not bound to a simulation team" % name}
-		return {"team": team}
+		return w._resolve_single_player_team(name)
 
 	func fire_special_power(
 		scope: int, name: String, power: String, target: Dictionary
@@ -1074,12 +1178,10 @@ class SliceCombat:
 				"combat.player_all_destroyed",
 				"no sourced build-facility classification exists for slice structures"
 			)
-		var team := w._bound_player_team(player)
-		if team < 0:
-			return _refuse_query(
-				"combat.player_all_destroyed",
-				"player '%s' is not bound to a simulation team" % player
-			)
+		var resolved := w._resolve_single_player_team(player)
+		if resolved.has("reason"):
+			return _refuse_query("combat.player_all_destroyed", String(resolved["reason"]))
+		var team := int(resolved["team"])
 		return SageWorldQuery.hit(
 			w.sim.living_ids(team).is_empty() and w.sim.living_structure_ids(team).is_empty()
 		)
@@ -1108,10 +1210,7 @@ class SliceProgression:
 		var w := _world()
 		if w == null or w.sim == null:
 			return {"reason": "no simulation attached"}
-		var team := w._bound_player_team(player)
-		if team < 0:
-			return {"reason": "player '%s' is not bound to a simulation team" % player}
-		return {"team": team}
+		return w._resolve_single_player_team(player)
 
 	func _science_gate(team: int) -> String:
 		## Reasons the science surface cannot answer for this team; "" = clear.
@@ -1302,33 +1401,31 @@ class SliceEconomy:
 		var w := _world()
 		if w == null or w.sim == null:
 			return _refuse_query("economy.money", "no simulation attached")
-		var team := w._bound_player_team(player)
-		if team < 0:
-			return _refuse_query(
-				"economy.money", "player '%s' is not bound to a simulation team" % player
-			)
-		return SageWorldQuery.hit(w.sim.resources_for_team(team))
+		var resolved := w._resolve_single_player_team(player)
+		if resolved.has("reason"):
+			return _refuse_query("economy.money", String(resolved["reason"]))
+		return SageWorldQuery.hit(w.sim.resources_for_team(int(resolved["team"])))
 
 	func set_money(player: String, amount: int) -> bool:
 		var w := _world()
 		if w == null or w.sim == null:
 			return _refuse_command("economy.set_money", "no simulation attached")
-		if w._bound_player_team(player) < 0:
-			return _refuse_command(
-				"economy.set_money", "player '%s' is not bound to a simulation team" % player
-			)
-		return w.set_player_money(player, amount)
+		var resolved := w._resolve_single_player_team(player)
+		if resolved.has("reason"):
+			return _refuse_command("economy.set_money", String(resolved["reason"]))
+		w.sim.team_resources[int(resolved["team"])] = amount
+		return true
 
 	func give_money(player: String, amount: int) -> bool:
 		var w := _world()
 		if w == null or w.sim == null:
 			return _refuse_command("economy.give_money", "no simulation attached")
-		var team := w._bound_player_team(player)
-		if team < 0:
-			return _refuse_command(
-				"economy.give_money", "player '%s' is not bound to a simulation team" % player
-			)
-		return w.set_player_money(player, w.sim.resources_for_team(team) + amount)
+		var resolved := w._resolve_single_player_team(player)
+		if resolved.has("reason"):
+			return _refuse_command("economy.give_money", String(resolved["reason"]))
+		var team := int(resolved["team"])
+		w.sim.team_resources[team] = w.sim.resources_for_team(team) + amount
+		return true
 
 
 # ==========================================================================
@@ -1380,12 +1477,10 @@ class SliceMeta:
 		var w := _world()
 		if w == null or w.sim == null:
 			return _refuse_query("meta.multiplayer_outcome", "no simulation attached")
-		var team := w._bound_player_team(player)
-		if team < 0:
-			return _refuse_query(
-				"meta.multiplayer_outcome",
-				"player '%s' is not bound to a simulation team" % player
-			)
+		var resolved := w._resolve_single_player_team(player)
+		if resolved.has("reason"):
+			return _refuse_query("meta.multiplayer_outcome", String(resolved["reason"]))
+		var team := int(resolved["team"])
 		var relation: Dictionary = RetailSliceScriptWorld.ParamTypes.ENUMS["RELATION"]
 		match outcome:
 			"defeat":
@@ -1441,14 +1536,12 @@ class SliceUnits:
 		var w := _world()
 		if w == null or w.sim == null:
 			return _refuse_query("units.has_command_points_to_build", "no simulation attached")
-		var team := w._player_team_for_token(player)
-		if team < 0:
+		var resolved_player := w._resolve_single_player_team(player)
+		if resolved_player.has("reason"):
 			return _refuse_query(
-				"units.has_command_points_to_build",
-				"player '%s' is not bound to a simulation team" % player
-				if player != RetailSliceScriptWorld.THIS_PLAYER_TOKEN
-				else "'<This Player>' cannot resolve: no script player is bound (bind_script_player)"
+				"units.has_command_points_to_build", String(resolved_player["reason"])
 			)
+		var team := int(resolved_player["team"])
 		if object_type == "":
 			return _refuse_query(
 				"units.has_command_points_to_build", "empty object type names no unit"
@@ -1504,14 +1597,9 @@ class SliceAi:
 		var w := _world()
 		if w == null or w.sim == null:
 			return _refuse_query("ai.base_unpackable", "no simulation attached")
-		var team := w._player_team_for_token(player)
-		if team < 0:
-			return _refuse_query(
-				"ai.base_unpackable",
-				"player '%s' is not bound to a simulation team" % player
-				if player != RetailSliceScriptWorld.THIS_PLAYER_TOKEN
-				else "'<This Player>' cannot resolve: no script player is bound (bind_script_player)"
-			)
+		var resolved_player := w._resolve_single_player_team(player)
+		if resolved_player.has("reason"):
+			return _refuse_query("ai.base_unpackable", String(resolved_player["reason"]))
 		var verdict: Dictionary = w.sim.base_flag_unpackable(object_name)
 		if not bool(verdict.get("known", false)):
 			return _refuse_query(

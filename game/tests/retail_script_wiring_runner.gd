@@ -80,6 +80,7 @@ func _run() -> void:
 	_test_wired_scripts_step_once_per_sim_tick()
 	_test_frozen_ticks_step_no_scripts()
 	_test_registration_refusals()
+	_test_registration_refuses_wrong_team_slot()
 	_test_out_of_band_executor_tick_is_quarantined()
 	_test_double_advancing_executor_is_quarantined()
 	_test_freed_executor_is_reported_and_dropped()
@@ -432,6 +433,64 @@ func _test_registration_refusals() -> void:
 	)
 	_check("the first registration survives the duplicate probe", first.env.attached_to(sim))
 	_check("the refusals registered nothing extra", sim.registered_script_executor_teams() == [SimScript.PLAYER_TEAM])
+
+
+func _test_registration_refuses_wrong_team_slot() -> void:
+	## Regression for the 0dce37e adversarial review: register_script_executor
+	## verified the env was attached to THIS sim but never that it was attached
+	## UNDER THE REGISTRATION TEAM. attach(env, PLAYER_TEAM) followed by
+	## register(executor, ENEMY_TEAM) was ACCEPTED - the executor ran in team
+	## 1's step slot while its scripts wrote team 0's state key, and a swapped
+	## PAIR silently inverted the ascending-team-order guarantee with zero
+	## wiring faults. The mismatch must refuse loudly at registration.
+	var sim := _make_sim()
+	var strayer: SageScriptExecutor = ExecutorScript.new()
+	strayer.load_script_payloads(_player_payloads())
+	_check(
+		"fixture: the stray env attaches under PLAYER_TEAM",
+		sim.attach_script_env(strayer.env, SimScript.PLAYER_TEAM)
+	)
+	# EXPECTED ERROR: env keyed to team 0, registration asked for team 1.
+	_check(
+		"an env attached under team 0 cannot register under team 1",
+		not sim.register_script_executor(strayer, SimScript.ENEMY_TEAM)
+	)
+	_check(
+		"the refused registration registered nothing",
+		sim.registered_script_executor_teams().is_empty()
+	)
+	_check(
+		"the same executor still registers under its OWN team",
+		sim.register_script_executor(strayer, SimScript.PLAYER_TEAM)
+	)
+
+	# The swapped pair from the review: both cross-registrations refuse; the
+	# straight ones then succeed, keeping slot order and state keys aligned.
+	var sim2 := _make_sim()
+	var a: SageScriptExecutor = ExecutorScript.new()
+	a.load_script_payloads(_player_payloads())
+	var b: SageScriptExecutor = ExecutorScript.new()
+	b.load_script_payloads(_enemy_payloads())
+	_check("fixture: a attaches under team 0", sim2.attach_script_env(a.env, SimScript.PLAYER_TEAM))
+	_check("fixture: b attaches under team 1", sim2.attach_script_env(b.env, SimScript.ENEMY_TEAM))
+	# EXPECTED ERRORS: the swap is refused in both directions.
+	_check(
+		"the swapped pair is refused in both directions",
+		not sim2.register_script_executor(a, SimScript.ENEMY_TEAM)
+		and not sim2.register_script_executor(b, SimScript.PLAYER_TEAM)
+	)
+	_check(
+		"the straight registrations still succeed after the refused swap",
+		sim2.register_script_executor(a, SimScript.PLAYER_TEAM)
+		and sim2.register_script_executor(b, SimScript.ENEMY_TEAM)
+	)
+	for _tick in 3:
+		sim2.tick()
+	_check(
+		"the correctly slotted pair runs clean (no faults, both stepped)",
+		sim2.script_wiring_faults == 0
+		and a.env.tick_index == 3 and b.env.tick_index == 3
+	)
 
 
 # --- Cadence violations -----------------------------------------------------

@@ -193,6 +193,16 @@ func attached_to(owner: Object) -> bool:
 	return _attached and _witness != null and _witness.get_ref() == owner
 
 
+## The namespace key this env is attached under (the sim uses the script
+## player's TEAM id), or null for a standalone env. The registration choke
+## point reads this to refuse an executor whose env is keyed to a different
+## team than the registration asks for - attached-to-the-right-sim alone is
+## not enough (the 0dce37e review registered a team-0 env under team 1 and
+## it ran in the wrong slot for 20 ticks with zero faults).
+func attachment_key() -> Variant:
+	return _shared_key if _attached else null
+
+
 ## True when the object whose store this env writes has been freed: the store
 ## is an orphan nothing hashes or snapshots. Every accessor below refuses
 ## (loudly, once) while this holds. Always false for a standalone env and for

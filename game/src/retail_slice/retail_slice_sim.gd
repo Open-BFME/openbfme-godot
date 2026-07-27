@@ -1227,8 +1227,11 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	# The script interpreter's memory (counters/flags/timers/enable bits/tick)
 	# is match state too. clear() IN PLACE, never rebind: attached
 	# SageScriptEnvs hold this dictionary by reference, and a rebind would
-	# leave them writing to an orphan outside the hash boundary.
+	# leave them writing to an orphan outside the hash boundary. The view's
+	# report-once table resets with the store so a stray field that returns
+	# after a reset is reported again.
 	script_env_state.clear()
+	_script_env_view_reported.clear()
 	# Registered executors survive a match reset (their bodies are match
 	# configuration), but both clocks just moved: rebase the recorded env/sim
 	# offsets from the reset values and lift any quarantine - a reset match
@@ -5877,11 +5880,32 @@ func resolve_object_type_names(object_type_list: String) -> Array:
 # that returns to pristine values returns to the pristine hash EXACTLY.
 # Enforcing this at the boundary (one choke point) rather than in every
 # mutator also keeps direct dictionary writes - which tests use - canonical.
+# Pruning applies ONLY to fields the view understands: an unrecognised field
+# is carried verbatim and reported loudly, never silently dropped (see
+# _script_env_state_view).
 
 ## team id -> {"tick": int, "counters": {}, "flags": {}, "timers": {},
 ## "script_enabled": {}}. See the block comment above. setup() clears it;
 ## hashed/serialized through _script_env_state_view (empty-is-absent).
 var script_env_state: Dictionary = {}
+
+## The team-entry fields (and timer-row fields) _script_env_state_view()
+## understands. Anything else in the store is a boundary violation: it is
+## reported loudly (once per field) and carried VERBATIM into the hash and
+## snapshot, so state added without teaching the view can never silently
+## escape the boundary (0dce37e review: it used to be invisible to the hash
+## and dropped on peer adoption).
+const SCRIPT_ENV_VIEW_FIELDS: Array[String] = [
+	"tick", "counters", "flags", "timers", "script_enabled",
+]
+const SCRIPT_ENV_TIMER_FIELDS: Array[String] = ["remaining", "running"]
+
+## Diagnostic count of unrecognised script-env fields the view has carried.
+## Process-local observability like script_wiring_faults, never hashed.
+var script_env_view_faults: int = 0
+## "team|path" keys already reported, so a persistent stray field is loud
+## once instead of once per hash. Cleared by setup() with the store.
+var _script_env_view_reported: Dictionary = {}
 
 
 func attach_script_env(env: SageScriptEnv, team: int) -> bool:
@@ -5903,6 +5927,16 @@ func attach_script_env(env: SageScriptEnv, team: int) -> bool:
 func _script_env_state_view() -> Dictionary:
 	## Canonical, pruned, sorted copy of script_env_state for state_hash() and
 	## snapshot() - the boundary choke point described in the block comment.
+	##
+	## FAIL LOUD, NEVER PRUNE THE UNKNOWN: pruning applies only to the fields
+	## this view UNDERSTANDS (SCRIPT_ENV_VIEW_FIELDS / the timer-row pair). A
+	## field it does not recognise is carried VERBATIM into the view - so it
+	## reaches the hash, the snapshot and every adopting peer - and reported
+	## loudly once (_report_script_env_view_fault). The 0dce37e review proved
+	## the previous whitelist silently dropped such a field from both the hash
+	## and the snapshot: a collection added to the env without updating this
+	## view would have been invisible to the desync barrier and lost on peer
+	## adoption, the exact silent-fallback class e56a0d4 closed.
 	var view := {}
 	var team_keys := script_env_state.keys()
 	team_keys.sort()
@@ -5931,10 +5965,18 @@ func _script_env_state_view() -> Dictionary:
 		var timers_view := {}
 		for name in _sorted_dictionary_keys(timers):
 			var timer: Dictionary = timers[name]
-			timers_view[name] = {
+			var timer_view := {
 				"remaining": float(timer.get("remaining", 0.0)),
 				"running": bool(timer.get("running", false)),
 			}
+			for field in _sorted_dictionary_keys(timer):
+				if SCRIPT_ENV_TIMER_FIELDS.has(field):
+					continue
+				_report_script_env_view_fault(
+					team_key, "timers/%s/%s" % [str(name), str(field)]
+				)
+				timer_view[field] = timer[field]
+			timers_view[name] = timer_view
 		if not timers_view.is_empty():
 			entry_view["timers"] = timers_view
 		var enabled: Dictionary = entry.get("script_enabled", {})
@@ -5943,9 +5985,32 @@ func _script_env_state_view() -> Dictionary:
 			enabled_view[name] = bool(enabled[name])
 		if not enabled_view.is_empty():
 			entry_view["script_enabled"] = enabled_view
+		for field in _sorted_dictionary_keys(entry):
+			if SCRIPT_ENV_VIEW_FIELDS.has(field):
+				continue
+			_report_script_env_view_fault(team_key, str(field))
+			entry_view[field] = entry[field]
 		if not entry_view.is_empty():
 			view[team_key] = entry_view
 	return view
+
+
+func _report_script_env_view_fault(team_key: Variant, path: String) -> void:
+	## Loud once per (team, field), like SageScriptEnv._report_stale: the first
+	## sighting is the defect report; one per hash call would bury the log.
+	var report_key := "%s|%s" % [str(team_key), path]
+	if _script_env_view_reported.has(report_key):
+		return
+	_script_env_view_reported[report_key] = true
+	script_env_view_faults += 1
+	push_error(
+		(
+			"script env state: team %s carries unrecognised field '%s'; "
+			+ "_script_env_state_view does not understand it, so it is carried "
+			+ "VERBATIM into the hash and snapshot rather than silently dropped - "
+			+ "teach the view (SCRIPT_ENV_VIEW_FIELDS) about it"
+		) % [str(team_key), path]
+	)
 
 
 func _sorted_dictionary_keys(source: Dictionary) -> Array:
@@ -6033,8 +6098,14 @@ func register_script_executor(executor: SageScriptExecutor, team: int) -> bool:
 	## loudly rather than guessing: null executors, unrostered teams, a team
 	## that already has a live executor, and - the choke point that makes env
 	## lifetime detection airtight - an executor whose env is not attached to
-	## THIS sim's store (attach_script_env first; an env attached to another
-	## sim would run scripts against state this sim never hashes).
+	## THIS sim's store UNDER THIS TEAM (attach_script_env(env, team) first).
+	## Both halves of that check are load-bearing: an env attached to another
+	## sim would run scripts against state this sim never hashes, and an env
+	## attached to this sim under a DIFFERENT team would run in team `team`'s
+	## step slot while writing the other team's state key - the 0dce37e review
+	## registered a team-0 env under team 1 (and a swapped PAIR) and both were
+	## accepted, silently inverting the ascending-team-order guarantee with
+	## zero faults.
 	if executor == null:
 		push_error("register_script_executor refused: null executor")
 		return false
@@ -6048,6 +6119,17 @@ func register_script_executor(executor: SageScriptExecutor, team: int) -> bool:
 		push_error(
 			"register_script_executor refused: the executor's env is not attached "
 			+ "to this sim's state store (call attach_script_env(executor.env, %d) first)" % team
+		)
+		return false
+	var env_key: Variant = executor.env.attachment_key()
+	if typeof(env_key) != TYPE_INT or int(env_key) != team:
+		push_error(
+			(
+				"register_script_executor refused: the executor's env is attached "
+				+ "under state-store key %s, not registration team %d - stepping it "
+				+ "in team %d's slot would run its scripts against another team's "
+				+ "hashed state (attach_script_env(executor.env, %d) first)"
+			) % [str(env_key), team, team, team]
 		)
 		return false
 	_script_executors[team] = weakref(executor)
