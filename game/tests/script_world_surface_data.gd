@@ -70,10 +70,6 @@ const SUBSYSTEMS := {
 		+ "team. The sim models spellbook powers per player, not per-object "
 		+ "command buttons."
 	),
-	"deterministic-rng": (
-		"A seeded, lockstep-safe random stream owned by the sim; advertising "
-		+ "CAP_RANDOM without it would invite randi() desyncs."
-	),
 	"diplomacy-overrides": (
 		"Mutable relation state: per-player and per-team relation overrides "
 		+ "layered over the fixed alliance-derived relation the sim computes "
@@ -542,8 +538,6 @@ const BLOCKED := {
 	"units.was_destroyed": {"subsystem": "object-name-registry", "requires": "per-name destruction edge records (NAMED_NOT_DESTROYED is 17 AI sites)"},
 	"units.was_discovered": {"subsystem": "vision-and-discovery", "requires": "discovery records per object"},
 	# --- base world ---------------------------------------------------------
-	"world.random_int": {"subsystem": "deterministic-rng", "requires": "a seeded sim-owned stream; no refusal channel exists, so the honest signal is the withheld CAP_RANDOM"},
-	"world.random_real": {"subsystem": "deterministic-rng", "requires": "a seeded sim-owned stream"},
 }
 
 ## Argument shapes that still refuse on BACKED methods. A backed method is not
@@ -631,7 +625,7 @@ const VOCABULARY_ROUTING := {
 	"PLAYER_SELL_EVERYTHING": {"route": "blocked", "worldMethods": ["players.sell_everything"], "blockingSubsystem": "production-controls", "mappingSource": "handler"},
 	"SET_COUNTER_TO_TEAM_THREAT": {"route": "blocked", "worldMethods": ["teams.threat"], "blockingSubsystem": "spatial-queries", "signatureGap": true, "mappingSource": "handler"},
 	"SET_PLAYER_OWNERSHIP_OF_TYPE_COUNTER": {"route": "backed", "worldMethods": ["players.object_count_of_types"], "mappingSource": "handler"},
-	"SET_RANDOM_COUNTER": {"route": "blocked", "worldMethods": ["world.random_int"], "blockingSubsystem": "deterministic-rng", "mappingSource": "handler"},
+	"SET_RANDOM_COUNTER": {"route": "backed", "worldMethods": ["world.random_int"], "mappingSource": "handler", "note": "served by the sim-owned retail GameLogic stream (logic_random_int); the spell-list-choice gate c930b68 measured"},
 	"SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER": {"route": "blocked", "worldMethods": ["teams.set_reference_to_nearest"], "blockingSubsystem": "spatial-queries", "signatureGap": true, "mappingSource": "handler"},
 	"SET_TEAM_REFERENCE": {"route": "blocked", "worldMethods": ["teams.set_reference"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},
 	"SET_UNIT_REFERENCE": {"route": "blocked", "worldMethods": ["units.set_reference"], "blockingSubsystem": "object-name-registry", "mappingSource": "declared"},

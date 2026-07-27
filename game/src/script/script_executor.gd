@@ -187,6 +187,12 @@ var interval_histogram: Dictionary = {}
 var action_outcomes: Dictionary = {}
 var conditions_evaluated: int = 0
 var scripts_fired: int = 0
+## Diagnostic per-opcode execution tallies (internal name -> count of
+## dispatches from THIS executor's own scripts and subroutines). Census
+## reporting only - deliberately NOT part of state_snapshot(), which is the
+## twin-comparison determinism surface; these add observability, not state.
+var condition_executions: Dictionary = {}
+var action_executions: Dictionary = {}
 
 ## Ticks refused because the env's backing simulation was freed (see
 ## SageScriptEnv.attachment_stale). A refusal is counted every time and
@@ -410,6 +416,7 @@ func _execute_script(script: Dictionary) -> bool:
 			continue  # authored off; already counted in disabled_records
 		var status := dispatch.execute_action(action, env, world, script_name)
 		_tally(action_outcomes, status)
+		_count(action_executions, _record_opcode(action))
 	if fired:
 		scripts_fired += 1
 		if bool(script["deactivate_upon_success"]):
@@ -433,6 +440,7 @@ func _conditions_fire(script: Dictionary) -> bool:
 				continue
 			considered = true
 			conditions_evaluated += 1
+			_count(condition_executions, _record_opcode(condition))
 			if not dispatch.evaluate_condition(condition, env, world, script_name):
 				block_true = false
 				break
@@ -489,6 +497,13 @@ func _run_subroutine(subroutine_name: String) -> bool:
 	return true
 
 
+static func _record_opcode(record: Dictionary) -> String:
+	## The dispatched internal name of a decoded Condition/ScriptAction record,
+	## or "<unnamed>" for a malformed one (still counted: an execution happened).
+	var name := String((record.get("internalName", {}) as Dictionary).get("name", ""))
+	return name if name != "" else "<unnamed>"
+
+
 static func _count(histogram: Dictionary, key: String) -> void:
 	histogram[key] = int(histogram.get(key, 0)) + 1
 
@@ -536,6 +551,8 @@ func load_report() -> Dictionary:
 			"deliberate": _sorted_view(census["deliberate"]),
 			"unknown": _sorted_view(census["unknown"]),
 		},
+		"condition_executions": _sorted_view(condition_executions),
+		"action_executions": _sorted_view(action_executions),
 		"malformed_records": malformed_records.duplicate(),
 		"disabled_records": disabled_records,
 		"duplicate_script_names": duplicate_script_names.duplicate(),

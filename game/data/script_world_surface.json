@@ -3,8 +3,8 @@
 	"surface": "Every public non-static script-declared instance method of the 16 facet objects of SageScriptWorld (the three presentation sinks counted per sink) plus the base world's own 7 surface methods under facet 'world'. simulationBacked is OBSERVED by calling each method against RetailSliceScriptWorld over a synthetic RetailSliceSim; blocking annotations are analysis, verified for coverage but not provable by a probe.",
 	"counts": {
 		"total": 319,
-		"simulationBacked": 43,
-		"refusing": 276
+		"simulationBacked": 45,
+		"refusing": 274
 	},
 	"subsystems": [
 		{
@@ -22,10 +22,6 @@
 		{
 			"id": "command-button-abilities",
 			"requires": "Command-button -> ability resolution on battalions: executing and auto-toggling abilities by button name, and readiness counts per team. The sim models spellbook powers per player, not per-object command buttons."
-		},
-		{
-			"id": "deterministic-rng",
-			"requires": "A seeded, lockstep-safe random stream owned by the sim; advertising CAP_RANDOM without it would invite randi() desyncs."
 		},
 		{
 			"id": "diplomacy-overrides",
@@ -6466,9 +6462,7 @@
 			"arity": 2,
 			"returns": "int",
 			"probe": "fallback",
-			"simulationBacked": false,
-			"blockingSubsystem": "deterministic-rng",
-			"requiredSimState": "a seeded sim-owned stream; no refusal channel exists, so the honest signal is the withheld CAP_RANDOM"
+			"simulationBacked": true
 		},
 		{
 			"facet": "world",
@@ -6486,9 +6480,7 @@
 			"arity": 2,
 			"returns": "float",
 			"probe": "fallback",
-			"simulationBacked": false,
-			"blockingSubsystem": "deterministic-rng",
-			"requiredSimState": "a seeded sim-owned stream"
+			"simulationBacked": true
 		},
 		{
 			"facet": "world",
@@ -6895,12 +6887,12 @@
 		},
 		{
 			"member": "SET_RANDOM_COUNTER",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"world.random_int"
 			],
-			"blockingSubsystem": "deterministic-rng",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "served by the sim-owned retail GameLogic stream (logic_random_int); the spell-list-choice gate c930b68 measured"
 		},
 		{
 			"member": "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER",

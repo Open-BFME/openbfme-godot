@@ -75,6 +75,7 @@ func _initialize() -> void:
 func _run() -> void:
 	_test_bindings()
 	_test_base_world()
+	_test_logic_random_stream()
 	_test_players_exists_and_faction()
 	_test_players_command_points()
 	_test_players_building_count()
@@ -298,13 +299,121 @@ func _test_base_world() -> void:
 	_check("supports player money", world.supports(SageScriptWorld.CAP_PLAYER_MONEY))
 	_check("supports debug output", world.supports(SageScriptWorld.CAP_DEBUG_OUTPUT))
 	_check(
-		"refuses CAP_RANDOM (no deterministic stream in the sim)",
-		not world.supports(SageScriptWorld.CAP_RANDOM)
+		"supports CAP_RANDOM (the sim owns the logic stream)",
+		world.supports(SageScriptWorld.CAP_RANDOM)
 	)
 	_check("world_frame starts at the sim tick", world.world_frame() == 0)
 	sim.advance(3)
 	_check("world_frame follows the sim tick", world.world_frame() == 3)
 	_check("debug_message is accepted", world.debug_message("DEBUG_STRING", "hello"))
+
+
+# --- 2b. The logic random stream ------------------------------------------
+#
+# The generator is retail's GameLogic lagged add-with-carry (see the
+# logic-random section in retail_slice_sim.gd). Every literal below was
+# minted by an INDEPENDENT Python implementation of the same retail source
+# (RandomValue.cpp), so a change to the GDScript constants, the carry rule,
+# the increment cascade, the seed expansion or the range mapping breaks
+# these checks immediately - the algorithm is pinned, not just "some
+# deterministic stream".
+
+
+func _test_logic_random_stream() -> void:
+	# Raw 32-bit draws, seed 0: the generator itself, no range mapping.
+	var words: Array = SimScript._logic_random_seed_words(0)
+	var raw: Array = []
+	for _draw in range(8):
+		raw.append(SimScript._logic_random_draw32(words))
+	_check(
+		"seed 0 raw draw vector matches the independent reference",
+		raw == [
+			1436176877, 659466229, 3894933472, 1991661106,
+			2132492267, 3941127662, 1359026287, 1702175322,
+		]
+	)
+	_check(
+		"seed 0 generator words after 8 draws match the reference",
+		words == [1702175322, 343149034, 2925250409, 3021019884, 489626297, 1876900716]
+	)
+	_check(
+		"seed 42 raw draws diverge from seed 0 as the reference says",
+		SimScript._logic_random_draw32(SimScript._logic_random_seed_words(42)) == 1436177129
+	)
+
+	# The mapped surface through the world adapter (seed 0 via default rules:
+	# no logic_random_seed key). [1..3] is the spell-list-choice shape.
+	var sim := _make_sim()
+	var world := _make_world(sim)
+	var choices: Array = []
+	for _draw in range(12):
+		choices.append(world.random_int(1, 3))
+	_check(
+		"seed 0 [1,3] sequence matches the reference (both bounds inclusive)",
+		choices == [3, 2, 2, 2, 3, 3, 2, 1, 3, 3, 3, 1]
+	)
+	var seeded := _make_sim()
+	seeded._rules["logic_random_seed"] = 42
+	var seeded_world := _make_world(seeded)
+	var seeded_choices: Array = []
+	for _draw in range(12):
+		seeded_choices.append(seeded_world.random_int(5, 9))
+	_check(
+		"a rules-configured seed selects a different pinned sequence",
+		seeded_choices == [9, 6, 9, 8, 6, 6, 6, 6, 6, 9, 9, 5]
+	)
+
+	# Retail's edge semantics, INCLUDING stream position (position is part of
+	# the lockstep contract, so a "harmless" shortcut that skips or adds a
+	# draw is a desync).
+	var edge := _make_sim()
+	var edge_world := _make_world(edge)
+	_check("low == high answers that value", edge_world.random_int(7, 7) == 7)
+	_check(
+		"low == high CONSUMED a draw (retail delta=1 still draws)",
+		edge_world.random_int(1, 3) == 2
+	)
+	var edge2 := _make_sim()
+	var edge2_world := _make_world(edge2)
+	_check("high == low - 1 answers high (retail delta==0)", edge2_world.random_int(5, 4) == 4)
+	_check(
+		"high == low - 1 did NOT consume a draw (retail returns before drawing)",
+		edge2_world.random_int(1, 3) == 3
+	)
+
+	# random_real: REAL bounds truncate toward zero and ONE integer is drawn
+	# (retail's script engine routes REAL bounds through the C-int
+	# GameLogicRandomValue; see the adapter comment).
+	var real_sim := _make_sim()
+	var real_world := _make_world(real_sim)
+	_check(
+		"random_real truncates REAL bounds toward zero and draws the int stream",
+		real_world.random_real(2.9, 5.9) == 3.0
+	)
+	_check(
+		"random_real truncation toward zero holds for negative bounds too",
+		real_world.random_real(-3.7, -1.2) == -2.0
+	)
+
+	# Determinism: two sims with identical rules replay the identical
+	# sequence; the draw tally is diagnostic, not hashed.
+	var twin_a := _make_sim()
+	var twin_b := _make_sim()
+	var world_a := _make_world(twin_a)
+	var world_b := _make_world(twin_b)
+	var seq_a: Array = []
+	var seq_b: Array = []
+	for _draw in range(8):
+		seq_a.append(world_a.random_int(1, 100))
+		seq_b.append(world_b.random_int(1, 100))
+	_check(
+		"twin sims replay the identical mapped sequence",
+		seq_a == seq_b and seq_a == [78, 30, 73, 7, 68, 63, 88, 23]
+	)
+	_check(
+		"the draw tally is a process-local diagnostic that counted every draw",
+		twin_a.logic_random_draws == 8
+	)
 
 
 # --- 3. Players -----------------------------------------------------------

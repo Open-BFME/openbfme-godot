@@ -62,8 +62,8 @@ extends SceneTree
 ##                            surface); probed by expecting the fixture's
 ##                            seeded resources for a bound player
 ##   * world.random_int / world.random_real - no refusal channel; classified
-##                            by supports(CAP_RANDOM), which the adapter
-##                            deliberately does not advertise
+##                            by supports(CAP_RANDOM) plus a live in-range
+##                            draw from the sim-owned logic stream
 ## Everything else - all facet methods and the two remaining base methods
 ## (set_player_money, debug_message return bool-as-refusal) - is genuinely
 ## called through the synthesised-argument path.
@@ -582,8 +582,14 @@ func _probe_fallback(qualified: String) -> Dictionary:
 			backed = world.player_money(PLAYER) == 10000
 		"world.random_int", "world.random_real":
 			# No refusal channel at all; the honest signal is the capability
-			# token the adapter deliberately withholds.
-			backed = world.supports(SageScriptWorld.CAP_RANDOM)
+			# token PLUS a live draw that lands in range (the token alone
+			# could be advertised by a stream that answers garbage). The draw
+			# mutates only this probe's own fixture sim.
+			var drawn := world.random_int(1, 3)
+			backed = (
+				world.supports(SageScriptWorld.CAP_RANDOM)
+				and drawn >= 1 and drawn <= 3
+			)
 	_release_fixture(fx)
 	return {"backed": backed, "mode": "fallback", "calls": 1}
 

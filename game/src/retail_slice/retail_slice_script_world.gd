@@ -526,16 +526,49 @@ func _resolve_base_structure(base: String) -> Dictionary:
 
 
 func supports(capability: String) -> bool:
-	## CAP_RANDOM is deliberately absent: the sim carries no deterministic
-	## random stream, and reaching for randi() would break lockstep. Refusing
-	## the capability is the honest answer until the sim owns a seeded stream.
+	## CAP_RANDOM is advertised because the sim now OWNS the stream it names:
+	## sim.logic_random_int is retail's GameLogic generator (seeded from match
+	## rules, six words hashed/snapshotted empty-is-absent), so serving it is
+	## lockstep-safe - the historical refusal ("no deterministic stream, and
+	## randi() would desync") described a sim that no longer exists. What is
+	## STILL refused, deliberately: the client-random family
+	## (SET_COUNTER_TO_CLIENT_RANDOM_VALUE) - that is a different stream in
+	## retail too, desync-prone by design.
 	if sim == null:
 		return false
-	return capability in [CAP_PLAYER_MONEY, CAP_DEBUG_OUTPUT]
+	return capability in [CAP_PLAYER_MONEY, CAP_RANDOM, CAP_DEBUG_OUTPUT]
 
 
 func world_frame() -> int:
 	return sim.tick_index if sim != null else 0
+
+
+func random_int(low: int, high: int) -> int:
+	## The sim-owned logic stream (retail's GameLogic generator; see the
+	## logic-random section in retail_slice_sim.gd for semantics, seeding and
+	## the boundary story). Inclusive of both bounds, retail's exact mapping.
+	## MUTATES hashed sim state (the stream advances): handlers only reach
+	## here through actions, never conditions, so the read-only query
+	## contract stands.
+	return sim.logic_random_int(low, high)
+
+
+func random_real(low: float, high: float) -> float:
+	## Retail's script engine has NO real-valued random draw path of its own:
+	## SET_RANDOM_MSEC_TIMER's REAL bounds go through GameLogicRandomValue,
+	## whose parameters are C `int` - the bounds truncate toward zero and ONE
+	## integer is drawn from the logic stream (ScriptEngine.cpp:6746-6752 +
+	## LogicRandomValue.h:42 in the GPL Zero Hour source). Mirroring that
+	## keeps this integer-only (no float in the generator or mapping - the
+	## cross-platform constraint) and keeps stream POSITION retail-aligned at
+	## one draw per call. GDScript int(float) truncates toward zero like C.
+	## ASSUMPTION, stated: BFME-era actions (SET_RANDOM_COUNTER_IN_SECONDS)
+	## could instead call the binary's GetGameLogicRandomValueReal (it exists
+	## in the BFME1 masm dumps); the decompiled dispatch is unreadable asm,
+	## so ZH's script-engine precedent is the best evidence. Falsified if a
+	## readable BFME dispatch surfaces showing the Real path - the fix would
+	## swap this mapping, not the generator or the boundary.
+	return float(sim.logic_random_int(int(low), int(high)))
 
 
 func player_money(player: String) -> int:

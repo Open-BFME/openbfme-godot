@@ -50,6 +50,16 @@ extends SceneTree
 ##      peer that armed them. Without a sim the env keeps its historical
 ##      standalone backing, byte-for-byte.
 ##
+## The sixth subject is the stream the retail AI's spell-list choice hangs
+## on (c930b68's census: SET_RANDOM_COUNTER refused for want of it):
+##
+##   6. THE LOGIC RANDOM STREAM (_logic_random_state): retail's GameLogic
+##      generator, sim-owned. Its six 32-bit words are the entire stream
+##      state - stream POSITION changes outcomes, so the words are hashed
+##      and snapshotted empty-is-absent (zero bytes until the first draw;
+##      the frozen pin stands), cleared by setup(), and carried to adopting
+##      peers, who continue the IDENTICAL sequence from the adopted words.
+##
 ## Every fixture is SYNTHETIC; no retail install or content pack is required.
 ## NOTE: the shadowing and attach-refusal tests intentionally trigger
 ## push_error lines (marked EXPECTED ERROR below) - they are the loud
@@ -88,6 +98,8 @@ func _run() -> void:
 	_test_script_env_state_is_hash_inert_until_used_and_reset_by_setup()
 	_test_script_env_unknown_fields_cannot_escape_the_boundary()
 	_test_script_env_degrades_without_a_sim_and_attach_refuses()
+	_test_logic_random_stream_lives_inside_the_snapshot_boundary()
+	_test_logic_random_stream_is_hash_inert_until_drawn_and_reset_by_setup()
 	print("RETAIL_STATE_BOUNDARY_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -898,4 +910,91 @@ func _test_script_env_degrades_without_a_sim_and_attach_refuses() -> void:
 	_check(
 		"the refused attaches stored nothing in the sim",
 		not sim.script_env_state.has(99) and used.counter("pre_attach") == 1
+	)
+
+
+# --- Defect-class subject 6: the logic random stream ------------------------
+
+
+func _test_logic_random_stream_lives_inside_the_snapshot_boundary() -> void:
+	## Stream POSITION is outcome-bearing state: peer A draws five spell-list
+	## choices, peer B adopts A's snapshot, and both must then continue the
+	## IDENTICAL sequence with hashes agreeing on every draw. The expected
+	## continuation is pinned from the independent reference implementation
+	## (literals, not values recomputed from the code under test), so this
+	## also fails if snapshotting perturbed the words. Pre-boundary, a stream
+	## held outside the snapshot would replay from the seed on B: same hash,
+	## different AI - the exact silent-divergence shape of subjects 2/4/5.
+	var sim_a := _make_sim()
+	var world_a := _make_world(sim_a)
+	var pristine := sim_a.state_hash()
+	for _draw in range(5):
+		world_a.random_int(1, 3)
+	_check("drawing MOVES the hash (stream position is not invisible)", sim_a.state_hash() != pristine)
+	_check(
+		"the stream words serialize",
+		(bytes_to_var(sim_a.snapshot()) as Dictionary).has("logic_random_state")
+	)
+
+	var sim_b := _make_sim()
+	_check("fixture: peer B adopts A's snapshot", sim_b.restore(sim_a.snapshot()))
+	var world_b := _make_world(sim_b)
+	_check("adopted snapshot agrees on the state hash", sim_a.state_hash() == sim_b.state_hash())
+	var continuation_a: Array = []
+	var continuation_b: Array = []
+	var first_divergence := -1
+	for step in range(6):
+		continuation_a.append(world_a.random_int(1, 100))
+		continuation_b.append(world_b.random_int(1, 100))
+		if first_divergence < 0 and sim_a.state_hash() != sim_b.state_hash():
+			first_divergence = step
+	_check(
+		"minter and adopter continue the identical pinned sequence",
+		continuation_a == continuation_b
+		and continuation_a == [63, 88, 23, 73, 74, 19]
+	)
+	_check("peers agree on the state hash after every draw", first_divergence < 0)
+
+
+func _test_logic_random_stream_is_hash_inert_until_drawn_and_reset_by_setup() -> void:
+	## The empty-is-absent discipline (the frozen-pin property) and both
+	## reset directions: an undrawn stream contributes ZERO bytes; setup()
+	## clears the words so a reused sim both hashes AND draws like a freshly
+	## built one; restore of a pre-draw snapshot returns the stream to the
+	## underived form (the adopter derives from the shared rules seed).
+	var sim := _make_sim()
+	var pristine := sim.state_hash()
+	_check(
+		"an undrawn sim snapshot carries NO logic_random_state key",
+		not (bytes_to_var(sim.snapshot()) as Dictionary).has("logic_random_state")
+	)
+	var pre_draw := sim.snapshot()
+	var world := _make_world(sim)
+	var first_fresh := world.random_int(1, 3)
+	_check("fixture: the first seed-0 [1,3] draw is the pinned 3", first_fresh == 3)
+	_check("a draw moves the hash", sim.state_hash() != pristine)
+
+	# Reset direction 1: setup() (the reset_match path routes through it).
+	sim.setup({}, {})
+	sim.ai_enabled = false  # the harness disables AI; setup() re-enables it
+	_check("setup() clears the stream to the undrawn form", sim._logic_random_state.is_empty())
+	var fresh := _make_sim()
+	_check(
+		"a reused sim hashes identically to a freshly built one after reset",
+		sim.state_hash() == fresh.state_hash()
+	)
+	_check(
+		"a reused sim REPLAYS the sequence from the seed after reset",
+		world.random_int(1, 3) == first_fresh
+	)
+
+	# Reset direction 2: restoring a pre-draw snapshot.
+	_check("fixture: the sim restores its pre-draw snapshot", sim.restore(pre_draw))
+	_check(
+		"restoring a pre-draw snapshot returns the stream to the undrawn form",
+		sim._logic_random_state.is_empty() and sim.state_hash() == pristine
+	)
+	_check(
+		"the restored sim derives from the shared rules seed on first draw",
+		world.random_int(1, 3) == first_fresh
 	)

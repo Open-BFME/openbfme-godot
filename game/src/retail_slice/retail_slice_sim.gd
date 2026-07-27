@@ -1258,6 +1258,10 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	# actions, persisted by retail save games), never configuration: a reused
 	# sim must not carry one match's lists into the next.
 	script_object_type_lists.clear()
+	# The logic random stream is match state too: cleared back to the
+	# never-drawn form so a reused sim re-derives the words from the (rules-
+	# configured) seed on first draw, exactly like a freshly built one.
+	_logic_random_state.clear()
 	# The script interpreter's memory (counters/flags/timers/enable bits/tick)
 	# is match state too. clear() IN PLACE, never rebind: attached
 	# SageScriptEnvs hold this dictionary by reference, and a rebind would
@@ -5855,6 +5859,165 @@ func resolve_object_type_names(object_type_list: String) -> Array:
 	if script_object_type_lists.has(object_type_list):
 		return (script_object_type_lists[object_type_list] as Array).duplicate()
 	return [object_type_list]
+
+
+# --- Logic random stream (SIM-owned, retail GameLogic generator) ------------
+#
+# The deterministic random stream retail script actions draw from
+# (SET_RANDOM_COUNTER / SET_RANDOM_TIMER / SET_RANDOM_MSEC_TIMER /
+# SET_RANDOM_COUNTER_IN_SECONDS). This is retail's LOGIC stream, not its
+# client stream: RandomValue.cpp keeps three independent generators
+# (theGameLogicSeed / theGameClientSeed / theGameAudioSeed) precisely so the
+# GameLogic "remains deterministic, regardless of the effects displayed on
+# the GameClient" (RandomValue.cpp:138-142), and the script engine's random
+# actions call GameLogicRandomValue (ScriptEngine.cpp setTimer, lines
+# 6746-6760 in the GPL Zero Hour source) - the logic stream. The client
+# stream stays refused here (SET_COUNTER_TO_CLIENT_RANDOM_VALUE is a
+# DELIBERATE gap): it is desync-prone by design.
+#
+# ONE GLOBAL STREAM, NOT PER-PLAYER - retail's shape. theGameLogicSeed is a
+# single static array; every logic draw by every subsystem and every script
+# player advances the same sequence, and the script engine passes no player
+# context into GameLogicRandomValue. Draw ORDER is therefore part of the
+# contract: draws happen only inside script/handler execution, which the sim
+# steps in ascending team order (register_script_executor's guarantee), so
+# every peer interleaves draws identically.
+#
+# THE GENERATOR IS RETAIL'S, TRANSCRIBED, NOT APPROXIMATED: the Michael
+# Booth (Jan 1998) lagged add-with-carry over six 32-bit words from the GPL
+# Generals/Zero Hour RandomValue.cpp (randomValue/seedRandom), which the
+# BFME1 binary still exports (GetGameLogicRandomValueReal thunk in the
+# decompilation's masm dumps, same signature). Two deliberate fidelity
+# points, verbatim from retail even where a clean-room design would differ:
+#   * the ADC carry is retail's `C = (SUM < A) || (SUM < B)` on the WRAPPED
+#     sum - which misses a true carry in the a=b=0xFFFFFFFF,c=1 edge. Bit
+#     identity with retail beats mathematical tidiness.
+#   * the range map is retail's biased modulo (delta = hi-lo+1 as uint32;
+#     delta==0 answers hi WITHOUT consuming a draw; otherwise one draw,
+#     `draw % delta + lo`, inclusive of BOTH bounds). The modulo bias is
+#     <= delta/2^32 - immaterial for script ranges like [1..3], and matching
+#     retail's mapping exactly matters more than uniformity.
+#
+# CROSS-PLATFORM BIT-IDENTITY: integer arithmetic only, every value masked
+# to 32 bits, all intermediates far below 2^63 - GDScript's int is 64-bit
+# signed on every platform, so no operation here can overflow or vary.
+# Deliberately NOT Godot's RandomNumberGenerator/randi(): their algorithm is
+# an engine implementation detail with no cross-version output guarantee.
+# This section IS the specification - it can be re-implemented identically
+# from this file alone (and was, in Python, to mint the pinned vectors).
+#
+# SEEDING is match configuration: _rules["logic_random_seed"] (absent means
+# 0), read at first draw. Rules are agreed match configuration on every peer
+# and a hashed static key, so a disagreeing seed diverges the state hash
+# immediately. Retail seeds the same way - InitGameLogicRandom(getSeed())
+# from the lobby-shared game seed (LANAPICallbacks.cpp:267,
+# SkirmishGameOptionsMenu.cpp:434); a lobby-varied seed is a follow-up that
+# only needs to set this rules key.
+#
+# STATE AND HASH INERTNESS: the six words ARE the entire stream state (the
+# draw count is not needed to continue the sequence). They live in
+# _logic_random_state, empty until the first draw (lazy seeding), hashed and
+# snapshotted empty-is-absent - a match that never draws contributes ZERO
+# bytes, so the frozen cross-platform pin stands untouched. setup() clears
+# the stream (match state); a peer adopting a mid-match snapshot receives
+# the words and continues the identical sequence.
+
+const _U32 := 0xFFFFFFFF
+
+## The six 32-bit words of the logic stream; [] until the first draw (the
+## empty-is-absent form). See the block comment above. setup() clears it.
+var _logic_random_state: Array = []
+
+## Process-local draw tally, DIAGNOSTIC only (like frame_conversions): an
+## adopting peer reports its own draws, not the minter's. Never hashed.
+var logic_random_draws: int = 0
+
+
+static func _logic_random_seed_words(seed_value: int) -> Array:
+	## Retail seedRandom() with the incremental constant additions telescoped:
+	## after step k the accumulator is exactly SEED + constant_k (mod 2^32).
+	var seed32 := seed_value & _U32
+	return [
+		(seed32 + 0xF22D0E56) & _U32,
+		(seed32 + 0x883126E9) & _U32,
+		(seed32 + 0xC624DD2F) & _U32,
+		(seed32 + 0x0702C49C) & _U32,
+		(seed32 + 0x9E353F7D) & _U32,
+		(seed32 + 0x6FDF3B64) & _U32,
+	]
+
+
+static func _logic_random_draw32(words: Array) -> int:
+	## One raw 32-bit draw, mutating `words` in place: retail randomValue() -
+	## five chained ADCs from words[5] down to words[0] (each ADC uses
+	## retail's carry rule on the wrapped sum), then the increment cascade
+	## that bubbles a +1 up from words[5], bumping the RETURN VALUE too when
+	## it reaches words[0].
+	var w0 := int(words[0])
+	var w1 := int(words[1])
+	var w2 := int(words[2])
+	var w3 := int(words[3])
+	var w4 := int(words[4])
+	var w5 := int(words[5])
+	var carry := 0
+	var ax := (w5 + w4 + carry) & _U32
+	carry = 1 if (ax < w5 or ax < w4) else 0
+	w4 = ax
+	var prev := ax
+	ax = (prev + w3 + carry) & _U32
+	carry = 1 if (ax < prev or ax < w3) else 0
+	w3 = ax
+	prev = ax
+	ax = (prev + w2 + carry) & _U32
+	carry = 1 if (ax < prev or ax < w2) else 0
+	w2 = ax
+	prev = ax
+	ax = (prev + w1 + carry) & _U32
+	carry = 1 if (ax < prev or ax < w1) else 0
+	w1 = ax
+	prev = ax
+	ax = (prev + w0 + carry) & _U32
+	w0 = ax
+	w5 = (w5 + 1) & _U32
+	if w5 == 0:
+		w4 = (w4 + 1) & _U32
+		if w4 == 0:
+			w3 = (w3 + 1) & _U32
+			if w3 == 0:
+				w2 = (w2 + 1) & _U32
+				if w2 == 0:
+					w1 = (w1 + 1) & _U32
+					if w1 == 0:
+						w0 = (w0 + 1) & _U32
+						ax = (ax + 1) & _U32
+	words[0] = w0
+	words[1] = w1
+	words[2] = w2
+	words[3] = w3
+	words[4] = w4
+	words[5] = w5
+	return ax
+
+
+func logic_random_int(low: int, high: int) -> int:
+	## Retail GetGameLogicRandomValue(lo, hi): inclusive of BOTH bounds.
+	## delta = hi - lo + 1 as uint32; delta == 0 (hi == lo - 1 mod 2^32)
+	## answers hi without consuming a draw; low == high consumes a draw and
+	## answers low (delta 1) - retail does both, and stream POSITION is
+	## contract, so neither shortcut may be "optimized". The unsigned draw is
+	## reinterpreted as int32 and the final sum wrapped to int32, matching
+	## retail's x86 Int arithmetic on the (unreachable-by-authored-scripts)
+	## degenerate ranges too.
+	if _logic_random_state.is_empty():
+		_logic_random_state = _logic_random_seed_words(int(_rules.get("logic_random_seed", 0)))
+	var delta := (high - low + 1) & _U32
+	if delta == 0:
+		return high
+	logic_random_draws += 1
+	var drawn := _logic_random_draw32(_logic_random_state) % delta
+	if drawn >= 0x80000000:
+		drawn -= 0x100000000
+	return ((drawn + low + 0x80000000) & _U32) - 0x80000000
 
 
 # --- Script-engine environment state (SageScriptEnv, SIM-owned) -------------
@@ -11382,6 +11545,13 @@ func _authoritative_state() -> Dictionary:
 	# one (see the store's block comment).
 	if not script_object_type_lists.is_empty():
 		state["script_object_type_lists"] = script_object_type_lists
+	# And for the logic random stream: the six generator words are the entire
+	# stream state (retail's theGameLogicSeed rides save games and its CRC is
+	# sync-checked - GetGameLogicRandomSeedCRC). Zero bytes until the first
+	# draw, so a scriptless match leaves the frozen pin untouched; an
+	# adopting peer receives the words and continues the identical sequence.
+	if not _logic_random_state.is_empty():
+		state["logic_random_state"] = _logic_random_state
 	# And for the script interpreter's own memory: hashed and serialized
 	# through its canonical view (zero counters/false flags pruned, every
 	# level sorted), so an untouched match contributes zero bytes and state
@@ -11464,6 +11634,9 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	unpackable_bases = state.get("unpackable_bases", {})
 	script_unit_references = state.get("script_unit_references", {})
 	script_object_type_lists = state.get("script_object_type_lists", {})
+	# Absent when the minter never drew (empty-is-absent): the adopter then
+	# also derives the words from the shared rules seed on ITS first draw.
+	_logic_random_state = state.get("logic_random_state", [])
 	# IN PLACE, never rebind: attached SageScriptEnvs share this dictionary by
 	# reference (see the script_env_state block comment), so a rebind here
 	# would silently detach every live script environment from the boundary.
