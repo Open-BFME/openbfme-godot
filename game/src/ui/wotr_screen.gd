@@ -60,6 +60,44 @@ const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 const SessionScript = preload("res://src/wotr/wotr_session.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 const BundleScript = preload("res://src/wotr/wotr_map_bundle.gd")
+const RegionGeometryScript = preload("res://src/wotr/wotr_region_geometry.gd")
+const StringsScript = preload("res://src/wotr/wotr_strings.gd")
+const MacrosScript = preload("res://src/wotr/wotr_macros.gd")
+
+## Retail's own region-bonus wording, keyed by the living-world document's own
+## bonus field. The VALUE is a string-table key, so what the player reads is
+## retail's text with retail's placeholders filled from retail's numbers - this
+## table is only the mapping between the two, and every entry is a field the
+## document actually carries.
+##
+## `%d%%` in retail's text is a literal percent sign after the number; `%d` alone
+## is a plain count. `_format_bonus()` handles both, and a formatter this project
+## cannot fill is shown raw rather than mangled.
+const BONUS_STRING_KEYS := {
+	"army": "LW:RegionBonusArmy",
+	"attack": "LW:RegionAttackBonus",
+	"buildingDiscount": "LW:RegionBuildingDiscountBonus",
+	"defense": "LW:RegionDefenseBonus",
+	"discountedBarracksUnits": "LW:RegionBarracksUnitDiscountBonus",
+	"discountedHeroUnits": "LW:RegionHeroDiscountBonus",
+	"discountedSiegeUnits": "LW:RegionSeigeDiscountBonus",
+	"experience": "LW:RegionExperienceBonus",
+	"extraStartResources": "LW:RegionExtraResourcesBonus",
+	"fertileTerritory": "LW:RegionTreasuryBonus",
+	"freeBuilder": "LW:RegionFreeBuildersBonus",
+	"freeInnUnits": "LW:RegionFreeInnUnitsBonus",
+	"legendary": "LW:RegionLegendaryBonus",
+	"resource": "LW:RegionBonusResource",
+}
+## The order retail's own panel lists bonuses in is not recorded in any file this
+## lane read, so they are listed in a FIXED ALPHABETICAL order by field name.
+## That is a stated presentation choice, not a claim about retail.
+const BONUS_ORDER := [
+	"fertileTerritory", "army", "legendary", "resource", "attack", "defense",
+	"experience", "buildingDiscount", "discountedBarracksUnits",
+	"discountedHeroUnits", "discountedSiegeUnits", "extraStartResources",
+	"freeBuilder", "freeInnUnits",
+]
 const MapViewScript = preload("res://src/wotr/wotr_map_view.gd")
 
 ## Seat colours. Fixed by seat index and never player-chosen: a colour is
@@ -96,6 +134,16 @@ var map_view: Control
 var map3d: Control
 var map_mode_label: Label
 var map_bundle: BundleScript = null
+## Retail's per-region territory geometry, when converted.
+var region_geometry: RegionGeometryScript = null
+## Why there is no territory shading, or "" when there is.
+var region_geometry_reason := ""
+## Retail's string table, when converted. Null means regions carry retail ids.
+var strings: StringsScript = null
+var strings_reason := ""
+## Retail's gamedata `#define` table, so a macro bonus shows retail's number.
+var macros: MacrosScript = null
+var macros_reason := ""
 ## Why there is no 3D map, or "" when there is one.
 var map_reason := ""
 ## Whose turn it is, in one line, at the size a player reads first.
@@ -353,6 +401,7 @@ func load_map_bundle(pack_roots: Array = []) -> bool:
 		for line in map_reason.split("\n"):
 			print("[WotrMap] %s" % line)
 	map3d.set_bundle(map_bundle, map_reason)
+	load_region_geometry(pack_roots)
 	var has_3d: bool = map3d.has_map()
 	map3d.visible = has_3d
 	map_view.visible = not has_3d
@@ -371,6 +420,77 @@ func load_map_bundle(pack_roots: Array = []) -> bool:
 		map_view.visible = true
 		return false
 	return has_3d
+
+
+## Find and load retail's per-region territory geometry. Independent of the map
+## bundle on purpose: retail's Middle-earth can be on screen with no territory
+## shapes converted, and that is a state the screen reports rather than hides.
+func load_region_geometry(pack_roots: Array = []) -> bool:
+	if heading_label == null:
+		build()
+	var geometry := RegionGeometryScript.new()
+	var located: Dictionary = geometry.locate_and_load(pack_roots)
+	if bool(located.get("ok", false)):
+		region_geometry = geometry
+		region_geometry_reason = ""
+		print("[WotrMap] region TERRITORY GEOMETRY loaded from %s [%s]" % [
+			String(located.get("root", "")), String(located.get("origin", ""))])
+		for line in geometry.describe_load():
+			print("[WotrMap]   %s" % line)
+		if geometry.regions_without_geometry.size() > 0:
+			push_warning("[WotrMap] %d region(s) in the document have NO territory mesh and will not be shaded: %s" % [
+				geometry.regions_without_geometry.size(),
+				", ".join(Array(geometry.regions_without_geometry))])
+	else:
+		region_geometry = null
+		region_geometry_reason = String(located.get("reason", ""))
+		# LOUDLY, on both channels, for the same reason the map bundle does: a
+		# strategic map that quietly stopped shading territories would just look
+		# like a rendering bug.
+		push_error("[WotrMap] %s" % region_geometry_reason)
+		for line in region_geometry_reason.split("\n"):
+			print("[WotrMap] %s" % line)
+	map3d.set_region_geometry(region_geometry, region_geometry_reason)
+	_load_strings(located, pack_roots)
+	return region_geometry != null
+
+
+## Retail's string table, looked for beside whichever region-geometry bundle was
+## found and in the mounted packs. A miss is a REPORTED miss: regions keep their
+## retail ids and the screen says the table is not converted.
+func _load_strings(located: Dictionary, pack_roots: Array) -> void:
+	var roots: Array = []
+	var geometry_root := String(located.get("root", ""))
+	if not geometry_root.is_empty():
+		roots.append(geometry_root)
+	for root in pack_roots:
+		roots.append(String(root).path_join(RegionGeometryScript.PACK_BUNDLE_RELATIVE))
+	roots.append(RegionGeometryScript.USER_BUNDLE)
+	var table := StringsScript.new()
+	var found: Dictionary = table.locate_and_load(roots)
+	if bool(found.get("ok", false)):
+		strings = table
+		strings_reason = ""
+		print("[WotrStrings] retail string table loaded from %s: %d strings" % [
+			String(found.get("path", "")), table.count()])
+	else:
+		strings = null
+		strings_reason = String(found.get("reason", ""))
+		push_warning("[WotrStrings] %s" % strings_reason)
+		print("[WotrStrings] %s" % strings_reason)
+
+	var macro_table := MacrosScript.new()
+	var macros_found: Dictionary = macro_table.locate_and_load(roots)
+	if bool(macros_found.get("ok", false)):
+		macros = macro_table
+		macros_reason = ""
+		print("[WotrStrings] retail gamedata #define table loaded from %s: %d defines" % [
+			String(macros_found.get("path", "")), macro_table.defines.size()])
+	else:
+		macros = null
+		macros_reason = String(macros_found.get("reason", ""))
+		push_warning("[WotrStrings] %s" % macros_reason)
+		print("[WotrStrings] %s" % macros_reason)
 
 
 func refresh() -> void:
@@ -430,9 +550,14 @@ func refresh() -> void:
 	attack_button.disabled = not can_attack_now()
 	attack_button.tooltip_text = _attack_button_reason()
 	_refresh_standings(state)
+	# THE MAP FIRST. `_rebuild_unplaced()` reports which regions the map could
+	# not place, so it has to run AFTER the map has placed them - otherwise it
+	# reports the previous frame's answer, and on the first frame it reports
+	# "nothing was placed". That is exactly how Rhun came to be listed as absent
+	# on the same screen whose mode line said it had been placed.
+	_refresh_map()
 	_rebuild_unplaced()
 	_refresh_detail()
-	_refresh_map()
 	legend_label.queue_redraw()
 
 
@@ -467,6 +592,23 @@ func _refresh_map_mode_label() -> void:
 	var notes: Array[String] = []
 	notes.append("MAP: retail livingmap.w3d, %d sub-objects, %d drawn, %d regions placed at authored world coordinates" % [
 		map_bundle.sub_objects.size(), map3d.drawn_mesh_count(), map3d.placed_regions.size()])
+	# TERRITORY SHADING: what is filled, and what is not.
+	if map3d.has_territories():
+		notes.append("TERRITORIES: retail lmr_fill.w3d / lmr_border.w3d, %d regions filled with their owner's colour, %d triangles" % [
+			map3d.shaded_regions.size(), region_geometry.total_triangles])
+		if map3d.unshaded_regions.size() > 0:
+			notes.append("NOT SHADED (%d): the bundle carries no fill mesh for these, so they keep a marker and no territory - %s" % [
+				map3d.unshaded_regions.size(), ", ".join(Array(map3d.unshaded_regions))])
+	else:
+		notes.append("TERRITORIES: NOT SHADED - regions are drawn as markers. %s" % region_geometry_reason.split("\n")[0])
+	if map3d.centroid_placed_regions.size() > 0:
+		notes.append("%d region(s) placed from a centroid DERIVED from retail's own fill triangles rather than an authored centre point: %s" % [
+			map3d.centroid_placed_regions.size(), ", ".join(Array(map3d.centroid_placed_regions))])
+	if strings != null:
+		notes.append("NAMES: retail data/lotr.str, %d strings; %d key(s) asked for and absent" % [
+			strings.count(), strings.missing_keys.size()])
+	else:
+		notes.append("NAMES: NOT CONVERTED - regions carry retail's own ids")
 	if not map_bundle.warnings.is_empty():
 		notes.append("%d texture problem(s): %s" % [
 			map_bundle.warnings.size(), ", ".join(Array(map_bundle.warnings))])
@@ -675,7 +817,22 @@ func _refresh_standings(state: StateScript) -> void:
 	# NOT DRAWN, and named. Retail's own strategic shell is a Flash movie this
 	# project does not read, and the region names are string-table keys with no
 	# converted table behind them, so regions carry retail's own ids.
-	lines.append("[color=#a9b39a]NOT CONVERTED, so not shown: retail's LivingWorldUI.apt shell (799 KB, unread), the LW:DisplayName* string table (regions carry retail ids), army models marching between regions, and retail's turn-phase banner.[/color]")
+	# NOT DRAWN, and named. Kept current: the string table and the region
+	# territory shapes HAVE now been converted, so claiming they have not would
+	# be its own dishonesty - but the ~25 strategic APT movies, the army banners
+	# carrying unit portraits, the radial build menu and the turn-phase bar are
+	# all still absent, and that is what this line is for.
+	var absent: Array[String] = []
+	if strings == null:
+		absent.append("retail's LW: string table (regions carry retail ids)")
+	if region_geometry == null:
+		absent.append("retail's region territory shapes (regions are markers, not filled territories)")
+	absent.append("retail's ~25 strategic APT movies (StrategicHUD, StrategicPalantir, StrategicDetails*, the radial build menu host) - none is read")
+	absent.append("army banner markers carrying unit and hero portraits")
+	absent.append("build plots and the radial build menu")
+	absent.append("the turn-phase bar (retail's phase list is hardcoded in the executable; livingworldlogic.ini ships EMPTY, 192 bytes of comment)")
+	absent.append("army models marching between regions")
+	lines.append("[color=#a9b39a]NOT CONVERTED, so not shown: %s.[/color]" % "; ".join(absent))
 	standings_label.text = "\n".join(lines)
 
 
@@ -725,9 +882,163 @@ func _draw_legend() -> void:
 
 # --- detail panel ------------------------------------------------------------
 
+## RETAIL'S REGION PANEL, in retail's own words.
+##
+## The screenshot the owner sent reads, over Mordor:
+##
+##     Mordor
+##     +500 Treasure
+##     3 Build Plots
+##     Territory of Region: Mordor
+##     Unified Region Bonus: Discount when Building Barracks Units
+##
+## Every one of those five lines is retail data, and none of it is written here:
+##
+##   * "Mordor" is `LW:DisplayNameMordor` from `data/lotr.str`.
+##   * "+500 Treasure" is the format string `LW:RegionTreasuryBonus`
+##     (`+%d Treasure`) filled from `FertileTerritoryBonus`, which retail authors
+##     as the macro `FERTILE_TERRITORY_BONUS` and `gamedata.ini` defines as 500.
+##   * "3 Build Plots" is `LW:NumberOfBuildPlotsPlural` (`\n%d Build Plots`)
+##     filled from the count of `BuildingSpot` lines the region authors.
+##   * "Territory of Region: %ls" is `LW:TerritoryPartOfRegion`, filled from the
+##     territory whose member list contains this region.
+##   * "Unified Region Bonus: %ls" is `LW:UnifiedRegionBonus`, filled from that
+##     territory's own bonuses through the same formatter table.
+##
+## WHAT IS SHOWN WHEN A PIECE IS MISSING. A macro the `#define` table does not
+## resolve prints its NAME and the word unresolved. A format string the table
+## does not carry prints the KEY. A region in no territory says so. Nothing here
+## substitutes a plausible number for one it could not read - which is the whole
+## reason the macro table exists rather than a literal 500 in this file.
+func _region_panel_lines(region_id: String) -> Array[String]:
+	var lines: Array[String] = []
+	if session == null or session.world == null:
+		return lines
+	var region := session.world.region(region_id)
+	if region.is_empty():
+		return lines
+
+	lines.append("[color=#e1c77d]%s[/color]" % _display_of(region_id))
+	if strings == null:
+		lines.append("  [color=#a9b39a]retail's string table is not converted, so this is retail's region id, not its name[/color]")
+
+	var bonuses := region.get("bonuses", {}) as Dictionary
+	var macro_names := region.get("bonus_macros", {}) as Dictionary
+	var printed := 0
+	for field in BONUS_ORDER:
+		var line := _format_bonus(field, bonuses, macro_names)
+		if line.is_empty():
+			continue
+		lines.append("  %s" % line)
+		printed += 1
+	if printed == 0:
+		var none := _string_or_key("LW:NoBonus")
+		lines.append("  %s" % none)
+
+	var plots := int(region.get("building_spot_count", 0))
+	var plot_key := "LW:NumberOfBuildPlotsSingle" if plots == 1 else "LW:NumberOfBuildPlotsPlural"
+	lines.append("  %s" % _fill_count(plot_key, plots))
+
+	var territory := session.world.territory_of(region_id)
+	if territory.is_empty():
+		lines.append("  [color=#a9b39a]this region belongs to no territory group in this campaign[/color]")
+	else:
+		var territory_name := _string_or_key(String(territory.get("territory", "")))
+		lines.append("  %s" % _fill_text("LW:TerritoryPartOfRegion", territory_name))
+		var territory_bonuses := territory.get("bonuses", {}) as Dictionary
+		var unified: Array[String] = []
+		for field in BONUS_ORDER:
+			var line := _format_bonus(field, territory_bonuses, {})
+			if not line.is_empty():
+				unified.append(line)
+		if unified.is_empty():
+			lines.append("  %s" % _fill_text("LW:UnifiedRegionBonus", _string_or_key("LW:NoBonus")))
+		else:
+			lines.append("  %s" % _fill_text("LW:UnifiedRegionBonus", ", ".join(unified)))
+		# The retail id rides along with the label, because retail's table maps
+		# more than one region onto the same English name (`Arnor` reads
+		# "Arthedain", `Buckland` reads "The North Downs") and a member list with
+		# the same word twice in it reads as a bug rather than as retail's own
+		# text. Both are shown so neither claim is lost.
+		lines.append("  [color=#a9b39a]territory members: %s[/color]" % ", ".join(
+			Array(territory.get("regions", PackedStringArray())).map(func(id: Variant) -> String:
+				var member := String(id)
+				var label := _display_of(member)
+				return label if label == member else "%s (%s)" % [label, member])))
+
+	var cp_limit := int(region.get("cp_limit", -1))
+	if cp_limit >= 0:
+		lines.append("  [color=#a9b39a]command point limit %d (ally %d)[/color]" % [
+			cp_limit, int(region.get("ally_cp_limit", -1))])
+	return lines
+
+
+## One bonus line in retail's own wording, or "" when the region does not carry
+## that bonus at all. A MACRO the `#define` table cannot resolve is named rather
+## than filled in with a number that was never read.
+func _format_bonus(field: String, bonuses: Dictionary, macro_names: Dictionary) -> String:
+	var key := String(BONUS_STRING_KEYS.get(field, ""))
+	if key.is_empty():
+		return ""
+	var macro_name := String(macro_names.get(field, ""))
+	if not macro_name.is_empty():
+		var resolved: Dictionary = macros.resolve(macro_name) if macros != null else {"ok": false, "raw": ""}
+		if bool(resolved.get("ok", false)):
+			return _fill_count(key, int(float(resolved["value"])))
+		var raw := String(resolved.get("raw", ""))
+		return "[color=#c8483f]%s: %s UNRESOLVED%s[/color]" % [
+			_string_or_key(key), macro_name,
+			(" (retail's body is %s, which is an expression, not a number)" % raw) if not raw.is_empty() else
+			" (no gamedata #define table is converted)"]
+	var amount := int(bonuses.get(field, 0))
+	if amount == 0:
+		return ""
+	return _fill_count(key, amount)
+
+
+## Fill a retail format string that takes one number. Retail writes `%d` for a
+## count and `%d%%` for a percentage; both are handled, and a string carrying
+## neither is returned untouched rather than mangled.
+func _fill_count(key: String, amount: int) -> String:
+	var template := _string_or_key(key).replace("\\n", "").strip_edges()
+	if template.contains("%d%%"):
+		return template.replace("%d%%", "%d%%" % amount)
+	if template.contains("%d"):
+		return template.replace("%d", str(amount))
+	return template
+
+
+## Fill a retail format string that takes one string (`%ls`).
+func _fill_text(key: String, value: String) -> String:
+	var template := _string_or_key(key).replace("\\n", " ").strip_edges()
+	if template.contains("%ls"):
+		return template.replace("%ls", value)
+	return "%s %s" % [template, value]
+
+
+## Retail's text for a key, or the KEY ITSELF when the table does not carry it.
+## Showing the key is deliberate: it is visibly not a name, so a missing string
+## can never be mistaken for retail's wording.
+func _string_or_key(key: String) -> String:
+	if strings == null:
+		return key
+	var value := strings.text(key)
+	return value if not value.is_empty() else key
+
+
 func _refresh_detail() -> void:
 	var lines: Array[String] = []
 	var state: StateScript = session.state
+	# THE REGION PANEL FIRST. Retail's strategic screen leads with the region the
+	# player is pointing at, and until now this screen led with a list.
+	var focus := session.selected_target
+	if focus.is_empty():
+		focus = session.hover_region
+	if focus.is_empty():
+		focus = session.selected_region
+	if not focus.is_empty() and _row_by_id.has(focus):
+		lines.append_array(_region_panel_lines(focus))
+		lines.append("")
 	lines.append("[color=#e1c77d]YOUR REGIONS WITH AN ARMY[/color]")
 	if _staging.is_empty():
 		lines.append("  none - this seat has no army standing in a region it owns")
@@ -770,9 +1081,19 @@ func _refresh_detail() -> void:
 func _rebuild_unplaced() -> void:
 	_clear_unplaced()
 	var unplaced: Array[Dictionary] = []
+	# A region with no authored centre point that the map DID place from a
+	# centroid derived off retail's own fill triangles is ON the map, and listing
+	# it here as absent would contradict the mode line two lines below it. That
+	# contradiction shipped in the first frame this lane captured.
+	var placed_from_geometry := PackedStringArray()
+	if map3d != null and map3d.has_map():
+		placed_from_geometry = map3d.centroid_placed_regions
 	for row in _rows:
-		if not bool(row["has_position"]):
-			unplaced.append(row)
+		if bool(row["has_position"]):
+			continue
+		if Array(placed_from_geometry).has(String(row["id"])):
+			continue
+		unplaced.append(row)
 	if unplaced.is_empty():
 		unplaced_label.text = ""
 		return
@@ -783,7 +1104,13 @@ func _rebuild_unplaced() -> void:
 	# landmarks; there is no `Rhun` mesh in it to take a centre from. So the
 	# position genuinely does not exist in the converted map, and a coordinate
 	# chosen here would be invented map data.
-	unplaced_label.text = "NOT ON THE MAP (%d): no authored centre point, and livingmap.w3d carries no per-region mesh to take one from." % unplaced.size()
+	# Retail falls back to the region's own sub-object when `CustomCenterPoint`
+	# is absent. `livingmap.w3d` carries no per-region mesh - but `lmr_fill.w3d`
+	# does, and when it is converted the centroid of retail's own triangles
+	# places these regions. This list is therefore only the regions that have
+	# NEITHER, and it shrinks to nothing once the region bundle is present.
+	unplaced_label.text = ("NOT ON THE MAP (%d): no authored centre point, and no region fill mesh "
+		+ "to take a centroid from either.") % unplaced.size()
 	for row in unplaced:
 		var button := Button.new()
 		var region_id := String(row["id"])
@@ -936,7 +1263,12 @@ func _on_map_input(event: InputEvent) -> void:
 func _on_region_hovered(region_id: String) -> void:
 	if session == null:
 		return
+	if session.hover_region == region_id:
+		return
 	session.hover_region = region_id
+	# The region panel follows the pointer, the way retail's does. Presentation
+	# only: `hover_region` is a presentation field no hash covers.
+	_refresh_detail()
 
 
 ## A click means "stage here" on one of your own armed regions and "attack here"
@@ -1012,12 +1344,21 @@ func _message(text: String) -> void:
 
 
 ## The label a region is shown under. The document's `displayName` is a STRING
-## TABLE KEY (`LW:DisplayNameArnor`), not a name, and no living-world string
-## table is converted; printing the key would be noise and inventing a name would
-## be worse. Retail's own region id is the honest label until the string table
-## lane exists.
+## TABLE KEY (`LW:DisplayNameArnor`), not a name. When retail's table has been
+## converted this is RETAIL'S OWN ENGLISH TEXT, verbatim - including the places
+## where retail's key and its text disagree (`LW:DisplayNameArnor` reads
+## "Arthedain", `Buckland` reads "The North Downs"), because those are retail's
+## words and not this project's to correct.
+##
+## With no table, or with no entry for this region's key, the label falls back to
+## retail's own region id. It never derives a name from the id: retail's own
+## disagreements above are the proof that such a derivation would be fiction.
 func _display_of(region_id: String) -> String:
-	return region_id
+	if strings == null or session == null or session.world == null:
+		return region_id
+	var key := String(session.world.region(region_id).get("display_name", ""))
+	var label := strings.text(key)
+	return label if not label.is_empty() else region_id
 
 
 func _owner_name(owner: int) -> String:

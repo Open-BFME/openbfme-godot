@@ -158,6 +158,18 @@ func are_adjacent(from_region: String, to_region: String) -> bool:
 	return neighbours(from_region).has(to_region)
 
 
+## The TERRITORY record a region belongs to, or `{}` when it belongs to none.
+## Retail's region panel reads "Territory of Region: Mordor" above the unified
+## bonus, and this is where that comes from. Deterministic: the first territory
+## in sorted order that lists the region, and retail never lists one twice.
+func territory_of(region_id: String) -> Dictionary:
+	for territory in territories:
+		var members: PackedStringArray = territory.get("regions", PackedStringArray())
+		if members.has(region_id):
+			return territory
+	return {}
+
+
 ## The whole region record, or `{}`.
 func region(region_id: String) -> Dictionary:
 	return regions.get(region_id, {}) as Dictionary
@@ -282,6 +294,12 @@ func _read_regions(rows: Array) -> bool:
 			"skirmish_music_track": String(source.get("skirmishMusicTrack", "")),
 			"conquered_notice": String(source.get("conqueredNotice", "")),
 			"bonuses": _read_int_map(source.get("bonuses", {}) as Dictionary),
+			# The bonuses retail authored as a MACRO rather than a literal
+			# (`FertileTerritoryBonus = FERTILE_TERRITORY_BONUS`). Carried
+			# symbolically because that is exactly what the document carries; a
+			# view layer resolves them through retail's own gamedata `#define`
+			# table, or says the macro is unresolved.
+			"bonus_macros": (source.get("bonusMacros", {}) as Dictionary).duplicate(true),
 			"cp_limit": int(source.get("cpLimit", -1)),
 			"ally_cp_limit": int(source.get("allyCpLimit", -1)),
 			# AUTHORED MAP POSITION, carried through verbatim as opaque numbers -
@@ -293,6 +311,16 @@ func _read_regions(rows: Array) -> bool:
 			"has_center_point": (source.get("centerPoint", null) is Dictionary),
 			"center_x": int((source.get("centerPoint", {}) as Dictionary).get("x", 0)) if (source.get("centerPoint", null) is Dictionary) else 0,
 			"center_y": int((source.get("centerPoint", {}) as Dictionary).get("y", 0)) if (source.get("centerPoint", null) is Dictionary) else 0,
+			# BUILD PLOTS. Retail's region panel reads "3 Build Plots", and the
+			# number is the count of `BuildingSpot` lines the region authors -
+			# nothing else in the document carries it. Carried as a COUNT and as
+			# the authored points, both verbatim; a region that authors none has
+			# zero plots, which is a fact, not a missing value.
+			"building_spot_count": (source.get("buildingSpots", []) as Array).size(),
+			"building_spots": (source.get("buildingSpots", []) as Array).duplicate(true),
+			"hero_army_spot_count": (source.get("heroArmySpots", []) as Array).size(),
+			"garrison_army_spot_count": (source.get("garrisonArmySpots", []) as Array).size(),
+			"restrict_buildings": (source.get("restrictBuildings", []) as Array).duplicate(true),
 			"create_auto_fort": bool(source.get("createAutoFort", false)),
 			"has_fortress": source.get("fortress", null) != null,
 			"neighbours": PackedStringArray(neighbour_ids),

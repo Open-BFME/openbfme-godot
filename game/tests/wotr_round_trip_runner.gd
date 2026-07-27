@@ -309,11 +309,34 @@ func _test_the_screen_offers_only_legal_moves(session) -> void:
 		if not bool((row as Dictionary)["has_position"]):
 			unpositioned += 1
 	_check("the_map_shows_ownership", owned_shown > 0, "%d owned regions" % owned_shown)
-	# The one region retail leaves without a custom centre point must be REPORTED
-	# rather than placed somewhere invented. (BFME2 1.06 authors exactly one.)
+	# A region retail leaves without a custom centre point must be REPORTED
+	# rather than placed somewhere invented. It used to be true that "no authored
+	# centre point" and "not on the map" were the same set, because
+	# `livingmap.w3d` carries no per-region mesh to take a centre from. They are
+	# no longer the same set: `lmr_fill.w3d` DOES carry one mesh per region, and
+	# the region-geometry converter computes an area-weighted centroid of
+	# retail's own triangles for each, which is derivation from shipped geometry
+	# rather than invention.
+	#
+	# So the invariant tightens rather than loosens. What must hold is an EXACT
+	# equality with no slack in it:
+	#
+	#   listed as unplaced  ==  unpositioned  -  placed from a derived centroid
+	#
+	# With no region bundle converted, the second term is 0 and this is the
+	# original assertion unchanged. With one converted, every region it covers
+	# must move out of the list and none may linger - a region reported both
+	# "placed" and "NOT ON THE MAP" on the same screen is the contradiction this
+	# now catches, and it shipped for one frame while this lane was written.
+	var centroid_placed := PackedStringArray()
+	if screen.map3d != null and screen.map3d.has_map():
+		centroid_placed = screen.map3d.centroid_placed_regions
+	var expected_listed := unpositioned - centroid_placed.size()
 	_check("regions_without_an_authored_position_are_reported_not_placed",
-		screen.unplaced_host.get_child_count() == unpositioned,
-		"%d unpositioned, %d listed" % [unpositioned, screen.unplaced_host.get_child_count()])
+		screen.unplaced_host.get_child_count() == expected_listed,
+		"%d unpositioned, %d placed from a centroid derived off retail's fill triangles, %d listed, %d expected" % [
+			unpositioned, centroid_placed.size(),
+			screen.unplaced_host.get_child_count(), expected_listed])
 
 	var staging: PackedStringArray = session.staging_regions()
 	_check("the_screen_offers_staging_regions_the_seat_actually_holds", not staging.is_empty())

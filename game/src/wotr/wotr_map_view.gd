@@ -38,10 +38,30 @@ signal region_clicked(region_id: String)
 signal region_hovered(region_id: String)
 
 const BundleScript = preload("res://src/wotr/wotr_map_bundle.gd")
+const RegionGeometryScript = preload("res://src/wotr/wotr_region_geometry.gd")
 const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 
 const MARKER_RADIUS := 9.0
 const PICK_SLOP := 7.0
+
+## How far above retail's terrain the territory fills and borders are lifted so
+## they do not z-fight the ground they lie on. This is RETAIL'S OWN NUMBER, not a
+## tuned one: `livingworld.ini` sets `ArmyLineHeightBias = 3.0` for exactly this
+## problem - "this is added to the height of each point so it doesn't conflict
+## with the terrain" - and the fills are the same kind of surface.
+const TERRITORY_HEIGHT_BIAS := 3.0
+## The border is lifted slightly further so it draws over its own fill.
+const BORDER_HEIGHT_BIAS := 4.5
+
+## How opaque an owned territory is. Retail shades the fill and lets the terrain
+## read through it; a solid fill would bury Middle-earth under flat colour.
+const TERRITORY_ALPHA := 0.46
+const TERRITORY_ALPHA_HOVER := 0.62
+const TERRITORY_ALPHA_SELECTED := 0.74
+## Retail's own neutral-region colour, from `livingworldregioneffects.ini`
+## (`NeutralRegionColor = R:245 G:245 B:245`), used at a much lower alpha so an
+## unclaimed region reads as unclaimed rather than as a seventh player.
+const NEUTRAL_TERRITORY_ALPHA := 0.10
 
 ## Camera framing, in retail world units. The default pitch looks down the map
 ## the way retail's does without pretending to reproduce its exact framing.
@@ -53,9 +73,29 @@ const MAX_ZOOM := 2.6
 const FRAMING_MARGIN := 1.06
 
 var bundle: BundleScript = null
+## Retail's per-region territory geometry, when a bundle has been converted.
+## Null means regions are drawn as markers only, and the screen says so.
+var region_geometry: RegionGeometryScript = null
+## Why there is no territory geometry, or "" when there is.
+var region_geometry_reason := ""
 ## Why there is no 3D map, or "" when there is one. Non-empty means this view
 ## draws the reason instead of a map.
 var unavailable_reason := ""
+
+## Regions actually SHADED on the map this frame, and the ones the strategic
+## layer knows about that no fill mesh covers. Both public so the screen can
+## name the second rather than leave a silent hole in Middle-earth.
+var shaded_regions: PackedStringArray = PackedStringArray()
+var unshaded_regions: PackedStringArray = PackedStringArray()
+## Regions placed from geometry the converter DERIVED (an area-weighted centroid
+## of retail's own fill triangles) rather than from an authored `CenterPoint`.
+## Reported separately because the two are different claims.
+var centroid_placed_regions: PackedStringArray = PackedStringArray()
+
+var _territory_root: Node3D = null
+## `region id -> {fill: MeshInstance3D, fill_material: StandardMaterial3D,
+## border: MeshInstance3D}`.
+var _territory_nodes: Dictionary = {}
 
 ## Region rows as `wotr_session.region_rows()` returns them. Read, never written.
 var rows: Array[Dictionary] = []
@@ -185,8 +225,45 @@ func set_bundle(loaded_bundle, reason: String) -> void:
 		_drawn_count, bundle.sub_objects.size(), bundle.sub_objects.size() - _drawn_count])
 
 
+## Bind retail's region territory geometry, or none plus the reason. Separate
+## from `set_bundle` because the two bundles fail independently: retail's map can
+## be present with no territory shapes converted, and that is a legitimate state
+## the screen reports rather than hides.
+func set_region_geometry(geometry, reason: String) -> void:
+	if viewport_container == null:
+		build()
+	region_geometry = geometry
+	region_geometry_reason = reason
+	_rebuild_territories()
+	_recompute_world_positions()
+	_apply_territory_colors()
+	queue_redraw()
+	if not has_territories():
+		push_warning("[WotrMap3D] no region territory geometry; regions are drawn as markers. %s"
+			% (reason if not reason.is_empty() else "no reason was supplied, which is itself a defect"))
+		print("[WotrMap3D] NO TERRITORY SHADING. %s" % (
+			reason if not reason.is_empty() else "no reason was supplied, which is itself a defect"))
+		return
+	print("[WotrMap3D] territory shading from retail geometry: %d regions filled, %d bordered, %d triangles" % [
+		shaded_regions.size(), _bordered_count(), region_geometry.total_triangles])
+	for line in region_geometry.describe_load():
+		print("[WotrMap3D]   %s" % line)
+
+
 func has_map() -> bool:
 	return bundle != null and bundle.loaded
+
+
+func has_territories() -> bool:
+	return region_geometry != null and region_geometry.loaded and not shaded_regions.is_empty()
+
+
+func _bordered_count() -> int:
+	var count := 0
+	for key in _territory_nodes.keys():
+		if (_territory_nodes[key] as Dictionary).has("border"):
+			count += 1
+	return count
 
 
 ## How many retail sub-objects are actually standing in the 3D world right now.
@@ -212,6 +289,7 @@ func set_regions(
 	selected_region = selection
 	selected_target = target
 	_recompute_world_positions()
+	_apply_territory_colors()
 	queue_redraw()
 
 
@@ -255,6 +333,124 @@ func _rebuild_world() -> void:
 		instance.material_override = entry["material"]
 		world_root.add_child(instance)
 		_drawn_count += 1
+	# The territories are rebuilt with the world, because clearing `world_root`
+	# above destroyed the node that held them.
+	_territory_root = null
+	_territory_nodes = {}
+	_rebuild_territories()
+
+
+## Stand retail's per-region fill and border meshes in the world, one node per
+## region. THE SHAPES ARE RETAIL'S; only the colour is this project's, and the
+## colour is a presentation value that reaches nothing.
+##
+## A region the bundle has no fill mesh for gets NO NODE. It keeps its marker and
+## is named in `unshaded_regions`, because a region silently drawn in a
+## neighbour's shape would be worse than one drawn in none.
+func _rebuild_territories() -> void:
+	if world_root == null:
+		return
+	if _territory_root != null and is_instance_valid(_territory_root):
+		world_root.remove_child(_territory_root)
+		_territory_root.queue_free()
+	_territory_root = null
+	_territory_nodes = {}
+	shaded_regions = PackedStringArray()
+	unshaded_regions = PackedStringArray()
+	if region_geometry == null or not region_geometry.loaded:
+		return
+
+	_territory_root = Node3D.new()
+	_territory_root.name = "Territories"
+	world_root.add_child(_territory_root)
+
+	var region_ids: Array[String] = []
+	for key in region_geometry.by_region.keys():
+		region_ids.append(String(key))
+	region_ids.sort()
+
+	var shaded: Array[String] = []
+	for region_id in region_ids:
+		var fill_mesh: ArrayMesh = region_geometry.region_mesh(region_id, "fill")
+		if fill_mesh == null:
+			continue
+		var slot: Dictionary = {}
+
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		# The fill lies ON the terrain, so it must not write depth or it would
+		# occlude the markers and the landmarks standing in it.
+		material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		material.render_priority = 1
+		material.albedo_color = neutral_color
+
+		var fill := MeshInstance3D.new()
+		fill.name = "Fill_%s" % region_id
+		fill.mesh = fill_mesh
+		fill.material_override = material
+		fill.position = Vector3(0.0, TERRITORY_HEIGHT_BIAS, 0.0)
+		_territory_root.add_child(fill)
+		slot["fill"] = fill
+		slot["fill_material"] = material
+
+		var border_mesh: ArrayMesh = region_geometry.region_mesh(region_id, "border")
+		if border_mesh != null:
+			var border_material := StandardMaterial3D.new()
+			border_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			border_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			border_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+			border_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+			border_material.render_priority = 2
+			# RETAIL'S OWN BORDER COLOUR: `livingworldregioneffects.ini` sets
+			# `RegionBorderColor = R:30 G:6 B:6`, which the living-world document
+			# carries through as `regionEffects[].colors.regionBorder`.
+			border_material.albedo_color = Color8(30, 6, 6, 235)
+			var border := MeshInstance3D.new()
+			border.name = "Border_%s" % region_id
+			border.mesh = border_mesh
+			border.material_override = border_material
+			border.position = Vector3(0.0, BORDER_HEIGHT_BIAS, 0.0)
+			_territory_root.add_child(border)
+			slot["border"] = border
+			slot["border_material"] = border_material
+
+		_territory_nodes[region_id] = slot
+		shaded.append(region_id)
+	shaded.sort()
+	shaded_regions = PackedStringArray(shaded)
+
+
+## Push ownership onto the territory materials. Pure presentation, run whenever
+## the strategic picture changes; nothing here is read back.
+func _apply_territory_colors() -> void:
+	if _territory_nodes.is_empty():
+		return
+	var owner_by_region: Dictionary = {}
+	for row in rows:
+		owner_by_region[String(row["id"])] = int(row["owner"])
+	var missing: Array[String] = []
+	for row in rows:
+		var region_id := String(row["id"])
+		if not _territory_nodes.has(region_id):
+			missing.append(region_id)
+			continue
+		var slot := _territory_nodes[region_id] as Dictionary
+		var material := slot["fill_material"] as StandardMaterial3D
+		var owner := int(row["owner"])
+		var color := _color_of(owner)
+		var alpha := TERRITORY_ALPHA if owner >= 0 and owner < owner_colors.size() else NEUTRAL_TERRITORY_ALPHA
+		if region_id == selected_region or region_id == selected_target:
+			alpha = TERRITORY_ALPHA_SELECTED
+		elif region_id == hover_region:
+			alpha = TERRITORY_ALPHA_HOVER
+		elif Array(targets).has(region_id):
+			alpha = TERRITORY_ALPHA_HOVER
+		color.a = alpha
+		material.albedo_color = color
+	missing.sort()
+	unshaded_regions = PackedStringArray(missing)
 
 
 func _frame_camera() -> void:
@@ -329,14 +525,25 @@ func _recompute_world_positions() -> void:
 	var placed: Array[String] = []
 	var unplaced: Array[String] = []
 	var unsampled: Array[String] = []
+	var from_centroid: Array[String] = []
 	for row in rows:
 		var region_id := String(row["id"])
-		if not bool(row["has_position"]):
-			# NOT placed, and said so. Retail derives this marker from per-region
-			# mesh data the living map does not carry.
-			unplaced.append(region_id)
-			continue
 		var authored := row["position"] as Vector2
+		if not bool(row["has_position"]):
+			# Retail leaves `CustomCenterPoint` off for a handful of regions and
+			# derives the marker from the region's OWN MESH. `livingmap.w3d`
+			# carries no such mesh, which is why these used to be listed as
+			# unplaceable - but `lmr_fill.w3d` does, and the converter computes an
+			# area-weighted centroid of retail's own triangles for every region in
+			# it. That is derivation from shipped geometry, so it may be used; it
+			# is recorded separately from an authored point so the screen can say
+			# which of the two a marker is standing on.
+			if region_geometry != null and region_geometry.derived_centroids.has(region_id):
+				authored = region_geometry.derived_centroids[region_id] as Vector2
+				from_centroid.append(region_id)
+			else:
+				unplaced.append(region_id)
+				continue
 		var height := float(bundle.terrain_extent.get("z_max", 0.0)) if has_map() else 0.0
 		if has_map():
 			var sampled: Dictionary = bundle.sample_height(authored.x, authored.y)
@@ -350,9 +557,11 @@ func _recompute_world_positions() -> void:
 	placed.sort()
 	unplaced.sort()
 	unsampled.sort()
+	from_centroid.sort()
 	placed_regions = PackedStringArray(placed)
 	unplaced_regions = PackedStringArray(unplaced)
 	unsampled_heights = PackedStringArray(unsampled)
+	centroid_placed_regions = PackedStringArray(from_centroid)
 
 
 ## Where each placed region lands on screen this frame. Recomputed from the
@@ -403,7 +612,16 @@ func _draw_overlay() -> void:
 			continue
 		var point: Vector2 = _screen_positions[region_id]
 		var color := _color_of(int(row["owner"]))
-		var radius := MARKER_RADIUS + (2.0 if int(row["armies"]) > 0 else 0.0)
+		var has_army := int(row["armies"]) > 0
+		# ONCE THE TERRITORY IS SHADED, the marker is no longer how ownership is
+		# read - the fill is - so it shrinks to what it actually still says: that
+		# an army stands here. A region with no fill mesh keeps its full-size
+		# marker, because for that region the marker is the only thing carrying
+		# ownership at all.
+		var shaded := _territory_nodes.has(region_id)
+		var radius := MARKER_RADIUS + (2.0 if has_army else 0.0)
+		if shaded:
+			radius = (MARKER_RADIUS * 0.62) if has_army else (MARKER_RADIUS * 0.34)
 		overlay.draw_circle(point, radius + 2.0, Color(0.03, 0.05, 0.03, 0.85))
 		overlay.draw_circle(point, radius, color)
 		if region_id == selected_region:
@@ -445,6 +663,7 @@ func _gui_input(event: InputEvent) -> void:
 		if hovered != hover_region:
 			hover_region = hovered
 			region_hovered.emit(hovered)
+			_apply_territory_colors()
 			queue_redraw()
 		return
 	if not (event is InputEventMouseButton):
