@@ -111,16 +111,14 @@ def git_revision(repository: Path, relative: str | None = None) -> str | None:
     return result.stdout.strip().casefold() if result.returncode == 0 else None
 
 
-def git_revision_at_exact_root(repository: Path) -> str | None:
-    """Return HEAD only when ``repository`` is itself the Git top-level.
+def _git_exact_root(repository: Path) -> Path | None:
+    """Resolve ``repository`` and return it only if it is the Git top-level.
 
-    ``git rev-parse HEAD`` searches upwards, so a directory that is not a
-    repository -- an unpacked release bundle, say -- silently answers with the
-    commit of whatever unrelated checkout happens to enclose it. An artifact
-    that claims an origin it does not have is worse than one that admits it
-    has none, so this refuses to answer unless the discovered top-level is the
-    requested root exactly. Callers that want a stamped identity must carry
-    one; they must not re-derive it from wherever they were installed.
+    Git discovers its repository by searching upwards, so any per-directory
+    question asked from a directory that is not itself a repository is
+    silently answered by whatever unrelated checkout happens to enclose it.
+    Returns the resolved root when ``git rev-parse --show-toplevel`` names
+    exactly that directory, and ``None`` otherwise.
     """
 
     git = shutil.which("git")
@@ -152,7 +150,41 @@ def git_revision_at_exact_root(repository: Path) -> str | None:
         return None
     if discovered != root:
         return None
+    return root
+
+
+def git_revision_at_exact_root(repository: Path) -> str | None:
+    """Return HEAD only when ``repository`` is itself the Git top-level.
+
+    ``git rev-parse HEAD`` searches upwards, so a directory that is not a
+    repository -- an unpacked release bundle, say -- silently answers with the
+    commit of whatever unrelated checkout happens to enclose it. An artifact
+    that claims an origin it does not have is worse than one that admits it
+    has none, so this refuses to answer unless the discovered top-level is the
+    requested root exactly. Callers that want a stamped identity must carry
+    one; they must not re-derive it from wherever they were installed.
+    """
+
+    root = _git_exact_root(repository)
+    if root is None:
+        return None
     return git_revision(root)
+
+
+def git_worktree_clean_at_exact_root(repository: Path) -> bool:
+    """Report cleanliness only when ``repository`` is itself the top-level.
+
+    ``git status`` walks up exactly like ``git rev-parse``, so a directory
+    that is not a repository inherits the clean/dirty verdict of whatever
+    checkout encloses it -- the same class of confidently wrong answer as a
+    borrowed commit. This fails closed to "not clean" unless the discovered
+    top-level is the requested root exactly.
+    """
+
+    root = _git_exact_root(repository)
+    if root is None:
+        return False
+    return git_worktree_clean(root)
 
 
 def git_worktree_clean(repository: Path) -> bool:

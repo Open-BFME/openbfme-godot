@@ -225,7 +225,7 @@ class SoftToolAttestTests(unittest.TestCase):
                     "cafebabe" * 8,
                 ),
                 mock.patch(
-                    "openbfme_importer.pipeline.git_worktree_clean",
+                    "openbfme_importer.pipeline.git_worktree_clean_at_exact_root",
                     return_value=True,
                 ),
                 mock.patch(
@@ -240,6 +240,68 @@ class SoftToolAttestTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "Blender portable tree changed"):
                     pipeline._end_w3d_conversion_batch()
                 tree_hash.assert_called()
+
+    def test_end_batch_refuses_plugin_cleanliness_from_enclosing_checkout(self) -> None:
+        """The final plugin cleanliness verdict must come from the plugin's own
+        repository. A non-repository plugin directory nested inside an
+        unrelated clean checkout would otherwise inherit that checkout's
+        "clean" answer and pass the end-of-batch attestation on a lie."""
+
+        from openbfme_importer.catalog import InstallCatalog
+        from openbfme_importer.tools import git_worktree_clean
+        from importer.tests.test_blender_tool_cache import _init_enclosing_repo
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            install = root / "install"
+            install.mkdir()
+            outer = root / "outer"
+            outer.mkdir()
+            _init_enclosing_repo(outer)
+            # Empty directories are invisible to git status, so the enclosing
+            # checkout stays clean while the plugin is not a repository.
+            plugin = outer / "plugin"
+            plugin.mkdir()
+
+            # Control: the walking check really does inherit the enclosing
+            # checkout's clean verdict, so the refusal asserted below cannot
+            # pass vacuously.
+            self.assertTrue(git_worktree_clean(plugin))
+
+            pipeline = ImportPipeline(InstallCatalog(install, (), ()), root / "state")
+            pipeline.dev_mode = False
+            blender = root / "tools" / "blender" / "blender.exe"
+            blender.parent.mkdir(parents=True)
+            blender.write_bytes(b"x" * 32)
+            pipeline._w3d_batch_tools = {
+                "blender": blender,
+                "plugin": plugin,
+                "blender_tree_sha256": "cafebabe" * 8,
+            }
+            with (
+                mock.patch.dict(os.environ, {}, clear=False),
+                mock.patch("openbfme_importer.bootstrap._reject_tree_links"),
+                mock.patch("openbfme_importer.bootstrap._reject_python_bytecode"),
+                mock.patch(
+                    "openbfme_importer.bootstrap._attest_opensage_plugin_checkout",
+                    return_value={"commit": "a" * 40, "submodule_commit": "b" * 40},
+                ),
+                mock.patch(
+                    "openbfme_importer.bootstrap.BLENDER_TREE_SHA256",
+                    "cafebabe" * 8,
+                ),
+                mock.patch(
+                    "openbfme_importer.pipeline.directory_tree_sha256",
+                    return_value="cafebabe" * 8,
+                ),
+            ):
+                os.environ.pop("OPENBFME_SOFT_TOOL_ATTEST", None)
+                os.environ.pop("OPENBFME_STRICT_TOOL_ATTEST", None)
+                os.environ.pop("OPENBFME_DEV", None)
+                with self.assertRaisesRegex(
+                    RuntimeError, "plugin changed during W3D conversion"
+                ):
+                    pipeline._end_w3d_conversion_batch()
 
 
 class DevCliTests(unittest.TestCase):

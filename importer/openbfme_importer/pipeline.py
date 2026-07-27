@@ -42,7 +42,7 @@ from .tools import (
     directory_tree_sha256,
     discover_executable,
     git_revision_at_exact_root,
-    git_worktree_clean,
+    git_worktree_clean_at_exact_root,
     inspect_tool,
     run_checked,
 )
@@ -2319,7 +2319,7 @@ def _importer_recipe_report() -> dict[str, Any]:
         # No stamp: this must be a real checkout rooted exactly here. An
         # enclosing repository's HEAD is not this tree's identity.
         commit = git_revision_at_exact_root(root)
-        clean = commit is not None and git_worktree_clean(root)
+        clean = commit is not None and git_worktree_clean_at_exact_root(root)
         provenance_source = PROVENANCE_SOURCE_GIT_EXACT_ROOT
     requirements = [
         root / "importer" / name
@@ -3643,7 +3643,7 @@ class ImportPipeline:
                 "worktree_clean": bool(
                     final_attestation.get("plugin_worktree_clean", False)
                     if final_attestation is not None
-                    else git_worktree_clean(plugin)
+                    else git_worktree_clean_at_exact_root(plugin)
                 ),
                 "python_bytecode_free": True,
             }
@@ -4565,7 +4565,9 @@ class ImportPipeline:
                 tree_ok = False
         if not tree_ok and directory_tree_sha256(blender.parent) != BLENDER_TREE_SHA256:
             raise RuntimeError("Blender portable tree changed during W3D conversion")
-        plugin_clean = git_worktree_clean(plugin)
+        # Exact-root only: a walking status check would report the cleanliness
+        # of whatever checkout encloses a non-repository plugin directory.
+        plugin_clean = git_worktree_clean_at_exact_root(plugin)
         if not plugin_clean:
             raise RuntimeError("OpenSAGE W3D plugin changed during W3D conversion")
         self._w3d_final_attestation = {

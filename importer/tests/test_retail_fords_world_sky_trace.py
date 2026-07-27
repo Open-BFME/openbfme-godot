@@ -1,13 +1,17 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import struct
+import subprocess
+import tempfile
 import unittest
 from tests.retail_inputs import retail_file
 
 try:
     from openbfme_importer.retail_fords_world_sky_trace import (
         _occurrences,
+        _opensage_trace,
         _raw_to_va,
         _relative_call_sites,
         compose_fords_world_sky_trace_contract,
@@ -15,6 +19,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - direct discovery fallback
     from importer.openbfme_importer.retail_fords_world_sky_trace import (
         _occurrences,
+        _opensage_trace,
         _raw_to_va,
         _relative_call_sites,
         compose_fords_world_sky_trace_contract,
@@ -44,6 +49,76 @@ class FordsWorldSkyTraceUnitTests(unittest.TestCase):
         relative = target - (code_va + 2 + 5)
         code = b"\x90\x90\xe8" + struct.pack("<i", relative) + b"\xc3"
         self.assertEqual([0x401002], _relative_call_sites(code, code_va, target))
+
+
+class FordsWorldSkyTraceOpenSageIdentityTests(unittest.TestCase):
+    def test_opensage_trace_refuses_enclosing_checkout_identity(self) -> None:
+        """git rev-parse walks up, so a non-repository source directory would
+        attribute the trace's evidence to the enclosing checkout's commit."""
+
+        git = shutil.which("git")
+        if not git:
+            raise unittest.SkipTest("git is not available")
+        with tempfile.TemporaryDirectory() as raw:
+            outer = Path(raw).resolve()
+            subprocess.run(
+                [git, "init", "--quiet"], cwd=outer, check=True, timeout=60
+            )
+            (outer / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(
+                [git, "add", "seed.txt"], cwd=outer, check=True, timeout=60
+            )
+            subprocess.run(
+                [
+                    git,
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "user.name=fixture",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "seed",
+                ],
+                cwd=outer,
+                check=True,
+                timeout=60,
+            )
+            head = subprocess.run(
+                [git, "rev-parse", "HEAD"],
+                cwd=outer,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            ).stdout.strip()
+
+            nested = outer / "OpenSAGE"
+            (nested / "src").mkdir(parents=True)
+
+            # Control: the walking call the guard replaces really does answer
+            # with the enclosing checkout's HEAD, so the refusal below cannot
+            # pass vacuously.
+            walked = subprocess.run(
+                [git, "-C", str(nested), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            ).stdout.strip()
+            self.assertEqual(walked, head)
+
+            with self.assertRaisesRegex(
+                ValueError, "not itself a Git repository root"
+            ):
+                _opensage_trace(nested)
+
+            # The exact root still answers with its own identity.
+            (outer / "src").mkdir()
+            trace = _opensage_trace(outer)
+            self.assertEqual(head, trace["commit"])
 
 
 class FordsWorldSkyTracePrivateIntegrationTests(unittest.TestCase):

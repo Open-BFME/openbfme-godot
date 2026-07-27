@@ -26,6 +26,8 @@ from openbfme_importer.tools import (
     discover_executable,
     git_revision,
     git_revision_at_exact_root,
+    git_worktree_clean,
+    git_worktree_clean_at_exact_root,
 )
 
 
@@ -310,6 +312,27 @@ class ReleaseIdentityProvenanceTests(unittest.TestCase):
         self.assertNotEqual(report["git_commit"], head)
         self.assertFalse(report["git_worktree_clean"])
         self.assertEqual(report["provenance_source"], "git-exact-root")
+
+    def test_worktree_cleanliness_is_exact_root_only(self) -> None:
+        """A clean/dirty verdict inherited from an enclosing checkout is the
+        same class of lie as a borrowed commit."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            outer = Path(raw).resolve()
+            _init_repo(outer)
+            nested = outer / "launcher"
+            # Empty directories are invisible to git status, so the enclosing
+            # checkout stays clean and the walking answer is a plausible lie.
+            nested.mkdir()
+
+            # Control: the walking check really does inherit the enclosing
+            # checkout's verdict, so the refusal below is not vacuous.
+            self.assertTrue(git_worktree_clean(outer))
+            self.assertTrue(git_worktree_clean(nested))
+
+            # Exact root still answers; a nested non-repository refuses.
+            self.assertTrue(git_worktree_clean_at_exact_root(outer))
+            self.assertFalse(git_worktree_clean_at_exact_root(nested))
 
     def test_real_checkout_reports_git_exact_root(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

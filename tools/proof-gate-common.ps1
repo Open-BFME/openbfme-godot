@@ -54,6 +54,14 @@ function Resolve-ProofGodot {
 
 function Get-ProofWorkingTreeIdentity {
     param([string]$RepoRoot)
+    # git discovers its repository by walking up, so a RepoRoot that is not
+    # itself a repository root would silently report the identity of whatever
+    # checkout encloses it. Refuse rather than inherit a wrong identity.
+    $topLevel = ([string](& git -C $RepoRoot rev-parse --show-toplevel)).Trim()
+    Assert-ProofTrue ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($topLevel)) "Git repository root could not be resolved for '$RepoRoot'."
+    $expectedRoot = [IO.Path]::GetFullPath($RepoRoot).TrimEnd('\', '/')
+    $discoveredRoot = [IO.Path]::GetFullPath($topLevel).TrimEnd('\', '/')
+    Assert-ProofTrue ([string]::Equals($discoveredRoot, $expectedRoot, [StringComparison]::OrdinalIgnoreCase)) "RepoRoot '$RepoRoot' is not itself a Git repository root (git top-level: '$topLevel'); its identity would be inherited from an enclosing checkout."
     $revision = (& git -C $RepoRoot rev-parse HEAD).Trim()
     Assert-ProofTrue ($LASTEXITCODE -eq 0 -and $revision -match '^[0-9a-f]{40}$') "Git revision could not be resolved."
     $temporary = Join-Path $RepoRoot ".private\scratch\proof-working-tree.diff"

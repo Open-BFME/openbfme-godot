@@ -361,6 +361,22 @@ def _opensage_trace(root: Path | str) -> dict[str, Any]:
     source = Path(root).expanduser().resolve()
     if not source.is_dir():
         raise ValueError(f"missing OpenSAGE source: {source}")
+    # git rev-parse walks up, so a source directory that is not itself a
+    # repository would inherit the HEAD of whatever checkout encloses it and
+    # the trace would attribute its evidence to the wrong commit.
+    toplevel = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "--show-toplevel"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    discovered = Path(toplevel.stdout.strip()).resolve()
+    if discovered != source:
+        raise ValueError(
+            f"OpenSAGE source is not itself a Git repository root: {source} "
+            f"(git top-level: {discovered}); refusing to inherit an enclosing "
+            "checkout's identity"
+        )
     result = subprocess.run(
         ["git", "-C", str(source), "rev-parse", "HEAD"],
         check=True,

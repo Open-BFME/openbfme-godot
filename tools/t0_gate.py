@@ -347,9 +347,20 @@ def check_authority(task, repo, rep):
 def check_repo_state(repo, task, rep):
     base = task.get("base_commit", "")
     try:
+        # git discovers its repository by walking up, so a --worktree that is
+        # not itself a repository root would silently report the HEAD (and
+        # diff, and status) of whatever checkout encloses it. A gate that
+        # inherits another repository's identity is a gate that lies.
+        toplevel = git(repo, "rev-parse", "--show-toplevel").strip()
         head = git(repo, "rev-parse", "HEAD").strip()
     except RuntimeError as exc:
         rep.fail("R1 base identity", str(exc))
+        return
+    if Path(toplevel).resolve() != Path(repo).resolve():
+        rep.fail("R1 base identity",
+                 f"{repo} is not itself a repository root (git top-level: "
+                 f"{toplevel}) - identity would be inherited from an "
+                 f"enclosing checkout")
         return
     if not re.fullmatch(r"[0-9a-f]{40}", str(base)):
         rep.skip("R1 base identity", "base_commit invalid; see C2")

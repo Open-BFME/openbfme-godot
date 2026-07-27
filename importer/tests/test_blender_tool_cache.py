@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -42,6 +44,10 @@ def _exact_plugin_git(
     *,
     cwd: Path | None = None,
 ) -> str:
+    if "--show-toplevel" in command:
+        # Simulate a well-formed checkout: discovery stops exactly at the
+        # directory the caller asked about.
+        return str(Path(cwd).resolve())
     del cwd
     if "status" in command:
         return ""
@@ -264,6 +270,8 @@ class BlenderToolCacheTests(unittest.TestCase):
                     bootstrap._checkout_plugin(state_root / "tools")
 
             def wrong_commit(command: list[str], *, cwd: Path | None = None) -> str:
+                if "--show-toplevel" in command:
+                    return str(Path(cwd).resolve())
                 if "status" in command:
                     return ""
                 if "-C" in command:
@@ -352,6 +360,131 @@ class BlenderToolCacheTests(unittest.TestCase):
             [("prepare-blender", blender), ("prepare-plugin", plugin)],
         )
         self.assertTrue(pipeline._blender_tree_verified)
+
+
+def _init_enclosing_repo(root: Path) -> str:
+    """Create a real one-commit Git repository and return its HEAD."""
+
+    git = shutil.which("git")
+    if not git:
+        raise unittest.SkipTest("git is not available")
+    subprocess.run([git, "init", "--quiet"], cwd=root, check=True, timeout=60)
+    (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run([git, "add", "seed.txt"], cwd=root, check=True, timeout=60)
+    subprocess.run(
+        [
+            git,
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "seed",
+        ],
+        cwd=root,
+        check=True,
+        timeout=60,
+    )
+    head = subprocess.run(
+        [git, "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return head.stdout.strip().casefold()
+
+
+class PluginProvenanceExactRootTests(unittest.TestCase):
+    """The attestation that feeds _w3d_final_attestation must not inherit an
+    enclosing checkout's identity through Git's upward repository discovery."""
+
+    def test_plugin_nested_in_a_checkout_does_not_inherit_its_head(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            outer = Path(raw).resolve()
+            head = _init_enclosing_repo(outer)
+            plugin = outer / "tools" / "OpenSAGE.BlenderPlugin"
+            # A .git that EXISTS but is not a valid repository passes the
+            # existence guard while git discovery keeps walking upward.
+            (plugin / ".git").mkdir(parents=True)
+            package = plugin / "io_mesh_w3d"
+            package.mkdir()
+            (package / "__init__.py").write_text("PLUGIN = 1\n", encoding="utf-8")
+            (package / "blender_addon_updater").mkdir()
+
+            git = shutil.which("git")
+            if not git:
+                raise unittest.SkipTest("git is not available")
+            # Control: the raw walking call the exact-root gate replaces
+            # really does answer with the enclosing checkout's HEAD, so the
+            # refusal asserted below cannot pass vacuously.
+            walked = bootstrap._run([git, "rev-parse", "HEAD"], cwd=plugin)
+            self.assertEqual(walked.casefold(), head)
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "OpenSAGE W3D plugin is not itself a Git repository root",
+            ):
+                bootstrap._attest_opensage_plugin_checkout(plugin)
+
+    def test_updater_submodule_must_be_its_own_repository_root(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            plugin = Path(raw).resolve() / "OpenSAGE.BlenderPlugin"
+            plugin.mkdir()
+            head = _init_enclosing_repo(plugin)
+            package = plugin / "io_mesh_w3d"
+            package.mkdir()
+            (package / "__init__.py").write_text("PLUGIN = 1\n", encoding="utf-8")
+            updater = package / "blender_addon_updater"
+            # Invalid .git: discovery walks up to the plugin repository, so
+            # the submodule commit would silently equal the plugin's HEAD.
+            (updater / ".git").mkdir(parents=True)
+
+            git = shutil.which("git")
+            if not git:
+                raise unittest.SkipTest("git is not available")
+            # Control: the walking submodule call inherits the plugin's HEAD.
+            walked = bootstrap._run(
+                [git, "-C", "io_mesh_w3d/blender_addon_updater", "rev-parse", "HEAD"],
+                cwd=plugin,
+            )
+            self.assertEqual(walked.casefold(), head)
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "updater submodule is not itself a Git repository root",
+            ):
+                bootstrap._attest_opensage_plugin_checkout(plugin)
+
+    def test_plugin_status_never_inherits_an_enclosing_checkouts_commit(self) -> None:
+        """Even if an enclosing checkout happens to sit at the pinned commit,
+        tool_status must not report the plugin ready off that coincidence."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            state_root = Path(raw) / "state"
+            _fake_plugin_tree(state_root)
+
+            def walking_git(command: list[str], *, cwd: Path | None = None) -> str:
+                if "--show-toplevel" in command:
+                    # Discovery escaped: the top-level is an enclosing
+                    # checkout, not the directory asked about. Every other
+                    # answer matches the pins exactly, so only the exact-root
+                    # gate stands between this and a false "ready".
+                    return str(Path(raw).resolve())
+                return _exact_plugin_git(command, cwd=cwd)
+
+            with (
+                mock.patch.object(bootstrap.shutil, "which", return_value="git"),
+                mock.patch.object(bootstrap, "_run", side_effect=walking_git),
+            ):
+                status = bootstrap.tool_status(state_root)
+
+            self.assertFalse(status["checks"]["opensage_w3d_plugin"])
 
 
 if __name__ == "__main__":

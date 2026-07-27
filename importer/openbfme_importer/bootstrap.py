@@ -331,6 +331,15 @@ def _attest_opensage_plugin_checkout(plugin: Path) -> dict[str, str]:
     if not (checkout / ".git").exists():
         raise RuntimeError(f"OpenSAGE W3D plugin is not a Git checkout: {checkout}")
     _reject_tree_links(checkout, "OpenSAGE W3D plugin")
+    # A present-but-invalid .git passes the existence check above while git
+    # still walks up, so the commits below could otherwise be an enclosing
+    # checkout's HEAD. Identity is only read at the exact root.
+    _require_exact_git_root(git, checkout, "OpenSAGE W3D plugin")
+    _require_exact_git_root(
+        git,
+        checkout / "io_mesh_w3d" / "blender_addon_updater",
+        "OpenSAGE W3D plugin updater submodule",
+    )
     commit = _run([git, "rev-parse", "HEAD"], cwd=checkout)
     submodule_commit = _run(
         [git, "-C", "io_mesh_w3d/blender_addon_updater", "rev-parse", "HEAD"],
@@ -463,6 +472,32 @@ def _run(command: list[str], *, cwd: Path | None = None) -> str:
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     return result.stdout.strip()
+
+
+def _require_exact_git_root(git: str, root: Path, label: str) -> None:
+    """Refuse Git identity questions that would be answered by an enclosing repo.
+
+    A ``.git`` entry that exists but is not a valid repository does not stop
+    Git's upward discovery, so ``git rev-parse HEAD`` and ``git status`` run
+    from such a directory report the identity and cleanliness of whatever
+    unrelated checkout encloses it -- a confidently wrong answer, not an
+    error. An attestation may only trust answers read at the exact requested
+    root.
+    """
+
+    if not root.is_dir():
+        raise RuntimeError(f"{label} directory is missing: {root}")
+    discovered_raw = _run([git, "rev-parse", "--show-toplevel"], cwd=root)
+    try:
+        discovered = Path(discovered_raw).resolve() if discovered_raw else None
+    except (OSError, ValueError):
+        discovered = None
+    if discovered != Path(root).resolve():
+        raise RuntimeError(
+            f"{label} is not itself a Git repository root: {root} "
+            f"(git top-level: {discovered_raw or 'unknown'}); refusing to "
+            "inherit an enclosing checkout's identity"
+        )
 
 
 def _require_hash(path: Path, expected: str, label: str) -> None:
@@ -719,6 +754,14 @@ def tool_status(
     submodule_commit = ""
     if not skip_w3d_attestation and git and (plugin / ".git").exists():
         try:
+            # Exact-root only: a walking rev-parse would report an enclosing
+            # checkout's HEAD as this plugin's commit. Missing stays "".
+            _require_exact_git_root(git, plugin, "OpenSAGE W3D plugin")
+            _require_exact_git_root(
+                git,
+                plugin / "io_mesh_w3d" / "blender_addon_updater",
+                "OpenSAGE W3D plugin updater submodule",
+            )
             plugin_commit = _run([git, "rev-parse", "HEAD"], cwd=plugin)
             submodule_commit = _run(
                 [git, "-C", "io_mesh_w3d/blender_addon_updater", "rev-parse", "HEAD"],
@@ -784,6 +827,9 @@ def tool_status(
         try:
             _reject_tree_links(plugin, "OpenSAGE W3D plugin")
             _reject_python_bytecode(plugin, "OpenSAGE W3D plugin")
+            # git status discovers its repository by walking up exactly like
+            # rev-parse; only the exact root's verdict is this plugin's own.
+            _require_exact_git_root(git, plugin, "OpenSAGE W3D plugin")
             plugin_clean = not bool(
                 _run([git, "status", "--porcelain", "--untracked-files=all"], cwd=plugin)
             )
