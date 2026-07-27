@@ -15,6 +15,14 @@ extends SceneTree
 const MEASURED_CYCLES := 2
 const SETTLE_FRAMES := 8
 
+## LIVENESS. A GDScript runtime error aborts the enclosing function on the spot
+## without propagating, so every `_check` after the error site never runs and
+## `failed` never increments - an inert runner prints a zero-failure result and
+## exits 0. Pinning the number of checks a healthy run makes turns that silent
+## abort into a loud failure. Raise it deliberately when tests are added; never
+## lower it to make a run go green.
+const EXPECTED_CHECKS := 19
+
 var passed := 0
 var failed := 0
 
@@ -147,6 +155,10 @@ func _first_line_with(text: String, marker: String) -> String:
 
 
 func _finish() -> void:
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("LEAK_ASSERTION FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("LEAK_ASSERTION_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 

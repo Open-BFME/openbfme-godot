@@ -17,6 +17,14 @@ const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 const HandoffScript = preload("res://src/wotr/wotr_handoff.gd")
 
+## LIVENESS. A GDScript runtime error aborts the enclosing function on the spot
+## without propagating, so every `_check` after the error site never runs and
+## `failed` never increments - an inert runner prints a zero-failure result and
+## exits 0. Pinning the number of checks a healthy run makes turns that silent
+## abort into a loud failure. Raise it deliberately when tests are added; never
+## lower it to make a run go green.
+const EXPECTED_CHECKS := 58
+
 var passed := 0
 var failed := 0
 
@@ -567,5 +575,9 @@ func _check(name: String, condition: bool, detail: String = "") -> void:
 
 
 func _finish() -> void:
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("WOTR_STRATEGIC FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("WOTR_STRATEGIC_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)

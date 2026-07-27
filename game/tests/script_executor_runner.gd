@@ -50,8 +50,24 @@ const CONTRACT_RELATIVE_PATH := ".private/retail-work/reports/skirmish-script-co
 ## retail_map_script_runner.gd for why that rule exists).
 const TICKS_PER_SECOND := 10
 
+## LIVENESS. A GDScript runtime error aborts the enclosing function on the spot
+## without propagating, so every `_check` after the error site never runs and
+## `failed` never increments - an inert runner prints a zero-failure result and
+## exits 0. Pinning the number of checks a healthy run makes turns that silent
+## abort into a loud failure. Raise it deliberately when tests are added; never
+## lower it to make a run go green.
+##
+## Section 10 is the one branch whose check count is not fixed: the decoded
+## .private corpus is skip-if-absent, so it contributes one check when the
+## contract is missing (or unreadable) and two when it loads. That branch is
+## reported by _contract_branch_checks rather than pinned, so the guard stays
+## exact in both environments instead of false-failing in the one without the
+## corpus.
+const EXPECTED_CHECKS_BEFORE_CONTRACT := 44
+
 var passed := 0
 var failed := 0
+var _contract_branch_checks := 1
 
 
 func _initialize() -> void:
@@ -69,6 +85,11 @@ func _run() -> void:
 	_test_document_order_semantics()
 	_test_twin_determinism()
 	_test_real_contract_payloads()
+	var expected := EXPECTED_CHECKS_BEFORE_CONTRACT + _contract_branch_checks
+	var ran := passed + failed
+	if ran != expected:
+		failed += 1
+		printerr("SCRIPT_EXECUTOR FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, expected])
 	print("SCRIPT_EXECUTOR_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -762,6 +783,9 @@ func _test_real_contract_payloads() -> void:
 		_check("real_contract_source_runs", false, "contract unreadable or empty")
 		return
 	var source: Dictionary = Array((parsed as Dictionary)["sources"])[0]
+	# The corpus is present and parsed, so this branch owes two checks, not the
+	# single one the skip and refusal paths make.
+	_contract_branch_checks = 2
 	var executor: SageScriptExecutor = Executor.new()
 	var loaded := 0
 	for row: Variant in Array(source.get("scripts", [])):

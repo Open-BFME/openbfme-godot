@@ -64,6 +64,14 @@ const ENEMY := "EnemyOne"
 const PLAYER_TEAM_NAME := "teamPlayerOne"
 const ENEMY_TEAM_NAME := "teamEnemyOne"
 
+## LIVENESS. A GDScript runtime error aborts the enclosing function on the spot
+## without propagating, so every `_check` after the error site never runs and
+## `failed` never increments - an inert runner prints a zero-failure result and
+## exits 0. Pinning the number of checks a healthy run makes turns that silent
+## abort into a loud failure. Raise it deliberately when tests are added; never
+## lower it to make a run go green.
+const EXPECTED_CHECKS := 377
+
 var passed := 0
 var failed := 0
 
@@ -108,6 +116,10 @@ func _run() -> void:
 	_test_nearest_type_exact_tie_break()
 	_test_queries_are_read_only()
 	_test_twin_worlds_agree()
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("RETAIL_SLICE_SCRIPT_WORLD FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("RETAIL_SLICE_SCRIPT_WORLD_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 

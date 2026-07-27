@@ -118,6 +118,14 @@ const FALLBACK_PROBED := [
 	"world.world_frame",
 ]
 
+## LIVENESS. A GDScript runtime error aborts the enclosing function on the spot
+## without propagating, so every `_check` after the error site never runs and
+## `failed` never increments - an inert runner prints a zero-failure result and
+## exits 0. Pinning the number of checks a healthy run makes turns that silent
+## abort into a loud failure. Raise it deliberately when tests are added; never
+## lower it to make a run go green.
+const EXPECTED_CHECKS := 3518
+
 var passed := 0
 var failed := 0
 
@@ -165,6 +173,10 @@ func _run() -> void:
 		"SURFACE total=%d backed=%d refusing=%d probedByCall=%d fallbackProbed=%d"
 		% [entries.size(), backed, entries.size() - backed, called, fallback]
 	)
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("SCRIPT_WORLD_SURFACE FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("SCRIPT_WORLD_SURFACE_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 

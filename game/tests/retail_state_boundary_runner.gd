@@ -78,6 +78,14 @@ const ParamTypes = preload("res://src/script/script_param_types.gd")
 const PLAYER := "PlayerOne"
 const ENEMY := "EnemyOne"
 
+## LIVENESS. A GDScript runtime error aborts the enclosing function on the spot
+## without propagating, so every `_check` after the error site never runs and
+## `failed` never increments - an inert runner prints a zero-failure result and
+## exits 0. Pinning the number of checks a healthy run makes turns that silent
+## abort into a loud failure. Raise it deliberately when tests are added; never
+## lower it to make a run go green.
+const EXPECTED_CHECKS := 113
+
 var passed := 0
 var failed := 0
 
@@ -100,6 +108,10 @@ func _run() -> void:
 	_test_script_env_degrades_without_a_sim_and_attach_refuses()
 	_test_logic_random_stream_lives_inside_the_snapshot_boundary()
 	_test_logic_random_stream_is_hash_inert_until_drawn_and_reset_by_setup()
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("RETAIL_STATE_BOUNDARY FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("RETAIL_STATE_BOUNDARY_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 

@@ -67,6 +67,14 @@ class DoubleAdvanceExecutor:
 		env.advance()
 
 
+## LIVENESS. A GDScript runtime error aborts the enclosing function on the spot
+## without propagating, so every `_check` after the error site never runs and
+## `failed` never increments - an inert runner prints a zero-failure result and
+## exits 0. Pinning the number of checks a healthy run makes turns that silent
+## abort into a loud failure. Raise it deliberately when tests are added; never
+## lower it to make a run go green.
+const EXPECTED_CHECKS := 111
+
 var passed := 0
 var failed := 0
 
@@ -88,6 +96,10 @@ func _run() -> void:
 	_test_match_reset_rebases_the_wiring()
 	_test_in_place_restore_rebases_the_wiring()
 	_test_peer_adoption_through_the_wired_path()
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("RETAIL_SCRIPT_WIRING FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("RETAIL_SCRIPT_WIRING_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 

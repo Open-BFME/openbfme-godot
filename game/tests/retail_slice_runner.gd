@@ -22,8 +22,26 @@ const EXPECTED_BATTLE_SIGNATURES := {
 # Multi-faction pack sets load many converted GLBs up front (isengard ~22s).
 const INITIALIZATION_WATCHDOG_MS := 30000
 
+## LIVENESS. A GDScript runtime error aborts the enclosing function on the spot
+## without propagating, so every `_check` after the error site never runs and
+## `failed` never increments - an inert runner prints a zero-failure result and
+## exits 0.
+##
+## Unlike the fixed-count runners this gate cannot pin an exact number: most of
+## its checks are generated per spawn-roster row, so the total tracks what the
+## mounted content pack declares. Pinning it would false-fail every time the
+## pack legitimately grows, which trains people to ignore the guard. What does
+## hold is a floor per branch - the document-backed run (men v-slice pack,
+## OPENBFME_CONTENT set) made 352 checks and the content-less run 261, and
+## neither branch can lose checks without something having aborted. The
+## content-less branch is never green anyway: it reports 31 real failures
+## because no document rows resolve.
+const MINIMUM_CHECKS_DOCUMENT_BACKED := 352
+const MINIMUM_CHECKS_WITHOUT_DOCUMENTS := 261
+
 var passed := 0
 var failed := 0
+var _document_backed_rows := 0
 
 
 func _initialize() -> void:
@@ -2521,6 +2539,7 @@ func _check_retail_unit_rules(slice: Node) -> void:
 		distinct_speeds[speed] = true
 		distinct_ranges[attack_range] = true
 		checked_rows += 1
+	_document_backed_rows = checked_rows
 	_check(
 		"spawn_roster_rows_all_document_backed",
 		checked_rows >= 5,
@@ -2583,5 +2602,10 @@ func _check(name: String, condition: bool, detail: String = "") -> void:
 
 
 func _finish() -> void:
+	var floor_checks := MINIMUM_CHECKS_DOCUMENT_BACKED if _document_backed_rows >= 5 else MINIMUM_CHECKS_WITHOUT_DOCUMENTS
+	var ran := passed + failed
+	if ran < floor_checks:
+		failed += 1
+		printerr("RETAIL_SLICE FAIL liveness: ran %d checks, expected at least %d - a function aborted before its assertions" % [ran, floor_checks])
 	print("RETAIL_SLICE_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)

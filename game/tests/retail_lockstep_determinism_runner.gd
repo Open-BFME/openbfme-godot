@@ -3,6 +3,14 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const CommandScript = preload("res://src/retail_slice/retail_command.gd")
 
+## LIVENESS. A GDScript runtime error aborts the enclosing function on the spot
+## without propagating, so every `_check` after the error site never runs and
+## `failed` never increments - an inert runner prints a zero-failure result and
+## exits 0. Pinning the number of checks a healthy run makes turns that silent
+## abort into a loud failure. Raise it deliberately when tests are added; never
+## lower it to make a run go green.
+const EXPECTED_CHECKS := 5
+
 var passed := 0
 var failed := 0
 
@@ -182,6 +190,10 @@ func _run() -> void:
 	_check("selection_is_excluded_from_state_hash", selection_ok)
 	_check("snapshot_round_trip_through_tick_3000", snapshot_ok and snapshot_restored, "first_divergence=%d" % first_snapshot_divergence)
 	_check("command_codec_round_trip", codec_ok)
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("RETAIL_LOCKSTEP FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("RETAIL_LOCKSTEP_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
