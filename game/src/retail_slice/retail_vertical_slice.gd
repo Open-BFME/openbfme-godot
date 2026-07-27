@@ -2540,18 +2540,25 @@ func _all_men_structure_contracts_v1() -> bool:
 	return true
 
 
-const FACTION_EVA_SIDES: Dictionary = {
-	"men": "Men",
-	"elves": "Elves",
-	"dwarves": "Dwarves",
-	"isengard": "Isengard",
-	"mordor": "Mordor",
-	"wild": "Wild",
-}
-
-
 func _faction_eva_side() -> String:
-	return String(FACTION_EVA_SIDES.get(String(faction_manifest.get("faction", "")), ""))
+	## The retail EVA side token for the mounted faction, from the SAME versioned
+	## table the script layer's faction gates use
+	## (game/data/retail_faction_sides.json). This was a hard-coded const listing
+	## the six BFME2 factions, which silently gave Angmar "" - generic EVA
+	## routing - because nobody updated the const when Angmar landed.
+	##
+	## That absence was a gap, not a decision: RotWK's retail eva.ini declares
+	## `Side = Angmar` and `Side = PlayerAngmar` (144 Angmar references in
+	## .private/retail-work/editions/rotwk/cache/effective-assets/data/ini/eva.ini,
+	## the PURE retail tree - the layered tree also shows Arnor and Rohan, which
+	## are community-patch additions and deliberately not mapped).
+	##
+	## Presentation only: this routes EVA announcements. The simulation never
+	## sees it, so no state hash can move. An unmapped faction still yields ""
+	## and falls back to generic routing exactly as before - but a MISSING table
+	## now push_errors from retail_faction_sides() instead of failing silently.
+	var sides: Dictionary = RetailFactionManifest.retail_faction_sides()
+	return String(sides.get(String(faction_manifest.get("faction", "")), ""))
 
 
 func _faction_structure_audio_contract() -> Dictionary:
