@@ -3,8 +3,8 @@
 	"surface": "Every public non-static script-declared instance method of the 16 facet objects of SageScriptWorld (the three presentation sinks counted per sink) plus the base world's own 7 surface methods under facet 'world'. simulationBacked is OBSERVED by calling each method against RetailSliceScriptWorld over a synthetic RetailSliceSim; blocking annotations are analysis, verified for coverage but not provable by a probe.",
 	"counts": {
 		"total": 319,
-		"simulationBacked": 57,
-		"refusing": 262
+		"simulationBacked": 58,
+		"refusing": 261
 	},
 	"subsystems": [
 		{
@@ -125,7 +125,7 @@
 		},
 		{
 			"id": "team-registry",
-			"requires": "The WorldBuilder sub-player team model: teams instantiated from templates, membership and leaders, priorities, team references, recruitment, merge/delete/transfer, created/destroyed edges. Bound default rosters exist; script teams do not."
+			"requires": "The WorldBuilder sub-player team model: teams instantiated from templates, membership, priorities, team references, recruitment, merge/delete/transfer, and the creation edge. Bound default rosters exist; script teams do not. WHAT THE CORPUS SHOWS, measured over the catalog-winning library BIGs of BOTH trees (identical member-for-member): the 9 routed members are 67 AI call sites carrying 85 TEAM argument slots, of which 27 (31.8%) are the <This Team> token and 58 are real sub-player team names. So unlike team-behavior-state, name resolution here IS load-bearing - 43 of the 67 sites name a real team in the SUBJECT slot. But every one of those names is a WorldBuilder team with its own membership, so a name TABLE alone buys nothing: a registry with no instantiation source and no members would make merge/delete/recruit/transfer silent no-ops that return OK. The other 24 subject slots need the sequential-script calling-team context, and transfer_to_player additionally needs entity-lifecycle-api. TWO CORRECTIONS this entry used to carry: 'destroyed edges' was WRONG (evaluateIsDestroyed is a level !hasAnyObjects() read needing no new state at all, and is now BUILT), and 'leaders' was WRONG (TEAM_IS_LED_BY_UNIT is a leadership-aura test). The creation edge survives review: Team::m_created is a genuine one-frame latch."
 		},
 		{
 			"id": "terrain-dynamics",
@@ -3635,7 +3635,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-registry",
-			"requiredSimState": "team priorities"
+			"requiredSimState": "team priorities AND the team TEMPLATE that carries the step. BFME actions 238/239 take [TEAM] only and read 'Increase/Reduce the AI priority for <TEAM> by its Success Priority Increase / Failure Priority Decrease amount', so the delta is authored per team prototype, not passed by the script - this method's `delta` parameter has no source for the two no-value spellings, which are the only ones the corpus authors (1 site each)"
 		},
 		{
 			"facet": "teams",
@@ -3671,7 +3671,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-registry",
-			"requiredSimState": "team templates buildable through production"
+			"requiredSimState": "team templates buildable through production. Signature defect recorded: BFME action 70 BUILD_TEAM takes ONE parameter, [TEAM] ('Start building team <TEAM>') - the owner comes from the team prototype, so this method's player slot is invented"
 		},
 		{
 			"facet": "teams",
@@ -3932,7 +3932,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-registry",
-			"requiredSimState": "team leader designation"
+			"requiredSimState": "NOT leader designation - that annotation was WRONG. BFME condition 123 TEAM_IS_LED_BY_UNIT takes [TEAM, UNIT] and reads 'Is team <TEAM> affected by leadership ability from unit <UNIT>': a leadership-AURA test, a different question with a different answer (a unit whose aura covers a team it does not lead answers true in retail, false from a leader name). Needs leadership auras plus the object-name registry, and a facet signature that takes the unit. Zero retail AI call sites"
 		},
 		{
 			"facet": "teams",
@@ -4022,7 +4022,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-registry",
-			"requiredSimState": "recruitment (and the gap-registered type-list parameter plus the INT-semantic ruling)"
+			"requiredSimState": "recruitment, plus a SECOND signature. The INT-semantic ruling is now CLOSED from the BFME binary itself: action 397/398 uiStrings read '<TEAM> will recruit <INT> units of type <OBJECT_TYPE_LIST> from nearby recruitable allied teams / from <TEAM>', so the INT is a unit COUNT and that pair carries no radius at all. This method's (team, radius, from_team) shape therefore fits only RECRUIT_TEAM(TEAM, REAL) / RECRUIT_TEAM_AT_TEAM(TEAM, REAL, TEAM), whose REAL is documented 'maximum recruiting distance (feet)'. NEEDED: recruit_units(team, count: int, object_type_list: String, from_team: String) in addition to the recruitment model"
 		},
 		{
 			"facet": "teams",
@@ -4690,7 +4690,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-registry",
-			"requiredSimState": "team ownership transfer - 32 AI sites, ALL of them the multiplayer inherit path (ai_mp_inherit_management)"
+			"requiredSimState": "team ownership transfer - 32 AI sites (ai_initialize 16 + ai_mp_inherit_management 16; the earlier single-library attribution was incomplete), every one of them naming a SUB-PLAYER team of the civilian player (PlyrCivilian/Player_N_Inherit) and never the <This Team> token. TWO subsystems block it: the named team model here, and per-object ownership transfer, which is entity-lifecycle-api (CP accounting, member-health arrays, corpse flow). Accepting it with neither would move nothing and return OK"
 		},
 		{
 			"facet": "teams",
@@ -4744,7 +4744,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "team-registry",
-			"requiredSimState": "team creation EDGE records (level-triggered exists() must not serve this - it would refire one-shot AI init every evaluation)"
+			"requiredSimState": "team creation EDGE records - SOURCED and CONFIRMED, unlike its sibling was_destroyed and unlike NAMED_CREATED: evaluateTeamCreated is getTeamNamed()->isCreated(), and Team::m_created is set by setActive() and CLEARED by the next Team::updateState (once per frame, from Player::update - Team.h:204/312/322, Team.cpp:1806-1816), save-persisted via Team::xfer. Needs a team INSTANTIATION event this simulation has none of (a player roster is not created mid-match); level-triggered exists() must not serve it - it would refire one-shot AI init every evaluation. All 22 retail-AI call sites author the <This Team> token regardless"
 		},
 		{
 			"facet": "teams",
@@ -4758,9 +4758,8 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "team destruction edge records"
+			"simulationBacked": true,
+			"restrictions": "bound team names only (the <This Team> restriction above); an unbound name refuses rather than reproducing retail's nonexistent-team false, exactly as teams.state does. A bound team is a player's DEFAULT team, so the census is retail's hasAnyObjects - no living battalion AND no living structure - never unit_count == 0, which would report a team down to its fortress as destroyed"
 		},
 		{
 			"facet": "teams",
@@ -6977,12 +6976,12 @@
 		},
 		{
 			"member": "TEAM_DESTROYED",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.was_destroyed"
 			],
-			"blockingSubsystem": "team-registry",
-			"mappingSource": "declared"
+			"mappingSource": "handler",
+			"note": "served for bound team names as retail's level !hasAnyObjects() read; all 5 AI call sites author the <This Team> token, which still refuses"
 		},
 		{
 			"member": "TEAM_EXECUTE_SEQUENTIAL_SCRIPT",

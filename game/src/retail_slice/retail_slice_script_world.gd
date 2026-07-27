@@ -966,13 +966,39 @@ class SlicePlayers:
 class SliceTeams:
 	extends SageScriptWorld.Teams
 
-	## Implemented: exists, unit_count, owner, stop (non-disband), and the
-	## team-behavior-state four - state/set_state (the retail TEAM_STATE
-	## string, sim.team_behavior_state) and custom_state/set_custom_state
-	## (the custom-state token set, sim.team_custom_states). Sub-player
-	## teams, discovery, threat and recruitment still refuse.
+	## Implemented: exists, unit_count, was_destroyed, owner, stop
+	## (non-disband), and the team-behavior-state four - state/set_state (the
+	## retail TEAM_STATE string, sim.team_behavior_state) and
+	## custom_state/set_custom_state (the custom-state token set,
+	## sim.team_custom_states). Sub-player teams, discovery, threat and
+	## recruitment still refuse.
 	##
 	## DELIBERATELY STILL REFUSING on this facet, with the evidence:
+	##   * was_created - unlike was_destroyed below, this one really IS an
+	##     edge: Team::m_created is set by setActive() and cleared by the next
+	##     Team::updateState (once per frame from Player::update), and it is
+	##     save-persisted. This simulation has no team INSTANTIATION event to
+	##     latch - a player's roster is not created mid-match - so there is no
+	##     edge to report, and answering exists() instead would refire the
+	##     AI's one-shot initialisation on every evaluation. All 22 retail-AI
+	##     call sites author "<This Team>" anyway.
+	##   * transfer_to_player - the whole AI slice of this member (32 of 32
+	##     sites, ai_initialize + ai_mp_inherit_management) names a SUB-PLAYER
+	##     team of the civilian player ("PlyrCivilian/Player_N_Inherit"), and
+	##     the retail write reassigns every member object's owner. Both halves
+	##     are unmodeled: the name resolves to nothing here, and per-object
+	##     ownership transfer is the entity-lifecycle-api gap (CP accounting,
+	##     member-health arrays, corpse flow). Accepting it would move nothing
+	##     and return OK.
+	##   * merge_into / delete / recruit* / collect_nearby / set_reference /
+	##     the recruitment flags - all need the WorldBuilder sub-player team
+	##     model (named instances with their own membership). A store that
+	##     accepted these would have no members to move and nothing in the sim
+	##     would ever consult it: a silent no-op, refused on the same standard
+	##     the object-name and team-behavior lanes applied.
+	##   * leader - TEAM_IS_LED_BY_UNIT is a leadership-AURA test between a
+	##     team and a named unit (BFME condition 123), not a leader
+	##     designation; see the facet declaration.
 	##   * set_attitude - the retail WRITE is sourced exactly (a one-shot
 	##     broadcast of the raw AI_MOOD int onto each member's
 	##     AIUpdateInterface::m_attitude, no clamp - ScriptActions.cpp:
@@ -1059,6 +1085,37 @@ class SliceTeams:
 		if resolved.has("query"):
 			return resolved["query"]
 		return SageWorldQuery.hit(_world().sim.living_ids(int(resolved["team"])).size())
+
+	func was_destroyed(team: String) -> SageWorldQuery:
+		## TEAM_DESTROYED reads this. STRICTLY READ-ONLY (condition path).
+		##
+		## NOT AN EDGE, AND NO NEW SIMULATION STATE. Retail's
+		## ScriptConditions::evaluateIsDestroyed is
+		## `theTeam ? !theTeam->hasAnyObjects() : false` - a level read over
+		## present membership. hasAnyObjects counts members that are neither
+		## effectively-dead nor destroyed and are not projectiles, inert
+		## objects or mines, and it INCLUDES STRUCTURES (its sibling
+		## hasAnyUnits, which TEAM_HAS_UNITS uses, is the one that excludes
+		## them). A bound script team is a player's default team - its whole
+		## roster - so the faithful census here is "no living battalion AND no
+		## living structure". unit_count() deliberately does NOT serve this:
+		## it counts battalions only, so a team down to its fortress would
+		## report destroyed when retail says otherwise.
+		##
+		## Retail's asymmetry for a NONEXISTENT team (false, "Non existent
+		## team is not destroyed") is deliberately NOT reproduced: an unbound
+		## name here is not proof of nonexistence while the sub-player team
+		## registry is unmodeled, so it refuses - the same ruling teams.state
+		## already applies.
+		var resolved := _team_or_refuse("teams.was_destroyed", team)
+		if resolved.has("query"):
+			return resolved["query"]
+		var w := _world()
+		var sim_team := int(resolved["team"])
+		return SageWorldQuery.hit(
+			w.sim.living_ids(sim_team).is_empty()
+			and w.sim.living_structure_ids(sim_team).is_empty()
+		)
 
 	func owner(team: String) -> SageWorldQuery:
 		var resolved := _team_or_refuse("teams.owner", team)

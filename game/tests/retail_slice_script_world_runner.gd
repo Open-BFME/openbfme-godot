@@ -73,7 +73,20 @@ const ENEMY_TEAM_NAME := "teamEnemyOne"
 ## 410 -> 475: RAISED by the 65 checks the three object-name-registry tests
 ## add (the eight reads/binds the shared namespace can answer, the refusals
 ## that stay refusals, and the reference-handle semantics). Nothing removed.
-const EXPECTED_CHECKS := 475
+## 475 -> 489: RAISED by the 14 checks _test_teams_was_destroyed adds - two
+## fixture preconditions plus the dead-battalions precondition (3), the four
+## _check_hit answers at 2 each (8: living, structures-only, wiped, the other
+## team), the two refusals (2) and the read-only hash check (1).
+## 3 + 8 + 2 + 1 = 14. Nothing removed.
+## 489 -> 495: RAISED by the 6 checks the snapshot-boundary block in the same
+## test adds - three _check_hit answers at 2 each (the wiped team, the
+## surviving team, and the structures-only team, each read back out of a sim
+## that adopted a snapshot). Nothing removed.
+## 495 -> 498: RAISED by the 3 checks the battalions-only mirror case adds
+## (one fixture precondition plus one _check_hit at 2). It exists because a
+## mutation run proved severing the ENTITY carry from snapshot() left all
+## six checks above green. Nothing removed.
+const EXPECTED_CHECKS := 498
 
 var passed := 0
 var failed := 0
@@ -92,6 +105,7 @@ func _run() -> void:
 	_test_players_building_count()
 	_test_players_relation_to()
 	_test_teams_reads()
+	_test_teams_was_destroyed()
 	_test_teams_stop()
 	_test_teams_behavior_state()
 	_test_teams_behavior_state_determinism()
@@ -641,6 +655,125 @@ func _test_teams_reads() -> void:
 	_check_refused(
 		"teams.owner refuses when no player name is bound to the team",
 		half_bound.teams().owner(PLAYER_TEAM_NAME)
+	)
+
+
+func _test_teams_was_destroyed() -> void:
+	## TEAM_DESTROYED. Retail's evaluateIsDestroyed is
+	## `theTeam ? !theTeam->hasAnyObjects() : false` - a LEVEL read, not an
+	## edge, and hasAnyObjects INCLUDES STRUCTURES (hasAnyUnits, which
+	## TEAM_HAS_UNITS uses, is the one that excludes them). The structure arm
+	## below is the assertion that separates the two: wiring this member to
+	## unit_count() == 0 would report a team down to its fortress as
+	## destroyed, which retail does not.
+	var sim := _make_sim()
+	var world := _make_world(sim)
+	_check("fixture: the bound team has living battalions", not sim.living_ids(0).is_empty())
+	_check(
+		"fixture: the bound team has living structures",
+		not sim.living_structure_ids(0).is_empty()
+	)
+	_check_hit(
+		"teams.was_destroyed is false while the team has objects",
+		world.teams().was_destroyed(PLAYER_TEAM_NAME),
+		false
+	)
+	for entity_id in sim.living_ids(0):
+		(sim.entities[entity_id] as Dictionary)["health"] = 0
+	_check(
+		"fixture: every battalion of the bound team is now dead",
+		sim.living_ids(0).is_empty()
+	)
+	_check_hit(
+		"teams.was_destroyed stays FALSE while only structures remain (hasAnyObjects, not hasAnyUnits)",
+		world.teams().was_destroyed(PLAYER_TEAM_NAME),
+		false
+	)
+	for structure_id in sim.living_structure_ids(0):
+		(sim.structures[structure_id] as Dictionary)["health"] = 0
+	_check_hit(
+		"teams.was_destroyed is true once no living object remains",
+		world.teams().was_destroyed(PLAYER_TEAM_NAME),
+		true
+	)
+	_check_hit(
+		"teams.was_destroyed is unaffected for the other bound team",
+		world.teams().was_destroyed(ENEMY_TEAM_NAME),
+		false
+	)
+	_check_refused(
+		"teams.was_destroyed refuses an unbound name (unbound is not proof of nonexistence)",
+		world.teams().was_destroyed("teamGhost")
+	)
+	_check_refused(
+		"teams.was_destroyed refuses '<This Team>' (no executing-team context)",
+		world.teams().was_destroyed("<This Team>")
+	)
+	var before := sim.state_hash()
+	world.teams().was_destroyed(PLAYER_TEAM_NAME)
+	world.teams().was_destroyed(ENEMY_TEAM_NAME)
+	world.teams().was_destroyed("teamGhost")
+	_check(
+		"teams.was_destroyed leaves state_hash untouched (condition path)",
+		sim.state_hash() == before
+	)
+
+	# THE SNAPSHOT BOUNDARY. This member adds no state of its own, so the
+	# assertion that matters is that everything it reads is inside what
+	# snapshot()/restore() reproduce: a peer adopting a snapshot must answer
+	# TEAM_DESTROYED exactly as the peer that wrote it. Sever either carry
+	# (the entity rows or the structure rows) and the corresponding branch
+	# below goes red.
+	var adopted: RetailSliceSim = SimScript.new()
+	adopted._rules = _harness_rules()
+	adopted.setup({}, {})
+	adopted.ai_enabled = false
+	adopted.restore(sim.snapshot())
+	var adopted_world := _make_world(adopted)
+	_check_hit(
+		"teams.was_destroyed survives snapshot/restore for the wiped team",
+		adopted_world.teams().was_destroyed(PLAYER_TEAM_NAME),
+		true
+	)
+	_check_hit(
+		"teams.was_destroyed survives snapshot/restore for the surviving team",
+		adopted_world.teams().was_destroyed(ENEMY_TEAM_NAME),
+		false
+	)
+	var structures_only: RetailSliceSim = SimScript.new()
+	structures_only._rules = _harness_rules()
+	structures_only.setup({}, {})
+	structures_only.ai_enabled = false
+	var mid := _make_sim()
+	for entity_id in mid.living_ids(0):
+		(mid.entities[entity_id] as Dictionary)["health"] = 0
+	structures_only.restore(mid.snapshot())
+	_check_hit(
+		"teams.was_destroyed survives snapshot/restore with only structures left",
+		_make_world(structures_only).teams().was_destroyed(PLAYER_TEAM_NAME),
+		false
+	)
+	# The mirror case, and it is not redundant: a mutation run proved that
+	# WITHOUT it, severing the ENTITY carry from snapshot() left every
+	# assertion above green - each of them happens to answer the same way
+	# with an empty entity table. Only a team that is alive SOLELY through
+	# its battalions distinguishes the two.
+	var battalions_only: RetailSliceSim = SimScript.new()
+	battalions_only._rules = _harness_rules()
+	battalions_only.setup({}, {})
+	battalions_only.ai_enabled = false
+	var razed := _make_sim()
+	for structure_id in razed.living_structure_ids(0):
+		(razed.structures[structure_id] as Dictionary)["health"] = 0
+	_check(
+		"fixture: the razed team still has living battalions",
+		not razed.living_ids(0).is_empty() and razed.living_structure_ids(0).is_empty()
+	)
+	battalions_only.restore(razed.snapshot())
+	_check_hit(
+		"teams.was_destroyed survives snapshot/restore with only battalions left",
+		_make_world(battalions_only).teams().was_destroyed(PLAYER_TEAM_NAME),
+		false
 	)
 
 

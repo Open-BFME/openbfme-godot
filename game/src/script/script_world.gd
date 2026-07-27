@@ -771,10 +771,34 @@ class Teams:
 
 	func was_created(_team: String) -> SageWorldQuery:
 		## WP15 TEAM_CREATED - an edge, true on the tick the team appeared.
+		##
+		## SOURCED, and it really IS an edge (unlike its object-scope sibling).
+		## evaluateTeamCreated is `getTeamNamed(name)->isCreated()`, and
+		## Team::m_created is set by setActive() and CLEARED the next time
+		## Team::updateState runs - once per frame, from Player::update
+		## (Team.h:204/312/322; Team.cpp:1806-1816 "Clears m_enteredExited,
+		## checks & clears m_created"). It is save-persisted (Team::xfer,
+		## Team.cpp:2646). So the surface's edge demand stands here - and it
+		## must NOT be wired to exists(), which would refire one-shot AI init
+		## on every evaluation. Contrast NAMED_CREATED, which the object-name
+		## lane proved is literally getUnitNamed() != NULL.
 		return _refuse_query("teams.was_created")
 
 	func was_destroyed(_team: String) -> SageWorldQuery:
 		## WP13 TEAM_DESTROYED.
+		##
+		## SOURCED, and it is NOT an edge and needs NO destruction records.
+		## ScriptConditions::evaluateIsDestroyed is exactly
+		## `theTeam ? !theTeam->hasAnyObjects() : false` - a LEVEL read of
+		## present membership, with retail's own comment "Non existent team is
+		## not destroyed" on the null arm. hasAnyObjects counts members that
+		## are neither effectively-dead nor destroyed and are not projectiles,
+		## inert objects or mines - STRUCTURES INCLUDED (Team.cpp
+		## hasAnyObjects; its sibling hasAnyUnits, which TEAM_HAS_UNITS uses,
+		## is the one that excludes structures). So this is "the team has no
+		## living objects left", answerable from a living-membership census
+		## alone. The surface's former "team destruction edge records" demand
+		## was wrong and has been withdrawn.
 		return _refuse_query("teams.was_destroyed")
 
 	func was_discovered(_team: String, _by_player: String) -> SageWorldQuery:
@@ -798,7 +822,18 @@ class Teams:
 		return _refuse_query("teams.owner")
 
 	func leader(_team: String) -> SageWorldQuery:
-		## WP15 TEAM_IS_LED_BY_UNIT. String object name.
+		## WP15 TEAM_IS_LED_BY_UNIT.
+		##
+		## THIS SIGNATURE IS MISNAMED AND CANNOT SERVE ITS OWN MEMBER. The
+		## BFME condition template (whale_scriptengine conditions worklist,
+		## condition id 123, parameters [TEAM, UNIT]) reads
+		## "Is team <TEAM> affected by leadership ability from unit <UNIT>" -
+		## a LEADERSHIP-AURA test between a team and a named unit, not a
+		## "who leads this team" designation. Answering it from a leader NAME
+		## would be a different question with a different answer (a unit whose
+		## leadership aura covers a team it does not lead answers true in
+		## retail and false here). Leader designation is not a BFME concept on
+		## this member; the surface annotation that called it one was wrong.
 		return _refuse_query("teams.leader")
 
 	func state(_team: String) -> SageWorldQuery:
@@ -857,11 +892,35 @@ class Teams:
 
 	func build(_player: String, _team: String) -> bool:
 		## WP11 BUILD_TEAM - queue the team's units for production.
+		##
+		## SIGNATURE DEFECT: BFME's BUILD_TEAM (action id 70) takes ONE
+		## parameter, [TEAM] - "Start building team <TEAM>". The PLAYER slot
+		## here is invented; the owner comes from the team's own prototype.
+		## Recorded rather than silently ignored.
 		return _refuse_command("teams.build")
 
 	func recruit(_team: String, _radius: float, _from_team: String) -> bool:
 		## WP15 RECRUIT_TEAM / RECRUIT_TEAM_AT_TEAM / TEAM_RECRUIT_UNITS[_FROM_TEAM].
 		## Empty `_from_team` recruits from the map at large.
+		##
+		## THIS SIGNATURE FITS ONLY THE RECRUIT_TEAM PAIR, AND THE INT IS NOW
+		## RULED. BFME's own action templates split into two shapes:
+		##   RECRUIT_TEAM(TEAM, REAL)                    id 180
+		##   RECRUIT_TEAM_AT_TEAM(TEAM, REAL, TEAM)      id 181
+		##     "Recruit an instance of <TEAM>, maximum recruiting distance
+		##      (feet): <REAL> [from the team <TEAM>]" - the REAL is the radius
+		##      this signature carries.
+		##   TEAM_RECRUIT_UNITS(TEAM, INT, OBJECT_TYPE_LIST)            id 397
+		##   TEAM_RECRUIT_UNITS_FROM_TEAM(TEAM, INT, OBJECT_TYPE_LIST, TEAM) 398
+		##     "<TEAM> will recruit <INT> units of type <OBJECT_TYPE_LIST>
+		##      from nearby recruitable allied teams / from <TEAM>."
+		## The second pair has NO radius at all: its INT is a unit COUNT and
+		## its type list selects which units. That closes WP15's open
+		## "ruling on the INT" - the community reference's description was
+		## garbled by placeholder substitution, but the BFME binary's own
+		## uiStrings are unambiguous. NEEDED for the count pair: a separate
+		## signature (team, count: int, object_type_list: String,
+		## from_team: String).
 		return _refuse_command("teams.recruit")
 
 	func recruit_combo_units(_team: String, _from_team: String) -> bool:
@@ -912,6 +971,15 @@ class Teams:
 	func adjust_priority(_team: String, _delta: int) -> bool:
 		## WP15 TEAM_INCREASE/DECREASE_PRIORITY[_BY_VALUE]. The no-value variants
 		## pass the engine default step; the handler decides that, not the world.
+		##
+		## CORRECTION: there is no "engine default step" for a handler to pass.
+		## BFME's TEAM_INCREASE_PRIORITY (id 238) and TEAM_DECREASE_PRIORITY
+		## (id 239) take [TEAM] only and read
+		## "Increase/Reduce the AI priority for <TEAM> by its Success Priority
+		## Increase / Failure Priority Decrease amount" - the step is authored
+		## PER TEAM TEMPLATE, so serving the no-value variants needs the team
+		## prototype's template info, not a constant. Both retail AI call sites
+		## are the no-value spelling.
 		return _refuse_command("teams.adjust_priority")
 
 	func set_attitude(_team: String, _mood: int) -> bool:

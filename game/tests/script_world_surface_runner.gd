@@ -132,7 +132,16 @@ const FALLBACK_PROBED := [
 ## real method", "annotation names a declared subsystem" - and 8 x 3 = 24. No
 ## assertion was weakened, deleted or skipped; every remaining check still runs
 ## and still passes.
-const EXPECTED_CHECKS := 3482
+## 3482 -> 3479: EXACTLY the one method that left the BLOCKED table when
+## teams.was_destroyed became simulation-backed (retail's TEAM_DESTROYED is a
+## level !hasAnyObjects() read, not the "destruction edge records" the
+## annotation used to demand, so it needed no new sim state). 1 x 3 = 3 -
+## "carries a blocking annotation", "annotation names a real method",
+## "annotation names a declared subsystem". The TEAM_DESTROYED ROUTE also
+## flipped blocked -> backed, which is check-neutral: a blocked route asserts
+## "names a declared subsystem" and a backed one asserts "cites a backed
+## method", one each. No assertion was weakened, deleted or skipped.
+const EXPECTED_CHECKS := 3479
 
 var passed := 0
 var failed := 0

@@ -253,9 +253,27 @@ const SUBSYSTEMS := {
 	),
 	"team-registry": (
 		"The WorldBuilder sub-player team model: teams instantiated from "
-		+ "templates, membership and leaders, priorities, team references, "
-		+ "recruitment, merge/delete/transfer, created/destroyed edges. Bound "
-		+ "default rosters exist; script teams do not."
+		+ "templates, membership, priorities, team references, recruitment, "
+		+ "merge/delete/transfer, and the creation edge. Bound default "
+		+ "rosters exist; script teams do not. WHAT THE CORPUS SHOWS, "
+		+ "measured over the catalog-winning library BIGs of BOTH trees "
+		+ "(identical member-for-member): the 9 routed members are 67 AI "
+		+ "call sites carrying 85 TEAM argument slots, of which 27 (31.8%) "
+		+ "are the <This Team> token and 58 are real sub-player team names. "
+		+ "So unlike team-behavior-state, name resolution here IS "
+		+ "load-bearing - 43 of the 67 sites name a real team in the SUBJECT "
+		+ "slot. But every one of those names is a WorldBuilder team with "
+		+ "its own membership, so a name TABLE alone buys nothing: a "
+		+ "registry with no instantiation source and no members would make "
+		+ "merge/delete/recruit/transfer silent no-ops that return OK. The "
+		+ "other 24 subject slots need the sequential-script calling-team "
+		+ "context, and transfer_to_player additionally needs "
+		+ "entity-lifecycle-api. TWO CORRECTIONS this entry used to carry: "
+		+ "'destroyed edges' was WRONG (evaluateIsDestroyed is a level "
+		+ "!hasAnyObjects() read needing no new state at all, and is now "
+		+ "BUILT), and 'leaders' was WRONG (TEAM_IS_LED_BY_UNIT is a "
+		+ "leadership-aura test). The creation edge survives review: "
+		+ "Team::m_created is a genuine one-frame latch."
 	),
 	"terrain-dynamics": (
 		"Terrain/water/weather dynamics: bridges, water heights, burn rates "
@@ -423,9 +441,9 @@ const BLOCKED := {
 	"progression.units_leveled_up": {"subsystem": "experience-model", "requires": "level-up counts per player"},
 	"progression.upgrade_nearest_wall": {"subsystem": "walls-and-siege", "requires": "wall segments and markers (and the gap-registered five-argument shape with reference binding - 13 AI sites)"},
 	# --- teams --------------------------------------------------------------
-	"teams.adjust_priority": {"subsystem": "team-registry", "requires": "team priorities"},
+	"teams.adjust_priority": {"subsystem": "team-registry", "requires": "team priorities AND the team TEMPLATE that carries the step. BFME actions 238/239 take [TEAM] only and read 'Increase/Reduce the AI priority for <TEAM> by its Success Priority Increase / Failure Priority Decrease amount', so the delta is authored per team prototype, not passed by the script - this method's `delta` parameter has no source for the two no-value spellings, which are the only ones the corpus authors (1 site each)"},
 	"teams.attacked_and_cannot_retaliate_count": {"subsystem": "event-ledger", "requires": "cannot-retaliate records per member"},
-	"teams.build": {"subsystem": "team-registry", "requires": "team templates buildable through production"},
+	"teams.build": {"subsystem": "team-registry", "requires": "team templates buildable through production. Signature defect recorded: BFME action 70 BUILD_TEAM takes ONE parameter, [TEAM] ('Start building team <TEAM>') - the owner comes from the team prototype, so this method's player slot is invented"},
 	"teams.collect_nearby": {"subsystem": "team-registry", "requires": "recruitment of nearby units into a team"},
 	"teams.command_points_to_build": {"subsystem": "team-registry", "requires": "CP costing over a team template"},
 	"teams.contained_count": {"subsystem": "garrison-transport-capture", "requires": "container membership per member"},
@@ -437,11 +455,11 @@ const BLOCKED := {
 	"teams.exit_all": {"subsystem": "garrison-transport-capture", "requires": "container exit (buildings-only variant included)"},
 	"teams.force_emotion": {"subsystem": "team-behavior-state", "requires": "an EmotionTracker model (see players.force_emotion - same missing tracker, unestablished EMOTION ordinals, and the seconds-vs-ticks signature defect)"},
 	"teams.harvest": {"subsystem": "economy-model-extras", "requires": "a harvesting loop"},
-	"teams.leader": {"subsystem": "team-registry", "requires": "team leader designation"},
+	"teams.leader": {"subsystem": "team-registry", "requires": "NOT leader designation - that annotation was WRONG. BFME condition 123 TEAM_IS_LED_BY_UNIT takes [TEAM, UNIT] and reads 'Is team <TEAM> affected by leadership ability from unit <UNIT>': a leadership-AURA test, a different question with a different answer (a unit whose aura covers a team it does not lead answers true in retail, false from a leader name). Needs leadership auras plus the object-name registry, and a facet signature that takes the unit. Zero retail AI call sites"},
 	"teams.members": {"subsystem": "team-registry", "requires": "membership lists carrying script names (also needs the name registry to be useful)"},
 	"teams.merge_into": {"subsystem": "team-registry", "requires": "sub-player teams with transferable membership"},
 	"teams.panic": {"subsystem": "team-behavior-state", "requires": "the AI_PANIC state machine (retail: per-member flight along a WAYPOINT_PATH with logic-random wander offsets, the PANICKING model condition, save-persisted state) plus waypoint paths from map geometry - AND a facet signature fix: the sourced action is TEAM_PANIC(TEAM, WAYPOINT_PATH) and this method has no slot for the path, so serving it would drop where the team flees to"},
-	"teams.recruit": {"subsystem": "team-registry", "requires": "recruitment (and the gap-registered type-list parameter plus the INT-semantic ruling)"},
+	"teams.recruit": {"subsystem": "team-registry", "requires": "recruitment, plus a SECOND signature. The INT-semantic ruling is now CLOSED from the BFME binary itself: action 397/398 uiStrings read '<TEAM> will recruit <INT> units of type <OBJECT_TYPE_LIST> from nearby recruitable allied teams / from <TEAM>', so the INT is a unit COUNT and that pair carries no radius at all. This method's (team, radius, from_team) shape therefore fits only RECRUIT_TEAM(TEAM, REAL) / RECRUIT_TEAM_AT_TEAM(TEAM, REAL, TEAM), whose REAL is documented 'maximum recruiting distance (feet)'. NEEDED: recruit_units(team, count: int, object_type_list: String, from_team: String) in addition to the recruitment model"},
 	"teams.recruit_combo_units": {"subsystem": "team-registry", "requires": "combo-horde recruitment"},
 	"teams.remove_all_override_relations": {"subsystem": "diplomacy-overrides", "requires": "override relation storage"},
 	"teams.remove_override_relation": {"subsystem": "diplomacy-overrides", "requires": "override relation storage"},
@@ -469,10 +487,9 @@ const BLOCKED := {
 	"teams.spin_for_ticks": {"subsystem": "order-verbs", "requires": "a timed spin/busy order"},
 	"teams.stop_sequential_script": {"subsystem": "sequential-scripts", "requires": "stoppable per-team sequential queues"},
 	"teams.threat": {"subsystem": "spatial-queries", "requires": "team threat evaluation (the AI's real usage carries a radius - gap-registered signature)"},
-	"teams.transfer_to_player": {"subsystem": "team-registry", "requires": "team ownership transfer - 32 AI sites, ALL of them the multiplayer inherit path (ai_mp_inherit_management)"},
+	"teams.transfer_to_player": {"subsystem": "team-registry", "requires": "team ownership transfer - 32 AI sites (ai_initialize 16 + ai_mp_inherit_management 16; the earlier single-library attribution was incomplete), every one of them naming a SUB-PLAYER team of the civilian player (PlyrCivilian/Player_N_Inherit) and never the <This Team> token. TWO subsystems block it: the named team model here, and per-object ownership transfer, which is entity-lifecycle-api (CP accounting, member-health arrays, corpse flow). Accepting it with neither would move nothing and return OK"},
 	"teams.wander": {"subsystem": "order-verbs", "requires": "a wander order (path and in-place variants)"},
-	"teams.was_created": {"subsystem": "team-registry", "requires": "team creation EDGE records (level-triggered exists() must not serve this - it would refire one-shot AI init every evaluation)"},
-	"teams.was_destroyed": {"subsystem": "team-registry", "requires": "team destruction edge records"},
+	"teams.was_created": {"subsystem": "team-registry", "requires": "team creation EDGE records - SOURCED and CONFIRMED, unlike its sibling was_destroyed and unlike NAMED_CREATED: evaluateTeamCreated is getTeamNamed()->isCreated(), and Team::m_created is set by setActive() and CLEARED by the next Team::updateState (once per frame, from Player::update - Team.h:204/312/322, Team.cpp:1806-1816), save-persisted via Team::xfer. Needs a team INSTANTIATION event this simulation has none of (a player roster is not created mid-match); level-triggered exists() must not serve it - it would refire one-shot AI init every evaluation. All 22 retail-AI call sites author the <This Team> token regardless"},
 	"teams.was_discovered": {"subsystem": "vision-and-discovery", "requires": "discovery records per team"},
 	# --- terrain ------------------------------------------------------------
 	"terrain.bridge_state": {"subsystem": "terrain-dynamics", "requires": "bridge objects with broken/repaired state"},
@@ -581,6 +598,7 @@ const RESTRICTIONS := {
 	"teams.set_state": "bound team names only (the '<This Team>' restriction above); writes refuse after match resolution",
 	"teams.state": "bound team names only (the '<This Team>' restriction above); an unbound name refuses rather than reproducing retail's nonexistent-team false (unbound is not proof of nonexistence while the sub-player team registry is unmodeled)",
 	"teams.stop": "disband=false only (no disband model)",
+	"teams.was_destroyed": "bound team names only (the <This Team> restriction above); an unbound name refuses rather than reproducing retail's nonexistent-team false, exactly as teams.state does. A bound team is a player's DEFAULT team, so the census is retail's hasAnyObjects - no living battalion AND no living structure - never unit_count == 0, which would report a team down to its fortress as destroyed",
 	"units.exists": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of",
 	"units.health_percent": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of; and a name that resolves to a LIVE STRUCTURE - a packed base flag refuses, because the flag row's health is the fortress it would unpack into, not the flag object's own",
 	"units.is_dying": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of. Answers retail's pointer-alive-but-effectively-dead reading (a structure row at health 0); its sibling is_totally_dead refuses, see the blocked table",
@@ -659,7 +677,7 @@ const VOCABULARY_ROUTING := {
 	"TEAM_CHANGE_OBJECT_STATUS": {"route": "blocked", "worldMethods": ["units.set_object_status"], "blockingSubsystem": "entity-status-flags", "mappingSource": "declared"},
 	"TEAM_CREATED": {"route": "blocked", "worldMethods": ["teams.was_created"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},
 	"TEAM_DELETE": {"route": "blocked", "worldMethods": ["teams.delete"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},
-	"TEAM_DESTROYED": {"route": "blocked", "worldMethods": ["teams.was_destroyed"], "blockingSubsystem": "team-registry", "mappingSource": "declared"},
+	"TEAM_DESTROYED": {"route": "backed", "worldMethods": ["teams.was_destroyed"], "mappingSource": "handler", "note": "served for bound team names as retail's level !hasAnyObjects() read; all 5 AI call sites author the <This Team> token, which still refuses"},
 	"TEAM_EXECUTE_SEQUENTIAL_SCRIPT": {"route": "blocked", "worldMethods": ["teams.execute_sequential_script"], "blockingSubsystem": "sequential-scripts", "mappingSource": "handler"},
 	"TEAM_EXECUTE_SEQUENTIAL_SCRIPT_LOOPING": {"route": "blocked", "worldMethods": ["teams.execute_sequential_script"], "blockingSubsystem": "sequential-scripts", "mappingSource": "handler", "note": "counts 0/1 are served by the handler, >=2 is a signature gap (boolean cannot express finite repeats); all 5 retail sites pass 0"},
 	"TEAM_EXIT_ALL_BUILDINGS": {"route": "blocked", "worldMethods": ["teams.exit_all"], "blockingSubsystem": "garrison-transport-capture", "mappingSource": "handler"},
