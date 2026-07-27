@@ -163,10 +163,14 @@ const SUBSYSTEMS := {
 		+ "cross-reference below shows it is NOT the largest call-site payoff."
 	),
 	"object-type-identity": (
-		"Retail object-type / KindOf / OBJECT_TYPE_LIST identity on sim rows "
-		+ "plus type-filtered censuses and list membership editing. The sim "
-		+ "knows five synthetic object ids, not the retail taxonomy - and "
-		+ "PLAYER_HAS_OBJECT_COMPARISON alone is 100 AI call sites against it."
+		"Retail object-type identity on sim rows. Its heaviest-traffic slice "
+		+ "is BUILT: rows resolve retail type names through recorded rule "
+		+ "provenance / runtime-id slugs / the manifest kind registries, the "
+		+ "script-built OBJECT_TYPE_LIST stores live in the sim (hashed, "
+		+ "empty-is-absent), and the type censuses plus nearest-of-type "
+		+ "search serve PLAYER_HAS_OBJECT_COMPARISON's 100 AI call sites. "
+		+ "Still missing here: KindOf bit sets (the importer extracts none "
+		+ "into pack documents) and model-condition flags."
 	),
 	"order-verbs": (
 		"Simulation order types beyond move/attack-move/attack/stance: guard "
@@ -313,7 +317,6 @@ const BLOCKED := {
 	"meta.living_world_command": {"subsystem": "living-world", "requires": "the LivingWorld strategic layer (11-action family funneled through one command)"},
 	"meta.living_world_query": {"subsystem": "living-world", "requires": "LivingWorld region state to read"},
 	"meta.mission_attempts": {"subsystem": "match-config-metadata", "requires": "an attempt counter carried across mission restarts"},
-	"meta.object_list_change": {"subsystem": "object-type-identity", "requires": "mutable OBJECT_TYPE_LIST stores"},
 	"meta.set_time_frozen": {"subsystem": "match-lifecycle-controls", "requires": "a freeze design that does not freeze the script layer with it - 005bcd8's deadlock finding, not missing state (clock_paused exists)"},
 	"meta.zone_focus_more_than": {"subsystem": "living-world", "requires": "campaign zone-focus state"},
 	# --- orders -------------------------------------------------------------
@@ -352,8 +355,7 @@ const BLOCKED := {
 	"players.is_in_planning_mode": {"subsystem": "match-config-metadata", "requires": "planning-mode state"},
 	"players.light_points": {"subsystem": "player-progression-state", "requires": "light points"},
 	"players.lost_object_type": {"subsystem": "event-ledger", "requires": "loss records keyed by object type"},
-	"players.object_count_of_types": {"subsystem": "object-type-identity", "requires": "retail type identity on rows plus OBJECT_TYPE_LIST resolution and an include-dead census - 124 AI call sites ride on this one method"},
-	"players.object_count_with_model_condition": {"subsystem": "object-type-identity", "requires": "model-condition flags countable per player"},
+	"players.object_count_with_model_condition": {"subsystem": "object-type-identity", "requires": "model-condition flags countable per player (no model-condition state machine exists in the sim)"},
 	"players.object_count_within_distance": {"subsystem": "spatial-queries", "requires": "type-filtered distance census from a named origin"},
 	"players.override_command_points": {"subsystem": "production-controls", "requires": "a per-team command-point cap override (the cap is global today)"},
 	"players.power_consumed": {"subsystem": "economy-model-extras", "requires": "a power model (Generals-era vocabulary; needs sourcing that BFME2 uses it at all)"},
@@ -401,7 +403,7 @@ const BLOCKED := {
 	"teams.collect_nearby": {"subsystem": "team-registry", "requires": "recruitment of nearby units into a team"},
 	"teams.command_points_to_build": {"subsystem": "team-registry", "requires": "CP costing over a team template"},
 	"teams.contained_count": {"subsystem": "garrison-transport-capture", "requires": "container membership per member"},
-	"teams.count_with_kindof": {"subsystem": "object-type-identity", "requires": "KindOf bits on rows"},
+	"teams.count_with_kindof": {"subsystem": "object-type-identity", "requires": "KindOf bit sets on rows - the importer extracts no KindOf into playable documents (only one capability-evidence string), so there is nothing authored to consult; deriving bits from the category field would be invention"},
 	"teams.custom_state": {"subsystem": "team-behavior-state", "requires": "custom-state token sets per team (the value-shape ambiguity WP15 reported also needs a ruling)"},
 	"teams.delete": {"subsystem": "team-registry", "requires": "sub-player teams to delete (living-only variant included)"},
 	"teams.enemy_sighted": {"subsystem": "vision-and-discovery", "requires": "sighting records per team"},
@@ -487,7 +489,6 @@ const BLOCKED := {
 	"units.exit_specific_building": {"subsystem": "garrison-transport-capture", "requires": "targeted container exit"},
 	"units.force_emotion": {"subsystem": "team-behavior-state", "requires": "an emotion/morale model"},
 	"units.gate_is_open": {"subsystem": "walls-and-siege", "requires": "gate state per named structure"},
-	"units.has_command_points_to_build": {"subsystem": "object-type-identity", "requires": "CP costs per retail object type"},
 	"units.has_delayed_carryover_of_type": {"subsystem": "hero-revival-carryover", "requires": "carryover ledger queries by type"},
 	"units.has_object_status": {"subsystem": "entity-status-flags", "requires": "object-status bit reads per scope"},
 	"units.health_percent": {"subsystem": "object-name-registry", "requires": "the name binding; health is modelled (UNIT_HEALTH gates on it)"},
@@ -531,7 +532,7 @@ const BLOCKED := {
 	"units.transfer_ownership": {"subsystem": "entity-lifecycle-api", "requires": "a single-object ownership transfer honoring CP accounting"},
 	"units.type_is_selected": {"subsystem": "sim-selection-model", "requires": "a lockstep selection notion queryable by type"},
 	"units.type_was_sighted": {"subsystem": "vision-and-discovery", "requires": "sighted-type records per player"},
-	"units.unowned_faction_unit_exists": {"subsystem": "object-type-identity", "requires": "neutral/unowned object modelling (every sim object is rostered today)"},
+	"units.unowned_faction_unit_exists": {"subsystem": "object-type-identity", "requires": "a sourced semantic for 'unowned faction unit': the sim now owns neutral (capturable) and creep teams, but nothing pins whether retail means neutral-owned UNITS only or capturable structures too, and the readings diverge exactly when neutral structures exist"},
 	"units.was_created": {"subsystem": "object-name-registry", "requires": "per-name creation edge records"},
 	"units.was_destroyed": {"subsystem": "object-name-registry", "requires": "per-name destruction edge records (NAMED_NOT_DESTROYED is 17 AI sites)"},
 	"units.was_discovered": {"subsystem": "vision-and-discovery", "requires": "discovery records per object"},
@@ -552,9 +553,11 @@ const RESTRICTIONS := {
 	"combat.special_power_ready": "PLAYER scope, powers of the match's spellbook document only",
 	"economy.money": "bound players only (facet path refuses unbound; the pre-facet path cannot)",
 	"meta.multiplayer_outcome": "defeat/allied_victory/allied_defeat tokens only",
+	"meta.object_list_change": "non-empty list and type names only (\"\" names nothing in the retail vocabulary); set semantics, duplicate adds and absent removes succeed as retail no-ops",
 	"orders.attack": "TEAM/PLAYER scope attacking a bound TEAM target only",
 	"orders.attack_move_to": "TEAM/PLAYER scope with explicit POSITION targets only",
-	"orders.move_to": "TEAM/PLAYER scope with explicit POSITION targets only; UNIT scope needs object-name-registry, nearest-of-type targets need object-type-identity",
+	"orders.move_to": "TEAM/PLAYER scope with POSITION or NEAREST_TYPE targets; UNIT scope needs object-name-registry; a NEAREST_TYPE naming only types the sim cannot field refuses (retail's authored targets are map-placed tactical markers, unmodeled), and waypoint/area targets need map geometry",
+	"players.object_count_of_types": "the player must resolve (bound names, '<This Player>', the plural enemies/allies aggregate tokens - aggregates SUM); the singular '<This Player's Enemy>' token refuses (no current-enemy model); creep-guard battalions and legacy synthetic ids without recorded provenance are not countable",
 	"orders.stand_ground": "TEAM/PLAYER scope, engage only - the vocabulary's boolean CLEAR is inexpressible (facet-signature-packet)",
 	"players.building_count": "empty class (count everything) or a structure kind this sim models",
 	"progression.has_science": "sciences of the GLOBAL spellbook tree only; per-team overrides refuse",
@@ -562,6 +565,7 @@ const RESTRICTIONS := {
 	"players.can_build_at_base": "the player must resolve ('<This Player>' included); bases through the shared object namespace; a non-empty object type must have an expansion rule (false for an unmodeled type would be a guess)",
 	"progression.unit_count_with_upgrade": "modelled upgrade ids only (zero for an unknown id would be a guess)",
 	"teams.stop": "disband=false only (no disband model)",
+	"units.has_command_points_to_build": "the player must resolve ('<This Player>' included); unit types with a production rule only (an unmodeled type's cost is unknowable, so it refuses)",
 	"world.player_money": "no refusal channel: an UNBOUND player reads 0 through this legacy path (reported base-class defect; economy.money is the honest surface)",
 }
 
@@ -617,11 +621,11 @@ const VOCABULARY_ROUTING := {
 	"PLAYER_DESTROYED_N_BUILDINGS_PLAYER": {"route": "blocked", "worldMethods": ["combat.buildings_destroyed_by"], "blockingSubsystem": "event-ledger", "mappingSource": "declared"},
 	"PLAYER_ENABLE_BASE_CONSTRUCTION": {"route": "blocked", "worldMethods": ["players.set_base_construction_enabled"], "blockingSubsystem": "production-controls", "mappingSource": "handler"},
 	"PLAYER_ENABLE_UNIT_CONSTRUCTION": {"route": "blocked", "worldMethods": ["players.set_unit_construction_enabled"], "blockingSubsystem": "production-controls", "mappingSource": "declared"},
-	"PLAYER_HAS_OBJECT_COMPARISON": {"route": "blocked", "worldMethods": ["players.object_count_of_types"], "blockingSubsystem": "object-type-identity", "mappingSource": "handler", "note": "the single heaviest blocked member: 100 call sites"},
+	"PLAYER_HAS_OBJECT_COMPARISON": {"route": "backed", "worldMethods": ["players.object_count_of_types"], "mappingSource": "handler", "note": "the formerly heaviest blocked member (100 call sites), served through the sim's object-type identity census; aggregate player tokens sum"},
 	"PLAYER_HAS_OBJECT_OF_VETERANCY": {"route": "blocked", "worldMethods": ["progression.has_object_of_veterancy"], "blockingSubsystem": "experience-model", "signatureGap": true, "mappingSource": "handler"},
 	"PLAYER_SELL_EVERYTHING": {"route": "blocked", "worldMethods": ["players.sell_everything"], "blockingSubsystem": "production-controls", "mappingSource": "handler"},
 	"SET_COUNTER_TO_TEAM_THREAT": {"route": "blocked", "worldMethods": ["teams.threat"], "blockingSubsystem": "spatial-queries", "signatureGap": true, "mappingSource": "handler"},
-	"SET_PLAYER_OWNERSHIP_OF_TYPE_COUNTER": {"route": "blocked", "worldMethods": ["players.object_count_of_types"], "blockingSubsystem": "object-type-identity", "mappingSource": "handler"},
+	"SET_PLAYER_OWNERSHIP_OF_TYPE_COUNTER": {"route": "backed", "worldMethods": ["players.object_count_of_types"], "mappingSource": "handler"},
 	"SET_RANDOM_COUNTER": {"route": "blocked", "worldMethods": ["world.random_int"], "blockingSubsystem": "deterministic-rng", "mappingSource": "handler"},
 	"SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER": {"route": "blocked", "worldMethods": ["teams.set_reference_to_nearest"], "blockingSubsystem": "spatial-queries", "signatureGap": true, "mappingSource": "handler"},
 	"SET_TEAM_REFERENCE": {"route": "blocked", "worldMethods": ["teams.set_reference"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},
@@ -643,8 +647,8 @@ const VOCABULARY_ROUTING := {
 	"TEAM_IS_ATTACKED_AND_CANNOT_RETALIATE_ALL": {"route": "blocked", "worldMethods": ["teams.attacked_and_cannot_retaliate_count"], "blockingSubsystem": "event-ledger", "mappingSource": "declared"},
 	"TEAM_LOAD_TRANSPORTS": {"route": "blocked", "worldMethods": ["transport.load_transports"], "blockingSubsystem": "garrison-transport-capture", "mappingSource": "handler"},
 	"TEAM_MERGE_INTO_TEAM": {"route": "blocked", "worldMethods": ["teams.merge_into"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},
-	"TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE": {"route": "blocked", "worldMethods": ["orders.move_to"], "blockingSubsystem": "object-type-identity", "mappingSource": "declared", "note": "the move itself is backed; the NEAREST_TYPE target cannot resolve without type identity"},
-	"TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER": {"route": "blocked", "worldMethods": ["orders.move_to"], "blockingSubsystem": "object-type-identity", "mappingSource": "declared", "note": "the move itself is backed; the owned NEAREST_TYPE target cannot resolve without type identity"},
+	"TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE": {"route": "blocked", "worldMethods": ["orders.move_to"], "blockingSubsystem": "base-building-ai", "mappingSource": "handler", "note": "NEAREST_TYPE targets now resolve over fieldable types, but every retail-authored target here is a map-placed tactical-marker type (CombatAreas, HighGround) no sim subsystem models - re-blocked on the marker gap, not on type identity"},
+	"TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER": {"route": "blocked", "worldMethods": ["orders.move_to"], "blockingSubsystem": "base-building-ai", "mappingSource": "handler", "note": "NEAREST_TYPE targets now resolve (owner tokens included), but the retail-authored targets are map-placed marker types (Center/Flank/Backdoor nodes) no sim subsystem models - re-blocked on the marker gap, not on type identity"},
 	"TEAM_RECRUIT_UNITS": {"route": "blocked", "worldMethods": ["teams.recruit"], "blockingSubsystem": "team-registry", "signatureGap": true, "mappingSource": "handler"},
 	"TEAM_RECRUIT_UNITS_FROM_TEAM": {"route": "blocked", "worldMethods": ["teams.recruit"], "blockingSubsystem": "team-registry", "signatureGap": true, "mappingSource": "handler"},
 	"TEAM_SET_ATTITUDE": {"route": "blocked", "worldMethods": ["teams.set_attitude"], "blockingSubsystem": "team-behavior-state", "mappingSource": "handler"},

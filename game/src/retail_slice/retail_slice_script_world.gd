@@ -177,6 +177,18 @@ func bind_script_player(player_name: String) -> bool:
 
 
 const THIS_PLAYER_TOKEN := "<This Player>"
+## The aggregate player tokens the retail AI libraries author on counting and
+## nearest-object members (exact spellings from the decoded corpus). Each
+## resolves to a SET of sim teams relative to the bound script player; the
+## censuses over them SUM (SET_PLAYER_OWNERSHIP_OF_TYPE_COUNTER writes ONE
+## counter from an enemies-token census, so the aggregate is a total, not a
+## per-player disjunction). The singular "<This Player's Enemy>" is NOT here:
+## it names the AI's current-enemy choice, a model the sim does not carry, so
+## it refuses rather than guessing which enemy.
+const THIS_PLAYERS_ENEMIES_TOKEN := "<This Player's Enemies>"
+const THIS_PLAYERS_ALLIES_TOKEN := "<This Player's Allies incl Self>"
+const THIS_PLAYERS_ENEMY_TOKEN := "<This Player's Enemy>"
+const ALL_PLAYERS_TOKEN := "<All Players>"
 
 
 func _player_team_for_token(player: String) -> int:
@@ -195,6 +207,65 @@ func _script_player_team() -> int:
 	if _script_player == "":
 		return -1
 	return _bound_player_team(_script_player)
+
+
+func _census_teams_for_player(player: String) -> Dictionary:
+	## Resolve a player argument to the SORTED team set a census aggregates
+	## over: a bound name is one team; the aggregate tokens (constants above)
+	## resolve relative to the bound script player. Answers {"teams": Array}
+	## or {"reason": String}. Read-only - condition paths resolve through
+	## here.
+	##
+	## The enemies set is the hostile ROSTERED combatants plus the creep
+	## owner when creep camps are seeded (retail's PlyrCreeps is at war with
+	## every player, and creep camp structures carry countable retail type
+	## names). The neutral capturable-structure owner is EXCLUDED: retail's
+	## PlyrCivilian relation is Neutral, not Enemy. Sets are sorted, so
+	## summation order is fixed regardless (integer sums commute).
+	if sim == null:
+		return {"reason": "no simulation attached"}
+	match player:
+		THIS_PLAYER_TOKEN:
+			var own_team := _script_player_team()
+			if own_team < 0:
+				return {"reason": "'<This Player>' cannot resolve: no script player is bound (bind_script_player)"}
+			return {"teams": [own_team]}
+		THIS_PLAYERS_ENEMIES_TOKEN, THIS_PLAYERS_ALLIES_TOKEN:
+			var anchor_team := _script_player_team()
+			if anchor_team < 0:
+				return {
+					"reason":
+					"'%s' cannot resolve: no script player is bound (bind_script_player)" % player
+				}
+			var wanted_relation := int(
+				(ParamTypes.ENUMS["RELATION"] as Dictionary)[
+					"Enemy" if player == THIS_PLAYERS_ENEMIES_TOKEN else "Friend"
+				]
+			)
+			var teams: Array = []
+			for team_value in sim.team_ids():
+				var team := int(team_value)
+				if team == anchor_team:
+					if player == THIS_PLAYERS_ALLIES_TOKEN:
+						teams.append(team)
+					continue
+				if _relation_between(anchor_team, team) == wanted_relation:
+					teams.append(team)
+			if player == THIS_PLAYERS_ENEMIES_TOKEN and sim.creep_lairs_enabled:
+				teams.append(RetailSliceSim.CREEP_TEAM)
+			teams.sort()
+			return {"teams": teams}
+		THIS_PLAYERS_ENEMY_TOKEN:
+			return {
+				"reason":
+				"the singular '<This Player's Enemy>' token names the AI's "
+				+ "current-enemy choice, a model this simulation does not carry "
+				+ "(refusing rather than guessing which enemy)"
+			}
+	var bound_team := _bound_player_team(player)
+	if bound_team < 0:
+		return {"reason": "player '%s' is not bound to a simulation team" % player}
+	return {"teams": [bound_team]}
 
 
 func resolve_script_object(name: String) -> Dictionary:
@@ -429,6 +500,10 @@ func _make_meta() -> Meta:
 	return SliceMeta.new()
 
 
+func _make_units() -> Units:
+	return SliceUnits.new()
+
+
 func _make_ai() -> Ai:
 	return SliceAi.new()
 
@@ -442,9 +517,11 @@ class SlicePlayers:
 	extends SageScriptWorld.Players
 
 	## Implemented: exists, faction, the three command-point reads,
-	## building_count, relation_to, and can_build_at_base (the base-anchored
+	## building_count, relation_to, can_build_at_base (the base-anchored
 	## buildability read, against the CORRECTED signature that carries the
-	## base - WP17's reported defect, since fixed). Everything else refuses.
+	## base - WP17's reported defect, since fixed), and object_count_of_types
+	## (the retail AI's single heaviest blocked read, served through the
+	## sim's object-type identity census). Everything else refuses.
 
 	func _world() -> RetailSliceScriptWorld:
 		return world as RetailSliceScriptWorld
@@ -606,6 +683,42 @@ class SlicePlayers:
 			return SageWorldQuery.hit(not free_kinds.is_empty())
 		return SageWorldQuery.hit(free_kinds.has(wanted_kind))
 
+	func object_count_of_types(
+		player: String, object_type_list: String, include_dead: bool
+	) -> SageWorldQuery:
+		## PLAYER_HAS_OBJECT_COMPARISON (124 retail-AI call sites together with
+		## WP01's SET_PLAYER_OWNERSHIP_OF_TYPE_COUNTER pair ride on this one
+		## method) - so STRICTLY READ-ONLY: it is a condition path evaluated an
+		## unpredictable number of times.
+		##
+		## `object_type_list` resolves list-first with a single-type fallback
+		## (sim.resolve_object_type_names - the retail engine's own rule; the
+		## corpus authors both spellings). The player argument accepts bound
+		## names and the aggregate tokens (_census_teams_for_player), and an
+		## aggregate is a SUM across the resolved teams - the counter-writing
+		## action proves retail's aggregate is a single total. The count
+		## itself is the sim's exact census over recorded row identity; a name
+		## the simulation cannot field counts a TRUE zero (no instance can
+		## exist in this match), which is also retail's answer for a list
+		## nobody has built yet. An empty list name refuses: "" names nothing
+		## in the retail vocabulary.
+		var w := _world()
+		if w == null or w.sim == null:
+			return _refuse_query("players.object_count_of_types", "no simulation attached")
+		if object_type_list == "":
+			return _refuse_query(
+				"players.object_count_of_types",
+				"empty OBJECT_TYPE_LIST name (neither a list nor a type)"
+			)
+		var resolved := w._census_teams_for_player(player)
+		if resolved.has("reason"):
+			return _refuse_query("players.object_count_of_types", String(resolved["reason"]))
+		var names: Array = w.sim.resolve_object_type_names(object_type_list)
+		var total := 0
+		for team_value in Array(resolved["teams"]):
+			total += w.sim.count_objects_of_types(int(team_value), names, include_dead)
+		return SageWorldQuery.hit(total)
+
 
 # ==========================================================================
 # TEAMS
@@ -686,10 +799,11 @@ class SliceTeams:
 class SliceOrders:
 	extends SageScriptWorld.Orders
 
-	## Implemented: move_to, attack_move_to (POSITION targets), attack (TEAM
-	## targets) and stand_ground, for TEAM and PLAYER scopes. UNIT scope needs
-	## the missing object-name binding; waypoint/area/named-object targets
-	## need map geometry the sim does not model.
+	## Implemented: move_to (POSITION and NEAREST_TYPE targets),
+	## attack_move_to (POSITION targets), attack (TEAM targets) and
+	## stand_ground, for TEAM and PLAYER scopes. UNIT scope needs the missing
+	## object-name binding; waypoint/area/named-object targets need map
+	## geometry the sim does not model.
 	##
 	## stand_ground maps to the sim's own retail-sourced "HoldGround" stance
 	## (issue_set_stance) - BFME2's stance system IS its stand-ground
@@ -726,19 +840,80 @@ class SliceOrders:
 		var resolved := _scope_team(scope, name)
 		if resolved.has("reason"):
 			return _refuse_command("orders.move_to", String(resolved["reason"]))
-		if int(target.get("kind", -1)) != SageScriptWorld.TargetKind.POSITION:
-			return _refuse_command(
-				"orders.move_to",
-				"only explicit POSITION targets are answerable (no waypoint/area/object geometry)"
-			)
 		var w := _world()
 		var team := int(resolved["team"])
-		w.sim.issue_move(
-			w.sim.living_ids(team),
-			RetailSliceScriptWorld._sim_point(target.get("position", Vector3.ZERO)),
-			"order.move",
-			team
+		match int(target.get("kind", -1)):
+			SageScriptWorld.TargetKind.POSITION:
+				w.sim.issue_move(
+					w.sim.living_ids(team),
+					RetailSliceScriptWorld._sim_point(target.get("position", Vector3.ZERO)),
+					"order.move",
+					team
+				)
+				return true
+			SageScriptWorld.TargetKind.NEAREST_TYPE:
+				return _move_to_nearest_type(team, target)
+		return _refuse_command(
+			"orders.move_to",
+			"only POSITION and NEAREST_TYPE targets are answerable (no waypoint/area/object geometry)"
 		)
+
+	func _move_to_nearest_type(team: int, target: Dictionary) -> bool:
+		## TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE[_OWNED_BY_PLAYER]: move the
+		## whole roster to the nearest living object matching an
+		## OBJECT_TYPE_LIST argument (list-first, single-type fallback).
+		##
+		## The empty owner is target_nearest_type's documented "any owner"
+		## sentinel; "<All Players>" (authored once in the corpus) is the same
+		## set spelled explicitly. Any other owner resolves through the census
+		## token rule, so "<This Player's Enemies>"-style aggregates search
+		## every resolved team.
+		##
+		## THE SEARCH ANCHOR is the position of the moving roster's
+		## lowest-living-id battalion, and the winner is the sim's exact total
+		## order (nearest_object_of_types: distance, kind, lowest id) - fully
+		## deterministic, no is_equal_approx.
+		##
+		## HONESTY SPLIT, deliberate: a type list naming NOTHING this
+		## simulation can ever field refuses (the retail AI's authored targets
+		## are map-placed tactical markers - Center1, CombatArea01 - which no
+		## sim subsystem models yet; a silent no-op would bury that gap).
+		## A FIELDABLE type with zero living instances right now is a truthful
+		## retail no-op: the retail action moves nobody when nothing matches.
+		var w := _world()
+		var type_names: Array = w.sim.resolve_object_type_names(String(target.get("name", "")))
+		var owner := String(target.get("owner", ""))
+		var owner_teams: Array = []
+		if owner != "" and owner != RetailSliceScriptWorld.ALL_PLAYERS_TOKEN:
+			var resolved_owner := w._census_teams_for_player(owner)
+			if resolved_owner.has("reason"):
+				return _refuse_command("orders.move_to", String(resolved_owner["reason"]))
+			owner_teams = resolved_owner["teams"]
+		var any_fieldable := false
+		for name_value in type_names:
+			if w.sim.fieldable_object_type(String(name_value)):
+				any_fieldable = true
+				break
+		if not any_fieldable:
+			return _refuse_command(
+				"orders.move_to",
+				(
+					"no type named by '%s' is an object this simulation can field "
+					+ "(retail's nearest-of-type moves target map-placed marker "
+					+ "objects, which no sim subsystem models)"
+				) % String(target.get("name", ""))
+			)
+		var movers := w.sim.living_ids(team)
+		if movers.is_empty():
+			# Nothing left to command: vacuous delivery, like the retail
+			# action on an emptied team.
+			return true
+		var origin := Vector2((w.sim.entities[movers[0]] as Dictionary).get("position", Vector2.ZERO))
+		var nearest: Dictionary = w.sim.nearest_object_of_types(origin, type_names, owner_teams)
+		if not bool(nearest.get("found", false)):
+			# A fieldable type with no living instance: retail moves nobody.
+			return true
+		w.sim.issue_move(movers, Vector2(nearest.get("position", Vector2.ZERO)), "order.move", team)
 		return true
 
 	func attack_move_to(scope: int, name: String, target: Dictionary) -> bool:
@@ -1164,13 +1339,34 @@ class SliceEconomy:
 class SliceMeta:
 	extends SageScriptWorld.Meta
 
-	## Implemented: player_count and multiplayer_outcome. set_time_frozen is
+	## Implemented: player_count, multiplayer_outcome and object_list_change
+	## (the sim-owned OBJECT_TYPE_LIST stores). set_time_frozen is
 	## deliberately refused even though the sim has clock_paused: freezing it
 	## also freezes whatever drives the script layer, so a scripted UNFREEZE
 	## could never run - a deadlock, which is worse than a refusal (finding).
 
 	func _world() -> RetailSliceScriptWorld:
 		return world as RetailSliceScriptWorld
+
+	func object_list_change(list_name: String, object_type: String, add: bool) -> bool:
+		## OBJECTLIST_ADDOBJECTTYPE (add) / OBJECTLIST_REMOVEOBJECTTYPE. The
+		## store is SIM-owned match state (global namespace, like retail's
+		## ScriptEngine table - see the sim's block comment), so the mutation
+		## rides the snapshot/hash boundary. Set semantics: duplicate adds
+		## and absent removes are retail no-ops that still succeed. Type-list
+		## names are a separate retail namespace from object names and base
+		## flags (resolve_script_object never consults them), so no shadowing
+		## rule applies here.
+		var w := _world()
+		if w == null or w.sim == null:
+			return _refuse_command("meta.object_list_change", "no simulation attached")
+		var result: Dictionary = w.sim.change_object_type_list(list_name, object_type, add)
+		if not bool(result.get("ok", false)):
+			return _refuse_command(
+				"meta.object_list_change",
+				"the simulation rejected the list edit: %s" % String(result.get("reason", ""))
+			)
+		return true
 
 	func player_count(_include_observers: bool) -> SageWorldQuery:
 		## Every rostered team is a player; the sim models no observers, so
@@ -1207,6 +1403,72 @@ class SliceMeta:
 		return _refuse_query(
 			"meta.multiplayer_outcome", "unknown outcome token '%s'" % outcome
 		)
+
+
+# ==========================================================================
+# UNITS
+# ==========================================================================
+
+
+class SliceUnits:
+	extends SageScriptWorld.Units
+
+	## Implemented: has_command_points_to_build. Everything else on the facet
+	## keeps the base refusal - most of it needs the object-name registry.
+	## unowned_faction_unit_exists stays REFUSED deliberately even though the
+	## sim now owns neutral (capturable) and creep teams: no source pins
+	## whether retail's "unowned faction unit" means neutral-owned UNITS only
+	## or includes capturable structures, and the two readings diverge exactly
+	## when the sim's neutral structures exist - so an answer would be a
+	## guess about which question is being asked.
+
+	func _world() -> RetailSliceScriptWorld:
+		return world as RetailSliceScriptWorld
+
+	func has_command_points_to_build(player: String, object_type: String) -> SageWorldQuery:
+		## HAS_COMMAND_POINTS_TO_BUILD_UNIT: "<PLAYER> has enough command
+		## points to build a <OBJECT_TYPE>". STRICTLY READ-ONLY (condition
+		## path). The player resolves like the base-building surface (bound
+		## names plus the "<This Player>" token); the type resolves through
+		## the production rules (retail name or runtime id ->
+		## trainable_unit_type_for), and the cost is the SAME number
+		## queue_unit will commit (sim.unit_command_point_cost), compared
+		## against the same headroom the queue admission rule computes - so
+		## this condition can never disagree with the production it gates.
+		## A type outside the production rules refuses: its cost is not
+		## derivable from anything the sim records, and a guessed answer
+		## would steer the AI's build loop.
+		var w := _world()
+		if w == null or w.sim == null:
+			return _refuse_query("units.has_command_points_to_build", "no simulation attached")
+		var team := w._player_team_for_token(player)
+		if team < 0:
+			return _refuse_query(
+				"units.has_command_points_to_build",
+				"player '%s' is not bound to a simulation team" % player
+				if player != RetailSliceScriptWorld.THIS_PLAYER_TOKEN
+				else "'<This Player>' cannot resolve: no script player is bound (bind_script_player)"
+			)
+		if object_type == "":
+			return _refuse_query(
+				"units.has_command_points_to_build", "empty object type names no unit"
+			)
+		var unit_type: String = w.sim.trainable_unit_type_for(team, object_type)
+		var cost: int = w.sim.unit_command_point_cost(unit_type) if unit_type != "" else -1
+		if cost < 0:
+			return _refuse_query(
+				"units.has_command_points_to_build",
+				(
+					"object type '%s' is not a unit this simulation's production "
+					+ "rules model, so its command-point cost is unknowable"
+				) % object_type
+			)
+		var headroom: int = (
+			w.sim.command_point_cap
+			- w.sim.command_points_for_team(team)
+			- w._queued_command_points(team)
+		)
+		return SageWorldQuery.hit(headroom >= cost)
 
 
 # ==========================================================================

@@ -30,13 +30,22 @@ extends SceneTree
 ##                        binding, and the subsystem's hash inertness for a
 ##                        match that configures no bases (the state-pin
 ##                        property)
-##  11. read-only-ness  - every implemented QUERY leaves state_hash()
+##  11. type identity   - players.object_count_of_types over recorded row
+##                        identity (provenance, runtime-id slugs, the
+##                        structure kind registry), the aggregate player
+##                        tokens, include_dead, the sim-owned
+##                        OBJECT_TYPE_LIST stores (meta.object_list_change),
+##                        units.has_command_points_to_build against the
+##                        queue admission numbers, and orders.move_to's
+##                        NEAREST_TYPE targets with the exact
+##                        distance/kind/lowest-id tie-break
+##  12. read-only-ness  - every implemented QUERY leaves state_hash()
 ##                        untouched across repeated evaluation
-##  12. determinism     - two independently built sims driven through two
+##  13. determinism     - two independently built sims driven through two
 ##                        independently built worlds give identical answers
 ##                        and identical state hashes, including the
-##                        tie-breaking attack target pick and the base
-##                        surface
+##                        tie-breaking attack target pick, the base surface
+##                        and the object-type censuses
 ##
 ## Every fixture is SYNTHETIC (the pin runner's harness rules); no retail
 ## install or content pack is required.
@@ -89,6 +98,11 @@ func _run() -> void:
 	_test_players_can_build_at_base()
 	_test_reference_namespace()
 	_test_base_state_is_hash_inert()
+	_test_players_object_count_of_types()
+	_test_object_type_list_editing()
+	_test_units_has_command_points_to_build()
+	_test_orders_move_to_nearest_type()
+	_test_nearest_type_exact_tie_break()
 	_test_queries_are_read_only()
 	_test_twin_worlds_agree()
 	print("RETAIL_SLICE_SCRIPT_WORLD_RESULT passed=%d failed=%d" % [passed, failed])
@@ -1356,7 +1370,397 @@ func _test_base_state_is_hash_inert() -> void:
 	)
 
 
-# --- 11. Read-only sweep --------------------------------------------------
+# --- 11. Object-type identity ---------------------------------------------
+
+
+func _identity_rules() -> Dictionary:
+	## Harness rules enriched with the retail identity a pack records: the
+	## soldier rule carries provenance whose source name does NOT slug-match
+	## its runtime id (so the provenance path is provably load-bearing), the
+	## archer carries none (the runtime-id fallback path is provably
+	## load-bearing too), and a structure kind registry maps synthetic retail
+	## names onto the seeded kinds.
+	var rules := _harness_rules()
+	var soldier: Dictionary = (rules["unit_rules"] as Dictionary)[SimScript.SOLDIER_OBJECT_ID]
+	soldier["provenance"] = {
+		"source_object_id": "SynthSoldierHorde",
+		"source_contract": "test-fixture",
+	}
+	rules["producer_kind_by_source_object"] = {
+		"SynthFarmHouse": "farm",
+		"SynthFortressCitadel": "fortress",
+	}
+	return rules
+
+
+func _make_identity_world() -> RetailSliceScriptWorld:
+	var sim: RetailSliceSim = SimScript.new()
+	sim._rules = _identity_rules()
+	sim.setup({}, {})
+	sim.ai_enabled = false
+	var world := _make_world(sim)
+	world.bind_script_player(PLAYER)
+	return world
+
+
+func _test_players_object_count_of_types() -> void:
+	var world := _make_identity_world()
+	var sim: RetailSliceSim = world.sim
+	var players := world.players()
+	# Roster per team: soldier + archer + builder battalions, and the five
+	# seeded structure kinds. Every expectation below is an exact census.
+	_check_hit(
+		"a provenance-recorded retail name counts the soldier row",
+		players.object_count_of_types(PLAYER, "SynthSoldierHorde", false),
+		1
+	)
+	_check_hit(
+		"retail-name matching folds case (SAGE INI lookups are case-insensitive)",
+		players.object_count_of_types(PLAYER, "SYNTHSOLDIERHORDE", false),
+		1
+	)
+	_check_hit(
+		"a provenance-free row resolves through the runtime-id slug",
+		players.object_count_of_types(PLAYER, "GondorArcher", false),
+		1
+	)
+	_check_hit(
+		"the MEMBER object name does not count the horde row (granularity: a row is one retail horde)",
+		players.object_count_of_types(PLAYER, "GondorFighter", false),
+		0
+	)
+	_check_hit(
+		"a registry-mapped structure name counts the team's farms",
+		players.object_count_of_types(PLAYER, "SynthFarmHouse", false),
+		1
+	)
+	_check_hit(
+		"the fortress registry name counts the enemy fortress for the enemy",
+		players.object_count_of_types(ENEMY, "SynthFortressCitadel", false),
+		1
+	)
+	_check_hit(
+		"an unfieldable name counts a TRUE zero over the enumerable census",
+		players.object_count_of_types(PLAYER, "MordorLumberMill", false),
+		0
+	)
+	# A declared list counts the union of its members; an unfieldable member
+	# contributes its true zero.
+	_check(
+		"fixture: the offense list builds",
+		world.meta().object_list_change("Synth_Offense", "SynthSoldierHorde", true)
+		and world.meta().object_list_change("Synth_Offense", "GondorArcher", true)
+		and world.meta().object_list_change("Synth_Offense", "GhostType", true)
+	)
+	_check_hit(
+		"a declared list counts the union of its members",
+		players.object_count_of_types(PLAYER, "Synth_Offense", false),
+		2
+	)
+	# Aggregate player tokens (the retail AI's authored spellings). Sums, not
+	# per-player disjunctions - the counter-writing action proves the shape.
+	_check_hit(
+		"'<This Player>' resolves through the bound script player",
+		players.object_count_of_types(RetailSliceScriptWorld.THIS_PLAYER_TOKEN, "Synth_Offense", false),
+		2
+	)
+	# Token direction is proven with ASYMMETRIC counts (only the enemy fields
+	# a knight; only the anchor fields an archer), so a swapped relation
+	# cannot pass by symmetry.
+	_check_hit(
+		"the plural enemies token counts the hostile roster's knight",
+		players.object_count_of_types(
+			RetailSliceScriptWorld.THIS_PLAYERS_ENEMIES_TOKEN, "GondorKnight", false
+		),
+		1
+	)
+	_check_hit(
+		"the enemies token excludes the anchor's own roster",
+		players.object_count_of_types(
+			RetailSliceScriptWorld.THIS_PLAYERS_ENEMIES_TOKEN, "GondorArcher", false
+		),
+		0
+	)
+	_check_hit(
+		"the allies-incl-self token includes the anchor's archer",
+		players.object_count_of_types(
+			RetailSliceScriptWorld.THIS_PLAYERS_ALLIES_TOKEN, "GondorArcher", false
+		),
+		1
+	)
+	_check_hit(
+		"the allies-incl-self token excludes the hostile knight",
+		players.object_count_of_types(
+			RetailSliceScriptWorld.THIS_PLAYERS_ALLIES_TOKEN, "GondorKnight", false
+		),
+		0
+	)
+	# include_dead: a razed/dead row leaves the living census but stays
+	# countable while its row persists.
+	var enemy_soldier: Dictionary = sim.entities[101]
+	enemy_soldier["health"] = 0
+	(enemy_soldier["member_health"] as Array)[0] = 0
+	_check_hit(
+		"a dead row leaves the living census",
+		players.object_count_of_types(ENEMY, "SynthSoldierHorde", false),
+		0
+	)
+	_check_hit(
+		"include_dead still counts the persisting dead row",
+		players.object_count_of_types(ENEMY, "SynthSoldierHorde", true),
+		1
+	)
+	# Refusals: what cannot be resolved is refused, never guessed.
+	_check_refused(
+		"an empty OBJECT_TYPE_LIST name refuses",
+		players.object_count_of_types(PLAYER, "", false)
+	)
+	_check_refused(
+		"an unbound player name refuses",
+		players.object_count_of_types("Nobody", "SynthSoldierHorde", false)
+	)
+	_check_refused(
+		"the singular current-enemy token refuses (no current-enemy model)",
+		players.object_count_of_types(
+			RetailSliceScriptWorld.THIS_PLAYERS_ENEMY_TOKEN, "SynthSoldierHorde", false
+		)
+	)
+	var tokenless := _make_world(_make_sim())
+	_check_refused(
+		"the enemies token refuses without a bound script player",
+		tokenless.players().object_count_of_types(
+			RetailSliceScriptWorld.THIS_PLAYERS_ENEMIES_TOKEN, "SynthSoldierHorde", false
+		)
+	)
+
+
+func _test_object_type_list_editing() -> void:
+	var world := _make_identity_world()
+	var sim: RetailSliceSim = world.sim
+	var players := world.players()
+	_check(
+		"fixture: a two-member list builds",
+		world.meta().object_list_change("Synth_Edit", "SynthSoldierHorde", true)
+		and world.meta().object_list_change("Synth_Edit", "GondorArcher", true)
+	)
+	_check(
+		"a duplicate add is a retail set no-op that still succeeds",
+		world.meta().object_list_change("Synth_Edit", "SynthSoldierHorde", true)
+		and (sim.script_object_type_lists["Synth_Edit"] as Array).size() == 2
+	)
+	_check(
+		"members are stored sorted (canonical set serialization)",
+		sim.script_object_type_lists["Synth_Edit"] == ["GondorArcher", "SynthSoldierHorde"]
+	)
+	_check(
+		"removing a member narrows the census",
+		world.meta().object_list_change("Synth_Edit", "GondorArcher", false)
+	)
+	_check_hit(
+		"the narrowed list counts only its remaining member",
+		players.object_count_of_types(PLAYER, "Synth_Edit", false),
+		1
+	)
+	_check(
+		"an absent-member remove is a retail no-op that still succeeds",
+		world.meta().object_list_change("Synth_Edit", "NeverAdded", false)
+	)
+	_check(
+		"removing the last member erases the list key itself",
+		world.meta().object_list_change("Synth_Edit", "SynthSoldierHorde", false)
+		and not sim.has_object_type_list("Synth_Edit")
+	)
+	_check_hit(
+		"an emptied list's name reads as a single type again (the retail fallback)",
+		players.object_count_of_types(PLAYER, "Synth_Edit", false),
+		0
+	)
+	_check(
+		"an empty list name refuses",
+		not world.meta().object_list_change("", "SynthSoldierHorde", true)
+	)
+	_check(
+		"an empty object type refuses",
+		not world.meta().object_list_change("Synth_Edit", "", true)
+	)
+
+
+func _test_units_has_command_points_to_build() -> void:
+	var sim := _make_sim()
+	var world := _make_world(sim)
+	world.bind_script_player(PLAYER)
+	var units := world.units()
+	# The soldier horde costs 60 CP (the default manifest rule). The seeded
+	# roster commits 120 (soldier + archer; the builder is 0), and the cap is
+	# the sim's command_point_cap - so the expected verdict is derivable
+	# exactly from the queue admission numbers.
+	var headroom: int = (
+		sim.command_point_cap
+		- sim.command_points_for_team(SimScript.PLAYER_TEAM)
+		- world._queued_command_points(SimScript.PLAYER_TEAM)
+	)
+	var cost: int = sim.unit_command_point_cost(SimScript.SOLDIER_HORDE_ID)
+	_check("fixture: the soldier rule carries a positive CP cost", cost > 0)
+	_check_hit(
+		"the retail spelling answers exactly the queue admission verdict",
+		units.has_command_points_to_build(PLAYER, "GondorFighterHorde"),
+		headroom >= cost
+	)
+	_check_hit(
+		"'<This Player>' resolves through the script player",
+		units.has_command_points_to_build(
+			RetailSliceScriptWorld.THIS_PLAYER_TOKEN, "GondorFighterHorde"
+		),
+		headroom >= cost
+	)
+	# Exhaust the headroom and the verdict flips with the same numbers.
+	sim.team_command_points[SimScript.PLAYER_TEAM] = sim.command_point_cap
+	_check_hit(
+		"a capped-out player has no room to build",
+		units.has_command_points_to_build(PLAYER, "GondorFighterHorde"),
+		false
+	)
+	_check_refused(
+		"a type without a production rule refuses (its cost is unknowable)",
+		units.has_command_points_to_build(PLAYER, "MordorLumberMill")
+	)
+	_check_refused(
+		"an empty object type refuses",
+		units.has_command_points_to_build(PLAYER, "")
+	)
+	_check_refused(
+		"an unbound player refuses",
+		units.has_command_points_to_build("Nobody", "GondorFighterHorde")
+	)
+
+
+func _test_orders_move_to_nearest_type() -> void:
+	var world := _make_identity_world()
+	var sim: RetailSliceSim = world.sim
+	_configure_base_building(sim)
+	var orders := world.orders()
+	var own_farm := _structure_id_of_kind(sim, SimScript.PLAYER_TEAM, "farm")
+	var enemy_farm := _structure_id_of_kind(sim, SimScript.ENEMY_TEAM, "farm")
+	_check("fixture: both farms exist", own_farm != 0 and enemy_farm != 0)
+	var origin := Vector2((sim.entities[1] as Dictionary)["position"])
+	# The sim-level pick: any-owner prefers the mover's own (closer) farm;
+	# the owner filter redirects to the enemy's.
+	var any_pick: Dictionary = sim.nearest_object_of_types(origin, ["SynthFarmHouse"], [])
+	_check(
+		"the any-owner nearest farm is the mover's own (closer) farm",
+		bool(any_pick.get("found", false)) and int(any_pick.get("id", 0)) == own_farm
+	)
+	var enemy_pick: Dictionary = sim.nearest_object_of_types(
+		origin, ["SynthFarmHouse"], [SimScript.ENEMY_TEAM]
+	)
+	_check(
+		"the owner filter redirects the pick to the enemy farm",
+		bool(enemy_pick.get("found", false)) and int(enemy_pick.get("id", 0)) == enemy_farm
+	)
+	# A marker type the sim cannot field refuses - the modeling gap must stay
+	# visible, never become a silent stand-down.
+	_check(
+		"a marker type the sim cannot field refuses",
+		not orders.move_to(
+			SageScriptWorld.Scope.TEAM,
+			PLAYER_TEAM_NAME,
+			SageScriptWorld.target_nearest_type("Center1", "")
+		)
+	)
+	# A fieldable type with no living instance is the retail no-op: success,
+	# and NOTHING moved (the hash is untouched because no order was issued).
+	var before := sim.state_hash()
+	_check(
+		"a fieldable type with no living instance is a truthful retail no-op",
+		orders.move_to(
+			SageScriptWorld.Scope.TEAM,
+			PLAYER_TEAM_NAME,
+			SageScriptWorld.target_nearest_type("SynthPitType", "")
+		)
+	)
+	_check("the no-op issued no order at all", sim.state_hash() == before)
+	# The owned move through the world: the enemies token resolves and the
+	# roster is ordered at the enemy farm's position.
+	_check(
+		"the enemies-token owned move is served",
+		orders.move_to(
+			SageScriptWorld.Scope.TEAM,
+			PLAYER_TEAM_NAME,
+			SageScriptWorld.target_nearest_type(
+				"SynthFarmHouse", RetailSliceScriptWorld.THIS_PLAYERS_ENEMIES_TOKEN
+			)
+		)
+	)
+	_check(
+		"the moving roster's destination is the enemy farm",
+		Vector2((sim.entities[1] as Dictionary)["destination"])
+		== Vector2((sim.structures[enemy_farm] as Dictionary)["position"])
+	)
+	# A list name resolves before the search, exactly like the census path.
+	world.meta().object_list_change("Synth_Move_List", "SynthFarmHouse", true)
+	_check(
+		"a declared list name resolves as the move's type argument",
+		orders.move_to(
+			SageScriptWorld.Scope.TEAM,
+			PLAYER_TEAM_NAME,
+			SageScriptWorld.target_nearest_type("Synth_Move_List", "")
+		)
+	)
+	_check(
+		"the list-driven move re-aimed the roster at the nearer own farm",
+		Vector2((sim.entities[1] as Dictionary)["destination"])
+		== Vector2((sim.structures[own_farm] as Dictionary)["position"])
+	)
+	# An owner that cannot resolve refuses (the singular token has no model).
+	_check(
+		"an unresolvable owner refuses the owned move",
+		not orders.move_to(
+			SageScriptWorld.Scope.TEAM,
+			PLAYER_TEAM_NAME,
+			SageScriptWorld.target_nearest_type(
+				"SynthFarmHouse", RetailSliceScriptWorld.THIS_PLAYERS_ENEMY_TOKEN
+			)
+		)
+	)
+
+
+func _test_nearest_type_exact_tie_break() -> void:
+	## The total order under EXACT ties: equal squared distance resolves to
+	## battalions before structures, then to the lowest id - written with
+	## coordinates whose squared distances are exactly representable, so the
+	## tie is a true float equality, not an approximation.
+	var world := _make_identity_world()
+	var sim: RetailSliceSim = world.sim
+	var origin := Vector2.ZERO
+	# Two soldier battalions (ids 1 < 101) at mirrored positions: d^2 = 25.
+	(sim.entities[1] as Dictionary)["position"] = Vector2(-3.0, 4.0)
+	(sim.entities[101] as Dictionary)["position"] = Vector2(3.0, 4.0)
+	var pick: Dictionary = sim.nearest_object_of_types(origin, ["SynthSoldierHorde"], [])
+	_check(
+		"an exact distance tie between battalions resolves to the LOWEST id",
+		int(pick.get("id", 0)) == 1 and String(pick.get("kind", "")) == "battalion"
+	)
+	# A structure at the same exact squared distance loses to a battalion.
+	var own_farm := _structure_id_of_kind(sim, SimScript.PLAYER_TEAM, "farm")
+	(sim.structures[own_farm] as Dictionary)["position"] = Vector2(0.0, 5.0)
+	var mixed: Dictionary = sim.nearest_object_of_types(origin, ["SynthSoldierHorde", "SynthFarmHouse"], [])
+	_check(
+		"an exact battalion/structure tie resolves to the battalion",
+		int(mixed.get("id", 0)) == 1 and String(mixed.get("kind", "")) == "battalion"
+	)
+	# Remove the battalions from contention: the structure tie is real too.
+	(sim.entities[1] as Dictionary)["position"] = Vector2(80.0, 80.0)
+	(sim.entities[101] as Dictionary)["position"] = Vector2(-80.0, 80.0)
+	var enemy_farm := _structure_id_of_kind(sim, SimScript.ENEMY_TEAM, "farm")
+	(sim.structures[enemy_farm] as Dictionary)["position"] = Vector2(5.0, 0.0)
+	var farms: Dictionary = sim.nearest_object_of_types(origin, ["SynthFarmHouse"], [])
+	_check(
+		"an exact structure/structure tie resolves to the LOWEST structure id",
+		int(farms.get("id", 0)) == mini(own_farm, enemy_farm)
+	)
+
+
+# --- 12. Read-only sweep --------------------------------------------------
 
 
 func _test_queries_are_read_only() -> void:
@@ -1406,6 +1810,17 @@ func _test_queries_are_read_only() -> void:
 		world.players().can_build_at_base(PLAYER, "AI_BASE", "SynthPitType")
 		world.players().can_build_at_base(PLAYER, "AI_BASE", "GhostType")
 		world.players().can_build_at_base(PLAYER, "BASE_FLAG_2", "")
+		world.players().object_count_of_types(PLAYER, "GondorArcher", false)
+		world.players().object_count_of_types(PLAYER, "GondorArcher", true)
+		world.players().object_count_of_types(PLAYER, "GhostType", false)
+		world.players().object_count_of_types(
+			RetailSliceScriptWorld.THIS_PLAYERS_ENEMIES_TOKEN, "GondorArcher", false
+		)
+		world.players().object_count_of_types(
+			RetailSliceScriptWorld.THIS_PLAYERS_ALLIES_TOKEN, "GondorArcher", false
+		)
+		world.units().has_command_points_to_build(PLAYER, "GondorFighterHorde")
+		world.units().has_command_points_to_build(PLAYER, "GhostType")
 		world.resolve_script_object("AI_BASE")
 	_check(
 		"every implemented query leaves the authoritative state hash untouched",
@@ -1413,7 +1828,7 @@ func _test_queries_are_read_only() -> void:
 	)
 
 
-# --- 12. Twin determinism -------------------------------------------------
+# --- 13. Twin determinism -------------------------------------------------
 
 
 func _twin_fixture() -> Array:
@@ -1432,6 +1847,15 @@ func _twin_fixture() -> Array:
 	world.ai().base_unpack("BASE_FLAG_1", true, "AI_BASE")
 	world.ai().base_unpack("BASE_FLAG_2", false, "AI_EXPANSION_1")
 	world.ai().build_base_building("SynthPitType", "AI_BASE", "AI_PIT_1")
+	# The object-type surface: a script-built list and a nearest-of-type move
+	# aimed through it at the pit the build above just minted.
+	world.meta().object_list_change("Synth_Targets", "SynthPitType", true)
+	world.meta().object_list_change("Synth_Targets", "GhostType", true)
+	world.orders().move_to(
+		SageScriptWorld.Scope.TEAM,
+		PLAYER_TEAM_NAME,
+		SageScriptWorld.target_nearest_type("Synth_Targets", "")
+	)
 	world.orders().attack(
 		SageScriptWorld.Scope.TEAM,
 		PLAYER_TEAM_NAME,
@@ -1471,6 +1895,15 @@ func _query_battery(world: RetailSliceScriptWorld) -> Array:
 		world.resolve_script_object("AI_BASE"),
 		world.resolve_script_object("AI_EXPANSION_1"),
 		world.resolve_script_object("AI_PIT_1"),
+		world.players().object_count_of_types(PLAYER, "Synth_Targets", false).value,
+		world.players().object_count_of_types(PLAYER, "Synth_Targets", true).value,
+		world.players().object_count_of_types(
+			RetailSliceScriptWorld.THIS_PLAYERS_ENEMIES_TOKEN, "Synth_Targets", false
+		).value,
+		world.units().has_command_points_to_build(PLAYER, "GondorFighterHorde").value,
+		world.sim.object_type_list_names(),
+		world.sim.resolve_object_type_names("Synth_Targets"),
+		world.sim.nearest_object_of_types(Vector2.ZERO, ["SynthPitType"], []),
 	]
 
 

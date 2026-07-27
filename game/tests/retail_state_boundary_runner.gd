@@ -25,6 +25,16 @@ extends SceneTree
 ##      name an existing reference holds was the unguarded edge. Such a
 ##      configure is now refused whole (false + push_error, nothing applied).
 ##
+## The object-type-identity packet added a fourth boundary subject, proven
+## here in the same shape BEFORE it could ship with the class-1/class-2
+## defects above:
+##
+##   4. OBJECT_TYPE_LIST STORES (script_object_type_lists): script-built
+##      named type sets, mutated mid-match by OBJECTLIST_ADDOBJECTTYPE and
+##      persisted by retail save games - so they live IN the sim, hashed and
+##      snapshotted empty-is-absent, restored by restore(), and cleared by
+##      setup() so a reused sim hashes identically to a fresh one.
+##
 ## Every fixture is SYNTHETIC; no retail install or content pack is required.
 ## NOTE: the shadowing tests intentionally trigger two push_error lines
 ## (marked EXPECTED ERROR below) - they are the loud refusal under test.
@@ -53,6 +63,8 @@ func _run() -> void:
 	_test_references_live_inside_the_snapshot_boundary()
 	_test_references_are_hash_inert_until_bound_and_reset_by_setup()
 	_test_flag_shadowing_is_refused_in_both_directions()
+	_test_object_type_lists_live_inside_the_snapshot_boundary()
+	_test_object_type_lists_are_hash_inert_until_built_and_reset_by_setup()
 	print("RETAIL_STATE_BOUNDARY_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -385,4 +397,85 @@ func _test_flag_shadowing_is_refused_in_both_directions() -> void:
 			"EARLY_FLAG": {"position": Vector2(60.0, 60.0), "cost": 500},
 			"OTHER_FLAG": {"position": Vector2(70.0, -60.0), "cost": 500},
 		})
+	)
+
+
+# --- Subject 4: OBJECT_TYPE_LIST stores inside the boundary ----------------
+
+
+func _test_object_type_lists_live_inside_the_snapshot_boundary() -> void:
+	## Peer A's scripts build a list; peer B adopts A's snapshot and rebuilds
+	## its world. Both must agree on the hash AND resolve the list name to
+	## the same members - the defect class this guards against is exactly
+	## defect 2's: state that steers a later script answer sitting outside
+	## what save/load reproduces (an unlisted store would make byte-equal
+	## sims answer PLAYER_HAS_OBJECT_COMPARISON differently).
+	var sim_a := _make_sim()
+	var world_a := _make_world(sim_a)
+	_check(
+		"fixture: peer A's scripts build a list",
+		world_a.meta().object_list_change("BOUNDARY_LIST", "SynthTypeA", true)
+		and world_a.meta().object_list_change("BOUNDARY_LIST", "SynthTypeB", true)
+	)
+
+	var sim_b := _make_sim()
+	_check("fixture: peer B adopts A's snapshot", sim_b.restore(sim_a.snapshot()))
+	var world_b := _make_world(sim_b)
+	_check("adopted snapshot agrees on the state hash", sim_a.state_hash() == sim_b.state_hash())
+	_check(
+		"the adopting peer resolves the list the minting peer built",
+		sim_b.resolve_object_type_names("BOUNDARY_LIST")
+		== sim_a.resolve_object_type_names("BOUNDARY_LIST")
+		and sim_b.resolve_object_type_names("BOUNDARY_LIST") == ["SynthTypeA", "SynthTypeB"]
+	)
+	# The identical follow-up edit lands identically on both peers.
+	var edited_a: bool = world_a.meta().object_list_change("BOUNDARY_LIST", "SynthTypeA", false)
+	var edited_b: bool = world_b.meta().object_list_change("BOUNDARY_LIST", "SynthTypeA", false)
+	_check("the identical edit succeeds on both peers", edited_a and edited_b)
+	_check(
+		"peers agree on the state hash after the identical edit",
+		sim_a.state_hash() == sim_b.state_hash()
+	)
+
+
+func _test_object_type_lists_are_hash_inert_until_built_and_reset_by_setup() -> void:
+	## The empty-is-absent discipline (the state-pin property) in all four
+	## directions, plus the match-reset direction: setup() clears the store,
+	## so a reused sim hashes identically to a freshly built one.
+	var sim := _make_sim()
+	_check(
+		"an unbuilt sim snapshot carries NO script_object_type_lists key",
+		not (bytes_to_var(sim.snapshot()) as Dictionary).has("script_object_type_lists")
+	)
+	var pristine := sim.state_hash()
+	var world := _make_world(sim)
+	_check(
+		"fixture: a list member is added",
+		world.meta().object_list_change("RESET_LIST", "SynthTypeA", true)
+	)
+	_check(
+		"building a list MOVES the hash (the state is not invisible)",
+		sim.state_hash() != pristine
+	)
+	_check(
+		"the built list serializes",
+		(bytes_to_var(sim.snapshot()) as Dictionary).has("script_object_type_lists")
+	)
+	_check(
+		"removing the last member returns to the pristine hash exactly",
+		world.meta().object_list_change("RESET_LIST", "SynthTypeA", false)
+		and sim.state_hash() == pristine
+	)
+	# The reset direction: a list left standing at reset must not survive.
+	world.meta().object_list_change("RESET_LIST", "SynthTypeA", true)
+	sim.setup({}, {})
+	sim.ai_enabled = false  # the harness disables AI; setup() re-enables it
+	_check(
+		"setup() clears the OBJECT_TYPE_LIST store",
+		sim.script_object_type_lists.is_empty()
+	)
+	var fresh := _make_sim()
+	_check(
+		"a reused sim hashes identically to a freshly built one after reset",
+		sim.state_hash() == fresh.state_hash()
 	)

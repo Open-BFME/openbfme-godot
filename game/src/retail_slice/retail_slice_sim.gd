@@ -1220,6 +1220,10 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	build_plots.clear()
 	_next_expansion_structure_id = 9000
 	script_unit_references.clear()
+	# Script-built OBJECT_TYPE_LIST stores are match STATE (mutated by script
+	# actions, persisted by retail save games), never configuration: a reused
+	# sim must not carry one match's lists into the next.
+	script_object_type_lists.clear()
 	_completed_hero_identities.clear()
 	_next_event_sequence = 1
 	_next_order_sequence = 1
@@ -5717,6 +5721,368 @@ func script_unit_reference(team: int, reference: String) -> int:
 	## The structure id bound to `reference` for `team`; 0 when unbound
 	## (structure ids are never 0).
 	return int((script_unit_references.get(team, {}) as Dictionary).get(reference, 0))
+
+
+# --- Script object-type lists (OBJECT_TYPE_LIST stores, SIM-owned) ----------
+#
+# Named, script-mutable SETS of retail object-type names: the subjects of
+# OBJECTLIST_ADDOBJECTTYPE / OBJECTLIST_REMOVEOBJECTTYPE and the resolution
+# target of every OBJECT_TYPE_LIST-typed script argument. Retail authors BOTH
+# spellings in those slots - a declared list name ("Offensive_Units") and a
+# plain object type ("IsengardUrukPit") - and resolves list-first with a
+# single-type fallback; resolve_object_type_names below mirrors that exactly.
+#
+# STATE, NOT CONFIGURATION - decided on retail evidence, not assumption. The
+# retail engine's ScriptEngine owns ONE global ObjectTypeList table per match,
+# mutated mid-match by script actions and PERSISTED IN SAVE GAMES (OpenSAGE's
+# ScriptingSystem.Persist serializes _objectTypeLists; each list is a
+# HashSet<string> keyed by name). Mutable-by-actions plus save-file membership
+# puts the table inside the snapshot/hash boundary, exactly like
+# script_unit_references. UNLIKE the references it is NOT keyed by team: the
+# retail store is engine-global (one namespace per match, however many script
+# players run), and every peer executes the same lockstep script stream, so
+# the converged table is identical on every peer by construction.
+#
+# CANONICAL FORM: member arrays are kept SORTED and UNIQUE (retail's HashSet
+# has no order; a sorted array is the canonical serialization of a set), and
+# a list whose last member is removed loses its KEY too, so an emptied table
+# returns to the exact pristine hash.
+#
+# HASH INERTNESS: participates in the authoritative state ONLY when non-empty
+# (empty-is-absent, the unpackable_bases discipline), so a match whose
+# scripts never build a list contributes zero bytes to state_hash() and the
+# frozen cross-platform pin stands untouched. setup() clears it (match state).
+
+## list name -> sorted unique Array of retail object-type name Strings.
+## See the block comment above. setup() clears it; hashed only when non-empty.
+var script_object_type_lists: Dictionary = {}
+
+
+func change_object_type_list(list_name: String, object_type: String, add: bool) -> Dictionary:
+	## OBJECTLIST_ADDOBJECTTYPE (`add` true) / OBJECTLIST_REMOVEOBJECTTYPE
+	## (`add` false). Set semantics, matching retail's HashSet store: a
+	## duplicate add and an absent remove are successful no-ops. Empty names
+	## refuse - "" is neither a list nor a type in the retail vocabulary, and
+	## admitting it would mint an unreachable store entry.
+	if list_name == "":
+		return {"ok": false, "reason": "empty-list-name"}
+	if object_type == "":
+		return {"ok": false, "reason": "empty-object-type"}
+	if add:
+		var members: Array = script_object_type_lists.get(list_name, [])
+		if not members.has(object_type):
+			members.append(object_type)
+			members.sort()
+		script_object_type_lists[list_name] = members
+		return {"ok": true, "reason": ""}
+	if script_object_type_lists.has(list_name):
+		var members: Array = script_object_type_lists[list_name]
+		members.erase(object_type)
+		if members.is_empty():
+			# Empty-is-absent inside the container too: no empty list may
+			# linger as a hash-visible key.
+			script_object_type_lists.erase(list_name)
+	return {"ok": true, "reason": ""}
+
+
+func object_type_list_names() -> Array[String]:
+	var names: Array[String] = []
+	for name_value in script_object_type_lists.keys():
+		names.append(String(name_value))
+	names.sort()
+	return names
+
+
+func has_object_type_list(list_name: String) -> bool:
+	return script_object_type_lists.has(list_name)
+
+
+func resolve_object_type_names(object_type_list: String) -> Array:
+	## Retail's OBJECT_TYPE_LIST argument resolution: a declared list answers
+	## its members; any other name IS a single object type (the retail engine
+	## looks the name up in the list table and falls back to reading the
+	## string as one type - the authored corpus uses both spellings). This is
+	## also the correct answer BEFORE list-building scripts have run: retail
+	## in that state has no list either and reads the single type. Read-only.
+	if script_object_type_lists.has(object_type_list):
+		return (script_object_type_lists[object_type_list] as Array).duplicate()
+	return [object_type_list]
+
+
+# --- Retail object-type identity (derived reads over existing hashed rows) --
+#
+# Counting and nearest-object queries by RETAIL object-type name. No new sim
+# state: every identity consulted here already lives inside the hash/snapshot
+# boundary - entity rows carry their compiled rule's provenance
+# (retail_rule_provenance.source_object_id, the document's retail objectId)
+# and their runtime ids (unit_type, a deterministic slug of the retail
+# container name); structure rows carry structure_kind, resolved through the
+# team manifest's producer_kind_registry (retail source object id -> kind,
+# part of the hashed rules/config) plus the expansion build rules; creep camps
+# carry their retail type_name verbatim. Matching is therefore EXACT string
+# identity over recorded facts, never a heuristic: retail names fold case
+# (SAGE INI object lookups are case-insensitive), runtime ids compare exactly.
+#
+# KNOWN LIMIT, recorded rather than papered over: rows whose identity was
+# never recorded cannot be matched. That is (a) the legacy tiny-pack's
+# hand-written synthetic ids where the id was not derived from the retail
+# name by the standard slug (the tower guard: "gondor-tower-guard" vs retail
+# GondorTowerShieldGuardHorde), and (b) creep GUARD battalions, whose ids are
+# synthetic creep-family keys. Pack-driven content - the shipping path -
+# records provenance on every unit rule, so its censuses are exact.
+
+
+func count_objects_of_types(team: int, type_names: Array, include_dead: bool) -> int:
+	## Census of `team`'s objects (battalion rows AND structure rows) whose
+	## retail type matches any name in `type_names`. STRICTLY READ-ONLY: this
+	## backs the retail AI's highest-traffic condition
+	## (PLAYER_HAS_OBJECT_COMPARISON) and conditions are evaluated an
+	## unpredictable number of times.
+	##
+	## `include_dead` counts rows regardless of health - rows that still
+	## EXIST. Structure rows persist after razing; battalion rows persist
+	## until corpse expiry (CORPSE_LIFETIME_TICKS), after which retail has
+	## deleted the object too. Living-only is the default reading.
+	##
+	## The count is exact over the enumerable object census: every countable
+	## row's identity is recorded (see the block comment), so a name matching
+	## zero rows is a true zero about THIS match, not a guess - a type the
+	## simulation cannot field has no instances here by construction.
+	var probe := _object_type_probe(type_names)
+	var total := 0
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if int(row.get("team", -1)) != team:
+			continue
+		if not include_dead and int(row.get("health", 0)) <= 0:
+			continue
+		if _entity_matches_types(row, probe):
+			total += 1
+	for structure_id in structure_ids(team):
+		var row: Dictionary = structures[structure_id]
+		if not include_dead and int(row.get("health", 0)) <= 0:
+			continue
+		if _structure_matches_types(row, probe):
+			total += 1
+	return total
+
+
+func nearest_object_of_types(origin: Vector2, type_names: Array, owner_teams: Array) -> Dictionary:
+	## Nearest LIVING object (battalion or structure) whose retail type
+	## matches any of `type_names`, owned by any team in `owner_teams` (empty
+	## = any owner, creep and neutral rows included). Read-only.
+	##
+	## DETERMINISM: candidates are visited in sorted id order and the winner
+	## is the minimum under an exact TOTAL order - strictly-less squared
+	## distance, ties to battalions before structures (the two id spaces may
+	## overlap numerically), then to the LOWEST id. Never is_equal_approx: a
+	## tolerance comparison is not transitive and cannot define a total order.
+	## Answers {"found": false} or {"found": true, "kind": "battalion"|
+	## "structure", "id": int, "position": Vector2}.
+	var probe := _object_type_probe(type_names)
+	var owner_filter := {}
+	for team_value in owner_teams:
+		owner_filter[int(team_value)] = true
+	var found := false
+	var best_id := 0
+	var best_rank := 0
+	var best_distance := 0.0
+	var best_position := Vector2.ZERO
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		if not owner_filter.is_empty() and not owner_filter.has(int(row.get("team", -1))):
+			continue
+		if not _entity_matches_types(row, probe):
+			continue
+		var distance := origin.distance_squared_to(Vector2(row.get("position", Vector2.ZERO)))
+		var wins := not found or distance < best_distance
+		if not wins and distance == best_distance:
+			wins = 0 < best_rank or (best_rank == 0 and id < best_id)
+		if wins:
+			found = true
+			best_id = id
+			best_rank = 0
+			best_distance = distance
+			best_position = Vector2(row.get("position", Vector2.ZERO))
+	for structure_id in structure_ids():
+		var row: Dictionary = structures[structure_id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		if not owner_filter.is_empty() and not owner_filter.has(int(row.get("team", -1))):
+			continue
+		if not _structure_matches_types(row, probe):
+			continue
+		var distance := origin.distance_squared_to(Vector2(row.get("position", Vector2.ZERO)))
+		var wins := not found or distance < best_distance
+		if not wins and distance == best_distance:
+			wins = 1 < best_rank or (best_rank == 1 and structure_id < best_id)
+		if wins:
+			found = true
+			best_id = structure_id
+			best_rank = 1
+			best_distance = distance
+			best_position = Vector2(row.get("position", Vector2.ZERO))
+	if not found:
+		return {"found": false}
+	return {
+		"found": true,
+		"kind": "battalion" if best_rank == 0 else "structure",
+		"id": best_id,
+		"position": best_position,
+	}
+
+
+func fieldable_object_type(name: String) -> bool:
+	## Whether THIS simulation could ever field an object of the retail type
+	## `name` - derived from match configuration only (unit rules, per-team
+	## manifests, expansion rules, creep families), so it is identical on
+	## every peer and never moves with match state. Callers use it to
+	## distinguish "zero of a type this match can express" (a truthful no-op)
+	## from "a type outside this simulation's model entirely" (a refusal that
+	## keeps the modeling gap visible - the retail AI's tactical-marker moves
+	## land there). Order-independent: a pure any() over configuration sets.
+	if name == "":
+		return false
+	var folded := name.to_lower()
+	var runtime_id := PlayableUnitAdapter.runtime_object_id(name)
+	var unit_rules: Dictionary = _rules.get("unit_rules", {}) as Dictionary
+	for object_id_value in unit_rules.keys():
+		var rule: Dictionary = unit_rules[object_id_value] as Dictionary
+		var source := String((rule.get("provenance", {}) as Dictionary).get("source_object_id", ""))
+		if source != "" and source.to_lower() == folded:
+			return true
+		if String(object_id_value) == runtime_id or String(rule.get("horde_id", "")) == runtime_id:
+			return true
+	for team_value in _roster_team_ids():
+		var team := int(team_value)
+		var manifest := team_manifest_for(team)
+		var registry: Dictionary = _structure_source_registry(manifest)
+		for source_value in registry.keys():
+			if String(source_value).to_lower() == folded:
+				return true
+		for object_id_value in (manifest.get("structure_object_ids", {}) as Dictionary).values():
+			if String(object_id_value) == runtime_id:
+				return true
+		if unit_production_rules_for_team(team).has(runtime_id):
+			return true
+	for kind_value in _expansion_build_rules.keys():
+		var expansion_object_id := String((_expansion_build_rules[kind_value] as Dictionary).get("object_id", ""))
+		if expansion_object_id == runtime_id or expansion_object_id.to_lower() == folded:
+			return true
+	if creep_lairs_enabled:
+		for family_value in CREEP_LAIR_FAMILIES.keys():
+			if String(family_value).to_lower() == folded:
+				return true
+		for alias_value in CREEP_LAIR_FAMILY_ALIASES.keys():
+			if String(alias_value).to_lower() == folded:
+				return true
+	return false
+
+
+func _object_type_probe(type_names: Array) -> Dictionary:
+	## Per-query matching keys: case-folded retail names, their derived
+	## runtime ids, and a lazily filled per-team structure-kind cache.
+	var folded := {}
+	var runtime_ids := {}
+	for name_value in type_names:
+		var name := String(name_value)
+		if name == "":
+			continue
+		folded[name.to_lower()] = true
+		runtime_ids[PlayableUnitAdapter.runtime_object_id(name)] = true
+	return {"folded": folded, "runtime_ids": runtime_ids, "kinds_by_team": {}}
+
+
+func _entity_matches_types(row: Dictionary, probe: Dictionary) -> bool:
+	## A battalion row matches on its recorded provenance (the retail source
+	## object id, authoritative) or on its runtime container id (unit_type is
+	## the deterministic slug of the retail container name for every
+	## pack-driven rule). The MEMBER id (row.object_id) deliberately does not
+	## match: a row is ONE retail horde object, and counting the member name
+	## as the horde would answer 1 where retail counts 15 members - the exact
+	## granularity lie the class comment forbids.
+	var provenance: Dictionary = row.get("retail_rule_provenance", {}) as Dictionary
+	var source := String(provenance.get("source_object_id", ""))
+	if source != "" and (probe["folded"] as Dictionary).has(source.to_lower()):
+		return true
+	return (probe["runtime_ids"] as Dictionary).has(String(row.get("unit_type", "")))
+
+
+func _structure_matches_types(row: Dictionary, probe: Dictionary) -> bool:
+	## A structure row matches through its team's kind registry (retail source
+	## object id -> structure kind), the manifest/expansion runtime ids, or -
+	## for creep camps - its recorded retail type_name.
+	var creep_type := String(row.get("creep_type_name", ""))
+	if creep_type != "" and (probe["folded"] as Dictionary).has(creep_type.to_lower()):
+		return true
+	var team := int(row.get("team", -1))
+	var kinds_by_team: Dictionary = probe["kinds_by_team"]
+	if not kinds_by_team.has(team):
+		kinds_by_team[team] = _structure_kinds_matching_probe(team, probe)
+	return (kinds_by_team[team] as Dictionary).has(String(row.get("structure_kind", "")))
+
+
+func _structure_kinds_matching_probe(team: int, probe: Dictionary) -> Dictionary:
+	## The set of structure kinds (for `team`'s manifest) that the probe's
+	## names denote. Built as a SET, so source-dictionary iteration order
+	## cannot affect any answer.
+	var kinds := {}
+	var folded: Dictionary = probe["folded"]
+	var runtime_ids: Dictionary = probe["runtime_ids"]
+	var manifest := team_manifest_for(team)
+	var registry := _structure_source_registry(manifest)
+	for source_value in registry.keys():
+		if folded.has(String(source_value).to_lower()):
+			kinds[String(registry[source_value])] = true
+	for kind_value in (manifest.get("structure_object_ids", {}) as Dictionary).keys():
+		if runtime_ids.has(String((manifest.get("structure_object_ids", {}) as Dictionary)[kind_value])):
+			kinds[String(kind_value)] = true
+	for kind_value in _expansion_build_rules.keys():
+		# Expansion rules record either the runtime id (the vertical slice's
+		# doc-driven path) or a plain source-style name (synthetic fixtures);
+		# both compare exactly against their own key form.
+		var expansion_object_id := String((_expansion_build_rules[kind_value] as Dictionary).get("object_id", ""))
+		if runtime_ids.has(expansion_object_id) or folded.has(expansion_object_id.to_lower()):
+			kinds[String(kind_value)] = true
+	return kinds
+
+
+func _structure_source_registry(manifest: Dictionary) -> Dictionary:
+	## retail structure source object id -> structure kind, from the team's
+	## manifest; the vertical slice's global registry is the fallback for the
+	## legacy manifest-free rules shape.
+	var registry: Variant = manifest.get("producer_kind_registry")
+	if typeof(registry) == TYPE_DICTIONARY and not (registry as Dictionary).is_empty():
+		return registry as Dictionary
+	return _rules.get("producer_kind_by_source_object", {}) as Dictionary
+
+
+func trainable_unit_type_for(team: int, object_type: String) -> String:
+	## Resolve a retail object-type name (or an already-runtime unit id) to
+	## the production-rule key `queue_unit` trains it by, or "" when this
+	## team's production rules do not model it - the caller must refuse, not
+	## guess a cost. Keys are visited sorted so a (mis-)configured duplicate
+	## resolves identically on every peer.
+	var runtime_id := PlayableUnitAdapter.runtime_object_id(object_type)
+	var keys: Array = unit_production_rules_for_team(team).keys()
+	keys.sort()
+	for key_value in keys:
+		var key := String(key_value)
+		if key == object_type or key == runtime_id:
+			return key
+	return ""
+
+
+func unit_command_point_cost(unit_type: String) -> int:
+	## The command points queue_unit will commit for one production of
+	## `unit_type` - the admission rule's own number (same rule/default
+	## resolution), exposed so HAS_COMMAND_POINTS_TO_BUILD_UNIT can never
+	## disagree with the queue that follows it. -1 for an unmodeled type.
+	if not _unit_production_rules.has(unit_type):
+		return -1
+	return maxi(0, _production_rule_value(unit_type, "command_points_rule", "default_command_points"))
 
 
 func expansion_kind_for_object_id(object_id: String) -> String:
@@ -10564,6 +10930,11 @@ func _authoritative_state() -> Dictionary:
 	# never bind one contributes zero bytes (see the store's block comment).
 	if not script_unit_references.is_empty():
 		state["script_unit_references"] = script_unit_references
+	# And for the script-built OBJECT_TYPE_LIST stores: mutable match state
+	# (retail persists them in save games), zero bytes until a script builds
+	# one (see the store's block comment).
+	if not script_object_type_lists.is_empty():
+		state["script_object_type_lists"] = script_object_type_lists
 	return state
 
 
@@ -10638,6 +11009,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	# Absent when empty by construction (empty-is-absent hash discipline).
 	unpackable_bases = state.get("unpackable_bases", {})
 	script_unit_references = state.get("script_unit_references", {})
+	script_object_type_lists = state.get("script_object_type_lists", {})
 	creep_lairs_enabled = bool(state.get("creep_lairs_enabled", false))
 	_creep_lair_placements = state.get("creep_lair_placements", [])
 	_next_creep_guard_id = int(state.get("next_creep_guard_id", 70001))

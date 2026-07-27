@@ -3,8 +3,8 @@
 	"surface": "Every public non-static script-declared instance method of the 16 facet objects of SageScriptWorld (the three presentation sinks counted per sink) plus the base world's own 7 surface methods under facet 'world'. simulationBacked is OBSERVED by calling each method against RetailSliceScriptWorld over a synthetic RetailSliceSim; blocking annotations are analysis, verified for coverage but not provable by a probe.",
 	"counts": {
 		"total": 319,
-		"simulationBacked": 40,
-		"refusing": 279
+		"simulationBacked": 43,
+		"refusing": 276
 	},
 	"subsystems": [
 		{
@@ -85,7 +85,7 @@
 		},
 		{
 			"id": "object-type-identity",
-			"requires": "Retail object-type / KindOf / OBJECT_TYPE_LIST identity on sim rows plus type-filtered censuses and list membership editing. The sim knows five synthetic object ids, not the retail taxonomy - and PLAYER_HAS_OBJECT_COMPARISON alone is 100 AI call sites against it."
+			"requires": "Retail object-type identity on sim rows. Its heaviest-traffic slice is BUILT: rows resolve retail type names through recorded rule provenance / runtime-id slugs / the manifest kind registries, the script-built OBJECT_TYPE_LIST stores live in the sim (hashed, empty-is-absent), and the type censuses plus nearest-of-type search serve PLAYER_HAS_OBJECT_COMPARISON's 100 AI call sites. Still missing here: KindOf bit sets (the importer extracts none into pack documents) and model-condition flags."
 		},
 		{
 			"id": "order-verbs",
@@ -1620,9 +1620,8 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-type-identity",
-			"requiredSimState": "mutable OBJECT_TYPE_LIST stores"
+			"simulationBacked": true,
+			"restrictions": "non-empty list and type names only (\"\" names nothing in the retail vocabulary); set semantics, duplicate adds and absent removes succeed as retail no-ops"
 		},
 		{
 			"facet": "meta",
@@ -2093,7 +2092,7 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "TEAM/PLAYER scope with explicit POSITION targets only; UNIT scope needs object-name-registry, nearest-of-type targets need object-type-identity"
+			"restrictions": "TEAM/PLAYER scope with POSITION or NEAREST_TYPE targets; UNIT scope needs object-name-registry; a NEAREST_TYPE naming only types the sim cannot field refuses (retail's authored targets are map-placed tactical markers, unmodeled), and waypoint/area targets need map geometry"
 		},
 		{
 			"facet": "orders",
@@ -2646,9 +2645,8 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-type-identity",
-			"requiredSimState": "retail type identity on rows plus OBJECT_TYPE_LIST resolution and an include-dead census - 124 AI call sites ride on this one method"
+			"simulationBacked": true,
+			"restrictions": "the player must resolve (bound names, '<This Player>', the plural enemies/allies aggregate tokens - aggregates SUM); the singular '<This Player's Enemy>' token refuses (no current-enemy model); creep-guard battalions and legacy synthetic ids without recorded provenance are not countable"
 		},
 		{
 			"facet": "players",
@@ -2668,7 +2666,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "object-type-identity",
-			"requiredSimState": "model-condition flags countable per player"
+			"requiredSimState": "model-condition flags countable per player (no model-condition state machine exists in the sim)"
 		},
 		{
 			"facet": "players",
@@ -3749,7 +3747,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "object-type-identity",
-			"requiredSimState": "KindOf bits on rows"
+			"requiredSimState": "KindOf bit sets on rows - the importer extracts no KindOf into playable documents (only one capability-evidence string), so there is nothing authored to consult; deriving bits from the category field would be invention"
 		},
 		{
 			"facet": "teams",
@@ -5496,9 +5494,8 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-type-identity",
-			"requiredSimState": "CP costs per retail object type"
+			"simulationBacked": true,
+			"restrictions": "the player must resolve ('<This Player>' included); unit types with a production rule only (an unmodeled type's cost is unknowable, so it refuses)"
 		},
 		{
 			"facet": "units",
@@ -6366,7 +6363,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "object-type-identity",
-			"requiredSimState": "neutral/unowned object modelling (every sim object is rostered today)"
+			"requiredSimState": "a sourced semantic for 'unowned faction unit': the sim now owns neutral (capturable) and creep teams, but nothing pins whether retail means neutral-owned UNITS only or capturable structures too, and the readings diverge exactly when neutral structures exist"
 		},
 		{
 			"facet": "units",
@@ -6804,13 +6801,12 @@
 		},
 		{
 			"member": "PLAYER_HAS_OBJECT_COMPARISON",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"players.object_count_of_types"
 			],
-			"blockingSubsystem": "object-type-identity",
 			"mappingSource": "handler",
-			"note": "the single heaviest blocked member: 100 call sites"
+			"note": "the formerly heaviest blocked member (100 call sites), served through the sim's object-type identity census; aggregate player tokens sum"
 		},
 		{
 			"member": "PLAYER_HAS_OBJECT_OF_VETERANCY",
@@ -6891,11 +6887,10 @@
 		},
 		{
 			"member": "SET_PLAYER_OWNERSHIP_OF_TYPE_COUNTER",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"players.object_count_of_types"
 			],
-			"blockingSubsystem": "object-type-identity",
 			"mappingSource": "handler"
 		},
 		{
@@ -7117,9 +7112,9 @@
 			"worldMethods": [
 				"orders.move_to"
 			],
-			"blockingSubsystem": "object-type-identity",
-			"mappingSource": "declared",
-			"note": "the move itself is backed; the NEAREST_TYPE target cannot resolve without type identity"
+			"blockingSubsystem": "base-building-ai",
+			"mappingSource": "handler",
+			"note": "NEAREST_TYPE targets now resolve over fieldable types, but every retail-authored target here is a map-placed tactical-marker type (CombatAreas, HighGround) no sim subsystem models - re-blocked on the marker gap, not on type identity"
 		},
 		{
 			"member": "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER",
@@ -7127,9 +7122,9 @@
 			"worldMethods": [
 				"orders.move_to"
 			],
-			"blockingSubsystem": "object-type-identity",
-			"mappingSource": "declared",
-			"note": "the move itself is backed; the owned NEAREST_TYPE target cannot resolve without type identity"
+			"blockingSubsystem": "base-building-ai",
+			"mappingSource": "handler",
+			"note": "NEAREST_TYPE targets now resolve (owner tokens included), but the retail-authored targets are map-placed marker types (Center/Flank/Backdoor nodes) no sim subsystem models - re-blocked on the marker gap, not on type identity"
 		},
 		{
 			"member": "TEAM_RECRUIT_UNITS",

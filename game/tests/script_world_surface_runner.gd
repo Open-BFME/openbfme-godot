@@ -488,6 +488,15 @@ func _override_tuples(entry: Dictionary, fx: Dictionary) -> Array:
 				SageScriptWorld.Scope.PLAYER, ENEMY, "SpellBookTestHeal",
 				SageScriptWorld.target_position(fx["cast_position"]),
 			]]
+		"meta.object_list_change":
+			# The generic object_type rule offers "" (can_build_at_base's
+			# "anything at all" form), which this method refuses - a list edit
+			# needs a real type name.
+			return [["SYNTH_PROBE_LIST", "SynthProbeType", true]]
+		"units.has_command_points_to_build":
+			# Needs a type the fixture's production rules model; the retail
+			# spelling resolves through the runtime-id slug.
+			return [[PLAYER, "GondorFighterHorde"]]
 	return []
 
 
