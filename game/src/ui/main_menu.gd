@@ -4,6 +4,7 @@ extends Control
 
 const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 const NavDiamondsScript = preload("res://src/ui/openbfme_nav_diamonds.gd")
+const ShellFlyoutScript = preload("res://src/ui/openbfme_shell_flyout.gd")
 const SliceScript = preload("res://src/retail_slice/retail_vertical_slice.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 const PackCapabilityScript = preload("res://src/content/pack_capability.gd")
@@ -83,18 +84,78 @@ const TEAM_ID_POOL: Array[int] = [0, 1, 3, 4, 5, 6, 7, 8]
 const CONTROLLER_HUMAN := "human"
 const CONTROLLER_AI := "ai"
 
+## Retail shell bar (REF-07): six stone caps along the bottom edge in the retail
+## order TUTORIALS / SOLO PLAY / MULTIPLAYER / OPTIONS / MY HEROES / QUIT. Each
+## carries the hover tooltip retail shows (REF-06 documents the QUIT one
+## verbatim); entries whose feature does not exist in Open BFME are present but
+## disabled with the honest reason, never a button that silently does nothing.
+const BAR_TOOLTIPS := {
+	"tutorials": "Guided tutorial missions",
+	"solo": "Play by yourself against the computer",
+	"multiplayer": "Play against other people over a network",
+	"options": "Change your audio and video settings",
+	"my_heroes": "Create and manage custom heroes",
+	"quit": "Quit to desktop",
+}
+## Upward flyout contents (REF-02 SOLO PLAY, REF-04 TUTORIALS, REF-05 OPTIONS).
+## Retail's row set is reproduced in full; `enabled` reflects what Open BFME has
+## actually converted, and every disabled row states why.
+const TUTORIALS_FLYOUT_ITEMS: Array = [
+	{"id": "basic", "label": "BASIC TUTORIAL", "enabled": false,
+		"tooltip": "No tutorial mission scripting has been converted yet"},
+	{"id": "advanced", "label": "ADVANCED TUTORIAL", "enabled": false,
+		"tooltip": "No tutorial mission scripting has been converted yet"},
+	{"id": "wotr", "label": "WAR OF THE RING TUTORIAL", "enabled": false,
+		"tooltip": "No tutorial mission scripting has been converted yet; the War of the Ring campaign layer itself is playable from SOLO PLAY"},
+]
+## SOLO PLAY rows OTHER than WAR OF THE RING, whose availability is decided at
+## runtime by the living-world document search — see `_solo_flyout_items()`.
+const SOLO_SKIRMISH_ITEM := {"id": "skirmish", "label": "SKIRMISH", "enabled": true,
+	"tooltip": "Set up a skirmish against the computer"}
+const SOLO_TAIL_ITEMS: Array = [
+	{"id": "evil_campaign", "label": "EVIL CAMPAIGN", "enabled": false,
+		"tooltip": "No campaign missions have been converted"},
+	{"id": "good_campaign", "label": "GOOD CAMPAIGN", "enabled": false,
+		"tooltip": "No campaign missions have been converted"},
+	{"id": "load_game", "label": "LOAD GAME", "enabled": false,
+		"tooltip": "Saved games exist in the simulation but no load browser is wired into the shell yet"},
+]
+const OPTIONS_FLYOUT_ITEMS: Array = [
+	{"id": "settings", "label": "SETTINGS", "enabled": true,
+		"tooltip": "Change your audio and video settings"},
+	{"id": "custom_settings", "label": "CUSTOM SETTINGS", "enabled": false,
+		"tooltip": "The per-detail graphics sliders (REF-15) are not implemented; SETTINGS exposes the quality preset instead"},
+	{"id": "credits", "label": "CREDITS", "enabled": false,
+		"tooltip": "No credits screen has been authored yet"},
+]
+## Content-pack ids a converted retail shell backdrop would register under in a
+## pack's uiManifest. No converted pack ships one today, so the procedural
+## Atmosphere drawing stands in; the first pack to publish one takes over
+## automatically. Nothing here copies retail art into the repository.
+const BACKDROP_IMAGE_IDS: Array[String] = [
+	"shellmapbackdrop", "mainmenubackdrop", "shellbackdrop", "mainmenu",
+]
+## ProjectSettings key that names this build. Read, never written here: the
+## version belongs to one place (game/project.godot) so a playtester filing a
+## report and the shell they were looking at cannot disagree.
+const VERSION_SETTING := "application/config/version"
+
 @onready var center: Control = $Center
-@onready var menu_frame: Panel = $MenuFrame
-@onready var main_heading: Label = $Center/MainHeading
+@onready var backdrop_art: TextureRect = $BackdropArt
+@onready var tutorials_btn: Button = $Center/Tutorials
 @onready var solo_btn: Button = $Center/Solo
 @onready var multiplayer_btn: Button = $Center/Multiplayer
-@onready var wotr_btn: Button = $Center/WarOfTheRing
 @onready var options_btn: Button = $Center/Options
+@onready var my_heroes_btn: Button = $Center/MyHeroes
 @onready var quit_btn: Button = $Center/Quit
-@onready var subpage_nav: Control = $Center/SubpageNav
-@onready var sub_solo_btn: Button = $Center/SubpageNav/Solo
-@onready var sub_options_btn: Button = $Center/SubpageNav/Options
-@onready var sub_quit_btn: Button = $Center/SubpageNav/Quit
+## WAR OF THE RING's canonical menu entry. It is NOT on the bottom bar — the
+## retail shell has no such cap and the player reaches the campaign through the
+## SOLO PLAY flyout — but it remains the single object that carries the entry's
+## state (enabled / label / the reason it is shut). `_refresh_wotr_entry()`
+## writes it and mirrors it onto the flyout row, so the two can never drift, and
+## the round-trip runner asserts against this one node rather than against
+## whichever widget the shell happens to render this month.
+@onready var wotr_btn: Button = $Center/WarOfTheRing
 
 @onready var solo_flyout: Panel = $Center/SoloFlyout
 @onready var multiplayer_flyout: Panel = $Center/MultiplayerFlyout
@@ -130,6 +191,8 @@ var _lobby_session
 ## a War of the Ring button that led to a fabricated Middle-earth would be
 ## exactly the silent fallback this project has been removing.
 var wotr_screen: Panel
+## Upward shell flyouts keyed by their anchor button's bar id.
+var _shell_flyouts: Dictionary = {}
 var _wotr_session = null
 var _wotr_unavailable_reason := ""
 var _wotr_document: Dictionary = {}
@@ -141,6 +204,7 @@ func _ready() -> void:
 	# Guard: any scene arriving here must find an unpaused tree (a pause-open
 	# exit from the slice must never leave the menu frozen).
 	get_tree().paused = false
+	_build_version_label()
 	_content_db = get_node_or_null("/root/ContentDB")
 	_game_state = get_node_or_null("/root/GameState")
 	if _content_db == null or _game_state == null:
@@ -169,11 +233,16 @@ func _ready() -> void:
 	_populate_skirmish_options()
 	_populate_rules_options()
 	_populate_color_options()
+	# The living-world search runs BEFORE the flyouts are built so the SOLO PLAY
+	# list is constructed with War of the Ring's real state, not a placeholder
+	# that a later refresh has to correct.
+	_locate_wotr_document()
+	_apply_converted_backdrop()
+	_build_shell_flyouts()
 	_connect_actions()
 	options_screen.configure({"font": _shell_font})
 	options_screen.closed.connect(func(_applied: bool) -> void: _show_page(PAGE_MAIN))
 	_build_nav_diamonds()
-	_locate_wotr_document()
 	_refresh_wotr_entry()
 	_show_page(PAGE_MAIN)
 	# A campaign returning from its tactical battle resumes on the strategic map,
@@ -243,12 +312,164 @@ func _font_pack_root_candidates() -> Array[String]:
 
 
 func _build_nav_diamonds() -> void:
+	## Retail marks every bar button that opens a sub-surface (REF-07: TUTORIALS
+	## / SOLO PLAY / MULTIPLAYER / OPTIONS carry one; MY HEROES and QUIT act
+	## immediately and do not).
 	_nav_diamonds = NavDiamondsScript.new()
 	_nav_diamonds.name = "NavDiamonds"
 	_nav_diamonds.z_index = 3
 	add_child(_nav_diamonds)
-	var nav_buttons: Array[Button] = [solo_btn, options_btn, quit_btn, sub_solo_btn, sub_options_btn, sub_quit_btn]
+	var nav_buttons: Array[Button] = [tutorials_btn, solo_btn, multiplayer_btn, options_btn]
 	_nav_diamonds.watch(nav_buttons)
+
+
+func _bar_buttons() -> Array[Button]:
+	return [tutorials_btn, solo_btn, multiplayer_btn, options_btn, my_heroes_btn, quit_btn]
+
+
+func _apply_converted_backdrop() -> void:
+	## Retail renders a live 3D shellmap behind the bar (REF-07, the Argonath).
+	## Open BFME never copies a retail screenshot in: if a mounted pack publishes
+	## a converted shell backdrop the TextureRect displays it and the procedural
+	## Atmosphere drawing steps aside; otherwise the authored placeholder stands,
+	## visibly a placeholder rather than a silent substitute for private art.
+	if _content_db == null or not _content_db.has_method("resolve_retail_ui_image_path"):
+		return
+	for image_id in BACKDROP_IMAGE_IDS:
+		var path := String(_content_db.call("resolve_retail_ui_image_path", image_id))
+		if path == "" or not FileAccess.file_exists(path):
+			continue
+		var image := Image.load_from_file(path)
+		if image == null or image.is_empty():
+			continue
+		backdrop_art.texture = ImageTexture.create_from_image(image)
+		backdrop_art.visible = true
+		var atmosphere := get_node_or_null("Atmosphere") as Control
+		if atmosphere != null:
+			atmosphere.visible = false
+		return
+
+
+## The SOLO PLAY list, in retail's order. WAR OF THE RING is a real, playable
+## row here — it is the strategic campaign this branch ships, not a placeholder —
+## and it is enabled exactly when a living-world document was found. When one was
+## not, the row STAYS LISTED and carries the search's own sentence, which names
+## the pack file it looked for, the environment variable it checked and the
+## command that generates a document.
+func _solo_flyout_items() -> Array:
+	var items: Array = [SOLO_SKIRMISH_ITEM]
+	items.append(_wotr_flyout_item())
+	items.append_array(SOLO_TAIL_ITEMS)
+	return items
+
+
+func _wotr_flyout_item() -> Dictionary:
+	var blocked := _wotr_unavailable_reason != ""
+	return {
+		"id": "wotr",
+		"label": "WAR OF THE RING",
+		"enabled": not blocked,
+		"tooltip": _wotr_unavailable_reason if blocked else "Play the strategic War of the Ring campaign",
+	}
+
+
+func _build_shell_flyouts() -> void:
+	## One upward flyout per bar button that owns a list in retail. They are
+	## siblings of the bar buttons inside Center so OpenBFMEShellFlyout's
+	## anchor-relative placement resolves in the same coordinate space, and they
+	## re-anchor themselves on every viewport resize (no fixed pixel layout).
+	_add_shell_flyout("tutorials", tutorials_btn, TUTORIALS_FLYOUT_ITEMS)
+	_add_shell_flyout("solo", solo_btn, _solo_flyout_items())
+	_add_shell_flyout("options", options_btn, OPTIONS_FLYOUT_ITEMS)
+
+
+func _add_shell_flyout(bar_id: String, anchor: Button, items: Array) -> void:
+	var flyout = ShellFlyoutScript.build(anchor, items)
+	center.add_child(flyout)
+	flyout.item_selected.connect(_on_shell_flyout_item.bind(bar_id))
+	_shell_flyouts[bar_id] = flyout
+
+
+func shell_flyout(bar_id: String):
+	## Exposed so a runner can assert on the shell's real rows rather than on a
+	## reconstruction of them.
+	return _shell_flyouts.get(bar_id, null)
+
+
+func _toggle_shell_flyout(bar_id: String) -> void:
+	var target = _shell_flyouts.get(bar_id, null)
+	var reopen: bool = target != null and not target.visible
+	_close_shell_flyouts()
+	if reopen:
+		target.open()
+		_set_nav_active(target.anchor_button)
+
+
+func _close_shell_flyouts() -> void:
+	for flyout in _shell_flyouts.values():
+		flyout.visible = false
+	_set_nav_active(null)
+
+
+func _set_nav_active(button: Button) -> void:
+	# The active-marker highlight arrived with the audit branch's nav diamonds;
+	# on a build without it the markers simply stay uniform.
+	if _nav_diamonds != null and _nav_diamonds.has_method("set_active"):
+		_nav_diamonds.call("set_active", button)
+
+
+func _shell_flyout_is_open() -> bool:
+	for flyout in _shell_flyouts.values():
+		if flyout.visible:
+			return true
+	return false
+
+
+func _on_shell_flyout_item(item_id: String, bar_id: String) -> void:
+	_close_shell_flyouts()
+	match [bar_id, item_id]:
+		["solo", "skirmish"]:
+			_show_page(PAGE_SOLO)
+		["solo", "wotr"]:
+			_on_wotr_pressed()
+		["options", "settings"]:
+			_on_options()
+		_:
+			# Every other retail row is listed but disabled, so it cannot emit.
+			push_warning("OpenBFME shell: unhandled flyout route %s/%s" % [bar_id, item_id])
+
+
+func _build_version_label() -> void:
+	## Build identity, bottom-left of the shell. A playtester filing a report has
+	## to be able to say which build they were on without guessing, so the version
+	## is READ from project.godot and never duplicated here — a literal in this
+	## file is exactly how the shell came to advertise a version the build had
+	## long since left behind.
+	##
+	## When project.godot declares no version the label says so, naming the
+	## setting that would fill it. That is deliberately louder than showing
+	## nothing: a missing version is a real gap in the release story, and a blank
+	## corner hides it.
+	if center == null or center.has_node("BuildVersion"):
+		return
+	var version := String(ProjectSettings.get_setting(VERSION_SETTING, "")).strip_edges()
+	var label := Label.new()
+	label.name = "BuildVersion"
+	label.text = "v%s" % version if version != "" else "build version not set (%s)" % VERSION_SETTING
+	# Above the bar's top edge (the caps occupy -102..-44), never overlapping a
+	# cap at any window size — both are anchored to the same bottom edge.
+	label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	label.offset_left = 22.0
+	label.offset_top = -136.0
+	label.offset_right = 520.0
+	label.offset_bottom = -114.0
+	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_color_override("font_color", Color(0.72, 0.78, 0.70, 0.75))
+	label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	label.add_theme_constant_override("shadow_offset_x", 1)
+	label.add_theme_constant_override("shadow_offset_y", 1)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(label)
 
 
 func _populate_skirmish_options() -> void:
@@ -1011,12 +1232,21 @@ func _locate_wotr_document() -> void:
 
 
 func _refresh_wotr_entry() -> void:
-	if wotr_btn == null:
-		return
+	## ONE source of truth, two surfaces. `wotr_btn` is the canonical entry the
+	## rest of the code (and the round-trip runner) reads; the SOLO PLAY flyout
+	## row is the surface the player clicks. Both are written from
+	## `_wotr_unavailable_reason` here, in the same call, so the shell can never
+	## offer a campaign the menu has already refused — or hide one it would open.
 	var blocked := _wotr_unavailable_reason != ""
-	wotr_btn.disabled = blocked
-	wotr_btn.text = "WAR OF THE RING" if not blocked else "WAR OF THE RING (UNAVAILABLE)"
-	wotr_btn.tooltip_text = _wotr_unavailable_reason
+	if wotr_btn != null:
+		wotr_btn.disabled = blocked
+		wotr_btn.text = "WAR OF THE RING" if not blocked else "WAR OF THE RING (UNAVAILABLE)"
+		wotr_btn.tooltip_text = _wotr_unavailable_reason
+	var solo_flyout_menu = _shell_flyouts.get("solo", null)
+	if solo_flyout_menu != null:
+		var item := _wotr_flyout_item()
+		solo_flyout_menu.set_item_state(
+			"wotr", bool(item["enabled"]), String(item["tooltip"]))
 
 
 ## Start a campaign on the located document. Fails closed and reports: seats come
@@ -1224,21 +1454,34 @@ func _wotr_seat_name(session, seat: int) -> String:
 
 
 func _connect_actions() -> void:
-	solo_btn.pressed.connect(func() -> void: _show_page(PAGE_SOLO))
-	multiplayer_btn.pressed.connect(func() -> void: _show_page(PAGE_MULTIPLAYER))
+	tutorials_btn.tooltip_text = BAR_TOOLTIPS["tutorials"]
+	solo_btn.tooltip_text = BAR_TOOLTIPS["solo"]
+	multiplayer_btn.tooltip_text = BAR_TOOLTIPS["multiplayer"]
+	options_btn.tooltip_text = BAR_TOOLTIPS["options"]
+	quit_btn.tooltip_text = BAR_TOOLTIPS["quit"]
+	# MY HEROES is a retail bar entry with no Open BFME feature behind it. It
+	# stays on the bar (REF-07 order is part of the shell's shape) but is
+	# visibly disabled and says why rather than doing nothing when clicked.
+	my_heroes_btn.disabled = true
+	my_heroes_btn.tooltip_text = "%s - Create-A-Hero is not implemented in Open BFME yet" % BAR_TOOLTIPS["my_heroes"]
+	tutorials_btn.pressed.connect(_toggle_shell_flyout.bind("tutorials"))
+	solo_btn.pressed.connect(_toggle_shell_flyout.bind("solo"))
+	options_btn.pressed.connect(_toggle_shell_flyout.bind("options"))
+	# MULTIPLAYER opens the NETWORK panel directly: REPLAYS and ONLINE (REF-01)
+	# have no converted implementation and NETWORK is the sole live route, so a
+	# one-live-row flyout would only add a click.
+	multiplayer_btn.pressed.connect(func() -> void:
+		_close_shell_flyouts()
+		_show_page(PAGE_MULTIPLAYER))
 	wotr_btn.pressed.connect(_on_wotr_pressed)
 	wotr_screen.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
 	wotr_screen.battle_committed.connect(_on_wotr_battle_committed)
-	options_btn.pressed.connect(_on_options)
 	quit_btn.pressed.connect(func() -> void: get_tree().quit())
 	multiplayer_flyout.host_requested.connect(_on_multiplayer_host)
 	multiplayer_flyout.join_requested.connect(_on_multiplayer_join)
 	multiplayer_flyout.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
 	multiplayer_lobby.launch_confirmed.connect(_on_lobby_launch_confirmed)
 	multiplayer_lobby.leave_requested.connect(_on_lobby_leave)
-	sub_solo_btn.pressed.connect(func() -> void: _show_page(PAGE_SOLO))
-	sub_options_btn.pressed.connect(_on_options)
-	sub_quit_btn.pressed.connect(func() -> void: get_tree().quit())
 	solo_flyout.army_changed.connect(_refresh_skirmish_launch_state)
 	solo_flyout.color_changed.connect(_on_color_changed)
 	solo_flyout.rows_changed.connect(_on_rows_changed)
@@ -1290,10 +1533,8 @@ func _show_page(page: String) -> void:
 	_set_nodes_visible(_options_page_nodes(), page == PAGE_OPTIONS)
 	_set_nodes_visible(_developer_page_nodes(), page == PAGE_DEVELOPER)
 	_set_nodes_visible(_stats_page_nodes(), page == PAGE_STATS)
-	menu_frame.visible = page != PAGE_DEVELOPER
-	# Subpage nav is a thin alternate strip — keep it off when the main bottom
-	# bar is the intended chrome so both bars never stack and fight input.
-	subpage_nav.visible = false
+	# Upward flyouts belong to the bar; any page change dismisses them.
+	_close_shell_flyouts()
 	if _nav_diamonds != null:
 		_nav_diamonds.queue_redraw()
 	# Developer tools remain deliberately absent from the player-facing surface;
@@ -1328,7 +1569,13 @@ func _show_page(page: String) -> void:
 
 
 func _main_page_nodes() -> Array[Control]:
-	return [main_heading, solo_btn, multiplayer_btn, wotr_btn, options_btn, quit_btn]
+	## The six retail bar caps. `wotr_btn` is deliberately absent: it is the WAR
+	## OF THE RING entry's state carrier, reached through the SOLO PLAY flyout,
+	## and must never appear as a seventh cap.
+	var nodes: Array[Control] = []
+	for button in _bar_buttons():
+		nodes.append(button)
+	return nodes
 
 
 func _solo_page_nodes() -> Array[Control]:
@@ -1503,10 +1750,31 @@ func _on_retail() -> void:
 		get_tree().change_scene_to_file("res://scenes/retail_loading_boot.tscn")
 
 
+func _unhandled_input(event: InputEvent) -> void:
+	## Clicking the backdrop dismisses an open bar flyout, matching retail where
+	## the list closes as soon as the pointer commits anywhere else. Presses that
+	## land on a flyout row or a bar button are consumed by those buttons and
+	## never reach here.
+	if not _shell_flyout_is_open():
+		return
+	var mouse := event as InputEventMouseButton
+	if mouse == null or not mouse.pressed:
+		return
+	for button in _bar_buttons():
+		if button.visible and button.get_global_rect().has_point(mouse.global_position):
+			return
+	_close_shell_flyouts()
+	get_viewport().set_input_as_handled()
+
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event.pressed or event.echo:
 		return
-	if event.keycode == KEY_ESCAPE and current_page == PAGE_MP_LOBBY:
+	if event.keycode == KEY_ESCAPE and _shell_flyout_is_open():
+		# An open bar flyout is the innermost surface; ESC dismisses it first.
+		_close_shell_flyouts()
+		get_viewport().set_input_as_handled()
+	elif event.keycode == KEY_ESCAPE and current_page == PAGE_MP_LOBBY:
 		# Escaping the lobby is a LEAVE, never a silent page swap: the session
 		# must close (notified disconnect) or the peer would wait forever.
 		multiplayer_lobby._on_leave_pressed()

@@ -31,6 +31,104 @@ func _run() -> void:
 	_check("main_page_is_uncluttered", _visible(menu, "Center/Solo") and _visible(menu, "Center/Options") and _visible(menu, "Center/Quit"))
 	_check("retail_launch_hidden_until_solo", not _retail_launch_visible(menu))
 
+	# --- retail shell bar + upward flyouts -----------------------------------
+	# The shell is the six retail caps in retail's order, with the lists that
+	# open UPWARD from them. These assert the shape a player sees, because a
+	# menu that only passes as a state machine is how a visibly broken build
+	# shipped green once already.
+	var bar_order := ["Tutorials", "Solo", "Multiplayer", "Options", "MyHeroes", "Quit"]
+	var bar_ok := true
+	var previous_left := -1.0
+	for node_name in bar_order:
+		var cap := menu.get_node_or_null("Center/%s" % node_name) as Button
+		if cap == null or not cap.visible:
+			bar_ok = false
+			break
+		# Left-to-right in the retail order, all sharing the bottom edge.
+		if cap.get_global_rect().position.x <= previous_left:
+			bar_ok = false
+			break
+		previous_left = cap.get_global_rect().position.x
+	_check("retail_bar_present_in_retail_order", bar_ok)
+	_check(
+		"my_heroes_is_disabled_and_says_why",
+		(menu.get_node("Center/MyHeroes") as Button).disabled
+			and (menu.get_node("Center/MyHeroes") as Button).tooltip_text.contains("not implemented")
+	)
+	_check(
+		"every_bar_cap_carries_a_hover_tooltip",
+		_all_have_tooltips(menu, bar_order)
+	)
+
+	var solo_menu = menu.shell_flyout("solo")
+	_check("solo_play_owns_an_upward_flyout", solo_menu != null)
+	if solo_menu != null:
+		_check("solo_flyout_starts_closed", not solo_menu.visible)
+		var solo_bar := menu.get_node("Center/Solo") as Button
+		solo_bar.pressed.emit()
+		await process_frame
+		_check("solo_bar_press_opens_the_flyout", solo_menu.visible)
+		# UPWARD: the panel sits wholly above the cap that spawned it.
+		_check(
+			"the_flyout_opens_above_its_bar_button",
+			solo_menu.get_global_rect().end.y <= solo_bar.get_global_rect().position.y,
+			"flyout_bottom=%s bar_top=%s" % [solo_menu.get_global_rect().end.y, solo_bar.get_global_rect().position.y]
+		)
+		var labels: Array = []
+		for row in solo_menu.item_buttons:
+			labels.append(String(row.text))
+		_check(
+			"solo_flyout_lists_the_retail_rows",
+			labels == ["SKIRMISH", "WAR OF THE RING", "EVIL CAMPAIGN", "GOOD CAMPAIGN", "LOAD GAME"],
+			str(labels)
+		)
+		# WAR OF THE RING is a real feature on this branch, not a stub. Its row
+		# tracks the menu's own availability verdict exactly - live when a
+		# living-world document was found, and when not, disabled carrying the
+		# search's reason rather than a flat "not implemented".
+		var wotr_row: Button = solo_menu.item_row("wotr")
+		var wotr_reason := String(menu.wotr_unavailable_reason())
+		_check(
+			"war_of_the_ring_row_matches_the_menus_verdict",
+			wotr_row != null and wotr_row.disabled == (wotr_reason != ""),
+			"disabled=%s reason=%s" % [wotr_row != null and wotr_row.disabled, wotr_reason]
+		)
+		_check(
+			"war_of_the_ring_row_is_never_a_stub",
+			wotr_row != null and not wotr_row.tooltip_text.contains("not implemented"),
+			wotr_row.tooltip_text if wotr_row != null else "<missing>"
+		)
+		if wotr_row != null and wotr_row.disabled:
+			_check(
+				"a_blocked_war_of_the_ring_row_carries_the_reason",
+				wotr_row.tooltip_text == wotr_reason, wotr_row.tooltip_text
+			)
+		else:
+			_check("a_live_war_of_the_ring_row_is_pressable", wotr_row != null and not wotr_row.disabled)
+		# The project's standing rule: no greyed control without a stated reason.
+		var mute_rows: Array = []
+		for bar_id in ["tutorials", "solo", "options"]:
+			var flyout = menu.shell_flyout(bar_id)
+			if flyout == null:
+				continue
+			for row in flyout.item_buttons:
+				if row.disabled and row.tooltip_text.strip_edges() == "":
+					mute_rows.append("%s/%s" % [bar_id, row.text])
+		_check("no_disabled_flyout_row_is_left_unexplained", mute_rows.is_empty(), str(mute_rows))
+		# A page change dismisses the bar's flyouts.
+		menu.show_page("main")
+		await process_frame
+		_check("changing_page_closes_the_flyout", not solo_menu.visible)
+
+	var version_label := menu.get_node_or_null("Center/BuildVersion") as Label
+	_check("build_version_is_shown_bottom_left", version_label != null and version_label.text.strip_edges() != "")
+	_check(
+		"build_version_is_not_a_stale_literal",
+		version_label != null
+			and version_label.text == _expected_version_text(),
+		version_label.text if version_label != null else "<missing>"
+	)
+
 	_check("solo_page_accepts_navigation", bool(menu.show_page("solo")))
 	_check("solo_page_preserves_retail_launch", _retail_launch_visible(menu))
 	_check("solo_page_has_no_legacy_launch", menu.get_node_or_null("Center/Start") == null and menu.get_node_or_null("Center/LegacyGrid") == null)
@@ -85,6 +183,25 @@ func _retail_launch_visible(menu: Node) -> bool:
 	## rework; visibility still tracks the solo page exactly.
 	var button := menu.find_child("Retail", true, false) as Control
 	return button != null and button.is_visible_in_tree()
+
+
+func _all_have_tooltips(menu: Node, bar_order: Array) -> bool:
+	for node_name in bar_order:
+		var cap := menu.get_node_or_null("Center/%s" % node_name) as Button
+		if cap == null or cap.tooltip_text.strip_edges() == "":
+			return false
+	return true
+
+
+func _expected_version_text() -> String:
+	## The label must be derived from project.godot, never a literal baked into
+	## the shell - a hardcoded version is how the menu came to advertise a build
+	## that had long since moved on. When the setting is unset the label says so
+	## and names the setting, which is louder (deliberately) than a blank corner.
+	var version := String(ProjectSettings.get_setting("application/config/version", "")).strip_edges()
+	if version != "":
+		return "v%s" % version
+	return "build version not set (application/config/version)"
 
 
 func _visible(root_node: Node, path: String) -> bool:
