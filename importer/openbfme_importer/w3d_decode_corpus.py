@@ -12,6 +12,13 @@ manifest entry is still opened, hash-verified, and included in all totals.
 The report proves decode-plan coverage only.  It deliberately contains no host
 paths, W3D payloads, authored identifiers, GLB claims, render claims, or
 playback-completeness claims.
+
+The stored report document (``bfme2-w3d-decode-corpus.json``) is written by
+:mod:`.w3d_decode_corpus_report`, which stamps measurement provenance and
+provides the regeneration CLI::
+
+    PYTHONPATH=importer python -m openbfme_importer.w3d_decode_corpus_report \
+        <effective-assets-root> <output-json>
 """
 
 from __future__ import annotations

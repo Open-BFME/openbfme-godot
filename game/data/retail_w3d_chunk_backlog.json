@@ -1,7 +1,7 @@
 {
-	"$comment": "Ranked retail W3D chunk-decode backlog. Regenerate with `PYTHONPATH=importer python -m openbfme_importer.w3d_chunk_backlog <effective-assets-root> <reports-dir> <output-json>`; do not hand-edit. Ranking is by DISTINCT FILES BLOCKED at the metadata-scanner level, not raw occurrences. `decodeLayer` quotes the sealed decode-corpus evidence for the same chunk ID: a non-null row with terminalCount 0 means the stream decoder already decodes every occurrence and only census accounting lags. anomalies.trimAdmitted counts files whose only index defect was retail fixed-width whitespace padding in an authored header identifier and whose trimmed ids are provably unique corpus-wide; a collision keeps the fail-closed rejection and is counted under anomalies.indexRejected instead. Aggregate counts and hashes only - no retail paths, authored identifiers, payload bytes, or geometry.",
+	"$comment": "Ranked retail W3D chunk-decode backlog. Regenerate with `PYTHONPATH=importer python -m openbfme_importer.w3d_chunk_backlog <effective-assets-root> <reports-dir> <output-json>`; do not hand-edit. Ranking is by DISTINCT FILES BLOCKED at the metadata-scanner level, not raw occurrences. `decodeLayer` quotes the sealed decode-corpus evidence for the same chunk ID: a non-null row with terminalCount 0 means the stream decoder already decodes every occurrence and only census accounting lags. anomalies.trimAdmitted counts files whose only index defect was retail fixed-width whitespace padding in an authored header identifier and whose trimmed ids are provably unique corpus-wide; a collision keeps the fail-closed rejection and is counted under anomalies.indexRejected instead. `provenance` blocks date this census and its decode-corpus input against the measuring code's import-closure fingerprint; a `status` other than `fresh` means the quoted figures were measured by code that has since changed and must be regenerated, and the committed-census test fails on it. Aggregate counts and hashes only - no retail paths, authored identifiers, payload bytes, or geometry.",
 	"schema": "openbfme.retail-w3d-chunk-backlog",
-	"schemaVersion": 1,
+	"schemaVersion": 2,
 	"corpus": {
 		"game": "bfme2",
 		"manifestFileCount": 40129,
@@ -15,12 +15,20 @@
 			"schema": "openbfme.w3d-decode-corpus",
 			"schemaVersion": 2,
 			"hashes": {
-				"corpusSha256": "de7393fd45c4ce993b735e2a3d9c856f8582953240342c166b4f8a63f10a8265",
-				"hierarchyResolverSha256": "3c05866cea166953454e2a9550392dd1419a5b58f3bcfae5fa940dd708177c32",
+				"corpusSha256": "077c18b8bdd962cee56ce610a15a0c7d867f68ffce43e70c73475171c7b61595",
+				"hierarchyResolverSha256": "9101bac33b0c9011539d758ae056ab42e4c4c73b816b5a409d6a92a73e6e090a",
 				"inventorySha256": "679a2a983f8fdf3276c48a65102fc699701eecc39c06ae066d0c24c314cceae9",
 				"manifestAggregateSha256": "fbf3c7e03ed5fe841cd7b71c3b2ac7dac712f0ece212bdc3621c7c4e99053568",
-				"manifestSha256": "05dca40acff19aba01c7bb2e1166461a0725e96487e407b53da67212e9d206ac",
-				"planSetSha256": "ccd7363c1efa83f223186c0e1c8fe6bcb90a5fa12189b74cee2a24c321eca4e6"
+				"manifestSha256": "8ca034dbf551e5162778a54a849afd02022ef5b368e39474a89b3c1a28f6803f",
+				"planSetSha256": "2505fb35e15d9c49b4e7517d196f197b744ecb29dee575e1c800e5c528963e14"
+			},
+			"provenance": {
+				"status": "fresh",
+				"rootModule": "openbfme_importer.w3d_decode_corpus",
+				"recordedFingerprintSha256": "9c138422225cce191e6584db31658507cd23a22c307e74cb64c26c11d73f12fb",
+				"currentFingerprintSha256": "9c138422225cce191e6584db31658507cd23a22c307e74cb64c26c11d73f12fb",
+				"recordedGitCommit": "2bc91f17866331e28c8812aab34e0d92dfd524c0",
+				"staleModules": []
 			}
 		}
 	},
@@ -717,14 +725,14 @@
 		"decodeCorpus": {
 			"joinedBySourceSha256": true,
 			"unjoinedFileCount": 0,
-			"notStreamCompleteFileCount": 272,
-			"notStreamCompleteFactionReachableFileCount": 106,
-			"damagedFileCount": 73,
-			"incompleteFileCount": 272,
+			"notStreamCompleteFileCount": 232,
+			"notStreamCompleteFactionReachableFileCount": 87,
+			"damagedFileCount": 33,
+			"incompleteFileCount": 232,
 			"unresolvedFileCount": 11,
 			"unsupportedFileCount": 10,
-			"damagedFactionReachableFileCount": 20,
-			"incompleteFactionReachableFileCount": 106,
+			"damagedFactionReachableFileCount": 1,
+			"incompleteFactionReachableFileCount": 87,
 			"unresolvedFactionReachableFileCount": 0,
 			"unsupportedFactionReachableFileCount": 0
 		},
@@ -738,5 +746,40 @@
 			"identicalByteGroupCount": 4,
 			"distinctByteGroupCount": 20
 		}
+	},
+	"provenance": {
+		"schema": "openbfme.measurement-provenance",
+		"schemaVersion": 0,
+		"rootModule": "openbfme_importer.w3d_chunk_backlog",
+		"moduleCount": 6,
+		"modules": [
+			{
+				"module": "paths",
+				"sha256": "679bb384a495fa917da56aa64333c0796722a989d213d9772bea5f20fbe9ba62"
+			},
+			{
+				"module": "w3d_catalog",
+				"sha256": "369d14675624b7e128eb6e1272980d6354fae1b40c8cf996623797a66b04ee00"
+			},
+			{
+				"module": "w3d_chunk_backlog",
+				"sha256": "4b0ad1d8ef4fb4a2b2515bd74907ae24eefefc09111e41ef6e9e9cb2722005c6"
+			},
+			{
+				"module": "w3d_corpus",
+				"sha256": "126b08bb1293c86e5bd8e8ab273408a3ecc594c8d0704a088c9173f2b25bb0fa"
+			},
+			{
+				"module": "w3d_index",
+				"sha256": "b9c957491459c8a0045a54dba8bef53eb1b97a6f7b9495b91a42f0b7262c4000"
+			},
+			{
+				"module": "w3d_metadata",
+				"sha256": "abee460bf7d23acb77ad3d89d3eae8f5bc1785c3987ddf4ddf8497f694cf08b0"
+			}
+		],
+		"fingerprintSha256": "f8cdca32998ace2a39dfdb90a8421f706500ebbef99275042b6a349ca4c9e0d7",
+		"gitCommit": "b6a67c45d92e9c125ecd271480087fa5f4932676",
+		"gitWorktreeClean": false
 	}
 }

@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
 import struct
+import tempfile
 import unittest
 
+from openbfme_importer.measurement_provenance import (
+    measurement_fingerprint,
+    measurement_provenance,
+)
 from openbfme_importer.w3d_chunk_backlog import (
+    CENSUS_MEASUREMENT_MODULE,
+    DECODE_CORPUS_MEASUREMENT_MODULE,
     RETAIL_W3D_CHUNK_BACKLOG_SCHEMA,
     W3DChunkBacklogError,
     build_w3d_chunk_backlog,
     collect_w3d_backlog_file_evidence,
     render_w3d_chunk_backlog,
+    scan_w3d_chunk_backlog_tree,
     w3d_paths_from_slice_plan,
 )
 
@@ -420,6 +431,210 @@ class W3DChunkBacklogTests(unittest.TestCase):
         )
         self.assertEqual(census["schema"], RETAIL_W3D_CHUNK_BACKLOG_SCHEMA)
         self.assertEqual(census["corpus"], _identity())
+
+
+class W3DChunkBacklogStalenessGuardTests(unittest.TestCase):
+    """The census may republish decode-corpus figures only when it can date
+    them; an undatable report is refused, a stale one is loudly marked."""
+
+    def _tree(self, base: Path) -> tuple[Path, bytes]:
+        from tests.test_w3d_decode_corpus import _write_corpus
+
+        root = base / "effective-assets"
+        root.mkdir()
+        payload = _mesh("Deformed") + _chunk(0x00000058, b"d" * 8)
+        _write_corpus(root, {"art/w3d/gu/deform.w3d": payload})
+        return root, payload
+
+    def _decode_corpus(
+        self, payload: bytes, provenance: object
+    ) -> dict[str, object]:
+        document: dict[str, object] = {
+            "schema": "openbfme.w3d-decode-corpus",
+            "schemaVersion": 2,
+            "hashes": {"corpusSha256": "c" * 64},
+            "sources": [
+                {
+                    "sourceSha256": hashlib.sha256(payload).hexdigest(),
+                    "status": {
+                        "streamComplete": False,
+                        "incomplete": True,
+                        "damaged": True,
+                        "unresolved": False,
+                        "unsupported": False,
+                    },
+                }
+            ],
+            "chunks": [],
+        }
+        if provenance is not None:
+            document["provenance"] = provenance
+        return document
+
+    def test_undatable_decode_corpus_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root, payload = self._tree(Path(raw))
+            with self.assertRaisesRegex(W3DChunkBacklogError, "undatable"):
+                scan_w3d_chunk_backlog_tree(
+                    root,
+                    faction_closures=_CLOSURES,
+                    decode_corpus=self._decode_corpus(payload, None),
+                )
+            with self.assertRaisesRegex(W3DChunkBacklogError, "undatable"):
+                scan_w3d_chunk_backlog_tree(
+                    root,
+                    faction_closures=_CLOSURES,
+                    decode_corpus=self._decode_corpus(
+                        payload, {"fingerprintSha256": "not-a-hash"}
+                    ),
+                )
+
+    def test_fresh_decode_corpus_is_dated_in_the_census(self) -> None:
+        recorded = measurement_provenance(DECODE_CORPUS_MEASUREMENT_MODULE)
+        with tempfile.TemporaryDirectory() as raw:
+            root, payload = self._tree(Path(raw))
+            census = scan_w3d_chunk_backlog_tree(
+                root,
+                faction_closures=_CLOSURES,
+                decode_corpus=self._decode_corpus(payload, recorded),
+            )
+
+        verdict = census["corpus"]["decodeCorpus"]["provenance"]
+        self.assertEqual(verdict["status"], "fresh")
+        self.assertEqual(verdict["staleModules"], [])
+        self.assertEqual(
+            verdict["recordedFingerprintSha256"],
+            verdict["currentFingerprintSha256"],
+        )
+        # The census also dates itself.
+        own = census["provenance"]
+        self.assertEqual(own["rootModule"], CENSUS_MEASUREMENT_MODULE)
+        self.assertEqual(
+            own["fingerprintSha256"],
+            measurement_fingerprint(CENSUS_MEASUREMENT_MODULE)[
+                "fingerprintSha256"
+            ],
+        )
+        # The stale figures joined from the report remain visible beside the
+        # verdict rather than being silently dropped.
+        decode = census["anomalies"]["decodeCorpus"]
+        self.assertTrue(decode["joinedBySourceSha256"])
+        self.assertEqual(decode["damagedFileCount"], 1)
+
+    def test_stale_decode_corpus_is_marked_loudly_with_the_moved_module(
+        self,
+    ) -> None:
+        recorded = measurement_provenance(DECODE_CORPUS_MEASUREMENT_MODULE)
+        tampered = dict(recorded)
+        tampered["modules"] = [
+            (
+                {**row, "sha256": "0" * 64}
+                if row["module"] == "w3d_decode_plan"
+                else dict(row)
+            )
+            for row in recorded["modules"]
+        ]
+        tampered["fingerprintSha256"] = "f" * 64
+        with tempfile.TemporaryDirectory() as raw:
+            root, payload = self._tree(Path(raw))
+            census = scan_w3d_chunk_backlog_tree(
+                root,
+                faction_closures=_CLOSURES,
+                decode_corpus=self._decode_corpus(payload, tampered),
+            )
+
+        verdict = census["corpus"]["decodeCorpus"]["provenance"]
+        self.assertEqual(verdict["status"], "stale")
+        self.assertEqual(verdict["staleModules"], ["w3d_decode_plan"])
+        # The verdict survives rendering into the committed document form.
+        rendered = render_w3d_chunk_backlog(census)
+        self.assertIn('"status": "stale"', rendered)
+
+
+class CommittedCensusProvenanceTests(unittest.TestCase):
+    """The committed census must be dated, and dated FRESH against the code
+    in this working tree.  A red run here means a stored report's figures
+    were measured by code that has since changed: regenerate the decode
+    corpus report (python -m openbfme_importer.w3d_decode_corpus_report)
+    and/or the census (python -m openbfme_importer.w3d_chunk_backlog)."""
+
+    _CENSUS_PATH = (
+        Path(__file__).resolve().parents[2]
+        / "game"
+        / "data"
+        / "retail_w3d_chunk_backlog.json"
+    )
+
+    def _census(self) -> dict[str, object]:
+        return json.loads(self._CENSUS_PATH.read_text(encoding="utf-8"))
+
+    def test_committed_census_dates_itself_and_is_current(self) -> None:
+        census = self._census()
+        own = census.get("provenance")
+        self.assertIsInstance(
+            own,
+            dict,
+            "committed census carries no provenance block: regenerate it "
+            "with python -m openbfme_importer.w3d_chunk_backlog",
+        )
+        current = measurement_fingerprint(CENSUS_MEASUREMENT_MODULE)
+        recorded_modules = {
+            row["module"]: row["sha256"] for row in own.get("modules", [])
+        }
+        current_modules = {
+            row["module"]: row["sha256"] for row in current["modules"]
+        }
+        moved = sorted(
+            module
+            for module in set(recorded_modules) | set(current_modules)
+            if recorded_modules.get(module) != current_modules.get(module)
+        )
+        self.assertEqual(
+            own.get("fingerprintSha256"),
+            current["fingerprintSha256"],
+            "the committed census predates the census-measurement code now "
+            f"on disk (moved modules: {moved}); its figures can no longer "
+            "be trusted -- regenerate game/data/retail_w3d_chunk_backlog"
+            ".json with python -m openbfme_importer.w3d_chunk_backlog",
+        )
+
+    def test_committed_census_decode_corpus_figures_are_dated_fresh(
+        self,
+    ) -> None:
+        census = self._census()
+        corpus = census.get("corpus")
+        self.assertIsInstance(corpus, dict)
+        decode = corpus.get("decodeCorpus")
+        self.assertIsInstance(
+            decode,
+            dict,
+            "committed census republishes no decode-corpus section; if that "
+            "is intentional, update this test with the reasoning",
+        )
+        verdict = decode.get("provenance")
+        self.assertIsInstance(
+            verdict,
+            dict,
+            "committed census republishes decode-corpus figures it cannot "
+            "date: regenerate the stored decode-corpus report with python "
+            "-m openbfme_importer.w3d_decode_corpus_report and rebuild the "
+            "census",
+        )
+        self.assertEqual(
+            verdict.get("status"),
+            "fresh",
+            "the committed census knowingly republishes STALE decode-corpus "
+            f"figures (stale modules: {verdict.get('staleModules')}); "
+            "regenerate the stored report and rebuild the census",
+        )
+        current = measurement_fingerprint(DECODE_CORPUS_MEASUREMENT_MODULE)
+        self.assertEqual(
+            verdict.get("currentFingerprintSha256"),
+            current["fingerprintSha256"],
+            "the decode-measurement code moved after the committed census "
+            "was generated; the stored decode-corpus report (and then the "
+            "census) must be regenerated before its figures are trusted",
+        )
 
 
 if __name__ == "__main__":

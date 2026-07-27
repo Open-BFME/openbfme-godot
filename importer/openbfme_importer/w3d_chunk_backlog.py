@@ -40,7 +40,10 @@ from .w3d_metadata import W3DMetadata, scan_w3d_metadata
 
 
 RETAIL_W3D_CHUNK_BACKLOG_SCHEMA = "openbfme.retail-w3d-chunk-backlog"
-RETAIL_W3D_CHUNK_BACKLOG_SCHEMA_VERSION = 1
+RETAIL_W3D_CHUNK_BACKLOG_SCHEMA_VERSION = 2
+
+CENSUS_MEASUREMENT_MODULE = "openbfme_importer.w3d_chunk_backlog"
+DECODE_CORPUS_MEASUREMENT_MODULE = "openbfme_importer.w3d_decode_corpus"
 
 _FLAGGED_CLASSIFICATIONS = frozenset({"unsupported", "unknown"})
 _METADATA_DAMAGE_CODES = frozenset(
@@ -474,6 +477,11 @@ def build_w3d_chunk_backlog(
             "header identifier and whose trimmed ids are provably unique "
             "corpus-wide; a collision keeps the fail-closed rejection and "
             "is counted under anomalies.indexRejected instead. "
+            "`provenance` blocks date this census and its decode-corpus "
+            "input against the measuring code's import-closure fingerprint; "
+            "a `status` other than `fresh` means the quoted figures were "
+            "measured by code that has since changed and must be "
+            "regenerated, and the committed-census test fails on it. "
             "Aggregate counts and hashes only - no retail paths, authored "
             "identifiers, payload bytes, or geometry."
         ),
@@ -601,10 +609,32 @@ def scan_w3d_chunk_backlog_tree(
                 "terminalCount": int(chunk["terminalCount"]),
             }
         hashes = decode_corpus.get("hashes")
+        # Staleness guard: the census REPUBLISHES the stored decode-corpus
+        # report's figures, so it must be able to date that report against
+        # the decode code currently on disk.  An undatable report is refused
+        # outright -- silently inheriting its numbers is exactly how two
+        # wrong figures shipped -- and a datable-but-stale report is admitted
+        # only with a loud "stale" verdict embedded beside the figures.
+        from .measurement_provenance import (
+            MeasurementProvenanceError,
+            measurement_fingerprint_verdict,
+        )
+
+        try:
+            decode_provenance = measurement_fingerprint_verdict(
+                decode_corpus.get("provenance"),
+                DECODE_CORPUS_MEASUREMENT_MODULE,
+            )
+        except MeasurementProvenanceError as exc:
+            raise W3DChunkBacklogError(
+                "decode corpus report is undatable; refusing to republish "
+                f"its figures: {exc}"
+            ) from exc
         decode_identity = {
             "schema": decode_corpus.get("schema"),
             "schemaVersion": decode_corpus.get("schemaVersion"),
             "hashes": dict(hashes) if isinstance(hashes, Mapping) else None,
+            "provenance": decode_provenance,
         }
 
     def evidence_rows() -> Iterable[W3DBacklogFileEvidence]:
@@ -626,13 +656,20 @@ def scan_w3d_chunk_backlog_tree(
         ),
         "decodeCorpus": decode_identity or None,
     }
-    return build_w3d_chunk_backlog(
+    census = build_w3d_chunk_backlog(
         evidence_rows(),
         faction_closures=faction_closures,
         corpus_identity=corpus_identity,
         decode_source_states=decode_states,
         decode_chunk_rows=decode_rows,
     )
+    # The census is itself a stored report, so it dates itself the same way
+    # it dates its decode-corpus input: with the fingerprint of its own
+    # measurement closure at generation time.
+    from .measurement_provenance import measurement_provenance
+
+    census["provenance"] = measurement_provenance(CENSUS_MEASUREMENT_MODULE)
+    return census
 
 
 def faction_closures_from_reports_dir(
@@ -696,6 +733,8 @@ if __name__ == "__main__":  # pragma: no cover - thin CLI shim
 
 
 __all__ = [
+    "CENSUS_MEASUREMENT_MODULE",
+    "DECODE_CORPUS_MEASUREMENT_MODULE",
     "RETAIL_W3D_CHUNK_BACKLOG_SCHEMA",
     "RETAIL_W3D_CHUNK_BACKLOG_SCHEMA_VERSION",
     "W3DBacklogFileEvidence",
