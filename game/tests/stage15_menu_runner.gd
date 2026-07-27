@@ -105,6 +105,34 @@ func _run() -> void:
 			)
 		else:
 			_check("a_live_war_of_the_ring_row_is_pressable", wotr_row != null and not wotr_row.disabled)
+		# RETAIL'S GAME SETUP SCREEN IS WHERE THE ENTRY LANDS. War of the Ring
+		# used to drop straight into a seated campaign; the entry now opens the
+		# setup screen, and it opens EVEN WHEN THE CAMPAIGN CANNOT START, because
+		# that screen is the surface that can say which file is missing. The
+		# strategic page keeps its own refusal and is checked by
+		# `wotr_round_trip_runner`, which is why this only asserts the route.
+		_check("war_of_the_ring_lands_on_game_setup", menu.show_page("wotr_setup"))
+		await process_frame
+		_check(
+			"game_setup_is_the_page_the_entry_opens",
+			String(menu.get_current_page()) == "wotr_setup"
+				and menu.wotr_setup_screen.visible and not menu.wotr_screen.visible,
+			"page=%s setup=%s map=%s" % [
+				menu.get_current_page(), menu.wotr_setup_screen.visible,
+				menu.wotr_screen.visible]
+		)
+		# PLAY REACHES THE EXISTING SESSION. The screen emits; the menu starts a
+		# `WotrSession`. A second path into the strategic layer is the thing this
+		# check exists to prevent.
+		_check(
+			"game_setup_play_is_wired_to_the_session_path",
+			menu.wotr_setup_screen.play_requested.is_connected(menu._on_wotr_setup_play),
+			"nothing is listening to PLAY"
+		)
+		menu.show_page("main")
+		await process_frame
+		solo_bar.pressed.emit()
+		await process_frame
 		# The project's standing rule: no greyed control without a stated reason.
 		var mute_rows: Array = []
 		for bar_id in ["tutorials", "solo", "options"]:

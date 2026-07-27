@@ -11,6 +11,7 @@ const PackCapabilityScript = preload("res://src/content/pack_capability.gd")
 const MultiplayerLobbyScript = preload("res://src/ui/multiplayer_lobby.gd")
 const LockstepSessionScript = preload("res://src/retail_slice/retail_lockstep_session.gd")
 const WotrScreenScript = preload("res://src/ui/wotr_screen.gd")
+const WotrSetupScreenScript = preload("res://src/ui/wotr_setup_screen.gd")
 const WotrSessionScript = preload("res://src/wotr/wotr_session.gd")
 const WotrStateScript = preload("res://src/wotr/wotr_state.gd")
 const WotrBattleScript = preload("res://src/wotr/wotr_battle.gd")
@@ -20,6 +21,10 @@ const PAGE_SOLO := "solo"
 const PAGE_MULTIPLAYER := "multiplayer"
 const PAGE_MP_LOBBY := "mp_lobby"
 const PAGE_WOTR := "wotr"
+## Retail's GAME SETUP screen, which now stands between the WAR OF THE RING
+## entry and the strategic map. `PAGE_WOTR` is unchanged and still opens the map
+## directly - the round trip and the battle return both go through it.
+const PAGE_WOTR_SETUP := "wotr_setup"
 const PAGE_OPTIONS := "options"
 const PAGE_DEVELOPER := "developer"
 const PAGE_STATS := "stats"
@@ -191,6 +196,8 @@ var _lobby_session
 ## a War of the Ring button that led to a fabricated Middle-earth would be
 ## exactly the silent fallback this project has been removing.
 var wotr_screen: Panel
+## Retail's GAME SETUP screen. It CHOOSES; `WotrSession` still decides.
+var wotr_setup_screen: Panel
 ## Upward shell flyouts keyed by their anchor button's bar id.
 var _shell_flyouts: Dictionary = {}
 var _wotr_session = null
@@ -230,6 +237,16 @@ func _ready() -> void:
 	wotr_screen.visible = false
 	wotr_screen.theme_type_variation = "FlyoutPanel"
 	center.add_child(wotr_screen)
+	# RETAIL'S GAME SETUP SCREEN, on the same rectangle. It is CONFIGURED later,
+	# in `_open_wotr_setup()`, because it needs the faction availability that
+	# `_populate_skirmish_options()` below has not filled in yet.
+	wotr_setup_screen = WotrSetupScreenScript.new()
+	wotr_setup_screen.name = "WotrSetupScreen"
+	wotr_setup_screen.position = solo_flyout.position
+	wotr_setup_screen.size = solo_flyout.size
+	wotr_setup_screen.visible = false
+	wotr_setup_screen.theme_type_variation = "FlyoutPanel"
+	center.add_child(wotr_setup_screen)
 	_populate_skirmish_options()
 	_populate_rules_options()
 	_populate_color_options()
@@ -1254,12 +1271,17 @@ func _refresh_wotr_entry() -> void:
 ## ones whose faction the tactical layer can actually field, and the scenario is
 ## the campaign's first startable two-seat scenario.
 ##
-## THE SEATING IS NOT A CHOICE YET, and that is a stated limit rather than a
-## hidden one: a faction chooser is a genuine feature this screen does not have,
-## and picking arbitrarily while pretending otherwise would be worse than saying
-## so. Seat 0 is the human seat, which is authoritative strategic state and rides
-## the hash - not a per-machine "which seat am I".
-func _start_wotr_session() -> bool:
+## `chosen` is the GAME SETUP screen's `{scenario, seats}` when the player came
+## through it, and EMPTY when they did not - `show_page("wotr")` and the return
+## from a tactical battle both arrive without one.
+##
+## THE SEATING USED TO BE FIXED, and said so. It is now the player's, through
+## retail's own GAME SETUP screen, and the fixed seating below survives as the
+## fallback for the two callers that legitimately have no chooser in front of
+## them. EITHER WAY THE SESSION DECIDES: `begin()` refuses a document that will
+## not load, fewer than two seats, and a scenario with no ownership to apply,
+## and this function reports its refusal rather than working around it.
+func _start_wotr_session(chosen: Dictionary = {}) -> bool:
 	if _wotr_document.is_empty():
 		return false
 	var probe = WotrSessionScript.new()
@@ -1268,26 +1290,30 @@ func _start_wotr_session() -> bool:
 		_wotr_unavailable_reason = "the living-world document did not load: %s" % str(probe_world.errors)
 		return false
 	probe.world = probe_world
-	var seats: Array = []
-	for option in probe.seat_options(_skirmish_availability):
-		if String(option["unavailable_reason"]) != "":
-			continue
-		seats.append({
-			"template": String(option["template"]),
-			"team": seats.size() + 1,
-			"controller": WotrStateScript.CONTROLLER_HUMAN if seats.is_empty() else WotrStateScript.CONTROLLER_AI,
-		})
-		if seats.size() == 2:
-			break
+	var seats: Array = chosen.get("seats", []) as Array
+	if seats.is_empty():
+		for option in probe.seat_options(_skirmish_availability):
+			if String(option["unavailable_reason"]) != "":
+				continue
+			seats.append({
+				"template": String(option["template"]),
+				"team": seats.size() + 1,
+				"controller": WotrStateScript.CONTROLLER_HUMAN if seats.is_empty() else WotrStateScript.CONTROLLER_AI,
+			})
+			if seats.size() == 2:
+				break
 	if seats.size() < 2:
 		_wotr_unavailable_reason = "fewer than two of the campaign's factions are converted, so no War of the Ring session can be seated"
 		return false
-	var scenarios := probe.startable_scenarios(2)
-	if scenarios.is_empty():
-		_wotr_unavailable_reason = "the document's campaign carries no scenario that seats two players with authored territory"
-		return false
+	var scenario := String(chosen.get("scenario", ""))
+	if scenario.is_empty():
+		var scenarios := probe.startable_scenarios(2)
+		if scenarios.is_empty():
+			_wotr_unavailable_reason = "the document's campaign carries no scenario that seats two players with authored territory"
+			return false
+		scenario = String(scenarios[0])
 	var session = WotrSessionScript.new()
-	if not session.begin(_wotr_document, probe_world.campaign_name, String(scenarios[0]), seats):
+	if not session.begin(_wotr_document, probe_world.campaign_name, scenario, seats):
 		_wotr_unavailable_reason = "the strategic layer refused this campaign: %s" % ", ".join(Array(session.refusals))
 		return false
 	session.document_path = _wotr_document_path
@@ -1307,6 +1333,50 @@ func wotr_available_map_ids() -> Array:
 			ids.append(map_id)
 	ids.sort()
 	return ids
+
+
+## Open retail's GAME SETUP screen. It gets the located document, a probe
+## session (world only - it never builds strategic state), the mounted pack roots
+## its string and geometry bundles are searched under, and the SAME unavailable
+## reason the strategic page refuses on, so the two surfaces cannot disagree
+## about whether War of the Ring is open.
+func _open_wotr_setup() -> bool:
+	var pack_roots: Array = []
+	for meta_value in (_content_db.get("pack_meta") as Array):
+		pack_roots.append(String((meta_value as Dictionary).get("root", "")))
+	pack_roots.sort()
+	var probe = null
+	if _wotr_unavailable_reason == "" and not _wotr_document.is_empty():
+		var probe_world = load("res://src/wotr/wotr_world.gd").new()
+		if probe_world.load_from_dict(_wotr_document, ""):
+			probe = WotrSessionScript.new()
+			probe.world = probe_world
+	wotr_setup_screen.pack_faction_availability = _skirmish_availability
+	wotr_setup_screen.configure(
+		_wotr_document, probe, pack_roots, _wotr_unavailable_reason)
+	for line in wotr_setup_screen.describe_load():
+		print("[wotr-setup] %s" % String(line))
+	return true
+
+
+## PLAY on the setup screen. It reaches EXACTLY the path the fixed seating
+## reached - `_start_wotr_session()` into `WotrSession.begin()` - carrying the
+## scenario and seats the player chose instead of the ones this file used to
+## pick. Nothing else about the chosen setup travels: colour is presentation,
+## and every locked row on the RULES tab is locked precisely because there is no
+## carrier for it inside the commitment.
+func _on_wotr_setup_play(setup: Dictionary) -> void:
+	_wotr_session = null
+	if not _start_wotr_session(setup):
+		_refresh_wotr_entry()
+		wotr_setup_screen.show_message(
+			"the session refused this setup: %s" % _wotr_unavailable_reason)
+		return
+	if not _open_wotr():
+		wotr_setup_screen.show_message(
+			"the strategic screen refused to open: %s" % _wotr_unavailable_reason)
+		return
+	_show_page(PAGE_WOTR)
 
 
 func _open_wotr() -> bool:
@@ -1476,6 +1546,8 @@ func _connect_actions() -> void:
 	wotr_btn.pressed.connect(_on_wotr_pressed)
 	wotr_screen.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
 	wotr_screen.battle_committed.connect(_on_wotr_battle_committed)
+	wotr_setup_screen.back_requested.connect(func() -> void: _show_page(PAGE_MAIN))
+	wotr_setup_screen.play_requested.connect(_on_wotr_setup_play)
 	quit_btn.pressed.connect(func() -> void: get_tree().quit())
 	multiplayer_flyout.host_requested.connect(_on_multiplayer_host)
 	multiplayer_flyout.join_requested.connect(_on_multiplayer_join)
@@ -1500,8 +1572,17 @@ func _connect_actions() -> void:
 
 
 func show_page(page: String) -> bool:
-	if page not in [PAGE_MAIN, PAGE_SOLO, PAGE_WOTR, PAGE_OPTIONS, PAGE_DEVELOPER, PAGE_STATS]:
+	if page not in [PAGE_MAIN, PAGE_SOLO, PAGE_WOTR, PAGE_WOTR_SETUP, PAGE_OPTIONS,
+			PAGE_DEVELOPER, PAGE_STATS]:
 		return false
+	# GAME SETUP OPENS EVEN WHEN THE CAMPAIGN CANNOT START, and draws the reason.
+	# The strategic page below refuses instead, because a strategic page with no
+	# map is a blank Middle-earth; a setup screen with no document is a setup
+	# screen carrying the sentence that says which file is missing.
+	if page == PAGE_WOTR_SETUP:
+		_open_wotr_setup()
+		_show_page(page)
+		return true
 	# WAR OF THE RING REFUSES RATHER THAN OPENING EMPTY. With no living-world
 	# document there is no map to show, and showing a page anyway - blank, or
 	# worse, populated with something invented - is the failure this refusal
@@ -1512,8 +1593,11 @@ func show_page(page: String) -> bool:
 	return true
 
 
+## The WAR OF THE RING entry now lands on retail's GAME SETUP screen rather than
+## dropping into a campaign that seated itself. The screen opens even when the
+## campaign cannot start, because it is the surface that can SAY why.
 func _on_wotr_pressed() -> void:
-	if not show_page(PAGE_WOTR):
+	if not show_page(PAGE_WOTR_SETUP):
 		status.text = "War of the Ring is unavailable: %s" % _wotr_unavailable_reason
 
 
@@ -1528,6 +1612,7 @@ func _show_page(page: String) -> void:
 	_set_nodes_visible(_main_page_nodes(), page == PAGE_MAIN or page == PAGE_MULTIPLAYER or page == PAGE_MP_LOBBY)
 	_set_nodes_visible(_solo_page_nodes(), page == PAGE_SOLO)
 	_set_nodes_visible(_wotr_page_nodes(), page == PAGE_WOTR)
+	_set_nodes_visible(_wotr_setup_page_nodes(), page == PAGE_WOTR_SETUP)
 	_set_nodes_visible(_multiplayer_page_nodes(), page == PAGE_MULTIPLAYER)
 	_set_nodes_visible(_mp_lobby_page_nodes(), page == PAGE_MP_LOBBY)
 	_set_nodes_visible(_options_page_nodes(), page == PAGE_OPTIONS)
@@ -1584,6 +1669,10 @@ func _solo_page_nodes() -> Array[Control]:
 
 func _wotr_page_nodes() -> Array[Control]:
 	return [wotr_screen]
+
+
+func _wotr_setup_page_nodes() -> Array[Control]:
+	return [wotr_setup_screen]
 
 
 func _multiplayer_page_nodes() -> Array[Control]:
