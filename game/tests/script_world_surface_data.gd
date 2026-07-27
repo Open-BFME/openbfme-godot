@@ -56,11 +56,13 @@ const SUBSYSTEMS := {
 		+ "consult the applied set."
 	),
 	"base-building-ai": (
-		"The skirmish-AI base model: base flags and unpack economics, build "
-		+ "plots and foundations, tactical markers, base regions and "
-		+ "population, approach paths, home-base identity, per-base "
-		+ "buildability, view guardband. The single heaviest AI-traffic "
-		+ "blocker (ai_economy_execution polls base flags 64 times per pass)."
+		"The skirmish-AI base model. Its heaviest-traffic slice is BUILT: base "
+		+ "flags with unpack economics, the unpack pair's result references, "
+		+ "and per-base buildability (the 64-per-pass ai_economy_execution "
+		+ "poll, the unpack pair and the CAN_BUILD pair are served). Still "
+		+ "missing: foundations, tactical markers, base regions and "
+		+ "population, approach paths, home-base identity, reinforcement "
+		+ "armies, view guardband."
 	),
 	"command-button-abilities": (
 		"Command-button -> ability resolution on battalions: executing and "
@@ -111,9 +113,13 @@ const SUBSYSTEMS := {
 		"Not a sim subsystem: the coordinated signature-correction packet on "
 		+ "script_world.gd collecting every gap-registered missing parameter "
 		+ "(custom-state enable flag, threat radius, recruit type list, "
-		+ "stand-ground clear flag, nearest-team anchor, base-anchored "
-		+ "buildability, unpack result references, tactical-marker builds, "
-		+ "wall-upgrade shape) plus the three defects 005bcd8 reported."
+		+ "stand-ground clear flag, nearest-team anchor, tactical-marker "
+		+ "builds, wall-upgrade shape) plus the remaining defects 005bcd8 "
+		+ "reported. Three corrections have landed: base-anchored "
+		+ "buildability (players.can_build_at_base grew the base), the unpack "
+		+ "result references (ai.base_unpack grew its UNIT_REF destination) "
+		+ "and the base-anchored build (ai.build_base_building was reshaped "
+		+ "to the sourced OBJECT_TYPE/UNIT/UNIT_REF form)."
 	),
 	"garrison-transport-capture": (
 		"The WP03/WP04 blocked block: passenger/transport containers, "
@@ -240,9 +246,6 @@ const SUBSYSTEMS := {
 const BLOCKED := {
 	# --- ai -----------------------------------------------------------------
 	"ai.base_population": {"subsystem": "base-building-ai", "requires": "a base-population count per AI base"},
-	"ai.base_unpack": {"subsystem": "base-building-ai", "requires": "base flags with unpack economics (and the gap-registered result-reference parameter)"},
-	"ai.base_unpackable": {"subsystem": "base-building-ai", "requires": "base flags with per-player unpackability - the single most-polled AI condition (64 sites, one library)"},
-	"ai.build_base_building": {"subsystem": "base-building-ai", "requires": "build plots/slots and tactical markers (and the gap-registered site+reference parameters)"},
 	"ai.build_on_foundation": {"subsystem": "base-building-ai", "requires": "foundation objects a building can be placed on"},
 	"ai.camps_should_unpack": {"subsystem": "base-building-ai", "requires": "camp regions with unpack pacing state"},
 	"ai.create_reinforcement_team": {"subsystem": "base-building-ai", "requires": "reinforcement army templates and spawn anchors (retail anchors on the reference NAMED_BASE_UNPACK_FREE binds)"},
@@ -338,7 +341,6 @@ const BLOCKED := {
 	"players.add_rank_level": {"subsystem": "player-progression-state", "requires": "player rank levels"},
 	"players.add_skill_points": {"subsystem": "player-progression-state", "requires": "player skill points"},
 	"players.base_count": {"subsystem": "base-building-ai", "requires": "a notion of distinct bases per player"},
-	"players.can_build_at_base": {"subsystem": "base-building-ai", "requires": "per-base plot availability (and the gap-registered base-anchor parameter - 50 AI sites)"},
 	"players.change_light_point_level": {"subsystem": "player-progression-state", "requires": "light-point levels"},
 	"players.eva_event_played_within": {"subsystem": "event-ledger", "requires": "EVA event timestamps per player (plus the seconds-vs-ticks defect from 005bcd8)"},
 	"players.exit_all_buildings": {"subsystem": "garrison-transport-capture", "requires": "garrisoned units to exit"},
@@ -542,6 +544,9 @@ const BLOCKED := {
 ## a finished method; routing attributes call sites that need a refused shape
 ## to the subsystem that blocks that shape.
 const RESTRICTIONS := {
+	"ai.base_unpack": "acts as the bound script player (the sourced action carries no player); base flags of the sim's unpackable-base table only",
+	"ai.base_unpackable": "base flags of the sim's unpackable-base table only; the player must resolve (a bound name, or '<This Player>' with a script player bound)",
+	"ai.build_base_building": "acts as the bound script player; building types with an expansion rule and bases reachable through the shared object/unit-reference namespace only",
 	"combat.fire_special_power": "PLAYER scope, spellbook powers, explicit POSITION targets only",
 	"combat.player_all_destroyed": "full variant only; build_facilities_only refuses (no build-facility classification)",
 	"combat.special_power_ready": "PLAYER scope, powers of the match's spellbook document only",
@@ -554,6 +559,7 @@ const RESTRICTIONS := {
 	"players.building_count": "empty class (count everything) or a structure kind this sim models",
 	"progression.has_science": "sciences of the GLOBAL spellbook tree only; per-team overrides refuse",
 	"progression.has_upgrade": "PLAYER scope, modelled upgrade ids only",
+	"players.can_build_at_base": "the player must resolve ('<This Player>' included); bases through the shared object namespace; a non-empty object type must have an expansion rule (false for an unmodeled type would be a guess)",
 	"progression.unit_count_with_upgrade": "modelled upgrade ids only (zero for an unknown id would be a guess)",
 	"teams.stop": "disband=false only (no disband model)",
 	"world.player_money": "no refusal channel: an UNBOUND player reads 0 through this legacy path (reported base-class defect; economy.money is the honest surface)",
@@ -592,19 +598,19 @@ const VOCABULARY_ROUTING := {
 	"SKIRMISH_PLAYER_FACTION": {"route": "backed", "worldMethods": ["players.faction"], "mappingSource": "handler"},
 	"TEAM_HAS_UNITS": {"route": "backed", "worldMethods": ["teams.unit_count"], "mappingSource": "handler"},
 	"TEAM_STOP": {"route": "backed", "worldMethods": ["teams.stop"], "mappingSource": "handler"},
+	"BUILD_BASE_BUILDING": {"route": "backed", "worldMethods": ["ai.build_base_building"], "mappingSource": "handler", "note": "served through the corrected (building_type, base, result_reference) signature"},
+	"CAN_BUILD_AT_BASE": {"route": "backed", "worldMethods": ["players.can_build_at_base"], "mappingSource": "handler", "note": "served through the corrected base-carrying signature; empty object_type is the 'anything at all' form"},
+	"CAN_BUILD_OBJECTTYPE_AT_BASE": {"route": "backed", "worldMethods": ["players.can_build_at_base"], "mappingSource": "handler"},
+	"NAMED_BASE_UNPACK": {"route": "backed", "worldMethods": ["ai.base_unpack"], "mappingSource": "handler", "note": "served through the corrected signature carrying the UNIT_REF destination"},
+	"NAMED_BASE_UNPACKABLE_FOR_PLAYER": {"route": "backed", "worldMethods": ["ai.base_unpackable"], "mappingSource": "handler"},
+	"NAMED_BASE_UNPACK_FREE": {"route": "backed", "worldMethods": ["ai.base_unpack"], "mappingSource": "handler"},
 	# --- blocked: waiting on a subsystem (and sometimes a signature fix) ----
-	"BUILD_BASE_BUILDING": {"route": "blocked", "worldMethods": ["ai.build_base_building"], "blockingSubsystem": "base-building-ai", "signatureGap": true, "mappingSource": "declared", "note": "shares the site+reference signature gap WP11 proved on the tactical-marker sibling"},
-	"BUILD_BASE_BUILDING_PER_TACTICAL_MARKER": {"route": "blocked", "worldMethods": ["ai.build_base_building"], "blockingSubsystem": "base-building-ai", "signatureGap": true, "mappingSource": "handler"},
-	"CAN_BUILD_AT_BASE": {"route": "blocked", "worldMethods": ["players.can_build_at_base"], "blockingSubsystem": "base-building-ai", "signatureGap": true, "mappingSource": "handler"},
-	"CAN_BUILD_OBJECTTYPE_AT_BASE": {"route": "blocked", "worldMethods": ["players.can_build_at_base"], "blockingSubsystem": "base-building-ai", "signatureGap": true, "mappingSource": "handler"},
+	"BUILD_BASE_BUILDING_PER_TACTICAL_MARKER": {"route": "blocked", "worldMethods": ["ai.build_base_building"], "blockingSubsystem": "base-building-ai", "signatureGap": true, "mappingSource": "handler", "note": "still needs its own facet method (near/far side + marker type) plus tactical-marker sim state"},
 	"CREATE_OBJECT": {"route": "blocked", "worldMethods": ["units.create_object"], "blockingSubsystem": "entity-lifecycle-api", "mappingSource": "declared"},
 	"CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION": {"route": "blocked", "worldMethods": ["ai.create_reinforcement_team"], "blockingSubsystem": "base-building-ai", "mappingSource": "handler"},
 	"EVAL_TEAM_HEALTH": {"route": "blocked", "worldMethods": ["combat.team_health_percent"], "blockingSubsystem": "adapter-only", "mappingSource": "declared"},
 	"GATE_CLOSE": {"route": "blocked", "worldMethods": ["units.set_gate_state"], "blockingSubsystem": "walls-and-siege", "mappingSource": "declared"},
 	"GATE_OPEN": {"route": "blocked", "worldMethods": ["units.set_gate_state"], "blockingSubsystem": "walls-and-siege", "mappingSource": "declared"},
-	"NAMED_BASE_UNPACK": {"route": "blocked", "worldMethods": ["ai.base_unpack"], "blockingSubsystem": "base-building-ai", "signatureGap": true, "mappingSource": "handler"},
-	"NAMED_BASE_UNPACK_FREE": {"route": "blocked", "worldMethods": ["ai.base_unpack"], "blockingSubsystem": "base-building-ai", "signatureGap": true, "mappingSource": "handler"},
-	"NAMED_BASE_UNPACKABLE_FOR_PLAYER": {"route": "blocked", "worldMethods": ["ai.base_unpackable"], "blockingSubsystem": "base-building-ai", "mappingSource": "handler"},
 	"NAMED_NOT_DESTROYED": {"route": "blocked", "worldMethods": ["units.was_destroyed"], "blockingSubsystem": "object-name-registry", "mappingSource": "declared"},
 	"NAMED_OWNED_BY_PLAYER": {"route": "blocked", "worldMethods": ["units.owner"], "blockingSubsystem": "object-name-registry", "mappingSource": "declared"},
 	"NAMED_USE_COMMANDBUTTON_ABILITY": {"route": "blocked", "worldMethods": ["orders.use_command_button"], "blockingSubsystem": "command-button-abilities", "mappingSource": "declared"},

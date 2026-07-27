@@ -28,28 +28,27 @@ extends RefCounted
 ##
 ## THE NINTH MEMBER THIS FILE DOES NOT TOUCH. The census lists one more
 ## AI-called WP11 action outside this subset's brief: BUILD_BASE_BUILDING
-## (2 call sites, 2 libraries). It is left to the completing package, with a
-## warning it should read first: its signature (OBJECT_TYPE, UNIT, UNIT_REF)
-## carries the same construction-site and result-reference arguments that
-## gap-register BUILD_BASE_BUILDING_PER_TACTICAL_MARKER below, so it shares
-## that member's world-surface gap and cannot be served today either.
+## (2 call sites, 2 libraries). It is served by the tail package
+## (wp11_ai_basebuilding_tail.gd), which owns that name.
 ##
 ##
 ## WHAT IS SERVED AND WHAT IS NOT
 ## ==============================
-## 5 members are implemented (1 condition, 4 actions). 3 are GAP-REGISTERED,
-## all for the same class of reason as WP15's gaps: the action carries a
-## LOAD-BEARING ARGUMENT that the SageScriptWorld facet surface has no
-## parameter for. Those are recorded as findings against the world surface,
-## not papered over here - see GAP_* below, which states the exact missing
-## signature for each.
+## 7 members are implemented (1 condition, 6 actions). 1 is GAP-REGISTERED
+## for the same class of reason as WP15's gaps: the action carries
+## LOAD-BEARING ARGUMENTS that the SageScriptWorld facet surface has no
+## parameter for. That is recorded as a finding against the world surface,
+## not papered over here - see GAP_BUILD_PER_MARKER below, which states the
+## exact missing signature.
 ##
 ## The rule applied throughout: an argument that changes the OUTCOME may never
-## be dropped. Serving NAMED_BASE_UNPACK by calling ai.base_unpack(name, free)
-## without the authored result reference would not be an approximation: every
-## retail call site binds one, and a later script then reads it (see the
-## RETAIL SHAPES section). A refusal is recoverable; a reference that was
-## silently never bound is not.
+## be dropped. The unpack pair was gap-registered on exactly that rule while
+## ai.base_unpack(name, free) had no slot for the authored result reference;
+## the world surface has since grown the corrected signature -
+## ai.base_unpack(object_name, free, result_reference) - and the pair is now
+## served THROUGH it, reference and all (see the RETAIL SHAPES section for
+## why the reference is load-bearing). A refusal is recoverable; a reference
+## that was silently never bound is not.
 ##
 ##
 ## RETAIL SHAPES (the evidence for the gap classification)
@@ -92,9 +91,11 @@ extends RefCounted
 ##                                    arguments of the SAME type, unrecoverable
 ##                                    by any non-positional method
 ##     NAMED_BASE_UNPACK(UNIT, UNIT_REF)   the subject is FIRST and the
-##                                    destination reference LAST (gap-registered
-##                                    here, but the completing agent will meet
-##                                    the same shape on BUILD_BASE_BUILDING)
+##                                    destination reference LAST - both
+##                                    text-carried, so a swapped read would
+##                                    unpack the reference name and bind the
+##                                    base flag (the tail package meets the
+##                                    same shape on BUILD_BASE_BUILDING)
 ##
 ## Of this file's parameter types only INT and NEAR_OR_FAR are integer-valued
 ## per SageScriptParamTypes.PAYLOAD_FIELD_FOR_PARAM; TEAM, UNIT, UNIT_REF,
@@ -130,36 +131,15 @@ const Dispatch := preload("res://src/script/script_dispatch.gd")
 # GAP-REGISTERED MEMBERS
 # ==========================================================================
 #
-# Three members whose world surface cannot carry an argument that changes the
-# outcome. They are declared through `reg.blocked_actions()` rather than given
+# One member whose world surface cannot carry arguments that change the
+# outcome. It is declared through `reg.blocked_actions()` rather than given
 # a body that returns OK, for the same two reasons as WP15's gaps: a body
 # would count as coverage, and a shared refusal cannot be mistaken for an
 # implementation while skimming.
 #
-# Each string below names the EXACT facet signature that would unblock it.
-# None of these needs a new simulation subsystem - the Ai facet exists. They
-# need parameters the facet does not have, which is a coordinated edit to
-# script_world.gd and therefore not this agent's to make.
-
-## NAMED_BASE_UNPACK(UNIT, UNIT_REF) - 32 AI call sites, 1 library.
-## NAMED_BASE_UNPACK_FREE(UNIT, UNIT_REF) - 8 AI call sites, 1 library.
-const GAP_BASE_UNPACK := (
-	"base unpack with a result reference (both actions' second argument is a "
-	+ "UNIT_REF DESTINATION - the base at <UNIT> unpacks and the resulting "
-	+ "base object is referenced as <UNIT_REF> - and every retail AI call "
-	+ "site binds one: the 32 paid unpacks in ai_economy_execution bind "
-	+ "AI_EXPANSION_1..N and the 8 free unpacks in ai_initialize all bind "
-	+ "AI_BASE, which ai_opposition then reads as the spawn anchor for "
-	+ "CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION. The world offers only "
-	+ "ai.base_unpack(object_name, free): the free/paid fold is expressible, "
-	+ "the reference binding is not, so serving these would leave every "
-	+ "downstream reader looking up a name that was never bound. NEEDED: "
-	+ "ai.base_unpack(object_name: String, free: bool, result_reference: "
-	+ "String) -> bool. A call authoring an EMPTY reference would be exactly "
-	+ "expressible today, but no retail AI call site does, so the pair is "
-	+ "declared blocked rather than shipped as an 'implementation' that "
-	+ "refuses 100% of retail traffic)"
-)
+# The string below names the EXACT facet signature that would unblock it.
+# (The unpack pair sat here under the same rule until the world grew
+# ai.base_unpack's result_reference parameter; it is served below now.)
 
 ## BUILD_BASE_BUILDING_PER_TACTICAL_MARKER
 ## (OBJECT_TYPE, NEAR_OR_FAR, OBJECT_TYPE, UNIT, UNIT_REF) - 8 AI call sites,
@@ -168,30 +148,29 @@ const GAP_BUILD_PER_MARKER := (
 	"tactical-marker base building (the action reads: build a <OBJECT_TYPE> "
 	+ "on the <NEAR_OR_FAR> side of the marker of type <OBJECT_TYPE>, at "
 	+ "construction site <UNIT>, and reference the new building as "
-	+ "<UNIT_REF>. The world's ai.build_base_building(player, building_type, "
-	+ "slot, marker) matches only the building type: it demands a player the "
-	+ "action does not carry, and has no parameter for the near/far side "
-	+ "(retail authors BOTH values - near=0 and far=1 - to place farms away "
-	+ "from the fight and barracks toward it), the marker object type, the "
-	+ "construction-site object, or the result reference that the predictive- "
-	+ "building scripts read back. Dropping the side bit alone would flip "
-	+ "authored placement; dropping the reference orphans the readers, as "
-	+ "with the unpack pair. NEEDED: "
+	+ "<UNIT_REF>. The world's corrected ai.build_base_building"
+	+ "(building_type, base, result_reference) now carries the site and the "
+	+ "reference - which is why the tail package serves plain "
+	+ "BUILD_BASE_BUILDING - but this spelling ALSO authors a near/far side "
+	+ "bit (retail authors BOTH values - near=0 and far=1 - to place farms "
+	+ "away from the fight and barracks toward it) and a marker object type, "
+	+ "and no facet parameter exists for either. Dropping the side bit alone "
+	+ "would flip authored placement, and the sim models no tactical markers "
+	+ "to resolve the pair against. NEEDED: "
 	+ "ai.build_base_building_per_tactical_marker(building_type: String, "
 	+ "near_or_far: int, marker_type: String, construction_site: String, "
 	+ "result_reference: String) -> bool, with near_or_far the raw ParamTypes "
-	+ "NEAR_OR_FAR int. The completing package's BUILD_BASE_BUILDING"
-	+ "(OBJECT_TYPE, UNIT, UNIT_REF) shares the site+reference half of this "
-	+ "gap)"
+	+ "NEAR_OR_FAR int, plus tactical-marker state in the simulation)"
 )
 
-const GAP_BASE_UNPACK_ACTIONS := ["NAMED_BASE_UNPACK", "NAMED_BASE_UNPACK_FREE"]
 const GAP_BUILD_PER_MARKER_ACTIONS := ["BUILD_BASE_BUILDING_PER_TACTICAL_MARKER"]
 
 
 static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 	# --- Served, in AI call-site order (census counts) --------------------
 	reg.condition("NAMED_BASE_UNPACKABLE_FOR_PLAYER", _condition_base_unpackable)  # 64
+	reg.action("NAMED_BASE_UNPACK", _base_unpack)                       # 32
+	reg.action("NAMED_BASE_UNPACK_FREE", _base_unpack_free)             #  8
 	reg.action("TEAM_GUARD_TEAM", _guard_team)                          #  5
 	reg.action("TEAM_GUARD_FOR_SECONDS", _guard_for_seconds)            #  4
 	reg.action("TEAM_IDLE_FOR_SECONDS", _idle_for_seconds)              #  4
@@ -199,8 +178,7 @@ static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 		"CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION", _create_reinforcement_team
 	)                                                                   #  3
 
-	# --- Gap-registered: the world surface cannot carry the argument ------
-	reg.blocked_actions(GAP_BASE_UNPACK_ACTIONS, GAP_BASE_UNPACK)       # 32 + 8
+	# --- Gap-registered: the world surface cannot carry the arguments -----
 	reg.blocked_actions(GAP_BUILD_PER_MARKER_ACTIONS, GAP_BUILD_PER_MARKER)  # 8
 
 
@@ -255,6 +233,47 @@ static func _condition_base_unpackable(ctx: Dictionary) -> int:
 		return _unanswered(ctx, query)
 	ctx["result"] = query.as_bool()
 	return Dispatch.Status.OK
+
+
+# --- Base unpacking --------------------------------------------------------
+
+
+static func _base_unpack_shared(ctx: Dictionary, free: bool) -> int:
+	# NAMED_BASE_UNPACK(UNIT, UNIT_REF) / NAMED_BASE_UNPACK_FREE(UNIT, UNIT_REF)
+	#   "The base at <UNIT> unpacks ... and is referenced as <UNIT_REF>."
+	#
+	# The SUBJECT (base flag) is FIRST and the DESTINATION reference LAST -
+	# both text-carried, so nothing but position separates them, and a swapped
+	# read would try to unpack the reference name and bind the base flag. The
+	# retail shapes are (BASE_FLAG_N, AI_EXPANSION_1..N) for the paid spelling
+	# in ai_economy_execution and (BASE_FLAG_N, AI_BASE) for the free spelling
+	# in ai_initialize; ai_opposition then reads AI_BASE as the spawn anchor
+	# for CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION, which is why the
+	# reference argument is load-bearing and may never be dropped (class
+	# comment). Neither spelling carries a player: the world acts as the
+	# script-executing player it was configured with, exactly as the retail
+	# engine runs each AI library in its owner's context.
+	#
+	# THE FREE/PAID FOLD. One world method serves both spellings behind the
+	# `free` flag, because the ONLY sourced difference is whether the unpack
+	# charges: folding them keeps a single unpack path to get right, and the
+	# flag comes from the OPCODE, never from the arguments, so a map cannot
+	# author a paid unpack into a free one.
+	var args: SageScriptArgs = ctx["args"]
+	return _served(
+		ctx, "ai.base_unpack",
+		(ctx["world"] as SageScriptWorld).ai().base_unpack(
+			args.text(0), free, args.text(1)
+		)
+	)
+
+
+static func _base_unpack(ctx: Dictionary) -> int:
+	return _base_unpack_shared(ctx, false)
+
+
+static func _base_unpack_free(ctx: Dictionary) -> int:
+	return _base_unpack_shared(ctx, true)
 
 
 # --- Guard / idle ----------------------------------------------------------
@@ -374,12 +393,12 @@ static func _create_reinforcement_team(ctx: Dictionary) -> int:
 	# target_object() because the action names the unit and the world resolves
 	# its position (the AT_WAYPOINT sibling, not on the AI list, would pass
 	# target_waypoint() to the same method). The retail anchor is AI_BASE -
-	# the very reference the gap-registered NAMED_BASE_UNPACK_FREE was
-	# supposed to bind, which is documented in GAP_BASE_UNPACK above: until
-	# the world grows the reference parameter, a full retail run will refuse
-	# the unpack and this action will then ask about an unbound name, which
-	# the world must answer with its own refusal. That is the correct chain of
-	# two honest gaps, not a defect in this handler.
+	# the very reference NAMED_BASE_UNPACK_FREE binds (served above, since
+	# the world grew the reference parameter), read here where a plain UNIT
+	# is declared: the shared object/unit-reference namespace is what makes
+	# that chain resolve. The world method itself still refuses (no
+	# reinforcement-team model in the sim), which is an honest gap, not a
+	# defect in this handler.
 	#
 	# THE EMPTY PLAYER IS NOT A DROPPED ARGUMENT. The world method is
 	# ai.create_reinforcement_team(player, team, target), but NEITHER

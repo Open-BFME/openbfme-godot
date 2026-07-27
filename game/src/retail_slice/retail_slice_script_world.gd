@@ -33,9 +33,35 @@ extends SageScriptWorld
 ## Sub-player script teams (the WorldBuilder team registry) are not modeled
 ## by the sim and stay refused.
 ##
-## Named single objects ("NAMED_..." vocabulary) have no binding at all: sim
-## entity rows carry display names, not script identities, so every
-## object-name-keyed method refuses. That is the single largest gap.
+## THE SCRIPT PLAYER. Retail executes each AI player's script libraries in
+## that player's context, and several base-building actions carry NO player
+## argument at all (NAMED_BASE_UNPACK unpacks "my" base; the sourced
+## signature has no player slot). The integrator therefore also binds WHOSE
+## scripts this world instance executes - match configuration exactly like
+## the name bindings, identical on every peer:
+##
+##     world.bind_script_player("Player_1")   # a name bound via bind_player
+##
+## Playerless AI actions act as that player; the "<This Player>" token the
+## retail AI authors resolves to it too (see _player_team_for_token). Without
+## the binding both refuse - honestly, naming what is missing.
+##
+## THE OBJECT / UNIT-REFERENCE NAMESPACE (WP16's contract). Script object
+## names and unit references share ONE namespace, because retail binds
+## AI_BASE as a UNIT_REF and then reads it where a plain UNIT is declared.
+## This adapter's slice of that namespace has two kinds of entry:
+##   * base-flag names - owned by the SIM's unpackable-base table (match
+##     configuration; never rebindable);
+##   * unit references - bound by actions that carry a UNIT_REF destination
+##     (base_unpack, build_base_building), stored as handles RESOLVED AT
+##     CALL TIME ({"kind": "structure", "id": ...}), never as source
+##     strings, so a later rebinding of the source cannot silently re-aim
+##     an existing reference. References are mutable by design (retail
+##     re-points AI_CURRENT_CONSTRUCTION_SITE constantly).
+## Everything else ("NAMED_..." vocabulary over map-placed units) still has
+## no binding: sim entity rows carry display names, not script identities,
+## so every other object-name-keyed method refuses. That remains the single
+## largest METHOD gap (the object-name-registry subsystem).
 ##
 ## DETERMINISM
 ## ===========
@@ -84,6 +110,15 @@ var _team_players: Dictionary = {}
 ## (SAGE aliases the default team), so this map is many-to-one.
 var _team_names: Dictionary = {}
 
+## The player whose script libraries this world instance executes (see the
+## class comment). "" until bind_script_player is called.
+var _script_player: String = ""
+
+## Unit-reference name -> resolved handle {"kind": "structure", "id": int}.
+## One namespace with the sim's base-flag names - resolve_script_object is
+## the single lookup; _bind_unit_reference is the single writer.
+var _unit_references: Dictionary = {}
+
 ## science id -> power id, derived once from the sim's GLOBAL spellbook
 ## document (authored order; deterministic). Rebuilt lazily so a world created
 ## before configure_spellbook_runtime() still sees the tree.
@@ -123,6 +158,80 @@ func bind_team(team_name: String, team: int) -> bool:
 		return int(_team_names[team_name]) == team
 	_team_names[team_name] = team
 	return true
+
+
+func bind_script_player(player_name: String) -> bool:
+	## Declare WHOSE script libraries this world instance executes (see the
+	## class comment). The name must already be bound via bind_player, so the
+	## script player always resolves to a rostered team; rebinding to a
+	## DIFFERENT name is rejected (the executing player is match
+	## configuration, not runtime state).
+	if sim == null or player_name == "" or not _player_teams.has(player_name):
+		return false
+	if _script_player != "":
+		return _script_player == player_name
+	_script_player = player_name
+	return true
+
+
+const THIS_PLAYER_TOKEN := "<This Player>"
+
+
+func _player_team_for_token(player: String) -> int:
+	## Player-argument resolution for the base-building surface, where the
+	## retail AI authors the literal "<This Player>" token: the token resolves
+	## to the bound script player; anything else is a plain player-name
+	## binding. -1 when unresolvable.
+	if player == THIS_PLAYER_TOKEN:
+		return _bound_player_team(_script_player) if _script_player != "" else -1
+	return _bound_player_team(player)
+
+
+func _script_player_team() -> int:
+	## The acting team for AI actions that carry no player argument. -1 when
+	## no script player is bound.
+	if _script_player == "":
+		return -1
+	return _bound_player_team(_script_player)
+
+
+func resolve_script_object(name: String) -> Dictionary:
+	## The ONE lookup for the shared object / unit-reference namespace (class
+	## comment): a bound unit reference answers its resolved handle
+	## ({"kind": "structure", "id": int}); a sim base-flag name answers
+	## {"kind": "base_flag", "name": String}; {} means unknown. Read-only -
+	## conditions resolve through here, so it may not mutate anything.
+	if _unit_references.has(name):
+		return (_unit_references[name] as Dictionary).duplicate(true)
+	if sim != null and sim.unpackable_bases.has(name):
+		return {"kind": "base_flag", "name": name}
+	return {}
+
+
+func _unit_reference_rejection(reference: String) -> String:
+	## "" when `reference` may be bound (or is empty - "bind nothing", which
+	## the surface allows although no retail AI call site authors it);
+	## otherwise the refusal reason. Base-flag names are owned by the sim's
+	## table and may never be shadowed: the namespace is shared, so a
+	## reference that eclipsed a flag would silently re-aim every later read
+	## of that flag. Callers MUST clear this check BEFORE mutating the sim,
+	## so a rejected binding never leaves a half-applied action behind.
+	if reference == "" or sim == null or not sim.unpackable_bases.has(reference):
+		return ""
+	return (
+		"'%s' names a base flag; flag names are owned by the simulation's "
+		+ "unpackable-base table and cannot be rebound as unit references"
+	) % reference
+
+
+func _bind_unit_reference(reference: String, structure_id: int) -> void:
+	## Bind (or re-point) a unit reference to a concrete structure - resolved
+	## NOW, stored as a handle, never as a source string (class comment). An
+	## empty reference binds nothing. Only call after _unit_reference_rejection
+	## answered "".
+	if reference == "":
+		return
+	_unit_references[reference] = {"kind": "structure", "id": structure_id}
 
 
 func _bound_player_team(player: String) -> int:
@@ -214,6 +323,27 @@ static func _sim_point(position: Vector3) -> Vector2:
 	return Vector2(position.x, position.z)
 
 
+func _resolve_base_structure(base: String) -> Dictionary:
+	## Resolve a base argument through the shared object namespace down to a
+	## sim structure. Read-only. Answers exactly one of:
+	##   {"id": int}       - a concrete base structure (a bound reference, or
+	##                       a base flag that has been unpacked - the flag name
+	##                       keeps resolving to the base it became);
+	##   {"packed": true}  - a base flag no one has unpacked: there IS no base
+	##                       object there yet (conditions answer false,
+	##                       commands refuse);
+	##   {}                - a name outside the namespace entirely.
+	var handle := resolve_script_object(base)
+	if handle.is_empty():
+		return {}
+	if String(handle.get("kind", "")) == "base_flag":
+		var row: Dictionary = sim.unpackable_base_state(String(handle.get("name", "")))
+		if int(row.get("unpacked_by", -1)) < 0:
+			return {"packed": true}
+		return {"id": int(row.get("structure_id", 0))}
+	return {"id": int(handle.get("id", 0))}
+
+
 # --- Base-world surface ---------------------------------------------------
 
 
@@ -286,6 +416,10 @@ func _make_meta() -> Meta:
 	return SliceMeta.new()
 
 
+func _make_ai() -> Ai:
+	return SliceAi.new()
+
+
 # ==========================================================================
 # PLAYERS
 # ==========================================================================
@@ -295,9 +429,9 @@ class SlicePlayers:
 	extends SageScriptWorld.Players
 
 	## Implemented: exists, faction, the three command-point reads,
-	## building_count, relation_to. Everything else refuses - including
-	## can_build_at_base, whose base signature is missing the base argument
-	## (reported defect; do not implement against a wrong slot).
+	## building_count, relation_to, and can_build_at_base (the base-anchored
+	## buildability read, against the CORRECTED signature that carries the
+	## base - WP17's reported defect, since fixed). Everything else refuses.
 
 	func _world() -> RetailSliceScriptWorld:
 		return world as RetailSliceScriptWorld
@@ -397,6 +531,67 @@ class SlicePlayers:
 				"player '%s' is not bound to a simulation team" % other
 			)
 		return SageWorldQuery.hit(w._relation_between(int(resolved["team"]), other_team))
+
+	func can_build_at_base(player: String, base: String, object_type: String) -> SageWorldQuery:
+		## CAN_BUILD_AT_BASE (empty object_type - "anything at all") /
+		## CAN_BUILD_OBJECTTYPE_AT_BASE. Retail authors "<This Player>" here,
+		## so the player resolves through the script-player token rule.
+		##
+		## STRICTLY READ-ONLY: this backs conditions the AI economy loop polls
+		## repeatedly.
+		##
+		## The answer is pad availability: true iff the resolved base is a
+		## living, completed base structure of THIS player's team with a free
+		## expansion pad that accepts the asked-for kind (any configured kind
+		## for the empty variant). Money is deliberately not consulted -
+		## affordability is the build ACTION's concern. A truthful FALSE
+		## covers: a base flag no one has unpacked (no base object exists
+		## there yet), someone else's base, a razed or vanished base, and no
+		## matching free pad. A REFUSAL covers what the sim cannot see at
+		## all: an unresolvable player, a name outside the object namespace,
+		## and an object type outside the expansion rules (false there would
+		## be a guess about a building the sim does not model).
+		var w := _world()
+		if w == null or w.sim == null:
+			return _refuse_query("players.can_build_at_base", "no simulation attached")
+		var team := w._player_team_for_token(player)
+		if team < 0:
+			return _refuse_query(
+				"players.can_build_at_base",
+				"player '%s' is not bound to a simulation team" % player
+				if player != RetailSliceScriptWorld.THIS_PLAYER_TOKEN
+				else "'<This Player>' cannot resolve: no script player is bound (bind_script_player)"
+			)
+		var wanted_kind := ""
+		if object_type != "":
+			wanted_kind = w.sim.expansion_kind_for_object_id(object_type)
+			if wanted_kind == "":
+				return _refuse_query(
+					"players.can_build_at_base",
+					"object type '%s' is not an expansion the simulation models (false would be a guess)" % object_type
+				)
+		var resolved_base := w._resolve_base_structure(base)
+		if resolved_base.is_empty():
+			return _refuse_query(
+				"players.can_build_at_base",
+				"base '%s' is not a bound unit reference or base flag" % base
+			)
+		if resolved_base.has("packed"):
+			# No base object exists at the flag yet - a truthful "no".
+			return SageWorldQuery.hit(false)
+		var structure_id := int(resolved_base.get("id", 0))
+		var row: Dictionary = w.sim.structures.get(structure_id, {})
+		if (
+			row.is_empty()
+			or int(row.get("team", -1)) != team
+			or int(row.get("health", 0)) <= 0
+			or float(row.get("construction_progress", 0.0)) < 1.0
+		):
+			return SageWorldQuery.hit(false)
+		var free_kinds: Array = w.sim.expansion_commands_for(structure_id)
+		if object_type == "":
+			return SageWorldQuery.hit(not free_kinds.is_empty())
+		return SageWorldQuery.hit(free_kinds.has(wanted_kind))
 
 
 # ==========================================================================
@@ -999,3 +1194,131 @@ class SliceMeta:
 		return _refuse_query(
 			"meta.multiplayer_outcome", "unknown outcome token '%s'" % outcome
 		)
+
+
+# ==========================================================================
+# AI (skirmish base building)
+# ==========================================================================
+
+
+class SliceAi:
+	extends SageScriptWorld.Ai
+
+	## Implemented: base_unpackable, base_unpack and build_base_building - the
+	## unpack pair and the base-anchored build, against the CORRECTED
+	## signatures (unpack carries its UNIT_REF destination; the build carries
+	## the base anchor and its UNIT_REF, and no invented player). The acting
+	## team for the playerless actions is the bound script player (class
+	## comment). Everything else on the facet still refuses: foundations,
+	## tactical markers, camp regions, base population, approach paths and
+	## reinforcement armies are unmodeled sim state, and the per-marker build
+	## additionally still needs its own facet method (WP11's
+	## GAP_BUILD_PER_MARKER names the sourced signature).
+
+	func _world() -> RetailSliceScriptWorld:
+		return world as RetailSliceScriptWorld
+
+	func base_unpackable(object_name: String, player: String) -> SageWorldQuery:
+		## NAMED_BASE_UNPACKABLE_FOR_PLAYER - the single most-polled retail AI
+		## condition (64 sites, one library's economy loop), so STRICTLY
+		## READ-ONLY. True iff the flag is still packed while the match runs;
+		## the sim models no per-player flag restrictions, so the player
+		## argument's job is resolution ("<This Player>" included), after
+		## which the answer is the same for every rostered player. Money is
+		## not consulted (the sim documents why on base_flag_unpackable).
+		var w := _world()
+		if w == null or w.sim == null:
+			return _refuse_query("ai.base_unpackable", "no simulation attached")
+		var team := w._player_team_for_token(player)
+		if team < 0:
+			return _refuse_query(
+				"ai.base_unpackable",
+				"player '%s' is not bound to a simulation team" % player
+				if player != RetailSliceScriptWorld.THIS_PLAYER_TOKEN
+				else "'<This Player>' cannot resolve: no script player is bound (bind_script_player)"
+			)
+		var verdict: Dictionary = w.sim.base_flag_unpackable(object_name)
+		if not bool(verdict.get("known", false)):
+			return _refuse_query(
+				"ai.base_unpackable",
+				"'%s' is not a base flag this simulation models (false would be a guess)" % object_name
+			)
+		return SageWorldQuery.hit(bool(verdict.get("unpackable", false)))
+
+	func base_unpack(object_name: String, free: bool, result_reference: String) -> bool:
+		## NAMED_BASE_UNPACK (free=false) / NAMED_BASE_UNPACK_FREE (free=true).
+		## The action carries no player: the actor is the bound script player.
+		## On success the resulting base structure is bound to
+		## result_reference, resolved NOW (retail binds AI_EXPANSION_1..N /
+		## AI_BASE and later reads them as plain units). The reference is
+		## validated BEFORE the sim moves, so a rejected binding costs nothing.
+		var w := _world()
+		if w == null or w.sim == null:
+			return _refuse_command("ai.base_unpack", "no simulation attached")
+		var team := w._script_player_team()
+		if team < 0:
+			return _refuse_command(
+				"ai.base_unpack",
+				"no script player is bound (bind_script_player), and the sourced action carries no player argument to act as"
+			)
+		var rejection := w._unit_reference_rejection(result_reference)
+		if rejection != "":
+			return _refuse_command("ai.base_unpack", rejection)
+		var result: Dictionary = w.sim.unpack_base(team, object_name, free)
+		if not bool(result.get("ok", false)):
+			return _refuse_command(
+				"ai.base_unpack",
+				"simulation rejected unpacking '%s': %s" % [object_name, String(result.get("reason", ""))]
+			)
+		w._bind_unit_reference(result_reference, int(result.get("structure_id", 0)))
+		return true
+
+	func build_base_building(building_type: String, base: String, result_reference: String) -> bool:
+		## BUILD_BASE_BUILDING: build a <building_type> in the first available
+		## slot of the base object <base> and bind the new building to
+		## <result_reference>. The actor is the bound script player; the sim
+		## enforces that the resolved base belongs to it (wrong-owner refuses
+		## rather than building at someone else's base). The pad pick is the
+		## sim's deterministic first-free-matching-pad-by-index rule
+		## (issue_expansion_construct with no requested pad).
+		var w := _world()
+		if w == null or w.sim == null:
+			return _refuse_command("ai.build_base_building", "no simulation attached")
+		var team := w._script_player_team()
+		if team < 0:
+			return _refuse_command(
+				"ai.build_base_building",
+				"no script player is bound (bind_script_player), and the sourced action carries no player argument to act as"
+			)
+		var kind: String = w.sim.expansion_kind_for_object_id(building_type)
+		if kind == "":
+			return _refuse_command(
+				"ai.build_base_building",
+				"object type '%s' is not an expansion the simulation models" % building_type
+			)
+		var resolved_base := w._resolve_base_structure(base)
+		if resolved_base.is_empty():
+			return _refuse_command(
+				"ai.build_base_building",
+				"base '%s' is not a bound unit reference or base flag" % base
+			)
+		if resolved_base.has("packed"):
+			return _refuse_command(
+				"ai.build_base_building",
+				"base flag '%s' has not been unpacked; there is no base to build in" % base
+			)
+		var rejection := w._unit_reference_rejection(result_reference)
+		if rejection != "":
+			return _refuse_command("ai.build_base_building", rejection)
+		var result: Dictionary = w.sim.issue_expansion_construct(
+			team, int(resolved_base.get("id", 0)), kind
+		)
+		if not bool(result.get("ok", false)):
+			return _refuse_command(
+				"ai.build_base_building",
+				"simulation rejected building '%s' at base '%s': %s" % [
+					building_type, base, String(result.get("reason", ""))
+				]
+			)
+		w._bind_unit_reference(result_reference, int(result.get("structure_id", 0)))
+		return true

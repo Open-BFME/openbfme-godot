@@ -3,8 +3,8 @@
 	"surface": "Every public non-static script-declared instance method of the 16 facet objects of SageScriptWorld (the three presentation sinks counted per sink) plus the base world's own 7 surface methods under facet 'world'. simulationBacked is OBSERVED by calling each method against RetailSliceScriptWorld over a synthetic RetailSliceSim; blocking annotations are analysis, verified for coverage but not provable by a probe.",
 	"counts": {
 		"total": 319,
-		"simulationBacked": 36,
-		"refusing": 283
+		"simulationBacked": 40,
+		"refusing": 279
 	},
 	"subsystems": [
 		{
@@ -17,7 +17,7 @@
 		},
 		{
 			"id": "base-building-ai",
-			"requires": "The skirmish-AI base model: base flags and unpack economics, build plots and foundations, tactical markers, base regions and population, approach paths, home-base identity, per-base buildability, view guardband. The single heaviest AI-traffic blocker (ai_economy_execution polls base flags 64 times per pass)."
+			"requires": "The skirmish-AI base model. Its heaviest-traffic slice is BUILT: base flags with unpack economics, the unpack pair's result references, and per-base buildability (the 64-per-pass ai_economy_execution poll, the unpack pair and the CAN_BUILD pair are served). Still missing: foundations, tactical markers, base regions and population, approach paths, home-base identity, reinforcement armies, view guardband."
 		},
 		{
 			"id": "command-button-abilities",
@@ -53,7 +53,7 @@
 		},
 		{
 			"id": "facet-signature-packet",
-			"requires": "Not a sim subsystem: the coordinated signature-correction packet on script_world.gd collecting every gap-registered missing parameter (custom-state enable flag, threat radius, recruit type list, stand-ground clear flag, nearest-team anchor, base-anchored buildability, unpack result references, tactical-marker builds, wall-upgrade shape) plus the three defects 005bcd8 reported."
+			"requires": "Not a sim subsystem: the coordinated signature-correction packet on script_world.gd collecting every gap-registered missing parameter (custom-state enable flag, threat radius, recruit type list, stand-ground clear flag, nearest-team anchor, tactical-marker builds, wall-upgrade shape) plus the remaining defects 005bcd8 reported. Three corrections have landed: base-anchored buildability (players.can_build_at_base grew the base), the unpack result references (ai.base_unpack grew its UNIT_REF destination) and the base-anchored build (ai.build_base_building was reshaped to the sourced OBJECT_TYPE/UNIT/UNIT_REF form)."
 		},
 		{
 			"id": "garrison-transport-capture",
@@ -172,14 +172,17 @@
 				{
 					"name": "free",
 					"type": "bool"
+				},
+				{
+					"name": "result_reference",
+					"type": "String"
 				}
 			],
-			"arity": 2,
+			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "base flags with unpack economics (and the gap-registered result-reference parameter)"
+			"simulationBacked": true,
+			"restrictions": "acts as the bound script player (the sourced action carries no player); base flags of the sim's unpackable-base table only"
 		},
 		{
 			"facet": "ai",
@@ -197,37 +200,31 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "base flags with per-player unpackability - the single most-polled AI condition (64 sites, one library)"
+			"simulationBacked": true,
+			"restrictions": "base flags of the sim's unpackable-base table only; the player must resolve (a bound name, or '<This Player>' with a script player bound)"
 		},
 		{
 			"facet": "ai",
 			"method": "build_base_building",
 			"params": [
 				{
-					"name": "player",
-					"type": "String"
-				},
-				{
 					"name": "building_type",
 					"type": "String"
 				},
 				{
-					"name": "slot",
-					"type": "int"
+					"name": "base",
+					"type": "String"
 				},
 				{
-					"name": "marker",
+					"name": "result_reference",
 					"type": "String"
 				}
 			],
-			"arity": 4,
+			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "build plots/slots and tactical markers (and the gap-registered site+reference parameters)"
+			"simulationBacked": true,
+			"restrictions": "acts as the bound script player; building types with an expansion rule and bases reachable through the shared object/unit-reference namespace only"
 		},
 		{
 			"facet": "ai",
@@ -2333,16 +2330,19 @@
 					"type": "String"
 				},
 				{
+					"name": "base",
+					"type": "String"
+				},
+				{
 					"name": "object_type",
 					"type": "String"
 				}
 			],
-			"arity": 2,
+			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "per-base plot availability (and the gap-registered base-anchor parameter - 50 AI sites)"
+			"simulationBacked": true,
+			"restrictions": "the player must resolve ('<This Player>' included); bases through the shared object namespace; a non-empty object type must have an expansion rule (false for an unmodeled type would be a guess)"
 		},
 		{
 			"facet": "players",
@@ -6546,14 +6546,12 @@
 		},
 		{
 			"member": "BUILD_BASE_BUILDING",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"ai.build_base_building"
 			],
-			"blockingSubsystem": "base-building-ai",
-			"signatureGap": true,
-			"mappingSource": "declared",
-			"note": "shares the site+reference signature gap WP11 proved on the tactical-marker sibling"
+			"mappingSource": "handler",
+			"note": "served through the corrected (building_type, base, result_reference) signature"
 		},
 		{
 			"member": "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER",
@@ -6563,7 +6561,8 @@
 			],
 			"blockingSubsystem": "base-building-ai",
 			"signatureGap": true,
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "still needs its own facet method (near/far side + marker type) plus tactical-marker sim state"
 		},
 		{
 			"member": "CALL_SUBROUTINE",
@@ -6574,22 +6573,19 @@
 		},
 		{
 			"member": "CAN_BUILD_AT_BASE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"players.can_build_at_base"
 			],
-			"blockingSubsystem": "base-building-ai",
-			"signatureGap": true,
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "served through the corrected base-carrying signature; empty object_type is the 'anything at all' form"
 		},
 		{
 			"member": "CAN_BUILD_OBJECTTYPE_AT_BASE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"players.can_build_at_base"
 			],
-			"blockingSubsystem": "base-building-ai",
-			"signatureGap": true,
 			"mappingSource": "handler"
 		},
 		{
@@ -6707,31 +6703,27 @@
 		},
 		{
 			"member": "NAMED_BASE_UNPACK",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"ai.base_unpack"
 			],
-			"blockingSubsystem": "base-building-ai",
-			"signatureGap": true,
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "served through the corrected signature carrying the UNIT_REF destination"
 		},
 		{
 			"member": "NAMED_BASE_UNPACKABLE_FOR_PLAYER",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"ai.base_unpackable"
 			],
-			"blockingSubsystem": "base-building-ai",
 			"mappingSource": "handler"
 		},
 		{
 			"member": "NAMED_BASE_UNPACK_FREE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"ai.base_unpack"
 			],
-			"blockingSubsystem": "base-building-ai",
-			"signatureGap": true,
 			"mappingSource": "handler"
 		},
 		{

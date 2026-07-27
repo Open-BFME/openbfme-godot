@@ -29,30 +29,36 @@ extends RefCounted
 ## most-exercised code is the code a reader meets first:
 ##
 ##     100     PLAYER_HAS_OBJECT_COMPARISON     condition   served
-##      33     CAN_BUILD_AT_BASE                condition   GAP-REGISTERED
+##      33     CAN_BUILD_AT_BASE                condition   served
 ##      18/19  SKIRMISH_PLAYER_FACTION          condition   served (bfme2/rotwk)
-##      17     CAN_BUILD_OBJECTTYPE_AT_BASE     condition   GAP-REGISTERED
+##      17     CAN_BUILD_OBJECTTYPE_AT_BASE     condition   served
 ##       8     START_POSITION_IS                condition   served
 ##       1     PLAYER_ENABLE_BASE_CONSTRUCTION  action      served
 ##       1     PLAYER_SELL_EVERYTHING           action      served
 ##
 ##
-## WHAT IS SERVED AND WHAT IS NOT
-## ==============================
-## 5 members are implemented. 2 are GAP-REGISTERED, both for the same reason:
-## the condition carries a LOAD-BEARING ARGUMENT - the BASE the question is
-## anchored to - that the SageScriptWorld facet surface has no parameter for.
-## That is recorded as a finding against the world surface, not papered over
-## here - see GAP_CAN_BUILD_AT_BASE below, which states the exact missing
-## signature.
+## WHAT IS SERVED
+## ==============
+## All 7 members are implemented. The two CAN_BUILD conditions landed
+## GAP-REGISTERED, because they carry a LOAD-BEARING ARGUMENT - the BASE the
+## question is anchored to - that the world's old
+## players.can_build_at_base(player, object_type) had no parameter for. The
+## facet-signature correction that gap demanded has since been made: the
+## world now carries the base -
+##
+##     players.can_build_at_base(player: String, base: String,
+##                               object_type: String) -> SageWorldQuery
+##
+## with empty object_type as the "anything at all" variant - and both
+## conditions are served through it, positionally, dropping nothing.
 ##
 ## The rule applied throughout: an argument that changes the OUTCOME may never
 ## be dropped. A BFME2 skirmish AI holds several bases at once (the main
 ## fortress plus outposts and camps), and "can I still build at THIS base" is a
 ## different question per base - one is full while another has plots free.
-## Answering the base-blind form the world offers would collapse every base
-## onto one unspecified answer, 50 times per AI tree. A refusal is recoverable;
-## a silently wrong answer is not.
+## Answering the old base-blind form would have collapsed every base onto one
+## unspecified answer, 50 times per AI tree. A refusal is recoverable; a
+## silently wrong answer is not.
 ##
 ##
 ## THE ARGUMENT TRAP
@@ -79,7 +85,7 @@ extends RefCounted
 ##
 ## CONDITIONS MAY NOT GUESS
 ## ========================
-## All three served conditions gate AI build and strategy decisions, and a read
+## All five served conditions gate AI build and strategy decisions, and a read
 ## the world cannot answer must never come back as a plain `false`. "This
 ## player is not Isengard" and "I have no idea who this player is" are
 ## different answers, and only the first may steer a faction-specific build
@@ -94,53 +100,15 @@ const Dispatch := preload("res://src/script/script_dispatch.gd")
 const ParamTypes := preload("res://src/script/script_param_types.gd")
 
 
-# ==========================================================================
-# GAP-REGISTERED MEMBERS
-# ==========================================================================
-#
-# Two members whose world surface cannot carry an argument that changes the
-# outcome. They are declared through `reg.blocked_conditions()` rather than
-# given a body that returns OK, for two reasons: a body would count as
-# coverage, and a shared refusal cannot be mistaken for an implementation
-# while skimming.
-#
-# The string below names the EXACT facet signature that would unblock both.
-# Neither needs a new simulation subsystem - the Players facet exists. They
-# need one more parameter, which is a coordinated edit to script_world.gd and
-# therefore not this agent's to make.
-
-## CAN_BUILD_AT_BASE(PLAYER, UNIT) - 33 AI call sites across 5 libraries.
-## CAN_BUILD_OBJECTTYPE_AT_BASE(PLAYER, UNIT, OBJECT_TYPE) - 17, in 1 library.
-const GAP_CAN_BUILD_AT_BASE := (
-	"base-anchored buildability query (both conditions carry a UNIT naming the "
-	+ "BASE the question is anchored to - the sourced signatures are "
-	+ "CAN_BUILD_AT_BASE(PLAYER, UNIT) and CAN_BUILD_OBJECTTYPE_AT_BASE(PLAYER, "
-	+ "UNIT, OBJECT_TYPE), where the UNIT is a named base object distinct from "
-	+ "the OBJECT_TYPE being built. The world offers only "
-	+ "players.can_build_at_base(player, object_type), with no slot for the "
-	+ "base: its own docstring reads the pair as differing only in the type, "
-	+ "but the signatures say otherwise and the signatures win. A skirmish AI "
-	+ "holds several bases at once and the answer differs per base - one is "
-	+ "full while another has plots free - so serving the base-blind form would "
-	+ "collapse every base onto one unspecified answer at 50 retail call sites "
-	+ "per tree. NEEDED: players.can_build_at_base(player: String, base: "
-	+ "String, object_type: String) -> SageWorldQuery, empty object_type being "
-	+ "the 'anything at all' variant that CAN_BUILD_AT_BASE asks for)"
-)
-
-const GAP_CAN_BUILD_CONDITIONS := ["CAN_BUILD_AT_BASE", "CAN_BUILD_OBJECTTYPE_AT_BASE"]
-
-
 static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 	# --- Served, in AI call-site order (bfme2-retail counts) --------------
 	reg.condition("PLAYER_HAS_OBJECT_COMPARISON", _condition_has_object_comparison)  # 100
+	reg.condition("CAN_BUILD_AT_BASE", _condition_can_build_at_base)     # 33
 	reg.condition("SKIRMISH_PLAYER_FACTION", _condition_player_faction)  # 18 (19 rotwk)
+	reg.condition("CAN_BUILD_OBJECTTYPE_AT_BASE", _condition_can_build_objecttype_at_base)  # 17
 	reg.condition("START_POSITION_IS", _condition_start_position_is)     #  8
 	reg.action("PLAYER_ENABLE_BASE_CONSTRUCTION", _enable_base_construction)  # 1
 	reg.action("PLAYER_SELL_EVERYTHING", _sell_everything)               #  1
-
-	# --- Gap-registered: the world surface cannot carry the base anchor ---
-	reg.blocked_conditions(GAP_CAN_BUILD_CONDITIONS, GAP_CAN_BUILD_AT_BASE)  # 33 + 17
 
 
 # --- Shared tails ---------------------------------------------------------
@@ -219,6 +187,59 @@ static func _condition_has_object_comparison(ctx: Dictionary) -> int:
 		return _unanswered(ctx, query)
 	ctx["result"] = ParamTypes.compare_int(query.as_int(), comparison, args.integer(2))
 	return Dispatch.Status.OK
+
+
+static func _can_build_shared(ctx: Dictionary, object_type: String) -> int:
+	# Shared tail for the CAN_BUILD pair: the world method folds them behind
+	# the object_type parameter, and the EMPTY type is the world's documented
+	# "anything at all" form - it comes from the OPCODE (which spelling was
+	# authored), never from the arguments, so a map cannot author one variant
+	# into the other.
+	var args: SageScriptArgs = ctx["args"]
+	var query := (ctx["world"] as SageScriptWorld).players().can_build_at_base(
+		args.text(0), args.text(1), object_type
+	)
+	if not query.ok:
+		return _unanswered(ctx, query)
+	ctx["result"] = query.as_bool()
+	return Dispatch.Status.OK
+
+
+static func _condition_can_build_at_base(ctx: Dictionary) -> int:
+	# CAN_BUILD_AT_BASE(PLAYER, UNIT)
+	#   "<PLAYER> can build another building at base <UNIT>."
+	#
+	# The PLAYER comes first and the BASE OBJECT second; both reach the world
+	# verbatim (retail authors "<This Player>" and a base reference like
+	# AI_CURRENT_CONSTRUCTION_SITE - the world resolves both). The base is
+	# LOAD-BEARING: a skirmish AI holds several bases and the answer differs
+	# per base, which is exactly why this pair sat gap-registered until the
+	# world's signature grew the base slot (class comment). No OBJECT_TYPE is
+	# authored in this spelling, so the world's empty-type "anything at all"
+	# form is passed - the one place this surface already defines "" as the
+	# every-type form (players.building_count).
+	#
+	# CONDITIONS MAY NOT GUESS. "That base is full" releases the AI to spend
+	# elsewhere; "the world cannot see that base" must keep the gate shut
+	# WITH a structured gap. _unanswered handles the second - never fold it
+	# into the first.
+	return _can_build_shared(ctx, "")
+
+
+static func _condition_can_build_objecttype_at_base(ctx: Dictionary) -> int:
+	# CAN_BUILD_OBJECTTYPE_AT_BASE(PLAYER, UNIT, OBJECT_TYPE)
+	#   "<PLAYER> can build a <OBJECT_TYPE> at base <UNIT>."
+	#
+	# Same anchor pair as the plain spelling, plus the TYPE being asked about
+	# in argument 2 - all three text-carried, so only position separates the
+	# base from the type: a swapped read would ask whether a building type
+	# can be built at a base named after a building type, which the world
+	# refuses (unknown base) rather than answers. The type passes through
+	# verbatim, per the world's argument conventions; the world owns the
+	# retail-object-type -> buildable-kind resolution and refuses types it
+	# does not model instead of answering a guessed false.
+	var args: SageScriptArgs = ctx["args"]
+	return _can_build_shared(ctx, args.text(2))
 
 
 static func _condition_player_faction(ctx: Dictionary) -> int:

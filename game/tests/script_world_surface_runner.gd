@@ -262,7 +262,11 @@ func _spellbook_document() -> Dictionary:
 ## faction-carrying roster, spellbook, a research contract, the ENEMY player's
 ## science pre-purchased (so combat.fire_special_power can cast as ENEMY while
 ## progression.purchase_science still has PLAYER's untouched purchase to make),
-## and one wounded enemy battalion for the heal to target.
+## one wounded enemy battalion for the heal to target, and the base-building
+## surface: an expansion rule, one PACKED base flag (SYNTH_BASE_FLAG, for the
+## unpack pair and the unpackable condition), one flag pre-unpacked free as
+## the bound script player PLAYER and referenced as SYNTH_HOME_REF (for the
+## base-anchored build and buildability probes).
 func _fixture() -> Dictionary:
 	var sim: RetailSliceSim = SimScript.new()
 	sim._rules = _harness_rules()
@@ -291,11 +295,30 @@ func _fixture() -> Dictionary:
 	(wounded["member_health"] as Array)[0] = 100
 	wounded["health"] = 100
 	var at := Vector2(wounded["position"])
+	sim.configure_expansion_rules({
+		"synth_pit": {
+			"cost": 300,
+			"seconds": 5.0,
+			"health": 500,
+			"pad_kinds": ["corner", "side"],
+			"name": "Synth Pit",
+			"object_id": "SynthPitType",
+		},
+	})
+	sim.configure_unpackable_bases({
+		"SYNTH_BASE_FLAG": {"position": Vector2(60.0, 60.0), "cost": 500},
+		"SYNTH_HOME_FLAG": {"position": Vector2(70.0, -60.0), "cost": 500},
+	})
 	var world: RetailSliceScriptWorld = WorldScript.new(sim)
 	world.bind_player(PLAYER, SimScript.PLAYER_TEAM)
 	world.bind_player(ENEMY, SimScript.ENEMY_TEAM)
 	world.bind_team(PLAYER_TEAM_NAME, SimScript.PLAYER_TEAM)
 	world.bind_team(ENEMY_TEAM_NAME, SimScript.ENEMY_TEAM)
+	_check("fixture: script player binds", world.bind_script_player(PLAYER))
+	_check(
+		"fixture: home flag unpacks free and binds SYNTH_HOME_REF",
+		world.ai().base_unpack("SYNTH_HOME_FLAG", true, "SYNTH_HOME_REF")
+	)
 	return {
 		"sim": sim,
 		"world": world,
@@ -403,6 +426,22 @@ func _candidates_for_param(param: Dictionary, fx: Dictionary) -> Array:
 			if pname == "outcome":
 				return ["defeat"]
 			if pname == "building_class":
+				return [""]
+			if pname == "object_name":
+				# The unpack pair and the unpackable condition take the fixture's
+				# packed base flag; every other object_name method refuses
+				# regardless of the value (no object-name registry).
+				return ["SYNTH_BASE_FLAG"]
+			if pname == "base":
+				return ["SYNTH_HOME_REF"]
+			if pname == "building_type":
+				return ["SynthPitType"]
+			if pname == "result_reference":
+				return ["SYNTH_PROBE_REF"]
+			if pname == "object_type":
+				# Empty is the documented "anything at all" form on the methods
+				# that answer (players.can_build_at_base); the rest refuse
+				# regardless of the value.
 				return [""]
 			if pname == "name" or pname.begins_with("name_"):
 				# Paired with a scope parameter; offer both spellings.

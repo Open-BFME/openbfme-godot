@@ -1,16 +1,15 @@
 extends RefCounted
 
-## WP11-basebuilding-ai-tail - the LAST AI-called WP11 member, gap-registered.
+## WP11-basebuilding-ai-tail - the LAST AI-called WP11 member, SERVED.
 ##
 ## SCOPE, AND WHY THIS FILE EXISTS AT ALL
 ## ======================================
-## wp11_ai_basebuilding.gd ("WP11-basebuilding-ai") implements eight of the
+## wp11_ai_basebuilding.gd ("WP11-basebuilding-ai") accounts for eight of the
 ## nine AI-called WP11 members and explicitly left the ninth to a later agent:
 ## BUILD_BASE_BUILDING, 2 call sites in 2 libraries per tree (identical counts
 ## in both trees, per game/data/retail_ai_call_census.json). This file is that
-## ninth member and NOTHING else - one action, gap-registered - because two
-## files may not claim one PACKAGE constant and the first subset's file may not
-## be edited while ~17 packages land concurrently.
+## ninth member and NOTHING else - one action - because two files may not
+## claim one PACKAGE constant and the sibling file may not grow the name.
 ##
 ## Names: this file claims the PACKAGE constant "WP11-basebuilding-ai-tail" and
 ## the file name wp11_ai_basebuilding_tail.gd. The catalog's full-package name,
@@ -21,13 +20,11 @@ extends RefCounted
 ## loudly, which is the intended signal.
 ##
 ##
-## WHY THIS MEMBER IS GAP-REGISTERED, NOT SERVED
-## =============================================
-## The previous WP11 agent predicted it ("its signature (OBJECT_TYPE, UNIT,
-## UNIT_REF) shares the construction-site and result-reference arguments that
-## gap-register BUILD_BASE_BUILDING_PER_TACTICAL_MARKER, so it ... cannot be
-## served today either") and the prediction CONFIRMS. The engine's own
-## WorldBuilder template reads:
+## FROM GAP TO SERVICE
+## ===================
+## This member landed gap-registered, because the world's
+## ai.build_base_building(player, building_type, slot, marker) could not carry
+## the authored arguments. The engine's own WorldBuilder template reads:
 ##
 ##     "Build building <OBJECT_TYPE> in base <UNIT> and reference it as
 ##      <UNIT_REF>."
@@ -35,61 +32,72 @@ extends RefCounted
 ##      referenced base.")
 ##
 ## So the UNIT is the BASE OBJECT the building goes into - retail authors
-## AI_CURRENT_CONSTRUCTION_SITE there, the sibling file's decode of the family
-## shape - and the UNIT_REF is a DESTINATION the new building is bound to
-## (AI_BARRACKS_1 / AI_FARM_LAST_BUILT / ...), which the predictive-building
-## scripts later read back. The world offers only
+## AI_CURRENT_CONSTRUCTION_SITE there - and the UNIT_REF is a DESTINATION the
+## new building is bound to (AI_BARRACKS_1 / AI_FARM_LAST_BUILT / ...), which
+## the predictive-building scripts later read back. Both arguments change the
+## outcome: the base decides WHERE the building lands (a skirmish AI holds
+## several bases at once), and a reference that is silently never bound
+## orphans every later reader. The facet-signature correction this gap
+## demanded has since been made - the world now offers exactly the signature
+## the gap named:
 ##
-##     ai.build_base_building(player, building_type, slot, marker)
+##     ai.build_base_building(building_type: String, base: String,
+##                            result_reference: String) -> bool
 ##
-## which matches the building type alone. It demands a PLAYER the action does
-## not carry, and has no parameter for the base object or for the result
-## reference. Both missing arguments change the outcome: the base decides
-## WHERE the building lands (a skirmish AI holds several bases at once), and a
-## reference that is silently never bound orphans every later reader - the
-## same two failure classes the sibling file proved on the unpack pair and the
-## tactical-marker build. The measured surface map agrees: its routing for
-## this member records `signatureGap: true` against ai.build_base_building.
+## and this handler serves the action through it, positionally, dropping
+## nothing. The old signature's `player` is gone because the sourced action
+## carries none (the world acts as its configured script player); its `slot`
+## and `marker` belonged to the _IN_SLOT and _PER_TACTICAL_MARKER spellings,
+## which carry EXTRA load-bearing arguments and stay with their own gaps
+## (see the sibling's GAP_BUILD_PER_MARKER).
 ##
-## It is declared through `reg.blocked_actions()` rather than given a body that
-## returns OK, for the same two reasons as every gap in the sibling file: a
-## body would count as coverage, and a shared refusal cannot be mistaken for an
-## implementation while skimming. The string below names the EXACT facet
-## signature that would unblock it. It needs no new simulation subsystem beyond
-## what the sibling's gaps already need - the Ai facet exists; it needs
-## parameters the facet does not have, which is a coordinated edit to
-## script_world.gd and therefore not this agent's to make.
+##
+## THE ARGUMENT TRAP
+## =================
+## sage_scb.py stores integer AND real AND text for EVERY non-position
+## argument, so a type-search silently succeeds on the wrong slot. All three
+## of this action's arguments are text-carried (OBJECT_TYPE, UNIT and
+## UNIT_REF have no observed wire code), so nothing but position separates
+## the building type from the base from the reference: a rotated read would
+## try to build a base named after a building type and bind the base's name
+## as the reference. The read below is BY INDEX with the signature written
+## directly above it.
 
 const PACKAGE := "WP11-basebuilding-ai-tail"
 
 const Dispatch := preload("res://src/script/script_dispatch.gd")
 
 
-## BUILD_BASE_BUILDING(OBJECT_TYPE, UNIT, UNIT_REF) - 2 AI call sites,
-## 2 libraries.
-const GAP_BUILD_BASE_BUILDING := (
-	"base-anchored build with a result reference (the action reads: build a "
-	+ "<OBJECT_TYPE> in the first available slot of the base object <UNIT> and "
-	+ "reference the new building as <UNIT_REF> - retail authors "
-	+ "(AI_CURRENT_CONSTRUCTION_SITE, AI_BARRACKS_1 / ...), a base anchor and "
-	+ "then a DESTINATION reference the predictive-building scripts read back. "
-	+ "The world offers only ai.build_base_building(player, building_type, "
-	+ "slot, marker): it demands a player the action does not carry, and has "
-	+ "no parameter for the base object or the result reference. Dropping the "
-	+ "base collapses every base of a multi-base skirmish AI onto one "
-	+ "unspecified build site; dropping the reference orphans every later "
-	+ "reader, as with the sibling file's unpack pair. NEEDED: "
-	+ "ai.build_base_building(building_type: String, base: String, "
-	+ "result_reference: String) -> bool - the same site+reference half "
-	+ "already recorded against BUILD_BASE_BUILDING_PER_TACTICAL_MARKER in "
-	+ "wp11_ai_basebuilding.gd, minus that member's near/far side bit and "
-	+ "marker type)"
-)
-
-const GAP_BUILD_ACTIONS := ["BUILD_BASE_BUILDING"]
-
-
 static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
-	# --- Gap-registered: the world surface cannot carry the base anchor or
-	# --- the result reference ---------------------------------------------
-	reg.blocked_actions(GAP_BUILD_ACTIONS, GAP_BUILD_BASE_BUILDING)  # 2
+	reg.action("BUILD_BASE_BUILDING", _build_base_building)  # 2
+
+
+static func _served(ctx: Dictionary, method: String, accepted: bool) -> int:
+	## A facet that returns false has already told the world (via
+	## Facet._refuse_command) which method refused; this turns that into the
+	## status the dispatcher records as a gap, naming the same method so the
+	## gap points at the missing WORLD surface rather than at the action.
+	if not accepted:
+		ctx["detail"] = "world does not implement %s" % method
+		return Dispatch.Status.WORLD_REFUSED
+	return Dispatch.Status.OK
+
+
+static func _build_base_building(ctx: Dictionary) -> int:
+	# BUILD_BASE_BUILDING(OBJECT_TYPE, UNIT, UNIT_REF)
+	#   "Build building <OBJECT_TYPE> in base <UNIT> and reference it as
+	#    <UNIT_REF>."
+	#
+	# Argument 0 is the building TYPE, argument 1 the BASE object it goes
+	# into, argument 2 the DESTINATION reference the new building is bound to
+	# - see the class comment for why all three are load-bearing and why no
+	# player is passed (the sourced action carries none; the world acts as
+	# its configured script player, and inventing one here would ADD an
+	# argument the map never authored).
+	var args: SageScriptArgs = ctx["args"]
+	return _served(
+		ctx, "ai.build_base_building",
+		(ctx["world"] as SageScriptWorld).ai().build_base_building(
+			args.text(0), args.text(1), args.text(2)
+		)
+	)

@@ -1265,6 +1265,12 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 				)
 	if base_loop_enabled:
 		_initialize_base_loop()
+	# Base-flag CONFIG (position/cost/health) survives setup like the expansion
+	# rules; the dynamic unpack state resets with the structures it pointed at.
+	for base_name in unpackable_base_names():
+		var flag_row: Dictionary = unpackable_bases[base_name]
+		flag_row["unpacked_by"] = -1
+		flag_row["structure_id"] = 0
 	_next_creep_guard_id = 70001
 	_next_creep_structure_id = 60001
 	if creep_lairs_enabled:
@@ -5481,6 +5487,156 @@ func issue_expansion_construct(team: int, fortress_id: int, expansion_kind: Stri
 	(pads[pad_index] as Dictionary)["expansion_structure_id"] = structure_id
 	_emit_event("construction.started", 0, structure_id, {"team": team, "structure_kind": expansion_kind, "cost": cost, "build_ticks": build_ticks})
 	return {"ok": true, "structure_id": structure_id, "cost": cost, "build_ticks": build_ticks}
+
+
+# --- Unpackable bases (script base flags) ----------------------------------
+#
+# The skirmish-AI base model's first piece: map-authored BASE FLAGS that a
+# player can UNPACK into a base of their own (retail's castle/camp flags, the
+# subjects of NAMED_BASE_UNPACK / NAMED_BASE_UNPACK_FREE and the base flags
+# ai_economy_execution polls 64 times per pass). A flag is match configuration
+# keyed by its SCRIPT OBJECT NAME; unpacking it creates a completed fortress
+# structure with expansion pads at the flag's authored position, owned by the
+# unpacking team, paid from that team's resources unless the free variant.
+#
+# HASH INERTNESS. `unpackable_bases` participates in the authoritative state
+# ONLY when non-empty (see _authoritative_state): a match that configures no
+# base flags contributes NOTHING to state_hash(), which is what keeps the
+# frozen cross-platform pin (retail_state_pin_runner.gd) standing as proof the
+# subsystem is inert by default. Do not add an unconditional key for it.
+#
+# MODELLING CHOICES, stated rather than implied:
+#   * The unpacked base completes INSTANTLY (construction_progress 1.0).
+#     Retail plays an unpack build-up; the sim models the outcome, not the
+#     animation, and an under-construction base would make the bound result
+#     reference point at a site later readers cannot build at yet.
+#   * The base produces nothing and earns nothing (empty production, zero
+#     income): its value is its expansion pads. Anything more would be a
+#     guess at retail camp internals nobody has sourced yet.
+#   * No proximity or builder requirement: the retail action is a script
+#     verb, not a porter order.
+#   * Placement is the authored flag position, unchecked: flags are match
+#     configuration like the home layout, not a player click.
+#   * Unpackability is per-flag, not per-player: the sim models no per-player
+#     flag restrictions, so a packed flag is unpackable by ANY rostered team
+#     while the match runs and the base loop is on.
+
+## Script base-flag name -> {"position": Vector2, "cost": int, "health": int,
+## "unpacked_by": int (team, -1 while packed), "structure_id": int (0 while
+## packed)}. Hashed only when non-empty - see the block comment above.
+var unpackable_bases: Dictionary = {}
+
+
+func configure_unpackable_bases(bases: Dictionary) -> void:
+	## bases: {name: {"position": Vector2, "cost": int, "health": int}} - match
+	## configuration, set identically on every peer before the match starts.
+	## Every row resets to packed. An empty dict clears the subsystem (and its
+	## hash contribution disappears entirely - empty-is-absent).
+	unpackable_bases = {}
+	var names := bases.keys()
+	names.sort()
+	for name_value in names:
+		var spec: Dictionary = bases[name_value]
+		unpackable_bases[String(name_value)] = {
+			"position": Vector2(spec.get("position", Vector2.ZERO)),
+			"cost": maxi(0, int(spec.get("cost", 0))),
+			"health": maxi(1, int(spec.get("health", 1000))),
+			"unpacked_by": -1,
+			"structure_id": 0,
+		}
+
+
+func unpackable_base_names() -> Array[String]:
+	var names: Array[String] = []
+	for name_value in unpackable_bases.keys():
+		names.append(String(name_value))
+	names.sort()
+	return names
+
+
+func unpackable_base_state(base_name: String) -> Dictionary:
+	## Deep copy of one flag row; {} for a name the sim does not model.
+	return (unpackable_bases.get(base_name, {}) as Dictionary).duplicate(true)
+
+
+func base_flag_unpackable(base_name: String) -> Dictionary:
+	## Side-effect-free read behind NAMED_BASE_UNPACKABLE_FOR_PLAYER.
+	## {"known": false} when the sim does not model this flag (the caller must
+	## refuse, not answer false); otherwise {"known": true, "unpackable": bool}.
+	## Unpackable = the base loop is on, the match is unresolved, and the flag
+	## is still packed. Money is deliberately NOT consulted: affordability is
+	## the unpack ACTION's concern, and folding it in here would make the
+	## condition flicker with the treasury.
+	if not unpackable_bases.has(base_name):
+		return {"known": false}
+	var row: Dictionary = unpackable_bases[base_name]
+	return {
+		"known": true,
+		"unpackable": base_loop_enabled and winner == -1 and int(row.get("unpacked_by", -1)) < 0,
+	}
+
+
+func unpack_base(team: int, base_name: String, free: bool) -> Dictionary:
+	## NAMED_BASE_UNPACK (`free` false) / NAMED_BASE_UNPACK_FREE (`free` true):
+	## the flag at `base_name` unpacks into a completed fortress (with expansion
+	## pads) owned by `team`. Paid unpacks charge the flag's authored cost; the
+	## free variant charges nothing. Returns {"ok": true, "structure_id": id,
+	## "cost": paid} or {"ok": false, "reason": ...}.
+	if not base_loop_enabled or winner != -1:
+		return {"ok": false, "reason": "match-unavailable"}
+	if not unpackable_bases.has(base_name):
+		return {"ok": false, "reason": "unknown-base"}
+	if not _roster_team_ids().has(team):
+		return {"ok": false, "reason": "unknown-team"}
+	var row: Dictionary = unpackable_bases[base_name]
+	if int(row.get("unpacked_by", -1)) >= 0:
+		return {"ok": false, "reason": "base-already-unpacked"}
+	var cost := 0 if free else int(row.get("cost", 0))
+	if resources_for_team(team) < cost:
+		return {"ok": false, "reason": "insufficient-resources", "cost": cost}
+	team_resources[team] = resources_for_team(team) - cost
+	var structure_id := _next_dynamic_structure_id
+	_next_dynamic_structure_id += 1
+	var maximum_health := int(row.get("health", 1000))
+	var position := Vector2(row.get("position", Vector2.ZERO))
+	structures[structure_id] = {
+		"id": structure_id,
+		"team": team,
+		"kind": "structure",
+		"structure_kind": "fortress",
+		"name": "Fortress",
+		"position": position,
+		"rally": position + Vector2(4.0, 0.0),
+		"health": maximum_health,
+		"maximum_health": maximum_health,
+		"construction_progress": 1.0,
+		"level": 1,
+		"completed_upgrades": [],
+		"upgrade_queue": [],
+		"production": [],
+		"queue": [],
+		"damage_remainders": {},
+		"income_per_payout": 0,
+		"unpacked_from_base": base_name,
+	}
+	_seed_expansion_pads_for(structure_id)
+	row["unpacked_by"] = team
+	row["structure_id"] = structure_id
+	_emit_event("base.unpacked", 0, structure_id, {"team": team, "base": base_name, "cost": cost, "free": free})
+	return {"ok": true, "structure_id": structure_id, "cost": cost}
+
+
+func expansion_kind_for_object_id(object_id: String) -> String:
+	## The expansion kind whose build rule declares `object_id`, or "" when no
+	## configured rule does (the caller must refuse an unmodeled type rather
+	## than answer for it). Kinds are visited in sorted order so a (mis-)
+	## configured duplicate object id resolves identically on every peer.
+	var kinds := _expansion_build_rules.keys()
+	kinds.sort()
+	for kind_value in kinds:
+		if String((_expansion_build_rules[kind_value] as Dictionary).get("object_id", "")) == object_id:
+			return String(kind_value)
+	return ""
 
 
 func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) -> Dictionary:
@@ -10232,7 +10388,7 @@ func _state_hash_static_keys() -> Array[String]:
 
 
 func _authoritative_state() -> Dictionary:
-	return {
+	var state := {
 		"tick_index": tick_index,
 		"winner": winner,
 		"ai_enabled": ai_enabled,
@@ -10305,6 +10461,13 @@ func _authoritative_state() -> Dictionary:
 		"next_creep_guard_id": _next_creep_guard_id,
 		"next_creep_structure_id": _next_creep_structure_id,
 	}
+	# EMPTY-IS-ABSENT, deliberately: a match with no configured base flags must
+	# contribute NOTHING for this subsystem, so the frozen cross-platform state
+	# pin keeps proving the addition is inert by default. An unconditional key
+	# here would re-mint the pin for every scenario that never touches bases.
+	if not unpackable_bases.is_empty():
+		state["unpackable_bases"] = unpackable_bases
+	return state
 
 
 func _restore_authoritative_state(state: Dictionary) -> void:
@@ -10375,6 +10538,8 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_unit_ability_rules = state["unit_ability_rules"]
 	_unit_experience_rules = state["unit_experience_rules"]
 	_pending_commands = state["pending_commands"]
+	# Absent when empty by construction (empty-is-absent hash discipline).
+	unpackable_bases = state.get("unpackable_bases", {})
 	creep_lairs_enabled = bool(state.get("creep_lairs_enabled", false))
 	_creep_lair_placements = state.get("creep_lair_placements", [])
 	_next_creep_guard_id = int(state.get("next_creep_guard_id", 70001))

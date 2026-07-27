@@ -22,12 +22,21 @@ extends SceneTree
 ##   8. economy facet   - money read/set/give with per-player refusal
 ##   9. meta facet      - player_count, multiplayer_outcome across a real
 ##                        victory resolution
-##  10. read-only-ness  - every implemented QUERY leaves state_hash()
+##  10. base building   - the unpack pair (paid charges, free does not, the
+##                        UNIT_REF destination binds), base-anchored builds,
+##                        per-base buildability, the shared object /
+##                        unit-reference namespace (call-time resolution,
+##                        flag names unshadowable), the script-player
+##                        binding, and the subsystem's hash inertness for a
+##                        match that configures no bases (the state-pin
+##                        property)
+##  11. read-only-ness  - every implemented QUERY leaves state_hash()
 ##                        untouched across repeated evaluation
-##  11. determinism     - two independently built sims driven through two
+##  12. determinism     - two independently built sims driven through two
 ##                        independently built worlds give identical answers
 ##                        and identical state hashes, including the
-##                        tie-breaking attack target pick
+##                        tie-breaking attack target pick and the base
+##                        surface
 ##
 ## Every fixture is SYNTHETIC (the pin runner's harness rules); no retail
 ## install or content pack is required.
@@ -73,6 +82,13 @@ func _run() -> void:
 	_test_progression_hero_rank()
 	_test_economy_money()
 	_test_meta_outcomes()
+	_test_script_player_binding()
+	_test_ai_base_unpackable()
+	_test_ai_base_unpack()
+	_test_ai_build_base_building()
+	_test_players_can_build_at_base()
+	_test_reference_namespace()
+	_test_base_state_is_hash_inert()
 	_test_queries_are_read_only()
 	_test_twin_worlds_agree()
 	print("RETAIL_SLICE_SCRIPT_WORLD_RESULT passed=%d failed=%d" % [passed, failed])
@@ -942,14 +958,413 @@ func _test_meta_outcomes() -> void:
 	)
 
 
+# --- 10. Base building ----------------------------------------------------
+
+
+func _configure_base_building(sim: RetailSliceSim) -> void:
+	## Synthetic base-building surface: one expansion rule and three base
+	## flags (positions far from every seeded structure; placement is
+	## authored configuration, not a click).
+	sim.configure_expansion_rules({
+		"synth_pit": {
+			"cost": 300,
+			"seconds": 5.0,
+			"health": 500,
+			"pad_kinds": ["corner", "side"],
+			"name": "Synth Pit",
+			"object_id": "SynthPitType",
+		},
+	})
+	sim.configure_unpackable_bases({
+		"BASE_FLAG_1": {"position": Vector2(60.0, 60.0), "cost": 500},
+		"BASE_FLAG_2": {"position": Vector2(70.0, -60.0), "cost": 500},
+		"BASE_FLAG_3": {"position": Vector2(-70.0, 60.0), "cost": 700},
+	})
+
+
+func _make_base_world(sim: RetailSliceSim) -> RetailSliceScriptWorld:
+	_configure_base_building(sim)
+	var world := _make_world(sim)
+	world.bind_script_player(PLAYER)
+	return world
+
+
+func _test_script_player_binding() -> void:
+	var sim := _make_sim()
+	var world := _make_world(sim)
+	_check(
+		"bind_script_player rejects a name not bound as a player",
+		not world.bind_script_player("Nobody")
+	)
+	_check("bind_script_player accepts a bound player", world.bind_script_player(PLAYER))
+	_check(
+		"bind_script_player is idempotent for the same name",
+		world.bind_script_player(PLAYER)
+	)
+	_check(
+		"bind_script_player rejects rebinding to another player",
+		not world.bind_script_player(ENEMY)
+	)
+
+
+func _test_ai_base_unpackable() -> void:
+	var sim := _make_sim()
+	_configure_base_building(sim)
+	var world := _make_world(sim)
+	_check_refused(
+		"ai.base_unpackable refuses '<This Player>' before a script player is bound",
+		world.ai().base_unpackable("BASE_FLAG_1", "<This Player>")
+	)
+	world.bind_script_player(PLAYER)
+	_check_hit(
+		"ai.base_unpackable is true for a packed flag",
+		world.ai().base_unpackable("BASE_FLAG_1", PLAYER),
+		true
+	)
+	_check_hit(
+		"ai.base_unpackable resolves '<This Player>' to the script player",
+		world.ai().base_unpackable("BASE_FLAG_1", "<This Player>"),
+		true
+	)
+	_check_refused(
+		"ai.base_unpackable refuses a name outside the base-flag table",
+		world.ai().base_unpackable("GHOST_FLAG", PLAYER)
+	)
+	_check_refused(
+		"ai.base_unpackable refuses an unbound player name",
+		world.ai().base_unpackable("BASE_FLAG_1", "Nobody")
+	)
+	_check(
+		"fixture: the flag unpacks paid",
+		world.ai().base_unpack("BASE_FLAG_1", false, "AI_EXPANSION_1")
+	)
+	_check_hit(
+		"ai.base_unpackable turns false once the flag is unpacked",
+		world.ai().base_unpackable("BASE_FLAG_1", PLAYER),
+		false
+	)
+	_check_hit(
+		"ai.base_unpackable is false for EVERY player once claimed (no per-player model)",
+		world.ai().base_unpackable("BASE_FLAG_1", ENEMY),
+		false
+	)
+
+
+func _test_ai_base_unpack() -> void:
+	var sim := _make_sim()
+	_configure_base_building(sim)
+	var unbound_world := _make_world(sim)
+	_check(
+		"ai.base_unpack refuses without a script player to act as",
+		not unbound_world.ai().base_unpack("BASE_FLAG_1", false, "AI_EXPANSION_1")
+	)
+	var world := _make_base_world(_make_sim())
+	var base_sim := world.sim
+	var before := base_sim.resources_for_team(0)
+	_check(
+		"ai.base_unpack (paid) is accepted",
+		world.ai().base_unpack("BASE_FLAG_1", false, "AI_EXPANSION_1")
+	)
+	_check(
+		"the paid unpack charged the authored cost",
+		base_sim.resources_for_team(0) == before - 500
+	)
+	var handle := world.resolve_script_object("AI_EXPANSION_1")
+	var base_id := int(handle.get("id", 0))
+	_check(
+		"the UNIT_REF destination binds to the unpacked structure",
+		String(handle.get("kind", "")) == "structure" and base_id != 0
+	)
+	var row: Dictionary = base_sim.structures.get(base_id, {})
+	_check(
+		"the unpacked base is a completed fortress of the script player's team",
+		String(row.get("structure_kind", "")) == "fortress"
+		and int(row.get("team", -1)) == 0
+		and float(row.get("construction_progress", 0.0)) >= 1.0
+	)
+	_check(
+		"the unpacked base carries expansion pads",
+		not base_sim.expansion_pad_states(base_id).is_empty()
+	)
+	_check(
+		"a second unpack of the same flag refuses",
+		not world.ai().base_unpack("BASE_FLAG_1", false, "AI_EXPANSION_2")
+	)
+	_check(
+		"the refused second unpack bound nothing",
+		world.resolve_script_object("AI_EXPANSION_2").is_empty()
+	)
+	# THE FREE/PAID DISTINCTION, under poverty so it cannot pass by accident:
+	# with 100 resources a paid unpack refuses and the FREE spelling of the
+	# very same flag succeeds without touching the treasury.
+	base_sim.team_resources[0] = 100
+	_check(
+		"a paid unpack refuses on insufficient resources",
+		not world.ai().base_unpack("BASE_FLAG_2", false, "AI_BASE")
+	)
+	_check(
+		"the refused paid unpack left the flag packed",
+		world.ai().base_unpackable("BASE_FLAG_2", PLAYER).value == true
+	)
+	_check(
+		"the free unpack of the same flag succeeds",
+		world.ai().base_unpack("BASE_FLAG_2", true, "AI_BASE")
+	)
+	_check(
+		"the free unpack charged nothing",
+		base_sim.resources_for_team(0) == 100
+	)
+	_check(
+		"the free unpack bound its reference too",
+		String(world.resolve_script_object("AI_BASE").get("kind", "")) == "structure"
+	)
+	# Reference validation precedes the sim mutation: binding onto a base-flag
+	# name is refused and the whole action must be a no-op.
+	var hash_before := base_sim.state_hash()
+	_check(
+		"an unpack whose reference would shadow a flag name refuses",
+		not world.ai().base_unpack("BASE_FLAG_3", false, "BASE_FLAG_1")
+	)
+	_check(
+		"the refused reference binding mutated nothing",
+		base_sim.state_hash() == hash_before
+	)
+
+
+func _test_ai_build_base_building() -> void:
+	var world := _make_base_world(_make_sim())
+	var sim := world.sim
+	_check(
+		"fixture: the home flag unpacks free as AI_BASE",
+		world.ai().base_unpack("BASE_FLAG_1", true, "AI_BASE")
+	)
+	var base_id := int(world.resolve_script_object("AI_BASE").get("id", 0))
+	var before := sim.resources_for_team(0)
+	_check(
+		"ai.build_base_building builds at the referenced base",
+		world.ai().build_base_building("SynthPitType", "AI_BASE", "AI_PIT_1")
+	)
+	_check(
+		"the build charged the expansion rule's cost",
+		sim.resources_for_team(0) == before - 300
+	)
+	var pit_id := int(world.resolve_script_object("AI_PIT_1").get("id", 0))
+	var pit: Dictionary = sim.structures.get(pit_id, {})
+	_check(
+		"the new building is the asked-for kind INSIDE the asked-for base",
+		String(pit.get("structure_kind", "")) == "synth_pit"
+		and int(pit.get("expansion_of_fortress", 0)) == base_id
+	)
+	_check(
+		"the build occupied a pad of that base",
+		int((sim.expansion_pad_states(base_id)[0] as Dictionary).get("expansion_structure_id", 0)) == pit_id
+	)
+	# The FLAG NAME keeps resolving to the base it became - the shared
+	# namespace rule retail leans on when it reads a bound name as a UNIT.
+	_check(
+		"building at the flag name reaches the same unpacked base",
+		world.ai().build_base_building("SynthPitType", "BASE_FLAG_1", "AI_PIT_2")
+	)
+	_check(
+		"ai.build_base_building refuses an unmodeled building type",
+		not world.ai().build_base_building("GhostType", "AI_BASE", "AI_PIT_3")
+	)
+	_check(
+		"ai.build_base_building refuses an unknown base name",
+		not world.ai().build_base_building("SynthPitType", "GHOST_BASE", "AI_PIT_3")
+	)
+	_check(
+		"ai.build_base_building refuses a still-packed flag as the base",
+		not world.ai().build_base_building("SynthPitType", "BASE_FLAG_2", "AI_PIT_3")
+	)
+	# WRONG OWNER. A second world executes ENEMY's scripts against the SAME
+	# sim; the flag name resolves to PLAYER's base, and the sim refuses to
+	# build there rather than building at someone else's base.
+	var enemy_world := _make_world(sim)
+	enemy_world.bind_script_player(ENEMY)
+	_check(
+		"another script player cannot build at this base",
+		not enemy_world.ai().build_base_building("SynthPitType", "BASE_FLAG_1", "AI_PIT_3")
+	)
+	# Pad exhaustion: the layout carries 6 pads, 2 are used above; 4 more
+	# builds fill the base and the next refuses (no-free-pad), which is also
+	# what flips can_build_at_base below.
+	for index in range(4):
+		_check(
+			"pad %d/4 of the remaining pads accepts a build" % (index + 1),
+			world.ai().build_base_building("SynthPitType", "AI_BASE", "AI_PIT_FILL_%d" % index)
+		)
+	_check(
+		"a build at a full base refuses",
+		not world.ai().build_base_building("SynthPitType", "AI_BASE", "AI_PIT_OVERFLOW")
+	)
+	_check(
+		"the refused overflow build bound nothing",
+		world.resolve_script_object("AI_PIT_OVERFLOW").is_empty()
+	)
+
+
+func _test_players_can_build_at_base() -> void:
+	var world := _make_base_world(_make_sim())
+	var sim := world.sim
+	_check_refused(
+		"players.can_build_at_base refuses an unknown base name",
+		world.players().can_build_at_base(PLAYER, "GHOST_BASE", "")
+	)
+	_check_hit(
+		"players.can_build_at_base is false at a still-packed flag (no base there yet)",
+		world.players().can_build_at_base(PLAYER, "BASE_FLAG_1", ""),
+		false
+	)
+	_check(
+		"fixture: the flag unpacks free as AI_BASE",
+		world.ai().base_unpack("BASE_FLAG_1", true, "AI_BASE")
+	)
+	_check_hit(
+		"the empty-type 'anything at all' variant is true with free pads",
+		world.players().can_build_at_base(PLAYER, "AI_BASE", ""),
+		true
+	)
+	_check_hit(
+		"the typed variant is true for a modeled type with a matching free pad",
+		world.players().can_build_at_base(PLAYER, "AI_BASE", "SynthPitType"),
+		true
+	)
+	_check_refused(
+		"the typed variant refuses an unmodeled type (false would be a guess)",
+		world.players().can_build_at_base(PLAYER, "AI_BASE", "GhostType")
+	)
+	_check_hit(
+		"another player's base answers false (ownership is part of the question)",
+		world.players().can_build_at_base(ENEMY, "AI_BASE", ""),
+		false
+	)
+	_check_hit(
+		"'<This Player>' resolves through the script player",
+		world.players().can_build_at_base("<This Player>", "AI_BASE", ""),
+		true
+	)
+	_check_refused(
+		"an unbound player name refuses",
+		world.players().can_build_at_base("Nobody", "AI_BASE", "")
+	)
+	# Fill every pad; the answer must flip to false - this is the check that
+	# breaks if the base anchor or the pad accounting is ignored.
+	var base_id := int(world.resolve_script_object("AI_BASE").get("id", 0))
+	var pad_count := sim.expansion_pad_states(base_id).size()
+	for index in range(pad_count):
+		_check(
+			"fixture: pad %d/%d fills" % [index + 1, pad_count],
+			world.ai().build_base_building("SynthPitType", "AI_BASE", "AI_FILL_%d" % index)
+		)
+	_check_hit(
+		"a full base answers false for the empty-type variant",
+		world.players().can_build_at_base(PLAYER, "AI_BASE", ""),
+		false
+	)
+	_check_hit(
+		"a full base answers false for the typed variant",
+		world.players().can_build_at_base(PLAYER, "AI_BASE", "SynthPitType"),
+		false
+	)
+	# A razed base answers false: there is nothing to build at.
+	(sim.structures[base_id] as Dictionary)["health"] = 0
+	_check_hit(
+		"a razed base answers false",
+		world.players().can_build_at_base(PLAYER, "AI_BASE", ""),
+		false
+	)
+
+
+func _test_reference_namespace() -> void:
+	var world := _make_base_world(_make_sim())
+	_check(
+		"an unknown name resolves to nothing",
+		world.resolve_script_object("GHOST").is_empty()
+	)
+	_check(
+		"a flag name resolves as a base flag",
+		String(world.resolve_script_object("BASE_FLAG_1").get("kind", "")) == "base_flag"
+	)
+	_check(
+		"fixture: two flags unpack behind distinct references",
+		world.ai().base_unpack("BASE_FLAG_1", true, "AI_REF")
+		and world.ai().base_unpack("BASE_FLAG_2", true, "AI_OTHER")
+	)
+	var first_id := int(world.resolve_script_object("AI_REF").get("id", 0))
+	var other_id := int(world.resolve_script_object("AI_OTHER").get("id", 0))
+	_check("distinct unpacks bind distinct structures", first_id != 0 and first_id != other_id)
+	# References are handles resolved AT BIND TIME and mutable by design:
+	# re-pointing AI_REF at a third base moves AI_REF alone - the earlier
+	# handle bound as AI_OTHER stays aimed where it was resolved.
+	_check(
+		"fixture: AI_REF re-points to a third unpack",
+		world.ai().base_unpack("BASE_FLAG_3", true, "AI_REF")
+	)
+	var repointed := int(world.resolve_script_object("AI_REF").get("id", 0))
+	_check("the re-pointed reference resolves to the new structure", repointed != first_id)
+	_check(
+		"the untouched reference still resolves to its bind-time structure",
+		int(world.resolve_script_object("AI_OTHER").get("id", 0)) == other_id
+	)
+
+
+func _test_base_state_is_hash_inert() -> void:
+	# THE STATE-PIN PROPERTY. A match that configures no base flags must
+	# contribute NOTHING to the authoritative state - the frozen
+	# cross-platform pin (retail_state_pin_runner.gd) rests on exactly this.
+	var sim := _make_sim()
+	var decoded: Dictionary = bytes_to_var(sim.snapshot())
+	_check(
+		"an unconfigured sim carries NO unpackable_bases key at all",
+		not decoded.has("unpackable_bases")
+	)
+	var pristine := sim.state_hash()
+	sim.configure_unpackable_bases({})
+	_check(
+		"configuring an EMPTY table stays absent (empty-is-absent is canonical)",
+		sim.state_hash() == pristine
+	)
+	_configure_base_building(sim)
+	_check(
+		"configuring real flags DOES move the hash (the state is not invisible)",
+		sim.state_hash() != pristine
+	)
+	_check(
+		"the configured table serializes",
+		(bytes_to_var(sim.snapshot()) as Dictionary).has("unpackable_bases")
+	)
+	sim.configure_unpackable_bases({})
+	_check(
+		"clearing the table returns to the pristine hash exactly",
+		sim.state_hash() == pristine
+	)
+	# Snapshot/restore round-trips the configured AND unpacked state.
+	var world := _make_base_world(_make_sim())
+	world.ai().base_unpack("BASE_FLAG_1", false, "AI_EXPANSION_1")
+	var restored: RetailSliceSim = SimScript.new()
+	restored._rules = _harness_rules()
+	restored.setup({}, {})
+	_check("a snapshot with unpacked bases restores", restored.restore(world.sim.snapshot()))
+	_check(
+		"the restored sim carries the identical authoritative hash",
+		restored.state_hash() == world.sim.state_hash()
+	)
+	_check(
+		"the restored sim still knows which team unpacked the flag",
+		int(restored.unpackable_base_state("BASE_FLAG_1").get("unpacked_by", -1)) == 0
+	)
+
+
 # --- 11. Read-only sweep --------------------------------------------------
 
 
 func _test_queries_are_read_only() -> void:
 	var sim := _make_sim()
-	var world := _make_world(sim)
+	var world := _make_base_world(sim)
 	_inject_research_contract(sim)
 	sim.configure_spellbook_runtime(_spellbook_document())
+	world.ai().base_unpack("BASE_FLAG_1", true, "AI_BASE")
 	sim.advance(5)
 	var before := sim.state_hash()
 	for _round in range(3):
@@ -984,6 +1399,14 @@ func _test_queries_are_read_only() -> void:
 		world.meta().multiplayer_outcome(PLAYER, "defeat")
 		world.meta().multiplayer_outcome(PLAYER, "allied_victory")
 		world.meta().multiplayer_outcome(PLAYER, "allied_defeat")
+		world.ai().base_unpackable("BASE_FLAG_2", PLAYER)
+		world.ai().base_unpackable("BASE_FLAG_1", "<This Player>")
+		world.ai().base_unpackable("GHOST_FLAG", PLAYER)
+		world.players().can_build_at_base(PLAYER, "AI_BASE", "")
+		world.players().can_build_at_base(PLAYER, "AI_BASE", "SynthPitType")
+		world.players().can_build_at_base(PLAYER, "AI_BASE", "GhostType")
+		world.players().can_build_at_base(PLAYER, "BASE_FLAG_2", "")
+		world.resolve_script_object("AI_BASE")
 	_check(
 		"every implemented query leaves the authoritative state hash untouched",
 		sim.state_hash() == before
@@ -996,15 +1419,19 @@ func _test_queries_are_read_only() -> void:
 func _twin_fixture() -> Array:
 	## One deterministic build of the sim+world pair, driven ONLY through
 	## world-facing commands after setup, so two invocations must agree
-	## bit-for-bit.
+	## bit-for-bit. Includes the base-building surface: an unpack chain, a
+	## base-anchored build and the reference bindings they leave behind.
 	var sim := _make_sim()
-	var world := _make_world(sim)
+	var world := _make_base_world(sim)
 	_inject_research_contract(sim)
 	sim.configure_spellbook_runtime(_spellbook_document())
 	_position_enemy_spread(sim, Vector2(10.0, 0.0), Vector2(-10.0, 0.0))
 	world.economy().set_money(PLAYER, 8000)
 	world.progression().purchase_science(PLAYER, "SCIENCE_TestHeal")
 	world.progression().build_upgrade(PLAYER, "Upgrade_TestTech")
+	world.ai().base_unpack("BASE_FLAG_1", true, "AI_BASE")
+	world.ai().base_unpack("BASE_FLAG_2", false, "AI_EXPANSION_1")
+	world.ai().build_base_building("SynthPitType", "AI_BASE", "AI_PIT_1")
 	world.orders().attack(
 		SageScriptWorld.Scope.TEAM,
 		PLAYER_TEAM_NAME,
@@ -1037,6 +1464,13 @@ func _query_battery(world: RetailSliceScriptWorld) -> Array:
 		world.economy().money(PLAYER).value,
 		world.meta().player_count(false).value,
 		world.meta().multiplayer_outcome(PLAYER, "defeat").value,
+		world.ai().base_unpackable("BASE_FLAG_1", PLAYER).value,
+		world.ai().base_unpackable("BASE_FLAG_3", "<This Player>").value,
+		world.players().can_build_at_base(PLAYER, "AI_BASE", "").value,
+		world.players().can_build_at_base(PLAYER, "AI_EXPANSION_1", "SynthPitType").value,
+		world.resolve_script_object("AI_BASE"),
+		world.resolve_script_object("AI_EXPANSION_1"),
+		world.resolve_script_object("AI_PIT_1"),
 	]
 
 

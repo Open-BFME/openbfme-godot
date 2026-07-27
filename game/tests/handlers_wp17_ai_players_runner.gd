@@ -3,8 +3,8 @@ extends SceneTree
 ## Proof runner for WP17-players, AI-critical subset (wp17_ai_players.gd).
 ##
 ## Covers, in order:
-##   1. registration    - all 7 AI-used members accounted for, 5 served and 2
-##                        gap-registered, with no overlap and no silent absence
+##   1. registration    - all 7 AI-used members accounted for and served, with
+##                        no overlap and no silent absence
 ##   2. positional args - the signature that puts two INTEGER-VALUED arguments
 ##                        side by side (comparison operator, then count), with
 ##                        fixture values chosen so a swapped or inverted read
@@ -18,9 +18,12 @@ extends SceneTree
 ##                        cannot answer NEVER comes back as a plain false
 ##   6. arity and types - one wrong-arity and one wrong-type case per served
 ##                        member, rejected before the handler runs
-##   7. gap register    - the 2 blocked members report BLOCKED, name the
-##                        missing world signature, and are not counted as
-##                        coverage
+##   7. can-build pair  - the base anchor and the player reach the world in
+##                        signature order, the plain spelling passes the
+##                        empty "anything at all" type, the typed spelling
+##                        passes its authored type, and a world refusal is a
+##                        structured gap (these two sat gap-registered until
+##                        the world's signature grew the base slot)
 ##
 ## Every fixture value is SYNTHETIC. The call SHAPES are modelled on the retail
 ## AI libraries (an object-type-list name, a "<This Player>" player token, a
@@ -37,25 +40,21 @@ const CoreHandlers := preload("res://src/script/script_handlers_core.gd")
 const Env := preload("res://src/script/script_env.gd")
 const GapLog := preload("res://src/script/script_gaps.gd")
 const ParamTypes := preload("res://src/script/script_param_types.gd")
-const Wp17 := preload("res://src/script/handlers/wp17_ai_players.gd")
 
-## The 5 members this package serves and the 2 it gap-registers. Written out
-## rather than derived from the module, so that a member quietly disappearing
-## from register() fails here instead of agreeing with itself.
+## The 7 members this package serves. Written out rather than derived from
+## the module, so that a member quietly disappearing from register() fails
+## here instead of agreeing with itself.
 const SERVED_ACTIONS := [
 	"PLAYER_ENABLE_BASE_CONSTRUCTION",
 	"PLAYER_SELL_EVERYTHING",
 ]
 
 const SERVED_CONDITIONS := [
+	"CAN_BUILD_AT_BASE",
+	"CAN_BUILD_OBJECTTYPE_AT_BASE",
 	"PLAYER_HAS_OBJECT_COMPARISON",
 	"SKIRMISH_PLAYER_FACTION",
 	"START_POSITION_IS",
-]
-
-const GAP_REGISTERED := [
-	"CAN_BUILD_AT_BASE",
-	"CAN_BUILD_OBJECTTYPE_AT_BASE",
 ]
 
 var passed := 0
@@ -80,7 +79,7 @@ func _run() -> void:
 	_test_command_refusal_is_reported()
 	_test_arity_is_enforced_per_member()
 	_test_argument_type_codes_are_enforced_per_member()
-	_test_gap_registered_members()
+	_test_can_build_pair_serves_player_then_base()
 	print("HANDLERS_WP17_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -179,41 +178,25 @@ func _test_registration_covers_the_ai_subset() -> void:
 			missing.append(name)
 	_check("every_served_member_is_registered", missing.is_empty(), str(missing))
 
-	var unblocked: Array[String] = []
-	for name: String in GAP_REGISTERED:
-		if not dispatch.blocked_names().has(name):
-			unblocked.append(name)
-	_check("every_gap_registered_member_is_blocked", unblocked.is_empty(), str(unblocked))
-
-	# 5 + 2 = 7, the exact AI-used membership the census records
+	# 2 + 5 = 7, the exact AI-used membership the census records
 	# (game/data/retail_ai_call_census.json, workPackage == "WP17-players").
-	# If a later edit serves a gap-registered member without removing it from
-	# the gap list, or vice versa, these two disagree.
 	_check(
 		"the_subset_is_seven_members",
-		SERVED_ACTIONS.size() + SERVED_CONDITIONS.size() + GAP_REGISTERED.size() == 7,
-		"served=%d conditions=%d gapped=%d" % [
-			SERVED_ACTIONS.size(), SERVED_CONDITIONS.size(), GAP_REGISTERED.size()
-		]
-	)
-	var overlap: Array[String] = []
-	for name: String in GAP_REGISTERED:
-		if dispatch.implemented_conditions().has(name):
-			overlap.append(name)
-	_check(
-		"a_gap_registered_member_is_not_counted_as_coverage",
-		overlap.is_empty(),
-		str(overlap)
+		SERVED_ACTIONS.size() + SERVED_CONDITIONS.size() == 7,
+		"served=%d conditions=%d" % [SERVED_ACTIONS.size(), SERVED_CONDITIONS.size()]
 	)
 
-	# The gap list this file asserts on must be the one the module actually
-	# declares, or the two could drift apart while both look right.
-	var declared: Array = Wp17.GAP_CAN_BUILD_CONDITIONS.duplicate()
-	declared.sort()
+	# The CAN_BUILD pair graduated from gap-registered to served when the
+	# world's signature grew the base slot; nothing of this package may remain
+	# on the blocked list.
+	var still_blocked: Array[String] = []
+	for name: String in SERVED_ACTIONS + SERVED_CONDITIONS:
+		if dispatch.blocked_names().has(name):
+			still_blocked.append(name)
 	_check(
-		"the_modules_gap_list_matches_this_runners",
-		declared == GAP_REGISTERED,
-		"module=%s runner=%s" % [str(declared), str(GAP_REGISTERED)]
+		"no_wp17_member_remains_on_the_blocked_list",
+		still_blocked.is_empty(),
+		str(still_blocked)
 	)
 
 
@@ -656,53 +639,91 @@ func _test_argument_type_codes_are_enforced_per_member() -> void:
 	)
 
 
-# --- 7. Gap-registered members --------------------------------------------
+# --- 7. The can-build pair -------------------------------------------------
 
 
-func _test_gap_registered_members() -> void:
+func _test_can_build_pair_serves_player_then_base() -> void:
+	# CAN_BUILD_AT_BASE(PLAYER, UNIT) / CAN_BUILD_OBJECTTYPE_AT_BASE(PLAYER,
+	# UNIT, OBJECT_TYPE): the player FIRST, the base anchor SECOND, the type
+	# (when authored) THIRD. The stub keys its fixture on the FULL
+	# (player, base, type) triple in signature order, so a swapped read - the
+	# base as the player, or the type as the base - misses the fixture and
+	# surfaces as a refusal instead of a quiet pass. These two sat
+	# gap-registered until the world's signature grew the base slot; the base
+	# anchor is what makes the question per-base instead of base-blind.
 	var harness := _harness()
-	var dispatch: SageScriptDispatch = harness["dispatch"]
 	var world: PlayerWorld = harness["world"]
+	var dispatch: SageScriptDispatch = harness["dispatch"]
+	world.can_build["Player_1|SYNTHETIC_BASE_FRONT|"] = true
+	world.can_build["Player_1|SYNTHETIC_BASE_REAR|"] = false
+	world.can_build["Player_1|SYNTHETIC_BASE_FRONT|Synthetic_Barracks_Type"] = false
 
-	# Both CAN_BUILD members carry a base-anchor UNIT the world has no slot
-	# for. They must report BLOCKED - which reads false at the call site, the
-	# only safe answer for an unevaluable gate - and must not reach the world
-	# at all: answering the base-blind form would conflate the AI's bases.
-	var plain := _cond(harness, "CAN_BUILD_AT_BASE", [
-		_player_arg("Player_1"), _name_arg("SYNTHETIC_BASE_FRONT")
-	])
-	_check("a_gap_registered_condition_reads_false", not plain)
 	_check(
-		"the_gap_registered_condition_records_a_blocked_gap",
-		dispatch.gaps.has("condition", "CAN_BUILD_AT_BASE", GapLog.REASON_BLOCKED_SUBSYSTEM),
+		"the_plain_spelling_passes_player_base_and_the_empty_anything_type",
+		_cond(harness, "CAN_BUILD_AT_BASE", [
+			_player_arg("Player_1"), _name_arg("SYNTHETIC_BASE_FRONT")
+		]),
+		str(world.reads)
+	)
+	# THE ANSWER IS PER BASE - the same player, a different base, a different
+	# answer, with no gap recorded for either (both are real answers).
+	var before := dispatch.gaps.entries.size()
+	_check(
+		"a_full_base_reads_false_for_the_same_player",
+		not _cond(harness, "CAN_BUILD_AT_BASE", [
+			_player_arg("Player_1"), _name_arg("SYNTHETIC_BASE_REAR")
+		])
+	)
+	_check(
+		"an_answered_false_records_no_gap",
+		dispatch.gaps.entries.size() == before,
 		str(dispatch.gaps.to_lines())
 	)
-
-	var typed := _cond(harness, "CAN_BUILD_OBJECTTYPE_AT_BASE", [
-		_player_arg("Player_1"), _name_arg("SYNTHETIC_BASE_FRONT"),
-		_name_arg("Synthetic_Barracks_Type")
-	])
-	_check("the_typed_variant_also_reads_false", not typed)
 	_check(
-		"the_typed_variant_also_records_a_blocked_gap",
-		dispatch.gaps.has(
-			"condition", "CAN_BUILD_OBJECTTYPE_AT_BASE", GapLog.REASON_BLOCKED_SUBSYSTEM
+		"the_typed_spelling_passes_its_authored_type_in_slot_three",
+		not _cond(harness, "CAN_BUILD_OBJECTTYPE_AT_BASE", [
+			_player_arg("Player_1"), _name_arg("SYNTHETIC_BASE_FRONT"),
+			_name_arg("Synthetic_Barracks_Type")
+		]),
+		str(world.reads)
+	)
+	_check(
+		"both_spellings_reached_the_world_with_their_triples_in_order",
+		world.reads.has("players.can_build_at_base|Player_1|SYNTHETIC_BASE_FRONT|")
+		and world.reads.has("players.can_build_at_base|Player_1|SYNTHETIC_BASE_REAR|")
+		and world.reads.has(
+			"players.can_build_at_base|Player_1|SYNTHETIC_BASE_FRONT|Synthetic_Barracks_Type"
+		),
+		str(world.reads)
+	)
+
+	# The third answer: a base the world cannot see refuses - false at the
+	# call site WITH a structured gap - and the polled pair mutates nothing.
+	_check(
+		"an_unanswerable_base_reads_false_with_a_world_refused_gap",
+		not _cond(harness, "CAN_BUILD_AT_BASE", [
+			_player_arg("Player_1"), _name_arg("SYNTHETIC_BASE_NOWHERE")
+		])
+		and dispatch.gaps.has(
+			"condition", "CAN_BUILD_AT_BASE", GapLog.REASON_WORLD_REFUSED
 		),
 		str(dispatch.gaps.to_lines())
 	)
-
 	_check(
-		"a_gap_registered_condition_never_reaches_the_world",
-		world.calls.is_empty() and world.refusal_log.is_empty(),
-		"calls=%s refusals=%s" % [str(world.calls), str(world.refusal_log)]
+		"the_refusal_names_the_world_method",
+		world.refused("players.can_build_at_base"),
+		str(world.refusal_log)
 	)
 	_check(
-		"the_gap_names_the_missing_world_signature",
-		_gap_detail(dispatch, "CAN_BUILD_AT_BASE").contains(
-			"players.can_build_at_base(player: String, base: String, object_type: String)"
-		)
-		and _gap_detail(dispatch, "CAN_BUILD_OBJECTTYPE_AT_BASE").contains(
-			"players.can_build_at_base(player: String, base: String, object_type: String)"
+		"the_polled_pair_issued_no_world_commands",
+		world.calls.is_empty(),
+		str(world.calls)
+	)
+	_check(
+		"a_short_can_build_argument_list_is_rejected",
+		not _cond(harness, "CAN_BUILD_AT_BASE", [_player_arg("Player_1")])
+		and dispatch.gaps.has(
+			"condition", "CAN_BUILD_AT_BASE", GapLog.REASON_BAD_ARGUMENTS
 		),
 		str(dispatch.gaps.to_lines())
 	)
@@ -726,6 +747,12 @@ class PlayerWorld:
 	extends SageScriptWorldStub
 
 	var calls: Array[String] = []
+	var reads: Array[String] = []
+
+	## "player|base|object_type" -> bool, keyed on the triple IN SIGNATURE
+	## ORDER so that a handler that rotated the arguments misses the fixture
+	## and refuses.
+	var can_build: Dictionary = {}
 
 	func _make_players() -> SageScriptWorld.Players:
 		return AiStubPlayers.new()
@@ -744,6 +771,14 @@ class AiStubPlayers:
 	func start_position(player: String) -> SageWorldQuery:
 		return _scalar(player, "start_position")
 
+	func can_build_at_base(player: String, base: String, object_type: String) -> SageWorldQuery:
+		var stub := world as PlayerWorld
+		var key := "%s|%s|%s" % [player, base, object_type]
+		stub.reads.append("players.can_build_at_base|%s" % key)
+		if not stub.can_build.has(key):
+			return _refuse_query("players.can_build_at_base", "no fixture for '%s'" % key)
+		return SageWorldQuery.hit(bool(stub.can_build[key]))
+
 	func set_base_construction_enabled(player: String, enabled: bool) -> bool:
 		return _log(
 			"players.set_base_construction_enabled|%s|%s" % [player, str(enabled).to_lower()]
@@ -754,17 +789,6 @@ class AiStubPlayers:
 
 
 # --- Reporting ------------------------------------------------------------
-
-
-func _gap_detail(dispatch: SageScriptDispatch, name: String) -> String:
-	## The blocked-subsystem gap detail recorded for condition `name`, or "" if
-	## no such gap exists. Returns a String rather than indexing the entry
-	## dictionary directly so that a MISSING gap fails the assertion that
-	## wanted it, instead of throwing and taking the rest of the run down.
-	var key := "condition|%s|%s" % [name, GapLog.REASON_BLOCKED_SUBSYSTEM]
-	if not dispatch.gaps.entries.has(key):
-		return ""
-	return String((dispatch.gaps.entries[key] as Dictionary)["detail"])
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:

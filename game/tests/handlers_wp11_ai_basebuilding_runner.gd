@@ -4,10 +4,12 @@ extends SceneTree
 ## (wp11_ai_basebuilding.gd).
 ##
 ## Covers, in order:
-##   1. registration    - all 8 AI-called members accounted for, 5 served and 3
+##   1. registration    - all 8 AI-called members accounted for, 7 served and 1
 ##                        gap-registered, with no overlap and no silent absence
 ##   2. positional args - the condition that puts the base flag before the
-##                        player, and the guard that puts two TEAMs side by side
+##                        player, the guard that puts two TEAMs side by side,
+##                        and the unpack pair that puts the base flag before
+##                        its UNIT_REF destination
 ##   3. durations       - INT seconds reach the world as TICKS via the same
 ##                        conversion the seconds-counters use; the guard's 0-
 ##                        second sentinel collision refuses instead of guarding
@@ -18,11 +20,16 @@ extends SceneTree
 ##   5. conditions      - true, false, and the third answer: a read the world
 ##                        cannot answer NEVER comes back as a plain false, and
 ##                        the polled condition has no side effects
-##   6. refusal + arity - a world without the facets refuses per method; wrong
+##   6. unpacking       - NAMED_BASE_UNPACK reaches ai.base_unpack with
+##                        free=false and NAMED_BASE_UNPACK_FREE with free=true
+##                        (the fold comes from the OPCODE, never the
+##                        arguments), both delivering the reference; a world
+##                        refusal is a structured gap
+##   7. refusal + arity - a world without the facets refuses per method; wrong
 ##                        arity and wrong-coded arguments are rejected before
 ##                        any handler runs
-##   7. gap register    - the 3 blocked members report BLOCKED, name the missing
-##                        world signature, and are not counted as coverage
+##   8. gap register    - the blocked member reports BLOCKED, names the missing
+##                        world signature, and is not counted as coverage
 ##
 ## Every fixture value is SYNTHETIC. The call SHAPES are modelled on the retail
 ## AI libraries (a "<This Player>" style token, an integer seconds value, a
@@ -41,11 +48,13 @@ const GapLog := preload("res://src/script/script_gaps.gd")
 const ParamTypes := preload("res://src/script/script_param_types.gd")
 const Wp11 := preload("res://src/script/handlers/wp11_ai_basebuilding.gd")
 
-## The 5 members this package serves and the 3 it gap-registers. Written out
+## The 7 members this package serves and the 1 it gap-registers. Written out
 ## rather than derived from the module, so that a member quietly disappearing
 ## from register() fails here instead of agreeing with itself.
 const SERVED_ACTIONS := [
 	"CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION",
+	"NAMED_BASE_UNPACK",
+	"NAMED_BASE_UNPACK_FREE",
 	"TEAM_GUARD_FOR_SECONDS",
 	"TEAM_GUARD_TEAM",
 	"TEAM_IDLE_FOR_SECONDS",
@@ -57,8 +66,6 @@ const SERVED_CONDITIONS := [
 
 const GAP_REGISTERED := [
 	"BUILD_BASE_BUILDING_PER_TACTICAL_MARKER",
-	"NAMED_BASE_UNPACK",
-	"NAMED_BASE_UNPACK_FREE",
 ]
 
 var passed := 0
@@ -79,6 +86,7 @@ func _run() -> void:
 	_test_guard_for_seconds_converts_and_respects_the_sentinel()
 	_test_idle_for_seconds_converts()
 	_test_reinforcement_team_target_and_ownership()
+	_test_base_unpack_pair_serves_flag_then_reference()
 	_test_command_refusal_is_reported()
 	_test_arity_is_enforced()
 	_test_argument_coding_is_enforced_where_observed()
@@ -187,11 +195,11 @@ func _test_registration_covers_the_ai_subset() -> void:
 			unblocked.append(name)
 	_check("every_gap_registered_member_is_blocked", unblocked.is_empty(), str(unblocked))
 
-	# 5 + 3 = 8, the exact AI-called membership this subset was scoped to
+	# 6 + 1 + 1 = 8, the exact AI-called membership this subset was scoped to
 	# (game/data/retail_ai_call_census.json; the ninth AI-called WP11 member,
-	# BUILD_BASE_BUILDING, is deliberately outside this subset). If a later
-	# edit serves a gap-registered member without removing it from the gap
-	# list, or vice versa, these two disagree.
+	# BUILD_BASE_BUILDING, is served by the tail package). If a later edit
+	# serves the gap-registered member without removing it from the gap list,
+	# or vice versa, these two disagree.
 	_check(
 		"the_subset_is_eight_members",
 		SERVED_ACTIONS.size() + SERVED_CONDITIONS.size() + GAP_REGISTERED.size() == 8,
@@ -211,7 +219,7 @@ func _test_registration_covers_the_ai_subset() -> void:
 
 	# The gap list this file asserts on must be the one the module actually
 	# declares, or the two could drift apart while both look right.
-	var declared: Array = Wp11.GAP_BASE_UNPACK_ACTIONS + Wp11.GAP_BUILD_PER_MARKER_ACTIONS
+	var declared: Array = Wp11.GAP_BUILD_PER_MARKER_ACTIONS.duplicate()
 	declared.sort()
 	_check(
 		"the_modules_gap_list_matches_this_runners",
@@ -496,7 +504,59 @@ func _test_reinforcement_team_target_and_ownership() -> void:
 	)
 
 
-# --- 6. Command refusal, arity, and argument coding -----------------------
+# --- 6. Base unpacking -----------------------------------------------------
+
+
+func _test_base_unpack_pair_serves_flag_then_reference() -> void:
+	var harness := _harness()
+	var world: BaseWorld = harness["world"]
+
+	# NAMED_BASE_UNPACK(UNIT, UNIT_REF): the base flag FIRST, the DESTINATION
+	# reference LAST, and the free flag FALSE - it comes from the opcode. The
+	# reference must arrive INTACT: it is the load-bearing argument the pair
+	# was gap-registered over until the world's signature grew its slot.
+	var paid := _act(harness, "NAMED_BASE_UNPACK", [
+		_name_arg("SYNTH_BASE_SITE"), _name_arg("SYNTH_EXPANSION_REF")
+	])
+	_check("the_paid_unpack_is_served", paid == Dispatch.Status.OK, "status=%d" % paid)
+	_check(
+		"the_flag_reference_and_paid_flag_arrive_in_order",
+		world.calls.has("ai.base_unpack|SYNTH_BASE_SITE|false|SYNTH_EXPANSION_REF"),
+		str(world.calls)
+	)
+
+	# The FREE spelling folds onto the same world method with free=true and
+	# nothing else different - a fold that came from the opcode, so a map
+	# cannot author a paid unpack into a free one.
+	world.calls.clear()
+	var free := _act(harness, "NAMED_BASE_UNPACK_FREE", [
+		_name_arg("SYNTH_BASE_SITE"), _name_arg("SYNTH_HOME_REF")
+	])
+	_check("the_free_unpack_is_served", free == Dispatch.Status.OK, "status=%d" % free)
+	_check(
+		"the_free_spelling_arrives_with_free_true",
+		world.calls.has("ai.base_unpack|SYNTH_BASE_SITE|true|SYNTH_HOME_REF"),
+		str(world.calls)
+	)
+
+	# A world refusal (unknown flag, no script player, ...) is a structured
+	# gap naming the world method - never a quiet success.
+	world.calls.clear()
+	world.refuse_unpacks = true
+	var refused := _act(harness, "NAMED_BASE_UNPACK", [
+		_name_arg("SYNTH_NOWHERE_SITE"), _name_arg("SYNTH_REF")
+	])
+	_check(
+		"a_world_refused_unpack_is_reported_as_a_gap",
+		refused == Dispatch.Status.WORLD_REFUSED
+		and (harness["dispatch"] as SageScriptDispatch).gaps.has(
+			"action", "NAMED_BASE_UNPACK", GapLog.REASON_WORLD_REFUSED
+		),
+		"status=%d gaps=%s" % [refused, str((harness["dispatch"] as SageScriptDispatch).gaps.to_lines())]
+	)
+
+
+# --- 7. Command refusal, arity, and argument coding -----------------------
 
 
 func _test_command_refusal_is_reported() -> void:
@@ -580,6 +640,17 @@ func _test_arity_is_enforced() -> void:
 		]) == Dispatch.Status.BAD_ARGUMENTS
 	)
 	_check(
+		"a_short_unpack_argument_list_is_rejected",
+		_act(harness, "NAMED_BASE_UNPACK", [_name_arg("SYNTH_BASE_SITE")])
+		== Dispatch.Status.BAD_ARGUMENTS
+	)
+	_check(
+		"a_long_free_unpack_argument_list_is_rejected",
+		_act(harness, "NAMED_BASE_UNPACK_FREE", [
+			_name_arg("SYNTH_BASE_SITE"), _name_arg("SYNTH_REF"), _name_arg("Surplus")
+		]) == Dispatch.Status.BAD_ARGUMENTS
+	)
+	_check(
 		"a_short_condition_argument_list_is_rejected_and_the_gate_stays_shut",
 		not _cond(harness, "NAMED_BASE_UNPACKABLE_FOR_PLAYER", [
 			_name_arg("SYNTH_SITE_A")
@@ -647,7 +718,7 @@ func _test_argument_coding_is_enforced_where_observed() -> void:
 	)
 
 
-# --- 7. Gap-registered members --------------------------------------------
+# --- 8. Gap-registered members --------------------------------------------
 
 
 func _test_gap_registered_members() -> void:
@@ -655,49 +726,8 @@ func _test_gap_registered_members() -> void:
 	var dispatch: SageScriptDispatch = harness["dispatch"]
 	var world: BaseWorld = harness["world"]
 
-	# NAMED_BASE_UNPACK carries a result reference the world cannot accept. It
-	# must report BLOCKED and must not reach the world at all - serving it
-	# through ai.base_unpack(name, free) would leave the reference unbound for
-	# every later script that reads it.
-	var status := _act(harness, "NAMED_BASE_UNPACK", [
-		_name_arg("SYNTH_BASE_SITE"), _name_arg("SYNTH_EXPANSION_REF")
-	])
-	_check(
-		"a_gap_registered_action_reports_blocked",
-		status == Dispatch.Status.BLOCKED,
-		"status=%d" % status
-	)
-	_check(
-		"a_gap_registered_action_never_reaches_the_world",
-		world.calls.is_empty(),
-		str(world.calls)
-	)
-	_check(
-		"the_unpack_gap_names_the_missing_world_signature",
-		_gap_detail(dispatch, "NAMED_BASE_UNPACK").contains(
-			"ai.base_unpack(object_name: String, free: bool, result_reference: String)"
-		),
-		str(dispatch.gaps.to_lines())
-	)
-
-	# The FREE variant is the same gap - and must NOT have been "resolved" by
-	# quietly serving it through the paying unpack, which would be an economy
-	# bug, not an approximation.
-	var free_status := _act(harness, "NAMED_BASE_UNPACK_FREE", [
-		_name_arg("SYNTH_BASE_SITE"), _name_arg("SYNTH_HOME_REF")
-	])
-	_check(
-		"the_free_unpack_is_blocked_not_served_as_a_paid_unpack",
-		free_status == Dispatch.Status.BLOCKED and world.calls.is_empty(),
-		"status=%d calls=%s" % [free_status, str(world.calls)]
-	)
-	_check(
-		"the_free_unpack_gap_states_that_the_free_paid_fold_itself_is_expressible",
-		_gap_detail(dispatch, "NAMED_BASE_UNPACK_FREE").contains("free/paid fold is expressible"),
-		str(dispatch.gaps.to_lines())
-	)
-
 	# The tactical-marker build names every argument the world surface lacks.
+	# It must report BLOCKED and must not reach the world at all.
 	var marker_status := _act(harness, "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER", [
 		_name_arg("SyntheticFarmType"),
 		_argument(ParamTypes.ARGUMENT_INTEGER, 1),
@@ -710,6 +740,11 @@ func _test_gap_registered_members() -> void:
 		marker_status == Dispatch.Status.BLOCKED,
 		"status=%d" % marker_status
 	)
+	_check(
+		"the_marker_build_never_reaches_the_world",
+		world.calls.is_empty(),
+		str(world.calls)
+	)
 	var marker_detail := _gap_detail(dispatch, "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER")
 	_check(
 		"the_marker_gap_names_the_needed_signature_including_the_side_bit",
@@ -718,17 +753,13 @@ func _test_gap_registered_members() -> void:
 		and marker_detail.contains("result_reference"),
 		str(dispatch.gaps.to_lines())
 	)
-
-	# Every one of the three reported BLOCKED above, so none of them silently
-	# degraded into BAD_ARGUMENTS or UNSUPPORTED on the way.
-	var not_gapped: Array[String] = []
-	for name: String in GAP_REGISTERED:
-		if not dispatch.gaps.has("action", name, GapLog.REASON_BLOCKED_SUBSYSTEM):
-			not_gapped.append(name)
 	_check(
-		"all_three_gap_registered_members_recorded_a_blocked_gap",
-		not_gapped.is_empty(),
-		"missing=%s log=%s" % [str(not_gapped), str(dispatch.gaps.to_lines())]
+		"the_gap_registered_member_recorded_a_blocked_gap",
+		dispatch.gaps.has(
+			"action", "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER",
+			GapLog.REASON_BLOCKED_SUBSYSTEM
+		),
+		str(dispatch.gaps.to_lines())
 	)
 
 
@@ -753,6 +784,10 @@ class BaseWorld:
 	## "unit|player" -> bool. Keyed on the pair IN SIGNATURE ORDER so that a
 	## handler that swapped the arguments misses the fixture and refuses.
 	var unpackable: Dictionary = {}
+
+	## When true the stub's ai.base_unpack refuses, exercising the handler's
+	## world-refusal path.
+	var refuse_unpacks := false
 
 	func _make_ai() -> SageScriptWorld.Ai:
 		return StubAi.new()
@@ -790,12 +825,15 @@ class StubAi:
 			)
 		return SageWorldQuery.hit(bool(stub.unpackable[key]))
 
-	func base_unpack(object_name: String, free: bool) -> bool:
-		# Present so that a handler serving the gap-registered unpack pair
-		# would be CAUGHT (the call would appear in the log) rather than
-		# refused into a false pass.
-		(world as BaseWorld).calls.append(
-			"ai.base_unpack|%s|%s" % [object_name, str(free).to_lower()]
+	func base_unpack(object_name: String, free: bool, result_reference: String) -> bool:
+		# Records the FULL argument tuple - the flag, the free/paid fold and
+		# the UNIT_REF destination - so the served pair is asserted on exactly
+		# what reached the world, in order.
+		var stub := world as BaseWorld
+		if stub.refuse_unpacks:
+			return _refuse_command("ai.base_unpack", "fixture refuses unpacks")
+		stub.calls.append(
+			"ai.base_unpack|%s|%s|%s" % [object_name, str(free).to_lower(), result_reference]
 		)
 		return true
 

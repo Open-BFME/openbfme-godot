@@ -1,25 +1,25 @@
 extends SceneTree
 
 ## Proof runner for WP11-basebuilding-ai-tail (wp11_ai_basebuilding_tail.gd) -
-## one member, gap-registered, and the proof that gap-registering it is
-## correct.
+## one member, SERVED through the corrected facet signature.
 ##
 ## Covers, in order:
 ##   1. registration - the tail package coexists with the WP11 subset package
 ##                     with no errors, no name overlap, and the catalog
-##                     package name still free; BUILD_BASE_BUILDING is blocked
-##                     and never counted as coverage
-##   2. the gap      - a call reports BLOCKED, never reaches the world (the
-##                     stub's ai.build_base_building exists precisely so a
-##                     serving handler would be CAUGHT), and the recorded gap
-##                     names the exact missing world signature
-##   3. arity        - validation runs BEFORE the blocked handler, so a
-##                     wrong-arity record is BAD_ARGUMENTS, not BLOCKED
+##                     package name still free; BUILD_BASE_BUILDING is served
+##                     and counted as coverage
+##   2. the service  - the three text arguments reach ai.build_base_building
+##                     positionally (building type, then the BASE object, then
+##                     the UNIT_REF destination - all text-carried, so only
+##                     position separates them), with NO invented player; a
+##                     world refusal is a structured gap naming the method
+##   3. arity        - wrong-arity records are BAD_ARGUMENTS before any
+##                     handler runs
 ##
 ## Every fixture value is SYNTHETIC. The call SHAPE is modelled on the retail
 ## AI libraries (a base anchor, then a destination reference) because that
-## shape is what the gap classification rests on, but no retail payload text
-## is reproduced here.
+## shape is what the positional reads rest on, but no retail payload text is
+## reproduced here.
 ##
 ## Invocation:
 ##   Godot_v4.7-stable_win64_console.exe --headless --path game \
@@ -30,11 +30,6 @@ const Dispatch := preload("res://src/script/script_dispatch.gd")
 const CoreHandlers := preload("res://src/script/script_handlers_core.gd")
 const Env := preload("res://src/script/script_env.gd")
 const GapLog := preload("res://src/script/script_gaps.gd")
-const Tail := preload("res://src/script/handlers/wp11_ai_basebuilding_tail.gd")
-
-const GAP_REGISTERED := [
-	"BUILD_BASE_BUILDING",
-]
 
 var passed := 0
 var failed := 0
@@ -46,8 +41,9 @@ func _initialize() -> void:
 
 func _run() -> void:
 	_test_registration_coexists_with_the_wp11_subset()
-	_test_the_gap_registered_member_blocks_and_names_the_missing_signature()
-	_test_arity_is_enforced_before_the_block()
+	_test_the_member_serves_type_base_reference_in_order()
+	_test_a_world_refusal_is_a_structured_gap()
+	_test_arity_is_enforced()
 	print("HANDLERS_WP11_TAIL_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -124,134 +120,126 @@ func _test_registration_coexists_with_the_wp11_subset() -> void:
 		not (outcome["packages"] as Array).has("WP11-ai-basebuilding"),
 		str(outcome["packages"])
 	)
-
-	var unblocked: Array[String] = []
-	for name: String in GAP_REGISTERED:
-		if not dispatch.blocked_names().has(name):
-			unblocked.append(name)
-	_check("the_gap_registered_member_is_blocked", unblocked.is_empty(), str(unblocked))
-
-	# With this file, all nine AI-called WP11 members are accounted for: the
-	# sibling's five served and three gapped, plus this ninth gap
-	# (game/data/retail_ai_call_census.json).
-	var wp11_blocked: Array[String] = []
-	for name: String in [
-		"BUILD_BASE_BUILDING",
-		"BUILD_BASE_BUILDING_PER_TACTICAL_MARKER",
-		"NAMED_BASE_UNPACK",
-		"NAMED_BASE_UNPACK_FREE",
-	]:
-		if not dispatch.blocked_names().has(name):
-			wp11_blocked.append(name)
 	_check(
-		"all_four_wp11_base_building_gaps_are_now_on_the_record",
-		wp11_blocked.is_empty(),
-		str(wp11_blocked)
-	)
-
-	_check(
-		"the_gap_registered_member_is_not_counted_as_coverage",
-		not dispatch.implemented_actions().has("BUILD_BASE_BUILDING"),
+		"the_member_is_served_and_counted_as_coverage",
+		dispatch.implemented_actions().has("BUILD_BASE_BUILDING"),
 		str(dispatch.implemented_actions())
 	)
-
-	# The gap list this file asserts on must be the one the module actually
-	# declares, or the two could drift apart while both look right.
-	var declared: Array = Tail.GAP_BUILD_ACTIONS.duplicate()
-	declared.sort()
 	_check(
-		"the_modules_gap_list_matches_this_runners",
-		declared == GAP_REGISTERED,
-		"module=%s runner=%s" % [str(declared), str(GAP_REGISTERED)]
+		"the_member_is_no_longer_on_the_blocked_list",
+		not dispatch.blocked_names().has("BUILD_BASE_BUILDING"),
+		str(dispatch.blocked_names())
+	)
+
+	# With this file, all nine AI-called WP11 members are accounted for: the
+	# sibling's seven served plus its one gap, plus this ninth member served
+	# (game/data/retail_ai_call_census.json). Only the tactical-marker build
+	# remains blocked.
+	_check(
+		"only_the_tactical_marker_build_remains_blocked_in_wp11",
+		dispatch.blocked_names().has("BUILD_BASE_BUILDING_PER_TACTICAL_MARKER")
+		and not dispatch.blocked_names().has("NAMED_BASE_UNPACK")
+		and not dispatch.blocked_names().has("NAMED_BASE_UNPACK_FREE"),
+		str(dispatch.blocked_names())
 	)
 
 
-# --- 2. The gap -----------------------------------------------------------
+# --- 2. The service --------------------------------------------------------
 
 
-func _test_the_gap_registered_member_blocks_and_names_the_missing_signature() -> void:
+func _test_the_member_serves_type_base_reference_in_order() -> void:
 	var harness := _harness()
-	var dispatch: SageScriptDispatch = harness["dispatch"]
 	var world: TailWorld = harness["world"]
 
-	# BUILD_BASE_BUILDING(OBJECT_TYPE, UNIT, UNIT_REF) carries a base anchor
-	# and a result reference the world cannot accept. It must report BLOCKED
-	# and must not reach the world at all - serving it through
-	# ai.build_base_building(player, building_type, slot, marker) would invent
-	# a player, drop the base, and leave the reference unbound for every later
-	# script that reads it.
+	# BUILD_BASE_BUILDING(OBJECT_TYPE, UNIT, UNIT_REF): the building type
+	# FIRST, the base object SECOND, the destination reference LAST. All
+	# three are text-carried, so only position separates them - a rotated
+	# read would try to build a base named after a building type - and the
+	# stub records the exact tuple that arrived. NO player argument exists
+	# anywhere in this chain: the world acts as its configured script player,
+	# and the stub's signature would reject an invented one loudly.
 	var status := _act(harness, "BUILD_BASE_BUILDING", [
 		_name_arg("SyntheticBarracksType"),
 		_name_arg("SYNTH_SITE_REF"),
 		_name_arg("SYNTH_BUILT_REF"),
 	])
+	_check("the_build_is_served", status == Dispatch.Status.OK, "status=%d" % status)
 	_check(
-		"the_gap_registered_action_reports_blocked",
-		status == Dispatch.Status.BLOCKED,
+		"type_base_and_reference_arrive_in_signature_order",
+		world.calls.has(
+			"ai.build_base_building|SyntheticBarracksType|SYNTH_SITE_REF|SYNTH_BUILT_REF"
+		),
+		str(world.calls)
+	)
+
+
+func _test_a_world_refusal_is_a_structured_gap() -> void:
+	var harness := _harness()
+	var world: TailWorld = harness["world"]
+	var dispatch: SageScriptDispatch = harness["dispatch"]
+	world.refuse_builds = true
+
+	var status := _act(harness, "BUILD_BASE_BUILDING", [
+		_name_arg("SyntheticBarracksType"),
+		_name_arg("SYNTH_NOWHERE_REF"),
+		_name_arg("SYNTH_BUILT_REF"),
+	])
+	_check(
+		"a_world_refused_build_reports_world_refused",
+		status == Dispatch.Status.WORLD_REFUSED,
 		"status=%d" % status
 	)
 	_check(
-		"the_gap_registered_action_never_reaches_the_world",
-		world.calls.is_empty(),
-		str(world.calls)
-	)
-	_check(
-		"the_gap_names_the_needed_world_signature",
-		_gap_detail(dispatch, "BUILD_BASE_BUILDING").contains(
-			"ai.build_base_building(building_type: String, base: String, "
-			+ "result_reference: String)"
-		),
-		str(dispatch.gaps.to_lines())
-	)
-	_check(
-		"the_gap_names_both_missing_halves",
-		_gap_detail(dispatch, "BUILD_BASE_BUILDING").contains("base")
-		and _gap_detail(dispatch, "BUILD_BASE_BUILDING").contains("result reference"),
-		str(dispatch.gaps.to_lines())
-	)
-	_check(
-		"the_block_is_recorded_under_the_blocked_subsystem_reason",
-		dispatch.gaps.has(
-			"action", "BUILD_BASE_BUILDING", GapLog.REASON_BLOCKED_SUBSYSTEM
-		),
+		"the_refusal_is_recorded_as_a_gap_naming_the_world_method",
+		dispatch.gaps.has("action", "BUILD_BASE_BUILDING", GapLog.REASON_WORLD_REFUSED)
+		and String(
+			dispatch.gaps.entries[
+				"action|BUILD_BASE_BUILDING|%s" % GapLog.REASON_WORLD_REFUSED
+			]["detail"]
+		).contains("ai.build_base_building"),
 		str(dispatch.gaps.to_lines())
 	)
 
 
-# --- 3. Arity precedes the block ------------------------------------------
+# --- 3. Arity --------------------------------------------------------------
 
 
-func _test_arity_is_enforced_before_the_block() -> void:
-	# Argument validation runs before ANY handler, the shared blocked handler
-	# included: a wrong-arity record must be reported as its own defect
-	# (BAD_ARGUMENTS), not folded into the subsystem gap.
+func _test_arity_is_enforced() -> void:
+	# Argument validation runs before ANY handler: a wrong-arity record is
+	# BAD_ARGUMENTS and never reaches the world.
 	var harness := _harness()
+	var world: TailWorld = harness["world"]
 	_check(
-		"a_short_build_argument_list_is_bad_arguments_not_blocked",
+		"a_short_build_argument_list_is_bad_arguments",
 		_act(harness, "BUILD_BASE_BUILDING", [
 			_name_arg("SyntheticBarracksType"), _name_arg("SYNTH_SITE_REF")
 		]) == Dispatch.Status.BAD_ARGUMENTS
 	)
 	_check(
-		"a_long_build_argument_list_is_bad_arguments_not_blocked",
+		"a_long_build_argument_list_is_bad_arguments",
 		_act(harness, "BUILD_BASE_BUILDING", [
 			_name_arg("A"), _name_arg("B"), _name_arg("C"), _name_arg("Surplus")
 		]) == Dispatch.Status.BAD_ARGUMENTS
+	)
+	_check(
+		"neither_bad_arity_record_reached_the_world",
+		world.calls.is_empty(),
+		str(world.calls)
 	)
 
 
 # --- Stub world -----------------------------------------------------------
 #
-# The Ai facet is taught ONE method here - and it is a trap, not a fixture:
-# ai.build_base_building exists in this stub precisely so that a handler
-# serving the gap-registered action would be CAUGHT (the call would appear in
-# the log) rather than refused into a false pass.
+# The Ai facet is taught ONE method, with the CORRECTED signature: the stub
+# records the exact argument tuple so the runner asserts on what reached the
+# world, and its refuse_builds switch exercises the structured-gap path.
 
 
 class TailWorld:
 	extends SageScriptWorldStub
 
 	var calls: Array[String] = []
+	var refuse_builds := false
 
 	func _make_ai() -> SageScriptWorld.Ai:
 		return StubAi.new()
@@ -261,26 +249,18 @@ class StubAi:
 	extends SageScriptWorld.Ai
 
 	func build_base_building(
-		player: String, building_type: String, slot: int, marker: String
+		building_type: String, base: String, result_reference: String
 	) -> bool:
-		(world as TailWorld).calls.append(
-			"ai.build_base_building|%s|%s|%d|%s" % [player, building_type, slot, marker]
+		var stub := world as TailWorld
+		if stub.refuse_builds:
+			return _refuse_command("ai.build_base_building", "fixture refuses builds")
+		stub.calls.append(
+			"ai.build_base_building|%s|%s|%s" % [building_type, base, result_reference]
 		)
 		return true
 
 
 # --- Reporting ------------------------------------------------------------
-
-
-func _gap_detail(dispatch: SageScriptDispatch, name: String) -> String:
-	## The blocked-subsystem gap detail recorded for `name`, or "" if no such
-	## gap exists. Returns a String rather than indexing the entry dictionary
-	## directly so that a MISSING gap fails the assertion that wanted it,
-	## instead of throwing and taking the rest of the run down with it.
-	var key := "action|%s|%s" % [name, GapLog.REASON_BLOCKED_SUBSYSTEM]
-	if not dispatch.gaps.entries.has(key):
-		return ""
-	return String((dispatch.gaps.entries[key] as Dictionary)["detail"])
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:

@@ -668,9 +668,14 @@ class Players:
 		## WP17 SKIRMISH_PLAYER_HAS_PREREQUISITE_TO_BUILD.
 		return _refuse_query("players.has_prerequisite_to_build")
 
-	func can_build_at_base(_player: String, _object_type: String) -> SageWorldQuery:
-		## WP17 CAN_BUILD_AT_BASE / CAN_BUILD_OBJECTTYPE_AT_BASE. Empty type is
-		## the "anything at all" variant.
+	func can_build_at_base(_player: String, _base: String, _object_type: String) -> SageWorldQuery:
+		## WP17 CAN_BUILD_AT_BASE / CAN_BUILD_OBJECTTYPE_AT_BASE. The sourced
+		## signatures are (PLAYER, UNIT) and (PLAYER, UNIT, OBJECT_TYPE): the
+		## UNIT names the BASE the question is anchored to - a skirmish AI holds
+		## several bases and the answer differs per base - so the base is a
+		## required parameter, resolved through the shared object/unit-reference
+		## namespace. Empty object_type is the "anything at all" variant that
+		## CAN_BUILD_AT_BASE asks for.
 		return _refuse_query("players.can_build_at_base")
 
 	func lost_object_type(_player: String, _object_type: String) -> SageWorldQuery:
@@ -1865,10 +1870,18 @@ class Ai:
 	extends Facet
 
 	func build_base_building(
-		_player: String, _building_type: String, _slot: int, _marker: String
+		_building_type: String, _base: String, _result_reference: String
 	) -> bool:
-		## WP11 BUILD_BASE_BUILDING, _IN_SLOT, _PER_TACTICAL_MARKER. Slot < 0 and
-		## empty marker select the plain variant.
+		## WP11 BUILD_BASE_BUILDING only. Sourced: (OBJECT_TYPE, UNIT, UNIT_REF)
+		## - the engine template reads "Build building <OBJECT_TYPE> in base
+		## <UNIT> and reference it as <UNIT_REF>". The base is the base OBJECT
+		## the building goes into (resolved through the shared
+		## object/unit-reference namespace) and the result reference is a
+		## DESTINATION the new building is bound to; retail authors no player
+		## (ownership follows the base). The _IN_SLOT and _PER_TACTICAL_MARKER
+		## spellings carry extra load-bearing arguments (slot index; near/far
+		## side + marker type) and need their own methods - see WP11's
+		## GAP_BUILD_PER_MARKER for the sourced per-marker signature.
 		return _refuse_command("ai.build_base_building")
 
 	func build_on_foundation(_player: String, _foundation: String, _building_type: String) -> bool:
@@ -1896,8 +1909,15 @@ class Ai:
 		## WP11 SET_COUNTER_TO_BASE_POPULATION.
 		return _refuse_query("ai.base_population")
 
-	func base_unpack(_object_name: String, _free: bool) -> bool:
-		## WP11 NAMED_BASE_UNPACK / NAMED_BASE_UNPACK_FREE.
+	func base_unpack(_object_name: String, _free: bool, _result_reference: String) -> bool:
+		## WP11 NAMED_BASE_UNPACK (`free` false) / NAMED_BASE_UNPACK_FREE
+		## (`free` true). Sourced: (UNIT, UNIT_REF) - the base at <UNIT> unpacks
+		## and the resulting base object is referenced as <UNIT_REF>. The result
+		## reference is a DESTINATION every retail AI call site binds (paid
+		## unpacks bind AI_EXPANSION_1..N; free unpacks bind AI_BASE, later read
+		## as a plain UNIT), so the world must bind it in the shared
+		## object/unit-reference namespace, resolved to the concrete unpacked
+		## object at call time. An empty reference means "bind nothing".
 		return _refuse_command("ai.base_unpack")
 
 	func base_unpackable(_object_name: String, _player: String) -> SageWorldQuery:
