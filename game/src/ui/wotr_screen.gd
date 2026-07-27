@@ -64,6 +64,8 @@ const RegionGeometryScript = preload("res://src/wotr/wotr_region_geometry.gd")
 const StringsScript = preload("res://src/wotr/wotr_strings.gd")
 const MacrosScript = preload("res://src/wotr/wotr_macros.gd")
 const LivingWorldUiScript = preload("res://src/wotr/wotr_living_world_ui.gd")
+const MarkerModelsScript = preload("res://src/wotr/wotr_marker_models.gd")
+const RegionImagesScript = preload("res://src/wotr/wotr_region_images.gd")
 const ChromeScript = preload("res://src/wotr/wotr_chrome.gd")
 
 ## Retail's own region-bonus wording, keyed by the living-world document's own
@@ -153,6 +155,13 @@ var macros_reason := ""
 ## is no build menu, and the screen says so.
 var ui: LivingWorldUiScript = null
 var ui_reason := ""
+## Retail's own 3D marker models - the army banners, the marching columns and the
+## build-plot foundation decals - or null with the reason.
+var markers: MarkerModelsScript = null
+var markers_reason := ""
+## Retail's own portraits of the regions themselves, or null with the reason.
+var region_images: RegionImagesScript = null
+var region_images_reason := ""
 ## The build plot the radial menu is open on, as `{region, index}` or `{}`.
 ## PRESENTATION ONLY - it lives here, not on the session, and reaches nothing.
 var selected_plot: Dictionary = {}
@@ -172,6 +181,11 @@ var legend_label: Control
 ## Every seat's standing: regions held, armies, command points.
 var standings_label: RichTextLabel
 var detail_label: RichTextLabel
+## RETAIL'S OWN PORTRAIT OF THE REGION under the pointer, and the line that says
+## which authored field it came from - or which one retail names and does not
+## define.
+var region_portrait_frame: Control
+var region_portrait_caption: Label
 var message_label: Label
 var unplaced_label: Label
 var unplaced_host: VBoxContainer
@@ -399,6 +413,173 @@ func build() -> void:
 	back_button.pressed.connect(func() -> void: back_requested.emit())
 	add_child(back_button)
 
+	# RETAIL'S PORTRAIT OF THE REGION UNDER THE POINTER. Sits directly above the
+	# region card, because that is what it is a picture of. Sized here and moved
+	# by `_relayout()` like everything else.
+	region_portrait_frame = Control.new()
+	region_portrait_frame.name = "RegionPortraitFrame"
+	region_portrait_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	region_portrait_frame.draw.connect(_draw_region_portrait)
+	add_child(region_portrait_frame)
+
+	region_portrait_caption = Label.new()
+	region_portrait_caption.name = "RegionPortraitCaption"
+	region_portrait_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	region_portrait_caption.add_theme_font_size_override("font_size", 13)
+	region_portrait_caption.add_theme_color_override("font_color", ThemeScript.PARCHMENT_DIM)
+	region_portrait_caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(region_portrait_caption)
+
+	resized.connect(_relayout)
+	_relayout()
+
+
+# --- layout -------------------------------------------------------------------
+
+## THE SCREEN WAS AUTHORED AT ~1860x800 AND NAILED TO IT. Every control carried a
+## hand-written pixel position, so on the 2560x1351 window the owner actually
+## runs it in, retail's Middle-earth occupied the top-left 1240x548 of a 2560-wide
+## panel and the other 40% of the screen was empty black.
+##
+## This gives the window back. The rule is stated rather than tuned:
+##
+##   * the SIDEBAR keeps a readable measure and no more - it is text, and text
+##     set 900 pixels wide is harder to read, not easier - so it takes a fixed
+##     column against the right edge, widening only as far as SIDE_MAX;
+##   * the MAP takes EVERYTHING ELSE, both axes. It is the one thing on this
+##     screen that gets better the bigger it is;
+##   * the top band (title, turn, hint) and the bottom band (legend, message,
+##     conversion report) keep their authored heights, because they are single
+##     lines of type that do not improve with room.
+##
+## Nothing here is scaled: no font is stretched and no control is squashed. At
+## the authored size the result is the authored layout, which is the property the
+## runner asserts rather than a screenshot nobody re-reads.
+const DESIGN_SIZE := Vector2(1860.0, 800.0)
+const LAYOUT_MARGIN := 24.0
+## The sidebar's authored measure, and the most it may grow to on a wide screen.
+const SIDE_MIN := 524.0
+const SIDE_MAX := 620.0
+## The narrowest the sidebar may ever be. THE SIDEBAR GIVES WAY FIRST: on a
+## window too narrow to hold both floors it shrinks below its authored measure
+## rather than sliding over the map, because a panel drawn on top of Middle-earth
+## is worse than a panel set narrow. Reached at 1100 pixels of window width.
+const SIDE_FLOOR := 260.0
+## What the map may not shrink below.
+const MAP_MIN := Vector2(760.0, 380.0)
+## The authored heights of the two bands the map sits between.
+const TOP_BAND := 118.0
+const BOTTOM_BAND := 162.0
+
+
+func _relayout() -> void:
+	if heading_label == null:
+		return
+	var frame := size
+	if frame.x < 1.0 or frame.y < 1.0:
+		frame = DESIGN_SIZE
+	# The sidebar column, right-anchored, between its authored measure and a
+	# ceiling - and never so wide that the map falls under its floor.
+	var side_width := clampf(frame.x * 0.28, SIDE_MIN, SIDE_MAX)
+	side_width = clampf(
+		frame.x - MAP_MIN.x - LAYOUT_MARGIN * 3.0, SIDE_FLOOR, side_width)
+	var side_x := frame.x - side_width - LAYOUT_MARGIN
+	# THE MAP TAKES EXACTLY WHAT IS LEFT, with no floor of its own applied here -
+	# a floor applied to the map instead of to the sidebar is precisely how a
+	# panel ends up drawn over Middle-earth, which is what the runner caught at
+	# 1280x1024. The map's floor is honoured by the clamp above.
+	var map_width := maxf(side_x - LAYOUT_MARGIN * 2.0, 200.0)
+	var map_height := maxf(frame.y - TOP_BAND - BOTTOM_BAND - LAYOUT_MARGIN, MAP_MIN.y)
+
+	status_label.size.x = maxf(side_x - status_label.position.x - LAYOUT_MARGIN, 200.0)
+	status_label.custom_minimum_size.x = status_label.size.x
+	turn_banner.size.x = maxf(map_width * 0.62, 320.0)
+	turn_banner.custom_minimum_size.x = turn_banner.size.x
+	header_label.position.x = LAYOUT_MARGIN + 6.0 + turn_banner.size.x + 10.0
+	header_label.size.x = maxf(side_x - header_label.position.x - LAYOUT_MARGIN, 200.0)
+	header_label.custom_minimum_size.x = header_label.size.x
+	hint_label.size.x = map_width
+	hint_label.custom_minimum_size.x = map_width
+	# CLIPPED, NOT OVERFLOWING. These are single lines whose length depends on
+	# the strategic state, and an unclipped one wrote itself across the seat
+	# table the moment a region name got long.
+	for line_label in [status_label, turn_banner, header_label, hint_label]:
+		line_label.clip_text = true
+
+	for view in [map_view, map3d]:
+		view.position = Vector2(LAYOUT_MARGIN, TOP_BAND)
+		view.custom_minimum_size = Vector2(map_width, map_height)
+		view.size = Vector2(map_width, map_height)
+
+	var below := TOP_BAND + map_height + 6.0
+	legend_label.position = Vector2(LAYOUT_MARGIN, below)
+	legend_label.custom_minimum_size = Vector2(map_width, 24.0)
+	legend_label.size = Vector2(map_width, 24.0)
+	message_label.position = Vector2(LAYOUT_MARGIN, below + 28.0)
+	message_label.custom_minimum_size = Vector2(map_width, 24.0)
+	message_label.size = Vector2(map_width, 24.0)
+	map_mode_label.position = Vector2(LAYOUT_MARGIN, below + 52.0)
+	var mode_height := maxf(frame.y - map_mode_label.position.y - LAYOUT_MARGIN, 40.0)
+	map_mode_label.custom_minimum_size = Vector2(map_width, mode_height)
+	map_mode_label.size = Vector2(map_width, mode_height)
+
+	# THE SIDEBAR, laid out from the BOTTOM UP: the buttons are the thing that
+	# must never be off the panel or under something else, so they are placed
+	# against the bottom edge first and the panels take what is left.
+	var button_width := (side_width - 12.0) * 0.5
+	back_button.position = Vector2(side_x, frame.y - 40.0 - LAYOUT_MARGIN)
+	back_button.size = Vector2(button_width, 40.0)
+	back_button.custom_minimum_size = back_button.size
+	var action_y := back_button.position.y - 54.0
+	attack_button.position = Vector2(side_x, action_y)
+	attack_button.size = Vector2(button_width, 44.0)
+	attack_button.custom_minimum_size = attack_button.size
+	end_turn_button.position = Vector2(side_x + button_width + 12.0, action_y)
+	end_turn_button.size = Vector2(button_width, 44.0)
+	end_turn_button.custom_minimum_size = end_turn_button.size
+
+	# The unplaced block keeps its authored 84-pixel band, directly above the
+	# buttons, and the two scrolling panels split everything above THAT.
+	var unplaced_y := action_y - 92.0
+	unplaced_label.position = Vector2(side_x, unplaced_y)
+	unplaced_label.custom_minimum_size = Vector2(side_width, 40.0)
+	unplaced_label.size = Vector2(side_width, 40.0)
+	unplaced_host.position = Vector2(side_x, unplaced_y + 44.0)
+	unplaced_host.custom_minimum_size = Vector2(side_width, 0.0)
+	unplaced_host.size = Vector2(side_width, 0.0)
+
+	# The portrait plate sits between the standings and the region card, at a
+	# fixed 4:3 that is retail's own aspect for these images.
+	var panel_top := 70.0
+	var panel_space := maxf(unplaced_y - 10.0 - panel_top, 200.0)
+	var portrait_height := clampf(panel_space * 0.24, 84.0, 190.0)
+	var standings_height := maxf((panel_space - portrait_height - 30.0) * 0.42, 90.0)
+	standings_label.position = Vector2(side_x, panel_top)
+	standings_label.custom_minimum_size = Vector2(side_width, standings_height)
+	standings_label.size = Vector2(side_width, standings_height)
+
+	var portrait_y := panel_top + standings_height + 10.0
+	region_portrait_frame.position = Vector2(side_x, portrait_y)
+	region_portrait_frame.custom_minimum_size = Vector2(side_width, portrait_height)
+	region_portrait_frame.size = Vector2(side_width, portrait_height)
+	region_portrait_caption.position = Vector2(
+		side_x + portrait_height * 4.0 / 3.0 + 12.0, portrait_y + 4.0)
+	region_portrait_caption.size = Vector2(
+		maxf(side_width - portrait_height * 4.0 / 3.0 - 12.0, 80.0), portrait_height - 8.0)
+	region_portrait_caption.custom_minimum_size = region_portrait_caption.size
+
+	var detail_y := portrait_y + portrait_height + 10.0
+	detail_label.position = Vector2(side_x, detail_y)
+	var detail_height := maxf(unplaced_y - 10.0 - detail_y, 120.0)
+	detail_label.custom_minimum_size = Vector2(side_width, detail_height)
+	detail_label.size = Vector2(side_width, detail_height)
+
+	if chrome_layer != null:
+		chrome_layer.queue_redraw()
+	if legend_label != null:
+		legend_label.queue_redraw()
+	region_portrait_frame.queue_redraw()
+
 
 ## Bind a live session, or NO session plus the reason there is none. Both are
 ## legitimate states and the screen shows either honestly; what it never does is
@@ -543,6 +724,44 @@ func _load_strings(located: Dictionary, pack_roots: Array) -> void:
 			print("[WotrUI] %s" % line)
 	map3d.set_ui(ui, ui_reason)
 
+	# RETAIL'S 3D MARKER MODELS, looked for in the same places and failing
+	# independently again: retail's portraits can be converted with none of its
+	# banner geometry, and the screen has to be able to say which of the two is
+	# missing rather than "the markers look wrong".
+	var marker_bundle := MarkerModelsScript.new()
+	var markers_found: Dictionary = marker_bundle.locate_and_load(roots)
+	if bool(markers_found.get("ok", false)):
+		markers = marker_bundle
+		markers_reason = ""
+		print("[WotrMarkers] retail 3D marker models loaded from %s" % String(markers_found.get("path", "")))
+		for line in marker_bundle.describe_load():
+			print("[WotrMarkers]   %s" % line)
+	else:
+		markers = null
+		markers_reason = String(markers_found.get("reason", ""))
+		push_warning("[WotrMarkers] %s" % markers_reason)
+		for line in markers_reason.split("\n"):
+			print("[WotrMarkers] %s" % line)
+	map3d.set_markers(markers, markers_reason)
+
+	# RETAIL'S OWN PORTRAITS OF THE REGIONS, for the region card. Independent
+	# again: the marker geometry and the card art come from different documents
+	# and fail for different reasons.
+	var region_image_bundle := RegionImagesScript.new()
+	var region_images_found: Dictionary = region_image_bundle.locate_and_load(roots)
+	if bool(region_images_found.get("ok", false)):
+		region_images = region_image_bundle
+		region_images_reason = ""
+		print("[WotrRegionArt] retail region portraits loaded from %s" % String(region_images_found.get("path", "")))
+		for line in region_image_bundle.describe_load():
+			print("[WotrRegionArt]   %s" % line)
+	else:
+		region_images = null
+		region_images_reason = String(region_images_found.get("reason", ""))
+		push_warning("[WotrRegionArt] %s" % region_images_reason)
+		for line in region_images_reason.split("\n"):
+			print("[WotrRegionArt] %s" % line)
+
 	var macro_table := MacrosScript.new()
 	var macros_found: Dictionary = macro_table.locate_and_load(roots)
 	if bool(macros_found.get("ok", false)):
@@ -643,7 +862,7 @@ func _refresh_map() -> void:
 			session.selected_region, session.selected_target)
 		map3d.set_overlays(
 			_army_stacks_by_region(), _plots_by_region(), _display_names(),
-			selected_plot, _radial_entries())
+			selected_plot, _radial_entries(), _plot_icons_by_region())
 		_refresh_map_mode_label()
 		return
 	map_view.queue_redraw()
@@ -711,6 +930,46 @@ func _refresh_map_mode_label() -> void:
 				unresolved.size(), ", ".join(unresolved)])
 	else:
 		notes.append("BANNERS: NOT CONVERTED - army stacks carry no portrait. %s" % ui_reason.split("\n")[0])
+	# THE 3D MARKERS: what is standing on the map as retail's own geometry, and
+	# what is still a flat stand-in with the reason. Two different claims.
+	if markers != null:
+		notes.append("MARKERS: retail's own W3D marker models, %d of %d converted - %d meshes, %d triangles across %d families and %d slots. %d army stack(s) and %d build plot(s) are standing as retail geometry." % [
+			int(markers.totals.get("modelsConverted", 0)), int(markers.totals.get("modelsNamed", 0)),
+			int(markers.totals.get("meshes", 0)), int(markers.totals.get("triangles", 0)),
+			int(markers.totals.get("families", 0)), int(markers.totals.get("slots", 0)),
+			map3d.army_markers_standing, map3d.plot_markers_standing])
+		# THE ONE NUMBER IN THE MARKERS THAT IS NOT RETAIL'S, said out loud.
+		notes.append("MARKER SIZE: retail's own Scale, ZOffset and OrientAngle, times a PRESENTATION magnification of x%.2f at this framing - x1.00 (retail's exact authored size) at zoom %.2f and below, capped at x%.2f. Retail's camera never pulls back as far as this one can, and at retail's true size a banner is about fifteen pixels across the whole map." % [
+			map3d.marker_magnification(), map3d.MARKER_TRUE_ZOOM,
+			map3d.MARKER_MAX_MAGNIFICATION])
+		# STRUCTURES ARE CONVERTED AND DELIBERATELY NOT PLACED, stated rather than
+		# left as a silent absence: nothing built them, so there is nothing there.
+		var building_families := int((markers.totals.get("familiesByKind", {}) as Dictionary).get("building", 0))
+		notes.append("STRUCTURE MODELS: %d LivingWorldBuildingIcon famil(ies) are converted and NONE is placed - construction is not simulated, so no structure exists on any plot to stand one on." % building_families)
+		if not markers.unresolved_models.is_empty():
+			var absent: Array[String] = []
+			for key in markers.unresolved_models.keys():
+				absent.append("%s (%s)" % [String(key), String(markers.unresolved_models[key])])
+			absent.sort()
+			notes.append("MARKER MODELS NOT CONVERTED (%d): %s" % [absent.size(), ", ".join(absent)])
+		for pair in [["ARMY STACKS", map3d.army_markers_flat], ["BUILD PLOTS", map3d.plot_markers_flat]]:
+			var table := pair[1] as Dictionary
+			if table.is_empty():
+				continue
+			var flat: Array[String] = []
+			for key in table.keys():
+				flat.append("%s - %s" % [String(key), String(table[key])])
+			flat.sort()
+			notes.append("%s STILL DRAWN FLAT (%d): %s" % [String(pair[0]), flat.size(), ", ".join(flat)])
+	else:
+		notes.append("MARKERS: NOT CONVERTED - armies are flat plates and build plots are flat rings. %s" % markers_reason.split("\n")[0])
+	# HAND-BUILT, SAID OUT LOUD. Retail's map surround genuinely does not resolve
+	# - its frame art names three .tga files that are in no archive under any
+	# name, and the APT vector shapes are masks rather than filigree - so the
+	# parchment band, the corner studs and the compass rose are this project's
+	# own drawing in retail's palette. Calling them retail art would be the same
+	# dishonesty as an invented number.
+	notes.append("MAP SURROUND: HAND-BUILT, not converted - the parchment band, the gold rule, the four corner studs and the compass rose are drawn in retail's style because retail's own frame art resolves to nothing. The rose is not decoration: it turns with the camera's yaw, so it never claims north is up while the map has been orbited.")
 	if not map_bundle.warnings.is_empty():
 		notes.append("%d texture problem(s): %s" % [
 			map_bundle.warnings.size(), ", ".join(Array(map_bundle.warnings))])
@@ -916,8 +1175,13 @@ func _army_stacks_by_region() -> Dictionary:
 			template = String((session.state.players[owner] as Dictionary).get("template", ""))
 		var roster := String(army.get("roster", ""))
 		var portrait: Dictionary = {"id": "", "source": ""}
+		var marker: Dictionary = {"icon": "", "size": "", "source": ""}
 		if ui != null:
 			portrait = ui.army_portrait(roster, String(army.get("hero_template", "")), template)
+			# THE 3D MARKER FAMILY, by the same discipline as the portrait: the
+			# `ArmyToSpawn` block that recruits this same `PlayerArmy`, failing
+			# that the seat template's own `DefaultArmyIconName`. Both authored.
+			marker = ui.army_marker(roster, template)
 		var stacks: Array = by_region.get(region_id, []) as Array
 		stacks.append({
 			"owner": owner,
@@ -926,6 +1190,9 @@ func _army_stacks_by_region() -> Dictionary:
 			"label": _army_label(roster),
 			"portrait_id": String(portrait.get("id", "")),
 			"portrait_source": String(portrait.get("source", "")),
+			"icon": String(marker.get("icon", "")),
+			"size": String(marker.get("size", "")),
+			"icon_source": String(marker.get("source", "")),
 		})
 		by_region[region_id] = stacks
 	return by_region
@@ -960,6 +1227,25 @@ func _plots_by_region() -> Dictionary:
 			var row := spot as Dictionary
 			points.append(Vector2(float(row.get("x", 0)), float(row.get("y", 0))))
 		by_region[String(region_id)] = points
+	return by_region
+
+
+## The `LivingWorldBuildPlotIcon` family retail decals each region's plots with -
+## the OWNING SEAT's own `BuildPlotIconName`, which is why an unowned region gets
+## none rather than a default. Authored link only.
+func _plot_icons_by_region() -> Dictionary:
+	var by_region: Dictionary = {}
+	if ui == null or session == null or session.state == null:
+		return by_region
+	for region_id in session.world.region_ids:
+		var id := String(region_id)
+		var owner := session.state.owner_of(id)
+		if owner == StateScript.NEUTRAL or owner < 0 or owner >= session.state.players.size():
+			continue
+		var template := String((session.state.players[owner] as Dictionary).get("template", ""))
+		var family := ui.build_plot_icon_id(template)
+		if not family.is_empty():
+			by_region[id] = family
 	return by_region
 
 
@@ -1121,8 +1407,16 @@ func _refresh_standings(state: StateScript) -> void:
 		# CONVERTED, so not claimed absent - but what is still missing INSIDE them
 		# is named, because a half-converted surface reported as done is the same
 		# defect as one reported as absent.
-		absent.append("the 3D marker models retail draws these with - the 43 LivingWorldArmyIcon W3D banners, the 28 LivingWorldBuildingIcon structures and the 7 LivingWorldBuildPlotIcon foundation decals are all in the archives and NONE is converted; the map draws flat plates and rings in their place")
 		absent.append("construction itself - the build ring shows retail's real offer and changes no state, because no building system exists in the simulation")
+	# THE MARKER MODELS, kept current the same way. They ARE converted now - all
+	# 81 of them - so claiming they are not would be its own dishonesty; what is
+	# still not on the map is the 28 structure families, and the reason is a
+	# missing SIMULATION rather than a missing conversion.
+	if markers == null:
+		absent.append("the 3D marker models retail draws armies and plots with - the LivingWorldArmyIcon banners, the LivingWorldBuildingIcon structures and the LivingWorldBuildPlotIcon foundation decals are all in the archives and NONE is converted here; the map draws flat plates and rings in their place")
+	else:
+		absent.append("retail's structure models standing on built plots - all %d LivingWorldBuildingIcon famil(ies) ARE converted and none is placed, because construction is not simulated and there is no structure on any plot to draw" % int((markers.totals.get("familiesByKind", {}) as Dictionary).get("building", 0)))
+		absent.append("the marker ANIMATIONS - retail fades, glows and marches these models; every one here is standing still, which is a state this screen names rather than a motion it invents")
 	absent.append("the turn-phase bar (retail's phase list is hardcoded in the executable; livingworldlogic.ini ships EMPTY, 192 bytes of comment, and there is no mprules.ini anywhere in the archives)")
 	absent.append("army models marching between regions")
 	lines.append("[color=#a9b39a]NOT CONVERTED, so not shown: %s.[/color]" % "; ".join(absent))
@@ -1417,7 +1711,59 @@ func _build_plot_panel_lines() -> Array[String]:
 	return lines
 
 
+## THE REGION THE CARD IS ABOUT, by the same precedence the card itself uses:
+## the attack target, then whatever is under the pointer, then the selection.
+func _card_region() -> String:
+	if session == null:
+		return ""
+	if not session.selected_target.is_empty():
+		return session.selected_target
+	if not session.hover_region.is_empty():
+		return session.hover_region
+	return session.selected_region
+
+
+## RETAIL'S OWN PORTRAIT OF THAT REGION, drawn at retail's own crop.
+##
+## The plate is ALWAYS drawn, even empty, so the card does not jump every time
+## the pointer crosses a region retail authors no picture for - and an empty one
+## SAYS WHY beside it. Retail names three fortress portraits it defines nowhere
+## (`BPCAmonSul`, `BPCCarnDum`, `BPCFornost`); the nearest ids in the archives
+## are `BPCFornostGate` and `BPCFornostCitadel`, which are different pictures of
+## different things, and none of the three is bridged to them.
+func _draw_region_portrait() -> void:
+	var frame := region_portrait_frame
+	var height := frame.size.y
+	var plate := Rect2(Vector2.ZERO, Vector2(height * 4.0 / 3.0, height))
+	frame.draw_rect(plate.grow(2.0), Color(0.05, 0.06, 0.05, 0.92))
+	var region_id := _card_region()
+	var found: Dictionary = {"texture": null, "id": "", "requested": "", "source": "", "reason": ""}
+	if region_images != null and not region_id.is_empty():
+		found = region_images.region_portrait(region_id)
+	var texture: Texture2D = found["texture"]
+	if texture != null:
+		frame.draw_texture_rect(texture, plate, false)
+	else:
+		# NOT A STAND-IN PICTURE: a flat plate that is visibly not retail art.
+		frame.draw_rect(plate, Color(0.13, 0.14, 0.11, 0.85))
+	frame.draw_rect(plate, ThemeScript.GOLD, false, 1.0)
+	var caption := ""
+	if region_id.is_empty():
+		caption = "no region is selected or under the pointer"
+	elif region_images == null:
+		caption = "NO PORTRAIT BUNDLE: %s" % region_images_reason.split(".")[0]
+	elif texture != null:
+		caption = "%s\n[%s = %s]" % [_display_of(region_id), String(found["source"]), String(found["id"])]
+	elif not String(found["requested"]).is_empty():
+		caption = "%s\nNO PICTURE: %s" % [_display_of(region_id), String(found["reason"])]
+	else:
+		caption = "%s\nretail's data names no portrait for this region" % _display_of(region_id)
+	region_portrait_caption.text = caption
+
+
 func _refresh_detail() -> void:
+	if region_portrait_frame != null:
+		region_portrait_frame.queue_redraw()
 	var lines: Array[String] = []
 	var state: StateScript = session.state
 	# THE REGION PANEL FIRST. Retail's strategic screen leads with the region the

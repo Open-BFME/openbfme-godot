@@ -48,6 +48,7 @@ signal overlay_painted
 
 const BundleScript = preload("res://src/wotr/wotr_map_bundle.gd")
 const RegionGeometryScript = preload("res://src/wotr/wotr_region_geometry.gd")
+const MarkerModelsScript = preload("res://src/wotr/wotr_marker_models.gd")
 const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 const ChromeScript = preload("res://src/wotr/wotr_chrome.gd")
 
@@ -67,11 +68,37 @@ const BANNER_FAN := 38.0
 ## At most this many banners are drawn per region; the rest are counted in the
 ## "+N" tail rather than piled into an unreadable heap.
 const MAX_BANNERS_PER_REGION := 3
+## How far apart stacked 3D markers are fanned, in RETAIL WORLD UNITS. Retail's
+## own banner models are ~70 units across and ~128 tall, so 90 puts two standards
+## side by side with a gap rather than one inside the other. Presentation, like
+## `BANNER_FAN` is for the flat plates, and it reaches nothing.
+const MARKER_FAN_WORLD := 90.0
+
+## MARKER LEGIBILITY ACROSS A 33.8x CAMERA, and why this multiplier exists at
+## all rather than standing every model at retail's own `Scale` and stopping.
+##
+## Retail's banner is about 128 world units tall on a map 6,021 units wide, and
+## at RETAIL'S OWN strategic camera distance that is a readable standard. This
+## camera goes from a fifth of one terrain tile to the whole of Middle-earth -
+## travel retail never had - and at the far end retail's true size projects to
+## roughly fifteen pixels: converted, standing, and unreadable.
+##
+## So the marker is scaled by the camera, on the SAME rule and for the same
+## reason the flat overlay already uses in `_view_scale()`: square-rooted so the
+## growth is gentle, clamped at both ends, and 1.0 - retail's exact authored size
+## with no multiplier at all - for every framing at or below MARKER_TRUE_ZOOM.
+##
+## THIS IS A PRESENTATION VALUE AND IT IS NOT RETAIL'S. It is stated here and on
+## screen rather than folded into the model, it reaches nothing, and the model,
+## its meshes, its `ZOffset` and its `OrientAngle` are all still retail's own.
+const MARKER_TRUE_ZOOM := 0.25
+const MARKER_MAX_MAGNIFICATION := 2.4
 
 ## Build-plot markers: retail decals a plot with a faction foundation model
-## (`LMGFoundation` and its six siblings). No model is converted, so this draws a
-## flat ring AT RETAIL'S OWN AUTHORED PLOT COORDINATE and says what it stands in
-## for.
+## (`LMGFoundation` and its six siblings). When the marker bundle carries that
+## model the DECAL ITSELF is stood on the map at retail's own authored plot
+## coordinate; the flat ring below is the STAND-IN kept for a plot whose model
+## did not convert, and the screen names the model in that case.
 const PLOT_RADIUS := 9.0
 const PLOT_PICK_SLOP := 6.0
 
@@ -217,6 +244,9 @@ var ui_reason := ""
 var armies_by_region: Dictionary = {}
 ## `region id -> Array[Vector2]`, retail's own authored `BuildingSpot` points.
 var plots_by_region: Dictionary = {}
+## `region id -> LivingWorldBuildPlotIcon id`, resolved by the screen from the
+## owning seat's own `BuildPlotIconName`. A region no seat owns carries none.
+var plot_icons_by_region: Dictionary = {}
 ## `region id -> String`, retail's English name when the string table converted.
 var display_names: Dictionary = {}
 ## The plot the radial build menu is open on: `{region, index}` or `{}`.
@@ -224,6 +254,31 @@ var selected_plot: Dictionary = {}
 ## What that menu offers: `[{id, image_id, title, cost, turns}]`, supplied by the
 ## screen from retail's own `LivingWorldBuilding` records.
 var radial_entries: Array[Dictionary] = []
+
+## RETAIL'S OWN 3D MARKER MODELS - the banners, the marching columns and the
+## foundation decals - or null. Null means armies keep their flat portrait plates
+## and plots their flat rings, and the screen says so.
+var markers = null
+## Why there are no marker models, or "" when there are.
+var markers_reason := ""
+## The node holding every marker standing in the world this frame.
+var _marker_root: Node3D = null
+## `Array[Dictionary]` of what is standing: {key, kind, node, aabb}. Rebuilt
+## whenever the overlays change; read by the label placer so a region name is
+## never written across a banner.
+var _standing_markers: Array[Dictionary] = []
+## The marker keys whose BODY slot actually stood, so the overlay knows which
+## flat plates and rings it must NOT also draw. A marker is drawn once.
+var _standing_keys: Dictionary = {}
+
+## How many army stacks are standing as retail's own 3D banner, and how many fell
+## back to a flat plate WITH THE REASON. Both public, because "the markers are 3D"
+## and "every marker is 3D" are two different claims.
+var army_markers_standing := 0
+var army_markers_flat: Dictionary = {}
+## The same for build plots.
+var plot_markers_standing := 0
+var plot_markers_flat: Dictionary = {}
 
 ## Army stacks whose portrait did not resolve, `army label -> reason`. Public so
 ## the screen can name every banner drawn as a bare faction plate.
@@ -421,6 +476,7 @@ func set_regions(
 	selected_target = target
 	_recompute_world_positions()
 	_apply_territory_colors()
+	_rebuild_markers()
 	_redraw()
 
 
@@ -446,6 +502,31 @@ func has_ui() -> bool:
 	return ui != null and ui.loaded
 
 
+## Bind retail's 3D marker models, or none plus the reason. Separate from the
+## map, the territory and the UI bundles for the same reason those three are
+## separate from each other: they fail independently, and a screen that could
+## only say "something is missing" would be no help at all.
+func set_markers(loaded_markers, reason: String) -> void:
+	if viewport_container == null:
+		build()
+	markers = loaded_markers
+	markers_reason = reason
+	_rebuild_markers()
+	_redraw()
+	if not has_markers():
+		push_warning("[WotrMap3D] no marker models; armies are flat plates and plots are flat rings. %s"
+			% (reason if not reason.is_empty() else "no reason was supplied, which is itself a defect"))
+		print("[WotrMap3D] NO 3D MARKERS. %s" % (
+			reason if not reason.is_empty() else "no reason was supplied, which is itself a defect"))
+		return
+	for line in markers.describe_load():
+		print("[WotrMap3D]   markers: %s" % line)
+
+
+func has_markers() -> bool:
+	return markers != null and markers.loaded
+
+
 ## Feed the view the army stacks, the build plots and the region labels. All
 ## three are already resolved by the screen; nothing here reads the simulation.
 func set_overlays(
@@ -453,13 +534,16 @@ func set_overlays(
 	plot_rows: Dictionary,
 	labels: Dictionary,
 	plot_selection: Dictionary,
-	menu_entries: Array[Dictionary]
+	menu_entries: Array[Dictionary],
+	plot_icon_rows: Dictionary = {}
 ) -> void:
 	armies_by_region = army_rows
 	plots_by_region = plot_rows
+	plot_icons_by_region = plot_icon_rows
 	display_names = labels
 	selected_plot = plot_selection
 	radial_entries = menu_entries
+	_rebuild_markers()
 	_redraw()
 
 
@@ -515,11 +599,14 @@ func _rebuild_world() -> void:
 		instance.material_override = entry["material"]
 		world_root.add_child(instance)
 		_drawn_count += 1
-	# The territories are rebuilt with the world, because clearing `world_root`
-	# above destroyed the node that held them.
+	# The territories and the markers are rebuilt with the world, because clearing
+	# `world_root` above destroyed the nodes that held them.
 	_territory_root = null
 	_territory_nodes = {}
+	_marker_root = null
+	_standing_markers = []
 	_rebuild_territories()
+	_rebuild_markers()
 
 
 ## Stand retail's per-region fill and border meshes in the world, one node per
@@ -633,6 +720,255 @@ func _apply_territory_colors() -> void:
 		material.albedo_color = color
 	missing.sort()
 	unshaded_regions = PackedStringArray(missing)
+
+
+# --- retail's 3D markers ---------------------------------------------------------
+
+## STAND RETAIL'S OWN MARKER MODELS ON THE MAP.
+##
+## This is what replaces the flat plates and rings. Every piece of geometry is
+## retail's, and so is every number that positions it: the model comes from the
+## marker family retail's own data binds to that army or that seat, the meshes
+## shown are the ones the slot's `SubObjects` names, the height above the terrain
+## is the slot's `ZOffset`, the size is its `Scale` and the facing is its
+## `OrientAngle`. Nothing here is chosen to look right.
+##
+## WHAT IS NOT STOOD UP, and why it is not a gap this hides:
+##
+## * STRUCTURES. All 28 `LivingWorldBuildingIcon` families and their 31 models
+##   are converted and in the bundle, and NONE of them is placed - because no
+##   structure exists to place. Construction is not simulated, the screen already
+##   says "structures 0 / N plots ... zero BY CONSTRUCTION", and standing a
+##   fortress on a plot nobody built would be inventing a game state.
+## * RALLY FLAGS and the move-order art (`DisplayAtRallyPoint`,
+##   `ShowOnlyAfterMoveOrder`). Retail shows them while a march is being ordered;
+##   this screen commits an attack through a button, so there is no rally point
+##   to stand one on.
+##
+## A stack or a plot whose model is absent gets NO substitute mesh: it keeps its
+## flat plate or ring and is named in `army_markers_flat` / `plot_markers_flat`.
+func _rebuild_markers() -> void:
+	army_markers_standing = 0
+	army_markers_flat = {}
+	plot_markers_standing = 0
+	plot_markers_flat = {}
+	_standing_markers = []
+	_standing_keys = {}
+	if world_root == null:
+		return
+	if _marker_root != null and is_instance_valid(_marker_root):
+		world_root.remove_child(_marker_root)
+		_marker_root.queue_free()
+	_marker_root = null
+	if not has_map():
+		return
+	if not has_markers():
+		# Every stack and every plot is a flat stand-in, for ONE reason, recorded
+		# once rather than repeated per marker.
+		var why := markers_reason.split("\n")[0] if not markers_reason.is_empty() else "no marker bundle is bound"
+		if not armies_by_region.is_empty():
+			army_markers_flat["<all stacks>"] = why
+		if not plots_by_region.is_empty():
+			plot_markers_flat["<all plots>"] = why
+		return
+
+	_marker_root = Node3D.new()
+	_marker_root.name = "Markers"
+	world_root.add_child(_marker_root)
+
+	_stand_army_markers()
+	_stand_plot_markers()
+
+
+## How much bigger than retail's own authored size a marker stands at this
+## framing. 1.0 means retail's exact size. Public so the screen can state it and
+## a test can assert both ends of it rather than take it on trust.
+func marker_magnification() -> float:
+	return clampf(sqrt(maxf(_zoom, 0.0001) / MARKER_TRUE_ZOOM),
+		1.0, MARKER_MAX_MAGNIFICATION)
+
+
+func _stand_army_markers() -> void:
+	if armies_by_region.is_empty():
+		return
+	var region_ids: Array[String] = []
+	for key in armies_by_region.keys():
+		region_ids.append(String(key))
+	region_ids.sort()
+	for region_id in region_ids:
+		if not _world_positions.has(region_id):
+			continue
+		var anchor: Vector3 = _world_positions[region_id]
+		var stacks: Array = armies_by_region[region_id] as Array
+		var shown: int = mini(stacks.size(), MAX_BANNERS_PER_REGION)
+		# Several stacks in one region are fanned apart along the map's own east
+		# axis so two banners read as two banners. The SPACING is presentation and
+		# reaches nothing; the anchor it is measured from is retail's coordinate.
+		# The fan widens with the markers, or magnified banners would stand inside
+		# one another at exactly the framing the magnification exists to serve.
+		var fan_world := MARKER_FAN_WORLD * marker_magnification()
+		var span := float(shown - 1) * fan_world
+		for index in range(shown):
+			var stack := stacks[index] as Dictionary
+			var family := String(stack.get("icon", ""))
+			var label := String(stack.get("label", "?"))
+			if family.is_empty():
+				army_markers_flat[label] = (
+					"retail's living-world data binds this army to no LivingWorldArmyIcon "
+					+ "and its seat's template authors no DefaultArmyIconName")
+				continue
+			if not markers.has_family(family):
+				army_markers_flat[label] = (
+					"the marker bundle carries no family %s" % family)
+				continue
+			var offset := Vector3(float(index) * fan_world - span * 0.5, 0.0, 0.0)
+			var stood := _stand_family(
+				"%s#%d" % [region_id, index], "army", family, anchor + offset,
+				String(stack.get("size", "")),
+				region_id == hover_region, region_id == selected_region)
+			if stood:
+				army_markers_standing += 1
+			else:
+				army_markers_flat[label] = (
+					"retail's %s slot of family %s names the model %s, which the bundle did not convert"
+					% [String(markers.families.get(family, {}).get("bodySlot", "?")), family,
+						markers.slot_model(family, String(markers.families.get(family, {}).get("bodySlot", "")))])
+
+
+func _stand_plot_markers() -> void:
+	var shown := plot_regions()
+	if shown.is_empty():
+		return
+	var open_region := String(selected_plot.get("region", ""))
+	var open_index := int(selected_plot.get("index", -1))
+	for region_id in shown:
+		var family := String(plot_icons_by_region.get(region_id, ""))
+		var spots: Array = plots_by_region.get(region_id, []) as Array
+		if family.is_empty():
+			plot_markers_flat[region_id] = (
+				"no seat owns this region, so retail's data binds its plots to no "
+				+ "LivingWorldBuildPlotIcon")
+			continue
+		if not markers.has_family(family):
+			plot_markers_flat[region_id] = "the marker bundle carries no family %s" % family
+			continue
+		for index in range(spots.size()):
+			var spot := spots[index] as Vector2
+			var height := float(bundle.terrain_extent.get("z_max", 0.0))
+			var sampled: Dictionary = bundle.sample_height(spot.x, spot.y)
+			if bool(sampled["ok"]):
+				height = float(sampled["height"])
+			var at := BundleScript.world_to_godot(spot.x, spot.y, height)
+			var stood := _stand_family(
+				"%s.plot%d" % [region_id, index], "plot", family, at, "",
+				false, open_region == region_id and open_index == index)
+			if stood:
+				plot_markers_standing += 1
+			else:
+				plot_markers_flat[region_id] = (
+					"retail's Decal slot of family %s names the model %s, which the bundle did not convert"
+					% [family, markers.slot_model(family, "Decal")])
+
+
+## Stand every slot of one family that retail's own visibility rules say is
+## showing, at `anchor`. Returns true when the family's BODY slot - the thing that
+## replaces the flat plate or ring - actually stood.
+func _stand_family(
+	key: String, kind: String, family_id: String, anchor: Vector3,
+	army_size: String, hovered: bool, selected: bool
+) -> bool:
+	var family: Dictionary = markers.families.get(family_id, {}) as Dictionary
+	var body_slot := String(family.get("bodySlot", ""))
+	var body_stood := false
+	var stood_slots: Array[String] = []
+	var holder := Node3D.new()
+	holder.name = "%s_%s" % [kind, key.replace("#", "_").replace(".", "_")]
+	var bounds := AABB()
+	var have_bounds := false
+	for slot_value in family.get("slots", []) as Array:
+		var slot_row := slot_value as Dictionary
+		if not _slot_is_showing(slot_row, army_size, hovered, selected):
+			continue
+		var pieces: Array[Dictionary] = markers.pieces_of(slot_row)
+		if pieces.is_empty():
+			continue
+		var slot_node := Node3D.new()
+		slot_node.name = String(slot_row.get("slot", "slot"))
+		# RETAIL'S OWN PLACEMENT, in retail's own order: turn by `OrientAngle`
+		# about the map's up axis, scale by `Scale`, lift by `ZOffset`.
+		var magnification := marker_magnification()
+		slot_node.transform = Transform3D(
+			Basis(Vector3.UP, MarkerModelsScript.slot_orient_radians(slot_row))
+				.scaled(Vector3.ONE * MarkerModelsScript.slot_scale(slot_row) * magnification),
+			anchor + Vector3(
+				0.0, MarkerModelsScript.slot_z_offset(slot_row) * magnification, 0.0))
+		for piece in pieces:
+			var instance := MeshInstance3D.new()
+			instance.name = String(piece["name"])
+			instance.mesh = piece["mesh"]
+			instance.material_override = piece["material"]
+			slot_node.add_child(instance)
+			var piece_aabb := (piece["mesh"] as ArrayMesh).get_aabb()
+			var world_aabb := slot_node.transform * piece_aabb
+			if have_bounds:
+				bounds = bounds.merge(world_aabb)
+			else:
+				bounds = world_aabb
+				have_bounds = true
+		holder.add_child(slot_node)
+		stood_slots.append(String(slot_row.get("slot", "")))
+		if String(slot_row.get("slot", "")) == body_slot:
+			body_stood = true
+	if holder.get_child_count() == 0:
+		holder.queue_free()
+		return false
+	_marker_root.add_child(holder)
+	if have_bounds:
+		# THE FAMILY AND THE SLOTS ARE RECORDED, not only the box. "Six markers are
+		# standing" and "six markers are standing the family retail's own data
+		# names for that army, showing only the slots retail's own visibility
+		# fields say are showing" are two different claims, and only the second
+		# one is the claim this lane makes.
+		_standing_markers.append({
+			"key": key, "kind": kind, "aabb": bounds, "body": body_stood,
+			"family": family_id, "slots": PackedStringArray(stood_slots),
+		})
+	if body_stood:
+		_standing_keys[key] = true
+	return body_stood
+
+
+## RETAIL'S OWN VISIBILITY RULES for one slot, and nothing else. Every clause is
+## a field retail authors; there is no "looks better" clause.
+func _slot_is_showing(
+	slot_row: Dictionary, army_size: String, hovered: bool, selected: bool
+) -> bool:
+	# Move-order art. There is no rally point on this screen to stand it on.
+	if String(slot_row.get("displayAtRallyPoint", "")).to_lower() == "yes":
+		return false
+	if String(slot_row.get("showOnlyAfterMoveOrder", "")).to_lower() == "yes":
+		return false
+	# Construction art. Construction is not simulated, so a scaffold and a
+	# producing-unit glow have no state to be in; drawing either would assert one.
+	if String(slot_row.get("hideWhenNotUnderConstruction", "")).to_lower() == "yes":
+		return false
+	if String(slot_row.get("hideWhenNotProducing", "")).to_lower() == "yes":
+		return false
+	if MarkerModelsScript.slot_hover_only(slot_row) and not hovered:
+		return false
+	if MarkerModelsScript.slot_selection_only(slot_row) and not selected:
+		return false
+	var sizes := MarkerModelsScript.slot_army_sizes(slot_row)
+	if sizes.is_empty():
+		# Retail's "always", not "never".
+		return true
+	# A slot gated on army size shows only when retail's own `IconSize` for this
+	# army says so. An army whose size retail does not author - one reached
+	# through the seat's `DefaultArmyIconName` rather than a recruit block - shows
+	# the size-independent slots only, rather than being assigned a size here.
+	if army_size.is_empty():
+		return false
+	return Array(sizes).has(army_size.to_upper())
 
 
 func _frame_camera() -> void:
@@ -850,7 +1186,89 @@ func _draw_overlay() -> void:
 	_draw_army_banners(font)
 	_draw_region_labels(font)
 	_draw_radial_menu(font)
+	_draw_map_surround(font)
 	overlay_painted.emit()
+
+
+# --- the map surround ------------------------------------------------------------
+
+## A PARCHMENT EDGE AND A COMPASS ROSE AROUND THE MAP PANEL.
+##
+## THIS IS HAND-BUILT, NOT CONVERTED, and the screen says so in the conversion
+## report in exactly those words. Retail's War of the Ring shell does have a
+## surround, and NO RETAIL ART FOR IT RESOLVES: commit 83b1959 established that
+## the frame art names three .tga files that are in no archive under any name,
+## and that the APT vector route decodes to circles and quads - masks, not
+## filigree. So this is drawn in retail's palette and idiom rather than
+## reproduced, on exactly the same footing as the frames in `wotr_chrome.gd`,
+## and describing it as retail art would be the same dishonesty as an invented
+## number.
+##
+## It is drawn LAST so nothing else paints over the edge, and it is inside the
+## clipped overlay so it cannot reach the rest of the screen.
+const SURROUND_BAND := 26.0
+## Retail's living map is warm parchment against dark ink; these are that
+## palette, chosen here rather than sampled from anything.
+const SURROUND_PARCHMENT := Color(0.86, 0.78, 0.56, 0.16)
+const SURROUND_INK := Color(0.05, 0.045, 0.03, 0.72)
+## Where the rose sits and how big it is. Bottom-right, clear of the seat table
+## and of the region labels, which crowd the north-west of Middle-earth.
+const COMPASS_RADIUS := 34.0
+const COMPASS_INSET := Vector2(64.0, 64.0)
+
+func _draw_map_surround(font: Font) -> void:
+	var band := SURROUND_BAND
+	var box := Rect2(Vector2.ZERO, size)
+	# A soft parchment band around all four edges, drawn as four rectangles so
+	# the middle of the map is never tinted.
+	overlay.draw_rect(Rect2(0.0, 0.0, size.x, band), SURROUND_PARCHMENT)
+	overlay.draw_rect(Rect2(0.0, size.y - band, size.x, band), SURROUND_PARCHMENT)
+	overlay.draw_rect(Rect2(0.0, band, band, size.y - band * 2.0), SURROUND_PARCHMENT)
+	overlay.draw_rect(Rect2(size.x - band, band, band, size.y - band * 2.0), SURROUND_PARCHMENT)
+	# Two rules, a dark outer and a gold inner, which is the shell's own idiom.
+	overlay.draw_rect(box, SURROUND_INK, false, 3.0)
+	overlay.draw_rect(box.grow(-band), ThemeScript.GOLD, false, 1.0)
+	# Corner studs, at the four inner corners.
+	var inner := box.grow(-band)
+	for corner in [inner.position, Vector2(inner.end.x, inner.position.y),
+			Vector2(inner.position.x, inner.end.y), inner.end]:
+		overlay.draw_circle(corner, 4.0, SURROUND_INK)
+		overlay.draw_arc(corner, 4.0, 0.0, TAU, 16, ThemeScript.GOLD_BRIGHT, 1.0)
+	_draw_compass(font)
+
+
+## THE COMPASS ROSE, and the one thing about it that is NOT decoration: it turns
+## with the camera. The map can be orbited a full circle, and a rose painted at a
+## fixed angle would be a picture of a compass rather than a compass - it would
+## say north was up while the player had turned Middle-earth ninety degrees.
+## `_yaw` is the camera's own field, read and never written.
+func _draw_compass(font: Font) -> void:
+	var centre := Vector2(size.x, size.y) - COMPASS_INSET
+	if size.x < COMPASS_INSET.x * 2.0 or size.y < COMPASS_INSET.y * 2.0:
+		return
+	var radius := COMPASS_RADIUS
+	overlay.draw_circle(centre, radius + 6.0, SURROUND_INK)
+	overlay.draw_arc(centre, radius + 6.0, 0.0, TAU, 48, ThemeScript.GOLD, 1.0)
+	overlay.draw_arc(centre, radius * 0.62, 0.0, TAU, 40, Color(0.90, 0.84, 0.62, 0.45), 1.0)
+	# The map's north is +Y in retail world units, which `world_to_godot` sends to
+	# -Z in Godot. A yaw of zero looks down +Z, so screen-up is north at yaw zero
+	# and the rose turns with `_yaw` from there.
+	for point in 8:
+		var angle := -PI * 0.5 + TAU * float(point) / 8.0 + _yaw
+		var long := (point % 2) == 0
+		var length := radius if long else radius * 0.52
+		var direction := Vector2(cos(angle), sin(angle))
+		overlay.draw_line(centre, centre + direction * length,
+			ThemeScript.GOLD_BRIGHT if long else Color(0.90, 0.84, 0.62, 0.5),
+			2.0 if long else 1.0)
+	if font == null:
+		return
+	var north := -PI * 0.5 + _yaw
+	var at := centre + Vector2(cos(north), sin(north)) * (radius + 15.0)
+	var glyph := 13
+	var measured := font.get_string_size("N", HORIZONTAL_ALIGNMENT_LEFT, -1, glyph)
+	overlay.draw_string(font, at - Vector2(measured.x * 0.5, -measured.y * 0.32),
+		"N", HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, ThemeScript.GOLD_BRIGHT)
 
 
 # --- build plots ----------------------------------------------------------------
@@ -959,6 +1377,10 @@ func _draw_build_plots() -> void:
 			var at := points[index] as Vector2
 			if at.x < -1000.0:
 				continue
+			# RETAIL'S OWN FOUNDATION DECAL IS ALREADY ON THE GROUND THERE. The
+			# flat ring is the stand-in, drawn only where the decal is not.
+			if _standing_keys.has("%s.plot%d" % [region_id, index]):
+				continue
 			var is_open := open_region == region_id and open_index == index
 			var ring := ThemeScript.GOLD_BRIGHT if is_open else Color(0.95, 0.88, 0.62, 0.85)
 			overlay.draw_circle(at, radius + 2.5, Color(0.03, 0.05, 0.03, 0.8))
@@ -979,10 +1401,42 @@ func _draw_build_plots() -> void:
 ## or the owning template's `GarrisonSelectionPortraitName`. A stack whose
 ## portrait did NOT resolve gets a plate in the owner's colour with no image on
 ## it at all, and is named in `banners_without_portrait`. Nothing is substituted.
+## The screen boxes retail's own 3D markers occupy this frame, from the projected
+## corners of their real world-space bounds. Labels are placed AROUND these for
+## exactly the reason commit 83b1959 established for the flat plates: a region
+## name written across a banner costs both. Separate from the drawing so a test
+## can assert it.
+func project_marker_boxes() -> Array[Rect2]:
+	var boxes: Array[Rect2] = []
+	if camera == null or not has_map():
+		return boxes
+	for row in _standing_markers:
+		var bounds := row["aabb"] as AABB
+		var rect := Rect2()
+		var started := false
+		for corner in 8:
+			var point := bounds.get_endpoint(corner)
+			if camera.is_position_behind(point):
+				started = false
+				break
+			var at := camera.unproject_position(point)
+			if started:
+				rect = rect.expand(at)
+			else:
+				rect = Rect2(at, Vector2.ZERO)
+				started = true
+		if started and rect.size.x > 0.0 and rect.size.y > 0.0:
+			boxes.append(rect.grow(3.0))
+	return boxes
+
+
 func _draw_army_banners(font: Font) -> void:
 	banners_drawn = 0
 	banners_without_portrait = {}
-	_banner_boxes = []
+	# SEEDED WITH RETAIL'S OWN 3D MARKERS FIRST. A banner that is now a model
+	# still occupies screen space, and a label written over it would be the same
+	# defect 83b1959 removed for the plates.
+	_banner_boxes = project_marker_boxes()
 	if armies_by_region.is_empty():
 		return
 	var region_ids: Array[String] = []
@@ -1001,6 +1455,10 @@ func _draw_army_banners(font: Font) -> void:
 		var shown: int = mini(stacks.size(), MAX_BANNERS_PER_REGION)
 		var span := float(shown - 1) * fan
 		for index in range(shown):
+			# RETAIL'S MODEL IS ALREADY STANDING THERE. The flat plate is the
+			# STAND-IN, not the marker, so it is drawn only where the model is not.
+			if _standing_keys.has("%s#%d" % [region_id, index]):
+				continue
 			var stack := stacks[index] as Dictionary
 			var at := anchor + Vector2(
 				float(index) * fan - span * 0.5,
@@ -1266,6 +1724,10 @@ func _gui_input(event: InputEvent) -> void:
 			hover_region = hovered
 			region_hovered.emit(hovered)
 			_apply_territory_colors()
+			# Retail's hover art is a SLOT of the marker family
+			# (`HideWhenUnhilighted`), so what is standing in the world changes
+			# when the pointer moves, not only what the overlay paints.
+			_rebuild_markers()
 			_redraw()
 		return
 	if not (event is InputEventMouseButton):
@@ -1343,6 +1805,10 @@ func region_at(point: Vector2) -> String:
 
 func _set_zoom(value: float) -> void:
 	_zoom = clampf(value, MIN_ZOOM, MAX_ZOOM)
+	# The markers' magnification is a function of the zoom, so they are restood
+	# when it moves. Rebuilding rather than rescaling in place keeps ONE place
+	# where a marker's transform is composed from retail's own numbers.
+	_rebuild_markers()
 	# A zoom changes how far the target may be dragged from the map, because the
 	# clamp is expressed in map units and the useful slack shrinks as the camera
 	# closes in. Re-clamping here means zooming out can never leave the target
@@ -1412,6 +1878,7 @@ func reset_camera() -> void:
 	_yaw = 0.0
 	_pitch_degrees = DEFAULT_PITCH_DEGREES
 	_frame_camera()
+	_rebuild_markers()
 	_redraw()
 
 
@@ -1426,6 +1893,7 @@ func focus_region(region_id: String, zoom: float) -> void:
 		_frame_camera()
 	_zoom = clampf(zoom, MIN_ZOOM, MAX_ZOOM)
 	_clamp_camera_target()
+	_rebuild_markers()
 	_apply_camera()
 	_redraw()
 

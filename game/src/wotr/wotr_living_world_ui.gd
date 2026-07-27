@@ -67,6 +67,11 @@ var building_ids: PackedStringArray = PackedStringArray()
 var player_templates: Dictionary = {}
 ## `playerArmy (casefolded) -> image id`, retail's own recruit-button link.
 var army_portraits: Dictionary = {}
+## `playerArmy (casefolded) -> {icon, size}`, retail's own `ArmyToSpawn.Icon` and
+## `IconSize` - the authored link from an army to the 3D MARKER FAMILY retail
+## stands on the map for it. Built from the same recruit rows the portraits come
+## from, so the two can never disagree about which army a row is for.
+var army_marker_icons: Dictionary = {}
 ## `heroTemplateName (casefolded) -> image id`, the same link keyed by hero.
 var hero_portraits: Dictionary = {}
 ## `build plot icon id -> record`, carrying the W3D model names retail decals a
@@ -172,6 +177,19 @@ func load_from(path: String) -> bool:
 			return _fail("a building record carries no id")
 		buildings[id] = row
 		ids.append(id)
+		# RETAIL'S OWN AUTHORED LINK from an army to its 3D marker family, read
+		# off the same `ArmyToSpawn` block that carries its portrait. Never a
+		# resemblance between two names.
+		for recruit_value in row.get("recruits", []) as Array:
+			var recruit := recruit_value as Dictionary
+			var army := String(recruit.get("playerArmy", "")).to_lower()
+			var icon := String(recruit.get("icon", ""))
+			if army.is_empty() or icon.is_empty():
+				continue
+			army_marker_icons[army] = {
+				"icon": icon,
+				"size": String(recruit.get("iconSize", "")),
+			}
 	ids.sort()
 	building_ids = PackedStringArray(ids)
 
@@ -326,6 +344,40 @@ func army_portrait(roster: String, hero_template: String, player_template: Strin
 	return {"id": "", "source": SOURCE_NONE}
 
 
+## THE 3D MARKER FAMILY retail stands on the map for one army, and WHICH authored
+## link found it.
+##
+## Returns `{icon, size, source}`. Exactly two rungs, both retail's own fields
+## and neither of them a name match: the `ArmyToSpawn` block that recruits this
+## same `PlayerArmy` (which is where every hero army's own banner comes from),
+## failing that the owning `LivingWorldPlayerTemplate`'s `DefaultArmyIconName`.
+## An army neither reaches gets an EMPTY icon, and the map keeps its flat plate
+## and says so - it never borrows another faction's banner.
+func army_marker(roster: String, player_template: String) -> Dictionary:
+	if not loaded:
+		return {"icon": "", "size": "", "source": SOURCE_NONE}
+	var by_army: Variant = army_marker_icons.get(roster.to_lower(), null)
+	if by_army is Dictionary and not String((by_army as Dictionary).get("icon", "")).is_empty():
+		var row := by_army as Dictionary
+		return {
+			"icon": String(row.get("icon", "")),
+			"size": String(row.get("size", "")),
+			"source": SOURCE_ARMY,
+		}
+	var template: Dictionary = player_templates.get(player_template, {}) as Dictionary
+	var default_icon := String(template.get("defaultArmyIconName", ""))
+	if not default_icon.is_empty():
+		return {"icon": default_icon, "size": "", "source": "DefaultArmyIconName"}
+	return {"icon": "", "size": "", "source": SOURCE_NONE}
+
+
+## The BUILD-PLOT marker family retail decals a seat's plots with - retail's own
+## `BuildPlotIconName` on the player template, or "" when it authors none.
+func build_plot_icon_id(player_template: String) -> String:
+	var template: Dictionary = player_templates.get(player_template, {}) as Dictionary
+	return String(template.get("buildPlotIconName", ""))
+
+
 ## The structures retail lets one player template build, in manifest order.
 ##
 ## `AvailableTo` is retail's own field and the ONLY filter applied here. A region
@@ -441,6 +493,7 @@ func _reset() -> void:
 	loaded = false
 	errors = PackedStringArray()
 	images = {}
+	army_marker_icons = {}
 	buildings = {}
 	building_ids = PackedStringArray()
 	player_templates = {}
