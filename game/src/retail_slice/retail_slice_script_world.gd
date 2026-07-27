@@ -399,6 +399,15 @@ func resolve_script_object(name: String) -> Dictionary:
 		var reference_id: int = sim.script_unit_reference(team, name)
 		if reference_id != 0:
 			return {"kind": "structure", "id": reference_id}
+		# A reference may also hold a BASE FLAG (the 32-call-site shape of
+		# SET_UNIT_REFERENCE; see the sim's bind_script_unit_reference_to_base).
+		# It answers as the flag it names, so a reference to a flag and the
+		# flag's own name resolve identically - which is what retail's shared
+		# namespace does and what the AI libraries rely on when they aim
+		# AI_CURRENT_CONSTRUCTION_SITE at BASE_FLAG_n and then build at it.
+		var reference_base: String = sim.script_unit_reference_base(team, name)
+		if reference_base != "":
+			return {"kind": "base_flag", "name": reference_base}
 	if sim.unpackable_bases.has(name):
 		return {"kind": "base_flag", "name": name}
 	return {}
@@ -512,6 +521,68 @@ func _known_upgrade_id(team: int, upgrade: String) -> bool:
 		if Array(equipment_value).has(upgrade):
 			return true
 	return false
+
+
+static func _world_point(position: Vector2) -> Vector3:
+	## Inverse of _sim_point. The sim is 2D, so the height component is 0.0 -
+	## the same flat plane every other sim-sourced position in this adapter
+	## reports; nothing here invents terrain height it does not have.
+	return Vector3(position.x, 0.0, position.y)
+
+
+func named_object_view(name: String) -> Dictionary:
+	## The ONE read behind every units.* method keyed by a script object name.
+	## Resolves through the shared object / unit-reference namespace
+	## (resolve_script_object) and flattens what the sim knows about the
+	## subject into a shape the facet methods can answer from without each
+	## re-deriving the flag/structure split. Strictly READ-ONLY.
+	##
+	## {} when the name is outside the namespace entirely. Otherwise:
+	##   "flag"          base-flag name, "" for a structure binding
+	##   "packed"        true for a flag nobody has unpacked - retail's flag
+	##                   OBJECT exists on the map, so this is a live subject
+	##                   with a position, but no owner and no health the sim
+	##                   models
+	##   "structure_id"  0 when there is no structure (a packed flag)
+	##   "present"       whether the structure row still exists (retail's
+	##                   "the name-table pointer is not NULL")
+	##   "position"      Vector2 sim point; valid when packed or present
+	##   "team"          owning sim team, -1 when there is none
+	##   "health"/"maximum_health"  valid when present
+	var handle := resolve_script_object(name)
+	if handle.is_empty():
+		return {}
+	var view := {
+		"flag": "",
+		"packed": false,
+		"structure_id": 0,
+		"present": false,
+		"position": Vector2.ZERO,
+		"team": -1,
+		"health": 0,
+		"maximum_health": 0,
+	}
+	if String(handle.get("kind", "")) == "base_flag":
+		var flag_name := String(handle.get("name", ""))
+		var row: Dictionary = sim.unpackable_base_state(flag_name)
+		view["flag"] = flag_name
+		view["position"] = Vector2(row.get("position", Vector2.ZERO))
+		if int(row.get("unpacked_by", -1)) < 0:
+			view["packed"] = true
+			return view
+		view["structure_id"] = int(row.get("structure_id", 0))
+	else:
+		view["structure_id"] = int(handle.get("id", 0))
+	var structure_id := int(view["structure_id"])
+	if structure_id == 0 or not sim.structures.has(structure_id):
+		return view
+	var structure: Dictionary = sim.structures[structure_id]
+	view["present"] = true
+	view["position"] = Vector2(structure.get("position", Vector2.ZERO))
+	view["team"] = int(structure.get("team", -1))
+	view["health"] = int(structure.get("health", 0))
+	view["maximum_health"] = maxi(1, int(structure.get("maximum_health", 1)))
+	return view
 
 
 static func _sim_point(position: Vector3) -> Vector2:
@@ -1708,17 +1779,275 @@ class SliceMeta:
 class SliceUnits:
 	extends SageScriptWorld.Units
 
-	## Implemented: has_command_points_to_build. Everything else on the facet
-	## keeps the base refusal - most of it needs the object-name registry.
-	## unowned_faction_unit_exists stays REFUSED deliberately even though the
-	## sim now owns neutral (capturable) and creep teams: no source pins
-	## whether retail's "unowned faction unit" means neutral-owned UNITS only
-	## or includes capturable structures, and the two readings diverge exactly
-	## when the sim's neutral structures exist - so an answer would be a
-	## guess about which question is being asked.
+	## Implemented: has_command_points_to_build, plus the object-name reads and
+	## the reference bind that the shared object / unit-reference namespace can
+	## actually answer - exists, was_created, was_destroyed, is_dying,
+	## position, owner, health_percent, set_reference.
+	##
+	## RETAIL SEMANTICS, SOURCED (C&C Generals/Zero Hour GPL ScriptEngine, the
+	## codebase BFME's ScriptEngine derives from - the BFME binary reversal in
+	## .private/scratch/Open-BFME-research/reverse/whale_scriptengine confirms
+	## the identical template/parameter shape for every member below):
+	##   * The name table is AsciiString -> Object* (ScriptEngine.h
+	##     m_namedObjects), ONE LIVE OBJECT PER NAME, compared with strcmp -
+	##     CASE-SENSITIVE. This adapter's namespace compares the same way.
+	##   * getUnitNamed returns NULL for an unknown name and every condition
+	##     then answers FALSE - no throw, no log (ScriptConditions.cpp).
+	##     THIS ADAPTER DOES NOT BORROW THAT FALSE. Retail's false is grounded
+	##     in a COMPLETE name table; this namespace is a strict subset of the
+	##     names a map may author, so "the sim does not model that name" and
+	##     "no such object exists" are different facts, and only the second may
+	##     answer false. Unknown names REFUSE.
+	##   * NAMED_NOT_DESTROYED is evaluateNamedUnitExists =
+	##     `theUnit && !theUnit->isEffectivelyDead()` - DERIVED FROM THE TABLE,
+	##     not an edge record. NAMED_DESTROYED is the hybrid
+	##     `theUnit ? isEffectivelyDead() : didUnitExist()`. NAMED_CREATED is
+	##     literally `getUnitNamed(...) != NULL`, with the engine's own
+	##     `///@todo - evaluate created, not exists...` above it. So none of
+	##     this family needs the "per-name creation/destruction edge records"
+	##     the surface annotation assumed; the current table plus the object's
+	##     dead flag is the whole answer, and that is what is served here.
+	##   * The name table (dead entries included, as INVALID_ID) is xfer'd into
+	##     save games - which is why the binding store lives inside the sim's
+	##     snapshot/hash boundary rather than in this adapter.
+	##
+	## WHAT THE NAMESPACE HOLDS, AND WHAT THAT COSTS. Every entry resolves to
+	## a base flag or a structure. It contains no battalion, and the retail AI
+	## corpus never authors one: all 885 object-name argument slots across the
+	## shipped script libraries name base flags, base/econ/spawn markers, or
+	## script-bound references to bases and buildings. That is why the
+	## battalion-shaped members below still refuse.
+	##
+	## STILL REFUSED, each for a named reason (not "not done yet"):
+	##   * is_totally_dead - retail reads the name-table pointer having gone
+	##     NULL (evaluateNamedUnitTotallyDead: object fully removed from the
+	##     world). This sim never removes a destroyed structure row: a killed
+	##     structure keeps its row at health 0 forever. The pointer-NULL state
+	##     therefore never occurs, so the method could only ever answer false,
+	##     and a script waiting on NAMED_TOTALLY_DEAD would wait forever.
+	##     Serving a permanent false is the silent no-op, not the answer.
+	##   * stance, stop, orders.in_alt_formation - stance, order queues and
+	##     alt formation are BATTALION state. Nothing in this namespace is a
+	##     battalion (above), so every call would resolve to a structure and
+	##     either no-op or write state no rule reads. Both are worse than a
+	##     refusal that names the missing binding.
+	##   * unowned_faction_unit_exists stays REFUSED deliberately even though
+	##     the sim now owns neutral (capturable) and creep teams: no source
+	##     pins whether retail's "unowned faction unit" means neutral-owned
+	##     UNITS only or includes capturable structures, and the two readings
+	##     diverge exactly when the sim's neutral structures exist - so an
+	##     answer would be a guess about which question is being asked.
+	## Everything else on the facet keeps the base refusal.
 
 	func _world() -> RetailSliceScriptWorld:
 		return world as RetailSliceScriptWorld
+
+	func _view(method: String, object_name: String) -> Dictionary:
+		## Shared preamble: {"reason": String} to refuse, else {"view": ...}.
+		var w := _world()
+		if w == null or w.sim == null:
+			return {"reason": "no simulation attached"}
+		var view := w.named_object_view(object_name)
+		if view.is_empty():
+			return {
+				"reason":
+				(
+					"'%s' is not a name this simulation's shared object / "
+					+ "unit-reference namespace holds (base flags and bound "
+					+ "references only); retail answers a false here off a "
+					+ "COMPLETE name table, which this one is not, so "
+					+ "answering false would be a confident wrong answer"
+				) % object_name
+			}
+		return {"view": view}
+
+	func exists(object_name: String) -> SageWorldQuery:
+		## NAMED_UNIT_EXISTS / NAMED_NOT_DESTROYED's positive half. Retail:
+		## `theUnit && !theUnit->isEffectivelyDead()`. A packed base flag is a
+		## live map object; a structure row at health 0 is effectively dead; a
+		## row that is gone is gone.
+		var resolved := _view("units.exists", object_name)
+		if resolved.has("reason"):
+			return _refuse_query("units.exists", String(resolved["reason"]))
+		var view: Dictionary = resolved["view"]
+		if bool(view["packed"]):
+			return SageWorldQuery.hit(true)
+		return SageWorldQuery.hit(bool(view["present"]) and int(view["health"]) > 0)
+
+	func was_created(object_name: String) -> SageWorldQuery:
+		## NAMED_CREATED. Retail is `getUnitNamed(...) != NULL` - "the name
+		## resolves to an object right now", dead or alive, with the engine's
+		## own todo admitting the member is misnamed. Reproduced exactly:
+		## unlike exists() this does NOT consult the dead flag.
+		var resolved := _view("units.was_created", object_name)
+		if resolved.has("reason"):
+			return _refuse_query("units.was_created", String(resolved["reason"]))
+		var view: Dictionary = resolved["view"]
+		return SageWorldQuery.hit(bool(view["packed"]) or bool(view["present"]))
+
+	func was_destroyed(object_name: String) -> SageWorldQuery:
+		## NAMED_DESTROYED, and (negated by the handler) NAMED_NOT_DESTROYED.
+		## Retail: `theUnit ? isEffectivelyDead() : didUnitExist()`. Here the
+		## missing row IS the nulled pointer, so a bound name whose structure
+		## is gone reads destroyed; a packed flag reads not destroyed.
+		var resolved := _view("units.was_destroyed", object_name)
+		if resolved.has("reason"):
+			return _refuse_query("units.was_destroyed", String(resolved["reason"]))
+		var view: Dictionary = resolved["view"]
+		if bool(view["packed"]):
+			return SageWorldQuery.hit(false)
+		if not bool(view["present"]):
+			return SageWorldQuery.hit(true)
+		return SageWorldQuery.hit(int(view["health"]) <= 0)
+
+	func is_dying(object_name: String) -> SageWorldQuery:
+		## NAMED_DYING. Retail: the pointer is still non-NULL AND the object
+		## is effectively dead - present in the world, already dead. The sim's
+		## health-0 structure row is exactly that state.
+		var resolved := _view("units.is_dying", object_name)
+		if resolved.has("reason"):
+			return _refuse_query("units.is_dying", String(resolved["reason"]))
+		var view: Dictionary = resolved["view"]
+		return SageWorldQuery.hit(bool(view["present"]) and int(view["health"]) <= 0)
+
+	func position(object_name: String) -> SageWorldQuery:
+		## Vector3 world position. A packed flag answers its authored flag
+		## position (the flag object stands there); a structure answers its
+		## own. A name whose object is gone REFUSES - a removed object has no
+		## position, and the flag/last-known reading would be an invention.
+		var resolved := _view("units.position", object_name)
+		if resolved.has("reason"):
+			return _refuse_query("units.position", String(resolved["reason"]))
+		var view: Dictionary = resolved["view"]
+		if not bool(view["packed"]) and not bool(view["present"]):
+			return _refuse_query(
+				"units.position",
+				"'%s' no longer names an object in the simulation" % object_name
+			)
+		return SageWorldQuery.hit(RetailSliceScriptWorld._world_point(Vector2(view["position"])))
+
+	func owner(object_name: String) -> SageWorldQuery:
+		## NAMED_OWNED_BY_PLAYER's read. Returns the owner's concrete script
+		## player NAME (the handler runs the equality).
+		##
+		## A PACKED FLAG REFUSES. Retail's flag object is owned by the neutral
+		## player, which this simulation models as "no team" (unpacked_by -1)
+		## and for which no script player name exists to return. "" is not a
+		## player name and returning it would make the handler's exact-equality
+		## comparison answer a confident false about a player that was never
+		## asked about.
+		var resolved := _view("units.owner", object_name)
+		if resolved.has("reason"):
+			return _refuse_query("units.owner", String(resolved["reason"]))
+		var view: Dictionary = resolved["view"]
+		if bool(view["packed"]):
+			return _refuse_query(
+				"units.owner",
+				(
+					"'%s' is a base flag nobody has unpacked; retail's flag "
+					+ "object belongs to the neutral player, which this "
+					+ "simulation models as no team and for which no script "
+					+ "player name exists to answer with"
+				) % object_name
+			)
+		if not bool(view["present"]):
+			return _refuse_query(
+				"units.owner",
+				"'%s' no longer names an object in the simulation" % object_name
+			)
+		var w := _world()
+		var team := int(view["team"])
+		if not w._team_players.has(team):
+			return _refuse_query(
+				"units.owner",
+				(
+					"'%s' is owned by simulation team %d, which no script "
+					+ "player name is bound to"
+				) % [object_name, team]
+			)
+		return SageWorldQuery.hit(String(w._team_players[team]))
+
+	func health_percent(object_name: String) -> SageWorldQuery:
+		## UNIT_HEALTH. Float 0..100. A packed flag REFUSES: the flag row's
+		## `health` is the maximum health of the FORTRESS it would unpack into
+		## (configure_unpackable_bases), not the flag object's own health, and
+		## reporting it would answer a question about a different object.
+		var resolved := _view("units.health_percent", object_name)
+		if resolved.has("reason"):
+			return _refuse_query("units.health_percent", String(resolved["reason"]))
+		var view: Dictionary = resolved["view"]
+		if bool(view["packed"]):
+			return _refuse_query(
+				"units.health_percent",
+				(
+					"'%s' is a base flag nobody has unpacked; the flag row's "
+					+ "health is the fortress it would become, not the flag "
+					+ "object's own"
+				) % object_name
+			)
+		if not bool(view["present"]):
+			return _refuse_query(
+				"units.health_percent",
+				"'%s' no longer names an object in the simulation" % object_name
+			)
+		return SageWorldQuery.hit(
+			100.0 * float(view["health"]) / float(int(view["maximum_health"]))
+		)
+
+	func set_reference(reference: String, object_name: String) -> bool:
+		## SET_UNIT_REFERENCE(UNIT_REF, UNIT) and
+		## SET_UNIT_REFERENCE_TO_REFERENCE(UNIT_REF, UNIT_REF) - destination
+		## FIRST. Both spellings land here because the namespace is shared, and
+		## the retail corpus proves the sharing: AI_BASE is written into a
+		## UNIT_REF slot by NAMED_BASE_UNPACK_FREE and then read in plain UNIT
+		## slots by NAMED_NOT_DESTROYED, TEAM_GUARD_OBJECT and
+		## UNIT_THREAT_LEVEL; AI_EXPANSION_n is written by NAMED_BASE_UNPACK
+		## and read as the SOURCE of all 16 SET_UNIT_REFERENCE_TO_REFERENCE
+		## sites.
+		##
+		## THE SOURCE IS RESOLVED NOW AND STORED AS A HANDLE, never as the
+		## source string: SET_UNIT_REFERENCE_TO_REFERENCE copies the source's
+		## CURRENT binding, so a stored string would alias the destination to
+		## the source's future values instead.
+		var w := _world()
+		if w == null or w.sim == null:
+			return _refuse_command("units.set_reference", "no simulation attached")
+		if reference == "":
+			return _refuse_command(
+				"units.set_reference", "an empty reference names no destination"
+			)
+		var rejection := w._unit_reference_rejection(reference)
+		if rejection != "":
+			return _refuse_command("units.set_reference", rejection)
+		if w._script_player_team() < 0:
+			return _refuse_command(
+				"units.set_reference",
+				(
+					"references are stored per script player and this world has "
+					+ "no script player bound, so there is no namespace to bind in"
+				)
+			)
+		var view := w.named_object_view(object_name)
+		if view.is_empty():
+			return _refuse_command(
+				"units.set_reference",
+				(
+					"'%s' is not a name this simulation's shared object / "
+					+ "unit-reference namespace holds, so there is no handle to "
+					+ "bind - binding the string would leave a dangling reference"
+				) % object_name
+			)
+		if String(view["flag"]) != "":
+			return w.sim.bind_script_unit_reference_to_base(
+				w._script_player_team(), reference, String(view["flag"])
+			)
+		if not bool(view["present"]):
+			return _refuse_command(
+				"units.set_reference",
+				"'%s' no longer names an object in the simulation" % object_name
+			)
+		w._bind_unit_reference(reference, int(view["structure_id"]))
+		return true
 
 	func has_command_points_to_build(player: String, object_type: String) -> SageWorldQuery:
 		## HAS_COMMAND_POINTS_TO_BUILD_UNIT: "<PLAYER> has enough command

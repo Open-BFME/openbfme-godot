@@ -3,8 +3,8 @@
 	"surface": "Every public non-static script-declared instance method of the 16 facet objects of SageScriptWorld (the three presentation sinks counted per sink) plus the base world's own 7 surface methods under facet 'world'. simulationBacked is OBSERVED by calling each method against RetailSliceScriptWorld over a synthetic RetailSliceSim; blocking annotations are analysis, verified for coverage but not provable by a probe.",
 	"counts": {
 		"total": 319,
-		"simulationBacked": 49,
-		"refusing": 270
+		"simulationBacked": 57,
+		"refusing": 262
 	},
 	"subsystems": [
 		{
@@ -77,7 +77,7 @@
 		},
 		{
 			"id": "object-name-registry",
-			"requires": "THE registry gap 005bcd8 named: a lockstep script-name -> entity-id binding (plus per-name created/destroyed edge records and a unit-reference store). Sim rows carry display names, not script identities, so nothing keyed by a named object can find its subject. Unblocks the most METHODS of any subsystem; the AI-traffic cross-reference below shows it is NOT the largest call-site payoff."
+			"requires": "WHAT IS LEFT of the registry gap 005bcd8 named, after the shared object / unit-reference namespace was measured against the retail corpus and the retail semantics were sourced. The eight reads and the bind that namespace can answer are now BUILT (exists, was_created, was_destroyed, is_dying, position, owner, health_percent, set_reference) - and they needed NO new simulation state and NO edge records: the GPL ScriptEngine derives this whole family from the current name table plus the object's dead flag (NAMED_NOT_DESTROYED is evaluateNamedUnitExists; NAMED_CREATED is literally getUnitNamed() != NULL, with the engine's own '@todo - evaluate created, not exists' above it), so the 'per-name created/destroyed edge records' this entry used to demand were never a retail thing. WHAT REMAINS is a genuinely different binding: every entry in the namespace is a base flag or a STRUCTURE, and the four members still here are BATTALION state (stance, stop, alt formation) or need an object-removal edge this simulation does not have (is_totally_dead - a killed structure row is never removed, so retail's nulled-pointer state never occurs). Zero retail AI call sites route here any more."
 		},
 		{
 			"id": "object-type-identity",
@@ -2029,7 +2029,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "the name binding; formation state itself is modelled"
+			"requiredSimState": "a BATTALION in the object namespace. Formation state is modelled - on battalions. Every entry the shared object/unit-reference namespace holds is a base flag or a structure, and the retail AI corpus never authors a battalion in an object-name slot (all 885 object-name arguments across the shipped libraries are flags, markers or references to bases/buildings), so serving this would resolve to a structure and answer about formation state no structure has"
 		},
 		{
 			"facet": "orders",
@@ -5390,9 +5390,8 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "the script-name binding itself - existence is the registry's first answer"
+			"simulationBacked": true,
+			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of"
 		},
 		{
 			"facet": "units",
@@ -5553,9 +5552,8 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "the name binding; health is modelled (UNIT_HEALTH gates on it)"
+			"simulationBacked": true,
+			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of; and a name that resolves to a LIVE STRUCTURE - a packed base flag refuses, because the flag row's health is the fortress it would unpack into, not the flag object's own"
 		},
 		{
 			"facet": "units",
@@ -5585,9 +5583,8 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "the name binding plus a distinct dying-phase read over the corpse flow"
+			"simulationBacked": true,
+			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of. Answers retail's pointer-alive-but-effectively-dead reading (a structure row at health 0); its sibling is_totally_dead refuses, see the blocked table"
 		},
 		{
 			"facet": "units",
@@ -5619,7 +5616,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "the name binding plus per-name death finality"
+			"requiredSimState": "an object-REMOVAL edge. Retail reads the name-table pointer having gone NULL (evaluateNamedUnitTotallyDead: the object left the world), which is why its sibling is_dying - pointer alive, object effectively dead - IS served. This simulation never removes a destroyed structure row: it keeps it at health 0 forever, so the pointer-NULL state never occurs and the method could only ever answer a permanent false, which would strand any script gated on NAMED_TOTALLY_DEAD"
 		},
 		{
 			"facet": "units",
@@ -5649,9 +5646,8 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "the name binding; ownership is modelled (NAMED_OWNED_BY_PLAYER is 32 AI sites)"
+			"simulationBacked": true,
+			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of; and a name that resolves to a LIVE STRUCTURE whose team has a bound script player name. A packed base flag refuses: retail's flag object belongs to the neutral player, which this simulation models as no team and for which no script player name exists"
 		},
 		{
 			"facet": "units",
@@ -5665,9 +5661,8 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "the name binding; positions are modelled"
+			"simulationBacked": true,
+			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of; a name whose object is gone refuses (a removed object has no position, and the last-known reading would be an invention)"
 		},
 		{
 			"facet": "units",
@@ -5969,9 +5964,8 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "a UNIT_REF store over script names - 40 AI call sites bind references through this"
+			"simulationBacked": true,
+			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of as the SOURCE; the destination may not shadow a base flag, and the world must have a script player bound (references are stored per script player). The source is resolved NOW and stored as a handle - a flag name for a flag, a structure id for a structure - never as the source string"
 		},
 		{
 			"facet": "units",
@@ -6231,7 +6225,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "the name binding; stances are modelled (issue_set_stance exists)"
+			"requiredSimState": "a BATTALION in the object namespace. Stances are modelled (issue_set_stance exists) - on battalions; the namespace holds only base flags and structures (see orders.in_alt_formation for the corpus evidence), which have no stance to read"
 		},
 		{
 			"facet": "units",
@@ -6251,7 +6245,7 @@
 			"probe": "called",
 			"simulationBacked": false,
 			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "the name binding; stop orders are modelled (issue_stop exists)"
+			"requiredSimState": "a BATTALION in the object namespace. Stop orders are modelled (issue_stop exists) - on battalions; the namespace holds only base flags and structures (see orders.in_alt_formation for the corpus evidence), which have no order queue to flush, so every call would be a silent no-op returning true"
 		},
 		{
 			"facet": "units",
@@ -6373,9 +6367,8 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "per-name creation edge records"
+			"simulationBacked": true,
+			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of. Retail's NAMED_CREATED is literally getUnitNamed() != NULL (the engine's own todo admits the member is misnamed), so this does NOT consult the dead flag - unlike exists()"
 		},
 		{
 			"facet": "units",
@@ -6389,9 +6382,8 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "per-name destruction edge records (NAMED_NOT_DESTROYED is 17 AI sites)"
+			"simulationBacked": true,
+			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of. Retail's hybrid: an object still present answers its effectively-dead flag, an object gone answers true. A packed base flag answers false - the flag object is alive"
 		},
 		{
 			"facet": "units",
@@ -6717,12 +6709,12 @@
 		},
 		{
 			"member": "NAMED_NOT_DESTROYED",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"units.was_destroyed"
 			],
-			"blockingSubsystem": "object-name-registry",
-			"mappingSource": "declared"
+			"mappingSource": "declared",
+			"note": "the world method answers, but only for names the shared namespace holds. Measured on the shipped libraries, this member's 23 authored arguments are AI_GATE (6), AI_BASE (3), AI_FARM_LAST_BUILT (2), BASE_FLAG_1..8 (8), three AI_HERO_* and START_SPAWN: the flags and AI_BASE (bound by the backed NAMED_BASE_UNPACK_FREE) resolve today, while AI_GATE and the heroes are bound by SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER and AI_FARM_LAST_BUILT by BUILD_BASE_BUILDING_PER_TACTICAL_MARKER - both still blocked, so those names have nothing to resolve to yet"
 		},
 		{
 			"member": "NAMED_OWNED_BY_PLAYER",
@@ -6730,8 +6722,10 @@
 			"worldMethods": [
 				"units.owner"
 			],
-			"blockingSubsystem": "object-name-registry",
-			"mappingSource": "declared"
+			"blockingSubsystem": "facet-signature-packet",
+			"signatureGap": true,
+			"mappingSource": "handler",
+			"note": "units.owner IS served now - but this member does not reach it. EVERY authored call site spells the PLAYER argument '<This Player>' (48 of 48 in the shipped libraries, measured), and the handler consumes the comparison itself, so it refuses the placeholder rather than answering a confident wrong false against a literal. The registry is no longer what blocks this member; the missing world-side signature is. NEEDED: units.is_owned_by(object_name: String, player: String) -> SageWorldQuery, with world-side token resolution - the exact signature wp16_ai_units.gd already gap-registers"
 		},
 		{
 			"member": "NAMED_USE_COMMANDBUTTON_ABILITY",
@@ -6921,21 +6915,21 @@
 		},
 		{
 			"member": "SET_UNIT_REFERENCE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"units.set_reference"
 			],
-			"blockingSubsystem": "object-name-registry",
-			"mappingSource": "declared"
+			"mappingSource": "declared",
+			"note": "measured on the shipped libraries, all 40 authored SOURCE arguments are map-placed markers: BASE_FLAG_1..16 (32 sites, which the simulation's unpackable-base table models and which bind) and BASE_SPAWN_1..8 (8 sites, which it does not model and which refuse per-argument)"
 		},
 		{
 			"member": "SET_UNIT_REFERENCE_TO_REFERENCE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"units.set_reference"
 			],
-			"blockingSubsystem": "object-name-registry",
-			"mappingSource": "declared"
+			"mappingSource": "declared",
+			"note": "all 16 authored sites copy AI_EXPANSION_1..16 into AI_CURRENT_CONSTRUCTION_SITE; AI_EXPANSION_n is bound by NAMED_BASE_UNPACK, which is already backed, so this chain resolves end to end"
 		},
 		{
 			"member": "SKIRMISH_PLAYER_FACTION",
@@ -7257,12 +7251,12 @@
 		},
 		{
 			"member": "UNIT_HEALTH",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"units.health_percent"
 			],
-			"blockingSubsystem": "object-name-registry",
-			"mappingSource": "declared"
+			"mappingSource": "declared",
+			"note": "the world method answers for a name resolving to a live structure. None of the 15 authored arguments measured in the shipped libraries resolves TODAY - two are AI_GATE and thirteen are AI_HERO_*, all bound by SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER, which is still blocked - so this is method-level backing, not call-site backing"
 		},
 		{
 			"member": "UNIT_SET_TEAM",

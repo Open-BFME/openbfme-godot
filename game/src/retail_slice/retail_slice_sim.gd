@@ -5750,6 +5750,9 @@ func unpack_base(team: int, base_name: String, free: bool) -> Dictionary:
 # the frozen cross-platform pin stands untouched.
 
 ## See the block comment above. setup() clears it (match state, not config).
+## Values are int (a structure id) or String (a base-flag name) - the two
+## kinds of entry the shared namespace carries; see
+## bind_script_unit_reference_to_base for why the flag kind exists.
 var script_unit_references: Dictionary = {}
 
 
@@ -5775,10 +5778,63 @@ func bind_script_unit_reference(team: int, reference: String, structure_id: int)
 	return true
 
 
+func bind_script_unit_reference_to_base(team: int, reference: String, base_name: String) -> bool:
+	## Bind (or re-point) `reference` for `team` to a BASE FLAG by name.
+	##
+	## WHY A SECOND BINDING KIND, ON RETAIL EVIDENCE. SET_UNIT_REFERENCE's
+	## subject slot in the shipped AI libraries is a base-flag name at 32 of
+	## its 40 call sites (BASE_FLAG_1..16; the other 8 are BASE_SPAWN_1..8,
+	## which this simulation does not model) - the AI aims
+	## AI_CURRENT_CONSTRUCTION_SITE / AI_CURRENT_DEF_CONSTRUCTION_SITE at a
+	## flag it has NOT yet unpacked and then builds through the reference. A
+	## packed flag has no structure id (structure_id is 0 until unpack), so a
+	## structure-id-only store could only refuse those 32 sites. Storing the
+	## FLAG NAME is not "storing the source string" in the aliasing sense the
+	## class comment forbids: a flag name is match configuration, immutable
+	## for the match, so it cannot be re-aimed under the reference the way a
+	## rebindable reference name could.
+	##
+	## Same store, same key, same empty-is-absent discipline - the VALUE is a
+	## String here and an int for structure bindings, which is exactly the
+	## "two kinds of entry" the shared object / unit-reference namespace is
+	## documented to carry. Refuses (loudly) a reference that would shadow a
+	## flag, and refuses an unknown base name rather than binding a dangling
+	## handle.
+	if reference == "":
+		return true
+	if unpackable_bases.has(reference):
+		push_error(
+			"bind_script_unit_reference_to_base refused: '%s' names a base flag; " % reference
+			+ "flag names are owned by the unpackable-base table (callers must "
+			+ "check the shadow rejection before mutating the sim)"
+		)
+		return false
+	if not unpackable_bases.has(base_name):
+		push_error(
+			"bind_script_unit_reference_to_base refused: '%s' is not a base flag " % base_name
+			+ "this simulation models; binding it would leave a dangling handle"
+		)
+		return false
+	if not script_unit_references.has(team):
+		script_unit_references[team] = {}
+	(script_unit_references[team] as Dictionary)[reference] = base_name
+	return true
+
+
 func script_unit_reference(team: int, reference: String) -> int:
-	## The structure id bound to `reference` for `team`; 0 when unbound
-	## (structure ids are never 0).
-	return int((script_unit_references.get(team, {}) as Dictionary).get(reference, 0))
+	## The structure id bound to `reference` for `team`; 0 when unbound OR
+	## when the binding is a base-flag name (structure ids are never 0, and a
+	## flag-valued binding is not a structure id - callers that need it must
+	## read script_unit_reference_handle).
+	var bound: Variant = (script_unit_references.get(team, {}) as Dictionary).get(reference, 0)
+	return int(bound) if typeof(bound) == TYPE_INT else 0
+
+
+func script_unit_reference_base(team: int, reference: String) -> String:
+	## The base-flag name bound to `reference` for `team`; "" when unbound or
+	## when the binding is a structure id.
+	var bound: Variant = (script_unit_references.get(team, {}) as Dictionary).get(reference, 0)
+	return String(bound) if typeof(bound) == TYPE_STRING else ""
 
 
 # --- Script object-type lists (OBJECT_TYPE_LIST stores, SIM-owned) ----------

@@ -151,12 +151,25 @@ const SUBSYSTEMS := {
 		+ "so a scripted UNFREEZE could never run)."
 	),
 	"object-name-registry": (
-		"THE registry gap 005bcd8 named: a lockstep script-name -> entity-id "
-		+ "binding (plus per-name created/destroyed edge records and a "
-		+ "unit-reference store). Sim rows carry display names, not script "
-		+ "identities, so nothing keyed by a named object can find its "
-		+ "subject. Unblocks the most METHODS of any subsystem; the AI-traffic "
-		+ "cross-reference below shows it is NOT the largest call-site payoff."
+		"WHAT IS LEFT of the registry gap 005bcd8 named, after the shared "
+		+ "object / unit-reference namespace was measured against the retail "
+		+ "corpus and the retail semantics were sourced. The eight reads and "
+		+ "the bind that namespace can answer are now BUILT (exists, "
+		+ "was_created, was_destroyed, is_dying, position, owner, "
+		+ "health_percent, set_reference) - and they needed NO new simulation "
+		+ "state and NO edge records: the GPL ScriptEngine derives this whole "
+		+ "family from the current name table plus the object's dead flag "
+		+ "(NAMED_NOT_DESTROYED is evaluateNamedUnitExists; NAMED_CREATED is "
+		+ "literally getUnitNamed() != NULL, with the engine's own '@todo - "
+		+ "evaluate created, not exists' above it), so the 'per-name created/"
+		+ "destroyed edge records' this entry used to demand were never a "
+		+ "retail thing. WHAT REMAINS is a genuinely different binding: every "
+		+ "entry in the namespace is a base flag or a STRUCTURE, and the four "
+		+ "members still here are BATTALION state (stance, stop, alt "
+		+ "formation) or need an object-removal edge this simulation does not "
+		+ "have (is_totally_dead - a killed structure row is never removed, so "
+		+ "retail's nulled-pointer state never occurs). Zero retail AI call "
+		+ "sites route here any more."
 	),
 	"object-type-identity": (
 		"Retail object-type identity on sim rows. Its heaviest-traffic slice "
@@ -345,7 +358,7 @@ const BLOCKED := {
 	"orders.guard_area_from_position": {"subsystem": "order-verbs", "requires": "a two-location guard order plus area geometry"},
 	"orders.hunt": {"subsystem": "order-verbs", "requires": "a hunt order type (TEAM_HUNT is 6 AI sites; command-button variant also needs abilities)"},
 	"orders.idle_for_ticks": {"subsystem": "order-verbs", "requires": "a timed idle order"},
-	"orders.in_alt_formation": {"subsystem": "object-name-registry", "requires": "the name binding; formation state itself is modelled"},
+	"orders.in_alt_formation": {"subsystem": "object-name-registry", "requires": "a BATTALION in the object namespace. Formation state is modelled - on battalions. Every entry the shared object/unit-reference namespace holds is a base flag or a structure, and the retail AI corpus never authors a battalion in an object-name slot (all 885 object-name arguments across the shipped libraries are flags, markers or references to bases/buildings), so serving this would resolve to a structure and answer about formation state no structure has"},
 	"orders.issued_formation_order": {"subsystem": "event-ledger", "requires": "per-player order-event records"},
 	"orders.move_home": {"subsystem": "order-verbs", "requires": "a home anchor per team plus a move-home order"},
 	"orders.reached_waypoints_end": {"subsystem": "map-geometry", "requires": "waypoint paths plus per-subject path-progress state"},
@@ -493,21 +506,16 @@ const BLOCKED := {
 	"units.enemy_sighted": {"subsystem": "vision-and-discovery", "requires": "sighting records per object"},
 	"units.enter_object": {"subsystem": "garrison-transport-capture", "requires": "container entry per named pair"},
 	"units.execute_sequential_script": {"subsystem": "sequential-scripts", "requires": "per-unit sequential queues"},
-	"units.exists": {"subsystem": "object-name-registry", "requires": "the script-name binding itself - existence is the registry's first answer"},
 	"units.exit": {"subsystem": "garrison-transport-capture", "requires": "container exit"},
 	"units.exit_specific_building": {"subsystem": "garrison-transport-capture", "requires": "targeted container exit"},
 	"units.force_emotion": {"subsystem": "team-behavior-state", "requires": "an EmotionTracker model (see players.force_emotion), plus the object-name registry for the unit spelling"},
 	"units.gate_is_open": {"subsystem": "walls-and-siege", "requires": "gate state per named structure"},
 	"units.has_delayed_carryover_of_type": {"subsystem": "hero-revival-carryover", "requires": "carryover ledger queries by type"},
 	"units.has_object_status": {"subsystem": "entity-status-flags", "requires": "object-status bit reads per scope"},
-	"units.health_percent": {"subsystem": "object-name-registry", "requires": "the name binding; health is modelled (UNIT_HEALTH gates on it)"},
 	"units.is_building_empty": {"subsystem": "garrison-transport-capture", "requires": "occupancy per named building"},
-	"units.is_dying": {"subsystem": "object-name-registry", "requires": "the name binding plus a distinct dying-phase read over the corpse flow"},
 	"units.is_selected": {"subsystem": "sim-selection-model", "requires": "a lockstep selection notion - sim.selected_ids is per-seat presentation state and would desync (005bcd8)"},
-	"units.is_totally_dead": {"subsystem": "object-name-registry", "requires": "the name binding plus per-name death finality"},
+	"units.is_totally_dead": {"subsystem": "object-name-registry", "requires": "an object-REMOVAL edge. Retail reads the name-table pointer having gone NULL (evaluateNamedUnitTotallyDead: the object left the world), which is why its sibling is_dying - pointer alive, object effectively dead - IS served. This simulation never removes a destroyed structure row: it keeps it at health 0 forever, so the pointer-NULL state never occurs and the method could only ever answer a permanent false, which would strand any script gated on NAMED_TOTALLY_DEAD"},
 	"units.is_webbed": {"subsystem": "entity-status-flags", "requires": "web status"},
-	"units.owner": {"subsystem": "object-name-registry", "requires": "the name binding; ownership is modelled (NAMED_OWNED_BY_PLAYER is 32 AI sites)"},
-	"units.position": {"subsystem": "object-name-registry", "requires": "the name binding; positions are modelled"},
 	"units.retract_siege": {"subsystem": "walls-and-siege", "requires": "siege detachment"},
 	"units.set_attitude": {"subsystem": "team-behavior-state", "requires": "mood consumption (see teams.set_attitude) plus the object-name registry for the named spelling"},
 	"units.set_cave_index": {"subsystem": "garrison-transport-capture", "requires": "cave/tunnel network membership"},
@@ -521,7 +529,6 @@ const BLOCKED := {
 	"units.set_model_condition": {"subsystem": "entity-status-flags", "requires": "model-condition flags with durations"},
 	"units.set_object_panel_flag": {"subsystem": "entity-status-flags", "requires": "object panel flags"},
 	"units.set_object_status": {"subsystem": "entity-status-flags", "requires": "object-status bit writes per scope"},
-	"units.set_reference": {"subsystem": "object-name-registry", "requires": "a UNIT_REF store over script names - 40 AI call sites bind references through this"},
 	"units.set_repulsor": {"subsystem": "entity-status-flags", "requires": "repulsor flags"},
 	"units.set_selected": {"subsystem": "sim-selection-model", "requires": "a lockstep selection notion to write"},
 	"units.set_special_weaponset": {"subsystem": "entity-status-flags", "requires": "weaponset switching"},
@@ -534,16 +541,14 @@ const BLOCKED := {
 	"units.siege_is_attached_to_wall": {"subsystem": "walls-and-siege", "requires": "siege attachment state"},
 	"units.skill_points": {"subsystem": "experience-model", "requires": "skill points per named object"},
 	"units.spawn_at": {"subsystem": "entity-lifecycle-api", "requires": "a public spawn API with name+orientation"},
-	"units.stance": {"subsystem": "object-name-registry", "requires": "the name binding; stances are modelled (issue_set_stance exists)"},
-	"units.stop": {"subsystem": "object-name-registry", "requires": "the name binding; stop orders are modelled (issue_stop exists)"},
+	"units.stance": {"subsystem": "object-name-registry", "requires": "a BATTALION in the object namespace. Stances are modelled (issue_set_stance exists) - on battalions; the namespace holds only base flags and structures (see orders.in_alt_formation for the corpus evidence), which have no stance to read"},
+	"units.stop": {"subsystem": "object-name-registry", "requires": "a BATTALION in the object namespace. Stop orders are modelled (issue_stop exists) - on battalions; the namespace holds only base flags and structures (see orders.in_alt_formation for the corpus evidence), which have no order queue to flush, so every call would be a silent no-op returning true"},
 	"units.stop_sequential_script": {"subsystem": "sequential-scripts", "requires": "stoppable per-unit sequential queues"},
 	"units.threat": {"subsystem": "spatial-queries", "requires": "per-object threat evaluation (the AI's real usage carries a radius)"},
 	"units.transfer_ownership": {"subsystem": "entity-lifecycle-api", "requires": "a single-object ownership transfer honoring CP accounting"},
 	"units.type_is_selected": {"subsystem": "sim-selection-model", "requires": "a lockstep selection notion queryable by type"},
 	"units.type_was_sighted": {"subsystem": "vision-and-discovery", "requires": "sighted-type records per player"},
 	"units.unowned_faction_unit_exists": {"subsystem": "object-type-identity", "requires": "a sourced semantic for 'unowned faction unit': the sim now owns neutral (capturable) and creep teams, but nothing pins whether retail means neutral-owned UNITS only or capturable structures too, and the readings diverge exactly when neutral structures exist"},
-	"units.was_created": {"subsystem": "object-name-registry", "requires": "per-name creation edge records"},
-	"units.was_destroyed": {"subsystem": "object-name-registry", "requires": "per-name destruction edge records (NAMED_NOT_DESTROYED is 17 AI sites)"},
 	"units.was_discovered": {"subsystem": "vision-and-discovery", "requires": "discovery records per object"},
 	# --- base world ---------------------------------------------------------
 }
@@ -576,6 +581,14 @@ const RESTRICTIONS := {
 	"teams.set_state": "bound team names only (the '<This Team>' restriction above); writes refuse after match resolution",
 	"teams.state": "bound team names only (the '<This Team>' restriction above); an unbound name refuses rather than reproducing retail's nonexistent-team false (unbound is not proof of nonexistence while the sub-player team registry is unmodeled)",
 	"teams.stop": "disband=false only (no disband model)",
+	"units.exists": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of",
+	"units.health_percent": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of; and a name that resolves to a LIVE STRUCTURE - a packed base flag refuses, because the flag row's health is the fortress it would unpack into, not the flag object's own",
+	"units.is_dying": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of. Answers retail's pointer-alive-but-effectively-dead reading (a structure row at health 0); its sibling is_totally_dead refuses, see the blocked table",
+	"units.owner": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of; and a name that resolves to a LIVE STRUCTURE whose team has a bound script player name. A packed base flag refuses: retail's flag object belongs to the neutral player, which this simulation models as no team and for which no script player name exists",
+	"units.position": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of; a name whose object is gone refuses (a removed object has no position, and the last-known reading would be an invention)",
+	"units.set_reference": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of as the SOURCE; the destination may not shadow a base flag, and the world must have a script player bound (references are stored per script player). The source is resolved NOW and stored as a handle - a flag name for a flag, a structure id for a structure - never as the source string",
+	"units.was_created": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of. Retail's NAMED_CREATED is literally getUnitNamed() != NULL (the engine's own todo admits the member is misnamed), so this does NOT consult the dead flag - unlike exists()",
+	"units.was_destroyed": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of. Retail's hybrid: an object still present answers its effectively-dead flag, an object gone answers true. A packed base flag answers false - the flag object is alive",
 	"units.has_command_points_to_build": "the player must resolve ('<This Player>' included); unit types with a production rule only (an unmodeled type's cost is unknowable, so it refuses)",
 	"world.player_money": "no refusal channel: an UNBOUND player reads 0 through this legacy path (reported base-class defect; economy.money is the honest surface)",
 }
@@ -626,8 +639,8 @@ const VOCABULARY_ROUTING := {
 	"EVAL_TEAM_HEALTH": {"route": "blocked", "worldMethods": ["combat.team_health_percent"], "blockingSubsystem": "adapter-only", "mappingSource": "declared"},
 	"GATE_CLOSE": {"route": "blocked", "worldMethods": ["units.set_gate_state"], "blockingSubsystem": "walls-and-siege", "mappingSource": "declared"},
 	"GATE_OPEN": {"route": "blocked", "worldMethods": ["units.set_gate_state"], "blockingSubsystem": "walls-and-siege", "mappingSource": "declared"},
-	"NAMED_NOT_DESTROYED": {"route": "blocked", "worldMethods": ["units.was_destroyed"], "blockingSubsystem": "object-name-registry", "mappingSource": "declared"},
-	"NAMED_OWNED_BY_PLAYER": {"route": "blocked", "worldMethods": ["units.owner"], "blockingSubsystem": "object-name-registry", "mappingSource": "declared"},
+	"NAMED_NOT_DESTROYED": {"route": "backed", "worldMethods": ["units.was_destroyed"], "mappingSource": "declared", "note": "the world method answers, but only for names the shared namespace holds. Measured on the shipped libraries, this member's 23 authored arguments are AI_GATE (6), AI_BASE (3), AI_FARM_LAST_BUILT (2), BASE_FLAG_1..8 (8), three AI_HERO_* and START_SPAWN: the flags and AI_BASE (bound by the backed NAMED_BASE_UNPACK_FREE) resolve today, while AI_GATE and the heroes are bound by SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER and AI_FARM_LAST_BUILT by BUILD_BASE_BUILDING_PER_TACTICAL_MARKER - both still blocked, so those names have nothing to resolve to yet"},
+	"NAMED_OWNED_BY_PLAYER": {"route": "blocked", "worldMethods": ["units.owner"], "blockingSubsystem": "facet-signature-packet", "signatureGap": true, "mappingSource": "handler", "note": "units.owner IS served now - but this member does not reach it. EVERY authored call site spells the PLAYER argument '<This Player>' (48 of 48 in the shipped libraries, measured), and the handler consumes the comparison itself, so it refuses the placeholder rather than answering a confident wrong false against a literal. The registry is no longer what blocks this member; the missing world-side signature is. NEEDED: units.is_owned_by(object_name: String, player: String) -> SageWorldQuery, with world-side token resolution - the exact signature wp16_ai_units.gd already gap-registers"},
 	"NAMED_USE_COMMANDBUTTON_ABILITY": {"route": "blocked", "worldMethods": ["orders.use_command_button"], "blockingSubsystem": "command-button-abilities", "mappingSource": "declared"},
 	"PLAYER_DESTROYED_N_BUILDINGS_PLAYER": {"route": "blocked", "worldMethods": ["combat.buildings_destroyed_by"], "blockingSubsystem": "event-ledger", "mappingSource": "declared"},
 	"PLAYER_ENABLE_BASE_CONSTRUCTION": {"route": "blocked", "worldMethods": ["players.set_base_construction_enabled"], "blockingSubsystem": "production-controls", "mappingSource": "handler"},
@@ -640,8 +653,8 @@ const VOCABULARY_ROUTING := {
 	"SET_RANDOM_COUNTER": {"route": "backed", "worldMethods": ["world.random_int"], "mappingSource": "handler", "note": "served by the sim-owned retail GameLogic stream (logic_random_int); the spell-list-choice gate c930b68 measured"},
 	"SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER": {"route": "blocked", "worldMethods": ["teams.set_reference_to_nearest"], "blockingSubsystem": "spatial-queries", "signatureGap": true, "mappingSource": "handler"},
 	"SET_TEAM_REFERENCE": {"route": "blocked", "worldMethods": ["teams.set_reference"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},
-	"SET_UNIT_REFERENCE": {"route": "blocked", "worldMethods": ["units.set_reference"], "blockingSubsystem": "object-name-registry", "mappingSource": "declared"},
-	"SET_UNIT_REFERENCE_TO_REFERENCE": {"route": "blocked", "worldMethods": ["units.set_reference"], "blockingSubsystem": "object-name-registry", "mappingSource": "declared"},
+	"SET_UNIT_REFERENCE": {"route": "backed", "worldMethods": ["units.set_reference"], "mappingSource": "declared", "note": "measured on the shipped libraries, all 40 authored SOURCE arguments are map-placed markers: BASE_FLAG_1..16 (32 sites, which the simulation's unpackable-base table models and which bind) and BASE_SPAWN_1..8 (8 sites, which it does not model and which refuse per-argument)"},
+	"SET_UNIT_REFERENCE_TO_REFERENCE": {"route": "backed", "worldMethods": ["units.set_reference"], "mappingSource": "declared", "note": "all 16 authored sites copy AI_EXPANSION_1..16 into AI_CURRENT_CONSTRUCTION_SITE; AI_EXPANSION_n is bound by NAMED_BASE_UNPACK, which is already backed, so this chain resolves end to end"},
 	"START_POSITION_IS": {"route": "blocked", "worldMethods": ["players.start_position"], "blockingSubsystem": "match-config-metadata", "mappingSource": "handler"},
 	"TEAM_CHANGE_OBJECT_STATUS": {"route": "blocked", "worldMethods": ["units.set_object_status"], "blockingSubsystem": "entity-status-flags", "mappingSource": "declared"},
 	"TEAM_CREATED": {"route": "blocked", "worldMethods": ["teams.was_created"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},
@@ -673,7 +686,7 @@ const VOCABULARY_ROUTING := {
 	"TEAM_TRANSFER_TO_PLAYER": {"route": "blocked", "worldMethods": ["teams.transfer_to_player"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},
 	"TEAM_USE_COMMANDBUTTON_ABILITY": {"route": "blocked", "worldMethods": ["orders.use_command_button"], "blockingSubsystem": "command-button-abilities", "mappingSource": "declared"},
 	"TYPE_SIGHTED": {"route": "blocked", "worldMethods": ["units.type_was_sighted"], "blockingSubsystem": "vision-and-discovery", "mappingSource": "declared"},
-	"UNIT_HEALTH": {"route": "blocked", "worldMethods": ["units.health_percent"], "blockingSubsystem": "object-name-registry", "mappingSource": "declared"},
+	"UNIT_HEALTH": {"route": "backed", "worldMethods": ["units.health_percent"], "mappingSource": "declared", "note": "the world method answers for a name resolving to a live structure. None of the 15 authored arguments measured in the shipped libraries resolves TODAY - two are AI_GATE and thirteen are AI_HERO_*, all bound by SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER, which is still blocked - so this is method-level backing, not call-site backing"},
 	"UNIT_SET_TEAM": {"route": "blocked", "worldMethods": ["units.set_team"], "blockingSubsystem": "team-registry", "mappingSource": "handler"},
 	"UNIT_THREAT_LEVEL": {"route": "blocked", "worldMethods": ["units.threat"], "blockingSubsystem": "spatial-queries", "signatureGap": true, "mappingSource": "handler", "note": "condition, not action - WP09's mis-attribution finding"},
 	"UPGRADE_NEAREST_WALL": {"route": "blocked", "worldMethods": ["progression.upgrade_nearest_wall"], "blockingSubsystem": "walls-and-siege", "signatureGap": true, "mappingSource": "handler"},

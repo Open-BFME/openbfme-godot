@@ -70,7 +70,10 @@ const ENEMY_TEAM_NAME := "teamEnemyOne"
 ## exits 0. Pinning the number of checks a healthy run makes turns that silent
 ## abort into a loud failure. Raise it deliberately when tests are added; never
 ## lower it to make a run go green.
-const EXPECTED_CHECKS := 410
+## 410 -> 475: RAISED by the 65 checks the three object-name-registry tests
+## add (the eight reads/binds the shared namespace can answer, the refusals
+## that stay refusals, and the reference-handle semantics). Nothing removed.
+const EXPECTED_CHECKS := 475
 
 var passed := 0
 var failed := 0
@@ -118,6 +121,9 @@ func _run() -> void:
 	_test_nearest_type_exact_tie_break()
 	_test_queries_are_read_only()
 	_test_twin_worlds_agree()
+	_test_named_object_reads()
+	_test_named_object_refusals()
+	_test_units_set_reference()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
 		failed += 1
@@ -2421,3 +2427,147 @@ func _test_twin_worlds_agree() -> void:
 	var battery_a := _query_battery(first[1])
 	var battery_b := _query_battery(second[1])
 	_check("twin worlds answer the full query battery identically", battery_a == battery_b)
+
+
+# --- Object-name registry: the reads the shared namespace can answer -------
+#
+# RETAIL SEMANTICS ARE SOURCED, NOT GUESSED (C&C Generals/Zero Hour GPL
+# ScriptEngine + ScriptConditions, the codebase BFME's ScriptEngine derives
+# from; the BFME binary reversal under
+# .private/scratch/Open-BFME-research/reverse/whale_scriptengine confirms the
+# identical template shape for every member):
+#   evaluateNamedUnitExists      theUnit && !theUnit->isEffectivelyDead()
+#   evaluateNamedCreated         getUnitNamed(...) != NULL  (dead flag NOT read)
+#   evaluateNamedUnitDestroyed   theUnit ? isEffectivelyDead() : didUnitExist()
+#   evaluateNamedUnitDying       theUnit && isEffectivelyDead()
+#   getUnitNamed                 NULL for an unknown name; conditions then FALSE
+# The last one is the line this adapter deliberately does NOT copy: retail's
+# false comes off a COMPLETE name table, this namespace is a subset of the
+# names a map may author, so an unknown name refuses instead. That asymmetry
+# is asserted below rather than left to a comment.
+
+
+func _test_named_object_reads() -> void:
+	var sim := _make_sim()
+	var world := _make_base_world(sim)
+	# A PACKED flag: retail's flag object stands on the map, so it exists, was
+	# "created", is not destroyed and is not dying.
+	_check_hit("units.exists is true for a packed base flag", world.units().exists("BASE_FLAG_1"), true)
+	_check_hit("units.was_created is true for a packed base flag", world.units().was_created("BASE_FLAG_1"), true)
+	_check_hit("units.was_destroyed is false for a packed base flag", world.units().was_destroyed("BASE_FLAG_1"), false)
+	_check_hit("units.is_dying is false for a packed base flag", world.units().is_dying("BASE_FLAG_1"), false)
+	_check_hit(
+		"units.position answers the packed flag's authored position",
+		world.units().position("BASE_FLAG_1"),
+		Vector3(60.0, 0.0, 60.0)
+	)
+	# Unpack it: now it resolves to a live fortress the script player owns.
+	_check("fixture: BASE_FLAG_1 unpacks behind AI_BASE", world.ai().base_unpack("BASE_FLAG_1", true, "AI_BASE"))
+	_check_hit("units.owner answers the unpacking player", world.units().owner("BASE_FLAG_1"), PLAYER)
+	_check_hit("units.owner answers identically through the bound reference", world.units().owner("AI_BASE"), PLAYER)
+	_check_hit("units.health_percent is 100 for an undamaged base", world.units().health_percent("AI_BASE"), 100.0)
+	_check_hit("units.exists is true for the unpacked base", world.units().exists("AI_BASE"), true)
+	# Kill it. The sim keeps a destroyed structure row at health 0 - retail's
+	# "pointer still non-NULL, object effectively dead" state.
+	var structure_id := int(world.resolve_script_object("AI_BASE").get("id", 0))
+	_check("fixture: the unpacked base has a structure id", structure_id != 0)
+	(sim.structures[structure_id] as Dictionary)["health"] = 0
+	_check_hit("units.exists is false once the object is effectively dead", world.units().exists("AI_BASE"), false)
+	_check_hit("units.is_dying is true once the object is effectively dead", world.units().is_dying("AI_BASE"), true)
+	_check_hit("units.was_destroyed is true once the object is effectively dead", world.units().was_destroyed("AI_BASE"), true)
+	_check_hit(
+		"units.was_created stays true for a dead object (retail does NOT read the dead flag)",
+		world.units().was_created("AI_BASE"),
+		true
+	)
+	_check_hit("units.health_percent reports 0 for the dead object", world.units().health_percent("AI_BASE"), 0.0)
+	# Remove the row entirely - retail's nulled name-table pointer.
+	sim.structures.erase(structure_id)
+	_check_hit("units.was_created is false once the object is gone", world.units().was_created("AI_BASE"), false)
+	_check_hit("units.was_destroyed stays true once the object is gone", world.units().was_destroyed("AI_BASE"), true)
+	_check_refused("units.position refuses for an object that is gone", world.units().position("AI_BASE"))
+	_check_refused("units.owner refuses for an object that is gone", world.units().owner("AI_BASE"))
+	_check_refused("units.health_percent refuses for an object that is gone", world.units().health_percent("AI_BASE"))
+
+
+func _test_named_object_refusals() -> void:
+	var world := _make_base_world(_make_sim())
+	# THE ASYMMETRY WITH RETAIL, ASSERTED. Retail answers false here off a
+	# complete name table; this namespace is a subset, so false would be a
+	# confident wrong answer and the method refuses instead.
+	_check_refused("units.exists refuses a name outside the namespace", world.units().exists("GHOST"))
+	_check_refused("units.was_created refuses a name outside the namespace", world.units().was_created("GHOST"))
+	_check_refused("units.was_destroyed refuses a name outside the namespace", world.units().was_destroyed("GHOST"))
+	_check_refused("units.is_dying refuses a name outside the namespace", world.units().is_dying("GHOST"))
+	_check_refused("units.position refuses a name outside the namespace", world.units().position("GHOST"))
+	_check_refused("units.owner refuses a name outside the namespace", world.units().owner("GHOST"))
+	_check_refused("units.health_percent refuses a name outside the namespace", world.units().health_percent("GHOST"))
+	# Case sensitivity: retail's name table compares with strcmp, not stricmp.
+	_check_refused("the namespace is case-sensitive, like retail's strcmp", world.units().exists("base_flag_1"))
+	# A packed flag has no owner this simulation can name and no health of its
+	# own - both refuse rather than answering about a different object.
+	_check_refused("units.owner refuses a packed base flag (no neutral player name)", world.units().owner("BASE_FLAG_1"))
+	_check_refused("units.health_percent refuses a packed base flag (the health is the fortress's)", world.units().health_percent("BASE_FLAG_1"))
+	# The four members that stay blocked, each for a sourced reason.
+	_check_refused("units.is_totally_dead still refuses (no object-removal edge)", world.units().is_totally_dead("BASE_FLAG_1"))
+	_check_refused("units.stance still refuses (the namespace holds no battalion)", world.units().stance("BASE_FLAG_1"))
+	_check_refused("orders.in_alt_formation still refuses (the namespace holds no battalion)", world.orders().in_alt_formation("BASE_FLAG_1"))
+	_check("units.stop still refuses (the namespace holds no battalion)", not world.units().stop("BASE_FLAG_1", true))
+
+
+func _test_units_set_reference() -> void:
+	var sim := _make_sim()
+	var world := _make_base_world(sim)
+	# SET_UNIT_REFERENCE's real retail shape: aim a reference at a base flag
+	# nobody has unpacked (32 of its 40 authored call sites).
+	_check(
+		"set_reference binds a reference to a PACKED base flag",
+		world.units().set_reference("AI_CURRENT_CONSTRUCTION_SITE", "BASE_FLAG_1")
+	)
+	_check(
+		"the reference resolves exactly as the flag's own name does",
+		world.resolve_script_object("AI_CURRENT_CONSTRUCTION_SITE")
+		== world.resolve_script_object("BASE_FLAG_1")
+	)
+	# SET_UNIT_REFERENCE_TO_REFERENCE: copies the SOURCE's CURRENT binding.
+	_check(
+		"set_reference copies a reference to another reference",
+		world.units().set_reference("AI_COPY", "AI_CURRENT_CONSTRUCTION_SITE")
+	)
+	_check(
+		"the copy took the source's bind-time value",
+		world.resolve_script_object("AI_COPY") == world.resolve_script_object("BASE_FLAG_1")
+	)
+	_check(
+		"fixture: the source re-points to a different flag",
+		world.units().set_reference("AI_CURRENT_CONSTRUCTION_SITE", "BASE_FLAG_2")
+	)
+	_check(
+		"the re-pointed source moved",
+		world.resolve_script_object("AI_CURRENT_CONSTRUCTION_SITE")
+		== world.resolve_script_object("BASE_FLAG_2")
+	)
+	_check(
+		"the copy did NOT follow the source (a handle was stored, not the name)",
+		world.resolve_script_object("AI_COPY") == world.resolve_script_object("BASE_FLAG_1")
+	)
+	# Structure-valued bind, and the refusals.
+	_check("fixture: BASE_FLAG_3 unpacks behind AI_BASE", world.ai().base_unpack("BASE_FLAG_3", true, "AI_BASE"))
+	_check("set_reference binds a reference to a structure-valued name", world.units().set_reference("AI_SITE", "AI_BASE"))
+	_check(
+		"the structure-valued copy resolves to the same structure",
+		int(world.resolve_script_object("AI_SITE").get("id", 0))
+		== int(world.resolve_script_object("AI_BASE").get("id", 0))
+	)
+	_check("set_reference refuses a source outside the namespace", not world.units().set_reference("AI_X", "GHOST"))
+	_check("set_reference refuses an empty destination", not world.units().set_reference("", "BASE_FLAG_1"))
+	_check(
+		"set_reference refuses a destination that would shadow a base flag",
+		not world.units().set_reference("BASE_FLAG_2", "BASE_FLAG_1")
+	)
+	var unbound := _make_base_world(_make_sim())
+	unbound._script_player = ""
+	_check(
+		"set_reference refuses with no script player bound (no namespace to bind in)",
+		not unbound.units().set_reference("AI_X", "BASE_FLAG_1")
+	)

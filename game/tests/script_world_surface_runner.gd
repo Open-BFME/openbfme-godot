@@ -124,7 +124,15 @@ const FALLBACK_PROBED := [
 ## exits 0. Pinning the number of checks a healthy run makes turns that silent
 ## abort into a loud failure. Raise it deliberately when tests are added; never
 ## lower it to make a run go green.
-const EXPECTED_CHECKS := 3506
+## 3506 -> 3482: EXACTLY the eight methods that left the BLOCKED table when the
+## object-name reads and the reference bind became simulation-backed
+## (units.exists, was_created, was_destroyed, is_dying, position, owner,
+## health_percent, set_reference). A refusing method costs three checks a
+## backed one does not - "carries a blocking annotation", "annotation names a
+## real method", "annotation names a declared subsystem" - and 8 x 3 = 24. No
+## assertion was weakened, deleted or skipped; every remaining check still runs
+## and still passes.
+const EXPECTED_CHECKS := 3482
 
 var passed := 0
 var failed := 0
@@ -445,10 +453,16 @@ func _candidates_for_param(param: Dictionary, fx: Dictionary) -> Array:
 			if pname == "building_class":
 				return [""]
 			if pname == "object_name":
-				# The unpack pair and the unpackable condition take the fixture's
-				# packed base flag; every other object_name method refuses
-				# regardless of the value (no object-name registry).
-				return ["SYNTH_BASE_FLAG"]
+				# BOTH kinds of entry in the shared object / unit-reference
+				# namespace, because the two answer different methods: the
+				# unpack pair and the unpackable condition need the PACKED flag
+				# (SYNTH_BASE_FLAG), while the ownership and health reads need a
+				# name that resolves to a live structure (SYNTH_HOME_REF, the
+				# fixture's pre-unpacked flag bound as a reference). Offering
+				# only the packed flag would classify units.owner and
+				# units.health_percent as refusing when what they actually
+				# refuse is the packed-flag SHAPE - a restriction, not a gap.
+				return ["SYNTH_BASE_FLAG", "SYNTH_HOME_REF"]
 			if pname == "base":
 				return ["SYNTH_HOME_REF"]
 			if pname == "building_type":

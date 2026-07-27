@@ -99,7 +99,11 @@ const TEAM_NAME := "teamPlayerOne"
 ## exits 0. Pinning the number of checks a healthy run makes turns that silent
 ## abort into a loud failure. Raise it deliberately when tests are added; never
 ## lower it to make a run go green.
-const EXPECTED_CHECKS := 131
+## 131 -> 152: RAISED by the 21 checks the two flag-valued-reference tests
+## add (the object-name registry's second binding kind - a reference aimed at
+## a base flag - crossing the snapshot boundary, and its hash-inertness plus
+## setup() reset). Nothing was removed.
+const EXPECTED_CHECKS := 152
 
 var passed := 0
 var failed := 0
@@ -125,6 +129,8 @@ func _run() -> void:
 	_test_logic_random_stream_is_hash_inert_until_drawn_and_reset_by_setup()
 	_test_team_behavior_state_lives_inside_the_snapshot_boundary()
 	_test_team_behavior_state_is_hash_inert_until_written_and_reset_by_setup()
+	_test_flag_valued_references_live_inside_the_snapshot_boundary()
+	_test_flag_valued_references_are_hash_inert_and_reset_by_setup()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
 		failed += 1
@@ -1137,4 +1143,109 @@ func _test_logic_random_stream_is_hash_inert_until_drawn_and_reset_by_setup() ->
 	_check(
 		"the restored sim derives from the shared rules seed on first draw",
 		world.random_int(1, 3) == first_fresh
+	)
+
+
+# --- Flag-valued unit references (the object-name registry's binding kind) --
+
+
+func _test_flag_valued_references_live_inside_the_snapshot_boundary() -> void:
+	## SET_UNIT_REFERENCE aims a reference at a base flag NOBODY HAS UNPACKED
+	## at 32 of its 40 authored retail call sites, so the reference store holds
+	## a flag NAME as well as a structure id. That binding decides what every
+	## later object-name read answers, so it must be reproduced byte-for-byte
+	## by a peer that adopts a snapshot - otherwise two byte-equal sims answer
+	## the next NAMED_* condition differently and lockstep is gone.
+	var sim_a := _make_sim()
+	_configure_bases(sim_a)
+	var world_a := _make_world(sim_a)
+	_check(
+		"fixture: a reference binds to a PACKED base flag",
+		world_a.units().set_reference("AI_CURRENT_CONSTRUCTION_SITE", "BASE_FLAG_1")
+	)
+	_check(
+		"the flag-valued binding is stored as the flag NAME, not a structure id",
+		sim_a.script_unit_reference_base(SimScript.PLAYER_TEAM, "AI_CURRENT_CONSTRUCTION_SITE")
+		== "BASE_FLAG_1"
+		and sim_a.script_unit_reference(SimScript.PLAYER_TEAM, "AI_CURRENT_CONSTRUCTION_SITE") == 0
+	)
+
+	var sim_b := _make_sim()
+	_configure_bases(sim_b)
+	_check("the adopting peer restores the snapshot", sim_b.restore(sim_a.snapshot()))
+	var world_b := _make_world(sim_b)
+	_check("adopted snapshot agrees on the state hash", sim_a.state_hash() == sim_b.state_hash())
+	_check(
+		"the adopting peer resolves the flag-valued reference identically",
+		world_b.resolve_script_object("AI_CURRENT_CONSTRUCTION_SITE")
+		== world_a.resolve_script_object("AI_CURRENT_CONSTRUCTION_SITE")
+	)
+	_check(
+		"the reference resolves to the FLAG, exactly as the flag's own name does",
+		world_b.resolve_script_object("AI_CURRENT_CONSTRUCTION_SITE")
+		== world_b.resolve_script_object("BASE_FLAG_1")
+	)
+	# THE OUTCOME-BEARING EDGE: SET_UNIT_REFERENCE_TO_REFERENCE copies the
+	# SOURCE's current binding, so the identical action on both peers can only
+	# agree if the carried binding is identical.
+	var copied_a: bool = world_a.units().set_reference("AI_COPY", "AI_CURRENT_CONSTRUCTION_SITE")
+	var copied_b: bool = world_b.units().set_reference("AI_COPY", "AI_CURRENT_CONSTRUCTION_SITE")
+	_check("the reference-to-reference copy succeeds on the minting peer", copied_a)
+	_check("the reference-to-reference copy succeeds on the adopting peer", copied_b)
+	_check(
+		"peers agree on the state hash after the identical action",
+		sim_a.state_hash() == sim_b.state_hash()
+	)
+	_check(
+		"the copy resolves to the same flag on both peers",
+		world_a.resolve_script_object("AI_COPY") == world_b.resolve_script_object("AI_COPY")
+		and world_b.resolve_script_object("AI_COPY") == world_b.resolve_script_object("BASE_FLAG_1")
+	)
+	# And a read keyed by the name agrees across the boundary.
+	var exists_a := world_a.units().exists("AI_CURRENT_CONSTRUCTION_SITE")
+	var exists_b := world_b.units().exists("AI_CURRENT_CONSTRUCTION_SITE")
+	_check(
+		"both peers answer the same existence for the referenced name",
+		exists_a.ok and exists_b.ok and exists_a.as_bool() == exists_b.as_bool()
+	)
+
+
+func _test_flag_valued_references_are_hash_inert_and_reset_by_setup() -> void:
+	## Same three properties the other stores are held to: zero bytes until
+	## used, hash-visible once used, cleared by setup().
+	var sim := _make_sim()
+	var pristine := sim.state_hash()
+	_check(
+		"fixture: base flags configure",
+		sim.configure_unpackable_bases(_base_flags())
+	)
+	var configured := sim.state_hash()
+	_check(
+		"a sim with flags but no bindings carries NO script_unit_references key",
+		not (bytes_to_var(sim.snapshot()) as Dictionary).has("script_unit_references")
+	)
+	var world := _make_world(sim)
+	_check(
+		"fixture: the flag-valued bind lands",
+		world.units().set_reference("AI_CURRENT_CONSTRUCTION_SITE", "BASE_FLAG_2")
+	)
+	_check(
+		"a flag-valued binding MOVES the hash (the state is not invisible)",
+		sim.state_hash() != configured
+	)
+	_check(
+		"the flag-valued binding serializes",
+		(bytes_to_var(sim.snapshot()) as Dictionary).has("script_unit_references")
+	)
+	sim.setup({}, {})
+	sim.ai_enabled = false  # the harness disables AI; setup() re-enables it
+	_check("setup() clears the flag-valued binding too", sim.script_unit_references.is_empty())
+	_check(
+		"a flag-valued reference cleared by reset no longer resolves",
+		world.resolve_script_object("AI_CURRENT_CONSTRUCTION_SITE").is_empty()
+	)
+	sim.configure_unpackable_bases({})
+	_check(
+		"clearing the flag table after reset returns to the pristine hash exactly",
+		sim.state_hash() == pristine
 	)
