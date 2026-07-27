@@ -75,6 +75,15 @@ const SERVED_CONDITIONS := [
 ## disagrees with this list loudly.
 const GAP_REGISTERED := []
 
+## LIVENESS GUARD. A GDScript RUNTIME error aborts the enclosing function
+## on the spot without propagating, so every later _check() in that function
+## silently never runs and `failed` never moves - the runner then prints a
+## zero-failure result and exits 0 with SCRIPT ERROR lines above it. This is
+## the exact count a HEALTHY run makes; if the run makes any other number,
+## something aborted (or an assertion was added without updating this) and
+## the result is not to be trusted.
+const EXPECTED_CHECKS := 59
+
 var passed := 0
 var failed := 0
 
@@ -101,6 +110,10 @@ func _run() -> void:
 	_test_conditions_have_no_side_effects()
 	_test_arity_is_enforced_per_member()
 	_test_argument_type_codes_are_enforced_where_observed()
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("HANDLERS_WP13 FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("HANDLERS_WP13_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 

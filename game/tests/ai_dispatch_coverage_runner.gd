@@ -94,8 +94,23 @@ const Vocabulary := preload("res://src/script/script_vocabulary.gd")
 
 const CENSUS_PATH := "res://data/retail_ai_call_census.json"
 
+## LIVENESS GUARD. A GDScript RUNTIME error aborts the enclosing function on the
+## spot without propagating, so an error inside _check_census_against_vocabulary
+## or _report would leave this runner printing "checks passed=1 failed=0" (or
+## even a clean 2) and exiting 0 with SCRIPT ERROR lines above it.
+##
+## This runner does NOT have a fixed check count: a healthy run makes exactly
+## two (registration clean, census resolves), but an UNHEALTHY registration
+## replaces the single registration check with one failure per error message, so
+## the total can legitimately exceed two. The invariant that always holds is a
+## FLOOR of two - the registration verdict and the census verdict must both have
+## been reached - which is what is asserted. _report makes no checks at all, so
+## it is covered separately by the _report_completed sentinel below.
+const MINIMUM_CHECKS := 2
+
 var passed := 0
 var failed := 0
+var _report_completed := false
 
 
 func _initialize() -> void:
@@ -150,6 +165,13 @@ func _run() -> void:
 	_report(census, served, blocked, refused)
 
 	print("")
+	var ran := passed + failed
+	if ran < MINIMUM_CHECKS:
+		failed += 1
+		printerr("AI_DISPATCH_COVERAGE FAIL liveness: ran %d checks, expected at least %d - a function aborted before its assertions" % [ran, MINIMUM_CHECKS])
+	if not _report_completed:
+		failed += 1
+		printerr("AI_DISPATCH_COVERAGE FAIL liveness: _report did not run to completion - it aborted mid-way and the coverage figures above are partial")
 	print("checks passed=%d failed=%d" % [passed, failed])
 	quit(1 if failed > 0 else 0)
 
@@ -254,6 +276,11 @@ func _report(census: Dictionary, served: Dictionary, blocked: Dictionary, refuse
 					break
 				print("    %6d  %-9s %s" % [int(row[0]), String(row[1]), String(row[2])])
 				shown += 1
+
+	# Liveness sentinel: only set once every tree has been walked to the end. If
+	# anything above aborts, this stays false and _run turns the run red instead
+	# of printing partial coverage under a clean "failed=0".
+	_report_completed = not trees.is_empty()
 
 
 func _pct(part: int, whole: int) -> float:

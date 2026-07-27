@@ -27,8 +27,23 @@ const TIMER_MONEY := 765432
 ## verified while depending on which revision happened to load.
 const TIMER_SECONDS := 3.0
 
+## LIVENESS GUARD. A GDScript RUNTIME error aborts the enclosing function on the
+## spot without propagating, so every later _check() in that function silently
+## never runs and `failed` never moves - the runner then prints a zero-failure
+## result and exits 0 with SCRIPT ERROR lines above it.
+##
+## This runner's count is ENVIRONMENT-DEPENDENT: _test_real_contract_payload
+## makes three checks against a real decoded skirmish source, but only ONE
+## (a recorded skip) when the Part 1 contract JSON is absent, which it is on any
+## checkout without .private. A single fixed number would false-fail in CI, so
+## both branches are pinned and the branch actually taken selects which applies.
+## The skip branch therefore cannot satisfy the full-run guard, and vice versa.
+const EXPECTED_CHECKS_WITH_CONTRACT := 13
+const EXPECTED_CHECKS_CONTRACT_ABSENT := 11
+
 var passed := 0
 var failed := 0
+var _contract_present := false
 
 
 func _initialize() -> void:
@@ -195,6 +210,13 @@ func _run() -> void:
 	_test_twin_run_determinism()
 	_test_unimplemented_accounting()
 	_test_real_contract_payload()
+	var ran := passed + failed
+	var expected := EXPECTED_CHECKS_WITH_CONTRACT if _contract_present else EXPECTED_CHECKS_CONTRACT_ABSENT
+	if ran != expected:
+		failed += 1
+		printerr("RETAIL_MAP_SCRIPT FAIL liveness: ran %d checks, expected %d (contract %s) - a function aborted before its assertions" % [
+			ran, expected, "present" if _contract_present else "absent",
+		])
 	print("RETAIL_MAP_SCRIPT_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -358,6 +380,10 @@ func _test_real_contract_payload() -> void:
 	for tick in range(10):
 		sim.tick()
 		scripts.step(sim)
+	# From here the real-contract branch owes all three of its checks, so the
+	# liveness guard switches to the with-contract count. Set here rather than at
+	# the file-exists test so that an abort anywhere above still reddens.
+	_contract_present = true
 	_check("real_contract_payload_loads",
 		loaded == int(source.get("scriptCount", -1)) and loaded > 0,
 		"loaded=%d expected=%s source=%s" % [loaded, str(source.get("scriptCount")), str(source.get("path"))])

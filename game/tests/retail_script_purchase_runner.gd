@@ -74,6 +74,21 @@ const ENEMY := "CensusEnemy"
 const VICTIM_COUNT := 12
 const ATTACKERS_PER_VICTIM := 2
 
+## LIVENESS GUARD. A GDScript RUNTIME error aborts the enclosing function on the
+## spot without propagating, so every later _check() silently never runs and
+## `failed` never moves - the runner would then print a zero-failure result and
+## exit 0 with SCRIPT ERROR lines above it.
+##
+## This count applies ONLY to the verified path. The three diagnostic SKIPs above
+## (contract absent, ContentDB absent, pack carries no Men spellbook) each quit(0)
+## before the first _check, print "THIS RUN VERIFIED NOTHING", and never reach
+## this guard - so a skip can never satisfy it, and the guard can never
+## false-fail a legitimate skip. 16 is the count a healthy verified run makes:
+## the 15 unconditional checks plus purchase_waited_for_affordability, which is
+## gated on a non-empty purchase list that purchase_event_recorded also asserts,
+## so on a healthy run it always runs.
+const EXPECTED_CHECKS := 16
+
 var passed := 0
 var failed := 0
 
@@ -264,6 +279,10 @@ func _run() -> void:
 			1 + earned_before >= int(first_purchase.get("cost", 0)),
 			"earned_before=%d cost=%d" % [earned_before, int(first_purchase.get("cost", 0))])
 
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("RETAIL_SCRIPT_PURCHASE FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("RETAIL_SCRIPT_PURCHASE RESULT passed=%d failed=%d" % [passed, failed])
 	if failed > 0:
 		quit(1)

@@ -47,6 +47,15 @@ const GapLog := preload("res://src/script/script_gaps.gd")
 const ParamTypes := preload("res://src/script/script_param_types.gd")
 const Wp06 := preload("res://src/script/handlers/wp06_audio_video.gd")
 
+## LIVENESS GUARD. A GDScript RUNTIME error aborts the enclosing function
+## on the spot without propagating, so every later _check() in that function
+## silently never runs and `failed` never moves - the runner then prints a
+## zero-failure result and exits 0 with SCRIPT ERROR lines above it. This is
+## the exact count a HEALTHY run makes; if the run makes any other number,
+## something aborted (or an assertion was added without updating this) and
+## the result is not to be trusted.
+const EXPECTED_CHECKS := 42
+
 var passed := 0
 var failed := 0
 
@@ -66,6 +75,10 @@ func _run() -> void:
 	_test_a_world_without_an_audio_sink_refuses()
 	_test_blocked_members()
 	_report()
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("HANDLERS_WP06 FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("HANDLERS_WP06_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 

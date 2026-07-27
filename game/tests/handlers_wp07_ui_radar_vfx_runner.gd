@@ -115,6 +115,15 @@ const NO_ARGUMENT_ACTIONS := [
 	"RESTORE_WORLD_LIGHTS",
 ]
 
+## LIVENESS GUARD. A GDScript RUNTIME error aborts the enclosing function
+## on the spot without propagating, so every later _check() in that function
+## silently never runs and `failed` never moves - the runner then prints a
+## zero-failure result and exits 0 with SCRIPT ERROR lines above it. This is
+## the exact count a HEALTHY run makes; if the run makes any other number,
+## something aborted (or an assertion was added without updating this) and
+## the result is not to be trusted.
+const EXPECTED_CHECKS := 58
+
 var passed := 0
 var failed := 0
 
@@ -136,6 +145,10 @@ func _run() -> void:
 	_test_the_match_outcome_family_is_blocked()
 	_test_the_ui_state_conditions_are_blocked()
 	_report()
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("HANDLERS_WP07 FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("HANDLERS_WP07_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 

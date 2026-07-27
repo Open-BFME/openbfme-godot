@@ -50,6 +50,15 @@ const SCIENCE := "SCIENCE_TestBeacon"
 const OTHER_SCIENCE := "SCIENCE_TestSecondBeacon"
 const UPGRADE := "Upgrade_TestFireArrows"
 
+## LIVENESS GUARD. A GDScript RUNTIME error aborts the enclosing function
+## on the spot without propagating, so every later _check() in that function
+## silently never runs and `failed` never moves - the runner then prints a
+## zero-failure result and exits 0 with SCRIPT ERROR lines above it. This is
+## the exact count a HEALTHY run makes; if the run makes any other number,
+## something aborted (or an assertion was added without updating this) and
+## the result is not to be trusted.
+const EXPECTED_CHECKS := 68
+
 var passed := 0
 var failed := 0
 
@@ -75,6 +84,10 @@ func _run() -> void:
 	_test_gap_registered_members()
 	_test_a_bare_world_refuses_rather_than_pretending()
 	_report()
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("HANDLERS_WP09 FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("HANDLERS_WP09_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 

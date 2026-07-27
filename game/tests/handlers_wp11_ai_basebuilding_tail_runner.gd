@@ -31,6 +31,15 @@ const CoreHandlers := preload("res://src/script/script_handlers_core.gd")
 const Env := preload("res://src/script/script_env.gd")
 const GapLog := preload("res://src/script/script_gaps.gd")
 
+## LIVENESS GUARD. A GDScript RUNTIME error aborts the enclosing function
+## on the spot without propagating, so every later _check() in that function
+## silently never runs and `failed` never moves - the runner then prints a
+## zero-failure result and exits 0 with SCRIPT ERROR lines above it. This is
+## the exact count a HEALTHY run makes; if the run makes any other number,
+## something aborted (or an assertion was added without updating this) and
+## the result is not to be trusted.
+const EXPECTED_CHECKS := 13
+
 var passed := 0
 var failed := 0
 
@@ -44,6 +53,10 @@ func _run() -> void:
 	_test_the_member_serves_type_base_reference_in_order()
 	_test_a_world_refusal_is_a_structured_gap()
 	_test_arity_is_enforced()
+	var ran := passed + failed
+	if ran != EXPECTED_CHECKS:
+		failed += 1
+		printerr("HANDLERS_WP11_TAIL FAIL liveness: ran %d checks, expected %d - a function aborted before its assertions" % [ran, EXPECTED_CHECKS])
 	print("HANDLERS_WP11_TAIL_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
