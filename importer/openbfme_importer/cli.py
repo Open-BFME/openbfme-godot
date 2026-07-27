@@ -21,6 +21,11 @@ from .catalog import (
 from .bootstrap import bootstrap_tools, tool_status
 from .dependency_check import check_dependencies, format_dependency_report
 from .asset_census import census_assets
+from .effective_assets_identity import (
+    VERIFY_CHOICES,
+    EffectiveAssetsIdentityError,
+    verify_effective_assets,
+)
 from .game import RETAIL_GAME_IDS, workspace_root
 from .paths import (
     default_godot_content_root,
@@ -222,6 +227,46 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="transactionally rebuild an existing effective asset tree",
+    )
+
+    verify_assets = sub.add_parser(
+        "verify-effective-assets",
+        help="name the install an effective-assets tree holds, and refuse a wrong or stale one",
+    )
+    verify_assets.add_argument(
+        "--assets-root",
+        type=Path,
+        required=True,
+        help="effective-assets root produced by extract-all-assets",
+    )
+    verify_assets.add_argument(
+        "--expect-game",
+        choices=RETAIL_GAME_IDS,
+        help=(
+            "refuse unless the tree serves this edition's bytes; omit to only "
+            "report which edition it holds"
+        ),
+    )
+    verify_assets.add_argument(
+        "--catalog",
+        type=Path,
+        help=(
+            "refuse unless the tree was extracted from this exact catalog "
+            "(catches a cache left behind by an older install)"
+        ),
+    )
+    verify_assets.add_argument(
+        "--verify",
+        choices=VERIFY_CHOICES,
+        default="manifest",
+        help=(
+            "manifest: trust the sealed manifest; sizes: stat every file; "
+            "hashes: re-digest every byte (default: manifest)"
+        ),
+    )
+    verify_assets.add_argument(
+        "--consumer",
+        help="record who is reading this tree, for the report",
     )
 
     asset_census = sub.add_parser(
@@ -693,6 +738,19 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(render_pack_report(report))
             return 0 if report["health"]["valid"] else 3
+
+        if args.command == "verify-effective-assets":
+            # Read-only. Answers the one question the shared "effective-assets"
+            # directory name cannot: which install are these bytes from?
+            value = verify_effective_assets(
+                args.assets_root,
+                game=args.expect_game,
+                catalog=args.catalog,
+                verify=args.verify,
+                consumer=args.consumer,
+            )
+            _render(value, args.json)
+            return 0
 
         if args.command == "visual-closure":
             assets_root = ensure_external_to_repo(
@@ -1324,6 +1382,13 @@ def main(argv: list[str] | None = None) -> int:
             _render(value, args.json)
             return 0 if value["valid"] else 3
         parser.error(f"unknown command: {args.command}")
+    except EffectiveAssetsIdentityError as exc:
+        # Structured, and never a silent read of another edition's bytes.
+        if args.json:
+            print(json.dumps(exc.diagnostic, indent=2, sort_keys=True), file=sys.stderr)
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     except CatalogProvenanceError as exc:
         # Structured, never a silent fallback to another edition.
         if args.json:
