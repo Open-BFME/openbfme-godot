@@ -1,0 +1,735 @@
+{
+	"$comment": "Ranked retail W3D chunk-decode backlog. Regenerate with `PYTHONPATH=importer python -m openbfme_importer.w3d_chunk_backlog <effective-assets-root> <reports-dir> <output-json>`; do not hand-edit. Ranking is by DISTINCT FILES BLOCKED at the metadata-scanner level, not raw occurrences. `decodeLayer` quotes the sealed decode-corpus evidence for the same chunk ID: a non-null row with terminalCount 0 means the stream decoder already decodes every occurrence and only census accounting lags. Aggregate counts and hashes only - no retail paths, authored identifiers, payload bytes, or geometry.",
+	"schema": "openbfme.retail-w3d-chunk-backlog",
+	"schemaVersion": 0,
+	"corpus": {
+		"game": "bfme2",
+		"manifestFileCount": 40129,
+		"manifestTotalBytes": 4200142436,
+		"manifestSha256": "8ca034dbf551e5162778a54a849afd02022ef5b368e39474a89b3c1a28f6803f",
+		"manifestAggregateSha256": "fbf3c7e03ed5fe841cd7b71c3b2ac7dac712f0ece212bdc3621c7c4e99053568",
+		"w3dFileCount": 12751,
+		"w3dTotalBytes": 1049935816,
+		"factionClosureSource": "union of W3D leaves across the faction-slice plans per faction",
+		"decodeCorpus": {
+			"schema": "openbfme.w3d-decode-corpus",
+			"schemaVersion": 2,
+			"hashes": {
+				"corpusSha256": "de7393fd45c4ce993b735e2a3d9c856f8582953240342c166b4f8a63f10a8265",
+				"hierarchyResolverSha256": "3c05866cea166953454e2a9550392dd1419a5b58f3bcfae5fa940dd708177c32",
+				"inventorySha256": "679a2a983f8fdf3276c48a65102fc699701eecc39c06ae066d0c24c314cceae9",
+				"manifestAggregateSha256": "fbf3c7e03ed5fe841cd7b71c3b2ac7dac712f0ece212bdc3621c7c4e99053568",
+				"manifestSha256": "05dca40acff19aba01c7bb2e1166461a0725e96487e407b53da67212e9d206ac",
+				"planSetSha256": "ccd7363c1efa83f223186c0e1c8fe6bcb90a5fa12189b74cee2a24c321eca4e6"
+			}
+		}
+	},
+	"summary": {
+		"scannedFileCount": 12751,
+		"warningCodeCounts": {
+			"empty-source": 9,
+			"truncated-chunk-header": 1,
+			"truncated-chunk-payload": 14,
+			"unknown-chunk": 72
+		},
+		"flaggedChunkIdCount": 28,
+		"blockedFileCount": 10,
+		"factionReachableBlockedFileCount": 0,
+		"factionClosureW3dFileCounts": {
+			"dwarves": 786,
+			"elves": 1009,
+			"isengard": 761,
+			"men": 1435,
+			"mordor": 875,
+			"wild": 717
+		}
+	},
+	"backlog": [
+		{
+			"chunkId": 164415,
+			"chunkIdHex": "0x0002823F",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 4,
+			"filesBlocked": 4,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 9
+			}
+		},
+		{
+			"chunkId": 2147483648,
+			"chunkIdHex": "0x80000000",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 6,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 9
+			}
+		},
+		{
+			"chunkId": 2816,
+			"chunkIdHex": "0x00000B00",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2817,
+			"chunkIdHex": "0x00000B01",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2818,
+			"chunkIdHex": "0x00000B02",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2819,
+			"chunkIdHex": "0x00000B03",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2848,
+			"chunkIdHex": "0x00000B20",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2849,
+			"chunkIdHex": "0x00000B21",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2880,
+			"chunkIdHex": "0x00000B40",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2881,
+			"chunkIdHex": "0x00000B41",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2882,
+			"chunkIdHex": "0x00000B42",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2883,
+			"chunkIdHex": "0x00000B43",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2884,
+			"chunkIdHex": "0x00000B44",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2885,
+			"chunkIdHex": "0x00000B45",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2887,
+			"chunkIdHex": "0x00000B47",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2889,
+			"chunkIdHex": "0x00000B49",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2890,
+			"chunkIdHex": "0x00000B4A",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 2891,
+			"chunkIdHex": "0x00000B4B",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 373883952,
+			"chunkIdHex": "0x16490430",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 373883984,
+			"chunkIdHex": "0x16490450",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 3,
+			"filesBlocked": 3,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 4,
+			"chunkIdHex": "0x00000004",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 1,
+			"filesBlocked": 1,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 2
+			}
+		},
+		{
+			"chunkId": 66367,
+			"chunkIdHex": "0x0001033F",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 1,
+			"filesBlocked": 1,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 164416,
+			"chunkIdHex": "0x00028240",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 1,
+			"filesBlocked": 1,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 3
+			}
+		},
+		{
+			"chunkId": 245877,
+			"chunkIdHex": "0x0003C075",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 1,
+			"filesBlocked": 1,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 2
+			}
+		},
+		{
+			"chunkId": 324157025,
+			"chunkIdHex": "0x13523E61",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 1,
+			"filesBlocked": 1,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 2
+			}
+		},
+		{
+			"chunkId": 503037591,
+			"chunkIdHex": "0x1DFBBE97",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 1,
+			"filesBlocked": 1,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 2
+			}
+		},
+		{
+			"chunkId": 1262443313,
+			"chunkIdHex": "0x4B3F5B31",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 1,
+			"filesBlocked": 1,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 2
+			}
+		},
+		{
+			"chunkId": 3227014436,
+			"chunkIdHex": "0xC0585524",
+			"chunkName": null,
+			"scannerClassifications": [
+				"unknown"
+			],
+			"occurrences": 1,
+			"filesBlocked": 1,
+			"factionReachableFiles": 0,
+			"factionFiles": {
+				"dwarves": 0,
+				"elves": 0,
+				"isengard": 0,
+				"men": 0,
+				"mordor": 0,
+				"wild": 0
+			},
+			"decodeLayer": {
+				"decodedStreamCount": 0,
+				"terminalCount": 1
+			}
+		}
+	],
+	"anomalies": {
+		"indexRejected": {
+			"fileCount": 34,
+			"causeCounts": {
+				"surrounding-whitespace-identifier": 34
+			},
+			"factionReachableFileCount": 2
+		},
+		"metadataDamaged": {
+			"fileCount": 16,
+			"warningCodeCounts": {
+				"empty-source": 9,
+				"truncated-chunk-header": 1,
+				"truncated-chunk-payload": 14
+			},
+			"factionReachableFileCount": 1
+		},
+		"decodeCorpus": {
+			"joinedBySourceSha256": true,
+			"unjoinedFileCount": 0,
+			"notStreamCompleteFileCount": 272,
+			"notStreamCompleteFactionReachableFileCount": 106,
+			"damagedFileCount": 73,
+			"incompleteFileCount": 272,
+			"unresolvedFileCount": 11,
+			"unsupportedFileCount": 10,
+			"damagedFactionReachableFileCount": 20,
+			"incompleteFactionReachableFileCount": 106,
+			"unresolvedFactionReachableFileCount": 0,
+			"unsupportedFactionReachableFileCount": 0
+		},
+		"duplicateLogicalIds": {
+			"groupCount": 24,
+			"kindCounts": {
+				"animation": 5,
+				"hierarchy": 6,
+				"model": 13
+			},
+			"identicalByteGroupCount": 4,
+			"distinctByteGroupCount": 20
+		}
+	}
+}

@@ -18,9 +18,11 @@ def _chunk(
     payload: bytes,
     *,
     declared_size: int | None = None,
+    children: bool = False,
 ) -> bytes:
     size = len(payload) if declared_size is None else declared_size
-    return struct.pack("<II", chunk_id, size) + payload
+    raw_size = size | (0x80000000 if children else 0)
+    return struct.pack("<II", chunk_id, raw_size) + payload
 
 
 def _catalog(*chunks: bytes):
@@ -29,6 +31,39 @@ def _catalog(*chunks: bytes):
 
 def _sha(label: str) -> str:
     return hashlib.sha256(label.encode("ascii")).hexdigest()
+
+
+def _fixed(value: str, size: int) -> bytes:
+    encoded = value.encode("cp1252")
+    return encoded + b"\0" * (size - len(encoded))
+
+
+def _mesh_with_secondary_streams(vertex_count: int = 2) -> bytes:
+    header = struct.pack(
+        "<II16s16s9I10f",
+        0x00040002,
+        0x00020000,
+        _fixed("BODY", 16),
+        _fixed("Fixture", 16),
+        1,
+        vertex_count,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0x13,
+        1,
+        *[0.0] * 10,
+    )
+    stream = struct.pack(f"<{vertex_count * 3}f", *[0.5] * (vertex_count * 3))
+    return _chunk(
+        0x00000000,
+        _chunk(0x1F, header)
+        + _chunk(0x00000C00, stream)
+        + _chunk(0x00000C01, stream),
+        children=True,
+    )
 
 
 def _attestation(report, chunk_id: int, *, label: str | None = None):
@@ -63,7 +98,21 @@ class W3DSupportMatrixTests(unittest.TestCase):
         self.assertEqual(report.entry_for(0x00000002).domain, "geometry")
         self.assertEqual(report.entry_for(0x00000020).domain, "geometry")
 
-    def test_secondary_geometry_is_explicitly_unsupported(self) -> None:
+    def test_valid_secondary_geometry_is_decoded_metadata_and_promotable(self) -> None:
+        report = build_w3d_support_matrix(_catalog(_mesh_with_secondary_streams()))
+
+        for chunk_id in (0x00000C00, 0x00000C01):
+            entry = report.entry_for(chunk_id)
+            self.assertEqual(entry.domain, "geometry")
+            self.assertEqual(entry.capability_state, "metadata-only")
+            self.assertTrue(entry.conversion_relevant)
+        # metadata-only is not conversion evidence: closure still requires an
+        # exact backtest attestation for these conversion-relevant chunks.
+        self.assertFalse(report.conversion_complete)
+
+    def test_malformed_secondary_geometry_is_source_invalid(self) -> None:
+        # Payloads outside a mesh container (and not a whole number of float32
+        # triples) must fail closed instead of decoding into a guessed record.
         report = build_w3d_support_matrix(
             _catalog(
                 _chunk(0x00000C00, b"secondary vertices"),
@@ -74,9 +123,18 @@ class W3DSupportMatrixTests(unittest.TestCase):
         for chunk_id in (0x00000C00, 0x00000C01):
             entry = report.entry_for(chunk_id)
             self.assertEqual(entry.domain, "geometry")
-            self.assertEqual(entry.capability_state, "explicit-unsupported")
+            self.assertEqual(entry.capability_state, "source-invalid")
             self.assertTrue(entry.conversion_relevant)
+        self.assertGreater(report.diagnostics.source_invalid_warning_count, 0)
         self.assertFalse(report.conversion_complete)
+
+        malformed = _catalog(_chunk(0x00000C00, b"secondary vertices"))
+        baseline = build_w3d_support_matrix(malformed)
+        with self.assertRaisesRegex(W3DSupportMatrixError, "cannot override"):
+            build_w3d_support_matrix(
+                malformed,
+                backtest_attestations=(_attestation(baseline, 0x00000C00),),
+            )
 
     def test_animation_payload_chunks_remain_metadata_only(self) -> None:
         report = build_w3d_support_matrix(
@@ -203,12 +261,16 @@ class W3DSupportMatrixTests(unittest.TestCase):
         with self.assertRaisesRegex(W3DSupportMatrixError, "duplicate attestation"):
             build_w3d_support_matrix(catalog, backtest_attestations=(valid, valid))
 
-        unsupported_catalog = _catalog(_chunk(0x00000C00, b"secondary"))
+        unsupported_catalog = _catalog(_chunk(0x00000058, b"deform data"))
         unsupported = build_w3d_support_matrix(unsupported_catalog)
+        self.assertEqual(
+            unsupported.entry_for(0x00000058).capability_state,
+            "explicit-unsupported",
+        )
         with self.assertRaisesRegex(W3DSupportMatrixError, "cannot override"):
             build_w3d_support_matrix(
                 unsupported_catalog,
-                backtest_attestations=(_attestation(unsupported, 0x00000C00),),
+                backtest_attestations=(_attestation(unsupported, 0x00000058),),
             )
 
     def test_header_index_failures_and_duplicates_are_separate_and_payload_free(

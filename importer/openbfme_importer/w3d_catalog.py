@@ -291,6 +291,7 @@ _ASSET_FAMILY_FIELDS = (
     ("meshes", "mesh_headers"),
     ("modelHeaders", "model_headers"),
     ("modelReferences", "model_references"),
+    ("secondaryGeometryStreams", "secondary_geometry_streams"),
     ("shaderMaterialHeaders", "shader_material_headers"),
     ("shaderMaterialProperties", "shader_material_properties"),
     ("shaders", "shaders"),

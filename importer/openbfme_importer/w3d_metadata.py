@@ -174,10 +174,20 @@ _UNSUPPORTED_CHUNKS = frozenset(
         0x00000750,
         0x00000800,
         0x00000A00,
-        0x00000C00,
-        0x00000C01,
     }
 )
+
+# BFME dual-bone skin streams.  Layout: a plain array of little-endian float32
+# triples, one record per mesh vertex, exactly like ``vertices``/``normals``.
+# Sources: the pinned OpenSAGE exporter (W3dChunkType.cs: ``W3D_CHUNK_VERTICES_2
+# = 0xC00 // used for dual bone skinning``; W3dMesh.cs parses both IDs as
+# ``W3dVector3List``) and this repo's ``w3d_secondary_skin`` proof module,
+# which decodes the same 12-byte records before proving them redundant.  The
+# semantic claim (each active record is the bind-pose point/normal in the
+# second influence bone's local space) is established in ``w3d_secondary_skin``
+# and is NOT re-asserted here; this scanner only validates the record layout.
+_SECONDARY_GEOMETRY_CHUNKS = frozenset({0x00000C00, 0x00000C01})
+_SECONDARY_GEOMETRY_RECORD_SIZE = 12
 
 _METADATA_CHUNKS = frozenset(
     {
@@ -480,6 +490,32 @@ class W3DCollisionBox:
 
 
 @dataclass(frozen=True, slots=True)
+class W3DSecondaryGeometryStream:
+    """One validated dual-bone skin stream (``vertices-2``/``normals-2``).
+
+    ``record_count`` is proven equal to the owning mesh header's vertex count
+    and every float32 record is proven finite before this record is created.
+    The payload values themselves are intentionally not retained; downstream
+    decoding stays with :mod:`w3d_geometry_streams`/:mod:`w3d_secondary_skin`.
+    """
+
+    kind: str
+    mesh_identifier: str
+    record_count: int
+    payload_sha256: str
+    provenance: W3DSourceProvenance
+
+    def neutral(self) -> dict[str, object]:
+        return {
+            "kind": self.kind,
+            "meshIdentifier": self.mesh_identifier,
+            "recordCount": self.record_count,
+            "payloadSha256": self.payload_sha256,
+            "provenance": self.provenance.neutral(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class W3DTextureReference:
     identifier: str
     texture_chunk_header_offset: int | None
@@ -680,6 +716,7 @@ class W3DMetadata:
     animation_headers: tuple[W3DAnimationHeader, ...]
     model_references: tuple[W3DModelReference, ...]
     collision_boxes: tuple[W3DCollisionBox, ...]
+    secondary_geometry_streams: tuple[W3DSecondaryGeometryStream, ...]
     texture_references: tuple[W3DTextureReference, ...]
     texture_infos: tuple[W3DTextureInfo, ...]
     material_infos: tuple[W3DMaterialInfo, ...]
@@ -767,6 +804,9 @@ class W3DMetadata:
             ],
             "modelReferences": [item.neutral() for item in self.model_references],
             "collisionBoxes": [item.neutral() for item in self.collision_boxes],
+            "secondaryGeometryStreams": [
+                item.neutral() for item in self.secondary_geometry_streams
+            ],
             "textureReferences": [
                 item.neutral() for item in self.texture_references
             ],
@@ -840,6 +880,7 @@ class _Scanner:
         self.animation_headers: list[W3DAnimationHeader] = []
         self.model_references: list[W3DModelReference] = []
         self.collision_boxes: list[W3DCollisionBox] = []
+        self.secondary_geometry_streams: list[W3DSecondaryGeometryStream] = []
         self.texture_references: list[W3DTextureReference] = []
         self.texture_infos: list[W3DTextureInfo] = []
         self.material_infos: list[W3DMaterialInfo] = []
@@ -1093,6 +1134,8 @@ class _Scanner:
             self.extract_model_reference(chunk)
         elif chunk_id == 0x00000740:
             self.extract_collision_box(chunk)
+        elif chunk_id in _SECONDARY_GEOMETRY_CHUNKS:
+            self.extract_secondary_geometry(chunk)
         elif chunk_id == 0x00000032:
             identifier = self.variable_string(chunk, "texture name")
             self.texture_references.append(
@@ -1325,6 +1368,108 @@ class _Scanner:
                 minor,
                 flags,
                 self.provenance(chunk, value_size=68),
+            )
+        )
+
+    def extract_secondary_geometry(self, chunk: _Chunk) -> None:
+        """Decode and validate one dual-bone skin stream, or fail closed.
+
+        Every rejected condition produces one ``invalid-secondary-geometry``
+        warning that names the exact chunk and the violated expectation.  No
+        record is ever emitted from a chunk that failed validation, and no
+        default is ever guessed.
+        """
+
+        kind = _CHUNK_NAMES[chunk.chunk_id]
+        if chunk.parent_chunk_id != 0x00000000:
+            self.warning(
+                "invalid-secondary-geometry",
+                f"{kind} chunk is not inside a mesh container",
+                chunk.header_offset,
+                chunk,
+            )
+            return
+        if chunk.declared_size != chunk.available_size:
+            # scan_region already recorded truncated-chunk-payload; refuse to
+            # decode a partial stream rather than truncating the record count.
+            self.warning(
+                "invalid-secondary-geometry",
+                f"{kind} chunk is truncated; refusing partial decode",
+                chunk.payload_offset,
+                chunk,
+            )
+            return
+        mesh_header = next(
+            (
+                header
+                for header in self.mesh_headers
+                if header.provenance.parent_chunk_header_offset
+                == chunk.parent_header_offset
+            ),
+            None,
+        )
+        if mesh_header is None:
+            self.warning(
+                "invalid-secondary-geometry",
+                f"{kind} chunk precedes its mesh header; owner is unproven",
+                chunk.header_offset,
+                chunk,
+            )
+            return
+        record_count, remainder = divmod(
+            chunk.available_size, _SECONDARY_GEOMETRY_RECORD_SIZE
+        )
+        if remainder:
+            self.warning(
+                "invalid-secondary-geometry",
+                f"{kind} payload of {chunk.available_size} bytes is not a "
+                f"whole number of {_SECONDARY_GEOMETRY_RECORD_SIZE}-byte "
+                "float32-triple records",
+                chunk.payload_offset,
+                chunk,
+            )
+            return
+        if record_count != mesh_header.vertex_count:
+            self.warning(
+                "invalid-secondary-geometry",
+                f"{kind} carries {record_count} records; owning mesh header "
+                f"declares {mesh_header.vertex_count} vertices",
+                chunk.payload_offset,
+                chunk,
+            )
+            return
+        payload = self.source[
+            chunk.payload_offset : chunk.payload_offset + chunk.available_size
+        ]
+        values = struct.unpack(f"<{record_count * 3}f", payload)
+        for index, value in enumerate(values):
+            if value != value or value in (float("inf"), float("-inf")):
+                self.warning(
+                    "invalid-secondary-geometry",
+                    f"{kind} record {index // 3} component {index % 3} "
+                    "is not a finite float32",
+                    chunk.payload_offset + index * 4,
+                    chunk,
+                )
+                return
+        # Round-trip invariant: re-encoding the decoded values must reproduce
+        # the exact payload bytes.  For finite float32 values this is lossless,
+        # so any disagreement is a decoder defect, not source damage.
+        if struct.pack(f"<{record_count * 3}f", *values) != payload:
+            self.warning(
+                "invalid-secondary-geometry",
+                f"{kind} decode failed the byte round-trip invariant",
+                chunk.payload_offset,
+                chunk,
+            )
+            return
+        self.secondary_geometry_streams.append(
+            W3DSecondaryGeometryStream(
+                kind,
+                mesh_header.identifier,
+                record_count,
+                hashlib.sha256(payload).hexdigest(),
+                self.provenance(chunk),
             )
         )
 
@@ -1565,6 +1710,7 @@ class _Scanner:
             tuple(self.animation_headers),
             tuple(self.model_references),
             tuple(self.collision_boxes),
+            tuple(self.secondary_geometry_streams),
             tuple(self.texture_references),
             tuple(self.texture_infos),
             tuple(self.material_infos),

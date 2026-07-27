@@ -14,8 +14,8 @@ from openbfme_importer.retail_neutral_lifecycle_profile import (
     _all_model_specs,
     _all_w3d_paths,
     _canonical_sha256,
+    _LEGACY_SECONDARY_WARNINGS,
     _expected_neutral_runtime_audio_events,
-    _expected_secondary_warnings,
     _expected_w3d_paths,
     _model_texture_resource_ids,
     _texture_paths,
@@ -139,12 +139,18 @@ def _fixture_target(spec, sources: dict[str, dict]) -> dict:
                     "animationIds": animation_ids.get(path, []),
                 },
                 "embeddedTextures": embedded,
+                # Fixtures record the legacy scanner form (explicit
+                # unsupported-chunk warnings) so the acceptance of archived
+                # censuses stays under test; the current scanner records no
+                # warnings for decoded secondary streams, which
+                # test_current_scanner_secondary_rows_without_warnings_validate
+                # pins separately.
                 "warnings": [
                     {**warning, "offset": index + 1}
                     for index, warning in enumerate(
-                        _expected_secondary_warnings(
-                            path, path in spec.secondary_skin_sources
-                        )
+                        _LEGACY_SECONDARY_WARNINGS
+                        if path in spec.secondary_skin_sources
+                        else []
                     )
                 ],
             }
@@ -662,6 +668,56 @@ class RetailNeutralLifecycleProfileTests(unittest.TestCase):
             source_path.write_bytes(source_path.read_bytes() + b"tamper")
             with self.assertRaisesRegex(ValueError, "byte length mismatch"):
                 build_retail_neutral_lifecycle_plan(census, simulation, effective_root)
+
+    def test_current_scanner_secondary_rows_without_warnings_validate(self) -> None:
+        # The current metadata scanner decodes secondary skin streams instead
+        # of warning about them, so a census recorded by it carries empty
+        # warning lists for secondary-skin sources.  Both recorded forms must
+        # validate; any other warning content must stay a hard failure.
+        with tempfile.TemporaryDirectory() as raw:
+            census, simulation, effective_root = _make_fixture(Path(raw))
+            secondary_paths = {
+                path
+                for spec in _STRUCTURES
+                for path in spec.secondary_skin_sources
+            }
+            self.assertTrue(secondary_paths)
+
+            modern = copy.deepcopy(census)
+            cleared = 0
+            for target in modern["targets"]:
+                for row in target["w3dClosure"]["files"]:
+                    if row["file"]["virtualPath"] in secondary_paths:
+                        self.assertTrue(row["warnings"])
+                        row["warnings"] = []
+                        cleared += 1
+            self.assertGreater(cleared, 0)
+            _seal_census(modern)
+            plan = build_retail_neutral_lifecycle_plan(
+                modern, simulation, effective_root
+            )
+            self.assertEqual(plan["schema"], NEUTRAL_LIFECYCLE_PLAN_SCHEMA)
+
+            unexpected = copy.deepcopy(modern)
+            for target in unexpected["targets"]:
+                for row in target["w3dClosure"]["files"]:
+                    if row["file"]["virtualPath"] in secondary_paths:
+                        row["warnings"] = [
+                            {
+                                "chunkId": 88,
+                                "chunkIdHex": "0x00000058",
+                                "code": "unsupported-chunk",
+                                "message": (
+                                    "metadata scanner does not interpret deform"
+                                ),
+                                "offset": 1,
+                            }
+                        ]
+            _seal_census(unexpected)
+            with self.assertRaisesRegex(ValueError, "unexpected W3D scanner"):
+                build_retail_neutral_lifecycle_plan(
+                    unexpected, simulation, effective_root
+                )
 
     def test_helpers_write_verified_plan_and_reject_resealed_plan_tamper(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

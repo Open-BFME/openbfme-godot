@@ -96,6 +96,32 @@ def _mesh(
     return _chunk(0x1F, header) + _chunk(0x02, b"\0" * 36) + _chunk(0x20, b"\0" * 32)
 
 
+def _secondary_skin_model(name: str, hierarchy: str = "") -> bytes:
+    """A model whose single mesh carries valid dual-bone skin streams.
+
+    The metadata scanner decodes ``vertices-2``/``normals-2`` fail-closed, so
+    planner fixtures must supply the retail shape: streams inside a mesh
+    container whose header vertex count matches the stream record count
+    (``_mesh`` declares 3 vertices; each stream carries exactly 3 records).
+    """
+
+    header = struct.pack(
+        "<II16s16s",
+        0x00040001,
+        1,
+        _fixed(name, 16),
+        _fixed(hierarchy, 16),
+    )
+    stream = struct.pack("<9f", *[0.25] * 9)
+    return _chunk(0x700, _chunk(0x701, header), children=True) + _chunk(
+        0x00000000,
+        _mesh(name)
+        + _chunk(0x00000C00, stream)
+        + _chunk(0x00000C01, stream),
+        children=True,
+    )
+
+
 def _model_reference(identifier: str, *, role: str, bone_index: int = 0) -> bytes:
     parent = {
         "lod": 0x00000702,
@@ -214,11 +240,7 @@ class W3DJobPlannerTests(unittest.TestCase):
         self,
     ) -> None:
         values = {
-            "models/skin.w3d": (
-                _model("Skin", "Rig")
-                + _chunk(0x00000C00, b"v" * 36)
-                + _chunk(0x00000C01, b"n" * 36)
-            ),
+            "models/skin.w3d": _secondary_skin_model("Skin", "Rig"),
             "models/Rig.w3d": _hierarchy("Rig"),
         }
         report = scan_w3d_catalog(values)
@@ -240,13 +262,7 @@ class W3DJobPlannerTests(unittest.TestCase):
         self.assertEqual(len(parsed), 1)
 
     def test_secondary_skin_preparation_without_a_hierarchy_is_terminal(self) -> None:
-        values = {
-            "models/skin.w3d": (
-                _model("Skin")
-                + _chunk(0x00000C00, b"v" * 36)
-                + _chunk(0x00000C01, b"n" * 36)
-            )
-        }
+        values = {"models/skin.w3d": _secondary_skin_model("Skin")}
         report = scan_w3d_catalog(values)
         plan = plan_w3d_batches(report, _mapping(values), index=report.index)
 
@@ -1416,13 +1432,17 @@ class W3DJobPlannerTests(unittest.TestCase):
         )
 
         self.assertEqual(default, explicit)
+        # Golden values re-pinned when the metadata neutral form gained the
+        # (empty here) secondaryGeometryStreams family; the invariant under
+        # test is unchanged: omitting the forced-terminal arguments must be
+        # byte-identical to passing their explicit defaults.
         self.assertEqual(
             default.private_plan_sha256,
-            "c1d51aee0132063f0cf64b57294acde837cef6b6aa20620d3655459e8bacf885",
+            "cf8f1aa8d0195eac055a0ff512a0196ccf51ae814037282f2bb5984aa77467c2",
         )
         self.assertEqual(
             default.evidence_sha256,
-            "3326ea7b6b1d784dcf1c44fdcd56421fdf8e6c120bbf7f7bf2be43d8ba047f1b",
+            "c0c84560f25354ff261b6414378e0e619d05bcac21d9430d9719733b76c0de20",
         )
         neutral_bytes = (
             json.dumps(
@@ -1435,7 +1455,7 @@ class W3DJobPlannerTests(unittest.TestCase):
         ).encode("utf-8")
         self.assertEqual(
             hashlib.sha256(neutral_bytes).hexdigest(),
-            "757c575b47483d1a0dcc1c21cd329e68121dffd5d72229e044b17aecd3e19dbd",
+            "7a26cd6be217a8e45ff53bfde69d25d32ee7c9e84ebff316ff25f44aa43a8318",
         )
         self.assertNotIn(
             "forcedTerminalEvidenceSha256",

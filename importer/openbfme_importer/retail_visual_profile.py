@@ -776,6 +776,19 @@ def build_retail_static_prop_plan(
                             "model-w3d-scanner-warnings", warningCount=len(warnings)
                         )
                     )
+                # Dual-bone skin streams no longer surface as scanner warnings
+                # (the scanner decodes them); this lane still has no secondary-
+                # skin normalization step, so their presence stays a rejection.
+                secondary_streams = int(
+                    scanned.get("secondaryGeometryStreamCount", 0) or 0
+                )
+                if secondary_streams:
+                    reasons.append(
+                        _reason(
+                            "model-w3d-secondary-geometry-streams",
+                            streamCount=secondary_streams,
+                        )
+                    )
                 header = scanned["headerIds"]
                 if not header.get("modelIds"):
                     reasons.append(_reason("model-w3d-has-no-model-header"))

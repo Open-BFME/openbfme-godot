@@ -73,7 +73,7 @@ _MAX_PROFILE_RESOURCES = 256
 _MAX_VERIFIED_SOURCE_BYTES = 512 * 1024 * 1024
 _MAX_GLOBAL_W3D_CORPUS_BYTES = 2 * 1024 * 1024 * 1024
 _MAX_GLOBAL_W3D_CORPUS_FILES = 100_000
-_SECONDARY_SKIN_WARNING_CHUNK_IDS = frozenset({0x00000C00, 0x00000C01})
+_SECONDARY_SKIN_CHUNK_IDS = frozenset({0x00000C00, 0x00000C01})
 
 # These are not filename substitutions.  They are exact TransitionState rows
 # authored by BFME2 that name no physical action anywhere in the complete,
@@ -494,15 +494,18 @@ def _source_native_no_clip_rows(
     return rows, frozenset(position for position, _ in accepted)
 
 
-def _has_only_secondary_skin_scanner_warnings(metadata: W3DMetadata) -> bool:
-    return (
-        bool(metadata.warnings)
-        and {(warning.code, warning.chunk_id) for warning in metadata.warnings}
-        == {
-            ("unsupported-chunk", chunk_id)
-            for chunk_id in _SECONDARY_SKIN_WARNING_CHUNK_IDS
-        }
-        and len(metadata.warnings) == len(_SECONDARY_SKIN_WARNING_CHUNK_IDS)
+def _has_clean_secondary_skin_streams(metadata: W3DMetadata) -> bool:
+    """True when validated dual-bone streams are present and nothing warned.
+
+    The metadata scanner now decodes ``vertices-2``/``normals-2`` instead of
+    warning about them, so presence is read from the chunk records.  The
+    no-other-warnings requirement is unchanged from the historical contract:
+    the secondary-skin normalization proof is only attempted for sources whose
+    scan is otherwise clean.
+    """
+
+    return not metadata.warnings and any(
+        chunk.chunk_id in _SECONDARY_SKIN_CHUNK_IDS for chunk in metadata.chunks
     )
 
 
@@ -833,8 +836,8 @@ def build_retail_animated_prop_plan(
 
         model_path = next(iter(model_paths))
         model = _scan_closure_source(model_path, closure, reader)
-        secondary_skin_warning_mode = _has_only_secondary_skin_scanner_warnings(model)
-        if model.warnings and not secondary_skin_warning_mode:
+        secondary_skin_mode = _has_clean_secondary_skin_streams(model)
+        if model.warnings:
             reasons.append(
                 _reason("model-w3d-scanner-warnings", warningCount=len(model.warnings))
             )
@@ -1139,7 +1142,7 @@ def build_retail_animated_prop_plan(
                     ):
                         reasons.append(_reason("hierarchy-w3d-is-not-hierarchy-only"))
 
-        if secondary_skin_warning_mode and hierarchy_path and hierarchy_metadata:
+        if secondary_skin_mode and hierarchy_path and hierarchy_metadata:
             try:
                 secondary_skin_proof = strip_proven_redundant_secondary_skin_streams(
                     reader.read(model_path), reader.read(hierarchy_path)

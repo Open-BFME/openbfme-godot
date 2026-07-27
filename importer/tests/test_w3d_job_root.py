@@ -670,17 +670,20 @@ class W3DJobRootTests(unittest.TestCase):
     def test_strict_fixture_hashes_remain_byte_identical(self) -> None:
         with _fixture() as fixture:
             report = _build(fixture)
+            # Golden values re-pinned when the metadata neutral form gained
+            # the secondaryGeometryStreams family; the output tree hash is
+            # unchanged, proving conversion outputs did not move.
             self.assertEqual(
                 report.request_sha256,
-                "de323f6f29d36e74d4a21a1c3918f4c62ba815ffd3fcf75929cff78571012ac2",
+                "66f6ae1453df8ffbd5be83e1bdb25daeb11cd2391d5b3ece6f77926901ef3b07",
             )
             self.assertEqual(
                 report.identity_sha256,
-                "b355a63c2bd1a959a44436c7a599396f00dea3be7c734263ba3862762e7e5baa",
+                "f8de328a2e3fcceff444fe0da85cbbb577ff96c19f443a46cd062c2309a72613",
             )
             self.assertEqual(
                 report.manifest_sha256,
-                "726129d26173b040c093a17f7d71da618f216b6e90883d8918b23cc32d922954",
+                "c8c38e334211f3194900446fe09e2e3fa84df52cd0b25bb37982d5489f2fbec2",
             )
             self.assertEqual(
                 report.output_tree_sha256,

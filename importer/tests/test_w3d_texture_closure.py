@@ -409,13 +409,15 @@ class W3DTextureClosureTests(unittest.TestCase):
         )
         self.assertTrue(copy.source_output_path.endswith(".png"))
         self.assertEqual(plan.models[0].resolved_reference_count, 1)
+        # Golden values re-pinned when the metadata neutral form gained the
+        # secondaryGeometryStreams family (empty for this fixture).
         self.assertEqual(
             plan.private_plan_sha256,
-            "d610e37e3e99229bc794fb7cd19edd1343422fd343e677c38bd527491ef1d154",
+            "7f01ae68af2df429d80385cebcc37bc057b2abdf00fcf6dc7c8283843b435e47",
         )
         self.assertEqual(
             plan.evidence_sha256,
-            "842364a927eb711c2ddff7638ef26348583895215eec9feb91055ef5dddb9ce5",
+            "8ad68cf500d5e1f75b3c644736e8b40c3d43635aff62bcef07059554b8f2a7ee",
         )
         neutral = plan.neutral()
         self.assertEqual(neutral["schemaVersion"], 1)

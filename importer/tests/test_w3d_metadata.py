@@ -6,6 +6,7 @@ import struct
 import unittest
 from unittest import mock
 
+from openbfme_importer.w3d_geometry_streams import decode_vec3_stream
 from openbfme_importer.w3d_metadata import (
     W3DMetadataLimitError,
     scan_w3d_metadata,
@@ -426,6 +427,176 @@ class W3DMetadataTests(unittest.TestCase):
         empty = scan_w3d_metadata(b"", "empty.w3d")
         self.assertEqual([item.code for item in empty.warnings], ["empty-source"])
         self.assertFalse(empty.chunks)
+
+
+def _secondary_mesh(
+    *,
+    vertex_count: int = 3,
+    stream_records: int | None = None,
+    stream_tail: bytes = b"",
+    stream_values: tuple[float, ...] | None = None,
+    include_header: bool = True,
+    chunk_ids: tuple[int, ...] = (0x00000C00, 0x00000C01),
+) -> bytes:
+    header = struct.pack(
+        "<II16s16s9I10f",
+        0x00040002,
+        0x00020000,
+        _fixed("BODY", 16),
+        _fixed("DualSkin", 16),
+        1,
+        vertex_count,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0x13,
+        1,
+        *[float(value) for value in range(10)],
+    )
+    records = vertex_count if stream_records is None else stream_records
+    if stream_values is None:
+        # The first component's little-endian bytes are 7F C0 00 00: a finite
+        # denormal whose byte-swapped (big-endian) misread is NaN, so even a
+        # symmetric endianness defect in the decoder trips the finite gate.
+        endian_canary = struct.unpack("<f", b"\x7f\xc0\x00\x00")[0]
+        stream_values = (
+            endian_canary,
+            *(0.25 * (index + 1) for index in range(records * 3 - 1)),
+        )
+    stream = struct.pack(f"<{records * 3}f", *stream_values) + stream_tail
+    children = (_chunk(0x1F, header) if include_header else b"") + b"".join(
+        _chunk(chunk_id, stream) for chunk_id in chunk_ids
+    )
+    return _chunk(0x00000000, children, children=True)
+
+
+class W3DSecondaryGeometryTests(unittest.TestCase):
+    def test_valid_streams_are_decoded_validated_and_round_tripped(self) -> None:
+        source = _secondary_mesh()
+        metadata = scan_w3d_metadata(source, "dualskin.w3d")
+
+        self.assertEqual([item.code for item in metadata.warnings], [])
+        streams = metadata.secondary_geometry_streams
+        self.assertEqual([item.kind for item in streams], ["vertices-2", "normals-2"])
+        for stream in streams:
+            self.assertEqual(stream.mesh_identifier, "DualSkin.BODY")
+            self.assertEqual(stream.record_count, 3)
+        chunks = {
+            chunk.chunk_id: chunk
+            for chunk in metadata.chunks
+            if chunk.chunk_id in (0x00000C00, 0x00000C01)
+        }
+        for chunk in chunks.values():
+            self.assertEqual(chunk.classification, "known-data")
+
+        # Cross-module agreement: the metadata-level decode must bind exactly
+        # the payload bytes that the geometry-stream decoder attests.
+        payload = source[
+            chunks[0x00000C00].payload_offset : chunks[0x00000C00].payload_offset
+            + chunks[0x00000C00].available_payload_size
+        ]
+        attestation = decode_vec3_stream(
+            0x00000C00, payload, expected_vertex_count=3
+        )
+        self.assertEqual(attestation.record_count, streams[0].record_count)
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(), streams[0].payload_sha256
+        )
+        # Byte round-trip of the attested records reproduces the payload.
+        repacked = b"".join(
+            struct.pack("<3f", *record) for record in attestation.numeric_records()
+        )
+        self.assertEqual(repacked, payload)
+
+    def test_streams_outside_a_mesh_fail_closed(self) -> None:
+        source = _chunk(0x00000C00, struct.pack("<9f", *[0.5] * 9))
+        metadata = scan_w3d_metadata(source, "orphan.w3d")
+
+        self.assertFalse(metadata.secondary_geometry_streams)
+        self.assertEqual(
+            [item.code for item in metadata.warnings],
+            ["invalid-secondary-geometry"],
+        )
+        self.assertIn("not inside a mesh container", metadata.warnings[0].message)
+        self.assertEqual(metadata.warnings[0].chunk_id, 0x00000C00)
+
+    def test_streams_before_their_mesh_header_fail_closed(self) -> None:
+        metadata = scan_w3d_metadata(
+            _secondary_mesh(include_header=False, chunk_ids=(0x00000C00,)),
+            "headerless.w3d",
+        )
+
+        self.assertFalse(metadata.secondary_geometry_streams)
+        codes = [item.code for item in metadata.warnings]
+        self.assertIn("invalid-secondary-geometry", codes)
+        self.assertTrue(
+            any("precedes its mesh header" in item.message for item in metadata.warnings)
+        )
+
+    def test_partial_records_fail_closed(self) -> None:
+        metadata = scan_w3d_metadata(
+            _secondary_mesh(stream_tail=b"\0\0", chunk_ids=(0x00000C00,)),
+            "ragged.w3d",
+        )
+
+        self.assertFalse(metadata.secondary_geometry_streams)
+        self.assertTrue(
+            any(
+                "whole number" in item.message
+                and item.code == "invalid-secondary-geometry"
+                for item in metadata.warnings
+            )
+        )
+
+    def test_count_disagreement_with_mesh_header_fails_closed(self) -> None:
+        metadata = scan_w3d_metadata(
+            _secondary_mesh(stream_records=2, chunk_ids=(0x00000C00,)),
+            "shortcount.w3d",
+        )
+
+        self.assertFalse(metadata.secondary_geometry_streams)
+        self.assertTrue(
+            any(
+                "carries 2 records" in item.message
+                and "declares 3 vertices" in item.message
+                for item in metadata.warnings
+            )
+        )
+
+    def test_non_finite_records_fail_closed(self) -> None:
+        metadata = scan_w3d_metadata(
+            _secondary_mesh(
+                stream_values=(0.0, 1.0, float("nan"), 0.0, 1.0, 2.0, 3.0, 4.0, 5.0),
+                chunk_ids=(0x00000C00,),
+            ),
+            "nonfinite.w3d",
+        )
+
+        self.assertFalse(metadata.secondary_geometry_streams)
+        self.assertTrue(
+            any(
+                "not a finite float32" in item.message
+                and item.code == "invalid-secondary-geometry"
+                for item in metadata.warnings
+            )
+        )
+
+    def test_truncated_streams_refuse_partial_decode(self) -> None:
+        stream = struct.pack("<9f", *[0.5] * 9)
+        source = _chunk(
+            0x00000000,
+            _chunk(0x1F, _mesh_header("BODY", "DualSkin"))
+            + _chunk(0x00000C00, stream, declared_size=len(stream) + 12),
+            children=True,
+        )
+        metadata = scan_w3d_metadata(source, "truncated.w3d")
+
+        self.assertFalse(metadata.secondary_geometry_streams)
+        codes = [item.code for item in metadata.warnings]
+        self.assertIn("truncated-chunk-payload", codes)
+        self.assertIn("invalid-secondary-geometry", codes)
 
 
 if __name__ == "__main__":

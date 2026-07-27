@@ -1570,23 +1570,33 @@ def _embedded_texture_paths(row: Mapping[str, Any], label: str) -> set[str]:
     return result
 
 
-def _expected_secondary_warnings(path: str, required: bool) -> list[dict[str, Any]]:
+# Censuses recorded before the metadata scanner decoded the dual-bone skin
+# streams carry exactly these two warnings for each secondary-skin source.
+# Censuses recorded by the current scanner carry no warnings for them: the
+# streams are decoded, validated, and reported as records instead.  Both
+# recorded forms are accepted; anything else stays a hard failure.  The
+# conversion-time secondary-skin strip proof, not this census pin, remains
+# the enforcement point for stream semantics.
+_LEGACY_SECONDARY_WARNINGS: list[dict[str, Any]] = [
+    {
+        "chunkId": 3072,
+        "chunkIdHex": "0x00000C00",
+        "code": "unsupported-chunk",
+        "message": "metadata scanner does not interpret vertices-2",
+    },
+    {
+        "chunkId": 3073,
+        "chunkIdHex": "0x00000C01",
+        "code": "unsupported-chunk",
+        "message": "metadata scanner does not interpret normals-2",
+    },
+]
+
+
+def _acceptable_warning_forms(required: bool) -> list[list[dict[str, Any]]]:
     if not required:
-        return []
-    return [
-        {
-            "chunkId": 3072,
-            "chunkIdHex": "0x00000C00",
-            "code": "unsupported-chunk",
-            "message": "metadata scanner does not interpret vertices-2",
-        },
-        {
-            "chunkId": 3073,
-            "chunkIdHex": "0x00000C01",
-            "code": "unsupported-chunk",
-            "message": "metadata scanner does not interpret normals-2",
-        },
-    ]
+        return [[]]
+    return [[], _LEGACY_SECONDARY_WARNINGS]
 
 
 def _validate_w3d_closure(
@@ -1615,7 +1625,7 @@ def _validate_w3d_closure(
 
         warnings = _array(row.get("warnings"), f"{spec.type_name} {path} warnings")
         required_secondary = path in spec.secondary_skin_sources
-        expected_warnings = _expected_secondary_warnings(path, required_secondary)
+        acceptable_forms = _acceptable_warning_forms(required_secondary)
         normalized_warnings: list[dict[str, Any]] = []
         for warning in warnings:
             value = _mapping(warning, f"{spec.type_name} {path} warning")
@@ -1627,7 +1637,7 @@ def _validate_w3d_closure(
                     "message": value.get("message"),
                 }
             )
-        if normalized_warnings != expected_warnings:
+        if normalized_warnings not in acceptable_forms:
             raise ValueError(
                 f"{spec.type_name} {path} has unexpected W3D scanner warnings"
             )

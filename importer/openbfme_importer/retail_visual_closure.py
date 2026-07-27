@@ -1204,6 +1204,7 @@ def build_retail_visual_closure(
             "modelReferences": [
                 reference.neutral() for reference in item.model_references
             ],
+            "secondaryGeometryStreamCount": len(item.secondary_geometry_streams),
             "warnings": [warning.neutral() for warning in item.warnings],
         }
         for item in scanned

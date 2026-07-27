@@ -73,8 +73,11 @@ def model_w3d(
     model_id: str = "CRITTER_SKN",
     secondary_skin: bool = False,
 ) -> bytes:
+    # The mesh header declares 8 vertices, so valid dual-bone streams must
+    # carry exactly 8 float32-triple records: the scanner decodes them
+    # fail-closed instead of warning about them.
     secondary_streams = (
-        _chunk(0x0C00, b"\0" * 12) + _chunk(0x0C01, b"\0" * 12)
+        _chunk(0x0C00, b"\0" * 96) + _chunk(0x0C01, b"\0" * 96)
         if secondary_skin
         else b""
     )
@@ -895,7 +898,7 @@ class RetailAnimatedPropProfileTests(unittest.TestCase):
         self.assertEqual(model["options"]["model"], "critter_skn.w3d")
         self.assertEqual(model["options"]["animations"], ["critter_skn.w3d"])
 
-    def test_exact_secondary_skin_warnings_require_and_record_semantic_proof(
+    def test_secondary_skin_streams_require_and_record_semantic_proof(
         self,
     ) -> None:
         neutral_proof = {

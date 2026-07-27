@@ -995,7 +995,14 @@ def _prepare_states(
             for chunk in metadata.chunks
             if chunk.classification == "unsupported"
         }
-        if unsupported_ids & _SECONDARY_SKIN_CHUNK_IDS:
+        # Secondary skin streams are detected by chunk presence, not by
+        # scanner classification: the metadata scanner decodes and validates
+        # them (they are ``known-data``), while conversion still requires the
+        # secondary-skin normalization proof before the streams are removed.
+        if any(
+            chunk.chunk_id in _SECONDARY_SKIN_CHUNK_IDS
+            for chunk in metadata.chunks
+        ):
             state.preparations.add(SECONDARY_SKIN_PREPARATION)
         if unsupported_ids - _SECONDARY_SKIN_CHUNK_IDS:
             state.reasons.add("unsupported-source")
