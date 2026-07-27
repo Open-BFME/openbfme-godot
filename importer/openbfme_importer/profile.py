@@ -41,6 +41,7 @@ ALLOWED_CONVERTERS = {
     "sage-map",
     "sage-apt-runtime",
     "retail-unit-rules",
+    "living-world",
     "sage-particle-definition",
     "sage-scripts",
     "sage-terrain-materials",

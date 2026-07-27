@@ -15,6 +15,7 @@
       "redistributable": false
     },
     "files": {
+      "livingWorld": "data/living-world.json",
       "objects": "data/objects.json",
       "unitRules": "data/retail_unit_rules.json",
       "animationCapabilities": "data/animation_capabilities.json",
@@ -909,6 +910,24 @@
         "data/ini/weapon.ini"
       ],
       "limit": 11
+    },
+    {
+      "id": "living-world-strategic-data",
+      "kind": "data",
+      "converter": "living-world",
+      "output": "data/living-world.json",
+      "options": {
+        "game": "bfme2"
+      },
+      "patterns": [
+        "data/ini/campaigns/riskcampaign.ini",
+        "data/ini/campaigns/common/*.inc",
+        "data/ini/campaigns/scenarios/*.inc",
+        "data/ini/livingworldregions.ini",
+        "data/ini/livingworldregioneffects.ini",
+        "data/ini/livingworldplayers.ini"
+      ],
+      "limit": 256
     },
     {
       "id": "gondor-fighter-rig-and-core-clips",

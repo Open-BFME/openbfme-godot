@@ -686,6 +686,20 @@ def _wildcard_entries(pattern: str, expected_count: int) -> list[str]:
             f"data/audio/sounds/gusoldg_voiatb{letter}.wav" for letter in "abc"
         ],
     }
+    known_documents = {
+        # The living-world strategic rule pulls the WOTR #include closure; a
+        # representative member per wildcard keeps the fixture catalog honest.
+        "data/ini/campaigns/common/*.inc": [
+            "data/ini/campaigns/common/livingworldregions.inc",
+            "data/ini/campaigns/common/livingworldcities.inc",
+            "data/ini/campaigns/common/livingworlddefaultrtssettings.inc",
+        ],
+        "data/ini/campaigns/scenarios/*.inc": [
+            "data/ini/campaigns/scenarios/wotrscenario001.inc",
+        ],
+    }
+    if pattern in known_documents:
+        return known_documents[pattern]
     if pattern in known_audio:
         return known_audio[pattern]
     if pattern.endswith("*.*"):

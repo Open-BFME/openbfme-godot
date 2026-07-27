@@ -252,6 +252,24 @@ def build_parser() -> argparse.ArgumentParser:
     _add_game_argument(strategic_census_cmd)
     strategic_census_cmd.add_argument("--reindex", action="store_true")
 
+    living_world_cmd = sub.add_parser(
+        "living-world",
+        help=(
+            "produce the openbfme.living-world strategic document (region "
+            "graph, armies, scenarios) the WOTR layer consumes, fail-closed"
+        ),
+    )
+    living_world_cmd.add_argument("--install", required=True)
+    _add_game_argument(living_world_cmd)
+    living_world_cmd.add_argument("--reindex", action="store_true")
+    living_world_cmd.add_argument(
+        "--output",
+        help=(
+            "explicit output path for the document; must stay outside the "
+            "repository (default: workspace reports/<game>-living-world.json)"
+        ),
+    )
+
     convert_videos_cmd = sub.add_parser(
         "convert-videos",
         help="convert loose data/movies VP6/Bink cinematics to Ogg Theora via pinned ffmpeg",
@@ -1038,6 +1056,50 @@ def main(argv: list[str] | None = None) -> int:
                     "report": str(report_path),
                     "faction_count": len(rows),
                     "factions": rows,
+                },
+                args.json,
+            )
+            return 0
+
+        if args.command == "living-world":
+            from .livingworld import profile_living_world, require_shippable
+
+            if args.output:
+                # The document is retail-derived payload: it may never land
+                # inside the repository, only in a pack or a private workspace.
+                document_path = ensure_external_to_repo(
+                    Path(args.output).expanduser().resolve(),
+                    repo_root_from_module(),
+                )
+            else:
+                document_path = (
+                    _workspace_root(args)
+                    / "reports"
+                    / f"{args.game}-living-world.json"
+                )
+            document = require_shippable(profile_living_world(catalog, args.game))
+            write_json_atomic(document_path, document)
+            campaigns = [
+                {
+                    "name": campaign["name"],
+                    "regions": len(campaign["regions"]),
+                    "connections": sum(
+                        len(region["connections"])
+                        for region in campaign["regions"]
+                    ),
+                }
+                for campaign in document["regionCampaigns"]
+            ]
+            _render(
+                {
+                    "ready": True,
+                    "game": args.game,
+                    "document": str(document_path),
+                    "region_count": document["regionCount"],
+                    "connection_count": document["connectionCount"],
+                    "scenario_count": document["scenarioCount"],
+                    "campaigns": campaigns,
+                    "gap_count": len(document["gaps"]),
                 },
                 args.json,
             )

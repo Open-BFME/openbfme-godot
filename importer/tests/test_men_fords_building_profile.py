@@ -404,7 +404,8 @@ class MenFordsBuildingProfileTests(unittest.TestCase):
     def test_import_profile_loads_and_lifecycle_contract_is_exact(self) -> None:
         profile = ImportProfile.load(PROFILE_PATH)
         self.assertEqual(profile.id, "men-fords-v0")
-        self.assertEqual(len(profile.resources), 83)
+        # 83 asset/data rules plus the living-world strategic document.
+        self.assertEqual(len(profile.resources), 84)
 
         payload = load_payload()
         objects = {

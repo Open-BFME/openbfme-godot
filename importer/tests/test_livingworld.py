@@ -7,6 +7,9 @@ and skip when they are unavailable, exactly like the other census tests.
 
 from __future__ import annotations
 
+from pathlib import Path
+import json
+import tempfile
 import unittest
 
 from openbfme_importer.catalog import CatalogEntry, InstallCatalog
@@ -14,6 +17,7 @@ from openbfme_importer.livingworld import (
     _CAMPAIGN_OPENERS,
     _EFFECT_OPENERS,
     ENTRY_POINTS,
+    LIVING_WORLD_PACK_PATH,
     SCHEMA,
     SCHEMA_VERSION,
     _as_milli,
@@ -22,7 +26,9 @@ from openbfme_importer.livingworld import (
     expand_document,
     flatten_document,
     profile_living_world,
+    profile_living_world_from_files,
     read_tree,
+    require_shippable,
 )
 from openbfme_importer.paths import repo_root_from_module
 
@@ -371,8 +377,8 @@ End
 """
 
 
-def _campaign_catalog(**overrides: bytes) -> _FakeCatalog:
-    """Build a complete synthetic Living World install for the profile."""
+def _campaign_files(**overrides: bytes) -> dict[str, bytes]:
+    """Build a complete synthetic Living World install as virtual-path bytes."""
 
     files: dict[str, bytes] = {
         "data/ini/campaigns/riskcampaign.ini": (
@@ -426,7 +432,13 @@ def _campaign_catalog(**overrides: bytes) -> _FakeCatalog:
         ),
     }
     files.update({path.casefold(): source for path, source in overrides.items()})
-    return _FakeCatalog(files)
+    return files
+
+
+def _campaign_catalog(**overrides: bytes) -> _FakeCatalog:
+    """Build a complete synthetic Living World install for the profile."""
+
+    return _FakeCatalog(_campaign_files(**overrides))
 
 
 class ProfileTests(unittest.TestCase):
@@ -619,6 +631,246 @@ class ProfileTests(unittest.TestCase):
     def test_unsupported_game_fails_closed(self) -> None:
         with self.assertRaises(ValueError):
             profile_living_world(_campaign_catalog(), "bfme1")
+
+
+def _materialise(files: dict[str, bytes], root: Path) -> dict[str, tuple[str, Path]]:
+    """Write fixture bytes to disk as the pack pipeline's extraction would."""
+
+    sources: dict[str, tuple[str, Path]] = {}
+    for index, (virtual_path, source) in enumerate(sorted(files.items())):
+        path = root / f"extracted-{index:03d}.bin"
+        path.write_bytes(source)
+        sources[virtual_path] = ("test.big", path)
+    return sources
+
+
+class PackLaneTests(unittest.TestCase):
+    """Profiling from extracted files: the lane the pack pipeline uses."""
+
+    def test_file_lane_matches_the_catalog_lane_byte_for_byte(self) -> None:
+        files = _campaign_files()
+        with tempfile.TemporaryDirectory() as raw:
+            from_files = profile_living_world_from_files(
+                _materialise(files, Path(raw)), "bfme2"
+            )
+        from_catalog = profile_living_world(_FakeCatalog(files), "bfme2")
+        self.assertEqual(from_files, from_catalog)
+
+    def test_missing_include_fails_closed_naming_the_document(self) -> None:
+        files = _campaign_files()
+        del files["data/ini/campaigns/common/regions.inc"]
+        with tempfile.TemporaryDirectory() as raw:
+            sources = _materialise(files, Path(raw))
+            with self.assertRaises(ValueError) as caught:
+                profile_living_world_from_files(sources, "bfme2")
+        self.assertIn("data/ini/campaigns/common/regions.inc", str(caught.exception))
+
+    def test_a_source_that_is_not_a_readable_file_fails_at_construction(self) -> None:
+        files = _campaign_files()
+        with tempfile.TemporaryDirectory() as raw:
+            sources = _materialise(files, Path(raw))
+            sources["data/ini/campaigns/riskcampaign.ini"] = (
+                "test.big",
+                Path(raw) / "never-extracted.bin",
+            )
+            with self.assertRaises(ValueError) as caught:
+                profile_living_world_from_files(sources, "bfme2")
+        self.assertIn("data/ini/campaigns/riskcampaign.ini", str(caught.exception))
+
+    def test_two_spellings_of_one_virtual_path_fail_closed(self) -> None:
+        files = _campaign_files()
+        with tempfile.TemporaryDirectory() as raw:
+            sources = _materialise(files, Path(raw))
+            first = next(iter(sources))
+            sources[first.upper()] = sources[first]
+            with self.assertRaises(ValueError) as caught:
+                profile_living_world_from_files(sources, "bfme2")
+        self.assertIn("mapped twice", str(caught.exception))
+
+
+class ShippableGateTests(unittest.TestCase):
+    """`require_shippable`: the refusal that guards what a pack may carry."""
+
+    def test_the_retail_shaped_fixture_is_shippable(self) -> None:
+        report = profile_living_world(_campaign_catalog(), "bfme2")
+        self.assertEqual(require_shippable(report), report)
+
+    def test_an_edgeless_surface_is_refused(self) -> None:
+        edgeless = (
+            b"LivingWorldRegionCampaign TestCampaign\n"
+            b"\tRegion North\n"
+            b"\t\tDisplayName = LW:DisplayNameNorth\n"
+            b"\tEnd\n"
+            b"\tRegion South\n"
+            b"\t\tDisplayName = LW:DisplayNameSouth\n"
+            b"\tEnd\n"
+            b"End\n"
+        )
+        report = profile_living_world(
+            _campaign_catalog(**{"data/ini/campaigns/common/regions.inc": edgeless}),
+            "bfme2",
+        )
+        with self.assertRaises(ValueError) as caught:
+            require_shippable(report)
+        self.assertIn("no army could ever move", str(caught.exception))
+
+    def test_a_missing_entry_point_is_refused_by_name(self) -> None:
+        files = _campaign_files()
+        del files["data/ini/livingworldplayers.ini"]
+        report = profile_living_world(_FakeCatalog(files), "bfme2")
+        with self.assertRaises(ValueError) as caught:
+            require_shippable(report)
+        self.assertIn("data/ini/livingworldplayers.ini", str(caught.exception))
+
+
+class _StubResource:
+    def __init__(self, count_error: str | None = None) -> None:
+        self.count_error = count_error
+
+
+class PipelineConverterTests(unittest.TestCase):
+    """The `living-world` pack converter: options, output path, document."""
+
+    @staticmethod
+    def _pipeline():
+        from openbfme_importer.pipeline import ImportPipeline
+
+        # The bundle converter deliberately touches no pipeline state, exactly
+        # like `retail-unit-rules`; instantiate without the heavyweight roots.
+        return ImportPipeline.__new__(ImportPipeline)
+
+    @staticmethod
+    def _extracted(files: dict[str, bytes], root: Path) -> dict:
+        extracted: dict = {}
+        for index, (virtual_path, source) in enumerate(sorted(files.items())):
+            path = root / f"cache-{index:03d}.bin"
+            path.write_bytes(source)
+            entry = CatalogEntry(
+                archive="test.big",
+                name=virtual_path,
+                offset=0,
+                size=len(source),
+                precedence=0,
+            )
+            extracted[("test.big", virtual_path.casefold())] = {
+                "catalog": entry,
+                "source_path": path,
+            }
+        return extracted
+
+    def test_converter_cooks_the_document_into_the_pack(self) -> None:
+        files = _campaign_files()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            pack_root = root / "pack"
+            pack_root.mkdir()
+            outputs = self._pipeline()._convert_living_world_bundle(
+                _StubResource(),
+                self._extracted(files, root),
+                LIVING_WORLD_PACK_PATH,
+                {"game": "bfme2"},
+                pack_root,
+            )
+            self.assertEqual(
+                outputs, [pack_root / "data" / "living-world.json"]
+            )
+            written = json.loads(outputs[0].read_text(encoding="utf-8"))
+        self.assertEqual(written, profile_living_world(_FakeCatalog(files), "bfme2"))
+
+    def test_converter_refuses_a_foreign_output_path(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaises(ValueError) as caught:
+                self._pipeline()._convert_living_world_bundle(
+                    _StubResource(),
+                    {},
+                    "data/elsewhere.json",
+                    {"game": "bfme2"},
+                    Path(raw),
+                )
+        self.assertIn(LIVING_WORLD_PACK_PATH, str(caught.exception))
+
+    def test_converter_requires_exactly_the_game_option(self) -> None:
+        # The refusal must be the OPTION contract's own diagnostic - a stray
+        # option must not survive to fail later for an unrelated reason.
+        with tempfile.TemporaryDirectory() as raw:
+            for options in ({}, {"game": "bfme2", "extra": 1}, {"game": 5}):
+                with self.assertRaisesRegex(
+                    ValueError, "exactly one option", msg=repr(options)
+                ):
+                    self._pipeline()._convert_living_world_bundle(
+                        _StubResource(),
+                        {},
+                        LIVING_WORLD_PACK_PATH,
+                        options,
+                        Path(raw),
+                    )
+
+    def test_converter_propagates_a_count_error(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaises(ValueError) as caught:
+                self._pipeline()._convert_living_world_bundle(
+                    _StubResource(count_error="expected 55 matches, found 3"),
+                    {},
+                    LIVING_WORLD_PACK_PATH,
+                    {"game": "bfme2"},
+                    Path(raw),
+                )
+        self.assertIn("expected 55 matches", str(caught.exception))
+
+    def test_converter_refuses_an_edgeless_extraction(self) -> None:
+        files = _campaign_files(
+            **{
+                "data/ini/campaigns/common/regions.inc": (
+                    b"LivingWorldRegionCampaign TestCampaign\n"
+                    b"\tRegion North\n"
+                    b"\tEnd\n"
+                    b"End\n"
+                )
+            }
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with self.assertRaises(ValueError) as caught:
+                self._pipeline()._convert_living_world_bundle(
+                    _StubResource(),
+                    self._extracted(files, root),
+                    LIVING_WORLD_PACK_PATH,
+                    {"game": "bfme2"},
+                    root / "pack",
+                )
+            self.assertFalse((root / "pack" / "data" / "living-world.json").exists())
+        self.assertIn("no army could ever move", str(caught.exception))
+
+
+class PackProfileContractTests(unittest.TestCase):
+    """The committed base profile must ship the strategic document."""
+
+    def test_the_base_profile_declares_the_living_world_rule(self) -> None:
+        from openbfme_importer.profile import ImportProfile
+
+        profile = ImportProfile.load(
+            repo_root_from_module() / "importer" / "profiles" / "men-fords-v0.json"
+        )
+        rule = next(
+            resource
+            for resource in profile.resources
+            if resource.converter == "living-world"
+        )
+        self.assertEqual(rule.id, "living-world-strategic-data")
+        self.assertEqual(rule.output, LIVING_WORLD_PACK_PATH)
+        self.assertEqual(rule.options, {"game": "bfme2"})
+        # The whole #include closure must be extractable: the campaign entry
+        # point, the shared common documents, every scenario, and the three
+        # loose entry points.
+        self.assertIn("data/ini/campaigns/riskcampaign.ini", rule.patterns)
+        self.assertIn("data/ini/campaigns/common/*.inc", rule.patterns)
+        self.assertIn("data/ini/campaigns/scenarios/*.inc", rule.patterns)
+        self.assertIn("data/ini/livingworldregions.ini", rule.patterns)
+        self.assertIn("data/ini/livingworldregioneffects.ini", rule.patterns)
+        self.assertIn("data/ini/livingworldplayers.ini", rule.patterns)
+        self.assertEqual(
+            profile.pack_metadata["files"]["livingWorld"], LIVING_WORLD_PACK_PATH
+        )
 
 
 class _RealCatalogTestsBase(unittest.TestCase):

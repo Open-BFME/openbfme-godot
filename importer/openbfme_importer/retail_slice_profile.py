@@ -52,8 +52,9 @@ ROAD_MATERIALS_RELATIVE_PATH = "road-materials.json"
 MAP_RESOURCE_ID = "fords-map-binary"
 PARTIAL_RESOURCE_ID = "gondor-fighter-definitions"
 
-EXPECTED_BASE_RESOURCE_COUNT = 83
-EXPECTED_ROAD_RESOURCE_COUNT = 88
+# 83 asset/data rules plus the living-world strategic document rule.
+EXPECTED_BASE_RESOURCE_COUNT = 84
+EXPECTED_ROAD_RESOURCE_COUNT = 89
 EXPECTED_FACTION_RESOURCE_COUNT = 85
 EXPECTED_STATIC_RESOURCE_COUNT = 53
 EXPECTED_STATIC_BINDING_COUNT = 38
@@ -67,7 +68,7 @@ EXPECTED_ANIMATED_REUSE_COUNT = 1
 EXPECTED_ANIMATED_ADDED_RESOURCE_COUNT = 21
 EXPECTED_PRE_ANIMATED_BINDING_COUNT = 44
 EXPECTED_FINAL_BINDING_COUNT = 54
-EXPECTED_FINAL_RESOURCE_COUNT = 240
+EXPECTED_FINAL_RESOURCE_COUNT = 241
 EXPECTED_SOURCE_VARIANTS = {
     "men-fortress-damaged-model": "men-fortress-intact-model",
 }
@@ -301,6 +302,7 @@ EXPECTED_UI_SOURCE_PATHS: dict[str, str] = {
 
 _BUNDLE_CONVERTERS = {
     "retail-unit-rules",
+    "living-world",
     "w3d-bundle",
     "w3d-hierarchical",
     "w3d-static",

@@ -107,6 +107,94 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(template_args.faction, "FactionAngmar")
 
+    def test_living_world_writes_the_document_and_summarises_it(self) -> None:
+        document = {
+            "format": 1,
+            "schema": "openbfme.living-world",
+            "schemaVersion": 1,
+            "game": "bfme2",
+            "regionCampaigns": [
+                {
+                    "name": "DefaultCampaign",
+                    "regions": [
+                        {"id": "North", "connections": [{"region": "South"}]},
+                        {"id": "South", "connections": [{"region": "North"}]},
+                    ],
+                }
+            ],
+            "regionCount": 2,
+            "connectionCount": 2,
+            "scenarioCount": 1,
+            "gaps": [],
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            with (
+                mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
+                mock.patch(
+                    "openbfme_importer.livingworld.profile_living_world",
+                    return_value=document,
+                ),
+            ):
+                result = cli.main(
+                    ["--state-root", raw, "living-world", "--install", "C:/BFME2"]
+                )
+            written = json.loads(
+                (Path(raw) / "reports" / "bfme2-living-world.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(written, document)
+
+    def test_living_world_refuses_an_edgeless_surface(self) -> None:
+        document = {
+            "schema": "openbfme.living-world",
+            "game": "bfme2",
+            "regionCampaigns": [
+                {"name": "GoodCampaign", "regions": [{"id": "North", "connections": []}]}
+            ],
+            "gaps": [],
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            with (
+                mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
+                mock.patch(
+                    "openbfme_importer.livingworld.profile_living_world",
+                    return_value=document,
+                ),
+            ):
+                result = cli.main(
+                    ["--state-root", raw, "living-world", "--install", "C:/BFME2"]
+                )
+            self.assertEqual(result, 1)
+            self.assertFalse((Path(raw) / "reports" / "bfme2-living-world.json").exists())
+
+    def test_living_world_output_may_never_land_inside_the_repository(self) -> None:
+        repo_root = Path(cli.repo_root_from_module())
+        with tempfile.TemporaryDirectory() as raw:
+            with (
+                mock.patch.object(cli, "_load_or_build_catalog", return_value=object()),
+                mock.patch(
+                    "openbfme_importer.livingworld.profile_living_world",
+                    return_value={"regionCampaigns": [], "gaps": []},
+                ),
+            ):
+                result = cli.main(
+                    [
+                        "--state-root",
+                        raw,
+                        "living-world",
+                        "--install",
+                        "C:/BFME2",
+                        "--output",
+                        str(repo_root / "game" / "data" / "living-world.json"),
+                    ]
+                )
+            self.assertEqual(result, 1)
+            self.assertFalse(
+                (repo_root / "game" / "data" / "living-world.json").exists()
+            )
+
     def test_census_factions_writes_discovered_rows(self) -> None:
         factions = (
             PlayableFaction("PlayableAlpha", "Alpha", 3),

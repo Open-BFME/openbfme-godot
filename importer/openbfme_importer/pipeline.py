@@ -78,7 +78,10 @@ IMPORTER_REQUIREMENTS_NAMES = (
     "requirements-win.txt",
 )
 
-MEN_FORDS_SOURCE_ENTRY_COUNT = 264
+# 264 asset/data sources, plus the 56 documents the living-world strategic
+# rule resolves from the BFME2 1.06 catalog (the riskcampaign #include closure
+# and its entry points; provenance carries one row per resolved entry).
+MEN_FORDS_SOURCE_ENTRY_COUNT = 264 + 56
 MAX_RENDERED_OUTPUT_PATH = 512
 W3D_ADAPTER_REPORT_CONTRACT = "openbfme.w3d-adapter-report"
 W3D_PRESENTATION_METADATA_CONTRACT = "openbfme.w3d-presentation-capabilities"
@@ -130,6 +133,7 @@ RESOURCE_BUNDLE_CONVERTERS = {
     "sage-terrain-materials",
     "sage-apt-runtime",
     "retail-unit-rules",
+    "living-world",
     "texture-atlas-crops",
 }
 EFFECTIVE_ASSET_MANIFEST_SCHEMA = "openbfme.effective-assets-manifest"
@@ -3247,6 +3251,23 @@ class ImportPipeline:
                     if resource.rule.required and not allow_incomplete:
                         raise
                     bundle_outputs = []
+            elif resource.rule.converter == "living-world" and resource.entries:
+                try:
+                    bundle_outputs = self._convert_living_world_bundle(
+                        resource,
+                        extracted,
+                        resource.rule.output,
+                        resource.rule.options,
+                        staging,
+                    )
+                except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                    bundle_error = str(exc)
+                    incomplete.append(
+                        {"resource": resource.rule.id, "reason": bundle_error}
+                    )
+                    if resource.rule.required and not allow_incomplete:
+                        raise
+                    bundle_outputs = []
 
             for index, entry in enumerate(resource.entries):
                 cache = extracted[(entry.archive.casefold(), entry.name.casefold())]
@@ -4229,6 +4250,57 @@ class ImportPipeline:
             sources[virtual_path] = Path(cached["source_path"])
         target = _safe_output(pack_root, OUTPUT_PATH)
         write_json_atomic(target, extract_retail_unit_rules(sources))
+        return [target]
+
+    def _convert_living_world_bundle(
+        self,
+        resource: ResolvedResource,
+        extracted: Mapping[tuple[str, str], Mapping[str, Any]],
+        output: str | None,
+        options: dict[str, Any],
+        pack_root: Path,
+    ) -> list[Path]:
+        """Cook the War-of-the-Ring strategic document into the pack.
+
+        The whole deterministic extraction set is offered to the profiler by
+        virtual path (mirroring ``retail-unit-rules``): the profiler reads
+        exactly the ``#include`` closure it needs, fails closed on a missing
+        include, and :func:`require_shippable` refuses to ship a document
+        whose entry points did not resolve or whose region graph has no edges.
+        """
+
+        from .livingworld import (
+            LIVING_WORLD_PACK_PATH,
+            profile_living_world_from_files,
+            require_shippable,
+        )
+
+        if output != LIVING_WORLD_PACK_PATH:
+            raise ValueError(
+                f"living-world output must be {LIVING_WORLD_PACK_PATH!r}"
+            )
+        game = options.get("game")
+        if set(options) != {"game"} or not isinstance(game, str):
+            raise ValueError(
+                "living-world requires exactly one option: game=<retail game id>"
+            )
+        if resource.count_error is not None:
+            raise ValueError(resource.count_error)
+        sources: dict[str, tuple[str, Path]] = {}
+        seen_paths: set[str] = set()
+        for cached in extracted.values():
+            entry = cached["catalog"]
+            virtual_path = str(entry.name).replace("\\", "/")
+            folded = virtual_path.casefold()
+            if folded in seen_paths:
+                continue
+            seen_paths.add(folded)
+            sources[virtual_path] = (str(entry.archive), Path(cached["source_path"]))
+        document = require_shippable(
+            profile_living_world_from_files(sources, game)
+        )
+        target = _safe_output(pack_root, LIVING_WORLD_PACK_PATH)
+        write_json_atomic(target, document)
         return [target]
 
     def _convert_terrain_material_bundle(

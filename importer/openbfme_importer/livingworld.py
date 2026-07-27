@@ -38,10 +38,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable, Iterable
+from pathlib import Path
+from typing import Any, Callable, Iterable, Mapping
 import json
 
-from .catalog import InstallCatalog
+from .catalog import CatalogEntry, InstallCatalog
 from .faction_census import _read_document
 from .game import retail_game
 from .sage_ini import (
@@ -54,6 +55,12 @@ from .sage_ini import (
 
 SCHEMA = "openbfme.living-world"
 SCHEMA_VERSION = 1
+
+# Where a content pack ships the strategic document.  The Godot strategic
+# layer (`game/src/wotr/wotr_world.gd`) consumes this schema unchanged, so the
+# path is a contract shared with every pack profile that declares the
+# ``living-world`` converter.
+LIVING_WORLD_PACK_PATH = "data/living-world.json"
 
 # Entry points.  ``riskcampaign.ini`` is the document the engine actually reads
 # for War of the Ring: it defines ``LivingWorldRegionCampaign DefaultCampaign``
@@ -1551,6 +1558,128 @@ def profile_living_world(catalog: InstallCatalog, game: str) -> dict[str, Any]:
         "playerTemplates": player_templates,
         "gaps": _sorted_gaps(gaps),
     }
+
+
+# ---------------------------------------------------------------------------
+# pack lane
+# ---------------------------------------------------------------------------
+
+
+class _FileCatalog:
+    """Duck-typed ``InstallCatalog`` over already-extracted source documents.
+
+    The pack pipeline hands the ``living-world`` converter deterministic
+    extracted files rather than a live retail install; this adapter lets the
+    exact same fail-closed profiling lane read them.  Construction validates
+    every mapped path up front and raises naming the virtual path, so a broken
+    extraction can never masquerade as an absent mod surface.  A virtual path
+    that was never mapped resolves to nothing, which keeps the profiler's own
+    distinction intact: a missing entry point is a recorded gap, a missing
+    ``#include`` inside an existing document is a hard error.
+    """
+
+    def __init__(self, sources: Mapping[str, tuple[str, Path]]) -> None:
+        self._by_key: dict[str, tuple[CatalogEntry, Path]] = {}
+        for virtual_path, (archive, raw_path) in sorted(sources.items()):
+            folded = virtual_path.replace("\\", "/").casefold()
+            if folded in self._by_key:
+                raise ValueError(
+                    f"living world source mapped twice: {virtual_path}"
+                )
+            path = Path(raw_path)
+            if not path.is_file():
+                raise ValueError(
+                    f"living world source is not a readable file: "
+                    f"{virtual_path} -> {path}"
+                )
+            entry = CatalogEntry(
+                archive=str(archive),
+                name=virtual_path.replace("\\", "/"),
+                offset=0,
+                size=path.stat().st_size,
+                precedence=0,
+            )
+            self._by_key[folded] = (entry, path)
+
+    def resolve_exact(self, virtual_path: str) -> CatalogEntry | None:
+        found = self._by_key.get(virtual_path.replace("\\", "/").casefold())
+        return found[0] if found else None
+
+    def open_archive_for(self, entry: CatalogEntry) -> "_FileCatalog":
+        return self
+
+    def as_entry(self, entry: CatalogEntry) -> CatalogEntry:
+        return entry
+
+    def read_entry(self, entry: CatalogEntry, max_bytes: int | None = None) -> bytes:
+        found = self._by_key.get(entry.name.casefold())
+        if found is None:
+            raise ValueError(f"living world source vanished: {entry.name}")
+        source = found[1].read_bytes()
+        if max_bytes is not None and len(source) > max_bytes:
+            raise ValueError(
+                f"living world source exceeds byte limit: {entry.name}"
+            )
+        return source
+
+
+def profile_living_world_from_files(
+    sources: Mapping[str, tuple[str, Path]], game: str
+) -> dict[str, Any]:
+    """Profile the strategic surface from extracted files (the pack lane).
+
+    ``sources`` maps virtual paths to ``(archive_label, extracted_path)``.
+    The document produced is byte-for-byte the one :func:`profile_living_world`
+    produces from a retail install whose catalog carries the same bytes under
+    the same archive labels.
+    """
+
+    return profile_living_world(_FileCatalog(sources), game)
+
+
+def require_shippable(document: Mapping[str, Any]) -> dict[str, Any]:
+    """Fail closed unless the profiled surface can honestly ship in a pack.
+
+    Two gates, both structural rather than statistical:
+
+    * every entry point must have resolved — a mod install may legitimately
+      omit a surface, but a pack that *declares* the living-world converter is
+      promising the strategic layer real data, so an absent surface there is a
+      broken pack, not a choice; and
+    * at least one region campaign must carry connections — retail ships
+      legacy Risk-style campaigns whose regions have no edges at all, and a
+      strategic map without edges would load cleanly and then never let an
+      army move.
+
+    Raises ``ValueError`` naming exactly what is missing; returns the document
+    unchanged when it passes.
+    """
+
+    unresolved = sorted(
+        {
+            str(gap.get("detail", ""))
+            for gap in document.get("gaps", [])
+            if gap.get("reason") == "unresolved-file"
+        }
+    )
+    if unresolved:
+        raise ValueError(
+            "living-world document is not shippable: unresolved entry point(s) "
+            + ", ".join(unresolved)
+        )
+    connected = max(
+        (
+            sum(len(region["connections"]) for region in campaign["regions"])
+            for campaign in document.get("regionCampaigns", [])
+        ),
+        default=0,
+    )
+    if connected <= 0:
+        raise ValueError(
+            "living-world document is not shippable: no region campaign carries "
+            "any connection, so no army could ever move on the strategic map"
+        )
+    return dict(document)
 
 
 def _read_player_templates(source: bytes, gaps: list[Gap]) -> list[dict[str, Any]]:
