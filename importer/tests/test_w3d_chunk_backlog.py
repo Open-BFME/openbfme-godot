@@ -169,6 +169,12 @@ class W3DChunkBacklogTests(unittest.TestCase):
             rejected.index_rejection_causes,
             ("surrounding-whitespace-identifier",),
         )
+        # The padding trim is the exact single-file repair, so the row is
+        # trim-pending; corpus-wide admission is decided during aggregation.
+        self.assertEqual(
+            rejected.trimmed_identifiers,
+            (("model", "Padded ", "Padded"),),
+        )
         rows.append(rejected)
         states = {
             row.source_sha256: {
@@ -192,11 +198,22 @@ class W3DChunkBacklogTests(unittest.TestCase):
         )
 
         anomalies = census["anomalies"]
+        # The whitespace-padded id has a provably unique trimmed form, so the
+        # file is admitted with the trim recorded instead of staying rejected.
         self.assertEqual(
             anomalies["indexRejected"],
             {
+                "fileCount": 0,
+                "causeCounts": {},
+                "factionReachableFileCount": 0,
+            },
+        )
+        self.assertEqual(
+            anomalies["trimAdmitted"],
+            {
                 "fileCount": 1,
-                "causeCounts": {"surrounding-whitespace-identifier": 1},
+                "identifierCount": 1,
+                "kindCounts": {"model": 1},
                 "factionReachableFileCount": 0,
             },
         )
@@ -210,6 +227,84 @@ class W3DChunkBacklogTests(unittest.TestCase):
             deform["decodeLayer"],
             {"decodedStreamCount": 0, "terminalCount": 3},
         )
+
+    def test_trim_collisions_keep_the_fail_closed_rejection(self) -> None:
+        def _hlod(identifier: str, path: str):
+            return collect_w3d_backlog_file_evidence(
+                _chunk(
+                    0x00000700,
+                    _chunk(
+                        0x00000701,
+                        struct.pack(
+                            "<II16s16s",
+                            0x00010000,
+                            1,
+                            _fixed(identifier, 16),
+                            _fixed("Rig", 16),
+                        ),
+                    ),
+                    children=True,
+                ),
+                path,
+            )
+
+        # A trimmed id colliding with a plainly authored id in another file
+        # keeps the fail-closed rejection for the padded file only.
+        padded = _hlod("Padded ", "art/w3d/gu/padded.w3d")
+        plain = _hlod("Padded", "art/w3d/gu/plain.w3d")
+        census = build_w3d_chunk_backlog(
+            [padded, plain],
+            faction_closures=_CLOSURES,
+            corpus_identity=_identity(),
+        )
+        anomalies = census["anomalies"]
+        self.assertEqual(anomalies["trimAdmitted"]["fileCount"], 0)
+        self.assertEqual(
+            anomalies["indexRejected"],
+            {
+                "fileCount": 1,
+                "causeCounts": {
+                    "surrounding-whitespace-identifier": 1,
+                    "trimmed-identifier-collision": 1,
+                },
+                "factionReachableFileCount": 0,
+            },
+        )
+
+        # Two different files trimming to one logical id are both rejected.
+        tabbed = _hlod("Padded\t", "art/w3d/gu/tabbed.w3d")
+        census = build_w3d_chunk_backlog(
+            [padded, tabbed],
+            faction_closures=_CLOSURES,
+            corpus_identity=_identity(),
+        )
+        anomalies = census["anomalies"]
+        self.assertEqual(anomalies["trimAdmitted"]["fileCount"], 0)
+        self.assertEqual(anomalies["indexRejected"]["fileCount"], 2)
+        self.assertEqual(
+            anomalies["indexRejected"]["causeCounts"][
+                "trimmed-identifier-collision"
+            ],
+            2,
+        )
+
+        # The counter-case: with no collision the same padded file is
+        # admitted, proving the rejection above is the collision's doing.
+        census = build_w3d_chunk_backlog(
+            [padded],
+            faction_closures=_CLOSURES,
+            corpus_identity=_identity(),
+        )
+        self.assertEqual(
+            census["anomalies"]["trimAdmitted"],
+            {
+                "fileCount": 1,
+                "identifierCount": 1,
+                "kindCounts": {"model": 1},
+                "factionReachableFileCount": 0,
+            },
+        )
+        self.assertEqual(census["anomalies"]["indexRejected"]["fileCount"], 0)
 
     def test_duplicate_logical_ids_split_identical_and_distinct_bytes(self) -> None:
         first = collect_w3d_backlog_file_evidence(

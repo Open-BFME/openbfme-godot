@@ -19,7 +19,7 @@ import struct
 from typing import Iterable
 
 from .paths import safe_relative_parts
-from .w3d_index import W3DFileHeaders
+from .w3d_index import W3DFileHeaders, W3DIdentifierTrim, trim_w3d_identifier
 
 
 MAX_W3D_METADATA_BYTES = 512 * 1024 * 1024
@@ -778,6 +778,70 @@ class W3DMetadata:
             model_ids=self.model_ids,
             animation_ids=tuple(animation_ids),
             hierarchy_ids=self.hierarchy_ids,
+        )
+
+    def trimmed_file_headers(
+        self,
+    ) -> tuple[W3DFileHeaders, tuple[W3DIdentifierTrim, ...]]:
+        """Return header IDs with retail fixed-width padding trimmed.
+
+        Retail exporters sometimes pad the fixed-width W3D name fields with
+        trailing spaces or tabs (``'..._WATCH_TOWER_01 '``, ``'...ROCK_01\\t'``).
+        This mirrors :meth:`file_headers` exactly, but every authored
+        component is trimmed with :func:`trim_w3d_identifier` BEFORE composite
+        ``hierarchy.animation`` spellings are derived, so padding on either
+        component never survives into the interior of a composite id.  Every
+        identifier whose admitted form differs from the authored form is
+        returned as a :class:`W3DIdentifierTrim` provenance record.
+
+        Trimming here proves nothing about uniqueness; admission of a trimmed
+        identifier additionally requires the corpus-wide proof implemented by
+        :func:`openbfme_importer.w3d_index.reject_ambiguous_w3d_trims`.  An
+        identifier with a whitespace-only component raises ``ValueError`` and
+        stays fail-closed.
+        """
+
+        trims: list[W3DIdentifierTrim] = []
+
+        def _admit(kind: str, authored: str) -> str:
+            admitted = trim_w3d_identifier(authored)
+            if admitted != authored:
+                trims.append(W3DIdentifierTrim(kind, authored, admitted))
+            return admitted
+
+        model_ids = tuple(
+            _admit("model", value) for value in self.model_ids
+        )
+        hierarchy_ids = tuple(
+            _admit("hierarchy", value) for value in self.hierarchy_ids
+        )
+        animation_ids: list[str] = []
+        for header in self.animation_headers:
+            identifier = _admit("animation", header.identifier)
+            animation_ids.append(identifier)
+            authored_hierarchy = header.hierarchy_identifier
+            if not authored_hierarchy:
+                continue
+            hierarchy = trim_w3d_identifier(authored_hierarchy)
+            if not identifier.casefold().startswith(hierarchy.casefold() + "."):
+                composite = f"{hierarchy}.{identifier}"
+                authored_composite = f"{authored_hierarchy}.{header.identifier}"
+                if composite != authored_composite:
+                    trims.append(
+                        W3DIdentifierTrim(
+                            "animation", authored_composite, composite
+                        )
+                    )
+                animation_ids.append(composite)
+
+        return (
+            W3DFileHeaders(
+                virtual_path=self.virtual_path,
+                model_ids=model_ids,
+                animation_ids=tuple(animation_ids),
+                hierarchy_ids=hierarchy_ids,
+            ),
+            tuple(trims),
         )
 
     def neutral(self) -> dict[str, object]:

@@ -352,6 +352,98 @@ class W3DCatalogTests(unittest.TestCase):
         self.assertEqual(partial.total_input_bytes, 2)
         self.assertEqual(len(partial.sources), 2)
 
+    def test_padded_ids_admit_with_trim_when_provably_unique(self) -> None:
+        report = scan_w3d_catalog(
+            {
+                "art/w3d/aa/padded.w3d": _mesh_source("TOWER", "BODY "),
+                "art/w3d/aa/clean.w3d": _mesh_source("KEEP"),
+            }
+        )
+        self.assertEqual(report.failures, ())
+        self.assertEqual(report.indexed_file_count, 2)
+        self.assertTrue(report.complete)
+        # The trimmed logical id resolves to the padded physical file.
+        resolved = report.index.resolve_exact("model", "TOWER.BODY")
+        self.assertEqual(
+            resolved.physical_virtual_path, "art/w3d/aa/padded.w3d"
+        )
+        self.assertEqual(resolved.header_id, "TOWER.BODY")
+        # The trim is recorded against the file's source provenance.
+        self.assertEqual(len(report.identifier_trims), 1)
+        entry = report.identifier_trims[0]
+        self.assertEqual(
+            entry.source.canonical_virtual_path, "art/w3d/aa/padded.w3d"
+        )
+        self.assertEqual(
+            [item.neutral() for item in entry.trims],
+            [
+                {
+                    "kind": "model",
+                    "authoredIdentifier": "TOWER.BODY ",
+                    "admittedIdentifier": "TOWER.BODY",
+                }
+            ],
+        )
+        self.assertEqual(
+            report.neutral()["identifierTrims"],
+            [entry.neutral()],
+        )
+        # Strict mode accepts an admitted trim; it is not damage.
+        scan_w3d_catalog(
+            {
+                "art/w3d/aa/padded.w3d": _mesh_source("TOWER", "BODY "),
+                "art/w3d/aa/clean.w3d": _mesh_source("KEEP"),
+            },
+            strict=True,
+        )
+
+    def test_trim_collisions_keep_the_fail_closed_rejection(self) -> None:
+        # Colliding with a plainly authored identifier in another file.
+        report = scan_w3d_catalog(
+            {
+                "art/w3d/aa/padded.w3d": _mesh_source("TOWER", "BODY "),
+                "art/w3d/aa/plain.w3d": _mesh_source("TOWER"),
+            }
+        )
+        self.assertEqual(
+            [(item.code, item.source.canonical_virtual_path) for item in report.failures],
+            [("index-rejected-trim-ambiguous", "art/w3d/aa/padded.w3d")],
+        )
+        self.assertEqual(report.identifier_trims, ())
+        self.assertEqual(report.index.virtual_paths, ("art/w3d/aa/plain.w3d",))
+        self.assertNotIn("identifierTrims", report.neutral())
+
+        # Two files trimming to the same logical id are both rejected.
+        report = scan_w3d_catalog(
+            {
+                "art/w3d/aa/padded.w3d": _mesh_source("TOWER", "BODY "),
+                "art/w3d/aa/tabbed.w3d": _mesh_source("TOWER", "BODY\t"),
+            }
+        )
+        self.assertEqual(
+            sorted(
+                (item.code, item.source.canonical_virtual_path)
+                for item in report.failures
+            ),
+            [
+                ("index-rejected-trim-ambiguous", "art/w3d/aa/padded.w3d"),
+                ("index-rejected-trim-ambiguous", "art/w3d/aa/tabbed.w3d"),
+            ],
+        )
+        self.assertEqual(report.identifier_trims, ())
+        self.assertIsNone(report.index)
+
+    def test_reports_without_trims_keep_the_pre_trim_canonical_form(
+        self,
+    ) -> None:
+        # The metadata hash basis must not gain a key for catalogs with no
+        # admitted trim; that invariant keeps every established golden hash
+        # byte-identical.
+        report = scan_w3d_catalog({"art/w3d/aa/clean.w3d": _mesh_source("KEEP")})
+        self.assertEqual(report.identifier_trims, ())
+        self.assertNotIn("identifierTrims", report.neutral())
+        self.assertNotIn("identifierTrims", report.metadata_hash_basis())
+
 
 if __name__ == "__main__":
     unittest.main()

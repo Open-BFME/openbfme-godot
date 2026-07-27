@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from types import MappingProxyType
-from typing import Iterable, Mapping, Sequence
+from typing import AbstractSet, Iterable, Mapping, Sequence
 
 from .paths import safe_relative_parts
 
@@ -237,6 +237,79 @@ def _safe_w3d_path(value: str, label: str) -> str:
     if not normalized.casefold().endswith(".w3d"):
         raise ValueError(f"{label} must end in .w3d: {value!r}")
     return normalized
+
+
+def trim_w3d_identifier(value: str) -> str:
+    """Trim retail fixed-width padding from one authored identifier.
+
+    W3D header name fields are fixed-width strings and retail exporters
+    sometimes pad a name with trailing spaces or tabs.  Composite
+    ``container.subobject`` ids are trimmed per dot-separated component
+    because either authored component may carry the padding, which after
+    joining sits in the interior of the composite string.  Trimming is the
+    only normalization performed; a component that trims to nothing is not
+    an identifier at all and fails closed here.
+    """
+
+    if not isinstance(value, str):
+        raise TypeError("W3D identifier must be a string")
+    parts = [part.strip() for part in value.split(".")]
+    if any(not part for part in parts):
+        raise ValueError(
+            f"W3D identifier has a whitespace-only component after trim: {value!r}"
+        )
+    return ".".join(parts)
+
+
+@dataclass(frozen=True, slots=True)
+class W3DIdentifierTrim:
+    """Provenance for one identifier admitted with padding trimmed.
+
+    ``authored_identifier`` is the exact string retail authored in the file
+    header; ``admitted_identifier`` is the trimmed form the index resolves.
+    Retaining both means an admitted identifier is never silently different
+    from what retail authored.
+    """
+
+    kind: str
+    authored_identifier: str
+    admitted_identifier: str
+
+    def neutral(self) -> dict[str, object]:
+        return {
+            "kind": self.kind,
+            "authoredIdentifier": self.authored_identifier,
+            "admittedIdentifier": self.admitted_identifier,
+        }
+
+
+def reject_ambiguous_w3d_trims(
+    occupied: Mapping[tuple[str, str], AbstractSet[str]],
+    changed: Mapping[str, AbstractSet[tuple[str, str]]],
+) -> frozenset[str]:
+    """Return the trim-pending files whose trimmed ids are NOT provably unique.
+
+    ``occupied`` maps ``(kind, casefolded identifier)`` to every file key that
+    authors that identifier in the post-trim index universe (raw-accepted
+    files under their authored ids plus every trim-pending file under its
+    trimmed ids, whether or not that file is ultimately admitted - keeping
+    rejected files in the namespace makes the proof order-independent and
+    fail-closed).  ``changed`` maps each trim-pending file key to the set of
+    ``(kind, casefolded identifier)`` entries whose admitted form differs
+    from the authored form.  A pending file is rejected when any changed
+    identifier is also claimed by any other file, which covers a collision
+    with a plainly authored identifier and two files trimming to the same
+    logical id.
+    """
+
+    rejected: set[str] = set()
+    for file_key, changed_ids in changed.items():
+        for key in changed_ids:
+            claimants = occupied.get(key, frozenset())
+            if any(claimant != file_key for claimant in claimants):
+                rejected.add(file_key)
+                break
+    return frozenset(rejected)
 
 
 def _safe_identifier(value: str, label: str) -> str:

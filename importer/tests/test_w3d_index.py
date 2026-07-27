@@ -9,9 +9,11 @@ from openbfme_importer.w3d_index import (
     W3DReferenceRequest,
     W3DResolutionError,
     build_w3d_index,
+    reject_ambiguous_w3d_trims,
     resolve_w3d_reference,
     resolve_w3d_references,
     resolve_w3d_references_partial,
+    trim_w3d_identifier,
 )
 
 
@@ -301,6 +303,70 @@ class W3DIndexTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "request count"):
             resolve_w3d_references_partial(index, [])
+
+
+class W3DTrimAdmissionTests(unittest.TestCase):
+    def test_trim_w3d_identifier_trims_each_component_and_fails_closed(
+        self,
+    ) -> None:
+        self.assertEqual(trim_w3d_identifier("TOWER_01 "), "TOWER_01")
+        self.assertEqual(trim_w3d_identifier("\tROCK_01"), "ROCK_01")
+        # Padding on the first component of a composite sits in the interior
+        # of the joined string; each dot-separated component is trimmed.
+        self.assertEqual(trim_w3d_identifier("DBMINE_A .ROCK_24\t"), "DBMINE_A.ROCK_24")
+        # Interior whitespace inside one component is preserved, not repaired.
+        self.assertEqual(
+            trim_w3d_identifier("GB.ROTATE CONTROL "), "GB.ROTATE CONTROL"
+        )
+        # An identifier that is not padding damage stays fail-closed.
+        for value in ("", " ", "\t", "A. ", " .B", ". ."):
+            with self.assertRaises(ValueError):
+                trim_w3d_identifier(value)
+        with self.assertRaises(TypeError):
+            trim_w3d_identifier(None)  # type: ignore[arg-type]
+
+    def test_reject_ambiguous_w3d_trims_is_exact_and_order_independent(
+        self,
+    ) -> None:
+        occupied = {
+            ("model", "tower.body"): {"a.w3d", "b.w3d"},
+            ("model", "unique.body"): {"a.w3d"},
+            ("hierarchy", "rig"): {"c.w3d"},
+        }
+        # A trim whose target only the trimming file itself claims is unique.
+        self.assertEqual(
+            reject_ambiguous_w3d_trims(
+                occupied, {"a.w3d": {("model", "unique.body")}}
+            ),
+            frozenset(),
+        )
+        # A trim colliding with any other claimant fails closed.
+        self.assertEqual(
+            reject_ambiguous_w3d_trims(
+                occupied, {"a.w3d": {("model", "tower.body")}}
+            ),
+            frozenset({"a.w3d"}),
+        )
+        # Kind namespaces are separate: a model trim never collides with a
+        # hierarchy id of the same spelling.
+        self.assertEqual(
+            reject_ambiguous_w3d_trims(occupied, {"a.w3d": {("model", "rig")}}),
+            frozenset(),
+        )
+        # Two files trimming to one logical id are both rejected, and the
+        # result does not depend on mapping order.
+        both = {
+            "a.w3d": {("model", "tower.body")},
+            "b.w3d": {("model", "tower.body")},
+        }
+        self.assertEqual(
+            reject_ambiguous_w3d_trims(occupied, both),
+            frozenset({"a.w3d", "b.w3d"}),
+        )
+        self.assertEqual(
+            reject_ambiguous_w3d_trims(occupied, dict(reversed(both.items()))),
+            frozenset({"a.w3d", "b.w3d"}),
+        )
 
 
 if __name__ == "__main__":

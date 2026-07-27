@@ -1,7 +1,7 @@
 {
-	"$comment": "Ranked retail W3D chunk-decode backlog. Regenerate with `PYTHONPATH=importer python -m openbfme_importer.w3d_chunk_backlog <effective-assets-root> <reports-dir> <output-json>`; do not hand-edit. Ranking is by DISTINCT FILES BLOCKED at the metadata-scanner level, not raw occurrences. `decodeLayer` quotes the sealed decode-corpus evidence for the same chunk ID: a non-null row with terminalCount 0 means the stream decoder already decodes every occurrence and only census accounting lags. Aggregate counts and hashes only - no retail paths, authored identifiers, payload bytes, or geometry.",
+	"$comment": "Ranked retail W3D chunk-decode backlog. Regenerate with `PYTHONPATH=importer python -m openbfme_importer.w3d_chunk_backlog <effective-assets-root> <reports-dir> <output-json>`; do not hand-edit. Ranking is by DISTINCT FILES BLOCKED at the metadata-scanner level, not raw occurrences. `decodeLayer` quotes the sealed decode-corpus evidence for the same chunk ID: a non-null row with terminalCount 0 means the stream decoder already decodes every occurrence and only census accounting lags. anomalies.trimAdmitted counts files whose only index defect was retail fixed-width whitespace padding in an authored header identifier and whose trimmed ids are provably unique corpus-wide; a collision keeps the fail-closed rejection and is counted under anomalies.indexRejected instead. Aggregate counts and hashes only - no retail paths, authored identifiers, payload bytes, or geometry.",
 	"schema": "openbfme.retail-w3d-chunk-backlog",
-	"schemaVersion": 0,
+	"schemaVersion": 1,
 	"corpus": {
 		"game": "bfme2",
 		"manifestFileCount": 40129,
@@ -692,9 +692,16 @@
 	],
 	"anomalies": {
 		"indexRejected": {
+			"fileCount": 0,
+			"causeCounts": {},
+			"factionReachableFileCount": 0
+		},
+		"trimAdmitted": {
 			"fileCount": 34,
-			"causeCounts": {
-				"surrounding-whitespace-identifier": 34
+			"identifierCount": 36,
+			"kindCounts": {
+				"animation": 2,
+				"model": 34
 			},
 			"factionReachableFileCount": 2
 		},

@@ -30,12 +30,17 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
-from .w3d_index import _safe_identifier, build_w3d_index
+from .w3d_index import (
+    W3DFileHeaders,
+    _safe_identifier,
+    build_w3d_index,
+    reject_ambiguous_w3d_trims,
+)
 from .w3d_metadata import W3DMetadata, scan_w3d_metadata
 
 
 RETAIL_W3D_CHUNK_BACKLOG_SCHEMA = "openbfme.retail-w3d-chunk-backlog"
-RETAIL_W3D_CHUNK_BACKLOG_SCHEMA_VERSION = 0
+RETAIL_W3D_CHUNK_BACKLOG_SCHEMA_VERSION = 1
 
 _FLAGGED_CLASSIFICATIONS = frozenset({"unsupported", "unknown"})
 _METADATA_DAMAGE_CODES = frozenset(
@@ -77,6 +82,14 @@ class W3DBacklogFileEvidence:
     warning_codes: tuple[str, ...]
     index_rejection_causes: tuple[str, ...]
     logical_ids: tuple[tuple[str, str], ...]
+    # The (kind, casefolded id) namespace this file would occupy in the
+    # aggregate index: authored ids for raw-accepted files, trimmed ids for
+    # trim-pending files, empty for files that stay rejected outright.
+    header_ids: tuple[tuple[str, str], ...] = ()
+    # (kind, authored, admitted) for every identifier whose padding trim is
+    # the exact single-file repair; admission still requires the corpus-wide
+    # uniqueness proof performed during aggregation.
+    trimmed_identifiers: tuple[tuple[str, str, str], ...] = ()
 
 
 def _identifier_rejection_cause(identifier: str) -> str | None:
@@ -131,6 +144,8 @@ def backlog_file_evidence_from_metadata(
             names.setdefault(chunk.chunk_id, chunk.chunk_name)
 
     causes: list[str] = []
+    admitted_headers: W3DFileHeaders | None = None
+    trimmed_identifiers: tuple[tuple[str, str, str], ...] = ()
     try:
         build_w3d_index((metadata.virtual_path,), (metadata.file_headers(),))
     except ValueError:
@@ -147,6 +162,35 @@ def backlog_file_evidence_from_metadata(
                 causes.append(cause)
         if not causes:
             causes.append("index-rejected-other")
+        # Trim-and-prove-unique admission, single-file half: the trimmed
+        # headers must repair the rejection on their own.  The corpus-wide
+        # uniqueness proof happens in :func:`build_w3d_chunk_backlog`.
+        try:
+            trimmed_headers, trims = metadata.trimmed_file_headers()
+            if trims:
+                build_w3d_index((metadata.virtual_path,), (trimmed_headers,))
+                admitted_headers = trimmed_headers
+                trimmed_identifiers = tuple(
+                    (trim.kind, trim.authored_identifier, trim.admitted_identifier)
+                    for trim in trims
+                )
+        except (TypeError, ValueError):
+            admitted_headers = None
+            trimmed_identifiers = ()
+    else:
+        admitted_headers = metadata.file_headers()
+
+    header_ids: tuple[tuple[str, str], ...] = ()
+    if admitted_headers is not None:
+        header_ids = tuple(
+            (kind, value.casefold())
+            for kind, values in (
+                ("model", admitted_headers.model_ids),
+                ("animation", admitted_headers.animation_ids),
+                ("hierarchy", admitted_headers.hierarchy_ids),
+            )
+            for value in values
+        )
 
     logical_ids = [
         *(("model", value.casefold()) for value in metadata.model_ids),
@@ -166,6 +210,8 @@ def backlog_file_evidence_from_metadata(
         warning_codes=tuple(item.code for item in metadata.warnings),
         index_rejection_causes=tuple(causes),
         logical_ids=tuple(logical_ids),
+        header_ids=header_ids,
+        trimmed_identifiers=trimmed_identifiers,
     )
 
 
@@ -301,6 +347,8 @@ def build_w3d_chunk_backlog(
     metadata_damage_counts: Counter[str] = Counter()
     rejected_files: set[str] = set()
     rejection_causes: Counter[str] = Counter()
+    trim_pending: list[W3DBacklogFileEvidence] = []
+    occupied_header_ids: dict[tuple[str, str], set[str]] = defaultdict(set)
     logical_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
     status_files: dict[str, set[str]] = {flag: set() for flag in _STATUS_FLAGS}
     not_stream_complete: set[str] = set()
@@ -320,10 +368,14 @@ def build_w3d_chunk_backlog(
             if code in _METADATA_DAMAGE_CODES:
                 metadata_damaged_files.add(row.path_key)
                 metadata_damage_counts[code] += 1
-        if row.index_rejection_causes:
+        if row.index_rejection_causes and not row.trimmed_identifiers:
             rejected_files.add(row.path_key)
             for cause in row.index_rejection_causes:
                 rejection_causes[cause] += 1
+        if row.trimmed_identifiers:
+            trim_pending.append(row)
+        for key in row.header_ids:
+            occupied_header_ids[key].add(row.path_key)
         for kind, identifier in row.logical_ids:
             logical_groups[(kind, identifier)].append(row.source_sha256)
         if states:
@@ -336,6 +388,33 @@ def build_w3d_chunk_backlog(
                         status_files[flag].add(row.path_key)
                 if not status["streamComplete"]:
                     not_stream_complete.add(row.path_key)
+
+    # Trim-and-prove-unique admission, corpus-wide half.  A trim-pending file
+    # is admitted only when every trimmed identifier is claimed by no other
+    # file in the post-trim namespace; any collision keeps the established
+    # fail-closed index rejection.
+    changed = {
+        row.path_key: frozenset(
+            (kind, admitted.casefold())
+            for kind, _authored, admitted in row.trimmed_identifiers
+        )
+        for row in trim_pending
+    }
+    collided = reject_ambiguous_w3d_trims(occupied_header_ids, changed)
+    trim_admitted_files: set[str] = set()
+    trim_admitted_identifier_count = 0
+    trim_admitted_kind_counts: Counter[str] = Counter()
+    for row in trim_pending:
+        if row.path_key in collided:
+            rejected_files.add(row.path_key)
+            for cause in row.index_rejection_causes:
+                rejection_causes[cause] += 1
+            rejection_causes["trimmed-identifier-collision"] += 1
+        else:
+            trim_admitted_files.add(row.path_key)
+            trim_admitted_identifier_count += len(row.trimmed_identifiers)
+            for kind, _authored, _admitted in row.trimmed_identifiers:
+                trim_admitted_kind_counts[kind] += 1
 
     def reachable(paths: set[str]) -> int:
         return sum(1 for path in paths if path in any_closure)
@@ -390,6 +469,11 @@ def build_w3d_chunk_backlog(
             "sealed decode-corpus evidence for the same chunk ID: a non-null "
             "row with terminalCount 0 means the stream decoder already "
             "decodes every occurrence and only census accounting lags. "
+            "anomalies.trimAdmitted counts files whose only index defect "
+            "was retail fixed-width whitespace padding in an authored "
+            "header identifier and whose trimmed ids are provably unique "
+            "corpus-wide; a collision keeps the fail-closed rejection and "
+            "is counted under anomalies.indexRejected instead. "
             "Aggregate counts and hashes only - no retail paths, authored "
             "identifiers, payload bytes, or geometry."
         ),
@@ -412,6 +496,12 @@ def build_w3d_chunk_backlog(
                 "fileCount": len(rejected_files),
                 "causeCounts": dict(sorted(rejection_causes.items())),
                 "factionReachableFileCount": reachable(rejected_files),
+            },
+            "trimAdmitted": {
+                "fileCount": len(trim_admitted_files),
+                "identifierCount": trim_admitted_identifier_count,
+                "kindCounts": dict(sorted(trim_admitted_kind_counts.items())),
+                "factionReachableFileCount": reachable(trim_admitted_files),
             },
             "metadataDamaged": {
                 "fileCount": len(metadata_damaged_files),

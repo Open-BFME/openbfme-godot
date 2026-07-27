@@ -20,7 +20,13 @@ import json
 from typing import Iterable, Mapping
 
 from .paths import safe_relative_parts
-from .w3d_index import W3DFileHeaders, W3DIndex, build_w3d_index
+from .w3d_index import (
+    W3DFileHeaders,
+    W3DIdentifierTrim,
+    W3DIndex,
+    build_w3d_index,
+    reject_ambiguous_w3d_trims,
+)
 from .w3d_metadata import (
     MAX_W3D_METADATA_PATH_LENGTH,
     W3DMetadata,
@@ -163,6 +169,27 @@ class W3DLogicalIdDuplicate:
 
 
 @dataclass(frozen=True, slots=True)
+class W3DCatalogFileTrims:
+    """Every identifier one file was admitted with after padding trim.
+
+    The census measured 34 retail W3D files whose only index defect is
+    surrounding whitespace in an authored header identifier.  A file appears
+    here ONLY when the trimmed forms passed the corpus-wide uniqueness proof
+    (:func:`openbfme_importer.w3d_index.reject_ambiguous_w3d_trims`); any
+    collision keeps the established fail-closed index rejection instead.
+    """
+
+    source: W3DCatalogSource
+    trims: tuple[W3DIdentifierTrim, ...]
+
+    def neutral(self) -> dict[str, object]:
+        return {
+            "source": self.source.neutral(),
+            "trims": [item.neutral() for item in self.trims],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class W3DCatalogReport:
     """Immutable catalog evidence and the exact index built from clean files."""
 
@@ -180,6 +207,7 @@ class W3DCatalogReport:
     total_input_bytes: int
     input_sha256: str
     metadata_sha256: str
+    identifier_trims: tuple[W3DCatalogFileTrims, ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -209,7 +237,11 @@ class W3DCatalogReport:
         hashes = {"inputSha256": self.input_sha256}
         if include_metadata_hash:
             hashes["metadataSha256"] = self.metadata_sha256
-        return {
+        # ``identifierTrims`` appears only when a trim was actually admitted,
+        # so the canonical form (and therefore ``metadata_sha256``) of every
+        # catalog without whitespace-padded identifiers is byte-identical to
+        # the pre-trim-rule schema.
+        result = {
             "schema": "openbfme.w3d-catalog",
             "schemaVersion": 0,
             "bounds": {
@@ -240,6 +272,11 @@ class W3DCatalogReport:
                 item.neutral() for item in self.duplicate_logical_ids
             ],
         }
+        if self.identifier_trims:
+            result["identifierTrims"] = [
+                item.neutral() for item in self.identifier_trims
+            ]
+        return result
 
 
 class W3DCatalogStrictError(ValueError):
@@ -278,6 +315,14 @@ class _InputSource:
 class _ScannedSource:
     source: W3DCatalogSource
     metadata: W3DMetadata
+    admitted_file_headers: W3DFileHeaders | None = None
+
+    def admitted_headers(self) -> W3DFileHeaders:
+        """The header IDs this file joins the aggregate index under."""
+
+        if self.admitted_file_headers is not None:
+            return self.admitted_file_headers
+        return self.metadata.file_headers()
 
 
 _ASSET_FAMILY_FIELDS = (
@@ -698,6 +743,9 @@ def scan_w3d_catalog(
             )
 
     indexable: list[_ScannedSource] = []
+    trim_pending: list[
+        tuple[_ScannedSource, W3DFileHeaders, tuple[W3DIdentifierTrim, ...]]
+    ] = []
     for position, item in enumerate(scanned):
         if position in path_rejected:
             continue
@@ -708,6 +756,29 @@ def scan_w3d_catalog(
             # can identify the source that the aggregate index must exclude.
             build_w3d_index((item.metadata.virtual_path,), (headers,))
         except ValueError as exc:
+            # Retail padding admission: if trimming fixed-width whitespace is
+            # the exact repair (the trimmed headers pass the same single-file
+            # probe and at least one identifier actually changed), defer the
+            # file to the corpus-wide uniqueness proof below.  Every other
+            # defect keeps the established fail-closed rejection.
+            trimmed: tuple[W3DFileHeaders, tuple[W3DIdentifierTrim, ...]] | None
+            try:
+                trimmed = item.metadata.trimmed_file_headers()
+            except (TypeError, ValueError):
+                trimmed = None
+            if trimmed is not None and trimmed[1]:
+                trimmed_headers, trims = trimmed
+                try:
+                    build_w3d_index(
+                        (item.metadata.virtual_path,), (trimmed_headers,)
+                    )
+                except ValueError:
+                    trimmed = None
+                else:
+                    trim_pending.append((item, trimmed_headers, trims))
+                    continue
+            else:
+                trimmed = None
             failures.append(
                 W3DCatalogFailure(
                     source=item.source,
@@ -723,10 +794,69 @@ def scan_w3d_catalog(
             continue
         indexable.append(item)
 
+    admitted_trims: list[W3DCatalogFileTrims] = []
+    if trim_pending:
+        # Prove every trimmed identifier unique across the post-trim index
+        # universe: raw-accepted files under their authored ids plus every
+        # trim-pending file under its trimmed ids.  Files rejected by the
+        # proof stay in the namespace, keeping the proof order-independent.
+        occupied: dict[tuple[str, str], set[str]] = {}
+
+        def _occupy(path_key: str, headers: W3DFileHeaders) -> None:
+            for kind, values in (
+                ("model", headers.model_ids),
+                ("animation", headers.animation_ids),
+                ("hierarchy", headers.hierarchy_ids),
+            ):
+                for value in values:
+                    occupied.setdefault((kind, value.casefold()), set()).add(
+                        path_key
+                    )
+
+        for item in indexable:
+            _occupy(
+                item.metadata.virtual_path.casefold(),
+                item.metadata.file_headers(),
+            )
+        for item, trimmed_headers, _trims in trim_pending:
+            _occupy(item.metadata.virtual_path.casefold(), trimmed_headers)
+        changed = {
+            item.metadata.virtual_path.casefold(): frozenset(
+                (trim.kind, trim.admitted_identifier.casefold())
+                for trim in trims
+            )
+            for item, _trimmed_headers, trims in trim_pending
+        }
+        collided = reject_ambiguous_w3d_trims(occupied, changed)
+        for item, trimmed_headers, trims in trim_pending:
+            if item.metadata.virtual_path.casefold() in collided:
+                failures.append(
+                    W3DCatalogFailure(
+                        source=item.source,
+                        phase="index",
+                        code="index-rejected-trim-ambiguous",
+                        message=(
+                            "trimmed W3D header identifier collides with "
+                            "another authored identifier: "
+                            f"{item.metadata.virtual_path!r}"
+                        ),
+                    )
+                )
+                continue
+            admitted_trims.append(W3DCatalogFileTrims(item.source, trims))
+            indexable.append(
+                _ScannedSource(
+                    item.source,
+                    item.metadata,
+                    admitted_file_headers=trimmed_headers,
+                )
+            )
+        indexable.sort(key=lambda item: _metadata_sort_key(item.metadata))
+
     if indexable:
         index = build_w3d_index(
             (item.metadata.virtual_path for item in indexable),
-            (item.metadata.file_headers() for item in indexable),
+            (item.admitted_headers() for item in indexable),
         )
         file_headers = index.file_headers
     else:
@@ -767,6 +897,12 @@ def scan_w3d_catalog(
         total_input_bytes=total_input_bytes,
         input_sha256=input_sha256,
         metadata_sha256="",
+        identifier_trims=tuple(
+            sorted(
+                admitted_trims,
+                key=lambda item: _source_sort_key(item.source),
+            )
+        ),
     )
     report = replace(
         provisional,

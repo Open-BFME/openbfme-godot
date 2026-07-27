@@ -599,5 +599,110 @@ class W3DSecondaryGeometryTests(unittest.TestCase):
         self.assertIn("invalid-secondary-geometry", codes)
 
 
+class W3DTrimmedFileHeadersTests(unittest.TestCase):
+    @staticmethod
+    def _padded_fixture() -> bytes:
+        mesh = _chunk(
+            0x00000000,
+            _chunk(0x1F, _mesh_header("BODY ", "HERO")),
+            children=True,
+        )
+        hierarchy = _chunk(
+            0x100,
+            _chunk(
+                0x101,
+                struct.pack(
+                    "<I16sI3f",
+                    0x00040001,
+                    _fixed("HERO_SKL ", 16),
+                    1,
+                    0.0,
+                    0.0,
+                    0.0,
+                ),
+            ),
+            children=True,
+        )
+        animation = _chunk(
+            0x200,
+            _chunk(
+                0x201,
+                struct.pack(
+                    "<I16s16sII",
+                    0x00040001,
+                    _fixed("HERO_IDLE \t", 16),
+                    _fixed("HERO_SKL ", 16),
+                    30,
+                    15,
+                ),
+            ),
+            children=True,
+        )
+        return mesh + hierarchy + animation
+
+    def test_trimmed_file_headers_trim_padding_and_record_provenance(
+        self,
+    ) -> None:
+        metadata = scan_w3d_metadata(self._padded_fixture(), "art/aa/hero.w3d")
+
+        raw = metadata.file_headers()
+        # The authored forms keep retail's fixed-width padding, including the
+        # composite whose padding sits in the interior after joining.
+        self.assertEqual(raw.model_ids, ("HERO.BODY ",))
+        self.assertEqual(raw.hierarchy_ids, ("HERO_SKL ",))
+        self.assertEqual(
+            raw.animation_ids,
+            ("HERO_IDLE \t", "HERO_SKL .HERO_IDLE \t"),
+        )
+
+        headers, trims = metadata.trimmed_file_headers()
+        self.assertEqual(headers.model_ids, ("HERO.BODY",))
+        self.assertEqual(headers.hierarchy_ids, ("HERO_SKL",))
+        self.assertEqual(
+            headers.animation_ids,
+            ("HERO_IDLE", "HERO_SKL.HERO_IDLE"),
+        )
+        # Every admitted identifier that differs from the authored form is
+        # recorded, so an admitted id is never silently different from what
+        # retail authored.
+        self.assertEqual(
+            {
+                (trim.kind, trim.authored_identifier, trim.admitted_identifier)
+                for trim in trims
+            },
+            {
+                ("model", "HERO.BODY ", "HERO.BODY"),
+                ("hierarchy", "HERO_SKL ", "HERO_SKL"),
+                ("animation", "HERO_IDLE \t", "HERO_IDLE"),
+                (
+                    "animation",
+                    "HERO_SKL .HERO_IDLE \t",
+                    "HERO_SKL.HERO_IDLE",
+                ),
+            },
+        )
+
+    def test_trimmed_file_headers_without_padding_are_identical(self) -> None:
+        source = _chunk(
+            0x00000000,
+            _chunk(0x1F, _mesh_header("BODY", "HERO")),
+            children=True,
+        )
+        metadata = scan_w3d_metadata(source, "art/aa/clean.w3d")
+        headers, trims = metadata.trimmed_file_headers()
+        self.assertEqual(trims, ())
+        self.assertEqual(headers, metadata.file_headers())
+
+    def test_whitespace_only_component_stays_fail_closed(self) -> None:
+        source = _chunk(
+            0x00000000,
+            _chunk(0x1F, _mesh_header(" ", "HERO")),
+            children=True,
+        )
+        metadata = scan_w3d_metadata(source, "art/aa/blank.w3d")
+        with self.assertRaises(ValueError):
+            metadata.trimmed_file_headers()
+
+
 if __name__ == "__main__":
     unittest.main()
