@@ -13,13 +13,24 @@ extends Panel
 ## measurement travels in the bundle manifest.
 ##
 ## With no bundle converted the screen falls back to the flat 2D region graph it
-## has always drawn, and SAYS which one the owner is looking at. A 2D graph
-## labelled as one is honest; a 2D graph presented as retail's map is not.
+## has always drawn, and SAYS which one the owner is looking at - in the log, in
+## the mode line, and in a banner across the top of the fallback itself carrying
+## every path that was searched and the command that produces a bundle. It used
+## to fall back in complete silence: no print, no warning, nothing in the log, so
+## the only way to find out was to notice the map looked wrong. That is the class
+## of defect this branch exists to remove, and it had shipped here.
 ##
-## Still missing from retail's presentation, and named rather than faked: the
-## `LivingWorldUI.apt` shell, army models walking between regions, the turn-phase
-## banner, and retail's ambient animation (the Eye of Sauron, circling eagles and
-## fellbeasts, drifting cloud borders).
+## WHAT ELSE IS ON SCREEN, all of it derived from the strategic state: whose turn
+## it is and whether that seat is human, what a click will do right now, a seat
+## table (regions held, armies, heroes, command points on the board), and a key
+## for every colour and ring the map draws.
+##
+## Still missing from retail's presentation, and named on screen rather than
+## faked: the `LivingWorldUI.apt` shell (799 KB of Flash this project does not
+## read), the `LW:DisplayName*` string table (so regions carry retail's own ids),
+## army models walking between regions, the turn-phase banner, and retail's
+## ambient animation (the Eye of Sauron, circling eagles and fellbeasts, drifting
+## cloud borders).
 ##
 ## THREE RULES IT KEEPS:
 ##
@@ -62,6 +73,12 @@ const NEUTRAL_COLOR := Color("#5a6656")
 
 const MAP_INSET := 44.0
 const MARKER_RADIUS := 11.0
+## The height of the "this is not retail's map" banner over the flat fallback.
+const FALLBACK_BANNER_HEIGHT := 158.0
+## Lines of the refusal the banner has room for. The full text always reaches the
+## launch log; the banner shows the headline, the present-but-broken bundles and
+## the command that fixes it, which are the first lines by construction.
+const FALLBACK_BANNER_LINES := 8
 
 var session: SessionScript = null
 ## Why War of the Ring is unavailable, or "" when it is. Non-empty means the map
@@ -81,6 +98,14 @@ var map_mode_label: Label
 var map_bundle: BundleScript = null
 ## Why there is no 3D map, or "" when there is one.
 var map_reason := ""
+## Whose turn it is, in one line, at the size a player reads first.
+var turn_banner: Label
+## What a click will do RIGHT NOW, given the current selection.
+var hint_label: Label
+## The marker key: what each fill and each ring on the map means.
+var legend_label: Control
+## Every seat's standing: regions held, armies, command points.
+var standings_label: RichTextLabel
 var detail_label: RichTextLabel
 var message_label: Label
 var unplaced_label: Label
@@ -101,6 +126,26 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	if heading_label == null:
 		build()
+	report_map_availability()
+
+
+## Say at STARTUP whether retail's 3D map will be there, without paying for the
+## 2.5 MB mesh and 48 textures a full load costs. The exported build that shipped
+## the flat fallback wrote a 234-byte log with one content line in it; a launch
+## log that does not mention the map at all is how a map goes missing quietly.
+## This runs before any pack root is known, so it reports the environment and
+## user-data candidates - the two the owner controls directly.
+func report_map_availability() -> void:
+	var probed: Dictionary = BundleScript.probe([])
+	if bool(probed.get("found", false)):
+		print("[WotrMap] startup: a living-map bundle is present at %s [%s]; it is read when War of the Ring opens." % [
+			String(probed.get("root", "")), String(probed.get("origin", ""))])
+		return
+	var places: Array[String] = []
+	for row in probed.get("rows", []) as Array:
+		places.append("%s [%s]" % [String((row as Dictionary)["root"]), String((row as Dictionary)["origin"])])
+	print("[WotrMap] startup: NO living-map bundle in any candidate location, so War of the Ring will draw its flat 2D region graph. Looked at: %s. Set %s to a bundle directory produced by `python -m openbfme_importer.livingmap_bundle`." % [
+		"; ".join(places), BundleScript.BUNDLE_ENV])
 
 
 func build() -> void:
@@ -114,16 +159,36 @@ func build() -> void:
 
 	status_label = Label.new()
 	status_label.name = "Status"
-	status_label.position = Vector2(30, 54)
-	status_label.add_theme_font_size_override("font_size", 16)
-	status_label.add_theme_color_override("font_color", ThemeScript.TEXT_LEAF)
+	status_label.position = Vector2(30, 50)
+	status_label.add_theme_font_size_override("font_size", 14)
+	status_label.add_theme_color_override("font_color", ThemeScript.PARCHMENT_DIM)
 	add_child(status_label)
+
+	# WHOSE TURN IT IS AND WHAT A CLICK WILL DO. Retail puts this in its
+	# `LivingWorldUI.apt` shell, which is not converted; this is the same two
+	# facts drawn from the strategic state rather than a reproduction of retail's
+	# frame.
+	turn_banner = Label.new()
+	turn_banner.name = "TurnBanner"
+	turn_banner.position = Vector2(30, 70)
+	turn_banner.custom_minimum_size = Vector2(1230, 22)
+	turn_banner.add_theme_font_size_override("font_size", 19)
+	turn_banner.add_theme_color_override("font_color", ThemeScript.GOLD_BRIGHT)
+	add_child(turn_banner)
+
+	hint_label = Label.new()
+	hint_label.name = "Hint"
+	hint_label.position = Vector2(30, 94)
+	hint_label.custom_minimum_size = Vector2(1230, 20)
+	hint_label.add_theme_font_size_override("font_size", 15)
+	hint_label.add_theme_color_override("font_color", ThemeScript.TEXT_LEAF)
+	add_child(hint_label)
 
 	map_view = Control.new()
 	map_view.name = "MapView"
-	map_view.position = Vector2(24, 84)
-	map_view.custom_minimum_size = Vector2(1240, 620)
-	map_view.size = Vector2(1240, 620)
+	map_view.position = Vector2(24, 118)
+	map_view.custom_minimum_size = Vector2(1240, 548)
+	map_view.size = Vector2(1240, 548)
 	map_view.mouse_filter = Control.MOUSE_FILTER_STOP
 	map_view.draw.connect(_draw_map)
 	map_view.gui_input.connect(_on_map_input)
@@ -139,48 +204,79 @@ func build() -> void:
 	map3d.region_hovered.connect(_on_region_hovered)
 	add_child(map3d)
 
+	# WHAT THE RINGS AND COLOURS MEAN. The map draws five different rings and one
+	# fill colour per seat; without this the player has to guess, and guessing at
+	# a strategic map is how a turn gets wasted.
+	legend_label = Control.new()
+	legend_label.name = "Legend"
+	legend_label.draw.connect(_draw_legend)
+	legend_label.position = Vector2(24, 672)
+	legend_label.custom_minimum_size = Vector2(1240, 24)
+	legend_label.size = Vector2(1240, 24)
+	legend_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(legend_label)
+
+	message_label = Label.new()
+	message_label.name = "Message"
+	message_label.position = Vector2(24, 700)
+	message_label.custom_minimum_size = Vector2(1240, 24)
+	message_label.add_theme_font_size_override("font_size", 15)
+	message_label.add_theme_color_override("font_color", ThemeScript.GOLD)
+	add_child(message_label)
+
 	map_mode_label = Label.new()
 	map_mode_label.name = "MapMode"
 	# Below the message line, so it never overlaps the map area.
-	map_mode_label.position = Vector2(24, 738)
-	map_mode_label.custom_minimum_size = Vector2(1240, 20)
-	map_mode_label.add_theme_font_size_override("font_size", 13)
+	map_mode_label.position = Vector2(24, 724)
+	map_mode_label.custom_minimum_size = Vector2(1240, 56)
+	map_mode_label.size = Vector2(1240, 56)
+	map_mode_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	map_mode_label.add_theme_font_size_override("font_size", 12)
 	map_mode_label.add_theme_color_override("font_color", ThemeScript.PARCHMENT_DIM)
 	add_child(map_mode_label)
 
 	var side_x := 1290.0
-	unplaced_label = Label.new()
-	unplaced_label.name = "UnplacedHeading"
-	unplaced_label.position = Vector2(side_x, 84)
-	unplaced_label.add_theme_font_size_override("font_size", 14)
-	unplaced_label.add_theme_color_override("font_color", ThemeScript.PARCHMENT_DIM)
-	add_child(unplaced_label)
-
-	unplaced_host = VBoxContainer.new()
-	unplaced_host.name = "UnplacedRegions"
-	unplaced_host.position = Vector2(side_x, 108)
-	unplaced_host.custom_minimum_size = Vector2(540, 0)
-	unplaced_host.size = Vector2(540, 0)
-	add_child(unplaced_host)
+	standings_label = RichTextLabel.new()
+	standings_label.name = "Standings"
+	standings_label.bbcode_enabled = true
+	standings_label.fit_content = false
+	standings_label.scroll_active = true
+	standings_label.position = Vector2(side_x, 70)
+	standings_label.custom_minimum_size = Vector2(548, 200)
+	standings_label.size = Vector2(548, 200)
+	standings_label.add_theme_font_size_override("normal_font_size", 15)
+	add_child(standings_label)
 
 	detail_label = RichTextLabel.new()
 	detail_label.name = "Detail"
 	detail_label.bbcode_enabled = true
 	detail_label.fit_content = false
 	detail_label.scroll_active = true
-	detail_label.position = Vector2(side_x, 200)
-	detail_label.custom_minimum_size = Vector2(540, 420)
-	detail_label.size = Vector2(540, 420)
+	detail_label.position = Vector2(side_x, 280)
+	detail_label.custom_minimum_size = Vector2(548, 256)
+	detail_label.size = Vector2(548, 256)
 	detail_label.add_theme_font_size_override("normal_font_size", 16)
 	add_child(detail_label)
 
-	message_label = Label.new()
-	message_label.name = "Message"
-	message_label.position = Vector2(24, 712)
-	message_label.custom_minimum_size = Vector2(1240, 24)
-	message_label.add_theme_font_size_override("font_size", 15)
-	message_label.add_theme_color_override("font_color", ThemeScript.GOLD)
-	add_child(message_label)
+	# The unplaced block sits BETWEEN the detail panel and the buttons, and its
+	# heading wraps to two lines. It gets exactly the band 544..628; the buttons
+	# start at 636 and nothing may reach them.
+	unplaced_label = Label.new()
+	unplaced_label.name = "UnplacedHeading"
+	unplaced_label.position = Vector2(side_x, 544)
+	unplaced_label.custom_minimum_size = Vector2(548, 40)
+	unplaced_label.size = Vector2(548, 40)
+	unplaced_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	unplaced_label.add_theme_font_size_override("font_size", 13)
+	unplaced_label.add_theme_color_override("font_color", ThemeScript.PARCHMENT_DIM)
+	add_child(unplaced_label)
+
+	unplaced_host = VBoxContainer.new()
+	unplaced_host.name = "UnplacedRegions"
+	unplaced_host.position = Vector2(side_x, 588)
+	unplaced_host.custom_minimum_size = Vector2(548, 0)
+	unplaced_host.size = Vector2(548, 0)
+	add_child(unplaced_host)
 
 	attack_button = Button.new()
 	attack_button.name = "Attack"
@@ -236,13 +332,44 @@ func load_map_bundle(pack_roots: Array = []) -> bool:
 	if bool(located.get("ok", false)):
 		map_bundle = bundle
 		map_reason = ""
+		print("[WotrMap] retail 3D map LOADED from %s [%s]" % [
+			String(located.get("root", "")), String(located.get("origin", ""))])
+		for line in bundle.describe_load():
+			print("[WotrMap]   %s" % line)
+		# A map that loaded WITH holes in it is not a clean load, and the log has
+		# to distinguish the two or a degraded map reads as a good one.
+		if not bundle.warnings.is_empty():
+			push_warning("[WotrMap] the retail map loaded with %d texture problem(s): %s" % [
+				bundle.warnings.size(), ", ".join(Array(bundle.warnings))])
 	else:
 		map_bundle = null
 		map_reason = String(located.get("reason", ""))
+		# LOUDLY. The whole point of this block: falling back to the flat 2D graph
+		# used to be completely silent - no print, no warning, nothing in the log -
+		# so the only way to discover it was to notice the map looked wrong. Both
+		# channels now carry it, and the reason names every path, its origin and
+		# the command that produces a bundle.
+		push_error("[WotrMap] %s" % map_reason)
+		for line in map_reason.split("\n"):
+			print("[WotrMap] %s" % line)
 	map3d.set_bundle(map_bundle, map_reason)
 	var has_3d: bool = map3d.has_map()
 	map3d.visible = has_3d
 	map_view.visible = not has_3d
+	# "The bundle parsed" and "there is a map on screen" are different claims.
+	# If the bundle loaded but nothing was instanced, say so rather than showing
+	# an empty black viewport that looks like a rendering bug.
+	if has_3d and map3d.drawn_mesh_count() <= 0:
+		push_error("[WotrMap] the bundle at %s loaded but produced NO drawable sub-objects; showing the flat 2D fallback instead."
+			% String(located.get("root", "")))
+		map_reason = ("The living-map bundle at %s loaded but produced no drawable "
+			+ "sub-objects, so there is nothing to show. Every sub-object in it was "
+			+ "an impassable volume, an ambient card or a shader-only surface.") % String(located.get("root", ""))
+		map_bundle = null
+		map3d.set_bundle(null, map_reason)
+		map3d.visible = false
+		map_view.visible = true
+		return false
 	return has_3d
 
 
@@ -256,12 +383,18 @@ func refresh() -> void:
 	_staging = PackedStringArray()
 	if session == null or session.state == null:
 		status_label.text = "UNAVAILABLE"
+		turn_banner.text = "WAR OF THE RING IS UNAVAILABLE"
+		hint_label.text = unavailable_reason
+		standings_label.text = ""
 		detail_label.text = "[color=#e1c77d]War of the Ring is unavailable.[/color]\n\n%s" % unavailable_reason
 		attack_button.disabled = true
+		attack_button.tooltip_text = "There is no strategic session to attack in."
 		end_turn_button.disabled = true
+		end_turn_button.tooltip_text = "There is no strategic session whose turn could pass."
 		_clear_unplaced()
 		unplaced_label.text = ""
 		map_view.queue_redraw()
+		legend_label.queue_redraw()
 		_refresh_map_mode_label()
 		return
 
@@ -276,22 +409,31 @@ func refresh() -> void:
 	var state: StateScript = session.state
 	var seat := state.active_player()
 	var seat_row: Dictionary = state.players[seat] as Dictionary if seat != StateScript.NEUTRAL else {}
-	status_label.text = "TURN %d  ROUND %d   ACTIVE SEAT %d (%s, %s)   DOCUMENT %s (%s)   CAMPAIGN %s / %s" % [
-		state.turn_index + 1,
-		state.round_index() + 1,
-		seat,
-		String(seat_row.get("template", "?")),
-		String(seat_row.get("controller", "?")),
+	# The provenance line: which document, from where, which campaign, which
+	# scenario. It stays because "the map looks wrong" is usually "a different
+	# document loaded than you think".
+	status_label.text = "DOCUMENT %s (%s)   CAMPAIGN %s   SCENARIO %s   %d regions   %d armies" % [
 		session.document_path.get_file(),
 		session.document_source,
 		session.world.campaign_name,
 		session.scenario_name,
+		session.world.region_ids.size(),
+		state.armies.size(),
 	]
-	end_turn_button.disabled = false
+	_refresh_turn_banner(state, seat, seat_row)
+	end_turn_button.disabled = not state.pending_battle.is_empty()
+	end_turn_button.tooltip_text = (
+		"A battle for %s is still in flight; it must resolve before the turn passes."
+			% String(state.pending_battle.get("region", ""))
+		if not state.pending_battle.is_empty()
+		else "Pass the turn to the next seat.")
 	attack_button.disabled = not can_attack_now()
+	attack_button.tooltip_text = _attack_button_reason()
+	_refresh_standings(state)
 	_rebuild_unplaced()
 	_refresh_detail()
 	_refresh_map()
+	legend_label.queue_redraw()
 
 
 ## Push the strategic picture into whichever map is showing. Strictly one-way:
@@ -316,13 +458,18 @@ func _refresh_map_mode_label() -> void:
 	if map_mode_label == null:
 		return
 	if map3d == null or not map3d.has_map():
+		# The full reason is drawn on the map itself and printed to the launch
+		# log; this line exists so the mode is unambiguous even at a glance.
 		map_mode_label.text = (
-			"MAP: flat 2D region graph (fallback). Retail's 3D map is not converted here - %s"
-			% map_reason)
+			"MAP: flat 2D region graph (FALLBACK) - retail's 3D Middle-earth did NOT load. "
+			+ "The reason is printed on the map above and in the launch log under [WotrMap].")
 		return
 	var notes: Array[String] = []
-	notes.append("MAP: retail livingmap.w3d, %d sub-objects, %d regions placed at authored world coordinates" % [
-		map_bundle.sub_objects.size(), map3d.placed_regions.size()])
+	notes.append("MAP: retail livingmap.w3d, %d sub-objects, %d drawn, %d regions placed at authored world coordinates" % [
+		map_bundle.sub_objects.size(), map3d.drawn_mesh_count(), map3d.placed_regions.size()])
+	if not map_bundle.warnings.is_empty():
+		notes.append("%d texture problem(s): %s" % [
+			map_bundle.warnings.size(), ", ".join(Array(map_bundle.warnings))])
 	if map3d.unplaced_regions.size() > 0:
 		notes.append("%d region(s) unplaced (no authored centre point)" % map3d.unplaced_regions.size())
 	if map3d.unsampled_heights.size() > 0:
@@ -433,6 +580,149 @@ func show_message(text: String) -> void:
 	_message(text)
 
 
+# --- turn, standings, legend --------------------------------------------------
+
+## The one line a player reads first, and under it the one line that says what a
+## click does next. Both are derived from the strategic state; neither invents a
+## phase retail has that this lane does not model.
+func _refresh_turn_banner(state: StateScript, seat: int, seat_row: Dictionary) -> void:
+	var controller := String(seat_row.get("controller", "?"))
+	var whose := "YOUR MOVE" if controller == StateScript.CONTROLLER_HUMAN else "AI SEAT"
+	turn_banner.text = "TURN %d   ROUND %d   %s - SEAT %d, %s (%s)" % [
+		state.turn_index + 1, state.round_index() + 1, whose, seat,
+		String(seat_row.get("template", "?")), controller]
+	turn_banner.add_theme_color_override("font_color", _owner_color(seat))
+	hint_label.text = _hint_text(state)
+
+
+## What clicking will do, spelled out. The click rule is genuinely two-sided -
+## stage, then attack or march - and a map that does not say so is a map you have
+## to learn by making mistakes on.
+func _hint_text(state: StateScript) -> String:
+	if not state.pending_battle.is_empty():
+		return "A battle for %s is in flight. Resolve it before anything else moves." % _display_of(
+			String(state.pending_battle.get("region", "")))
+	if session.selected_region.is_empty():
+		if _staging.is_empty():
+			return "This seat has no army standing in a region it owns, so nothing can be staged. END TURN passes play on."
+		return "Click one of your %d armed regions (gold-ringed) to stage from." % _staging.size()
+	var parts: Array[String] = []
+	parts.append("Staged at %s." % _display_of(session.selected_region))
+	if not _targets.is_empty():
+		parts.append("Click a RED-ringed region to pick it as the attack target (%d offered)." % _targets.size())
+	if not _moves.is_empty():
+		parts.append("Click a PALE-ringed region to march there (%d reachable)." % _moves.size())
+	if _targets.is_empty() and _moves.is_empty():
+		parts.append("Nothing adjacent can be attacked or marched to from here.")
+	if not session.selected_target.is_empty():
+		parts.append("Target %s chosen - press ATTACK to commit." % _display_of(session.selected_target))
+	return "  ".join(parts)
+
+
+## Why ATTACK is greyed out, in the tooltip, so a disabled button is never a
+## dead end the player has to guess at.
+func _attack_button_reason() -> String:
+	if session == null or session.state == null:
+		return "There is no strategic session."
+	if not session.state.pending_battle.is_empty():
+		return "A battle is already in flight."
+	if session.selected_region.is_empty():
+		return "Stage from one of your own armed regions first."
+	if session.selected_target.is_empty():
+		return "Choose an adjacent region to attack."
+	if not Array(_targets).has(session.selected_target):
+		return "%s cannot be attacked from %s." % [
+			_display_of(session.selected_target), _display_of(session.selected_region)]
+	return "Commit the attack on %s. This is the only path from this screen to a battle." % _display_of(
+		session.selected_target)
+
+
+## EVERY SEAT'S STANDING, from the authoritative state and nothing else: regions
+## held, armies standing, command points on the board, and the starting world and
+## hero command points the document authored for the template. Read-only - this
+## panel computes from `state` and writes nothing back.
+func _refresh_standings(state: StateScript) -> void:
+	var lines: Array[String] = []
+	var active := state.active_player()
+	lines.append("[color=#e1c77d]SEATS[/color]")
+	var claimed := 0
+	for index in range(state.players.size()):
+		var seat_row := state.players[index] as Dictionary
+		var regions := state.regions_owned_by(index)
+		claimed += regions.size()
+		var army_count := 0
+		var command_points := 0
+		var heroes := 0
+		for army_id in state.armies.keys():
+			var army := state.armies[army_id] as Dictionary
+			if int(army.get("owner", StateScript.NEUTRAL)) != index:
+				continue
+			army_count += 1
+			command_points += int(army.get("command_points", 0))
+			if String(army.get("kind", "")) == StateScript.ARMY_HERO:
+				heroes += 1
+		var marker := ">" if index == active else " "
+		var color := _owner_color(index)
+		lines.append("%s [color=#%s]%s[/color]  %s%s" % [
+			marker, color.to_html(false), String(seat_row.get("template", "?")),
+			String(seat_row.get("controller", "?")),
+			"  [color=#c8483f]DEFEATED[/color]" if bool(seat_row.get("defeated", false)) else ""])
+		lines.append("    regions %d   armies %d (%d hero)   CP on the board %d" % [
+			regions.size(), army_count, heroes, command_points])
+	var neutral := session.world.region_ids.size() - claimed
+	lines.append("  [color=#a9b39a]unclaimed  regions %d[/color]" % neutral)
+	lines.append("")
+	# NOT DRAWN, and named. Retail's own strategic shell is a Flash movie this
+	# project does not read, and the region names are string-table keys with no
+	# converted table behind them, so regions carry retail's own ids.
+	lines.append("[color=#a9b39a]NOT CONVERTED, so not shown: retail's LivingWorldUI.apt shell (799 KB, unread), the LW:DisplayName* string table (regions carry retail ids), army models marching between regions, and retail's turn-phase banner.[/color]")
+	standings_label.text = "\n".join(lines)
+
+
+## The marker key. Drawn rather than written so the colours in it are the SAME
+## values the map draws with - a legend that restates colours in prose can drift
+## from the map it explains.
+func _draw_legend() -> void:
+	var font := get_theme_default_font()
+	if font == null:
+		return
+	var x := 6.0
+	var y := 15.0
+	var swatches: Array = [
+		["staged", Color(0.85, 0.92, 0.75, 0.9)],
+		["attackable", Color("#c8483f")],
+		["selected", ThemeScript.GOLD_BRIGHT],
+		["target", Color("#e8623f")],
+		["unclaimed", NEUTRAL_COLOR],
+	]
+	legend_label.draw_string(font, Vector2(x, y), "KEY:", HORIZONTAL_ALIGNMENT_LEFT,
+		-1, 13, ThemeScript.PARCHMENT_DIM)
+	x += 40.0
+	for entry in swatches:
+		var label := String((entry as Array)[0])
+		var color := (entry as Array)[1] as Color
+		legend_label.draw_circle(Vector2(x + 6.0, y - 4.0), 6.0, color)
+		legend_label.draw_string(font, Vector2(x + 17.0, y), label,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ThemeScript.TEXT_LEAF)
+		x += 24.0 + font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+	# Seat colours, so a fill on the map names its owner without a hover.
+	if session == null or session.state == null:
+		return
+	x += 20.0
+	for index in range(session.state.players.size()):
+		var seat_row := session.state.players[index] as Dictionary
+		var name := String(seat_row.get("template", "seat %d" % index))
+		legend_label.draw_circle(Vector2(x + 6.0, y - 4.0), 6.0, _owner_color(index))
+		legend_label.draw_string(font, Vector2(x + 17.0, y), name,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ThemeScript.TEXT_LEAF)
+		x += 24.0 + font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+	# A marker with an army is drawn larger; say so rather than letting it read as
+	# a rendering wobble.
+	legend_label.draw_string(font, Vector2(x + 10.0, y),
+		"| larger marker = an army stands there | label x2 = army count",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ThemeScript.PARCHMENT_DIM)
+
+
 # --- detail panel ------------------------------------------------------------
 
 func _refresh_detail() -> void:
@@ -493,7 +783,7 @@ func _rebuild_unplaced() -> void:
 	# landmarks; there is no `Rhun` mesh in it to take a centre from. So the
 	# position genuinely does not exist in the converted map, and a coordinate
 	# chosen here would be invented map data.
-	unplaced_label.text = "REGIONS WITH NO AUTHORED MAP POSITION (%d) - retail takes these from a per-region sub-object that livingmap.w3d does not carry" % unplaced.size()
+	unplaced_label.text = "NOT ON THE MAP (%d): no authored centre point, and livingmap.w3d carries no per-region mesh to take one from." % unplaced.size()
 	for row in unplaced:
 		var button := Button.new()
 		var region_id := String(row["id"])
@@ -518,9 +808,11 @@ func _draw_map() -> void:
 	var size := map_view.size
 	if session == null or session.state == null:
 		map_view.draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.05, 0.03, 0.6))
+		_draw_fallback_banner(size)
 		return
 	_screen_positions = _compute_screen_positions(size)
 	map_view.draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.05, 0.03, 0.6))
+	_draw_fallback_banner(size)
 	# Edges first, so markers sit on top of them.
 	for region_id in session.world.region_ids:
 		if not _screen_positions.has(region_id):
@@ -557,6 +849,31 @@ func _draw_map() -> void:
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ThemeScript.TEXT_LEAF)
 
 
+## WHY THE PLAYER IS LOOKING AT A DIAGRAM INSTEAD OF MIDDLE-EARTH, drawn on the
+## thing itself. The flat graph already called itself a fallback in a 13px line
+## under the map; that was not enough for the owner to notice, let alone act on.
+## The reason is the loader's own multi-line refusal - every path it looked at,
+## where each came from, and the command that produces a bundle.
+func _draw_fallback_banner(size: Vector2) -> void:
+	if map_reason.is_empty():
+		return
+	var font := get_theme_default_font()
+	if font == null:
+		return
+	var banner := Rect2(Vector2.ZERO, Vector2(size.x, FALLBACK_BANNER_HEIGHT))
+	map_view.draw_rect(banner, Color(0.16, 0.06, 0.05, 0.92))
+	map_view.draw_line(
+		Vector2(0.0, FALLBACK_BANNER_HEIGHT), Vector2(size.x, FALLBACK_BANNER_HEIGHT),
+		Color("#c8483f"), 2.0)
+	map_view.draw_string(
+		font, Vector2(18.0, 26.0),
+		"FLAT 2D REGION GRAPH (FALLBACK) - THIS IS NOT RETAIL'S MAP",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("#e8623f"))
+	map_view.draw_multiline_string(
+		font, Vector2(18.0, 48.0), map_reason, HORIZONTAL_ALIGNMENT_LEFT,
+		size.x - 36.0, 13, FALLBACK_BANNER_LINES, ThemeScript.PARCHMENT_DIM)
+
+
 ## Authored region coordinates scaled into the view. Pure presentation: the
 ## transform is derived from the authored extent every frame and reaches nothing
 ## but the drawing. Regions without an authored point are ABSENT from the result
@@ -576,7 +893,11 @@ func _compute_screen_positions(size: Vector2) -> Dictionary:
 		minimum = Vector2(minf(minimum.x, point.x), minf(minimum.y, point.y))
 		maximum = Vector2(maxf(maximum.x, point.x), maxf(maximum.y, point.y))
 	var span := maximum - minimum
-	var usable := size - Vector2(MAP_INSET * 2.0, MAP_INSET * 2.0)
+	# The fallback banner owns the top of the view when it is up, so the graph is
+	# fitted into what is left. A marker under an explanation of why the marker is
+	# there instead of a map would be its own small dishonesty.
+	var banner := FALLBACK_BANNER_HEIGHT if not map_reason.is_empty() else 0.0
+	var usable := size - Vector2(MAP_INSET * 2.0, MAP_INSET * 2.0 + banner)
 	var scale_x := usable.x / span.x if span.x > 0.0 else 1.0
 	var scale_y := usable.y / span.y if span.y > 0.0 else 1.0
 	var factor := minf(scale_x, scale_y)

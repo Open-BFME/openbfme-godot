@@ -27,19 +27,32 @@ const StateScript = preload("res://src/wotr/wotr_state.gd")
 ## a failure rather than a quietly smaller number. Both are counted, not guessed:
 ##
 ##   with no bundle   = 2 (the refusal is actionable)
+##                    + 1 (the refusal names every candidate it looked at)
+##                    + 3 (a deliberately corrupt bundle is NAMED, and does not
+##                         end the search)
+##                    + 1 (the view instanced nothing, and says so)
 ##                    + 6 (the screen labels the 2D fallback and stays sealed)
-##                    = 8
+##                    + 1 (the fallback label sends the owner to the log)
+##                    = 14
 ##   with a bundle    = 2 (bundle located, no spurious reason)
+##                    + 3 (a deliberately corrupt bundle is NAMED, and does not
+##                         end the search)
 ##                    + 7 (sub-objects, landmarks, triangles, vertices, tiles,
 ##                         textures resolved, untextured really untextured)
 ##                    + 4 (grid exact, grid is 5x4, nine pairs, agreement bound)
 ##                    + 4 (view has map, regions placed, Rhun refused, heights in
 ##                         terrain)
+##                    + 1 (the view instanced retail's drawable sub-objects)
 ##                    + 7 (the screen shows the 3D map, names what it does not
 ##                         draw, and stays sealed)
-##                    = 24
-const EXPECTED_CHECKS_NO_BUNDLE := 8
-const EXPECTED_CHECKS_WITH_BUNDLE := 24
+##                    + 1 (the 3D label reports how many meshes are on screen)
+##                    = 29
+const EXPECTED_CHECKS_NO_BUNDLE := 14
+const EXPECTED_CHECKS_WITH_BUNDLE := 29
+
+## Retail's 64 sub-objects minus the 30 this lane holds back (the impassable
+## volumes, the animated ambient cards and the multi-stage water overlays).
+const EXPECTED_DRAWN_SUB_OBJECTS := 34
 
 ## Retail's own sub-object names, quoted from `livingworld.ini`'s `LivingMap`
 ## MapObject declaration. If the converter ever stops resolving one of these the
@@ -69,6 +82,7 @@ func _init() -> void:
 		print("bundle: NONE - %s" % located["reason"])
 
 	_check_reason_is_actionable(located, have_bundle)
+	_check_a_broken_bundle_is_named()
 	if have_bundle:
 		_check_bundle(bundle)
 		_check_coordinate_space(bundle)
@@ -103,6 +117,61 @@ func _check_reason_is_actionable(located: Dictionary, have_bundle: bool) -> void
 		"the no-map reason names the converter to run", reason)
 	_check(reason.contains(BundleScript.BUNDLE_ENV),
 		"the no-map reason names the environment variable", reason)
+	# "Not found" without the list of places is what makes a silent fallback
+	# impossible to diagnose from a log.
+	_check(reason.contains("Looked in") and reason.contains(BundleScript.USER_BUNDLE),
+		"the no-map reason names every place it looked", reason)
+
+
+## THE DEFECT THIS RUNNER SHIPPED. A bundle that could not be read used to end
+## the search and, on the real screen, produce a flat 2D map and a completely
+## silent log. Both halves are asserted here: the bad candidate is NAMED with
+## what was wrong with it, and the search carries on past it.
+##
+## Deliberately corrupt: a manifest that is not JSON at all, written into a
+## throwaway pack root under `user://`.
+func _check_a_broken_bundle_is_named() -> void:
+	var pack_root := "user://wotr_map3d_runner_broken_pack"
+	var bundle_dir := pack_root.path_join(BundleScript.PACK_BUNDLE_RELATIVE)
+	DirAccess.make_dir_recursive_absolute(bundle_dir)
+	var handle := FileAccess.open(bundle_dir.path_join("manifest.json"), FileAccess.WRITE)
+	if handle == null:
+		_fail("the corrupt-bundle probe could write its fixture", bundle_dir)
+		_fail("the corrupt candidate is reported as unreadable", "no fixture")
+		_fail("a corrupt candidate does not end the search", "no fixture")
+		return
+	handle.store_string("this is not a manifest")
+	handle.close()
+
+	var probe_bundle = BundleScript.new()
+	var probed: Dictionary = probe_bundle.locate_and_load([pack_root])
+	var row: Dictionary = {}
+	for entry in probe_bundle.searched_roots:
+		if String(entry["root"]) == bundle_dir:
+			row = entry
+			break
+	_check(not row.is_empty() and String(row["verdict"]) == "unreadable",
+		"the corrupt candidate is reported as unreadable, not skipped in silence",
+		str(row))
+	_check(String(row.get("detail", "")).contains("manifest"),
+		"the corrupt candidate's row says what was wrong with it",
+		String(row.get("detail", "")))
+	# It must NOT have stopped there: the environment override and the user-data
+	# location are both later in the order, and one stale pack must never be able
+	# to hide a good bundle behind it.
+	_check(probe_bundle.searched_roots.size() >= 2,
+		"a corrupt candidate does not end the search",
+		"%d candidate(s) examined, verdicts %s" % [
+			probe_bundle.searched_roots.size(),
+			str(probed.get("ok", false))])
+
+	# Leave nothing behind: a stale fixture under user:// would be a candidate
+	# root on the NEXT run, which is precisely the class of surprise this runner
+	# exists to catch.
+	DirAccess.remove_absolute(bundle_dir.path_join("manifest.json"))
+	DirAccess.remove_absolute(bundle_dir)
+	DirAccess.remove_absolute(pack_root.path_join("data"))
+	DirAccess.remove_absolute(pack_root)
 
 
 func _check_bundle(bundle) -> void:
@@ -181,6 +250,11 @@ func _check_view_places_regions(bundle) -> void:
 	view.size = Vector2(1240, 620)
 	view.set_bundle(bundle, "")
 	_check(view.has_map(), "the view reports a map", "")
+	# "The bundle parsed" and "there is geometry on screen" are two claims, and
+	# only the second one is what a player sees. Exact, not a floor.
+	_check(view.drawn_mesh_count() == EXPECTED_DRAWN_SUB_OBJECTS,
+		"the view instanced retail's %d drawable sub-objects" % EXPECTED_DRAWN_SUB_OBJECTS,
+		"instanced %d" % view.drawn_mesh_count())
 
 	# Feed the view retail's own region rows, built straight from the document.
 	var session := _load_session()
@@ -258,6 +332,8 @@ func _check_screen_fallback_is_labelled(have_bundle: bool) -> void:
 			"with no bundle the screen shows the 2D graph", "")
 		_check(not screen.map_reason.is_empty(),
 			"with no bundle the screen carries the reason", "")
+		_check(screen.map3d.drawn_mesh_count() == 0,
+			"with no bundle the 3D view instanced nothing", "")
 
 	screen.refresh()
 	var label: String = screen.map_mode_label.text
@@ -270,9 +346,15 @@ func _check_screen_fallback_is_labelled(have_bundle: bool) -> void:
 		_check(label.contains("NOT DRAWN") and label.contains("WATER")
 				and label.contains("RIVERS"),
 			"the 3D label names the sub-objects it does not draw", label)
+		_check(label.contains("%d drawn" % EXPECTED_DRAWN_SUB_OBJECTS),
+			"the 3D label reports how many sub-objects are on screen", label)
 	else:
 		_check(label.to_lower().contains("fallback"),
 			"the 2D label calls itself a fallback", label)
+		# The label is one line; the diagnosis is many. It must point at where the
+		# diagnosis actually is, or the owner is back to guessing.
+		_check(label.contains("[WotrMap]") and label.contains("log"),
+			"the 2D label sends the owner to the launch log for the reason", label)
 
 	# The rule the whole lane exists to keep: presentation must not be able to
 	# reach the simulation. The screen holds the map; the session holds selection.

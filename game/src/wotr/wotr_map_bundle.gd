@@ -14,7 +14,11 @@ extends RefCounted
 ## * FAIL LOUDLY, NEVER PARTIALLY. `load_from()` returns false and fills
 ##   `errors` the moment the manifest, the mesh block or a declared sub-object
 ##   does not add up. A half-loaded map is never handed back, because a map
-##   missing a third of Middle-earth still looks like a map.
+##   missing a third of Middle-earth still looks like a map. And a load that
+##   found nothing reports EVERY candidate it looked at, with its origin and its
+##   verdict - `describe_search_failure()` is what the log and the player both
+##   get, because a silent fall back to the flat 2D graph is only discoverable by
+##   noticing the map looks wrong, which is not a diagnosis.
 ##
 ## * A TEXTURE THAT DID NOT RESOLVE IS SAID, NOT SUBSTITUTED. The converter
 ##   marks unresolved textures in the manifest; this file carries that through to
@@ -87,6 +91,16 @@ var loaded := false
 var bundle_root := ""
 ## Every refusal, in order. Never empty on a false return from `load_from()`.
 var errors: PackedStringArray = PackedStringArray()
+## Everything that went WRONG without stopping the load: a declared texture the
+## converter never resolved, a resolved texture whose bytes would not decode.
+## A load can succeed with a non-empty `warnings`, and when it does the screen
+## and the log both say so - a map missing a third of its textures still looks
+## like a map, which is exactly why it has to be said out loud.
+var warnings: PackedStringArray = PackedStringArray()
+## One row per candidate root `locate_and_load()` actually looked at:
+## {root, origin, verdict, detail}. `verdict` is one of "loaded", "absent",
+## "unreadable". This is what turns "no map" into an actionable sentence.
+var searched_roots: Array[Dictionary] = []
 
 ## Sub-object rows: {name, mesh: ArrayMesh, material, textured, ambient,
 ## collision, vertex_count, triangle_count, bounds_min, bounds_max}.
@@ -118,47 +132,150 @@ var _terrain_tiles: Array[Dictionary] = []
 
 ## Where to look for a bundle, in the order the strategic lane searches: the
 ## packs the game actually mounted, then the documented environment override,
-## then the user-data workspace location.
-static func candidate_roots(pack_roots: Array = []) -> PackedStringArray:
-	var candidates := PackedStringArray()
+## then the user-data workspace location. Each candidate carries WHERE IT CAME
+## FROM, because "searched five paths" is only actionable when the owner can see
+## which one was his environment variable and which one the game chose itself.
+static func candidate_sources(pack_roots: Array = []) -> Array[Dictionary]:
+	var candidates: Array[Dictionary] = []
 	for root_value in pack_roots:
 		var root := String(root_value).strip_edges()
 		if not root.is_empty():
-			candidates.append(root.path_join(PACK_BUNDLE_RELATIVE))
+			candidates.append({
+				"root": root.path_join(PACK_BUNDLE_RELATIVE),
+				"origin": "mounted content pack %s" % root.get_file(),
+			})
 	var override := OS.get_environment(BUNDLE_ENV).strip_edges()
 	if not override.is_empty():
-		candidates.append(override)
-	candidates.append(USER_BUNDLE)
+		candidates.append({"root": override, "origin": "%s" % BUNDLE_ENV})
+	candidates.append({"root": USER_BUNDLE, "origin": "user-data workspace"})
 	return candidates
 
 
-## Load the first candidate that carries a manifest. Returns `{ok, root, reason}`
-## and names every place it looked when it finds nothing - "no map" alone sends
-## nobody anywhere.
+## The same candidate list as paths alone, kept for callers that only need the
+## order.
+static func candidate_roots(pack_roots: Array = []) -> PackedStringArray:
+	var roots := PackedStringArray()
+	for row in candidate_sources(pack_roots):
+		roots.append(String(row["root"]))
+	return roots
+
+
+## A CHEAP look: which candidate roots carry a manifest at all, without reading
+## 2.5 MB of mesh or 48 textures. Returns `{found, root, origin, rows}` where
+## each row is {root, origin, present}. This is what lets the game say at STARTUP
+## whether retail's 3D map will be there, instead of the owner discovering it by
+## noticing the map looks wrong.
+static func probe(pack_roots: Array = []) -> Dictionary:
+	var rows: Array[Dictionary] = []
+	var found_root := ""
+	var found_origin := ""
+	for row in candidate_sources(pack_roots):
+		var root := String(row["root"])
+		var present := FileAccess.file_exists(root.path_join("manifest.json"))
+		rows.append({"root": root, "origin": String(row["origin"]), "present": present})
+		if present and found_root.is_empty():
+			found_root = root
+			found_origin = String(row["origin"])
+	return {
+		"found": not found_root.is_empty(),
+		"root": found_root,
+		"origin": found_origin,
+		"rows": rows,
+	}
+
+
+## Load the first candidate that carries a READABLE bundle. Returns
+## `{ok, root, origin, reason}` and, when it finds nothing, names every place it
+## looked, what was wrong with each, and the command that produces one - because
+## "no map" alone sends nobody anywhere.
+##
+## A candidate that carries a manifest but does not load NO LONGER ENDS THE
+## SEARCH. It used to, and that made a single stale bundle in a mounted pack able
+## to hide a perfectly good one behind it with no way for the owner to tell.
+## Every candidate is now tried and every verdict is reported.
 func locate_and_load(pack_roots: Array = []) -> Dictionary:
-	var searched: Array[String] = []
-	for root in candidate_roots(pack_roots):
-		searched.append(root)
+	searched_roots = []
+	for row in candidate_sources(pack_roots):
+		var root := String(row["root"])
+		var origin := String(row["origin"])
 		if not FileAccess.file_exists(root.path_join("manifest.json")):
+			searched_roots.append({
+				"root": root, "origin": origin,
+				"verdict": "absent", "detail": "no manifest.json here",
+			})
 			continue
 		if load_from(root):
-			return {"ok": true, "root": root, "reason": ""}
-		return {
-			"ok": false,
-			"root": root,
-			"reason": "The living-map bundle at %s could not be read: %s" % [
-				root, ", ".join(Array(errors))],
-		}
+			searched_roots.append({
+				"root": root, "origin": origin,
+				"verdict": "loaded", "detail": "",
+			})
+			return {"ok": true, "root": root, "origin": origin, "reason": ""}
+		searched_roots.append({
+			"root": root, "origin": origin, "verdict": "unreadable",
+			"errors": ", ".join(Array(errors)),
+			"detail": "manifest is present but the bundle did not load: %s"
+				% ", ".join(Array(errors)),
+		})
 	return {
 		"ok": false,
 		"root": "",
-		"reason": (
-			"No living-map bundle was found. Retail's 3D strategic map is "
-			+ "converted by `python -m openbfme_importer.livingmap_bundle "
-			+ "<catalog>/rotwk.json <bundle-dir>`; point %s at the result. "
-			+ "Searched: %s"
-		) % [BUNDLE_ENV, ", ".join(searched)],
+		"origin": "",
+		"reason": describe_search_failure(),
 	}
+
+
+## The player-facing and log-facing sentence for "there is no 3D map". It names
+## every candidate, its origin, its verdict, the environment variable and the
+## command that produces a bundle - the same shape as
+## `wotr_session.locate_document`'s refusal, which is the message that let the
+## owner diagnose the document problem himself.
+func describe_search_failure() -> String:
+	var lines: Array[String] = []
+	lines.append(
+		"Retail's 3D strategic map is NOT loaded, so the strategic screen is "
+		+ "drawing its flat 2D region graph instead.")
+	# THE ACTIONABLE LINES COME FIRST, deliberately. A bundle that is PRESENT and
+	# broken is a different problem from one that was never converted, and it is
+	# the one the owner can fix in a minute - so it goes above the audit trail
+	# rather than under a list of paths that pushes it off the panel.
+	for row in searched_roots:
+		if String(row["verdict"]) != "unreadable":
+			continue
+		lines.append("A bundle IS present at %s [%s], and it did NOT load: %s" % [
+			String(row["root"]), String(row["origin"]), String(row.get("errors", ""))])
+	lines.append(
+		"Convert one with `python -m openbfme_importer.livingmap_bundle "
+		+ "<catalog>/rotwk.json <bundle-dir>` and point %s at <bundle-dir>."
+		% BUNDLE_ENV)
+	lines.append("Looked in %d place(s), in this order:" % searched_roots.size())
+	for row in searched_roots:
+		var detail := String(row["detail"])
+		lines.append("  - %s  [%s]  %s" % [
+			String(row["root"]), String(row["origin"]),
+			detail if not detail.is_empty() else String(row["verdict"])])
+	return "\n".join(lines)
+
+
+## One line per thing that is true about the loaded map, for the log. Never
+## silent: a map that loaded with three textures missing says so here.
+func describe_load() -> PackedStringArray:
+	var lines := PackedStringArray()
+	if not loaded:
+		lines.append("no bundle loaded")
+		return lines
+	lines.append("root %s" % bundle_root)
+	lines.append("source livingmap.w3d sha256 %s" % source_sha256)
+	lines.append("%d sub-objects" % sub_objects.size())
+	if warnings.is_empty():
+		lines.append("every declared texture resolved and decoded")
+	else:
+		lines.append("%d texture problem(s): %s" % [
+			warnings.size(), ", ".join(Array(warnings))])
+	if not untextured_sub_objects.is_empty():
+		lines.append("%d sub-object(s) drawn UNTEXTURED: %s" % [
+			untextured_sub_objects.size(),
+			", ".join(Array(untextured_sub_objects))])
+	return lines
 
 
 func load_from(root: String) -> bool:
@@ -224,13 +341,17 @@ func load_from(root: String) -> bool:
 		var declared := String(row.get("declared", ""))
 		if not bool(row.get("resolved", false)):
 			missing.append(declared)
+			warnings.append("%s: the converter never resolved it in the catalog" % declared)
 			continue
-		var image := _load_image(root.path_join(String(row.get("file", ""))))
+		var texture_path := root.path_join(String(row.get("file", "")))
+		var attempt := _load_image(texture_path)
+		var image: Image = attempt["image"]
 		if image == null:
 			# A texture the converter DID resolve but this loader cannot decode is
 			# a real defect, not a missing asset. Say which, and carry on
 			# untextured rather than pretending the pixel data exists.
 			missing.append("%s (present but undecodable)" % declared)
+			warnings.append("%s: %s (%s)" % [declared, String(attempt["reason"]), texture_path])
 			continue
 		texture_by_declared[declared] = ImageTexture.create_from_image(image)
 	missing.sort()
@@ -319,6 +440,7 @@ func _reset() -> void:
 	loaded = false
 	bundle_root = ""
 	errors = PackedStringArray()
+	warnings = PackedStringArray()
 	sub_objects = []
 	_by_name = {}
 	_terrain_tiles = []
@@ -336,13 +458,18 @@ func _fail(message: String) -> bool:
 	return false
 
 
-func _load_image(path: String) -> Image:
+## Returns `{image, reason}`. `image` is null exactly when the load failed, and
+## `reason` then says WHICH failure it was - a missing file, an oversized one, a
+## format this loader does not read, or bytes the decoder rejected. A null with
+## no reason is how a texture goes missing without anyone finding out.
+func _load_image(path: String) -> Dictionary:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
-		return null
+		return {"image": null, "reason": "cannot open the texture file (error %d)" % FileAccess.get_open_error()}
 	if file.get_length() > TEXTURE_MAX_BYTES:
+		var oversized := file.get_length()
 		file.close()
-		return null
+		return {"image": null, "reason": "texture is %d bytes, over the %d limit" % [oversized, TEXTURE_MAX_BYTES]}
 	var bytes := file.get_buffer(file.get_length())
 	file.close()
 	var image := Image.new()
@@ -358,9 +485,12 @@ func _load_image(path: String) -> Image:
 		status = image.load_tga_from_buffer(bytes)
 	elif extension == "png":
 		status = image.load_png_from_buffer(bytes)
+	else:
+		return {"image": null, "reason": "this loader does not read .%s textures" % extension}
 	if status != OK:
-		return null
-	return image
+		return {"image": null, "reason": "the .%s decoder rejected %d bytes (error %d)" % [
+			extension, bytes.size(), status]}
+	return {"image": image, "reason": ""}
 
 
 func _build_sub_object(row: Dictionary, blob: PackedByteArray, textures: Dictionary) -> Dictionary:

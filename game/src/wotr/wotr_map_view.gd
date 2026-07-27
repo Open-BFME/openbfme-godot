@@ -48,6 +48,9 @@ const PICK_SLOP := 7.0
 const DEFAULT_PITCH_DEGREES := -52.0
 const MIN_ZOOM := 0.35
 const MAX_ZOOM := 2.6
+## Breathing room around the fitted map, so the coastline is not flush with the
+## panel edge. 1.0 would be an exact fit.
+const FRAMING_MARGIN := 1.06
 
 var bundle: BundleScript = null
 ## Why there is no 3D map, or "" when there is one. Non-empty means this view
@@ -81,6 +84,10 @@ var overlay: Control
 
 var _world_positions: Dictionary = {}
 var _screen_positions: Dictionary = {}
+## Mesh instances actually put in the world by the last `_rebuild_world()`.
+## Reported rather than assumed: "the map loaded" and "the map is on screen" are
+## two different claims and only the second one is what the player sees.
+var _drawn_count := 0
 var _camera_target := Vector3.ZERO
 var _camera_distance := 1.0
 var _zoom := 1.0
@@ -155,7 +162,11 @@ func build() -> void:
 	_on_resized()
 
 
-## Bind a loaded bundle, or none plus the reason. Both are legitimate states.
+## Bind a loaded bundle, or none plus the reason. Both are legitimate states -
+## and BOTH are said out loud. This view used to contain no print, warning or
+## error of any kind, so a failure to build retail's map produced a screen that
+## looked slightly wrong and a log that said nothing at all; the only way to find
+## it was to notice. That is the failure this logging exists to make impossible.
 func set_bundle(loaded_bundle, reason: String) -> void:
 	if viewport_container == null:
 		build()
@@ -164,10 +175,24 @@ func set_bundle(loaded_bundle, reason: String) -> void:
 	_rebuild_world()
 	_frame_camera()
 	queue_redraw()
+	if not has_map():
+		push_warning("[WotrMap3D] no retail map bound; this view will draw its refusal instead. %s"
+			% (reason if not reason.is_empty() else "no reason was supplied, which is itself a defect"))
+		print("[WotrMap3D] NO 3D MAP. %s" % (
+			reason if not reason.is_empty() else "no reason was supplied, which is itself a defect"))
+		return
+	print("[WotrMap3D] drawing %d of %d retail sub-objects (%d held back: impassable volumes, animated ambient cards, multi-stage water)" % [
+		_drawn_count, bundle.sub_objects.size(), bundle.sub_objects.size() - _drawn_count])
 
 
 func has_map() -> bool:
 	return bundle != null and bundle.loaded
+
+
+## How many retail sub-objects are actually standing in the 3D world right now.
+## `has_map()` says the bytes parsed; this says something is on screen.
+func drawn_mesh_count() -> int:
+	return _drawn_count
 
 
 ## Feed the view the strategic picture. Pure presentation: nothing here is
@@ -197,6 +222,11 @@ func _on_resized() -> void:
 	if view_size.x < 1.0 or view_size.y < 1.0:
 		view_size = Vector2(1.0, 1.0)
 	viewport.size = Vector2i(int(view_size.x), int(view_size.y))
+	# The fit depends on the viewport's ASPECT, so a resize has to redo it. Only
+	# the distance is recomputed: where the camera is looking and how far the
+	# player has zoomed are his, and a resize must not throw them away.
+	_fit_distance()
+	_apply_camera()
 	queue_redraw()
 
 
@@ -205,6 +235,7 @@ func _on_resized() -> void:
 func _rebuild_world() -> void:
 	if world_root == null:
 		return
+	_drawn_count = 0
 	for child in world_root.get_children():
 		world_root.remove_child(child)
 		child.queue_free()
@@ -223,6 +254,7 @@ func _rebuild_world() -> void:
 		instance.mesh = entry["mesh"]
 		instance.material_override = entry["material"]
 		world_root.add_child(instance)
+		_drawn_count += 1
 
 
 func _frame_camera() -> void:
@@ -234,11 +266,47 @@ func _frame_camera() -> void:
 	var y_min := float(extent["y_min"])
 	var y_max := float(extent["y_max"])
 	_camera_target = BundleScript.world_to_godot(
-		(x_min + x_max) * 0.5, (y_min + y_max) * 0.5, float(extent["z_min"]))
-	var span := maxf(x_max - x_min, y_max - y_min)
-	# Fit the longer axis into the vertical field of view with a little margin.
-	_camera_distance = (span * 0.62) / tan(deg_to_rad(camera.fov * 0.5))
+		(x_min + x_max) * 0.5, (y_min + y_max) * 0.5,
+		(float(extent["z_min"]) + float(extent["z_max"])) * 0.5)
+	_fit_distance()
 	_apply_camera()
+
+
+## Fit retail's whole map into the viewport it is actually being drawn in.
+##
+## THE FRAMING THIS REPLACES fitted the map's LONGER axis into the camera's
+## VERTICAL field of view. Two things were wrong with that and they compounded:
+## the strategic viewport is wide (it ran 1240x548, aspect 2.26), so the vertical
+## field is the tight one and fitting the long axis to it wastes the width; and
+## the map is looked at down a -52 degree pitch, which foreshortens its depth to
+## sin(52) = 0.79 of itself before it reaches the screen. The result was retail's
+## Middle-earth drawn about a quarter of the size of the panel holding it,
+## floating in a black field - which is exactly what "the 3D bit is not 3D" looks
+## like from the outside.
+##
+## This fits BOTH axes: the width against the horizontal field derived from the
+## viewport's own aspect, the pitched depth-plus-relief against the vertical
+## field, and takes whichever needs the camera further back.
+func _fit_distance() -> void:
+	if camera == null or not has_map():
+		return
+	var extent: Dictionary = bundle.terrain_extent
+	var width := float(extent["x_max"]) - float(extent["x_min"])
+	var depth := float(extent["y_max"]) - float(extent["y_min"])
+	var relief := float(extent["z_max"]) - float(extent["z_min"])
+	var pitch := absf(deg_to_rad(DEFAULT_PITCH_DEGREES))
+	# What the map actually occupies vertically on screen at this pitch.
+	var vertical_span := depth * sin(pitch) + relief * cos(pitch)
+	var aspect := 16.0 / 9.0
+	if viewport != null and viewport.size.y > 0:
+		aspect = float(viewport.size.x) / float(viewport.size.y)
+	# Godot's Camera3D keeps the VERTICAL field, so `fov` is the vertical one and
+	# the horizontal follows the aspect.
+	var half_vertical := tan(deg_to_rad(camera.fov * 0.5))
+	var half_horizontal := half_vertical * aspect
+	var for_width := (width * 0.5) / maxf(half_horizontal, 0.0001)
+	var for_depth := (vertical_span * 0.5) / maxf(half_vertical, 0.0001)
+	_camera_distance = maxf(for_width, for_depth) * FRAMING_MARGIN
 
 
 func _apply_camera() -> void:
