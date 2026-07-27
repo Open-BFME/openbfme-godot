@@ -82,6 +82,17 @@ try {
     if (-not $info.redistributable) {
         Write-BundleWarn 'content is retail-derived and NOT redistributable'
     }
+    $infoNames = @($info.PSObject.Properties.Name)
+    if ($infoNames -contains 'warOfTheRing' -and $null -ne $info.warOfTheRing) {
+        if ([bool]$info.warOfTheRing.staged) {
+            Write-BundleStep "war of ring  data staged in $($info.warOfTheRing.documentRelative) ($($info.warOfTheRing.files) files)"
+        } else {
+            Write-BundleWarn "War of the Ring is UNAVAILABLE in this bundle: $($info.warOfTheRing.reason)"
+        }
+    }
+    if ($infoNames -contains 'releaseNotes' -and $null -ne $info.releaseNotes) {
+        Write-BundleStep "notes        $($info.releaseNotes.patchNotes) - $($info.releaseNotes.commitCount) change(s) over $($info.releaseNotes.rangeBasis)"
+    }
     if ($info.launchCheck.performed) {
         Write-BundleStep "launch check $($info.launchCheck.withContentEnv.contentDb)"
     } else {

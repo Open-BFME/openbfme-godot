@@ -43,6 +43,44 @@
     Where the bundle directory is created. Default: <repo>/dist/bundle.
     Must be git-ignored; this is checked with `git check-ignore`, not assumed.
 
+.PARAMETER Release
+    Build a RELEASE: it lands in the MAIN checkout's dist/bundle rather than in
+    whichever worktree built it, it is named for the date and commit rather than
+    the branch, and it carries PATCH-NOTES.txt written from real history. Use
+    this for anything handed to a playtester; leave it off for a dev build,
+    which keeps working exactly as before.
+
+    A worktree is temporary. A release built into one disappears when the
+    worktree is removed, which is why this exists at all.
+
+.PARAMETER ReleaseRoot
+    Override where releases land. Default: <main checkout>/dist/bundle.
+
+.PARAMETER AllowDirtyRelease
+    Permit a release from a working copy with uncommitted changes. Off by
+    default: the patch notes are made from committed history, so uncommitted
+    work is in the build and cannot be in the notes. The notes say so loudly
+    when this is used.
+
+.PARAMETER Since
+    Write the patch notes against this commit instead of the previous release.
+
+.PARAMETER Highlights
+    The player-facing note file. Default: tools/release-highlights.txt. Every
+    line must cite a commit, and a line whose commit is not in this release's
+    range is dropped rather than printed.
+
+.PARAMETER LivingWorldDocument
+.PARAMETER LivingMapBundle
+    War of the Ring's data, staged INTO the bundle so the menu entry works
+    without any environment variable. Defaults point at the private retail
+    workspace in the main checkout.
+
+.PARAMETER AllowMissingWotrData
+    Build a release even though War of the Ring's data is absent. The bundle
+    then says so in its own output, in BUILD-INFO and in the patch notes; it
+    does not ship a dead button quietly.
+
 .PARAMETER ContentRoot
     Pack cache to stage from. Default search order:
       1. -ContentRoot
@@ -77,6 +115,9 @@
 
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File tools\Build-PlayableBundle.ps1 -Name OpenBFME-alpha02 -Force
+
+.EXAMPLE
+    powershell -NoProfile -ExecutionPolicy Bypass -File tools\Build-PlayableBundle.ps1 -Release
 #>
 [CmdletBinding()]
 param(
@@ -87,6 +128,15 @@ param(
     [string]$Godot = '',
     [string]$Preset = 'windows',
     [int]$LaunchTimeoutSeconds = 300,
+    [switch]$Release,
+    [string]$ReleaseRoot = '',
+    [switch]$AllowDirtyRelease,
+    [string]$Since = '',
+    [string]$Highlights = '',
+    [string]$BaseBranch = 'main',
+    [string]$LivingWorldDocument = '',
+    [string]$LivingMapBundle = '',
+    [switch]$AllowMissingWotrData,
     [switch]$Force,
     [switch]$SkipLaunchCheck,
     [switch]$FastFinalVerify,
@@ -145,6 +195,13 @@ try {
     Write-BundleStep "commit subject      $($source.commitSubject)"
     if ($source.dirty) {
         Write-BundleWarn 'The working tree has uncommitted changes. They WILL be in this build; BUILD-INFO.json records that, and lists the files.'
+    }
+    # A release states what changed since the last one, and it derives that from
+    # committed history. Uncommitted work is therefore IN the build and CANNOT be
+    # in the notes - a release whose notes are structurally incomplete is the
+    # overstating-by-omission version of the problem the notes exist to solve.
+    if ($Release -and $source.dirty -and -not $AllowDirtyRelease) {
+        throw (New-BundleRefusal -Problem "This would be a RELEASE built from a working copy with $($source.dirtyFileCount) uncommitted files. Its patch notes are made from committed history, so that work would be in the build and absent from the notes." -Remedy 'Commit the work first, or pass -AllowDirtyRelease to accept notes that are knowingly incomplete (the bundle and its notes then say so).')
     }
 
     if ($Godot -eq '') {
@@ -211,18 +268,59 @@ try {
         Write-BundleWarn 'These packs are retail-derived and marked NOT redistributable. The bundle stays inside dist/ (git-ignored) and must not be published.'
     }
 
+    # ------------------------------------------------------- where this lands
+    $mainWorktree = Get-BundleMainWorktree -RepoRoot $repoRoot
+    if ($Release) {
+        if ($OutputRoot -ne '' -and $ReleaseRoot -ne '') {
+            throw (New-BundleRefusal -Problem 'Both -OutputRoot and -ReleaseRoot were given, and they mean the same thing for a release.' -Remedy 'Pass one.')
+        }
+        if ($ReleaseRoot -eq '' -and $OutputRoot -eq '') {
+            $ReleaseRoot = Join-Path $mainWorktree 'dist\bundle'
+        } elseif ($ReleaseRoot -eq '') {
+            $ReleaseRoot = $OutputRoot
+        }
+        $OutputRoot = $ReleaseRoot
+        Write-BundleStep 'RELEASE build'
+    } elseif ($ReleaseRoot -ne '') {
+        throw (New-BundleRefusal -Problem '-ReleaseRoot was given without -Release.' -Remedy 'Add -Release, or use -OutputRoot for a development build.')
+    }
     if ($OutputRoot -eq '') { $OutputRoot = Join-Path $repoRoot 'dist\bundle' }
     $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
+
+    # Close the git hazard BEFORE asking git about it. `/dist/` lives in a
+    # TRACKED .gitignore, so whether it applies depends on which branch the
+    # destination checkout is standing on - and this destination is deliberately
+    # in another checkout, whose branch this build does not control. Writing a
+    # self-ignoring .gitignore into the release directory makes the guarantee
+    # branch-independent. The refusal below still runs and is still what decides.
+    # Only for -Release, and only for the directory this tool owns. A dev build
+    # with a hand-picked -OutputRoot is not this tool's directory to blanket-
+    # ignore, and the refusal below is the right answer for it.
+    $ignoreOwner = ''
+    if ($Release) { $ignoreOwner = [IO.Path]::GetDirectoryName($OutputRoot.TrimEnd('\', '/')) }
+    if ($ignoreOwner -ne '' -and $null -ne $ignoreOwner) {
+        if (Set-BundleReleaseDirectoryIgnored -ReleaseDirectory $ignoreOwner) {
+            Write-BundleStep "wrote the self-ignoring guard $ignoreOwner\.gitignore (keeps this directory out of git on every branch)"
+        }
+    }
     if (-not (Test-BundlePathIsGitIgnored -RepoRoot $repoRoot -Path $OutputRoot)) {
         throw (New-BundleRefusal -Problem "The output directory is NOT git-ignored: $OutputRoot" -Remedy 'The bundle carries retail-derived content. Build into a git-ignored path (dist/ is ignored by default) and never into a tracked one.')
     }
     Write-BundleGood "output root is git-ignored: $OutputRoot"
 
     if ($Name -eq '') {
-        $branchPart = ($source.branch -replace '[^A-Za-z0-9._-]', '-')
-        if ($branchPart -eq '' -or $branchPart -eq 'HEAD') { $branchPart = 'detached' }
-        $Name = "OpenBFME-$branchPart-$($source.shortCommit)"
-        if ($source.dirty) { $Name += '-dirty' }
+        if ($Release) {
+            # A release is named for WHEN and WHAT, not for the branch it came
+            # from: the branch is an implementation detail that stops existing,
+            # and a playtester sorting a folder wants the date first.
+            $Name = "OpenBFME-release-$((Get-Date).ToString('yyyyMMdd'))-$($source.shortCommit)"
+            if ($source.dirty) { $Name += '-dirty' }
+        } else {
+            $branchPart = ($source.branch -replace '[^A-Za-z0-9._-]', '-')
+            if ($branchPart -eq '' -or $branchPart -eq 'HEAD') { $branchPart = 'detached' }
+            $Name = "OpenBFME-$branchPart-$($source.shortCommit)"
+            if ($source.dirty) { $Name += '-dirty' }
+        }
     }
     if ($Name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
         throw (New-BundleRefusal -Problem "Unsafe bundle name: '$Name'." -Remedy 'Use letters, digits, dot, dash and underscore only.')
@@ -234,6 +332,68 @@ try {
         }
     }
     Write-BundleStep "bundle name         $Name"
+
+    # ------------------------------------------- War of the Ring data sources
+    # The bundle used to ship a WAR OF THE RING button and none of its data, so
+    # it read (UNAVAILABLE) in every build and the owner hit it. These two
+    # artefacts are what the menu entry needs; they are resolved and validated
+    # HERE, in preflight, so a missing one costs seconds rather than a finished
+    # build with a dead button in it.
+    if ($LivingWorldDocument -eq '') {
+        foreach ($candidate in @(
+            (Join-Path $repoRoot '.private\retail-work\reports\bfme2-living-world.json'),
+            (Join-Path $mainWorktree '.private\retail-work\reports\bfme2-living-world.json')
+        )) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $LivingWorldDocument = [IO.Path]::GetFullPath($candidate); break }
+        }
+    } elseif (-not (Test-Path -LiteralPath $LivingWorldDocument -PathType Leaf)) {
+        throw (New-BundleRefusal -Problem "-LivingWorldDocument does not exist: $LivingWorldDocument")
+    } else {
+        $LivingWorldDocument = [IO.Path]::GetFullPath($LivingWorldDocument)
+    }
+    if ($LivingMapBundle -eq '') {
+        foreach ($candidate in @(
+            (Join-Path $repoRoot '.private\retail-work\livingmap'),
+            (Join-Path $mainWorktree '.private\retail-work\livingmap')
+        )) {
+            if (Test-Path -LiteralPath (Join-Path $candidate 'manifest.json') -PathType Leaf) { $LivingMapBundle = [IO.Path]::GetFullPath($candidate); break }
+        }
+    } elseif (-not (Test-Path -LiteralPath $LivingMapBundle -PathType Container)) {
+        throw (New-BundleRefusal -Problem "-LivingMapBundle does not exist: $LivingMapBundle")
+    } else {
+        $LivingMapBundle = [IO.Path]::GetFullPath($LivingMapBundle)
+    }
+
+    $wotrMissing = New-Object 'System.Collections.Generic.List[string]'
+    if ($LivingWorldDocument -eq '') { $wotrMissing.Add('the living-world document (.private/retail-work/reports/bfme2-living-world.json)') }
+    if ($LivingMapBundle -eq '') { $wotrMissing.Add('the converted 3D map bundle (.private/retail-work/livingmap)') }
+    $wotrDocumentBytes = [long]0
+    if ($LivingWorldDocument -ne '') { $wotrDocumentBytes = Test-BundleWotrDocument -Path $LivingWorldDocument }
+    if ($LivingMapBundle -ne '') { [void](Test-BundleWotrMap -Path $LivingMapBundle) }
+
+    $wotrStaged = ($wotrMissing.Count -eq 0)
+    $wotrReason = ''
+    if (-not $wotrStaged) {
+        $wotrReason = "not present at build time: $($wotrMissing -join '; ')"
+        Write-BundleWarn "WAR OF THE RING WILL BE UNAVAILABLE in this bundle - $wotrReason"
+        Write-BundleWarn 'The menu entry will read WAR OF THE RING (UNAVAILABLE). BUILD-INFO and the release notes say so; this build is not pretending otherwise.'
+        # A dev build without the private workspace is a normal, honest state. A
+        # RELEASE handed to a playtester with a button that cannot open is the
+        # exact defect this staging was added to fix, so that one is refused.
+        if ($Release -and -not $AllowMissingWotrData) {
+            throw (New-BundleRefusal -Problem "A release would ship a WAR OF THE RING menu entry with no data behind it - $wotrReason" -Remedy 'Produce the artefacts, point -LivingWorldDocument / -LivingMapBundle at them, or pass -AllowMissingWotrData to ship a release that states the entry is unavailable.')
+        }
+    } else {
+        Write-BundleStep "war of the ring     $LivingWorldDocument"
+        Write-BundleStep "war of the ring     $LivingMapBundle"
+    }
+
+    if ($Highlights -eq '') { $Highlights = Join-Path $PSScriptRoot 'release-highlights.txt' }
+    elseif (-not (Test-Path -LiteralPath $Highlights -PathType Leaf)) {
+        throw (New-BundleRefusal -Problem "-Highlights does not exist: $Highlights")
+    }
+    # Parse now, not after the export: a typo in a note should not cost a build.
+    [void](Read-BundleReleaseHighlights -Path $Highlights)
 
     # Build into <name>.partial and rename only at the very end. If anything
     # below refuses, what is left on disk is named .partial and can never be
@@ -313,6 +473,19 @@ try {
     $packRecords = New-Object 'System.Collections.Generic.List[object]'
     $totalFiles = 0
     $totalBytes = [long]0
+    $wotrRecord = [ordered]@{
+        staged = $false
+        reason = $(if ($wotrReason -ne '') { $wotrReason } else { 'the active pack was never staged, so nothing could be added to it' })
+        packRelative = ''
+        documentSource = $LivingWorldDocument
+        documentBytes = $wotrDocumentBytes
+        documentRelative = ''
+        mapSource = $LivingMapBundle
+        mapRelative = ''
+        files = 0
+        bytes = [long]0
+        reachableWithoutEnvironment = $false
+    }
     foreach ($pack in $packs) {
         Write-BundleStep "copying $($pack.relative) ..."
         $destination = Join-Path $bundleContentRoot ($pack.relative -replace '/', '\')
@@ -328,6 +501,71 @@ try {
             throw (New-BundleRefusal -Problem ("The staged copy of '$($pack.relative)' does not match the source pack:`n           " + ($differences -join "`n           ")) -Remedy 'Do not ship this bundle. Re-run the build; if it repeats, the source pack or the disk is at fault.')
         }
         Write-BundleGood "$($pack.relative): $($stagedManifest.files) files, $(Format-BundleBytes $stagedManifest.bytes), hash matches source"
+
+        # --------------------------------------- War of the Ring data overlay
+        # AFTER the source-vs-staged proof, never before: that check exists to
+        # prove the copy is faithful, and adding files first would make it
+        # unprovable. The overlay is then folded into the recorded manifest, so
+        # the verifier still re-hashes the tree it will actually find.
+        #
+        # It goes INSIDE the active pack because that is where the running game
+        # looks: wotr_session.gd walks the pack roots ContentDB mounted and
+        # opens <root>/data/living-world.json, and wotr_map_bundle.gd does the
+        # same for <root>/data/living-map. Beside the exe is reachable only via
+        # OPENBFME_LIVING_WORLD_DOC / OPENBFME_LIVING_MAP, and needing an
+        # environment variable to see your own bundled content is the bug.
+        if ($wotrStaged -and $pack.relative -ceq $selection.activePack) {
+            Write-BundleStep 'staging War of the Ring data into the active pack ...'
+            $dataRoot = Join-Path $destination 'data'
+            [void](New-Item -ItemType Directory -Path $dataRoot -Force)
+
+            $documentTarget = Join-Path $dataRoot 'living-world.json'
+            if (Test-Path -LiteralPath $documentTarget) {
+                throw (New-BundleRefusal -Problem "The content pack already ships $($script:WotrDocumentRelative); staging would replace it." -Remedy 'A pack that carries its own living-world document is already complete. Rebuild without staging, or remove the collision at the source.')
+            }
+            Copy-Item -LiteralPath $LivingWorldDocument -Destination $documentTarget -Force
+
+            $mapTarget = Join-Path $dataRoot 'living-map'
+            if (Test-Path -LiteralPath $mapTarget) {
+                throw (New-BundleRefusal -Problem "The content pack already ships $($script:WotrMapRelative); staging would replace it." -Remedy 'Rebuild without staging, or remove the collision at the source.')
+            }
+            Invoke-Robocopy -Source $LivingMapBundle -Destination $mapTarget
+
+            # Verify what LANDED, not what was asked for. A copy that silently
+            # dropped the manifest would produce a bundle whose map falls back to
+            # flat 2D with nothing saying why.
+            [void](Test-BundleWotrDocument -Path $documentTarget)
+            [void](Test-BundleWotrMap -Path $mapTarget)
+
+            $overlay = @{}
+            $overlayBytes = [long]0
+            $destinationFull = [IO.Path]::GetFullPath($destination).TrimEnd('\', '/')
+            foreach ($file in @(
+                @([IO.FileInfo]$documentTarget) +
+                @([IO.Directory]::EnumerateFiles($mapTarget, '*', [IO.SearchOption]::AllDirectories) | ForEach-Object { [IO.FileInfo]$_ })
+            )) {
+                $relativeKey = $file.FullName.Substring($destinationFull.Length + 1).Replace('\', '/')
+                $hash = '-'
+                if (-not $stagedManifest.quick) { $hash = Get-BundleFileSha256 -Path $file.FullName }
+                $overlay[$relativeKey] = [pscustomobject]@{ bytes = $file.Length; sha256 = $hash }
+                $overlayBytes += $file.Length
+            }
+            $stagedManifest = New-BundleMergedManifest -Base $stagedManifest -Added $overlay
+            $wotrRecord = [ordered]@{
+                staged        = $true
+                reason        = ''
+                packRelative  = $pack.relative
+                documentSource = $LivingWorldDocument
+                documentBytes  = $wotrDocumentBytes
+                documentRelative = "$($script:BundleContentDir)/$($pack.relative)/$($script:WotrDocumentRelative)"
+                mapSource      = $LivingMapBundle
+                mapRelative    = "$($script:BundleContentDir)/$($pack.relative)/$($script:WotrMapRelative)"
+                files          = $overlay.Count
+                bytes          = $overlayBytes
+                reachableWithoutEnvironment = $true
+            }
+            Write-BundleGood "War of the Ring: $($overlay.Count) files, $(Format-BundleBytes $overlayBytes) staged at content-packs/$($pack.relative)/data/ - no environment variable needed"
+        }
 
         $totalFiles += $stagedManifest.files
         $totalBytes += $stagedManifest.bytes
@@ -455,11 +693,35 @@ try {
         }
     }
 
+    # ------------------------------------------------------------ patch notes
+    # Written from `git log` over a stated range plus a citation file whose every
+    # line names a commit inside it. Nothing here is inferred from what a feature
+    # is called. This project's recurring failure is confident wrong reporting,
+    # and a changelog is the easiest place in the whole build to commit it.
+    $builtAtUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $previousRelease = Get-BundlePreviousRelease -ReleaseRoot $OutputRoot -RepoRoot $repoRoot -ExcludeName $Name
+    if ($null -ne $previousRelease) {
+        Write-BundleStep "previous release    $($previousRelease.name) ($($previousRelease.shortCommit), built $($previousRelease.builtAtUtc))"
+    } else {
+        Write-BundleWarn 'No previous release in this folder states which commit it was built from, so the notes fall back to a stated range and say so.'
+    }
+    $notes = New-BundleReleaseNotes -RepoRoot $repoRoot -BundleName $Name -Source $source `
+        -BuiltAtUtc $builtAtUtc -PackRecords $packRecords.ToArray() -Since $Since `
+        -HighlightsPath $Highlights -BaseBranch $BaseBranch -PreviousRelease $previousRelease `
+        -WotrData ([pscustomobject]$wotrRecord)
+    Write-BundleTextFile -Path (Join-Path $script:PartialRoot $script:BundlePatchNotes) -Content ($notes.notesText + "`n")
+    Write-BundleTextFile -Path (Join-Path $script:PartialRoot $script:BundleChangeLog) -Content ($notes.changeText + "`n")
+    Write-BundleGood "$($script:BundlePatchNotes): $($notes.commitCount) change(s) over $($notes.rangeBasis); $(@($notes.highlights).Count) player-facing note(s) cited"
+    foreach ($droppedNote in @($notes.dropped)) {
+        Write-BundleWarn "release note left out - the change it cites is not in this range: $droppedNote"
+    }
+
     $buildInfo = [ordered]@{
         schema        = $script:BundleSchema
         schemaVersion = $script:BundleSchemaVersion
         bundleName    = $Name
-        builtAtUtc    = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        isRelease     = [bool]$Release
+        builtAtUtc    = $builtAtUtc
         builtBy       = 'tools/Build-PlayableBundle.ps1'
         builtOnMachine = $env:COMPUTERNAME
         source        = [ordered]@{
@@ -499,6 +761,18 @@ try {
             totalBytes = $totalBytes
         }
         redistributable = $redistributable
+        warOfTheRing  = $wotrRecord
+        releaseNotes  = [ordered]@{
+            patchNotes  = $script:BundlePatchNotes
+            changeLog   = $script:BundleChangeLog
+            rangeBasis  = $notes.rangeBasis
+            fromCommit  = $notes.fromCommit
+            commitCount = $notes.commitCount
+            citedNotes  = @($notes.highlights).Count
+            highlightsSource = $Highlights
+            previousRelease = $(if ($null -eq $previousRelease) { $null } else { [ordered]@{
+                name = $previousRelease.name; commit = $previousRelease.commit; builtAtUtc = $previousRelease.builtAtUtc } })
+        }
         launchCheck   = [ordered]@{
             performed         = (-not $SkipLaunchCheck)
             selfLocatesContent = $selfLocating
@@ -552,6 +826,26 @@ CONTENT  ($totalFiles files, $(Format-BundleBytes $totalBytes))
 $($packLines -join "`n")
 
   Redistributable: $(if ($redistributable) { 'yes' } else { 'NO - retail-derived. Keep this bundle inside the dev group.' })
+
+WAR OF THE RING
+$(if ($wotrRecord.staged) { @"
+  staged       yes - $($wotrRecord.files) files, $(Format-BundleBytes ([long]$wotrRecord.bytes))
+  document     $($wotrRecord.documentRelative)
+  3D map       $($wotrRecord.mapRelative)
+  reachable    without any environment variable: the running game finds both by
+               walking the pack roots it mounted. OPENBFME_LIVING_WORLD_DOC and
+               OPENBFME_LIVING_MAP are not needed and are not set by the launcher.
+"@ } else { @"
+  staged       NO - the menu entry will read WAR OF THE RING (UNAVAILABLE)
+  reason       $($wotrRecord.reason)
+  This is stated rather than hidden. A build that ships the button without the
+  data behind it is a defect, not a feature that happens to be off.
+"@ })
+RELEASE NOTES
+  $($script:BundlePatchNotes) - $($notes.commitCount) change(s)
+  range        $($notes.rangeBasis)
+  cited notes  $(@($notes.highlights).Count) player-facing line(s), each naming the change it came from
+  full history $($script:BundleChangeLog)
 
 LAUNCH CHECK
   $launchSummary
@@ -633,9 +927,20 @@ LAYOUT - the game finds content in content-packs NEXT TO the exe.
     selection.json
 $(@($packRecords | ForEach-Object { "    $($_.id)/$($_.bundleHash)/..." }) -join "`n")
   run-with-log.bat
+  PATCH-NOTES.txt         <- what changed since the last release, in plain words
+  CHANGES.txt             <- every change in this release, raw
   BUILD-INFO.txt          <- exactly what is in this build
   BUILD-INFO.json         <- the same, machine-readable
   logs/                   <- export and launch-check logs from the build
+
+WAR OF THE RING
+$(if ($wotrRecord.staged) { @"
+  Its data ships inside this bundle, so the menu entry opens with no setup.
+  You do not need OPENBFME_LIVING_WORLD_DOC or OPENBFME_LIVING_MAP.
+"@ } else { @"
+  NOT IN THIS BUILD. The menu entry reads WAR OF THE RING (UNAVAILABLE) and will
+  not open: $($wotrRecord.reason)
+"@ })
 
   To point at a different pack root instead:
     set "OPENBFME_CONTENT=D:\some\other\content-packs"
@@ -651,7 +956,7 @@ REPORTING A PROBLEM
   which commit and which content produced the behaviour.
 "@
     Write-BundleTextFile -Path (Join-Path $script:PartialRoot $script:BundleReadme) -Content ($readme + "`n")
-    Write-BundleGood 'wrote BUILD-INFO.json, BUILD-INFO.txt, README.txt, run-with-log.bat'
+    Write-BundleGood 'wrote BUILD-INFO.json, BUILD-INFO.txt, README.txt, PATCH-NOTES.txt, CHANGES.txt, run-with-log.bat'
 
     # ------------------------------------------------------------- verification
     Write-BundleHeading 'Verify the produced bundle'
@@ -669,6 +974,11 @@ REPORTING A PROBLEM
     Rename-Item -LiteralPath $script:PartialRoot -NewName $Name
     $script:PartialRoot = ''
 
+    # A copy of the notes beside the bundle, so the release folder can be read
+    # without opening a 4 GB directory to find out what is in it.
+    $notesBeside = Join-Path $OutputRoot "$Name-PATCH-NOTES.txt"
+    Write-BundleTextFile -Path $notesBeside -Content ($notes.notesText + "`n")
+
     $elapsed = (Get-Date) - $script:StartedAt
     Write-Host ''
     Write-Host 'BUNDLE READY' -ForegroundColor Green
@@ -678,8 +988,16 @@ REPORTING A PROBLEM
     if (-not $SkipLaunchCheck) { Write-Host "  booted  $($withEnv.contentDb)" }
     Write-Host "  took    $([int]$elapsed.TotalMinutes)m $($elapsed.Seconds)s"
     Write-Host ''
-    Write-Host "  Play it:    $bundleRoot\$($script:BundleLauncher)"
-    Write-Host "  What it is: $bundleRoot\$($script:BundleInfoText)"
+    if ($wotrRecord.staged) {
+        Write-Host "  wotr    War of the Ring data staged ($($wotrRecord.files) files) - the menu entry opens with no environment set"
+    } else {
+        Write-Host "  wotr    NOT STAGED - the menu entry will read WAR OF THE RING (UNAVAILABLE): $($wotrRecord.reason)" -ForegroundColor Yellow
+    }
+    Write-Host ''
+    Write-Host "  Play it:      $bundleRoot\$($script:BundleLauncher)"
+    Write-Host "  What changed: $bundleRoot\$($script:BundlePatchNotes)"
+    Write-Host "                $notesBeside"
+    Write-Host "  What it is:   $bundleRoot\$($script:BundleInfoText)"
     Write-Host ''
     exit 0
 } catch {

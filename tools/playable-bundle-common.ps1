@@ -29,6 +29,22 @@ $script:BundleReadme = 'README.txt'
 $script:BundleExe = 'OpenBFME.exe'
 $script:BundlePck = 'OpenBFME.pck'
 $script:BundleContentDir = 'content-packs'
+$script:BundlePatchNotes = 'PATCH-NOTES.txt'
+$script:BundleChangeLog = 'CHANGES.txt'
+
+# WAR OF THE RING DATA, staged INTO the bundle.
+#
+# The runtime finds both of these by walking the pack roots it actually mounted
+# and looking for these exact relative paths - game/src/wotr/wotr_session.gd
+# (PACK_DOCUMENT_RELATIVE) and game/src/wotr/wotr_map_bundle.gd
+# (PACK_BUNDLE_RELATIVE). That is why they are staged inside the active pack and
+# not beside the exe: a directory beside the exe is reachable only through
+# OPENBFME_LIVING_WORLD_DOC / OPENBFME_LIVING_MAP, and a bundle that needs
+# environment variables to show its own content is the bug this staging fixes.
+$script:WotrDocumentRelative = 'data/living-world.json'
+$script:WotrMapRelative = 'data/living-map'
+$script:WotrDocumentMaxBytes = 32 * 1024 * 1024   # wotr_session.gd DOCUMENT_MAX_BYTES
+$script:WotrMapSchema = 'openbfme.living-map'
 
 # <pack-id>/<bundle-hash>. Deliberately strict: a selection entry is an identity,
 # not a path expression. Anything with a drive letter, a backslash, a "..", or a
@@ -606,10 +622,36 @@ function Test-BundleTree {
             $problems.Add("required file is missing: $required")
         }
     }
+    # Release notes are required only of bundles that claim to have them, so a
+    # bundle built before the notes existed still verifies as what it is.
+    $infoNames = @($info.PSObject.Properties.Name)
+    if ($infoNames -contains 'releaseNotes' -and $null -ne $info.releaseNotes) {
+        foreach ($required in @($script:BundlePatchNotes, $script:BundleChangeLog)) {
+            if (-not (Test-Path -LiteralPath (Join-Path $BundleRoot $required) -PathType Leaf)) {
+                $problems.Add("BUILD-INFO.json says this bundle carries release notes, but $required is missing")
+            }
+        }
+    }
     $contentRoot = Join-Path $BundleRoot $script:BundleContentDir
     if (-not (Test-Path -LiteralPath $contentRoot -PathType Container)) {
         $problems.Add("required directory is missing: $($script:BundleContentDir)/ (it must sit beside the exe)")
         return $problems.ToArray()
+    }
+
+    # War of the Ring data, if this bundle claims to carry it. A bundle that says
+    # War of the Ring works and does not carry the files would ship a button that
+    # reads (UNAVAILABLE) while its own provenance says otherwise - which is the
+    # defect this staging exists to fix, wearing a disguise.
+    if ($infoNames -contains 'warOfTheRing' -and $null -ne $info.warOfTheRing -and [bool]$info.warOfTheRing.staged) {
+        $wotrPackRoot = Join-Path $contentRoot (([string]$info.warOfTheRing.packRelative) -replace '/', '\')
+        $wotrDocument = Join-Path $wotrPackRoot ($script:WotrDocumentRelative -replace '/', '\')
+        $wotrMapManifest = Join-Path (Join-Path $wotrPackRoot ($script:WotrMapRelative -replace '/', '\')) 'manifest.json'
+        if (-not (Test-Path -LiteralPath $wotrDocument -PathType Leaf)) {
+            $problems.Add("BUILD-INFO.json says War of the Ring is playable, but its living-world document is missing: content-packs/$($info.warOfTheRing.packRelative)/$($script:WotrDocumentRelative)")
+        }
+        if (-not (Test-Path -LiteralPath $wotrMapManifest -PathType Leaf)) {
+            $problems.Add("BUILD-INFO.json says War of the Ring is playable, but its 3D map bundle has no manifest: content-packs/$($info.warOfTheRing.packRelative)/$($script:WotrMapRelative)/manifest.json")
+        }
     }
 
     # 2. The exe and pck are the ones this bundle claims.
@@ -702,6 +744,573 @@ function Test-BundleTree {
     }
 
     return $problems.ToArray()
+}
+
+function Get-BundleMainWorktree {
+    <#
+    .SYNOPSIS
+        The main checkout of this repository, whatever worktree we are in.
+    .DESCRIPTION
+        Releases land in the MAIN checkout's dist/, not in whichever worktree
+        happened to build them. A worktree is temporary and gets deleted; a
+        release that lived only inside one would vanish with it.
+    #>
+    param([Parameter(Mandatory)][string]$RepoRoot)
+    Push-Location $RepoRoot
+    try {
+        $commonDir = (& git rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
+    } finally { Pop-Location }
+    if ($commonDir -eq '') {
+        throw (New-BundleRefusal -Problem "Cannot locate the main checkout from $RepoRoot (git rev-parse --git-common-dir said nothing)." -Remedy 'Pass -ReleaseRoot <path> explicitly.')
+    }
+    $main = [IO.Path]::GetDirectoryName(([IO.Path]::GetFullPath($commonDir)).TrimEnd('\', '/'))
+    if ($main -eq '' -or $null -eq $main -or -not [IO.Directory]::Exists($main)) {
+        throw (New-BundleRefusal -Problem "Resolved a main checkout that does not exist: '$main'." -Remedy 'Pass -ReleaseRoot <path> explicitly.')
+    }
+    return $main
+}
+
+function Set-BundleReleaseDirectoryIgnored {
+    <#
+    .SYNOPSIS
+        Make the release directory git-invisible on EVERY branch, then let the
+        existing refusal check the result.
+    .DESCRIPTION
+        THE HAZARD THIS CLOSES, measured rather than assumed: `/dist/` is in
+        .gitignore on some branches of this repository and not on others. The
+        root .gitignore is a TRACKED file, so which rules apply depends on which
+        branch the checkout is standing on - and a release directory holding
+        gigabytes of retail-derived output was one `git add -A` from entering
+        history whenever a branch without the rule was checked out.
+
+        A .gitignore INSIDE the release directory containing `*` does not have
+        that property. It is untracked, it ignores itself, and it applies on
+        every branch because it is not part of any branch. That is the whole
+        fix: the guarantee stops depending on which branch is checked out.
+
+        This ADDS a guard; it does not replace one. Test-BundlePathIsGitIgnored
+        still asks git afterwards and still refuses if git disagrees, so a
+        release can never be written on the strength of this function having
+        been called.
+    #>
+    param([Parameter(Mandatory)][string]$ReleaseDirectory)
+    $full = [IO.Path]::GetFullPath($ReleaseDirectory).TrimEnd('\', '/')
+
+    # NEVER blanket-ignore a directory that has tracked files in it. Writing `*`
+    # into, say, the repository root would hide the whole project from git and
+    # clobber the real .gitignore on the way. A release directory is output; if
+    # git is tracking anything here, this is not one, and the caller has pointed
+    # a release somewhere it must not go - which the git-ignore refusal below
+    # will then say out loud.
+    if ([IO.Directory]::Exists($full)) {
+        Push-Location $full
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $tracked = @(& git ls-files -- . 2>$null | Where-Object { $_ -ne '' }) }
+        finally { $ErrorActionPreference = $previousPreference; Pop-Location }
+        if ($tracked.Count -gt 0) {
+            throw (New-BundleRefusal -Problem "Refusing to write a blanket .gitignore into $full - git is tracking $($tracked.Count) file(s) there, so it is source, not release output." -Remedy 'Point the release at a directory that holds output only (dist/ by default).')
+        }
+    }
+
+    [void](New-Item -ItemType Directory -Path $full -Force)
+    $ignoreFile = Join-Path $full '.gitignore'
+    $wanted = @(
+        '# Release staging: packaged builds and the retail-derived content they carry.'
+        '#'
+        '# Self-ignoring ON PURPOSE. The root .gitignore is tracked, so a /dist/ rule'
+        '# only applies on the branches that happen to carry it; this file is untracked'
+        '# and therefore applies on every branch, including a checkout that has just'
+        '# switched to one without the rule.'
+        '#'
+        '# Written by tools/playable-bundle-common.ps1. Do not delete: without it a'
+        '# `git add -A` on the wrong branch would commit gigabytes of retail-derived'
+        '# content, which is permanent and pushed, unlike the bundle itself.'
+        '*'
+    ) -join "`n"
+    $existing = ''
+    if (Test-Path -LiteralPath $ignoreFile -PathType Leaf) { $existing = [IO.File]::ReadAllText($ignoreFile) }
+    if ($existing.TrimEnd() -cne $wanted) {
+        Write-BundleTextFile -Path $ignoreFile -Content ($wanted + "`n")
+        return $true
+    }
+    return $false
+}
+
+function New-BundleMergedManifest {
+    <#
+    .SYNOPSIS
+        A tree manifest for "this pack plus these extra files", without walking
+        and re-hashing the whole multi-gigabyte pack a third time.
+    .DESCRIPTION
+        Produces exactly what Get-BundleTreeManifest would produce for the
+        merged tree: the roll-up hashes are recomputed from the merged entry set
+        using the same sorted, tab-separated, forward-slash encoding, so a
+        verifier that re-walks the finished bundle agrees with it byte for byte.
+        Refuses an overlay that would land on a path the pack already has -
+        silently replacing a pack's own file is content substitution, not
+        staging.
+    #>
+    param(
+        [Parameter(Mandatory)]$Base,
+        [Parameter(Mandatory)][hashtable]$Added
+    )
+    $entries = [ordered]@{}
+    foreach ($key in $Base.entries.Keys) { $entries[$key] = $Base.entries[$key] }
+    foreach ($key in $Added.Keys) {
+        if ($entries.Contains($key)) {
+            throw (New-BundleRefusal -Problem "Staging would overwrite a file the content pack already ships: $key" -Remedy 'Nothing may replace a pack file. Remove the collision at the source, or stage under a path the pack does not use.')
+        }
+        $entries[$key] = $Added[$key]
+    }
+    $ordered = @($entries.Keys)
+    [Array]::Sort($ordered, [StringComparer]::Ordinal)
+
+    $layout = New-Object Text.StringBuilder
+    $deep = New-Object Text.StringBuilder
+    $totalBytes = [long]0
+    $quick = [bool]$Base.quick
+    foreach ($relative in $ordered) {
+        $entry = $entries[$relative]
+        $totalBytes += [long]$entry.bytes
+        [void]$layout.Append("$($entry.bytes)`t$relative`n")
+        if (-not $quick) { [void]$deep.Append("$($entry.sha256)`t$($entry.bytes)`t$relative`n") }
+    }
+    $encoding = [Text.UTF8Encoding]::new($false)
+    $layoutHash = [BitConverter]::ToString(
+        [Security.Cryptography.SHA256]::Create().ComputeHash($encoding.GetBytes($layout.ToString()))
+    ).Replace('-', '').ToLowerInvariant()
+    $deepHash = ''
+    if (-not $quick) {
+        $deepHash = [BitConverter]::ToString(
+            [Security.Cryptography.SHA256]::Create().ComputeHash($encoding.GetBytes($deep.ToString()))
+        ).Replace('-', '').ToLowerInvariant()
+    }
+    $merged = [ordered]@{}
+    foreach ($relative in $ordered) { $merged[$relative] = $entries[$relative] }
+    return [pscustomobject]@{
+        root         = $Base.root
+        files        = $ordered.Length
+        bytes        = $totalBytes
+        layoutSha256 = $layoutHash
+        sha256       = $deepHash
+        quick        = $quick
+        entries      = $merged
+    }
+}
+
+function Test-BundleWotrDocument {
+    <#
+    .SYNOPSIS
+        Refuse a living-world document the shipped game would reject anyway.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $info = New-Object IO.FileInfo $Path
+    if ($info.Length -eq 0) {
+        throw (New-BundleRefusal -Problem "The living-world document is empty: $Path")
+    }
+    if ($info.Length -gt $script:WotrDocumentMaxBytes) {
+        throw (New-BundleRefusal -Problem "The living-world document is $($info.Length) bytes, over the $($script:WotrDocumentMaxBytes)-byte limit the game enforces (wotr_session.gd DOCUMENT_MAX_BYTES)." -Remedy 'The shipped build would refuse to read it, so shipping it would produce a War of the Ring button that is present and broken.')
+    }
+    try { $parsed = [IO.File]::ReadAllText($Path) | ConvertFrom-Json } catch {
+        throw (New-BundleRefusal -Problem "The living-world document is not valid JSON: $Path" -Remedy 'Re-run the living-world report; a document that does not parse disables War of the Ring at runtime.')
+    }
+    if ($null -eq $parsed -or $parsed -isnot [psobject]) {
+        throw (New-BundleRefusal -Problem "The living-world document is not a JSON object: $Path")
+    }
+    return $info.Length
+}
+
+function Test-BundleWotrMap {
+    <#
+    .SYNOPSIS
+        Refuse a living-map bundle the shipped game would reject anyway.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $manifest = Join-Path $Path 'manifest.json'
+    if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+        throw (New-BundleRefusal -Problem "The living-map directory has no manifest.json, so it is not a living-map bundle: $Path" -Remedy 'Produce one with `python -m openbfme_importer.livingmap_bundle <catalog>/rotwk.json <bundle-dir>`.')
+    }
+    try { $parsed = [IO.File]::ReadAllText($manifest) | ConvertFrom-Json } catch {
+        throw (New-BundleRefusal -Problem "The living-map manifest is not valid JSON: $manifest")
+    }
+    if ([string]$parsed.schema -cne $script:WotrMapSchema) {
+        throw (New-BundleRefusal -Problem "The living-map manifest declares schema '$($parsed.schema)', expected '$($script:WotrMapSchema)': $manifest" -Remedy 'The shipped build checks this and would fall back to the flat 2D map.')
+    }
+    return $true
+}
+
+$script:PatchNoteSections = @('NEW', 'FIX', 'UNCERTAIN')
+
+function Get-BundlePreviousRelease {
+    <#
+    .SYNOPSIS
+        The most recent release in this release root that can identify itself.
+    .DESCRIPTION
+        "What changed since last time" is only answerable if last time said what
+        commit it was. Hand-assembled bundles (alpha01) carry no BUILD-INFO.json
+        and are deliberately NOT counted: guessing a range from a directory name
+        would produce a confident, wrong changelog, which is the exact failure
+        class the patch notes exist to avoid. Returns $null when there is none,
+        and the caller must then say so in the notes rather than invent a range.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$ReleaseRoot,
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [string]$ExcludeName = ''
+    )
+    if (-not (Test-Path -LiteralPath $ReleaseRoot -PathType Container)) { return $null }
+    $best = $null
+    foreach ($directory in @(Get-ChildItem -LiteralPath $ReleaseRoot -Directory -ErrorAction SilentlyContinue)) {
+        if ($ExcludeName -ne '' -and $directory.Name -ceq $ExcludeName) { continue }
+        $infoPath = Join-Path $directory.FullName $script:BundleInfoJson
+        if (-not (Test-Path -LiteralPath $infoPath -PathType Leaf)) { continue }
+        try { $info = [IO.File]::ReadAllText($infoPath) | ConvertFrom-Json } catch { continue }
+        $names = @($info.PSObject.Properties.Name)
+        if ($names -notcontains 'source' -or $names -notcontains 'builtAtUtc') { continue }
+        $commit = [string]$info.source.commit
+        if ($commit -cnotmatch '^[0-9a-f]{40}$') { continue }
+        Push-Location $RepoRoot
+        # $ErrorActionPreference is 'Stop' in the callers, and git writes to
+        # stderr when the object is unknown - which Windows PowerShell turns into
+        # a terminating error before the exit code can be read. Asking about a
+        # commit that is legitimately absent must not kill the build.
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { & git cat-file -e "$commit^{commit}" 2>$null | Out-Null; $known = ($LASTEXITCODE -eq 0) }
+        finally { $ErrorActionPreference = $previousPreference; Pop-Location }
+        if (-not $known) { continue }
+        $builtAt = [string]$info.builtAtUtc
+        if ($null -eq $best -or $builtAt -gt $best.builtAtUtc) {
+            $best = [pscustomobject]@{
+                name = [string]$info.bundleName; commit = $commit
+                shortCommit = $commit.Substring(0, 10); builtAtUtc = $builtAt
+                path = $directory.FullName
+            }
+        }
+    }
+    return $best
+}
+
+function Read-BundleReleaseHighlights {
+    <#
+    .SYNOPSIS
+        Player-facing lines, each of which must name the change that introduced it.
+    .DESCRIPTION
+        THE CITATION IS THE POINT. A patch note here cannot be written without a
+        commit id, and a note whose commit is not in this release's range is
+        dropped rather than printed. So the notes cannot claim a feature this
+        build does not contain: the worst case is a note that is missing, never
+        one that is invented. Lines are `SECTION|commit|text`; `#` comments and
+        blank lines are ignored.
+
+        Sections, and why there are exactly three:
+          NEW       something a player can do in this build that they could not before
+          FIX       something that was broken for a player and now is not
+          UNCERTAIN real work that landed, which this tool CANNOT confirm the
+                    player reaches. It is printed under its own heading rather
+                    than promoted or dropped, because both of those are lies of a
+                    different kind.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $rows = New-Object 'System.Collections.Generic.List[object]'
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $rows.ToArray() }
+    $lineNumber = 0
+    foreach ($line in [IO.File]::ReadAllLines($Path)) {
+        $lineNumber++
+        $trimmed = $line.Trim()
+        if ($trimmed -eq '' -or $trimmed.StartsWith('#')) { continue }
+        $parts = $trimmed.Split('|', 3)
+        if ($parts.Length -ne 3) {
+            throw (New-BundleRefusal -Problem "$Path line ${lineNumber}: expected 'SECTION|commit|text'." -Remedy "Got: $trimmed")
+        }
+        $section = $parts[0].Trim().ToUpperInvariant()
+        if ($script:PatchNoteSections -cnotcontains $section) {
+            throw (New-BundleRefusal -Problem "$Path line ${lineNumber}: unknown section '$section'." -Remedy "Use one of: $($script:PatchNoteSections -join ', ')")
+        }
+        $commit = $parts[1].Trim()
+        if ($commit -cnotmatch '^[0-9a-f]{7,40}$') {
+            throw (New-BundleRefusal -Problem "$Path line ${lineNumber}: '$commit' is not a commit id." -Remedy 'Every patch note must cite the commit that introduced it; that citation is what stops the notes overstating.')
+        }
+        $text = $parts[2].Trim()
+        if ($text -eq '') {
+            throw (New-BundleRefusal -Problem "$Path line ${lineNumber}: the note text is empty.")
+        }
+        $rows.Add([pscustomobject]@{ section = $section; commit = $commit; text = $text; line = $lineNumber })
+    }
+    return $rows.ToArray()
+}
+
+function New-BundleReleaseNotes {
+    <#
+    .SYNOPSIS
+        Build the playtester-facing PATCH-NOTES.txt and the raw CHANGES.txt.
+    .DESCRIPTION
+        Everything printed is derived from `git log` over a stated range plus a
+        citation file whose every line names a commit inside that range. Nothing
+        is inferred from a feature name, a directory listing, or this tool's
+        opinion of what a commit probably did.
+
+        The range is chosen in this order, and the notes SAY which was used:
+          1. -Since, if given.
+          2. The newest previous release in the release root that carries a
+             BUILD-INFO.json naming a commit this repository knows.
+          3. Nothing - in which case the notes state that no previous release
+             could be identified and fall back to the branch point against the
+             stated base branch.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$BundleName,
+        [Parameter(Mandatory)]$Source,
+        [Parameter(Mandatory)][string]$BuiltAtUtc,
+        [Parameter(Mandatory)]$PackRecords,
+        [string]$Since = '',
+        [string]$HighlightsPath = '',
+        [string]$BaseBranch = 'main',
+        $PreviousRelease = $null,
+        $WotrData = $null
+    )
+    Push-Location $RepoRoot
+    try {
+        # THE RANGE ENDS AT THE COMMIT THIS BUNDLE WAS BUILT FROM, never at HEAD.
+        # Other lanes commit to this repository continuously; a first version of
+        # this used HEAD and, when re-run minutes later, produced notes claiming
+        # two changes that were not in the build. Notes that describe a different
+        # build than the one they sit next to are worse than no notes.
+        $to = [string]$Source.commit
+        if ($to -cnotmatch '^[0-9a-f]{40}$') {
+            throw (New-BundleRefusal -Problem "The source identity carries no commit, so the release notes have no endpoint to stop at: '$to'.")
+        }
+        $rangeBasis = ''
+        $from = ''
+        if ($Since -ne '') {
+            # Same stderr trap as above: an unknown -Since must produce this
+            # refusal, which names the parameter, not a bare "fatal:" from git.
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { $resolved = (& git rev-parse --verify "$Since^{commit}" 2>$null | Out-String).Trim() }
+            finally { $ErrorActionPreference = $previousPreference }
+            if ($LASTEXITCODE -ne 0 -or $resolved -eq '') {
+                throw (New-BundleRefusal -Problem "-Since '$Since' is not a commit this repository knows." -Remedy 'Pass a commit, tag or branch that exists here.')
+            }
+            $from = $resolved
+            $rangeBasis = "explicit -Since $Since"
+        } elseif ($null -ne $PreviousRelease) {
+            $from = $PreviousRelease.commit
+            $rangeBasis = "the previous release in this folder, $($PreviousRelease.name) (built $($PreviousRelease.builtAtUtc))"
+        } else {
+            $mergeBase = (& git merge-base $BaseBranch $to 2>$null | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $mergeBase -eq '') {
+                $from = ''
+                $rangeBasis = "NOTHING - not even a branch point against '$BaseBranch' could be resolved, so this covers the whole history"
+            } else {
+                $from = $mergeBase
+                $rangeBasis = "the branch point against '$BaseBranch' (no previous release could be identified)"
+            }
+        }
+
+        $range = if ($from -eq '') { $to } else { "$from..$to" }
+        # A separator that cannot occur in a commit subject. Written as [char],
+        # not as a "`u{...}" escape: Windows PowerShell 5.1 does not understand
+        # that escape and would split on the literal text, silently producing an
+        # EMPTY changelog for a release that has 250 changes in it.
+        $unitSeparator = [string][char]0x1f
+        $log = @(& git log --reverse --format='%H%x1f%h%x1f%cI%x1f%s' $range 2>$null | Where-Object { $_ -ne '' })
+        $commits = New-Object 'System.Collections.Generic.List[object]'
+        foreach ($row in $log) {
+            $fields = $row -split $unitSeparator
+            if ($fields.Length -lt 4) { continue }
+            $subject = $fields[3]
+            $area = 'other'
+            if ($subject -cmatch '^(?<a>[a-z][a-z0-9-]{1,14}):\s') { $area = $Matches['a'] }
+            $commits.Add([pscustomobject]@{
+                commit = $fields[0]; short = $fields[1]; date = $fields[2]
+                subject = $subject; area = $area
+            })
+        }
+
+        # "git printed N lines and we understood none of them" is not an empty
+        # release, it is a broken parser - and it would ship a release whose
+        # notes say nothing changed. That mistake has already been made here
+        # once, so it is now a refusal rather than a comment.
+        if ($log.Count -gt 0 -and $commits.Count -eq 0) {
+            throw (New-BundleRefusal -Problem "git log returned $($log.Count) lines for $range and none of them parsed, so the release notes would claim nothing changed." -Remedy 'This is a defect in New-BundleReleaseNotes, not in the repository. Do not ship notes produced by it.')
+        }
+
+        $highlights = @()
+        $dropped = New-Object 'System.Collections.Generic.List[string]'
+        if ($HighlightsPath -ne '') {
+            $inRange = @{}
+            foreach ($entry in $commits) {
+                $inRange[$entry.commit] = $entry
+                $inRange[$entry.short] = $entry
+            }
+            foreach ($row in @(Read-BundleReleaseHighlights -Path $HighlightsPath)) {
+                $matched = $null
+                if ($inRange.ContainsKey($row.commit)) { $matched = $inRange[$row.commit] }
+                else {
+                    foreach ($entry in $commits) {
+                        if ($entry.commit.StartsWith($row.commit, [StringComparison]::Ordinal)) { $matched = $entry; break }
+                    }
+                }
+                if ($null -eq $matched) {
+                    # Not an error: a highlights file accumulates across releases,
+                    # so a note for an older release legitimately falls out of
+                    # range. Dropping it is the honest outcome; printing it would
+                    # credit this build with someone else's work.
+                    $dropped.Add("$($row.section) $($row.commit): $($row.text)")
+                    continue
+                }
+                $highlights += [pscustomobject]@{
+                    section = $row.section; commit = $matched.short
+                    date = $matched.date.Substring(0, 10); text = $row.text
+                }
+            }
+        }
+        $cited = @{}
+        foreach ($highlight in $highlights) { $cited[$highlight.commit] = $true }
+
+        $byArea = @{}
+        foreach ($entry in $commits) {
+            if (-not $byArea.ContainsKey($entry.area)) { $byArea[$entry.area] = 0 }
+            $byArea[$entry.area] = $byArea[$entry.area] + 1
+        }
+        $areaLines = @($byArea.Keys | Sort-Object { -$byArea[$_] }, { $_ } | ForEach-Object {
+            "    {0,-16} {1,4}" -f $_, $byArea[$_]
+        })
+
+        function Format-Section {
+            param([string]$Key)
+            $rows = @($highlights | Where-Object { $_.section -ceq $Key })
+            if ($rows.Count -eq 0) { return @('  (nothing recorded for this release)') }
+            return @($rows | ForEach-Object { "  - $($_.text)`n      [$($_.commit), $($_.date)]" })
+        }
+
+        $first = ''
+        $last = ''
+        if ($commits.Count -gt 0) {
+            $first = "$($commits[0].short) $($commits[0].date.Substring(0,10))"
+            $last = "$($commits[$commits.Count - 1].short) $($commits[$commits.Count - 1].date.Substring(0,10))"
+        }
+
+        $previousLine = 'NONE COULD BE IDENTIFIED. No earlier build in this folder states which'
+        if ($null -ne $PreviousRelease) {
+            $previousLine = "$($PreviousRelease.name), built $($PreviousRelease.builtAtUtc) from $($PreviousRelease.shortCommit)"
+        }
+        $previousExtra = ''
+        if ($null -eq $PreviousRelease) {
+            $previousExtra = @"
+
+  commit it was built from, so "what changed since then" is not answerable for
+  it. Rather than guess a range, this list covers $rangeBasis.
+  Everything below is still taken from the real history of this build; only the
+  starting point is a fallback.
+"@
+        }
+
+        $wotrLine = '  War of the Ring data: not recorded by this build.'
+        if ($null -ne $WotrData) {
+            if ([bool]$WotrData.staged) {
+                $wotrLine = @"
+  War of the Ring: the strategic map data IS in this build, inside
+  content-packs. Earlier builds shipped the button without its data and it read
+  WAR OF THE RING (UNAVAILABLE); this one does not.
+"@
+            } else {
+                $wotrLine = @"
+  War of the Ring: NOT IN THIS BUILD. The menu entry will read
+  WAR OF THE RING (UNAVAILABLE) and will not open. Reason:
+    $([string]$WotrData.reason)
+"@
+            }
+        }
+
+        $dirtyLine = ''
+        if ($Source.dirty) {
+            $dirtyLine = @"
+
+  !! This build was made from a WORKING COPY with $($Source.dirtyFileCount) uncommitted files in it.
+     Those changes are in the build and are NOT in the list below, because the
+     list is made from committed history. Treat anything you see that is not
+     listed here as unlisted work, not as a surprise feature.
+
+"@
+        }
+
+        $notes = @"
+OPEN BFME - $BundleName
+$('=' * (11 + $BundleName.Length))
+  built            $BuiltAtUtc UTC
+  from             $($Source.shortCommit) on $($Source.branch)
+  content packs    $(@($PackRecords | ForEach-Object { $_.id }) -join ', ')
+$dirtyLine
+HOW TO READ THIS
+  Every line below names the change it came from, in [brackets]. Nothing here is
+  written from memory or from what a feature is called - it is taken from the
+  recorded history of this build over a stated range.
+
+  Because of that, this list errs towards being SHORT rather than flattering.
+  Work that landed but that nobody has confirmed you can actually reach from the
+  menu is listed under NOT CONFIRMED IN THIS BUILD instead of being promoted to
+  a feature. If something you expected is missing from the top two sections,
+  look there before concluding it was not done.
+
+$wotrLine
+WHAT YOU CAN DO NOW THAT YOU COULD NOT BEFORE
+$((Format-Section -Key 'NEW') -join "`n")
+
+THINGS THAT WERE BROKEN AND NOW ARE NOT
+$((Format-Section -Key 'FIX') -join "`n")
+
+NOT CONFIRMED IN THIS BUILD
+  Real work that landed in this range which this file cannot confirm reaches
+  you. It is listed so it is not hidden, and it is here rather than above so it
+  is not claimed.
+$((Format-Section -Key 'UNCERTAIN') -join "`n")
+
+EVERYTHING ELSE IN THIS RELEASE
+  $($commits.Count) changes in total. The ones above are the ones somebody wrote a
+  player-facing line for; the rest are engine, importer, tooling and test work
+  with no direct effect on what you see. By area:
+
+$($areaLines -join "`n")
+
+  The complete list, one line per change, is in $($script:BundleChangeLog).
+
+WHAT RANGE THIS COVERS
+  previous release $previousLine$previousExtra
+  range basis      $rangeBasis
+  first change     $(if ($first -eq '') { '(none)' } else { $first })
+  last change      $(if ($last -eq '') { '(none)' } else { $last })
+$(if ($dropped.Count -gt 0) { "`n  $($dropped.Count) recorded note(s) were left out because the change they cite is not`n  in this range:`n" + (@($dropped | ForEach-Object { "    $_" }) -join "`n") } else { '' })
+
+REPORTING A PROBLEM
+  Send run.log and BUILD-INFO.txt from this folder. Between them they say
+  exactly which build, which commit and which content produced the behaviour.
+"@
+
+        $changeLines = @($commits | ForEach-Object { "$($_.date.Substring(0,10))  $($_.short)  $($_.subject)" })
+        $changeLog = @"
+OPEN BFME - $BundleName
+Every committed change in this release, oldest first. Raw history, no editing.
+Range: $rangeBasis
+$(if ($from -eq '') { 'From: (the beginning of history)' } else { "From: $from" })
+To:   $($Source.commit)
+Count: $($commits.Count)
+
+$($changeLines -join "`n")
+"@
+        return [pscustomobject]@{
+            notesText   = $notes
+            changeText  = $changeLog
+            rangeBasis  = $rangeBasis
+            fromCommit  = $from
+            commitCount = $commits.Count
+            highlights  = $highlights
+            dropped     = $dropped.ToArray()
+        }
+    } finally { Pop-Location }
 }
 
 function Format-BundleBytes {
