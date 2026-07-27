@@ -1,0 +1,7320 @@
+{
+	"$comment": "Measured SageScriptWorld surface map. Regenerate with script_world_surface_runner.gd -- --write; do not hand-edit. The runner fails if this file disagrees with the probed adapter or with its own regeneration.",
+	"surface": "Every public non-static script-declared instance method of the 16 facet objects of SageScriptWorld (the three presentation sinks counted per sink) plus the base world's own 7 surface methods under facet 'world'. simulationBacked is OBSERVED by calling each method against RetailSliceScriptWorld over a synthetic RetailSliceSim; blocking annotations are analysis, verified for coverage but not provable by a probe.",
+	"counts": {
+		"total": 319,
+		"simulationBacked": 36,
+		"refusing": 283
+	},
+	"subsystems": [
+		{
+			"id": "adapter-only",
+			"requires": "No new sim state at all: answerable today from existing public sim state for bound names (e.g. team health aggregates over the member-health arrays). Refuses only because the adapter has not implemented it - the cheapest bucket on this list."
+		},
+		{
+			"id": "attack-priorities",
+			"requires": "Named attack-priority sets: a store of per-thing/per-kindof priority tables plus target-selection hooks in the sim's combat AI that consult the applied set."
+		},
+		{
+			"id": "base-building-ai",
+			"requires": "The skirmish-AI base model: base flags and unpack economics, build plots and foundations, tactical markers, base regions and population, approach paths, home-base identity, per-base buildability, view guardband. The single heaviest AI-traffic blocker (ai_economy_execution polls base flags 64 times per pass)."
+		},
+		{
+			"id": "command-button-abilities",
+			"requires": "Command-button -> ability resolution on battalions: executing and auto-toggling abilities by button name, and readiness counts per team. The sim models spellbook powers per player, not per-object command buttons."
+		},
+		{
+			"id": "deterministic-rng",
+			"requires": "A seeded, lockstep-safe random stream owned by the sim; advertising CAP_RANDOM without it would invite randi() desyncs."
+		},
+		{
+			"id": "diplomacy-overrides",
+			"requires": "Mutable relation state: per-player and per-team relation overrides layered over the fixed alliance-derived relation the sim computes today (set, remove, remove-all)."
+		},
+		{
+			"id": "economy-model-extras",
+			"requires": "Economy state beyond the single team-resources number: supply sources and trucking, area value censuses, warehouse values, harvesting, scoring, and the (likely Generals-vestigial) power produced/consumed model."
+		},
+		{
+			"id": "entity-lifecycle-api",
+			"requires": "A public sim API for scripted spawn/despawn/damage/kill/teleport/ownership-transfer that honors command-point accounting, member-health arrays and the corpse flow - today's spawn path is private and raw writes would bypass all three (005bcd8's own finding)."
+		},
+		{
+			"id": "entity-status-flags",
+			"requires": "Per-entity/per-team status bits the sim rules would have to consult: object status, model conditions, stealth, held, repulsor, flame, web, shock, panel flags, weaponset switches, emoticons."
+		},
+		{
+			"id": "event-ledger",
+			"requires": "Recorded simulation events with edge semantics: attacked-by (player/type), cannot-retaliate, kills by type/kindof, buildings destroyed per victim, EVA event memory, formation orders issued, objects lost by type."
+		},
+		{
+			"id": "experience-model",
+			"requires": "A public experience surface over the authored XP chains: level and XP reads, grants, gained-level edges, level caps, veterancy censuses, XP-receiving/sharing toggles - for units, teams and players (unit/team scope also needs the name/team registries)."
+		},
+		{
+			"id": "facet-signature-packet",
+			"requires": "Not a sim subsystem: the coordinated signature-correction packet on script_world.gd collecting every gap-registered missing parameter (custom-state enable flag, threat radius, recruit type list, stand-ground clear flag, nearest-team anchor, base-anchored buildability, unpack result references, tactical-marker builds, wall-upgrade shape) plus the three defects 005bcd8 reported."
+		},
+		{
+			"id": "garrison-transport-capture",
+			"requires": "The WP03/WP04 blocked block: passenger/transport containers, garrisons, tunnel networks, building emptiness, capture allegiance, exits. No container model exists in either sim."
+		},
+		{
+			"id": "hero-revival-carryover",
+			"requires": "A hero revival and delayed-carryover ledger: revival entries at level, carryover units materialised at waypoints, per-type carryover queries."
+		},
+		{
+			"id": "living-world",
+			"requires": "The LivingWorld campaign strategic layer, deliberately unmodelled; the whole family funnels through one command/query pair until a campaign layer exists."
+		},
+		{
+			"id": "map-geometry",
+			"requires": "Map geometry in the sim: waypoints, waypoint paths, trigger-area polygons, point-in-area tests, path-following and pathability queries, passability edits. The sim currently knows positions but no named geometry."
+		},
+		{
+			"id": "match-config-metadata",
+			"requires": "Match-configuration metadata: start-spot indices, game-mode token, mission attempts, planning mode. Facts of match setup the sim is never told today."
+		},
+		{
+			"id": "match-lifecycle-controls",
+			"requires": "Scripted match-lifecycle controls: per-player local defeat, map exit, and a time-freeze design that cannot deadlock the script layer (set_time_frozen is refused by 005bcd8's deadlock finding, not by missing state: freezing the tick would freeze the scripts, so a scripted UNFREEZE could never run)."
+		},
+		{
+			"id": "object-name-registry",
+			"requires": "THE registry gap 005bcd8 named: a lockstep script-name -> entity-id binding (plus per-name created/destroyed edge records and a unit-reference store). Sim rows carry display names, not script identities, so nothing keyed by a named object can find its subject. Unblocks the most METHODS of any subsystem; the AI-traffic cross-reference below shows it is NOT the largest call-site payoff."
+		},
+		{
+			"id": "object-type-identity",
+			"requires": "Retail object-type / KindOf / OBJECT_TYPE_LIST identity on sim rows plus type-filtered censuses and list membership editing. The sim knows five synthetic object ids, not the retail taxonomy - and PLAYER_HAS_OBJECT_COMPARISON alone is 100 AI call sites against it."
+		},
+		{
+			"id": "order-verbs",
+			"requires": "Simulation order types beyond move/attack-move/attack/stance: guard (timed, area, object), hunt, idle-for, wander, face, move-home, repair-nearest, spin, stopping distance."
+		},
+		{
+			"id": "player-progression-state",
+			"requires": "Player-level progression state: rank levels and caps, skill points and skill sets, light points, spell-point caps, command-point overrides."
+		},
+		{
+			"id": "presentation-adapter",
+			"requires": "A client-side presentation adapter draining the camera/audio/ui sinks; simulation-free by design, zero lockstep risk, zero retail AI call sites - 191 handler members, none of them AI traffic."
+		},
+		{
+			"id": "production-controls",
+			"requires": "Per-player production gating and structure verbs: base-construction/factory/unit-construction toggles, construction speed, auto-build, sell-everything, repair, prerequisite and buildability evaluation."
+		},
+		{
+			"id": "progression-grant-api",
+			"requires": "Public grant surfaces that bypass production HONESTLY: outright upgrade grants (distinct from build_upgrade's queue), free science grants, science availability edits."
+		},
+		{
+			"id": "sequential-scripts",
+			"requires": "Sequential-script execution bound to teams/units: per-subject sequential queues the script executor owns and the sim can start, loop and stop (ai_attack_execution drives every behaviour script through this)."
+		},
+		{
+			"id": "sim-selection-model",
+			"requires": "A SIMULATION notion of selection. sim.selected_ids is per-seat presentation state, explicitly not lockstep; backing a script condition with it would desync (005bcd8's finding). Needs a design decision before it needs code."
+		},
+		{
+			"id": "spatial-queries",
+			"requires": "Deterministic spatial search surface: nearest-of-type/kindof/most-valuable object selection, distance between named subjects, radius-scoped threat evaluation, threat finders."
+		},
+		{
+			"id": "special-power-extras",
+			"requires": "Special-power state beyond the modelled owned/ready/cast pair: writable and pausable countdowns (player- and object-scoped) and triggered/midway/completed phase events per cast."
+		},
+		{
+			"id": "team-behavior-state",
+			"requires": "Per-team behaviour state: TEAM_STATE tokens, custom-state token sets, AI mood/attitude, emotions, panic. Missing even for the bound default rosters, and the retail AI's attack loops gate on it constantly (TEAM_SET_CUSTOM_STATE alone is 40 call sites)."
+		},
+		{
+			"id": "team-registry",
+			"requires": "The WorldBuilder sub-player team model: teams instantiated from templates, membership and leaders, priorities, team references, recruitment, merge/delete/transfer, created/destroyed edges. Bound default rosters exist; script teams do not."
+		},
+		{
+			"id": "terrain-dynamics",
+			"requires": "Terrain/water/weather dynamics: bridges, water heights, burn rates and area fire, cloud speed, map borders, logic fog, tree censuses."
+		},
+		{
+			"id": "vision-and-discovery",
+			"requires": "A per-player vision/discovery model: fog of war and shroud, sighted/discovered edges for players, teams, units and types. Neither sim models visibility at all (WP02 blocked block)."
+		},
+		{
+			"id": "walls-and-siege",
+			"requires": "Walls, gates and siege attachment: wall segments and upgrade targets, gate open/close/ready state, siege tower deploy/retract."
+		}
+	],
+	"methods": [
+		{
+			"facet": "ai",
+			"method": "base_population",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "a base-population count per AI base"
+		},
+		{
+			"facet": "ai",
+			"method": "base_unpack",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "free",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "base flags with unpack economics (and the gap-registered result-reference parameter)"
+		},
+		{
+			"facet": "ai",
+			"method": "base_unpackable",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "base flags with per-player unpackability - the single most-polled AI condition (64 sites, one library)"
+		},
+		{
+			"facet": "ai",
+			"method": "build_base_building",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "building_type",
+					"type": "String"
+				},
+				{
+					"name": "slot",
+					"type": "int"
+				},
+				{
+					"name": "marker",
+					"type": "String"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "build plots/slots and tactical markers (and the gap-registered site+reference parameters)"
+		},
+		{
+			"facet": "ai",
+			"method": "build_on_foundation",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "foundation",
+					"type": "String"
+				},
+				{
+					"name": "building_type",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "foundation objects a building can be placed on"
+		},
+		{
+			"facet": "ai",
+			"method": "camps_should_unpack",
+			"params": [
+				{
+					"name": "region",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "camp regions with unpack pacing state"
+		},
+		{
+			"facet": "ai",
+			"method": "create_reinforcement_team",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "reinforcement army templates and spawn anchors (retail anchors on the reference NAMED_BASE_UNPACK_FREE binds)"
+		},
+		{
+			"facet": "ai",
+			"method": "move_to_approach_path",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "path",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "authored approach paths per base"
+		},
+		{
+			"facet": "ai",
+			"method": "remove_reinforcement_army",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "army",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "a reinforcement army roster to remove from"
+		},
+		{
+			"facet": "ai",
+			"method": "sell_on_foundation",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "foundation",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "foundation objects plus a sell/refund path"
+		},
+		{
+			"facet": "ai",
+			"method": "set_attack_priority",
+			"params": [
+				{
+					"name": "set_name",
+					"type": "String"
+				},
+				{
+					"name": "target_kind",
+					"type": "String"
+				},
+				{
+					"name": "target_name",
+					"type": "String"
+				},
+				{
+					"name": "priority",
+					"type": "int"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "attack-priorities",
+			"requiredSimState": "named priority sets keyed by thing/kindof"
+		},
+		{
+			"facet": "ai",
+			"method": "set_buildings_allowed",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "building_type",
+					"type": "String"
+				},
+				{
+					"name": "allowed",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "per-player per-type build permission flags the production rules consult"
+		},
+		{
+			"facet": "ai",
+			"method": "set_default_attack_priority",
+			"params": [
+				{
+					"name": "set_name",
+					"type": "String"
+				},
+				{
+					"name": "priority",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "attack-priorities",
+			"requiredSimState": "a default priority slot per named set"
+		},
+		{
+			"facet": "ai",
+			"method": "set_view_guardband",
+			"params": [
+				{
+					"name": "width",
+					"type": "float"
+				},
+				{
+					"name": "height",
+					"type": "float"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "an AI awareness guardband the wave logic reads"
+		},
+		{
+			"facet": "ai",
+			"method": "skirmish_build",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "building_type",
+					"type": "String"
+				},
+				{
+					"name": "placement",
+					"type": "String"
+				},
+				{
+					"name": "count",
+					"type": "int"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "front/flank placement zones per base"
+		},
+		{
+			"facet": "areas",
+			"method": "base_transition_count",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "base_reference",
+					"type": "String"
+				},
+				{
+					"name": "entered",
+					"type": "bool"
+				},
+				{
+					"name": "entirely",
+					"type": "bool"
+				}
+			],
+			"arity": 5,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "base regions plus per-subject enter/exit edge records"
+		},
+		{
+			"facet": "areas",
+			"method": "contains",
+			"params": [
+				{
+					"name": "area",
+					"type": "String"
+				},
+				{
+					"name": "position",
+					"type": "Vector3"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "trigger-area polygons and a point-in-area test"
+		},
+		{
+			"facet": "areas",
+			"method": "exists",
+			"params": [
+				{
+					"name": "area",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "named trigger areas loaded from map data"
+		},
+		{
+			"facet": "areas",
+			"method": "is_on_fire",
+			"params": [
+				{
+					"name": "area",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "terrain-dynamics",
+			"requiredSimState": "area fire state"
+		},
+		{
+			"facet": "areas",
+			"method": "member_count",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "area",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "trigger areas plus per-subject membership counting"
+		},
+		{
+			"facet": "areas",
+			"method": "object_inside_base",
+			"params": [
+				{
+					"name": "object_or_type",
+					"type": "String"
+				},
+				{
+					"name": "base_reference",
+					"type": "String"
+				},
+				{
+					"name": "is_type",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "base regions plus object/type containment tests"
+		},
+		{
+			"facet": "areas",
+			"method": "set_human_impassable",
+			"params": [
+				{
+					"name": "area",
+					"type": "String"
+				},
+				{
+					"name": "impassable",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "per-area passability the human pathing respects"
+		},
+		{
+			"facet": "areas",
+			"method": "transition_count",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "area",
+					"type": "String"
+				},
+				{
+					"name": "entered",
+					"type": "bool"
+				}
+			],
+			"arity": 4,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "trigger areas plus entered/exited EDGE records since last evaluation (containment alone must not answer these)"
+		},
+		{
+			"facet": "areas",
+			"method": "tree_count",
+			"params": [
+				{
+					"name": "area",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "terrain-dynamics",
+			"requiredSimState": "map tree objects countable per area"
+		},
+		{
+			"facet": "areas",
+			"method": "unit_count_in_area",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "area",
+					"type": "String"
+				},
+				{
+					"name": "filter",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "trigger areas plus type/kindof/upgrade/built filters over contained objects"
+		},
+		{
+			"facet": "areas",
+			"method": "waypoint_path_exists",
+			"params": [
+				{
+					"name": "path",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "named waypoint paths from map data"
+		},
+		{
+			"facet": "areas",
+			"method": "waypoint_position",
+			"params": [
+				{
+					"name": "waypoint",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "named waypoints from map data - the primitive under every _AT_WAYPOINT action"
+		},
+		{
+			"facet": "audio",
+			"method": "emit",
+			"params": [
+				{
+					"name": "op",
+					"type": "String"
+				},
+				{
+					"name": "values",
+					"type": "Array"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "presentation-adapter",
+			"requiredSimState": "an audio/video sink adapter on the client"
+		},
+		{
+			"facet": "camera",
+			"method": "emit",
+			"params": [
+				{
+					"name": "op",
+					"type": "String"
+				},
+				{
+					"name": "values",
+					"type": "Array"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "presentation-adapter",
+			"requiredSimState": "a camera sink adapter on the client"
+		},
+		{
+			"facet": "combat",
+			"method": "attack_nearest_group_with_value",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "value",
+					"type": "int"
+				},
+				{
+					"name": "comparison",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "spatial-queries",
+			"requiredSimState": "value-weighted group search near a team"
+		},
+		{
+			"facet": "combat",
+			"method": "attacked_and_cannot_retaliate",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "event-ledger",
+			"requiredSimState": "attacked-without-retaliation-path records per named object (plus the name binding)"
+		},
+		{
+			"facet": "combat",
+			"method": "attacked_by",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "attacker",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "event-ledger",
+			"requiredSimState": "attacked-by records keyed by player and object type"
+		},
+		{
+			"facet": "combat",
+			"method": "buildings_destroyed_by",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "victim",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "event-ledger",
+			"requiredSimState": "per-victim building-kill tallies"
+		},
+		{
+			"facet": "combat",
+			"method": "command_button_ready_count",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "command_button",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "command-button-abilities",
+			"requiredSimState": "per-member ability readiness by command button"
+		},
+		{
+			"facet": "combat",
+			"method": "damage",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "amount",
+					"type": "float"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "a public damage entry point honoring member-health arrays, CP release and the corpse flow (raw health writes bypass all three)"
+		},
+		{
+			"facet": "combat",
+			"method": "fire_special_power",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "power",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "PLAYER scope, spellbook powers, explicit POSITION targets only"
+		},
+		{
+			"facet": "combat",
+			"method": "kill",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "a public kill entry point honoring the corpse flow"
+		},
+		{
+			"facet": "combat",
+			"method": "kill_count_of_type",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "is_kindof",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "event-ledger",
+			"requiredSimState": "kill tallies keyed by object type and kindof"
+		},
+		{
+			"facet": "combat",
+			"method": "kill_horde_members",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "member-granular kill API within a battalion row"
+		},
+		{
+			"facet": "combat",
+			"method": "player_all_destroyed",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "build_facilities_only",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "full variant only; build_facilities_only refuses (no build-facility classification)"
+		},
+		{
+			"facet": "combat",
+			"method": "set_bonuses_allowed",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "allowed",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "a per-entity bonus-eligibility flag the damage pipeline consults (plus the name binding)"
+		},
+		{
+			"facet": "combat",
+			"method": "set_health_percent",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "percent",
+					"type": "float"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "a public health-write API honoring member-health arrays"
+		},
+		{
+			"facet": "combat",
+			"method": "set_special_power_countdown",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "power",
+					"type": "String"
+				},
+				{
+					"name": "ticks",
+					"type": "int"
+				},
+				{
+					"name": "relative",
+					"type": "bool"
+				}
+			],
+			"arity": 5,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "special-power-extras",
+			"requiredSimState": "writable per-power countdowns (per object needs the name binding too)"
+		},
+		{
+			"facet": "combat",
+			"method": "set_special_power_countdown_running",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "power",
+					"type": "String"
+				},
+				{
+					"name": "running",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "special-power-extras",
+			"requiredSimState": "pausable per-object power countdowns"
+		},
+		{
+			"facet": "combat",
+			"method": "set_victim_selection_normal",
+			"params": [
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "attack-priorities",
+			"requiredSimState": "a victim-selection mode switch in target selection"
+		},
+		{
+			"facet": "combat",
+			"method": "special_power_phase",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "power",
+					"type": "String"
+				},
+				{
+					"name": "phase",
+					"type": "String"
+				},
+				{
+					"name": "from_object",
+					"type": "String"
+				}
+			],
+			"arity": 4,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "special-power-extras",
+			"requiredSimState": "triggered/midway/completed phase events per power cast"
+		},
+		{
+			"facet": "combat",
+			"method": "special_power_ready",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "power",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "PLAYER scope, powers of the match's spellbook document only"
+		},
+		{
+			"facet": "combat",
+			"method": "team_health_percent",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "adapter-only",
+			"requiredSimState": "nothing new: aggregate member_health over living_ids for a bound roster - EVAL_TEAM_HEALTH's 4 AI call sites are waiting on adapter work only"
+		},
+		{
+			"facet": "combat",
+			"method": "using_autopickup",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "command-button-abilities",
+			"requiredSimState": "auto-pickup behaviour flags per object (plus the name binding)"
+		},
+		{
+			"facet": "combat",
+			"method": "using_bloodthirsty",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "command-button-abilities",
+			"requiredSimState": "bloodthirsty ability usage tracking per player"
+		},
+		{
+			"facet": "economy",
+			"method": "build_supply_center",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "distance",
+					"type": "float"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "supply-center build orders in the AI economy"
+		},
+		{
+			"facet": "economy",
+			"method": "give_money",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "amount",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "economy",
+			"method": "money",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "bound players only (facet path refuses unbound; the pre-facet path cannot)"
+		},
+		{
+			"facet": "economy",
+			"method": "resume_supply_trucking",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "a supply-trucking loop to resume"
+		},
+		{
+			"facet": "economy",
+			"method": "set_money",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "amount",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "economy",
+			"method": "set_scoring_enabled",
+			"params": [
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "a scoring model to toggle"
+		},
+		{
+			"facet": "economy",
+			"method": "supplies_within_distance",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "origin",
+					"type": "String"
+				},
+				{
+					"name": "distance",
+					"type": "float"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "supply objects with values, searchable by distance"
+		},
+		{
+			"facet": "economy",
+			"method": "supply_source_state",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "safe",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "supply sources with attacked/safe state"
+		},
+		{
+			"facet": "economy",
+			"method": "value_in_area",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "area",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "per-object value plus trigger-area geometry"
+		},
+		{
+			"facet": "fog",
+			"method": "reveal",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				},
+				{
+					"name": "permanent",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "vision-and-discovery",
+			"requiredSimState": "a fog-of-war grid to reveal (WP02: no subsystem exists in either sim)"
+		},
+		{
+			"facet": "fog",
+			"method": "set_border_shroud",
+			"params": [
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "vision-and-discovery",
+			"requiredSimState": "border shroud state"
+		},
+		{
+			"facet": "fog",
+			"method": "shroud",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "vision-and-discovery",
+			"requiredSimState": "a fog-of-war grid to shroud"
+		},
+		{
+			"facet": "fog",
+			"method": "undo_permanent_reveal",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "vision-and-discovery",
+			"requiredSimState": "permanent-reveal bookkeeping to undo"
+		},
+		{
+			"facet": "meta",
+			"method": "banner_pressed",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "living-world",
+			"requiredSimState": "campaign banner UI events"
+		},
+		{
+			"facet": "meta",
+			"method": "declare_local_defeat",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "match-lifecycle-controls",
+			"requiredSimState": "per-player defeat declaration distinct from match resolution"
+		},
+		{
+			"facet": "meta",
+			"method": "exit_map",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "match-lifecycle-controls",
+			"requiredSimState": "a scripted map-exit path"
+		},
+		{
+			"facet": "meta",
+			"method": "game_mode",
+			"params": [
+				{
+					"name": "mode",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "match-config-metadata",
+			"requiredSimState": "the match's mode token told to the sim at setup"
+		},
+		{
+			"facet": "meta",
+			"method": "living_world_command",
+			"params": [
+				{
+					"name": "command",
+					"type": "String"
+				},
+				{
+					"name": "arguments",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "living-world",
+			"requiredSimState": "the LivingWorld strategic layer (11-action family funneled through one command)"
+		},
+		{
+			"facet": "meta",
+			"method": "living_world_query",
+			"params": [
+				{
+					"name": "query_name",
+					"type": "String"
+				},
+				{
+					"name": "arguments",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "living-world",
+			"requiredSimState": "LivingWorld region state to read"
+		},
+		{
+			"facet": "meta",
+			"method": "mission_attempts",
+			"params": [],
+			"arity": 0,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "match-config-metadata",
+			"requiredSimState": "an attempt counter carried across mission restarts"
+		},
+		{
+			"facet": "meta",
+			"method": "multiplayer_outcome",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "outcome",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "defeat/allied_victory/allied_defeat tokens only"
+		},
+		{
+			"facet": "meta",
+			"method": "object_list_change",
+			"params": [
+				{
+					"name": "list_name",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "add",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-type-identity",
+			"requiredSimState": "mutable OBJECT_TYPE_LIST stores"
+		},
+		{
+			"facet": "meta",
+			"method": "player_count",
+			"params": [
+				{
+					"name": "include_observers",
+					"type": "bool"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "meta",
+			"method": "set_time_frozen",
+			"params": [
+				{
+					"name": "frozen",
+					"type": "bool"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "match-lifecycle-controls",
+			"requiredSimState": "a freeze design that does not freeze the script layer with it - 005bcd8's deadlock finding, not missing state (clock_paused exists)"
+		},
+		{
+			"facet": "meta",
+			"method": "zone_focus_more_than",
+			"params": [
+				{
+					"name": "zone",
+					"type": "String"
+				},
+				{
+					"name": "amount",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "living-world",
+			"requiredSimState": "campaign zone-focus state"
+		},
+		{
+			"facet": "orders",
+			"method": "apply_attack_priority_set",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "set_name",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "attack-priorities",
+			"requiredSimState": "named priority sets applicable per subject"
+		},
+		{
+			"facet": "orders",
+			"method": "attack",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "TEAM/PLAYER scope attacking a bound TEAM target only"
+		},
+		{
+			"facet": "orders",
+			"method": "attack_area",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "area",
+					"type": "String"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "trigger areas as attack targets (plus a timed area-attack order)"
+		},
+		{
+			"facet": "orders",
+			"method": "attack_follow_waypoints",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "waypoint_path",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "waypoint paths plus an attack-along-path order"
+		},
+		{
+			"facet": "orders",
+			"method": "attack_move_to",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "TEAM/PLAYER scope with explicit POSITION targets only"
+		},
+		{
+			"facet": "orders",
+			"method": "can_path_to",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "a pathability query against the real route provider"
+		},
+		{
+			"facet": "orders",
+			"method": "distance_between",
+			"params": [
+				{
+					"name": "scope_a",
+					"type": "int"
+				},
+				{
+					"name": "name_a",
+					"type": "String"
+				},
+				{
+					"name": "scope_b",
+					"type": "int"
+				},
+				{
+					"name": "name_b",
+					"type": "String"
+				}
+			],
+			"arity": 4,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "spatial-queries",
+			"requiredSimState": "a sourced distance semantic between team/object subjects (nearest member? centroid?) before any number is answered"
+		},
+		{
+			"facet": "orders",
+			"method": "face",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				},
+				{
+					"name": "reverse",
+					"type": "bool"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "order-verbs",
+			"requiredSimState": "a facing order (and target geometry for waypoint variants)"
+		},
+		{
+			"facet": "orders",
+			"method": "fire_weapon_following_path",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "waypoint_path",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "waypoint paths plus a fire-along-path order"
+		},
+		{
+			"facet": "orders",
+			"method": "follow_waypoint_path",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "waypoint paths (exact/formation variant included)"
+		},
+		{
+			"facet": "orders",
+			"method": "guard",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "order-verbs",
+			"requiredSimState": "a guard order type with targets and durations - the whole *_GUARD* family lands here"
+		},
+		{
+			"facet": "orders",
+			"method": "guard_area_from_position",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "area",
+					"type": "String"
+				},
+				{
+					"name": "position",
+					"type": "Vector3"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "order-verbs",
+			"requiredSimState": "a two-location guard order plus area geometry"
+		},
+		{
+			"facet": "orders",
+			"method": "hunt",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "command_button",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "order-verbs",
+			"requiredSimState": "a hunt order type (TEAM_HUNT is 6 AI sites; command-button variant also needs abilities)"
+		},
+		{
+			"facet": "orders",
+			"method": "idle_for_ticks",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "ticks",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "order-verbs",
+			"requiredSimState": "a timed idle order"
+		},
+		{
+			"facet": "orders",
+			"method": "in_alt_formation",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "the name binding; formation state itself is modelled"
+		},
+		{
+			"facet": "orders",
+			"method": "issued_formation_order",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "event-ledger",
+			"requiredSimState": "per-player order-event records"
+		},
+		{
+			"facet": "orders",
+			"method": "move_home",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "order-verbs",
+			"requiredSimState": "a home anchor per team plus a move-home order"
+		},
+		{
+			"facet": "orders",
+			"method": "move_to",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "TEAM/PLAYER scope with explicit POSITION targets only; UNIT scope needs object-name-registry, nearest-of-type targets need object-type-identity"
+		},
+		{
+			"facet": "orders",
+			"method": "reached_waypoints_end",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "waypoint_path",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "waypoint paths plus per-subject path-progress state"
+		},
+		{
+			"facet": "orders",
+			"method": "set_auto_ability",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "command_button",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "command-button-abilities",
+			"requiredSimState": "auto-cast toggles per command button"
+		},
+		{
+			"facet": "orders",
+			"method": "set_stopping_distance",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "distance",
+					"type": "float"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "order-verbs",
+			"requiredSimState": "per-subject stopping-distance state the movement rules consult"
+		},
+		{
+			"facet": "orders",
+			"method": "stand_ground",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "TEAM/PLAYER scope, engage only - the vocabulary's boolean CLEAR is inexpressible (facet-signature-packet)"
+		},
+		{
+			"facet": "orders",
+			"method": "use_command_button",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "command_button",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "command-button-abilities",
+			"requiredSimState": "command-button -> ability execution with target resolution (~20-action family)"
+		},
+		{
+			"facet": "orders",
+			"method": "use_command_button_partial",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "command_button",
+					"type": "String"
+				},
+				{
+					"name": "count",
+					"type": "int"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "command-button-abilities",
+			"requiredSimState": "ability execution for a counted subset of a team (plus the signature's REAL-fraction defect from 005bcd8)"
+		},
+		{
+			"facet": "players",
+			"method": "add_rank_level",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "delta",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "player rank levels"
+		},
+		{
+			"facet": "players",
+			"method": "add_skill_points",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "amount",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "player skill points"
+		},
+		{
+			"facet": "players",
+			"method": "base_count",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "a notion of distinct bases per player"
+		},
+		{
+			"facet": "players",
+			"method": "building_count",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "building_class",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "empty class (count everything) or a structure kind this sim models"
+		},
+		{
+			"facet": "players",
+			"method": "can_build_at_base",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "per-base plot availability (and the gap-registered base-anchor parameter - 50 AI sites)"
+		},
+		{
+			"facet": "players",
+			"method": "change_light_point_level",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "delta",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "light-point levels"
+		},
+		{
+			"facet": "players",
+			"method": "command_points_available",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "players",
+			"method": "command_points_total",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "players",
+			"method": "command_points_used",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "players",
+			"method": "eva_event_played_within",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "event",
+					"type": "String"
+				},
+				{
+					"name": "seconds",
+					"type": "float"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "event-ledger",
+			"requiredSimState": "EVA event timestamps per player (plus the seconds-vs-ticks defect from 005bcd8)"
+		},
+		{
+			"facet": "players",
+			"method": "exists",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "players",
+			"method": "exit_all_buildings",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "garrisoned units to exit"
+		},
+		{
+			"facet": "players",
+			"method": "faction",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "players",
+			"method": "force_emotion",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "emotion",
+					"type": "int"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-behavior-state",
+			"requiredSimState": "an emotion/morale model"
+		},
+		{
+			"facet": "players",
+			"method": "give_light_points",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "amount",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "light points"
+		},
+		{
+			"facet": "players",
+			"method": "has_discovered",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "other",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "vision-and-discovery",
+			"requiredSimState": "per-player discovery records"
+		},
+		{
+			"facet": "players",
+			"method": "has_prerequisite_to_build",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "tech-tree prerequisite evaluation per object type"
+		},
+		{
+			"facet": "players",
+			"method": "home_base",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "base-building-ai",
+			"requiredSimState": "home-base identity per player"
+		},
+		{
+			"facet": "players",
+			"method": "is_in_planning_mode",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "match-config-metadata",
+			"requiredSimState": "planning-mode state"
+		},
+		{
+			"facet": "players",
+			"method": "light_points",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "light points"
+		},
+		{
+			"facet": "players",
+			"method": "lost_object_type",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "event-ledger",
+			"requiredSimState": "loss records keyed by object type"
+		},
+		{
+			"facet": "players",
+			"method": "object_count_of_types",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type_list",
+					"type": "String"
+				},
+				{
+					"name": "include_dead",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-type-identity",
+			"requiredSimState": "retail type identity on rows plus OBJECT_TYPE_LIST resolution and an include-dead census - 124 AI call sites ride on this one method"
+		},
+		{
+			"facet": "players",
+			"method": "object_count_with_model_condition",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "model_condition",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-type-identity",
+			"requiredSimState": "model-condition flags countable per player"
+		},
+		{
+			"facet": "players",
+			"method": "object_count_within_distance",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "origin",
+					"type": "String"
+				},
+				{
+					"name": "distance",
+					"type": "float"
+				}
+			],
+			"arity": 4,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "spatial-queries",
+			"requiredSimState": "type-filtered distance census from a named origin"
+		},
+		{
+			"facet": "players",
+			"method": "override_command_points",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "amount",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "a per-team command-point cap override (the cap is global today)"
+		},
+		{
+			"facet": "players",
+			"method": "power_consumed",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "a power model (Generals-era vocabulary; needs sourcing that BFME2 uses it at all)"
+		},
+		{
+			"facet": "players",
+			"method": "power_produced",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "a power model (Generals-era vocabulary; needs sourcing that BFME2 uses it at all)"
+		},
+		{
+			"facet": "players",
+			"method": "rank_level",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "player rank levels"
+		},
+		{
+			"facet": "players",
+			"method": "reached_level_cap",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "player rank levels with caps"
+		},
+		{
+			"facet": "players",
+			"method": "relation_to",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "other",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "players",
+			"method": "repair_structure",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "a structure repair path (cost, rate) plus the name binding"
+		},
+		{
+			"facet": "players",
+			"method": "reset_light_points",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "light points"
+		},
+		{
+			"facet": "players",
+			"method": "select_skill_set",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "skill_set",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "skill sets"
+		},
+		{
+			"facet": "players",
+			"method": "sell_everything",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "a sell/refund path over everything owned"
+		},
+		{
+			"facet": "players",
+			"method": "set_auto_build_enabled",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "an auto-build loop to toggle"
+		},
+		{
+			"facet": "players",
+			"method": "set_base_construction_enabled",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "a base-construction gate the AI build loop consults"
+		},
+		{
+			"facet": "players",
+			"method": "set_base_construction_speed",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "factor",
+					"type": "float"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "a construction-speed factor"
+		},
+		{
+			"facet": "players",
+			"method": "set_excluded_from_score_screen",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "excluded",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "a score screen to exclude from"
+		},
+		{
+			"facet": "players",
+			"method": "set_factories_enabled",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "a factory production gate"
+		},
+		{
+			"facet": "players",
+			"method": "set_max_spell_points",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "amount",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "a mutable spell-point cap"
+		},
+		{
+			"facet": "players",
+			"method": "set_rank_level",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "level",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "player rank levels"
+		},
+		{
+			"facet": "players",
+			"method": "set_rank_level_limit",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "limit",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "player-progression-state",
+			"requiredSimState": "player rank levels with caps"
+		},
+		{
+			"facet": "players",
+			"method": "set_relation_to",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "other",
+					"type": "String"
+				},
+				{
+					"name": "relation",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "diplomacy-overrides",
+			"requiredSimState": "mutable player-to-player relations (the read is backed; the write would contradict the fixed alliance rule)"
+		},
+		{
+			"facet": "players",
+			"method": "set_unit_construction_enabled",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "per-type production gates"
+		},
+		{
+			"facet": "players",
+			"method": "start_position",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "match-config-metadata",
+			"requiredSimState": "start-spot indices told to the sim at setup - START_POSITION_IS is 8 AI sites"
+		},
+		{
+			"facet": "players",
+			"method": "threat_at",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "threat_finder",
+					"type": "String"
+				},
+				{
+					"name": "threat_type",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "spatial-queries",
+			"requiredSimState": "threat finders (RotWK-only vocabulary)"
+		},
+		{
+			"facet": "players",
+			"method": "transfer_ownership",
+			"params": [
+				{
+					"name": "from_player",
+					"type": "String"
+				},
+				{
+					"name": "to_player",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "a wholesale ownership-transfer API honoring CP accounting"
+		},
+		{
+			"facet": "players",
+			"method": "units_near_last_eva_event",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "radius",
+					"type": "float"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "event-ledger",
+			"requiredSimState": "EVA event positions plus a radius census"
+		},
+		{
+			"facet": "progression",
+			"method": "any_hero_reached_rank",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "rank",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "progression",
+			"method": "build_upgrade",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "upgrade",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "progression",
+			"method": "can_purchase_science",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "science",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "progression",
+			"method": "experience_points",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "XP reads per unit/team scope (plus the name/team registries)"
+		},
+		{
+			"facet": "progression",
+			"method": "gained_level",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "gained-level EDGE records per named object"
+		},
+		{
+			"facet": "progression",
+			"method": "give_experience_levels",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "levels",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "a public level-award API over the authored chains"
+		},
+		{
+			"facet": "progression",
+			"method": "give_experience_points",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "points",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "a public XP-award API"
+		},
+		{
+			"facet": "progression",
+			"method": "give_upgrade",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "upgrade",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "progression-grant-api",
+			"requiredSimState": "an outright upgrade grant distinct from build_upgrade's paid queue"
+		},
+		{
+			"facet": "progression",
+			"method": "grant_science",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "science",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "progression-grant-api",
+			"requiredSimState": "a free science grant path (purchase exists and is backed)"
+		},
+		{
+			"facet": "progression",
+			"method": "has_object_of_veterancy",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "veterancy",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "veterancy censuses (and the gap-registered type/comparison/level parameters - 21 AI sites)"
+		},
+		{
+			"facet": "progression",
+			"method": "has_science",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "science",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "sciences of the GLOBAL spellbook tree only; per-team overrides refuse"
+		},
+		{
+			"facet": "progression",
+			"method": "has_upgrade",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "upgrade",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "PLAYER scope, modelled upgrade ids only"
+		},
+		{
+			"facet": "progression",
+			"method": "level",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "level reads per unit/team scope (any_hero_reached_rank shows the chains exist; the scoped read needs the registries)"
+		},
+		{
+			"facet": "progression",
+			"method": "purchase_science",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "science",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "progression",
+			"method": "science_purchase_points",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "progression",
+			"method": "set_experience_points",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "points",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "a public XP-set API"
+		},
+		{
+			"facet": "progression",
+			"method": "set_experience_receiving",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "an XP-receiving toggle the award path consults"
+		},
+		{
+			"facet": "progression",
+			"method": "set_hero_experience_sharing",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "hero XP sharing"
+		},
+		{
+			"facet": "progression",
+			"method": "set_max_level",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "level",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "per-object level caps"
+		},
+		{
+			"facet": "progression",
+			"method": "set_science_availability",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "science",
+					"type": "String"
+				},
+				{
+					"name": "availability",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "progression-grant-api",
+			"requiredSimState": "per-science availability states the purchase path consults"
+		},
+		{
+			"facet": "progression",
+			"method": "unit_count_with_upgrade",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "upgrade",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "modelled upgrade ids only (zero for an unknown id would be a guess)"
+		},
+		{
+			"facet": "progression",
+			"method": "units_leveled_up",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "level-up counts per player"
+		},
+		{
+			"facet": "progression",
+			"method": "upgrade_nearest_wall",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "upgrade",
+					"type": "String"
+				},
+				{
+					"name": "origin",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "walls-and-siege",
+			"requiredSimState": "wall segments and markers (and the gap-registered five-argument shape with reference binding - 13 AI sites)"
+		},
+		{
+			"facet": "teams",
+			"method": "adjust_priority",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "delta",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "team priorities"
+		},
+		{
+			"facet": "teams",
+			"method": "attacked_and_cannot_retaliate_count",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "event-ledger",
+			"requiredSimState": "cannot-retaliate records per member"
+		},
+		{
+			"facet": "teams",
+			"method": "build",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "team templates buildable through production"
+		},
+		{
+			"facet": "teams",
+			"method": "collect_nearby",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "radius",
+					"type": "float"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "recruitment of nearby units into a team"
+		},
+		{
+			"facet": "teams",
+			"method": "command_points_to_build",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "CP costing over a team template"
+		},
+		{
+			"facet": "teams",
+			"method": "contained_count",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "container membership per member"
+		},
+		{
+			"facet": "teams",
+			"method": "count_with_kindof",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "kindof",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-type-identity",
+			"requiredSimState": "KindOf bits on rows"
+		},
+		{
+			"facet": "teams",
+			"method": "custom_state",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-behavior-state",
+			"requiredSimState": "custom-state token sets per team (the value-shape ambiguity WP15 reported also needs a ruling)"
+		},
+		{
+			"facet": "teams",
+			"method": "delete",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "living_only",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "sub-player teams to delete (living-only variant included)"
+		},
+		{
+			"facet": "teams",
+			"method": "enemy_sighted",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "by_player",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "vision-and-discovery",
+			"requiredSimState": "sighting records per team"
+		},
+		{
+			"facet": "teams",
+			"method": "enter_object",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "container entry"
+		},
+		{
+			"facet": "teams",
+			"method": "execute_sequential_script",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "script",
+					"type": "String"
+				},
+				{
+					"name": "looping",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "sequential-scripts",
+			"requiredSimState": "per-team sequential queues (24 AI sites drive every behaviour script through this)"
+		},
+		{
+			"facet": "teams",
+			"method": "exists",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "teams",
+			"method": "exit_all",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "buildings_only",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "container exit (buildings-only variant included)"
+		},
+		{
+			"facet": "teams",
+			"method": "force_emotion",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "emotion",
+					"type": "int"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-behavior-state",
+			"requiredSimState": "an emotion/morale model"
+		},
+		{
+			"facet": "teams",
+			"method": "harvest",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "a harvesting loop"
+		},
+		{
+			"facet": "teams",
+			"method": "leader",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "team leader designation"
+		},
+		{
+			"facet": "teams",
+			"method": "members",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "membership lists carrying script names (also needs the name registry to be useful)"
+		},
+		{
+			"facet": "teams",
+			"method": "merge_into",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "destination",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "sub-player teams with transferable membership"
+		},
+		{
+			"facet": "teams",
+			"method": "owner",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "teams",
+			"method": "panic",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-behavior-state",
+			"requiredSimState": "a panic behaviour"
+		},
+		{
+			"facet": "teams",
+			"method": "recruit",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "radius",
+					"type": "float"
+				},
+				{
+					"name": "from_team",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "recruitment (and the gap-registered type-list parameter plus the INT-semantic ruling)"
+		},
+		{
+			"facet": "teams",
+			"method": "recruit_combo_units",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "from_team",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "combo-horde recruitment"
+		},
+		{
+			"facet": "teams",
+			"method": "remove_all_override_relations",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "diplomacy-overrides",
+			"requiredSimState": "override relation storage"
+		},
+		{
+			"facet": "teams",
+			"method": "remove_override_relation",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "other",
+					"type": "String"
+				},
+				{
+					"name": "other_is_team",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "diplomacy-overrides",
+			"requiredSimState": "override relation storage"
+		},
+		{
+			"facet": "teams",
+			"method": "repair_nearest",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "order-verbs",
+			"requiredSimState": "a repair-nearest order"
+		},
+		{
+			"facet": "teams",
+			"method": "set_ai_recruitable",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "recruitable",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "an AI-recruitable flag per team"
+		},
+		{
+			"facet": "teams",
+			"method": "set_attitude",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "mood",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-behavior-state",
+			"requiredSimState": "AI mood per team (retail authors -3 outside the documented 0..5 - open question travels with this)"
+		},
+		{
+			"facet": "teams",
+			"method": "set_available_for_recruitment",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "available",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "recruitment availability per team"
+		},
+		{
+			"facet": "teams",
+			"method": "set_close_range_weapon",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "weapon-range toggles per member"
+		},
+		{
+			"facet": "teams",
+			"method": "set_custom_state",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "state",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-behavior-state",
+			"requiredSimState": "custom-state token sets (and the gap-registered BOOLEAN enable flag - serving without it would invert 40 AI call sites)"
+		},
+		{
+			"facet": "teams",
+			"method": "set_emoticon",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "emoticon",
+					"type": "String"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "emoticon state per team"
+		},
+		{
+			"facet": "teams",
+			"method": "set_flame_status",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "burning",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "flame status bits"
+		},
+		{
+			"facet": "teams",
+			"method": "set_house_color_enabled",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "house-color flags"
+		},
+		{
+			"facet": "teams",
+			"method": "set_model_condition",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "condition",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "model-condition flags with durations"
+		},
+		{
+			"facet": "teams",
+			"method": "set_nearest_unit_of_type_to_reference",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "reference",
+					"type": "String"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "spatial-queries",
+			"requiredSimState": "nearest-of-type search anchored on a team, feeding the reference store"
+		},
+		{
+			"facet": "teams",
+			"method": "set_needs_open_gate",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "walls-and-siege",
+			"requiredSimState": "gate-interaction pathing flags"
+		},
+		{
+			"facet": "teams",
+			"method": "set_object_panel_flag",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "flag",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "object panel flags"
+		},
+		{
+			"facet": "teams",
+			"method": "set_override_relation_to_player",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "relation",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "diplomacy-overrides",
+			"requiredSimState": "team-to-player override relations"
+		},
+		{
+			"facet": "teams",
+			"method": "set_override_relation_to_team",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "other_team",
+					"type": "String"
+				},
+				{
+					"name": "relation",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "diplomacy-overrides",
+			"requiredSimState": "team-to-team override relations"
+		},
+		{
+			"facet": "teams",
+			"method": "set_player_override_relation_to_team",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "relation",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "diplomacy-overrides",
+			"requiredSimState": "player-to-team override relations"
+		},
+		{
+			"facet": "teams",
+			"method": "set_reference",
+			"params": [
+				{
+					"name": "reference",
+					"type": "String"
+				},
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "a TEAM_REF store (destination-first signature; see WP15)"
+		},
+		{
+			"facet": "teams",
+			"method": "set_reference_to_nearest",
+			"params": [
+				{
+					"name": "reference",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "named_type",
+					"type": "bool"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "spatial-queries",
+			"requiredSimState": "nearest-team-of-type search (and the gap-registered anchor-team parameter)"
+		},
+		{
+			"facet": "teams",
+			"method": "set_repulsor",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "repulsor flags"
+		},
+		{
+			"facet": "teams",
+			"method": "set_state",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "state",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-behavior-state",
+			"requiredSimState": "TEAM_STATE token storage - 32 AI sites, the attack loops' backbone"
+		},
+		{
+			"facet": "teams",
+			"method": "set_stealth_enabled",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "stealth flags the vision/combat rules consult"
+		},
+		{
+			"facet": "teams",
+			"method": "set_strict_control_enabled",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "strict-control flags"
+		},
+		{
+			"facet": "teams",
+			"method": "set_threat_level",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "level",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "spatial-queries",
+			"requiredSimState": "MIS-ATTRIBUTED per WP09's finding: retail uses TEAM_THREAT_LEVEL as a radius-scoped CONDITION, not a set command; nothing should ever call this - kept annotated so the mis-attribution stays visible"
+		},
+		{
+			"facet": "teams",
+			"method": "spin_for_ticks",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "ticks",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "order-verbs",
+			"requiredSimState": "a timed spin/busy order"
+		},
+		{
+			"facet": "teams",
+			"method": "state",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-behavior-state",
+			"requiredSimState": "TEAM_STATE token reads (TEAM_STATE_IS/_IS_NOT gate the AI's retreat logic)"
+		},
+		{
+			"facet": "teams",
+			"method": "stop",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "disband",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true,
+			"restrictions": "disband=false only (no disband model)"
+		},
+		{
+			"facet": "teams",
+			"method": "stop_sequential_script",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "sequential-scripts",
+			"requiredSimState": "stoppable per-team sequential queues"
+		},
+		{
+			"facet": "teams",
+			"method": "threat",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "spatial-queries",
+			"requiredSimState": "team threat evaluation (the AI's real usage carries a radius - gap-registered signature)"
+		},
+		{
+			"facet": "teams",
+			"method": "transfer_to_player",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "team ownership transfer - 32 AI sites, ALL of them the multiplayer inherit path (ai_mp_inherit_management)"
+		},
+		{
+			"facet": "teams",
+			"method": "unit_count",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "teams",
+			"method": "wander",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "waypoint_path",
+					"type": "String"
+				},
+				{
+					"name": "in_place",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "order-verbs",
+			"requiredSimState": "a wander order (path and in-place variants)"
+		},
+		{
+			"facet": "teams",
+			"method": "was_created",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "team creation EDGE records (level-triggered exists() must not serve this - it would refire one-shot AI init every evaluation)"
+		},
+		{
+			"facet": "teams",
+			"method": "was_destroyed",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "team destruction edge records"
+		},
+		{
+			"facet": "teams",
+			"method": "was_discovered",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "by_player",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "vision-and-discovery",
+			"requiredSimState": "discovery records per team"
+		},
+		{
+			"facet": "terrain",
+			"method": "bridge_state",
+			"params": [
+				{
+					"name": "bridge",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "terrain-dynamics",
+			"requiredSimState": "bridge objects with broken/repaired state"
+		},
+		{
+			"facet": "terrain",
+			"method": "set_buildability",
+			"params": [
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "buildability",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "production-controls",
+			"requiredSimState": "a mutable tech-tree buildability table"
+		},
+		{
+			"facet": "terrain",
+			"method": "set_burn_rate",
+			"params": [
+				{
+					"name": "target",
+					"type": "Dictionary"
+				},
+				{
+					"name": "rate",
+					"type": "float"
+				},
+				{
+					"name": "max_burn",
+					"type": "float"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "terrain-dynamics",
+			"requiredSimState": "burn-rate state at waypoints/areas"
+		},
+		{
+			"facet": "terrain",
+			"method": "set_cloud_speed",
+			"params": [
+				{
+					"name": "multiplier",
+					"type": "float"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "terrain-dynamics",
+			"requiredSimState": "cloud state (presentation-adjacent but declared simulation by the vocabulary)"
+		},
+		{
+			"facet": "terrain",
+			"method": "set_logic_fog_state",
+			"params": [
+				{
+					"name": "state",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "terrain-dynamics",
+			"requiredSimState": "simulation-visible weather fog (distinct from fog of war)"
+		},
+		{
+			"facet": "terrain",
+			"method": "set_water_height",
+			"params": [
+				{
+					"name": "water",
+					"type": "String"
+				},
+				{
+					"name": "height",
+					"type": "float"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "terrain-dynamics",
+			"requiredSimState": "water bodies with animatable heights"
+		},
+		{
+			"facet": "terrain",
+			"method": "switch_border",
+			"params": [
+				{
+					"name": "border_index",
+					"type": "int"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "terrain-dynamics",
+			"requiredSimState": "map border sets"
+		},
+		{
+			"facet": "transport",
+			"method": "capture_nearest_unowned",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "capturable unowned faction units"
+		},
+		{
+			"facet": "transport",
+			"method": "captured_unit_count",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "capture records per player"
+		},
+		{
+			"facet": "transport",
+			"method": "create_team_from_captured",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "captured-unit rosters plus team creation"
+		},
+		{
+			"facet": "transport",
+			"method": "garrison",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				},
+				{
+					"name": "instantly",
+					"type": "bool"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "garrisonable buildings with occupancy"
+		},
+		{
+			"facet": "transport",
+			"method": "garrisoned_count",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "garrison occupancy counts"
+		},
+		{
+			"facet": "transport",
+			"method": "has_toggled_weapon",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "weapon-mode toggle state per object"
+		},
+		{
+			"facet": "transport",
+			"method": "load_transports",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "transport containers with capacity"
+		},
+		{
+			"facet": "transport",
+			"method": "passenger_count",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "passenger counts per container"
+		},
+		{
+			"facet": "transport",
+			"method": "teleport_to",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "a position-write API that re-validates collision/formation state"
+		},
+		{
+			"facet": "ui",
+			"method": "emit",
+			"params": [
+				{
+					"name": "op",
+					"type": "String"
+				},
+				{
+					"name": "values",
+					"type": "Array"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "presentation-adapter",
+			"requiredSimState": "a UI/radar/VFX sink adapter on the client"
+		},
+		{
+			"facet": "units",
+			"method": "build_structure_at",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "map-geometry",
+			"requiredSimState": "waypoint targets for builder construction (builder production exists)"
+		},
+		{
+			"facet": "units",
+			"method": "create_delayed_carryover_at",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "hero-revival-carryover",
+			"requiredSimState": "a delayed-carryover ledger plus waypoint spawn anchors"
+		},
+		{
+			"facet": "units",
+			"method": "create_object",
+			"params": [
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "position",
+					"type": "Vector3"
+				},
+				{
+					"name": "angle",
+					"type": "float"
+				}
+			],
+			"arity": 4,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "a public spawn API - the sim's spawn path is private and a raw insert would skip CP accounting and corpse scheduling (005bcd8)"
+		},
+		{
+			"facet": "units",
+			"method": "create_on_team_at",
+			"params": [
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				},
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 4,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "a public spawn API plus team placement targets"
+		},
+		{
+			"facet": "units",
+			"method": "create_revival_entry",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "level",
+					"type": "int"
+				},
+				{
+					"name": "from_carryover",
+					"type": "bool"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "hero-revival-carryover",
+			"requiredSimState": "a revival ledger with levels and carryover sourcing"
+		},
+		{
+			"facet": "units",
+			"method": "delete",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "a public despawn API honoring CP release (plus the name binding)"
+		},
+		{
+			"facet": "units",
+			"method": "delete_all_unmanned",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "unmanned-object identification plus a despawn API"
+		},
+		{
+			"facet": "units",
+			"method": "deploy_siege",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "target",
+					"type": "Dictionary"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "walls-and-siege",
+			"requiredSimState": "siege attachment to walls/waypoints"
+		},
+		{
+			"facet": "units",
+			"method": "destroy_all_contained",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "container contents to destroy"
+		},
+		{
+			"facet": "units",
+			"method": "destroyed_by_object_type",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "event-ledger",
+			"requiredSimState": "killer-type records per named object"
+		},
+		{
+			"facet": "units",
+			"method": "enemy_sighted",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "vision-and-discovery",
+			"requiredSimState": "sighting records per object"
+		},
+		{
+			"facet": "units",
+			"method": "enter_object",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "target_object",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "container entry per named pair"
+		},
+		{
+			"facet": "units",
+			"method": "execute_sequential_script",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "script",
+					"type": "String"
+				},
+				{
+					"name": "looping",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "sequential-scripts",
+			"requiredSimState": "per-unit sequential queues"
+		},
+		{
+			"facet": "units",
+			"method": "exists",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "the script-name binding itself - existence is the registry's first answer"
+		},
+		{
+			"facet": "units",
+			"method": "exit",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "all_contained",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "container exit"
+		},
+		{
+			"facet": "units",
+			"method": "exit_specific_building",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "building",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "targeted container exit"
+		},
+		{
+			"facet": "units",
+			"method": "force_emotion",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "emotion",
+					"type": "int"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-behavior-state",
+			"requiredSimState": "an emotion/morale model"
+		},
+		{
+			"facet": "units",
+			"method": "gate_is_open",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "walls-and-siege",
+			"requiredSimState": "gate state per named structure"
+		},
+		{
+			"facet": "units",
+			"method": "has_command_points_to_build",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-type-identity",
+			"requiredSimState": "CP costs per retail object type"
+		},
+		{
+			"facet": "units",
+			"method": "has_delayed_carryover_of_type",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "hero-revival-carryover",
+			"requiredSimState": "carryover ledger queries by type"
+		},
+		{
+			"facet": "units",
+			"method": "has_object_status",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "status",
+					"type": "String"
+				},
+				{
+					"name": "require_all",
+					"type": "bool"
+				}
+			],
+			"arity": 4,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "object-status bit reads per scope"
+		},
+		{
+			"facet": "units",
+			"method": "health_percent",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "the name binding; health is modelled (UNIT_HEALTH gates on it)"
+		},
+		{
+			"facet": "units",
+			"method": "is_building_empty",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "occupancy per named building"
+		},
+		{
+			"facet": "units",
+			"method": "is_dying",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "the name binding plus a distinct dying-phase read over the corpse flow"
+		},
+		{
+			"facet": "units",
+			"method": "is_selected",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "sim-selection-model",
+			"requiredSimState": "a lockstep selection notion - sim.selected_ids is per-seat presentation state and would desync (005bcd8)"
+		},
+		{
+			"facet": "units",
+			"method": "is_totally_dead",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "the name binding plus per-name death finality"
+		},
+		{
+			"facet": "units",
+			"method": "is_webbed",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "web status"
+		},
+		{
+			"facet": "units",
+			"method": "owner",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "the name binding; ownership is modelled (NAMED_OWNED_BY_PLAYER is 32 AI sites)"
+		},
+		{
+			"facet": "units",
+			"method": "position",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "the name binding; positions are modelled"
+		},
+		{
+			"facet": "units",
+			"method": "retract_siege",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "walls-and-siege",
+			"requiredSimState": "siege detachment"
+		},
+		{
+			"facet": "units",
+			"method": "set_attitude",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "mood",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-behavior-state",
+			"requiredSimState": "AI mood per object"
+		},
+		{
+			"facet": "units",
+			"method": "set_cave_index",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "index",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "garrison-transport-capture",
+			"requiredSimState": "cave/tunnel network membership"
+		},
+		{
+			"facet": "units",
+			"method": "set_close_range_weapon",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "weapon-range toggles"
+		},
+		{
+			"facet": "units",
+			"method": "set_emoticon",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "emoticon",
+					"type": "String"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "emoticon state"
+		},
+		{
+			"facet": "units",
+			"method": "set_flame_status",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "burning",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "flame status"
+		},
+		{
+			"facet": "units",
+			"method": "set_gate_state",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "open",
+					"type": "bool"
+				},
+				{
+					"name": "ready",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "walls-and-siege",
+			"requiredSimState": "gate open/close/ready state (GATE_OPEN and GATE_CLOSE each have one AI call site)"
+		},
+		{
+			"facet": "units",
+			"method": "set_held",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "held",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "held (movement-frozen) status"
+		},
+		{
+			"facet": "units",
+			"method": "set_house_color_enabled",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "house-color flags"
+		},
+		{
+			"facet": "units",
+			"method": "set_hulk_lifetime",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "ticks",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "corpse lifetime overrides in the corpse flow"
+		},
+		{
+			"facet": "units",
+			"method": "set_model_condition",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "condition",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "model-condition flags with durations"
+		},
+		{
+			"facet": "units",
+			"method": "set_object_panel_flag",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "flag",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 3,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "object panel flags"
+		},
+		{
+			"facet": "units",
+			"method": "set_object_status",
+			"params": [
+				{
+					"name": "scope",
+					"type": "int"
+				},
+				{
+					"name": "name",
+					"type": "String"
+				},
+				{
+					"name": "status",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "object-status bit writes per scope"
+		},
+		{
+			"facet": "units",
+			"method": "set_reference",
+			"params": [
+				{
+					"name": "reference",
+					"type": "String"
+				},
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "a UNIT_REF store over script names - 40 AI call sites bind references through this"
+		},
+		{
+			"facet": "units",
+			"method": "set_repulsor",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "repulsor flags"
+		},
+		{
+			"facet": "units",
+			"method": "set_selected",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "selected",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "sim-selection-model",
+			"requiredSimState": "a lockstep selection notion to write"
+		},
+		{
+			"facet": "units",
+			"method": "set_special_weaponset",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "weaponset",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "weaponset switching"
+		},
+		{
+			"facet": "units",
+			"method": "set_stealth_enabled",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "stealth flags"
+		},
+		{
+			"facet": "units",
+			"method": "set_strict_control_enabled",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "strict-control flags"
+		},
+		{
+			"facet": "units",
+			"method": "set_team",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "team",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "team-registry",
+			"requiredSimState": "sub-player teams a named object can join"
+		},
+		{
+			"facet": "units",
+			"method": "set_topple_direction",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "direction",
+					"type": "Vector3"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "topple physics parameters"
+		},
+		{
+			"facet": "units",
+			"method": "set_warehouse_value",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "value",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "economy-model-extras",
+			"requiredSimState": "warehouse objects with values"
+		},
+		{
+			"facet": "units",
+			"method": "shock",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "duration_ticks",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-status-flags",
+			"requiredSimState": "a timed shock/stun status"
+		},
+		{
+			"facet": "units",
+			"method": "siege_is_attached_to_wall",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "walls-and-siege",
+			"requiredSimState": "siege attachment state"
+		},
+		{
+			"facet": "units",
+			"method": "skill_points",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "experience-model",
+			"requiredSimState": "skill points per named object"
+		},
+		{
+			"facet": "units",
+			"method": "spawn_at",
+			"params": [
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "position",
+					"type": "Vector3"
+				},
+				{
+					"name": "angle",
+					"type": "float"
+				}
+			],
+			"arity": 5,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "a public spawn API with name+orientation"
+		},
+		{
+			"facet": "units",
+			"method": "stance",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "the name binding; stances are modelled (issue_set_stance exists)"
+		},
+		{
+			"facet": "units",
+			"method": "stop",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "flush_queue",
+					"type": "bool"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "the name binding; stop orders are modelled (issue_stop exists)"
+		},
+		{
+			"facet": "units",
+			"method": "stop_sequential_script",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "sequential-scripts",
+			"requiredSimState": "stoppable per-unit sequential queues"
+		},
+		{
+			"facet": "units",
+			"method": "threat",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "spatial-queries",
+			"requiredSimState": "per-object threat evaluation (the AI's real usage carries a radius)"
+		},
+		{
+			"facet": "units",
+			"method": "transfer_ownership",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "entity-lifecycle-api",
+			"requiredSimState": "a single-object ownership transfer honoring CP accounting"
+		},
+		{
+			"facet": "units",
+			"method": "type_is_selected",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "sim-selection-model",
+			"requiredSimState": "a lockstep selection notion queryable by type"
+		},
+		{
+			"facet": "units",
+			"method": "type_was_sighted",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "vision-and-discovery",
+			"requiredSimState": "sighted-type records per player"
+		},
+		{
+			"facet": "units",
+			"method": "unowned_faction_unit_exists",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-type-identity",
+			"requiredSimState": "neutral/unowned object modelling (every sim object is rostered today)"
+		},
+		{
+			"facet": "units",
+			"method": "was_created",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "per-name creation edge records"
+		},
+		{
+			"facet": "units",
+			"method": "was_destroyed",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "object-name-registry",
+			"requiredSimState": "per-name destruction edge records (NAMED_NOT_DESTROYED is 17 AI sites)"
+		},
+		{
+			"facet": "units",
+			"method": "was_discovered",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "by_player",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": false,
+			"blockingSubsystem": "vision-and-discovery",
+			"requiredSimState": "discovery records per object"
+		},
+		{
+			"facet": "world",
+			"method": "debug_message",
+			"params": [
+				{
+					"name": "channel",
+					"type": "String"
+				},
+				{
+					"name": "text",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "world",
+			"method": "player_money",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "int",
+			"probe": "fallback",
+			"simulationBacked": true,
+			"restrictions": "no refusal channel: an UNBOUND player reads 0 through this legacy path (reported base-class defect; economy.money is the honest surface)"
+		},
+		{
+			"facet": "world",
+			"method": "random_int",
+			"params": [
+				{
+					"name": "low",
+					"type": "int"
+				},
+				{
+					"name": "high",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "int",
+			"probe": "fallback",
+			"simulationBacked": false,
+			"blockingSubsystem": "deterministic-rng",
+			"requiredSimState": "a seeded sim-owned stream; no refusal channel exists, so the honest signal is the withheld CAP_RANDOM"
+		},
+		{
+			"facet": "world",
+			"method": "random_real",
+			"params": [
+				{
+					"name": "low",
+					"type": "float"
+				},
+				{
+					"name": "high",
+					"type": "float"
+				}
+			],
+			"arity": 2,
+			"returns": "float",
+			"probe": "fallback",
+			"simulationBacked": false,
+			"blockingSubsystem": "deterministic-rng",
+			"requiredSimState": "a seeded sim-owned stream"
+		},
+		{
+			"facet": "world",
+			"method": "set_player_money",
+			"params": [
+				{
+					"name": "player",
+					"type": "String"
+				},
+				{
+					"name": "amount",
+					"type": "int"
+				}
+			],
+			"arity": 2,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true
+		},
+		{
+			"facet": "world",
+			"method": "supports",
+			"params": [
+				{
+					"name": "capability",
+					"type": "String"
+				}
+			],
+			"arity": 1,
+			"returns": "command",
+			"probe": "fallback",
+			"simulationBacked": true
+		},
+		{
+			"facet": "world",
+			"method": "world_frame",
+			"params": [],
+			"arity": 0,
+			"returns": "int",
+			"probe": "fallback",
+			"simulationBacked": true
+		}
+	],
+	"vocabularyRouting": [
+		{
+			"member": "AI_PLAYER_BUILD_UPGRADE",
+			"route": "backed",
+			"worldMethods": [
+				"progression.build_upgrade"
+			],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "BUILD_BASE_BUILDING",
+			"route": "blocked",
+			"worldMethods": [
+				"ai.build_base_building"
+			],
+			"blockingSubsystem": "base-building-ai",
+			"signatureGap": true,
+			"mappingSource": "declared",
+			"note": "shares the site+reference signature gap WP11 proved on the tactical-marker sibling"
+		},
+		{
+			"member": "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER",
+			"route": "blocked",
+			"worldMethods": [
+				"ai.build_base_building"
+			],
+			"blockingSubsystem": "base-building-ai",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "CALL_SUBROUTINE",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler",
+			"note": "needs a subroutine_runner installed on the env, not a world method"
+		},
+		{
+			"member": "CAN_BUILD_AT_BASE",
+			"route": "blocked",
+			"worldMethods": [
+				"players.can_build_at_base"
+			],
+			"blockingSubsystem": "base-building-ai",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "CAN_BUILD_OBJECTTYPE_AT_BASE",
+			"route": "blocked",
+			"worldMethods": [
+				"players.can_build_at_base"
+			],
+			"blockingSubsystem": "base-building-ai",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "CONDITION_TRUE",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "COUNTER",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "COUNTER_COUNTER",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "COUNTER_MATH_COUNTER",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "COUNTER_MATH_VALUE",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "CREATE_OBJECT",
+			"route": "blocked",
+			"worldMethods": [
+				"units.create_object"
+			],
+			"blockingSubsystem": "entity-lifecycle-api",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION",
+			"route": "blocked",
+			"worldMethods": [
+				"ai.create_reinforcement_team"
+			],
+			"blockingSubsystem": "base-building-ai",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "DEBUG_STRING",
+			"route": "backed",
+			"worldMethods": [
+				"world.debug_message"
+			],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "DECREMENT_COUNTER",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "DISABLE_SCRIPT",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "ENABLE_SCRIPT",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "EVAL_TEAM_HEALTH",
+			"route": "blocked",
+			"worldMethods": [
+				"combat.team_health_percent"
+			],
+			"blockingSubsystem": "adapter-only",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "FLAG",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "GATE_CLOSE",
+			"route": "blocked",
+			"worldMethods": [
+				"units.set_gate_state"
+			],
+			"blockingSubsystem": "walls-and-siege",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "GATE_OPEN",
+			"route": "blocked",
+			"worldMethods": [
+				"units.set_gate_state"
+			],
+			"blockingSubsystem": "walls-and-siege",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "INCREMENT_COUNTER",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "NAMED_BASE_UNPACK",
+			"route": "blocked",
+			"worldMethods": [
+				"ai.base_unpack"
+			],
+			"blockingSubsystem": "base-building-ai",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "NAMED_BASE_UNPACKABLE_FOR_PLAYER",
+			"route": "blocked",
+			"worldMethods": [
+				"ai.base_unpackable"
+			],
+			"blockingSubsystem": "base-building-ai",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "NAMED_BASE_UNPACK_FREE",
+			"route": "blocked",
+			"worldMethods": [
+				"ai.base_unpack"
+			],
+			"blockingSubsystem": "base-building-ai",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "NAMED_NOT_DESTROYED",
+			"route": "blocked",
+			"worldMethods": [
+				"units.was_destroyed"
+			],
+			"blockingSubsystem": "object-name-registry",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "NAMED_OWNED_BY_PLAYER",
+			"route": "blocked",
+			"worldMethods": [
+				"units.owner"
+			],
+			"blockingSubsystem": "object-name-registry",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "NAMED_USE_COMMANDBUTTON_ABILITY",
+			"route": "blocked",
+			"worldMethods": [
+				"orders.use_command_button"
+			],
+			"blockingSubsystem": "command-button-abilities",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "NO_OP",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "PLAYER_CAN_PURCHASE_SCIENCE",
+			"route": "backed",
+			"worldMethods": [
+				"progression.can_purchase_science"
+			],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "PLAYER_DESTROYED_N_BUILDINGS_PLAYER",
+			"route": "blocked",
+			"worldMethods": [
+				"combat.buildings_destroyed_by"
+			],
+			"blockingSubsystem": "event-ledger",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "PLAYER_ENABLE_BASE_CONSTRUCTION",
+			"route": "blocked",
+			"worldMethods": [
+				"players.set_base_construction_enabled"
+			],
+			"blockingSubsystem": "production-controls",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "PLAYER_ENABLE_UNIT_CONSTRUCTION",
+			"route": "blocked",
+			"worldMethods": [
+				"players.set_unit_construction_enabled"
+			],
+			"blockingSubsystem": "production-controls",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "PLAYER_HAS_CREDITS",
+			"route": "backed",
+			"worldMethods": [
+				"economy.money"
+			],
+			"mappingSource": "declared"
+		},
+		{
+			"member": "PLAYER_HAS_OBJECT_COMPARISON",
+			"route": "blocked",
+			"worldMethods": [
+				"players.object_count_of_types"
+			],
+			"blockingSubsystem": "object-type-identity",
+			"mappingSource": "handler",
+			"note": "the single heaviest blocked member: 100 call sites"
+		},
+		{
+			"member": "PLAYER_HAS_OBJECT_OF_VETERANCY",
+			"route": "blocked",
+			"worldMethods": [
+				"progression.has_object_of_veterancy"
+			],
+			"blockingSubsystem": "experience-model",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "PLAYER_PURCHASE_SCIENCE",
+			"route": "backed",
+			"worldMethods": [
+				"progression.purchase_science"
+			],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "PLAYER_SELL_EVERYTHING",
+			"route": "blocked",
+			"worldMethods": [
+				"players.sell_everything"
+			],
+			"blockingSubsystem": "production-controls",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_COUNTER",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_COUNTER_TO_COUNTER",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_COUNTER_TO_TEAM_THREAT",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.threat"
+			],
+			"blockingSubsystem": "spatial-queries",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_FLAG",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_MILLISECOND_TIMER",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_PLAYER_COMMAND_POINTS_AVAILABLE_TO_COUNTER",
+			"route": "backed",
+			"worldMethods": [
+				"players.command_points_available"
+			],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_PLAYER_MONEY_TO_COUNTER",
+			"route": "backed",
+			"worldMethods": [
+				"world.set_player_money"
+			],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_PLAYER_OWNERSHIP_OF_TYPE_COUNTER",
+			"route": "blocked",
+			"worldMethods": [
+				"players.object_count_of_types"
+			],
+			"blockingSubsystem": "object-type-identity",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_RANDOM_COUNTER",
+			"route": "blocked",
+			"worldMethods": [
+				"world.random_int"
+			],
+			"blockingSubsystem": "deterministic-rng",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.set_reference_to_nearest"
+			],
+			"blockingSubsystem": "spatial-queries",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_TEAM_REFERENCE",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.set_reference"
+			],
+			"blockingSubsystem": "team-registry",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_TIMER",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "SET_UNIT_REFERENCE",
+			"route": "blocked",
+			"worldMethods": [
+				"units.set_reference"
+			],
+			"blockingSubsystem": "object-name-registry",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "SET_UNIT_REFERENCE_TO_REFERENCE",
+			"route": "blocked",
+			"worldMethods": [
+				"units.set_reference"
+			],
+			"blockingSubsystem": "object-name-registry",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "SKIRMISH_PLAYER_FACTION",
+			"route": "backed",
+			"worldMethods": [
+				"players.faction"
+			],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "START_POSITION_IS",
+			"route": "blocked",
+			"worldMethods": [
+				"players.start_position"
+			],
+			"blockingSubsystem": "match-config-metadata",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_CHANGE_OBJECT_STATUS",
+			"route": "blocked",
+			"worldMethods": [
+				"units.set_object_status"
+			],
+			"blockingSubsystem": "entity-status-flags",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "TEAM_CREATED",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.was_created"
+			],
+			"blockingSubsystem": "team-registry",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_DELETE",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.delete"
+			],
+			"blockingSubsystem": "team-registry",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_DESTROYED",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.was_destroyed"
+			],
+			"blockingSubsystem": "team-registry",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "TEAM_EXECUTE_SEQUENTIAL_SCRIPT",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.execute_sequential_script"
+			],
+			"blockingSubsystem": "sequential-scripts",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_EXECUTE_SEQUENTIAL_SCRIPT_LOOPING",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.execute_sequential_script"
+			],
+			"blockingSubsystem": "sequential-scripts",
+			"mappingSource": "handler",
+			"note": "counts 0/1 are served by the handler, >=2 is a signature gap (boolean cannot express finite repeats); all 5 retail sites pass 0"
+		},
+		{
+			"member": "TEAM_EXIT_ALL_BUILDINGS",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.exit_all"
+			],
+			"blockingSubsystem": "garrison-transport-capture",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_GUARD_FOR_SECONDS",
+			"route": "blocked",
+			"worldMethods": [
+				"orders.guard"
+			],
+			"blockingSubsystem": "order-verbs",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_GUARD_TEAM",
+			"route": "blocked",
+			"worldMethods": [
+				"orders.guard"
+			],
+			"blockingSubsystem": "order-verbs",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_HAS_CUSTOM_STATE",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.custom_state"
+			],
+			"blockingSubsystem": "team-behavior-state",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_HAS_UNITS",
+			"route": "backed",
+			"worldMethods": [
+				"teams.unit_count"
+			],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_HUNT",
+			"route": "blocked",
+			"worldMethods": [
+				"orders.hunt"
+			],
+			"blockingSubsystem": "order-verbs",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_IDLE_FOR_SECONDS",
+			"route": "blocked",
+			"worldMethods": [
+				"orders.idle_for_ticks"
+			],
+			"blockingSubsystem": "order-verbs",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_IS_ATTACKED_AND_CANNOT_RETALIATE_ALL",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.attacked_and_cannot_retaliate_count"
+			],
+			"blockingSubsystem": "event-ledger",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "TEAM_LOAD_TRANSPORTS",
+			"route": "blocked",
+			"worldMethods": [
+				"transport.load_transports"
+			],
+			"blockingSubsystem": "garrison-transport-capture",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_MERGE_INTO_TEAM",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.merge_into"
+			],
+			"blockingSubsystem": "team-registry",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE",
+			"route": "blocked",
+			"worldMethods": [
+				"orders.move_to"
+			],
+			"blockingSubsystem": "object-type-identity",
+			"mappingSource": "declared",
+			"note": "the move itself is backed; the NEAREST_TYPE target cannot resolve without type identity"
+		},
+		{
+			"member": "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER",
+			"route": "blocked",
+			"worldMethods": [
+				"orders.move_to"
+			],
+			"blockingSubsystem": "object-type-identity",
+			"mappingSource": "declared",
+			"note": "the move itself is backed; the owned NEAREST_TYPE target cannot resolve without type identity"
+		},
+		{
+			"member": "TEAM_RECRUIT_UNITS",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.recruit"
+			],
+			"blockingSubsystem": "team-registry",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_RECRUIT_UNITS_FROM_TEAM",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.recruit"
+			],
+			"blockingSubsystem": "team-registry",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_SET_ATTITUDE",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.set_attitude"
+			],
+			"blockingSubsystem": "team-behavior-state",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_SET_CUSTOM_STATE",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.set_custom_state"
+			],
+			"blockingSubsystem": "team-behavior-state",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_SET_STATE",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.set_state"
+			],
+			"blockingSubsystem": "team-behavior-state",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_STAND_GROUND",
+			"route": "blocked",
+			"worldMethods": [
+				"orders.stand_ground"
+			],
+			"blockingSubsystem": "facet-signature-packet",
+			"signatureGap": true,
+			"mappingSource": "handler",
+			"note": "the method is BACKED but can only engage; both retail sites author the CLEAR the signature cannot carry"
+		},
+		{
+			"member": "TEAM_STATE_IS",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.state"
+			],
+			"blockingSubsystem": "team-behavior-state",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_STATE_IS_NOT",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.state"
+			],
+			"blockingSubsystem": "team-behavior-state",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_STOP",
+			"route": "backed",
+			"worldMethods": [
+				"teams.stop"
+			],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_STOP_SEQUENTIAL_SCRIPT",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.stop_sequential_script"
+			],
+			"blockingSubsystem": "sequential-scripts",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_THREAT_LEVEL",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.threat"
+			],
+			"blockingSubsystem": "spatial-queries",
+			"signatureGap": true,
+			"mappingSource": "handler",
+			"note": "condition, not action - WP09's mis-attribution finding"
+		},
+		{
+			"member": "TEAM_TRANSFER_TO_PLAYER",
+			"route": "blocked",
+			"worldMethods": [
+				"teams.transfer_to_player"
+			],
+			"blockingSubsystem": "team-registry",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TEAM_USE_COMMANDBUTTON_ABILITY",
+			"route": "blocked",
+			"worldMethods": [
+				"orders.use_command_button"
+			],
+			"blockingSubsystem": "command-button-abilities",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "TIMER_EXPIRED",
+			"route": "env",
+			"worldMethods": [],
+			"mappingSource": "handler"
+		},
+		{
+			"member": "TYPE_SIGHTED",
+			"route": "blocked",
+			"worldMethods": [
+				"units.type_was_sighted"
+			],
+			"blockingSubsystem": "vision-and-discovery",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "UNIT_HEALTH",
+			"route": "blocked",
+			"worldMethods": [
+				"units.health_percent"
+			],
+			"blockingSubsystem": "object-name-registry",
+			"mappingSource": "declared"
+		},
+		{
+			"member": "UNIT_SET_TEAM",
+			"route": "blocked",
+			"worldMethods": [
+				"units.set_team"
+			],
+			"blockingSubsystem": "team-registry",
+			"mappingSource": "handler"
+		},
+		{
+			"member": "UNIT_THREAT_LEVEL",
+			"route": "blocked",
+			"worldMethods": [
+				"units.threat"
+			],
+			"blockingSubsystem": "spatial-queries",
+			"signatureGap": true,
+			"mappingSource": "handler",
+			"note": "condition, not action - WP09's mis-attribution finding"
+		},
+		{
+			"member": "UPGRADE_NEAREST_WALL",
+			"route": "blocked",
+			"worldMethods": [
+				"progression.upgrade_nearest_wall"
+			],
+			"blockingSubsystem": "walls-and-siege",
+			"signatureGap": true,
+			"mappingSource": "handler"
+		}
+	]
+}
