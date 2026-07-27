@@ -1,0 +1,1209 @@
+{
+	"$comment": "Retail AI call-site census. Regenerate with scratchpad/export_ai_census.py; do not hand-edit. The denominator for AI-weighted dispatch coverage.",
+	"corpus": "The 14 AI_* WorldBuilder script libraries referenced by LibraryMapLists across the 301 decoded retail maps, per tree.",
+	"trees": {
+		"bfme2-retail": {
+			"libraryCount": 14,
+			"scriptCount": 1021,
+			"actionCallSites": 2903,
+			"conditionCallSites": 2825,
+			"totalCallSites": 5728,
+			"distinctActions": 62,
+			"distinctConditions": 29
+		},
+		"rotwk-retail": {
+			"libraryCount": 14,
+			"scriptCount": 1103,
+			"actionCallSites": 3157,
+			"conditionCallSites": 3056,
+			"totalCallSites": 6213,
+			"distinctActions": 62,
+			"distinctConditions": 29
+		}
+	},
+	"members": [
+		{
+			"name": "FLAG",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 847,
+				"rotwk-retail": 916
+			},
+			"libraryCount": {
+				"bfme2-retail": 10,
+				"rotwk-retail": 10
+			},
+			"workPackage": null
+		},
+		{
+			"name": "SET_FLAG",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 596,
+				"rotwk-retail": 683
+			},
+			"libraryCount": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"workPackage": null
+		},
+		{
+			"name": "COUNTER",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 588,
+				"rotwk-retail": 669
+			},
+			"libraryCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"workPackage": null
+		},
+		{
+			"name": "ENABLE_SCRIPT",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 574,
+				"rotwk-retail": 654
+			},
+			"libraryCount": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"workPackage": null
+		},
+		{
+			"name": "PLAYER_PURCHASE_SCIENCE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 461,
+				"rotwk-retail": 539
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP09-experience-upgrades-spellbook"
+		},
+		{
+			"name": "PLAYER_CAN_PURCHASE_SCIENCE",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 461,
+				"rotwk-retail": 539
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP09-experience-upgrades-spellbook"
+		},
+		{
+			"name": "COUNTER_COUNTER",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 437,
+				"rotwk-retail": 437
+			},
+			"libraryCount": {
+				"bfme2-retail": 7,
+				"rotwk-retail": 7
+			},
+			"workPackage": null
+		},
+		{
+			"name": "CALL_SUBROUTINE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 245,
+				"rotwk-retail": 245
+			},
+			"libraryCount": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"workPackage": "WP01-core-script-state"
+		},
+		{
+			"name": "SET_COUNTER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 215,
+				"rotwk-retail": 216
+			},
+			"libraryCount": {
+				"bfme2-retail": 7,
+				"rotwk-retail": 7
+			},
+			"workPackage": null
+		},
+		{
+			"name": "PLAYER_HAS_OBJECT_COMPARISON",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 100,
+				"rotwk-retail": 100
+			},
+			"libraryCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"workPackage": "WP17-players"
+		},
+		{
+			"name": "NO_OP",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 73,
+				"rotwk-retail": 73
+			},
+			"libraryCount": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"workPackage": null
+		},
+		{
+			"name": "CONDITION_TRUE",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 70,
+				"rotwk-retail": 70
+			},
+			"libraryCount": {
+				"bfme2-retail": 9,
+				"rotwk-retail": 9
+			},
+			"workPackage": null
+		},
+		{
+			"name": "DISABLE_SCRIPT",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 68,
+				"rotwk-retail": 74
+			},
+			"libraryCount": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"workPackage": null
+		},
+		{
+			"name": "COUNTER_MATH_COUNTER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 66,
+				"rotwk-retail": 66
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": null
+		},
+		{
+			"name": "NAMED_BASE_UNPACKABLE_FOR_PLAYER",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 64,
+				"rotwk-retail": 64
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP11-ai-basebuilding"
+		},
+		{
+			"name": "SET_COUNTER_TO_COUNTER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 47,
+				"rotwk-retail": 47
+			},
+			"libraryCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"workPackage": null
+		},
+		{
+			"name": "COUNTER_MATH_VALUE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 42,
+				"rotwk-retail": 42
+			},
+			"libraryCount": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"workPackage": null
+		},
+		{
+			"name": "TEAM_SET_CUSTOM_STATE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 40,
+				"rotwk-retail": 40
+			},
+			"libraryCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "CAN_BUILD_AT_BASE",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 33,
+				"rotwk-retail": 33
+			},
+			"libraryCount": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"workPackage": "WP17-players"
+		},
+		{
+			"name": "NAMED_BASE_UNPACK",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 32,
+				"rotwk-retail": 32
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP11-ai-basebuilding"
+		},
+		{
+			"name": "TEAM_SET_STATE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 32,
+				"rotwk-retail": 32
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_TRANSFER_TO_PLAYER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 32,
+				"rotwk-retail": 32
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "NAMED_OWNED_BY_PLAYER",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 32,
+				"rotwk-retail": 32
+			},
+			"libraryCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"workPackage": "WP16-units"
+		},
+		{
+			"name": "TIMER_EXPIRED",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 26,
+				"rotwk-retail": 28
+			},
+			"libraryCount": {
+				"bfme2-retail": 9,
+				"rotwk-retail": 9
+			},
+			"workPackage": null
+		},
+		{
+			"name": "SET_PLAYER_OWNERSHIP_OF_TYPE_COUNTER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 24,
+				"rotwk-retail": 24
+			},
+			"libraryCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"workPackage": "WP01-core-script-state"
+		},
+		{
+			"name": "SET_UNIT_REFERENCE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 24,
+				"rotwk-retail": 24
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP16-units"
+		},
+		{
+			"name": "TEAM_EXECUTE_SEQUENTIAL_SCRIPT",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 24,
+				"rotwk-retail": 24
+			},
+			"libraryCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "AI_PLAYER_BUILD_UPGRADE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 23,
+				"rotwk-retail": 23
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP09-experience-upgrades-spellbook"
+		},
+		{
+			"name": "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 21,
+				"rotwk-retail": 21
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP14-pathing-movement"
+		},
+		{
+			"name": "PLAYER_HAS_OBJECT_OF_VETERANCY",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 21,
+				"rotwk-retail": 21
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP09-experience-upgrades-spellbook"
+		},
+		{
+			"name": "TEAM_CHANGE_OBJECT_STATUS",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 18,
+				"rotwk-retail": 18
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP10-economy-objectstatus-objectlists"
+		},
+		{
+			"name": "TEAM_USE_COMMANDBUTTON_ABILITY",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 18,
+				"rotwk-retail": 18
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP13-special-powers-combat"
+		},
+		{
+			"name": "SKIRMISH_PLAYER_FACTION",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 18,
+				"rotwk-retail": 19
+			},
+			"libraryCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"workPackage": "WP17-players"
+		},
+		{
+			"name": "CAN_BUILD_OBJECTTYPE_AT_BASE",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 17,
+				"rotwk-retail": 17
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP17-players"
+		},
+		{
+			"name": "NAMED_NOT_DESTROYED",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 17,
+				"rotwk-retail": 17
+			},
+			"libraryCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"workPackage": "WP13-special-powers-combat"
+		},
+		{
+			"name": "PLAYER_HAS_CREDITS",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 17,
+				"rotwk-retail": 17
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP10-economy-objectstatus-objectlists"
+		},
+		{
+			"name": "UNIT_THREAT_LEVEL",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 17,
+				"rotwk-retail": 17
+			},
+			"libraryCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"workPackage": "WP09-experience-upgrades-spellbook"
+		},
+		{
+			"name": "INCREMENT_COUNTER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 16,
+				"rotwk-retail": 16
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": null
+		},
+		{
+			"name": "SET_UNIT_REFERENCE_TO_REFERENCE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 16,
+				"rotwk-retail": 16
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP16-units"
+		},
+		{
+			"name": "TEAM_HAS_CUSTOM_STATE",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 16,
+				"rotwk-retail": 16
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_MERGE_INTO_TEAM",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 15,
+				"rotwk-retail": 15
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_SET_ATTITUDE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 14,
+				"rotwk-retail": 14
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "DECREMENT_COUNTER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 13,
+				"rotwk-retail": 13
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": null
+		},
+		{
+			"name": "SET_COUNTER_TO_TEAM_THREAT",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 13,
+				"rotwk-retail": 13
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "UPGRADE_NEAREST_WALL",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 13,
+				"rotwk-retail": 13
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP09-experience-upgrades-spellbook"
+		},
+		{
+			"name": "SET_MILLISECOND_TIMER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 12,
+				"rotwk-retail": 13
+			},
+			"libraryCount": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"workPackage": null
+		},
+		{
+			"name": "TEAM_STOP",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 11,
+				"rotwk-retail": 11
+			},
+			"libraryCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 10,
+				"rotwk-retail": 10
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP14-pathing-movement"
+		},
+		{
+			"name": "TEAM_STATE_IS_NOT",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 9,
+				"rotwk-retail": 9
+			},
+			"libraryCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP11-ai-basebuilding"
+		},
+		{
+			"name": "NAMED_BASE_UNPACK_FREE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP11-ai-basebuilding"
+		},
+		{
+			"name": "START_POSITION_IS",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP17-players"
+		},
+		{
+			"name": "TEAM_THREAT_LEVEL",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 8,
+				"rotwk-retail": 8
+			},
+			"libraryCount": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"workPackage": "WP09-experience-upgrades-spellbook"
+		},
+		{
+			"name": "SET_RANDOM_COUNTER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 7,
+				"rotwk-retail": 8
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": null
+		},
+		{
+			"name": "TEAM_RECRUIT_UNITS",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 7,
+				"rotwk-retail": 7
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_HUNT",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 6,
+				"rotwk-retail": 6
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "SET_TIMER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"libraryCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"workPackage": null
+		},
+		{
+			"name": "TEAM_EXECUTE_SEQUENTIAL_SCRIPT_LOOPING",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_GUARD_TEAM",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP11-ai-basebuilding"
+		},
+		{
+			"name": "TEAM_DESTROYED",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 5,
+				"rotwk-retail": 5
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP13-special-powers-combat"
+		},
+		{
+			"name": "CREATE_OBJECT",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP16-units"
+		},
+		{
+			"name": "SET_PLAYER_MONEY_TO_COUNTER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": null
+		},
+		{
+			"name": "TEAM_GUARD_FOR_SECONDS",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP11-ai-basebuilding"
+		},
+		{
+			"name": "TEAM_IDLE_FOR_SECONDS",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP11-ai-basebuilding"
+		},
+		{
+			"name": "EVAL_TEAM_HEALTH",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP13-special-powers-combat"
+		},
+		{
+			"name": "TEAM_HAS_UNITS",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"libraryCount": {
+				"bfme2-retail": 4,
+				"rotwk-retail": 4
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP11-ai-basebuilding"
+		},
+		{
+			"name": "TEAM_RECRUIT_UNITS_FROM_TEAM",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_STOP_SEQUENTIAL_SCRIPT",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 3,
+				"rotwk-retail": 3
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "BUILD_BASE_BUILDING",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP11-ai-basebuilding"
+		},
+		{
+			"name": "SET_TEAM_REFERENCE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"libraryCount": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_STAND_GROUND",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 2,
+				"rotwk-retail": 2
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "DEBUG_STRING",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": null
+		},
+		{
+			"name": "GATE_CLOSE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP16-units"
+		},
+		{
+			"name": "GATE_OPEN",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP16-units"
+		},
+		{
+			"name": "NAMED_USE_COMMANDBUTTON_ABILITY",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP13-special-powers-combat"
+		},
+		{
+			"name": "PLAYER_ENABLE_BASE_CONSTRUCTION",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP17-players"
+		},
+		{
+			"name": "PLAYER_ENABLE_UNIT_CONSTRUCTION",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP16-units"
+		},
+		{
+			"name": "PLAYER_SELL_EVERYTHING",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP17-players"
+		},
+		{
+			"name": "SET_PLAYER_COMMAND_POINTS_AVAILABLE_TO_COUNTER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP01-core-script-state"
+		},
+		{
+			"name": "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_DELETE",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_EXIT_ALL_BUILDINGS",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_LOAD_TRANSPORTS",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP03-blocked-transport-garrison"
+		},
+		{
+			"name": "UNIT_SET_TEAM",
+			"kind": "action",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "PLAYER_DESTROYED_N_BUILDINGS_PLAYER",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP13-special-powers-combat"
+		},
+		{
+			"name": "TEAM_CREATED",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TEAM_IS_ATTACKED_AND_CANNOT_RETALIATE_ALL",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP13-special-powers-combat"
+		},
+		{
+			"name": "TEAM_STATE_IS",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP15-teams"
+		},
+		{
+			"name": "TYPE_SIGHTED",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP16-units"
+		},
+		{
+			"name": "UNIT_HEALTH",
+			"kind": "condition",
+			"callSites": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"libraryCount": {
+				"bfme2-retail": 1,
+				"rotwk-retail": 1
+			},
+			"workPackage": "WP13-special-powers-combat"
+		}
+	]
+}
