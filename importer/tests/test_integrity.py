@@ -128,9 +128,20 @@ class IntegrityTests(unittest.TestCase):
             PYTHON_VERSION,
         )
 
-        recipe_file = {"path": "importer/example.py", "size": 1, "sha256": "a" * 64}
+        recipe_files = [
+            {"path": "importer/example.py", "size": 1, "sha256": "a" * 64},
+            {"path": "importer/requirements-win.txt", "size": 2, "sha256": "f" * 64},
+        ]
         recipe_digest = hashlib.sha256(
-            ("importer/example.py\0" + "1\0" + "a" * 64 + "\n").encode("utf-8")
+            b"".join(
+                b"%s\0%d\0%s\n"
+                % (
+                    item["path"].encode("utf-8"),
+                    item["size"],
+                    item["sha256"].encode("ascii"),
+                )
+                for item in recipe_files
+            )
         ).hexdigest()
         archives = [
             {
@@ -176,9 +187,11 @@ class IntegrityTests(unittest.TestCase):
             "profile_sha256": "d" * 64,
             "importer_recipe": {
                 "tree_sha256": recipe_digest,
-                "files": [recipe_file],
+                "files": recipe_files,
                 "git_commit": "e" * 40,
                 "git_worktree_clean": False,
+                "provenance_source": "git-exact-root",
+                "requirements_files": ["importer/requirements-win.txt"],
             },
             "source_game": "bfme2-retail-user-owned",
             "source_archives": archives,

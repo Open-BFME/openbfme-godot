@@ -111,6 +111,50 @@ def git_revision(repository: Path, relative: str | None = None) -> str | None:
     return result.stdout.strip().casefold() if result.returncode == 0 else None
 
 
+def git_revision_at_exact_root(repository: Path) -> str | None:
+    """Return HEAD only when ``repository`` is itself the Git top-level.
+
+    ``git rev-parse HEAD`` searches upwards, so a directory that is not a
+    repository -- an unpacked release bundle, say -- silently answers with the
+    commit of whatever unrelated checkout happens to enclose it. An artifact
+    that claims an origin it does not have is worse than one that admits it
+    has none, so this refuses to answer unless the discovered top-level is the
+    requested root exactly. Callers that want a stamped identity must carry
+    one; they must not re-derive it from wherever they were installed.
+    """
+
+    git = shutil.which("git")
+    if not git:
+        return None
+    try:
+        root = repository.expanduser().resolve()
+    except (OSError, ValueError):
+        return None
+    if not root.is_dir():
+        return None
+    try:
+        top = subprocess.run(
+            [git, "rev-parse", "--show-toplevel"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    discovered_raw = top.stdout.strip()
+    if top.returncode != 0 or not discovered_raw:
+        return None
+    try:
+        discovered = Path(discovered_raw).resolve()
+    except (OSError, ValueError):
+        return None
+    if discovered != root:
+        return None
+    return git_revision(root)
+
+
 def git_worktree_clean(repository: Path) -> bool:
     git = shutil.which("git")
     if not git:

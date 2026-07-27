@@ -41,7 +41,7 @@ from .profile import (
 from .tools import (
     directory_tree_sha256,
     discover_executable,
-    git_revision,
+    git_revision_at_exact_root,
     git_worktree_clean,
     inspect_tool,
     run_checked,
@@ -56,6 +56,28 @@ from .w3d_secondary_skin import (
 
 
 RETAIL_PROVENANCE_CONTRACT = "openbfme.retail-import-provenance-v1"
+
+# A shipped launcher carries its own source identity, stamped at build time by
+# the release workflow beside the archived importer source. Development builds
+# have no such stamp and derive identity from Git instead. The two are
+# different mechanisms and the recipe says which one produced its commit, so a
+# pack's provenance can be read back without guessing how it was made.
+RELEASE_IDENTITY_RELATIVE = "release-identity.json"
+RELEASE_IDENTITY_SCHEMA = "openbfme.bundled-source-identity"
+RELEASE_IDENTITY_SCHEMA_VERSION = 1
+PROVENANCE_SOURCE_RELEASE_IDENTITY = "release-identity"
+PROVENANCE_SOURCE_GIT_EXACT_ROOT = "git-exact-root"
+PROVENANCE_SOURCES = frozenset(
+    {PROVENANCE_SOURCE_RELEASE_IDENTITY, PROVENANCE_SOURCE_GIT_EXACT_ROOT}
+)
+# Release bundles archive the release pin; a checkout also carries the wider
+# development pin. Hash whichever are actually present rather than assuming a
+# fixed name, and record the answer.
+IMPORTER_REQUIREMENTS_NAMES = (
+    "requirements-release-win.txt",
+    "requirements-win.txt",
+)
+
 MEN_FORDS_SOURCE_ENTRY_COUNT = 264
 MAX_RENDERED_OUTPUT_PATH = 512
 W3D_ADAPTER_REPORT_CONTRACT = "openbfme.w3d-adapter-report"
@@ -2255,14 +2277,64 @@ def _canonical_pack_inventory(pack_root: Path) -> list[dict[str, Any]]:
     return inventory
 
 
+def _read_release_identity(path: Path) -> tuple[str, bool]:
+    """Return the stamped ``(commit, clean)`` pair, or fail closed.
+
+    The stamp is the authority for a shipped build, so anything short of a
+    complete, current, clean identity is a refusal rather than a fallback:
+    silently dropping to Git here is what let bundles inherit an unrelated
+    checkout's commit in the first place.
+    """
+
+    def reject(reason: str) -> RuntimeError:
+        return RuntimeError(
+            f"bundled importer release identity is unusable ({reason}): {path}"
+        )
+
+    try:
+        identity = read_json(path)
+    except (OSError, ValueError) as exc:
+        raise reject("unreadable") from exc
+    if not isinstance(identity, dict):
+        raise reject("not an object")
+    if identity.get("schema") != RELEASE_IDENTITY_SCHEMA:
+        raise reject("unexpected schema")
+    if identity.get("schemaVersion") != RELEASE_IDENTITY_SCHEMA_VERSION:
+        raise reject("unsupported schemaVersion")
+    commit = identity.get("commit")
+    if not _is_git_commit(commit):
+        raise reject("commit is not a full git revision")
+    if identity.get("sourceClean") is not True:
+        raise reject("source was not clean when the build was stamped")
+    return str(commit).casefold(), True
+
+
 def _importer_recipe_report() -> dict[str, Any]:
-    root = repo_root_from_module()
+    root = repo_root_from_module().resolve()
+    identity_path = root / RELEASE_IDENTITY_RELATIVE
+    if identity_path.is_file():
+        commit, clean = _read_release_identity(identity_path)
+        provenance_source = PROVENANCE_SOURCE_RELEASE_IDENTITY
+    else:
+        # No stamp: this must be a real checkout rooted exactly here. An
+        # enclosing repository's HEAD is not this tree's identity.
+        commit = git_revision_at_exact_root(root)
+        clean = commit is not None and git_worktree_clean(root)
+        provenance_source = PROVENANCE_SOURCE_GIT_EXACT_ROOT
+    requirements = [
+        root / "importer" / name
+        for name in IMPORTER_REQUIREMENTS_NAMES
+        if (root / "importer" / name).is_file()
+    ]
     candidates = [
         *sorted((root / "importer" / "openbfme_importer").rglob("*.py")),
         *sorted((root / "importer" / "blender").rglob("*.py")),
-        root / "importer" / "requirements-win.txt",
+        *requirements,
         root / "tools" / "openbfme_import.py",
         root / "tools" / "bootstrap-importer-python.ps1",
+        # The self-attestation is only worth anything inside the hash it
+        # attests to.
+        identity_path,
     ]
     files: list[dict[str, Any]] = []
     digest = hashlib.sha256()
@@ -2283,8 +2355,12 @@ def _importer_recipe_report() -> dict[str, Any]:
     return {
         "tree_sha256": digest.hexdigest(),
         "files": files,
-        "git_commit": git_revision(root),
-        "git_worktree_clean": git_worktree_clean(root),
+        "git_commit": commit,
+        "git_worktree_clean": clean,
+        "provenance_source": provenance_source,
+        "requirements_files": sorted(
+            path.relative_to(root).as_posix() for path in requirements
+        ),
     }
 
 
@@ -3547,9 +3623,14 @@ class ImportPipeline:
         )
         final_attestation = getattr(self, "_w3d_final_attestation", None)
         final_plugin = final_attestation.get("plugin", {}) if final_attestation else {}
-        value = final_plugin.get("commit") or git_revision(plugin)
-        submodule_value = final_plugin.get("submodule_commit") or git_revision(
-            plugin, "io_mesh_w3d/blender_addon_updater"
+        # The plugin lives under the state root, which is external to this
+        # repository but may still sit inside some unrelated checkout. Only an
+        # exact top-level match is this plugin's own commit.
+        value = final_plugin.get("commit") or git_revision_at_exact_root(plugin)
+        submodule_value = final_plugin.get(
+            "submodule_commit"
+        ) or git_revision_at_exact_root(
+            plugin / "io_mesh_w3d" / "blender_addon_updater"
         )
         if value:
             from .bootstrap import _reject_python_bytecode
@@ -5339,6 +5420,45 @@ def _audit_recipe(recipe: Any, errors: list[str]) -> str:
         errors.append("retail provenance importer recipe has no exact git commit")
     if not isinstance(recipe.get("git_worktree_clean"), bool):
         errors.append("retail provenance importer recipe lacks worktree state")
+    provenance_source = recipe.get("provenance_source")
+    if (
+        not isinstance(provenance_source, str)
+        or provenance_source not in PROVENANCE_SOURCES
+    ):
+        # Recipes written before provenance self-description landed reach here.
+        # That is not a bug in the auditor: such a recipe may carry a commit
+        # inherited from whatever checkout happened to enclose the bundle, which
+        # is the exact defect these fields exist to rule out. There is no lax
+        # mode for them on purpose - a second, weaker audit path is how the
+        # guarantee quietly dies. Re-import is the migration.
+        errors.append(
+            "retail provenance importer recipe does not declare how its commit "
+            "was established; a recipe predating provenance self-description "
+            "cannot be verified - re-import this pack"
+        )
+    elif provenance_source == PROVENANCE_SOURCE_RELEASE_IDENTITY:
+        # A stamp the inventory does not cover attests to nothing.
+        if RELEASE_IDENTITY_RELATIVE.casefold() not in seen:
+            errors.append(
+                "retail provenance importer recipe claims a release identity "
+                "it did not hash"
+            )
+    requirements = recipe.get("requirements_files")
+    if (
+        not isinstance(requirements, list)
+        or not requirements
+        or not all(isinstance(item, str) and item for item in requirements)
+    ):
+        errors.append(
+            "retail provenance importer recipe does not name the requirements "
+            "pin it hashed; a recipe predating provenance self-description "
+            "cannot be verified - re-import this pack"
+        )
+    elif any(item.casefold() not in seen for item in requirements):
+        errors.append(
+            "retail provenance importer recipe names a requirements pin it did "
+            "not hash"
+        )
     return str(declared or "")
 
 
