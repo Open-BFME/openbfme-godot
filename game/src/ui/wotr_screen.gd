@@ -3,20 +3,31 @@ extends Panel
 ## THE WAR OF THE RING STRATEGIC SCREEN: the map, the armies, and the one button
 ## that starts a battle.
 ##
-## It is deliberately NOT retail's War of the Ring presentation. Retail draws a
-## 3D Middle-earth with region meshes, army models walking between them, a
-## turn-phase banner and a full army-management sidebar; none of that exists in
-## any pack and inventing it would be scenery over a hole. This screen draws what
-## the imported document actually authorises: the region graph at its AUTHORED
-## positions, ownership, army counts, and the legal moves the strategic layer
-## itself reports.
+## It draws RETAIL'S OWN 3D MAP when one has been converted. `livingmap.w3d` -
+## the whole of Middle-earth as 64 sub-objects with retail's compiled textures -
+## decodes through this project's W3D scanner with no unsupported chunks, and
+## `openbfme_importer.livingmap_bundle` turns it into the bundle
+## `wotr_map_bundle.gd` loads. Regions sit on that mesh at their AUTHORED world
+## coordinates, because the document's `centerPoint` values and the map's
+## vertices are the same coordinate space at scale 1 - measured, and the
+## measurement travels in the bundle manifest.
+##
+## With no bundle converted the screen falls back to the flat 2D region graph it
+## has always drawn, and SAYS which one the owner is looking at. A 2D graph
+## labelled as one is honest; a 2D graph presented as retail's map is not.
+##
+## Still missing from retail's presentation, and named rather than faked: the
+## `LivingWorldUI.apt` shell, army models walking between regions, the turn-phase
+## banner, and retail's ambient animation (the Eye of Sauron, circling eagles and
+## fellbeasts, drifting cloud borders).
 ##
 ## THREE RULES IT KEEPS:
 ##
 ## 1. NOTHING ON SCREEN IS INVENTED. A region retail did not give a custom centre
 ##    point (BFME2 authors exactly one: Rhun) is NOT placed at a plausible
 ##    coordinate - it is listed separately and labelled. The battlefield a battle
-##    is fought on is labelled a stand-in, because it is one.
+##    is fought on is labelled a stand-in, because it is one. A map sub-object
+##    whose texture did not resolve is drawn flat grey, never with a substitute.
 ##
 ## 2. SELECTION IS PRESENTATION UNTIL IT IS COMMITTED. `selected_region`,
 ##    `selected_target` and the hover highlight live on the session's
@@ -37,6 +48,8 @@ signal turn_ended
 const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 const SessionScript = preload("res://src/wotr/wotr_session.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
+const BundleScript = preload("res://src/wotr/wotr_map_bundle.gd")
+const MapViewScript = preload("res://src/wotr/wotr_map_view.gd")
 
 ## Seat colours. Fixed by seat index and never player-chosen: a colour is
 ## presentation, and a presentation value that varied per session would be one
@@ -59,7 +72,15 @@ var available_map_ids: Array = []
 
 var heading_label: Label
 var status_label: Label
+## The flat 2D region graph. Kept as the honest fallback for when no living-map
+## bundle has been converted, and labelled as a fallback when it is showing.
 var map_view: Control
+## Retail's 3D map, when a bundle is available.
+var map3d: Control
+var map_mode_label: Label
+var map_bundle: BundleScript = null
+## Why there is no 3D map, or "" when there is one.
+var map_reason := ""
 var detail_label: RichTextLabel
 var message_label: Label
 var unplaced_label: Label
@@ -107,6 +128,25 @@ func build() -> void:
 	map_view.draw.connect(_draw_map)
 	map_view.gui_input.connect(_on_map_input)
 	add_child(map_view)
+
+	map3d = MapViewScript.new()
+	map3d.name = "Map3D"
+	map3d.position = map_view.position
+	map3d.custom_minimum_size = map_view.custom_minimum_size
+	map3d.size = map_view.size
+	map3d.visible = false
+	map3d.region_clicked.connect(_on_region_clicked)
+	map3d.region_hovered.connect(_on_region_hovered)
+	add_child(map3d)
+
+	map_mode_label = Label.new()
+	map_mode_label.name = "MapMode"
+	# Below the message line, so it never overlaps the map area.
+	map_mode_label.position = Vector2(24, 738)
+	map_mode_label.custom_minimum_size = Vector2(1240, 20)
+	map_mode_label.add_theme_font_size_override("font_size", 13)
+	map_mode_label.add_theme_color_override("font_color", ThemeScript.PARCHMENT_DIM)
+	add_child(map_mode_label)
 
 	var side_x := 1290.0
 	unplaced_label = Label.new()
@@ -174,13 +214,36 @@ func build() -> void:
 ## Bind a live session, or NO session plus the reason there is none. Both are
 ## legitimate states and the screen shows either honestly; what it never does is
 ## show a map when `bound_session` is null.
-func configure(bound_session, map_ids: Array, reason: String) -> void:
+func configure(bound_session, map_ids: Array, reason: String, pack_roots: Array = []) -> void:
 	if heading_label == null:
 		build()
 	session = bound_session
 	available_map_ids = map_ids.duplicate()
 	unavailable_reason = reason
+	load_map_bundle(pack_roots)
 	refresh()
+
+
+## Find and load retail's converted 3D map. Separate from `configure()` so a test
+## can drive it directly, and so a failure to load the MAP never stops the
+## strategic layer from working - the 2D fallback is a real screen, not an error
+## state.
+func load_map_bundle(pack_roots: Array = []) -> bool:
+	if heading_label == null:
+		build()
+	var bundle := BundleScript.new()
+	var located: Dictionary = bundle.locate_and_load(pack_roots)
+	if bool(located.get("ok", false)):
+		map_bundle = bundle
+		map_reason = ""
+	else:
+		map_bundle = null
+		map_reason = String(located.get("reason", ""))
+	map3d.set_bundle(map_bundle, map_reason)
+	var has_3d: bool = map3d.has_map()
+	map3d.visible = has_3d
+	map_view.visible = not has_3d
+	return has_3d
 
 
 func refresh() -> void:
@@ -199,6 +262,7 @@ func refresh() -> void:
 		_clear_unplaced()
 		unplaced_label.text = ""
 		map_view.queue_redraw()
+		_refresh_map_mode_label()
 		return
 
 	_rows = session.region_rows()
@@ -227,7 +291,57 @@ func refresh() -> void:
 	attack_button.disabled = not can_attack_now()
 	_rebuild_unplaced()
 	_refresh_detail()
+	_refresh_map()
+
+
+## Push the strategic picture into whichever map is showing. Strictly one-way:
+## the map is handed already-computed rows and never writes anything back.
+func _refresh_map() -> void:
+	if map3d != null and map3d.has_map():
+		var adjacency: Dictionary = {}
+		for region_id in session.world.region_ids:
+			adjacency[String(region_id)] = session.world.neighbours(String(region_id))
+		map3d.owner_colors = SEAT_COLORS
+		map3d.neutral_color = NEUTRAL_COLOR
+		map3d.set_regions(
+			_rows, adjacency, _staging, _targets,
+			session.selected_region, session.selected_target)
+		_refresh_map_mode_label()
+		return
 	map_view.queue_redraw()
+	_refresh_map_mode_label()
+
+
+func _refresh_map_mode_label() -> void:
+	if map_mode_label == null:
+		return
+	if map3d == null or not map3d.has_map():
+		map_mode_label.text = (
+			"MAP: flat 2D region graph (fallback). Retail's 3D map is not converted here - %s"
+			% map_reason)
+		return
+	var notes: Array[String] = []
+	notes.append("MAP: retail livingmap.w3d, %d sub-objects, %d regions placed at authored world coordinates" % [
+		map_bundle.sub_objects.size(), map3d.placed_regions.size()])
+	if map3d.unplaced_regions.size() > 0:
+		notes.append("%d region(s) unplaced (no authored centre point)" % map3d.unplaced_regions.size())
+	if map3d.unsampled_heights.size() > 0:
+		notes.append("%d region height(s) not sampled from terrain" % map3d.unsampled_heights.size())
+	if map_bundle.untextured_sub_objects.size() > 0:
+		notes.append("%d sub-object(s) drawn untextured: %s" % [
+			map_bundle.untextured_sub_objects.size(),
+			", ".join(Array(map_bundle.untextured_sub_objects))])
+	# Everything retail draws that this lane does not, named on screen. A map
+	# quietly missing its rivers and its ocean shader would look finished.
+	var not_drawn: Array[String] = []
+	for entry in map_bundle.sub_objects:
+		if bool(entry["collision"]) or bool(entry["ambient"]) or bool(entry["shader_only"]):
+			not_drawn.append(entry["name"] as String)
+	not_drawn.sort()
+	if not_drawn.size() > 0:
+		notes.append("NOT DRAWN (%d): retail's impassable volumes, its animated ambient cards and multi-stage water overlays - %s" % [
+			not_drawn.size(), ", ".join(not_drawn)])
+	map_mode_label.text = "   |   ".join(notes)
 
 
 ## True when the current selection is a legal, committable attack.
@@ -372,10 +486,14 @@ func _rebuild_unplaced() -> void:
 	if unplaced.is_empty():
 		unplaced_label.text = ""
 		return
-	# NOT drawn on the map, and said so. Retail derives these markers from the
-	# region's map mesh, which no pack ships; a coordinate chosen here would be
-	# invented map data.
-	unplaced_label.text = "REGIONS WITH NO AUTHORED MAP POSITION (%d) - retail derives these from the region mesh, which no pack ships" % unplaced.size()
+	# NOT drawn on the map, and said so. Retail falls back to the region's own
+	# sub-object when `CustomCenterPoint` is absent - and `livingmap.w3d` does NOT
+	# carry per-region sub-objects. Its 64 sub-objects are 20 terrain tiles, the
+	# coast and water, the impassable volumes, the ambient cards and eleven named
+	# landmarks; there is no `Rhun` mesh in it to take a centre from. So the
+	# position genuinely does not exist in the converted map, and a coordinate
+	# chosen here would be invented map data.
+	unplaced_label.text = "REGIONS WITH NO AUTHORED MAP POSITION (%d) - retail takes these from a per-region sub-object that livingmap.w3d does not carry" % unplaced.size()
 	for row in unplaced:
 		var button := Button.new()
 		var region_id := String(row["id"])
@@ -489,6 +607,15 @@ func _on_map_input(event: InputEvent) -> void:
 	if region_id.is_empty():
 		return
 	_on_region_clicked(region_id)
+
+
+## Hover from the 3D map. Presentation only: it lands on the session's per-seat
+## presentation field, which `authoritative_state()` does not read and no hash
+## covers.
+func _on_region_hovered(region_id: String) -> void:
+	if session == null:
+		return
+	session.hover_region = region_id
 
 
 ## A click means "stage here" on one of your own armed regions and "attack here"

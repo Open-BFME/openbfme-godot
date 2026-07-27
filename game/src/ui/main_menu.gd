@@ -1086,7 +1086,15 @@ func _open_wotr() -> bool:
 	if _wotr_session == null and not _start_wotr_session():
 		_refresh_wotr_entry()
 		return false
-	wotr_screen.configure(_wotr_session, wotr_available_map_ids(), _wotr_unavailable_reason)
+	# The same mounted pack roots the living-world DOCUMENT is searched for, so a
+	# pack that ships retail's converted 3D map is found the same way and in the
+	# same order as the one that ships the region data.
+	var pack_roots: Array = []
+	for meta_value in (_content_db.get("pack_meta") as Array):
+		pack_roots.append(String((meta_value as Dictionary).get("root", "")))
+	pack_roots.sort()
+	wotr_screen.configure(
+		_wotr_session, wotr_available_map_ids(), _wotr_unavailable_reason, pack_roots)
 	return true
 
 
