@@ -9257,8 +9257,13 @@ func _step_entity(id: int) -> void:
 		row["current_speed"] = 0.0
 		if knockdown_ticks <= 0:
 			row["knocked_down"] = false
-			row["state"] = "idle"
 			_emit_event("combat.stand_up", id, 0)
+			# Standing back up resumes the order the charge interrupted, from
+			# the spot the battalion was thrown to. Without this a trampled
+			# battalion stands up ownerless and idle, so the player's attack
+			# order is destroyed by the first hoof that touches it.
+			if not _resume_order_after_knockdown(row):
+				row["state"] = "idle"
 		else:
 			row["state"] = "knocked_down"
 		return
@@ -10209,6 +10214,33 @@ func _try_cavalry_trample(row: Dictionary) -> void:
 	_apply_knockback(origin, TRAMPLE_COLLISION_RADIUS, TRAMPLE_KNOCKBACK_STRENGTH, team, 0, "trample", int(row.get("id", 0)))
 
 
+func _resume_order_after_knockdown(row: Dictionary) -> bool:
+	## Re-path a battalion that just stood up back onto the order it was
+	## carrying when it was knocked down: its live attack target first, then a
+	## pending move destination. Returns false when there is nothing left to
+	## resume (order complete, target dead, or the route is now unreachable),
+	## in which case the caller settles it into idle.
+	var target_id := int(row.get("target_id", 0))
+	if target_id != 0:
+		var target: Dictionary = {}
+		if String(row.get("target_kind", "battalion")) == "structure":
+			target = structures.get(target_id, {}) as Dictionary
+		else:
+			target = entities.get(target_id, {}) as Dictionary
+		if not target.is_empty() and int(target.get("health", 0)) > 0:
+			if _assign_route(row, Vector2(target["position"])):
+				row["state"] = "run"
+				return true
+		row["target_id"] = 0
+		row["target_kind"] = "battalion"
+	var destination := Vector2(row.get("destination", row["position"]))
+	if destination.distance_to(Vector2(row["position"])) > 0.001 and _assign_route(row, destination):
+		row["state"] = "run"
+		return true
+	_clear_pending_route(row, true)
+	return false
+
+
 func _apply_knockback(center: Vector2, radius: float, strength: float, source_team: int, damage: int, damage_reason: String, source_id: int = 0) -> int:
 	## Deterministic radial knockback: sweep enemy battalions in ascending id
 	## order, throw each away from the center (clamped to walkable ground),
@@ -10231,6 +10263,18 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 		var distance := position.distance_to(center)
 		if distance > radius:
 			continue
+		if int(row.get("knockdown_ticks", 0)) > 0:
+			# Already sprawled on the ground: a charge cannot fling a battalion
+			# that is still lying there, and it cannot refresh the timer either.
+			# KNOCKDOWN_DURATION_TICKS(25) outlives TRAMPLE_COOLDOWN_TICKS(10)
+			# and TRAMPLE_KNOCKBACK_STRENGTH(2.0) throws the victim less far
+			# than TRAMPLE_COLLISION_RADIUS(2.5), so without this guard a single
+			# cavalry battalion re-downs the same clump every 10 ticks forever:
+			# the victims never stand, never retaliate, and are ground to dust
+			# for free. Damage still lands on a prone target.
+			if damage > 0:
+				_apply_damage(source_id, id, damage, "battalion")
+			continue
 		var direction := (position - center) / distance if distance > 0.001 else Vector2.RIGHT
 		# Try the full throw first, then shorter deterministic fractions so a
 		# victim near water/cliff lands on the nearest walkable spot instead
@@ -10247,12 +10291,14 @@ func _apply_knockback(center: Vector2, radius: float, strength: float, source_te
 		row["knocked_down"] = true
 		row["current_speed"] = 0.0
 		row["attack_windup"] = 0
-		row["target_id"] = 0
-		row["target_kind"] = "battalion"
-		row["attack_move"] = false
+		# The order survives the fall. Being bowled over interrupts a battalion,
+		# it does not make it forget what it was told to do; the route is
+		# dropped (the victim was displaced) and re-pathed on stand-up. Wiping
+		# target_id/destination here made every knockdown a permanent
+		# disarm, because nothing ever re-issues the player's order.
 		_clear_member_attack_schedule(row)
 		_clear_member_targets(row)
-		_clear_pending_route(row, true)
+		_clear_pending_route(row, false)
 		row["state"] = "knocked_down"
 		if damage > 0:
 			_apply_damage(source_id, id, damage, "battalion")
