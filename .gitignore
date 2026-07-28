@@ -49,3 +49,9 @@ build/
 
 # Local Codex/MCP wiring is machine-specific (absolute node + checkout paths).
 .codex/
+
+# Git-Bash debris: a literal relative `dev/null` path created when a command
+# meant for POSIX `/dev/null` runs from a non-POSIX shell (e.g. git-lfs writing
+# hooks into `-c core.hooksPath=dev/null`). Salvaged from
+# claude/distracted-herschel-c99a60, whose only unique content this was.
+dev/null/
