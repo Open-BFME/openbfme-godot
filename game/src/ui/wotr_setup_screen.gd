@@ -96,6 +96,11 @@ var seat_options: Array[Dictionary] = []
 ## The chosen seating. One entry per row:
 ## `{option_index, team, controller, color_slot, handicap_index}`.
 var seats: Array[Dictionary] = []
+
+## Rule row id -> the option index the player picked. A row absent from here has
+## never been touched and shows its own authored default; the table stays the
+## single source of what the defaults ARE.
+var rule_choice: Dictionary = {}
 ## Scenario rows: `{name, display, description, startable, reason, max_players}`.
 var scenarios: Array[Dictionary] = []
 var scenario_index := 0
@@ -487,8 +492,66 @@ func seat_payload() -> Array:
 			"template": String(option["template"]),
 			"team": int(row["team"]),
 			"controller": String(row["controller"]),
+			# RETAIL'S OWN RUNG, not the index into the list. The strategic layer
+			# validates it against retail's ladder and refuses anything off it,
+			# so sending an index would send a number retail never wrote.
+			"handicap": int(BindingsScript.HANDICAP_LEVELS[int(row["handicap_index"])]),
 		})
 	return payload
+
+
+## The RULES tab's campaign-wide choices, in the vocabulary the strategic layer
+## stores rather than the `VALUE:` keys the screen shows. Only rows that
+## actually reach the strategic layer are included: a locked row contributes
+## nothing, because contributing a value nothing carries is how a control comes
+## to look like it works.
+func rules_payload() -> Dictionary:
+	var payload: Dictionary = {}
+	for row in BindingsScript.RULE_ROWS:
+		if String(row.get("reaches", "")) != "strategic":
+			continue
+		var field := String(row.get("state_field", ""))
+		var states: Array = row.get("values_state", []) as Array
+		if field.is_empty() or states.is_empty():
+			continue
+		var index := _rule_index(row, states.size())
+		payload[field] = String(states[index])
+	return payload
+
+
+## Which option a rule row is currently showing. The player's pick when they
+## have made one, else the row's own authored default - clamped, because a
+## document with fewer victory types than the table has rows would otherwise
+## index past the end.
+func _rule_index(row: Dictionary, count: int) -> int:
+	if count <= 0:
+		return 0
+	var chosen := int(rule_choice.get(String(row.get("id", "")), int(row.get("default", 0))))
+	return clampi(chosen, 0, count - 1)
+
+
+func _rule_row(id: String) -> Dictionary:
+	for row in BindingsScript.RULE_ROWS:
+		if String(row["id"]) == id:
+			return row
+	return {}
+
+
+## What choosing this option will actually mean, in the strategic layer's own
+## words. Shown in the dropdown so the consequence is visible at the moment of
+## choosing rather than discovered at the first battle.
+func _rule_state_note(row: Dictionary, index: int) -> String:
+	var states: Array = row.get("values_state", []) as Array
+	if index < 0 or index >= states.size():
+		return ""
+	match String(states[index]):
+		"auto_resolve_and_rts":
+			return "both are offered; the strategic screen shows an ATTACK and an AUTO-RESOLVE button and the choice is recorded per battle"
+		"auto_resolve":
+			return "every battle is decided by retail's auto-resolve tables and this project's dice"
+		"rts":
+			return "every battle is fought in the tactical layer"
+	return ""
 
 
 ## "" when PLAY can be pressed, else the reason it cannot - the same shape the
@@ -833,11 +896,18 @@ func _draw_rules_tab() -> void:
 		if options.is_empty():
 			shown = "unavailable"
 		else:
-			shown = String(options[mini(maxi(int(row["default"]), 0), options.size() - 1)]["text"])
-		_draw_menu_field(String(row["id"]), field, shown, enabled, "")
-		# THE REASON, ON SCREEN. A locked control that does not say why it is
-		# locked is indistinguishable from a broken one.
+			shown = String(options[_rule_index(row, options.size())]["text"])
+		# `rule:` prefixed, because the seat-column ids are `<kind>_<row>` and a
+		# rule id like `battle_type` splits into two parts exactly the same way -
+		# an unprefixed id would have been picked up as seat row "type".
+		_draw_menu_field("rule:" + String(row["id"]), field, shown, enabled, "")
+		# THE REASON, ON SCREEN, WHEN THERE IS ONE. Two of these rows used to be
+		# locked because no auto-resolve path existed; one does now, so they are
+		# live controls and carry a statement of where the choice LANDS instead.
 		var reason := String(row.get("locked_reason", ""))
+		if enabled and reason.is_empty():
+			reason = "reaches WotrSession.begin() -> state.%s, inside the strategic hash" % String(
+				row.get("state_field", "?"))
 		if options.is_empty():
 			reason = String(row.get("absent_reason", ""))
 			if reason.is_empty():
@@ -865,10 +935,10 @@ func _draw_rules_tab() -> void:
 	ChromeScript.draw_steel_button(self, reset, 3)
 	_centre_text(_label(BindingsScript.SHELL_KEYS["button_reset"]), reset, LABEL_FONT, TEXT_LOCKED)
 	_wrap_text(
-		"every row on this tab is drawn from retail's own RULE:/VALUE: keys and "
-		+ "LOCKED: nothing in the strategic layer or the version-2 commitment "
-		+ "carries these values, and wiring one in as an extra argument to a "
-		+ "battle is the desync this branch has already fixed twice.",
+		"every row is drawn from retail's own RULE:/VALUE: keys. BATTLE TYPE and "
+		+ "BATTLE TYPE PRIORITY are now LIVE - they land in the strategic state "
+		+ "and ride the version-3 commitment. The rest stay LOCKED because "
+		+ "nothing carries them, and each says which.",
 		Rect2(reset.position.x + 142.0, reset.position.y - 6.0,
 			inner.size.x - 150.0, 44.0), SMALL_FONT, TEXT_DIM)
 
@@ -958,12 +1028,13 @@ func _draw_table() -> void:
 		_hits.append({"id": "color_%d" % row_index,
 			"rect": Rect2(x + 2.0, cell_y, widths[4] - 8.0, ROW_H - 4.0), "kind": "menu"})
 		x += widths[4]
-		# Handicap: retail's own level, LOCKED. Drawn as a value plate rather
-		# than a control, because it is not one.
+		# Handicap: retail's own ladder, and now a REAL CONTROL. It used to be
+		# drawn as a dead value plate because nothing carried it; the seat row
+		# carries it now, the version-3 commitment carries it, and it scales
+		# retail's own auto-resolve multipliers.
 		var handicap := Rect2(x + 4.0, y + 5.0, widths[5] - 14.0, ROW_H - 10.0)
-		ChromeScript.draw_dropdown(self, handicap, false)
-		_text("%d%%" % BindingsScript.HANDICAP_LEVELS[int(row["handicap_index"])],
-			Vector2(handicap.position.x + 8.0, y + 19.0), BODY_FONT, TEXT_LOCKED)
+		_draw_menu_field("handicap_%d" % row_index, handicap,
+			"%d%%" % BindingsScript.HANDICAP_LEVELS[int(row["handicap_index"])], true, "")
 		ChromeScript.draw_row_rule(self, Vector2(inner.position.x, y + ROW_H), inner.size.x)
 		y += ROW_H
 
@@ -981,7 +1052,7 @@ func _draw_table() -> void:
 	_centre_text("REMOVE PLAYER", remove, SMALL_FONT, TEXT if can_remove else TEXT_LOCKED)
 	if can_remove:
 		_hits.append({"id": "remove_seat", "rect": remove, "kind": "button"})
-	_text("%d of %d armies fieldable | %s seats %d | handicap and AI tier are locked" % [
+	_text("%d of %d armies fieldable | %s seats %d | handicap is live; AI tier is locked" % [
 			_fieldable_count(), seat_options.size(),
 			_scenario_display(scenarios[scenario_index]) if not scenarios.is_empty() else "-",
 			_selected_scenario_record().get("ownership_sets", []).size()],
@@ -1075,6 +1146,19 @@ func _draw_menu_field(id: String, rect: Rect2, text: String, enabled: bool, _rea
 ## against the seating it describes.
 func _menu_options(id: String) -> Array[Dictionary]:
 	var options: Array[Dictionary] = []
+	if id.begins_with("rule:"):
+		var row := _rule_row(id.substr(5))
+		if row.is_empty():
+			return options
+		var resolved := _rule_options(row)
+		for index in range(resolved.size()):
+			options.append({
+				"text": String((resolved[index] as Dictionary)["text"]),
+				"value": index,
+				"enabled": true,
+				"note": _rule_state_note(row, index),
+			})
+		return options
 	if id == "scenario":
 		for index in range(scenarios.size()):
 			var row := scenarios[index] as Dictionary
@@ -1115,6 +1199,17 @@ func _menu_options(id: String) -> Array[Dictionary]:
 		"team":
 			for team in range(1, MAX_SEATS + 1):
 				options.append({"text": str(team), "value": team, "enabled": true, "note": ""})
+		"handicap":
+			# Retail's 21 rungs, in retail's own order. The note is retail's own
+			# algebra, which the auto-resolve runner verifies exactly: every
+			# rung's ArmorMultiplier is the reciprocal of its WeaponMultiplier.
+			for index in range(BindingsScript.HANDICAP_LEVELS.size()):
+				options.append({
+					"text": "%d%%" % BindingsScript.HANDICAP_LEVELS[index],
+					"value": index,
+					"enabled": true,
+					"note": "" if index == 0 else BindingsScript.HANDICAP_NOTE,
+				})
 		"color":
 			for entry in BindingsScript.COLORS:
 				var slot := int(entry["slot"])
@@ -1140,6 +1235,9 @@ func _army_label_for_option(index: int) -> String:
 
 
 func _selected_value(id: String) -> int:
+	if id.begins_with("rule:"):
+		var row := _rule_row(id.substr(5))
+		return _rule_index(row, _rule_options(row).size()) if not row.is_empty() else 0
 	if id == "scenario":
 		return scenario_index
 	var parts := id.split("_")
@@ -1155,10 +1253,15 @@ func _selected_value(id: String) -> int:
 			return int(row["team"])
 		"color":
 			return int(row["color_slot"])
+		"handicap":
+			return int(row["handicap_index"])
 	return 0
 
 
 func _apply_choice(id: String, value: int) -> void:
+	if id.begins_with("rule:"):
+		rule_choice[id.substr(5)] = value
+		return
 	if id == "scenario":
 		scenario_index = clampi(value, 0, maxi(scenarios.size() - 1, 0))
 		# The seating may no longer fit the new scenario's ownership sets; trim
@@ -1187,6 +1290,8 @@ func _apply_choice(id: String, value: int) -> void:
 		"color":
 			row["color_slot"] = value
 			_refresh_ownership()
+		"handicap":
+			row["handicap_index"] = clampi(value, 0, BindingsScript.HANDICAP_LEVELS.size() - 1)
 	_refresh_ownership()
 
 
@@ -1349,7 +1454,14 @@ func _press(id: String) -> void:
 			if not refusal.is_empty():
 				message = refusal
 				return
-			play_requested.emit({"scenario": scenario_name(), "seats": seat_payload()})
+			play_requested.emit({
+				"scenario": scenario_name(),
+				"seats": seat_payload(),
+				# The campaign-wide RULES choices. A listener that ignores this
+				# key gets retail's own screen defaults, which is exactly what
+				# the screen was showing.
+				"rules": rules_payload(),
+			})
 		"add_seat":
 			if seats.size() >= _seat_ceiling():
 				return

@@ -41,6 +41,9 @@ const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 const HandoffScript = preload("res://src/wotr/wotr_handoff.gd")
 const BattleScript = preload("res://src/wotr/wotr_battle.gd")
+const AutoResolveScript = preload("res://src/wotr/wotr_autoresolve.gd")
+const AutoResolveBattleScript = preload("res://src/wotr/wotr_autoresolve_battle.gd")
+const AutoResolveBindingsScript = preload("res://src/wotr/wotr_autoresolve_bindings.gd")
 
 ## The document a pack ships, relative to its root. No pack built before the
 ## living-world lane carries one; that is a real state and it is reported, not
@@ -84,6 +87,18 @@ const HANDOFF_SCHEMA_VERSION := 1
 
 var world: WorldScript = null
 var state: StateScript = null
+
+## Retail's auto-resolve tables and the object-to-block bindings that map an
+## army onto them. BOTH are needed to auto-resolve anything and neither is
+## faked: with either missing, `auto_resolve_reason` says which one and where it
+## looked, `state.roster_units` stays empty, and every attempt to auto-resolve
+## refuses by name instead of fighting a battle with invented numbers.
+var autoresolve: AutoResolveScript = null
+var autoresolve_bindings: AutoResolveBindingsScript = null
+var auto_resolve_reason := ""
+## Living-world templates the binding bundle has no auto-resolve data for, from
+## the last `load_auto_resolve()`. Named on screen, never defaulted.
+var auto_resolve_unbound_templates: PackedStringArray = PackedStringArray()
 
 ## Where the loaded document came from, and how it was found ("pack" or "env").
 var document_path := ""
@@ -237,9 +252,84 @@ func seat_options(available_pack_factions: Dictionary) -> Array[Dictionary]:
 	return options
 
 
+## Load retail's auto-resolve tables and the unit bindings. Returns
+## `{ok, reason, rules_path, bindings_path}`; on failure `reason` names every
+## path tried and the command that produces each bundle.
+##
+## SEPARATE FROM `begin()` on purpose: a session with no auto-resolve data is a
+## real and legitimate state - it is what every pack built before this lane
+## produces - and it must start, run and fight tactical battles normally. What
+## it must NOT do is auto-resolve, and `commit_attack()` refuses that by name.
+func load_auto_resolve(pack_roots: Array = []) -> Dictionary:
+	autoresolve = null
+	autoresolve_bindings = null
+	auto_resolve_reason = ""
+	auto_resolve_unbound_templates = PackedStringArray()
+	var model := AutoResolveScript.new()
+	var located: Dictionary = model.locate_and_load(pack_roots)
+	if not bool(located.get("ok", false)):
+		auto_resolve_reason = String(located.get("reason", ""))
+		return {"ok": false, "reason": auto_resolve_reason, "rules_path": "", "bindings_path": ""}
+	var bound := AutoResolveBindingsScript.new()
+	var found: Dictionary = bound.locate_and_load(pack_roots)
+	if not bool(found.get("ok", false)):
+		auto_resolve_reason = String(found.get("reason", ""))
+		return {"ok": false, "reason": auto_resolve_reason,
+			"rules_path": String(located.get("path", "")), "bindings_path": ""}
+	autoresolve = model
+	autoresolve_bindings = bound
+	return {
+		"ok": true, "reason": "",
+		"rules_path": String(located.get("path", "")),
+		"bindings_path": String(found.get("path", "")),
+	}
+
+
+## Roster name -> the auto-resolve units an army of that roster fields, each
+## already carrying retail's `HitpointsAtLevel`. Built ONCE per session, over
+## sorted roster names so the order a template is first reported unbound in is
+## reproducible. `{}` when either bundle is missing, which is what makes every
+## army field no units and every auto-resolve refuse by name.
+func _build_roster_units() -> Dictionary:
+	var table: Dictionary = {}
+	auto_resolve_unbound_templates = PackedStringArray()
+	if world == null or autoresolve == null or autoresolve_bindings == null:
+		return table
+	var bindings := autoresolve_bindings.objects()
+	var unbound: Dictionary = {}
+	var names: Array[String] = []
+	for key in world.player_armies.keys():
+		names.append(String(key))
+	names.sort()
+	for name in names:
+		var roster := world.player_armies[name] as Dictionary
+		var built: Dictionary = AutoResolveBattleScript.units_for_roster(
+			bindings, roster.get("entries", []))
+		for template in built["unbound"] as PackedStringArray:
+			unbound[String(template)] = true
+		var with_health: Dictionary = AutoResolveBattleScript.with_hitpoints(
+			autoresolve.rules, built["units"])
+		for note in with_health["unresolved"] as PackedStringArray:
+			unbound[String(note)] = true
+		table[name] = with_health["units"]
+	var sorted_unbound: Array[String] = []
+	for key in unbound.keys():
+		sorted_unbound.append(String(key))
+	sorted_unbound.sort()
+	auto_resolve_unbound_templates = PackedStringArray(sorted_unbound)
+	return table
+
+
 ## Load `document` and seat a session. Fails closed and NAMES the reason: a
 ## session that half-started would put a plausible map on screen.
-func begin(document: Dictionary, campaign: String, scenario: String, seats: Array) -> bool:
+##
+## `rules` is the setup screen's RULES tab: `battle_type` and
+## `battle_type_priority`. It defaults to retail's own screen defaults, so every
+## existing caller keeps the behaviour it had.
+func begin(
+	document: Dictionary, campaign: String, scenario: String, seats: Array,
+	rules: Dictionary = {}
+) -> bool:
 	refusals = PackedStringArray()
 	world = WorldScript.new()
 	if not world.load_from_dict(document, campaign):
@@ -254,11 +344,14 @@ func begin(document: Dictionary, campaign: String, scenario: String, seats: Arra
 		world = null
 		return false
 	state = StateScript.new()
-	if not state.setup(world, seats):
+	if not state.setup(world, seats, rules):
 		refusals.append("the strategic layer refused the seating")
 		world = null
 		state = null
 		return false
+	# BEFORE any army is placed, because `place_army()` copies the units onto
+	# the army record and an army placed without them would field nothing.
+	state.roster_units = _build_roster_units()
 	if not state.apply_ownership_sets(scenario):
 		refusals.append("scenario '%s' has no ownership this campaign can apply" % scenario)
 		world = null
@@ -467,7 +560,16 @@ static func _stable_index(name: String, count: int) -> int:
 ## battlefield_map, region_map_name}`. `team_roster` is re-derived from the
 ## commitment the state actually admitted, so what a caller feeds the simulation
 ## is provably the record the strategic hash covers.
-func commit_attack(target_region: String, available_map_ids: Array) -> Dictionary:
+##
+## `requested_battle_type` is the attacker's per-battle pick - `"auto_resolve"`
+## or `"rts"` - and it only does anything when the campaign rule is retail's own
+## default "Auto Resolve and RTS", which OFFERS both. Under "Auto Resolve" or
+## "RTS" the campaign rule wins and the request is ignored. The RESOLVED type is
+## what lands in the commitment, so the request itself never reaches anything
+## the hash cannot see.
+func commit_attack(
+	target_region: String, available_map_ids: Array, requested_battle_type: String = ""
+) -> Dictionary:
 	refusals = PackedStringArray()
 	if world == null or state == null:
 		return _commit_refused("no War of the Ring session is running")
@@ -480,7 +582,14 @@ func commit_attack(target_region: String, available_map_ids: Array) -> Dictionar
 	if brief.is_empty():
 		return _commit_refused("seat %d cannot legally attack %s from any region it holds" % [attacker, target_region])
 	var bindings := battlefield_bindings(available_map_ids)
-	var configured: Dictionary = BattleScript.configure(brief, FACTION_BINDINGS, bindings)
+	if requested_battle_type == StateScript.BATTLE_TYPE_AUTO_RESOLVE \
+			and (autoresolve == null or autoresolve_bindings == null):
+		return _commit_refused(
+			"this attack asked to be auto-resolved and there is no auto-resolve data: %s"
+			% (auto_resolve_reason if not auto_resolve_reason.is_empty()
+				else "load_auto_resolve() was never called"))
+	var configured: Dictionary = BattleScript.configure(
+		brief, FACTION_BINDINGS, bindings, requested_battle_type)
 	if not bool(configured.get("ok", false)):
 		for reason in configured.get("refusals", PackedStringArray()) as PackedStringArray:
 			refusals.append(String(reason))
@@ -524,6 +633,84 @@ func resolve_battle(winner_team: int) -> Dictionary:
 	selected_region = ""
 	selected_target = ""
 	return outcome
+
+
+## AUTO-RESOLVE THE BATTLE IN FLIGHT, roll the dice, and write the result back.
+##
+## Returns `{ok, refusals, outcome, applied, seed}`. `outcome` carries the
+## strike-by-strike record the battle screen draws - what each side rolled, what
+## modified it, and which numbers are retail's and which are this project's.
+##
+## THE SEED IS THE COMMITMENT AND NOTHING ELSE. `AutoResolveBattleScript.
+## seed_for()` digests `state.pending_battle`, which is inside the strategic
+## hash, so two peers that agree on strategic state necessarily roll the same
+## dice in the same order. There is no clock, no `randomize()` and no engine RNG
+## anywhere on this path, and the auto-resolve runner asserts that by reading
+## the file.
+##
+## It REFUSES rather than falling back when the commitment says this battle is
+## not an auto-resolved one, when the data is missing, or when a committed army
+## has no units - because each of those, resolved anyway, would produce a real
+## strategic result from a configuration error.
+func auto_resolve_pending_battle() -> Dictionary:
+	refusals = PackedStringArray()
+	if state == null:
+		return _auto_resolve_refused("no War of the Ring session is running")
+	if state.pending_battle.is_empty():
+		return _auto_resolve_refused("no battle is in flight")
+	if autoresolve == null or autoresolve_bindings == null:
+		return _auto_resolve_refused(
+			auto_resolve_reason if not auto_resolve_reason.is_empty()
+			else "auto-resolve data has not been loaded; call load_auto_resolve() first")
+	if not BattleScript.is_auto_resolved(state.pending_battle):
+		return _auto_resolve_refused(
+			("this battle's commitment says battle_type '%s' with priority '%s', which is a "
+			+ "tactical battle; auto-resolving it anyway would decide it by a rule the "
+			+ "commitment does not name") % [
+				String(state.pending_battle.get("battle_type", "")),
+				String(state.pending_battle.get("battle_type_priority", ""))])
+
+	var sides: Dictionary = BattleScript.auto_resolve_sides(state)
+	if not bool(sides.get("ok", false)):
+		for reason in sides.get("refusals", PackedStringArray()) as PackedStringArray:
+			refusals.append(String(reason))
+		return _auto_resolve_refused_with_existing()
+
+	var seed_hex := AutoResolveBattleScript.seed_for(state.pending_battle)
+	var outcome: Dictionary = AutoResolveBattleScript.resolve(
+		autoresolve.rules, sides["attacker"], sides["defender"], seed_hex)
+	if not bool(outcome.get("ok", false)):
+		for reason in outcome.get("refusals", PackedStringArray()) as PackedStringArray:
+			refusals.append(String(reason))
+		return _auto_resolve_refused_with_existing()
+
+	var applied: Dictionary = BattleScript.apply_auto_resolve_outcome(state, outcome)
+	for reason in applied.get("refusals", PackedStringArray()) as PackedStringArray:
+		refusals.append(String(reason))
+	# The turn only passes on a battle that actually decided. An UNDECIDED
+	# battle already cost both armies their attrition; ending the turn on top of
+	# that would also cost the attacker the move, which retail states nothing
+	# about and this project is not going to invent.
+	if bool(applied.get("ok", false)) and not bool(applied.get("undecided", true)):
+		state.advance_turn()
+	selected_region = ""
+	selected_target = ""
+	return {
+		"ok": bool(applied.get("ok", false)),
+		"refusals": refusals,
+		"outcome": outcome,
+		"applied": applied,
+		"seed": seed_hex,
+	}
+
+
+func _auto_resolve_refused(reason: String) -> Dictionary:
+	refusals.append(reason)
+	return _auto_resolve_refused_with_existing()
+
+
+func _auto_resolve_refused_with_existing() -> Dictionary:
+	return {"ok": false, "refusals": refusals, "outcome": {}, "applied": {}, "seed": ""}
 
 
 ## Abandon a battle that never decided - the player left the tactical match. The
@@ -595,6 +782,11 @@ func adopt_handoff(payload: Dictionary) -> bool:
 	# COMMIT. Nothing below can fail.
 	world = rebuilt
 	state = rebuilt_state
+	# The armies' own units RODE THE SNAPSHOT and are already correct - they are
+	# hashed state. This rebuilds only the lookup table a FUTURE `place_army()`
+	# would need, which is a pure function of the two converted bundles and was
+	# deliberately not carried in the handoff.
+	state.roster_units = _build_roster_units()
 	document_path = path
 	document_source = String(payload.get("document_source", ""))
 	scenario_name = String(payload.get("scenario", ""))

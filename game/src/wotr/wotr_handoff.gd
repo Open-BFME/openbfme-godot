@@ -23,7 +23,13 @@ const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 
 const SCHEMA := "openbfme.wotr-battle-request"
-const SCHEMA_VERSION := 1
+## VERSION 2 carries what an AUTO-RESOLVED battle needs and a tactical one does
+## not: each side's handicap rung and its unit roster with retail's auto-resolve
+## blocks and current hitpoints, plus the campaign's battle-type rules. All of
+## it is derived from authoritative state, so the brief stays a pure function of
+## the state it was built from and its digest stays the chain link between the
+## strategic and tactical hashes.
+const SCHEMA_VERSION := 2
 
 ## Named capabilities a real battle needs that the retail-slice simulation does
 ## not expose today. These are requirements, not excuses: each one is a thing a
@@ -42,12 +48,18 @@ const SCHEMA_VERSION := 1
 ##   back, not just a winner, to write armies back into the region.
 ## * `region_bonus_modifiers` - per-region and unified-territory attack/defence/
 ##   experience/resource bonuses have to reach the tactical rules.
+## `battle_outcome_report` has LEFT this list. It named the gap that the
+## strategic layer needed the surviving roster back, not just a winner - and
+## that is exactly what auto-resolve now returns and `apply_attrition()` now
+## writes. The gap remains open for TACTICAL battles, and is named separately as
+## `tactical_battle_outcome_report` so the two cannot be confused: an
+## auto-resolved battle reports survivors, a fought one still reports a boolean.
 const UNSUPPORTED_BY_TACTICAL_SIM := [
-	"battle_outcome_report",
 	"carried_hero_state",
 	"prebuilt_fortress",
 	"region_bonus_modifiers",
 	"reinforcement_schedule",
+	"tactical_battle_outcome_report",
 ]
 
 
@@ -83,6 +95,11 @@ static func build_request(
 		"schema": SCHEMA,
 		"schema_version": SCHEMA_VERSION,
 		"turn_index": state.turn_index,
+		# THE CAMPAIGN'S BATTLE RULES, carried so `configure()` can record them
+		# in the commitment. They come from authoritative state, never from a UI
+		# argument, which is what keeps them inside both hashes.
+		"battle_type": state.battle_type,
+		"battle_type_priority": state.battle_type_priority,
 		"region": {
 			"id": region_id,
 			"map_name": String(region.get("map_name", "")),
@@ -135,6 +152,7 @@ static func _side(
 			"faction": "",
 			"team": 0,
 			"controller": StateScript.CONTROLLER_AI,
+			"handicap": 0,
 			"staging_region": region_id,
 			"armies": [],
 			"command_points": 0,
@@ -153,6 +171,13 @@ static func _side(
 			"hero_template": String(army.get("hero_template", "")),
 			"entries": roster.get("entries", []),
 			"command_points": int(army.get("command_points", 0)),
+			# THE ARMY AS IT STANDS RIGHT NOW, wounds and all. `entries` is the
+			# roster it was RAISED from and never changes; `units` is what is
+			# actually left of it, and that is what an auto-resolved battle
+			# fights with. Two armies raised from the same roster that have
+			# fought different battles are different armies, and only this field
+			# can tell them apart.
+			"units": army.get("units", []),
 		})
 		total += int(army.get("command_points", 0))
 	return {
@@ -164,6 +189,9 @@ static func _side(
 		# per-session "which seat am I" argument, so it is inside the brief, inside
 		# the digest, and inside the strategic hash.
 		"controller": StateScript.normalized_controller(seat.get("controller", StateScript.CONTROLLER_AI)),
+		# The seat's handicap rung, from authoritative state for the same reason
+		# `controller` is: it scales auto-resolve combat and seeds the dice.
+		"handicap": StateScript.normalized_handicap(seat.get("handicap", 0)),
 		"staging_region": region_id,
 		"armies": rows,
 		"command_points": total,

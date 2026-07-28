@@ -37,7 +37,12 @@ const StateScript = preload("res://src/wotr/wotr_state.gd")
 const BindingsScript = preload("res://src/wotr/wotr_setup_bindings.gd")
 const WorldScript = preload("res://src/wotr/wotr_world.gd")
 
-const EXPECTED_WITH_DOCUMENT := 45
+## 45 as it stood, minus the two rows that no longer state a locked reason
+## because they are no longer locked (battle_type, battle_type_priority), plus
+## three: the handicap rungs are on retail's ladder, the RULES payload carries
+## exactly the rows that reach the strategic layer, and the handicap column's
+## DECLARED reach matches what the payload really carries. 45 - 2 + 3 = 46.
+const EXPECTED_WITH_DOCUMENT := 46
 const EXPECTED_WITHOUT_DOCUMENT := 6
 
 var _passed := 0
@@ -345,12 +350,40 @@ func _play(screen, document: Dictionary, world) -> void:
 	for seat_value in payload:
 		var seat := seat_value as Dictionary
 		for key in seat.keys():
-			if not ["template", "team", "controller"].has(String(key)):
+			if not ["template", "team", "controller", "handicap"].has(String(key)):
 				extra.append(String(key))
-	# NOTHING SNEAKS PAST. Colour, handicap and every locked rule row stay on
-	# this screen; the session is handed the three fields it has always taken.
-	_check("the seat payload carries template, team and controller and nothing else",
+	# NOTHING SNEAKS PAST. Colour and every still-locked rule row stay on this
+	# screen. HANDICAP has joined the payload, and it is not sneaking: it is
+	# authoritative strategic state on `players[].handicap`, it rides the hash,
+	# and it reaches a battle only through the version-3 commitment's own
+	# `attacker_handicap` / `defender_handicap` fields - never as a side
+	# argument, which is the shape that caused the two desyncs this branch fixed.
+	_check("the seat payload carries template, team, controller and handicap and nothing else",
 		extra.is_empty(), "extra fields: %s" % ", ".join(extra))
+	var rungs: Array[String] = []
+	for seat_value in payload:
+		if not StateScript.is_authored_handicap(int((seat_value as Dictionary)["handicap"])):
+			rungs.append(str((seat_value as Dictionary)["handicap"]))
+	_check("every handicap in the payload is a rung retail actually authored",
+		rungs.is_empty(), "off-ladder: %s" % ", ".join(rungs))
+	# THE RULES TAB'S CHOICES TRAVEL TOO, in the strategic layer's vocabulary
+	# rather than as `VALUE:` keys, and ONLY the rows that really reach it.
+	var rules: Dictionary = screen.rules_payload()
+	_check("the rules payload carries exactly the two rows that reach the strategic layer",
+		rules.size() == 2 and StateScript.BATTLE_TYPES.has(String(rules.get("battle_type", "")))
+			and StateScript.BATTLE_PRIORITIES.has(String(rules.get("battle_type_priority", ""))),
+		str(rules))
+	# WHAT THE TABLE CLAIMS AND WHAT THE PAYLOAD DOES MUST AGREE. `reaches` is
+	# read by the screen to decide whether a control is live and by a reader to
+	# decide whether to believe it; mutation M9 set the handicap column back to
+	# "nothing carries it" and every check stayed green while the payload went on
+	# carrying it. A column that is live in fact and locked in the table is worse
+	# than either, because the table is what a reviewer trusts.
+	var declared := String(BindingsScript.SEAT_COLUMN_REACH.get("handicap", ""))
+	var carried := (payload[0] as Dictionary).has("handicap")
+	_check("the handicap column's declared reach matches what the payload actually carries",
+		(declared == "strategic") == carried and declared == "strategic",
+		"table says '%s', payload carries it: %s" % [declared, str(carried)])
 
 	var session := SessionScript.new()
 	var began: bool = session.begin(

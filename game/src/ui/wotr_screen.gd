@@ -103,6 +103,16 @@ const BONUS_ORDER := [
 	"freeBuilder", "freeInnUnits",
 ]
 const MapViewScript = preload("res://src/wotr/wotr_map_view.gd")
+const RulesScript = preload("res://src/wotr/wotr_autoresolve_rules.gd")
+const AutoResolveBattleScript = preload("res://src/wotr/wotr_autoresolve_battle.gd")
+
+## THE TWO COLOURS THE BATTLE REPORT USES, and the only distinction it draws.
+## Retail's numbers in one, this project's in the other, side by side on the
+## same line so a player never has to remember which is which. The same
+## discipline this branch already applies to the marker magnification, the
+## hand-built chrome and the `structures 0 / 3 plots` line.
+const RETAIL_COLOR := "#9fd18a"
+const PROJECT_COLOR := "#e8b45c"
 
 ## Seat colours. Fixed by seat index and never player-chosen: a colour is
 ## presentation, and a presentation value that varied per session would be one
@@ -190,8 +200,22 @@ var message_label: Label
 var unplaced_label: Label
 var unplaced_host: VBoxContainer
 var attack_button: Button
+var auto_resolve_button: Button
 var end_turn_button: Button
 var back_button: Button
+
+## THE BATTLE RESULT SCREEN. Hidden until a battle is auto-resolved, then it
+## covers the map with the WORKING - what each side rolled, what modified it,
+## and why the outcome fell the way it did. It is a report rather than an
+## animation, and it says so, because retail's animated auto-resolve
+## presentation is not converted and drawing one would be inventing it.
+var report_backdrop: ColorRect
+var report_text: RichTextLabel
+var report_close: Button
+## The last auto-resolve, kept so the report can be redrawn and so a test can
+## read what the screen was showing. Presentation only: never hashed, never
+## handed to anything, cleared when the report closes.
+var last_auto_resolve: Dictionary = {}
 
 var _rows: Array[Dictionary] = []
 var _row_by_id: Dictionary = {}
@@ -404,6 +428,44 @@ func build() -> void:
 	end_turn_button.pressed.connect(_on_end_turn_pressed)
 	add_child(end_turn_button)
 
+	# AUTO-RESOLVE. Retail's own RULES tab offers "Auto Resolve and RTS", which
+	# means BOTH are offered and the player picks per battle; this is that pick.
+	# It goes through the SAME door ATTACK does - `session.commit_attack()` -
+	# because the choice has to be recorded in the commitment the strategic hash
+	# covers, not applied afterwards to a battle that was committed as something
+	# else.
+	auto_resolve_button = Button.new()
+	auto_resolve_button.name = "AutoResolve"
+	auto_resolve_button.text = "AUTO-RESOLVE"
+	auto_resolve_button.position = Vector2(side_x + 262, 690)
+	auto_resolve_button.custom_minimum_size = Vector2(250, 40)
+	auto_resolve_button.size = Vector2(250, 40)
+	auto_resolve_button.disabled = true
+	auto_resolve_button.pressed.connect(_on_auto_resolve_pressed)
+	add_child(auto_resolve_button)
+
+	report_backdrop = ColorRect.new()
+	report_backdrop.name = "BattleReportBackdrop"
+	report_backdrop.color = Color(0.04, 0.05, 0.06, 0.96)
+	report_backdrop.visible = false
+	report_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(report_backdrop)
+
+	report_text = RichTextLabel.new()
+	report_text.name = "BattleReport"
+	report_text.bbcode_enabled = true
+	report_text.scroll_active = true
+	report_text.fit_content = false
+	report_text.visible = false
+	add_child(report_text)
+
+	report_close = Button.new()
+	report_close.name = "BattleReportClose"
+	report_close.text = "CLOSE"
+	report_close.visible = false
+	report_close.pressed.connect(close_battle_report)
+	add_child(report_close)
+
 	back_button = Button.new()
 	back_button.name = "Back"
 	back_button.text = "MAIN MENU"
@@ -530,6 +592,23 @@ func _relayout() -> void:
 	back_button.position = Vector2(side_x, frame.y - 40.0 - LAYOUT_MARGIN)
 	back_button.size = Vector2(button_width, 40.0)
 	back_button.custom_minimum_size = back_button.size
+	# AUTO-RESOLVE sits beside MAIN MENU on the bottom row rather than beside
+	# ATTACK, so the two ways of deciding a battle are not adjacent and cannot be
+	# hit by accident for each other.
+	auto_resolve_button.position = Vector2(side_x + button_width + 12.0, back_button.position.y)
+	auto_resolve_button.size = Vector2(button_width, 40.0)
+	auto_resolve_button.custom_minimum_size = auto_resolve_button.size
+
+	report_backdrop.position = Vector2(LAYOUT_MARGIN, LAYOUT_MARGIN)
+	report_backdrop.size = Vector2(frame.x - LAYOUT_MARGIN * 2.0, frame.y - LAYOUT_MARGIN * 2.0)
+	report_text.position = report_backdrop.position + Vector2(28.0, 24.0)
+	report_text.size = report_backdrop.size - Vector2(56.0, 96.0)
+	report_close.size = Vector2(180.0, 40.0)
+	report_close.custom_minimum_size = report_close.size
+	report_close.position = Vector2(
+		report_backdrop.position.x + report_backdrop.size.x - 208.0,
+		report_backdrop.position.y + report_backdrop.size.y - 56.0)
+
 	var action_y := back_button.position.y - 54.0
 	attack_button.position = Vector2(side_x, action_y)
 	attack_button.size = Vector2(button_width, 44.0)
@@ -590,6 +669,24 @@ func configure(bound_session, map_ids: Array, reason: String, pack_roots: Array 
 	session = bound_session
 	available_map_ids = map_ids.duplicate()
 	unavailable_reason = reason
+	# RETAIL'S AUTO-RESOLVE TABLES AND THE UNIT BINDINGS, searched the same way
+	# and in the same order as every other bundle: the mounted packs first, then
+	# the documented environment override. A failure is NOT an error state - the
+	# campaign runs fine without them, tactical battles are unaffected, and the
+	# AUTO-RESOLVE button carries the loader's own reason - so the return is used
+	# for the tooltip rather than checked here.
+	if session != null:
+		var loaded: Dictionary = session.load_auto_resolve(pack_roots)
+		print("[wotr] auto-resolve: %s" % (
+			"tables %s + bindings %s" % [
+				String(loaded["rules_path"]).get_file(),
+				String(loaded["bindings_path"]).get_file()]
+			if bool(loaded.get("ok", false))
+			else "UNAVAILABLE - " + String(loaded.get("reason", "")).split(".")[0]))
+		if not session.auto_resolve_unbound_templates.is_empty():
+			print("[wotr] auto-resolve: %d unit template(s) have no auto-resolve data in any retail object file and will not fight: %s" % [
+				session.auto_resolve_unbound_templates.size(),
+				", ".join(Array(session.auto_resolve_unbound_templates))])
 	load_map_bundle(pack_roots)
 	refresh()
 
@@ -881,6 +978,8 @@ func refresh() -> void:
 		detail_label.text = "[color=#e1c77d]War of the Ring is unavailable.[/color]\n\n%s" % unavailable_reason
 		attack_button.disabled = true
 		attack_button.tooltip_text = "There is no strategic session to attack in."
+		auto_resolve_button.disabled = true
+		auto_resolve_button.tooltip_text = "There is no strategic session to auto-resolve in."
 		end_turn_button.disabled = true
 		end_turn_button.tooltip_text = "There is no strategic session whose turn could pass."
 		_clear_unplaced()
@@ -922,6 +1021,15 @@ func refresh() -> void:
 		else "Pass the turn to the next seat.")
 	attack_button.disabled = not can_attack_now()
 	attack_button.tooltip_text = _attack_button_reason()
+	# AUTO-RESOLVE needs the same committable attack ATTACK does, plus the two
+	# converted bundles. When either is missing the button is disabled and the
+	# tooltip is the loader's own reason naming every path it searched - never a
+	# bare "unavailable", and never a battle quietly fought on invented numbers.
+	var can_auto := can_attack_now() and session.autoresolve != null \
+		and session.autoresolve_bindings != null \
+		and String(state.battle_type) != StateScript.BATTLE_TYPE_RTS
+	auto_resolve_button.disabled = not can_auto
+	auto_resolve_button.tooltip_text = _auto_resolve_button_reason(state)
 	_refresh_standings(state)
 	# THE MAP FIRST. `_rebuild_unplaced()` reports which regions the map could
 	# not place, so it has to run AFTER the map has placed them - otherwise it
@@ -1161,6 +1269,202 @@ func commit_selected_attack() -> Dictionary:
 	refresh()
 	battle_committed.emit(configured)
 	return configured
+
+
+## AUTO-RESOLVE THE SELECTED ATTACK, and show the working.
+##
+## It commits and resolves in one press, because a half-committed auto-resolve -
+## a battle admitted into the strategic state that the player then has no way to
+## finish - would strand the campaign with a transaction open. Both halves go
+## through the session; this screen decides nothing.
+func auto_resolve_selected_attack() -> Dictionary:
+	if not can_attack_now():
+		_message("There is no committable attack selected.")
+		return {"ok": false}
+	var committed: Dictionary = session.commit_attack(
+		session.selected_target, available_map_ids, StateScript.BATTLE_TYPE_AUTO_RESOLVE)
+	if not bool(committed.get("ok", false)):
+		_message("Auto-resolve refused: %s" % ", ".join(
+			Array(committed.get("refusals", PackedStringArray()))))
+		refresh()
+		return committed
+	var resolved: Dictionary = session.auto_resolve_pending_battle()
+	if not bool(resolved.get("ok", false)):
+		# The commitment is still open if the resolution refused. Say so rather
+		# than leaving the player looking at an unchanged map with no explanation.
+		_message("Auto-resolve refused: %s" % ", ".join(
+			Array(resolved.get("refusals", PackedStringArray()))))
+		refresh()
+		return resolved
+	last_auto_resolve = {
+		"commitment": committed.get("commitment", {}),
+		"outcome": resolved.get("outcome", {}),
+		"applied": resolved.get("applied", {}),
+		"seed": String(resolved.get("seed", "")),
+	}
+	_show_battle_report()
+	refresh()
+	return resolved
+
+
+func close_battle_report() -> void:
+	last_auto_resolve = {}
+	report_backdrop.visible = false
+	report_text.visible = false
+	report_close.visible = false
+	refresh()
+
+
+func _show_battle_report() -> void:
+	report_text.text = battle_report_bbcode()
+	report_backdrop.visible = true
+	report_text.visible = true
+	report_close.visible = true
+	report_close.grab_focus()
+
+
+## THE WORKING, as the player reads it.
+##
+## THE WHOLE POINT OF THIS SCREEN is that it is obvious which numbers are EA's
+## and which are this project's. Retail's are printed in one colour and name the
+## retail file they came from; this project's are printed in another, marked
+## PROJECT, and name the row of `wotr_autoresolve_rules.gd` a modder would edit
+## to change them. There is no third category and nothing is unattributed.
+func battle_report_bbcode() -> String:
+	if last_auto_resolve.is_empty():
+		return ""
+	var commitment: Dictionary = last_auto_resolve.get("commitment", {})
+	var outcome: Dictionary = last_auto_resolve.get("outcome", {})
+	var applied: Dictionary = last_auto_resolve.get("applied", {})
+	var lines: Array[String] = []
+
+	lines.append("[b][font_size=26]BATTLE FOR %s[/font_size][/b]" % _display_of(
+		String(commitment.get("region", ""))).to_upper())
+	var winner := String(outcome.get("winner", ""))
+	var headline := "UNDECIDED"
+	if winner == "attacker":
+		headline = "ATTACKER WINS"
+	elif winner == "defender":
+		headline = "DEFENDER HOLDS"
+	lines.append("[b][font_size=20]%s[/font_size][/b]  after %d round(s)" % [
+		headline, int(outcome.get("rounds", 0))])
+	lines.append("[color=#c8c2b0]%s[/color]" % String(outcome.get("reason", "")))
+	lines.append("")
+
+	# THE KEY, FIRST, so nothing below has to be guessed at.
+	lines.append("[b]HOW TO READ THIS[/b]")
+	lines.append("  [color=%s]RETAIL[/color]   a number EA authored. The retail file it came from is named beside it." % RETAIL_COLOR)
+	lines.append("  [color=%s]PROJECT[/color]  a rule retail never states. Open BFME chose it; the row it lives in is named beside it, in game/src/wotr/wotr_autoresolve_rules.gd, and you can edit it." % PROJECT_COLOR)
+	lines.append("")
+
+	lines.append("[b]THE DICE ARE OURS, AND THEY ARE SEEDED FROM THIS BATTLE[/b]")
+	lines.append("  [color=%s]PROJECT[/color]  Risk dice: the striking unit rolls %d, the unit struck rolls %d, top %d paired highest against highest, ties to the %s. Two pairs won = full damage, one = half, none = nothing." % [
+		PROJECT_COLOR,
+		RulesScript.int_value("attacker_dice", 3), RulesScript.int_value("defender_dice", 2),
+		RulesScript.int_value("pairs_compared", 2),
+		"defender" if RulesScript.bool_value("ties_to_defender", true) else "attacker"])
+	lines.append("  [color=%s]PROJECT[/color]  they REPLACE retail's own MissPercentChance roll, whose seed retail never states. Average landed fraction 0.5396 against retail's own 0.5000." % PROJECT_COLOR)
+	lines.append("  [color=#8fa4bd]seed[/color] %s" % String(last_auto_resolve.get("seed", "")))
+	lines.append("  [color=#8fa4bd]the seed is the SHA-256 of this battle's commitment - region, turn, both seats, both factions, both handicaps, the battlefield and every army id. No clock is read anywhere on this path, so every player's copy of this campaign rolled exactly these dice.[/color]")
+	lines.append("")
+
+	lines.append("[b]THE SIDES[/b]")
+	for role in ["attacker", "defender"]:
+		var seat := int(commitment.get(role, -1))
+		var side: Dictionary = outcome.get(role, {})
+		var handicap: Dictionary = side.get("handicap", {})
+		lines.append("  [b]%s[/b] seat %d, %s, handicap %d%%  [color=%s]RETAIL[/color] weapon x%s / armour x%s (livingworldautoresolvehandicaps.ini)" % [
+			role.to_upper(), seat, String(commitment.get("%s_faction" % role, "")),
+			int(commitment.get("%s_handicap" % role, 0)), RETAIL_COLOR,
+			str(handicap.get("weaponMultiplier", 1.0)), str(handicap.get("armorMultiplier", 1.0))])
+		var survivors: Array = side.get("survivors", [])
+		var lost: PackedStringArray = side.get("lost", PackedStringArray())
+		lines.append("    %d survived, %d lost%s" % [
+			survivors.size(), lost.size(),
+			"" if lost.is_empty() else ": " + ", ".join(Array(lost))])
+		for row in survivors:
+			var unit: Dictionary = row
+			lines.append("      %s  %.1f / %.1f hp  [color=%s]RETAIL[/color] %s, %s vs %s" % [
+				String(unit.get("template", "?")),
+				float(int(unit.get("hitpoints_milli", 0))) / 1000.0,
+				float(int(unit.get("max_hitpoints_milli", 0))) / 1000.0,
+				RETAIL_COLOR, String(unit.get("body", "")),
+				String(unit.get("weapon", "")), String(unit.get("armor", ""))])
+	lines.append("")
+
+	lines.append("[b]THE ROUNDS[/b]")
+	for entry in outcome.get("log", []) as Array:
+		var round_row: Dictionary = entry
+		lines.append("  [b]round %d[/b] - %d strike(s), %.1f total damage%s" % [
+			int(round_row.get("round", 0)), int(round_row.get("strikeCount", 0)),
+			float(int(round_row.get("damageMilli", 0))) / 1000.0,
+			"" if bool(round_row.get("detailed", false))
+				else "  [color=#8fa4bd](abbreviated: only the first %d rounds carry every die)[/color]"
+					% AutoResolveBattleScript.DETAILED_ROUNDS])
+		for strike_value in round_row.get("strikes", []) as Array:
+			var strike: Dictionary = strike_value
+			var contest: Dictionary = strike.get("contest", {})
+			lines.append("    %s (%s) strikes %s (%s) for %.1f" % [
+				String(strike.get("attacker", "?")), String(strike.get("attackerType", "")),
+				String(strike.get("defender", "?")), String(strike.get("defenderType", "")),
+				float(int(strike.get("damageMilli", 0))) / 1000.0])
+			for factor_value in strike.get("factors", []) as Array:
+				var factor: Dictionary = factor_value
+				var owner := String(factor.get("owner", ""))
+				lines.append("        [color=%s]%s[/color] %-22s x%.3f   %s" % [
+					RETAIL_COLOR if owner == "retail" else PROJECT_COLOR,
+					"RETAIL " if owner == "retail" else "PROJECT",
+					String(factor.get("name", "")),
+					float(int(factor.get("milli", 0))) / 1000.0,
+					String(factor.get("source", ""))])
+			if not contest.is_empty():
+				lines.append("        [color=%s]the dice[/color] attacker %s vs defender %s -> %d of %d pairs won" % [
+					PROJECT_COLOR, str(contest.get("attackerDice", [])),
+					str(contest.get("defenderDice", [])), int(contest.get("pairsWon", 0)),
+					(contest.get("pairs", []) as Array).size()])
+	if int(outcome.get("abbreviatedRounds", 0)) > 0:
+		lines.append("  [color=#8fa4bd]%d further round(s) are summarised rather than itemised. That is a limit of this REPORT, not of the battle: every round was fought in full.[/color]"
+			% int(outcome.get("abbreviatedRounds", 0)))
+	lines.append("")
+
+	lines.append("[b]WHAT IT DID TO THE CAMPAIGN[/b]")
+	lines.append("  region %s%s" % [
+		_display_of(String(applied.get("region", ""))),
+		" CHANGED HANDS" if bool(applied.get("captured", false)) else " did not change hands"])
+	lines.append("  armies destroyed: %s" % _ids_or_none(applied.get("armies_lost", PackedInt32Array())))
+	lines.append("  armies reduced:   %s" % _ids_or_none(applied.get("armies_reduced", PackedInt32Array())))
+	lines.append("  armies advanced:  %s" % _ids_or_none(applied.get("armies_advanced", PackedInt32Array())))
+	for reason in applied.get("refusals", PackedStringArray()) as PackedStringArray:
+		lines.append("  [color=#e0a24a]not fully applied: %s[/color]" % String(reason))
+	var unresolved: PackedStringArray = outcome.get("unresolved", PackedStringArray())
+	if not unresolved.is_empty():
+		lines.append("")
+		lines.append("[b]WHAT DID NOT RESOLVE[/b] - named rather than substituted with a number")
+		for note in unresolved:
+			lines.append("  [color=#e0a24a]%s[/color]" % String(note))
+	lines.append("")
+
+	lines.append("[b]EVERY RULE THIS BATTLE RAN UNDER[/b] - the whole editable table, in one place")
+	for row_value in outcome.get("rules", []) as Array:
+		var rule: Dictionary = row_value
+		var owner := String(rule.get("owner", ""))
+		lines.append("  [color=%s]%s[/color] %s" % [
+			RETAIL_COLOR if owner == "retail" else PROJECT_COLOR,
+			"RETAIL " if owner == "retail" else "PROJECT", String(rule.get("text", ""))])
+	return "\n".join(lines)
+
+
+static func _ids_or_none(ids: PackedInt32Array) -> String:
+	if ids.is_empty():
+		return "none"
+	var parts: Array[String] = []
+	for value in ids:
+		parts.append(str(int(value)))
+	return ", ".join(parts)
+
+
+func _on_auto_resolve_pressed() -> void:
+	auto_resolve_selected_attack()
 
 
 func end_turn() -> void:
@@ -1450,6 +1754,27 @@ func _attack_button_reason() -> String:
 ## held, armies standing, command points on the board, and the starting world and
 ## hero command points the document authored for the template. Read-only - this
 ## panel computes from `state` and writes nothing back.
+## Why AUTO-RESOLVE cannot be pressed, or what it will do. The loader's own
+## reason verbatim when the data is missing, because "unavailable" sends nobody
+## anywhere and the reason names every path that was searched.
+func _auto_resolve_button_reason(state: StateScript) -> String:
+	if session.autoresolve == null or session.autoresolve_bindings == null:
+		return (session.auto_resolve_reason if not session.auto_resolve_reason.is_empty()
+			else "retail's auto-resolve tables have not been loaded for this session")
+	if String(state.battle_type) == StateScript.BATTLE_TYPE_RTS:
+		return ("this campaign's RULES tab is set to RTS, so every battle is fought in the "
+			+ "tactical layer and there is nothing to auto-resolve")
+	if not can_attack_now():
+		return _attack_button_reason()
+	if not session.auto_resolve_unbound_templates.is_empty():
+		return ("Decide this battle with retail's auto-resolve tables and this project's dice. "
+			+ "%d unit template(s) in this campaign have no auto-resolve data in any retail "
+			+ "object file and will not fight: %s") % [
+			session.auto_resolve_unbound_templates.size(),
+			", ".join(Array(session.auto_resolve_unbound_templates))]
+	return "Decide this battle with retail's auto-resolve tables and this project's dice."
+
+
 func _refresh_standings(state: StateScript) -> void:
 	var lines: Array[String] = []
 	var active := state.active_player()

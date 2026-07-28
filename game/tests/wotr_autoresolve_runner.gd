@@ -184,13 +184,35 @@ func _check_the_loader_and_the_boundary(located: Dictionary, bound: bool) -> voi
 		not bool((AutoResolve.armor_multiplier({}, "anything", "AutoResolveUnit_Hero")
 			as Dictionary)["resolved"]))
 
+	# THE BOUNDARY MOVED, ON PURPOSE, AND IT IS STILL ASSERTED.
+	#
+	# It used to say "nothing in the game calls this model", which was the right
+	# assertion while the lane was converted-but-unwired. The owner has since
+	# authorised wiring, so that assertion is obsolete BY DESIGN - and it is
+	# REPLACED rather than deleted, because the property worth keeping was never
+	# "nobody calls it", it was "only one thing calls it".
+	#
+	# The new boundary: retail's tables are reached through exactly TWO files,
+	# both in the strategic layer, and through NOTHING in the UI or the scenes.
+	# `wotr_autoresolve_battle.gd` is the only thing that does arithmetic with
+	# them and the only thing that rolls a die; `wotr_session.gd` only loads
+	# them. A screen that read a damage table directly could show a number the
+	# resolver never used, and a screen that resolved a battle directly would be
+	# a second resolution rule nobody could find. Both are what this reddens on.
 	var callers := _files_naming_the_model(["res://src", "res://scenes"])
-	_check("nothing_outside_the_tests_calls_the_auto_resolve_model",
-		callers.is_empty(), "called from: %s" % ", ".join(callers))
-	var self_only := _files_naming_the_model(["res://tests"])
-	_check("the_model_is_reachable_from_this_runner_and_no_other",
-		self_only.size() == 1 and self_only[0].ends_with("wotr_autoresolve_runner.gd"),
-		"; ".join(self_only))
+	_check("retails_tables_are_reached_through_the_resolver_and_the_session_and_nothing_else",
+		Array(callers) == [
+			"res://src/wotr/wotr_autoresolve_battle.gd",
+			"res://src/wotr/wotr_session.gd",
+		],
+		"called from: %s" % ", ".join(callers))
+	var from_tests := _files_naming_the_model(["res://tests"])
+	_check("the_model_is_reachable_from_its_two_runners_and_no_other_test",
+		Array(from_tests) == [
+			"res://tests/wotr_autoresolve_battle_runner.gd",
+			"res://tests/wotr_autoresolve_runner.gd",
+		],
+		"; ".join(from_tests))
 
 
 func _files_naming_the_model(roots: Array) -> Array[String]:

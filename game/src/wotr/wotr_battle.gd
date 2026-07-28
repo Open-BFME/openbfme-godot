@@ -80,10 +80,18 @@ const UNDECIDED := -1
 ## Returns `{ok, refusals, team_roster, gameplay_rules, commitment}`. On refusal
 ## `ok` is false, `refusals` names every reason, and the other three are empty -
 ## a caller can never be handed a half-configured match.
+## `requested_battle_type` is the attacker's per-battle pick when the campaign
+## rule offers both ("Auto Resolve and RTS"). It is an ARGUMENT and not state,
+## for the same reason the two binding tables are - and, like them, its RESULT
+## and not itself is recorded, in the commitment's `battle_type`. A peer that
+## requested differently mints a different commitment and the strategic hashes
+## part company before a battle is fought, which is the property that makes an
+## argument safe here. Ignored entirely when the campaign rule fixes the type.
 static func configure(
 	brief: Dictionary,
 	faction_bindings: Dictionary,
-	map_bindings: Dictionary
+	map_bindings: Dictionary,
+	requested_battle_type: String = ""
 ) -> Dictionary:
 	var refusals := PackedStringArray()
 	if brief.is_empty():
@@ -170,6 +178,21 @@ static func configure(
 		"battlefield_map": battlefield,
 		"attacker_is_ai": _is_ai(attacker),
 		"defender_is_ai": _is_ai(defender),
+		# THE VERSION 3 FIELDS. Same rule as `battlefield_map` above: the values
+		# themselves, not the settings they came from. Both handicaps decide
+		# auto-resolve damage AND seed the dice, and the battle type decides
+		# which resolution path runs at all - so all four have to be inside the
+		# record the strategic hash covers or they are unhashed inputs to a
+		# result, which is the defect this file has now been fixed against three
+		# times.
+		"battle_type": StateScript.resolve_battle_type(
+			StateScript.normalized_battle_type(brief.get("battle_type", "")),
+			StateScript.normalized_battle_priority(brief.get("battle_type_priority", "")),
+			String(requested_battle_type).strip_edges().to_lower()),
+		"battle_type_priority": StateScript.normalized_battle_priority(
+			brief.get("battle_type_priority", "")),
+		"attacker_handicap": StateScript.normalized_handicap(attacker.get("handicap", 0)),
+		"defender_handicap": StateScript.normalized_handicap(defender.get("handicap", 0)),
 		"staging_region": String(attacker.get("staging_region", "")),
 		"committed_armies": committed,
 		"defending_armies": _army_ids(defender),
@@ -407,6 +430,222 @@ static func apply_outcome(state: StateScript, winner_team: int) -> Dictionary:
 		"captured": captured,
 		"armies_advanced": PackedInt32Array(advanced),
 		"armies_lost": PackedInt32Array(lost),
+	}
+
+
+## Is THIS battle auto-resolved? A pure read of the commitment - no rule is
+## re-applied here, because the rule was applied once at `configure()` and its
+## answer was recorded. Two peers reading the same commitment cannot disagree.
+static func is_auto_resolved(commitment: Dictionary) -> bool:
+	if commitment.is_empty():
+		return false
+	return String(commitment.get("battle_type", "")) == StateScript.BATTLE_TYPE_AUTO_RESOLVE
+
+
+## THE SIDES an auto-resolved battle is fought with, read out of the strategic
+## state the commitment names. Returns
+## `{ok, refusals, attacker, defender}` where each side is the shape
+## `wotr_autoresolve_battle.resolve()` wants.
+##
+## THE UNITS COME FROM THE ARMY RECORDS, not from the roster the army was raised
+## from, so an army that has already fought arrives at its second battle as
+## damaged as it left the first. An army with NO units is refused BY NAME rather
+## than fielded empty - an empty army would lose instantly and the loss would
+## look like a battle result rather than a missing binding.
+static func auto_resolve_sides(state: StateScript) -> Dictionary:
+	var refusals := PackedStringArray()
+	if state == null:
+		return {"ok": false, "refusals": PackedStringArray(["state is null"]),
+			"attacker": {}, "defender": {}}
+	var commitment := state.pending_battle
+	if commitment.is_empty():
+		return {"ok": false, "refusals": PackedStringArray(["no battle is in flight"]),
+			"attacker": {}, "defender": {}}
+	var sides: Dictionary = {}
+	for role in ["attacker", "defender"]:
+		var seat := int(commitment.get(role, StateScript.NEUTRAL))
+		var ids: PackedInt32Array = commitment.get(
+			"committed_armies" if role == "attacker" else "defending_armies", PackedInt32Array())
+		var armies: Array = []
+		for army_id in ids:
+			if not state.armies.has(int(army_id)):
+				refusals.append("%s army %d named by the commitment is gone" % [role, int(army_id)])
+				continue
+			var army := state.armies[int(army_id)] as Dictionary
+			var units: Array = army.get("units", [])
+			if units.is_empty():
+				refusals.append(
+					("%s army %d fields no auto-resolve units, so it cannot be resolved; "
+					+ "its roster '%s' has no binding in the auto-resolve binding bundle") % [
+						role, int(army_id), String(army.get("roster", ""))])
+				continue
+			armies.append(units)
+		# AN UNDEFENDED REGION IS NOT A REFUSAL. The strategic layer legitimately
+		# lets a player attack a region its owner has left empty, and retail's
+		# own end condition already covers it - "the battle is over when all
+		# units with CanBeAttacked = Yes are gone" is true of that side before
+		# round one, so the resolver declares the other side the winner with no
+		# rounds fought and no attrition. Inventing a refusal here would make a
+		# legal move impossible; inventing a battle would fabricate casualties.
+		#
+		# What IS refused is a side that HAS armies none of which can field a
+		# unit, because that is a missing binding wearing a walkover's costume.
+		if armies.is_empty() and not ids.is_empty():
+			refusals.append("the %s has armies but none of them can field a unit" % role)
+		sides[role] = {
+			"armies": armies,
+			"handicap": int(commitment.get("%s_handicap" % role, 0)),
+			# The living-world player template name is what retail's resource and
+			# science bonus tables are keyed by. Both tables ship with every
+			# non-1.0 tier commented out in RotWK, so these look up to 1.0 today -
+			# which is retail's data saying nothing, not this project skipping it.
+			"side": String((state.players[seat] as Dictionary).get("template", ""))
+				if seat >= 0 and seat < state.players.size() else "",
+			"resource": 0.0,
+			"sciencePoints": 0.0,
+		}
+	if not refusals.is_empty():
+		return {"ok": false, "refusals": refusals, "attacker": {}, "defender": {}}
+	return {"ok": true, "refusals": refusals,
+		"attacker": sides["attacker"], "defender": sides["defender"]}
+
+
+## Apply an AUTO-RESOLVED result and close the transaction. This is the outcome
+## path `apply_outcome(winner_team)` cannot be, because auto-resolve does not
+## return a boolean - it returns who is left and how hurt they are.
+##
+## THREE BRANCHES, and the third is the one a tactical battle never has:
+##
+##   attacker won   every side's attrition is written back, the defeated
+##                  garrison is removed, the region changes hands, and the
+##                  surviving committed armies advance into it.
+##   defender won   attrition is written back and the region does not move.
+##   UNDECIDED      the battle reached this project's round bound. NO winner is
+##                  invented and the region does not move - but the attrition IS
+##                  applied, because both armies really did spend four hundred
+##                  rounds hitting each other. Retail states no round cap and so
+##                  states nothing about this case; leaving both armies at full
+##                  strength would be inventing a result just as much as naming
+##                  a winner would.
+##
+## Returns `{ok, refusals, winner_player, region, captured, armies_advanced,
+## armies_lost, armies_reduced, undecided}`.
+static func apply_auto_resolve_outcome(state: StateScript, outcome: Dictionary) -> Dictionary:
+	var refusals := PackedStringArray()
+	if state == null:
+		return _auto_refused(refusals, "state is null")
+	var commitment := state.pending_battle
+	if commitment.is_empty():
+		return _auto_refused(refusals, "no battle is in flight")
+	if not bool(outcome.get("ok", false)):
+		return _auto_refused(refusals, "the auto-resolve produced no result: %s" % ", ".join(
+			Array(outcome.get("refusals", PackedStringArray()))))
+
+	var winner := String(outcome.get("winner", ""))
+	var undecided := winner.is_empty()
+	var attacker := int(commitment.get("attacker", StateScript.NEUTRAL))
+	var defender := int(commitment.get("defender", StateScript.NEUTRAL))
+	var region_id := String(commitment.get("region", ""))
+	var committed: PackedInt32Array = commitment.get("committed_armies", PackedInt32Array())
+	var defending: PackedInt32Array = commitment.get("defending_armies", PackedInt32Array())
+
+	var survivors := _survivors_by_army(outcome)
+	var lost: Array[int] = []
+	var reduced: Array[int] = []
+	# BOTH SIDES FIRST, in ascending army id, so the order the strategic layer
+	# is written in is reproducible and does not depend on which side won.
+	var every: Array[int] = []
+	for army_id in committed:
+		every.append(int(army_id))
+	for army_id in defending:
+		every.append(int(army_id))
+	every.sort()
+	for army_id in every:
+		var kept: Array = survivors.get(army_id, [])
+		if not state.apply_attrition(army_id, kept):
+			refusals.append("attrition for army %d could not be written" % army_id)
+			continue
+		if kept.is_empty():
+			lost.append(army_id)
+		else:
+			reduced.append(army_id)
+
+	var captured := false
+	var advanced: Array[int] = []
+	if not undecided and winner == "attacker":
+		# A defending army that SURVIVED a lost battle still cannot stay: the
+		# region has changed hands. Retail's `LeaveInArmySummary` keeps dead
+		# heroes in a roster and says nothing about where a defeated hero goes
+		# when the ground is lost, so they are removed and the count is REPORTED
+		# rather than a retreat destination being invented.
+		var kept_through_defeat := 0
+		for army_id in defending:
+			if not state.armies.has(int(army_id)):
+				continue
+			kept_through_defeat += (state.armies[int(army_id)] as Dictionary).get("units", []).size()
+			if state.remove_army(int(army_id)):
+				if not lost.has(int(army_id)):
+					lost.append(int(army_id))
+			else:
+				refusals.append("defending army %d could not be removed" % int(army_id))
+		if kept_through_defeat > 0:
+			refusals.append(
+				("%d defending unit(s) retail would keep in the army summary were removed with "
+				+ "the region; retreat across a lost region is not modelled") % kept_through_defeat)
+		captured = state.transfer_region(region_id, attacker)
+		if not captured:
+			refusals.append("region %s did not change hands" % region_id)
+		for army_id in committed:
+			if not state.armies.has(int(army_id)):
+				continue
+			if state.move_army(int(army_id), region_id):
+				advanced.append(int(army_id))
+			else:
+				refusals.append("army %d could not advance into %s" % [int(army_id), region_id])
+
+	state.clear_battle()
+	lost.sort()
+	reduced.sort()
+	advanced.sort()
+	return {
+		"ok": refusals.is_empty(),
+		"refusals": refusals,
+		"winner_player": StateScript.NEUTRAL if undecided else (
+			attacker if winner == "attacker" else defender),
+		"undecided": undecided,
+		"region": region_id,
+		"captured": captured,
+		"armies_advanced": PackedInt32Array(advanced),
+		"armies_lost": PackedInt32Array(lost),
+		"armies_reduced": PackedInt32Array(reduced),
+	}
+
+
+static func _survivors_by_army(outcome: Dictionary) -> Dictionary:
+	var grouped: Dictionary = {}
+	for role in ["attacker", "defender"]:
+		var side: Dictionary = outcome.get(role, {})
+		for row in side.get("survivors", []) as Array:
+			var unit: Dictionary = row
+			var army_id := int(unit.get("army_id", 0))
+			if not grouped.has(army_id):
+				grouped[army_id] = []
+			(grouped[army_id] as Array).append(unit)
+	return grouped
+
+
+static func _auto_refused(refusals: PackedStringArray, reason: String) -> Dictionary:
+	refusals.append(reason)
+	return {
+		"ok": false,
+		"refusals": refusals,
+		"winner_player": StateScript.NEUTRAL,
+		"undecided": true,
+		"region": "",
+		"captured": false,
+		"armies_advanced": PackedInt32Array(),
+		"armies_lost": PackedInt32Array(),
+		"armies_reduced": PackedInt32Array(),
 	}
 
 

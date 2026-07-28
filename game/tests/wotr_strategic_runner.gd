@@ -23,7 +23,14 @@ const HandoffScript = preload("res://src/wotr/wotr_handoff.gd")
 ## exits 0. Pinning the number of checks a healthy run makes turns that silent
 ## abort into a loud failure. Raise it deliberately when tests are added; never
 ## lower it to make a run go green.
-const EXPECTED_CHECKS := 58
+## 58 + 1: the closed `battle_outcome_report` gap is asserted GONE as well as
+## the new `tactical_battle_outcome_report` gap being present, because a
+## capability list that only grows is a list nobody believes.
+## + 1: the campaign's battle rules are inside the hash. Mutation M7 removed
+## them from `authoritative_state()` and every existing check stayed green,
+## which meant two peers could have run different resolution paths and still
+## agreed on a hash - the exact failure this whole layer exists to prevent.
+const EXPECTED_CHECKS := 60
 
 var passed := 0
 var failed := 0
@@ -535,15 +542,48 @@ func _test_handoff_request() -> void:
 
 	# The brief must keep naming what the tactical simulation still owes it, so
 	# this contract can never rot silently into "looks finished".
+	#
+	# `battle_outcome_report` HAS LEFT THE LIST and its going is checked here as
+	# hard as its presence was, because a capability list that only ever grows is
+	# a list nobody believes. The gap it named - the strategic layer needs the
+	# surviving roster back, not just a winner - is exactly what auto-resolve now
+	# returns and `apply_attrition()` now writes. What is still missing is the
+	# same report from a TACTICAL battle, so the list now names that instead,
+	# under a name that cannot be confused with the closed one.
 	var unsupported: Array = request["unsupported"]
 	_check("handoff_names_every_missing_tactical_capability",
 		unsupported == HandoffScript.UNSUPPORTED_BY_TACTICAL_SIM
 			and unsupported.has("reinforcement_schedule")
 			and unsupported.has("carried_hero_state")
-			and unsupported.has("battle_outcome_report")
+			and unsupported.has("tactical_battle_outcome_report")
 			and unsupported.has("prebuilt_fortress")
 			and unsupported.has("region_bonus_modifiers"),
 		str(unsupported))
+	_check("the_closed_outcome_report_gap_is_gone_rather_than_renamed_beside_itself",
+		not unsupported.has("battle_outcome_report") and unsupported.size() == 5,
+		str(unsupported))
+
+	# THE CAMPAIGN'S BATTLE RULES ARE HASHED STATE. `battle_type` selects which
+	# of two entirely different resolution paths a battle takes, so two peers
+	# holding different values are not playing the same campaign - and if the
+	# hash did not cover them, they would agree anyway. Checked by MOVING the
+	# value and requiring the hash to move with it, not by reading the
+	# dictionary, because a key present but never hashed would pass that.
+	var rules_world := _world()
+	var first := StateScript.new()
+	first.setup(rules_world, [{"template": "PlayerMen"}, {"template": "PlayerMordor"}],
+		{"battle_type": "auto_resolve", "battle_type_priority": "auto_resolve"})
+	var second := StateScript.new()
+	second.setup(rules_world, [{"template": "PlayerMen"}, {"template": "PlayerMordor"}],
+		{"battle_type": "rts", "battle_type_priority": "auto_resolve"})
+	var same := StateScript.new()
+	same.setup(rules_world, [{"template": "PlayerMen"}, {"template": "PlayerMordor"}],
+		{"battle_type": "auto_resolve", "battle_type_priority": "auto_resolve"})
+	_check("the_campaigns_battle_rules_are_inside_the_strategic_hash",
+		first.state_hash() != second.state_hash()
+			and first.state_hash() == same.state_hash()
+			and first.battle_type == "auto_resolve" and second.battle_type == "rts",
+		"%s vs %s" % [first.state_hash().substr(0, 12), second.state_hash().substr(0, 12)])
 
 
 func _test_import_gaps_are_carried_through() -> void:

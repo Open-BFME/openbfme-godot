@@ -58,7 +58,54 @@ const BATTLE_COMMITMENT_SCHEMA := "openbfme.wotr-battle-commitment"
 ## as an extra argument is 867447e's desync with a different name on it. The
 ## resolution table is an argument to `configure()`; its RESULT is recorded here,
 ## so two peers whose strategic hashes agree fought on the same ground.
-const BATTLE_COMMITMENT_SCHEMA_VERSION := 2
+## VERSION 3 adds the four fields auto-resolve needs, and adds them HERE rather
+## than passing them alongside for the reason version 2 added `battlefield_map`:
+## every value that decides what a battle IS has to be inside the record the
+## strategic hash covers, or it is 867447e's desync with a different name on it.
+##
+##   `battle_type`           THE RESOLVED type of THIS battle: `auto_resolve` or
+##                           `rts`, never the campaign rule. Retail's campaign
+##                           rule "Auto Resolve and RTS" means both are OFFERED,
+##                           so the campaign rule alone does not say what this
+##                           battle is - only the resolved value does, and only
+##                           the resolved value can be checked by a peer.
+##   `battle_type_priority`  the campaign rule that resolved it, recorded so the
+##                           resolution can be re-derived and disagreed with.
+##   `attacker_handicap`     retail's `GUIDisplayedLevel`, which scales that
+##   `defender_handicap`     side's auto-resolve weapon and armour multipliers.
+##
+## The handicaps matter to the hash twice over: they change the arithmetic AND
+## they are inside the digest the dice are seeded from, so a peer with a
+## different handicap does not merely compute different damage - it rolls
+## different dice, which is exactly the divergence a hash comparison should
+## catch rather than paper over.
+const BATTLE_COMMITMENT_SCHEMA_VERSION := 3
+
+## The three battle types retail's RULES tab offers, as stable ids. Retail's own
+## string keys are `VALUE:AutoResolveAndRTS`, `VALUE:AutoResolve` and
+## `VALUE:RTS`; these are the ids the strategic layer stores, because a string
+## table key is presentation and this is state.
+const BATTLE_TYPE_AUTO_RESOLVE_AND_RTS := "auto_resolve_and_rts"
+const BATTLE_TYPE_AUTO_RESOLVE := "auto_resolve"
+const BATTLE_TYPE_RTS := "rts"
+const BATTLE_TYPES := [
+	BATTLE_TYPE_AUTO_RESOLVE_AND_RTS, BATTLE_TYPE_AUTO_RESOLVE, BATTLE_TYPE_RTS,
+]
+## What a single battle can actually BE. "Auto Resolve and RTS" is a campaign
+## rule offering both; it is not a way to fight one battle, and a commitment
+## carrying it would describe a battle nothing could resolve.
+const BATTLE_RESOLVED_TYPES := [BATTLE_TYPE_AUTO_RESOLVE, BATTLE_TYPE_RTS]
+## Retail's tooltip: the priority decides "whether a battle will be decided
+## through real-time or auto-resolve if players choose differently". Two
+## outcomes, so two values.
+const BATTLE_PRIORITIES := [BATTLE_TYPE_AUTO_RESOLVE, BATTLE_TYPE_RTS]
+
+## Retail's own handicap rungs, `GUIDisplayedLevel` 0..100 in fives, transcribed
+## from `livingworldautoresolvehandicaps.ini`. A commitment carrying a level
+## retail never authored is refused rather than resolved to the nearest rung:
+## the ladder is retail's and a value off it is not retail's.
+const HANDICAP_STEP := 5
+const HANDICAP_MAX := 100
 
 ## Every field a commitment may carry, and the type it must carry. Exhaustive in
 ## BOTH directions: a missing field is refused and so is an extra one. A field
@@ -67,13 +114,17 @@ const BATTLE_COMMITMENT_SCHEMA_VERSION := 2
 const BATTLE_COMMITMENT_FIELDS := {
 	"attacker": TYPE_INT,
 	"attacker_faction": TYPE_STRING,
+	"attacker_handicap": TYPE_INT,
 	"attacker_is_ai": TYPE_BOOL,
 	"attacker_team": TYPE_INT,
+	"battle_type": TYPE_STRING,
+	"battle_type_priority": TYPE_STRING,
 	"battlefield_map": TYPE_STRING,
 	"brief_digest": TYPE_STRING,
 	"committed_armies": TYPE_PACKED_INT32_ARRAY,
 	"defender": TYPE_INT,
 	"defender_faction": TYPE_STRING,
+	"defender_handicap": TYPE_INT,
 	"defender_is_ai": TYPE_BOOL,
 	"defender_team": TYPE_INT,
 	"defending_armies": TYPE_PACKED_INT32_ARRAY,
@@ -95,8 +146,32 @@ const MAX_ARMIES := 4096
 var world: WorldScript = null
 
 ## Player seats, index-addressed. Each row: {index, template, faction, team,
-## controller, world_cp, hero_cp, defeated}.
+## controller, handicap, world_cp, hero_cp, defeated}.
+##
+## `handicap` is retail's `GUIDisplayedLevel` for that seat. It is AUTHORITATIVE
+## STRATEGIC STATE for the same reason `controller` is: it scales auto-resolve
+## combat, so it decides outcomes, so it has to be identical on every peer and
+## inside the hash. The setup screen used to draw the column locked saying
+## "nothing carries it"; this field is what now carries it.
 var players: Array[Dictionary] = []
+
+## How battles are decided this campaign. AUTHORITATIVE: it selects between two
+## different resolution paths, so two peers disagreeing about it would fight two
+## different games. Set once by `setup()` from the setup screen's RULES tab and
+## never changed mid-campaign.
+var battle_type := BATTLE_TYPE_AUTO_RESOLVE_AND_RTS
+var battle_type_priority := BATTLE_TYPE_AUTO_RESOLVE
+
+## Roster name -> the auto-resolve units an army of that roster fields, each
+## already carrying retail's `HitpointsAtLevel` for its body. Supplied by the
+## session from the binding bundle BEFORE any army is placed.
+##
+## It is NOT hashed and it is NOT restored: it is a pure function of two
+## converted bundles, identical on every peer that loaded the same content, and
+## putting a 100-entry lookup table inside every snapshot would hash the content
+## pack rather than the campaign. What IS hashed is the units it produced, which
+## live on the army records themselves.
+var roster_units: Dictionary = {}
 ## Turn order as player indices. Never shuffled here; the caller supplies it.
 var turn_order: PackedInt32Array = PackedInt32Array()
 ## Completed turns since setup. `active_player()` derives from it.
@@ -129,7 +204,13 @@ var last_command_result: Variant = null
 
 ## Bind a world and seat the players. Returns false (and changes nothing that
 ## matters) when the setup is not fully understood.
-func setup(source_world: WorldScript, seats: Array) -> bool:
+##
+## `rules` carries the campaign-wide choices the setup screen's RULES tab makes,
+## today `battle_type` and `battle_type_priority`. It DEFAULTS rather than being
+## required so every existing caller keeps working, and the defaults are
+## retail's own screen defaults ("Auto Resolve and RTS", priority "Auto
+## Resolve") rather than this project's preference.
+func setup(source_world: WorldScript, seats: Array, rules: Dictionary = {}) -> bool:
 	if source_world == null or source_world.region_ids.is_empty():
 		return false
 	if seats.is_empty() or seats.size() > WorldScript.MAX_PLAYERS:
@@ -142,6 +223,9 @@ func setup(source_world: WorldScript, seats: Array) -> bool:
 	events = []
 	turn_index = 0
 	_next_army_id = 1
+	battle_type = normalized_battle_type(rules.get("battle_type", BATTLE_TYPE_AUTO_RESOLVE_AND_RTS))
+	battle_type_priority = normalized_battle_priority(
+		rules.get("battle_type_priority", BATTLE_TYPE_AUTO_RESOLVE))
 	var order: Array[int] = []
 	for index in range(seats.size()):
 		var seat := seats[index] as Dictionary
@@ -153,6 +237,7 @@ func setup(source_world: WorldScript, seats: Array) -> bool:
 			"faction": String(template.get("faction", seat.get("faction", ""))),
 			"team": int(seat.get("team", index + 1)),
 			"controller": normalized_controller(seat.get("controller", CONTROLLER_AI)),
+			"handicap": normalized_handicap(seat.get("handicap", 0)),
 			"world_cp": int(template.get("starting_world_cp", 0)),
 			"hero_cp": int(template.get("starting_hero_cp", 0)),
 			"defeated": false,
@@ -275,6 +360,21 @@ func place_army(player: int, region_id: String, army_name: String) -> int:
 	var kind := ARMY_HERO if bool(spawn.get("is_hero", false)) else ARMY_GARRISON
 	var id := _next_army_id
 	_next_army_id += 1
+	# THE UNITS ARE AUTHORITATIVE STATE from here on. Each one carries its
+	# retail auto-resolve type, body, armour, weapon, combat chain, level and
+	# CURRENT HITPOINTS, and all of it enters `authoritative_state()`. That is
+	# the largest change this lane makes to the hash surface: an army's strength
+	# stops being a command-point integer and becomes a continuous quantity that
+	# a battle can reduce without destroying the army.
+	#
+	# With no `roster_units` table bound - no bindings bundle, or a caller that
+	# never set one - the list is EMPTY, and auto-resolve then refuses that army
+	# by name rather than inventing a force for it.
+	var units: Array[Dictionary] = []
+	for row in (roster_units.get(roster_name, []) as Array):
+		var unit: Dictionary = (row as Dictionary).duplicate(true)
+		unit["army_id"] = id
+		units.append(unit)
 	armies[id] = {
 		"id": id,
 		"owner": player,
@@ -284,6 +384,7 @@ func place_army(player: int, region_id: String, army_name: String) -> int:
 		"roster": roster_name,
 		"hero_template": String(spawn.get("hero_template_name", "")),
 		"command_points": _roster_command_points(roster),
+		"units": units,
 	}
 	events.append({"kind": "army_placed", "army": id, "region": region_id, "turn": turn_index})
 	last_command_result = true
@@ -420,6 +521,45 @@ func clear_battle() -> bool:
 	return true
 
 
+## Write a battle's ATTRITION back to an army: the units that survived, with the
+## hitpoints they survived on. This is the outcome path auto-resolve needs and
+## `apply_outcome(winner_team)` cannot provide, because auto-resolve does not
+## return a boolean - it returns who is left and how hurt they are.
+##
+## An army whose survivor list is EMPTY is REMOVED, not left standing at zero
+## strength: an army with no units is not an army, and leaving one on the board
+## would let a wiped force keep holding a region.
+##
+## Fails closed on an unknown army, and on a survivor list carrying a unit whose
+## `army_id` is somebody else's - a mis-keyed writeback would silently move
+## units between armies, which is a lost-update with no symptom until a much
+## later battle counts the wrong roster.
+func apply_attrition(army_id: int, survivors: Array) -> bool:
+	if not armies.has(army_id):
+		return _reject("unknown army %d" % army_id)
+	var kept: Array[Dictionary] = []
+	for row in survivors:
+		var unit: Dictionary = row
+		if int(unit.get("army_id", army_id)) != army_id:
+			return _reject("attrition for army %d carries a unit belonging to army %d" % [
+				army_id, int(unit.get("army_id", -1))])
+		if int(unit.get("hitpoints_milli", 0)) < 0:
+			return _reject("attrition for army %d carries negative hitpoints" % army_id)
+		kept.append(unit.duplicate(true))
+	if kept.is_empty():
+		return remove_army(army_id)
+	var army := armies[army_id] as Dictionary
+	army["units"] = kept
+	events.append({
+		"kind": "army_attrition",
+		"army": army_id,
+		"survivors": kept.size(),
+		"turn": turn_index,
+	})
+	last_command_result = true
+	return true
+
+
 ## Mark a seat defeated. Idempotent-safe: reports false when already defeated.
 func set_defeated(player: int, defeated: bool = true) -> bool:
 	if player < 0 or player >= players.size():
@@ -506,7 +646,17 @@ func restore(bytes: PackedByteArray) -> bool:
 			return false
 		staged_battle = (state["pending_battle"] as Dictionary).duplicate(true)
 
+	# The battle rules ride the snapshot. They are NOT in the required list: a
+	# snapshot minted before version 3 legitimately carries neither, and refusing
+	# it would refuse every saved campaign. Absent restores to retail's own screen
+	# defaults, which is what such a campaign was played under.
+	var staged_type := normalized_battle_type(state.get("battle_type", BATTLE_TYPE_AUTO_RESOLVE_AND_RTS))
+	var staged_priority := normalized_battle_priority(
+		state.get("battle_type_priority", BATTLE_TYPE_AUTO_RESOLVE))
+
 	# COMMIT. Nothing below can fail.
+	battle_type = staged_type
+	battle_type_priority = staged_priority
 	turn_index = int(state["turn_index"])
 	turn_order = PackedInt32Array(state["turn_order"])
 	players = staged_players
@@ -544,6 +694,11 @@ func authoritative_state() -> Dictionary:
 		"region_owner": owners,
 		"armies": army_rows,
 		"next_army_id": _next_army_id,
+		# THE CAMPAIGN'S OWN BATTLE RULES. Hashed, because they select which
+		# resolution path runs, and two peers running different paths are not
+		# playing the same campaign.
+		"battle_type": battle_type,
+		"battle_type_priority": battle_type_priority,
 	}
 	# EMPTY-IS-ABSENT, the same discipline the retail slice applies to
 	# `script_env_state`: with no battle in flight the key contributes zero bytes,
@@ -563,6 +718,67 @@ func authoritative_state() -> Dictionary:
 ## lobby's `controller` field: trimmed, lowercased, `human` or else AI.
 static func normalized_controller(value: Variant) -> String:
 	return CONTROLLER_HUMAN if String(value).strip_edges().to_lower() == CONTROLLER_HUMAN else CONTROLLER_AI
+
+
+## A seat's handicap, clamped onto retail's own ladder. Retail authors every
+## multiple of five from 0 to 100 and states no interpolation, so a value off
+## the ladder is snapped DOWN to the rung below and never averaged between two -
+## an interpolated rung would be a multiplier retail never wrote.
+static func normalized_handicap(value: Variant) -> int:
+	var level := int(value)
+	if level <= 0:
+		return 0
+	if level >= HANDICAP_MAX:
+		return HANDICAP_MAX
+	return (level / HANDICAP_STEP) * HANDICAP_STEP
+
+
+static func is_authored_handicap(level: int) -> bool:
+	return level >= 0 and level <= HANDICAP_MAX and level % HANDICAP_STEP == 0
+
+
+static func normalized_battle_type(value: Variant) -> String:
+	var text := String(value).strip_edges().to_lower()
+	return text if BATTLE_TYPES.has(text) else BATTLE_TYPE_AUTO_RESOLVE_AND_RTS
+
+
+static func normalized_battle_priority(value: Variant) -> String:
+	var text := String(value).strip_edges().to_lower()
+	return text if BATTLE_PRIORITIES.has(text) else BATTLE_TYPE_AUTO_RESOLVE
+
+
+## RESOLVE ONE BATTLE'S TYPE from the campaign rule, the priority, and what the
+## attacker asked for. Returns `auto_resolve` or `rts` and never anything else.
+##
+## Retail's three campaign rules mean three different things and this is a
+## transcription of them, not an interpretation:
+##
+##   "RTS"                 every battle is fought. The request is ignored.
+##   "Auto Resolve"        every battle is auto-resolved. Likewise.
+##   "Auto Resolve and RTS"  BOTH ARE OFFERED, so the player chooses per battle -
+##                         which is the only reading under which the row means
+##                         anything different from the other two.
+##
+## When both are offered and the attacker asks for neither in particular, the
+## `battle_type_priority` row decides, which is exactly what retail's own
+## tooltip says it is for: it settles "whether a battle will be decided through
+## real-time or auto-resolve if players choose differently".
+##
+## THE DEFENDER IS NOT ASKED, and that is stated rather than hidden: no seat
+## carries a per-battle preference today, so there is nobody to disagree with
+## the attacker. `battle_type_priority` is recorded in the commitment now, and
+## validated now, so the day a defender can express a preference the commitment
+## does not need a fourth version.
+static func resolve_battle_type(
+	campaign_type: String, priority: String, requested: String
+) -> String:
+	if campaign_type == BATTLE_TYPE_AUTO_RESOLVE:
+		return BATTLE_TYPE_AUTO_RESOLVE
+	if campaign_type == BATTLE_TYPE_RTS:
+		return BATTLE_TYPE_RTS
+	if BATTLE_RESOLVED_TYPES.has(requested):
+		return requested
+	return priority if BATTLE_RESOLVED_TYPES.has(priority) else BATTLE_TYPE_RTS
 
 
 ## Why `commitment` may not be admitted, or "" when it may. Sorted iteration:
@@ -602,6 +818,25 @@ func _battle_commitment_refusal(commitment: Dictionary) -> String:
 	var digest := String(commitment["brief_digest"])
 	if digest.length() != 64 or not digest.is_valid_hex_number():
 		return "battle commitment carries no well-formed brief digest"
+
+	# THE VERSION 3 FIELDS. Checked here rather than trusted, for the same reason
+	# every other field is: they decide the outcome, and they SEED THE DICE. A
+	# handicap off retail's ladder would mean a multiplier retail never wrote; a
+	# battle type this build does not implement would mean a battle nothing can
+	# resolve, admitted into the hash and then stuck.
+	if not BATTLE_RESOLVED_TYPES.has(String(commitment["battle_type"])):
+		return ("battle commitment names battle_type '%s'; a single battle is either %s "
+			+ "or %s, and '%s' is a campaign rule offering both") % [
+			String(commitment["battle_type"]), BATTLE_TYPE_AUTO_RESOLVE, BATTLE_TYPE_RTS,
+			BATTLE_TYPE_AUTO_RESOLVE_AND_RTS]
+	if not BATTLE_PRIORITIES.has(String(commitment["battle_type_priority"])):
+		return "battle commitment names battle_type_priority '%s', which is not one of %s" % [
+			String(commitment["battle_type_priority"]), str(BATTLE_PRIORITIES)]
+	for role in ["attacker", "defender"]:
+		var level := int(commitment["%s_handicap" % role])
+		if not is_authored_handicap(level):
+			return ("battle commitment carries %s_handicap %d, which is not a rung retail "
+				+ "authored (0 to %d in steps of %d)") % [role, level, HANDICAP_MAX, HANDICAP_STEP]
 	return ""
 
 

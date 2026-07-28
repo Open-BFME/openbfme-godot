@@ -122,8 +122,17 @@ const RULE_ROWS: Array[Dictionary] = [
 		"default": 0,                              # "Auto Resolve and RTS"
 		"evidence": "screenshot",
 		"source": "retail GAME SETUP screenshot shows 'Auto Resolve and RTS'",
-		"reaches": "",
-		"locked_reason": "every War of the Ring battle here is fought in the tactical layer; no auto-resolve path exists to choose between",
+		# UNLOCKED. It was locked because no auto-resolve path existed; one does
+		# now. The value is an argument to `WotrSession.begin()`, lands on
+		# `state.battle_type`, is inside `authoritative_state()` and therefore
+		# inside the hash, and decides which of the two resolution paths a battle
+		# takes. "Auto Resolve and RTS" - retail's own default - means BOTH are
+		# offered, so the strategic screen shows both buttons and the choice is
+		# recorded per battle in the commitment's `battle_type`.
+		"reaches": "strategic",
+		"state_field": "battle_type",
+		"values_state": ["auto_resolve_and_rts", "auto_resolve", "rts"],
+		"locked_reason": "",
 		"absent_reason": "",
 	},
 	{
@@ -137,8 +146,13 @@ const RULE_ROWS: Array[Dictionary] = [
 		"default": 1,
 		"evidence": "screenshot",
 		"source": "option set follows ToolTip:WaroftheRing_Rules_BattleTypePriority; the DEFAULT is read off the owner's own retail RULES tab, which shows \"Auto Resolve*\" - it was authored as RTS and corrected",
-		"reaches": "",
-		"locked_reason": "there is no auto-resolve path for this to arbitrate between",
+		# UNLOCKED. There is now something for it to arbitrate between. It lands
+		# on `state.battle_type_priority`, rides the hash, and is recorded in
+		# every commitment beside the resolved type it produced.
+		"reaches": "strategic",
+		"state_field": "battle_type_priority",
+		"values_state": ["rts", "auto_resolve"],
+		"locked_reason": "",
 		"absent_reason": "",
 	},
 	{
@@ -149,8 +163,13 @@ const RULE_ROWS: Array[Dictionary] = [
 		"default": 0,                              # "Dynamic"
 		"evidence": "screenshot",
 		"source": "retail GAME SETUP screenshot shows 'Dynamic'",
+		# STILL LOCKED, but the reason it used to give has stopped being true, so
+		# it has been replaced rather than left standing. Battles DO auto-resolve
+		# now; what does not exist is retail's animated presentation of one. Open
+		# BFME shows the working as a readable report instead, so "Dynamic" and
+		# "Quick" would render exactly the same screen.
 		"reaches": "",
-		"locked_reason": "nothing auto-resolves, so there is no battle animation to show or skip",
+		"locked_reason": "battles do auto-resolve now, but the result is shown as a written working rather than retail's animation, so Dynamic and Quick would draw the same screen",
 		"absent_reason": "",
 	},
 	{
@@ -263,11 +282,21 @@ const HANDICAP_LEVELS: Array[int] = [
 ]
 const HANDICAP_DEFAULT := 0
 const HANDICAP_TOOLTIP_KEY := "TOOLTIP:Skirmish/tooltipHandicap"
-## Handicap multiplies auto-resolve weapon and armour strength. There is no
-## auto-resolve here and no field on the commitment that could carry it, so the
-## column is DRAWN AND LOCKED rather than offered - a handicap that silently did
-## nothing would be worse than one the screen admits it cannot apply.
-const HANDICAP_LOCKED_REASON := "handicap scales auto-resolve combat; nothing auto-resolves here and the commitment carries no handicap field"
+## UNLOCKED. Handicap multiplies auto-resolve weapon and armour strength; both
+## of those now happen, and both ends of the carrier exist: the seat's
+## `handicap` is authoritative strategic state, and the commitment carries
+## `attacker_handicap` and `defender_handicap` at schema version 3. It reaches
+## the arithmetic AND the dice, because the commitment it sits in is what the
+## dice are seeded from.
+## KEPT AS AN EMPTY STRING RATHER THAN DELETED, so a mod or a screen that still
+## reads it gets "there is no reason, it is not locked" instead of a missing
+## constant - and so the fact that this row USED to be locked, and why it no
+## longer is, stays readable right here.
+const HANDICAP_LOCKED_REASON := ""
+## What choosing a rung actually does, shown beside the column so a player knows
+## which direction helps them. Retail's own comment beside the ladder reads
+## "; GUI displayed -N% (we ignore the negative)".
+const HANDICAP_NOTE := "retail's own ladder: a higher rung scales that seat's auto-resolve weapon down and its armour up by exactly reciprocal multipliers"
 
 
 # --- the colour swatches -------------------------------------------------------
@@ -347,7 +376,12 @@ const SEAT_COLUMN_REACH := {
 	"hero": "",                # derived from the scenario's own act armies; not chosen
 	"team": "strategic",       # state.players[].team
 	"color": "presentation",   # never hashed, never handed to the simulation
-	"handicap": "",            # nothing carries it
+	# state.players[].handicap, and from there the commitment's two handicap
+	# fields at schema version 3. It scales retail's auto-resolve multipliers AND
+	# it is inside the digest the dice are seeded from, so two seats with
+	# different handicaps do not merely take different damage - they roll
+	# different dice.
+	"handicap": "strategic",
 }
 
 
