@@ -138,11 +138,67 @@ def test_angmar_is_a_registered_rotwk_faction(tmp_path: Path) -> None:
         compose_faction_profile(_base(), tmp_path, ["angmar"], game="rotwk")
 
 
+def _base_with_selection_contract() -> dict[str, object]:
+    """Base profile carrying the universal selection-decal contract plus one
+    host-only artifact that the lean expansion filter must strip."""
+    from openbfme_importer.retail_fords_completion_profile import (
+        MEN_SELECTION_PACK_KEY,
+        MEN_SELECTION_RESOURCES,
+        MEN_SELECTION_RUNTIME,
+        MEN_SELECTION_RUNTIME_PATH,
+    )
+
+    base = _base()
+    base["resources"] = [deepcopy(row) for row in MEN_SELECTION_RESOURCES] + [_resource("host-only-unit")]
+    base["runtime_data"] = {
+        MEN_SELECTION_RUNTIME_PATH: deepcopy(MEN_SELECTION_RUNTIME),
+        "data/host-only.json": {"host": True},
+    }
+    base["pack"]["files"] = {
+        MEN_SELECTION_PACK_KEY: MEN_SELECTION_RUNTIME_PATH,
+        "hostOnly": "data/host-only.json",
+    }
+    return base
+
+
 def test_rotwk_faction_pack_id_is_game_prefixed(tmp_path: Path) -> None:
     # A RotWK faction publish lands under rotwk-<faction>-vslice, not bfme2-.
     _faction_coverage(tmp_path, "angmar")
-    target, _ = compose_faction_profile(_base(), tmp_path, ["angmar"], game="rotwk")
+    target, _ = compose_faction_profile(_base_with_selection_contract(), tmp_path, ["angmar"], game="rotwk")
     assert target["pack"]["id"] == "rotwk-angmar-vslice"
+
+
+def test_rotwk_lean_pack_retains_universal_selection_decal_contract(tmp_path: Path) -> None:
+    # The lean expansion filter strips host-only payload but must keep the
+    # universal SHADOW_MERGE_DECAL selection contract so a solo-mounted Angmar
+    # pack binds retail selection decals without borrowing from a host pack.
+    _faction_coverage(tmp_path, "angmar")
+    target, _ = compose_faction_profile(_base_with_selection_contract(), tmp_path, ["angmar"], game="rotwk")
+    resource_ids = [row["id"] for row in target["resources"]]
+    assert "men-selection-decal-level1" in resource_ids
+    assert "men-selection-decal-good-co" in resource_ids
+    assert "host-only-unit" not in resource_ids
+    assert "effects/men-selection-decal.json" in target["runtime_data"]
+    assert "data/host-only.json" not in target["runtime_data"]
+    assert target["pack"]["files"]["menSelectionDecal"] == "effects/men-selection-decal.json"
+    assert "hostOnly" not in target["pack"]["files"]
+
+
+def test_rotwk_lean_pack_fails_closed_without_selection_decal_contract(tmp_path: Path) -> None:
+    # Universality invariant: an expansion compose from a base profile that
+    # does not ship the selection-decal contract must fail loudly, not publish
+    # a pack that silently regresses to synthetic selection rings.
+    _faction_coverage(tmp_path, "angmar")
+    with pytest.raises(ValueError, match="universal selection-decal contract"):
+        compose_faction_profile(_base(), tmp_path, ["angmar"], game="rotwk")
+
+
+def test_bfme2_compose_does_not_require_selection_decal_contract(tmp_path: Path) -> None:
+    # The fail-closed contract check is scoped to the lean expansion branch;
+    # BFME2 factions inherit the full base profile and stay unaffected.
+    _faction_coverage(tmp_path, "mordor")
+    target, _ = compose_faction_profile(_base(), tmp_path, ["mordor"])
+    assert target["pack"]["id"] == "bfme2-mordor-vslice"
 
 
 def test_rejects_unsupported_compose_game(tmp_path: Path) -> None:
