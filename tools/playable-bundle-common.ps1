@@ -41,6 +41,12 @@ $script:BundleChangeLog = 'CHANGES.txt'
 # not beside the exe: a directory beside the exe is reachable only through
 # OPENBFME_LIVING_WORLD_DOC / OPENBFME_LIVING_MAP, and a bundle that needs
 # environment variables to show its own content is the bug this staging fixes.
+#
+# THESE TWO CONSTANTS ARE NO LONGER THE LIST. They are the two paths this file's
+# own verifier still checks by name, kept because BUILD-INFO.json schema 1
+# records them by name. What a build must STAGE is computed in
+# tools/wotr-data-staging.ps1 from the loaders themselves - see the comment at
+# the top of that file for why a hardcoded list was the bug rather than the fix.
 $script:WotrDocumentRelative = 'data/living-world.json'
 $script:WotrMapRelative = 'data/living-map'
 $script:WotrDocumentMaxBytes = 32 * 1024 * 1024   # wotr_session.gd DOCUMENT_MAX_BYTES
@@ -653,6 +659,28 @@ function Test-BundleTree {
             $problems.Add("BUILD-INFO.json says War of the Ring is playable, but its 3D map bundle has no manifest: content-packs/$($info.warOfTheRing.packRelative)/$($script:WotrMapRelative)/manifest.json")
         }
     }
+    # EVERY converted bundle this build claims to have staged, re-checked at the
+    # path the loader that needs it actually opens. The two lines above cover the
+    # two artefacts BUILD-INFO schema 1 names directly; this covers the rest, and
+    # it is the check that would have caught four bundles going missing at once.
+    if ($infoNames -contains 'warOfTheRing' -and $null -ne $info.warOfTheRing) {
+        $wotrNames = @($info.warOfTheRing.PSObject.Properties.Name)
+        if ($wotrNames -contains 'bundles' -and $null -ne $info.warOfTheRing.bundles) {
+            $wotrPackRoot = Join-Path $contentRoot (([string]$info.warOfTheRing.packRelative) -replace '/', '\')
+            foreach ($declared in @($info.warOfTheRing.bundles)) {
+                if (-not [bool]$declared.staged) { continue }
+                $relative = [string]$declared.packRelative
+                if ($relative -eq '') {
+                    $problems.Add("BUILD-INFO.json says $([string]$declared.env) was staged but records no path for it")
+                    continue
+                }
+                $landed = Join-Path $wotrPackRoot ($relative -replace '/', '\')
+                if (-not (Test-Path -LiteralPath $landed -PathType Leaf)) {
+                    $problems.Add("BUILD-INFO.json says $([string]$declared.env) was staged, and the file the loader opens is not there: content-packs/$($info.warOfTheRing.packRelative)/$relative (without it the player loses $([string]$declared.losesWithout))")
+                }
+            }
+        }
+    }
 
     # 2. The exe and pck are the ones this bundle claims.
     foreach ($artifact in @(
@@ -1216,8 +1244,19 @@ function New-BundleReleaseNotes {
 
         $wotrLine = 'War of the Ring data: not recorded by this build.'
         if ($null -ne $WotrData) {
-            if ([bool]$WotrData.staged) {
+            $wotrNames = @($WotrData.PSObject.Properties.Name)
+            $wotrDegraded = ($wotrNames -contains 'degraded' -and [bool]$WotrData.degraded)
+            if ([bool]$WotrData.staged -and -not $wotrDegraded) {
                 $wotrLine = 'War of the Ring data ships inside this build - no setup needed.'
+            } elseif ([bool]$WotrData.staged) {
+                # A degraded build must not read like a complete one. The player
+                # is told which parts are absent and what they will see instead,
+                # in the same file that tells them what is new.
+                $lost = @()
+                if ($wotrNames -contains 'bundles') {
+                    $lost = @(@($WotrData.bundles) | Where-Object { -not [bool]$_.staged } | ForEach-Object { "  -no $([string]$_.losesWithout)" })
+                }
+                $wotrLine = ("War of the Ring opens, but this build is MISSING some of its converted art:`n" + ($lost -join "`n"))
             } else {
                 $wotrLine = "War of the Ring is NOT in this build (menu entry reads UNAVAILABLE): $([string]$WotrData.reason)"
             }
@@ -1276,6 +1315,12 @@ $($changeLines -join "`n")
         }
     } finally { Pop-Location }
 }
+
+# The derived War of the Ring staging plan. Dot-sourced LAST so it can use the
+# refusal helper and the size limits above; both scripts get it for free, which
+# is what keeps "what the builder staged" and "what the verifier looks for" from
+# drifting apart.
+. (Join-Path $PSScriptRoot 'wotr-data-staging.ps1')
 
 function Format-BundleBytes {
     param([Parameter(Mandatory)][long]$Bytes)

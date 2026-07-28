@@ -77,9 +77,22 @@
     workspace in the main checkout.
 
 .PARAMETER AllowMissingWotrData
-    Build a release even though War of the Ring's data is absent. The bundle
-    then says so in its own output, in BUILD-INFO and in the patch notes; it
-    does not ship a dead button quietly.
+    Build a release even though one or more of War of the Ring's converted
+    bundles is absent. The bundle then says so in its own output, in BUILD-INFO
+    and in the patch notes, naming each missing bundle and what the player loses
+    without it; it does not ship a dead button or a degraded map quietly.
+
+    WHICH bundles a build must carry is not written down anywhere. It is derived
+    in tools/wotr-data-staging.ps1 from the loaders in game/src/wotr - see the
+    comment at the top of that file. A new loader with no staging rule stops the
+    build; that is deliberate, and it is the fix for having shipped this class of
+    omission three times.
+
+.PARAMETER AllowMismatchedWotrDocument
+    Ship a living-world document other than the one the converted region
+    geometry and region portraits record being built against. Off by default:
+    those meshes are keyed to the region ids in a specific document, and pairing
+    them with a different one degrades the map silently.
 
 .PARAMETER ContentRoot
     Pack cache to stage from. Default search order:
@@ -137,6 +150,7 @@ param(
     [string]$LivingWorldDocument = '',
     [string]$LivingMapBundle = '',
     [switch]$AllowMissingWotrData,
+    [switch]$AllowMismatchedWotrDocument,
     [switch]$Force,
     [switch]$SkipLaunchCheck,
     [switch]$FastFinalVerify,
@@ -160,9 +174,14 @@ function Invoke-Robocopy {
     param(
         [Parameter(Mandatory)][string]$Source,
         [Parameter(Mandatory)][string]$Destination,
-        [string[]]$ExcludeDirectories = @()
+        [string[]]$ExcludeDirectories = @(),
+        # /E instead of /MIR: adds files without deleting what is already there.
+        # Used only where two converted bundles deliberately share one staged
+        # directory because that is where the loader searches for both.
+        [switch]$Merge
     )
-    $arguments = @($Source, $Destination, '/MIR', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:2', '/W:2', '/MT:16')
+    $mode = $(if ($Merge) { '/E' } else { '/MIR' })
+    $arguments = @($Source, $Destination, $mode, '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:2', '/W:2', '/MT:16')
     foreach ($excluded in $ExcludeDirectories) { $arguments += @('/XD', (Join-Path $Source $excluded)) }
     & robocopy.exe @arguments | Out-Null
     $code = $LASTEXITCODE
@@ -335,57 +354,87 @@ try {
 
     # ------------------------------------------- War of the Ring data sources
     # The bundle used to ship a WAR OF THE RING button and none of its data, so
-    # it read (UNAVAILABLE) in every build and the owner hit it. These two
-    # artefacts are what the menu entry needs; they are resolved and validated
-    # HERE, in preflight, so a missing one costs seconds rather than a finished
-    # build with a dead button in it.
-    if ($LivingWorldDocument -eq '') {
-        foreach ($candidate in @(
-            (Join-Path $repoRoot '.private\retail-work\reports\bfme2-living-world.json'),
-            (Join-Path $mainWorktree '.private\retail-work\reports\bfme2-living-world.json')
-        )) {
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $LivingWorldDocument = [IO.Path]::GetFullPath($candidate); break }
+    # it read (UNAVAILABLE) in every build and the owner hit it. Then it shipped
+    # the button and the document with no 3D map. Then it shipped both with none
+    # of the four bundles that had landed since. Each fix added a name to a list
+    # that was correct until the next converter ran.
+    #
+    # So the list is DERIVED now: tools/wotr-data-staging.ps1 reads every loader
+    # in game/src/wotr, learns from each one the environment variable it reads,
+    # the schema it accepts and the pack-relative path it searches, and then
+    # finds the artefacts in the private workspace BY SCHEMA. A loader with no
+    # staging rule refuses this build; so does a rule with no loader. Resolved
+    # and validated HERE, in preflight, so a missing bundle costs seconds rather
+    # than a finished build with a degraded map in it.
+    $wotrWorkspaceRoots = @(
+        (Join-Path $repoRoot ($script:WotrWorkspaceRelative -replace '/', '\')),
+        (Join-Path $mainWorktree ($script:WotrWorkspaceRelative -replace '/', '\'))
+    )
+    $wotrPlan = New-WotrStagingPlan -RepoRoot $repoRoot -WorkspaceRoots $wotrWorkspaceRoots `
+        -DocumentOverride $LivingWorldDocument -MapOverride $LivingMapBundle `
+        -AllowMismatchedDocument:$AllowMismatchedWotrDocument
+    Write-BundleStep "wotr loaders        $($wotrPlan.rules.Count) declared by $($script:WotrLoaderDirectory), $($wotrPlan.scanned) workspace documents scanned by schema"
+
+    # Validate every present artefact against the schema ITS OWN LOADER declares,
+    # before the build spends six minutes exporting.
+    $wotrDocumentBytes = [long]0
+    foreach ($rule in $wotrPlan.rules) {
+        if (-not $rule.present) { continue }
+        $bytes = Test-BundleWotrArtifact -Path $rule.source -Schema $rule.schema `
+            -Label "the $($rule.schema) artefact" -Strict:($rule.kind -ceq 'document')
+        if ($rule.kind -ceq 'document') {
+            $wotrDocumentBytes = $bytes
+            # The refusal that already existed for the document, unchanged.
+            [void](Test-BundleWotrDocument -Path $rule.source)
         }
-    } elseif (-not (Test-Path -LiteralPath $LivingWorldDocument -PathType Leaf)) {
-        throw (New-BundleRefusal -Problem "-LivingWorldDocument does not exist: $LivingWorldDocument")
-    } else {
-        $LivingWorldDocument = [IO.Path]::GetFullPath($LivingWorldDocument)
+        Write-BundleStep ("  {0,-36} {1}" -f $rule.env, $rule.source)
+        Write-BundleStep ("  {0,-36} -> content-packs/<active pack>/{1}" -f '', $rule.landedRelative)
     }
-    if ($LivingMapBundle -eq '') {
-        foreach ($candidate in @(
-            (Join-Path $repoRoot '.private\retail-work\livingmap'),
-            (Join-Path $mainWorktree '.private\retail-work\livingmap')
-        )) {
-            if (Test-Path -LiteralPath (Join-Path $candidate 'manifest.json') -PathType Leaf) { $LivingMapBundle = [IO.Path]::GetFullPath($candidate); break }
-        }
-    } elseif (-not (Test-Path -LiteralPath $LivingMapBundle -PathType Container)) {
-        throw (New-BundleRefusal -Problem "-LivingMapBundle does not exist: $LivingMapBundle")
-    } else {
-        $LivingMapBundle = [IO.Path]::GetFullPath($LivingMapBundle)
+
+    # BUILD-INFO schema 1 records these two by name, so they keep their meaning:
+    # the living-world document and the 3D map are what decide whether the menu
+    # entry opens at all. Everything else degrades the screen without closing it.
+    $LivingWorldDocument = ''
+    $LivingMapBundle = ''
+    foreach ($rule in $wotrPlan.rules) {
+        if (-not $rule.present) { continue }
+        if ($rule.env -ceq 'OPENBFME_LIVING_WORLD_DOC') { $LivingWorldDocument = $rule.source }
+        if ($rule.env -ceq 'OPENBFME_LIVING_MAP') { $LivingMapBundle = $rule.sourceDirectory }
     }
 
     $wotrMissing = New-Object 'System.Collections.Generic.List[string]'
-    if ($LivingWorldDocument -eq '') { $wotrMissing.Add('the living-world document (.private/retail-work/reports/bfme2-living-world.json)') }
-    if ($LivingMapBundle -eq '') { $wotrMissing.Add('the converted 3D map bundle (.private/retail-work/livingmap)') }
-    $wotrDocumentBytes = [long]0
-    if ($LivingWorldDocument -ne '') { $wotrDocumentBytes = Test-BundleWotrDocument -Path $LivingWorldDocument }
-    if ($LivingMapBundle -ne '') { [void](Test-BundleWotrMap -Path $LivingMapBundle) }
+    foreach ($rule in $wotrPlan.missing) {
+        # A missing bundle must never read like a bundle that was never needed.
+        # Name it, name the setting that would have found it, and name what the
+        # player gets instead.
+        $wotrMissing.Add("$($rule.env) ($($rule.schema)) - the player loses $($rule.loses)")
+    }
 
-    $wotrStaged = ($wotrMissing.Count -eq 0)
+    # "The menu entry opens" and "the screen is complete" are different claims,
+    # and collapsing them is how four bundles went missing without a word.
+    $wotrStaged = ($LivingWorldDocument -ne '' -and $LivingMapBundle -ne '')
+    $wotrDegraded = ($wotrMissing.Count -gt 0)
     $wotrReason = ''
-    if (-not $wotrStaged) {
+    if ($wotrDegraded) {
         $wotrReason = "not present at build time: $($wotrMissing -join '; ')"
-        Write-BundleWarn "WAR OF THE RING WILL BE UNAVAILABLE in this bundle - $wotrReason"
-        Write-BundleWarn 'The menu entry will read WAR OF THE RING (UNAVAILABLE). BUILD-INFO and the release notes say so; this build is not pretending otherwise.'
+        if (-not $wotrStaged) {
+            Write-BundleWarn 'WAR OF THE RING WILL BE UNAVAILABLE in this bundle - its document or its 3D map is absent.'
+            Write-BundleWarn 'The menu entry will read WAR OF THE RING (UNAVAILABLE). BUILD-INFO and the release notes say so; this build is not pretending otherwise.'
+        } else {
+            Write-BundleWarn "WAR OF THE RING WILL BE DEGRADED in this bundle - $($wotrMissing.Count) converted bundle(s) are absent from the workspace:"
+        }
+        foreach ($line in $wotrMissing) { Write-BundleWarn "  $line" }
         # A dev build without the private workspace is a normal, honest state. A
-        # RELEASE handed to a playtester with a button that cannot open is the
-        # exact defect this staging was added to fix, so that one is refused.
+        # RELEASE handed to a playtester with a feature whose art sits on the
+        # author's disk is the exact defect this staging was added to fix - three
+        # times now - so that one is refused, for ANY absent bundle and not only
+        # for the two the menu entry needs.
         if ($Release -and -not $AllowMissingWotrData) {
-            throw (New-BundleRefusal -Problem "A release would ship a WAR OF THE RING menu entry with no data behind it - $wotrReason" -Remedy 'Produce the artefacts, point -LivingWorldDocument / -LivingMapBundle at them, or pass -AllowMissingWotrData to ship a release that states the entry is unavailable.')
+            throw (New-BundleRefusal -Problem ("A release would ship War of the Ring with $($wotrMissing.Count) of its converted bundle(s) missing:`n           " + ($wotrMissing -join "`n           ")) -Remedy 'Produce the artefacts into the private workspace (they are found by schema, so any path under .private/retail-work works), or pass -AllowMissingWotrData to ship a release that states in its own output, in BUILD-INFO and in the notes exactly what the player is losing.')
         }
     } else {
-        Write-BundleStep "war of the ring     $LivingWorldDocument"
-        Write-BundleStep "war of the ring     $LivingMapBundle"
+        Write-BundleGood "every War of the Ring bundle the loaders declare is present ($($wotrPlan.rules.Count) of $($wotrPlan.rules.Count))"
+        Write-BundleStep "living-world doc    $([IO.Path]::GetFileName($LivingWorldDocument)) - $($wotrPlan.document.basis)"
     }
 
     if ($Highlights -eq '') { $Highlights = Join-Path $PSScriptRoot 'release-highlights.txt' }
@@ -475,16 +524,30 @@ try {
     $totalBytes = [long]0
     $wotrRecord = [ordered]@{
         staged = $false
+        degraded = $true
         reason = $(if ($wotrReason -ne '') { $wotrReason } else { 'the active pack was never staged, so nothing could be added to it' })
         packRelative = ''
         documentSource = $LivingWorldDocument
         documentBytes = $wotrDocumentBytes
         documentRelative = ''
+        documentChoiceBasis = [string]$wotrPlan.document.basis
+        documentProvenance = [string]$wotrPlan.document.provenanceFileName
         mapSource = $LivingMapBundle
         mapRelative = ''
         files = 0
         bytes = [long]0
         reachableWithoutEnvironment = $false
+        loaderDirectory = $script:WotrLoaderDirectory
+        bundlesDeclared = @($wotrPlan.rules).Count
+        bundlesStaged = 0
+        bundlesMissing = @($wotrMissing)
+        bundles = @($wotrPlan.rules | ForEach-Object {
+            [ordered]@{
+                env = $_.env; schema = $_.schema; loader = $_.loader
+                staged = $false; source = $_.source; packRelative = ''
+                basis = $_.basis; losesWithout = $_.loses
+            }
+        })
     }
     foreach ($pack in $packs) {
         Write-BundleStep "copying $($pack.relative) ..."
@@ -514,57 +577,122 @@ try {
         # same for <root>/data/living-map. Beside the exe is reachable only via
         # OPENBFME_LIVING_WORLD_DOC / OPENBFME_LIVING_MAP, and needing an
         # environment variable to see your own bundled content is the bug.
-        if ($wotrStaged -and $pack.relative -ceq $selection.activePack) {
-            Write-BundleStep 'staging War of the Ring data into the active pack ...'
-            $dataRoot = Join-Path $destination 'data'
-            [void](New-Item -ItemType Directory -Path $dataRoot -Force)
+        if ($wotrPlan.groups.Count -gt 0 -and $pack.relative -ceq $selection.activePack) {
+            Write-BundleStep "staging $($wotrPlan.groups.Count) War of the Ring bundle(s) into the active pack ..."
 
-            $documentTarget = Join-Path $dataRoot 'living-world.json'
-            if (Test-Path -LiteralPath $documentTarget) {
-                throw (New-BundleRefusal -Problem "The content pack already ships $($script:WotrDocumentRelative); staging would replace it." -Remedy 'A pack that carries its own living-world document is already complete. Rebuild without staging, or remove the collision at the source.')
+            # Mirrors first, merges after - New-WotrStagingPlan already ordered
+            # the groups that way. A merge group shares a staged directory with
+            # its host because that is literally where the game searches for it:
+            # wotr_screen.gd hands the marker, region-image, string, UI and macro
+            # loaders the directory the region geometry was found in, plus
+            # <pack>/data/living-map-regions. Staging them anywhere else would
+            # produce files no shipped build can reach.
+            $stagedRoots = New-Object 'System.Collections.Generic.List[string]'
+            $createdTargets = New-Object 'System.Collections.Generic.List[string]'
+            foreach ($group in $wotrPlan.groups) {
+                $target = Join-Path $destination ($group.destination -replace '/', '\')
+                $alreadyMine = ($createdTargets -ccontains $target)
+                if ($group.kind -ceq 'document') {
+                    if (Test-Path -LiteralPath $target) {
+                        throw (New-BundleRefusal -Problem "The content pack already ships $($group.destination); staging would replace it." -Remedy 'A pack that carries its own living-world document is already complete. Rebuild without staging, or remove the collision at the source.')
+                    }
+                    [void](New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($target)) -Force)
+                    Copy-Item -LiteralPath $group.source -Destination $target -Force
+                    $stagedRoots.Add($target)
+                    $createdTargets.Add($target)
+                } elseif ($group.primary) {
+                    if (Test-Path -LiteralPath $target) {
+                        throw (New-BundleRefusal -Problem "The content pack already ships $($group.destination); staging would replace it." -Remedy 'Rebuild without staging, or remove the collision at the source.')
+                    }
+                    Invoke-Robocopy -Source $group.source -Destination $target
+                    $stagedRoots.Add($target)
+                    $createdTargets.Add($target)
+                } else {
+                    # A merge is only ever allowed into a directory THIS BUILD
+                    # created. Merging into one the pack itself ships would put
+                    # files inside a pack tree whose hash was just proved, which
+                    # is content substitution wearing staging's clothes.
+                    if (-not $alreadyMine -and (Test-Path -LiteralPath $target)) {
+                        throw (New-BundleRefusal -Problem "$($group.envs -join ', ') must be staged beside $($group.destination), and the content pack already ships that directory." -Remedy 'Rebuild the pack without it, or remove the collision at the source. Nothing may be merged into a pack-owned directory.')
+                    }
+                    Invoke-Robocopy -Source $group.source -Destination $target -Merge
+                }
             }
-            Copy-Item -LiteralPath $LivingWorldDocument -Destination $documentTarget -Force
 
-            $mapTarget = Join-Path $dataRoot 'living-map'
-            if (Test-Path -LiteralPath $mapTarget) {
-                throw (New-BundleRefusal -Problem "The content pack already ships $($script:WotrMapRelative); staging would replace it." -Remedy 'Rebuild without staging, or remove the collision at the source.')
+            # Verify what LANDED, not what was asked for, against the schema each
+            # loader itself declares. A copy that silently dropped a manifest
+            # would otherwise produce a bundle that falls back with nothing
+            # saying why - flat 2D map, flat marker plates, raw string keys.
+            foreach ($rule in $wotrPlan.rules) {
+                if (-not $rule.present) { continue }
+                $landed = Join-Path $destination ($rule.landedRelative -replace '/', '\')
+                [void](Test-BundleWotrArtifact -Path $landed -Schema $rule.schema `
+                    -Label "the staged $($rule.schema) artefact ($($rule.env))" -Strict:($rule.kind -ceq 'document'))
+                if ($rule.kind -ceq 'document') { [void](Test-BundleWotrDocument -Path $landed) }
+                if ($rule.env -ceq 'OPENBFME_LIVING_MAP') {
+                    # The 3D map keeps its own landed check as well, unchanged.
+                    [void](Test-BundleWotrMap -Path (Join-Path $destination ($rule.destination -replace '/', '\')))
+                }
             }
-            Invoke-Robocopy -Source $LivingMapBundle -Destination $mapTarget
-
-            # Verify what LANDED, not what was asked for. A copy that silently
-            # dropped the manifest would produce a bundle whose map falls back to
-            # flat 2D with nothing saying why.
-            [void](Test-BundleWotrDocument -Path $documentTarget)
-            [void](Test-BundleWotrMap -Path $mapTarget)
 
             $overlay = @{}
             $overlayBytes = [long]0
             $destinationFull = [IO.Path]::GetFullPath($destination).TrimEnd('\', '/')
-            foreach ($file in @(
-                @([IO.FileInfo]$documentTarget) +
-                @([IO.Directory]::EnumerateFiles($mapTarget, '*', [IO.SearchOption]::AllDirectories) | ForEach-Object { [IO.FileInfo]$_ })
-            )) {
-                $relativeKey = $file.FullName.Substring($destinationFull.Length + 1).Replace('\', '/')
-                $hash = '-'
-                if (-not $stagedManifest.quick) { $hash = Get-BundleFileSha256 -Path $file.FullName }
-                $overlay[$relativeKey] = [pscustomobject]@{ bytes = $file.Length; sha256 = $hash }
-                $overlayBytes += $file.Length
+            foreach ($root in $stagedRoots) {
+                $files = @()
+                if (Test-Path -LiteralPath $root -PathType Container) {
+                    $files = @([IO.Directory]::EnumerateFiles($root, '*', [IO.SearchOption]::AllDirectories) | ForEach-Object { [IO.FileInfo]$_ })
+                } else {
+                    $files = @([IO.FileInfo]$root)
+                }
+                foreach ($file in $files) {
+                    $relativeKey = $file.FullName.Substring($destinationFull.Length + 1).Replace('\', '/')
+                    $hash = '-'
+                    if (-not $stagedManifest.quick) { $hash = Get-BundleFileSha256 -Path $file.FullName }
+                    $overlay[$relativeKey] = [pscustomobject]@{ bytes = $file.Length; sha256 = $hash }
+                    $overlayBytes += $file.Length
+                }
             }
             $stagedManifest = New-BundleMergedManifest -Base $stagedManifest -Added $overlay
+
+            $bundleRecords = @($wotrPlan.rules | ForEach-Object {
+                [ordered]@{
+                    env         = $_.env
+                    schema      = $_.schema
+                    loader      = $_.loader
+                    staged      = [bool]$_.present
+                    source      = $_.source
+                    packRelative = $(if ($_.present) { $_.landedRelative } else { '' })
+                    basis       = $_.basis
+                    losesWithout = $_.loses
+                }
+            })
             $wotrRecord = [ordered]@{
-                staged        = $true
-                reason        = ''
+                staged        = $wotrStaged
+                degraded      = $wotrDegraded
+                reason        = $wotrReason
                 packRelative  = $pack.relative
                 documentSource = $LivingWorldDocument
                 documentBytes  = $wotrDocumentBytes
-                documentRelative = "$($script:BundleContentDir)/$($pack.relative)/$($script:WotrDocumentRelative)"
+                documentRelative = $(if ($LivingWorldDocument -ne '') { "$($script:BundleContentDir)/$($pack.relative)/$($script:WotrDocumentRelative)" } else { '' })
+                documentChoiceBasis = [string]$wotrPlan.document.basis
+                documentProvenance  = [string]$wotrPlan.document.provenanceFileName
                 mapSource      = $LivingMapBundle
-                mapRelative    = "$($script:BundleContentDir)/$($pack.relative)/$($script:WotrMapRelative)"
+                mapRelative    = $(if ($LivingMapBundle -ne '') { "$($script:BundleContentDir)/$($pack.relative)/$($script:WotrMapRelative)" } else { '' })
                 files          = $overlay.Count
                 bytes          = $overlayBytes
                 reachableWithoutEnvironment = $true
+                loaderDirectory = $script:WotrLoaderDirectory
+                bundlesDeclared = @($wotrPlan.rules).Count
+                bundlesStaged   = @($wotrPlan.rules | Where-Object { $_.present }).Count
+                bundlesMissing  = @($wotrMissing)
+                bundles         = $bundleRecords
             }
-            Write-BundleGood "War of the Ring: $($overlay.Count) files, $(Format-BundleBytes $overlayBytes) staged at content-packs/$($pack.relative)/data/ - no environment variable needed"
+            Write-BundleGood "War of the Ring: $($wotrRecord.bundlesStaged) of $($wotrRecord.bundlesDeclared) bundle(s), $($overlay.Count) files, $(Format-BundleBytes $overlayBytes) staged inside content-packs/$($pack.relative)/ - no environment variable needed"
+            foreach ($rule in $wotrPlan.rules) {
+                if ($rule.present) { Write-BundleGood ("  {0,-36} {1}" -f $rule.env, $rule.landedRelative) }
+                else { Write-BundleWarn ("  {0,-36} NOT STAGED - {1}" -f $rule.env, $rule.loses) }
+            }
         }
 
         $totalFiles += $stagedManifest.files
@@ -827,20 +955,29 @@ $($packLines -join "`n")
 
   Redistributable: $(if ($redistributable) { 'yes' } else { 'NO - retail-derived. Keep this bundle inside the dev group.' })
 
-WAR OF THE RING
-$(if ($wotrRecord.staged) { @"
-  staged       yes - $($wotrRecord.files) files, $(Format-BundleBytes ([long]$wotrRecord.bytes))
-  document     $($wotrRecord.documentRelative)
-  3D map       $($wotrRecord.mapRelative)
-  reachable    without any environment variable: the running game finds both by
-               walking the pack roots it mounted. OPENBFME_LIVING_WORLD_DOC and
-               OPENBFME_LIVING_MAP are not needed and are not set by the launcher.
-"@ } else { @"
-  staged       NO - the menu entry will read WAR OF THE RING (UNAVAILABLE)
-  reason       $($wotrRecord.reason)
-  This is stated rather than hidden. A build that ships the button without the
-  data behind it is a defect, not a feature that happens to be off.
-"@ })
+WAR OF THE RING  ($($wotrRecord.bundlesStaged) of $($wotrRecord.bundlesDeclared) converted bundles, $($wotrRecord.files) files, $(Format-BundleBytes ([long]$wotrRecord.bytes)))
+  What must be here is not a list somebody maintains. It is derived from the
+  loaders in $($wotrRecord.loaderDirectory): each one names the data it needs, and a
+  loader with nothing behind it appears below as NOT STAGED rather than silently.
+
+$(@($wotrRecord.bundles | ForEach-Object { if ($_.staged) {
+"  STAGED       $($_.env)`n               $($_.packRelative)"
+} else {
+"  NOT STAGED   $($_.env)`n               the player loses $($_.losesWithout)"
+} }) -join "`n")
+
+  menu entry   $(if ($wotrRecord.staged) { 'OPENS - the document and the 3D map are both here' } else { 'READS (UNAVAILABLE) - the document or the 3D map is absent' })
+  document     $(if ([string]$wotrRecord.documentSource -ne '') { [IO.Path]::GetFileName([string]$wotrRecord.documentSource) } else { 'none' })
+               chosen by: $($wotrRecord.documentChoiceBasis)
+  reachable    without any environment variable: the running game finds all of
+               this by walking the pack roots it mounted. None of the
+               OPENBFME_LIVING_* settings are needed, and the launcher sets none.
+$(if ($wotrRecord.degraded) { @"
+
+  THIS BUILD IS INCOMPLETE and says so rather than hiding it. A build that ships
+  the feature without the data behind it is a defect, not a feature that happens
+  to be off. Reason: $($wotrRecord.reason)
+"@ } else { '' })
 RELEASE NOTES
   $($script:BundlePatchNotes) - $($notes.commitCount) change(s)
   range        $($notes.rangeBasis)
@@ -935,12 +1072,18 @@ $(@($packRecords | ForEach-Object { "    $($_.id)/$($_.bundleHash)/..." }) -join
 
 WAR OF THE RING
 $(if ($wotrRecord.staged) { @"
-  Its data ships inside this bundle, so the menu entry opens with no setup.
-  You do not need OPENBFME_LIVING_WORLD_DOC or OPENBFME_LIVING_MAP.
+  Its data ships inside this bundle, so the menu entry opens with no setup - the
+  3D Middle-earth map, the filled territories, the 3D army and building models,
+  the region portraits and retail's own names for all of it. You do not need any
+  OPENBFME_LIVING_* environment variable.
 "@ } else { @"
   NOT IN THIS BUILD. The menu entry reads WAR OF THE RING (UNAVAILABLE) and will
   not open: $($wotrRecord.reason)
-"@ })
+"@ })$(if ($wotrRecord.staged -and $wotrRecord.degraded) { @"
+
+  It is INCOMPLETE, and BUILD-INFO.txt names exactly which parts are missing and
+  what you will see instead. That list is generated, not written by hand.
+"@ } else { '' })
 
   To point at a different pack root instead:
     set "OPENBFME_CONTENT=D:\some\other\content-packs"
@@ -988,8 +1131,10 @@ REPORTING A PROBLEM
     if (-not $SkipLaunchCheck) { Write-Host "  booted  $($withEnv.contentDb)" }
     Write-Host "  took    $([int]$elapsed.TotalMinutes)m $($elapsed.Seconds)s"
     Write-Host ''
-    if ($wotrRecord.staged) {
-        Write-Host "  wotr    War of the Ring data staged ($($wotrRecord.files) files) - the menu entry opens with no environment set"
+    if ($wotrRecord.staged -and -not $wotrRecord.degraded) {
+        Write-Host "  wotr    all $($wotrRecord.bundlesDeclared) converted bundles staged ($($wotrRecord.files) files) - the menu entry opens with no environment set"
+    } elseif ($wotrRecord.staged) {
+        Write-Host "  wotr    DEGRADED - $($wotrRecord.bundlesStaged) of $($wotrRecord.bundlesDeclared) bundles staged; BUILD-INFO.txt names what the player loses" -ForegroundColor Yellow
     } else {
         Write-Host "  wotr    NOT STAGED - the menu entry will read WAR OF THE RING (UNAVAILABLE): $($wotrRecord.reason)" -ForegroundColor Yellow
     }
