@@ -180,6 +180,12 @@ const PAN_MARGIN_FRACTION := 0.25
 ## Breathing room around the fitted map, so the coastline is not flush with the
 ## panel edge. 1.0 would be an exact fit.
 const FRAMING_MARGIN := 1.06
+## How many halvings the vertical centring search takes. The search is a
+## bisection on one scalar over a bracket that is at most the map's own height
+## (~4,800 world units), so 48 halvings resolve it to far below a world unit -
+## i.e. exactly, at float precision, and in a bounded number of steps rather than
+## "until it converges".
+const FRAMING_CENTRE_STEPS := 48
 
 var bundle: BundleScript = null
 ## Retail's per-region territory geometry, when a bundle has been converted.
@@ -251,6 +257,18 @@ var plot_icons_by_region: Dictionary = {}
 var display_names: Dictionary = {}
 ## The plot the radial build menu is open on: `{region, index}` or `{}`.
 var selected_plot: Dictionary = {}
+## The plot the POINTER is over, as `{region, index}`, or `{}`. Separate from
+## `selected_plot`, because retail draws two different things for the two states
+## and gates them on two different fields.
+##
+## WHY THIS EXISTS. Retail authors every one of its seven
+## `LivingWorldBuildPlotIcon` families with a `HilightedRing` slot carrying the
+## model `ArmyAntsLoc` and `HideWhenUnhilighted = Yes`. The slot was converted,
+## `_slot_is_showing()` already honours the field, and the ring still never
+## appeared - because hover was only ever tracked per REGION and the plot stand
+## was handed a flat `false`. So retail's own hover art for a build plot was
+## present in the bundle, understood by the code, and unreachable by the pointer.
+var hover_plot: Dictionary = {}
 ## What that menu offers: `[{id, image_id, title, cost, turns}]`, supplied by the
 ## screen from retail's own `LivingWorldBuilding` records.
 var radial_entries: Array[Dictionary] = []
@@ -302,6 +320,15 @@ var _banner_boxes: Array[Rect2] = []
 var _drawn_count := 0
 var _camera_target := Vector3.ZERO
 var _camera_distance := 1.0
+## How far the framing shifts the camera and its look-at point across the screen
+## (`x`) and up it (`y`), in world units at zoom 1, so retail's map sits in the
+## MIDDLE of the panel. A pitched plane projects its near half larger than its
+## far half, so a camera aimed at the map's own centre frames it low - and, once
+## the camera is turned, off to one side as well. This is the correction. It is
+## solved by `_fit_distance()` from retail's own extent, and it is the FRAMING
+## rather than the player's pan: `_pan()` never writes it and `_camera_target`
+## never carries it.
+var _framing_offset := Vector2.ZERO
 var _zoom := 1.0
 var _yaw := 0.0
 ## The live pitch. `DEFAULT_PITCH_DEGREES` is now only the value this opens at
@@ -841,6 +868,8 @@ func _stand_plot_markers() -> void:
 		return
 	var open_region := String(selected_plot.get("region", ""))
 	var open_index := int(selected_plot.get("index", -1))
+	var over_region := String(hover_plot.get("region", ""))
+	var over_index := int(hover_plot.get("index", -1))
 	for region_id in shown:
 		var family := String(plot_icons_by_region.get(region_id, ""))
 		var spots: Array = plots_by_region.get(region_id, []) as Array
@@ -861,7 +890,8 @@ func _stand_plot_markers() -> void:
 			var at := BundleScript.world_to_godot(spot.x, spot.y, height)
 			var stood := _stand_family(
 				"%s.plot%d" % [region_id, index], "plot", family, at, "",
-				false, open_region == region_id and open_index == index)
+				over_region == region_id and over_index == index,
+				open_region == region_id and open_index == index)
 			if stood:
 				plot_markers_standing += 1
 			else:
@@ -986,61 +1016,192 @@ func _frame_camera() -> void:
 	_apply_camera()
 
 
+## The direction from the point the camera looks at to the camera itself, at the
+## live yaw and pitch, as a unit vector. One expression, used by the fit and by
+## `_apply_camera`, so the distance that was solved for and the place the camera
+## is actually put cannot drift apart.
+func _camera_offset_direction() -> Vector3:
+	var pitch := deg_to_rad(_pitch_degrees)
+	return Vector3(sin(_yaw) * cos(pitch), -sin(pitch), cos(_yaw) * cos(pitch))
+
+
+## The camera's own basis at the live yaw and pitch: `x` across the screen, `y`
+## up it, `-z` along the view. Built with `Basis.looking_at` and the same up hint
+## `look_at_from_position` is given below, so it is the basis the camera will
+## actually have rather than a re-derivation of it.
+func _view_basis() -> Basis:
+	return Basis.looking_at(-_camera_offset_direction(), Vector3.UP)
+
+
 ## Fit retail's whole map into the viewport it is actually being drawn in.
 ##
-## THE FRAMING THIS REPLACES fitted the map's LONGER axis into the camera's
-## VERTICAL field of view. Two things were wrong with that and they compounded:
-## the strategic viewport is wide (it ran 1240x548, aspect 2.26), so the vertical
-## field is the tight one and fitting the long axis to it wastes the width; and
-## the map is looked at down a -52 degree pitch, which foreshortens its depth to
-## sin(52) = 0.79 of itself before it reaches the screen. The result was retail's
-## Middle-earth drawn about a quarter of the size of the panel holding it,
-## floating in a black field - which is exactly what "the 3D bit is not 3D" looks
-## like from the outside.
+## THE FRAMING a1e7b2e REPLACED fitted the map's LONGER axis into the camera's
+## VERTICAL field of view, ignoring both the wide panel and the pitch. That is
+## fixed and stays fixed. WHAT THIS COMMIT REPLACES is the fit that followed it:
+## it measured the map's BOUNDING BOX under an ORTHOGRAPHIC approximation -
+## `depth * sin(pitch) + relief * cos(pitch)`, one number for the whole map - and
+## a pitched perspective camera does not draw a box. It draws a TRAPEZOID: the
+## south edge is nearer the camera and projects wide, the north edge is further
+## and projects narrow, and the two do not straddle the panel's centre line.
 ##
-## This fits BOTH axes: the width against the horizontal field derived from the
-## viewport's own aspect, the pitched depth-plus-relief against the vertical
-## field, and takes whichever needs the camera further back.
+## Measured on the shipped bundle at the 1860x800 window, panel 1264x496,
+## pitch -52, zoom 1: the ground quad projected to y 71.9..568.5. The panel is
+## 496 tall. So 72 px of Middle-earth's south coast was BELOW THE PANEL and cut
+## off, and a 72 px band along the top was empty - the map was not too big and
+## not too small, it was 72 px too low, because the orthographic estimate has no
+## way to know that the near half of a pitched plane projects larger than the far
+## half. The width was under-used for the same reason: the estimate is symmetric
+## and the projection is not.
+##
+## THIS FITS THE PROJECTED FOOTPRINT. The eight corners of retail's own terrain
+## extent are resolved into the camera's own basis and the exact perspective
+## inequalities are solved:
+##
+##   ndc_x = across / ((along + distance) * half_horizontal)
+##   ndc_y = (lift - centring) / ((along + distance) * half_vertical)
+##
+## `distance` is the smallest that keeps every |ndc| within 1 - a closed form on
+## each axis, no search - and `centring` is then solved so the footprint's top
+## and bottom slacks are equal, which is what puts the map in the middle of the
+## panel instead of 72 px below it.
+##
+## BOTH PROPERTIES a1e7b2e ESTABLISHED ARE PRESERVED, and both are asserted at a
+## non-default zoom and a non-zero yaw: the fit is still against the viewport's
+## own aspect and the LIVE pitch, and this function still writes ONLY
+## `_camera_distance` and `_framing_offset`, never the player's pan, zoom, yaw
+## or pitch. A resize re-fits; it discards nothing.
 func _fit_distance() -> void:
 	if camera == null or not has_map():
 		return
 	var extent: Dictionary = bundle.terrain_extent
-	var width := float(extent["x_max"]) - float(extent["x_min"])
-	var depth := float(extent["y_max"]) - float(extent["y_min"])
-	var relief := float(extent["z_max"]) - float(extent["z_min"])
-	# THE LIVE PITCH, not the constant. The fit's whole point is that the map
-	# occupies the panel at the angle it is actually being looked at; fitting
-	# against a fixed -52 while the player is at -12 would frame a map nobody is
-	# looking at. Both properties commit a1e7b2e established are preserved: both
-	# axes are still fitted against the viewport's own aspect, and this function
-	# still writes ONLY `_camera_distance`, so a resize re-fits without touching
-	# the player's pan, zoom, yaw or pitch.
-	var pitch := absf(deg_to_rad(_pitch_degrees))
-	# What the map actually occupies vertically on screen at this pitch.
-	var vertical_span := depth * sin(pitch) + relief * cos(pitch)
+	# The fit is measured from the MAP'S OWN CENTRE, never from the live camera
+	# target. If it were measured from the target, panning would move the
+	# footprint, the centring would cancel the move, and the map could not be
+	# panned at all.
+	var centre := BundleScript.world_to_godot(
+		(float(extent["x_min"]) + float(extent["x_max"])) * 0.5,
+		(float(extent["y_min"]) + float(extent["y_max"])) * 0.5,
+		(float(extent["z_min"]) + float(extent["z_max"])) * 0.5)
+	var basis := _view_basis()
+	var right := basis.x
+	var up := basis.y
+	var forward := -basis.z
+
 	var aspect := 16.0 / 9.0
 	if viewport != null and viewport.size.y > 0:
 		aspect = float(viewport.size.x) / float(viewport.size.y)
 	# Godot's Camera3D keeps the VERTICAL field, so `fov` is the vertical one and
 	# the horizontal follows the aspect.
-	var half_vertical := tan(deg_to_rad(camera.fov * 0.5))
-	var half_horizontal := half_vertical * aspect
-	var for_width := (width * 0.5) / maxf(half_horizontal, 0.0001)
-	var for_depth := (vertical_span * 0.5) / maxf(half_vertical, 0.0001)
-	_camera_distance = maxf(for_width, for_depth) * FRAMING_MARGIN
+	var half_vertical := maxf(tan(deg_to_rad(camera.fov * 0.5)), 0.0001)
+	var half_horizontal := maxf(half_vertical * aspect, 0.0001)
+
+	# The eight corners of retail's own terrain extent, in the camera's basis.
+	var across: PackedFloat32Array = PackedFloat32Array()
+	var lift: PackedFloat32Array = PackedFloat32Array()
+	var along: PackedFloat32Array = PackedFloat32Array()
+	for xi in [float(extent["x_min"]), float(extent["x_max"])]:
+		for yi in [float(extent["y_min"]), float(extent["y_max"])]:
+			for zi in [float(extent["z_min"]), float(extent["z_max"])]:
+				var rel := BundleScript.world_to_godot(xi, yi, zi) - centre
+				across.append(rel.dot(right))
+				lift.append(rel.dot(up))
+				along.append(rel.dot(forward))
+
+	# THE DISTANCE, on both axes at once. With a centring shift `s` on an axis,
+	# corner i is on the panel when
+	#     -(along[i] + d) * half  <=  offset[i] - s  <=  (along[i] + d) * half
+	# and a single `s` satisfies every corner iff it satisfies every PAIR, which
+	# rearranges into a closed form with no search in it:
+	#     d >= (offset[i] - offset[j]) / (2 * half) - (along[i] + along[j]) / 2.
+	# WHY THE PAIRWISE FORM AND NOT `|offset| / half - along`: the second is the
+	# distance that frames the map with the camera aimed at the map's own centre,
+	# and aiming at the centre is precisely the mistake. A pitched plane's near
+	# half projects larger than its far half, so the centre of the map is not the
+	# centre of its picture, and insisting on it both wastes panel and pushes the
+	# near edge off it.
+	var needed := 1.0
+	for i in across.size():
+		for j in across.size():
+			needed = maxf(needed, (across[i] - across[j]) / (2.0 * half_horizontal)
+				- (along[i] + along[j]) * 0.5)
+			needed = maxf(needed, (lift[i] - lift[j]) / (2.0 * half_vertical)
+				- (along[i] + along[j]) * 0.5)
+	_camera_distance = needed * FRAMING_MARGIN
+
+	# THE CENTRING, one axis at a time. Both are needed and neither is cosmetic:
+	# the vertical one is what stops Middle-earth sitting 72 px low at the opening
+	# orbit, and the horizontal one is its exact counterpart once the camera is
+	# TURNED - at yaw 0 the near and far edges are equally wide so it solves to
+	# zero, and at yaw 1.1 it was 52 px.
+	_framing_offset = Vector2(
+		_solve_centring(across, along, half_horizontal),
+		_solve_centring(lift, along, half_vertical))
+
+
+## The one shift along an axis that leaves the footprint's two slacks equal - the
+## definition of "in the middle of the panel".
+##
+## The bracket is the range of shifts that keep every corner on the panel; inside
+## it `_footprint_balance` is strictly decreasing in the shift, because every
+## corner's own normalised coordinate is, so a fixed number of halvings lands on
+## the balance point rather than iterating until something converges.
+func _solve_centring(
+	offsets: PackedFloat32Array, along: PackedFloat32Array, half: float
+) -> float:
+	var low := -INF
+	var high := INF
+	for index in offsets.size():
+		var reach := half * (along[index] + _camera_distance)
+		low = maxf(low, offsets[index] - reach)
+		high = minf(high, offsets[index] + reach)
+	if low > high or not is_finite(low) or not is_finite(high):
+		# No shift frames the whole map on this axis. The distance solved above
+		# makes that impossible, and if it ever happens the honest answer is no
+		# shift at all rather than an arbitrary one.
+		return 0.0
+	for _step in FRAMING_CENTRE_STEPS:
+		var middle := (low + high) * 0.5
+		if _footprint_balance(middle, offsets, along, half) > 0.0:
+			low = middle
+		else:
+			high = middle
+	return (low + high) * 0.5
+
+
+## `max + min` of the footprint's normalised coordinate on one axis at a
+## candidate shift. Zero means the map sits exactly in the middle of the panel on
+## that axis; positive means it is pushed towards the far side and the shift must
+## grow.
+func _footprint_balance(
+	shift: float, offsets: PackedFloat32Array, along: PackedFloat32Array, half: float
+) -> float:
+	var top := -INF
+	var bottom := INF
+	for index in offsets.size():
+		var depth := maxf((along[index] + _camera_distance) * half, 0.0001)
+		var normalised := (offsets[index] - shift) / depth
+		top = maxf(top, normalised)
+		bottom = minf(bottom, normalised)
+	return top + bottom
 
 
 func _apply_camera() -> void:
 	if camera == null:
 		return
-	var pitch := deg_to_rad(_pitch_degrees)
 	var distance := _camera_distance * _zoom
-	var offset := Vector3(
-		sin(_yaw) * cos(pitch), -sin(pitch), cos(_yaw) * cos(pitch)) * distance
+	var offset := _camera_offset_direction() * distance
+	# THE CENTRING IS PART OF THE FRAMING, NOT PART OF THE PAN. The camera and
+	# the point it looks at are both shifted by the same vector, so the view
+	# direction is untouched and only the framing moves; and the shift scales with
+	# the zoom, which makes it a CONSTANT offset on screen - so zooming in on a
+	# region does not slide it across the panel.
+	var basis := _view_basis()
+	var look_at := _camera_target + (
+		basis.x * _framing_offset.x + basis.y * _framing_offset.y) * _zoom
 	# `look_at_from_position` rather than `look_at`, because this runs before the
 	# view is inside a tree when a test drives it directly and `look_at` requires
 	# a global transform.
-	camera.look_at_from_position(_camera_target + offset, _camera_target, Vector3.UP)
+	camera.look_at_from_position(look_at + offset, look_at, Vector3.UP)
 
 
 # --- region placement ---------------------------------------------------------
@@ -1720,15 +1881,26 @@ func _gui_input(event: InputEvent) -> void:
 				_pan(motion.relative)
 			return
 		var hovered := region_at(motion.position)
-		if hovered != hover_region:
-			hover_region = hovered
+		# THE PLOT UNDER THE POINTER, not only the region. Retail gates a build
+		# plot's ring on `HideWhenUnhilighted`, which is a per-PLOT state: moving
+		# from one plot to the next inside one region has to move the ring, and
+		# while hover was tracked per region it could not.
+		var over := plot_at(motion.position)
+		var moved_region := hovered != hover_region
+		var moved_plot := not _same_plot(over, hover_plot)
+		if not moved_region and not moved_plot:
+			return
+		hover_region = hovered
+		hover_plot = over
+		if moved_region:
 			region_hovered.emit(hovered)
 			_apply_territory_colors()
-			# Retail's hover art is a SLOT of the marker family
-			# (`HideWhenUnhilighted`), so what is standing in the world changes
-			# when the pointer moves, not only what the overlay paints.
-			_rebuild_markers()
-			_redraw()
+		# Retail's hover art is a SLOT of the marker family
+		# (`HideWhenUnhilighted`), so what is standing in the world changes when
+		# the pointer moves, not only what the overlay paints. Rebuilt for either
+		# kind of move, because a plot ring and a region highlight are both slots.
+		_rebuild_markers()
+		_redraw()
 		return
 	if not (event is InputEventMouseButton):
 		return
@@ -1762,6 +1934,29 @@ func _gui_input(event: InputEvent) -> void:
 			var region_id := region_at(button.position)
 			if not region_id.is_empty():
 				region_clicked.emit(region_id)
+
+
+## Whether two `{region, index}` plot references are the same plot. An empty
+## dictionary is a legitimate value - the pointer is over no plot - and two
+## empties are the same, so this is not `==` on dictionaries.
+static func _same_plot(left: Dictionary, right: Dictionary) -> bool:
+	return (String(left.get("region", "")) == String(right.get("region", ""))
+		and int(left.get("index", -1)) == int(right.get("index", -1)))
+
+
+## Set the plot the pointer is over directly, as `{region, index}` or `{}`.
+## PRESENTATION ONLY, and public for the same reason `focus_region` is: a test or
+## a capture can put the pointer on a plot without synthesising motion events
+## through a control that has to be in a tree to receive them.
+func hover_plot_at(region_id: String, index: int) -> void:
+	var wanted: Dictionary = {}
+	if not region_id.is_empty() and index >= 0:
+		wanted = {"region": region_id, "index": index}
+	if _same_plot(wanted, hover_plot):
+		return
+	hover_plot = wanted
+	_rebuild_markers()
+	_redraw()
 
 
 ## The build plot under a point, as `{region, index}`, or `{}`. Deterministic:
@@ -1917,4 +2112,8 @@ func camera_state() -> Dictionary:
 		"pitch": _pitch_degrees,
 		"target": _camera_target,
 		"distance": _camera_distance,
+		# Part of the FIT, like the distance: a resize may move it, and a resize
+		# moving it is not the same thing as a resize discarding the player's
+		# framing. Reported so a test can tell the two apart.
+		"centring": _framing_offset,
 	}

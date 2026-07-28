@@ -598,6 +598,93 @@ func configure(bound_session, map_ids: Array, reason: String, pack_roots: Array 
 ## can drive it directly, and so a failure to load the MAP never stops the
 ## strategic layer from working - the 2D fallback is a real screen, not an error
 ## state.
+## THE 90-REGION NUMBER, SPLIT SO IT STOPS NEEDING A FOOTNOTE.
+##
+## The region-image bundle carries 90 rows and every report that quoted it said
+## "90 regions". Thirty-eight of those rows are `Region_1` .. `Region_38`: they
+## carry no display name, no `RegionPortrait` and no `Fortress.Portrait`, and
+## they are why the geometry probe reads `shadedRegions=52 ... unshaded=38`.
+## Retail's own living-world document says what they are - it declares three
+## `RegionCampaign` blocks, and their region lists are disjoint from each other
+## except that two of them are IDENTICAL:
+##
+##   DefaultCampaign   52 regions, all named, all with a portrait
+##   EvilCampaign      38 regions, `Region_1`..`Region_38`
+##   GoodCampaign      the SAME 38 ids, not 38 more
+##
+## 52 + 38 = 90, which is exactly the bundle's row count, so nothing is dropped
+## and nothing is double-counted. THE ROWS STAY. This is a reporting fix: the
+## placeholders are still loaded, still addressable and still listed - they are
+## just no longer added to a number that reads as "regions you can play".
+##
+## THE SPLIT IS MADE ON THE ROWS THEMSELVES, not on the id spelling. A row counts
+## as a placeholder when it names NO art of any kind - no region portrait, no
+## fortress portrait, no fortress display name. That is a property of the data
+## rather than of the naming convention, so a placeholder that retail one day
+## called something else would still be counted as one, and a real region that
+## happened to be called `Region_7` would not.
+func region_portrait_census() -> Dictionary:
+	var playable: Array[String] = []
+	var placeholders: Array[String] = []
+	if region_images == null or not region_images.loaded:
+		return {"playable": playable, "placeholders": placeholders, "rows": 0}
+	var ids: Array[String] = []
+	for key in region_images.regions.keys():
+		ids.append(String(key))
+	ids.sort()
+	for region_id in ids:
+		var row: Dictionary = region_images.regions[region_id] as Dictionary
+		var bare := (
+			String(row.get("regionPortrait", "")).is_empty()
+			and String(row.get("fortressPortrait", "")).is_empty()
+			and String(row.get("fortressDisplayName", "")).is_empty())
+		if bare:
+			placeholders.append(region_id)
+		else:
+			playable.append(region_id)
+	return {
+		"playable": playable, "placeholders": placeholders, "rows": ids.size(),
+	}
+
+
+## The census as one line, stating the ARITHMETIC rather than the total, because
+## the total on its own is the thing that was misleading.
+##
+## `compact` is for the on-screen conversion report, which is a fixed panel that
+## already runs long; the launch log gets the whole sentence, including which of
+## retail's campaign blocks the placeholder rows come from. The two say the same
+## thing and neither rounds a number.
+func region_portrait_census_line(compact: bool = false) -> String:
+	var census: Dictionary = region_portrait_census()
+	var playable: Array = census["playable"] as Array
+	var placeholders: Array = census["placeholders"] as Array
+	if int(census["rows"]) <= 0:
+		return "REGION CENSUS: no region-image bundle, so there is no region census to split."
+	if placeholders.is_empty():
+		return ("REGION CENSUS: %d region row(s), all of them named and carrying "
+			+ "art; no placeholder rows in this bundle.") % playable.size()
+	if compact:
+		return ("REGION CENSUS: %d row(s) = %d PLAYABLE + %d PLACEHOLDER (%s and "
+			+ "%d more, none with a name or a portrait of any kind - retail "
+			+ "declares them in its EvilCampaign and GoodCampaign blocks, which "
+			+ "list the SAME ids rather than a set each). The placeholder rows "
+			+ "are KEPT, not dropped; they are not part of the playable count.") % [
+				int(census["rows"]), playable.size(), placeholders.size(),
+				String(placeholders[0]), placeholders.size() - 1]
+	var shown := placeholders.slice(0, mini(placeholders.size(), 4))
+	return ("REGION CENSUS: %d row(s) = %d PLAYABLE region(s) + %d PLACEHOLDER "
+		+ "row(s), %d + %d = %d. The placeholders carry no name and no portrait "
+		+ "of any kind (%s%s); retail's own living-world document declares them "
+		+ "in its EvilCampaign and GoodCampaign blocks, which list the SAME %d "
+		+ "ids rather than %d each, beside DefaultCampaign's %d named regions. "
+		+ "They are kept and addressable, not dropped - they are simply not part "
+		+ "of the playable count.") % [
+			int(census["rows"]), playable.size(), placeholders.size(),
+			playable.size(), placeholders.size(), int(census["rows"]),
+			", ".join(shown), "" if placeholders.size() <= shown.size() else ", ...",
+			placeholders.size(), placeholders.size(), playable.size()]
+
+
 func load_map_bundle(pack_roots: Array = []) -> bool:
 	if heading_label == null:
 		build()
@@ -755,6 +842,7 @@ func _load_strings(located: Dictionary, pack_roots: Array) -> void:
 		print("[WotrRegionArt] retail region portraits loaded from %s" % String(region_images_found.get("path", "")))
 		for line in region_image_bundle.describe_load():
 			print("[WotrRegionArt]   %s" % line)
+		print("[WotrRegionArt]   %s" % region_portrait_census_line())
 	else:
 		region_images = null
 		region_images_reason = String(region_images_found.get("reason", ""))
@@ -899,6 +987,12 @@ func _refresh_map_mode_label() -> void:
 			strings.count(), strings.missing_keys.size()])
 	else:
 		notes.append("NAMES: NOT CONVERTED - regions carry retail's own ids")
+	# THE REGION CENSUS, SPLIT. The 90 in the region-art bundle is 52 playable
+	# regions plus 38 placeholder rows, and reporting the total on its own is
+	# what made `unshaded=38` read as a conversion gap rather than as retail's
+	# own second-campaign block.
+	if region_images != null and region_images.loaded:
+		notes.append(region_portrait_census_line(true))
 	# LABELS: how many names are on screen and how many were held back so the
 	# rest could be read. A label quietly dropped is exactly the kind of thing
 	# that looks like a rendering bug, so the count is stated.

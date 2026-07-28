@@ -66,7 +66,17 @@ const SPOT_Z_OFFSET := 5.0
 const SPOT_SCALE := 1.0
 const SPOT_ORIENT_DEGREES := 270.0
 
-const CHECKS_WITH_BUNDLE := 40
+## The model retail names in the `HilightedRing` slot of all seven
+## `LivingWorldBuildPlotIcon` families - `livingworldbuildploticons.ini`, one
+## value, no exceptions. Asserted BY NAME so a bundle that started binding that
+## slot to some other ring could not pass as "a ring is standing".
+const RETAIL_PLOT_RING_MODEL := "ArmyAntsLoc"
+
+## 40 was the count before retail's per-plot hover ring became reachable.
+## Nothing was removed and nothing was weakened; two were added, both about the
+## ring that had never been on screen, so 40 + 2 = 42. The no-bundle total is
+## untouched at 5, because a ring needs a plot to stand on.
+const CHECKS_WITH_BUNDLE := 42
 const CHECKS_WITHOUT_BUNDLE := 5
 
 var _passed := 0
@@ -384,6 +394,10 @@ func _check_the_map_stands_them_and_drops_the_flat_stand_ins() -> void:
 		_fail("the_markers_survive_the_whole_zoom_range_and_an_orbit", "no document")
 		_fail("a_marker_stands_at_retails_exact_size_when_close_in_and_is_capped_when_far_out",
 			"no document")
+		_fail("retails_hilighted_ring_stands_on_the_plot_under_the_pointer_and_no_other",
+			"no document")
+		_fail("the_plot_ring_is_retails_own_model_and_leaves_with_the_pointer",
+			"no document")
 		return
 	var session = _seat(found)
 	var screen := ScreenScript.new()
@@ -402,6 +416,10 @@ func _check_the_map_stands_them_and_drops_the_flat_stand_ins() -> void:
 		_fail("the_standing_markers_seed_the_label_placer", "no map")
 		_fail("the_markers_survive_the_whole_zoom_range_and_an_orbit", "no map")
 		_fail("a_marker_stands_at_retails_exact_size_when_close_in_and_is_capped_when_far_out",
+			"no map")
+		_fail("retails_hilighted_ring_stands_on_the_plot_under_the_pointer_and_no_other",
+			"no map")
+		_fail("the_plot_ring_is_retails_own_model_and_leaves_with_the_pointer",
 			"no map")
 		screen.queue_free()
 		return
@@ -539,7 +557,82 @@ func _check_the_map_stands_them_and_drops_the_flat_stand_ins() -> void:
 		"x%.2f at zoom %.2f, x%.2f at %.2f, x%.2f at %.2f" % [
 			at_near, MapViewScript.MIN_ZOOM, at_true, MapViewScript.MARKER_TRUE_ZOOM,
 			at_far, MapViewScript.MAX_ZOOM])
+	_check_a_plot_ring_follows_the_pointer(view)
 	screen.queue_free()
+
+
+## RETAIL'S OWN PER-PLOT HOVER ART, and the reason it was invisible.
+##
+## Every one of retail's seven `LivingWorldBuildPlotIcon` families authors a
+## `HilightedRing` slot carrying the model `ArmyAntsLoc` with
+## `HideWhenUnhilighted = Yes`. All seven converted, `_slot_is_showing()` already
+## honoured the field, and the ring had never once been on screen - because the
+## view tracked hover per REGION and handed the plot stand a flat `false`. The
+## art, the rule and the data were all present and the pointer could not reach
+## them.
+##
+## So this asserts the thing that was missing rather than the thing that worked:
+## the ring stands on the plot under the pointer, on THAT plot and no other -
+## including no other plot in the same region, which is the case a per-region
+## hover cannot distinguish - and it is gone when the pointer leaves.
+func _check_a_plot_ring_follows_the_pointer(view) -> void:
+	# A region the pointer could actually be over: it has to carry at least TWO
+	# authored plots, so "this plot and not its neighbour" is a real distinction,
+	# and a seat has to own it or retail's data binds its plots to no icon family.
+	var region_id := ""
+	var region_ids: Array[String] = []
+	for key in view.plots_by_region.keys():
+		region_ids.append(String(key))
+	region_ids.sort()
+	for candidate in region_ids:
+		if (view.plots_by_region[candidate] as Array).size() < 2:
+			continue
+		if String(view.plot_icons_by_region.get(candidate, "")).is_empty():
+			continue
+		region_id = candidate
+		break
+	if region_id.is_empty():
+		_fail("retails_hilighted_ring_stands_on_the_plot_under_the_pointer_and_no_other",
+			"the state owns no region with two authored plots")
+		_fail("the_plot_ring_is_retails_own_model_and_leaves_with_the_pointer",
+			"the state owns no region with two authored plots")
+		return
+
+	# The plots are only drawn for a region that is selected or hovered, so the
+	# pointer has to be over the region before it can be over one of its plots.
+	view.hover_region = region_id
+	view.hover_plot_at(region_id, 0)
+	var on_first := _slots_standing(view, "%s.plot0" % region_id)
+	var on_second := _slots_standing(view, "%s.plot1" % region_id)
+	_check("retails_hilighted_ring_stands_on_the_plot_under_the_pointer_and_no_other",
+		on_first.has("HilightedRing") and not on_second.has("HilightedRing"),
+		"plot 0 of %s stands %s, plot 1 stands %s" % [
+			region_id, str(on_first), str(on_second)])
+
+	# THE MODEL IS RETAIL'S, NAMED, not "a ring". If the bundle ever binds that
+	# slot to something else this says which model it actually stood.
+	var family := String(view.plot_icons_by_region.get(region_id, ""))
+	var ring: Dictionary = view.markers.slot(family, "HilightedRing")
+	var model := String(ring.get("model", ""))
+	view.hover_plot_at("", -1)
+	var after_leaving := _slots_standing(view, "%s.plot0" % region_id)
+	_check("the_plot_ring_is_retails_own_model_and_leaves_with_the_pointer",
+		model == RETAIL_PLOT_RING_MODEL and not after_leaving.has("HilightedRing"),
+		"%s/HilightedRing names %s (retail: %s); with the pointer away plot 0 stands %s" % [
+			family, model if not model.is_empty() else "NOTHING",
+			RETAIL_PLOT_RING_MODEL, str(after_leaving)])
+	view.hover_region = ""
+	view._rebuild_markers()
+
+
+## The slot names standing for one marker key, as an Array of String. Read off
+## the view's own record of what it stood, which is the same record the other
+## checks in this file read.
+func _slots_standing(view, key: String) -> Array:
+	for row in view._standing_markers:
+		if String(row["key"]) == key:
+			return Array(row["slots"] as PackedStringArray)
+	return []
 
 
 func _seat(found: Dictionary):

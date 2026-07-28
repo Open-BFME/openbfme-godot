@@ -27,6 +27,28 @@ const SessionScript = preload("res://src/wotr/wotr_session.gd")
 const SETTLE_FRAMES := 45
 const WINDOW_SIZE := Vector2i(1860, 800)
 
+## THE TWO WINDOWS THE LAYOUT IS ASSERTED AT AND WAS NEVER PHOTOGRAPHED AT.
+##
+## `wotr_region_card_runner` holds the layout to five window sizes and asserts
+## two properties at the ends of that range: at 1100x700 the map must not shrink
+## below its stated floor and the sidebar must give way instead, and at
+## 2560x1351 - the owner's own window, which is why that odd number is in the
+## runner - the map must be nearly twice the area it has at the authored size.
+## Both were arithmetic only. Every shot this runner took was at 1860x800, so
+## "the sidebar gives way rather than sliding over Middle-earth" and "a bigger
+## window is a bigger map" were claims with no picture behind them, which is
+## exactly the gap this runner exists to close.
+##
+## NEITHER NUMBER IS CHOSEN HERE. Both are transcribed from
+## `wotr_region_card_runner.gd`, which is where they are asserted: 1100x700 from
+## `the_map_never_shrinks_below_its_stated_floor`, and 2560x1351 - the owner's
+## own window, which is why it is an odd number rather than a round one - from
+## that runner's `SIZES` list and its
+## `the_map_grows_with_the_window_rather_than_staying_at_its_authored_size`.
+## Picking a different pair here would photograph a layout nobody checks.
+const LAYOUT_FLOOR_WINDOW := Vector2i(1100, 700)
+const OWNERS_WINDOW := Vector2i(2560, 1351)
+
 var _out_dir := ""
 var _screen: Control = null
 var _frames := 0
@@ -79,6 +101,16 @@ func _initialize() -> void:
 		{"name": "05-zoomed-in", "action": "zoom_in"},
 		{"name": "06-orbited", "action": "orbit"},
 		{"name": "07-zoomed-out", "action": "zoom_out"},
+		# THE TWO WINDOWS THE LAYOUT IS ASSERTED AT AND WAS NEVER PHOTOGRAPHED
+		# AT. Both reset the camera first, so what differs between 08, 09 and 01
+		# is the WINDOW and nothing else: three shots of one framing at three
+		# sizes is a comparison, three shots of three cameras is not.
+		{"name": "08-layout-floor", "action": "reset", "window": LAYOUT_FLOOR_WINDOW},
+		{"name": "09-owners-window", "action": "reset", "window": OWNERS_WINDOW},
+		# BACK TO THE AUTHORED SIZE, and this is not a spare picture: the layout
+		# has just been driven down to its floor and back up again, so if a
+		# control does not come back, 10 and 01 differ and the pair says so.
+		{"name": "10-back-at-the-authored-size", "action": "reset", "window": WINDOW_SIZE},
 	]
 	print("[capture] writing to %s" % _out_dir)
 
@@ -99,6 +131,19 @@ func _process(_delta: float) -> bool:
 	# this lane took was one step stale because of it. `_applied` makes the two
 	# halves separate visits.
 	if not _applied:
+		# THE WINDOW FIRST, then the action. A resize relayouts the screen and
+		# re-fits the camera, so doing it after would photograph a camera fitted
+		# to the previous panel; and it is done in the SAME visit as the action so
+		# that a whole settle period still passes before the shutter.
+		if step.has("window"):
+			var wanted := step["window"] as Vector2i
+			root.size = wanted
+			if _screen != null:
+				_screen.size = Vector2(wanted)
+				_screen._relayout()
+			print("[capture] window %s -> screen %s, map panel %s" % [
+				str(wanted), str(_screen.size),
+				"none" if _screen == null else str(_screen.map3d.size)])
 		_apply(String(step["action"]))
 		_applied = true
 		return false
@@ -158,6 +203,10 @@ func _apply(action: String) -> void:
 	if action.is_empty() or _screen == null or _screen.session == null:
 		return
 	match action:
+		"reset":
+			# Retail's opening framing, so a window shot is about the WINDOW.
+			_screen.map3d.reset_camera()
+			print("[capture] camera %s" % str(_screen.map3d.camera_state()))
 		"hover":
 			# Point at whatever region the strategic layer says the active seat
 			# could stage from - a real region, chosen by the state, not a name

@@ -33,7 +33,9 @@ const StateScript = preload("res://src/wotr/wotr_state.gd")
 ##                    + 1 (the view instanced nothing, and says so)
 ##                    + 6 (the screen labels the 2D fallback and stays sealed)
 ##                    + 1 (the fallback label sends the owner to the log)
-##                    = 14
+##                    + 2 (the region census is split, and the placeholder rows
+##                         are kept rather than dropped)
+##                    = 16
 ##   with a bundle    = 2 (bundle located, no spurious reason)
 ##                    + 3 (a deliberately corrupt bundle is NAMED, and does not
 ##                         end the search)
@@ -46,9 +48,19 @@ const StateScript = preload("res://src/wotr/wotr_state.gd")
 ##                    + 7 (the screen shows the 3D map, names what it does not
 ##                         draw, and stays sealed)
 ##                    + 1 (the 3D label reports how many meshes are on screen)
-##                    = 29
-const EXPECTED_CHECKS_NO_BUNDLE := 14
-const EXPECTED_CHECKS_WITH_BUNDLE := 29
+##                    + 3 (the whole map is inside the panel, centred in it, and
+##                         the framing does not slide as the zoom moves)
+##                    + 2 (the region census is split, and the placeholder rows
+##                         are kept rather than dropped)
+##                    = 34
+##
+## THE ARITHMETIC OF THE TWO MOVES. Nothing was removed and nothing was weakened.
+## With a bundle: 29 + 3 framing + 2 census = 34. With no bundle: 14 + 2 census
+## = 16 - the census checks run in both modes because the region-image bundle is
+## found independently of the map bundle, and the framing ones do not, because a
+## framing check needs a map to frame.
+const EXPECTED_CHECKS_NO_BUNDLE := 16
+const EXPECTED_CHECKS_WITH_BUNDLE := 34
 
 ## Retail's 64 sub-objects minus the 30 this lane holds back (the impassable
 ## volumes, the animated ambient cards and the multi-stage water overlays).
@@ -88,6 +100,7 @@ func _init() -> void:
 		_check_coordinate_space(bundle)
 		_check_view_places_regions(bundle)
 	_check_screen_fallback_is_labelled(have_bundle)
+	_check_the_region_census_is_split()
 
 	var expected := EXPECTED_CHECKS_NO_BUNDLE
 	if have_bundle:
@@ -256,6 +269,10 @@ func _check_view_places_regions(bundle) -> void:
 		"the view instanced retail's %d drawable sub-objects" % EXPECTED_DRAWN_SUB_OBJECTS,
 		"instanced %d" % view.drawn_mesh_count())
 
+	# THE FRAMING, before the regions, so that a missing living-world document
+	# cannot take these three with it: the fit needs a map, not a session.
+	_check_the_framing_fills_the_panel(view)
+
 	# Feed the view retail's own region rows, built straight from the document.
 	var session := _load_session()
 	if session == null:
@@ -315,6 +332,231 @@ func _check_view_places_regions(bundle) -> void:
 		"outside %s" % str(outside))
 
 	view.free()
+
+
+## THE PROJECTED FOOTPRINT, and the three things the fit before this one got
+## wrong.
+##
+## That fit measured retail's terrain BOUNDING BOX and reduced its on-screen
+## height to `depth * sin(pitch) + relief * cos(pitch)` - one number, symmetric,
+## and therefore a description of a rectangle. A pitched perspective camera does
+## not draw a rectangle. It draws a TRAPEZOID: the south edge is nearer the
+## camera and projects wide, the north edge is further and projects narrow, and
+## the two do not straddle the panel's centre line.
+##
+## Measured on the shipped bundle at the capture window - panel 1264x496,
+## pitch -52, zoom 1 - the ground quad projected to y 71.9..568.5 on a panel 496
+## tall. So 72 px of Middle-earth's south coast was cut off the bottom, a 72 px
+## band along the top was empty, 18.28% of the map was not on screen at all, and
+## nothing said so. That last part is the reason these checks exist: the defect
+## was invisible to every assertion this lane had.
+##
+## All three are asserted AT A NON-ZERO YAW as well as at retail's opening orbit,
+## and the third at a non-default zoom - the same discipline the resize property
+## in `wotr_living_world_ui_runner` is held to, and for the same reason. A
+## framing fix that only holds at yaw 0 and zoom 1 is a screenshot, not a fix.
+func _check_the_framing_fills_the_panel(view) -> void:
+	# Retail's own opening orbit, then a turned camera at a shallow angle and a
+	# turned camera at a steep one.
+	var orbits := [
+		[0.0, MapViewScript.DEFAULT_PITCH_DEGREES], [1.1, -21.0], [-2.3, -70.0]]
+	# AND AT MORE THAN ONE PANEL SHAPE, because the defect was aspect-dependent
+	# and a single panel is how it survived. These are the map panel's REAL
+	# measured sizes at the three windows the layout is asserted at - 1264x496 at
+	# the authored 1860x800, 1868x1047 at the owner's 2560x1351, 760x396 at the
+	# 1100x700 floor - plus this runner's own historical 1240x620. The
+	# orthographic fit this replaces overflowed 1264x496 by 72 px and fitted
+	# 1240x620 almost exactly, which is precisely why testing one shape proved
+	# nothing.
+	var panels := [
+		Vector2(1264.0, 496.0), Vector2(1868.0, 1047.0),
+		Vector2(760.0, 396.0), Vector2(1240.0, 620.0)]
+	var original: Vector2 = view.size
+	var worst_overshoot := 0.0
+	var overshoot_at := ""
+	var worst_offset := 0.0
+	var offset_at := ""
+	var framings := 0
+	for panel_size in panels:
+		view.size = panel_size as Vector2
+		view._on_resized()
+		for orbit in orbits:
+			framings += 1
+			view.reset_camera()
+			view.set_orbit(float(orbit[0]), float(orbit[1]))
+			var panel := Vector2(view.viewport.size)
+			var box := _projected_footprint(view)
+			# OVERSHOOT: how far outside the panel the footprint reaches, in px.
+			var overshoot := maxf(
+				maxf(-box.position.x, -box.position.y),
+				maxf(box.end.x - panel.x, box.end.y - panel.y))
+			if overshoot > worst_overshoot:
+				worst_overshoot = overshoot
+				overshoot_at = "panel %s yaw %.1f pitch %.0f: box %s" % [
+					panel, orbit[0], orbit[1], box]
+			# OFF-CENTRE: the gap between the two slacks, as a fraction of the
+			# panel. This was 72 px - 14.5% of the panel height - before the fix.
+			var offset := maxf(
+				absf(box.position.x - (panel.x - box.end.x)) / maxf(panel.x, 1.0),
+				absf(box.position.y - (panel.y - box.end.y)) / maxf(panel.y, 1.0))
+			if offset > worst_offset:
+				worst_offset = offset
+				offset_at = "panel %s yaw %.1f pitch %.0f: %.1f/%.1f left/right, %.1f/%.1f top/bottom" % [
+					panel, orbit[0], orbit[1],
+					box.position.x, panel.x - box.end.x,
+					box.position.y, panel.y - box.end.y]
+	view.size = original
+	view._on_resized()
+
+	_check(worst_overshoot <= 0.5,
+		"retail's whole map projects inside the panel at every orbit and panel shape",
+		"worst overshoot %.2f px over %d framing(s)%s" % [
+			worst_overshoot, framings,
+			"" if overshoot_at.is_empty() else " (" + overshoot_at + ")"])
+	# One percent of the panel. Not a matter of taste: the defect this replaces
+	# was 14.5% of the panel height, so a tolerance fourteen times tighter than
+	# the thing it guards against cannot be met by accident.
+	_check(worst_offset <= 0.01,
+		"the map is centred in the panel rather than riding low in it",
+		"worst slack difference %.2f%% of the panel over %d framing(s)%s" % [
+			100.0 * worst_offset, framings,
+			"" if offset_at.is_empty() else " (" + offset_at + ")"])
+
+	# THE CENTRING SCALES WITH THE ZOOM, and this is why that matters. It shifts
+	# the camera AND the point it looks at, so if it did not scale with the
+	# distance it would grow into a huge offset as the player zoomed in and
+	# `focus_region` would carry its region off the panel. Scaled, it is a
+	# CONSTANT offset on screen: the aimed point projects to the same pixel at
+	# every zoom. Checked at a non-zero yaw, across the whole 33.8x range.
+	view.reset_camera()
+	view.set_orbit(1.1, -21.0)
+	var aimed: Vector3 = view.camera_state()["target"]
+	var seen: Array[Vector2] = []
+	for zoom in [1.0, 0.31, MapViewScript.MIN_ZOOM]:
+		view.focus_region("", float(zoom))
+		seen.append(_project(view, aimed))
+	var drift := 0.0
+	for point in seen:
+		drift = maxf(drift, point.distance_to(seen[0]))
+	_check(drift <= 1.0,
+		"zooming does not slide the framing across the panel",
+		"the aimed point moved %.2f px across zoom 1.00 / 0.31 / %.2f (%s)" % [
+			drift, MapViewScript.MIN_ZOOM, str(seen)])
+	view.reset_camera()
+
+
+## The screen-space bounding box of retail's own terrain extent - all eight
+## corners, projected through the camera the fit actually placed.
+##
+## The projection is done here rather than by `Camera3D.unproject_position`
+## because this runner drives a view that is not in a scene tree, and that method
+## refuses with "Camera is not inside scene" and returns (0, 0) for every point -
+## which would pass every check below silently, the worst possible failure for a
+## framing test. It reads the camera's own TRANSFORM, which is what
+## `look_at_from_position` wrote, so it is still checking the camera that was
+## placed rather than re-running the arithmetic that placed it: a wrong distance
+## or a wrong centring moves the transform and shows up here.
+##
+## `transform` and not `global_transform`: the camera's parent is a SubViewport,
+## which carries no 3D transform of its own, so the two are the same thing - the
+## view's own `_pan()` reads the basis the same way and says why.
+func _project(view, world: Vector3) -> Vector2:
+	var local: Vector3 = view.camera.transform.affine_inverse() * world
+	var depth := maxf(-local.z, 0.0001)
+	var panel := Vector2(view.viewport.size)
+	var half_vertical := tan(deg_to_rad(view.camera.fov * 0.5))
+	var half_horizontal := half_vertical * (panel.x / maxf(panel.y, 1.0))
+	return Vector2(
+		(local.x / (depth * half_horizontal) + 1.0) * 0.5 * panel.x,
+		(1.0 - local.y / (depth * half_vertical)) * 0.5 * panel.y)
+
+
+func _projected_footprint(view) -> Rect2:
+	var extent: Dictionary = view.bundle.terrain_extent
+	var low := Vector2(INF, INF)
+	var high := Vector2(-INF, -INF)
+	for xi in [float(extent["x_min"]), float(extent["x_max"])]:
+		for yi in [float(extent["y_min"]), float(extent["y_max"])]:
+			for zi in [float(extent["z_min"]), float(extent["z_max"])]:
+				var point := _project(
+					view, BundleScript.world_to_godot(xi, yi, zi))
+				low.x = minf(low.x, point.x)
+				low.y = minf(low.y, point.y)
+				high.x = maxf(high.x, point.x)
+				high.y = maxf(high.y, point.y)
+	return Rect2(low, high - low)
+
+
+## THE 90 THAT NEEDED A FOOTNOTE.
+##
+## Every report that quoted the region-image bundle said "90 regions", and the
+## geometry probe said `shadedRegions=52 ... unshaded=38` - which reads as a
+## conversion gap and is not one. Thirty-eight of those 90 rows are retail's own
+## `Region_1`..`Region_38` placeholders: no display name, no `RegionPortrait`,
+## no `Fortress.Portrait`. Retail's living-world document declares them in its
+## EvilCampaign and GoodCampaign blocks, which list the SAME 38 ids rather than
+## 38 each, beside DefaultCampaign's 52 named regions. 52 + 38 = 90.
+##
+## THE FIX WAS A REPORTING FIX AND THESE TWO CHECKS SAY SO: the first asserts the
+## arithmetic of the split, and the second asserts that the placeholder rows are
+## STILL THERE afterwards. Splitting a census by deleting the awkward half would
+## satisfy the first on its own, which is exactly why the second exists.
+func _check_the_region_census_is_split() -> void:
+	var screen = ScreenScript.new()
+	screen.build()
+	screen.load_map_bundle([])
+	var census: Dictionary = screen.region_portrait_census()
+	var rows := int(census["rows"])
+	var playable: Array = census["playable"] as Array
+	var placeholders: Array = census["placeholders"] as Array
+	var line: String = screen.region_portrait_census_line()
+
+	if rows <= 0:
+		# No region-image bundle. The census must SAY that rather than report a
+		# confident zero, which would be the same silent-nothing this lane keeps
+		# finding.
+		_check(line.contains("no region-image bundle"),
+			"with no region-image bundle the census says so rather than reporting zero",
+			line)
+		_check(playable.is_empty() and placeholders.is_empty(),
+			"with no region-image bundle the census claims no regions of either kind",
+			"%d playable, %d placeholder" % [playable.size(), placeholders.size()])
+		screen.queue_free()
+		return
+
+	# THE ARITHMETIC, stated in the check's own detail so the numbers are in the
+	# log rather than only in a comment.
+	var adds_up := playable.size() + placeholders.size() == rows
+	var every_placeholder_is_bare := true
+	var wrong: Array[String] = []
+	for region_id in placeholders:
+		var row: Dictionary = screen.region_images.regions[String(region_id)] as Dictionary
+		if not (String(row.get("regionPortrait", "")).is_empty()
+				and String(row.get("fortressPortrait", "")).is_empty()
+				and String(row.get("fortressDisplayName", "")).is_empty()):
+			every_placeholder_is_bare = false
+			wrong.append(String(region_id))
+	_check(adds_up and every_placeholder_is_bare and not playable.is_empty(),
+		"the region census splits the placeholder rows out of the playable count",
+		"%d playable + %d placeholder = %d row(s)%s" % [
+			playable.size(), placeholders.size(), rows,
+			"" if wrong.is_empty() else "; NOT BARE: " + ", ".join(wrong)])
+
+	# THE ROWS ARE KEPT. Every id on both sides of the split is still in the
+	# bundle, the bundle's own total still agrees, and the report NAMES the
+	# placeholders rather than reducing them to a number.
+	var missing: Array[String] = []
+	for region_id in placeholders + playable:
+		if not screen.region_images.regions.has(String(region_id)):
+			missing.append(String(region_id))
+	var bundle_total := int(screen.region_images.totals.get("regions", -1))
+	var names_them := placeholders.is_empty() or line.contains(String(placeholders[0]))
+	_check(missing.is_empty() and bundle_total == rows and names_them,
+		"the placeholder rows are kept and named rather than dropped from the bundle",
+		"%d row(s) held, bundle totals say %d, the report names %s" % [
+			rows, bundle_total,
+			"none" if placeholders.is_empty() else String(placeholders[0])])
+	screen.queue_free()
 
 
 func _check_screen_fallback_is_labelled(have_bundle: bool) -> void:
