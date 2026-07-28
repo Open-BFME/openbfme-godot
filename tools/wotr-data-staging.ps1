@@ -93,6 +93,23 @@ $script:WotrStagingRules = @(
         loses  = "retail's 3D army, building and build-plot models - army stacks become flat portrait plates and plots flat rings"
     }
     [pscustomobject]@{
+        # THIS RULE EXISTS BECAUSE THE GUARD CAUGHT ITS ABSENCE IN PRODUCTION,
+        # one commit after the guard was written: the release refused by name
+        # the moment wotr_autoresolve.gd landed. Adding the rule is the intended
+        # response, not a workaround.
+        #
+        # Note the honest `loses`: the auto-resolve model is deliberately wired
+        # to NOTHING (56ffb5c), so its absence costs the player nothing TODAY.
+        # It ships anyway because the loader is real and the data is 655 KB -
+        # when auto-resolve is authorised, the tables are already in the field
+        # rather than needing a re-release. Overstating the loss here would be
+        # the same dishonesty as understating one.
+        env    = 'OPENBFME_LIVING_WORLD_AUTORESOLVE'
+        schema = 'openbfme.living-world-autoresolve'
+        host   = 'OPENBFME_LIVING_MAP_REGIONS'
+        loses  = "nothing visible yet - retail's auto-resolve tables are converted but deliberately not wired into battle resolution, so this ships ready rather than needed"
+    }
+    [pscustomobject]@{
         env    = 'OPENBFME_LIVING_WORLD_REGION_IMAGES'
         schema = ''
         host   = 'OPENBFME_LIVING_MAP_REGIONS'

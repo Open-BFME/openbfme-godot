@@ -94,7 +94,18 @@ function New-WorkspaceFixture {
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
     [void](New-Item -ItemType Directory -Path $root -Force)
     $source = Join-Path (Get-BundleMainWorktree -RepoRoot $repoRoot) '.private\retail-work'
-    foreach ($directory in @('livingmap', 'livingmap-regions', 'livingworld-markers', 'livingworld-region-images', 'reports')) {
+    # ENUMERATED, NOT LISTED. This was a hardcoded list of five directory names
+    # and it went stale the moment a sixth bundle landed - the auto-resolve
+    # converter - which is EXACTLY the failure mode the guard under test exists
+    # to prevent. A fixture that has to be edited whenever the thing it tests
+    # grows will silently stop covering it. So the fixture mirrors whatever the
+    # workspace actually holds, and the assertions below compare that against
+    # the loader census rather than against a number somebody typed.
+    $directories = @(
+        Get-ChildItem -LiteralPath $source -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.Name }
+    )
+    foreach ($directory in $directories) {
         if ($Exclude -ccontains $directory) { continue }
         $from = Join-Path $source $directory
         if (-not (Test-Path -LiteralPath $from -PathType Container)) { continue }
