@@ -104,10 +104,24 @@ $script:WotrStagingRules = @(
         # when auto-resolve is authorised, the tables are already in the field
         # rather than needing a re-release. Overstating the loss here would be
         # the same dishonesty as understating one.
+        # The `loses` line was rewritten when auto-resolve was WIRED (07d4f2d).
+        # It used to say "nothing visible yet ... ships ready rather than
+        # needed", which was true while the model was deliberately connected to
+        # nothing. It is now false: without these tables a player who picks
+        # AUTO-RESOLVE gets no battle. Leaving the old wording would have been a
+        # stale reassurance, which is the same failure as an overstated one.
         env    = 'OPENBFME_LIVING_WORLD_AUTORESOLVE'
         schema = 'openbfme.living-world-autoresolve'
         host   = 'OPENBFME_LIVING_MAP_REGIONS'
-        loses  = "nothing visible yet - retail's auto-resolve tables are converted but deliberately not wired into battle resolution, so this ships ready rather than needed"
+        loses  = "auto-resolved battles - the AUTO-RESOLVE button cannot resolve anything without retail's damage, armour and hitpoint tables"
+    }
+    [pscustomobject]@{
+        # Ships beside the auto-resolve tables, and its loader also finds it
+        # there, so one env var covers both in practice.
+        env    = 'OPENBFME_LIVING_WORLD_AUTORESOLVE_BINDINGS'
+        schema = 'openbfme.living-world-autoresolve-bindings'
+        host   = 'OPENBFME_LIVING_MAP_REGIONS'
+        loses  = "the unit-to-table bindings - auto-resolve would know retail's numbers but not which unit uses which of them"
     }
     [pscustomobject]@{
         env    = 'OPENBFME_LIVING_WORLD_REGION_IMAGES'
