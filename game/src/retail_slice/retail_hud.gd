@@ -21,6 +21,15 @@ signal weak_fortress_toggled(value: bool)
 signal cheat_resources_requested
 signal cheat_finish_work_requested
 signal cheat_level_up_requested
+## Playtest tools, reached from the pause screen's Playtest Tools entry.
+## That entry sits behind dev_hud_enabled() with the rest of the dev
+## surface: these signals drive local, unreplicated writes to hashed
+## simulation state, so a build that exposed them to an ordinary player
+## would hand every multiplayer peer a desync button.
+signal playtest_resources_requested(amount: int)
+signal playtest_power_points_requested(amount: int)
+signal playtest_max_level_requested(scope: String)
+signal playtest_heal_requested
 signal power_purchase_requested(power_id: String, cost: int)
 signal power_cast_requested(cast_kind: String)
 signal ability_cast_requested(unit_id: String, ability_id: String)
@@ -340,6 +349,9 @@ var retail_control_bar_frame: RetailPalantirFrame
 var retail_apt_runtime: RetailHudAptRuntime
 var group_buttons: Dictionary = {}
 var pause_panel: PanelContainer
+var playtest_panel: PanelContainer
+var playtest_command_cap_slider: HSlider
+var playtest_command_cap_label: Label
 var failure_panel: PanelContainer
 var outcome_layer: Control
 var outcome_title: Label
@@ -402,6 +414,9 @@ var retail_side_command_bar: RetailSideCommandBar
 var _retail_command_costs: Dictionary = {}
 var _retail_command_build_seconds: Dictionary = {}
 var _tooltip_hover_button: Button = null
+## Monotonic hover id: the pending SceneTreeTimer callback binds this int (never
+## the Button object) so a freed button can never become a dangling capture.
+var _tooltip_hover_token: int = 0
 var _retail_command_specs: Array = RETAIL_COMMAND_SPECS.duplicate(true)
 var _retail_portrait_specs: Array = RETAIL_PORTRAIT_SPECS.duplicate(true)
 var _retail_action_specs: Array = RETAIL_UNIT_ACTION_SPECS.duplicate(true)
@@ -992,6 +1007,7 @@ func build() -> void:
 	_build_feedback()
 	_build_diagnostics()
 	_build_pause_panel()
+	_build_playtest_panel()
 	_build_outcome_layer()
 	_build_failure_panel()
 	_build_side_command_bar()
@@ -1832,6 +1848,20 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 	if retail_apt_runtime == null:
 		return "The retail Palantir APT runtime has not been built."
 	var apt_configured := retail_apt_runtime.configure_from_pack(expected_pack_root, true)
+	if not apt_configured or not retail_apt_runtime.contract_declared:
+		# The HUD APT bundle is host-pack payload. An expansion faction's lean
+		# supplemental pack ships only its own units, structures and spellbook,
+		# so the runtime configures against it "successfully" while declaring no
+		# contract, and the HUD then falls back to a manifest path demanding
+		# images (SGCommandBar) that no pack carries. Retry against the recorded
+		# host/faction roots; a genuine host declares its contract on the first
+		# attempt, so this costs a BFME2 faction nothing.
+		for root in _allowed_image_pack_roots:
+			if _same_pack_root(root, expected_pack_root):
+				continue
+			if retail_apt_runtime.configure_from_pack(root, true) and retail_apt_runtime.contract_declared:
+				apt_configured = true
+				break
 	var use_apt := retail_apt_runtime.contract_declared
 	if not apt_configured:
 		return "Private retail HUD APT is incomplete: %s" % retail_apt_runtime.error
@@ -2246,8 +2276,16 @@ func _validate_retail_image(
 		# pack root, and fail closed when the image has no pack backing at all.
 		if not _pack_root_allowed(image_pack_root):
 			return {"error": "Required UI image '%s' did not come from the selected or faction private packs." % image_id}
-	elif expected_pack_root == "" or not _same_pack_root(image_pack_root, expected_pack_root):
-		return {"error": "Required UI image '%s' did not come from the selected private pack." % image_id}
+	elif not _same_pack_root(image_pack_root, expected_pack_root) and not _pack_root_allowed(image_pack_root):
+		# Shared HUD chrome (the command-bar buttons, fortress expansion icons,
+		# SGCommandBar) is host-pack payload. An expansion faction cooks as a
+		# LEAN supplemental pack that deliberately ships none of it — the host
+		# pinned to BFME2 1.06 bytes owns those surfaces and the supplement
+		# borrows them. Requiring strict equality with the selected pack made
+		# every Angmar match fail HUD validation on images the mounted host pack
+		# was already providing. Accept the recorded host/faction roots, and
+		# still fail closed for an image with no pack backing at all.
+		return {"error": "Required UI image '%s' did not come from the selected or faction private packs." % image_id}
 
 	var image_path := ""
 	if structure_object_id != "":
@@ -2635,6 +2673,9 @@ func show_diagnostics(text: String, visible: bool) -> void:
 
 func show_pause(value: bool) -> void:
 	pause_panel.visible = value
+	# Unpausing must not leave the playtest sheet floating over the battle.
+	if not value and playtest_panel != null:
+		playtest_panel.visible = false
 	if value:
 		outcome_layer.visible = false
 
@@ -3664,13 +3705,17 @@ func push_event_feed(text: String) -> void:
 	_event_feed_gold_next = not _event_feed_gold_next
 	event_feed.add_child(label)
 	if is_inside_tree():
-		var tween := create_tween()
+		# The tween is bound to the LABEL, not the HUD: when a line is evicted
+		# early by the EVENT_FEED_MAX_LINES trim above, the tween dies with it.
+		# A HUD-bound tween would outlive the freed label and (with a lambda
+		# capturing it) raise "Lambda capture at index 0 was freed" every time a
+		# line is evicted -- which is constantly during a busy battle. The
+		# callback is a method Callable on the label for the same reason: Tween
+		# validity-checks a Callable's object, but never a lambda's captures.
+		var tween := label.create_tween()
 		tween.tween_interval(EVENT_FEED_SECONDS)
 		tween.tween_property(label, "modulate:a", 0.0, 1.2)
-		tween.tween_callback(func() -> void:
-			if is_instance_valid(label):
-				label.queue_free()
-		)
+		tween.tween_callback(label.queue_free)
 
 
 func event_feed_lines() -> Array[String]:
@@ -4051,10 +4096,126 @@ func _build_pause_panel() -> void:
 	# flipped for a dev build); the retail pause screen stays clean.
 	if dev_hud_enabled():
 		_build_dev_console(column)
+		# Playtest Tools arrived from the audit lane OUTSIDE this guard, i.e. on
+		# the pause screen of every build. Its entries (grant resources, grant
+		# power points, force max level, heal) write hashed simulation state
+		# locally and never travel through the lockstep command stream, so in a
+		# multiplayer match one press desyncs every peer. It belongs behind the
+		# same OPENBFME_DEV_HUD gate as the console it sits next to.
+		_add_action_button(column, "Playtest Tools", func() -> void: show_playtest(true))
 	_add_action_button(column, "Resume", func() -> void: pause_requested.emit())
 	_add_action_button(column, "Restart Battle", func() -> void: restart_requested.emit())
 	_add_action_button(column, "Return to Main Menu", func() -> void: main_menu_requested.emit())
 	_add_action_button(column, "Quit", func() -> void: quit_requested.emit())
+
+
+func _build_playtest_panel() -> void:
+	## Dev-only playtest surface (pause → Playtest Tools, itself behind
+	## dev_hud_enabled()). It sits on top of the pause panel and closes back to
+	## it, so nothing here can be reached mid-battle by accident.
+	playtest_panel = PanelContainer.new()
+	playtest_panel.name = "PlaytestPanel"
+	playtest_panel.set_anchors_preset(Control.PRESET_CENTER)
+	playtest_panel.offset_left = -260
+	playtest_panel.offset_top = -300
+	playtest_panel.offset_right = 260
+	playtest_panel.offset_bottom = 300
+	playtest_panel.add_theme_stylebox_override("panel", _panel)
+	playtest_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	playtest_panel.visible = false
+	playtest_panel.z_index = 20
+	add_child(playtest_panel)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 8)
+	playtest_panel.add_child(column)
+	var heading := Label.new()
+	heading.text = "PLAYTEST TOOLS"
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 26)
+	heading.add_theme_color_override("font_color", Color("d9c996"))
+	column.add_child(heading)
+	var note := Label.new()
+	note.text = "Development aids. These bypass the retail economy and do not\nproduce evidence usable for a parity gate."
+	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	note.add_theme_font_size_override("font_size", 12)
+	note.add_theme_color_override("font_color", Color("8fa3ad"))
+	column.add_child(note)
+
+	_add_section_label(column, "Economy")
+	_add_action_button(column, "Resources → 999,999", func() -> void:
+		playtest_resources_requested.emit(999999)
+	)
+	_add_action_button(column, "Resources +50,000 (F7)", func() -> void:
+		cheat_resources_requested.emit()
+	)
+	playtest_command_cap_label = Label.new()
+	playtest_command_cap_label.name = "PlaytestCommandCapLabel"
+	playtest_command_cap_label.text = "Command point cap: 200"
+	playtest_command_cap_label.add_theme_color_override("font_color", Color("c8dbe4"))
+	column.add_child(playtest_command_cap_label)
+	playtest_command_cap_slider = HSlider.new()
+	playtest_command_cap_slider.name = "PlaytestCommandCapSlider"
+	playtest_command_cap_slider.min_value = 100
+	playtest_command_cap_slider.max_value = 5000
+	playtest_command_cap_slider.step = 50
+	playtest_command_cap_slider.value = 200
+	playtest_command_cap_slider.value_changed.connect(func(value: float) -> void:
+		playtest_command_cap_label.text = "Command point cap: %d" % int(value)
+		command_cap_changed.emit(int(value))
+	)
+	column.add_child(playtest_command_cap_slider)
+
+	_add_section_label(column, "Spellbook")
+	_add_action_button(column, "Power points +10", func() -> void:
+		playtest_power_points_requested.emit(10)
+	)
+	_add_action_button(column, "Power points +100 (buy the whole tree)", func() -> void:
+		playtest_power_points_requested.emit(100)
+	)
+
+	_add_section_label(column, "Units")
+	_add_action_button(column, "Max level: selected", func() -> void:
+		playtest_max_level_requested.emit("selected")
+	)
+	_add_action_button(column, "Max level: all my units", func() -> void:
+		playtest_max_level_requested.emit("all")
+	)
+	_add_action_button(column, "Full health: selected", func() -> void:
+		playtest_heal_requested.emit()
+	)
+
+	_add_action_button(column, "Back", func() -> void: show_playtest(false))
+
+
+func _add_section_label(parent: VBoxContainer, text: String) -> void:
+	var label := Label.new()
+	label.text = text.to_upper()
+	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_color_override("font_color", Color("8fa3ad"))
+	parent.add_child(label)
+
+
+func show_playtest(value: bool) -> void:
+	# Second gate, deliberately redundant with the pause-screen entry: the panel
+	# writes unreplicated simulation state, so it must be impossible to open in
+	# a build that did not opt into the dev surface, whatever calls this.
+	if playtest_panel == null or not dev_hud_enabled():
+		return
+	playtest_panel.visible = value
+	# The pause panel stays built but hidden underneath, so "Back" returns to
+	# it rather than dropping the player into an unpaused battle.
+	if pause_panel != null:
+		pause_panel.visible = not value
+
+
+## Keeps the playtest command-cap slider in step with the live cap (the dev
+## console owns the same signal, and the slice can change the cap on load).
+func set_playtest_command_cap(value: int) -> void:
+	if playtest_command_cap_slider == null:
+		return
+	playtest_command_cap_slider.set_value_no_signal(float(value))
+	if playtest_command_cap_label != null:
+		playtest_command_cap_label.text = "Command point cap: %d" % value
 
 
 ## Dev-console gate: env flag (per-run) or constant (dev builds). Default OFF.
@@ -4531,11 +4692,24 @@ func _begin_tooltip_hover(button: Button) -> void:
 	_tooltip_hover_button = button
 	if not is_inside_tree():
 		return
+	# A SceneTreeTimer outlives the hovered button (hero-bar and spellbook-dock
+	# buttons are freed and rebuilt while the pointer rests on them), so the
+	# callback must NOT be a lambda capturing the button: Godot validates lambda
+	# captures before the body runs, so an inner is_instance_valid() guard cannot
+	# suppress "Lambda capture at index 0 was freed". Bind an int token instead
+	# and re-resolve the button from the member on the way out.
+	_tooltip_hover_token += 1
 	var timer := get_tree().create_timer(RETAIL_TOOLTIP_HOVER_DELAY)
-	timer.timeout.connect(func() -> void:
-		if _tooltip_hover_button == button and is_instance_valid(button):
-			show_retail_tooltip(button)
-	)
+	timer.timeout.connect(_on_tooltip_hover_elapsed.bind(_tooltip_hover_token))
+
+
+func _on_tooltip_hover_elapsed(token: int) -> void:
+	if token != _tooltip_hover_token:
+		return
+	if not is_instance_valid(_tooltip_hover_button):
+		_tooltip_hover_button = null
+		return
+	show_retail_tooltip(_tooltip_hover_button)
 
 
 func _end_tooltip_hover(button: Button) -> void:

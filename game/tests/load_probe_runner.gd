@@ -6,7 +6,15 @@ extends SceneTree
 var _t0 := 0
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _initialize() -> void:
+	_runner_watchdog.start(self, "LOAD_PROBE_RUNNER")
 	_t0 = Time.get_ticks_msec()
 	print("PROBE harness_start_ms=%d" % _t0)
 	call_deferred("_run")

@@ -5,6 +5,7 @@ extends Control
 const ThemeScript = preload("res://src/ui/openbfme_theme.gd")
 const NavDiamondsScript = preload("res://src/ui/openbfme_nav_diamonds.gd")
 const ShellFlyoutScript = preload("res://src/ui/openbfme_shell_flyout.gd")
+const ShellAptRuntimeScript = preload("res://src/ui/retail_shell_apt_runtime.gd")
 const SliceScript = preload("res://src/retail_slice/retail_vertical_slice.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 const PackCapabilityScript = preload("res://src/content/pack_capability.gd")
@@ -200,6 +201,10 @@ var wotr_screen: Panel
 var wotr_setup_screen: Panel
 ## Upward shell flyouts keyed by their anchor button's bar id.
 var _shell_flyouts: Dictionary = {}
+## Retail APT shell presentation layer; null until a mounted pack ships the
+## `shellScene` bundle. The hand-built chrome stays authoritative otherwise.
+var _shell_apt_runtime: Control = null
+var _shell_apt_metadata: Dictionary = {}
 var _wotr_session = null
 var _wotr_unavailable_reason := ""
 var _wotr_document: Dictionary = {}
@@ -255,6 +260,7 @@ func _ready() -> void:
 	# that a later refresh has to correct.
 	_locate_wotr_document()
 	_apply_converted_backdrop()
+	_configure_shell_apt_presentation()
 	_build_shell_flyouts()
 	_connect_actions()
 	options_screen.configure({"font": _shell_font})
@@ -342,6 +348,56 @@ func _build_nav_diamonds() -> void:
 
 func _bar_buttons() -> Array[Button]:
 	return [tutorials_btn, solo_btn, multiplayer_btn, options_btn, my_heroes_btn, quit_btn]
+
+
+func _configure_shell_apt_presentation() -> bool:
+	## Retail's shell is an APT movie (MainMenu.apt + the MenuExport library),
+	## exactly like the in-game palantir. When a mounted pack ships the cooked
+	## `shellScene` bundle we present those retail triangles; when no pack does
+	## -- the state of every pack that predates the shell ingress lane -- the
+	## hand-built chrome below stays authoritative. This is additive: a missing
+	## or rejected contract never removes the fallback shell.
+	_shell_apt_metadata = {}
+	if _shell_apt_runtime != null:
+		_shell_apt_runtime.queue_free()
+		_shell_apt_runtime = null
+	var runtime: Control = ShellAptRuntimeScript.new()
+	runtime.name = "RetailShellApt"
+	runtime.set_anchors_preset(Control.PRESET_FULL_RECT)
+	runtime.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	runtime.visible = false
+	# Behind the authored chrome so a partial static subset never hides the
+	# working shell; it is promoted to the front only once it presents.
+	add_child(runtime)
+	move_child(runtime, 0)
+	var presented := false
+	for pack_root in _font_pack_root_candidates():
+		if not runtime.call("configure_from_pack", pack_root, true):
+			continue
+		if not bool(runtime.get("presentation_ready")):
+			continue
+		presented = true
+		_shell_apt_metadata = runtime.call("runtime_metadata") as Dictionary
+		break
+	if not presented:
+		runtime.queue_free()
+		return false
+	_shell_apt_runtime = runtime
+	runtime.visible = true
+	# Ordering, deliberately: the retail draws sit above the backdrop and below
+	# `Center`. Two things force that. The retail backdrop is a live 3D shellmap
+	# behind a native View3D gadget with no APT payload, so the authored
+	# backdrop must stay underneath rather than be replaced by nothing; and the
+	# cooked contract binds no button action programs (`parityReady` is false),
+	# so the authored bar remains the interactive surface. Once the contract
+	# reports parity the authored chrome can step aside.
+	var center_index := center.get_index()
+	move_child(runtime, maxi(0, center_index))
+	return true
+
+
+func shell_apt_metadata() -> Dictionary:
+	return _shell_apt_metadata.duplicate(true)
 
 
 func _apply_converted_backdrop() -> void:

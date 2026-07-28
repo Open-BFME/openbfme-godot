@@ -18,7 +18,7 @@ owner review before release.
 
 ### Private retail lane
 
-The user's BFME2 1.06 installation, extracted source entries, decoded media, converted
+The user's retail installation, extracted source entries, decoded media, converted
 assets, runtime retail packs, oracle captures and importer work products remain only
 below:
 

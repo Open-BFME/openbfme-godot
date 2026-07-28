@@ -51,7 +51,12 @@ from .sage_video import convert_videos
 from .tools import discover_executable
 from .faction_profile import build_men_leaf_profile
 from .faction_slice_profile import compose_faction_profile
-from .map_profile import build_five_map_profile
+from .map_profile import (
+    MAP_SETS,
+    build_category_map_profile,
+    build_five_map_profile,
+    make_effective_assets_binder,
+)
 from .map_census import census_multiplayer_maps
 from .profile import ImportProfile, profile_path, resolve_profile
 from .retail_visual_closure import (
@@ -65,6 +70,68 @@ from .version import __version__
 
 
 PROFILES_ROOT = Path(__file__).resolve().parents[1] / "profiles"
+
+
+def _conversion_failure_report(pack_root: Path) -> dict[str, Any]:
+    """Summarise per-resource conversion failures recorded in the pack.
+
+    build() records every converter failure in provenance ``incomplete`` but
+    nothing ever showed it to the operator: an --allow-incomplete run could
+    lose hundreds of conversions and still print a clean, valid, exit-0
+    result. That is the exact shape of the historical bug where every audio
+    job failed a pinned-tool attest and the run produced a silently
+    audio-less pack. The count and a per-converter breakdown now ride the
+    command result, and a non-empty list is echoed to stderr regardless of
+    --json so it cannot be scrolled past.
+    """
+
+    manifest_path = Path(pack_root) / "provenance" / "manifest.json"
+    try:
+        with manifest_path.open("r", encoding="utf-8") as stream:
+            manifest = json.load(stream)
+    except (OSError, json.JSONDecodeError):
+        return {"conversion_failures": None}
+    incomplete = manifest.get("incomplete")
+    if not isinstance(incomplete, list) or not incomplete:
+        return {"conversion_failures": 0}
+
+    converter_by_resource: dict[str, str] = {}
+    for entry in manifest.get("entries", []):
+        if isinstance(entry, dict):
+            converter_by_resource[str(entry.get("resource_id"))] = str(
+                entry.get("converter", "?")
+            )
+    by_converter: dict[str, int] = {}
+    for item in incomplete:
+        if not isinstance(item, dict):
+            continue
+        resource = str(item.get("resource", "?"))
+        by_converter[converter_by_resource.get(resource, "?")] = (
+            by_converter.get(converter_by_resource.get(resource, "?"), 0) + 1
+        )
+
+    print(
+        f"WARNING: {len(incomplete)} resource(s) did not convert; the pack is "
+        "incomplete. Breakdown by converter: "
+        + ", ".join(f"{name}={count}" for name, count in sorted(by_converter.items())),
+        file=sys.stderr,
+    )
+    for item in incomplete[:10]:
+        if isinstance(item, dict):
+            print(
+                f"  - {item.get('resource', '?')}: {item.get('reason', '?')}",
+                file=sys.stderr,
+            )
+    if len(incomplete) > 10:
+        print(
+            f"  ... {len(incomplete) - 10} more; full list in "
+            f"{manifest_path}",
+            file=sys.stderr,
+        )
+    return {
+        "conversion_failures": len(incomplete),
+        "conversion_failures_by_converter": by_converter,
+    }
 
 
 def _render(value: Any, as_json: bool) -> None:
@@ -438,11 +505,40 @@ def build_parser() -> argparse.ArgumentParser:
 
     map_profile = sub.add_parser(
         "generate-map-profile",
-        help="generate the private BFME2 1.06 five-map source/terrain profile",
+        help="generate a private map source/terrain profile from retail bytes",
     )
     map_profile.add_argument("--install", required=True)
     _add_game_argument(map_profile)
     map_profile.add_argument("--reindex", action="store_true")
+    map_profile.add_argument(
+        "--map-set",
+        choices=("five-map", *sorted(MAP_SETS)),
+        default="five-map",
+        help=(
+            "five-map: the legacy private BFME2 1.06 development set; every "
+            "other value selects a retail map category discovered from "
+            "maps/mapcache.ini (skirmish, wotr-battle, campaign, cinematic, "
+            "tutorial, playable, single-player, all)"
+        ),
+    )
+    map_profile.add_argument(
+        "--effective-assets",
+        type=Path,
+        default=None,
+        help=(
+            "extracted effective-assets root; enables automatic per-map prop "
+            "binding through the visual-closure planners. Without it no "
+            "objectBindings are declared."
+        ),
+    )
+    map_profile.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "skirmish only: abort instead of recording a rejection when a "
+            "shipped map cannot be parsed"
+        ),
+    )
 
     import_unit = sub.add_parser(
         "import-unit",
@@ -536,9 +632,15 @@ def build_parser() -> argparse.ArgumentParser:
     publish_faction.add_argument(
         "--faction",
         required=True,
+        action="append",
         # BFME2's six factions plus the RotWK 2.01 data-driven expansion
         # factions (faction_slice_profile validates the game/faction pair).
         choices=("men", "elves", "dwarves", "isengard", "mordor", "wild", "angmar"),
+        help=(
+            "faction to compose; repeat to cook one multi-faction pack "
+            "(compose_faction_profile has always accepted a sequence, and a "
+            "cross-faction skirmish needs every side in the active pack)"
+        ),
     )
     publish_faction.add_argument(
         "--base-profile",
@@ -677,6 +779,15 @@ def _restore_env(prior: Mapping[str, str | None]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # `default_state_root()` is consulted directly by helpers that never see
+    # `args` (tool discovery is the load-bearing one: it resolves the pinned
+    # ffmpeg/blender under <state-root>/tools). Without this, an explicit
+    # --state-root left those helpers pointing at the checkout's own .private,
+    # and a missing pinned ffmpeg silently fell through to whatever is on PATH
+    # — which then fails the pinned-hash attest on every audio conversion.
+    os.environ["OPENBFME_IMPORT_ROOT"] = str(
+        Path(args.state_root).expanduser().resolve()
+    )
     dev_env_prior: dict[str, str | None] | None = None
     try:
         if getattr(args, "dev", False):
@@ -1005,12 +1116,19 @@ def main(argv: list[str] | None = None) -> int:
                 args.coverage_root
                 or (workspace / "reports" / "faction-import")
             ).expanduser()
-            coverage_path = coverage_root / f"{args.faction}-coverage.json"
-            if not coverage_path.is_file():
-                raise FileNotFoundError(
-                    f"faction coverage missing at {coverage_path}; "
-                    f"run: openbfme-import import-faction --faction {args.faction} --convert"
-                )
+            # `--faction` is repeatable; compose order is the order given so a
+            # multi-faction profile id stays reproducible for the same request.
+            factions: list[str] = list(args.faction)
+            if len(set(factions)) != len(factions):
+                raise ValueError(f"--faction repeated with a duplicate: {factions}")
+            for faction in factions:
+                coverage_path = coverage_root / f"{faction}-coverage.json"
+                if not coverage_path.is_file():
+                    raise FileNotFoundError(
+                        f"faction coverage missing at {coverage_path}; "
+                        f"run: openbfme-import import-faction --faction {faction} --convert"
+                    )
+            faction_slug = "-".join(factions)
             base_profile_path = Path(
                 args.base_profile
                 or (workspace / "profiles" / "men-fords-v1.generated.json")
@@ -1025,25 +1143,33 @@ def main(argv: list[str] | None = None) -> int:
                 or (
                     workspace
                     / "profiles"
-                    / f"faction-slice-{args.faction}.generated.json"
+                    / f"faction-slice-{faction_slug}.generated.json"
                 )
             ).expanduser()
             progress_emit(
                 "compose",
-                f"composing {args.faction} coverage into pack profile",
+                f"composing {', '.join(factions)} coverage into pack profile",
             )
             base = json.loads(base_profile_path.read_text(encoding="utf-8"))
             if not isinstance(base, dict):
                 raise ValueError(f"base profile root is not an object: {base_profile_path}")
             composed, receipt = compose_faction_profile(
-                base, coverage_root, [args.faction], game=args.game
+                base, coverage_root, factions, game=args.game
             )
             # Keep the host pack id stable so the vertical slice host pack
             # assertion (bfme2-men-vslice) continues to pass for Men.
             pack = composed.get("pack")
-            if isinstance(pack, dict) and args.faction == "men":
+            if isinstance(pack, dict) and factions == ["men"]:
                 pack["id"] = "bfme2-men-vslice"
                 composed["title"] = "BFME2 Men full faction vertical slice"
+            elif isinstance(pack, dict) and len(factions) > 1:
+                # compose_faction_profile only owns the pack id for a
+                # single-faction publish; a multi-faction pack would otherwise
+                # inherit the base profile's (Men) id and stray-bundle under it.
+                pack["id"] = f"{args.game}-{faction_slug}-vslice"
+                composed["title"] = (
+                    f"{args.game.upper()} {', '.join(factions)} faction slice"
+                )
             # Freshly composed profiles bind to the catalog they were composed
             # against; inherited m3 markers otherwise fail the build's source
             # catalog identity check with no stamping path.
@@ -1086,7 +1212,8 @@ def main(argv: list[str] | None = None) -> int:
             value["pack"] = str(pack_root)
             value["profile"] = str(profile_output)
             value["receipt"] = str(receipt_path)
-            value["faction"] = args.faction
+            value["faction"] = factions[0] if len(factions) == 1 else faction_slug
+            value["factions"] = factions
             value["composed_objects"] = len(receipt.get("objects", []))
             if light_audit:
                 value["bundle_sha256"] = "dev-skipped"
@@ -1094,6 +1221,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 value["bundle_sha256"] = bundle_digest(pack_root)
             value["conversion_cache"] = pipeline.conversion_cache_stats
+            value.update(_conversion_failure_report(pack_root))
             if not args.no_publish:
                 if args.select:
                     progress_emit("publish", "selecting pack for Godot vertical slice")
@@ -1103,11 +1231,19 @@ def main(argv: list[str] | None = None) -> int:
                         "publishing pack bundle (selection.json untouched; "
                         "pass --select to activate)",
                     )
+                # A full (non-light) audit plus bundle_digest just ran over
+                # this exact pack above; publication would otherwise repeat
+                # both full passes. Only hand the digest over when the audit
+                # really was full and clean - dev/light runs must re-verify.
+                reusable_digest = None
+                if not light_audit and value.get("valid", False):
+                    reusable_digest = value["bundle_sha256"]
                 publication = pipeline.publish_to_godot(
                     pack_root,
                     args.godot_content_root,
                     allow_incomplete=bool(args.allow_incomplete),
                     select=bool(args.select),
+                    verified_digest=reusable_digest,
                 )
                 value.update(publication)
                 # Durable record of what was published so orchestration can
@@ -1133,7 +1269,7 @@ def main(argv: list[str] | None = None) -> int:
                 write_json_atomic(publish_receipt_path, publish_receipt)
                 value["publish_receipt"] = str(publish_receipt_path)
             progress_complete(
-                f"faction={args.faction} pack={pack_root} slice path ready"
+                f"faction={faction_slug} pack={pack_root} slice path ready"
             )
             _render(value, args.json)
             return 0 if value.get("valid", False) else 3
@@ -1377,22 +1513,49 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "generate-map-profile":
-            if args.game != "bfme2":
-                raise ValueError("generate-map-profile currently supports BFME2 only")
-            profile = build_five_map_profile(catalog)
-            generated_path = (
-                _workspace_root(args) / "profiles" / "five-maps.generated.json"
-            )
+            map_set = getattr(args, "map_set", "five-map")
+            if map_set == "five-map":
+                if args.game != "bfme2":
+                    raise ValueError(
+                        "the five-map development set is BFME2 only; use "
+                        "--map-set skirmish for other editions"
+                    )
+                profile = build_five_map_profile(catalog)
+                generated_name = "five-maps.generated.json"
+            else:
+                assets_root = getattr(args, "effective_assets", None)
+                binder = None
+                if assets_root is not None:
+                    from .map_prop_bindings import load_effective_assets_manifest
+
+                    binder = make_effective_assets_binder(
+                        assets_root, load_effective_assets_manifest(assets_root)
+                    )
+                profile = build_category_map_profile(
+                    catalog,
+                    game=args.game,
+                    map_set=map_set,
+                    strict=bool(getattr(args, "strict", False)),
+                    **({"binder": binder} if binder is not None else {}),
+                )
+                generated_name = f"{args.game}-{map_set}-maps.generated.json"
+            generated_path = _workspace_root(args) / "profiles" / generated_name
             write_json_atomic(generated_path, profile)
             payload = (
                 json.dumps(profile, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
             )
+            evidence = profile.get("planning_evidence", {})
             value = {
                 "ready": True,
                 "profile": str(generated_path),
                 "profile_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
                 "resource_count": len(profile["resources"]),
                 "map_count": len(profile["runtime_data"]["data/maps.json"]["maps"]),
+                "rejected_map_count": len(evidence.get("rejectedMaps", [])),
+                "unbound_object_type_count": sum(
+                    int(row["count"])
+                    for row in evidence.get("unboundObjectTypes", {}).values()
+                ),
             }
             _render(value, args.json)
             return 0
@@ -1443,6 +1606,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 value["bundle_sha256"] = bundle_digest(pack)
             value["conversion_cache"] = pipeline.conversion_cache_stats
+            value.update(_conversion_failure_report(pack_root))
             if not args.no_publish:
                 progress_emit("assemble", "publishing pack to Godot content root")
                 value.update(

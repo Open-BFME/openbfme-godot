@@ -10,7 +10,15 @@ var failed := 0
 var finished := false
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _initialize() -> void:
+	_runner_watchdog.start(self, "RETAIL_ENVIRONMENT_RUNNER")
 	create_timer(30.0, true, false, true).timeout.connect(_watchdog_timeout)
 	call_deferred("_run")
 

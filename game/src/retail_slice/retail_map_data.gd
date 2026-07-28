@@ -34,20 +34,35 @@ const MAX_ROAD_MATERIALS := 256
 const MAX_ROAD_TEXTURE_DIMENSION := 4096
 const MAX_ROAD_TEXTURE_BYTES := 16 * 1024 * 1024
 const MAX_ROAD_TEXTURE_TOTAL_BYTES := 64 * 1024 * 1024
-const MAX_PROVENANCE_BUNDLE_FILES := 20_000
-## Byte bound for the PACK-WIDE provenance inventory, which - unlike the cooked
-## map documents above - grows with the number of converted factions. It is
-## derived from MAX_PROVENANCE_BUNDLE_FILES so the two guards cannot disagree:
-## previously the shared 8 MiB document bound refused inventories the 20,000-row
-## bound explicitly permits, and the pack that tripped it was the owner's own.
+## Row bound for the PACK-WIDE provenance inventory. Raised from 20,000 to
+## 65,536 on 2026-07-28 against measurement, not assumption. Every manifest.json
+## in the workspace was counted:
+##   men v-slice (1 faction)      5,275 rows
+##   six-faction v-slice (live)  16,230 rows   <- the selected pack
+##   rotwk angmar supplement      2,164 rows   (separate pack, own manifest)
+## A composed 7-faction pack therefore projects to ~18,400 rows, which the old
+## 20,000 admitted with 8% to spare - and the six-faction manifests already grew
+## 15,655 -> 16,230 across recent rebuilds. A bound that close to the real value
+## is a tripwire, not a resource guard, and this project has already shipped one
+## fail-closed regression from exactly that (the 8 MiB document bound refusing
+## the owner's own pack). 65,536 is ~3.6x the 7-faction projection: still hard,
+## no longer standing on the working set's toes.
+const MAX_PROVENANCE_BUNDLE_FILES := 65_536
+## Byte bound for that same inventory, derived from the row bound so the two
+## guards cannot disagree: previously the shared 8 MiB document bound refused
+## inventories the row bound explicitly permits, and the pack that tripped it
+## was the owner's own. The per-map MAX_DOCUMENT_BYTES above stays at 8 MiB -
+## cooked map documents are sized by ONE map and never scale with faction count,
+## so raising them wholesale (as the audit lane did, to 64 MiB) would loosen a
+## bound that was never the one under pressure.
 ##
 ## Arithmetic. Measured record cost, path + sha256 + size per row:
 ##   men v-slice (1 faction):   5,275 rows /  5,087,289 B = 964 B/row
 ##   six-faction v-slice:      16,230 rows / 16,059,309 B = 989 B/row
 ## 1,600 B/row is ~1.6x the observed worst case, covering longer object paths.
-## 20,000 x 1,600 = 32,000,000 B, so the byte bound is reached only by an
+## 65,536 x 1,600 = 104,857,600 B, so the byte bound is reached only by an
 ## inventory the row bound would already refuse. Both stay fail-closed, and the
-## real 16.06 MB document is admitted with ~2x headroom.
+## real 16.06 MB document is admitted with room for the factions still to come.
 const MAX_PROVENANCE_MANIFEST_BYTES := MAX_PROVENANCE_BUNDLE_FILES * 1600
 const LOCAL_START_SEPARATION := 76.0
 const FORD_CORRIDOR_DILATION_CELLS := 5

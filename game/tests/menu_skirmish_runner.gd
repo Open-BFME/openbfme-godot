@@ -14,7 +14,15 @@ var passed := 0
 var failed := 0
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _initialize() -> void:
+	_runner_watchdog.start(self, "MENU_SKIRMISH_RUNNER")
 	call_deferred("_run")
 
 
@@ -22,6 +30,7 @@ func _run() -> void:
 	root.size = Vector2i(1920, 1080)
 	var faction_manifest_script = load("res://src/retail_slice/retail_faction_manifest.gd")
 	var slice_script = load("res://src/retail_slice/retail_vertical_slice.gd")
+	var menu_script = load("res://src/ui/main_menu.gd")
 	_check("slice_scripts_load", faction_manifest_script != null and slice_script != null)
 	if faction_manifest_script == null or slice_script == null:
 		_finish()
@@ -50,7 +59,8 @@ func _run() -> void:
 	var retail_btn := menu.find_child("Retail", true, false) as Button
 	var setup := menu.get_node("Center/SoloFlyout")
 	var map_rows: Array = setup.get("map_rows")
-	_check("skirmish_controls_present", player_opt != null and enemy_opt != null and retail_btn != null and map_rows.size() == 5)
+	# The map list length follows the selected pack's catalog, not a literal.
+	_check("skirmish_controls_present", player_opt != null and enemy_opt != null and retail_btn != null and not map_rows.is_empty())
 	if player_opt == null or enemy_opt == null or retail_btn == null or map_rows.is_empty():
 		menu.queue_free()
 		await process_frame
@@ -73,18 +83,52 @@ func _run() -> void:
 			ids_match = false
 	_check("faction_ids_and_display_names", ids_match)
 
-	# The map list carries every cooked map with its authored player count;
-	# Fords of Isen II remains the default selection.
-	_check("map_list_offers_five_choices", map_rows.size() == 5, "got %d maps" % map_rows.size())
-	var expected_players := [2, 3, 4, 6, 8]
+	# The map list carries every lobby-category cooked map with its authored
+	# player count; Fords of Isen II remains the default selection. The counts
+	# are re-derived from the selected pack's own catalog rather than asserted
+	# as a literal: a skirmish pack ships whatever counts BFME2 and RotWK
+	# actually author, and neither edition ships a three-player skirmish map, so
+	# the old [2, 3, 4, 6, 8] literal (the five-map WOTR dev set) could never be
+	# satisfied by one.
+	var lobby_catalog_rows: Array = content_db.call("list_catalog_maps")
+	var expected_players: Array = []
+	if lobby_catalog_rows.is_empty():
+		# No pack in this selection publishes a map catalog, so the menu falls
+		# back to its authored vertical-slice list. Each row's count must still
+		# come from that map's own cooked document, which is 0 for a map the
+		# selection does not ship -- the honest, still-open content gap.
+		for row in map_rows:
+			var doc := content_db.call("get_bundle_map", String((row as Dictionary).get("map_id", ""))) as Dictionary
+			expected_players.append(int(doc.get("playerCount", 0)))
+	else:
+		_check(
+			"map_list_offers_every_lobby_catalog_map",
+			map_rows.size() == lobby_catalog_rows.size(),
+			"rows=%d catalog=%d" % [map_rows.size(), lobby_catalog_rows.size()]
+		)
+		for value in lobby_catalog_rows:
+			expected_players.append(int((value as Dictionary).get("players", 0)))
 	var players_match := map_rows.size() == expected_players.size()
 	for index in range(mini(expected_players.size(), map_rows.size())):
 		var row_button := map_rows[index]["button"] as Button
+		# Zero means no cooked map document authored a player count for this
+		# row. That is a real content gap, never a passing row.
+		if expected_players[index] <= 0:
+			players_match = false
 		if int(map_rows[index].get("players", -1)) != expected_players[index]:
 			players_match = false
 		if row_button != null and row_button.get_meta("player_count", -1) != expected_players[index]:
 			players_match = false
 	_check("map_list_player_counts_from_pack", players_match, str(expected_players))
+	# Mirrors ContentDB.LOBBY_MAP_CATEGORIES: campaign, cinematic, tutorial,
+	# shell and system maps are cooked and catalogued but never lobby offerings.
+	var lobby_categories := ["skirmish", "wotr-battle"]
+	var lobby_only := true
+	for value in lobby_catalog_rows:
+		var category := String((value as Dictionary).get("category", ""))
+		if category != "" and not lobby_categories.has(category):
+			lobby_only = false
+	_check("map_list_excludes_non_lobby_categories", lobby_only)
 	var first_row := map_rows[0]["button"] as Button
 	_check(
 		"map_default_is_fords",
@@ -213,6 +257,19 @@ func _run() -> void:
 			availability_matches_slice_signals = false
 			continue
 		if faction_id == String(faction_manifest_script.DEFAULT_FACTION):
+			continue
+		if menu_script.FACTIONS_BLOCKED_FROM_PLAY.has(faction_id):
+			# A blocked faction deliberately reports a product-policy note that
+			# the slice's conversion signal does not produce: its content DOES
+			# convert, it just cannot complete a match yet. Assert the menu is
+			# blocking it for the recorded reason instead of asserting parity
+			# with a signal that is, correctly, empty.
+			_check(
+				"blocked_faction_reports_policy_note_%s" % faction_id,
+				String(availability.get(faction_id, "")) == String(
+					menu_script.FACTIONS_BLOCKED_FROM_PLAY[faction_id]
+				)
+			)
 			continue
 		slice_probe._classify_faction_units(faction_id)
 		var expected_note := String(faction_manifest_script.from_registries(
@@ -552,6 +609,78 @@ func _run() -> void:
 
 	# The legacy prototype skirmish entry point is gone for good.
 	_check("legacy_grid_removed", menu.get_node_or_null("Center/LegacyGrid") == null and menu.get_node_or_null("Center/Start") == null)
+
+	# A pack that publishes a map catalog owns the skirmish map list: however
+	# many maps it ships, in its authored order, with the player count each map
+	# document carries. This runs last because it swaps the content root.
+	var catalog_fixture := "user://menu-catalog-fixture"
+	var catalog_pack := catalog_fixture.path_join("skirmish-maps-fixture")
+	var fixture_maps := [
+		{"slug": "alpha", "name": "Alpha Vale", "players": 2},
+		{"slug": "bravo", "name": "Bravo Ridge", "players": 6},
+		{"slug": "charlie", "name": "Charlie Fen", "players": 8},
+	]
+	var catalog_rows: Array = []
+	DirAccess.make_dir_recursive_absolute(catalog_pack.path_join("data"))
+	for entry in fixture_maps:
+		var slug := String(entry["slug"])
+		var relative := "maps/%s/map.json" % slug
+		DirAccess.make_dir_recursive_absolute(catalog_pack.path_join("maps/%s" % slug))
+		var doc := FileAccess.open(catalog_pack.path_join(relative), FileAccess.WRITE)
+		doc.store_string(JSON.stringify({
+			"schema": "openbfme.map", "schemaVersion": 0,
+			"id": "bfme2.map.%s" % slug,
+			"displayName": String(entry["name"]),
+			"playerCount": int(entry["players"]),
+		}))
+		doc.close()
+		catalog_rows.append({"id": "bfme2.map.%s" % slug, "map": relative})
+	var pack_file := FileAccess.open(catalog_pack.path_join("pack.json"), FileAccess.WRITE)
+	pack_file.store_string(JSON.stringify({
+		"schema": "openbfme.content-pack", "schemaVersion": 0,
+		"id": "skirmish-maps-fixture", "version": "fixture-v0", "priority": 905,
+		"files": {"mapCatalog": "data/maps.json"},
+	}))
+	pack_file.close()
+	var catalog_doc := FileAccess.open(catalog_pack.path_join("data/maps.json"), FileAccess.WRITE)
+	catalog_doc.store_string(JSON.stringify({
+		"schema": "openbfme.map-catalog", "schemaVersion": 0, "maps": catalog_rows,
+	}))
+	catalog_doc.close()
+	var restore_content_root := OS.get_environment("OPENBFME_CONTENT")
+	OS.set_environment("OPENBFME_CONTENT", ProjectSettings.globalize_path(catalog_fixture))
+	content_db.call("reload")
+	var listed: Array = content_db.call("list_catalog_maps") as Array
+	var listed_ids: Array = []
+	var listed_players: Array = []
+	for row in listed:
+		listed_ids.append(String((row as Dictionary).get("id", "")))
+		listed_players.append(int((row as Dictionary).get("players", -1)))
+	_check(
+		"catalog_maps_enumerated_in_authored_order",
+		listed_ids == ["bfme2.map.alpha", "bfme2.map.bravo", "bfme2.map.charlie"],
+		str(listed_ids)
+	)
+	_check(
+		"catalog_map_player_counts_come_from_map_documents",
+		listed_players == [2, 6, 8],
+		str(listed_players)
+	)
+	var catalog_choices: Array = menu._skirmish_map_choices()
+	var choice_ids: Array = []
+	for choice in catalog_choices:
+		choice_ids.append(String((choice as Dictionary).get("id", "")))
+	_check(
+		"map_list_follows_the_pack_catalog_not_a_fixed_list",
+		choice_ids == listed_ids,
+		str(choice_ids)
+	)
+	OS.set_environment("OPENBFME_CONTENT", restore_content_root)
+	content_db.call("reload")
+	_check(
+		"map_list_falls_back_to_authored_choices_without_a_catalog",
+		menu._skirmish_map_choices().size() == menu.RETAIL_MAP_CHOICES.size()
+	)
 
 	game_state.set("retail_player_faction", "men")
 	game_state.set("retail_enemy_faction", "men")

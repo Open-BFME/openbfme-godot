@@ -1,10 +1,12 @@
 """Descriptor-driven spellbook conversion recipe and runtime document compiler.
 
-The spellbook lane has no W3D stage: its pack payload is the button art
-(texture-atlas crops) and audio samples referenced by the resolved power tree.
-This module joins one spellbook descriptor to those source-backed leaves and
-fails closed on any unresolved binding; it never substitutes generic art or
-silence.
+The spellbook pack payload is the button art (texture-atlas crops), the audio
+samples referenced by the resolved power tree, the converted ability-FX
+particle closure, and — since the effect-geometry pass — the GLBs behind the
+models its effect objects author (summoned Oathbreakers, Rohirrim, Ents,
+Balrogs, Elven-Wood trees).  This module joins one spellbook descriptor to
+those source-backed leaves and fails closed on any unresolved binding; it never
+substitutes generic art or silence.
 """
 
 from __future__ import annotations
@@ -15,9 +17,15 @@ import hashlib
 import json
 
 from .playable_unit_pack_compiler import _resource_id, _safe_path, _slug
+from .retail_ability_fx_ingress import AbilityFxIngressError, fx_recipe_parts
 from .spellbook_compiler import (
     SpellbookCompilerError,
     validate_spellbook_descriptor,
+)
+from .spellbook_visual_ingress import (
+    SpellbookVisualIngressError,
+    spellbook_visual_recipe_parts,
+    validate_spellbook_visual_bindings,
 )
 
 
@@ -207,8 +215,38 @@ def _audio_leaves(
     return resources, bindings, resolution
 
 
-def compile_spellbook_pack_recipe(descriptor: Mapping[str, object]) -> dict[str, object]:
-    """Compile one spellbook's source-backed pack recipe or fail closed."""
+def _fx_leaves(
+    fx_closure: Mapping[str, object] | None, slug: str
+) -> tuple[list[dict[str, object]], dict[str, object] | None]:
+    try:
+        return fx_recipe_parts(fx_closure, slug)
+    except AbilityFxIngressError as exc:
+        raise SpellbookPackCompilerError(str(exc)) from exc
+
+
+def compile_spellbook_pack_recipe(
+    descriptor: Mapping[str, object],
+    fx_closure: Mapping[str, object] | None = None,
+    visual_closures: Mapping[str, Mapping[str, object]] | None = None,
+    visual_closure_failures: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    """Compile one spellbook's source-backed pack recipe or fail closed.
+
+    ``fx_closure`` is the optional sealed ability-FX closure from
+    :mod:`retail_ability_fx_ingress`.  When present its conversion resources
+    ride the recipe and its payload-free bindings ride the runtime
+    registration, so a power's authored FXList finally has converted particle
+    definitions and textures behind it.  When absent the recipe is byte-identical
+    to the pre-FX lane, which keeps ``import-spellbook`` and every fixture that
+    has no effective-assets root working unchanged.
+
+    ``visual_closures`` is the matching optional map of per-effect-object retail
+    visual closures from :mod:`spellbook_visual_ingress`.  When present, the
+    models retail authors on those objects convert into ordinary pack GLBs and
+    ride ``runtimeRegistration.visualBindings``, which is what finally lets a
+    summoned unit present its real geometry instead of the runtime's synthetic
+    kit fallback.  Absent, the recipe again stays byte-identical.
+    """
 
     try:
         validate_spellbook_descriptor(descriptor)
@@ -239,6 +277,14 @@ def compile_spellbook_pack_recipe(descriptor: Mapping[str, object]) -> dict[str,
         descriptor, slug, audio_ids
     )
 
+    fx_resources, fx_bindings = _fx_leaves(fx_closure, slug)
+    try:
+        visual_resources, visual_bindings = spellbook_visual_recipe_parts(
+            descriptor, slug, visual_closures, visual_closure_failures
+        )
+    except SpellbookVisualIngressError as exc:
+        raise SpellbookPackCompilerError(str(exc)) from exc
+
     recipe: dict[str, object] = {
         "schema": SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
@@ -246,7 +292,12 @@ def compile_spellbook_pack_recipe(descriptor: Mapping[str, object]) -> dict[str,
         "spellBookObjectId": object_id,
         "slug": slug,
         "descriptorSha256": descriptor["descriptorSha256"],
-        "resources": [*image_resources, *audio_resources],
+        "resources": [
+            *image_resources,
+            *audio_resources,
+            *fx_resources,
+            *visual_resources,
+        ],
         "runtimeRegistration": {
             "spellBook": deepcopy(dict(spellbook)),
             "sciences": deepcopy(descriptor["sciences"]),
@@ -259,6 +310,12 @@ def compile_spellbook_pack_recipe(descriptor: Mapping[str, object]) -> dict[str,
             },
             "audioBindings": audio_bindings,
             "audioResolution": audio_resolution,
+            **({"fxBindings": fx_bindings} if fx_bindings is not None else {}),
+            **(
+                {"visualBindings": visual_bindings}
+                if visual_bindings is not None
+                else {}
+            ),
         },
     }
     recipe["recipeSha256"] = _digest(recipe)
@@ -293,6 +350,25 @@ def validate_spellbook_pack_recipe(value: Mapping[str, object]) -> None:
             raise SpellbookPackCompilerError(
                 f"spellbook runtime {bindings} are invalid"
             )
+    try:
+        validate_spellbook_visual_bindings(runtime.get("visualBindings"))
+    except SpellbookVisualIngressError as exc:
+        raise SpellbookPackCompilerError(str(exc)) from exc
+    # Every bound effect model must be produced by a resource this recipe owns.
+    resource_ids = {str(row.get("id", "")).casefold() for row in resources}
+    visual = runtime.get("visualBindings")
+    if isinstance(visual, Mapping):
+        for object_id, row in (visual.get("objects") or {}).items():
+            if not isinstance(row, Mapping) or row.get("status") not in {
+                "model",
+                "horde-member",
+            }:
+                continue
+            if str(row.get("resourceId", "")).casefold() not in resource_ids:
+                raise SpellbookPackCompilerError(
+                    "spellbook visual binding names an unowned resource: "
+                    f"{object_id}"
+                )
 
 
 def compose_spellbook_runtime_document(
@@ -333,6 +409,21 @@ def compose_spellbook_runtime_document(
                 "stringBindings": deepcopy(dict(registration["stringBindings"])),  # type: ignore[arg-type]
                 "audioBindings": deepcopy(dict(registration["audioBindings"])),  # type: ignore[arg-type]
                 "audioResolution": deepcopy(dict(registration["audioResolution"])),  # type: ignore[arg-type]
+                # Present only when the FX ingress lane ran; the runtime treats
+                # its absence as "no converted power art", never as an error.
+                **(
+                    {"fxBindings": deepcopy(dict(registration["fxBindings"]))}  # type: ignore[arg-type]
+                    if isinstance(registration.get("fxBindings"), Mapping)
+                    else {}
+                ),
+                # Present only when the effect-geometry lane ran. Absence means
+                # "no converted effect models" (import-spellbook, fixtures), and
+                # the runtime reads it as such rather than as an error.
+                **(
+                    {"visualBindings": deepcopy(dict(registration["visualBindings"]))}  # type: ignore[arg-type]
+                    if isinstance(registration.get("visualBindings"), Mapping)
+                    else {}
+                ),
             },
             "resourceIds": sorted(str(row["id"]) for row in resources),
         },

@@ -16,6 +16,12 @@ const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 
 const DEFAULT_FACTION := "men"
+## Historical single-faction host pack id. This is a FAST-PATH hint, never an
+## identity requirement: a composed pack is id'd `bfme2-<a>-<b>-…-vslice` and
+## hosts Men just as fully. Every consumer that resolves a host pack falls back
+## to pack.json's `factionImportCoverage` (ModLoader.pack_provides_faction /
+## RetailVerticalSlice._pack_root_hosting_faction / MainMenu.
+## _mounted_pack_root_hosting_faction) when this literal does not match.
 const DEFAULT_PACK_ID := "bfme2-men-vslice"
 ## Pack faction id -> retail side token (playertemplate.ini `Side =`), the
 ## vocabulary retail scripts compare with SKIRMISH_PLAYER_FACTION. Versioned

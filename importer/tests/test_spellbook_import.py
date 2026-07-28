@@ -8,6 +8,7 @@ from openbfme_importer.sage_gameplay import _digest as _gameplay_digest
 from openbfme_importer.sage_ini import parse_flat_named_blocks
 from openbfme_importer.spellbook_compiler import (
     SpellbookCompilerError,
+    _particle_sys_bone_fields,
     compile_spellbook_descriptor,
     validate_spellbook_descriptor,
 )
@@ -254,6 +255,12 @@ Object TestSpellBook
 End
 
 Object TestHealPing
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    DefaultModelConditionState
+      Model = None
+      ParticleSysBone = None TestHealParticles
+    End
+  End
   EditorSorting = SYSTEM
   KindOf = NO_COLLIDE IMMOBILE INERT
 End
@@ -291,6 +298,11 @@ Object TestSummonedHorde
 End
 
 Object TestSummonedMember
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    DefaultModelConditionState
+      Model = TestMember_SKN
+    End
+  End
   EditorSorting = UNIT
   KindOf = INFANTRY SELECTABLE
   Body = ActiveBody ModuleTag_Body
@@ -569,6 +581,31 @@ def test_descriptor_resolves_tree_costs_prerequisites_and_effect_leaves() -> Non
     assert horde["immortal"] is True
     assert horde["commandPoints"] == 0
     member = object_rows["TestSummonedMember"]
+    # Authored Draw evidence rides every effect leaf: without it a summoned
+    # battalion reaches the runtime with no art and presents as synthetic kit
+    # geometry.
+    assert member["draw"] == [
+        {
+            "drawModule": "W3DScriptedModelDraw",
+            "conditions": [],
+            "models": ["TestMember_SKN"],
+        }
+    ]
+    # ``Model = None`` is the authored absence, recorded as such; the object's
+    # only art is its ParticleSysBone system (retail CloudBreakSunbeam /
+    # ElvenGrove shape).
+    assert object_rows["TestHealPing"]["draw"] == [
+        {
+            "drawModule": "W3DScriptedModelDraw",
+            "conditions": [],
+            "particleSysBones": [
+                {"bone": "None", "particleSystem": "TestHealParticles"}
+            ],
+        }
+    ]
+    assert "models" not in object_rows["TestHealPing"]["draw"][0]
+    # Objects retail authors with no Draw module at all carry no invented one.
+    assert "draw" not in object_rows["TestVolleyReceptacle"]
     assert member["maxHealth"] == 450
     assert member["weaponId"] == "TestVolleyWeapon"
     assert member["locomotor"] == {
@@ -981,3 +1018,233 @@ def test_distinct_images_colliding_on_logical_name_fail_closed() -> None:
     descriptor = _compile_with(documents, graph)
     with pytest.raises(SpellbookPackCompilerError, match="collide"):
         compile_spellbook_pack_recipe(descriptor)
+
+
+class TestParticleSysBoneFields:
+    """RotWK authors bone names as quoted strings containing spaces.
+
+    ``data/ini/object/neutral/neutralunits.ini:5969`` (AngmarShadeWolf, the
+    Angmar spellbook's summoned Shade Wolf) authors
+    ``ParticleSysBone = "Bip L Finger2" SoWolf_Ambient_fog FollowBone:YES``.
+    Splitting that on whitespace makes the second field ``L`` — a fragment of
+    the BONE name read as a particle-system name — which fails the definition
+    lookup and costs the whole faction its spellbook object.
+    """
+
+    def test_quoted_bone_with_spaces_keeps_the_real_system_name(self) -> None:
+        assert _particle_sys_bone_fields(
+            '"Bip L Finger2" SoWolf_Ambient_fog FollowBone:YES'
+        ) == ("Bip L Finger2", "SoWolf_Ambient_fog")
+        assert _particle_sys_bone_fields(
+            '"Bip R Finger2" SoWolf_Ambient_EmbersHero FollowBone:YES'
+        ) == ("Bip R Finger2", "SoWolf_Ambient_EmbersHero")
+
+    def test_unquoted_form_is_unchanged(self) -> None:
+        assert _particle_sys_bone_fields("None SoWolf_Ambient_fog01") == (
+            "None",
+            "SoWolf_Ambient_fog01",
+        )
+        assert _particle_sys_bone_fields(
+            "STAFF GandalfMoriaLight FollowBone:Yes"
+        ) == ("STAFF", "GandalfMoriaLight")
+
+    def test_value_without_both_fields_binds_nothing(self) -> None:
+        assert _particle_sys_bone_fields("None") is None
+        assert _particle_sys_bone_fields("") is None
+        assert _particle_sys_bone_fields('"Bip L Finger2"') is None
+
+
+def test_unresolvable_particle_sys_bone_is_recorded_with_its_source_line():
+    """A system retail names but never defines is evidence, not an invention.
+
+    ``neutralunits.ini:6016`` authors ``SoWolf_Ambient_snowFollowBone:YES`` —
+    one missing space away from the real ``SoWolf_Ambient_snow``. SAGE looks
+    that name up, misses, and draws nothing. The leaf keeps the authored
+    reference with its source line so the gap is quotable, and no definition
+    is substituted.
+    """
+
+    documents = _documents()
+    documents["data/ini/object/system/test_system.ini"] = documents[
+        "data/ini/object/system/test_system.ini"
+    ].replace(
+        b"      ParticleSysBone = None TestHealParticles\n",
+        b"      ParticleSysBone = None TestHealParticles\n"
+        b"      ParticleSysBone = None TestHealParticlesFollowBone:YES\n",
+    )
+    descriptor = _compile_with(documents, _graph(documents))
+    ping = {row["id"]: row for row in descriptor["leaves"]["objects"]}["TestHealPing"]
+    state = ping["draw"][0]
+    # The well-formed line still binds.
+    assert state["particleSysBones"] == [
+        {"bone": "None", "particleSystem": "TestHealParticles"}
+    ]
+    unresolved = state["unresolvedParticleSysBones"]
+    assert len(unresolved) == 1
+    assert unresolved[0]["particleSystem"] == "TestHealParticlesFollowBone:YES"
+    assert (
+        unresolved[0]["authoredValue"] == "None TestHealParticlesFollowBone:YES"
+    )
+    assert unresolved[0]["sourceIni"] == "data/ini/object/system/test_system.ini"
+    assert isinstance(unresolved[0]["line"], int)
+    # The legacy family is not in this view, so the record says so rather than
+    # asserting an absence it never checked.
+    assert unresolved[0]["authoredFamily"] == "unknown-legacy-family-not-in-view"
+    # The unresolved name is never promoted into the converted particle leaves.
+    assert {row["id"] for row in descriptor["leaves"]["particles"]} == {
+        "TestHealParticles"
+    }
+
+
+def test_unresolvable_particle_is_classified_against_the_legacy_family():
+    """When the legacy family IS in view, the record names it exactly.
+
+    Retail ships two particle families; this lane binds only
+    ``FXParticleSystem``. ``RainOfFireProjectileSmoke`` and
+    ``InfantryDustTrails`` exist only in ``data/ini/particlesystem.ini``,
+    while ``BalrogSword`` and ``GoblinKingTaint`` are in neither file. Those
+    are different gaps and the evidence has to distinguish them.
+    """
+
+    documents = _documents()
+    documents["data/ini/particlesystem.ini"] = b"""
+ParticleSystem LegacyOnlyParticles
+  Priority = AREA_EFFECT
+  ParticleName = EXSmoke.tga
+End
+"""
+    documents["data/ini/object/system/test_system.ini"] = documents[
+        "data/ini/object/system/test_system.ini"
+    ].replace(
+        b"      ParticleSysBone = None TestHealParticles\n",
+        b"      ParticleSysBone = None TestHealParticles\n"
+        b"      ParticleSysBone = None LegacyOnlyParticles\n"
+        b"      ParticleSysBone = None NotAnywhereParticles\n",
+    )
+    descriptor = _compile_with(documents, _graph(documents))
+    ping = {row["id"]: row for row in descriptor["leaves"]["objects"]}["TestHealPing"]
+    families = {
+        row["particleSystem"]: row["authoredFamily"]
+        for row in ping["draw"][0]["unresolvedParticleSysBones"]
+    }
+    assert families == {
+        "LegacyOnlyParticles": "ParticleSystem",
+        "NotAnywhereParticles": "none",
+    }
+
+
+def test_effect_geometry_rides_the_recipe_and_the_runtime_document() -> None:
+    """A summoned member's model reaches the runtime as a real pack GLB.
+
+    Before this lane the spellbook recipe had no W3D stage at all, so a
+    summoned battalion arrived at the presentation bridge with no mesh path and
+    fell back to the synthetic multi-part kit. The horde container the OCL
+    actually creates draws nothing itself, so it binds to its authored
+    MemberObject's model; the particle-only ping stays invisible.
+    """
+
+    from openbfme_importer.playable_unit_pack_compiler import _digest as _closure_digest
+
+    descriptor = _compile()
+    closure: dict[str, object] = {
+        "schema": "openbfme.retail-visual-closure",
+        "schemaVersion": 1,
+        "targets": [{"name": "TestSummonedMember", "status": "resolved"}],
+        "exactLeaves": [
+            {
+                "targetObject": "TestSummonedMember",
+                "identifier": "TestMember_SKN",
+                "kind": "model",
+                "usage": "model",
+                "status": "resolved",
+                "conditions": [],
+                "physicalVirtualPaths": ["art/w3d/tt/testmember_skn.w3d"],
+                "provenance": {
+                    "definingObject": "TestSummonedMember",
+                    "virtualPath": "data/ini/object/system/test_system.ini",
+                    "line": 1,
+                    "scopePath": ["W3DScriptedModelDraw ModuleTag_01"],
+                },
+            }
+        ],
+        "semanticLeaves": [],
+        "unresolved": {"graphDiagnostics": [], "references": []},
+        "scannedW3d": [
+            {
+                "virtualPath": "art/w3d/tt/testmember_skn.w3d",
+                "byteLength": 2048,
+                "headerIds": {"hierarchyIds": ["TESTMEMBER_SKL"], "animationIds": []},
+                "modelHierarchyIdentifiers": [],
+                "embeddedAnimationChannelCount": 0,
+            }
+        ],
+        "w3dDependencyClosure": {
+            "embeddedTextures": [
+                {
+                    "sourceW3dVirtualPath": "art/w3d/tt/testmember_skn.w3d",
+                    "identifier": "testmember.tga",
+                    "status": "resolved",
+                    "physicalVirtualPaths": ["art/textures/testmember.tga"],
+                }
+            ]
+        },
+        "summary": {"ready": True},
+    }
+    closure["aggregateSha256"] = _closure_digest(closure)
+
+    baseline = compile_spellbook_pack_recipe(descriptor)
+    recipe = compile_spellbook_pack_recipe(
+        descriptor, visual_closures={"TestSummonedMember": closure}
+    )
+    validate_spellbook_pack_recipe(recipe)
+    # Absent closures keep the pre-visual bytes exactly.
+    assert "visualBindings" not in baseline["runtimeRegistration"]
+    assert len(recipe["resources"]) == len(baseline["resources"]) + 2
+
+    model = next(
+        row
+        for row in recipe["resources"]
+        if row["kind"] == "model"
+    )
+    assert model["converter"] == "w3d-hierarchical"
+    assert model["output"] == (
+        "assets/models/spellbook/testspellbook/testsummonedmember.glb"
+    )
+
+    objects = recipe["runtimeRegistration"]["visualBindings"]["objects"]
+    assert objects["TestSummonedMember"]["status"] == "model"
+    assert objects["TestSummonedHorde"] == {
+        "status": "horde-member",
+        "memberObjectId": "TestSummonedMember",
+        "resourceId": model["id"],
+        "model": model["output"],
+        "sourceW3d": "art/w3d/tt/testmember_skn.w3d",
+        "converter": "w3d-hierarchical",
+    }
+    assert objects["TestHealPing"]["status"] == "authored-invisible"
+
+    runtime = compose_spellbook_runtime_document(descriptor, recipe)
+    presented = runtime["registration"]["presentation"]["visualBindings"]["objects"]
+    assert presented["TestSummonedHorde"]["model"] == model["output"]
+
+
+def test_recipe_rejects_a_visual_binding_with_no_owning_resource() -> None:
+    descriptor = _compile()
+    recipe = compile_spellbook_pack_recipe(descriptor)
+    tampered = deepcopy(recipe)
+    tampered["runtimeRegistration"]["visualBindings"] = {
+        "objects": {
+            "TestSummonedMember": {
+                "status": "model",
+                "resourceId": "not-a-resource",
+                "model": "assets/models/spellbook/testspellbook/x.glb",
+            }
+        },
+        "summary": {},
+    }
+    tampered.pop("recipeSha256")
+    from openbfme_importer.spellbook_pack_compiler import _digest as _recipe_digest
+
+    tampered["recipeSha256"] = _recipe_digest(tampered)
+    with pytest.raises(SpellbookPackCompilerError):
+        validate_spellbook_pack_recipe(tampered)

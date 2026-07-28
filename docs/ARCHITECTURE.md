@@ -43,7 +43,9 @@ Implemented does not mean final architecture: the current simulator remains a mi
 
 ## Decided
 
-- BFME2 1.06 is the active compatibility target; RotWK is deferred.
+- Rise of the Witch-king 2.01 is the compatibility target. BFME2 1.06 is the
+  base game underneath it and the source of evidence for everything 2.01 does
+  not change.
 - Maximum match size is eight players.
 - Production simulation cadence is 30 Hz; rendering cadence is independent.
 - Networking is server-refereed deterministic lockstep. Commands are normal traffic; snapshots are recovery checkpoints, not the primary synchronization model.

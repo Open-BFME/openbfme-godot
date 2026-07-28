@@ -2,7 +2,7 @@
 
 OpenBFME welcomes careful contributions from game developers, engine programmers,
 modders, technical artists, reverse engineers, testers, and documentation writers.
-The project is still preparing its first public-quality vertical slice, so small
+The project is still preparing its first public-quality release, so small
 well-proven changes are much easier to review than broad rewrites.
 
 ## Before you start
@@ -74,7 +74,8 @@ private pack merely to test a code change.
 
 ## Code and design principles
 
-- BFME2 1.06 is the active compatibility source; RotWK is separate future work.
+- Rise of the Witch-king 2.01 is the compatibility target; BFME2 1.06 is the
+  base game underneath it.
 - The importer alone understands retail source formats.
 - Runtime code consumes versioned OpenBFME data, not the BFME installation.
 - Authoritative simulation must remain independent of Godot rendering and local

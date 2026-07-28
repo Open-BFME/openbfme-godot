@@ -233,3 +233,33 @@ static func provides_order_hint(pack_root: String) -> bool:
 	if pack_root == "" or pack_root.begins_with("res://"):
 		return false
 	return declares_surface(pack_root, ORDER_HINT_SURFACE_KEY)
+
+
+static func is_retail_import(pack_root: String) -> bool:
+	## True when the root is an external converted retail pack: outside res://
+	## and declaring itself a local retail import. The audit lane answered this
+	## with a ModLoader method (`pack_is_retail_import`) that this branch never
+	## grew; the walk lives here instead so there is exactly one copy of it, for
+	## the same reason resolve_host_slice_pack replaced the duplicated host walk.
+	if pack_root == "" or pack_root.begins_with("res://"):
+		return false
+	return bool(declaration(pack_root).get("local_retail_import", false))
+
+
+static func provides_faction(pack_root: String, faction: String) -> bool:
+	## True when the pack's own pack.json `factionImportCoverage` lists the
+	## faction. The pack id is NOT the question: the historical single-faction
+	## pack is `bfme2-men-vslice`, a composed pack is `bfme2-men-elves-…-vslice`,
+	## and both host Men. Fails closed on a pack that declares no coverage.
+	var slug := faction.strip_edges().to_lower()
+	if pack_root == "" or slug == "":
+		return false
+	var coverage: Variant = declaration(pack_root).get("factionImportCoverage", [])
+	if typeof(coverage) != TYPE_ARRAY:
+		return false
+	for row_value in (coverage as Array):
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		if String((row_value as Dictionary).get("faction", "")).strip_edges().to_lower() == slug:
+			return true
+	return false

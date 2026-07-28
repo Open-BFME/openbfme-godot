@@ -1,5 +1,19 @@
 # Current milestone: M2 Men/Fords
 
+> [!WARNING]
+> **Historical. Retained because tooling parses it.**
+>
+> This is the M2 acceptance contract for the original Men-versus-Men,
+> Fords-of-Isen-II vertical slice. That milestone is superseded — the product
+> target is now RotWK 2.01 and cross-faction skirmish, per
+> [DIRECTION.md](../DIRECTION.md), and sequencing is owned by
+> [PLAN.md](../PLAN.md).
+>
+> It has not been deleted because `importer/tests/test_m2_gate_script.py` reads
+> this file to derive the required oracle capture matrix, and
+> `tools/gate-m2-men-fords.ps1` is checked against it. Retiring it means
+> retiring that gate first. Nothing here describes current scope.
+
 **Owner:** integration owner
 **Owns:** binary completion contract for the active milestone
 **Does not own:** broader product scope or volatile pack identity

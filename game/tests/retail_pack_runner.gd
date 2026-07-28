@@ -5,7 +5,16 @@ var passed := 0
 var failed := 0
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+const PackCapability = preload("res://src/content/pack_capability.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _initialize() -> void:
+	_runner_watchdog.start(self, "RETAIL_PACK_RUNNER")
 	call_deferred("_run")
 
 
@@ -24,9 +33,18 @@ func _run() -> void:
 	_check("selected_pack_exists", selected != "" and DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(selected)), selected)
 	_check("selected_pack_is_external", not selected.begins_with("res://"), selected)
 	_check("retail_pack_mounted", content_db.pack_roots.has(selected), selected)
-	var expected_pack_id := "bfme2-men-vslice"
+	# A cooked pack is identified by its retail import provenance and the
+	# factions its pack.json `factionImportCoverage` declares, not by the
+	# historical single-faction id "bfme2-men-vslice". Composed packs are
+	# id'd `bfme2-<a>-<b>-…-vslice` and host Men just as fully.
 	var pack_meta: Variant = mod_loader._read_json(selected.path_join("pack.json"))
-	_check("pack_manifest_v0", typeof(pack_meta) == TYPE_DICTIONARY and String((pack_meta as Dictionary).get("id", "")) == expected_pack_id)
+	_check(
+		"pack_manifest_v0",
+		typeof(pack_meta) == TYPE_DICTIONARY
+			and PackCapability.is_retail_import(selected)
+			and PackCapability.provides_faction(selected, "men"),
+		String((pack_meta as Dictionary).get("id", "")) if typeof(pack_meta) == TYPE_DICTIONARY else "no pack.json"
+	)
 	_check("pack_is_private", typeof(pack_meta) == TYPE_DICTIONARY and not bool((pack_meta as Dictionary).get("redistributable", true)))
 
 	var object_id := "bfme2.object.gondor-fighter"
@@ -38,7 +56,25 @@ func _run() -> void:
 
 	var definition: Dictionary = content_db.get_bundle_object(object_id)
 	var model_path: String = content_db.resolve_mesh_path(definition)
-	_check("model_is_selected_pack_relative", mod_loader.path_is_within(selected, model_path) and model_path.ends_with("gondor-fighter.glb"), model_path)
+	# The Soldier's presentation model is whichever lane published it. The
+	# legacy vertical-slice lane cooked one GLB per member id
+	# (`assets/models/units/gondor-fighter.glb`); the playable-unit lane cooks
+	# per horde document and the member resolves to that document's default
+	# visual component (`assets/models/units/gondorfighterhorde/00.glb`, the
+	# richer authored rig). Pinning the filename pinned the lane, so assert the
+	# real invariant instead: the mesh is pack-relative and is exactly what the
+	# lane that owns this object publishes.
+	var fighter_runtime: Dictionary = content_db.get_playable_unit_runtime("GondorFighterHorde")
+	var playable_model := _default_component_output(fighter_runtime)
+	_check(
+		"model_is_selected_pack_relative",
+		mod_loader.path_is_within(selected, model_path)
+		and (
+			model_path.ends_with("gondor-fighter.glb")
+			or (playable_model != "" and model_path == content_db.resolve_asset(playable_model, selected))
+		),
+		"%s (playable-unit lane: %s)" % [model_path, playable_model]
+	)
 	_check("model_substantial", FileAccess.get_file_as_bytes(model_path).size() > 1000000)
 
 	var asset_factory = load("res://src/view/asset_factory.gd")
@@ -49,7 +85,23 @@ func _run() -> void:
 	_check("retail_glb_loaded", visual != null and bool(visual.get_meta("authored", false)))
 	_check("retail_rig_loaded", visual != null and bool(visual.get_meta("has_skeleton", false)))
 	var clips: Array = visual.get_meta("animation_clips", []) if visual != null else []
-	_check("all_core_clips_loaded", clips.size() == 23, "clips=%d %s" % [clips.size(), str(clips)])
+	# `23` was the legacy vertical-slice GLB's clip count, not a contract. The
+	# exact, lane-independent invariant is that the cooked mesh carries every
+	# authored retail clip the runtime document says was converted, and nothing
+	# else — no over-binding, no silent drops. For the Soldier that is the full
+	# authored GondorFighter set (flail/fear/taunt/cheer/idle variants included),
+	# every one of which `gondorfighter.ini` authors an `AnimationState` for.
+	var expected_clips := _converted_animation_identifiers(fighter_runtime)
+	_check(
+		"all_core_clips_loaded",
+		(
+			not expected_clips.is_empty()
+			and _clip_identifier_set(clips) == expected_clips
+			if not fighter_runtime.is_empty()
+			else clips.size() == 23
+		),
+		"clips=%d expected=%d %s" % [clips.size(), expected_clips.size(), str(clips)]
+	)
 	for expected in ["gumanmocap_idlb", "gumanmocap_runb", "gumanmocap_atka", "gumanmocap_dieb"]:
 		_check("clip_%s" % expected, _clip_list_contains(clips, expected), str(clips))
 
@@ -60,6 +112,50 @@ func _run() -> void:
 	_check("scene_has_materials", int(metrics.get("materials", 0)) >= 1, str(metrics))
 	if visual != null:
 		visual.queue_free()
+		await process_frame
+	asset_factory.clear_mesh_cache()
+
+	# Hero ability poses must be addressable, not folded into the generic swing.
+	# The pack compiler maps every SPECIAL_WEAPON_* AnimationState to the
+	# "attack" semantic state, so Gandalf's staff-lowering wizard blast
+	# (`GUGandalfG_SKL.GUGandalfG_SPCL`, gandalf.ini:305, selected by
+	# `WhichSpecialWeapon = 2` at gandalf.ini:1300) reached the cooked mesh with
+	# no name to ask for it by. ContentDB now projects one capability state per
+	# authored ability pose alongside the core states.
+	var gandalf_capability: Dictionary = content_db.get_animation_capability(
+		"playable-unit:gondorgandalf"
+	)
+	var gandalf_states: Dictionary = gandalf_capability.get("states", {}) as Dictionary
+	var wizard_blast_state: Dictionary = gandalf_states.get(
+		"ability:specialWeaponTwo:cast", {}
+	) as Dictionary
+	_check(
+		"gandalf_wizard_blast_pose_is_addressable",
+		(wizard_blast_state.get("clips", []) as Array).has("GUGandalfG_SKL.GUGandalfG_SPCL"),
+		str(wizard_blast_state)
+	)
+	_check(
+		"gandalf_core_states_survive_ability_projection",
+		gandalf_states.has("idle") and gandalf_states.has("move")
+		and gandalf_states.has("attack") and gandalf_states.has("death"),
+		str(gandalf_states.keys())
+	)
+	var gandalf_visual: Node3D = asset_factory.make_bundle_object_visual(
+		"bfme2.object.gondor-gandalf", 0
+	)
+	if gandalf_visual != null:
+		root.add_child(gandalf_visual)
+		await process_frame
+	var gandalf_clips: Array = (
+		gandalf_visual.get_meta("animation_clips", []) if gandalf_visual != null else []
+	)
+	_check(
+		"gandalf_wizard_blast_clip_is_cooked",
+		_clip_list_contains(gandalf_clips, "gugandalfg_spcl"),
+		str(gandalf_clips)
+	)
+	if gandalf_visual != null:
+		gandalf_visual.queue_free()
 		await process_frame
 	asset_factory.clear_mesh_cache()
 
@@ -391,6 +487,50 @@ func _lifecycle_asset_contract(lifecycle: Dictionary) -> Dictionary:
 	paths["bib"] = String(bib_visual.get("glb", ""))
 	clips["bib"] = {"mode": "none", "names": []}
 	return {"paths": paths, "clips": clips}
+
+
+func _default_component_output(runtime: Dictionary) -> String:
+	## Pack-relative output of a playable-unit document's default visual
+	## component — the mesh that lane publishes for the primary member.
+	var visual: Dictionary = (
+		(runtime.get("registration", {}) as Dictionary).get("visual", {}) as Dictionary
+	)
+	for value in visual.get("components", []) as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			continue
+		var component := value as Dictionary
+		if bool(component.get("default", false)):
+			return String(component.get("output", ""))
+	return ""
+
+
+func _converted_animation_identifiers(runtime: Dictionary) -> Dictionary:
+	## Clip-name set the runtime document says the cook converted: every
+	## authored animation state that was not explicitly excluded. Keys are the
+	## lowercased trailing clip name (`GUGandalfG_SKL.GUGandalfG_SPCL` ->
+	## `gugandalfg_spcl`), matching how the GLB names its animations.
+	var result: Dictionary = {}
+	var visual: Dictionary = (
+		(runtime.get("registration", {}) as Dictionary).get("visual", {}) as Dictionary
+	)
+	for value in visual.get("authoredAnimationStates", []) as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			continue
+		var row := value as Dictionary
+		if String(row.get("runtimeSupport", "")).begins_with("excluded"):
+			continue
+		var identifier := String(row.get("identifier", ""))
+		if identifier == "":
+			continue
+		result[identifier.get_slice(".", identifier.get_slice_count(".") - 1).to_lower()] = true
+	return result
+
+
+func _clip_identifier_set(clips: Array) -> Dictionary:
+	var result: Dictionary = {}
+	for clip in clips:
+		result[String(clip).get_file().to_lower()] = true
+	return result
 
 
 func _clip_list_contains(clips: Array, expected: String) -> bool:

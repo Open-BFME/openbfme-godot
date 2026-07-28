@@ -49,7 +49,15 @@ var _failed := 0
 var _lines: Array[String] = []
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _init() -> void:
+	_runner_watchdog.start(self, "MEN_VSLICE_GATE_RUNNER")
 	# Gate boots assert the legacy pre-spawned roster; retail play starts from
 	# fortress + porter only.
 	OS.set_environment("OPENBFME_STARTER_ARMY", "1")

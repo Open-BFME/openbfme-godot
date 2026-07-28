@@ -137,6 +137,10 @@ ANIMATED_RUNTIME_PATH = "maps/fords-of-isen-ii/animated-props.json"
 ARCHER_PROJECTILE_PACK_KEY = "gondorArcherProjectile"
 HUD_APT_RUNTIME_PATH = "data/ui/palantir/scene-contract.json"
 HUD_APT_PACK_KEY = "palantirScene"
+SHELL_APT_SCHEMA = "openbfme.retail-shell-apt-plan"
+SHELL_APT_RESOURCE_ID = "shell-apt-runtime-bundle"
+SHELL_APT_RUNTIME_PATH = "data/ui/shell/scene-contract.json"
+SHELL_APT_PACK_KEY = "shellScene"
 HUD_UI_AUDIO_RESOURCE = {
     "converter": "audio",
     "expected_count": 4,
@@ -1669,6 +1673,7 @@ def compose_retail_fords_completion_profile(
     men_damage_effects_contract_path: Path | str,
     catalog_path: Path | str,
     men_lifecycle_report_path: Path | str = DEFAULT_MEN_LIFECYCLE_REPORT_PATH,
+    shell_apt_plan_path: Path | str | None = None,
 ) -> ComposedRetailFordsCompletion:
     base, base_path = _load_document(base_profile_path, "base full profile")
     base_report, base_report_source = _load_document(
@@ -1694,6 +1699,37 @@ def compose_retail_fords_completion_profile(
         fords_environment_plan_path, "Fords environment plan"
     )
     hud_apt, hud_apt_source = _load_document(hud_apt_plan_path, "HUD APT plan")
+    # The main-menu shell APT closure is an optional, additive ingress lane: it
+    # rides the same transactional pack build as the palantir HUD bundle, and a
+    # composition that does not pass a shell plan produces exactly the profile
+    # it produced before the lane existed.
+    shell_apt: dict[str, Any] | None = None
+    shell_apt_source: Path | None = None
+    shell_apt_resources: list[Any] = []
+    if shell_apt_plan_path is not None:
+        shell_apt, shell_apt_source = _load_document(
+            shell_apt_plan_path, "shell APT plan"
+        )
+        if shell_apt.get("schema") != SHELL_APT_SCHEMA:
+            raise ValueError("shell APT plan schema changed")
+        _validate_declared_digest(shell_apt, "shell APT plan")
+        shell_fragment = _mapping(
+            shell_apt.get("profileFragment"), "shell APT profileFragment"
+        )
+        shell_apt_resources = _array(
+            shell_fragment.get("resources"), "shell APT resources"
+        )
+        if [
+            _resource_id(resource, "shell APT resource")
+            for resource in shell_apt_resources
+        ] != [SHELL_APT_RESOURCE_ID]:
+            raise ValueError("shell APT profile fragment resource identities changed")
+        shell_binding = _mapping(shell_apt.get("packBinding"), "shell APT packBinding")
+        if (
+            shell_binding.get("packFileKey") != SHELL_APT_PACK_KEY
+            or shell_binding.get("runtimePath") != SHELL_APT_RUNTIME_PATH
+        ):
+            raise ValueError("shell APT pack binding changed")
     animated_runtime, animated_runtime_source = _load_document(
         animated_runtime_contract_path, "animated-prop runtime contract"
     )
@@ -1863,6 +1899,7 @@ def compose_retail_fords_completion_profile(
                 ),
             ),
             ("hud-apt", _array(hud_apt_fragment["resources"], "HUD APT resources")),
+            ("shell-apt", deepcopy(shell_apt_resources)),
             ("hud-ui-audio", [deepcopy(HUD_UI_AUDIO_RESOURCE)]),
             ("men-selection", deepcopy(MEN_SELECTION_RESOURCES)),
             ("men-order-hint", deepcopy(MEN_ORDER_HINT_RESOURCES)),
@@ -2024,6 +2061,12 @@ def compose_retail_fords_completion_profile(
     # contract. The single production bundle resource creates this path from
     # the exact 261-source closure during the transactional pack build.
     files[HUD_APT_PACK_KEY] = HUD_APT_RUNTIME_PATH
+    if shell_apt is not None:
+        if SHELL_APT_RUNTIME_PATH in runtime_data or SHELL_APT_PACK_KEY in files:
+            raise ValueError("shell APT runtime path collides with existing data")
+        # As with the palantir bundle, the shell path is created by the single
+        # production bundle resource during the transactional pack build.
+        files[SHELL_APT_PACK_KEY] = SHELL_APT_RUNTIME_PATH
     if MEN_SELECTION_RUNTIME_PATH in runtime_data or MEN_SELECTION_PACK_KEY in files:
         raise ValueError("Men selection decal runtime path collides with existing data")
     runtime_data[MEN_SELECTION_RUNTIME_PATH] = deepcopy(MEN_SELECTION_RUNTIME)
@@ -2060,6 +2103,7 @@ def compose_retail_fords_completion_profile(
             archer_projectile_fragment,
             fords_environment_fragment,
             hud_apt_fragment,
+            {"resources": shell_apt_resources},
             {"resources": MEN_SELECTION_RESOURCES},
             {"resources": MEN_ORDER_HINT_RESOURCES},
         ]
@@ -2108,6 +2152,14 @@ def compose_retail_fords_completion_profile(
             "hudAptPlanSha256": _file_sha256(hud_apt_source),
             "hudAptPlanAggregateSha256": hud_apt["aggregateSha256"],
             "hudAptSceneAggregateSha256": hud_scene_digest,
+            **(
+                {}
+                if shell_apt is None or shell_apt_source is None
+                else {
+                    "shellAptPlanSha256": _file_sha256(shell_apt_source),
+                    "shellAptPlanAggregateSha256": shell_apt["aggregateSha256"],
+                }
+            ),
             "animatedRuntimeContractSha256": _file_sha256(animated_runtime_source),
             "animatedRuntimeContractAggregateSha256": animated_runtime_digest,
             "menDamageAudioContractSha256": _file_sha256(men_damage_audio_source),
@@ -2443,6 +2495,15 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_MEN_LIFECYCLE_REPORT_PATH,
     )
+    parser.add_argument(
+        "--shell-apt-plan",
+        type=Path,
+        default=None,
+        help=(
+            "optional retail main-menu shell APT plan; when supplied the "
+            "shell bundle resource and the shellScene pack key are attached"
+        ),
+    )
     parser.add_argument("--catalog", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--report", required=True, type=Path)
@@ -2466,6 +2527,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.men_damage_effects_contract,
         args.catalog,
         args.men_lifecycle_report,
+        args.shell_apt_plan,
     )
     write_composed_retail_fords_completion(composed, args.output, args.report)
     print(

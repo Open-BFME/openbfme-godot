@@ -1085,6 +1085,135 @@ def test_runtime_document_requires_manual_construction_clip() -> None:
         compose_structure_runtime_document(descriptor, recipe, evidence)
 
 
+def _self_referential_construction_fixture(
+    *,
+    embedded_channels: int = 0,
+    keep_split_animation: bool = False,
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    """Build retail's embedded-build-up shape.
+
+    Retail authors a structure's construction animation two ways. The split
+    shape names a separate asset (``GBBarracks_ASKL.GBBarracks_ABLD``). The
+    embedded shape names the construction model as its own clip
+    (``GBWell_A.GBWell_A``) and keys the motion inside that model's own W3D
+    as compressed animation channels, with no sibling animation file. The
+    fixture rewrites the AnimationName to the self-referential spelling and
+    drops the separate animation asset; ``embedded_channels`` sets how many
+    keyed channels the construction model itself carries.
+    """
+
+    from importer.tests.test_playable_structure_compiler import (
+        _structure_documents,
+    )
+    from openbfme_importer.playable_structure_compiler import (
+        compile_playable_structure_descriptor,
+    )
+
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    source = documents[objects_path].decode("utf-8")
+    source = source.replace(
+        "        AnimationName = Keep_SKL.Keep_CONSA\n",
+        "        AnimationName = Keep_CONS.Keep_CONS\n",
+        1,
+    )
+    documents[objects_path] = source.encode("utf-8")
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    closure = _closure()
+    if not keep_split_animation:
+        # The embedded shape ships no sibling animation file at all.
+        closure["exactLeaves"] = [
+            row
+            for row in closure["exactLeaves"]
+            if row["identifier"] != "Keep_CONSA"
+        ]
+        closure["scannedW3d"] = [
+            row
+            for row in closure["scannedW3d"]
+            if row["virtualPath"] != _ANIMATION_CONSTRUCTION
+        ]
+        dependency = closure["w3dDependencyClosure"]
+        dependency["embeddedTextures"] = [
+            row
+            for row in dependency["embeddedTextures"]
+            if row["sourceW3dVirtualPath"] != _ANIMATION_CONSTRUCTION
+        ]
+    for row in closure["exactLeaves"]:
+        row["targetObject"] = "TestKeep"
+    if embedded_channels:
+        for row in closure["scannedW3d"]:
+            if row["virtualPath"] == _MODEL_CONSTRUCTION:
+                row["headerIds"]["animationIds"] = ["KEEP_CONS.KEEP_CONS"]
+                row["embeddedAnimationChannelCount"] = embedded_channels
+    _rehash(closure)
+    recipe = compile_structure_visual_recipe("TestKeep", closure)
+    evidence = compile_structure_lifecycle_evidence("TestKeep", documents)
+    return descriptor, recipe, evidence
+
+
+def test_runtime_document_binds_embedded_self_referential_construction_clip() -> None:
+    # Retail's embedded build-up: gbwell_a.w3d ships eight keyed compressed
+    # animation channels named GBWELL_A on hierarchy GBWELL_A, and the state
+    # names it self-referentially. The conversion declares the model as its
+    # own animation source, so the clip it captures must resolve as the
+    # phase's manual-progress animation.
+    descriptor, recipe, evidence = _self_referential_construction_fixture(
+        embedded_channels=8
+    )
+
+    resources = _models_by_source(recipe)
+    construction = resources[_MODEL_CONSTRUCTION]
+    assert construction["converter"] == "w3d-bundle"
+    assert construction["options"]["animations"] == ["keep_cons.w3d"]
+    state = next(
+        row
+        for row in recipe["lifecycleStates"]
+        if row["sourceW3d"] == _MODEL_CONSTRUCTION
+    )
+    assert state["animationClipIds"] == ["keep_cons"]
+
+    document = compose_structure_runtime_document(descriptor, recipe, evidence)
+    lifecycle = document["registration"]["presentation"]["buildingLifecycle"]
+    phases = {row["phase"]: row for row in lifecycle["phases"]}
+    assert phases["construction"]["animation"] == {
+        "clip": "keep_cons",
+        "mode": "manual-progress",
+    }
+    assert lifecycle["simulationFacts"]["construction"] == {
+        "buildTimeSeconds": 45.0,
+        "animationMode": "MANUAL",
+        "animation": "keep_cons",
+    }
+
+
+def test_self_referential_construction_clip_without_channels_fails_closed() -> None:
+    # A self-referential name whose model keys nothing is the genuinely
+    # vacuous case: there is no motion anywhere, so it stays a hard failure.
+    descriptor, recipe, evidence = _self_referential_construction_fixture()
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError,
+        match="embeds no keyed animation channels",
+    ):
+        compose_structure_runtime_document(descriptor, recipe, evidence)
+
+
+def test_self_referential_construction_clip_fails_closed_when_displaced() -> None:
+    # The construction model keys motion, but a separately authored clip also
+    # binds to it, so the conversion drops the embedded action and which clip
+    # drives the build becomes ambiguous. Fail closed rather than guess.
+    descriptor, recipe, evidence = _self_referential_construction_fixture(
+        embedded_channels=8, keep_split_animation=True
+    )
+
+    with pytest.raises(
+        PlayableStructurePackCompilerError,
+        match="displaced by externally bound clips",
+    ):
+        compose_structure_runtime_document(descriptor, recipe, evidence)
+
+
 def test_runtime_document_reduces_damage_phases_without_thresholds() -> None:
     from importer.tests.test_playable_structure_compiler import (
         _structure_documents,

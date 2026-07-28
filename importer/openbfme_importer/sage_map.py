@@ -3601,11 +3601,26 @@ def convert_sage_map(
 
     map_id = str(metadata.pop("id", "bfme2.map.fords-of-isen-ii"))
     display_name = str(metadata.pop("displayName", "Fords of Isen II"))
+    # The menu's map list needs the authored lobby capacity in the map document
+    # itself: a catalog row is optional, the map document is not. Both facts are
+    # already validated against one another by ``_validate_multiplayer_setup``;
+    # publishing them here keeps the runtime from re-deriving player capacity.
+    player_start_count = len(parsed.player_starts)
+    player_capacity = {
+        "playerStartCount": player_start_count,
+        "declaredPlayerCount": int(parsed.setup["declaredPlayerCount"]),
+        "lobbySlotCount": int(parsed.setup["lobbySlotCount"]),
+        "scenarioPlayerCount": int(parsed.setup["scenarioPlayerCount"]),
+        "source": "authored-player-start-waypoints",
+        "startBindings": player_start_bindings,
+    }
     map_data: dict[str, Any] = {
         "schema": "openbfme.map",
         "schemaVersion": 0,
         "id": map_id,
         "displayName": display_name,
+        "playerCount": player_start_count,
+        "playerCapacity": player_capacity,
         **parsed.profile,
         "conversionEvidence": conversion_evidence,
         "sourceFormat": "sage-map-binary",

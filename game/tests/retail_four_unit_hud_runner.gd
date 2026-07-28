@@ -1,4 +1,5 @@
 extends SceneTree
+const PackCapability = preload("res://src/content/pack_capability.gd")
 ## Focused private Men production-command gate. Retail payloads stay mounted
 ## under the external pack; this runner only inspects their registered sources.
 
@@ -88,7 +89,15 @@ class CorruptContentStub:
 		return path == pack_root.path_join("corrupt.png")
 
 
+const RunnerWatchdogScript := preload("res://tests/runner_watchdog.gd")
+# Turns a GDScript runtime error inside `_run` — which unwinds past every
+# `quit()` and would otherwise leave this headless process idling forever —
+# into a loud non-zero exit. See tests/runner_watchdog.gd.
+var _runner_watchdog := RunnerWatchdogScript.new()
+
+
 func _initialize() -> void:
+	_runner_watchdog.start(self, "RETAIL_FOUR_UNIT_HUD_RUNNER")
 	call_deferred("_run")
 
 
@@ -107,7 +116,18 @@ func _run() -> void:
 		return
 	var soldier_definition: Dictionary = content_db.get_bundle_object("bfme2.object.gondor-fighter")
 	var selected_pack_root := String(soldier_definition.get("_pack_root", ""))
-	_check("private_men_pack_selected", selected_pack_root != "" and selected_pack_root.contains("bfme2-men-vslice"), selected_pack_root)
+	# The host pack must be an external converted pack that provides Men; it is
+	# NOT required to be the single-faction `bfme2-men-vslice`. A composed pack
+	# is id'd `bfme2-<a>-<b>-…-vslice` and lists its factions in pack.json
+	# `factionImportCoverage`.
+	var host_mod_loader = root.get_node("/root/ModLoader")
+	_check(
+		"private_men_pack_selected",
+		selected_pack_root != ""
+			and PackCapability.is_retail_import(selected_pack_root)
+			and PackCapability.provides_faction(selected_pack_root, "men"),
+		selected_pack_root
+	)
 	if selected_pack_root == "":
 		_finish()
 		return

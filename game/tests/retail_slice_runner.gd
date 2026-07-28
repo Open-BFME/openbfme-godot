@@ -3,13 +3,15 @@ extends SceneTree
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const PackCapability = preload("res://src/content/pack_capability.gd")
+const WatchdogScript = preload("res://tests/runner_watchdog.gd")
 # Capture-measured dock geometry (bfme2-ref-120s.png); mirrors
 # retail_hud.gd RETAIL_RADAR_CENTER / RETAIL_DISH_CENTER.
 const EXPECTED_RADAR_CENTER := Vector2(225.0, 198.0)
 const EXPECTED_DISH_CENTER := Vector2(587.0, 219.0)
 const ARCHER_PROJECTILE_CONTROLLER_PATH := "res://src/retail_slice/retail_archer_projectile_controller.gd"
 ## Pinned deterministic battle signatures per faction (see
-## battle_signature_matches_pinned_constant).
+## battle_signature_matches_pinned_constant). Repository policy: a drifted pin
+## must be EXPLAINED before it is moved, never silently refreshed.
 const EXPECTED_BATTLE_SIGNATURES := {
 	"men": "3CB9CA98",
 	"elves": "2521173F",
@@ -43,12 +45,17 @@ const MINIMUM_CHECKS_WITHOUT_DOCUMENTS := 261
 var passed := 0
 var failed := 0
 var _document_backed_rows := 0
+# A GDScript runtime error inside `_run` unwinds past every `quit()` in this
+# file, so without this the headless process idles forever instead of failing.
+var _watchdog := WatchdogScript.new()
 
 
 func _initialize() -> void:
 	# The gate's combat checks are written against the legacy pre-spawned
 	# battalions; retail play starts from fortress + porter only.
 	OS.set_environment("OPENBFME_STARTER_ARMY", "1")
+	_watchdog.start(self, "RETAIL_SLICE", 0, 0, true)
+	_watchdog.set_result_provider(func() -> Vector2i: return Vector2i(passed, failed))
 	call_deferred("_run")
 
 
@@ -908,7 +915,37 @@ func _run() -> void:
 		not xp_rule.is_empty() or not faction_requires_experience,
 		"faction=%s unit=%s" % [String(slice.faction_manifest.get("faction", "")), String(xp_attacker.get("unit_type", ""))]
 	)
-	if not xp_rule.is_empty():
+	# The rank-2 assertions below only apply to a unit retail actually lets
+	# level. A one-row chain is authored, not truncated: data/ini/
+	# experiencelevels.ini heads its siege section ";---- NO LEVELING UNITS"
+	# and gives IsengardBallista / IsengardBatteringRam / GondorTrebuchet /
+	# DwarvenCatapult / MordorCatapult / every porter exactly one
+	# ExperienceLevel block (`IsengardBallistaLevel1`, TargetNames =
+	# IsengardBallista, Rank = 1, and no Level2). Ring heroes and Treebeard are
+	# the mirror case: one row whose authored Rank is already their max (10).
+	# Isengard's spawn-roster slot 2 is the ballista, so this branch is the
+	# whole reason `steps[1]`/`xp_levels[1]` used to run off the end of the
+	# array and abort `_run` — the assertion adapts to the authored chain
+	# length instead of assuming two ranks.
+	var authored_levels: Array = xp_rule.get("levels", [])
+	if not xp_rule.is_empty() and authored_levels.size() < 2:
+		var only_level: Dictionary = authored_levels[0]
+		var single_rank_state: Dictionary = roster_sim.experience_state(xp_attacker_id)
+		_check(
+			"single_rank_unit_fields_at_its_authored_top_rank",
+			int(only_level.get("rank", 0)) == int(xp_rule.get("max_level", -1))
+				and int(single_rank_state.get("level", 0)) == int(only_level.get("rank", 0))
+				and int(single_rank_state.get("max_level", -1)) == int(xp_rule.get("max_level", -1))
+				and int(only_level.get("experience_award", -1)) >= 0,
+			"faction=%s unit=%s rank=%d max_level=%d state=%s" % [
+				String(slice.faction_manifest.get("faction", "")),
+				String(xp_attacker.get("unit_type", "")),
+				int(only_level.get("rank", 0)),
+				int(xp_rule.get("max_level", -1)),
+				str(single_rank_state),
+			]
+		)
+	elif not xp_rule.is_empty():
 		var xp_levels: Array = xp_rule.get("levels", [])
 		var rank_one_award := int((xp_levels[0] as Dictionary).get("experience_award", 0))
 		var rank_two: Dictionary = xp_levels[1]
@@ -1411,7 +1448,12 @@ func _run() -> void:
 		var doc_button_hud = load("res://src/retail_slice/retail_hud.gd").new()
 		doc_button_hud.build()
 		doc_button_hud.set_production_state([], true, 0, [], [], [], [], String(line_unit.get("producer_kind", "")), offered)
-		var doc_button: Button = (doc_button_hud._doc_upgrade_buttons.get(first_upgrade, {}) as Button)
+		# `as Button` on the old `{}` fallback is a hard cast error, not a null:
+		# a faction whose HUD never bound this upgrade aborted `_run` outright
+		# (mordor did). Resolve it as a Variant and let the check report the
+		# missing binding.
+		var doc_button_value: Variant = doc_button_hud._doc_upgrade_buttons.get(first_upgrade, null)
+		var doc_button: Button = doc_button_value as Button if doc_button_value is Button else null
 		_check(
 			"doc_upgrade_button_binds_at_authored_slot",
 			doc_button != null
@@ -2599,6 +2641,7 @@ func _armor_rule_for_set(sim, set_id: String) -> Dictionary:
 
 
 func _check(name: String, condition: bool, detail: String = "") -> void:
+	_watchdog.note(name)
 	if condition:
 		passed += 1
 		print("RETAIL_SLICE PASS %s" % name)
@@ -2613,5 +2656,6 @@ func _finish() -> void:
 	if ran < floor_checks:
 		failed += 1
 		printerr("RETAIL_SLICE FAIL liveness: ran %d checks, expected at least %d - a function aborted before its assertions" % [ran, floor_checks])
+	_watchdog.stop()
 	print("RETAIL_SLICE_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)

@@ -4135,7 +4135,7 @@ func _spellbook_effect_support(power_row: Dictionary, fields: Array, references:
 		"OCLSpecialPower":
 			return _spellbook_ocl_support(power_row, references, object_leaves, ocl_leaves, weapon_leaves)
 		"ElvenWoodSpecialPower":
-			return _spellbook_grove_support(field_values, field_resolved, references, modifier_leaves, object_leaves)
+			return _spellbook_grove_support(field_values, field_resolved, references, modifier_leaves, object_leaves, ocl_leaves)
 		"CloudBreakSpecialPower":
 			return _spellbook_cloudbreak_support(field_values, field_resolved)
 		_:
@@ -4439,7 +4439,77 @@ func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, 
 	return {"ok": true, "rule": rule, "lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / TICK_SECONDS))}
 
 
-func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary) -> Dictionary:
+func _spellbook_grove_chain(references: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary) -> Dictionary:
+	## Resolve Elven Wood's authored geometry chain, or return {} for "none".
+	##
+	## Retail plants the grove through an ObjectCreationList, not through the
+	## ElvenGrove object (which authors `Model = None` and is pure particle):
+	## OCL_ElvenWoodSeed creates N ElvenWoodTreeSeed at an authored spread
+	## radius, each seed's SlowDeath hatches OCL_ElvenWoodTree -> ElvenWoodTree,
+	## which itself hatches OCL_ElvenWoodTreeSpawn -> ElvenWoodTreeOpt (the tree
+	## that stays). Every number below is read off that chain; nothing is
+	## assumed, and an unresolvable link simply yields no trees rather than an
+	## invented grove.
+	var ocl_ids: Array = references.get("objectCreationLists", []) as Array
+	if ocl_ids.is_empty():
+		return {}
+	var ocl: Dictionary = ocl_leaves.get(String(ocl_ids[0]), {}) as Dictionary
+	if ocl.is_empty():
+		return {}
+	var creates: Array = ocl.get("createObjects", []) as Array
+	if creates.is_empty() or typeof(creates[0]) != TYPE_DICTIONARY:
+		return {}
+	var create := creates[0] as Dictionary
+	var names: Array = create.get("objects", []) as Array
+	if names.is_empty():
+		return {}
+	var count := 1
+	var min_radius := 0.0
+	var max_radius := 0.0
+	for field_value in Array(create.get("fields", [])):
+		if typeof(field_value) != TYPE_DICTIONARY:
+			continue
+		var field_row := field_value as Dictionary
+		match String(field_row.get("key", "")):
+			"Count":
+				count = maxi(1, int(field_row.get("resolved", 1)))
+			"MinDistanceAFormation":
+				min_radius = float(field_row.get("resolved", 0.0))
+			"MaxDistanceFormation":
+				max_radius = float(field_row.get("resolved", 0.0))
+	# Follow every authored hatch to the object that actually remains standing.
+	var object_id := String(names[0])
+	var guard := 0
+	while guard < 4:
+		guard += 1
+		var leaf: Dictionary = object_leaves.get(object_id, {}) as Dictionary
+		if leaf.is_empty():
+			return {}
+		var hatch: Dictionary = leaf.get("hatch", {}) as Dictionary
+		var hatch_ocl_id := String(hatch.get("ocl", ""))
+		if hatch_ocl_id == "":
+			break
+		var hatch_ocl: Dictionary = ocl_leaves.get(hatch_ocl_id, {}) as Dictionary
+		var hatch_creates: Array = hatch_ocl.get("createObjects", []) as Array
+		if hatch_creates.is_empty() or typeof(hatch_creates[0]) != TYPE_DICTIONARY:
+			break
+		var hatch_names: Array = (hatch_creates[0] as Dictionary).get("objects", []) as Array
+		if hatch_names.is_empty():
+			break
+		object_id = String(hatch_names[0])
+	if object_id == "" or not object_leaves.has(object_id):
+		return {}
+	if max_radius <= 0.0:
+		max_radius = min_radius
+	return {
+		"object_id": object_id,
+		"count": count,
+		"min_radius_source": min_radius,
+		"max_radius_source": max_radius,
+	}
+
+
+func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary = {}) -> Dictionary:
 	## Elven Wood: the converted ElvenGrove leaf carries the taint aura —
 	## modifier leaf, refresh, range, filter, and the grove lifetime.
 	var grove_id := String(field_values.get("ElvenGroveObject", ""))
@@ -4481,6 +4551,9 @@ func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictiona
 		"lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / TICK_SECONDS)),
 		"filter": filter,
 		"modifier": modifier_id,
+		# Presentation-only: the authored tree chain behind the grove. Absent
+		# when the chain does not fully convert, and then no geometry is placed.
+		"trees": _spellbook_grove_chain(references, object_leaves, ocl_leaves),
 	}}
 
 
@@ -4772,6 +4845,12 @@ func cast_power(team: int, power_id: String, point: Vector2) -> Dictionary:
 		"sound_id": String(row.get("sound_id", "")),
 		"effect_kind": String(effect.get("kind", "")),
 		"radius_source": float(effect.get("radius_source", effect.get("range_source", 0.0))),
+		# Map-scaled twin of radius_source so the presentation cue can cover the
+		# ground the power actually affected without re-deriving the scale.
+		"fx_radius": snappedf(
+			float(effect.get("radius_source", effect.get("range_source", 0.0))) * _spellbook_world_scale(),
+			0.001
+		),
 		"fx_lists": row.get("fx_lists", []),
 		"ocls": row.get("ocls", []),
 		"battalions": int(result.get("battalions", 0)),
@@ -4994,7 +5073,15 @@ func _cast_spellbook_grove(team: int, effect: Dictionary, point: Vector2) -> Dic
 		"despawn_tick": tick_index + int(effect.get("lifetime_ticks", 1)),
 		"filter": String(effect.get("filter", "")),
 	})
-	_emit_event("power.grove", 0, 0, {"team": team, "point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)], "lifetime_ticks": int(effect.get("lifetime_ticks", 0))})
+	var grove_trees: Dictionary = effect.get("trees", {}) as Dictionary
+	_emit_event("power.grove", 0, 0, {
+		"team": team,
+		"point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)],
+		"lifetime_ticks": int(effect.get("lifetime_ticks", 0)),
+		# The presenter plants the authored tree object; an empty block means
+		# the chain did not convert and nothing is drawn.
+		"trees": grove_trees.duplicate(true),
+	})
 	return {"ok": true, "reason": "", "battalions": 0}
 
 
@@ -5127,12 +5214,21 @@ func _fire_power_summon(effect: Dictionary) -> void:
 	## Hatch: spawn each converted summon target with its summon lifetime.
 	var team := int(effect.get("team", -1))
 	var point := Vector2(effect.get("point", Vector2.ZERO))
+	var spawned := _spawn_summon_targets(team, point, Array(effect.get("targets", [])))
+	_emit_event("power.summon", 0, 0, {"team": team, "point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)], "spawned": spawned})
+
+
+func _spawn_summon_targets(team: int, point: Vector2, targets: Array) -> Array:
+	## Shared summon spawn: register each converted summon rule as a live unit
+	## rule and place its battalions with the authored summon lifetime. Used by
+	## BOTH the spellbook OCL powers and the hero egg-chain abilities so the two
+	## lanes cannot drift apart.
 	var unit_rules_value: Variant = _rules.get("unit_rules", {})
 	if typeof(unit_rules_value) != TYPE_DICTIONARY:
-		return
+		return []
 	var unit_rules := unit_rules_value as Dictionary
 	var spawned: Array = []
-	for target_value in Array(effect.get("targets", [])):
+	for target_value in targets:
 		var target := target_value as Dictionary
 		var rule: Dictionary = (target.get("rule", {}) as Dictionary).duplicate(true)
 		var object_id := String(target.get("object_id", ""))
@@ -5158,7 +5254,48 @@ func _fire_power_summon(effect: Dictionary) -> void:
 				_summon_despawn_ticks[entity_id] = tick_index + lifetime_ticks
 			spawned.append(entity_id)
 	_rules["unit_rules"] = unit_rules
-	_emit_event("power.summon", 0, 0, {"team": team, "point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)], "spawned": spawned})
+	return spawned
+
+
+func spawn_script_object(object_type: String, team: int, at: Vector2) -> int:
+	## Map-script object creation (campaign B4). Instantiates one battalion of
+	## the retail object type `object_type` for `team` at `at` and returns its
+	## entity id.
+	##
+	## Returns -1, and creates nothing, when this simulation cannot honestly
+	## produce the type: the loaded content carries no unit rule for it, or the
+	## team is not in the roster. That is the ordinary case for a campaign map
+	## object whose retail type is not in the loaded faction slice, and the
+	## caller (RetailMapScripts) keeps the object as registry state only rather
+	## than substituting a different unit for it.
+	##
+	## Nothing inside the simulation calls this, so a match whose scripts never
+	## create objects is byte-identical to one compiled before it existed.
+	if object_type == "":
+		return -1
+	var unit_rules_value: Variant = _rules.get("unit_rules", {})
+	if typeof(unit_rules_value) != TYPE_DICTIONARY:
+		return -1
+	var rule: Dictionary = (unit_rules_value as Dictionary).get(object_type, {}) as Dictionary
+	if rule.is_empty():
+		return -1
+	if not _next_dynamic_id.has(team):
+		# Allocating outside the seeded per-team id ranges would collide with
+		# another team's ids, so an unseeded team refuses rather than inventing
+		# an id space.
+		return -1
+	var entity_id := int(_next_dynamic_id[team])
+	_next_dynamic_id[team] = entity_id + 1
+	_add_battalion(
+		entity_id,
+		team,
+		at,
+		String(rule.get("horde_id", object_type)),
+		object_type,
+		object_type,
+		0
+	)
+	return entity_id if entities.has(entity_id) else -1
 
 
 func _step_summon_despawns() -> void:
@@ -7586,10 +7723,12 @@ func _scaled_ability_rules(rules: Array[Dictionary], source_scale: float) -> Arr
 				var range_source := float(effect.get("attackRange", effect.get("startAbilityRange", 0.0)))
 				effect["range"] = range_source * scale
 				# Converter-emitted knockback magnitudes (source units) bind to
-				# map scale like every other range. No compiled Men ability
-				# carries these yet (MetaImpactNugget extraction is importer
-				# follow-up); until then the keys stay 0 and the blast deals
-				# damage without a shockwave — fail-closed, nothing invented.
+				# map scale like every other range. Gandalf's Wizard Blast is
+				# the compiled Men ability that carries them today
+				# (knockbackRadius 110, knockbackStrength 70); abilities whose
+				# MetaImpactNugget extraction is still importer follow-up keep
+				# these keys at 0 and deal damage without a shockwave —
+				# fail-closed, nothing invented.
 				effect["knockback_radius"] = float(effect.get("knockbackRadius", 0.0)) * scale
 				effect["knockback_strength"] = float(effect.get("knockbackStrength", 0.0)) * scale
 			"heal":
@@ -7699,6 +7838,63 @@ func _attach_experience_state(row: Dictionary) -> void:
 	row["level"] = int(rule.get("initial_rank", 1))
 	row["experience_xp"] = 0
 	row["experience_max_level"] = int(rule.get("max_level", 1))
+
+
+func debug_force_max_level(entity_ids: Array) -> int:
+	## Playtest aid: walk each entity up its own authored ExperienceLevel chain
+	## by awarding the XP the chain itself demands, so every rank's authored
+	## level effects apply exactly as they would in a real match. It never
+	## fabricates a rank the source does not author.
+	var levelled := 0
+	for id_value in entity_ids:
+		var entity_id := int(id_value)
+		if not entities.has(entity_id):
+			continue
+		var row: Dictionary = entities[entity_id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		var rule: Dictionary = _unit_experience_rules.get(String(row.get("unit_type", "")), {})
+		if rule.is_empty():
+			continue
+		var before := int(row.get("level", 1))
+		var required := 0
+		for level_value in Array(rule.get("levels", [])):
+			required = maxi(required, int((level_value as Dictionary).get("required_experience", 0)))
+		var deficit := required - int(row.get("experience_xp", 0))
+		if deficit > 0:
+			_award_experience(row, deficit)
+		if int(row.get("level", 1)) != before:
+			levelled += 1
+	return levelled
+
+
+func debug_restore_health(entity_ids: Array) -> int:
+	## Playtest aid: refill an entity and every living horde member. Dead
+	## members stay dead — resurrecting them would change horde size, which is
+	## a simulation fact rather than a convenience.
+	var healed := 0
+	for id_value in entity_ids:
+		var entity_id := int(id_value)
+		if not entities.has(entity_id):
+			continue
+		var row: Dictionary = entities[entity_id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		var member_max := int(row.get("member_maximum_health", 0))
+		var members: Array = Array(row.get("member_health", []))
+		if member_max > 0 and not members.is_empty():
+			for index in range(members.size()):
+				if int(members[index]) > 0:
+					members[index] = member_max
+			row["member_health"] = members
+			var total := 0
+			for value in members:
+				total += int(value)
+			row["health"] = total
+		else:
+			row["health"] = int(row.get("maximum_health", row.get("health", 0)))
+		healed += 1
+	return healed
 
 
 func experience_rule_for_unit(unit_type: String) -> Dictionary:
@@ -7961,9 +8157,39 @@ func cast_ability(hero_id: int, ability_id: String, target_point: Vector2, team:
 		"affected": int(result.get("affected", 0)),
 		"summoned": result.get("summoned", []),
 		"sound_id": String(rule.get("initiate_sound_id", rule.get("unit_specific_sound_id", ""))),
+		# Authored FX identity and the map-scaled radii the converted leaf gave
+		# this cast. The presentation layer had no way to tell one ability's
+		# cue from another's before this; spellbook casts already carried their
+		# fx_lists on power.cast, hero abilities carried nothing.
+		"fx_lists": _ability_fx_list_ids(effect),
+		"fx_radius": snappedf(_ability_fx_radius(effect), 0.001),
+		"damage_type": String(effect.get("damageType", "")),
 		"point": [snappedf(target_point.x, 0.001), snappedf(target_point.y, 0.001)],
 	})
 	return result
+
+
+func _ability_fx_list_ids(effect: Dictionary) -> Array:
+	## Authored FXList ids on a converted ability leaf, in a stable order. The
+	## converter emits these under kind-specific keys (fireFxId on weapon
+	## leaves, healFxId on heals, levelFxId on level grants); nothing is
+	## synthesised when a leaf authors none.
+	var ids: Array = []
+	for key in ["fireFxId", "healFxId", "levelFxId", "fxId"]:
+		var value := String(effect.get(key, ""))
+		if value != "" and not ids.has(value):
+			ids.append(value)
+	return ids
+
+
+func _ability_fx_radius(effect: Dictionary) -> float:
+	## The largest map-scaled radius this ability actually acts over, so the
+	## presentation cue covers exactly the ground the sim affected. Ability
+	## kinds that author no radius return 0 and get no radial cue.
+	var radius := 0.0
+	for key in ["knockback_radius", "damage_radius", "radius_scaled", "target_radius_scaled"]:
+		radius = maxf(radius, float(effect.get(key, 0.0)))
+	return radius
 
 
 func _ability_enemies_near(team: int, point: Vector2, radius: float) -> Array[int]:
@@ -8313,6 +8539,16 @@ func _apply_ability_summon(hero_row: Dictionary, effect: Dictionary, point: Vect
 	## Converted ObjectCreationList summon: each created object must resolve to
 	## a converted unit rule or the cast fails closed (never a stand-in).
 	var team := int(hero_row.get("team", -1))
+	# Retail hero summons hatch: the ability's ObjectCreationList creates a
+	# model-less egg (AragornArmyofTheDeadSmallEgg) whose SlowDeathBehavior OCL
+	# spawns the real battalions. `effect.objects` names only that egg, and no
+	# playable-unit document ever describes it, so the legacy lookup below
+	# always failed closed and the power did nothing at all. When the converter
+	# published the ability's leaf closure, walk the same egg -> hatch -> horde
+	# -> member chain the spellbook powers already walk.
+	var chained := _apply_ability_summon_chain(team, effect, point)
+	if not chained.is_empty():
+		return chained
 	var summoned: Array = []
 	var ordinal := 0
 	for entry_value in effect.get("objects", []) as Array:
@@ -8337,6 +8573,60 @@ func _apply_ability_summon(hero_row: Dictionary, effect: Dictionary, point: Vect
 			_emit_event("unit.summoned", new_id, 0, {"team": team, "object_id": member_id, "unit_type": unit_type})
 			summoned.append(new_id)
 	return {"ok": true, "reason": "", "effect": "summon", "affected": summoned.size(), "summoned": summoned}
+
+
+func _apply_ability_summon_chain(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
+	## Resolve a hero summon through its converted leaf closure with the proven
+	## spellbook OCL machinery. Returns {} when the ability carries no closure
+	## (older documents) so the caller keeps its playable-unit lookup, and a
+	## fail-closed result carrying the exact leaf gap when the closure is
+	## present but the chain does not convert — never a stand-in summon.
+	var leaves: Dictionary = effect.get("leaves", {}) as Dictionary
+	if leaves.is_empty():
+		return {}
+	var ocl_id := String(effect.get("oclId", ""))
+	if ocl_id == "":
+		return {}
+	var object_leaves: Dictionary = {}
+	for object_value in Array(leaves.get("objects", [])):
+		if typeof(object_value) == TYPE_DICTIONARY:
+			object_leaves[String((object_value as Dictionary).get("id", ""))] = object_value
+	var ocl_leaves: Dictionary = {}
+	for ocl_value in Array(leaves.get("objectCreationLists", [])):
+		if typeof(ocl_value) == TYPE_DICTIONARY:
+			ocl_leaves[String((ocl_value as Dictionary).get("id", ""))] = ocl_value
+	var weapon_leaves: Dictionary = {}
+	for weapon_value in Array(leaves.get("weapons", [])):
+		if typeof(weapon_value) == TYPE_DICTIONARY:
+			weapon_leaves[String((weapon_value as Dictionary).get("id", ""))] = weapon_value
+	var support := _spellbook_ocl_support(
+		{}, {"objectCreationLists": [ocl_id]}, object_leaves, ocl_leaves, weapon_leaves
+	)
+	if not bool(support.get("ok", false)):
+		return {"ok": false, "reason": "summon-chain-unconverted:%s" % String(support.get("reason", ""))}
+	var resolved: Dictionary = support.get("effect", {}) as Dictionary
+	if String(resolved.get("kind", "")) != "summon":
+		# Fire-weapon receptacles and structure spawns are other powers' shapes;
+		# a hero summon button never presents them.
+		return {"ok": false, "reason": "summon-chain-unsupported-kind:%s" % String(resolved.get("kind", ""))}
+	var targets: Array = Array(resolved.get("targets", []))
+	if targets.is_empty():
+		return {"ok": false, "reason": "summon-chain-has-no-targets"}
+	# The egg's authored SlowDeathBehavior DestructionDelay is the summon's
+	# rise time (4000ms for the Army of the Dead). Schedule through the same
+	# pending-effect queue the spellbook summons use so both lanes hatch on the
+	# authored beat instead of popping in instantly.
+	var pending := 0
+	for target_value in targets:
+		pending += maxi(1, int((target_value as Dictionary).get("count", 1)))
+	_pending_power_effects.append({
+		"kind": "summon",
+		"fire_tick": tick_index + int(resolved.get("hatch_delay_ticks", 0)),
+		"team": team,
+		"point": point,
+		"targets": targets.duplicate(true),
+	})
+	return {"ok": true, "reason": "", "effect": "summon", "affected": pending, "summoned": []}
 
 
 func _summon_unit_type_for(source_object_id: String) -> String:

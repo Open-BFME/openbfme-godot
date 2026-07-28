@@ -54,7 +54,7 @@ run_importer.bat <BFME2>
 The underlying flow is:
 
 1. Bootstrap or attest the pinned private toolchain.
-2. Diagnose the user-owned BFME2 1.06 installation without modifying it.
+2. Diagnose the user-owned retail installation without modifying it.
 3. Index the archive overlay and compute the effective source view.
 4. Census the requested dependency closure.
 5. Plan from metadata before extracting payloads.
@@ -79,7 +79,7 @@ approval.
 
 ## Source selection and precedence
 
-The catalog records every archive entry needed to reproduce BFME2 1.06 overlay
+The catalog records every archive entry needed to reproduce retail overlay
 selection. Selection must be deterministic and include:
 
 - canonical virtual path and case handling;

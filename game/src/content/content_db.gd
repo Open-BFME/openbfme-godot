@@ -8,10 +8,18 @@ const MAX_MAP_CATALOG_ROW_FIELDS := 64
 const MAX_COOKED_MAP_ROOT_FIELDS := 128
 const MAX_MAP_ID_LENGTH := 256
 const MAX_MAP_PATH_LENGTH := 1024
+# Registry sizes are per PACK, and a pack now composes every faction it was
+# built from, so both counts scale with faction count rather than being a
+# single roster. Measured: single-faction Men v-slice = 16 units / 22
+# structures; six-faction v-slice = 82 units / 130 structures (~14 units and
+# ~22 structures per added faction). 130 was already at 51% of the old 256
+# structure ceiling, so a 7th faction plus mod content would have tripped it.
+# Both raised to 2,048 — still a hard resource-exhaustion guard, with room for
+# a fully composed pack an order of magnitude larger than today's.
 const MAX_PLAYABLE_UNIT_RUNTIME_BYTES := 4 * 1024 * 1024
-const MAX_PLAYABLE_UNIT_RUNTIMES_PER_PACK := 512
+const MAX_PLAYABLE_UNIT_RUNTIMES_PER_PACK := 2_048
 const MAX_PLAYABLE_STRUCTURE_RUNTIME_BYTES := 4 * 1024 * 1024
-const MAX_PLAYABLE_STRUCTURE_RUNTIMES_PER_PACK := 256
+const MAX_PLAYABLE_STRUCTURE_RUNTIMES_PER_PACK := 2_048
 const PLAYABLE_STRUCTURE_LIFECYCLE_PHASES: Array[String] = [
 	"construction", "intact", "damaged", "really-damaged", "rubble", "post-rubble",
 ]
@@ -37,6 +45,18 @@ var retail_unit_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
 var trebuchet_runtime: Dictionary = {}
 var spellbook_runtime: Dictionary = {}
+## Effect-object presentation rows registered from every admitted spellbook
+## runtime document's `presentation.visualBindings`: object id -> the binding
+## row the importer emitted (status / model / sourceW3d / memberObjectId).
+## Summoned units, groves and trees are NOT playable-unit documents, so the
+## roster projection never registers them; without this table every summoned
+## object reached AssetFactory with no mesh path and fell back to the synthetic
+## multi-part kit (the "blue units"). Objects retail authors with `Model = None`
+## are recorded here too, as `authored-invisible`, and stay invisible.
+var spellbook_visual_bindings: Dictionary = {}
+## Effect objects a spellbook bound to no converted model, with the importer's
+## verbatim reason. Surfaced for the runners rather than silently substituted.
+var spellbook_unconverted_visuals: Array[String] = []
 var playable_unit_runtimes: Dictionary = {}
 ## Every admitted copy of a playableUnit.* document: casefolded object id to
 ## the load-ordered list of per-pack documents. Shared retail units (the
@@ -60,6 +80,10 @@ var skipped_playable_unit_documents: Array[String] = []
 var playable_structure_runtimes: Dictionary = {}
 var animation_capabilities: Dictionary = {}
 var bundle_maps: Dictionary = {}
+## Map ids that a pack published through a `mapCatalog` document, in authored
+## order. Empty when no loaded pack ships a catalog, which is what keeps the
+## skirmish menu on its authored fallback list instead of a one-entry list.
+var catalog_map_ids: Array[String] = []
 var retail_ui_images: Dictionary = {}
 var retail_strings: Dictionary = {}
 var retail_audio_events: Dictionary = {}
@@ -111,6 +135,8 @@ func reload() -> void:
 	ranger_runtime.clear()
 	trebuchet_runtime.clear()
 	spellbook_runtime.clear()
+	spellbook_visual_bindings.clear()
+	spellbook_unconverted_visuals.clear()
 	playable_unit_runtimes.clear()
 	playable_unit_runtime_pack_index.clear()
 	bundle_object_pack_index.clear()
@@ -119,6 +145,7 @@ func reload() -> void:
 	playable_structure_runtimes.clear()
 	animation_capabilities.clear()
 	bundle_maps.clear()
+	catalog_map_ids.clear()
 	retail_ui_images.clear()
 	retail_strings.clear()
 	retail_audio_events.clear()
@@ -292,6 +319,11 @@ func _load_map_catalog(root: String, relative: String) -> bool:
 			bundle_maps[map_id] = existing
 		else:
 			bundle_maps[map_id] = row
+		# Authored catalog order is the map list's order; a map reached only
+		# through a pack's entryMap is deliberately not enumerable, because a
+		# host pack's entry map is not a skirmish menu offering.
+		if not catalog_map_ids.has(map_id):
+			catalog_map_ids.append(map_id)
 	return true
 
 
@@ -418,8 +450,62 @@ func _load_spellbook_runtimes(root: String, declared: Dictionary) -> void:
 		document["_source"] = ModLoader.resolve_pack_path(root, relative)
 		document["_pack_root"] = root
 		document["_pack_file_key"] = key
+		_register_spellbook_visual_bindings(root, document)
 		spellbook_runtime = document
 		# Last valid wins across packs (matches other registry overwrite policy).
+
+
+func _register_spellbook_visual_bindings(root: String, document: Dictionary) -> void:
+	## Publish one spellbook's converted effect geometry as ordinary bundle
+	## objects so the existing presentation bridge can find it.
+	##
+	## A power's summoned objects are not playable units and have no
+	## playableUnit.* document, so nothing ever put their models in
+	## `bundle_objects`; every summon presented as the synthetic kit mesh. The
+	## importer now converts the models retail authors on those objects and
+	## records them here, including the horde-container rows whose presented art
+	## is their authored MemberObject's (a horde marker draws nothing).
+	##
+	## Registration NEVER overwrites a row an objects.json or playableUnit.*
+	## document already owns: those carry animation capabilities this static
+	## effect binding does not.
+	var presentation: Dictionary = (document.get("registration", {}) as Dictionary).get("presentation", {}) as Dictionary
+	var bindings: Dictionary = presentation.get("visualBindings", {}) as Dictionary
+	var objects: Dictionary = bindings.get("objects", {}) as Dictionary
+	for object_id_value in objects.keys():
+		var object_id := String(object_id_value)
+		var row_value: Variant = objects[object_id_value]
+		if object_id == "" or typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := (row_value as Dictionary).duplicate(true)
+		row["_pack_root"] = root
+		spellbook_visual_bindings[object_id] = row
+		var status := String(row.get("status", ""))
+		if status == "unconverted":
+			var note := "%s:%s" % [object_id, String(row.get("reason", ""))]
+			if not spellbook_unconverted_visuals.has(note):
+				spellbook_unconverted_visuals.append(note)
+			continue
+		if status != "model" and status != "horde-member":
+			continue  # authored-invisible stays invisible
+		var model := String(row.get("model", ""))
+		if model == "" or not ModLoader.is_safe_relative_path(model):
+			continue
+		if bundle_objects.has(object_id):
+			continue
+		bundle_objects[object_id] = {
+			"id": object_id,
+			"kind": "member",
+			"displayName": object_id,
+			"presentation": {"model": model},
+			"_pack_root": root,
+			"_source": ModLoader.resolve_pack_path(root, model),
+			"_spellbookEffectObject": true,
+			"_spellbookVisualStatus": status,
+		}
+		if not bundle_object_pack_index.has(object_id):
+			bundle_object_pack_index[object_id] = []
+		(bundle_object_pack_index[object_id] as Array).append(bundle_objects[object_id])
 
 
 func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
@@ -539,6 +625,7 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 				if not projected_states.has(state_name):
 					projected_states[state_name] = (authored_states[state_name] as Dictionary).duplicate(true)
 			capability["states"] = projected_states
+		member = _merge_projected_member(member, replaced_object, document)
 		bundle_objects[member_key] = member
 		animation_capabilities[String(capability["id"])] = capability
 		# Shared units project the same member/capability ids from every faction
@@ -773,6 +860,197 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 	return true
 
 
+## Retail model conditions that name an addressable special ability rather than
+## a generic combat pose. Mirrors `_ABILITY_STATE_TOKENS` in the importer's
+## `playable_unit_pack_compiler.py`; kept here as well because the derivation
+## also runs against packs cooked before the compiler sealed the block.
+const ABILITY_STATE_CONDITIONS: Dictionary = {
+	"SPECIAL_WEAPON_ONE": "specialWeaponOne",
+	"SPECIAL_WEAPON_TWO": "specialWeaponTwo",
+	"SPECIAL_WEAPON_THREE": "specialWeaponThree",
+	"USING_SPECIAL_ABILITY": "usingSpecialAbility",
+}
+## Retail's four-phase cast envelope (boromir.ini:127-178 authors all four for
+## SPECIAL_POWER_1). The bare condition is the fire frame itself.
+const ABILITY_PHASE_CONDITIONS: Dictionary = {
+	"UNPACKING": "unpack",
+	"PREPARING": "prepare",
+	"PACKING": "pack",
+}
+const ABILITY_DEFAULT_PHASE := "cast"
+
+
+func _ability_animation_key(conditions: Array) -> Array:
+	## `[abilityState, phase]` named by one AnimationState's conditions, or an
+	## empty array when the row names no addressable ability — or names more
+	## than one, which cannot be addressed unambiguously and is left alone
+	## rather than guessed at.
+	var tokens: Array[String] = []
+	for value in conditions:
+		tokens.append(String(value).to_upper())
+	var state := ""
+	for token in tokens:
+		var mapped := String(ABILITY_STATE_CONDITIONS.get(token, ""))
+		if mapped == "":
+			if token.begins_with("SPECIAL_POWER_") and token.substr(14).is_valid_int():
+				mapped = "specialPower%d" % token.substr(14).to_int()
+			elif token.begins_with("PACKING_TYPE_") and token.substr(13).is_valid_int():
+				mapped = "packingType%d" % token.substr(13).to_int()
+		if mapped == "":
+			continue
+		if state != "" and state != mapped:
+			return []
+		state = mapped
+	if state == "":
+		return []
+	var phase := ABILITY_DEFAULT_PHASE
+	for token in tokens:
+		var mapped_phase := String(ABILITY_PHASE_CONDITIONS.get(token, ""))
+		if mapped_phase == "":
+			continue
+		if phase != ABILITY_DEFAULT_PHASE:
+			return []
+		phase = mapped_phase
+	return [state, phase]
+
+
+func _ability_animation_states(visual: Dictionary) -> Dictionary:
+	## Capability states for the authored ability poses this unit can address,
+	## keyed `ability:<abilityState>:<phase>`.
+	##
+	## A cast used to be indistinguishable from a normal swing: the pack
+	## compiler folds every SPECIAL_WEAPON_* AnimationState into the generic
+	## "attack" semantic state, so Gandalf's staff-lowering wizard blast clip
+	## (`GUGandalfG_SKL.GUGandalfG_SPCL`, gandalf.ini:305) reached the cooked
+	## mesh but nothing could ask for it by name. The core lane is deliberately
+	## left as-is — this is a parallel, additive index over the very same
+	## authored rows.
+	##
+	## Reads the compiler's sealed `visual.abilityAnimations` block when the
+	## pack carries one, and otherwise derives the same mapping from
+	## `visual.authoredAnimationStates`, which every cooked pack already ships.
+	var result: Dictionary = {}
+	var sealed_value: Variant = visual.get("abilityAnimations", null)
+	if typeof(sealed_value) == TYPE_DICTIONARY:
+		for state_value in (sealed_value as Dictionary).keys():
+			var phases_value: Variant = (sealed_value as Dictionary)[state_value]
+			if typeof(phases_value) != TYPE_DICTIONARY:
+				continue
+			for phase_value in (phases_value as Dictionary).keys():
+				var bindings: Variant = (phases_value as Dictionary)[phase_value]
+				if typeof(bindings) != TYPE_ARRAY:
+					continue
+				_append_ability_state(
+					result, String(state_value), String(phase_value), bindings as Array
+				)
+		return result
+	var authored: Variant = visual.get("authoredAnimationStates", [])
+	if typeof(authored) != TYPE_ARRAY:
+		return result
+	var grouped: Dictionary = {}
+	for row_value in authored as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := row_value as Dictionary
+		if String(row.get("runtimeSupport", "")).begins_with("excluded"):
+			continue
+		var conditions: Variant = row.get("conditions", [])
+		if typeof(conditions) != TYPE_ARRAY:
+			continue
+		var key := _ability_animation_key(conditions as Array)
+		if key.is_empty():
+			continue
+		var group_key := "%s\u001f%s" % [String(key[0]), String(key[1])]
+		if not grouped.has(group_key):
+			grouped[group_key] = []
+		(grouped[group_key] as Array).append(row)
+	for group_key_value in grouped.keys():
+		var parts := String(group_key_value).split("\u001f")
+		_append_ability_state(result, parts[0], parts[1], grouped[group_key_value] as Array)
+	return result
+
+
+func _append_ability_state(
+	result: Dictionary, state: String, phase: String, bindings: Array
+) -> void:
+	var clips: Array[String] = []
+	for binding_value in bindings:
+		if typeof(binding_value) != TYPE_DICTIONARY:
+			continue
+		var identifier := String((binding_value as Dictionary).get("identifier", ""))
+		if identifier == "":
+			continue
+		if not clips.has(identifier):
+			clips.append(identifier)
+	if clips.is_empty():
+		return
+	clips.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	result["ability:%s:%s" % [state, phase]] = {
+		"clips": clips,
+		"mode": "loop" if phase == "prepare" else "once",
+		"useWeaponTiming": false,
+	}
+
+
+func _merge_projected_member(
+	member: Dictionary, replaced: Dictionary, document: Dictionary
+) -> Dictionary:
+	## Overlay the playable-unit projection onto the bundle object it supersedes.
+	##
+	## The playable-unit lane owns the presentation model, the animation
+	## capability AND the gameplay numbers — `_gameplay_rules` deliberately
+	## routes a unit to the lane's own `registration.simulation` when the bundle
+	## object carries no `simulation` block, so that block must stay absent here.
+	##
+	## What the lane does not own is the unit's *identity art*. The bare
+	## projection carries only `presentation.model`, so assigning it over
+	## `bundle_objects` dropped `presentation.icon` and
+	## `presentation.commandIcon` outright and every unit the lane admitted lost
+	## its portrait and command icon. The composed six-faction pack made that
+	## visible everywhere because it admits far more playable-unit documents
+	## than the single-faction cook did.
+	##
+	## So: inherit the presentation-only keys, nothing else. Units the legacy
+	## `data/objects.json` lane never published have nothing to inherit, so
+	## their icons come from the playable-unit document's own authored
+	## `imageBindings` (`ui.portraitImageIds` for the portrait, the train
+	## command's `ButtonImage` for the command icon). Nothing is invented: an id
+	## the pack did not bind simply stays empty.
+	var merged: Dictionary = member.duplicate(true)
+	var inherited_presentation: Dictionary = (
+		replaced.get("presentation", {}) as Dictionary
+	)
+	if String(merged.get("displayName", "")) == "" and String(replaced.get("displayName", "")) != "":
+		merged["displayName"] = replaced["displayName"]
+	var presentation: Dictionary = (member.get("presentation", {}) as Dictionary).duplicate(true)
+	for key in ["icon", "commandIcon"]:
+		if String(presentation.get(key, "")) == "" and String(inherited_presentation.get(key, "")) != "":
+			presentation[key] = inherited_presentation[key]
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var image_bindings: Dictionary = registration.get("imageBindings", {}) as Dictionary
+	var ui: Dictionary = registration.get("ui", {}) as Dictionary
+	if String(presentation.get("icon", "")) == "":
+		for portrait_id_value in ui.get("portraitImageIds", []) as Array:
+			var relative := String(image_bindings.get(String(portrait_id_value), ""))
+			if relative != "":
+				presentation["icon"] = relative
+				break
+	if String(presentation.get("commandIcon", "")) == "":
+		for command_value in ui.get("commands", []) as Array:
+			if typeof(command_value) != TYPE_DICTIONARY:
+				continue
+			var fields: Dictionary = (command_value as Dictionary).get("fields", {}) as Dictionary
+			for image_id_value in fields.get("ButtonImage", []) as Array:
+				var relative := String(image_bindings.get(String(image_id_value), ""))
+				if relative != "":
+					presentation["commandIcon"] = relative
+					break
+			if String(presentation.get("commandIcon", "")) != "":
+				break
+	merged["presentation"] = presentation
+	return merged
+
+
 func _playable_unit_projection(document: Dictionary) -> Dictionary:
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
 	var composition: Dictionary = registration.get("composition", {}) as Dictionary
@@ -833,6 +1111,11 @@ func _playable_unit_projection(document: Dictionary) -> Dictionary:
 			"mode": "loop" if state in ["idle", "move"] else "once",
 			"useWeaponTiming": state == "attack",
 		}
+	var ability_states := _ability_animation_states(visual)
+	for ability_state_value in ability_states.keys():
+		var ability_state := String(ability_state_value)
+		if not states.has(ability_state):
+			states[ability_state] = ability_states[ability_state_value]
 	var root := String(document.get("_pack_root", ""))
 	return {
 		"member": {
@@ -1598,6 +1881,35 @@ func get_animation_capability(id: String) -> Dictionary:
 
 func get_bundle_map(id: String) -> Dictionary:
 	return bundle_maps.get(id, {})
+
+
+## Retail map categories a lobby may offer. Campaign, cinematic, tutorial,
+## shell and system maps are cooked and catalogued, but they are not skirmish
+## offerings and must never be mixed into the map list.
+const LOBBY_MAP_CATEGORIES: Array[String] = ["skirmish", "wotr-battle"]
+
+
+func list_catalog_maps(categories: Array = LOBBY_MAP_CATEGORIES) -> Array[Dictionary]:
+	## Every catalog-published map of the requested categories, in authored
+	## order, as {"id", "name", "players", "category"}. Fails closed per row: a
+	## map whose document carries no authored player count reports 0 rather than
+	## a guess. A row that declares no category predates categorised discovery
+	## and is retained, so an already-cooked pack keeps its list.
+	var rows: Array[Dictionary] = []
+	for map_id in catalog_map_ids:
+		var document := bundle_maps.get(map_id, {}) as Dictionary
+		if document.is_empty():
+			continue
+		var category := String(document.get("category", ""))
+		if category != "" and not categories.has(category):
+			continue
+		rows.append({
+			"id": map_id,
+			"name": String(document.get("displayName", map_id)),
+			"players": int(document.get("playerCount", 0)),
+			"category": category,
+		})
+	return rows
 
 
 func get_retail_ui_image(id: String) -> Dictionary:

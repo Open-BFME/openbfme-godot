@@ -40,6 +40,7 @@ ALLOWED_CONVERTERS = {
     "map",
     "sage-map",
     "sage-apt-runtime",
+    "sage-apt-shell-runtime",
     "retail-unit-rules",
     "living-world",
     "sage-particle-definition",
@@ -47,14 +48,28 @@ ALLOWED_CONVERTERS = {
     "sage-terrain-materials",
 }
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-MAX_PROFILE_BYTES = 16 * 1024 * 1024
+# Resource-exhaustion bound on profile JSON parsing, not a semantic limit on
+# how much a pack may contain. A single-faction slice profile is ~5-6 MB, so
+# the old 16 MiB ceiling silently capped a pack at roughly three factions; one
+# composed from all six BFME2 factions is ~22 MB and a cross-faction skirmish
+# needs every side in the same pack. 64 MiB keeps the guard meaningful against
+# a hostile file while leaving headroom for a full six-faction compose.
+MAX_PROFILE_BYTES = 64 * 1024 * 1024
 # The exact Fords closure alone is now larger than the original provisional
 # 256-rule ceiling once neutral lifecycles and particle definitions are kept as
 # independent, auditable resources.  Keep a hard bound, but size it for one
 # complete retail map/faction expansion instead of forcing unrelated leaves
 # into ambiguous wildcard owners. The byte bound remains independent.
-MAX_RESOURCES = 4_096
+# Raised from 4_096 once packs stopped being single-faction. That ceiling was
+# sized for "one complete retail map/faction expansion" and a single faction
+# already spends ~3_167 of it (Men), so any two-faction compose blew it —
+# which is why a cross-faction skirmish was never cookable. All six BFME2
+# factions compose to ~12_570. Still a hard bound, just sized for the pack
+# shape the project actually needs. The byte bound remains independent.
+MAX_RESOURCES = 32_768
 MAX_PATTERNS_PER_RESOURCE = 256
+#: The one terrain.ini source plus one texture per terrain symbol.
+MAX_TERRAIN_MATERIAL_PATTERNS = 4_097
 MAX_PATH_LENGTH = 512
 W3D_DEPENDENCY_CONVERTERS = {
     "w3d-bundle",
@@ -79,7 +94,12 @@ W3D_CLEAN_MESH_IDENTIFIER_PATTERN = re.compile(
 W3D_TEXTURE_BASENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 W3D_TEXTURE_SUFFIXES = {".bmp", ".dds", ".jpeg", ".jpg", ".png", ".tga"}
 MAX_TERRAIN_MATERIAL_SYMBOLS = 4_096
-TERRAIN_MATERIAL_SYMBOL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# Terrain symbols are table keys in the cooked terrain-materials manifest, never
+# path components (textures cook to indexed ``textures/NNNN.png``).  Retail
+# authors exactly one symbol outside the conservative identifier set, the BFME2
+# ``SandLargeType3Rocky&Grassy`` used by WOTR Enedwaith, Minhiriath and Harad, so
+# ``&`` is admitted rather than rejecting three shipped maps.
+TERRAIN_MATERIAL_SYMBOL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._&-]{0,127}$")
 MAX_TEXTURE_ATLAS_CROPS = 64
 TEXTURE_ATLAS_LOGICAL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 TEXTURE_ATLAS_OUTPUT_PART_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -760,12 +780,23 @@ class ImportProfile:
             if converter not in ALLOWED_CONVERTERS:
                 raise ValueError(f"unsupported converter {converter!r}")
             raw_patterns = item.get("patterns", [])
+            # Every producer that can split its sources chunks them at
+            # MAX_PATTERNS_PER_RESOURCE. A terrain-material table cannot: its
+            # ordered symbol table and its single cooked terrain-materials.json
+            # are one resource by construction, and a whole-corpus map profile
+            # reaches 990 terrain sources (RotWK 2.01, all categories). That one
+            # converter is bounded by its own symbol ceiling instead.
+            pattern_ceiling = (
+                MAX_TERRAIN_MATERIAL_PATTERNS
+                if converter == "sage-terrain-materials"
+                else MAX_PATTERNS_PER_RESOURCE
+            )
             if (
                 not isinstance(raw_patterns, list)
-                or len(raw_patterns) > MAX_PATTERNS_PER_RESOURCE
+                or len(raw_patterns) > pattern_ceiling
             ):
                 raise ValueError(
-                    f"resource {resource_id!r} patterns must be an array of at most {MAX_PATTERNS_PER_RESOURCE}"
+                    f"resource {resource_id!r} patterns must be an array of at most {pattern_ceiling}"
                 )
             patterns = tuple(
                 str(pattern).replace("\\", "/") for pattern in raw_patterns

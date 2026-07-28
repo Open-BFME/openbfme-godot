@@ -62,10 +62,19 @@ from .spellbook_import import (
     _resolved_spellbook_strings,
     spellbook_source_documents,
 )
+from .retail_ability_fx_ingress import (
+    build_ability_fx_closure,
+    harvest_fx_ids,
+    texture_index_for,
+)
 from .spellbook_pack_compiler import (
     SpellbookPackCompilerError,
     compile_spellbook_pack_recipe,
     compose_spellbook_runtime_document,
+)
+from .spellbook_visual_ingress import (
+    SpellbookVisualIngressError,
+    build_spellbook_visual_closures,
 )
 
 
@@ -656,6 +665,90 @@ def _source_null_command_set_ids(faction_graph: Mapping[str, object]) -> tuple[s
     )
 
 
+def _ability_fx_closure(
+    descriptor: Mapping[str, object],
+    documents: Mapping[str, bytes],
+    effective_root: Path,
+    assets_fp: str,
+    namespace: str,
+) -> dict[str, object] | None:
+    """Seal the authored ability/power FX closure for one compiled descriptor.
+
+    Returns ``None`` only when the descriptor authored no FXList at all, so a
+    unit without abilities keeps exactly its previous recipe bytes.  Ids that
+    do not resolve are recorded inside the closure as unresolved rows, never
+    substituted; a corpus-level failure raises and turns the object into an
+    explicit converter-gap row rather than shipping invented art.
+    """
+
+    fx_ids = harvest_fx_ids(descriptor)
+    particle_ids = _draw_particle_system_ids(descriptor)
+    if not fx_ids and not particle_ids:
+        return None
+    return build_ability_fx_closure(
+        documents,
+        fx_ids,
+        namespace=namespace,
+        texture_index=texture_index_for(effective_root, assets_fp),
+        particle_ids=particle_ids,
+    )
+
+
+def _spellbook_visual_row(recipe: Mapping[str, object]) -> dict[str, object]:
+    """Surface the effect-geometry outcome on the coverage row.
+
+    Operators need to see, without opening the recipe, how many effect objects
+    got real converted geometry, how many retail authors invisible, and how many
+    still have no converted model — the last number is the honest gap list.
+    """
+
+    registration = recipe.get("runtimeRegistration")
+    if not isinstance(registration, Mapping):
+        return {}
+    bindings = registration.get("visualBindings")
+    if not isinstance(bindings, Mapping):
+        return {}
+    summary = bindings.get("summary")
+    if not isinstance(summary, Mapping):
+        return {}
+    return {"effectVisuals": dict(summary)}
+
+
+def _draw_particle_system_ids(descriptor: Mapping[str, object]) -> list[str]:
+    """Return every ParticleSysBone system the descriptor's leaves author.
+
+    Some effect objects have no model at all: their whole appearance is a
+    Draw-module bone particle system (CloudBreakSunbeam -> ``CloudBreakRays``,
+    ElvenGrove -> ``TaintHCPing``).  Those ids never appear in an FXList, so
+    they have to be seeded into the FX closure explicitly or the object
+    converts with nothing to draw.
+    """
+
+    found: list[str] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                folded = str(key).casefold()
+                if folded == "unresolvedparticlesysbones":
+                    # Authored references with no definition behind them. They
+                    # are kept as evidence on the leaf, never seeded into the
+                    # closure — seeding one would ask the FX lane to convert a
+                    # system that does not exist.
+                    continue
+                if folded == "particlesystem" and isinstance(item, str):
+                    if item.strip():
+                        found.append(item.strip())
+                else:
+                    walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(descriptor.get("leaves"))
+    return sorted(set(found), key=lambda value: (value.casefold(), value))
+
+
 def _convert_one_plan_object(
     plan_row: Mapping[str, object],
     *,
@@ -808,11 +901,31 @@ def _convert_one_plan_object(
                 resolved_strings=strings,
                 prepared=prepared,
             )
-            recipe = compile_spellbook_pack_recipe(descriptor)
+            # Effect geometry: every model the spellbook's leaf objects author
+            # (summoned units, groves, trees, dragons) converts through the same
+            # generic W3D stack the unit lane uses.  Without this the runtime
+            # has no art binding for a summoned object at all and falls back to
+            # the synthetic kit mesh — the "blue units" symptom.
+            visual_closures, visual_failures = build_spellbook_visual_closures(
+                descriptor, effective_root
+            )
+            recipe = compile_spellbook_pack_recipe(
+                descriptor,
+                _ability_fx_closure(
+                    descriptor,
+                    documents,
+                    effective_root,
+                    assets_fp,
+                    str(descriptor["spellBook"]["objectId"]),  # type: ignore[index]
+                ),
+                visual_closures=visual_closures,
+                visual_closure_failures=visual_failures,
+            )
             runtime = compose_spellbook_runtime_document(descriptor, recipe)
         except (
             SpellbookCompilerError,
             SpellbookPackCompilerError,
+            SpellbookVisualIngressError,
             ValueError,
         ) as exc:
             row.update({"status": "converter-gap", "reason": str(exc)})
@@ -831,6 +944,7 @@ def _convert_one_plan_object(
                     "recipeSha256": recipe["recipeSha256"],
                     "runtimeSha256": runtime["runtimeSha256"],
                     "resourceCount": len(recipe["resources"]),
+                    **_spellbook_visual_row(recipe),
                 }
             )
     elif status == "descriptor-ready":
@@ -865,7 +979,17 @@ def _convert_one_plan_object(
             closure = build_retail_visual_closure(
                 effective_root, sorted(targets, key=str.casefold)
             )
-            recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+            recipe = compile_playable_unit_pack_recipe(
+                descriptor,
+                closure,
+                _ability_fx_closure(
+                    descriptor,
+                    documents,
+                    effective_root,
+                    assets_fp,
+                    str(descriptor["objectId"]),
+                ),
+            )
         except (
             PlayableUnitCompilerError,
             PlayableUnitPackCompilerError,
