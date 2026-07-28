@@ -361,6 +361,16 @@ func _initialize_content_and_match() -> void:
 	var expected_pack_id := String(faction_manifest.get("pack_id", "bfme2-men-vslice"))
 	selected_pack_root = _pack_root_for_id(expected_pack_id)
 	if selected_pack_root == "":
+		# Composed multi-faction packs record their real id on the manifest; if
+		# that still misses (stale DEFAULT_PACK_ID), fall back to the faction's
+		# own content roots so Men/Elves HUD validation binds the pack that
+		# actually holds UCCommon_* and fortress expansion icons.
+		for root_value in faction_manifest.get("faction_pack_roots", []) as Array:
+			var root := String(root_value).strip_edges()
+			if root != "" and DirAccess.dir_exists_absolute(root):
+				selected_pack_root = root
+				break
+	if selected_pack_root == "":
 		_fail("The selected content pack is not %s." % expected_pack_id)
 		return
 	map_id = _resolve_slice_map_id()

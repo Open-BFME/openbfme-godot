@@ -554,11 +554,18 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 
 	var sorted_pack_roots: Array = pack_roots.keys()
 	sorted_pack_roots.sort()
+	# Prefer the real pack.json id from faction content roots. Composed alpha
+	# packs (e.g. bfme2-men-elves-...) replace the historical men-vslice host
+	# id; asserting DEFAULT_PACK_ID when that pack is not mounted makes the
+	# slice fail closed on host resolution / HUD image pack-root checks.
+	var resolved_pack_id := _host_pack_id_from_roots(sorted_pack_roots)
+	if resolved_pack_id == "":
+		resolved_pack_id = DEFAULT_PACK_ID
 	return {
 		"faction": slug,
 		# The host slice pack (map, HUD dock, shared surfaces) stays asserted;
 		# faction gameplay content arrives from the packs recorded below.
-		"pack_id": DEFAULT_PACK_ID,
+		"pack_id": resolved_pack_id,
 		# Full constructable list for the builder UI / production routing.
 		"structure_kinds": structure_kinds,
 		# Retail start: only fortresses are pre-placed; everything else is built.
@@ -595,6 +602,29 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		"builder_unit_ids": [builder_member_id],
 		"faction_pack_roots": sorted_pack_roots,
 	}
+
+
+static func _host_pack_id_from_roots(pack_root_list: Array) -> String:
+	## Returns the pack.json id for the first readable faction pack root, or "".
+	for root_value in pack_root_list:
+		var root := String(root_value).strip_edges()
+		if root == "":
+			continue
+		var pack_path := root.path_join("pack.json")
+		if not FileAccess.file_exists(pack_path):
+			continue
+		var file := FileAccess.open(pack_path, FileAccess.READ)
+		if file == null:
+			continue
+		var text := file.get_as_text()
+		file.close()
+		var json := JSON.new()
+		if json.parse(text) != OK or typeof(json.data) != TYPE_DICTIONARY:
+			continue
+		var pack_id := String((json.data as Dictionary).get("id", "")).strip_edges()
+		if pack_id != "":
+			return pack_id
+	return ""
 
 
 static func faction_scoped_unit_runtimes(prefixes: Array, unit_runtimes: Dictionary, structure_runtimes: Dictionary, pack_index: Dictionary) -> Dictionary:

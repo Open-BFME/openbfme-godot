@@ -7,6 +7,11 @@ from typing import Mapping, Sequence
 from .faction_import import coverage_digest_payload
 from .playable_structure_pack_compiler import validate_structure_visual_recipe
 from .playable_unit_import import FACTIONS as _FACTION_ROWS, extend_profile_with_unit
+from .retail_fords_completion_profile import (
+    MEN_SELECTION_PACK_KEY,
+    MEN_SELECTION_RESOURCES,
+    MEN_SELECTION_RUNTIME_PATH,
+)
 
 # Authoritative BFME2 faction slugs (men, elves, dwarves, isengard, mordor,
 # wild) come from the playable-unit FACTIONS registry.  RotWK 2.01 adds its own
@@ -179,6 +184,31 @@ def compose_faction_profile(base: Mapping[str, object], report_root: Path, facti
         files = pack.get("files")
         if not isinstance(resources, list) or not isinstance(runtime_data, dict) or not isinstance(files, dict):
             raise ValueError("target profile is not filterable")
+        # Exception to the lean filter: the universal SHADOW_MERGE_DECAL
+        # selection contract stays. Every faction pack ships the identical
+        # contract so a solo-mounted expansion pack binds retail selection
+        # decals without depending on a host pack being mounted; its two
+        # source textures resolve through the expansion's layered install
+        # (the BFME2 layer supplies the bytes). Fail closed if the base
+        # profile does not carry the contract to keep the universality
+        # invariant honest.
+        selection_resource_ids = {
+            str(row["id"]).casefold() for row in MEN_SELECTION_RESOURCES
+        }
+        base_resource_ids = {
+            str(row.get("id", "")).casefold() for row in resources if isinstance(row, Mapping)
+        }
+        if (
+            not selection_resource_ids <= base_resource_ids
+            or MEN_SELECTION_RUNTIME_PATH not in runtime_data
+            or files.get(MEN_SELECTION_PACK_KEY) != MEN_SELECTION_RUNTIME_PATH
+        ):
+            raise ValueError(
+                "expansion base profile is missing the universal selection-decal contract"
+            )
+        added_resource_ids |= selection_resource_ids
+        added_paths.add(MEN_SELECTION_RUNTIME_PATH)
+        added_file_keys.add(MEN_SELECTION_PACK_KEY)
         missing_owned = added_resource_ids - {
             str(row.get("id", "")).casefold() for row in resources if isinstance(row, Mapping)
         }
