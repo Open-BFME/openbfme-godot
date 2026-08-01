@@ -56,7 +56,7 @@ OPEN_ENDED = [
     "refactor",
 ]
 
-# Two reviewers required for these boundaries (AGENT_WORKFLOW.md).
+# Two reviewers required for these boundaries (AGENTS.md).
 TWO_REVIEWER_LANES = {
     "importer", "importer-runtime", "simulation", "networking", "performance",
     "platform",
@@ -244,7 +244,7 @@ def check_contract(task, rep, strict_acceptance):
     hits = [w for w in OPEN_ENDED if re.search(rf"\b{re.escape(w)}\b", objective)]
     if hits:
         rep.fail("C4 objective bounded",
-                 f"open-ended language: {', '.join(hits)} — AGENT_WORKFLOW.md "
+                 f"open-ended language: {', '.join(hits)} — AGENTS.md "
                  f"keeps such objectives in draft")
     else:
         rep.ok("C4 objective bounded")
