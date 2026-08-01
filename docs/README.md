@@ -1,50 +1,36 @@
-# OpenBFME documentation
+# Documentation
 
-The public documentation map. If a document is not linked from this page (or
-from the top-level `README.md` / `DIRECTION.md`), treat it as non-authoritative.
+Authoritative map for this repo. If it is not linked here or from the root
+`README.md` / `DIRECTION.md`, treat it as non-authoritative.
 
-Historical reverse-engineering notebooks were removed from the public tree
-(personal-path leakage + non-authoritative). Product truth is only the docs
-linked below.
+## Start
 
-## Start here
+1. [README](../README.md) â€” what the project is and quick start
+2. [Onboarding](ONBOARDING.md) â€” install, convert, launch
+3. [FAQ](FAQ.md) â€” legality and scope
+4. [Contributing](../CONTRIBUTING.md) â€” retail firewall and PR shape
 
-1. [Project README](../README.md) — purpose and orientation  
-2. [Onboarding](ONBOARDING.md) — prerequisites, install, convert, launch  
-3. [FAQ](FAQ.md) — legality, assets, AI, scope  
-4. [Contributing](../CONTRIBUTING.md) — contribution boundaries and the retail firewall  
+## Product truth
 
-## Project truth
-
-| Document | Owns |
+| Doc | Owns |
 |---|---|
-| [DIRECTION.md](../DIRECTION.md) | RotWK 2.01 product target, systems-first model, ladder, non-goals |
-| [MILESTONE_CURRENT.md](MILESTONE_CURRENT.md) | Active systems-iteration objective |
-| [STATUS.md](../STATUS.md) | Verified evidence and blockers (volatile) |
+| [DIRECTION.md](../DIRECTION.md) | RotWK 2.01 target, systems-first model, ladder |
+| [MILESTONE_CURRENT.md](MILESTONE_CURRENT.md) | Active systems work |
+| [STATUS.md](../STATUS.md) | Volatile evidence (do not treat as permanent) |
 | [contracts/rotwk-201-product-scope.json](../contracts/rotwk-201-product-scope.json) | Machine-readable product policy |
 
-Volatile gate numbers belong only in `STATUS.md`.
+## Engineering
 
-## Engineering guides
-
-| Area | Guide |
+| Doc | Topic |
 |---|---|
-| System boundaries | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| Parity doctrine (RotWK-primary) | [BFME2_PARITY.md](BFME2_PARITY.md) |
-| Import / packs / containment | [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) |
-| RotWK systems operator path | [ROTWK_SYSTEMS_PATH.md](ROTWK_SYSTEMS_PATH.md) |
-| OpenSAGE comparison checklist | [OPENSAGE_GAP_MATRIX.md](OPENSAGE_GAP_MATRIX.md) |
-| Verification doctrine | [VERIFICATION.md](VERIFICATION.md) |
-| Simulation / networking target | [SIMULATION_PROTOCOL.md](SIMULATION_PROTOCOL.md) |
-| Mod packs | [MODDING.md](MODDING.md) |
-| Build and release | [BUILD_AND_RELEASE.md](BUILD_AND_RELEASE.md) |
-| Code-only distribution | [RELEASE_POLICY.md](RELEASE_POLICY.md) |
-| Launcher and releases | [LAUNCHER_AND_RELEASES.md](LAUNCHER_AND_RELEASES.md) |
-| Third-party tools | [THIRD_PARTY.md](THIRD_PARTY.md) |
-| AI-assisted development | [AI_DEVELOPMENT.md](AI_DEVELOPMENT.md) |
-
-## What is not here
-
-Frozen oracle notebooks and campaign design drafts are not shipped in the
-public documentation set. If you need historical research notes, recover them
-from private history — do not treat missing archive files as onboarding.
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Boundaries (`game` / `importer` / `engine`) |
+| [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) | Import, packs, `.private` |
+| [ROTWK_SYSTEMS_PATH.md](ROTWK_SYSTEMS_PATH.md) | `run_rotwk_*` operator path |
+| [BFME2_PARITY.md](BFME2_PARITY.md) | Parity doctrine (RotWK-primary) |
+| [VERIFICATION.md](VERIFICATION.md) | Gates and fail-closed checks |
+| [OPENSAGE_GAP_MATRIX.md](OPENSAGE_GAP_MATRIX.md) | OpenSAGE comparison checklist |
+| [SIMULATION_PROTOCOL.md](SIMULATION_PROTOCOL.md) | Sim / network target notes |
+| [MODDING.md](MODDING.md) | Mod pack direction |
+| [THIRD_PARTY.md](THIRD_PARTY.md) | Toolchain and asset provenance |
+| [BUILD_AND_RELEASE.md](BUILD_AND_RELEASE.md) | Windows release workflow |
+| [RELEASE_POLICY.md](RELEASE_POLICY.md) | Code-only distribution rules |

@@ -176,7 +176,6 @@ $allowList = @{
     "README.md"                             = @("hardcoded release target")
     "docs/ONBOARDING.md"                    = @("hardcoded release target")
     "docs/BUILD_AND_RELEASE.md"             = @("hardcoded release target")
-    "docs/LAUNCHER_AND_RELEASES.md"         = @("hardcoded release target")
     # Release readiness notes name the active repo when recording blockers.
     "STATUS.md"                             = @("hardcoded release target")
 }
