@@ -9,22 +9,31 @@ Validation: Compare this file with `docs/AGENT_WORKFLOW.md` and validate the app
 
 ## Product target and active objective
 
-The product target is the full game: all BFME2 and RotWK factions, both
-campaigns, Create-a-Hero, War of the Ring, skirmish, and multiplayer. The
-scope ladder in `DIRECTION.md` is authoritative and runs to step 8.
+The product target is the full **RotWK 2.01** game: all playable factions
+(including Angmar and RotWK-only units), official skirmish/multiplayer maps,
+Create-a-Hero, both campaigns (as shipped), War of the Ring, skirmish shell,
+and multiplayer. BFME2 remains an optional comparison install only.
 
-The active acceptance milestone is the private BFME2 1.06 Men-versus-Men Fords
-of Isen II gate in `docs/MILESTONE_CURRENT.md`. That is the next step on the
-ladder, not the end of it. Do not read the active milestone as the product
-scope, and do not reject work as out-of-scope because it belongs to a later
-ladder step — later is not excluded.
+`DIRECTION.md` owns product scope, the **systems-first iterative** development
+model, and the system ladder. Do not treat historical Men/Fords vertical-slice
+freeze as the active strategy. Do not reject major-system work as out of scope
+because it is not a single-map slice.
+
+The active **systems-iteration objective** is named in
+`docs/MILESTONE_CURRENT.md` (not a BFME2-only M2 freeze). That objective is the
+current system(s) under iteration, not the end of the product.
 
 `DIRECTION.md` owns product scope; `STATUS.md` owns current evidence. Do not
-substitute obsolete proof-stage documents.
+substitute obsolete proof-stage documents for either.
+
+Content baseline for importer and packs is **RotWK** (see importer CLI default
+`--game rotwk`). Prefer RotWK evidence for parity claims.
 
 ## Required workflow
 
-Follow `docs/AGENT_WORKFLOW.md`.
+Follow `docs/AGENT_WORKFLOW.md` for packets, locks, review, and integration.
+Follow `docs/AGENT_REASONING_MANUAL.md` for how to orient, classify work, bound
+scope, fail closed, verify, and stop/escalate.
 
 - One integration owner controls queue state, path locks, publication, final
   gates, and persistent workflow changes.
@@ -55,9 +64,19 @@ Follow `docs/AGENT_WORKFLOW.md`.
 - Run the smallest focused check first.
 - Any warning, error, leak, orphan, escaped retail path, or unbounded fallback
   on a required path is a failure.
-- `run_m2_acceptance.bat -IntegrationOwnerPublish` is the only final M2 entry
-  point and is run only by the integration owner after identity-bound human
-  oracle approval.
+- Historical `run_m2_acceptance.bat -IntegrationOwnerPublish` remains
+  integration-owner-only tooling for the legacy Men/Fords oracle path; it is
+  not the definition of product completion under the systems-first model.
+- System iterations use the focused acceptance command named in the task packet
+  and the objective in `docs/MILESTONE_CURRENT.md`.
+- **Grok coding double-check:** when a Grok agent writes or modifies code, it
+  must run **Sol medium** via Codex before claiming done — pin
+  `model="gpt-5.6-sol"` and `model_reasoning_effort="medium"`. Prefer
+  `codex.cmd review --uncommitted` (then optional `codex.cmd exec -s read-only`
+  for deeper correctness). Fix or escalate Sol P0/P1 findings. Sol is not a
+  substitute for focused runners or owner final gates. Full procedure:
+  `docs/AGENT_REASONING_MANUAL.md` §10a. Do not skip silently if Codex is down;
+  report blocked. Do not edit shared Codex config from implementation tasks.
 
 ## Private workspace
 

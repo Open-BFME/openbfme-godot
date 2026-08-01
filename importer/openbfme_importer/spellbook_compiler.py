@@ -19,17 +19,23 @@ from pathlib import PurePosixPath
 import re
 
 from .playable_unit_compiler import (
+    PlayableUnitCompilerError,
     PlayableUnitCompilerInputs,
+    EXPERIENCE_LEVELS_PATH,
     _ancestry,
     _command_slots,
     _default_set_target,
     _effective_body_health,
     _effective_top_blocks,
     _effective_values,
+    _experience_contract,
+    _experience_level_create,
     _first,
     _kind_of,
     _named_blocks,
     _named_definition_values,
+    _default_weapon_slot,
+    _permanent_weapon_locks,
     _resolved_expression,
     _resolved_multiplicative_expression,
     _resolved_set_field,
@@ -168,7 +174,23 @@ def _resolved_field(
     constants: Mapping[str, int | float],
     label: str,
 ) -> dict[str, object]:
-    value = _resolved_expression(expression, constants)
+    stripped = expression.strip()
+    value = _resolved_expression(stripped, constants)
+    if value is None:
+        # RotWK authors a few dual-token radii as ``DEFINE literal`` after the
+        # BFME2 ``DEFINE  ; ;literal`` comment form lost its comment markers
+        # (e.g. ``SPAWN_UNDERMINE_DECAL_RADIUS 95.0``). Prefer the define when
+        # it resolves; otherwise accept a trailing numeric literal only when
+        # the leading token is a known constant name that failed evaluation.
+        parts = stripped.split()
+        if len(parts) >= 2:
+            head = _resolved_expression(parts[0], constants)
+            if head is not None:
+                value = head
+            else:
+                tail = _resolved_expression(parts[-1], constants)
+                if tail is not None and parts[0].casefold() in constants:
+                    value = tail
     if value is None:
         raise SpellbookCompilerError(f"{label} has unresolved expression: {expression}")
     return {"value": value, "expression": expression}
@@ -781,7 +803,21 @@ class _LeafResolver:
             raise SpellbookCompilerError(
                 f"{label} references a missing Object: {identifier}"
             )
-        self.objects[key] = self._project_effect_object(target, label)
+        # Reserve a placeholder before projecting so BuildVariations (and similar
+        # recursive object graphs common in RotWK) cannot re-enter this object
+        # and recurse until Python's stack dies.
+        self.objects[key] = {
+            "id": target.name,
+            "projectionStatus": "in-progress",
+            "sourceIni": target.source_virtual_path,
+            "line": target.line,
+        }
+        try:
+            projected = self._project_effect_object(target, label)
+            self.objects[key] = projected
+        except Exception:
+            self.objects.pop(key, None)
+            raise
 
     def _resolve_numeric(self, expression: str) -> int | float | None:
         return _resolved_multiplicative_expression(expression, self._constants)
@@ -833,6 +869,32 @@ class _LeafResolver:
         weapon_name = _default_set_target(lineage, "WeaponSet", "Weapon")
         if weapon_name is not None:
             leaf["weaponId"] = self.weapon(weapon_name, f"{label} WeaponSet")
+            weapon_slot = _default_weapon_slot(lineage, weapon_name)
+            if weapon_slot is not None:
+                leaf["weaponSlot"] = weapon_slot
+        try:
+            permanent_weapon_locks = _permanent_weapon_locks(lineage, weapon_name)
+        except PlayableUnitCompilerError as error:
+            raise SpellbookCompilerError(f"{label}: {error}") from error
+        if permanent_weapon_locks:
+            leaf["permanentWeaponLocks"] = permanent_weapon_locks
+        try:
+            experience_level_create = _experience_level_create(lineage)
+        except PlayableUnitCompilerError as error:
+            raise SpellbookCompilerError(f"{label}: {error}") from error
+        if experience_level_create is not None:
+            leaf["experienceLevelCreate"] = experience_level_create
+            try:
+                leaf["experience"] = _experience_contract(
+                    lineage,
+                    lineage,
+                    (),
+                    self._documents,
+                    self._constants,
+                    experience_level_create,
+                )
+            except PlayableUnitCompilerError as error:
+                raise SpellbookCompilerError(f"{label}: {error}") from error
         locomotor_name = _default_set_target(lineage, "LocomotorSet", "Locomotor")
         if locomotor_name is not None:
             self._project_locomotor(leaf, lineage, locomotor_name, label)
@@ -864,6 +926,13 @@ class _LeafResolver:
                 self._project_fire_weapons(leaf, block, label)
             elif kind == "attributemodifierauraupdate":
                 self._project_aura(leaf, block, label)
+            elif kind == "lockweaponcreate":
+                # Projected above with the default WeaponSet so the lock and
+                # the slot it protects are validated as one atomic contract.
+                pass
+            elif kind == "experiencelevelcreate":
+                # Projected above as authoritative creation-rank evidence.
+                pass
             else:
                 unconverted.add(block.kind)
         if unconverted:
@@ -1662,6 +1731,76 @@ def _effect_modules(
     return result
 
 
+def _command_points_upgrade(
+    lineage: Sequence[SageObject],
+) -> dict[str, object] | None:
+    """Compile the exact retail spellbook ``CommandPointsUpgrade`` shape."""
+
+    modules = [
+        block
+        for block in _effective_top_blocks(lineage)
+        if (block.header_key or "").casefold() == "behavior"
+        and block.kind.casefold() == "commandpointsupgrade"
+    ]
+    if not modules:
+        return None
+    if len(modules) != 1:
+        raise SpellbookCompilerError(
+            "spell book has multiple effective CommandPointsUpgrade modules"
+        )
+    block = modules[0]
+    fields = {}
+    for row in block.assignments:
+        folded = row.key.casefold()
+        if (
+            folded not in {"triggeredby", "commandpoints", "requiredobject"}
+            or folded in fields
+        ):
+            raise SpellbookCompilerError(
+                "CommandPointsUpgrade must author exactly TriggeredBy, "
+                "CommandPoints, and RequiredObject"
+            )
+        fields[folded] = row
+    if set(fields) != {"triggeredby", "commandpoints", "requiredobject"}:
+        raise SpellbookCompilerError(
+            "CommandPointsUpgrade must author exactly TriggeredBy, "
+            "CommandPoints, and RequiredObject"
+        )
+    trigger_tokens = _tokens(fields["triggeredby"].value)
+    required_tokens = _tokens(fields["requiredobject"].value)
+    points_token = fields["commandpoints"].value.strip()
+    if (
+        len(trigger_tokens) != 1
+        or trigger_tokens[0].casefold()
+        != "upgrade_marketplaceupgradegrandharvest"
+    ):
+        raise SpellbookCompilerError(
+            "CommandPointsUpgrade TriggeredBy is outside the retail corpus"
+        )
+    if (
+        re.fullmatch(r"[1-9][0-9]*", points_token) is None
+        or int(points_token) != 100
+    ):
+        raise SpellbookCompilerError(
+            "CommandPointsUpgrade CommandPoints is outside the retail corpus"
+        )
+    if [token.casefold() for token in required_tokens] != [
+        "none",
+        "+gondormarketplace",
+    ]:
+        raise SpellbookCompilerError(
+            "CommandPointsUpgrade RequiredObject is outside the retail corpus"
+        )
+    return {
+        "triggeredBy": trigger_tokens[0],
+        "commandPoints": int(points_token),
+        "requiredObject": " ".join(required_tokens),
+        "module": "CommandPointsUpgrade",
+        "sourceIni": block.source_virtual_path,
+        "line": block.line,
+    }
+
+
 def _module_field_rows(
     block: SageBlock,
     constants: Mapping[str, int | float],
@@ -1808,6 +1947,7 @@ def compile_spellbook_descriptor(
         raise SpellbookCompilerError(
             f"Object {spellbook_id} has no {_SPELL_BOOK_KIND} KindOf capability"
         )
+    command_points_upgrade = _command_points_upgrade(lineage)
     command_values = [
         value
         for row in _effective_values(lineage, "CommandSet")
@@ -2047,6 +2187,8 @@ def compile_spellbook_descriptor(
         UPGRADE_PATH,
         FX_PARTICLE_PATH,
     ]
+    if any("experience" in leaf for leaf in resolver.objects.values()):
+        used_paths.append(EXPERIENCE_LEVELS_PATH)
     if resolver.used_locomotor:
         used_paths.append(LOCOMOTOR_PATH)
     used_paths.extend(
@@ -2084,6 +2226,11 @@ def compile_spellbook_descriptor(
             "commandSetId": command_set.name,
             "spellStoreCommandSetId": store_set.name,
             "intrinsicSciences": list(intrinsic_sciences),
+            **(
+                {"commandPointsUpgrade": command_points_upgrade}
+                if command_points_upgrade is not None
+                else {}
+            ),
         },
         "sciences": science_rows,
         "powers": power_rows,
@@ -2165,6 +2312,33 @@ def validate_spellbook_descriptor(value: Mapping[str, object]) -> None:
         raise SpellbookCompilerError(
             "spellbook descriptor spell book evidence is invalid"
         )
+    command_points_upgrade = spellbook.get("commandPointsUpgrade")
+    if command_points_upgrade is not None and (
+        not isinstance(command_points_upgrade, Mapping)
+        or set(command_points_upgrade)
+        != {
+            "triggeredBy",
+            "commandPoints",
+            "requiredObject",
+            "module",
+            "sourceIni",
+            "line",
+        }
+        or command_points_upgrade.get("triggeredBy")
+        != "Upgrade_MarketplaceUpgradeGrandHarvest"
+        or command_points_upgrade.get("commandPoints") != 100
+        or command_points_upgrade.get("requiredObject")
+        != "NONE +GondorMarketPlace"
+        or command_points_upgrade.get("module") != "CommandPointsUpgrade"
+        or not isinstance(command_points_upgrade.get("sourceIni"), str)
+        or not command_points_upgrade.get("sourceIni")
+        or not isinstance(command_points_upgrade.get("line"), int)
+        or isinstance(command_points_upgrade.get("line"), bool)
+        or int(command_points_upgrade["line"]) <= 0
+    ):
+        raise SpellbookCompilerError(
+            "spellbook CommandPointsUpgrade evidence is invalid"
+        )
     sciences = value.get("sciences")
     powers = value.get("powers")
     if not isinstance(sciences, list) or not isinstance(powers, list) or not powers:
@@ -2177,6 +2351,92 @@ def validate_spellbook_descriptor(value: Mapping[str, object]) -> None:
         ):
             raise SpellbookCompilerError(
                 "spellbook descriptor power payload is invalid"
+            )
+    leaves = value.get("leaves")
+    objects = leaves.get("objects") if isinstance(leaves, Mapping) else None
+    if not isinstance(objects, list):
+        raise SpellbookCompilerError(
+            "spellbook descriptor object leaves are invalid"
+        )
+    for leaf in objects:
+        if not isinstance(leaf, Mapping):
+            raise SpellbookCompilerError(
+                "spellbook descriptor object leaf is invalid"
+            )
+        creation_grant = leaf.get("experienceLevelCreate")
+        if creation_grant is not None and (
+            not isinstance(creation_grant, Mapping)
+            or creation_grant.get("module") != "ExperienceLevelCreate"
+            or creation_grant.get("mpOnly") is not False
+            or not isinstance(creation_grant.get("rank"), int)
+            or isinstance(creation_grant.get("rank"), bool)
+            or int(creation_grant["rank"]) < 1
+            or not isinstance(creation_grant.get("sourceIni"), str)
+            or not creation_grant.get("sourceIni")
+            or not isinstance(creation_grant.get("line"), int)
+            or isinstance(creation_grant.get("line"), bool)
+            or int(creation_grant["line"]) <= 0
+        ):
+            raise SpellbookCompilerError(
+                "spellbook ExperienceLevelCreate leaf evidence is invalid"
+            )
+        experience = leaf.get("experience")
+        if (creation_grant is None) != (experience is None):
+            raise SpellbookCompilerError(
+                "spellbook creation experience contract is incomplete"
+            )
+        if creation_grant is not None:
+            levels = (
+                experience.get("levels")
+                if isinstance(experience, Mapping)
+                else None
+            )
+            granted_rank = int(creation_grant["rank"])
+            if (
+                not isinstance(experience, Mapping)
+                or experience.get("status") != "compiled"
+                or experience.get("initialRank") != granted_rank
+                or not isinstance(experience.get("maxLevel"), int)
+                or isinstance(experience.get("maxLevel"), bool)
+                or int(experience["maxLevel"]) < granted_rank
+                or not isinstance(experience.get("sourceIni"), str)
+                or not experience.get("sourceIni")
+                or not isinstance(levels, list)
+                or not levels
+                or sum(
+                    1
+                    for level_row in levels
+                    if isinstance(level_row, Mapping)
+                    and level_row.get("rank") == granted_rank
+                )
+                != 1
+            ):
+                raise SpellbookCompilerError(
+                    "spellbook creation experience contract is invalid"
+                )
+        locks = leaf.get("permanentWeaponLocks")
+        if locks is None:
+            continue
+        valid_lock = (
+            isinstance(locks, list)
+            and len(locks) == 1
+            and isinstance(locks[0], Mapping)
+        )
+        lock = locks[0] if valid_lock else {}
+        if (
+            not valid_lock
+            or leaf.get("weaponSlot") != "PRIMARY"
+            or lock.get("slot") != "PRIMARY"
+            or lock.get("state") != "LOCKED_PERMANENTLY"
+            or lock.get("module") != "LockWeaponCreate"
+            or not isinstance(lock.get("sourceIni"), str)
+            or not lock.get("sourceIni")
+            or not isinstance(lock.get("line"), int)
+            or isinstance(lock.get("line"), bool)
+            or int(lock["line"]) <= 0
+        ):
+            raise SpellbookCompilerError(
+                "spellbook LockWeaponCreate leaf evidence is invalid"
             )
 
 

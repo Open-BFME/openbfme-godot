@@ -712,6 +712,7 @@ func _test_can_build_pair_serves_player_then_base() -> void:
 
 	# The third answer: a base the world cannot see refuses - false at the
 	# call site WITH a structured gap - and the polled pair mutates nothing.
+	world.expect_refusals()
 	_check(
 		"an_unanswerable_base_reads_false_with_a_world_refused_gap",
 		not _cond(harness, "CAN_BUILD_AT_BASE", [

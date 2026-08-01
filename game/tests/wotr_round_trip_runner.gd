@@ -53,7 +53,11 @@ const HARNESS_MAP_IDS: Array = [
 ## reaching a `_check`, so a runner that only counts failures reports GREEN when
 ## its fixture collapses. Raise this deliberately when tests are added; never
 ## lower it to make a run go green.
-const EXPECTED_CHECKS := 85
+## 85 -> 90: the real document's seven victory types, the hero ledger the real
+## ownership sets now seed (per-template spawn resolution), the fresh-campaign
+## victory evaluation, the version 3 brief surface inside the digested brief,
+## and the ledger surviving the scene change.
+const EXPECTED_CHECKS := 90
 
 var passed := 0
 var failed := 0
@@ -136,8 +140,13 @@ func _test_the_menu_refuses_without_a_document() -> void:
 		_check("navigating_to_war_of_the_ring_is_refused", not bool(menu.show_page("wotr")))
 		_check("the_refused_navigation_left_the_page_alone",
 			String(menu.get_current_page()) != "wotr", String(menu.get_current_page()))
+		# The strategic screen's ~22k-line script is compiled at the moment the
+		# page is navigated to, so a REFUSED navigation never builds the node at
+		# all. That is a stronger form of "stayed hidden", not a weaker one:
+		# nothing was constructed, so nothing can be showing.
+		var strategic := menu.get_node_or_null("Center/WotrScreen") as Control
 		_check("the_strategic_screen_stayed_hidden",
-			not (menu.get_node("Center/WotrScreen") as Control).visible)
+			strategic == null or not strategic.visible)
 		menu.queue_free()
 		await process_frame
 		await process_frame
@@ -192,6 +201,23 @@ func _begin_session(found: Dictionary):
 	_check("the_active_seat_is_the_human_one",
 		String((session.state.players[session.state.active_player()] as Dictionary)["controller"])
 			== StateScript.CONTROLLER_HUMAN)
+	# THE RETAIL SCENARIO'S OWN RULES ARRIVED. RotWK authors seven victory types
+	# on every WOTR scenario, the ownership sets spawn REAL hero armies (each
+	# seat's own, resolved per template - the shipped document carries ten
+	# different `HeroArmy1` rows), and a fresh campaign must evaluate as ended
+	# for nobody.
+	_check("the_real_scenario_authors_its_seven_victory_types",
+		(session.world.scenario(session.scenario_name).get("victory_types", []) as Array).size() == 7,
+		session.scenario_name)
+	_check("the_campaign_opens_with_a_living_hero_ledger",
+		not session.state.heroes.is_empty(),
+		"heroes=%d" % session.state.heroes.size())
+	var standing: Dictionary = session.victory_status()
+	_check("a_fresh_real_campaign_ends_nothing",
+		bool(standing.get("ok", false))
+			and (standing.get("defeated_players", PackedInt32Array()) as PackedInt32Array).is_empty()
+			and int(standing.get("victorious_team", StateScript.NEUTRAL)) == StateScript.NEUTRAL,
+		str(standing))
 	return session
 
 
@@ -449,12 +475,22 @@ func _test_a_selection_becomes_a_commitment(session) -> Dictionary:
 		str(session.state.pending_battle))
 	_check("admitting_it_changed_the_strategic_hash",
 		String(session.state.state_hash()) != before_hash)
+	var brief: Dictionary = HandoffScript.build_request(
+		session.world, _rebuilt_pre_battle_state(session),
+		int(commitment["attacker"]), target)
 	_check("the_commitment_digests_the_brief_it_came_from",
-		BattleScript.commitment_matches_brief(
-			commitment,
-			HandoffScript.build_request(
-				session.world, _rebuilt_pre_battle_state(session),
-				int(commitment["attacker"]), target)))
+		BattleScript.commitment_matches_brief(commitment, brief))
+	# The version 3 strategic surface rides the REAL brief: territory bonuses,
+	# standing buildings, hero levels and the named data gaps - all derived from
+	# hashed state, all inside the digest the check above just proved.
+	_check("the_version_3_brief_carries_the_strategic_bonus_surface",
+		int(brief.get("schema_version", -1)) == 3
+			and (brief["region"] as Dictionary).has("standing_buildings")
+			and (brief["region"] as Dictionary).has("territory")
+			and (brief["attacker"] as Dictionary).has("territory_bonuses")
+			and (brief["defender"] as Dictionary).has("unified_territories")
+			and not (brief["data_gaps"] as Array).is_empty(),
+		str(brief.get("region", {}).keys() if brief.has("region") else brief.keys()))
 	# THE BATTLEFIELD. It is a stand-in and it is recorded; a battlefield chosen
 	# outside the commitment would be the desync of 867447e with a new name.
 	_check("the_bound_battlefield_is_recorded_in_the_commitment",
@@ -523,6 +559,10 @@ func _test_the_session_survives_the_scene_change(session) -> void:
 	_check("the_rebuilt_session_still_has_the_battle_in_flight",
 		String(adopted.state.pending_battle.get("region", ""))
 			== String(session.state.pending_battle.get("region", "")))
+	_check("the_rebuilt_session_keeps_the_hero_ledger",
+		adopted.state.heroes == session.state.heroes
+			and not adopted.state.heroes.is_empty(),
+		"heroes=%d" % adopted.state.heroes.size())
 	var truncated := payload.duplicate(true)
 	truncated["snapshot"] = PackedByteArray()
 	var refused := SessionScript.new()
@@ -585,6 +625,14 @@ func _test_the_menu_reaches_it(found: Dictionary) -> void:
 	# A CAMPAIGN NEEDS TWO FIELDABLE FACTIONS. With fewer converted the menu
 	# refuses BY NAME rather than seating a session whose battles could never be
 	# fought - assert that refusal first, on an empty availability map.
+	# FORCE THE AVAILABILITY SWEEP FIRST. It is stepped across idle frames now, and
+	# every reader of `_skirmish_availability` forces the rest of it - including
+	# `_start_wotr_session()` below. Overriding the table while the sweep still had
+	# steps left would simply be overwritten by them, and this check would then be
+	# measuring the machine's real conversion state instead of the empty map it
+	# means to test. `get_retail_faction_availability()` is the public reader whose
+	# whole job is to guarantee the sweep is complete when it returns.
+	menu.get_retail_faction_availability()
 	menu._skirmish_availability = {}
 	menu._wotr_session = null
 	_check("with_no_converted_faction_the_campaign_refuses_to_seat",

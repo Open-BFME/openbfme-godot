@@ -18,6 +18,11 @@ import math
 import re
 import threading
 
+from .module_contracts import (
+    ModuleContractError,
+    compile_all_module_contracts,
+    validate_module_contracts,
+)
 from .sage_cst import (
     SageAssignment,
     SageBlock,
@@ -520,23 +525,32 @@ def _resolved_scalar(
     }
 
 
-def _effective_body_health(
-    ancestry: Sequence[SageObject], constants: Mapping[str, int | float]
-) -> dict[str, object] | None:
+def _effective_primary_body(
+    ancestry: Sequence[SageObject],
+) -> tuple[SageBlock, object] | None:
     bodies = [
         block
         for block in _effective_top_blocks(ancestry)
         if (block.header_key or "").casefold() == "body"
     ]
     values = [
-        assignment
+        (block, assignment)
         for block in bodies
         for assignment in block.assignments
         if assignment.key.casefold() == "maxhealth"
     ]
     if len(values) != 1:
         return None
-    assignment = values[0]
+    return values[0]
+
+
+def _effective_body_health(
+    ancestry: Sequence[SageObject], constants: Mapping[str, int | float]
+) -> dict[str, object] | None:
+    primary = _effective_primary_body(ancestry)
+    if primary is None:
+        return None
+    _block, assignment = primary
     resolved = _resolved_expression(assignment.value, constants)
     if resolved is None:
         return None
@@ -605,6 +619,141 @@ def _default_set_target(
         candidates = primary_candidates
     unique = {value.casefold(): value for value in candidates}
     return next(iter(unique.values())) if len(unique) == 1 else None
+
+
+_WEAPON_SLOT_NAMES = frozenset({"primary", "secondary", "tertiary"})
+
+
+def _weapon_slot_for_target(block: SageBlock, weapon_id: str) -> str | None:
+    """Return the unique authored slot carrying ``weapon_id`` in a WeaponSet."""
+
+    slots: dict[str, str] = {}
+    for assignment in block.assignments:
+        if assignment.key.casefold() != "weapon":
+            continue
+        tokens = _tokens(assignment.value)
+        if not tokens or tokens[-1].casefold() != weapon_id.casefold():
+            continue
+        authored = [
+            token
+            for token in tokens[:-1]
+            if token.casefold() in _WEAPON_SLOT_NAMES
+        ]
+        if len(authored) != 1:
+            return None
+        slots[authored[0].casefold()] = authored[0].upper()
+    return next(iter(slots.values())) if len(slots) == 1 else None
+
+
+def _default_weapon_slot(
+    ancestry: Sequence[SageObject], weapon_id: str
+) -> str | None:
+    block = _default_set_block(ancestry, "WeaponSet")
+    return _weapon_slot_for_target(block, weapon_id) if block is not None else None
+
+
+def _permanent_weapon_locks(
+    ancestry: Sequence[SageObject], default_weapon_id: str | None
+) -> list[dict[str, object]]:
+    """Compile the complete retail ``LockWeaponCreate`` corpus.
+
+    BFME2 and RotWK author this module only with ``SlotToLock = PRIMARY``.
+    Missing/ambiguous slots and any wider slot vocabulary fail closed rather
+    than silently claiming support the current oracle/corpus does not provide.
+    """
+
+    modules = [
+        block
+        for block in _effective_top_blocks(ancestry)
+        if (block.header_key or "").casefold() == "behavior"
+        and block.kind.casefold() == "lockweaponcreate"
+    ]
+    if not modules:
+        return []
+    if len(modules) != 1:
+        raise PlayableUnitCompilerError(
+            "Object has multiple effective LockWeaponCreate modules"
+        )
+    block = modules[0]
+    rows = [
+        row
+        for row in block.assignments
+        if row.key.casefold() == "slottolock"
+    ]
+    if len(rows) != 1 or len(_tokens(rows[0].value)) != 1:
+        raise PlayableUnitCompilerError(
+            "LockWeaponCreate must author exactly one SlotToLock"
+        )
+    slot = _tokens(rows[0].value)[0].upper()
+    if slot != "PRIMARY":
+        raise PlayableUnitCompilerError(
+            f"LockWeaponCreate slot is outside the retail corpus: {slot}"
+        )
+    if (
+        default_weapon_id is None
+        or _default_weapon_slot(ancestry, default_weapon_id) != slot
+    ):
+        raise PlayableUnitCompilerError(
+            "LockWeaponCreate PRIMARY has no unique default PRIMARY weapon"
+        )
+    return [
+        {
+            "slot": slot,
+            "state": "LOCKED_PERMANENTLY",
+            "module": "LockWeaponCreate",
+            "sourceIni": rows[0].source_virtual_path,
+            "line": rows[0].line,
+        }
+    ]
+
+
+def _experience_level_create(
+    ancestry: Sequence[SageObject],
+) -> dict[str, object] | None:
+    """Compile the exact retail ``ExperienceLevelCreate`` shape."""
+
+    modules = [
+        block
+        for block in _effective_top_blocks(ancestry)
+        if (block.header_key or "").casefold() == "behavior"
+        and block.kind.casefold() == "experiencelevelcreate"
+    ]
+    if not modules:
+        return None
+    if len(modules) != 1:
+        raise PlayableUnitCompilerError(
+            "Object has multiple effective ExperienceLevelCreate modules"
+        )
+    block = modules[0]
+    fields: dict[str, SageAssignment] = {}
+    for row in block.assignments:
+        folded = row.key.casefold()
+        if folded not in {"leveltogrant", "mponly"} or folded in fields:
+            raise PlayableUnitCompilerError(
+                "ExperienceLevelCreate must author exactly LevelToGrant and MPOnly"
+            )
+        fields[folded] = row
+    if set(fields) != {"leveltogrant", "mponly"}:
+        raise PlayableUnitCompilerError(
+            "ExperienceLevelCreate must author exactly LevelToGrant and MPOnly"
+        )
+    level_token = fields["leveltogrant"].value.strip()
+    if re.fullmatch(r"[1-9][0-9]*", level_token) is None:
+        raise PlayableUnitCompilerError(
+            "ExperienceLevelCreate LevelToGrant must be a positive integer"
+        )
+    mp_tokens = _tokens(fields["mponly"].value)
+    if len(mp_tokens) != 1 or mp_tokens[0].casefold() != "no":
+        raise PlayableUnitCompilerError(
+            "ExperienceLevelCreate MPOnly is outside the retail MPOnly = No corpus"
+        )
+    return {
+        "rank": int(level_token),
+        "mpOnly": False,
+        "module": "ExperienceLevelCreate",
+        "sourceIni": block.source_virtual_path,
+        "line": block.line,
+    }
 
 
 def _resolved_set_field(
@@ -1060,6 +1209,8 @@ def _simulation_contract(
     cache_lock: threading.Lock | None = None,
     hero: bool = False,
     game: str = "bfme2",
+    destroy_die_policies: Sequence[Mapping[str, object]] = (),
+    module_contracts: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     resolved: dict[str, object] = {}
     required = {
@@ -1080,6 +1231,17 @@ def _simulation_contract(
         missing.append("memberHealth")
     else:
         resolved["memberHealth"] = health
+        primary_body = _effective_primary_body(member_lineage)
+        if (
+            primary_body is not None
+            and primary_body[0].kind.casefold() == "highlanderbody"
+        ):
+            resolved["highlanderBody"] = {
+                "value": True,
+                "module": primary_body[0].kind,
+                "sourceIni": primary_body[0].source_virtual_path,
+                "line": primary_body[0].line,
+            }
     member_count = sum(int(row.get("count", 0)) for row in members)
     if member_count <= 0:
         missing.append("memberCount")
@@ -1157,6 +1319,9 @@ def _simulation_contract(
     )
     if weapon_id and weapon is not None:
         combat: dict[str, object] = {"weaponId": weapon_id}
+        weapon_slot = _default_weapon_slot(member_lineage, weapon_id)
+        if weapon_slot is not None:
+            combat["weaponSlot"] = weapon_slot
         for output_name, source_name in (
             ("attackRange", "AttackRange"),
             ("minimumAttackRange", "MinimumAttackRange"),
@@ -1306,6 +1471,13 @@ def _simulation_contract(
         resolved["combat"] = combat
     else:
         missing.append("combat.weapon")
+    permanent_weapon_locks = _permanent_weapon_locks(member_lineage, weapon_id)
+    if permanent_weapon_locks:
+        resolved["permanentWeaponLocks"] = permanent_weapon_locks
+    if destroy_die_policies:
+        resolved["destroyDie"] = [dict(row) for row in destroy_die_policies]
+    if module_contracts:
+        resolved["moduleContracts"] = [dict(row) for row in module_contracts]
     # Alternate weapon-mode profiles (WEAPONSET_TOGGLE_* / MOUNTED): the
     # runtime unit rule carries every fully-resolved conditioned WeaponSet so
     # toggles and mounts swap live combat stats; unresolvable sets are
@@ -1387,10 +1559,170 @@ def _simulation_contract(
     )
     if fear_resistance is not None:
         resolved["fearResistant"] = fear_resistance
+    # The runtime simulates one aggregate object. A produced horde's own
+    # HordeAIUpdate owns that aggregate policy; its payload member's
+    # AIUpdateInterface governs individual SAGE members that are not separate
+    # authoritative entities here. Singletons use their sole lineage,
+    # including concrete subclasses such as DozerAIUpdate.
+    auto_acquire_lineage = (
+        container_lineage
+        if container_lineage
+        and member_lineage
+        and container_lineage[-1].name.casefold()
+        != member_lineage[-1].name.casefold()
+        else member_lineage
+    )
+    auto_acquire = _auto_acquire_enemies_contract(auto_acquire_lineage)
+    if auto_acquire is not None:
+        resolved["autoAcquireEnemiesWhenIdle"] = auto_acquire
+    mood_attack_check_rate = _mood_attack_check_rate_contract(auto_acquire_lineage)
+    if mood_attack_check_rate is not None:
+        if auto_acquire is None:
+            raise PlayableUnitCompilerError(
+                "MoodAttackCheckRate is authored without "
+                "AutoAcquireEnemiesWhenIdle on the effective AI update owner"
+            )
+        resolved["moodAttackCheckRate"] = mood_attack_check_rate
     return {
         "status": "ready" if not missing else "unresolved",
         "resolved": resolved,
         "missing": sorted(set(missing), key=str.casefold),
+    }
+
+
+def _auto_acquire_enemies_contract(
+    owner_lineage: Sequence[SageObject],
+) -> dict[str, object] | None:
+    """Compile AIUpdateInterface.AutoAcquireEnemiesWhenIdle exactly.
+
+    Missing authoring emits no contract, preserving the runtime's established
+    behavior. The first token is the Yes/No switch; ATTACK_BUILDINGS and
+    STEALTHED are independent authored bits (retail sometimes retains them
+    after No, where they are inert). STEALTHED describes the source unit
+    firing while cloaked, not detection of cloaked targets.
+    """
+
+    authored: list[tuple[SageBlock, tuple[str, ...]]] = []
+    for block in _effective_top_blocks(owner_lineage):
+        if (block.header_key or "").casefold() != "behavior":
+            continue
+        if block.kind.casefold() not in {
+            "aiupdateinterface",
+            "dozeraiupdate",
+            "deploystyleaiupdate",
+            "giantbirdaiupdate",
+            "hordeaiupdate",
+            "hordeworkeraiupdate",
+            "siegeaiupdate",
+            "workeraiupdate",
+        }:
+            continue
+        values = block.values("AutoAcquireEnemiesWhenIdle")
+        if not values:
+            continue
+        # SAGE INI's bit-list scanner tokenizes only on whitespace and '='.
+        # Do not use the compiler's broad identifier extractor here: it would
+        # incorrectly turn malformed `Yes,ATTACK_BUILDINGS` into two valid
+        # tokens instead of preserving the comma for an unknown-token refusal.
+        tokens = tuple(
+            token
+            for token in re.split(r"[ \n\r\t=]+", values[-1].strip())
+            if token
+        )
+        authored.append((block, tokens))
+    if not authored:
+        return None
+
+    contracts: list[tuple[bool, bool, bool]] = []
+    for block, tokens in authored:
+        if not tokens or tokens[0].casefold() not in {"yes", "no"}:
+            raise PlayableUnitCompilerError(
+                f"{block.kind} AutoAcquireEnemiesWhenIdle must start with Yes or No"
+            )
+        enabled = tokens[0].casefold() == "yes"
+        modifiers = [token.casefold() for token in tokens[1:]]
+        if len(modifiers) != len(set(modifiers)):
+            raise PlayableUnitCompilerError(
+                f"{block.kind} AutoAcquireEnemiesWhenIdle repeats a modifier"
+            )
+        unknown = sorted(
+            token
+            for token in modifiers
+            if token not in {"attack_buildings", "stealthed"}
+        )
+        if unknown:
+            raise PlayableUnitCompilerError(
+                f"{block.kind} AutoAcquireEnemiesWhenIdle has unknown modifier(s): "
+                + ", ".join(unknown)
+            )
+        contracts.append(
+            (enabled, "attack_buildings" in modifiers, "stealthed" in modifiers)
+        )
+    if any(contract != contracts[0] for contract in contracts[1:]):
+        raise PlayableUnitCompilerError(
+            "effective AIUpdateInterface modules disagree on "
+            "AutoAcquireEnemiesWhenIdle"
+        )
+    enabled, attack_buildings, while_stealthed = contracts[0]
+    block = authored[0][0]
+    return {
+        "enabled": {"value": enabled},
+        "attackBuildings": {"value": attack_buildings},
+        "whileStealthed": {"value": while_stealthed},
+        "sourceIni": block.source_virtual_path,
+        "line": block.line,
+        "semantic": (
+            "AIUpdateInterface.AutoAcquireEnemiesWhenIdle "
+            + ("Yes" if enabled else "No")
+        ),
+    }
+
+
+def _mood_attack_check_rate_contract(
+    owner_lineage: Sequence[SageObject],
+) -> dict[str, object] | None:
+    """Compile AIUpdateInterface.MoodAttackCheckRate as authored milliseconds."""
+
+    authored: list[tuple[SageBlock, int]] = []
+    for block in _effective_top_blocks(owner_lineage):
+        if (block.header_key or "").casefold() != "behavior":
+            continue
+        if block.kind.casefold() not in {
+            "aiupdateinterface",
+            "dozeraiupdate",
+            "deploystyleaiupdate",
+            "giantbirdaiupdate",
+            "hordeaiupdate",
+            "hordeworkeraiupdate",
+            "siegeaiupdate",
+            "workeraiupdate",
+        }:
+            continue
+        values = block.values("MoodAttackCheckRate")
+        if not values:
+            continue
+        # INI::parseDurationUnsignedInt consumes one concrete unsigned duration.
+        # Retail authors decimal milliseconds only; accepting signs, floats,
+        # defines or trailing tokens here would invent parser semantics.
+        token = values[-1].strip()
+        if re.fullmatch(r"[0-9]+", token) is None or int(token) <= 0:
+            raise PlayableUnitCompilerError(
+                f"{block.kind} MoodAttackCheckRate must be one positive "
+                "base-10 integer millisecond duration"
+            )
+        authored.append((block, int(token)))
+    if not authored:
+        return None
+    if any(milliseconds != authored[0][1] for _, milliseconds in authored[1:]):
+        raise PlayableUnitCompilerError(
+            "effective AIUpdateInterface modules disagree on MoodAttackCheckRate"
+        )
+    block, milliseconds = authored[0]
+    return {
+        "milliseconds": {"value": milliseconds},
+        "sourceIni": block.source_virtual_path,
+        "line": block.line,
+        "semantic": "AIUpdateInterface.MoodAttackCheckRate",
     }
 
 
@@ -2158,6 +2490,7 @@ def _runtime_module_evidence(
     target_lineage: Sequence[SageObject],
     member_lineage: Sequence[SageObject],
     consumed_container_modules: frozenset[tuple[str, int, str, str]],
+    consumed_member_modules: frozenset[tuple[str, int, str, str]] = frozenset(),
 ) -> list[dict[str, object]]:
     result: list[dict[str, object]] = []
     owners: list[tuple[str, Sequence[SageObject]]] = [("container", target_lineage)]
@@ -2174,8 +2507,10 @@ def _runtime_module_evidence(
                 (block.instance_tag or "").casefold(),
                 block.kind.casefold(),
             )
-            consumes_horde = (
-                role == "container" and identity in consumed_container_modules
+            consumed = (
+                identity in consumed_container_modules
+                if role == "container"
+                else identity in consumed_member_modules
             )
             result.append(
                 {
@@ -2185,7 +2520,7 @@ def _runtime_module_evidence(
                     "sourceIni": block.source_virtual_path,
                     "line": block.line,
                     "semanticSha256": _digest(semantic),
-                    "consumed": consumes_horde,
+                    "consumed": consumed,
                 }
             )
     return sorted(
@@ -2198,6 +2533,100 @@ def _runtime_module_evidence(
             int(row["line"]),
         ),
     )
+
+
+def _behavior_module_identities(
+    lineage: Sequence[SageObject], kind: str
+) -> frozenset[tuple[str, int, str, str]]:
+    folded = kind.casefold()
+    return frozenset(
+        (
+            block.source_virtual_path.casefold(),
+            block.line,
+            (block.instance_tag or "").casefold(),
+            block.kind.casefold(),
+        )
+        for block in _effective_top_blocks(lineage)
+        if (block.header_key or "").casefold() == "behavior"
+        and block.kind.casefold() == folded
+    )
+
+
+def _destroy_die_policies(
+    lineage: Sequence[SageObject], owner_role: str
+) -> tuple[
+    list[dict[str, object]],
+    frozenset[tuple[str, int, str, str]],
+]:
+    """Compile the measured retail DestroyDie/DieMuxData subset.
+
+    DestroyDie has no module-local payload: after DieMuxData accepts a death
+    event it destroys the object immediately.  The effective BFME2/RotWK
+    carrier census authors only the default ALL mask, explicit ALL, and
+    ALL -TOPPLED.  Refuse every other field/mask rather than pretending the
+    runtime implements unmeasured veterancy or status filtering.
+    """
+
+    policies: list[dict[str, object]] = []
+    consumed: set[tuple[str, int, str, str]] = set()
+    for block in _effective_top_blocks(lineage):
+        if (
+            (block.header_key or "").casefold() != "behavior"
+            or block.kind.casefold() != "destroydie"
+        ):
+            continue
+        unsupported = sorted(
+            {
+                assignment.key
+                for assignment in block.assignments
+                if assignment.key.casefold() != "deathtypes"
+            },
+            key=str.casefold,
+        )
+        death_type_rows = [
+            assignment
+            for assignment in block.assignments
+            if assignment.key.casefold() == "deathtypes"
+        ]
+        if unsupported or len(death_type_rows) > 1:
+            detail = ", ".join(unsupported) if unsupported else "duplicate DeathTypes"
+            raise PlayableUnitCompilerError(
+                f"DestroyDie {block.instance_tag or '<untagged>'} authors "
+                f"unsupported DieMuxData fields: {detail}"
+            )
+        tokens = (
+            tuple(token.upper() for token in _tokens(death_type_rows[0].value))
+            if death_type_rows
+            else ("ALL",)
+        )
+        if tokens == ("ALL",):
+            excluded: list[str] = []
+        elif tokens == ("ALL", "-TOPPLED"):
+            excluded = ["TOPPLED"]
+        else:
+            raise PlayableUnitCompilerError(
+                f"DestroyDie {block.instance_tag or '<untagged>'} authors "
+                f"unsupported DeathTypes filter: {' '.join(tokens)}"
+            )
+        policies.append(
+            {
+                "ownerRole": owner_role,
+                "module": block.kind,
+                "deathTypes": "ALL",
+                "excludedDeathTypes": excluded,
+                "sourceIni": block.source_virtual_path,
+                "line": block.line,
+            }
+        )
+        consumed.add(
+            (
+                block.source_virtual_path.casefold(),
+                block.line,
+                (block.instance_tag or "").casefold(),
+                block.kind.casefold(),
+            )
+        )
+    return policies, frozenset(consumed)
 
 
 # Retail SelectPortraits are authored 191x191 (units) or 192x192 (heroes and
@@ -2640,10 +3069,12 @@ def _hero_level_grants(
 UPGRADE_PATH = "data/ini/upgrade.ini"
 
 # Modifier kinds the runtime level-up path can apply faithfully.  HEALTH and
-# DAMAGE_ADD are flat per-member additions; PRODUCTION is the structure
-# build-speed factor.  Anything else stays recorded, never applied.
+# DAMAGE_ADD are flat per-member additions; the other supported kinds are
+# authored multiplicative factors. Anything else stays recorded, never applied.
 _LEVEL_MODIFIER_ADDITIVE_KINDS = frozenset({"health", "damage_add"})
-_LEVEL_MODIFIER_MULTIPLICATIVE_KINDS = frozenset({"production"})
+_LEVEL_MODIFIER_MULTIPLICATIVE_KINDS = frozenset(
+    {"production", "damage_mult", "spell_damage"}
+)
 
 
 def _experience_target_set(
@@ -2758,6 +3189,13 @@ def _select_experience_chain(
     row_targets: dict[int, frozenset[str]] = {}
     for rank in sorted(by_rank):
         supplying = by_rank[rank]
+        own_suppliers = (
+            [item for item in supplying if own_name in item[0]]
+            if own_name
+            else []
+        )
+        if own_suppliers:
+            supplying = own_suppliers
         best_size = min(len(targets) for targets, _ in supplying)
         tied = [item for item in supplying if len(item[0]) == best_size]
         if len(tied) == 1:
@@ -2817,8 +3255,13 @@ def _level_modifier_leaf(
                 {"kind": canonical, "value": magnitude, "application": "additive"}
             )
         elif folded in _LEVEL_MODIFIER_MULTIPLICATIVE_KINDS:
+            canonical = {
+                "production": "PRODUCTION",
+                "damage_mult": "DAMAGE_MULT",
+                "spell_damage": "SPELL_DAMAGE",
+            }[folded]
             rows.append(
-                {"kind": "PRODUCTION", "value": magnitude, "application": "multiplicative"}
+                {"kind": canonical, "value": magnitude, "application": "multiplicative"}
             )
         else:
             unsupported.append(kind)
@@ -2841,12 +3284,17 @@ def _experience_contract(
     members: Sequence[Mapping[str, object]],
     documents: Mapping[str, bytes],
     constants: Mapping[str, int | float],
+    creation_grant: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Compile the authored ExperienceLevel chain of one playable unit."""
 
     label = f"unit {target_lineage[-1].name}"
     source = _optional_document(documents, EXPERIENCE_LEVELS_PATH)
     if source is None:
+        if creation_grant is not None:
+            raise PlayableUnitCompilerError(
+                f"{label} ExperienceLevelCreate has no authored ExperienceLevel source"
+            )
         return {
             "status": "unavailable",
             "note": "experience level source is not in the effective INI view",
@@ -2871,6 +3319,10 @@ def _experience_contract(
         primary_name=target_lineage[-1].name if target_lineage else "",
     )
     if not chain:
+        if creation_grant is not None:
+            raise PlayableUnitCompilerError(
+                f"{label} ExperienceLevelCreate has no authored ExperienceLevel chain"
+            )
         return {
             "status": "unauthored",
             "note": "retail authors no ExperienceLevel chain targeting this unit",
@@ -2900,10 +3352,20 @@ def _experience_contract(
             raise PlayableUnitCompilerError(
                 f"{level_label} has no resolvable RequiredExperience"
             )
+        award_authored = award is not None
         if award is None:
-            raise PlayableUnitCompilerError(
-                f"{level_label} has no resolvable ExperienceAward"
-            )
+            # Several retail creation-granted chains do not author a kill
+            # award at or below the granted entry rank. Those lower ranks are
+            # unreachable on creation, but remain explicit unknown evidence.
+            # A non-empty unresolved expression is always malformed.
+            if (
+                award_expression
+                or creation_grant is None
+                or rank > int(creation_grant["rank"])
+            ):
+                raise PlayableUnitCompilerError(
+                    f"{level_label} has no resolvable ExperienceAward"
+                )
         # SAGE parses both fields through its INI integer scanner, which
         # truncates fractional macro results (RotWK authors awards like
         # #DIVIDE( ADVANCED_EXP_AWARD_TARGET ANGMAR_HILL_TROLL_HORDE_SIZE )
@@ -2918,9 +3380,12 @@ def _experience_contract(
             "experienceId": str(row["id"]),
             "rank": rank,
             "requiredExperience": required,
-            "experienceAward": award,
             "line": int(row["line"]),
         }
+        if award_authored:
+            level["experienceAward"] = award
+        else:
+            level["experienceAwardStatus"] = "unauthored"
         if any(
             expression
             and _resolved_expression(expression, {}) is None
@@ -2957,12 +3422,33 @@ def _experience_contract(
         if level_up_fx:
             level["levelUpFxId"] = level_up_fx
         levels.append(level)
+    # An ExperienceLevel row describes progression at that rank; it does not
+    # itself grant the rank at object creation. Ordinary objects start at rank
+    # one even when their first authored row is a higher summon-only rank.
+    initial_rank = 1
+    if creation_grant is not None:
+        granted_rank = int(creation_grant["rank"])
+        matching_grant_rows = [
+            row for row, _targets in chain if int(row["rank"]) == granted_rank
+        ]
+        if len(matching_grant_rows) != 1:
+            raise PlayableUnitCompilerError(
+                f"{label} ExperienceLevelCreate rank {granted_rank} does not "
+                "match exactly one authored experience-chain rank"
+            )
+        initial_rank = granted_rank
     return {
         "status": "compiled",
         "sourceIni": EXPERIENCE_LEVELS_PATH,
-        # Authored entry rank (1 for fielded units; retail summons such as the
-        # ring hero and Treebeard enter at their authored top rank).
-        "initialRank": int(chain[0][0]["rank"]),
+        # ExperienceLevelCreate is the only creation-rank authority. All exact
+        # corpus carriers enter at the same rank as their chain's first row, so
+        # a disagreement is rejected above rather than guessed.
+        "initialRank": initial_rank,
+        **(
+            {"experienceLevelCreate": dict(creation_grant)}
+            if creation_grant is not None
+            else {}
+        ),
         "maxLevel": int(chain[-1][0]["rank"]),
         "targetCount": len(chain[0][1]),
         # SAGE applies level modifiers permanently at level-up; the runtime
@@ -3717,7 +4203,7 @@ def _conditional_weapon_modes(
             continue
         try:
             weapon_id = _conditioned_weapon_set_target(block, label)
-            modes[mode_key] = _weapon_mode_profile(
+            profile = _weapon_mode_profile(
                 documents,
                 weapon_id,
                 constants,
@@ -3725,6 +4211,10 @@ def _conditional_weapon_modes(
                 named_definition_cache=named_definition_cache,
                 cache_lock=cache_lock,
             )
+            weapon_slot = _weapon_slot_for_target(block, weapon_id)
+            if weapon_slot is not None:
+                profile["weaponSlot"] = weapon_slot
+            modes[mode_key] = profile
         except PlayableUnitCompilerError as error:
             gaps.append({"mode": mode_key, "reason": str(error)})
     return modes, gaps
@@ -5726,7 +6216,49 @@ def compile_playable_unit_descriptor(
             target.name, objects, command_sets, command_buttons, reachable_object_ids
         )
     except PlayableUnitCompilerError as error:
-        direct_error = error
+        # Fortress citadels that castle-unpack creates (e.g. MenFortressCitadel)
+        # author UNIT_BUILD for porters/builders but often sit outside the
+        # player-template reachability set. When the filtered search fails,
+        # retry without the reachability gate and keep same-Side producers.
+        if reachable_object_ids is not None and "no producer CommandSet reaches" in str(
+            error
+        ):
+            try:
+                unrestricted = _producer_bindings(
+                    target.name, objects, command_sets, command_buttons, None
+                )
+                target_side = {
+                    value.casefold()
+                    for row in _effective_values([target], "Side")
+                    for value in (row.value,)
+                    if value
+                }
+                same_side: list[dict[str, object]] = []
+                for route in unrestricted:
+                    producer = objects.get(str(route["producerObjectId"]).casefold())
+                    if producer is None:
+                        continue
+                    producer_side = {
+                        value.casefold()
+                        for row in _effective_values(
+                            _ancestry(objects, producer), "Side"
+                        )
+                        for value in (row.value,)
+                        if value
+                    }
+                    if target_side and producer_side and target_side.isdisjoint(
+                        producer_side
+                    ):
+                        continue
+                    same_side.append(route)
+                if same_side:
+                    direct_producers = tuple(same_side)
+                else:
+                    direct_error = error
+            except PlayableUnitCompilerError:
+                direct_error = error
+        else:
+            direct_error = error
     if is_roster_hero and is_ring_hero:
         raise PlayableUnitCompilerError(
             f"hero {target.name} has conflicting BuildableHeroesMP and "
@@ -5889,8 +6421,64 @@ def compile_playable_unit_descriptor(
         },
         key=str.casefold,
     )
+    consumed_lock_modules = _behavior_module_identities(
+        member_lineage, "LockWeaponCreate"
+    )
+    experience_level_create = _experience_level_create(target_lineage)
+    if experience_level_create is not None:
+        consumed_container_modules = (
+            consumed_container_modules
+            | _behavior_module_identities(
+                target_lineage, "ExperienceLevelCreate"
+            )
+        )
+    destroy_die_policies: list[dict[str, object]] = []
+    if target_lineage[-1].name.casefold() == member_lineage[-1].name.casefold():
+        object_policies, consumed_destroy_die = _destroy_die_policies(
+            target_lineage, "object"
+        )
+        destroy_die_policies.extend(object_policies)
+        consumed_container_modules = (
+            consumed_container_modules | consumed_destroy_die
+        )
+    else:
+        container_policies, consumed_container_destroy_die = (
+            _destroy_die_policies(target_lineage, "container")
+        )
+        member_policies, consumed_member_destroy_die = _destroy_die_policies(
+            member_lineage, "primaryMember"
+        )
+        destroy_die_policies.extend(container_policies)
+        destroy_die_policies.extend(member_policies)
+        consumed_container_modules = (
+            consumed_container_modules | consumed_container_destroy_die
+        )
+    try:
+        module_contracts = compile_all_module_contracts(
+            target_lineage, target_lineage[-1].name
+        )
+        if target_lineage[-1].name.casefold() != member_lineage[-1].name.casefold():
+            member_contracts = compile_all_module_contracts(
+                member_lineage, member_lineage[-1].name
+            )
+            # Prefer container contracts first, then primary-member contracts.
+            module_contracts = module_contracts + member_contracts
+    except ModuleContractError as error:
+        raise PlayableUnitCompilerError(str(error)) from error
+    consumed_member_modules: frozenset[tuple[str, int, str, str]] = frozenset()
+    if target_lineage[-1].name.casefold() == member_lineage[-1].name.casefold():
+        consumed_container_modules = (
+            consumed_container_modules | consumed_lock_modules
+        )
+    else:
+        consumed_member_modules = (
+            consumed_lock_modules | consumed_member_destroy_die
+        )
     module_evidence = _runtime_module_evidence(
-        target_lineage, member_lineage, consumed_container_modules
+        target_lineage,
+        member_lineage,
+        consumed_container_modules,
+        consumed_member_modules,
     )
     runtime_modules = sorted(
         {str(row["kind"]) for row in module_evidence}, key=str.casefold
@@ -5973,6 +6561,8 @@ def compile_playable_unit_descriptor(
         cache_lock=prepared.cache_lock,
         hero=category == "hero",
         game=game,
+        destroy_die_policies=destroy_die_policies,
+        module_contracts=module_contracts,
     )
     combined_kinds = tuple(sorted(set(target_kinds) | set(member_kinds)))
     capabilities, unsupported_capabilities, traits = _capability_contract(
@@ -6004,6 +6594,7 @@ def compile_playable_unit_descriptor(
         members,
         documents,
         prepared.numeric_defines,
+        experience_level_create,
     )
     used_paths = {
         COMMAND_SET_PATH,
@@ -6358,6 +6949,96 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             ):
                 raise PlayableUnitCompilerError(
                     "playable-unit gameplay reference row is invalid"
+                )
+    simulation = gameplay.get("simulation")
+    resolved_simulation = (
+        simulation.get("resolved") if isinstance(simulation, Mapping) else None
+    )
+    highlander_body = (
+        resolved_simulation.get("highlanderBody")
+        if isinstance(resolved_simulation, Mapping)
+        else None
+    )
+    if highlander_body is not None and (
+        not isinstance(highlander_body, Mapping)
+        or highlander_body.get("value") is not True
+        or highlander_body.get("module") != "HighlanderBody"
+        or not isinstance(highlander_body.get("sourceIni"), str)
+        or not highlander_body.get("sourceIni")
+        or not isinstance(highlander_body.get("line"), int)
+        or isinstance(highlander_body.get("line"), bool)
+        or int(highlander_body["line"]) <= 0
+    ):
+        raise PlayableUnitCompilerError(
+            "playable-unit HighlanderBody policy evidence is invalid"
+        )
+    permanent_weapon_locks = (
+        resolved_simulation.get("permanentWeaponLocks")
+        if isinstance(resolved_simulation, Mapping)
+        else None
+    )
+    if permanent_weapon_locks is not None:
+        combat = resolved_simulation.get("combat")
+        valid_lock = (
+            isinstance(permanent_weapon_locks, list)
+            and len(permanent_weapon_locks) == 1
+            and isinstance(permanent_weapon_locks[0], Mapping)
+        )
+        lock = permanent_weapon_locks[0] if valid_lock else {}
+        if (
+            not valid_lock
+            or lock.get("slot") != "PRIMARY"
+            or lock.get("state") != "LOCKED_PERMANENTLY"
+            or lock.get("module") != "LockWeaponCreate"
+            or not isinstance(lock.get("sourceIni"), str)
+            or not lock.get("sourceIni")
+            or not isinstance(lock.get("line"), int)
+            or isinstance(lock.get("line"), bool)
+            or int(lock["line"]) <= 0
+            or not isinstance(combat, Mapping)
+            or combat.get("weaponSlot") != "PRIMARY"
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit LockWeaponCreate policy evidence is invalid"
+            )
+    module_contracts_value = (
+        resolved_simulation.get("moduleContracts")
+        if isinstance(resolved_simulation, Mapping)
+        else None
+    )
+    if module_contracts_value is not None:
+        try:
+            validate_module_contracts(
+                module_contracts_value, label="playable-unit"
+            )
+        except ModuleContractError as error:
+            raise PlayableUnitCompilerError(str(error)) from error
+    destroy_die = (
+        resolved_simulation.get("destroyDie")
+        if isinstance(resolved_simulation, Mapping)
+        else None
+    )
+    if destroy_die is not None:
+        if not isinstance(destroy_die, list) or not destroy_die:
+            raise PlayableUnitCompilerError(
+                "playable-unit DestroyDie policy evidence is invalid"
+            )
+        for policy in destroy_die:
+            if (
+                not isinstance(policy, Mapping)
+                or policy.get("ownerRole")
+                not in {"object", "container", "primaryMember"}
+                or policy.get("module") != "DestroyDie"
+                or policy.get("deathTypes") != "ALL"
+                or policy.get("excludedDeathTypes") not in ([], ["TOPPLED"])
+                or not isinstance(policy.get("sourceIni"), str)
+                or not policy.get("sourceIni")
+                or not isinstance(policy.get("line"), int)
+                or isinstance(policy.get("line"), bool)
+                or int(policy["line"]) <= 0
+            ):
+                raise PlayableUnitCompilerError(
+                    "playable-unit DestroyDie policy evidence is invalid"
                 )
     presentation = value.get("presentation")
     if not isinstance(presentation, Mapping):
@@ -6748,6 +7429,21 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             raise PlayableUnitCompilerError(
                 "playable-unit experience level table is invalid"
             )
+        creation_grant = experience.get("experienceLevelCreate")
+        if creation_grant is not None and (
+            not isinstance(creation_grant, Mapping)
+            or creation_grant.get("module") != "ExperienceLevelCreate"
+            or creation_grant.get("mpOnly") is not False
+            or creation_grant.get("rank") != initial_rank
+            or not isinstance(creation_grant.get("sourceIni"), str)
+            or not creation_grant.get("sourceIni")
+            or not isinstance(creation_grant.get("line"), int)
+            or isinstance(creation_grant.get("line"), bool)
+            or int(creation_grant["line"]) <= 0
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit ExperienceLevelCreate evidence is invalid"
+            )
         expected_previous = 0
         for level_row in levels:
             if not isinstance(level_row, Mapping):
@@ -6757,6 +7453,12 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             rank = level_row.get("rank")
             required_xp = level_row.get("requiredExperience")
             award = level_row.get("experienceAward")
+            award_unknown = (
+                award is None
+                and level_row.get("experienceAwardStatus") == "unauthored"
+                and creation_grant is not None
+                and rank <= initial_rank
+            )
             if (
                 not isinstance(rank, int)
                 or isinstance(rank, bool)
@@ -6764,9 +7466,18 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
                 or not isinstance(required_xp, (int, float))
                 or isinstance(required_xp, bool)
                 or required_xp < 0
-                or not isinstance(award, (int, float))
-                or isinstance(award, bool)
-                or award < 0
+                or (
+                    not award_unknown
+                    and (
+                        not isinstance(award, (int, float))
+                        or isinstance(award, bool)
+                        or award < 0
+                    )
+                )
+                or (
+                    award is not None
+                    and "experienceAwardStatus" in level_row
+                )
             ):
                 raise PlayableUnitCompilerError(
                     "playable-unit experience level row is invalid"
@@ -6785,7 +7496,14 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
                     )
                     if (
                         not isinstance(modifier, Mapping)
-                        or modifier.get("kind") not in {"HEALTH", "DAMAGE_ADD", "PRODUCTION"}
+                        or modifier.get("kind")
+                        not in {
+                            "HEALTH",
+                            "DAMAGE_ADD",
+                            "PRODUCTION",
+                            "DAMAGE_MULT",
+                            "SPELL_DAMAGE",
+                        }
                         or not isinstance(modifier.get("value"), (int, float))
                         or isinstance(modifier.get("value"), bool)
                         or application
@@ -6794,7 +7512,22 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
                         raise PlayableUnitCompilerError(
                             "playable-unit experience modifier row is invalid"
                         )
-        if expected_previous != max_level or int(levels[0]["rank"]) != initial_rank:
+        if (
+            expected_previous != max_level
+            or (
+                creation_grant is None
+                and initial_rank != 1
+            )
+            or (
+                creation_grant is not None
+                and sum(
+                    1
+                    for level_row in levels
+                    if int(level_row["rank"]) == initial_rank
+                )
+                != 1
+            )
+        ):
             raise PlayableUnitCompilerError(
                 "playable-unit experience level table is invalid"
             )

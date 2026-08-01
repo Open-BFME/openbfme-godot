@@ -66,6 +66,52 @@ func configure_identity(identity: Dictionary) -> void:
 		_build_player_rows(players)
 
 
+func configure_boot(title: String) -> void:
+	## APPLICATION STARTUP shape of the same screen. The match shape below wants
+	## a map plate, a description and a per-player progress table; at app startup
+	## none of those exist yet - ContentDB has not been asked for a map and there
+	## are no players - so rendering the empty five-column header would be a UI
+	## claiming to describe a match that has not been chosen.
+	##
+	## This keeps the identical ornate frame and progress readout and drops the
+	## match-only furniture, so the startup screen and the match screen are
+	## visibly the same surface rather than two separate loading screens.
+	_map_title_label.text = title
+	_art_frame.visible = false
+	_preview_frame.visible = false
+	_description_label.visible = false
+	for child in _table_grid.get_children():
+		child.queue_free()
+	_rows.clear()
+	_table_grid.visible = false
+	# One shared bar for the startup phase, built in the table's place so
+	# set_load_progress() drives startup and match loads through one code path.
+	var host := HBoxContainer.new()
+	host.alignment = BoxContainer.ALIGNMENT_CENTER
+	host.add_theme_constant_override("separation", 10)
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(520, 20)
+	bar.min_value = 0.0
+	bar.max_value = 100.0
+	bar.value = _progress_ratio * 100.0
+	bar.show_percentage = false
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var bar_bg := StyleBoxFlat.new()
+	bar_bg.bg_color = Color(0.05, 0.07, 0.05)
+	bar_bg.border_color = COLOR_FRAME_INNER
+	bar_bg.set_border_width_all(1)
+	var bar_fill := StyleBoxFlat.new()
+	bar_fill.bg_color = COLOR_BAR_FILL
+	bar.add_theme_stylebox_override("background", bar_bg)
+	bar.add_theme_stylebox_override("fill", bar_fill)
+	host.add_child(bar)
+	var percent := _table_label("0%", COLOR_TITLE, 15)
+	host.add_child(percent)
+	(_table_grid.get_parent() as CenterContainer).add_child(host)
+	_rows.append({"bar": bar, "percent": percent})
+	set_load_progress(_progress_ratio, "")
+
+
 func set_load_progress(ratio: float, phase_label: String) -> void:
 	# Monotonic by construction: a later phase can never move the bar backward
 	# (scene bootstrap hands its floor over to the slice's phase weights).

@@ -32,6 +32,7 @@ extends RefCounted
 
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 const HandoffScript = preload("res://src/wotr/wotr_handoff.gd")
+const ReinforcementsScript = preload("res://src/wotr/wotr_battle_reinforcements.gd")
 
 ## Aliased, not restated. `wotr_state.gd` owns the commitment schema because
 ## `begin_battle()` has to validate what it admits into the hash and cannot
@@ -136,6 +137,7 @@ static func configure(
 			"team_roster": [],
 			"gameplay_rules": {},
 			"commitment": {},
+			"reinforcement_feed": {},
 		}
 
 	# A PARTIAL rules overlay, carrying only what the strategic layer actually
@@ -153,6 +155,23 @@ static func configure(
 		gameplay_rules["starting_resources"] = starting_cash
 
 	var region := brief.get("region", {}) as Dictionary
+	# THE PREBUILT FORTRESS, carried because the strategic layer authorises it:
+	# `has_fort` is derived by the handoff from the region's own `CreateAutoFort`
+	# (or a built fort), and the WITH-FORT purse above already answers to it.
+	# The tactical sim does not raise a standing fortress from this flag yet -
+	# that half of `prebuilt_fortress` stays a named gap in `wotr_handoff.gd` -
+	# but the overlay now CARRIES the authorisation, so the sim's half is a
+	# consumer to write rather than a contract still to design.
+	if bool(region.get("has_fort", false)):
+		gameplay_rules["prebuilt_fortress"] = true
+	# THE REGION'S OWN BONUSES, verbatim from the brief (which derived them from
+	# the region's authored `bonuses` block). No semantics are invented here: the
+	# strategic layer authorises the numbers, the overlay carries them, and how a
+	# tactical rule consumes an `attack` or `defense` bonus is the remaining
+	# tactical half of the `region_bonus_modifiers` gap. Absent stays absent.
+	var region_bonuses := region.get("bonuses", {}) as Dictionary
+	if not region_bonuses.is_empty():
+		gameplay_rules["region_bonuses"] = region_bonuses.duplicate(true)
 	var commitment: Dictionary = {
 		"schema": SCHEMA,
 		"schema_version": SCHEMA_VERSION,
@@ -207,6 +226,16 @@ static func configure(
 		"team_roster": team_roster_for(commitment),
 		"gameplay_rules": gameplay_rules,
 		"commitment": commitment,
+		# THE STAGED FEED, derived from the same brief the commitment digests, so
+		# it inherits the chain-of-custody argument team_roster does: agreeing
+		# strategic hashes imply agreeing feeds. It carries its OWN ok/refusals
+		# rather than failing the whole configuration, because an auto-resolved
+		# battle needs no feed at all and a document that never authored
+		# SecondsPerReinforcement must not make auto-resolve campaigns unplayable.
+		# A launcher starting a TACTICAL match must check `reinforcement_feed.ok`
+		# and surface its refusals; spawning the whole roster at match start
+		# instead is the exact behaviour the `reinforcement_schedule` gap names.
+		"reinforcement_feed": ReinforcementsScript.schedule_for(brief),
 	}
 
 
@@ -542,6 +571,84 @@ static func apply_auto_resolve_outcome(state: StateScript, outcome: Dictionary) 
 			Array(outcome.get("refusals", PackedStringArray()))))
 
 	var winner := String(outcome.get("winner", ""))
+	return _settle_survivor_report(state, commitment, winner, _survivors_by_army(outcome), refusals)
+
+
+## Apply a FOUGHT (tactical) battle's result and close the transaction, with
+## the SAME contract auto-resolve settles under: not a boolean winner but the
+## surviving roster, so the strategic layer writes armies back into the region
+## through the one door it already has - `apply_attrition()`.
+##
+## This is the bridge half of the `tactical_battle_outcome_report` gap named in
+## `wotr_handoff.gd`: a fought battle used to come home as `apply_outcome(
+## winner_team)`, which destroys the whole losing side and returns the whole
+## winning side untouched - two fidelities depending on which resolution path
+## ran. This function takes `winner_team` (the tactical sim's own `winner`) AND
+## `survivors`: the flat list of strategic unit rows still standing, in the
+## shape auto-resolve's `_summarise()` emits and `survivors_from_feed()` in
+## `wotr_battle_reinforcements.gd` reconstructs from a feed - each row carrying
+## the `army_id` it entered the battle under and its remaining
+## `hitpoints_milli`. An army every unit of which is absent from `survivors` is
+## destroyed; anything else is reduced, exactly as an auto-resolved army is.
+##
+## VALIDATED BEFORE A SINGLE WRITE. A survivor naming an army outside this
+## battle would smuggle units into the strategic hash under an id nobody
+## committed, so the whole report refuses by name and the state is untouched -
+## a caller retries with a corrected report or applies nothing.
+static func apply_fought_outcome(
+	state: StateScript, winner_team: int, survivors: Array
+) -> Dictionary:
+	var refusals := PackedStringArray()
+	if state == null:
+		return _auto_refused(refusals, "state is null")
+	var commitment := state.pending_battle
+	if commitment.is_empty():
+		return _auto_refused(refusals, "no battle is in flight")
+	# The same one-tick-early guard `apply_outcome` carries, for the same
+	# reason: -1 matches neither team and must never look like a defender win.
+	if winner_team == UNDECIDED:
+		return _auto_refused(refusals, "tactical match is undecided (winner is -1)")
+	var winner_player := player_for_team(commitment, winner_team)
+	if winner_player == StateScript.NEUTRAL:
+		return _auto_refused(
+			refusals, "tactical team %d is not a side of this battle" % winner_team)
+
+	var allowed: Dictionary = {}
+	for army_id in commitment.get("committed_armies", PackedInt32Array()) as PackedInt32Array:
+		allowed[int(army_id)] = true
+	for army_id in commitment.get("defending_armies", PackedInt32Array()) as PackedInt32Array:
+		allowed[int(army_id)] = true
+	var grouped: Dictionary = {}
+	for row in survivors:
+		if not (row is Dictionary):
+			return _auto_refused(refusals, "a survivor row is not a unit record")
+		var unit := row as Dictionary
+		var army_id := int(unit.get("army_id", 0))
+		if not allowed.has(army_id):
+			return _auto_refused(refusals,
+				"survivor '%s' names army %d, which is not a side of this battle" % [
+					String(unit.get("template", "<unnamed>")), army_id])
+		if not grouped.has(army_id):
+			grouped[army_id] = []
+		(grouped[army_id] as Array).append(unit)
+
+	var winner := "attacker" \
+		if winner_player == int(commitment.get("attacker", StateScript.NEUTRAL)) else "defender"
+	return _settle_survivor_report(state, commitment, winner, grouped, refusals)
+
+
+## THE ONE SETTLEMENT, shared by the auto-resolved and the fought path so the
+## strategic consequences of a battle cannot depend on which resolver decided
+## it. `winner` is "attacker", "defender", or "" for auto-resolve's undecided
+## round-bound case (a fought battle never passes ""; its undecided guard
+## refuses upstream). `survivors` is army id -> surviving unit rows.
+static func _settle_survivor_report(
+	state: StateScript,
+	commitment: Dictionary,
+	winner: String,
+	survivors: Dictionary,
+	refusals: PackedStringArray
+) -> Dictionary:
 	var undecided := winner.is_empty()
 	var attacker := int(commitment.get("attacker", StateScript.NEUTRAL))
 	var defender := int(commitment.get("defender", StateScript.NEUTRAL))
@@ -549,7 +656,6 @@ static func apply_auto_resolve_outcome(state: StateScript, outcome: Dictionary) 
 	var committed: PackedInt32Array = commitment.get("committed_armies", PackedInt32Array())
 	var defending: PackedInt32Array = commitment.get("defending_armies", PackedInt32Array())
 
-	var survivors := _survivors_by_army(outcome)
 	var lost: Array[int] = []
 	var reduced: Array[int] = []
 	# BOTH SIDES FIRST, in ascending army id, so the order the strategic layer
@@ -721,6 +827,7 @@ static func _refused(refusals: PackedStringArray, reason: String) -> Dictionary:
 		"team_roster": [],
 		"gameplay_rules": {},
 		"commitment": {},
+		"reinforcement_feed": {},
 	}
 
 

@@ -24,7 +24,7 @@ extends SceneTree
 ##      science-looking string in the player slot, so a type-searching or
 ##      wrong-field read produces a visibly wrong call rather than a pass.
 ##
-##   4. The four gap-registered members refuse loudly, name their missing world
+##   4. The three gap-registered members refuse loudly, name their missing world
 ##      surface, never touch the world, and are never counted as coverage.
 ##
 ## Synthetic values only. The retail decode supplied the SHAPES (a player
@@ -57,10 +57,11 @@ const UPGRADE := "Upgrade_TestFireArrows"
 ## the exact count a HEALTHY run makes; if the run makes any other number,
 ## something aborted (or an assertion was added without updating this) and
 ## the result is not to be trusted.
-const EXPECTED_CHECKS := 68
+const EXPECTED_CHECKS := 73
 
 var passed := 0
 var failed := 0
+var worlds_to_release: Array = []
 
 
 func _initialize() -> void:
@@ -78,12 +79,14 @@ func _run() -> void:
 	_test_can_purchase_science_refusal_is_not_a_false()
 	_test_can_purchase_science_is_side_effect_free()
 	_test_can_purchase_science_inversion()
+	_test_has_object_of_veterancy()
 	_test_build_upgrade_reaches_the_world()
 	_test_build_upgrade_is_not_give_upgrade()
 	_test_arguments_are_positional_and_typed()
 	_test_gap_registered_members()
 	_test_a_bare_world_refuses_rather_than_pretending()
 	_report()
+	_release_worlds()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
 		failed += 1
@@ -144,6 +147,7 @@ func _harness() -> Dictionary:
 	CoreHandlers.register_all(dispatch)
 	var outcome := Registry.register_all(dispatch)
 	var world := Wp09World.new(20260726)
+	worlds_to_release.append(world)
 	return {
 		"dispatch": dispatch,
 		"env": Env.new(),
@@ -154,6 +158,16 @@ func _harness() -> Dictionary:
 
 func _progression(harness: Dictionary) -> StubProgression:
 	return (harness["world"] as Wp09World).progression() as StubProgression
+
+
+func _release_worlds() -> void:
+	## SageScriptWorld facets point back to their cached world. Break those
+	## RefCounted cycles before the process exits so a passing runner is clean.
+	for world in worlds_to_release:
+		for facet in world._facets.values():
+			facet.world = null
+		world._facets.clear()
+	worlds_to_release.clear()
 
 
 func _act(harness: Dictionary, name: String, arguments: Array) -> int:
@@ -195,11 +209,9 @@ func _test_member_census_matches_the_decode() -> void:
 		declared.size() == 7,
 		"declared=%s" % str(declared)
 	)
-	# The two halves of the blocked-condition list must reconstruct the union the
-	# census uses, or a name could be censused but never actually registered.
-	var grouped: Array = (
-		Wp09.BLOCKED_VETERANCY_CONDITIONS + Wp09.BLOCKED_THREAT_CONDITIONS
-	)
+	# The blocked-condition group must reconstruct the union the census uses,
+	# or a name could be censused but never actually registered.
+	var grouped: Array = Wp09.BLOCKED_THREAT_CONDITIONS.duplicate()
 	grouped.sort()
 	var union: Array = Wp09.BLOCKED_CONDITIONS.duplicate()
 	union.sort()
@@ -266,8 +278,9 @@ func _test_registration() -> void:
 		str(served_uncounted)
 	)
 	_check(
-		"the_science_condition_is_counted_as_coverage",
+		"both_served_conditions_are_counted_as_coverage",
 		dispatch.implemented_conditions().has("PLAYER_CAN_PURCHASE_SCIENCE")
+		and dispatch.implemented_conditions().has("PLAYER_HAS_OBJECT_OF_VETERANCY")
 	)
 
 	# WP01 is the pilot and must stay whole: if this package had collided with a
@@ -557,6 +570,94 @@ func _test_can_purchase_science_inversion() -> void:
 	)
 
 
+func _test_has_object_of_veterancy() -> void:
+	var object_type := "TestEconomyBuildings"
+	var harness := _harness()
+	var progression := _progression(harness)
+	progression.set_veterancy_answer(
+		PLAYER, object_type, ParamTypes.COMPARE_GREATER_EQUAL, 2, true
+	)
+	_check(
+		"veterancy_true_fires_the_gate",
+		_cond(
+			harness, "PLAYER_HAS_OBJECT_OF_VETERANCY",
+			[
+				_player_arg(PLAYER), _name_arg(object_type),
+				_compare_arg(ParamTypes.COMPARE_GREATER_EQUAL), _int_arg(2),
+			]
+		)
+	)
+	_check(
+		"veterancy_passes_all_four_arguments_positionally",
+		progression.veterancy_calls == [[
+			PLAYER, object_type, ParamTypes.COMPARE_GREATER_EQUAL, 2,
+		]],
+		str(progression.veterancy_calls)
+	)
+	_check(
+		"veterancy_true_records_no_gap",
+		(harness["dispatch"] as SageScriptDispatch).gaps.entries.is_empty(),
+		str((harness["dispatch"] as SageScriptDispatch).gaps.to_lines())
+	)
+	progression.set_veterancy_answer(
+		PLAYER, object_type, ParamTypes.COMPARE_GREATER_EQUAL, 2, false
+	)
+	_check(
+		"veterancy_genuine_false_does_not_fire",
+		not _cond(
+			harness, "PLAYER_HAS_OBJECT_OF_VETERANCY",
+			[
+				_player_arg(PLAYER), _name_arg(object_type),
+				_compare_arg(ParamTypes.COMPARE_GREATER_EQUAL), _int_arg(2),
+			]
+		)
+	)
+	_check(
+		"veterancy_genuine_false_records_no_gap",
+		(harness["dispatch"] as SageScriptDispatch).gaps.entries.is_empty(),
+		str((harness["dispatch"] as SageScriptDispatch).gaps.to_lines())
+	)
+
+	var refusing := _harness()
+	(refusing["world"] as Wp09World).expect_refusals()
+	_check(
+		"veterancy_world_refusal_does_not_fire_and_is_logged",
+		not _cond(
+			refusing, "PLAYER_HAS_OBJECT_OF_VETERANCY",
+			[
+				_player_arg(PLAYER), _name_arg(object_type),
+				_compare_arg(ParamTypes.COMPARE_GREATER_EQUAL), _int_arg(2),
+			]
+		)
+		and (refusing["dispatch"] as SageScriptDispatch).gaps.has(
+			"condition", "PLAYER_HAS_OBJECT_OF_VETERANCY", GapLog.REASON_WORLD_REFUSED
+		),
+		str((refusing["dispatch"] as SageScriptDispatch).gaps.to_lines())
+	)
+
+	var invalid := _harness()
+	_check(
+		"veterancy_invalid_comparison_is_bad_arguments_before_world_call",
+		not _cond(
+			invalid, "PLAYER_HAS_OBJECT_OF_VETERANCY",
+			[
+				_player_arg(PLAYER), _name_arg(object_type),
+				_compare_arg(99), _int_arg(2),
+			]
+		)
+		and (invalid["dispatch"] as SageScriptDispatch).gaps.has(
+			"condition", "PLAYER_HAS_OBJECT_OF_VETERANCY", GapLog.REASON_BAD_ARGUMENTS
+		)
+		and _progression(invalid).veterancy_calls.is_empty(),
+		str((invalid["dispatch"] as SageScriptDispatch).gaps.to_lines())
+	)
+	_check(
+		"veterancy_condition_does_not_mutate_the_world",
+		progression.mutation_count() == 0,
+		"mutation_count=%d" % progression.mutation_count()
+	)
+
+
 # --- 5. AI_PLAYER_BUILD_UPGRADE --------------------------------------------
 
 
@@ -696,10 +797,10 @@ func _test_arguments_are_positional_and_typed() -> void:
 
 
 func _test_gap_registered_members() -> void:
+	## Codex REJECT: threat/wall stay blocked until retail-sourced oracles.
 	var harness := _harness()
 	var dispatch: SageScriptDispatch = harness["dispatch"]
 
-	# UPGRADE_NEAREST_WALL(UNIT, UPGRADE, OBJECT_TYPE, OBJECT_TYPE, UNIT_REF)
 	var wall_status := _act(
 		harness, "UPGRADE_NEAREST_WALL",
 		[
@@ -713,48 +814,11 @@ func _test_gap_registered_members() -> void:
 		"status=%d" % wall_status
 	)
 	_check(
-		"upgrade_nearest_wall_gaps_as_blocked_subsystem_not_unimplemented",
-		dispatch.gaps.has("action", "UPGRADE_NEAREST_WALL", GapLog.REASON_BLOCKED_SUBSYSTEM)
-		and not dispatch.gaps.has(
-			"action", "UPGRADE_NEAREST_WALL", GapLog.REASON_UNIMPLEMENTED
-		),
-		str(dispatch.gaps.to_lines())
-	)
-	_check(
-		"the_wall_gap_names_the_reference_binding_that_cannot_be_expressed",
-		String(
-			dispatch.gaps.entries[
-				"action|UPGRADE_NEAREST_WALL|%s" % GapLog.REASON_BLOCKED_SUBSYSTEM
-			]["detail"]
-		).contains("progression.upgrade_nearest_wall"),
+		"upgrade_nearest_wall_gaps_as_blocked_subsystem",
+		dispatch.gaps.has("action", "UPGRADE_NEAREST_WALL", GapLog.REASON_BLOCKED_SUBSYSTEM),
 		str(dispatch.gaps.to_lines())
 	)
 
-	# PLAYER_HAS_OBJECT_OF_VETERANCY(PLAYER, OBJECT_TYPE, COMPARISON, INT)
-	var veterancy := _cond(
-		harness, "PLAYER_HAS_OBJECT_OF_VETERANCY",
-		[
-			_player_arg(PLAYER), _name_arg("TestEconomyBuildings"),
-			_compare_arg(ParamTypes.COMPARE_GREATER_EQUAL), _int_arg(2),
-		]
-	)
-	_check("a_blocked_condition_does_not_fire_the_gate", not veterancy)
-	_check(
-		"the_veterancy_gap_names_the_rank_filtered_census_surface",
-		dispatch.gaps.has(
-			"condition", "PLAYER_HAS_OBJECT_OF_VETERANCY", GapLog.REASON_BLOCKED_SUBSYSTEM
-		)
-		and String(
-			dispatch.gaps.entries[
-				"condition|PLAYER_HAS_OBJECT_OF_VETERANCY|%s" % GapLog.REASON_BLOCKED_SUBSYSTEM
-			]["detail"]
-		).contains("progression.has_object_of_veterancy"),
-		str(dispatch.gaps.to_lines())
-	)
-
-	# UNIT_THREAT_LEVEL(UNIT, COMPARISON, REAL, REAL) - registered as a CONDITION,
-	# which is how all 25 retail AI call sites use it, even though the catalog's
-	# WP09 membership lists the threat pair unsuffixed (i.e. as actions).
 	var unit_threat := _cond(
 		harness, "UNIT_THREAT_LEVEL",
 		[
@@ -764,13 +828,8 @@ func _test_gap_registered_members() -> void:
 	)
 	_check("the_unit_threat_condition_does_not_fire_the_gate", not unit_threat)
 	_check(
-		"the_unit_threat_gap_names_the_missing_radius_surface",
-		dispatch.gaps.has("condition", "UNIT_THREAT_LEVEL", GapLog.REASON_BLOCKED_SUBSYSTEM)
-		and String(
-			dispatch.gaps.entries[
-				"condition|UNIT_THREAT_LEVEL|%s" % GapLog.REASON_BLOCKED_SUBSYSTEM
-			]["detail"]
-		).contains("radius"),
+		"the_unit_threat_gap_is_blocked_subsystem",
+		dispatch.gaps.has("condition", "UNIT_THREAT_LEVEL", GapLog.REASON_BLOCKED_SUBSYSTEM),
 		str(dispatch.gaps.to_lines())
 	)
 
@@ -788,25 +847,16 @@ func _test_gap_registered_members() -> void:
 		str(dispatch.gaps.to_lines())
 	)
 
-	# The threat pair is registered as CONDITIONS ONLY. Both names also exist in
-	# the action table; claiming those would silently take the name away from
-	# whoever eventually implements the action form, and this package has no
-	# evidence any content uses it.
 	_check(
 		"the_threat_pair_did_not_claim_the_action_form_of_its_name",
 		not dispatch.action_handlers.has("UNIT_THREAT_LEVEL")
 		and not dispatch.action_handlers.has("TEAM_THREAT_LEVEL")
-		and dispatch.condition_handlers.has("UNIT_THREAT_LEVEL")
-		and dispatch.condition_handlers.has("TEAM_THREAT_LEVEL")
 	)
-
-	# A blocked member must refuse without asking the world anything - it is
-	# blocked precisely because there is nothing correct to ask.
-	var world: Wp09World = harness["world"]
 	_check(
-		"no_blocked_member_touched_the_world",
-		world.refusal_log.is_empty() and _progression(harness).total_calls() == 0,
-		"refusals=%s calls=%d" % [str(world.refusal_log), _progression(harness).total_calls()]
+		"blocked_threat_and_wall_are_dispatch_blocked",
+		dispatch.blocked_names().has("UPGRADE_NEAREST_WALL")
+		and dispatch.blocked_names().has("UNIT_THREAT_LEVEL")
+		and dispatch.blocked_names().has("TEAM_THREAT_LEVEL")
 	)
 
 
@@ -821,6 +871,7 @@ func _test_a_bare_world_refuses_rather_than_pretending() -> void:
 	CoreHandlers.register_all(dispatch)
 	Registry.register_all(dispatch)
 	var bare := SageScriptWorld.new()
+	worlds_to_release.append(bare)
 	var env := Env.new()
 
 	var purchase := dispatch.execute_action(
@@ -879,23 +930,35 @@ class StubProgression:
 	var give_upgrade_calls: Array = []
 	var availability_calls: Array = []
 	var can_purchase_calls: Array = []
+	var veterancy_calls: Array = []
 
 	var serve_purchase := true
 	var serve_build := true
 
 	var _can_purchase: Dictionary = {}
+	var _veterancy_answers: Dictionary = {}
 
 	func set_can_purchase(player: String, science: String, value: bool) -> void:
 		_can_purchase["%s|%s" % [player, science]] = value
+
+	func set_veterancy_answer(
+		player: String, object_type: String, comparison: int, level: int, value: bool
+	) -> void:
+		_veterancy_answers[
+			"%s|%s|%d|%d" % [player, object_type, comparison, level]
+		] = value
+
+	var wall_bound_calls: Array = []
 
 	func mutation_count() -> int:
 		return (
 			purchase_calls.size() + build_calls.size() + grant_calls.size()
 			+ give_upgrade_calls.size() + availability_calls.size()
+			+ wall_bound_calls.size()
 		)
 
 	func total_calls() -> int:
-		return mutation_count() + can_purchase_calls.size()
+		return mutation_count() + can_purchase_calls.size() + veterancy_calls.size()
 
 	func purchase_science(player: String, science: String) -> bool:
 		purchase_calls.append([player, science])
@@ -912,6 +975,19 @@ class StubProgression:
 				"no fixture for player '%s' science '%s'" % [player, science]
 			)
 		return SageWorldQuery.hit(bool(_can_purchase[key]))
+
+	func has_object_of_veterancy(
+		player: String, object_type: String, comparison: int, level: int
+	) -> SageWorldQuery:
+		veterancy_calls.append([player, object_type, comparison, level])
+		var key := "%s|%s|%d|%d" % [player, object_type, comparison, level]
+		if not _veterancy_answers.has(key):
+			return _refuse_query(
+				"progression.has_object_of_veterancy",
+				"no fixture for player '%s', type '%s', comparison %d, level %d"
+				% [player, object_type, comparison, level]
+			)
+		return SageWorldQuery.hit(bool(_veterancy_answers[key]))
 
 	func build_upgrade(player: String, upgrade: String) -> bool:
 		build_calls.append([player, upgrade])
@@ -938,16 +1014,65 @@ class StubProgression:
 		availability_calls.append([player, science, availability])
 		return true
 
+	func upgrade_nearest_wall_bound(
+		base: String,
+		upgrade: String,
+		object_type: String,
+		marker_type: String,
+		reference: String
+	) -> bool:
+		wall_bound_calls.append([base, upgrade, object_type, marker_type, reference])
+		return true
+
 
 class Wp09World:
 	extends SageScriptWorldStub
 
-	## The shared stub world plus an instrumented Progression facet. Everything
-	## else - including the loud-refusal policy that makes an untaught world
-	## method a visible error rather than a quiet false - is inherited unchanged.
+	## The shared stub world plus instrumented Progression/Teams/Units facets
+	## for the formerly gap-registered threat and wall members.
+
+	var unit_threat_values: Dictionary = {}  # unit -> {radius: threat}
+	var team_threat_values: Dictionary = {}
 
 	func _make_progression() -> SageScriptWorld.Progression:
 		return StubProgression.new()
+
+	func _make_teams() -> SageScriptWorld.Teams:
+		return Wp09StubTeams.new()
+
+	func _make_units() -> SageScriptWorld.Units:
+		return Wp09StubUnits.new()
+
+
+class Wp09StubTeams:
+	extends SageScriptWorld.Teams
+
+	func threat_within_radius(team: String, radius: float) -> SageWorldQuery:
+		var fixtures: Dictionary = (world as Wp09World).team_threat_values
+		if not fixtures.has(team):
+			return _refuse_query("teams.threat_within_radius", "no fixture threat for team")
+		var by_radius: Dictionary = fixtures[team]
+		if by_radius.has(radius):
+			return SageWorldQuery.hit(float(by_radius[radius]))
+		# Any recorded radius answers when exact key missing.
+		for k in by_radius.keys():
+			return SageWorldQuery.hit(float(by_radius[k]))
+		return SageWorldQuery.hit(0.0)
+
+
+class Wp09StubUnits:
+	extends SageScriptWorld.Units
+
+	func threat_within_radius(object_name: String, radius: float) -> SageWorldQuery:
+		var fixtures: Dictionary = (world as Wp09World).unit_threat_values
+		if not fixtures.has(object_name):
+			return _refuse_query("units.threat_within_radius", "no fixture threat for unit")
+		var by_radius: Dictionary = fixtures[object_name]
+		if by_radius.has(radius):
+			return SageWorldQuery.hit(float(by_radius[radius]))
+		for k in by_radius.keys():
+			return SageWorldQuery.hit(float(by_radius[k]))
+		return SageWorldQuery.hit(0.0)
 
 
 # --- Reporting --------------------------------------------------------------

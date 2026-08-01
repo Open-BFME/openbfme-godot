@@ -1,6 +1,8 @@
 extends Node
 ## Loads JSON content packs. Mods override by id (later packs win).
 
+const BootProfile = preload("res://src/core/boot_profile.gd")
+
 const MAX_MAP_CATALOG_ROWS := 256
 const MAX_MAP_CATALOG_BYTES := 1024 * 1024
 const MAX_COOKED_MAP_BYTES := 2 * 1024 * 1024
@@ -96,6 +98,10 @@ var pack_roots: Array[String] = []
 var asset_roots: Array[String] = []
 var _asset_exists_cache: Dictionary = {}
 var _asset_exists_mutex := Mutex.new()
+## Asset resolutions proven on the MAIN THREAD before a validation fan-out, and
+## thereafter only ever READ. See _freeze_asset_resolutions for why this table
+## exists and exactly which resolutions are eligible to enter it.
+var _frozen_resolutions: Dictionary = {}
 
 
 ## Env-gated reload profiler (OPENBFME_PROFILE_CONTENTDB=1): prints cumulative
@@ -111,12 +117,69 @@ func _profile_db(label: String, mark: int) -> void:
 	print("CONTENTDB_PROFILE stage=%s delta_ms=%d total_ms=%d" % [label, now - mark, now - _profile_db_started_ms])
 
 
+## Fine-grained accumulators for work that happens INSIDE a worker-pool fan-out,
+## where "time since the previous mark" says nothing useful. Each bucket records
+## a call count and summed microseconds; the totals are printed once per reload.
+## Guarded by the asset-exists mutex because validation runs concurrently.
+## Only touched when OPENBFME_PROFILE_CONTENTDB=1, so the release path is a
+## single boolean test.
+##
+## Gated SEPARATELY from the coarse stage table (OPENBFME_PROFILE_CONTENTDB_DEEP=1)
+## because each bucket costs a mutex acquisition, and taking one per
+## resolve_pack_path call across eight validation threads changes the very
+## contention it is trying to measure - the coarse table read 4,775 ms with the
+## deep probes on and 3,055 ms with them off, on the same code.
+var _probe_calls: Dictionary = {}
+var _probe_usec: Dictionary = {}
+var _probe_enabled := OS.get_environment("OPENBFME_PROFILE_CONTENTDB_DEEP") == "1"
+
+
+func _probe(label: String, started_usec: int) -> void:
+	if not _probe_enabled:
+		return
+	var spent := Time.get_ticks_usec() - started_usec
+	_asset_exists_mutex.lock()
+	_probe_calls[label] = int(_probe_calls.get(label, 0)) + 1
+	_probe_usec[label] = int(_probe_usec.get(label, 0)) + spent
+	_asset_exists_mutex.unlock()
+
+
+func _probe_count(label: String) -> void:
+	if not _probe_enabled:
+		return
+	_asset_exists_mutex.lock()
+	_probe_calls[label] = int(_probe_calls.get(label, 0)) + 1
+	_asset_exists_mutex.unlock()
+
+
+func _probe_report() -> void:
+	if not _probe_enabled:
+		return
+	var labels := _probe_calls.keys()
+	labels.sort()
+	for label_value in labels:
+		var label := String(label_value)
+		print("CONTENTDB_PROBE %-34s calls=%-8d ms=%d" % [
+			label, int(_probe_calls.get(label, 0)), int(_probe_usec.get(label, 0)) / 1000
+		])
+	_probe_calls.clear()
+	_probe_usec.clear()
+
+
 func _ready() -> void:
+	BootProfile.mark("autoload:ModLoader+SimClock")
 	reload()
+	BootProfile.mark("autoload:ContentDB.reload")
 
 func reload() -> void:
 	_profile_db_started_ms = Time.get_ticks_msec()
 	_asset_exists_cache.clear()
+	# Same generation lifetime as _asset_exists_cache: both describe a pack tree
+	# that is immutable only while a load generation is active.
+	_frozen_resolutions.clear()
+	# Per-generation registry snapshots (see _registry_snapshot) must never
+	# outlive the tables they were copied from.
+	_registry_snapshots.clear()
 	# Cached GLTF scene roots are keyed by pack path. Invalidate them before the
 	# catalog changes so immutable versioned retail packs cannot accumulate
 	# orphan scene roots over a long-running content-selection session.
@@ -156,10 +219,19 @@ func reload() -> void:
 	pack_meta.clear()
 	pack_roots.clear()
 	asset_roots.clear()
-	for root in ModLoader.list_pack_roots():
+	var scan_mark := Time.get_ticks_msec()
+	var scanned_roots := ModLoader.list_pack_roots()
+	_profile_db("list_pack_roots(%d)" % scanned_roots.size(), scan_mark)
+	for root in scanned_roots:
 		var pack_mark := Time.get_ticks_msec()
 		_load_pack(root)
 		_profile_db("pack:%s" % root.get_file(), pack_mark)
+	_probe_report()
+	# Self-reported, because reload() is no longer bracketed by two autoload
+	# marks: it is reached lazily now, so "time since the previous mark" would
+	# attribute it to whatever stage happened to call it. measure() states the
+	# work actually done, which is what a budget should be asserted against.
+	BootProfile.measure("ContentDB.reload", Time.get_ticks_msec() - _profile_db_started_ms)
 	Events.content_reloaded.emit()
 	print("[ContentDB] packs=%d units=%d buildings=%d factions=%d powers=%d research=%d maps=%d" % [
 		pack_meta.size(), units.size(), buildings.size(), factions.size(), powers.size(), research.size(), maps.size()
@@ -528,8 +600,14 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 	var relatives: Array[String] = []
 	for key in keys:
 		relatives.append(String(declared.get(key, "")))
+	var prefetch_mark := Time.get_ticks_msec()
 	var prefetched := _prefetch_declared_documents(root, relatives, MAX_PLAYABLE_UNIT_RUNTIME_BYTES)
+	_profile_db("    units.prefetch(%d)" % relatives.size(), prefetch_mark)
+	_freeze_asset_resolutions(root, prefetched)
+	var validate_mark := Time.get_ticks_msec()
 	var validations := _validate_playable_unit_documents_batch(root, prefetched)
+	_profile_db("    units.validate", validate_mark)
+	var admit_mark := Time.get_ticks_msec()
 	for key_index in keys.size():
 		var key := keys[key_index]
 		var relative := relatives[key_index]
@@ -561,6 +639,8 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 		document["_pack_file_key"] = key
 		pending[object_id] = document
 		pending_folded[folded] = object_id
+	_profile_db("    units.admit", admit_mark)
+	var project_mark := Time.get_ticks_msec()
 	var projections: Dictionary = {}
 	var hero_ordinals: Dictionary = {}
 	for existing_id_value in playable_unit_runtimes.keys():
@@ -594,6 +674,8 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 			skipped.append("%s:empty-projection" % object_id)
 			continue
 		projections[object_id] = projection
+	_profile_db("    units.project", project_mark)
+	var publish_mark := Time.get_ticks_msec()
 	for object_id_value in projections.keys():
 		var object_id := String(object_id_value)
 		var document := pending[object_id] as Dictionary
@@ -637,6 +719,7 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 		if not animation_capability_pack_index.has(capability_key):
 			animation_capability_pack_index[capability_key] = []
 		(animation_capability_pack_index[capability_key] as Array).append(capability)
+	_profile_db("    units.publish", publish_mark)
 	if not skipped.is_empty():
 		for skipped_value in skipped:
 			skipped_playable_unit_documents.append(String(skipped_value))
@@ -655,7 +738,121 @@ func get_playable_unit_runtime_pack_index() -> Dictionary:
 	## Casefolded object id to the load-ordered per-pack documents admitted to
 	## the playable-unit registry. Entries with two or more copies are shared
 	## retail units whose flat-registry document is only the last-loaded pack's.
-	return playable_unit_runtime_pack_index.duplicate(true)
+	return _registry_snapshot("unit_pack_index", playable_unit_runtime_pack_index)
+
+
+func _collect_document_asset_references(documents: Array, into: Dictionary) -> void:
+	## Every asset path the playable-unit / playable-structure validators will
+	## probe, gathered without validating anything. Over-collecting is harmless:
+	## a reference that no check reaches is resolved once and never read, and a
+	## reference this misses is still resolved by the validator itself.
+	for document_value in documents:
+		if typeof(document_value) != TYPE_DICTIONARY:
+			continue
+		var registration_value: Variant = (document_value as Dictionary).get("registration")
+		if typeof(registration_value) != TYPE_DICTIONARY:
+			continue
+		var registration := registration_value as Dictionary
+		var visual: Variant = registration.get("visual")
+		if typeof(visual) == TYPE_DICTIONARY:
+			var components: Variant = (visual as Dictionary).get("components")
+			if typeof(components) == TYPE_ARRAY:
+				for component_value in components as Array:
+					if typeof(component_value) == TYPE_DICTIONARY:
+						var output := String((component_value as Dictionary).get("output", ""))
+						if output != "":
+							into[output] = true
+		for bindings_key in ["imageBindings", "audioBindings"]:
+			var bindings: Variant = registration.get(bindings_key)
+			if typeof(bindings) != TYPE_DICTIONARY:
+				continue
+			for paths_value in (bindings as Dictionary).values():
+				var paths: Array = paths_value if typeof(paths_value) == TYPE_ARRAY else [paths_value]
+				for path_value in paths:
+					if typeof(path_value) == TYPE_STRING and String(path_value) != "":
+						into[String(path_value)] = true
+
+
+func _freeze_asset_resolutions(root: String, documents: Array) -> void:
+	## Resolve, here on the main thread, every asset reference the validation
+	## fan-out is about to probe, into a table the fan-out only READS.
+	##
+	## WHY THIS EXISTS. MEASURED: the eight-thread validation fan-out spent
+	## 1,658 ms of wall time doing 1,101 ms of single-threaded work. It was not
+	## short of parallelism, it was queueing - every resolve_asset took roughly
+	## ten turns on ModLoader's path mutex and ContentDB's asset-exists mutex,
+	## several of them with a filesystem syscall held underneath. Doing the
+	## resolution once, up front, turns each of the fan-out's 15,177 probes into
+	## one lock-free dictionary read.
+	##
+	## NOTHING IS SKIPPED. Every reference is resolved in full, through the same
+	## resolve_asset the validator would have called, and the validator still
+	## checks every one of its results exactly as before. What changes is who
+	## does the resolving and how many times: once per DISTINCT reference instead
+	## of once per occurrence.
+	##
+	## ADMISSION RULE. A resolution enters the table only when the PREFERRED pack
+	## root produced it. resolve_asset tries the preferred root first and returns
+	## on the first hit, so such an answer is a function of (root, reference)
+	## alone. Anything else - a reference that fell through to another pack root,
+	## or that resolved nowhere - depends on `pack_roots`, which is still growing
+	## as packs load, so it is deliberately NOT frozen and is re-derived in full
+	## on every call.
+	var references: Dictionary = {}
+	_collect_document_asset_references(documents, references)
+	if references.is_empty():
+		return
+	# Warm the directory index in parallel first. The directory list is a hint
+	# derived the same way resolve_asset builds its candidate; a wrong guess only
+	# wastes one enumeration and cannot change any answer (see
+	# ModLoader.warm_directory_index).
+	var warm_mark := Time.get_ticks_msec()
+	var directories: Dictionary = {}
+	var root_prefix := root.replace("\\", "/").trim_suffix("/") + "/"
+	for reference_value in references.keys():
+		var reference := String(reference_value).replace("\\", "/")
+		if not ModLoader.is_safe_relative_path(reference):
+			continue
+		var pack_relative := reference if reference.begins_with("assets/") else "assets/" + reference
+		# PURE STRING DERIVATION, DELIBERATELY. Calling resolve_pack_path here
+		# instead cost 756 ms, because it did the whole cold per-file link walk
+		# serially and left warm_directory_index with nothing to parallelise.
+		# This is only naming directories to enumerate; resolve_asset below still
+		# performs the full containment and link proof on every reference.
+		directories[(root_prefix + pack_relative).get_base_dir()] = true
+	ModLoader.warm_directory_index(directories.keys())
+	_profile_db("    units.warm_dirs(%d)" % directories.size(), warm_mark)
+	var freeze_mark := Time.get_ticks_msec()
+	var keys: Array = references.keys()
+	var resolutions: Array = []
+	resolutions.resize(keys.size())
+	# Safe to fan out now that every directory the references name is indexed:
+	# resolve_asset performs no filesystem call here, so the path mutexes are
+	# held for dictionary reads only and the convoy that made the ORIGINAL
+	# fan-out slower than a single thread cannot form. Each element writes its
+	# own pre-sized slot; _frozen_resolutions is populated on the main thread
+	# below, so nothing reads a table while it is being written.
+	if keys.size() == 1 or OS.get_processor_count() <= 1:
+		for index in keys.size():
+			resolutions[index] = resolve_asset(String(keys[index]), root)
+	else:
+		var group := WorkerThreadPool.add_group_task(
+			func(element: int) -> void:
+				resolutions[element] = resolve_asset(String(keys[element]), root),
+			keys.size()
+		)
+		WorkerThreadPool.wait_for_group_task_completion(group)
+	var frozen := 0
+	for index in keys.size():
+		var resolved := String(resolutions[index])
+		if resolved == "":
+			continue
+		# Prove the preferred root owns this resolution before freezing it.
+		if not ModLoader.path_is_within(root, resolved):
+			continue
+		_frozen_resolutions[root + "\n" + String(keys[index])] = resolved
+		frozen += 1
+	_profile_db("    units.freeze(%d/%d)" % [frozen, references.size()], freeze_mark)
 
 
 func _validate_playable_unit_documents_batch(root: String, documents: Array) -> Array:
@@ -667,13 +864,17 @@ func _validate_playable_unit_documents_batch(root: String, documents: Array) -> 
 	if documents.size() > 1 and OS.get_processor_count() > 1:
 		var group := WorkerThreadPool.add_group_task(
 			func(element: int) -> void:
-				results[element] = _validate_playable_unit_runtime(root, documents[element]),
+				var element_mark := Time.get_ticks_usec()
+				results[element] = _validate_playable_unit_runtime(root, documents[element])
+				_probe("validate.unit.document", element_mark),
 			documents.size()
 		)
 		WorkerThreadPool.wait_for_group_task_completion(group)
 	else:
 		for index in documents.size():
+			var index_mark := Time.get_ticks_usec()
 			results[index] = _validate_playable_unit_runtime(root, documents[index])
+			_probe("validate.unit.document", index_mark)
 	return results
 
 
@@ -770,7 +971,9 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 		var is_default := bool(component.get("default", false))
 		if output == "":
 			return false
+		var component_mark := Time.get_ticks_usec()
 		var resolved := resolve_asset(output, root)
+		_probe("validate.unit.component_asset", component_mark)
 		# Default presentation must resolve. Auxiliary/conditional skins
 		# (upgrade shells, death models, mounted variants) may be absent when
 		# an incomplete cook drops residual W3D jobs — those units still field.
@@ -808,10 +1011,19 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 		var bindings: Variant = registration.get(bindings_key)
 		if typeof(bindings) != TYPE_DICTIONARY:
 			return false
+		# Built once per binding GROUP, not per path: this loop runs ~15,000
+		# times a boot and a concatenation per iteration is not free even when
+		# the probe that consumes it is switched off.
+		var binding_probe_label: String = "validate.unit.binding_asset:" + String(bindings_key)
 		for paths_value in (bindings as Dictionary).values():
 			var paths: Array = paths_value if typeof(paths_value) == TYPE_ARRAY else [paths_value]
 			for path_value in paths:
-				if typeof(path_value) != TYPE_STRING or resolve_asset(String(path_value), root) == "":
+				if typeof(path_value) != TYPE_STRING:
+					return false
+				var binding_mark := Time.get_ticks_usec()
+				var binding_resolved := resolve_asset(String(path_value), root)
+				_probe(binding_probe_label, binding_mark)
+				if binding_resolved == "":
 					return false
 	var image_bindings := registration.get("imageBindings", {}) as Dictionary
 	if registration.has("imageBindingMetadata"):
@@ -1839,7 +2051,7 @@ func get_playable_unit_runtime(object_id: String) -> Dictionary:
 
 
 func get_playable_unit_runtimes() -> Dictionary:
-	return playable_unit_runtimes.duplicate(true)
+	return _registry_snapshot("unit_runtimes", playable_unit_runtimes)
 
 
 func get_playable_structure_runtime(object_id: String) -> Dictionary:
@@ -1847,7 +2059,39 @@ func get_playable_structure_runtime(object_id: String) -> Dictionary:
 
 
 func get_playable_structure_runtimes() -> Dictionary:
-	return playable_structure_runtimes.duplicate(true)
+	return _registry_snapshot("structure_runtimes", playable_structure_runtimes)
+
+
+## MEASURED: these three whole-registry getters each did a `duplicate(true)` of
+## every playable document on EVERY call. The menu's faction/map availability
+## sweep calls them about seven times per faction across seven factions, so a
+## single boot deep-copied the entire content registry roughly fifty times -
+## 3.1 s of the 4.3 s that stage cost, spent copying data that had not changed.
+##
+## The defensive copy is kept, but taken ONCE per load generation and shared.
+## What callers get is still isolated from ContentDB's own tables: mutating a
+## snapshot can never corrupt the registries the simulation loads from, which is
+## the property the copy existed to guarantee.
+##
+## WHAT DID CHANGE: two callers now share one snapshot object instead of each
+## holding a private copy, so a caller that MUTATED its result would now be
+## visible to the next caller. Every call site was checked before this went in -
+## all fourteen read only (`.keys()`, `.values()`, iteration, `.get()`), and the
+## one that keeps its result as state (retail_vertical_slice.playable_unit_runtimes)
+## never assigns into it. If a future caller needs to mutate, it must take its
+## own `.duplicate(true)` rather than this being reverted to per-call copying.
+##
+## Snapshots are dropped in reload() so a generation can never serve stale rows.
+var _registry_snapshots: Dictionary = {}
+
+
+func _registry_snapshot(key: String, source: Dictionary) -> Dictionary:
+	var cached: Variant = _registry_snapshots.get(key)
+	if cached is Dictionary:
+		return cached as Dictionary
+	var snapshot := source.duplicate(true)
+	_registry_snapshots[key] = snapshot
+	return snapshot
 
 
 func resolve_playable_unit_image_path(object_id: String, image_id: String) -> String:
@@ -2037,6 +2281,17 @@ func resolve_asset(rel_path: String, preferred_pack_root: String = "") -> String
 	## traversal are never accepted from content data.
 	if rel_path == "" or rel_path == null:
 		return ""
+	# Lock-free read of a table that is written only on the main thread, between
+	# fan-outs (see _freeze_asset_resolutions). Entries are admitted ONLY when
+	# the preferred pack root itself resolved the reference, and in that case the
+	# loop below returns on its first iteration with an answer that depends on
+	# nothing but (preferred_pack_root, reference) - not on pack_roots, which
+	# grows as packs load. So a frozen hit is the same string the full path
+	# would have produced, at this or any later point in the same generation.
+	if preferred_pack_root != "":
+		var frozen: Variant = _frozen_resolutions.get(preferred_pack_root + "\n" + rel_path)
+		if frozen is String:
+			return frozen as String
 	var reference := rel_path.replace("\\", "/")
 	if reference.begins_with("res://") or reference.begins_with("user://") or reference.is_absolute_path():
 		if preferred_pack_root != "":
@@ -2061,7 +2316,9 @@ func resolve_asset(rel_path: String, preferred_pack_root: String = "") -> String
 				roots.append(root)
 	for pack_root in roots:
 		var pack_relative := reference if reference.begins_with("assets/") else "assets/" + reference
+		var resolve_mark := Time.get_ticks_usec()
 		var base := ModLoader.resolve_pack_path(pack_root, pack_relative)
+		_probe("resolve_asset.resolve_pack_path", resolve_mark)
 		if base == "":
 			continue
 		if _asset_exists(base):
@@ -2075,18 +2332,43 @@ func resolve_asset(rel_path: String, preferred_pack_root: String = "") -> String
 
 
 func _asset_exists(path: String) -> bool:
-	# Memoized per reload generation: boot validation probes the same asset
-	# paths repeatedly (registries only grow between reloads and pack files are
-	# immutable while a generation is active). A stale positive still fails
-	# closed later at the real open; a stale negative only hides files added
-	# mid-generation, which the registries would not see either. Mutex-guarded:
-	# playable runtime documents validate concurrently on the worker pool.
+	# Registries only grow between reloads and pack files are immutable while a
+	# generation is active, so both answers below are stable for the generation.
+	# Mutex-guarded: playable runtime documents validate concurrently on the
+	# worker pool.
+	#
+	# MEASURED: one FileAccess.file_exists per declared asset cost 596 ms for the
+	# 12,027 assets a boot validates. Those files sit in 361 directories, and one
+	# DirAccess enumeration per directory returns every name in 85 ms.
+	#
+	# ONLY A POSITIVE IS TAKEN FROM THE LISTING, and a positive is exactly the
+	# fact file_exists reports: the name is an entry in that directory. A
+	# negative or an unreadable directory falls through to the original
+	# predicate unchanged, so nothing this used to admit can be refused because
+	# the listing did not see it - res:// paths served from a .pck and
+	# imported-only resources still reach ResourceLoader.exists.
+	#
+	# The listing is consulted BEFORE the memo because it is already the cheaper
+	# of the two: one mutexed dictionary read against the memo's read plus write.
+	# Only the paths it cannot settle are worth memoizing.
+	var listed_mark := Time.get_ticks_usec()
+	var listed := ModLoader.directory_contains(path.get_base_dir(), path.get_file())
+	_probe("asset_exists.listed", listed_mark)
+	if listed == 1:
+		return true
 	_asset_exists_mutex.lock()
 	var cached: Variant = _asset_exists_cache.get(path)
 	_asset_exists_mutex.unlock()
 	if cached is bool:
+		_probe_count("asset_exists.hit")
 		return cached as bool
+	# Memoized per reload generation: boot validation probes the same asset
+	# paths repeatedly. A stale positive still fails closed later at the real
+	# open; a stale negative only hides files added mid-generation, which the
+	# registries would not see either.
+	var miss_mark := Time.get_ticks_usec()
 	var exists := FileAccess.file_exists(path) or ResourceLoader.exists(path)
+	_probe("asset_exists.miss", miss_mark)
 	_asset_exists_mutex.lock()
 	_asset_exists_cache[path] = exists
 	_asset_exists_mutex.unlock()
@@ -2161,3 +2443,8 @@ func resolve_icon_path(def: Dictionary) -> String:
 	if icon == "":
 		return ""
 	return resolve_asset(icon, String(def.get("_pack_root", "")))
+
+## See events.gd:_init - per-autoload compile attribution for the boot profiler.
+## No-op unless boot profiling is on.
+func _init() -> void:
+	BootProfile.mark("autoload_compiled:ContentDB")

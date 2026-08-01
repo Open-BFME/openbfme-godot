@@ -45,6 +45,7 @@ ALLOWED_CONVERTERS = {
     "living-world",
     "sage-particle-definition",
     "sage-scripts",
+    "sage-script-composite",
     "sage-terrain-materials",
 }
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -77,6 +78,51 @@ W3D_DEPENDENCY_CONVERTERS = {
     "w3d-static",
 }
 W3D_INPUT_RESOURCE_IDS_OPTION = "inputResourceIds"
+
+
+def canonical_multiplayer_map_runtime_slug(value: object) -> str | None:
+    """Derive the runtime slug for one exact multiplayer map virtual path.
+
+    Retail multiplayer maps use a repeated directory/file identity:
+    ``maps/map mp <name>/map mp <name>.map``.  Matching is case-insensitive,
+    like BIG virtual-path lookup, but separators, the repeated identity, and
+    the runtime map-id slug grammar are otherwise exact so campaign,
+    cinematic, WOTR, and direct-map paths cannot enter the AI-library
+    composition path.
+    """
+
+    if not isinstance(value, str) or "\\" in value:
+        return None
+    match = re.fullmatch(
+        r"maps/(map mp [^/]+)/([^/]+)\.map",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    directory_name, file_stem = match.groups()
+    canonical_name = directory_name.casefold()
+    if (
+        len(canonical_name) <= len("map mp ")
+        or canonical_name != file_stem.casefold()
+    ):
+        return None
+    slug = canonical_name.removeprefix("map mp ").replace(" ", "-")
+    if not (
+        slug
+        and not slug.startswith("-")
+        and not slug.endswith("-")
+        and "--" not in slug
+        and re.fullmatch(r"[a-z0-9-]+", slug)
+    ):
+        return None
+    return slug
+
+
+def is_canonical_multiplayer_map_virtual_path(value: object) -> bool:
+    """Return whether *value* has the exact shared runtime-slug grammar."""
+
+    return canonical_multiplayer_map_runtime_slug(value) is not None
 W3D_EXCLUDED_OPTIONAL_MESHES_OPTION = "excludedOptionalMeshes"
 W3D_PROVEN_ROOT_RIGID_BAKE_OPTION = "provenRootRigidBake"
 W3D_PROVEN_PIVOT_ONLY_MODEL_OPTION = "provenPivotOnlyModel"
@@ -438,6 +484,84 @@ def _validate_w3d_source_variants(resources: list["ResourceRule"]) -> None:
             )
 
 
+def _validate_script_composite_resources(resources: list["ResourceRule"]) -> None:
+    """Validate exact source closure and output ownership before extraction."""
+
+    expected_libraries = [
+        "libraries/ai_initialize/ai_initialize.map",
+        "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
+    ]
+    for resource in resources:
+        output_key = (
+            "/".join(safe_relative_parts(resource.output)).casefold()
+            if resource.output is not None
+            else ""
+        )
+        reserves_map_scripts_output = (
+            output_key.startswith("maps/")
+            and output_key.endswith("/scripts.json")
+        )
+        if reserves_map_scripts_output and resource.converter != "sage-script-composite":
+            raise ValueError(
+                f"resource {resource.id!r} output {resource.output!r} is reserved "
+                "for sage-script-composite"
+            )
+        if resource.converter != "sage-script-composite":
+            continue
+        if (
+            resource.output is None
+            or Path(resource.output).name.casefold() != "scripts.json"
+            or resource.limit != 3
+            or resource.expected_count != 3
+            or set(resource.options) != {"mapVirtualPath", "libraryVirtualPaths"}
+        ):
+            raise ValueError(
+                f"resource {resource.id!r} has an invalid "
+                "sage-script-composite contract"
+            )
+        map_virtual_path = resource.options.get("mapVirtualPath")
+        runtime_slug = canonical_multiplayer_map_runtime_slug(map_virtual_path)
+        libraries = resource.options.get("libraryVirtualPaths")
+        requested_paths = (
+            [map_virtual_path, *libraries]
+            if isinstance(map_virtual_path, str) and isinstance(libraries, list)
+            else []
+        )
+        if (
+            runtime_slug is None
+            or libraries != expected_libraries
+            or resource.patterns != (map_virtual_path, *expected_libraries)
+            or len(requested_paths) != 3
+            or len({path.casefold() for path in requested_paths}) != 3
+        ):
+            raise ValueError(
+                f"resource {resource.id!r} must own the exact ordered map and "
+                "qualified AI-library closure"
+            )
+        expected_output = f"maps/{runtime_slug}/scripts.json"
+        if resource.output != expected_output:
+            raise ValueError(
+                f"resource {resource.id!r} sage-script-composite output must be "
+                f"exactly {expected_output!r} for mapVirtualPath"
+            )
+        collision = next(
+            (
+                other.id
+                for other in resources
+                if other is not resource
+                and other.output is not None
+                and "/".join(safe_relative_parts(other.output)).casefold()
+                == output_key
+            ),
+            "",
+        )
+        if collision:
+            raise ValueError(
+                f"resource {resource.id!r} sage-script-composite output "
+                f"collides with {collision!r}"
+            )
+
+
 def _validate_terrain_material_options(resource: "ResourceRule") -> None:
     if resource.converter != "sage-terrain-materials":
         return
@@ -760,6 +884,33 @@ class ImportProfile:
         runtime_data = value.get("runtime_data", {})
         if not isinstance(runtime_data, dict):
             raise ValueError("profile runtime_data must be an object")
+        canonical_runtime_data: dict[str, Any] = {}
+        runtime_output_keys: set[str] = set()
+        for relative, runtime_value in runtime_data.items():
+            if not isinstance(relative, str) or len(relative) > MAX_PATH_LENGTH:
+                raise ValueError("profile runtime_data has an unsafe output path")
+            parts = safe_relative_parts(relative)
+            canonical = "/".join(parts)
+            if relative != canonical or any(
+                character in relative for character in '<>"|?*'
+            ):
+                raise ValueError(
+                    f"profile runtime_data has a non-canonical output path: {relative!r}"
+                )
+            key = canonical.casefold()
+            if key in runtime_output_keys:
+                raise ValueError(
+                    f"profile runtime_data has a canonical output collision: {relative!r}"
+                )
+            if (
+                key.startswith("maps/")
+                and key.endswith("/scripts.json")
+            ):
+                raise ValueError(
+                    "profile runtime_data cannot own a map scripts.json output"
+                )
+            runtime_output_keys.add(key)
+            canonical_runtime_data[canonical] = runtime_value
         resources: list[ResourceRule] = []
         ids: set[str] = set()
         for item in raw_resources:
@@ -828,7 +979,12 @@ class ImportProfile:
                 raise ValueError(
                     f"resource {resource_id!r} limit is smaller than expected_count"
                 )
-            output = str(item["output"]) if item.get("output") else None
+            raw_output = item.get("output")
+            if raw_output is not None and not isinstance(raw_output, str):
+                raise ValueError(
+                    f"resource {resource_id!r} output path must be a string"
+                )
+            output = raw_output if raw_output else None
             if output is not None:
                 if len(output) > MAX_PATH_LENGTH or any(
                     character in output for character in '<>"|?*'
@@ -836,7 +992,17 @@ class ImportProfile:
                     raise ValueError(
                         f"resource {resource_id!r} has an unsafe output path"
                     )
-                safe_relative_parts(output)
+                output_parts = safe_relative_parts(output)
+                canonical_output = "/".join(output_parts)
+                if output != canonical_output:
+                    raise ValueError(
+                        f"resource {resource_id!r} has a non-canonical output path"
+                    )
+                output_key = canonical_output.casefold()
+                if output_key in runtime_output_keys:
+                    raise ValueError(
+                        f"resource {resource_id!r} output collides with runtime_data"
+                    )
             options = item.get("options", {})
             if not isinstance(options, dict):
                 raise ValueError(f"resource {resource_id!r} options must be an object")
@@ -893,6 +1059,7 @@ class ImportProfile:
             )
         _validate_w3d_input_dependencies(resources)
         _validate_w3d_source_variants(resources)
+        _validate_script_composite_resources(resources)
         for resource in resources:
             _validate_hierarchical_w3d_options(resource)
             _validate_particle_definition_options(resource)
@@ -914,7 +1081,7 @@ class ImportProfile:
             pack_version=str(pack_value.get("version", "0.1.0")),
             pack_metadata=dict(pack_value),
             resources=tuple(resources),
-            runtime_data=dict(runtime_data),
+            runtime_data=canonical_runtime_data,
         )
 
 

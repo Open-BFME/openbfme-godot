@@ -76,7 +76,15 @@ const RETAIL_PLOT_RING_MODEL := "ArmyAntsLoc"
 ## Nothing was removed and nothing was weakened; two were added, both about the
 ## ring that had never been on screen, so 40 + 2 = 42. The no-bundle total is
 ## untouched at 5, because a ring needs a plot to stand on.
-const CHECKS_WITH_BUNDLE := 42
+##
+## ROUND 5 RAISES IT TO 43 for one field nothing in this lane had ever read.
+## Every army banner slot retail authors carries `UseHouseColor = Yes` and this
+## lane applies no house colour, so every seat's standard flies the same cloth -
+## a real fidelity gap that had NO NAME, was in no log and was in no test, which
+## is the state this project treats as worse than the gap itself. The check pins
+## the count off the loaded bundle, so the gap sentence cannot outlive the fact
+## and the day a house-colour mask is found this reddens rather than passing on.
+const CHECKS_WITH_BUNDLE := 44
 const CHECKS_WITHOUT_BUNDLE := 5
 
 var _passed := 0
@@ -102,6 +110,7 @@ func _initialize() -> void:
 		_check_visibility_rules_are_retails_own(markers)
 		_check_the_army_and_plot_links_are_authored()
 		_check_the_map_stands_them_and_drops_the_flat_stand_ins()
+		_check_the_house_colour_field_is_read_and_named()
 
 	var expected := CHECKS_WITH_BUNDLE if bound else CHECKS_WITHOUT_BUNDLE
 	var total := _passed + _failed
@@ -193,6 +202,64 @@ func _check_the_bundle_carries_retails_own_census(markers) -> void:
 ## EVERY MODEL EITHER CONVERTED OR IS NAMED. There is no third state, and the
 ## assertion is BY NAME rather than by a count tolerance so a second failure
 ## cannot hide behind the first.
+## RETAIL AUTHORS A FIELD THIS LANE CANNOT ACT ON, and the rule is that such a
+## field is READ, COUNTED and NAMED rather than quietly ignored. See
+## `wotr_marker_models.HOUSE_COLOUR_GAP`.
+func _check_the_house_colour_field_is_read_and_named() -> void:
+	var markers = MarkerScript.new()
+	var located: Dictionary = markers.locate_and_load(_roots())
+	var faults: Array[String] = []
+	if not bool(located.get("ok", false)):
+		faults.append("the bundle that loaded once did not load again")
+	else:
+		var wanting: Dictionary = markers.slots_wanting_house_color()
+		var slot_total := 0
+		for key in wanting.keys():
+			slot_total += (wanting[key] as Array).size()
+		# The field is genuinely there to be read - if this ever hits zero the
+		# converter has stopped carrying `UseHouseColor` and the gap is a lie.
+		if slot_total <= 0:
+			faults.append("no slot in the bundle carries UseHouseColor, so the gap describes nothing")
+		# And the sentence says what is missing, why it cannot be supplied, and what
+		# is drawn instead - the shape every named gap in this project has.
+		var gap: String = MarkerScript.HOUSE_COLOUR_GAP
+		if not (gap.contains("UseHouseColor") and gap.contains("house-colour")
+				and gap.contains("swatch") and gap.contains("invented")):
+			faults.append("the house-colour gap does not name the field, what IS applied, and what is not")
+		# THE MEASUREMENT THE GAP NOW RESTS ON, asserted against the shipped
+		# meshes rather than against the sentence. Round 6 found that retail
+		# authors its house-coloured PIP geometry with the UVs collapsed onto a
+		# one-to-two texel block of a single flat colour, and its banner CLOTH
+		# with 118x124 texels of painted crest. That is the whole basis for
+		# recolouring one and not the other, so if either half stops being true
+		# this must redden rather than the prose quietly going stale.
+		var model: Dictionary = markers.models.get("LWArmyHAng", {}) as Dictionary
+		if model.is_empty():
+			faults.append("LWArmyHAng is not in the bundle, so the swatch measurement has no subject")
+		else:
+			var by_mesh: Dictionary = model["meshes"] as Dictionary
+			for pip in ["LWBANSMALL", "LWBANMEDIUM", "LWBANLARGE"]:
+				if not by_mesh.has(pip):
+					faults.append("%s is missing from LWArmyHAng" % pip)
+					continue
+				if not MarkerScript.piece_is_flat_swatch(by_mesh[pip] as Dictionary):
+					faults.append("%s no longer samples a flat house-colour swatch" % pip)
+			if by_mesh.has("LWBANNER") 					and MarkerScript.piece_is_flat_swatch(by_mesh["LWBANNER"] as Dictionary):
+				faults.append(
+					"LWBANNER now reads as a flat swatch, which would mean the painted cloth was lost")
+		# And it reaches the log, so an operator sees it without reading this file.
+		var spoken := false
+		for line in markers.describe_load():
+			if String(line).contains("house colour"):
+				spoken = true
+		if not spoken:
+			faults.append("describe_load() never mentions the house-colour gap")
+	_check("retails_house_colour_swatch_is_measured_applied_to_the_pips_and_named_as_a_gap_on_the_cloth",
+		faults.is_empty(),
+		"faults " + str(faults) if not faults.is_empty()
+			else "the pip meshes measure as retail's flat house-colour swatch, the cloth does not, and both are named in the load log")
+
+
 func _check_every_model_converted_or_is_named(markers) -> void:
 	var named := int(markers.totals.get("modelsNamed", 0))
 	var converted := int(markers.totals.get("modelsConverted", 0))
@@ -444,10 +511,24 @@ func _check_the_map_stands_them_and_drops_the_flat_stand_ins() -> void:
 	# THE FLAT PLATE IS THE STAND-IN, NOT A SECOND MARKER. Drawing both would look
 	# like a heavy banner and would be two things claiming to be one army.
 	view._draw_overlay()
+	# ASSERTED ON `flat_banners_drawn`, NOT ON `banners_drawn`, AND THE OLD FORM WAS
+	# PASSING FOR THE WRONG REASON. `banners_drawn` is the TOTAL of both kinds of
+	# army mark - the flat stand-in plate and the general's medallion hung on
+	# retail's own standing model - so "banners_drawn == 0" was only ever true here
+	# because the medallion could not be placed in a headless run: it hangs on the
+	# marker's PROJECTED box, and `Camera3D.unproject_position` outside a scene tree
+	# produced none. Round 8 replaced that projection with one the view solves
+	# itself (`_project_world_box`), the medallions now draw headless as they always
+	# did on screen, and the total stopped being zero. The property this check names
+	# has not changed at all: no army that stands as a model may ALSO get the flat
+	# plate. That is `flat_banners_drawn`, and the medallion count is asserted
+	# beside it so a regression that stopped drawing faces reddens too.
 	_check("a_stack_that_stands_as_a_model_is_not_also_drawn_as_a_flat_plate",
-		view.banners_drawn == 0 and view.army_markers_standing > 0,
-		"%d flat plate(s) over %d standing model(s)" % [
-			view.banners_drawn, view.army_markers_standing])
+		view.flat_banners_drawn == 0 and view.army_markers_standing > 0
+			and view.medallions_drawn == view.army_markers_standing,
+		"%d flat plate(s) and %d medallion(s) over %d standing model(s)" % [
+			view.flat_banners_drawn, view.medallions_drawn,
+			view.army_markers_standing])
 	# STRUCTURES: converted, and deliberately absent from the world because no
 	# structure exists to place. Asserted so the absence is a decision on record
 	# rather than something that could quietly become a defect.
@@ -522,10 +603,17 @@ func _check_the_map_stands_them_and_drops_the_flat_stand_ins() -> void:
 	_check("the_standing_markers_seed_the_label_placer_from_a_real_world_footprint",
 		footprints == view._standing_markers.size()
 			and footprints == view.army_markers_standing + view.plot_markers_standing
-			and view._banner_boxes.size() == boxes.size(),
-		"%d footprint(s) over %d standing, %d seeded box(es)" % [
+			# EVERY STANDING MARKER'S FOOTPRINT, PLUS ONE PER MEDALLION. The
+			# medallion is a disc hung on the marker's own projected box and it
+			# occupies screen space of its own, so it seeds the placer too - it has
+			# since the medallions were added, and only round 8's projection change
+			# made it visible to a headless run. Stated as the sum rather than
+			# loosened to an inequality, so a medallion that stopped seeding still
+			# reddens.
+			and view._banner_boxes.size() == boxes.size() + view.medallions_drawn,
+		"%d footprint(s) over %d standing, %d seeded box(es) for %d marker box(es) + %d medallion(s)" % [
 			footprints, view.army_markers_standing + view.plot_markers_standing,
-			view._banner_boxes.size()])
+			view._banner_boxes.size(), boxes.size(), view.medallions_drawn])
 	# THE CAMERA IS FREE OVER 33.8x AND A FULL ORBIT. A marker set that only
 	# survives the opening framing is a marker set nobody checked.
 	var standing_at_default: int = view.army_markers_standing
@@ -545,6 +633,17 @@ func _check_the_map_stands_them_and_drops_the_flat_stand_ins() -> void:
 	# than trusted. At or below the stated framing a marker stands at RETAIL'S
 	# EXACT authored size with no multiplier at all; at the far end it is capped,
 	# so it can neither vanish nor grow without bound.
+	#
+	# THE ORBIT IS PUT BACK FIRST, and that is not a convenience. The loop above
+	# deliberately leaves the camera at pitch -12, and the map view's cut-edge
+	# clamp (`zoom_ceiling()`) legitimately refuses most of the pull-back range at
+	# a low oblique - a camera that flat, that far out, would have retail's terrain
+	# slab ending in mid-air across the picture. Asking for `MAX_ZOOM` from there
+	# gets the clamp's answer, not the zoom, so this measured the CLAMP and called
+	# it the magnification. The property under test is that
+	# `marker_magnification()` is 1.0 at and below `MARKER_TRUE_ZOOM` and capped
+	# above it, which needs the far end to actually be reachable.
+	view.reset_camera()
 	view.focus_region("", MapViewScript.MARKER_TRUE_ZOOM)
 	var at_true: float = view.marker_magnification()
 	view.focus_region("", MapViewScript.MIN_ZOOM)
@@ -557,6 +656,54 @@ func _check_the_map_stands_them_and_drops_the_flat_stand_ins() -> void:
 		"x%.2f at zoom %.2f, x%.2f at %.2f, x%.2f at %.2f" % [
 			at_near, MapViewScript.MIN_ZOOM, at_true, MapViewScript.MARKER_TRUE_ZOOM,
 			at_far, MapViewScript.MAX_ZOOM])
+	# RETAIL'S HOUSE COLOUR REACHED A PIXEL, which is a different claim from "the
+	# field is read". `house_coloured_meshes` counts the meshes the view drew in
+	# the OWNING SEAT'S colour instead of retail's texture, and it can only be
+	# non-zero when a slot authored `UseHouseColor = Yes` AND the mesh measured as
+	# retail's flat swatch - so a regression in either half zeroes it.
+	# RETAIL'S HOUSE COLOUR REACHES A PIXEL, which is a different claim from "the
+	# field is read". Asserted over the BUNDLE rather than over this scenario's two
+	# seats, because which faction icons happen to be standing is a property of the
+	# fixture and the measurement is a property of retail's art.
+	#
+	# 23 OF THE 36 FAMILIES THAT ASK FOR A HOUSE COLOUR CARRY A MEASURABLE SWATCH,
+	# and the other 13 do not, which is the fail-closed half of this: on those
+	# sheets the patch the pips sample is not one colour to within
+	# `HOUSE_SWATCH_TOLERANCE` - `LWArmyHDwf`'s is DXT noise spread wider than the
+	# threshold - and rather than guess at which of the values is "the" house
+	# colour, those keep retail's own texture. The floor is exact so that a
+	# tolerance quietly widened to sweep them in reddens here.
+	var with_swatch: Array[String] = []
+	var without_swatch: Array[String] = []
+	for family_id in view.markers.families.keys():
+		var pip_model := String(view.markers.slot_model(String(family_id), "SmallPip"))
+		if pip_model.is_empty():
+			continue
+		var model_row: Dictionary = view.markers.models.get(pip_model, {}) as Dictionary
+		if model_row.is_empty():
+			continue
+		var by_mesh: Dictionary = model_row["meshes"] as Dictionary
+		if not by_mesh.has("LWBANSMALL"):
+			continue
+		if MarkerScript.piece_is_flat_swatch(by_mesh["LWBANSMALL"] as Dictionary):
+			with_swatch.append(String(family_id))
+		else:
+			without_swatch.append(String(family_id))
+	# And the recolour itself: the seat's colour, on the mesh, with retail's
+	# texture DROPPED - which is only exact because the mesh sampled one colour.
+	var seat := Color(0.2, 0.6, 0.9)
+	var recoloured_correctly := false
+	if not with_swatch.is_empty():
+		var sample_model := String(view.markers.slot_model(with_swatch[0], "SmallPip"))
+		var sample_piece: Dictionary = ((view.markers.models[sample_model] as Dictionary)
+			["meshes"] as Dictionary)["LWBANSMALL"] as Dictionary
+		var recoloured: StandardMaterial3D = view.markers.house_coloured_material_of(
+			sample_model, sample_piece, seat)
+		recoloured_correctly = recoloured.albedo_texture == null 			and recoloured.albedo_color.is_equal_approx(Color(seat.r, seat.g, seat.b, 1.0))
+	_check("the_house_colour_swatch_is_measured_on_23_families_and_recoloured_in_the_seats_colour",
+		with_swatch.size() == 23 and without_swatch.size() == 13 and recoloured_correctly,
+		"%d famil(ies) carry a measurable swatch, %d do not and keep retail's texture; recolour exact: %s" % [
+			with_swatch.size(), without_swatch.size(), str(recoloured_correctly)])
 	_check_a_plot_ring_follows_the_pointer(view)
 	screen.queue_free()
 

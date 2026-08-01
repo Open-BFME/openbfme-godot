@@ -1570,6 +1570,26 @@
       }
     },
     {
+      "id": "fords-map-scripts",
+      "kind": "map",
+      "converter": "sage-script-composite",
+      "patterns": [
+        "maps/map mp fords of isen ii/map mp fords of isen ii.map",
+        "libraries/ai_initialize/ai_initialize.map",
+        "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map"
+      ],
+      "output": "maps/fords-of-isen-ii/scripts.json",
+      "limit": 3,
+      "expected_count": 3,
+      "options": {
+        "mapVirtualPath": "maps/map mp fords of isen ii/map mp fords of isen ii.map",
+        "libraryVirtualPaths": [
+          "libraries/ai_initialize/ai_initialize.map",
+          "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map"
+        ]
+      }
+    },
+    {
       "id": "fords-map-config",
       "kind": "map",
       "converter": "hash-only",

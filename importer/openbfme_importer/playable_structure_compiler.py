@@ -16,6 +16,11 @@ import hashlib
 import json
 import re
 
+from .module_contracts import (
+    ModuleContractError,
+    compile_all_module_contracts,
+    validate_module_contracts,
+)
 from .playable_unit_compiler import (
     ATTRIBUTE_MODIFIER_PATH,
     EXPERIENCE_LEVELS_PATH,
@@ -41,7 +46,7 @@ from .playable_unit_compiler import (
     _walk_blocks,
     prepare_playable_unit_compiler,
 )
-from .sage_cst import SageBlock, SageObject
+from .sage_cst import SageAssignment, SageBlock, SageObject
 from .sage_ini import IniBlock
 
 
@@ -398,7 +403,722 @@ def _health_contract(
         raise PlayableStructureCompilerError(
             f"structure body does not author MaxHealth: {target_id}"
         )
-    return {"primary": primary, "evidence": bodies}
+    contract: dict[str, object] = {"primary": primary, "evidence": bodies}
+    if str(primary.get("module", "")).casefold() == "highlanderbody":
+        contract["highlanderBody"] = {
+            "value": True,
+            "sourceIni": str(primary.get("sourceIni", "")),
+            "line": int(primary.get("line", 0)),
+        }
+    return contract
+
+
+def _grant_upgrade_create_contract(
+    lineage: Sequence[SageObject],
+    documents: Mapping[str, bytes],
+    target_id: str,
+) -> list[dict[str, object]]:
+    """Flatten supported GrantUpgradeCreate rows into exact lifecycle grants.
+
+    BFME's foundation objects explicitly use ``GiveOnBuildComplete = Yes``.
+    The earlier EA implementation also supports the
+    ``ExemptStatus = UNDER_CONSTRUCTION`` create-time path.  Other status
+    masks and false/implicit build-complete policy remain unsupported rather
+    than being assigned guessed timing.
+    """
+
+    modules = [
+        block
+        for block in _walk_blocks(_effective_top_blocks(lineage))
+        if block.kind.casefold() == "grantupgradecreate"
+    ]
+    if not modules:
+        return []
+    upgrade_source = _optional_document(documents, UPGRADE_PATH)
+    if upgrade_source is None:
+        raise PlayableStructureCompilerError(
+            f"{target_id} authors GrantUpgradeCreate but {UPGRADE_PATH} is "
+            "not in the effective INI view"
+        )
+    upgrade_blocks = _named_blocks(upgrade_source, "Upgrade")
+    rows: list[dict[str, object]] = []
+    seen: set[tuple[str, bool, bool]] = set()
+    for block in modules:
+        upgrade_id = _first(block.values("UpgradeToGrant"))
+        if upgrade_id is None or not upgrade_id.strip():
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} omits UpgradeToGrant"
+            )
+        upgrade_id = upgrade_id.strip()
+        upgrade_block = upgrade_blocks.get(upgrade_id.casefold())
+        if upgrade_block is None:
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} references missing upgrade "
+                f"{upgrade_id}"
+            )
+        upgrade_type = _first(upgrade_block.values("Type"))
+        if upgrade_type is None or upgrade_type.strip().casefold() not in {
+            "object",
+            "player",
+        }:
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} upgrade {upgrade_id} has unsupported "
+                "or missing Type"
+            )
+        exempt_tokens = {
+            token.casefold()
+            for value in block.values("ExemptStatus")
+            for token in _tokens(value)
+            if token.casefold() not in {"none", "null"}
+        }
+        if exempt_tokens - {"under_construction"}:
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} has unsupported ExemptStatus "
+                f"{sorted(exempt_tokens)}"
+            )
+        give_values = [
+            value.strip().casefold()
+            for value in block.values("GiveOnBuildComplete")
+            if value.strip()
+        ]
+        if len(set(give_values)) > 1 or any(
+            value not in {"yes", "true", "1", "no", "false", "0"}
+            for value in give_values
+        ):
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} has invalid GiveOnBuildComplete"
+            )
+        on_build_complete = bool(give_values) and give_values[-1] in {
+            "yes",
+            "true",
+            "1",
+        }
+        on_create_when_complete = "under_construction" in exempt_tokens
+        if not on_build_complete and not on_create_when_complete:
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} has no source-backed grant timing"
+            )
+        identity = (
+            upgrade_id.casefold(),
+            on_create_when_complete,
+            on_build_complete,
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        rows.append(
+            {
+                "upgradeId": upgrade_id,
+                "upgradeType": upgrade_type.strip().upper(),
+                "onCreateWhenComplete": on_create_when_complete,
+                "onBuildComplete": on_build_complete,
+                "module": "GrantUpgradeCreate",
+                "sourceIni": block.source_virtual_path,
+                "line": block.line,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            str(row["upgradeId"]).casefold(),
+            str(row["sourceIni"]).casefold(),
+            int(row["line"]),
+        )
+    )
+    return rows
+
+
+def _inherit_upgrade_create_contract(
+    lineage: Sequence[SageObject],
+    documents: Mapping[str, bytes],
+    defines: Mapping[str, int | float],
+    target_id: str,
+) -> list[dict[str, object]]:
+    """Compile retail's creation-time nearby-source upgrade inheritance.
+
+    Every BFME2/RotWK declaration in the retail census authors the same closed
+    filter shape, ``ANY +ObjectType``.  Preserve that exact positive source
+    identity instead of widening it to KindOf or substring matching.
+    """
+
+    modules = [
+        block
+        for block in _walk_blocks(_effective_top_blocks(lineage))
+        if block.kind.casefold() == "inheritupgradecreate"
+    ]
+    if not modules:
+        return []
+    upgrade_source = _optional_document(documents, UPGRADE_PATH)
+    if upgrade_source is None:
+        raise PlayableStructureCompilerError(
+            f"{target_id} authors InheritUpgradeCreate but {UPGRADE_PATH} is "
+            "not in the effective INI view"
+        )
+    upgrade_blocks = _named_blocks(upgrade_source, "Upgrade")
+    rows: list[dict[str, object]] = []
+    seen: set[tuple[str, float, str]] = set()
+    for block in modules:
+        authored_keys = [item.key.casefold() for item in block.assignments]
+        expected_keys = {"radius", "upgrade", "objectfilter"}
+        if (
+            set(authored_keys) != expected_keys
+            or any(authored_keys.count(key) != 1 for key in expected_keys)
+        ):
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} must author exactly one Radius, "
+                "Upgrade, and ObjectFilter assignment"
+            )
+        radius_token = _first(block.values("Radius"))
+        upgrade_id = _first(block.values("Upgrade"))
+        filter_value = _first_raw(block, "ObjectFilter")
+        if radius_token is None:
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} omits Radius"
+            )
+        radius = _numeric_value(
+            radius_token, defines, f"{target_id} {block.kind} Radius"
+        )
+        if radius <= 0.0:
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} has non-positive Radius"
+            )
+        if upgrade_id is None or upgrade_id.casefold() not in upgrade_blocks:
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} references missing Upgrade "
+                f"{upgrade_id or ''}"
+            )
+        upgrade_type = _first(
+            upgrade_blocks[upgrade_id.casefold()].values("Type")
+        )
+        if upgrade_type is None or upgrade_type.casefold() != "object":
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} upgrade {upgrade_id} is not "
+                "Type = OBJECT"
+            )
+        filter_tokens = _tokens(filter_value or "")
+        if (
+            len(filter_tokens) != 2
+            or filter_tokens[0].casefold() != "any"
+            or not filter_tokens[1].startswith("+")
+            or len(filter_tokens[1]) == 1
+        ):
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} has unsupported ObjectFilter "
+                f"{filter_value or ''!r}"
+            )
+        source_object_id = filter_tokens[1][1:]
+        identity = (upgrade_id.casefold(), float(radius), source_object_id.casefold())
+        if identity in seen:
+            continue
+        seen.add(identity)
+        rows.append(
+            {
+                "radius": {"authored": radius_token, "value": radius},
+                "upgradeId": upgrade_id,
+                "upgradeType": "OBJECT",
+                "objectFilter": filter_value,
+                "sourceObjectId": source_object_id,
+                "module": "InheritUpgradeCreate",
+                "sourceIni": block.source_virtual_path,
+                "line": block.line,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            str(row["upgradeId"]).casefold(),
+            str(row["sourceObjectId"]).casefold(),
+            float(row["radius"]["value"]),
+            str(row["sourceIni"]).casefold(),
+            int(row["line"]),
+        )
+    )
+    return rows
+
+
+_QUEUE_EXIT_SUPPORTED_FIELDS = frozenset(
+    {
+        "unitcreatepoint",
+        "naturalrallypoint",
+        "exitdelay",
+        "allowairbornecreation",
+        "initialburst",
+    }
+)
+_QUEUE_EXIT_DEFERRED_FIELDS = frozenset(
+    {
+        # BFME accepts these inside QueueProductionExitUpdate, but the local
+        # Generals module-data oracle does not define their behavior.
+        "placementviewangle",
+        "usereturntoformation",
+        "noexitpath",
+    }
+)
+
+
+def _effective_block_assignment(
+    block: SageBlock, key: str
+) -> SageAssignment | None:
+    """Return the last assignment for one case-insensitive module field.
+
+    SAGE's INI field parser writes each occurrence into the same module-data
+    slot in source order.  Repeated scalar fields therefore use the final
+    assignment; rejecting duplicates or taking the first silently changes the
+    effective module data.
+    """
+
+    folded = key.casefold()
+    rows = tuple(
+        row for row in block.assignments if row.key.casefold() == folded
+    )
+    return rows[-1] if rows else None
+
+
+_QUEUE_EXIT_COORD_PATTERN = re.compile(
+    r"(?i)^\s*X\s*:\s*"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s+"
+    r"Y\s*:\s*"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s+"
+    r"Z\s*:\s*"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*$"
+)
+
+
+def _queue_exit_coord_values(
+    authored: str,
+    label: str,
+) -> dict[str, float]:
+    match = _QUEUE_EXIT_COORD_PATTERN.fullmatch(authored)
+    if match is None:
+        # Known RotWK typo: AngmarKennelExpansion authors ``X:70.0.0`` (extra
+        # ``.0``) instead of ``X:70.0``. Accept a single extra trailing ``.0``
+        # on any axis so the structure still compiles from retail bytes.
+        repaired = re.sub(
+            r"(?i)(X|Y|Z)\s*:\s*([+-]?(?:\d+\.\d+|\d+|\.\d+))\.0(?=\s|$)",
+            r"\1:\2",
+            authored.strip(),
+        )
+        match = _QUEUE_EXIT_COORD_PATTERN.fullmatch(repaired)
+    if match is None:
+        raise PlayableStructureCompilerError(
+            f"{label} is not an exact X/Y/Z Coord3D: {authored!r}"
+        )
+    x_token, y_token, z_token = match.groups()
+    return {
+        "x": float(x_token),
+        "y": float(y_token),
+        "z": float(z_token),
+    }
+
+
+def _queue_exit_coord(
+    assignment: SageAssignment | None,
+    label: str,
+) -> dict[str, object]:
+    if assignment is None:
+        return {
+            "authored": "",
+            "value": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "defaulted": True,
+        }
+    values = _queue_exit_coord_values(assignment.value, label)
+    return {
+        "authored": assignment.value,
+        "value": values,
+        "sourceIni": assignment.source_virtual_path,
+        "line": assignment.line,
+    }
+
+
+def _queue_exit_number(
+    assignment: SageAssignment | None,
+    defines: Mapping[str, int | float],
+    label: str,
+    *,
+    integral: bool,
+) -> dict[str, object]:
+    if assignment is None:
+        return {"authored": "0", "value": 0, "defaulted": True}
+    authored = assignment.value.strip()
+    resolved_define: dict[str, object] | None = None
+    if re.fullmatch(r"[0-9]+", authored):
+        value: int | float = int(authored)
+    elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", authored):
+        resolved = defines.get(authored.casefold())
+        if resolved is None:
+            raise PlayableStructureCompilerError(
+                f"{label} references an unresolved GameData constant: "
+                f"{assignment.value}"
+            )
+        value = resolved
+        resolved_define = {"name": authored, "value": resolved}
+    else:
+        raise PlayableStructureCompilerError(
+            f"{label} must be an exact unsigned decimal or resolved "
+            f"GameData constant: {assignment.value!r}"
+        )
+    if (
+        float(value) < 0.0
+        or (integral and float(value) != int(value))
+        or (integral and int(value) > 4_294_967_295)
+    ):
+        raise PlayableStructureCompilerError(
+            f"{label} must be an UnsignedInt in range 0..4294967295"
+        )
+    effective: int | float = int(value) if integral else value
+    result: dict[str, object] = {
+        "authored": assignment.value,
+        "value": effective,
+        "sourceIni": assignment.source_virtual_path,
+        "line": assignment.line,
+    }
+    if resolved_define is not None:
+        resolved_define["value"] = effective
+        result["resolvedDefine"] = resolved_define
+    return result
+
+
+def _queue_exit_bool(
+    assignment: SageAssignment | None,
+    label: str,
+) -> dict[str, object]:
+    if assignment is None:
+        return {"authored": "No", "value": False, "defaulted": True}
+    folded = assignment.value.strip().casefold()
+    if folded not in {"yes", "no"}:
+        raise PlayableStructureCompilerError(
+            f"{label} must be Yes or No: {assignment.value!r}"
+        )
+    return {
+        "authored": assignment.value,
+        "value": folded == "yes",
+        "sourceIni": assignment.source_virtual_path,
+        "line": assignment.line,
+    }
+
+
+def _queue_production_exit_contract(
+    lineage: Sequence[SageObject],
+    defines: Mapping[str, int | float],
+    target_id: str,
+) -> list[dict[str, object]]:
+    """Compile QueueProductionExitUpdate without claiming live simulation.
+
+    The local Generals GPL module-data and implementation source the five
+    supported fields.  BFME-only fields are retained as explicit deferred
+    assignments; an unknown field fails closed.
+    """
+
+    modules = [
+        block
+        for block in _walk_blocks(_effective_top_blocks(lineage))
+        if block.kind.casefold() == "queueproductionexitupdate"
+    ]
+    rows: list[dict[str, object]] = []
+    for block in modules:
+        authored_keys = {row.key.casefold() for row in block.assignments}
+        unknown = authored_keys - (
+            _QUEUE_EXIT_SUPPORTED_FIELDS | _QUEUE_EXIT_DEFERRED_FIELDS
+        )
+        if unknown:
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} has unsupported fields: "
+                + ", ".join(sorted(unknown))
+            )
+        deferred_fields: list[dict[str, object]] = []
+        for field_name in sorted(_QUEUE_EXIT_DEFERRED_FIELDS):
+            assignment = _effective_block_assignment(block, field_name)
+            if assignment is None:
+                continue
+            deferred_fields.append(
+                {
+                    "name": assignment.key,
+                    "authored": assignment.value,
+                    "sourceIni": assignment.source_virtual_path,
+                    "line": assignment.line,
+                    "reason": "bfme-field-without-local-runtime-oracle",
+                }
+            )
+        rows.append(
+            {
+                "module": "QueueProductionExitUpdate",
+                "unitCreatePoint": _queue_exit_coord(
+                    _effective_block_assignment(block, "UnitCreatePoint"),
+                    f"{target_id} {block.kind} UnitCreatePoint",
+                ),
+                "naturalRallyPoint": _queue_exit_coord(
+                    _effective_block_assignment(block, "NaturalRallyPoint"),
+                    f"{target_id} {block.kind} NaturalRallyPoint",
+                ),
+                "exitDelay": {
+                    **_queue_exit_number(
+                        _effective_block_assignment(block, "ExitDelay"),
+                        defines,
+                        f"{target_id} {block.kind} ExitDelay",
+                        integral=True,
+                    ),
+                    # INI::parseDurationUnsignedInt parses the authored duration;
+                    # preserve that millisecond unit. A frame conversion needs a
+                    # BFME tick oracle and is intentionally not invented here.
+                    "unit": "milliseconds",
+                },
+                "allowAirborneCreation": _queue_exit_bool(
+                    _effective_block_assignment(
+                        block, "AllowAirborneCreation"
+                    ),
+                    f"{target_id} {block.kind} AllowAirborneCreation",
+                ),
+                "initialBurst": _queue_exit_number(
+                    _effective_block_assignment(block, "InitialBurst"),
+                    defines,
+                    f"{target_id} {block.kind} InitialBurst",
+                    integral=True,
+                ),
+                "deferredFields": deferred_fields,
+                "runtimeStatus": "deferred",
+                "sourceIni": block.source_virtual_path,
+                "line": block.line,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            str(row["sourceIni"]).casefold(),
+            int(row["line"]),
+        )
+    )
+    return rows
+
+
+_AUTO_DEPOSIT_SUPPORTED_FIELDS = frozenset(
+    {
+        "deposittiming",
+        "depositamount",
+        "initialcapturebonus",
+        "actualmoney",
+        "upgradedboost",
+    }
+)
+_AUTO_DEPOSIT_DEFERRED_FIELDS = frozenset(
+    {
+        # BFME2 additions not present in the Generals module-data/implementation
+        # oracle. Both change eligibility/score semantics, so they cannot be
+        # silently ignored by the runtime.
+        "givenoxp",
+        "onlywhengarrisoned",
+    }
+)
+_AUTO_DEPOSIT_UPGRADE_PAIR_PATTERN = re.compile(
+    r"(?i)^\s*UpgradeType\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s+"
+    r"Boost\s*:\s*([+-]?[0-9]+)\s*$"
+)
+
+
+def _auto_deposit_integer(
+    assignment: SageAssignment | None,
+    defines: Mapping[str, int | float],
+    label: str,
+    *,
+    default: int,
+    unsigned: bool = False,
+) -> dict[str, object]:
+    if assignment is None:
+        return {"authored": str(default), "value": default, "defaulted": True}
+    authored = assignment.value.strip()
+    resolved_define: dict[str, object] | None = None
+    if re.fullmatch(r"[+-]?[0-9]+", authored):
+        value = int(authored)
+    elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", authored):
+        resolved = defines.get(authored.casefold())
+        if (
+            resolved is None
+            or isinstance(resolved, bool)
+            or float(resolved) != int(resolved)
+        ):
+            raise PlayableStructureCompilerError(
+                f"{label} references a missing or non-integral GameData "
+                f"constant: {assignment.value}"
+            )
+        value = int(resolved)
+        resolved_define = {"name": authored, "value": value}
+    else:
+        raise PlayableStructureCompilerError(
+            f"{label} must be an exact integer or resolved GameData constant: "
+            f"{assignment.value!r}"
+        )
+    if unsigned and not 0 <= value <= 4_294_967_295:
+        raise PlayableStructureCompilerError(
+            f"{label} must be an UnsignedInt in range 0..4294967295"
+        )
+    if not unsigned and not -2_147_483_648 <= value <= 2_147_483_647:
+        raise PlayableStructureCompilerError(
+            f"{label} must be an Int in range -2147483648..2147483647"
+        )
+    result: dict[str, object] = {
+        "authored": assignment.value,
+        "value": value,
+        "sourceIni": assignment.source_virtual_path,
+        "line": assignment.line,
+    }
+    if resolved_define is not None:
+        result["resolvedDefine"] = resolved_define
+    return result
+
+
+def _auto_deposit_contract(
+    lineage: Sequence[SageObject],
+    documents: Mapping[str, bytes],
+    defines: Mapping[str, int | float],
+    target_id: str,
+) -> list[dict[str, object]]:
+    """Compile the source-backed AutoDepositUpdate module-data contract.
+
+    ``parseDurationUnsignedInt`` consumes milliseconds and rounds upward to
+    engine frames. The local authoritative simulation advances at 100 ms per
+    tick, so its deterministic duration projection is ceil(ms / 100).
+    """
+
+    modules = [
+        block
+        for block in _walk_blocks(_effective_top_blocks(lineage))
+        if block.kind.casefold() == "autodepositupdate"
+    ]
+    if not modules:
+        return []
+    upgrade_blocks: Mapping[str, object] = {}
+    if any(
+        assignment.key.casefold() == "upgradedboost"
+        for block in modules
+        for assignment in block.assignments
+    ):
+        upgrade_source = _optional_document(documents, UPGRADE_PATH)
+        if upgrade_source is None:
+            raise PlayableStructureCompilerError(
+                f"{target_id} authors AutoDepositUpdate UpgradedBoost but "
+                f"{UPGRADE_PATH} is not in the effective INI view"
+            )
+        upgrade_blocks = _named_blocks(upgrade_source, "Upgrade")
+    rows: list[dict[str, object]] = []
+    for block in modules:
+        authored_keys = {assignment.key.casefold() for assignment in block.assignments}
+        unknown = authored_keys - (
+            _AUTO_DEPOSIT_SUPPORTED_FIELDS | _AUTO_DEPOSIT_DEFERRED_FIELDS
+        )
+        if unknown:
+            raise PlayableStructureCompilerError(
+                f"{target_id} {block.kind} has unsupported fields: "
+                + ", ".join(sorted(unknown))
+            )
+        timing = _auto_deposit_integer(
+            _effective_block_assignment(block, "DepositTiming"),
+            defines,
+            f"{target_id} {block.kind} DepositTiming",
+            default=0,
+            unsigned=True,
+        )
+        timing["unit"] = "milliseconds"
+        timing["simulationTicks"] = (
+            (int(timing["value"]) + 99) // 100
+            if int(timing["value"]) > 0
+            else 0
+        )
+        actual_money = _queue_exit_bool(
+            _effective_block_assignment(block, "ActualMoney"),
+            f"{target_id} {block.kind} ActualMoney",
+        )
+        if actual_money.get("defaulted") is True:
+            actual_money = {
+                "authored": "Yes",
+                "value": True,
+                "defaulted": True,
+            }
+        upgrade_boosts: list[dict[str, object]] = []
+        for assignment in block.assignments:
+            if assignment.key.casefold() != "upgradedboost":
+                continue
+            match = _AUTO_DEPOSIT_UPGRADE_PAIR_PATTERN.fullmatch(assignment.value)
+            if match is None:
+                raise PlayableStructureCompilerError(
+                    f"{target_id} {block.kind} UpgradedBoost is not an exact "
+                    f"UpgradeType/Boost pair: {assignment.value!r}"
+                )
+            upgrade_id, boost_token = match.groups()
+            if upgrade_id.casefold() not in upgrade_blocks:
+                raise PlayableStructureCompilerError(
+                    f"{target_id} {block.kind} UpgradedBoost references missing "
+                    f"Upgrade {upgrade_id}"
+                )
+            upgrade_type = _first(
+                upgrade_blocks[upgrade_id.casefold()].values("Type")
+            )
+            if (
+                upgrade_type is None
+                or upgrade_type.strip().casefold() != "player"
+            ):
+                raise PlayableStructureCompilerError(
+                    f"{target_id} {block.kind} UpgradedBoost upgrade "
+                    f"{upgrade_id} must have source-attested Type PLAYER"
+                )
+            upgrade_boosts.append(
+                {
+                    "upgradeId": upgrade_id,
+                    # AutoDepositUpdate queries the controlling player's
+                    # completed-upgrade set. OBJECT upgrades are not a
+                    # compatible authority.
+                    "upgradeType": "PLAYER",
+                    "upgradeAttestation": {
+                        "upgradeId": upgrade_id,
+                        # Parsed from the named block in upgrade.ini and bound
+                        # to the pack source-document receipt below.
+                        "upgradeType": "PLAYER",
+                        "sourceIni": UPGRADE_PATH,
+                        "sourceSha256": hashlib.sha256(upgrade_source).hexdigest(),
+                    },
+                    "boost": int(boost_token),
+                    "authored": assignment.value,
+                    "sourceIni": assignment.source_virtual_path,
+                    "line": assignment.line,
+                }
+            )
+        deferred_fields: list[dict[str, object]] = []
+        for field_name in sorted(_AUTO_DEPOSIT_DEFERRED_FIELDS):
+            assignment = _effective_block_assignment(block, field_name)
+            if assignment is not None:
+                deferred_fields.append(
+                    {
+                        "name": assignment.key,
+                        "authored": assignment.value,
+                        "sourceIni": assignment.source_virtual_path,
+                        "line": assignment.line,
+                        "reason": "bfme-field-without-local-runtime-oracle",
+                    }
+                )
+        rows.append(
+            {
+                "module": "AutoDepositUpdate",
+                "depositTiming": timing,
+                "depositAmount": _auto_deposit_integer(
+                    _effective_block_assignment(block, "DepositAmount"),
+                    defines,
+                    f"{target_id} {block.kind} DepositAmount",
+                    default=0,
+                ),
+                "initialCaptureBonus": _auto_deposit_integer(
+                    _effective_block_assignment(block, "InitialCaptureBonus"),
+                    defines,
+                    f"{target_id} {block.kind} InitialCaptureBonus",
+                    default=0,
+                ),
+                "actualMoney": actual_money,
+                "upgradedBoosts": upgrade_boosts,
+                "deferredFields": deferred_fields,
+                "runtimeStatus": (
+                    "executable" if not deferred_fields else "deferred"
+                ),
+                "sourceIni": block.source_virtual_path,
+                "line": block.line,
+            }
+        )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
 
 def _trained_command_sets(
     lineage: Sequence[SageObject],
@@ -1612,6 +2332,25 @@ def compile_playable_structure_descriptor(
     resource_behavior = _resource_behavior_radius(
         lineage, prepared.numeric_defines, target.name
     )
+    create_grants = _grant_upgrade_create_contract(
+        lineage, documents, target.name
+    )
+    inherit_upgrades = _inherit_upgrade_create_contract(
+        lineage, documents, prepared.numeric_defines, target.name
+    )
+    production_exit_updates = _queue_production_exit_contract(
+        lineage, prepared.numeric_defines, target.name
+    )
+    auto_deposit_updates = _auto_deposit_contract(
+        lineage,
+        documents,
+        prepared.numeric_defines,
+        target.name,
+    )
+    try:
+        module_contracts = compile_all_module_contracts(lineage, target.name)
+    except ModuleContractError as error:
+        raise PlayableStructureCompilerError(str(error)) from error
     audio = {
         key: value
         for key, value in sorted(_audio_routes(lineage).items())
@@ -1642,6 +2381,26 @@ def compile_playable_structure_descriptor(
         | (
             {str(path) for path in upgrade_effects.get("sourceIni", [])}
             if upgrade_effects is not None
+            else set()
+        )
+        | {
+            str(row["sourceIni"])
+            for row in create_grants
+        }
+        | {
+            str(row["sourceIni"])
+            for row in inherit_upgrades
+        }
+        | (
+            {UPGRADE_PATH}
+            if (
+                create_grants
+                or inherit_upgrades
+                or any(
+                    row["upgradedBoosts"]
+                    for row in auto_deposit_updates
+                )
+            )
             else set()
         ),
         key=lambda value: (value.casefold(), value),
@@ -1707,6 +2466,27 @@ def compile_playable_structure_descriptor(
             **(
                 {"resourceBehavior": resource_behavior}
                 if resource_behavior is not None
+                else {}
+            ),
+            **({"createGrants": create_grants} if create_grants else {}),
+            **(
+                {"inheritUpgradesOnCreate": inherit_upgrades}
+                if inherit_upgrades
+                else {}
+            ),
+            **(
+                {"productionExitUpdates": production_exit_updates}
+                if production_exit_updates
+                else {}
+            ),
+            **(
+                {"autoDepositUpdates": auto_deposit_updates}
+                if auto_deposit_updates
+                else {}
+            ),
+            **(
+                {"moduleContracts": module_contracts}
+                if module_contracts
                 else {}
             ),
             "scalarFields": _resolved_scalar_fields(
@@ -1796,12 +2576,775 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
         raise PlayableStructureCompilerError(
             "structure descriptor gameplay is invalid"
         )
-    if gameplay.get("health") is None and "BASE_FOUNDATION" not in {
+    health = gameplay.get("health")
+    if health is None and "BASE_FOUNDATION" not in {
         str(item) for item in kinds
     }:
         raise PlayableStructureCompilerError(
             "structure descriptor omits health without foundation evidence"
         )
+    if health is not None:
+        if not isinstance(health, Mapping):
+            raise PlayableStructureCompilerError(
+                "structure descriptor health is invalid"
+            )
+        highlander = health.get("highlanderBody")
+        if highlander is not None and (
+            not isinstance(highlander, Mapping)
+            or highlander.get("value") is not True
+            or not isinstance(highlander.get("sourceIni"), str)
+            or not highlander.get("sourceIni")
+            or not isinstance(highlander.get("line"), int)
+            or isinstance(highlander.get("line"), bool)
+            or int(highlander["line"]) <= 0
+            or str((health.get("primary", {}) or {}).get("module", "")).casefold()
+            != "highlanderbody"
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor HighlanderBody policy is invalid"
+            )
+    create_grants = gameplay.get("createGrants", [])
+    if not isinstance(create_grants, list):
+        raise PlayableStructureCompilerError(
+            "structure descriptor create grants are invalid"
+        )
+    for row in create_grants:
+        if (
+            not isinstance(row, Mapping)
+            or not isinstance(row.get("upgradeId"), str)
+            or not row.get("upgradeId")
+            or row.get("upgradeType") not in {"OBJECT", "PLAYER"}
+            or not isinstance(row.get("onCreateWhenComplete"), bool)
+            or not isinstance(row.get("onBuildComplete"), bool)
+            or not (
+                row.get("onCreateWhenComplete")
+                or row.get("onBuildComplete")
+            )
+            or row.get("module") != "GrantUpgradeCreate"
+            or not isinstance(row.get("sourceIni"), str)
+            or not isinstance(row.get("line"), int)
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor create grant row is invalid"
+            )
+    production_exit_updates = gameplay.get("productionExitUpdates", [])
+    if not isinstance(production_exit_updates, list):
+        raise PlayableStructureCompilerError(
+            "structure descriptor production exit updates are invalid"
+        )
+    production_exit_source_paths: set[str] = set()
+    if production_exit_updates:
+        source_documents = value.get("sourceDocuments")
+        if not isinstance(source_documents, list):
+            raise PlayableStructureCompilerError(
+                "structure descriptor production exit source evidence is missing"
+            )
+        production_exit_source_hashes: dict[str, str] = {}
+        for source in source_documents:
+            if (
+                not isinstance(source, Mapping)
+                or set(source) != {"virtualPath", "sha256"}
+                or not isinstance(source.get("virtualPath"), str)
+                or not source.get("virtualPath")
+                or not isinstance(source.get("sha256"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", str(source.get("sha256")))
+                is None
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor production exit source document "
+                    "schema is invalid"
+                )
+            normalized_path = (
+                str(source["virtualPath"]).replace("\\", "/").casefold()
+            )
+            if normalized_path in production_exit_source_hashes:
+                if (
+                    production_exit_source_hashes[normalized_path]
+                    != source["sha256"]
+                ):
+                    raise PlayableStructureCompilerError(
+                        "structure descriptor production exit source document "
+                        "hashes contradict"
+                    )
+                raise PlayableStructureCompilerError(
+                    "structure descriptor production exit source document "
+                    "path is duplicated"
+                )
+            production_exit_source_hashes[normalized_path] = str(
+                source["sha256"]
+            )
+        production_exit_source_paths = set(production_exit_source_hashes)
+
+    def require_production_exit_source(source_ini: object) -> bool:
+        return (
+            isinstance(source_ini, str)
+            and bool(source_ini)
+            and source_ini.replace("\\", "/").casefold()
+            in production_exit_source_paths
+        )
+
+    for row in production_exit_updates:
+        if (
+            not isinstance(row, Mapping)
+            or set(row)
+            != {
+                "module",
+                "unitCreatePoint",
+                "naturalRallyPoint",
+                "exitDelay",
+                "allowAirborneCreation",
+                "initialBurst",
+                "deferredFields",
+                "runtimeStatus",
+                "sourceIni",
+                "line",
+            }
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor production exit update row is invalid"
+            )
+        for field_name in ("unitCreatePoint", "naturalRallyPoint"):
+            field = row.get(field_name)
+            coordinates = (
+                field.get("value") if isinstance(field, Mapping) else None
+            )
+            authored_coordinates: Mapping[str, float] | None = None
+            if (
+                isinstance(field, Mapping)
+                and isinstance(field.get("authored"), str)
+                and field.get("authored")
+            ):
+                try:
+                    authored_coordinates = _queue_exit_coord_values(
+                        str(field["authored"]),
+                        f"structure descriptor {field_name}",
+                    )
+                except PlayableStructureCompilerError:
+                    authored_coordinates = None
+            if (
+                not isinstance(field, Mapping)
+                or (
+                    set(field)
+                    not in (
+                        {"authored", "value", "defaulted"},
+                        {"authored", "value", "sourceIni", "line"},
+                    )
+                )
+                or not isinstance(field.get("authored"), str)
+                or not isinstance(coordinates, Mapping)
+                or set(coordinates) != {"x", "y", "z"}
+                or any(
+                    not isinstance(coordinates[axis], float)
+                    for axis in ("x", "y", "z")
+                )
+                or (
+                    "defaulted" in field
+                    and field.get("defaulted") is not True
+                )
+                or (
+                    field.get("defaulted") is True
+                    and (
+                        field.get("authored") != ""
+                        or dict(coordinates)
+                        != {"x": 0.0, "y": 0.0, "z": 0.0}
+                    )
+                )
+                or (
+                    "defaulted" not in field
+                    and (
+                        not field.get("authored")
+                        or authored_coordinates is None
+                        or any(
+                            float(coordinates[axis])
+                            != float(authored_coordinates[axis])
+                            for axis in ("x", "y", "z")
+                        )
+                        or not require_production_exit_source(
+                            field.get("sourceIni")
+                        )
+                        or not isinstance(field.get("line"), int)
+                        or isinstance(field.get("line"), bool)
+                        or int(field["line"]) <= 0
+                    )
+                )
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor production exit coordinate is invalid"
+                )
+        for field_name, value_type in (
+            ("exitDelay", int),
+            ("initialBurst", int),
+            ("allowAirborneCreation", bool),
+        ):
+            field = row.get(field_name)
+            authored_unsigned_matches = True
+            if isinstance(field, Mapping) and value_type is int:
+                authored = field.get("authored")
+                stored = field.get("value")
+                resolved_define = field.get("resolvedDefine")
+                if (
+                    isinstance(authored, str)
+                    and re.fullmatch(r"[0-9]+", authored)
+                ):
+                    authored_unsigned_matches = (
+                        resolved_define is None
+                        and not isinstance(stored, bool)
+                        and isinstance(stored, int)
+                        and int(authored) == stored
+                    )
+                elif (
+                    isinstance(authored, str)
+                    and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", authored)
+                    and isinstance(resolved_define, Mapping)
+                ):
+                    authored_unsigned_matches = (
+                        set(resolved_define) == {"name", "value"}
+                        and resolved_define.get("name") == authored
+                        and not isinstance(resolved_define.get("value"), bool)
+                        and isinstance(resolved_define.get("value"), int)
+                        and resolved_define.get("value") == stored
+                    )
+                else:
+                    authored_unsigned_matches = False
+            if (
+                not isinstance(field, Mapping)
+                or (
+                    set(field)
+                    not in (
+                        (
+                            {"authored", "value", "defaulted", "unit"}
+                            if field_name == "exitDelay"
+                            else {"authored", "value", "defaulted"}
+                        ),
+                        (
+                            {"authored", "value", "sourceIni", "line", "unit"}
+                            if field_name == "exitDelay"
+                            else {"authored", "value", "sourceIni", "line"}
+                        ),
+                        (
+                            {
+                                "authored",
+                                "value",
+                                "sourceIni",
+                                "line",
+                                "unit",
+                                "resolvedDefine",
+                            }
+                            if field_name == "exitDelay"
+                            else {
+                                "authored",
+                                "value",
+                                "sourceIni",
+                                "line",
+                                "resolvedDefine",
+                            }
+                        ),
+                    )
+                )
+                or not isinstance(field.get("authored"), str)
+                or (
+                    value_type is int
+                    and (
+                        not isinstance(field.get("value"), int)
+                        or isinstance(field.get("value"), bool)
+                    )
+                )
+                or (
+                    value_type is bool
+                    and not isinstance(field.get("value"), bool)
+                )
+                or (
+                    "defaulted" in field
+                    and field.get("defaulted") is not True
+                )
+                or (value_type is bool and "resolvedDefine" in field)
+                or not authored_unsigned_matches
+                or (
+                    value_type is int
+                    and (
+                        isinstance(field.get("value"), bool)
+                        or int(field["value"]) < 0
+                        or int(field["value"]) > 4_294_967_295
+                    )
+                )
+                or (
+                    field_name == "exitDelay"
+                    and field.get("unit") != "milliseconds"
+                )
+                or (
+                    field_name != "exitDelay"
+                    and "unit" in field
+                )
+                or (
+                    field.get("defaulted") is True
+                    and (
+                        (
+                            field_name == "allowAirborneCreation"
+                            and (
+                                field.get("authored") != "No"
+                                or field.get("value") is not False
+                            )
+                        )
+                        or (
+                            field_name != "allowAirborneCreation"
+                            and (
+                                field.get("authored") != "0"
+                                or int(field.get("value", -1)) != 0
+                            )
+                        )
+                    )
+                )
+                or (
+                    "defaulted" not in field
+                    and (
+                        not field.get("authored")
+                        or (
+                            field_name == "allowAirborneCreation"
+                            and (
+                                str(field.get("authored", ""))
+                                .strip()
+                                .casefold()
+                                not in {"yes", "no"}
+                                or bool(field.get("value"))
+                                != (
+                                    str(field.get("authored", ""))
+                                    .strip()
+                                    .casefold()
+                                    == "yes"
+                                )
+                            )
+                        )
+                        or not require_production_exit_source(
+                            field.get("sourceIni")
+                        )
+                        or not isinstance(field.get("line"), int)
+                        or isinstance(field.get("line"), bool)
+                        or int(field["line"]) <= 0
+                    )
+                )
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor production exit scalar is invalid"
+                )
+        deferred_fields = row.get("deferredFields")
+        if not isinstance(deferred_fields, list):
+            raise PlayableStructureCompilerError(
+                "structure descriptor production exit deferred fields are invalid"
+            )
+        seen_deferred: set[str] = set()
+        for deferred in deferred_fields:
+            name = (
+                str(deferred.get("name", "")).casefold()
+                if isinstance(deferred, Mapping)
+                else ""
+            )
+            if (
+                not isinstance(deferred, Mapping)
+                or set(deferred)
+                != {"name", "authored", "sourceIni", "line", "reason"}
+                or name not in _QUEUE_EXIT_DEFERRED_FIELDS
+                or name in seen_deferred
+                or not isinstance(deferred.get("authored"), str)
+                or not deferred.get("authored")
+                or not require_production_exit_source(
+                    deferred.get("sourceIni")
+                )
+                or not isinstance(deferred.get("line"), int)
+                or isinstance(deferred.get("line"), bool)
+                or int(deferred["line"]) <= 0
+                or deferred.get("reason")
+                != "bfme-field-without-local-runtime-oracle"
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor production exit deferred field is invalid"
+                )
+            seen_deferred.add(name)
+        if (
+            row.get("module") != "QueueProductionExitUpdate"
+            or row.get("runtimeStatus") != "deferred"
+            or not require_production_exit_source(row.get("sourceIni"))
+            or not isinstance(row.get("line"), int)
+            or isinstance(row.get("line"), bool)
+            or int(row["line"]) <= 0
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor production exit update row is invalid"
+            )
+    module_contracts = gameplay.get("moduleContracts", [])
+    try:
+        validate_module_contracts(
+            module_contracts, label="structure descriptor"
+        )
+    except ModuleContractError as error:
+        raise PlayableStructureCompilerError(str(error)) from error
+    auto_deposit_updates = gameplay.get("autoDepositUpdates", [])
+    if not isinstance(auto_deposit_updates, list):
+        raise PlayableStructureCompilerError(
+            "structure descriptor auto-deposit updates are invalid"
+        )
+    auto_deposit_source_paths: set[str] = set()
+    if auto_deposit_updates:
+        source_documents = value.get("sourceDocuments")
+        if not isinstance(source_documents, list):
+            raise PlayableStructureCompilerError(
+                "structure descriptor auto-deposit source evidence is missing"
+            )
+        auto_deposit_source_paths = {
+            str(source.get("virtualPath", "")).replace("\\", "/").casefold()
+            for source in source_documents
+            if isinstance(source, Mapping)
+            and isinstance(source.get("sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", str(source.get("sha256")))
+        }
+
+    def require_auto_deposit_source(source_ini: object) -> bool:
+        return (
+            isinstance(source_ini, str)
+            and bool(source_ini)
+            and source_ini.replace("\\", "/").casefold()
+            in auto_deposit_source_paths
+        )
+
+    def valid_auto_deposit_integer(
+        field: object, *, unsigned: bool = False
+    ) -> bool:
+        if not isinstance(field, Mapping):
+            return False
+        allowed = (
+            {"authored", "value", "defaulted"},
+            {"authored", "value", "sourceIni", "line"},
+            {
+                "authored",
+                "value",
+                "sourceIni",
+                "line",
+                "resolvedDefine",
+            },
+        )
+        if set(field) not in allowed:
+            return False
+        value_field = field.get("value")
+        if not isinstance(value_field, int) or isinstance(value_field, bool):
+            return False
+        if unsigned:
+            if not 0 <= value_field <= 4_294_967_295:
+                return False
+        elif not -2_147_483_648 <= value_field <= 2_147_483_647:
+            return False
+        if field.get("defaulted") is True:
+            return (
+                set(field) == {"authored", "value", "defaulted"}
+                and field.get("authored") == str(value_field)
+            )
+        if (
+            not isinstance(field.get("authored"), str)
+            or not field.get("authored")
+            or not require_auto_deposit_source(field.get("sourceIni"))
+            or not isinstance(field.get("line"), int)
+            or isinstance(field.get("line"), bool)
+            or int(field["line"]) <= 0
+        ):
+            return False
+        authored = str(field["authored"]).strip()
+        if re.fullmatch(r"[+-]?[0-9]+", authored):
+            return "resolvedDefine" not in field and int(authored) == value_field
+        resolved = field.get("resolvedDefine")
+        return (
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", authored) is not None
+            and isinstance(resolved, Mapping)
+            and set(resolved) == {"name", "value"}
+            and resolved.get("name") == authored
+            and resolved.get("value") == value_field
+        )
+
+    for row in auto_deposit_updates:
+        if (
+            not isinstance(row, Mapping)
+            or set(row)
+            != {
+                "module",
+                "depositTiming",
+                "depositAmount",
+                "initialCaptureBonus",
+                "actualMoney",
+                "upgradedBoosts",
+                "deferredFields",
+                "runtimeStatus",
+                "sourceIni",
+                "line",
+            }
+            or row.get("module") != "AutoDepositUpdate"
+            or row.get("runtimeStatus") not in {"executable", "deferred"}
+            or not require_auto_deposit_source(row.get("sourceIni"))
+            or not isinstance(row.get("line"), int)
+            or isinstance(row.get("line"), bool)
+            or int(row["line"]) <= 0
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor auto-deposit update row is invalid"
+            )
+        timing = row.get("depositTiming")
+        if (
+            not isinstance(timing, Mapping)
+            or set(timing)
+            not in (
+                {
+                    "authored",
+                    "value",
+                    "defaulted",
+                    "unit",
+                    "simulationTicks",
+                },
+                {
+                    "authored",
+                    "value",
+                    "sourceIni",
+                    "line",
+                    "unit",
+                    "simulationTicks",
+                },
+                {
+                    "authored",
+                    "value",
+                    "sourceIni",
+                    "line",
+                    "resolvedDefine",
+                    "unit",
+                    "simulationTicks",
+                },
+            )
+            or timing.get("unit") != "milliseconds"
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor auto-deposit timing is invalid"
+            )
+        timing_integer = dict(timing)
+        timing_integer.pop("unit")
+        simulation_ticks = timing_integer.pop("simulationTicks", None)
+        if (
+            not valid_auto_deposit_integer(timing_integer, unsigned=True)
+            or not isinstance(simulation_ticks, int)
+            or isinstance(simulation_ticks, bool)
+            or simulation_ticks
+            != (
+                (int(timing["value"]) + 99) // 100
+                if int(timing["value"]) > 0
+                else 0
+            )
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor auto-deposit timing is invalid"
+            )
+        if not valid_auto_deposit_integer(row.get("depositAmount")) or not valid_auto_deposit_integer(
+            row.get("initialCaptureBonus")
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor auto-deposit amount is invalid"
+            )
+        for default_field, expected_value in (
+            (timing, 0),
+            (row.get("depositAmount"), 0),
+            (row.get("initialCaptureBonus"), 0),
+        ):
+            if (
+                isinstance(default_field, Mapping)
+                and default_field.get("defaulted") is True
+                and (
+                    default_field.get("value") != expected_value
+                    or default_field.get("authored") != str(expected_value)
+                )
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor auto-deposit default is invalid"
+                )
+        actual_money = row.get("actualMoney")
+        if not isinstance(actual_money, Mapping) or set(actual_money) not in (
+            {"authored", "value", "defaulted"},
+            {"authored", "value", "sourceIni", "line"},
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor auto-deposit ActualMoney is invalid"
+            )
+        if (
+            not isinstance(actual_money.get("value"), bool)
+            or str(actual_money.get("authored", "")).strip().casefold()
+            not in {"yes", "no"}
+            or bool(actual_money["value"])
+            != (str(actual_money["authored"]).strip().casefold() == "yes")
+            or (
+                actual_money.get("defaulted") is True
+                and (
+                    set(actual_money) != {"authored", "value", "defaulted"}
+                    or actual_money.get("authored") != "Yes"
+                    or actual_money.get("value") is not True
+                )
+            )
+            or (
+                "defaulted" not in actual_money
+                and (
+                    not require_auto_deposit_source(
+                        actual_money.get("sourceIni")
+                    )
+                    or not isinstance(actual_money.get("line"), int)
+                    or isinstance(actual_money.get("line"), bool)
+                    or int(actual_money["line"]) <= 0
+                )
+            )
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor auto-deposit ActualMoney is invalid"
+            )
+        boosts = row.get("upgradedBoosts")
+        if not isinstance(boosts, list):
+            raise PlayableStructureCompilerError(
+                "structure descriptor auto-deposit boosts are invalid"
+            )
+        for boost in boosts:
+            if (
+                not isinstance(boost, Mapping)
+                or set(boost)
+                != {
+                    "upgradeId",
+                    "upgradeType",
+                    "upgradeAttestation",
+                    "boost",
+                    "authored",
+                    "sourceIni",
+                    "line",
+                }
+                or not isinstance(boost.get("upgradeId"), str)
+                or not boost.get("upgradeId")
+                or boost.get("upgradeType") != "PLAYER"
+                or not isinstance(boost.get("upgradeAttestation"), Mapping)
+                or not isinstance(boost.get("boost"), int)
+                or isinstance(boost.get("boost"), bool)
+                or _AUTO_DEPOSIT_UPGRADE_PAIR_PATTERN.fullmatch(
+                    str(boost.get("authored", ""))
+                )
+                is None
+                or not require_auto_deposit_source(boost.get("sourceIni"))
+                or not isinstance(boost.get("line"), int)
+                or isinstance(boost.get("line"), bool)
+                or int(boost["line"]) <= 0
+                or UPGRADE_PATH.casefold() not in auto_deposit_source_paths
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor auto-deposit boost is invalid"
+                )
+            authored_match = _AUTO_DEPOSIT_UPGRADE_PAIR_PATTERN.fullmatch(
+                str(boost["authored"])
+            )
+            attestation = boost["upgradeAttestation"]
+            attested_source_hashes = {
+                str(source.get("sha256", ""))
+                for source in value.get("sourceDocuments", [])
+                if isinstance(source, Mapping)
+                and str(source.get("virtualPath", ""))
+                .replace("\\", "/")
+                .casefold()
+                == UPGRADE_PATH.casefold()
+            }
+            if (
+                authored_match is None
+                or authored_match.group(1) != boost["upgradeId"]
+                or int(authored_match.group(2)) != boost["boost"]
+                or set(attestation)
+                != {
+                    "upgradeId",
+                    "upgradeType",
+                    "sourceIni",
+                    "sourceSha256",
+                }
+                or attestation.get("upgradeId") != boost["upgradeId"]
+                or attestation.get("upgradeType") != "PLAYER"
+                or str(attestation.get("sourceIni", "")).casefold()
+                != UPGRADE_PATH.casefold()
+                or attestation.get("sourceSha256") not in attested_source_hashes
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor auto-deposit boost projection is invalid"
+                )
+        deferred = row.get("deferredFields")
+        if not isinstance(deferred, list):
+            raise PlayableStructureCompilerError(
+                "structure descriptor auto-deposit deferred fields are invalid"
+            )
+        for field in deferred:
+            if (
+                not isinstance(field, Mapping)
+                or set(field)
+                != {"name", "authored", "sourceIni", "line", "reason"}
+                or str(field.get("name", "")).casefold()
+                not in _AUTO_DEPOSIT_DEFERRED_FIELDS
+                or not isinstance(field.get("authored"), str)
+                or not field.get("authored")
+                or not require_auto_deposit_source(field.get("sourceIni"))
+                or not isinstance(field.get("line"), int)
+                or isinstance(field.get("line"), bool)
+                or int(field["line"]) <= 0
+                or field.get("reason")
+                != "bfme-field-without-local-runtime-oracle"
+            ):
+                raise PlayableStructureCompilerError(
+                    "structure descriptor auto-deposit deferred field is invalid"
+                )
+        if (row.get("runtimeStatus") == "executable") != (not deferred):
+            raise PlayableStructureCompilerError(
+                "structure descriptor auto-deposit runtime status is invalid"
+            )
+    inherit_upgrades = gameplay.get("inheritUpgradesOnCreate", [])
+    if not isinstance(inherit_upgrades, list):
+        raise PlayableStructureCompilerError(
+            "structure descriptor inherited upgrades are invalid"
+        )
+    for row in inherit_upgrades:
+        radius = row.get("radius") if isinstance(row, Mapping) else None
+        if (
+            not isinstance(row, Mapping)
+            or not isinstance(radius, Mapping)
+            or not isinstance(radius.get("authored"), str)
+            or not radius.get("authored")
+            or not isinstance(radius.get("value"), (int, float))
+            or isinstance(radius.get("value"), bool)
+            or float(radius["value"]) <= 0.0
+            or not isinstance(row.get("upgradeId"), str)
+            or not row.get("upgradeId")
+            or row.get("upgradeType") != "OBJECT"
+            or not isinstance(row.get("sourceObjectId"), str)
+            or not row.get("sourceObjectId")
+            or row.get("objectFilter")
+            != "ANY +%s" % row.get("sourceObjectId")
+            or row.get("module") != "InheritUpgradeCreate"
+            or not isinstance(row.get("sourceIni"), str)
+            or not row.get("sourceIni")
+            or not isinstance(row.get("line"), int)
+            or isinstance(row.get("line"), bool)
+            or int(row["line"]) <= 0
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor inherited upgrade row is invalid"
+            )
+    if inherit_upgrades:
+        source_documents = value.get("sourceDocuments")
+        if not isinstance(source_documents, list):
+            raise PlayableStructureCompilerError(
+                "structure descriptor inherited upgrade sources are invalid"
+            )
+        source_paths = {
+            str(row.get("virtualPath", "")).replace("\\", "/").casefold()
+            for row in source_documents
+            if isinstance(row, Mapping)
+            and isinstance(row.get("sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", str(row.get("sha256")))
+        }
+        if UPGRADE_PATH.casefold() not in source_paths or any(
+            str(row["sourceIni"]).replace("\\", "/").casefold()
+            not in source_paths
+            for row in inherit_upgrades
+        ):
+            raise PlayableStructureCompilerError(
+                "structure descriptor inherited upgrade source evidence is missing"
+            )
 
 
 __all__ = [

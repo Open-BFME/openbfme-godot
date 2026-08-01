@@ -51,6 +51,7 @@ func _run() -> void:
 	_sim_cast_checks(doc)
 	_sim_effect_casts(doc)
 	_sim_economy_checks(doc)
+	_command_points_upgrade_checks(doc)
 	_sim_pause_checks(doc)
 	_sim_ui_state_checks(doc)
 	_per_faction_checks(content_db)
@@ -107,6 +108,39 @@ func _sim_tree_checks(doc: Dictionary) -> void:
 	damaged_sim.configure_spellbook_runtime(damaged)
 	var damaged_row: Dictionary = damaged_sim.spellbook_power("SpellBookArrowVolleyGood")
 	_check("missing_weapon_leaf_relocks_with_gap", not bool(damaged_row.get("castable", true)) and String(damaged_row.get("locked_reason", "")).contains("ArrowVolleyOneWeapon"), String(damaged_row.get("locked_reason", "")))
+	# A rehashed/manufactured summon leaf must not invent gameplay lock state
+	# without the compiler's exact module provenance.
+	var unproven_lock_doc: Dictionary = doc.duplicate(true)
+	var unproven_objects: Array = (
+		(
+			(unproven_lock_doc.get("registration", {}) as Dictionary).get(
+				"leaves", {}
+			) as Dictionary
+		).get("objects", []) as Array
+	)
+	for object_value in unproven_objects:
+		var object_leaf := object_value as Dictionary
+		if String(object_leaf.get("id", "")) == "RohanFrodo_Summoned":
+			object_leaf["weaponSlot"] = "PRIMARY"
+			object_leaf["permanentWeaponLocks"] = [{
+				"slot": "PRIMARY",
+				"state": "LOCKED_PERMANENTLY",
+				"module": "LockWeaponCreate",
+				"line": 1,
+			}]
+	var unproven_lock_sim = SimScript.new()
+	unproven_lock_sim.configure_spellbook_runtime(unproven_lock_doc)
+	var unproven_hobbits: Dictionary = unproven_lock_sim.spellbook_power(
+		"SpellBookHobbitAllies"
+	)
+	_check(
+		"unproven_summon_weapon_lock_relocks_with_gap",
+		not bool(unproven_hobbits.get("castable", true))
+			and String(unproven_hobbits.get("locked_reason", "")).contains(
+				"permanent weapon lock"
+			),
+		String(unproven_hobbits.get("locked_reason", ""))
+	)
 	damaged_sim.setup({}, _rules())
 	damaged_sim.team_power_points[0] = 30
 	damaged_sim.purchase_power(0, "SpellBookHeal")
@@ -330,6 +364,99 @@ func _earthquake_checks(doc: Dictionary) -> void:
 	_check("earthquake_damages_enemy_battalion", int(sim.entity(101).get("health", 0)) < enemy_health_before, "%d < %d" % [int(sim.entity(101).get("health", 0)), enemy_health_before])
 
 
+func _command_points_upgrade_checks(doc: Dictionary) -> void:
+	var upgraded_doc := doc.duplicate(true)
+	var spell_book: Dictionary = (
+		(upgraded_doc.get("registration", {}) as Dictionary).get(
+			"spellBook", {}
+		) as Dictionary
+	)
+	spell_book["commandPointsUpgrade"] = {
+		"triggeredBy": "Upgrade_MarketplaceUpgradeGrandHarvest",
+		"commandPoints": 100,
+		"requiredObject": "NONE +GondorMarketPlace",
+		"module": "CommandPointsUpgrade",
+		"sourceIni": "data/ini/object/system/system.ini",
+		"line": 989,
+	}
+	var malformed_doc := upgraded_doc.duplicate(true)
+	(
+		(malformed_doc["registration"] as Dictionary)["spellBook"] as Dictionary
+	)["commandPointsUpgrade"]["commandPoints"] = "100"
+	var malformed_sim = SimScript.new()
+	_check(
+		"command_points_upgrade_rejects_string_points",
+		not malformed_sim.configure_spellbook_runtime(malformed_doc)
+	)
+	var sim = SimScript.new()
+	var rules := _rules()
+	rules["producer_kind_registry"] = {
+		"GondorMarketPlace": "marketplace",
+	}
+	_check(
+		"command_points_upgrade_configures",
+		sim.configure_spellbook_runtime(upgraded_doc)
+	)
+	sim.setup({}, rules)
+	var base_total := sim.command_point_total_for_team(0)
+	var base_maximum := sim.command_point_maximum_for_team(0)
+	var owned: Dictionary = sim.team_upgrades.get(0, {}) as Dictionary
+	owned["Upgrade_MarketplaceUpgradeGrandHarvest"] = sim.tick_index
+	sim.team_upgrades[0] = owned
+	_check(
+		"grand_harvest_without_marketplace_does_not_raise_command_points",
+		sim.command_point_total_for_team(0) == base_total
+			and sim.command_point_maximum_for_team(0) == base_maximum
+	)
+	sim.structures[990] = {
+		"id": 990,
+		"team": 0,
+		"structure_kind": "marketplace",
+		"health": 100,
+	}
+	_check(
+		"grand_harvest_with_living_marketplace_adds_exactly_100_command_points",
+		sim.command_point_total_for_team(0) == base_total + 100
+			and sim.command_point_maximum_for_team(0) == base_maximum + 100
+	)
+	var adopter = SimScript.new()
+	_check(
+		"command_points_upgrade_survives_snapshot_adoption",
+		adopter.restore(sim.snapshot())
+			and adopter.state_hash() == sim.state_hash()
+			and adopter.command_point_total_for_team(0) == base_total + 100
+			and adopter.command_point_maximum_for_team(0) == base_maximum + 100
+	)
+	(sim.structures[990] as Dictionary)["health"] = 0
+	_check(
+		"destroyed_marketplace_removes_command_points_upgrade",
+		sim.command_point_total_for_team(0) == base_total
+			and sim.command_point_maximum_for_team(0) == base_maximum
+	)
+	var enemy_base := sim.command_point_total_for_team(1)
+	var enemy_owned: Dictionary = sim.team_upgrades.get(1, {}) as Dictionary
+	enemy_owned["Upgrade_MarketplaceUpgradeGrandHarvest"] = sim.tick_index
+	sim.team_upgrades[1] = enemy_owned
+	sim.structures[991] = {
+		"id": 991,
+		"team": 1,
+		"structure_kind": "marketplace",
+		"health": 100,
+	}
+	_check(
+		"command_points_upgrade_is_team_local",
+		sim.command_point_total_for_team(0) == base_total
+			and sim.command_point_total_for_team(1) == enemy_base + 100
+	)
+	(sim.structures[990] as Dictionary)["health"] = 100
+	_check(
+		"script_command_point_override_keeps_precedence",
+		sim.override_command_points_for_team(0, 73, 91)
+			and sim.command_point_total_for_team(0) == 73
+			and sim.command_point_maximum_for_team(0) == 91
+	)
+
+
 func _summon_checks(doc: Dictionary) -> void:
 	# Rohan Allies: five hordes of five with converted stats and the lifetime.
 	var rohan_sim = _effect_sim(doc)
@@ -375,7 +502,57 @@ func _summon_checks(doc: Dictionary) -> void:
 			dun_ok = false
 	_check("dunedain_hordes_carry_converted_stats", dun_ok, str(dun_spawned.size()))
 	# Tom Bombadil: one hero with converted punch and 60s lifetime.
-	var tom_sim = _effect_sim(doc)
+	var ranked_tom_doc: Dictionary = doc.duplicate(true)
+	var ranked_tom_leaf_found := false
+	var ranked_tom_objects: Array = (
+		(
+			(ranked_tom_doc.get("registration", {}) as Dictionary).get(
+				"leaves", {}
+			) as Dictionary
+		).get("objects", []) as Array
+	)
+	for object_value in ranked_tom_objects:
+		var object_leaf := object_value as Dictionary
+		if String(object_leaf.get("id", "")).to_lower().contains("tombombadil"):
+			object_leaf["experienceLevelCreate"] = {
+				"rank": 10,
+				"mpOnly": false,
+				"module": "ExperienceLevelCreate",
+				"sourceIni": "data/ini/object/goodfaction/generic/tombombadil.ini",
+				"line": 474,
+			}
+			object_leaf["experience"] = {
+				"status": "compiled",
+				"sourceIni": "data/ini/experiencelevels.ini",
+				"initialRank": 10,
+				"maxLevel": 10,
+				"targetCount": 1,
+				"modifierApplication": "cumulative-per-level",
+				"experienceLevelCreate": object_leaf["experienceLevelCreate"],
+				"levels": [{
+					"experienceId": "TomBombadilLevel10",
+					"rank": 10,
+					"requiredExperience": 1,
+					"experienceAwardStatus": "unauthored",
+					"line": 1,
+					"attributeModifiers": [{
+						"id": "FixtureCreationRankBonus",
+						"modifiers": [
+							{"kind": "HEALTH", "value": 80, "application": "additive"},
+							{"kind": "DAMAGE_ADD", "value": 40, "application": "additive"},
+						],
+						"sourceIni": "data/ini/attributemodifier.ini",
+						"category": "LEVEL",
+					}],
+					"upgrades": [
+						"Upgrade_ObjectLevel1", "Upgrade_ObjectLevel2", "Upgrade_ObjectLevel3",
+						"Upgrade_ObjectLevel4", "Upgrade_ObjectLevel5",
+					],
+				}],
+			}
+			ranked_tom_leaf_found = true
+	_check("tom_bombadil_creation_rank_leaf_found", ranked_tom_leaf_found)
+	var tom_sim = _effect_sim(ranked_tom_doc)
 	tom_sim.purchase_power(0, "SpellBookHeal")
 	tom_sim.purchase_power(0, "SpellBookRallyingCall")
 	tom_sim.purchase_power(0, "SpellBookTomBombadil")
@@ -386,7 +563,13 @@ func _summon_checks(doc: Dictionary) -> void:
 	var tom_ok := tom_spawned.size() == 1
 	if tom_ok:
 		var tom: Dictionary = tom_sim.entity(int(tom_spawned[0]))
-		tom_ok = int(tom.get("member_maximum_health", 0)) == 5000 and int(tom.get("member_damage", 0)) == 200 and String(tom.get("category", "")) == "hero"
+		tom_ok = (
+			int(tom.get("member_maximum_health", 0)) == 5080
+			and int(tom.get("member_damage", 0)) == 240
+			and String(tom.get("category", "")) == "hero"
+			and int(tom.get("level", 0)) == 10
+			and (tom.get("applied_upgrades", {}) as Dictionary).size() == 5
+		)
 	_check("tom_bombadil_carries_converted_stats", tom_ok)
 	# Hobbits: three hordes plus Sam, Frodo, and Merry as single units.
 	var hob_sim = _effect_sim(doc)
@@ -399,6 +582,22 @@ func _summon_checks(doc: Dictionary) -> void:
 		hob_sim.tick()
 	var hob_spawned: Array = _last_power_event(hob_sim, "power.summon").get("spawned", [])
 	_check("hobbits_hatch_horde_and_named_friends", hob_spawned.size() == 7, str(hob_spawned.size()))
+	var frodo_lock_ok := false
+	for entity_id_value in hob_spawned:
+		var hobbit: Dictionary = hob_sim.entity(int(entity_id_value))
+		if String(hobbit.get("object_id", "")).to_lower().contains("frodo"):
+			frodo_lock_ok = (
+				hobbit.get("permanent_weapon_locks", []) == ["primary"]
+				and String(
+					((hobbit.get("weapon_modes", {}) as Dictionary).get(
+						String(hobbit.get("active_weapon_mode", "default")), {}
+					) as Dictionary).get("weapon_slot", "")
+				) == "primary"
+			)
+	_check(
+		"hobbit_allies_frodo_spawns_with_permanent_primary_weapon_lock",
+		frodo_lock_ok
+	)
 	# Army of the Dead: six immortal-bodied hordes of sixteen, 45s lifetime.
 	var aod_sim = _effect_sim(doc)
 	aod_sim.purchase_power(0, "SpellBookHeal")
@@ -832,7 +1031,9 @@ func _per_faction_checks(content_db) -> void:
 			"%s_spellbook_doc_resolves_from_own_pack" % faction.to_lower(),
 			not doc.is_empty()
 				and String((doc.get("target", {}) as Dictionary).get("faction", "")) == faction
-				and PackCapability.provides_faction(String(doc.get("_pack_root", ""), faction)),
+				and PackCapability.provides_faction(
+					String(doc.get("_pack_root", "")), faction
+				),
 			String(doc.get("_pack_root", "missing"))
 		)
 		if doc.is_empty():

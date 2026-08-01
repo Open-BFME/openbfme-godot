@@ -241,25 +241,37 @@ def _source_record(
     expected_sha256: str | None = None,
     expected_size: int | None = None,
 ) -> dict[str, Any]:
+    """Resolve a closure path against the effective-assets inventory.
+
+    Layered RotWK extracts can mix path casings across overlay layers
+    (``art/...`` vs ``Art/...``). The inventory key is the authority: when the
+    only difference is case, rewrite to the manifest path rather than failing
+    the whole map binding. True absence still fails closed.
+    """
     source = sources.get(virtual_path)
+    resolved_path = virtual_path
     if source is None:
         folded_matches = [
             path for path in sources if path.casefold() == virtual_path.casefold()
         ]
-        if folded_matches:
+        if len(folded_matches) == 1:
+            resolved_path = folded_matches[0]
+            source = sources[resolved_path]
+        elif len(folded_matches) > 1:
             raise ValueError(
-                "closure path case does not match effective-assets manifest: "
-                f"{virtual_path!r} != {folded_matches[0]!r}"
+                "closure path matches multiple case-colliding effective-assets "
+                f"entries: {virtual_path!r} -> {folded_matches!r}"
             )
-        raise ValueError(
-            f"closure source is absent from effective-assets manifest: {virtual_path}"
-        )
+        else:
+            raise ValueError(
+                f"closure source is absent from effective-assets manifest: {virtual_path}"
+            )
     if expected_sha256 is not None and source["sha256"] != expected_sha256:
-        raise ValueError(f"closure source SHA-256 mismatch: {virtual_path}")
+        raise ValueError(f"closure source SHA-256 mismatch: {resolved_path}")
     if expected_size is not None and source["size"] != expected_size:
-        raise ValueError(f"closure source byte length mismatch: {virtual_path}")
+        raise ValueError(f"closure source byte length mismatch: {resolved_path}")
     return {
-        "virtualPath": virtual_path,
+        "virtualPath": resolved_path,
         "byteLength": source["size"],
         "sha256": source["sha256"],
         "source": {

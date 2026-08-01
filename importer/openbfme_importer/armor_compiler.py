@@ -493,13 +493,48 @@ def _weapon_projectile_nuggets(
     return next(iter(semantic.values())) if len(semantic) == 1 else None
 
 
-def _damage_scalars(fields: Mapping[str, object]) -> list[dict[str, object]]:
+def _damage_scalar_percent(
+    token: str,
+    constants: Mapping[str, int | float],
+    *,
+    context: str,
+) -> float:
+    """Resolve one DamageScalar magnitude as a percentage number (e.g. 30.0).
+
+    Retail authors both literal ``30%`` tokens and GameData ``#define`` names
+    whose bodies are percent literals (``#define FIRE_ARROW_SCALAR_... 30%``).
+    Percent defines are stored under the reserved ``name%`` key as fractions
+    (0.30); convert back to the same percent scale ``_percent`` returns.
+    """
+    text = token.strip()
+    if text.endswith("%"):
+        return _percent(text, context=context)
+    key = text.casefold()
+    percent_key = key + "%"
+    if percent_key in constants:
+        return float(constants[percent_key]) * 100.0
+    if key in constants:
+        # Non-percent numeric define used as a scalar — refuse; DamageScalar
+        # must carry percent semantics.
+        raise ArmorCompilerError(
+            f"{context} references non-percent GameData constant: {token!r}"
+        )
+    raise ArmorCompilerError(f"{context} is not a percentage: {token!r}")
+
+
+def _damage_scalars(
+    fields: Mapping[str, object],
+    constants: Mapping[str, int | float] | None = None,
+) -> list[dict[str, object]]:
+    constants = constants or {}
     scalars: list[dict[str, object]] = []
     for row in fields.get("damagescalar", ()):
         parts = str(row.get("expression", "")).split(None, 1)
         if not parts:
             continue
-        percent = _percent(parts[0], context="DamageScalar")
+        percent = _damage_scalar_percent(
+            parts[0], constants, context="DamageScalar"
+        )
         scalars.append(
             {
                 "percent": percent,
@@ -538,7 +573,7 @@ def _nugget_contract(
     }
     if len(damage_types) == 1:
         contract["damageType"] = next(iter(damage_types.values()))
-    scalars = _damage_scalars(fields)
+    scalars = _damage_scalars(fields, constants)
     if scalars:
         contract["damageScalars"] = scalars
     for gate_key in ("requiredupgradenames", "forbiddenupgradenames"):
@@ -674,7 +709,7 @@ def _weapon_damage_contract(
         fields = nugget["fields"]
         if fields.get("requiredupgradenames") or fields.get("forbiddenupgradenames"):
             continue
-        scalars.extend(_damage_scalars(fields))
+        scalars.extend(_damage_scalars(fields, constants))
     if scalars:
         contract["damageScalars"] = scalars
     return contract
@@ -802,10 +837,11 @@ def compile_weapon_upgrades(
         for behavior in _behavior_blocks(lineage, "WeaponSetUpgrade"):
             trigger = _behavior_assignment(behavior, "TriggeredBy")
             if trigger is None or not _tokens(trigger.value):
-                raise ArmorCompilerError(
-                    f"WeaponSetUpgrade at {behavior.source_virtual_path}:"
-                    f"{behavior.line} has no unique TriggeredBy"
-                )
+                # Retail leaves anim-only WeaponSetUpgrade shells with the
+                # TriggeredBy line commented out (NoldorWarrior USER_4/USER_5
+                # flags). Those modules do not gate a damage effect; skip them
+                # rather than inventing a trigger or failing closed on dead code.
+                continue
             upgrade_id = _tokens(trigger.value)[-1]
             behavior_row = {
                 "kind": "WeaponSetUpgrade",
@@ -898,11 +934,25 @@ def compile_weapon_upgrades(
                     if len(unique_effects) == 1:
                         _, chosen = next(iter(unique_effects.values()))
                 if chosen is None:
-                    raise ArmorCompilerError(
-                        f"WeaponSetUpgrade '{upgrade_id}' has no unique "
-                        f"upgrade-gated effect across weapons "
-                        f"{list(base_weapon_ids)}: {'; '.join(failures)}"
+                    # Empty WeaponSetUpgrade shells that only gate production
+                    # legality when base WeaponSets already author the upgraded
+                    # weapons under both None and PLAYER_UPGRADE (NoldorWarrior
+                    # silverthorn bows). Record the no-damage marker rather than
+                    # inventing a warhead or failing closed on dead damage path.
+                    entry.update(
+                        {
+                            "kind": "production-legality",
+                            "semantic": (
+                                "WeaponSetUpgrade authors no damage delta; "
+                                "base WeaponSets already carry the upgraded "
+                                f"weapons {list(base_weapon_ids)}"
+                            ),
+                            "unresolvedEffectNotes": list(failures),
+                        }
                     )
+                    by_upgrade_id[upgrade_id.casefold()] = entry
+                    upgrades.append(entry)
+                    continue
                 entry.update(chosen)
                 if alternates:
                     entry["excludedAlternates"] = alternates

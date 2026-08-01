@@ -22,7 +22,7 @@ from .faction_policy import (
     source_null_mapped_image_textures,
 )
 from .playable_unit_compiler import prepare_playable_unit_compiler
-from .playable_unit_import import FACTIONS, _source_documents
+from .playable_unit_import import FACTIONS, _REQUIRED_DOCUMENTS, _source_documents
 from .sage_string import MAX_STRING_BYTES, parse_string_catalog
 from .spellbook_compiler import compile_spellbook_descriptor
 from .spellbook_pack_compiler import (
@@ -35,6 +35,8 @@ from .util import write_json_atomic
 _REQUIRED_EXTRA_DOCUMENTS = (
     "data/ini/science.ini",
     "data/ini/specialpower.ini",
+    # Create-a-Hero powers referenced from shared command surfaces (Wild, etc.).
+    "data/ini/createaherospecialpowers.ini",
     "data/ini/objectcreationlist.ini",
     "data/ini/fxlist.ini",
     "data/ini/attributemodifier.ini",
@@ -44,27 +46,115 @@ _REQUIRED_EXTRA_DOCUMENTS = (
     "data/ini/emotions.ini",
 )
 
+# Unit + spellbook top-level INIs that must share one archive winner. Disk
+# effective-assets can concatenate multi-layer editions (per-unit BonusRank
+# names from base + thin patch files), while census and catalog.resolve_exact
+# use the highest-precedence archive only. Overlaying both experiencelevels
+# and attributemodifier (and the other shared unit INIs) keeps ExperienceLevel
+# AttributeModifiers resolvable against the same ModifierList set the game sees.
+_CATALOG_AUTHORITY_DOCUMENTS = tuple(
+    dict.fromkeys((*_REQUIRED_DOCUMENTS, *_REQUIRED_EXTRA_DOCUMENTS))
+)
 
-def spellbook_source_documents(effective_root: Path) -> dict[str, bytes]:
-    """Return the effective INI view required by the spellbook compilers."""
+_MAX_CATALOG_DOCUMENT_BYTES = 8_000_000
 
-    documents = _source_documents(effective_root)
-    for relative in _REQUIRED_EXTRA_DOCUMENTS:
-        path = effective_root.joinpath(*relative.split("/"))
-        if not path.is_file():
-            raise FileNotFoundError(f"effective retail source is missing: {relative}")
-        documents[relative] = path.read_bytes()
+
+def _catalog_winner_documents(catalog: InstallCatalog) -> dict[str, bytes]:
+    """Load Object + identity-critical top-level INIs from catalog winners.
+
+    Matches faction census document authority (highest-precedence archive per
+    virtual path). Disk effective-assets may hold multi-layer concatenations
+    that invent symbols (e.g. per-unit BonusRank lists, TERRAIN_CLAIM_RADIUS)
+    that no single archive winner authors.
+    """
+
+    documents: dict[str, bytes] = {}
+    # Object tree winners first (same selection rule as faction_census).
+    object_winners: dict[str, object] = {}
+    for entry in sorted(
+        catalog.entries,
+        key=lambda item: (
+            item.precedence,
+            item.archive.casefold(),
+            item.name.casefold(),
+        ),
+    ):
+        name = entry.name.replace("\\", "/")
+        folded = name.casefold()
+        if not folded.startswith("data/ini/object/"):
+            continue
+        if not folded.endswith((".ini", ".inc")):
+            continue
+        object_winners.setdefault(folded, entry)
+    for entry in object_winners.values():
+        name = entry.name.replace("\\", "/")
+        archive = catalog.open_archive_for(entry)
+        documents[name] = archive.read_entry(
+            catalog.as_entry(entry), max_bytes=_MAX_CATALOG_DOCUMENT_BYTES
+        )
+    for relative in _CATALOG_AUTHORITY_DOCUMENTS:
+        entry = catalog.resolve_exact(relative)
+        if entry is None:
+            continue
+        archive = catalog.open_archive_for(entry)
+        documents[relative] = archive.read_entry(
+            catalog.as_entry(entry), max_bytes=_MAX_CATALOG_DOCUMENT_BYTES
+        )
+    if not documents:
+        raise FileNotFoundError("catalog produced no INI documents for faction convert")
+    return documents
+
+
+def spellbook_source_documents(
+    effective_root: Path,
+    catalog: InstallCatalog | None = None,
+) -> dict[str, bytes]:
+    """Return the effective INI view required by the spellbook compilers.
+
+    When ``catalog`` is provided, Object definitions and identity-critical
+    top-level INIs are taken from catalog winners so ExperienceLevel
+    ModifierLists, science digests, weapons, and structures match the faction
+    census and install precedence. Disk effective-assets can lag or mix
+    editions; census authority is the install catalog.
+    """
+
+    if catalog is not None:
+        documents = _catalog_winner_documents(catalog)
+        # Optional disk-only extras (mod fragments, any required path catalog
+        # lacked) still fill gaps without overriding catalog winners.
+        for relative in _CATALOG_AUTHORITY_DOCUMENTS:
+            if relative in documents:
+                continue
+            path = effective_root.joinpath(*relative.split("/"))
+            if path.is_file():
+                documents[relative] = path.read_bytes()
+        for relative in _CATALOG_AUTHORITY_DOCUMENTS:
+            if relative not in documents:
+                raise FileNotFoundError(
+                    f"catalog and effective tree both miss: {relative}"
+                )
+    else:
+        documents = _source_documents(effective_root)
+        for relative in _REQUIRED_EXTRA_DOCUMENTS:
+            path = effective_root.joinpath(*relative.split("/"))
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"effective retail source is missing: {relative}"
+                )
+            documents[relative] = path.read_bytes()
     # RotWK 2.01 top-level inis pull data/ini/mod/*.inc patch fragments via
     # authored #include directives; the include expansion fails closed on a
     # missing target, so the fragments must ride the document view when the
     # edition ships them (BFME2 1.06 has no mod directory — view unchanged).
+    # Catalog winners already cover paths present in archives; disk mod/ fills
+    # any extract-only fragments without overriding catalog keys.
     mod_root = effective_root / "data" / "ini" / "mod"
     if mod_root.is_dir():
         for path in sorted(mod_root.rglob("*")):
             if path.is_file() and path.suffix.casefold() in {".inc", ".ini"}:
-                documents[path.relative_to(effective_root).as_posix()] = (
-                    path.read_bytes()
-                )
+                key = path.relative_to(effective_root).as_posix()
+                if key not in documents:
+                    documents[key] = path.read_bytes()
     return documents
 
 

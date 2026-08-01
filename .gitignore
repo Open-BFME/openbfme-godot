@@ -55,3 +55,10 @@ build/
 # hooks into `-c core.hooksPath=dev/null`). Salvaged from
 # claude/distracted-herschel-c99a60, whose only unique content this was.
 dev/null/
+
+# Session/oracle captures (local only; not product source)
+.captures/
+captures/
+game/.captures/
+game/.private/
+

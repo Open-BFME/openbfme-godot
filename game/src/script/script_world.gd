@@ -241,6 +241,16 @@ func _bind(facet: Facet) -> Facet:
 	return facet
 
 
+func _release_facets() -> void:
+	## Break world↔facet ownership before dropping this world (match end /
+	## scene change). Safe to call multiple times. Underscore-prefixed so the
+	## script-world surface probe does not treat it as product vocabulary.
+	for facet_value in _facets.values():
+		if facet_value != null and facet_value is Facet:
+			(facet_value as Facet).world = null
+	_facets.clear()
+
+
 func _facet(key: String, factory: Callable) -> Facet:
 	if not _facets.has(key):
 		_facets[key] = _bind(factory.call())
@@ -455,6 +465,13 @@ class Facet:
 	## methods it can serve; everything it does not override keeps refusing, by
 	## name, forever. There is no partial-implementation twilight state where a
 	## method exists but quietly does nothing.
+	##
+	## Strong back-ref to world is intentional while the world is live (facets
+	## are a cache owned by the world). Callers MUST release_facets() before
+	## dropping the last external world ref — otherwise world↔facet forms a
+	## RefCounted cycle that leaks and can AV on Windows scene teardown
+	## (null+0x58). WeakRef property was tried and rejected: GDScript get/set
+	## surface-enumerates extra methods and breaks the script-world probe.
 
 	var world: SageScriptWorld = null
 
@@ -565,7 +582,7 @@ class Players:
 		## WP01 SET_PLAYER_COMMAND_POINTS_USED_TO_COUNTER.
 		return _refuse_query("players.command_points_used")
 
-	func override_command_points(_player: String, _amount: int) -> bool:
+	func override_command_points(_player: String, _total: int, _maximum: int) -> bool:
 		## WP17 OVERRIDE_PLAYER_COMMAND_POINTS.
 		return _refuse_command("players.override_command_points")
 
@@ -865,11 +882,16 @@ class Teams:
 		return _refuse_command("teams.set_custom_state")
 
 	func threat(_team: String) -> SageWorldQuery:
-		## WP15 SET_COUNTER_TO_TEAM_THREAT.
+		## WP15 SET_COUNTER_TO_TEAM_THREAT (no-radius form / stored override).
 		return _refuse_query("teams.threat")
 
+	func threat_within_radius(_team: String, _radius: float) -> SageWorldQuery:
+		## WP09 TEAM_THREAT_LEVEL condition and SET_COUNTER_TO_TEAM_THREAT:
+		## enemy threat present within radius of the team (first living member).
+		return _refuse_query("teams.threat_within_radius")
+
 	func set_threat_level(_team: String, _level: int) -> bool:
-		## WP09 TEAM_THREAT_LEVEL.
+		## Mis-attributed legacy write; retail TEAM_THREAT_LEVEL is a condition.
 		return _refuse_command("teams.set_threat_level")
 
 	func command_points_to_build(_team: String) -> SageWorldQuery:
@@ -900,28 +922,18 @@ class Teams:
 		return _refuse_command("teams.build")
 
 	func recruit(_team: String, _radius: float, _from_team: String) -> bool:
-		## WP15 RECRUIT_TEAM / RECRUIT_TEAM_AT_TEAM / TEAM_RECRUIT_UNITS[_FROM_TEAM].
+		## WP15 RECRUIT_TEAM / RECRUIT_TEAM_AT_TEAM distance form only.
 		## Empty `_from_team` recruits from the map at large.
-		##
-		## THIS SIGNATURE FITS ONLY THE RECRUIT_TEAM PAIR, AND THE INT IS NOW
-		## RULED. BFME's own action templates split into two shapes:
-		##   RECRUIT_TEAM(TEAM, REAL)                    id 180
-		##   RECRUIT_TEAM_AT_TEAM(TEAM, REAL, TEAM)      id 181
-		##     "Recruit an instance of <TEAM>, maximum recruiting distance
-		##      (feet): <REAL> [from the team <TEAM>]" - the REAL is the radius
-		##      this signature carries.
-		##   TEAM_RECRUIT_UNITS(TEAM, INT, OBJECT_TYPE_LIST)            id 397
-		##   TEAM_RECRUIT_UNITS_FROM_TEAM(TEAM, INT, OBJECT_TYPE_LIST, TEAM) 398
-		##     "<TEAM> will recruit <INT> units of type <OBJECT_TYPE_LIST>
-		##      from nearby recruitable allied teams / from <TEAM>."
-		## The second pair has NO radius at all: its INT is a unit COUNT and
-		## its type list selects which units. That closes WP15's open
-		## "ruling on the INT" - the community reference's description was
-		## garbled by placeholder substitution, but the BFME binary's own
-		## uiStrings are unambiguous. NEEDED for the count pair: a separate
-		## signature (team, count: int, object_type_list: String,
-		## from_team: String).
 		return _refuse_command("teams.recruit")
+
+	func recruit_units(
+		_team: String, _count: int, _object_type_list: String, _from_team: String
+	) -> bool:
+		## WP15 TEAM_RECRUIT_UNITS / TEAM_RECRUIT_UNITS_FROM_TEAM:
+		## "<TEAM> will recruit <INT> units of type <OBJECT_TYPE_LIST>
+		## from nearby recruitable allied teams / from <TEAM>." Empty
+		## `_from_team` means nearby allied recruitables.
+		return _refuse_command("teams.recruit_units")
 
 	func recruit_combo_units(_team: String, _from_team: String) -> bool:
 		## WP15 RECRUIT_COMBO_UNITS_FROM_TEAM.
@@ -956,10 +968,15 @@ class Teams:
 		return _refuse_command("teams.set_reference")
 
 	func set_reference_to_nearest(
-		_reference: String, _object_type: String, _player: String, _named_type: bool
+		_reference: String,
+		_object_type: String,
+		_player: String,
+		_anchor_team: String,
+		_named_type: bool
 	) -> bool:
 		## WP15 SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER [sic] and its
-		## _UNNAMED_TYPE_ sibling (`_named_type` false).
+		## _UNNAMED_TYPE_ sibling (`_named_type` false). The anchor team is the
+		## origin of "nearest"; omitting it changes the selected object.
 		return _refuse_command("teams.set_reference_to_nearest")
 
 	func set_nearest_unit_of_type_to_reference(
@@ -1122,6 +1139,12 @@ class Units:
 		## WP16 NAMED_OWNED_BY_PLAYER. String player name.
 		return _refuse_query("units.owner")
 
+	func is_owned_by(_object_name: String, _player: String) -> SageWorldQuery:
+		## WP16 NAMED_OWNED_BY_PLAYER. Boolean ownership predicate. The player
+		## stays world-side so reserved tokens such as "<This Player>" resolve
+		## in the executing world's binding context.
+		return _refuse_query("units.is_owned_by")
+
 	func was_created(_object_name: String) -> SageWorldQuery:
 		## WP16 NAMED_CREATED.
 		return _refuse_query("units.was_created")
@@ -1156,8 +1179,15 @@ class Units:
 		return _refuse_query("units.type_is_selected")
 
 	func type_was_sighted(_player: String, _object_type: String) -> SageWorldQuery:
-		## WP16 TYPE_SIGHTED.
+		## WP16 TYPE_SIGHTED (observer collapsed) - prefer type_sighted_by.
 		return _refuse_query("units.type_was_sighted")
+
+	func type_sighted_by(
+		_observer: String, _object_type: String, _owner: String
+	) -> SageWorldQuery:
+		## WP16 TYPE_SIGHTED(UNIT, OBJECT_TYPE, PLAYER): observer unit has
+		## sighted an object_type owned by player.
+		return _refuse_query("units.type_sighted_by")
 
 	func enemy_sighted(_object_name: String) -> SageWorldQuery:
 		## WP16 ENEMY_SIGHTED.
@@ -1186,6 +1216,10 @@ class Units:
 	func threat(_object_name: String) -> SageWorldQuery:
 		## WP16 SET_COUNTER_TO_UNIT_THREAT.
 		return _refuse_query("units.threat")
+
+	func threat_within_radius(_object_name: String, _radius: float) -> SageWorldQuery:
+		## WP09 UNIT_THREAT_LEVEL condition: threat present within radius of unit.
+		return _refuse_query("units.threat_within_radius")
 
 	func skill_points(_object_name: String) -> SageWorldQuery:
 		## WP13 UNIT_HAS_NUM_SKILL_POINTS.
@@ -1220,6 +1254,13 @@ class Units:
 		## WP16 CREATE_OBJECT. Returns the new object's script name so the
 		## handler can bind a reference; refusal means nothing was spawned.
 		return _refuse_query("units.create_object")
+
+	func create_object_on_team(
+		_object_type: String, _team: String, _position: Vector3, _angle: float
+	) -> SageWorldQuery:
+		## WP16 CREATE_OBJECT with TEAM ownership: spawn joins the named team's
+		## roster and faces ANGLE. Returns the new entity id as string.
+		return _refuse_query("units.create_object_on_team")
 
 	func create_on_team_at(
 		_object_type: String, _team: String, _target: Dictionary, _object_name: String
@@ -1454,8 +1495,9 @@ class Orders:
 		## WP14 NAMED/TEAM_FACE_WAYPOINT, WP15 TEAM_FACE_NAMED, WP16 NAMED_FACE_NAMED.
 		return _refuse_command("orders.face")
 
-	func stand_ground(_scope: int, _name: String) -> bool:
-		## WP15 TEAM_STAND_GROUND, WP16 UNIT_STAND_GROUND.
+	func stand_ground(_scope: int, _name: String, _enabled: bool) -> bool:
+		## WP15 TEAM_STAND_GROUND, WP16 UNIT_STAND_GROUND. Status setter:
+		## enabled selects HoldGround; clear selects ordinary Battle.
 		return _refuse_command("orders.stand_ground")
 
 	func idle_for_ticks(_scope: int, _name: String, _ticks: int) -> bool:
@@ -1700,12 +1742,18 @@ class Progression:
 		## WP08 NUM_UNITS_LEVELED_UP.
 		return _refuse_query("progression.units_leveled_up")
 
-	func any_hero_reached_rank(_player: String, _rank: int) -> SageWorldQuery:
-		## WP08 ANY_HERO_REACHED_RANK.
+	func any_hero_reached_rank(
+		_player: String, _hero_count: int, _rank: int
+	) -> SageWorldQuery:
+		## WP08 ANY_HERO_REACHED_RANK(PLAYER, INT, INT).
 		return _refuse_query("progression.any_hero_reached_rank")
 
-	func has_object_of_veterancy(_player: String, _veterancy: String) -> SageWorldQuery:
-		## WP09 PLAYER_HAS_OBJECT_OF_VETERANCY.
+	func has_object_of_veterancy(
+		_player: String, _object_type: String, _comparison: int, _level: int
+	) -> SageWorldQuery:
+		## WP09 PLAYER_HAS_OBJECT_OF_VETERANCY. Current living-object rank
+		## predicate over the formal OBJECT_TYPE slot; the retail corpus also
+		## places list-like tokens in that slot, resolved by the adapter.
 		return _refuse_query("progression.has_object_of_veterancy")
 
 	func set_experience_receiving(_player: String, _enabled: bool) -> bool:
@@ -1734,8 +1782,18 @@ class Progression:
 		return _refuse_command("progression.build_upgrade")
 
 	func upgrade_nearest_wall(_player: String, _upgrade: String, _origin: String) -> bool:
-		## WP09 UPGRADE_NEAREST_WALL.
+		## Thin three-arg form; prefer upgrade_nearest_wall_bound for AI.
 		return _refuse_command("progression.upgrade_nearest_wall")
+
+	func upgrade_nearest_wall_bound(
+		_base: String,
+		_upgrade: String,
+		_object_type: String,
+		_marker_type: String,
+		_reference: String
+	) -> bool:
+		## WP09 UPGRADE_NEAREST_WALL(UNIT, UPGRADE, OBJECT_TYPE, OBJECT_TYPE, UNIT_REF).
+		return _refuse_command("progression.upgrade_nearest_wall_bound")
 
 	func grant_science(_player: String, _science: String) -> bool:
 		## WP09 PLAYER_GRANT_SCIENCE.
@@ -1948,6 +2006,16 @@ class Terrain:
 
 class Ai:
 	extends Facet
+
+	func build_base_building_per_tactical_marker(
+		_building_type: String,
+		_near_or_far: String,
+		_marker_type: String,
+		_base: String,
+		_result_reference: String
+	) -> bool:
+		## WP11 BUILD_BASE_BUILDING_PER_TACTICAL_MARKER.
+		return _refuse_command("ai.build_base_building_per_tactical_marker")
 
 	func build_base_building(
 		_building_type: String, _base: String, _result_reference: String

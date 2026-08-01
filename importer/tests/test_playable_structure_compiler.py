@@ -1,3 +1,7 @@
+from copy import deepcopy
+import hashlib
+import json
+
 import pytest
 
 from openbfme_importer.playable_structure_compiler import (
@@ -142,6 +146,20 @@ End
     return documents
 
 
+def _resign_structure_descriptor(descriptor: dict[str, object]) -> None:
+    unsigned = dict(descriptor)
+    unsigned.pop("descriptorSha256", None)
+    descriptor["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def test_constructed_structure_compiles_deterministically() -> None:
     documents = _structure_documents()
 
@@ -160,6 +178,7 @@ def test_constructed_structure_compiles_deterministically() -> None:
     assert route["prerequisites"] == ["Upgrade_StoneWork"]
     assert route["buttonImageId"] == "BITestKeep"
     health = first["gameplay"]["health"]["primary"]
+    assert health["module"] == "StructureBody"
     assert health["maxHealth"] == {"authored": "KEEP_HEALTH", "value": 3000}
     assert health["maxHealthDamaged"]["value"] == 2000
     assert health["maxHealthReallyDamaged"]["value"] == 1000
@@ -171,6 +190,896 @@ def test_constructed_structure_compiles_deterministically() -> None:
     ]
     assert first["presentation"]["ui"]["DisplayName"]
     assert len(first["descriptorSha256"]) == 64
+
+
+def test_queue_production_exit_update_compiles_effective_deferred_contract() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents["data/ini/gamedata.ini"] += (
+        b"#define TEST_QUEUE_EXIT_DELAY 50\n"
+    )
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:1 Y:2 Z:3
+    UnitCreatePoint = X:14.8616 Y:-0.1480 Z:0.0
+    NaturalRallyPoint = X:56 Y:-0.148 Z:0
+    ExitDelay = 25
+    ExitDelay = TEST_QUEUE_EXIT_DELAY
+    AllowAirborneCreation = Yes
+    InitialBurst = 2
+    PlacementViewAngle = 45
+    PlacementViewAngle = 90
+    UseReturnToFormation = No
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    assert descriptor["gameplay"]["productionExitUpdates"] == [
+        {
+            "module": "QueueProductionExitUpdate",
+            "unitCreatePoint": {
+                "authored": "X:14.8616 Y:-0.1480 Z:0.0",
+                "value": {"x": 14.8616, "y": -0.148, "z": 0.0},
+                "sourceIni": path,
+                "line": descriptor["gameplay"]["productionExitUpdates"][0][
+                    "unitCreatePoint"
+                ]["line"],
+            },
+            "naturalRallyPoint": {
+                "authored": "X:56 Y:-0.148 Z:0",
+                "value": {"x": 56.0, "y": -0.148, "z": 0.0},
+                "sourceIni": path,
+                "line": descriptor["gameplay"]["productionExitUpdates"][0][
+                    "naturalRallyPoint"
+                ]["line"],
+            },
+            "exitDelay": {
+                "authored": "TEST_QUEUE_EXIT_DELAY",
+                "value": 50,
+                "unit": "milliseconds",
+                "sourceIni": path,
+                "line": descriptor["gameplay"]["productionExitUpdates"][0][
+                    "exitDelay"
+                ]["line"],
+                "resolvedDefine": {
+                    "name": "TEST_QUEUE_EXIT_DELAY",
+                    "value": 50,
+                },
+            },
+            "allowAirborneCreation": {
+                "authored": "Yes",
+                "value": True,
+                "sourceIni": path,
+                "line": descriptor["gameplay"]["productionExitUpdates"][0][
+                    "allowAirborneCreation"
+                ]["line"],
+            },
+            "initialBurst": {
+                "authored": "2",
+                "value": 2,
+                "sourceIni": path,
+                "line": descriptor["gameplay"]["productionExitUpdates"][0][
+                    "initialBurst"
+                ]["line"],
+            },
+            "deferredFields": [
+                {
+                    "name": "PlacementViewAngle",
+                    "authored": "90",
+                    "sourceIni": path,
+                    "line": descriptor["gameplay"]["productionExitUpdates"][0][
+                        "deferredFields"
+                    ][0]["line"],
+                    "reason": "bfme-field-without-local-runtime-oracle",
+                },
+                {
+                    "name": "UseReturnToFormation",
+                    "authored": "No",
+                    "sourceIni": path,
+                    "line": descriptor["gameplay"]["productionExitUpdates"][0][
+                        "deferredFields"
+                    ][1]["line"],
+                    "reason": "bfme-field-without-local-runtime-oracle",
+                },
+            ],
+            "runtimeStatus": "deferred",
+            "sourceIni": path,
+            "line": descriptor["gameplay"]["productionExitUpdates"][0]["line"],
+        }
+    ]
+
+
+def test_queue_production_exit_update_defaults_and_unknown_field_refusal() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:0 Y:0 Z:0
+    NaturalRallyPoint = X:0 Y:0 Z:0
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    row = descriptor["gameplay"]["productionExitUpdates"][0]
+    assert row["exitDelay"] == {
+        "authored": "0",
+        "value": 0,
+        "defaulted": True,
+        "unit": "milliseconds",
+    }
+    assert row["allowAirborneCreation"] == {
+        "authored": "No",
+        "value": False,
+        "defaulted": True,
+    }
+    assert row["initialBurst"] == {
+        "authored": "0",
+        "value": 0,
+        "defaulted": True,
+    }
+
+    documents[path] = documents[path].replace(
+        b"    NaturalRallyPoint = X:0 Y:0 Z:0",
+        b"    NaturalRallyPoint = X:0 Y:0 Z:0\n    InventedExitRule = Yes",
+        1,
+    )
+    with pytest.raises(
+        PlayableStructureCompilerError, match="unsupported fields"
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_queue_production_exit_update_descriptor_rejects_runtime_promotion() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:0 Y:0 Z:0
+    NaturalRallyPoint = X:10 Y:0 Z:0
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    corrupted = compile_playable_structure_descriptor("TestKeep", documents)
+    corrupted["gameplay"]["productionExitUpdates"][0][
+        "runtimeStatus"
+    ] = "simulation-backed"
+    unsigned = dict(corrupted)
+    unsigned.pop("descriptorSha256")
+    corrupted["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="production exit update row",
+    ):
+        validate_playable_structure_descriptor(corrupted)
+
+
+def test_queue_production_exit_update_rejects_coord_with_ignored_suffix() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:0 Y:0 Z:0 UnmappedTail
+    NaturalRallyPoint = X:10 Y:0 Z:0
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="not an exact X/Y/Z Coord3D",
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_queue_production_exit_update_rejects_unsigned_int_overflow() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:0 Y:0 Z:0
+    NaturalRallyPoint = X:10 Y:0 Z:0
+    ExitDelay = 4294967296
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match=r"UnsignedInt in range 0\.\.4294967295",
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "authored"),
+    (("ExitDelay", "50.0"), ("InitialBurst", "2.0")),
+)
+def test_queue_production_exit_update_requires_exact_unsigned_decimal(
+    field_name: str, authored: str
+) -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        f"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:0 Y:0 Z:0
+    NaturalRallyPoint = X:10 Y:0 Z:0
+    {field_name} = {authored}
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""".encode(),
+        1,
+    )
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="exact unsigned decimal or resolved GameData constant",
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_queue_production_exit_update_rejects_non_ini_boolean_alias() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:0 Y:0 Z:0
+    NaturalRallyPoint = X:10 Y:0 Z:0
+    AllowAirborneCreation = True
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="must be Yes or No",
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_queue_production_exit_update_rejects_out_of_order_coord_axes() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = Y:0 X:10 Z:0
+    NaturalRallyPoint = X:10 Y:0 Z:0
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="not an exact X/Y/Z Coord3D",
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_queue_production_exit_update_resigned_descriptor_rejects_drift() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:10 Y:20 Z:30
+    NaturalRallyPoint = X:40 Y:50 Z:60
+    ExitDelay = 50
+    InitialBurst = 2
+    AllowAirborneCreation = Yes
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    mixed_case = deepcopy(descriptor)
+    mixed_case["gameplay"]["productionExitUpdates"][0][
+        "allowAirborneCreation"
+    ]["authored"] = "yEs"
+    unsigned_mixed_case = dict(mixed_case)
+    unsigned_mixed_case.pop("descriptorSha256")
+    mixed_case["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned_mixed_case,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    validate_playable_structure_descriptor(mixed_case)
+
+    for mutate in (
+        "coord-order",
+        "coord-value",
+        "exit-authored",
+        "exit-value",
+        "burst-authored",
+        "burst-value",
+        "bool-vocabulary",
+        "bool-value",
+    ):
+        corrupted = deepcopy(descriptor)
+        row = corrupted["gameplay"]["productionExitUpdates"][0]
+        if mutate == "coord-order":
+            row["unitCreatePoint"]["authored"] = "Y:20 X:10 Z:30"
+        elif mutate == "coord-value":
+            row["unitCreatePoint"]["value"]["x"] = 11.0
+        elif mutate == "exit-authored":
+            row["exitDelay"]["authored"] = "1"
+        elif mutate == "exit-value":
+            row["exitDelay"]["value"] = 1
+        elif mutate == "burst-authored":
+            row["initialBurst"]["authored"] = "1"
+        elif mutate == "burst-value":
+            row["initialBurst"]["value"] = 1
+        elif mutate == "bool-vocabulary":
+            row["allowAirborneCreation"]["authored"] = "True"
+        else:
+            row["allowAirborneCreation"]["value"] = False
+        unsigned = dict(corrupted)
+        unsigned.pop("descriptorSha256")
+        corrupted["descriptorSha256"] = hashlib.sha256(
+            json.dumps(
+                unsigned,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        with pytest.raises(
+            PlayableStructureCompilerError,
+            match="production exit",
+        ):
+            validate_playable_structure_descriptor(corrupted)
+
+
+def test_queue_production_exit_update_resigned_source_paths_require_attestation() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:10 Y:20 Z:30
+    NaturalRallyPoint = X:40 Y:50 Z:60
+    ExitDelay = 50
+    InitialBurst = 2
+    AllowAirborneCreation = Yes
+    PlacementViewAngle = 90
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    mixed_case = deepcopy(descriptor)
+    row = mixed_case["gameplay"]["productionExitUpdates"][0]
+    for source_row in (
+        row,
+        row["unitCreatePoint"],
+        row["naturalRallyPoint"],
+        row["exitDelay"],
+        row["initialBurst"],
+        row["allowAirborneCreation"],
+        row["deferredFields"][0],
+    ):
+        source_row["sourceIni"] = path.upper().replace("/", "\\")
+    unsigned = dict(mixed_case)
+    unsigned.pop("descriptorSha256")
+    mixed_case["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    validate_playable_structure_descriptor(mixed_case)
+
+    source_locations = (
+        (),
+        ("unitCreatePoint",),
+        ("naturalRallyPoint",),
+        ("exitDelay",),
+        ("initialBurst",),
+        ("allowAirborneCreation",),
+        ("deferredFields", 0),
+    )
+    for location in source_locations:
+        corrupted = deepcopy(descriptor)
+        target = corrupted["gameplay"]["productionExitUpdates"][0]
+        for part in location:
+            target = target[part]
+        target["sourceIni"] = "data/ini/object/unattested.ini"
+        unsigned = dict(corrupted)
+        unsigned.pop("descriptorSha256")
+        corrupted["descriptorSha256"] = hashlib.sha256(
+            json.dumps(
+                unsigned,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        with pytest.raises(
+            PlayableStructureCompilerError,
+            match="production exit",
+        ):
+            validate_playable_structure_descriptor(corrupted)
+
+
+def test_queue_production_exit_update_resigned_closed_schema_refuses_smuggling() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents["data/ini/gamedata.ini"] += b"#define TEST_EXIT_DELAY 50\n"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:10 Y:20 Z:30
+    NaturalRallyPoint = X:40 Y:50 Z:60
+    ExitDelay = TEST_EXIT_DELAY
+    InitialBurst = 2
+    AllowAirborneCreation = Yes
+    PlacementViewAngle = 90
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    def queue_row(candidate: dict[str, object]) -> dict[str, object]:
+        return candidate["gameplay"]["productionExitUpdates"][0]
+
+    mutations = [
+        lambda candidate: candidate["sourceDocuments"][0].__setitem__(
+            "ignored", True
+        ),
+        lambda candidate: candidate["sourceDocuments"][0].pop("sha256"),
+        lambda candidate: candidate["sourceDocuments"][0].__setitem__(
+            "sha256", "A" * 64
+        ),
+        lambda candidate: queue_row(candidate).__setitem__("ignored", True),
+        lambda candidate: queue_row(candidate).pop("runtimeStatus"),
+        lambda candidate: queue_row(candidate)["unitCreatePoint"].__setitem__(
+            "ignored", True
+        ),
+        lambda candidate: queue_row(candidate)["unitCreatePoint"].pop("line"),
+        lambda candidate: queue_row(candidate)["unitCreatePoint"][
+            "value"
+        ].__setitem__("w", 1.0),
+        lambda candidate: queue_row(candidate)["exitDelay"].__setitem__(
+            "ignored", True
+        ),
+        lambda candidate: queue_row(candidate)["exitDelay"].pop("unit"),
+        lambda candidate: queue_row(candidate)["exitDelay"][
+            "resolvedDefine"
+        ].__setitem__("ignored", True),
+        lambda candidate: queue_row(candidate)["exitDelay"][
+            "resolvedDefine"
+        ].pop("value"),
+        lambda candidate: queue_row(candidate)[
+            "allowAirborneCreation"
+        ].__setitem__("ignored", True),
+        lambda candidate: queue_row(candidate)[
+            "allowAirborneCreation"
+        ].pop("line"),
+        lambda candidate: queue_row(candidate)["deferredFields"][
+            0
+        ].__setitem__("ignored", True),
+        lambda candidate: queue_row(candidate)["deferredFields"][0].pop(
+            "reason"
+        ),
+    ]
+    for mutate in mutations:
+        corrupted = deepcopy(descriptor)
+        mutate(corrupted)
+        _resign_structure_descriptor(corrupted)
+        with pytest.raises(
+            PlayableStructureCompilerError,
+            match="production exit",
+        ):
+            validate_playable_structure_descriptor(corrupted)
+
+
+def test_queue_production_exit_update_resigned_schema_requires_exact_types() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:10 Y:20 Z:30
+    NaturalRallyPoint = X:40 Y:50 Z:60
+    ExitDelay = 50
+    InitialBurst = 2
+    AllowAirborneCreation = Yes
+    PlacementViewAngle = 90
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    mutations = (
+        lambda row: row.__setitem__("line", True),
+        lambda row: row["unitCreatePoint"].__setitem__("line", True),
+        lambda row: row["unitCreatePoint"]["value"].__setitem__("x", 10),
+        lambda row: row["exitDelay"].__setitem__("line", True),
+        lambda row: row["initialBurst"].__setitem__("value", 2.0),
+        lambda row: row["allowAirborneCreation"].__setitem__("line", True),
+        lambda row: row["deferredFields"][0].__setitem__("line", True),
+    )
+    for mutate in mutations:
+        corrupted = deepcopy(descriptor)
+        mutate(corrupted["gameplay"]["productionExitUpdates"][0])
+        _resign_structure_descriptor(corrupted)
+        with pytest.raises(
+            PlayableStructureCompilerError,
+            match="production exit",
+        ):
+            validate_playable_structure_descriptor(corrupted)
+
+    defaulted = deepcopy(descriptor)
+    row = defaulted["gameplay"]["productionExitUpdates"][0]
+    for field_name, replacement in (
+        (
+            "unitCreatePoint",
+            {
+                "authored": "",
+                "value": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "defaulted": "true",
+            },
+        ),
+        (
+            "exitDelay",
+            {
+                "authored": "0",
+                "value": 0,
+                "defaulted": 1,
+                "unit": "milliseconds",
+            },
+        ),
+        (
+            "initialBurst",
+            {"authored": "0", "value": 0, "defaulted": False},
+        ),
+        (
+            "allowAirborneCreation",
+            {"authored": "No", "value": False, "defaulted": "yes"},
+        ),
+    ):
+        mistyped = deepcopy(descriptor)
+        mistyped["gameplay"]["productionExitUpdates"][0][field_name] = (
+            replacement
+        )
+        _resign_structure_descriptor(mistyped)
+        with pytest.raises(
+            PlayableStructureCompilerError, match="production exit"
+        ):
+            validate_playable_structure_descriptor(mistyped)
+
+
+@pytest.mark.parametrize("contradictory", [False, True])
+def test_queue_production_exit_update_resigned_duplicate_sources_refused(
+    contradictory: bool,
+) -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:10 Y:20 Z:30
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    source = next(
+        row
+        for row in descriptor["sourceDocuments"]
+        if row["virtualPath"].replace("\\", "/").casefold()
+        == path.casefold()
+    )
+    duplicate = deepcopy(source)
+    duplicate["virtualPath"] = path.upper().replace("/", "\\")
+    if contradictory:
+        duplicate["sha256"] = "0" * 64
+    descriptor["sourceDocuments"].append(duplicate)
+    _resign_structure_descriptor(descriptor)
+
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="contradict|duplicated",
+    ):
+        validate_playable_structure_descriptor(descriptor)
+
+
+def test_queue_production_exit_update_rejects_retail_malformed_coord_token() -> None:
+    """RotWK AngmarKennelExpansion authors X:70.0.0 and stays fail-closed."""
+
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:0.0 Y:0.0 Z:0.0
+    NaturalRallyPoint = X:70.0.0 Y:0.0 Z:0.0
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="not an exact X/Y/Z Coord3D",
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_inherit_upgrade_create_compiles_exact_creation_contract() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = InheritUpgradeCreate ModuleTag_InheritStonework
+    Radius = KEEP_INHERIT_RADIUS
+    Upgrade = Upgrade_StoneWork
+    ObjectFilter = ANY +TestCitadel
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    documents["data/ini/gamedata.ini"] += b"#define KEEP_INHERIT_RADIUS 400\n"
+    documents["data/ini/upgrade.ini"] = b"""Upgrade Upgrade_StoneWork
+  Type = OBJECT
+End
+"""
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    assert descriptor["gameplay"]["inheritUpgradesOnCreate"] == [
+        {
+            "radius": {"authored": "KEEP_INHERIT_RADIUS", "value": 400},
+            "upgradeId": "Upgrade_StoneWork",
+            "upgradeType": "OBJECT",
+            "objectFilter": "ANY +TestCitadel",
+            "sourceObjectId": "TestCitadel",
+            "module": "InheritUpgradeCreate",
+            "sourceIni": path,
+            "line": descriptor["gameplay"]["inheritUpgradesOnCreate"][0]["line"],
+        }
+    ]
+
+
+def test_inherit_upgrade_create_descriptor_rejects_resigned_non_object_upgrade() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = InheritUpgradeCreate ModuleTag_InheritStonework
+    Radius = 400
+    Upgrade = Upgrade_StoneWork
+    ObjectFilter = ANY +TestCitadel
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    documents["data/ini/upgrade.ini"] = b"""Upgrade Upgrade_StoneWork
+  Type = OBJECT
+End
+"""
+    corrupted = compile_playable_structure_descriptor("TestKeep", documents)
+    corrupted["gameplay"]["inheritUpgradesOnCreate"][0]["upgradeType"] = "PLAYER"
+    unsigned = dict(corrupted)
+    unsigned.pop("descriptorSha256")
+    corrupted["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with pytest.raises(
+        PlayableStructureCompilerError, match="inherited upgrade row"
+    ):
+        validate_playable_structure_descriptor(corrupted)
+
+
+def test_inherit_upgrade_create_rejects_unproven_filter_grammar() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = InheritUpgradeCreate ModuleTag_InheritStonework
+    Radius = 400
+    Upgrade = Upgrade_StoneWork
+    ObjectFilter = ANY +TestCitadel -MONSTER
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    documents["data/ini/upgrade.ini"] = b"""Upgrade Upgrade_StoneWork
+  Type = OBJECT
+End
+"""
+
+    with pytest.raises(
+        PlayableStructureCompilerError, match="unsupported ObjectFilter"
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+@pytest.mark.parametrize(
+    "bad_row",
+    [
+        b"    Radius = 401\n",
+        b"    UnknownField = Yes\n",
+    ],
+)
+def test_inherit_upgrade_create_rejects_duplicate_or_unknown_fields(
+    bad_row: bytes,
+) -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = InheritUpgradeCreate ModuleTag_InheritStonework
+    Radius = 400
+    Upgrade = Upgrade_StoneWork
+    ObjectFilter = ANY +TestCitadel
+"""
+        + bad_row
+        + b"""  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    documents["data/ini/upgrade.ini"] = b"""Upgrade Upgrade_StoneWork
+  Type = OBJECT
+End
+"""
+
+    with pytest.raises(
+        PlayableStructureCompilerError, match="must author exactly one"
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_inherit_upgrade_create_requires_object_upgrade_type() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = InheritUpgradeCreate ModuleTag_InheritStonework
+    Radius = 400
+    Upgrade = Upgrade_StoneWork
+    ObjectFilter = ANY +TestCitadel
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    documents["data/ini/upgrade.ini"] = b"""Upgrade Upgrade_StoneWork
+  Type = PLAYER
+End
+"""
+
+    with pytest.raises(PlayableStructureCompilerError, match="Type = OBJECT"):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_highlander_body_is_preserved_as_primary_structure_policy() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Body = StructureBody ModuleTag_Body",
+        b"Body = HighlanderBody ModuleTag_Body",
+        1,
+    )
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    primary = descriptor["gameplay"]["health"]["primary"]
+    assert primary["module"] == "HighlanderBody"
+    assert primary["maxHealth"]["value"] == 3000
+    assert descriptor["gameplay"]["health"]["highlanderBody"]["value"] is True
+
+    corrupted = deepcopy(descriptor)
+    corrupted["gameplay"]["health"]["highlanderBody"]["line"] = 0
+    unsigned = dict(corrupted)
+    unsigned.pop("descriptorSha256")
+    corrupted["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(
+        PlayableStructureCompilerError, match="HighlanderBody policy"
+    ):
+        validate_playable_structure_descriptor(corrupted)
+
+
+def test_grant_upgrade_create_compiles_exact_build_complete_contract() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = GrantUpgradeCreate ModuleTag_BuiltUpgrade
+    UpgradeToGrant = Upgrade_TestKeepBuilt
+    GiveOnBuildComplete = Yes
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    documents["data/ini/upgrade.ini"] = b"""
+Upgrade Upgrade_TestKeepBuilt
+  Type = OBJECT
+End
+"""
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    grant = descriptor["gameplay"]["createGrants"][0]
+    assert grant["upgradeId"] == "Upgrade_TestKeepBuilt"
+    assert grant["upgradeType"] == "OBJECT"
+    assert grant["onCreateWhenComplete"] is False
+    assert grant["onBuildComplete"] is True
+    assert grant["module"] == "GrantUpgradeCreate"
+    assert "data/ini/upgrade.ini" in {
+        row["virtualPath"] for row in descriptor["sourceDocuments"]
+    }
+
+
+def test_grant_upgrade_create_rejects_unsupported_status_mask() -> None:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = GrantUpgradeCreate ModuleTag_BuiltUpgrade
+    UpgradeToGrant = Upgrade_TestKeepBuilt
+    ExemptStatus = RIDER1
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    documents["data/ini/upgrade.ini"] = b"""
+Upgrade Upgrade_TestKeepBuilt
+  Type = OBJECT
+End
+"""
+
+    with pytest.raises(
+        PlayableStructureCompilerError, match="unsupported ExemptStatus"
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
 
 
 def test_prepared_inputs_preserve_structure_identity() -> None:
@@ -996,3 +1905,203 @@ def test_upgrade_chain_unresolvable_cost_fails_closed() -> None:
 
     with pytest.raises(PlayableStructureCompilerError, match="GameData constant"):
         compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+
+def _auto_deposit_documents(body: str) -> dict[str, bytes]:
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = (
+        documents[path]
+        .decode("utf-8")
+        .replace(
+            "Object TestKeep\n",
+            "Object TestKeep\n"
+            "  Behavior = AutoDepositUpdate ModuleTag_AutoDeposit\n"
+            f"{body}"
+            "  End\n",
+            1,
+        )
+        .encode("utf-8")
+    )
+    return documents
+
+
+def test_auto_deposit_compiles_exact_runtime_contract() -> None:
+    documents = _auto_deposit_documents(
+        "    DepositTiming = 5050\n"
+        "    DepositAmount = KEEP_INCOME\n"
+        "    InitialCaptureBonus = 45\n"
+        "    ActualMoney = No\n"
+        "    UpgradedBoost = UpgradeType:Upgrade_StoneWork Boost:25\n"
+    )
+    documents["data/ini/gamedata.ini"] += b"#define KEEP_INCOME 35\n"
+    documents["data/ini/upgrade.ini"] = b"""
+Upgrade Upgrade_StoneWork
+  Type = PLAYER
+End
+"""
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    row = descriptor["gameplay"]["autoDepositUpdates"][0]
+    assert row["runtimeStatus"] == "executable"
+    assert row["depositTiming"]["value"] == 5050
+    assert row["depositTiming"]["unit"] == "milliseconds"
+    assert row["depositTiming"]["simulationTicks"] == 51
+    assert row["depositAmount"]["resolvedDefine"] == {
+        "name": "KEEP_INCOME",
+        "value": 35,
+    }
+    assert row["initialCaptureBonus"]["value"] == 45
+    assert row["actualMoney"]["value"] is False
+    assert row["upgradedBoosts"][0]["upgradeId"] == "Upgrade_StoneWork"
+    assert row["upgradedBoosts"][0]["upgradeType"] == "PLAYER"
+    assert row["upgradedBoosts"][0]["boost"] == 25
+
+
+def test_auto_deposit_defaults_and_bfme_only_fields_defer() -> None:
+    documents = _auto_deposit_documents(
+        "    DepositTiming = 5000\n"
+        "    DepositAmount = 25\n"
+        "    GiveNoXP = Yes\n"
+        "    OnlyWhenGarrisoned = Yes\n"
+    )
+
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    row = descriptor["gameplay"]["autoDepositUpdates"][0]
+    assert row["runtimeStatus"] == "deferred"
+    assert row["actualMoney"] == {
+        "authored": "Yes",
+        "value": True,
+        "defaulted": True,
+    }
+    assert row["initialCaptureBonus"] == {
+        "authored": "0",
+        "value": 0,
+        "defaulted": True,
+    }
+    assert [field["name"] for field in row["deferredFields"]] == [
+        "GiveNoXP",
+        "OnlyWhenGarrisoned",
+    ]
+
+
+def test_auto_deposit_unknown_field_fails_closed() -> None:
+    documents = _auto_deposit_documents(
+        "    DepositTiming = 5000\n"
+        "    InventedIncome = 25\n"
+    )
+    with pytest.raises(
+        PlayableStructureCompilerError, match="unsupported fields"
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_auto_deposit_timing_projection_is_digest_validated() -> None:
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep",
+        _auto_deposit_documents(
+            "    DepositTiming = 5000\n"
+            "    DepositAmount = 25\n"
+        ),
+    )
+    descriptor["gameplay"]["autoDepositUpdates"][0]["depositTiming"][
+        "simulationTicks"
+    ] = 49
+    _resign_structure_descriptor(descriptor)
+    with pytest.raises(
+        PlayableStructureCompilerError, match="auto-deposit timing"
+    ):
+        validate_playable_structure_descriptor(descriptor)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "mutated"),
+    [
+        ("depositTiming", {"authored": "1", "value": 1, "defaulted": True,
+                           "unit": "milliseconds", "simulationTicks": 1}),
+        ("depositAmount", {"authored": "1", "value": 1, "defaulted": True}),
+        ("initialCaptureBonus", {"authored": "1", "value": 1, "defaulted": True}),
+    ],
+)
+def test_auto_deposit_resigned_non_cpp_default_rejects(
+    field_name: str, mutated: dict[str, object]
+) -> None:
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep", _auto_deposit_documents("")
+    )
+    descriptor["gameplay"]["autoDepositUpdates"][0][field_name] = mutated
+    _resign_structure_descriptor(descriptor)
+    with pytest.raises(
+        PlayableStructureCompilerError, match="auto-deposit default"
+    ):
+        validate_playable_structure_descriptor(descriptor)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "mutated"),
+    [
+        ("upgradeId", "Upgrade_Invented"),
+        ("upgradeType", "OBJECT"),
+        ("boost", 26),
+    ],
+)
+def test_auto_deposit_resigned_boost_projection_mutation_rejects(
+    field_name: str, mutated: object
+) -> None:
+    documents = _auto_deposit_documents(
+        "    UpgradedBoost = UpgradeType:Upgrade_StoneWork Boost:25\n"
+    )
+    documents["data/ini/upgrade.ini"] = b"""
+Upgrade Upgrade_StoneWork
+  Type = PLAYER
+End
+"""
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    descriptor["gameplay"]["autoDepositUpdates"][0]["upgradedBoosts"][0][
+        field_name
+    ] = mutated
+    _resign_structure_descriptor(descriptor)
+    with pytest.raises(
+        PlayableStructureCompilerError, match="auto-deposit boost"
+    ):
+        validate_playable_structure_descriptor(descriptor)
+
+
+def test_auto_deposit_object_upgrade_type_fails_closed_at_compile() -> None:
+    documents = _auto_deposit_documents(
+        "    UpgradedBoost = UpgradeType:Upgrade_StoneWork Boost:25\n"
+    )
+    documents["data/ini/upgrade.ini"] = b"""
+Upgrade Upgrade_StoneWork
+  Type = OBJECT
+End
+"""
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="source-attested Type PLAYER",
+    ):
+        compile_playable_structure_descriptor("TestKeep", documents)
+
+
+def test_auto_deposit_resigned_coordinated_object_type_mutation_rejects() -> None:
+    documents = _auto_deposit_documents(
+        "    UpgradedBoost = UpgradeType:Upgrade_StoneWork Boost:25\n"
+    )
+    documents["data/ini/upgrade.ini"] = b"""
+Upgrade Upgrade_StoneWork
+  Type = PLAYER
+End
+"""
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    boost = descriptor["gameplay"]["autoDepositUpdates"][0]["upgradedBoosts"][0]
+    boost["upgradeType"] = "OBJECT"
+    boost["upgradeAttestation"]["upgradeType"] = "OBJECT"
+    _resign_structure_descriptor(descriptor)
+    with pytest.raises(
+        PlayableStructureCompilerError, match="auto-deposit boost"
+    ):
+        validate_playable_structure_descriptor(descriptor)

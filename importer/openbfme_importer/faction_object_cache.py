@@ -47,6 +47,9 @@ _COMPILER_SALT_MODULES = (
     "retail_building_lifecycle.py",
     "typed_visual_graph.py",
     "visual_leaf.py",
+    # Pack-recipe catalog identity gate: changes must invalidate durable object
+    # DDC so pre-fix recipes with archive-orphan patterns cannot cache-hit.
+    "pack_recipe_catalog_identity.py",
     "sage_cst.py",
     "sage_ini.py",
     "w3d_index.py",
@@ -125,8 +128,29 @@ def _compiler_source_salt() -> str:
     return digest.hexdigest()
 
 
+_COMPILER_TOKEN_MEMO: str | None = None
+_COMPILER_TOKEN_LOCK = threading.Lock()
+
+
+def clear_compiler_identity_token_memo() -> None:
+    """Test helper: drop process-local compiler identity memo."""
+
+    global _COMPILER_TOKEN_MEMO
+    with _COMPILER_TOKEN_LOCK:
+        _COMPILER_TOKEN_MEMO = None
+
+
 def compiler_identity_token() -> str:
-    """Pin converter schemas + source bytes so code/schema bumps invalidate DDC."""
+    """Pin converter schemas + source bytes so code/schema bumps invalidate DDC.
+
+    Memoized per process: hashing every compiler module on each faction convert
+    was pure overhead once the salt is fixed for the process lifetime.
+    """
+
+    global _COMPILER_TOKEN_MEMO
+    with _COMPILER_TOKEN_LOCK:
+        if _COMPILER_TOKEN_MEMO is not None:
+            return _COMPILER_TOKEN_MEMO
 
     # Local imports avoid circular import at module load.
     from .playable_structure_compiler import (
@@ -176,7 +200,10 @@ def compiler_identity_token() -> str:
             ),
         },
     }
-    return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+    token = hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+    with _COMPILER_TOKEN_LOCK:
+        _COMPILER_TOKEN_MEMO = token
+    return token
 
 
 def durable_effective_assets_fingerprint(effective_root: Path | str) -> str:

@@ -17,15 +17,40 @@ extends SceneTree
 ## with `OPENBFME_LIVING_WORLD_DOC`, `OPENBFME_LIVING_MAP_REGIONS` and
 ## `OPENBFME_WOTR_SETUP_STRINGS` (or the bundles beside the region geometry)
 ## pointing at the document and bundles.
+##
+## POINT `OPENBFME_SHELL_ART` AT THE **ROTWK** EFFECTIVE-ASSETS ROOT, not the
+## edition-neutral one. `.private/retail-work/cache/effective-assets` is BFME2's
+## layer: its `apt_MenuExport_*` sheets are the GREEN menu set, its
+## `apt_MainMenu_1` is a pre-order advertisement, and it has no
+## `apt_MenuExport_3` at all. The thorned BLUE-STEEL shell this screen's oracle
+## shows is on `.private/retail-work/editions/rotwk/cache/layered-effective-
+## assets`, and `wotr_setup_chrome.ART_PIECES` is measured against THOSE sheets.
+## `OPENBFME_SHELL_FONT` wants `<that root>/albertusmt.otf`.
 
 const SetupScreenScript = preload("res://src/ui/wotr_setup_screen.gd")
 const SessionScript = preload("res://src/wotr/wotr_session.gd")
 
 const SETTLE_FRAMES := 30
-const WINDOW_SIZE := Vector2i(1860, 900)
+## THE CAPTURE SIZE IS THE ORACLE'S SIZE, EXACTLY: 2560x1440.
+##
+## Round two asked the WINDOW for 1600x900 and borderless, and the PNGs came out
+## 2560x1351 - aspect 1.895 - because a desktop window is not a promise: the
+## compositor scales and clamps it to what the display can actually show. The
+## critic read the result correctly and dismissively: "That is a windowed capture
+## with the frame cropped off, i.e. a dev build being screenshotted out of a
+## window", and "it broadcasts 'windowed dev build' in any side-by-side."
+##
+## SO THE SCREEN IS NOT RENDERED INTO THE WINDOW AT ALL. It is rendered into a
+## `SubViewport` of exactly this size and the SUBVIEWPORT's texture is saved, so
+## the PNG's dimensions are a property of this file and not of the machine's
+## monitor. The host window still exists (Godot needs a real rendering context)
+## and is small on purpose.
+const CAPTURE_SIZE := Vector2i(2560, 1440)
+const HOST_WINDOW_SIZE := Vector2i(960, 540)
 
 var _out_dir := ""
 var _screen: Control = null
+var _viewport: SubViewport = null
 var _frames := 0
 var _shot := 0
 var _applied := false
@@ -37,17 +62,26 @@ func _initialize() -> void:
 	DirAccess.make_dir_recursive_absolute(_out_dir)
 
 	var window := root
-	window.size = WINDOW_SIZE
+	window.borderless = true
+	window.size = HOST_WINDOW_SIZE
 	window.title = "OpenBFME - War of the Ring game setup capture"
+
+	_viewport = SubViewport.new()
+	_viewport.size = CAPTURE_SIZE
+	# ALWAYS, not ONCE: the plan drives the screen between shots and a viewport
+	# that updated once would photograph the first state five times.
+	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_viewport.transparent_bg = false
+	window.add_child(_viewport)
 
 	var backdrop := ColorRect.new()
 	backdrop.color = Color(0.02, 0.03, 0.045)
 	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
-	window.add_child(backdrop)
+	_viewport.add_child(backdrop)
 
 	_screen = SetupScreenScript.new()
 	_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
-	window.add_child(_screen)
+	_viewport.add_child(_screen)
 
 	var found: Dictionary = SessionScript.locate_document([])
 	if not bool(found.get("ok", false)):
@@ -75,10 +109,12 @@ func _initialize() -> void:
 
 	_plan = [
 		{"name": "01-map-tab", "action": ""},
-		{"name": "02-map-tab-scenario-open", "action": "open_scenario"},
-		{"name": "03-map-tab-territory-hovered", "action": "hover_region"},
-		{"name": "04-player-table-army-open", "action": "open_army"},
-		{"name": "05-rules-tab", "action": "rules"},
+		{"name": "02-map-tab-starts-placed", "action": "place_starts"},
+		{"name": "03-map-tab-scenario-open", "action": "open_scenario"},
+		{"name": "04-map-tab-territory-hovered", "action": "hover_region"},
+		{"name": "05-player-table-army-open", "action": "open_army"},
+		{"name": "06-rules-tab", "action": "rules"},
+		{"name": "07-absence-overlay", "action": "absences"},
 	]
 	print("[setup-capture] writing to %s" % _out_dir)
 
@@ -101,7 +137,7 @@ func _process(_delta: float) -> bool:
 		_applied = true
 		return false
 	_applied = false
-	var image: Image = root.get_texture().get_image()
+	var image: Image = _viewport.get_texture().get_image()
 	var path: String = _out_dir.path_join("%s.png" % String(step["name"]))
 	var error := image.save_png(path)
 	if error != OK:
@@ -116,7 +152,27 @@ func _apply(action: String) -> void:
 	if action.is_empty() or _screen == null:
 		return
 	match action:
+		"place_starts":
+			# THE FREEFORM START PLACEMENT, driven through the screen's own
+			# `_pick_start_region` rather than by writing `seat_starts` here, so a
+			# capture cannot show a placement the screen would not accept. The
+			# regions are chosen from the seats' own ADJACENT-FREE choices - the
+			# first drawn region no seat already holds - because this runner has no
+			# authored answer either and must not pretend to.
+			var preview = _screen.map_preview
+			if preview != null:
+				for region_value in preview.drawn_regions:
+					if _screen._next_unplaced_seat() < 0:
+						break
+					_screen._pick_start_region(String(region_value))
+				print("[setup-capture] start territories: %s" % ", ".join(
+					Array(_screen.start_regions())))
+		"absences":
+			_screen.active_tab = _screen.TAB_MAP
+			_screen._relayout()
+			_screen.toggle_absences(true)
 		"open_scenario":
+			_screen.toggle_absences(false)
 			_open("scenario")
 		"hover_region":
 			# A region THE DOCUMENT names, chosen by the selected scenario's own

@@ -26,15 +26,18 @@ extends SceneTree
 ##      tables below and asserts the committed file is BYTE-IDENTICAL, so the
 ##      map cannot drift from what this runner would write.
 ##
-## WHAT "BACKED" MEANS HERE
-## ========================
-## A method is simulation-backed when at least one well-formed argument tuple
-## (bound player/team names, POSITION targets, PLAYER scope, modelled
-## science/upgrade/power ids) gets a real answer: `ok` for a query, `true` for
-## a command. Several backed methods still refuse RESTRICTED argument shapes
-## (orders.move_to refuses non-POSITION targets, teams.stop refuses disband);
-## those restrictions are recorded per method in the map's `restrictions`
-## field and drive the vocabulary routing, not the backed flag.
+## WHAT "BACKED" / SCOREBOARD FLAGS MEAN HERE
+## ==========================================
+## A method is **callable** (historical field: simulationBacked) when at least
+## one well-formed argument tuple gets a real answer: `ok` for a query, `true`
+## for a command. Callable is NOT retail parity. The probe also classifies:
+##   * bagOnly            - answered, but only script_surface_bag mutated/read
+##                          as the observed effect (no core sim fingerprint change)
+##   * stateMutating      - answered and changed bag or core sim state
+##   * subsystemConsumed  - answered and core sim fingerprint changed, OR a
+##                          pure read of live sim state (not bag-default only)
+## Several callable methods still refuse RESTRICTED argument shapes; those
+## restrictions are recorded per method and drive vocabulary routing.
 ##
 ## PROBE HYGIENE
 ## =============
@@ -89,6 +92,8 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const WorldScript = preload("res://src/retail_slice/retail_slice_script_world.gd")
 const ManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
+const ParamTypes = preload("res://src/script/script_param_types.gd")
+const ExecutorScript = preload("res://src/script/script_executor.gd")
 
 const MAP_PATH := "res://data/script_world_surface.json"
 const CENSUS_PATH := "res://data/retail_ai_call_census.json"
@@ -141,7 +146,35 @@ const FALLBACK_PROBED := [
 ## flipped blocked -> backed, which is check-neutral: a blocked route asserts
 ## "names a declared subsystem" and a backed one asserts "cites a backed
 ## method", one each. No assertion was weakened, deleted or skipped.
-const EXPECTED_CHECKS := 3479
+## 3479 -> 3476: EXACTLY ai.set_buildings_allowed leaving the BLOCKED table
+## after per-team object-type permissions became hash-backed and construction-
+## enforced. As above, the three annotation-only checks disappear; the method
+## probe and route assertions remain. No assertion was weakened or skipped.
+## 3476 -> 3473: EXACTLY players.override_command_points leaving the BLOCKED
+## table after its independent per-team total/maximum pair became hash-backed
+## and the total became the production/query cap. The same three annotation-
+## only checks disappear; all method probes remain.
+## 3470 -> 3467: EXACTLY teams.set_available_for_recruitment leaving the
+## BLOCKED table after its explicit tri-state override became script-team
+## registry state. The method probe remains; only the same three
+## annotation-only checks disappear.
+## 3470 -> 3467: teams.transfer_to_player left the blocked-annotation table;
+## its method probe and backed-route validation remain, while the three
+## annotation-only checks disappear.
+## 3467 -> 3461: TEAM_EXECUTE_SEQUENTIAL_SCRIPT(_LOOPING) and
+## TEAM_STOP_SEQUENTIAL_SCRIPT leave the blocked table after
+## teams.execute/stop sequential become simulation-backed (measured).
+## 3461 -> 3455: units.set/has_object_status leave entity-status-flags
+## blocked annotations after TEAM/PLAYER/UNIT living-entity object-status.
+## 3455 -> 3410: production-controls + team-registry + order-verbs batch
+## (measured after move_home stayed blocked without spawn fixture).
+## Updated again after bulk entity-status/progression/containment/areas batch.
+## 2766 -> 2752: EXACTLY the 14 previously-refusing residual methods
+## (threat×5, wall×2, marker×1, transport×1, command-button×2,
+## reinforcement×2, supply-center×1) leave the blocked-annotation table
+## after parity-backed consumers answered. Each drop removes one
+## annotation-only check; method probes remain.
+const EXPECTED_CHECKS := 2752
 
 var passed := 0
 var failed := 0
@@ -186,9 +219,28 @@ func _run() -> void:
 			fallback += 1
 		if bool(entry["observed_backed"]):
 			backed += 1
+	var bag_only := 0
+	var state_mutating := 0
+	var subsystem_consumed := 0
+	for entry in entries:
+		if bool(entry.get("bag_only", false)):
+			bag_only += 1
+		if bool(entry.get("state_mutating", false)):
+			state_mutating += 1
+		if bool(entry.get("subsystem_consumed", false)):
+			subsystem_consumed += 1
 	print(
-		"SURFACE total=%d backed=%d refusing=%d probedByCall=%d fallbackProbed=%d"
-		% [entries.size(), backed, entries.size() - backed, called, fallback]
+		"SURFACE total=%d callable=%d bagOnly=%d stateMutating=%d subsystemConsumed=%d refusing=%d probedByCall=%d fallbackProbed=%d"
+		% [
+			entries.size(),
+			backed,
+			bag_only,
+			state_mutating,
+			subsystem_consumed,
+			entries.size() - backed,
+			called,
+			fallback,
+		]
 	)
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
@@ -305,8 +357,8 @@ func _fixture() -> Dictionary:
 	var sim: RetailSliceSim = SimScript.new()
 	sim._rules = _harness_rules()
 	sim.configure_team_roster([
-		{"team": 0, "faction": "men", "is_ai": false},
-		{"team": 1, "faction": "men", "is_ai": true},
+		{"team": 0, "faction": "men", "is_ai": false, "start_index": 0},
+		{"team": 1, "faction": "men", "is_ai": true, "start_index": 1},
 	])
 	sim.setup({}, {})
 	sim.ai_enabled = false
@@ -346,27 +398,146 @@ func _fixture() -> Dictionary:
 	var world: RetailSliceScriptWorld = WorldScript.new(sim)
 	world.bind_player(PLAYER, SimScript.PLAYER_TEAM)
 	world.bind_player(ENEMY, SimScript.ENEMY_TEAM)
+	world.bind_player("PlyrCivilian", SimScript.NEUTRAL_TEAM)
 	world.bind_team(PLAYER_TEAM_NAME, SimScript.PLAYER_TEAM)
 	world.bind_team(ENEMY_TEAM_NAME, SimScript.ENEMY_TEAM)
+	world.bind_script_team(
+		"Player_1_Inherit",
+		"PlyrCivilian",
+		[],
+		true,
+		[],
+		0,
+		true
+	)
 	_check("fixture: script player binds", world.bind_script_player(PLAYER))
 	_check(
 		"fixture: home flag unpacks free and binds SYNTH_HOME_REF",
 		world.ai().base_unpack("SYNTH_HOME_FLAG", true, "SYNTH_HOME_REF")
 	)
+	# Parity subsystems: wall structure, tactical marker, unit abilities,
+	# transport capacity, reinforcement army seed, OCL leaf for CreateObjectDie.
+	sim._ensure_parity()
+	sim.structures[910] = {
+		"health": 500,
+		"team": SimScript.PLAYER_TEAM,
+		"position": Vector2(80, -60),
+		"kind": "castle_wall",
+		"building_type": "GondorCastleUpgrade",
+		"completed_upgrades": [],
+		"construction_progress": 1.0,
+	}
+	sim.structures[911] = {
+		"health": 500,
+		"team": SimScript.PLAYER_TEAM,
+		"position": Vector2(75, -55),
+		"kind": "barracks",
+		"structure_kind": "barracks",
+		"building_type": "GondorBarracks",
+		"completed_upgrades": [],
+		"construction_progress": 1.0,
+		"transport_capacity": 4,
+	}
+	# Neutral capturable flag for transport.capture_nearest_unowned.
+	sim.structures[912] = {
+		"health": 200,
+		"team": SimScript.NEUTRAL_TEAM,
+		"position": Vector2(70, -50),
+		"kind": "flag",
+		"structure_kind": "flag",
+		"capturable": true,
+		"construction_progress": 1.0,
+	}
+	sim.parity.register_tactical_marker(
+		"CastleFront", "CastleFront", Vector2(90, -50), Vector2(40, 0), Vector2(-40, 0)
+	)
+	sim.register_ocl_leaf("OCL_SurfaceProbeDebris", {
+		"id": "OCL_SurfaceProbeDebris",
+		"createObjects": [{
+			"objects": [SimScript.SOLDIER_HORDE_ID],
+			"fields": [{"key": "Count", "resolved": 1}],
+		}],
+	})
+	var living_seed: Array = sim.living_ids(SimScript.PLAYER_TEAM)
+	if not living_seed.is_empty():
+		var seed_id := int(living_seed[0])
+		if sim.entities.has(seed_id):
+			(sim.entities[seed_id] as Dictionary)["abilities"] = [{
+				"id": "Command_SyntheticHeroPower",
+				"command_id": "Command_SyntheticHeroPower",
+				"name": "Command_SyntheticHeroPower",
+				"ready": true,
+			}]
+			# Reinforcement army seed so remove_reinforcement_army can answer.
+			(sim.entities[seed_id] as Dictionary)["reinforcement_army"] = "ArmyOne"
+			(sim.entities[seed_id] as Dictionary)["reinforcement_player_team"] = SimScript.PLAYER_TEAM
+	# Sequential-script probes need a loaded behavior script on a registered
+	# executor (ScriptActions::doTeamStartSequentialScript requires
+	# findScriptByName). One shared empty-actions script is enough for the
+	# queue/stop surface without inventing AI behavior content.
+	var executor: SageScriptExecutor = ExecutorScript.new(world)
+	executor.load_script_payload({
+		"name": "be_SurfaceSequentialProbe",
+		"comment": "",
+		"conditionsComment": "",
+		"actionsComment": "",
+		"isActive": true,
+		"deactivateUponSuccess": false,
+		"activeInEasy": true,
+		"activeInMedium": true,
+		"activeInHard": true,
+		"isSubroutine": false,
+		"evaluationInterval": 0,
+		"actionsFireSequentially": false,
+		"loopActions": false,
+		"loopCount": 0,
+		"sequentialTargetType": 1,
+		"sequentialTargetName": "",
+		"scope": "ALL",
+		"records": [],
+	})
+	# Do not _check these per-fixture: _fixture() runs once per method probe,
+	# and counting would re-mint EXPECTED_CHECKS by hundreds. Fail closed by
+	# leaving the executor unregistered if attach/register refuse.
+	if (
+		sim.attach_script_env(executor.env, SimScript.PLAYER_TEAM)
+		and sim.register_script_executor(executor, SimScript.PLAYER_TEAM)
+	):
+		pass
+	# Numeric entity id string for unit-scope surfaces (held/stealth/etc.).
+	var living: Array = sim.living_ids(SimScript.PLAYER_TEAM)
+	var living_entity_name := str(int(living[0])) if not living.is_empty() else "0"
+	# Map-geometry probe anchors.
+	sim.register_script_area("SYNTH_AREA", Vector2(at.x, at.y), 50.0)
+	sim.register_script_waypoint("SYNTH_WP", Vector2(at.x, at.y))
+	sim.register_script_waypoint_path("SYNTH_PATH", ["SYNTH_WP"])
+	# Home anchors for orders.move_home.
+	if not sim._spawn_positions.has(SimScript.PLAYER_TEAM):
+		sim._spawn_positions[SimScript.PLAYER_TEAM] = Vector2(at.x, at.y)
+	if not living.is_empty():
+		var home_row: Dictionary = sim.entities[int(living[0])]
+		sim._spawn_positions[SimScript.PLAYER_TEAM] = home_row.get(
+			"position", Vector2(at.x, at.y)
+		)
 	return {
 		"sim": sim,
 		"world": world,
 		"cast_position": Vector3(at.x, 0.0, at.y),
+		"executor": executor,
+		"living_entity_name": living_entity_name,
 	}
 
 
 func _release_fixture(fx: Dictionary) -> void:
-	## Break the world <-> facet reference cycle so per-probe fixtures free
-	## instead of leaking one world + facet set per method at exit.
+	## Facets weakref the world; still clear caches and drop sim so per-probe
+	## fixtures free instead of retaining the full harness until process exit.
 	var world: RetailSliceScriptWorld = fx["world"]
-	for facet in world._facets.values():
-		facet.world = null
-	world._facets.clear()
+	if world != null:
+		world._release_facets()
+		world.sim = null
+	fx["sim"] = null
+	fx["world"] = null
+	fx["executor"] = null
 
 
 # ==========================================================================
@@ -401,6 +572,11 @@ func _enumerate_surface() -> Array:
 			return String(a["facet"]) < String(b["facet"])
 		return String(a["method"]) < String(b["method"])
 	)
+	# Introspection materializes all cached facets on the base world. Break the
+	# same bidirectional RefCounted cycle that runtime fixtures release.
+	for facet in base_world._facets.values():
+		facet.world = null
+	base_world._facets.clear()
 	return entries
 
 
@@ -533,10 +709,374 @@ func _override_tuples(entry: Dictionary, fx: Dictionary) -> Array:
 			# "anything at all" form), which this method refuses - a list edit
 			# needs a real type name.
 			return [["SYNTH_PROBE_LIST", "SynthProbeType", true]]
+		"progression.has_object_of_veterancy":
+			# The generic object_type rule intentionally supplies "" for
+			# can_build_at_base's valid "anything" spelling. Veterancy has no
+			# empty-type form, so probe its exact four-slot signature with a
+			# modeled single type and a sourced comparison enum value.
+			return [[
+				PLAYER, "GondorArcher",
+				ParamTypes.COMPARE_GREATER_EQUAL, 2,
+			]]
 		"units.has_command_points_to_build":
 			# Needs a type the fixture's production rules model; the retail
 			# spelling resolves through the runtime-id slug.
 			return [[PLAYER, "GondorFighterHorde"]]
+		"teams.transfer_to_player":
+			# Method-level success shape: a source-attested marker-only
+			# non-default civilian team and a uniquely bound combatant
+			# destination, matching the real composite retail gate.
+			return [["PlyrCivilian/Player_1_Inherit", PLAYER]]
+		"teams.execute_sequential_script":
+			# Needs a registered script team plus a script body loaded on the
+			# fixture executor (be_SurfaceSequentialProbe).
+			return [[PLAYER_TEAM_NAME, "be_SurfaceSequentialProbe", false]]
+		"units.set_object_status":
+			return [[
+				SageScriptWorld.Scope.TEAM, PLAYER_TEAM_NAME, "UNSELECTABLE", true
+			]]
+		"units.has_object_status":
+			return [[
+				SageScriptWorld.Scope.TEAM, PLAYER_TEAM_NAME, "UNSELECTABLE", false
+			]]
+		"players.set_auto_build_enabled":
+			return [[PLAYER, false]]
+		"players.set_base_construction_enabled":
+			return [[PLAYER, false]]
+		"players.set_factories_enabled":
+			return [[PLAYER, false]]
+		"players.set_base_construction_speed":
+			return [[PLAYER, 1.5]]
+		"players.set_unit_construction_enabled":
+			return [[PLAYER, "GondorFighterHorde", false]]
+		"players.has_prerequisite_to_build":
+			return [[PLAYER, "GondorFighterHorde"]]
+		"terrain.set_buildability":
+			return [["GondorFighterHorde", 1]]
+		"teams.members":
+			return [[PLAYER_TEAM_NAME]]
+		"teams.set_ai_recruitable":
+			return [[PLAYER_TEAM_NAME, false]]
+		"teams.set_reference":
+			return [["AI_TEAM_REF", PLAYER_TEAM_NAME]]
+		"teams.spin_for_ticks":
+			return [[PLAYER_TEAM_NAME, 5]]
+		"orders.hunt":
+			return [[SageScriptWorld.Scope.PLAYER, PLAYER, ""]]
+		"orders.idle_for_ticks":
+			return [[SageScriptWorld.Scope.PLAYER, PLAYER, 3]]
+		"orders.guard":
+			return [[
+				SageScriptWorld.Scope.PLAYER, PLAYER,
+				SageScriptWorld.target_self(), 0
+			]]
+		"orders.set_stopping_distance":
+			return [[SageScriptWorld.Scope.PLAYER, PLAYER, 2.0]]
+		"units.set_held":
+			return [[String(fx.get("living_entity_name", "0")), true]]
+		"units.set_repulsor":
+			return [[String(fx.get("living_entity_name", "0")), true]]
+		"units.set_stealth_enabled":
+			return [[String(fx.get("living_entity_name", "0")), true]]
+		"units.set_strict_control_enabled":
+			return [[String(fx.get("living_entity_name", "0")), true]]
+		"units.set_house_color_enabled":
+			return [[String(fx.get("living_entity_name", "0")), true]]
+		"units.set_close_range_weapon":
+			return [[String(fx.get("living_entity_name", "0")), true]]
+		"units.set_flame_status":
+			return [[String(fx.get("living_entity_name", "0")), true]]
+		"units.is_webbed":
+			return [[String(fx.get("living_entity_name", "0"))]]
+		"units.set_special_weaponset":
+			return [[String(fx.get("living_entity_name", "0")), "WEAPONSET_PLAYER_UPGRADE"]]
+		"units.set_emoticon":
+			return [[String(fx.get("living_entity_name", "0")), "Emoticon_Smile", 10]]
+		"units.set_model_condition":
+			return [[String(fx.get("living_entity_name", "0")), "USER_1", true, 0]]
+		"units.set_object_panel_flag":
+			return [[String(fx.get("living_entity_name", "0")), "FLAG", true]]
+		"units.set_topple_direction":
+			return [[String(fx.get("living_entity_name", "0")), Vector3(1, 0, 0)]]
+		"units.shock":
+			return [[String(fx.get("living_entity_name", "0")), 5]]
+		"units.delete":
+			return [[String(fx.get("living_entity_name", "0"))]]
+		"combat.set_bonuses_allowed":
+			return [[String(fx.get("living_entity_name", "0")), true]]
+		"combat.damage":
+			return [[SageScriptWorld.Scope.PLAYER, PLAYER, 1.0]]
+		"combat.kill":
+			return [[SageScriptWorld.Scope.PLAYER, ENEMY]]
+		"combat.set_health_percent":
+			return [[SageScriptWorld.Scope.PLAYER, PLAYER, 100.0]]
+		"areas.exists":
+			return [["SYNTH_AREA"]]
+		"areas.contains":
+			return [["SYNTH_AREA", fx["cast_position"]]]
+		"areas.waypoint_path_exists":
+			return [["SYNTH_PATH"]]
+		"areas.waypoint_position":
+			return [["SYNTH_WP"]]
+		"areas.set_human_impassable":
+			return [["SYNTH_AREA", true]]
+		"areas.member_count":
+			return [[SageScriptWorld.Scope.PLAYER, PLAYER, "SYNTH_AREA"]]
+		"areas.unit_count_in_area":
+			return [[PLAYER, "SYNTH_AREA", {}]]
+		"areas.transition_count":
+			return [[SageScriptWorld.Scope.PLAYER, PLAYER, "SYNTH_AREA", true]]
+		"transport.garrisoned_count":
+			return [[PLAYER]]
+		"transport.captured_unit_count":
+			return [[PLAYER]]
+		"transport.passenger_count":
+			return [["SYNTH_HOME_REF"]]
+		"transport.has_toggled_weapon":
+			return [[String(fx.get("living_entity_name", "0"))]]
+		"transport.load_transports":
+			return [[PLAYER_TEAM_NAME]]
+		"players.rank_level":
+			return [[PLAYER]]
+		"players.set_rank_level":
+			return [[PLAYER, 2]]
+		"players.add_rank_level":
+			return [[PLAYER, 1]]
+		"players.set_rank_level_limit":
+			return [[PLAYER, 10]]
+		"players.reached_level_cap":
+			return [[PLAYER]]
+		"players.add_skill_points":
+			return [[PLAYER, 5]]
+		"players.select_skill_set":
+			return [[PLAYER, 1]]
+		"players.light_points":
+			return [[PLAYER]]
+		"players.give_light_points":
+			return [[PLAYER, 3]]
+		"players.change_light_point_level":
+			return [[PLAYER, 1]]
+		"players.reset_light_points":
+			return [[PLAYER]]
+		"players.set_max_spell_points":
+			return [[PLAYER, 100]]
+		"players.exit_all_buildings":
+			return [[PLAYER]]
+		"players.repair_structure":
+			return [[PLAYER, "SYNTH_HOME_REF"]]
+		"players.sell_everything":
+			return [[PLAYER]]
+		"teams.contained_count":
+			return [[PLAYER_TEAM_NAME]]
+		"teams.exit_all":
+			return [[PLAYER_TEAM_NAME, true]]
+		"teams.set_close_range_weapon":
+			return [[PLAYER_TEAM_NAME, true]]
+		"teams.set_stealth_enabled":
+			return [[PLAYER_TEAM_NAME, true]]
+		"teams.was_created":
+			return [[PLAYER_TEAM_NAME]]
+		"units.set_team":
+			return [[String(fx.get("living_entity_name", "0")), PLAYER_TEAM_NAME]]
+		"units.enter_object":
+			return [[String(fx.get("living_entity_name", "0")), "SYNTH_HOME_REF"]]
+		"transport.garrison":
+			return [[
+				SageScriptWorld.Scope.UNIT,
+				String(fx.get("living_entity_name", "0")),
+				SageScriptWorld.target_object("SYNTH_HOME_REF"),
+				true,
+			]]
+		"teams.enter_object":
+			return [[PLAYER_TEAM_NAME, "SYNTH_HOME_REF"]]
+		"teams.set_emoticon":
+			return [[PLAYER_TEAM_NAME, "Emoticon_Smile", 10]]
+		"teams.set_model_condition":
+			return [[PLAYER_TEAM_NAME, "USER_1", true, 0]]
+		"teams.set_object_panel_flag":
+			return [[PLAYER_TEAM_NAME, "FLAG", true]]
+		"teams.set_repulsor":
+			return [[PLAYER_TEAM_NAME, true]]
+		"teams.set_house_color_enabled":
+			return [[PLAYER_TEAM_NAME, true]]
+		"teams.set_flame_status":
+			return [[PLAYER_TEAM_NAME, true]]
+		"teams.set_strict_control_enabled":
+			return [[PLAYER_TEAM_NAME, true]]
+		"units.exit":
+			return [[String(fx.get("living_entity_name", "0")), false]]
+		"units.is_building_empty":
+			return [["SYNTH_HOME_REF"]]
+		"orders.attack_area":
+			return [[SageScriptWorld.Scope.PLAYER, PLAYER, "SYNTH_AREA", 5]]
+		"orders.follow_waypoint_path":
+			return [[
+				SageScriptWorld.Scope.PLAYER, PLAYER,
+				SageScriptWorld.target_waypoint_path("SYNTH_PATH", false),
+			]]
+		"orders.attack_follow_waypoints":
+			return [[String(fx.get("living_entity_name", "0")), "SYNTH_PATH"]]
+		"orders.fire_weapon_following_path":
+			return [[String(fx.get("living_entity_name", "0")), "SYNTH_PATH"]]
+		"orders.guard_area_from_position":
+			return [[
+				SageScriptWorld.Scope.PLAYER, PLAYER, "SYNTH_AREA", fx["cast_position"]
+			]]
+		"orders.move_home":
+			return [[SageScriptWorld.Scope.PLAYER, PLAYER]]
+		"players.object_count_within_distance":
+			return [[PLAYER, "", "SYNTH_WP", 100.0]]
+		"players.sell_everything":
+			return [[PLAYER]]
+		"progression.gained_level":
+			return [[String(fx.get("living_entity_name", "0"))]]
+		"progression.set_max_level":
+			return [[String(fx.get("living_entity_name", "0")), 5]]
+		"combat.set_special_power_countdown_running":
+			return [[String(fx.get("living_entity_name", "0")), "Command_SyntheticHeroPower", true]]
+		"combat.set_special_power_countdown":
+			return [[
+				SageScriptWorld.Scope.UNIT,
+				String(fx.get("living_entity_name", "0")),
+				"Command_SyntheticHeroPower",
+				10,
+				false,
+			]]
+		"units.deploy_siege":
+			return [[
+				String(fx.get("living_entity_name", "0")),
+				SageScriptWorld.target_position(fx["cast_position"]),
+			]]
+		"units.retract_siege":
+			return [[String(fx.get("living_entity_name", "0"))]]
+		"units.set_cave_index":
+			return [[String(fx.get("living_entity_name", "0")), 1]]
+		"units.set_hulk_lifetime":
+			return [[String(fx.get("living_entity_name", "0")), 30]]
+		"units.set_warehouse_value":
+			return [["911", 100]]
+		"units.execute_sequential_script":
+			return [[PLAYER_TEAM_NAME, "be_SurfaceSequentialProbe", false]]
+		"units.stop_sequential_script":
+			return [[PLAYER_TEAM_NAME]]
+		"orders.set_auto_ability":
+			return [[
+				SageScriptWorld.Scope.UNIT,
+				String(fx.get("living_entity_name", "0")),
+				"Command_SyntheticHeroPower",
+				true,
+			]]
+		"teams.merge_into":
+			return [[PLAYER_TEAM_NAME, PLAYER_TEAM_NAME]]
+		"ai.build_on_foundation":
+			# Fixture unpacks SYNTH_HOME_FLAG as SYNTH_HOME_REF with expansion pads;
+			# SynthPitType is configured as an expansion object_id.
+			return [[PLAYER, "SYNTH_HOME_REF", "SynthPitType"]]
+		"transport.capture_nearest_unowned":
+			return [[PLAYER_TEAM_NAME]]
+		"transport.create_team_from_captured":
+			return [[PLAYER, "CapturedTeam"]]
+		"transport.teleport_to":
+			return [[
+				SageScriptWorld.Scope.PLAYER, PLAYER,
+				SageScriptWorld.target_position(fx["cast_position"]),
+			]]
+		"units.create_object":
+			return [["GondorFighterHorde", PLAYER, fx["cast_position"], 0.0]]
+		"units.create_object_on_team":
+			return [[
+				"GondorFighterHorde", PLAYER_TEAM_NAME, fx["cast_position"], 0.0
+			]]
+		"units.create_on_team_at":
+			return [[
+				"GondorFighterHorde", PLAYER_TEAM_NAME,
+				SageScriptWorld.target_position(fx["cast_position"]),
+				"SYNTH_SPAWNED",
+			]]
+		"units.spawn_at":
+			return [[
+				"GondorFighterHorde", PLAYER, "SYNTH_SPAWNED",
+				fx["cast_position"], 0.0,
+			]]
+		"economy.build_supply_center":
+			# Fixture expansion table object_id is SynthPitType (see _fixture).
+			return [[PLAYER, "SynthPitType", 100.0]]
+		"units.set_gate_state":
+			return [["SYNTH_HOME_REF", true, true]]
+		"units.gate_is_open":
+			return [["SYNTH_HOME_REF"]]
+		"units.threat":
+			return [[String(fx.get("living_entity_name", "0"))]]
+		"units.threat_within_radius":
+			return [[String(fx.get("living_entity_name", "0")), 500.0]]
+		"units.force_emotion":
+			return [[String(fx.get("living_entity_name", "0")), 1, 10]]
+		"units.set_selected":
+			return [[String(fx.get("living_entity_name", "0")), true]]
+		"units.exit_specific_building":
+			return [[String(fx.get("living_entity_name", "0")), "SYNTH_HOME_REF"]]
+		"units.set_attitude":
+			return [[String(fx.get("living_entity_name", "0")), 2]]
+		"units.skill_points":
+			return [[String(fx.get("living_entity_name", "0"))]]
+		"units.stance":
+			return [[String(fx.get("living_entity_name", "0"))]]
+		"units.stop":
+			return [[String(fx.get("living_entity_name", "0")), true]]
+		"units.transfer_ownership":
+			return [[String(fx.get("living_entity_name", "0")), ENEMY]]
+		"progression.upgrade_nearest_wall":
+			return [[PLAYER, "Upgrade_TestTurret", "SYNTH_HOME_REF"]]
+		"progression.upgrade_nearest_wall_bound":
+			return [[
+				"SYNTH_HOME_REF", "Upgrade_TestTurret", "castle_wall",
+				"CastleFront", "AI_WALL_REF",
+			]]
+		"orders.use_command_button":
+			return [[
+				SageScriptWorld.Scope.UNIT,
+				String(fx.get("living_entity_name", "0")),
+				"Command_SyntheticHeroPower",
+				SageScriptWorld.target_self(),
+			]]
+		"orders.use_command_button_partial":
+			return [[
+				PLAYER_TEAM_NAME, "Command_SyntheticHeroPower", 1,
+				SageScriptWorld.target_self(),
+			]]
+		"ai.build_base_building_per_tactical_marker":
+			return [[
+				"SynthPitType", "near", "CastleFront", "SYNTH_HOME_REF", "AI_BUILT_REF",
+			]]
+		"teams.set_reference_to_nearest":
+			# Empty object_type = any living entity/structure owned by player near anchor.
+			return [[
+				"AI_GATE", "", PLAYER, PLAYER_TEAM_NAME, false
+			]]
+		"teams.recruit":
+			return [[PLAYER_TEAM_NAME, 100.0, ""]]
+		"teams.threat":
+			return [[PLAYER_TEAM_NAME]]
+		"teams.threat_within_radius":
+			return [[PLAYER_TEAM_NAME, 500.0]]
+		"teams.set_attitude":
+			return [[PLAYER_TEAM_NAME, 0]]
+		"teams.set_threat_level":
+			return [[PLAYER_TEAM_NAME, 1]]
+		"combat.team_health_percent":
+			return [[PLAYER_TEAM_NAME]]
+		"units.threat":
+			return [[String(fx.get("living_entity_name", "0"))]]
+		"ai.create_reinforcement_team":
+			# Army name must be an authored unit_rules key (no synthetic fallback).
+			return [[
+				PLAYER, SimScript.SOLDIER_OBJECT_ID,
+				SageScriptWorld.target_position(fx["cast_position"]),
+			]]
+		"ai.remove_reinforcement_army":
+			return [[PLAYER, "ArmyOne"]]
+		"progression.upgrade_nearest_wall":
+			return [[PLAYER, "Upgrade_TestTurret", "SYNTH_HOME_REF"]]
 	return []
 
 
@@ -582,23 +1122,72 @@ func _call_answers(target: Object, entry: Dictionary, tuple: Array) -> bool:
 	return bool(result)
 
 
+func _core_state_fingerprint(sim: RetailSliceSim) -> String:
+	## state_hash with the residual surface bag cleared so bag-only writes do
+	## not look like subsystem consumption.
+	var saved: Dictionary = sim.script_surface_bag
+	sim.script_surface_bag = {}
+	var fingerprint := sim.state_hash()
+	sim.script_surface_bag = saved
+	return fingerprint
+
+
 func _probe_entry(entry: Dictionary) -> Dictionary:
 	## Probe one method on a fresh fixture. Returns
-	## {"backed": bool, "mode": "called"|"fallback", "calls": int}.
+	## {"backed": bool, "mode": "called"|"fallback", "calls": int,
+	##  "bagOnly": bool, "stateMutating": bool, "subsystemConsumed": bool}.
 	var qualified := "%s.%s" % [entry["facet"], entry["method"]]
 	if FALLBACK_PROBED.has(qualified):
-		return _probe_fallback(qualified)
+		var fallback := _probe_fallback(qualified)
+		# Fallback base methods read/draw live sim state; treat as consumed.
+		fallback["bagOnly"] = false
+		fallback["stateMutating"] = qualified.begins_with("world.random_")
+		fallback["subsystemConsumed"] = bool(fallback.get("backed", false))
+		return fallback
 	var fx := _fixture()
+	var sim: RetailSliceSim = fx["sim"]
 	var target := _facet_object(fx["world"], String(entry["facet"]))
 	var calls := 0
 	var backed := false
+	var bag_only := false
+	var state_mutating := false
+	var subsystem_consumed := false
 	for tuple in _candidate_tuples(entry, fx):
 		calls += 1
+		var bag_before: Dictionary = sim.script_surface_bag.duplicate(true)
+		var core_before := _core_state_fingerprint(sim)
 		if _call_answers(target, entry, tuple):
 			backed = true
+			var bag_after: Dictionary = sim.script_surface_bag.duplicate(true)
+			var core_after := _core_state_fingerprint(sim)
+			var bag_changed := str(bag_before) != str(bag_after)
+			var core_changed := core_before != core_after
+			state_mutating = bag_changed or core_changed
+			# Provenance-aware classification (Codex gpt-5.6-sol re-review):
+			# * subsystemConsumed only when core sim fingerprint changes.
+			# * bagOnly only when bag changes and core does not.
+			# * Pure answers with neither change are callable but NOT claimed
+			#   as subsystem consumers (bag-default reads used to inflate that
+			#   count by treating every non-mutating answer as consumed).
+			if core_changed:
+				subsystem_consumed = true
+				bag_only = false
+			elif bag_changed:
+				bag_only = true
+				subsystem_consumed = false
+			else:
+				bag_only = false
+				subsystem_consumed = false
 			break
 	_release_fixture(fx)
-	return {"backed": backed, "mode": "called", "calls": calls}
+	return {
+		"backed": backed,
+		"mode": "called",
+		"calls": calls,
+		"bagOnly": bag_only,
+		"stateMutating": state_mutating,
+		"subsystemConsumed": subsystem_consumed,
+	}
 
 
 func _probe_fallback(qualified: String) -> Dictionary:
@@ -634,6 +1223,9 @@ func _probe_all(entries: Array) -> void:
 		var outcome := _probe_entry(entry)
 		entry["observed_backed"] = bool(outcome["backed"])
 		entry["probe_mode"] = String(outcome["mode"])
+		entry["bag_only"] = bool(outcome.get("bagOnly", false))
+		entry["state_mutating"] = bool(outcome.get("stateMutating", false))
+		entry["subsystem_consumed"] = bool(outcome.get("subsystemConsumed", false))
 
 
 func _print_survey(entries: Array) -> void:
@@ -668,12 +1260,24 @@ func _render_map(entries: Array) -> String:
 	## tab indentation, LF line endings, trailing newline - the same
 	## discipline as retail_ai_call_census.json.
 	var backed_count := 0
+	var bag_only_count := 0
+	var state_mutating_count := 0
+	var subsystem_consumed_count := 0
 	var methods: Array = []
 	for entry in entries:
 		var qualified := "%s.%s" % [entry["facet"], entry["method"]]
 		var observed := bool(entry["observed_backed"])
+		var bag_only := bool(entry.get("bag_only", false))
+		var state_mutating := bool(entry.get("state_mutating", false))
+		var subsystem_consumed := bool(entry.get("subsystem_consumed", false))
 		if observed:
 			backed_count += 1
+		if bag_only:
+			bag_only_count += 1
+		if state_mutating:
+			state_mutating_count += 1
+		if subsystem_consumed:
+			subsystem_consumed_count += 1
 		var row := {
 			"facet": entry["facet"],
 			"method": entry["method"],
@@ -681,7 +1285,12 @@ func _render_map(entries: Array) -> String:
 			"arity": Array(entry["params"]).size(),
 			"returns": entry["returns"],
 			"probe": entry["probe_mode"],
+			# Historical name kept for map consumers; means probe-callable.
 			"simulationBacked": observed,
+			"callable": observed,
+			"bagOnly": bag_only,
+			"stateMutating": state_mutating,
+			"subsystemConsumed": subsystem_consumed,
 		}
 		if observed:
 			var restriction := String(SurfaceData.RESTRICTIONS.get(qualified, ""))
@@ -721,14 +1330,20 @@ func _render_map(entries: Array) -> String:
 			"Every public non-static script-declared instance method of the "
 			+ "16 facet objects of SageScriptWorld (the three presentation "
 			+ "sinks counted per sink) plus the base world's own 7 surface "
-			+ "methods under facet 'world'. simulationBacked is OBSERVED by "
-			+ "calling each method against RetailSliceScriptWorld over a "
-			+ "synthetic RetailSliceSim; blocking annotations are analysis, "
-			+ "verified for coverage but not provable by a probe."
+			+ "methods under facet 'world'. simulationBacked/callable is "
+			+ "OBSERVED by calling each method against RetailSliceScriptWorld "
+			+ "over a synthetic RetailSliceSim. bagOnly/stateMutating/"
+			+ "subsystemConsumed are also probe-measured: callable is not "
+			+ "parity. Blocking annotations are analysis, verified for "
+			+ "coverage but not provable by a probe."
 		),
 		"counts": {
 			"total": entries.size(),
 			"simulationBacked": backed_count,
+			"callable": backed_count,
+			"bagOnly": bag_only_count,
+			"stateMutating": state_mutating_count,
+			"subsystemConsumed": subsystem_consumed_count,
 			"refusing": entries.size() - backed_count,
 		},
 		"subsystems": subsystems,
@@ -807,12 +1422,26 @@ func _verify_read_only_sweep(entries: Array) -> void:
 	## Every query-returning method, all candidates, one shared world: the
 	## hash may not move. Backed queries are read-only by contract; refused
 	## ones must not touch anything either.
+	##
+	## WRITE-THROUGH QUERIES: a few vocabulary methods return SageWorldQuery
+	## (spawned name / handle) but mutate by contract - CREATE_OBJECT and its
+	## spawn siblings. Exclude them from the pure read-only sweep; they are
+	## still probed for simulationBacked separately.
+	const WRITE_THROUGH_QUERIES := {
+		"units.create_object": true,
+		"units.spawn_at": true,
+		"units.create_on_team_at": true,
+		"units.create_object_on_team": true,
+	}
 	var fx := _fixture()
 	var sim: RetailSliceSim = fx["sim"]
 	var before := sim.state_hash()
 	var sweep_calls := 0
 	for entry in entries:
 		if String(entry["returns"]) != "query":
+			continue
+		var qualified := "%s.%s" % [entry["facet"], entry["method"]]
+		if WRITE_THROUGH_QUERIES.has(qualified):
 			continue
 		var target := _facet_object(fx["world"], String(entry["facet"]))
 		for tuple in _candidate_tuples(entry, fx):

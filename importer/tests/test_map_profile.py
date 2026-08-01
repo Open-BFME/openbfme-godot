@@ -27,6 +27,8 @@ def _catalog(root: Path, *, omit_preview: bool = False) -> InstallCatalog:
     entries: dict[str, bytes] = {
         "data/ini/terrain.ini": b"Terrain TestGrass\n Texture = testgrass.tga\nEnd\n",
         "art/terrain/testgrass.tga": b"synthetic-tga",
+        "libraries/ai_initialize/ai_initialize.map": source,
+        "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map": source,
     }
     for index, target in enumerate(FIVE_MAP_TARGETS):
         path = PurePosixPath(target.virtual_path)
@@ -40,7 +42,9 @@ def _catalog(root: Path, *, omit_preview: bool = False) -> InstallCatalog:
 
 
 class FiveMapProfileTests(unittest.TestCase):
-    def test_generated_profile_is_deterministic_resolved_and_schema_valid(self) -> None:
+    def test_script_composite_generated_profile_is_deterministic_and_schema_valid(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             catalog = _catalog(root)
@@ -57,7 +61,7 @@ class FiveMapProfileTests(unittest.TestCase):
             resolved = resolve_profile(loaded, catalog)
 
         self.assertFalse(resolved.missing_required)
-        self.assertEqual(len(first["resources"]), 21)
+        self.assertEqual(len(first["resources"]), 22)
         self.assertEqual(len(first["runtime_data"]["data/maps.json"]["maps"]), 5)
         self.assertEqual(
             [row["playerCount"] for row in first["runtime_data"]["data/maps.json"]["maps"]],
@@ -67,6 +71,26 @@ class FiveMapProfileTests(unittest.TestCase):
             row for row in first["resources"] if row["converter"] == "sage-map"
         ]
         self.assertEqual(len(map_resources), 5)
+        script_resources = [
+            row
+            for row in first["resources"]
+            if row["converter"] == "sage-script-composite"
+        ]
+        self.assertEqual(len(script_resources), 1)
+        self.assertEqual(
+            script_resources[0]["options"]["mapVirtualPath"],
+            "maps/map mp fords of isen ii/map mp fords of isen ii.map",
+        )
+        self.assertTrue(
+            all(
+                row["patterns"][1:]
+                == [
+                    "libraries/ai_initialize/ai_initialize.map",
+                    "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
+                ]
+                for row in script_resources
+            )
+        )
         self.assertTrue(
             all(row["options"]["expected"]["terrainTextureCount"] == 1 for row in map_resources)
         )
@@ -89,7 +113,7 @@ class FiveMapProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             profile = build_five_map_profile(_catalog(Path(raw), omit_preview=True))
 
-        self.assertEqual(len(profile["resources"]), 20)
+        self.assertEqual(len(profile["resources"]), 21)
         rows = profile["runtime_data"]["data/maps.json"]["maps"]
         without_preview = [row for row in rows if "preview" not in row]
         self.assertEqual(len(without_preview), 1)
@@ -129,6 +153,8 @@ def _skirmish_catalog(root: Path, *, drop_preview_for: str = "") -> InstallCatal
     entries: dict[str, bytes] = {
         "data/ini/terrain.ini": b"Terrain TestGrass\n Texture = testgrass.tga\nEnd\n",
         "art/terrain/testgrass.tga": b"synthetic-tga",
+        "libraries/ai_initialize/ai_initialize.map": source,
+        "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map": source,
     }
     records = [
         # Advertised but never shipped: the registry outlives its payload.
@@ -271,6 +297,19 @@ class SkirmishMapDiscoveryTests(unittest.TestCase):
             [row["id"] for row in rows],
             ["bfme2.map.alpha-vale", "bfme2.map.bravo-ridge-ii"],
         )
+        script_resources = [
+            row
+            for row in first["resources"]
+            if row["converter"] == "sage-script-composite"
+        ]
+        self.assertEqual(len(script_resources), 2)
+        self.assertEqual(
+            [row["output"] for row in script_resources],
+            [
+                "maps/alpha-vale/scripts.json",
+                "maps/bravo-ridge-ii/scripts.json",
+            ],
+        )
         self.assertEqual([row["displayName"] for row in rows], ["Alpha Vale", "Bravo Ridge II"])
         self.assertEqual([row["playerCount"] for row in rows], [1, 1])
         self.assertEqual([row["registryPlayerCount"] for row in rows], [1, 1])
@@ -286,6 +325,21 @@ class SkirmishMapDiscoveryTests(unittest.TestCase):
         self.assertEqual(
             [row["status"] for row in evidence["rejectedMaps"]],
             ["registry-stale-missing-payload"],
+        )
+
+    def test_scripts_rotwk_skirmish_profile_uses_rotwk_map_identifiers(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            profile = build_skirmish_map_profile(
+                _skirmish_catalog(Path(raw)),
+                game="rotwk",
+            )
+
+        self.assertEqual(
+            [
+                row["id"]
+                for row in profile["runtime_data"]["data/maps.json"]["maps"]
+            ],
+            ["rotwk.map.alpha-vale", "rotwk.map.bravo-ridge-ii"],
         )
 
     def test_registry_player_count_disagreement_rejects_the_map(self) -> None:

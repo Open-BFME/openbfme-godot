@@ -121,13 +121,19 @@ func _run() -> void:
 		# `wotr_round_trip_runner`, which is why this only asserts the route.
 		_check("war_of_the_ring_lands_on_game_setup", menu.show_page("wotr_setup"))
 		await process_frame
+		# `wotr_screen` is null until the STRATEGIC page is navigated to - the
+		# strategic screen's ~22k-line script is compiled at that navigation, not
+		# during boot - so "the strategic map is not showing" is now "no strategic
+		# screen exists yet, or it exists and is hidden". Both are the same fact
+		# this check has always asserted, and the null case is the stronger one.
+		var strategic_showing: bool = menu.wotr_screen != null and menu.wotr_screen.visible
 		_check(
 			"game_setup_is_the_page_the_entry_opens",
 			String(menu.get_current_page()) == "wotr_setup"
-				and menu.wotr_setup_screen.visible and not menu.wotr_screen.visible,
+				and menu.wotr_setup_screen.visible and not strategic_showing,
 			"page=%s setup=%s map=%s" % [
 				menu.get_current_page(), menu.wotr_setup_screen.visible,
-				menu.wotr_screen.visible]
+				strategic_showing]
 		)
 		# PLAY REACHES THE EXISTING SESSION. The screen emits; the menu starts a
 		# `WotrSession`. A second path into the strategic layer is the thing this
@@ -155,6 +161,220 @@ func _run() -> void:
 		menu.show_page("main")
 		await process_frame
 		_check("changing_page_closes_the_flyout", not solo_menu.visible)
+
+	# ------------------------------------------------------------------------------
+	# THE STRATEGIC PAGE IS THE GAME, SO IT TAKES THE WHOLE WINDOW
+	# ------------------------------------------------------------------------------
+	#
+	# It did not. `_ensure_wotr_screen()` used to copy the SOLO PLAY flyout's
+	# rectangle onto the strategic screen, so War of the Ring played inside an inset
+	# panel with the shell's backdrop, the OPEN BFME masthead, the version corner and
+	# the "Open source engine" line framing it. The owner's words were "there is no
+	# way to have this fullscreen inside of the game engine itself".
+	#
+	# NOTHING CAUGHT IT, and that is the reason these checks are here rather than in
+	# a WOTR runner: every layout assertion this project has is made against a screen
+	# the runners BUILD THEMSELVES at full window size, and the capture runner did
+	# the same. The one thing nobody asserted was the rectangle the MENU hands the
+	# screen - which is the only rectangle a player ever sees.
+	# THE REAL ENTRY FIRST. `show_page("wotr")` is the route a player's clicks take:
+	# it compiles the screen, seats a session and configures it. It legitimately
+	# refuses on a machine with no living-world document, and the layout half of
+	# these checks must still run there - so the page is shown either way and only
+	# the seating check below depends on a session existing.
+	var wotr_opened: bool = menu.show_page("wotr")
+	_check("the_strategic_screen_can_be_built", menu._ensure_wotr_screen())
+	if menu.wotr_screen != null:
+		if not wotr_opened:
+			menu._show_page("wotr")
+		await process_frame
+		var strategic: Control = menu.wotr_screen
+		_check("the_strategic_page_is_showing", strategic.visible)
+		# FILLS THE VIEWPORT. Asserted against the root viewport rather than against
+		# its parent, because "it fills its parent" is exactly what the broken version
+		# was also true of.
+		var viewport_size := Vector2(root.size)
+		_check(
+			"the_strategic_page_fills_the_whole_window",
+			strategic.get_global_rect().position.is_equal_approx(Vector2.ZERO)
+				and strategic.size.is_equal_approx(viewport_size),
+			"screen %s at %s, window %s" % [
+				str(strategic.size), str(strategic.get_global_rect().position),
+				str(viewport_size)]
+		)
+		# AND THE SHELL'S FURNITURE IS DOWN. A full-window page under the menu's
+		# masthead is still a game inside a menu.
+		_check("the_shells_chrome_is_hidden_while_the_game_is_up", menu.shell_chrome_is_hidden())
+		var still_up: Array[String] = []
+		for path in ["Center/Title", "Center/Subtitle", "Center/BuildVersion",
+				"Footer", "Atmosphere", "BarScrim"]:
+			var node := menu.get_node_or_null(path) as Control
+			if node != null and node.visible:
+				still_up.append(path)
+		_check("no_named_piece_of_shell_chrome_survives_the_strategic_page",
+			still_up.is_empty(), ", ".join(still_up))
+		# IT FOLLOWS THE WINDOW. The whole point of anchors rather than a copied
+		# rectangle is that going fullscreen, or dragging the window, resizes the game.
+		# ANCHORED, not copied. The anchors are the property that makes the resize
+		# automatic, so they are asserted directly - a headless run has no compositor
+		# and cannot be relied on to deliver a real window resize, but a control
+		# anchored to all four edges of a full-window parent cannot fail to follow one.
+		_check(
+			"the_strategic_page_is_anchored_to_the_window_rather_than_given_a_copied_rectangle",
+			is_equal_approx(strategic.anchor_left, 0.0) and is_equal_approx(strategic.anchor_top, 0.0)
+				and is_equal_approx(strategic.anchor_right, 1.0)
+				and is_equal_approx(strategic.anchor_bottom, 1.0)
+				and is_zero_approx(strategic.offset_left) and is_zero_approx(strategic.offset_top)
+				and is_zero_approx(strategic.offset_right) and is_zero_approx(strategic.offset_bottom),
+			"anchors %.2f %.2f %.2f %.2f offsets %.1f %.1f %.1f %.1f" % [
+				strategic.anchor_left, strategic.anchor_top, strategic.anchor_right,
+				strategic.anchor_bottom, strategic.offset_left, strategic.offset_top,
+				strategic.offset_right, strategic.offset_bottom]
+		)
+		# AND IT REALLY DOES FOLLOW ONE. Driven through the parent the anchors resolve
+		# against, so the check holds whether or not this headless process has a
+		# window manager willing to change the root viewport's size.
+		var shell_center := menu.get_node("Center") as Control
+		var center_was := shell_center.size
+		shell_center.size = Vector2(2560.0, 1440.0)
+		await process_frame
+		_check(
+			"the_strategic_page_follows_a_resize",
+			strategic.size.is_equal_approx(shell_center.size),
+			"screen %s, frame %s" % [str(strategic.size), str(shell_center.size)]
+		)
+		shell_center.size = center_was
+		await process_frame
+		# HIDE THE UI. F2 takes every HUD island down and leaves the map; F2 again
+		# restores exactly what it hid.
+		var end_turn_was: bool = strategic.end_turn_button.visible
+		strategic.set_hud_hidden(true)
+		_check(
+			"hiding_the_hud_takes_down_the_chrome_pass_and_the_controls",
+			not strategic.chrome_layer.visible and not strategic.end_turn_button.visible
+				and not strategic.standings_label.visible,
+			"chrome=%s endturn=%s standings=%s" % [
+				strategic.chrome_layer.visible, strategic.end_turn_button.visible,
+				strategic.standings_label.visible]
+		)
+		_check("hiding_the_hud_leaves_the_map_alone",
+			strategic.map3d.visible or strategic.map_view.visible)
+		strategic.set_hud_hidden(false)
+		_check(
+			"showing_the_hud_restores_exactly_what_was_hidden",
+			strategic.chrome_layer.visible
+				and strategic.end_turn_button.visible == end_turn_was,
+			"chrome=%s endturn=%s (was %s)" % [
+				strategic.chrome_layer.visible, strategic.end_turn_button.visible,
+				end_turn_was]
+		)
+		# THE PAUSE SHELL'S OPTIONS CAPSULE, which is the route to settings from
+		# inside a campaign - the one the owner could not find because it did not
+		# exist. It must be wired to the shell's own options screen, not to nothing.
+		_check("the_pause_shell_carries_an_options_capsule",
+			strategic.pause_options != null and strategic.pause_options.text == "OPTIONS")
+		_check("the_pause_shells_options_capsule_is_wired_to_the_shell",
+			strategic.options_requested.get_connections().size() > 0)
+		strategic.toggle_pause_shell(true)
+		await process_frame
+		_check("opening_the_pause_shell_shows_all_three_of_its_controls",
+			strategic.pause_resume.visible and strategic.pause_options.visible
+				and strategic.back_button.visible)
+		strategic.pause_options.emit_signal("pressed")
+		await process_frame
+		_check("pressing_options_opens_the_settings_screen",
+			String(menu.get_current_page()) == "options" and menu.options_screen.visible,
+			"page=%s" % menu.get_current_page())
+		# AND CLOSING IT COMES BACK TO THE CAMPAIGN rather than dumping the player on
+		# the front page with a seated session behind it.
+		menu.options_screen.cancel()
+		await process_frame
+		_check("closing_settings_returns_to_the_strategic_page",
+			String(menu.get_current_page()) == "wotr" and strategic.visible,
+			"page=%s visible=%s" % [menu.get_current_page(), strategic.visible])
+		# THE DEFAULT OPPONENT MUST BE ABLE TO FIGHT. The chooser-less seating takes
+		# the document's first two templates, and on this checkout the second of
+		# those (PlayerDwarves) has no roster in the auto-resolve bindings bundle -
+		# so every battle its seat committed was refused by name and the campaign sat
+		# perfectly still, which reads as a broken opponent and is a content hole.
+		# `_seat_an_opponent_that_can_fight` moves the AI seat past that; this holds
+		# it. On a machine with no bundles at all the helper deliberately does
+		# nothing, and so does this check - `_seat_cannot_fight` answers false when
+		# there is no bindings bundle to be unbound against.
+		_check(
+			"the_default_opponent_is_a_seat_whose_armies_can_actually_fight",
+			menu._wotr_session == null or not menu._seat_cannot_fight(menu._wotr_session, 1),
+			"seats=%s" % ("<no session>" if menu._wotr_session == null
+				else "%s (human) vs %s (ai)" % [
+					String((menu._wotr_session.state.players[0] as Dictionary).get("template", "?")),
+					String((menu._wotr_session.state.players[1] as Dictionary).get("template", "?"))])
+		)
+		# AND THE OPPONENT IS WIRED TO THE TURN. END TURN used to hand the turn to a
+		# seat that never moved; `run_opponent_turns()` is the call that changed that,
+		# and a method nothing calls is a feature nobody meets.
+		_check("the_strategic_screen_can_run_the_opponents_turns",
+			strategic.has_method("run_opponent_turns"))
+
+		# BACK TO THE SHELL, and the furniture comes back with it.
+		menu._show_page("main")
+		await process_frame
+		_check("leaving_the_strategic_page_restores_the_shells_chrome",
+			not menu.shell_chrome_is_hidden()
+				and _visible(menu, "Center/Title") and _visible(menu, "Footer"))
+
+	# ------------------------------------------------------------------------------
+	# F11 IS FULLSCREEN AND IT PERSISTS
+	# ------------------------------------------------------------------------------
+	#
+	# Applying a mode is half a fullscreen toggle. The half that was missing is that
+	# `startup_boot.gd` re-applies the STORED mode before the first frame of every
+	# launch, so a toggle that does not write to that store is a key the player has
+	# to press again every time they open the game. This asserts the store, which is
+	# the half a headless run can prove; `apply_display_settings` is the same applier
+	# `boot_startup_runner` already covers.
+	var display_before: Dictionary = SettingsScript.load_display()
+	SettingsScript.save_display("windowed", "1920x1080")
+	var went: String = menu.toggle_fullscreen()
+	_check("f11_from_windowed_goes_fullscreen", went == "borderless", went)
+	_check("f11_persists_the_mode_it_applied",
+		String(SettingsScript.load_display()["window_mode"]) == "borderless",
+		str(SettingsScript.load_display()))
+	var came_back: String = menu.toggle_fullscreen()
+	_check("f11_from_fullscreen_comes_back_to_windowed", came_back == "windowed", came_back)
+	_check("f11_persists_the_way_back_too",
+		String(SettingsScript.load_display()["window_mode"]) == "windowed",
+		str(SettingsScript.load_display()))
+	# THE KEY IS BOUND, not merely implemented. A method nothing calls is a feature
+	# nobody can reach, which is the shape of every complaint this round answers.
+	_check("f11_is_actually_bound_to_a_key", menu.has_method("_unhandled_key_input"))
+	SettingsScript.save_display(
+		String(display_before["window_mode"]), String(display_before["resolution"]))
+
+	# THE KEY SETTINGS COLUMN. "The key settings does nothing" was true: this column
+	# never mentioned the keyboard. It lists every binding now, and it states in
+	# words that rebinding is not offered rather than showing a rebind row that would
+	# discard the change.
+	var key_heading := menu.find_child("KeyBindingsHeading", true, false) as Label
+	var key_rows := menu.find_child("KeyBindingRows", true, false) as VBoxContainer
+	var key_gap := menu.find_child("KeyBindingGap", true, false) as Label
+	_check("the_options_screen_has_a_key_settings_section",
+		key_heading != null and key_rows != null
+			and key_rows.get_child_count() == SettingsScript.KEY_BINDINGS.size(),
+		"heading=%s rows=%d of %d" % [key_heading != null,
+			key_rows.get_child_count() if key_rows != null else -1,
+			SettingsScript.KEY_BINDINGS.size()])
+	_check("the_key_settings_section_states_why_rebinding_is_absent",
+		key_gap != null and key_gap.text == SettingsScript.KEYBIND_REMAP_GAP)
+	# NOT ONE OF THE ROWS IS A CONTROL. A list of keys that looks pressable and is
+	# not is the exact defect this round exists to remove, so the rows are Labels
+	# that refuse the mouse entirely.
+	var pressable: Array[String] = []
+	if key_rows != null:
+		for row in key_rows.get_children():
+			if row is BaseButton or (row as Control).mouse_filter != Control.MOUSE_FILTER_IGNORE:
+				pressable.append(String((row as Node).name))
+	_check("no_key_settings_row_pretends_to_be_a_control",
+		pressable.is_empty(), ", ".join(pressable))
 
 	var version_label := menu.get_node_or_null("Center/BuildVersion") as Label
 	_check("build_version_is_shown_bottom_left", version_label != null and version_label.text.strip_edges() != "")

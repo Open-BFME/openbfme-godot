@@ -21,10 +21,12 @@ the one that owns that claim type.
 
 | Document | What it answers |
 |---|---|
-| [DIRECTION.md](../DIRECTION.md) | What are we building, in what order, what is out of scope? |
+| [DIRECTION.md](../DIRECTION.md) | RotWK 2.01 target, systems-first iterative model, system ladder, non-goals |
+| [MILESTONE_CURRENT.md](MILESTONE_CURRENT.md) | Active systems-iteration objective (not vertical-slice freeze) |
 | [STATUS.md](../STATUS.md) | What is verified **right now**, and what is blocked? |
-| [PLAN.md](../PLAN.md) | What is the engineering sequence? |
+| [PLAN.md](../PLAN.md) | Engineering sequence notes (defer to DIRECTION when they conflict) |
 | [CAMPAIGN_PLAN.md](CAMPAIGN_PLAN.md) | How does the campaign lane get built? |
+| [contracts/rotwk-201-product-scope.json](../contracts/rotwk-201-product-scope.json) | Machine-readable product policy |
 
 Volatile facts — gate results, counts, hashes, blockers — belong in `STATUS.md`
 and nowhere else. Every other document should link to it rather than restate it.
@@ -34,7 +36,7 @@ and nowhere else. Every other document should link to it rather than restate it.
 | Area | Guide |
 |---|---|
 | System boundaries and state ownership | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| What parity means and how it is evidenced | [BFME2_PARITY.md](BFME2_PARITY.md) |
+| What parity means and how it is evidenced (RotWK-primary) | [BFME2_PARITY.md](BFME2_PARITY.md) |
 | Import, conversion, packs, containment | [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) |
 | Verification doctrine and gate hierarchy | [VERIFICATION.md](VERIFICATION.md) |
 | Deterministic simulation and networking target | [SIMULATION_PROTOCOL.md](SIMULATION_PROTOCOL.md) |
@@ -47,6 +49,7 @@ and nowhere else. Every other document should link to it rather than restate it.
 | Art direction | [art_bible.md](art_bible.md) |
 | AI-assisted development methodology | [AI_DEVELOPMENT.md](AI_DEVELOPMENT.md) |
 | How agent work is queued, locked, and reviewed | [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) |
+| How agents should *reason* through work (orientation, fail-closed, stop rules) | [AGENT_REASONING_MANUAL.md](AGENT_REASONING_MANUAL.md) |
 
 ## Retail reference
 

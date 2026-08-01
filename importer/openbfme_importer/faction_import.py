@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
 from typing import Callable, Mapping
 
 from .catalog import InstallCatalog
@@ -52,6 +53,10 @@ from .playable_unit_pack_compiler import (
     PlayableUnitPackCompilerError,
     compile_playable_unit_pack_recipe,
 )
+from .pack_recipe_catalog_identity import (
+    PackRecipeCatalogIdentityError,
+    assert_pack_recipe_catalog_identity,
+)
 from .retail_visual_closure import build_retail_visual_closure
 from .spellbook_compiler import (
     SpellbookCompilerError,
@@ -84,8 +89,19 @@ COVERAGE_SCHEMA = "openbfme.faction-import-coverage"
 COVERAGE_SCHEMA_VERSION = 0
 
 # Run-only fields excluded from coverage aggregateSha256 (cold/warm/jobs stable).
-_COVERAGE_EPHEMERAL_OBJECT_KEYS = frozenset({"cacheHit"})
-_COVERAGE_EPHEMERAL_SUMMARY_KEYS = frozenset({"cacheHits", "convertWorkers"})
+_COVERAGE_EPHEMERAL_OBJECT_KEYS = frozenset({"cacheHit", "convertElapsedMs"})
+_COVERAGE_EPHEMERAL_SUMMARY_KEYS = frozenset(
+    {
+        "cacheHits",
+        "convertWorkers",
+        "convertLoopMs",
+        "objectElapsedMsTotal",
+        "objectElapsedMsP50",
+        "objectElapsedMsP95",
+        "objectsPerSecond",
+        "slowestObjects",
+    }
+)
 
 
 def coverage_digest_payload(coverage: Mapping[str, object]) -> dict[str, object]:
@@ -625,7 +641,7 @@ def plan_faction_import(
     progress_emit("faction-plan", f"building import plan: {faction}")
     return build_faction_import_plan(
         graph,
-        spellbook_source_documents(effective_root),
+        spellbook_source_documents(effective_root, catalog=catalog),
         catalog_identity_sha256=catalog.identity_sha256(),
         game=game,
     )
@@ -772,6 +788,9 @@ def _convert_one_plan_object(
 ) -> tuple[dict[str, object], dict[str, Mapping[str, object]]]:
     """Convert one plan row; returns (coverage_row, artifacts)."""
 
+    import time as _time
+
+    started = _time.perf_counter()
     object_id = str(plan_row["id"])
     family = str(plan_row["family"])
     status = str(plan_row["status"])
@@ -801,6 +820,9 @@ def _convert_one_plan_object(
         if hit is not None:
             cached_row = dict(hit["row"])
             cached_row["cacheHit"] = True
+            cached_row["convertElapsedMs"] = int(
+                (_time.perf_counter() - started) * 1000
+            )
             return cached_row, dict(hit["artifacts"])
 
     if family == "structure":
@@ -815,31 +837,68 @@ def _convert_one_plan_object(
                 source_null_command_sets=source_null_sets,
                 game=game,
             )
-            closure = build_retail_visual_closure(effective_root, [object_id])
-            images, image_gaps = _resolved_structure_images(
-                faction_graph, descriptor
+            kinds = {
+                str(item)
+                for item in (descriptor.get("kindOf") or [])
+                if isinstance(item, str)
+            }
+            # Only the fortress center-generic plot composite is a pure
+            # BASE_FOUNDATION pad with no lifecycle presentation. Other
+            # BASE_FOUNDATION-tagged objects (fortress, expansion pads) still
+            # convert as real structures — do not over-exclude on KindOf alone.
+            is_center_generic_foundation = (
+                "BASE_FOUNDATION" in kinds
+                and object_id.casefold().endswith("fortresscentergeneric")
             )
-            recipe = compile_structure_visual_recipe(
-                object_id,
-                closure,
-                resolved_images=images,
-                image_binding_gaps=image_gaps,
-            )
-            evidence = compile_structure_lifecycle_evidence(
-                object_id, documents, prepared=prepared
-            )
-            runtime = compose_structure_runtime_document(
-                descriptor, recipe, evidence
-            )
+            if is_center_generic_foundation:
+                row.update(
+                    {
+                        "status": "excluded",
+                        "reason": (
+                            "foundation composite authors no lifecycle visuals"
+                        ),
+                        "descriptorSha256": descriptor["descriptorSha256"],
+                    }
+                )
+            else:
+                closure = build_retail_visual_closure(
+                    effective_root,
+                    [object_id],
+                    catalog=catalog,
+                    catalog_identity_sha256=catalog_identity_sha256,
+                )
+                images, image_gaps = _resolved_structure_images(
+                    faction_graph, descriptor
+                )
+                recipe = compile_structure_visual_recipe(
+                    object_id,
+                    closure,
+                    resolved_images=images,
+                    image_binding_gaps=image_gaps,
+                )
+                assert_pack_recipe_catalog_identity(
+                    recipe, catalog, object_id=object_id
+                )
+                evidence = compile_structure_lifecycle_evidence(
+                    object_id, documents, prepared=prepared
+                )
+                runtime = compose_structure_runtime_document(
+                    descriptor, recipe, evidence
+                )
         except (
             PlayableStructureCompilerError,
             PlayableStructurePackCompilerError,
+            PackRecipeCatalogIdentityError,
             ValueError,
         ) as exc:
             if (
                 isinstance(descriptor, Mapping)
                 and "no resolved lifecycle model" in str(exc)
-                and "BASE_FOUNDATION" in descriptor.get("kindOf", [])
+                and "BASE_FOUNDATION" in {
+                    str(item)
+                    for item in (descriptor.get("kindOf") or [])
+                    if isinstance(item, str)
+                }
             ):
                 row.update(
                     {
@@ -853,24 +912,27 @@ def _convert_one_plan_object(
             else:
                 row.update({"status": "converter-gap", "reason": str(exc)})
         else:
-            artifacts = {
-                "descriptor": descriptor,
-                "pack-recipe": recipe,
-                "lifecycle-evidence": evidence,
-                "runtime": runtime,
-            }
-            row.update(
-                {
-                    "status": "converted",
-                    "converter": "playable-structure",
-                    "category": "structure",
-                    "productionEvidence": str(descriptor["production"]["evidence"]),
-                    "descriptorSha256": descriptor["descriptorSha256"],
-                    "recipeSha256": recipe["recipeSha256"],
-                    "runtimeSha256": runtime["runtimeSha256"],
-                    "resourceCount": len(recipe["resources"]),
+            if row.get("status") != "excluded":
+                artifacts = {
+                    "descriptor": descriptor,
+                    "pack-recipe": recipe,
+                    "lifecycle-evidence": evidence,
+                    "runtime": runtime,
                 }
-            )
+                row.update(
+                    {
+                        "status": "converted",
+                        "converter": "playable-structure",
+                        "category": "structure",
+                        "productionEvidence": str(
+                            descriptor["production"]["evidence"]
+                        ),
+                        "descriptorSha256": descriptor["descriptorSha256"],
+                        "recipeSha256": recipe["recipeSha256"],
+                        "runtimeSha256": runtime["runtimeSha256"],
+                        "resourceCount": len(recipe["resources"]),
+                    }
+                )
     elif family == "spellbook":
         try:
             draft = compile_spellbook_descriptor(
@@ -907,7 +969,10 @@ def _convert_one_plan_object(
             # has no art binding for a summoned object at all and falls back to
             # the synthetic kit mesh — the "blue units" symptom.
             visual_closures, visual_failures = build_spellbook_visual_closures(
-                descriptor, effective_root
+                descriptor,
+                effective_root,
+                catalog=catalog,
+                catalog_identity_sha256=catalog_identity_sha256,
             )
             recipe = compile_spellbook_pack_recipe(
                 descriptor,
@@ -921,11 +986,15 @@ def _convert_one_plan_object(
                 visual_closures=visual_closures,
                 visual_closure_failures=visual_failures,
             )
+            assert_pack_recipe_catalog_identity(
+                recipe, catalog, object_id=object_id
+            )
             runtime = compose_spellbook_runtime_document(descriptor, recipe)
         except (
             SpellbookCompilerError,
             SpellbookPackCompilerError,
             SpellbookVisualIngressError,
+            PackRecipeCatalogIdentityError,
             ValueError,
         ) as exc:
             row.update({"status": "converter-gap", "reason": str(exc)})
@@ -977,7 +1046,10 @@ def _convert_one_plan_object(
                 str(member["objectId"]) for member in composition["members"]
             )
             closure = build_retail_visual_closure(
-                effective_root, sorted(targets, key=str.casefold)
+                effective_root,
+                sorted(targets, key=str.casefold),
+                catalog=catalog,
+                catalog_identity_sha256=catalog_identity_sha256,
             )
             recipe = compile_playable_unit_pack_recipe(
                 descriptor,
@@ -990,9 +1062,13 @@ def _convert_one_plan_object(
                     str(descriptor["objectId"]),
                 ),
             )
+            assert_pack_recipe_catalog_identity(
+                recipe, catalog, object_id=object_id
+            )
         except (
             PlayableUnitCompilerError,
             PlayableUnitPackCompilerError,
+            PackRecipeCatalogIdentityError,
             ValueError,
         ) as exc:
             row.update({"status": "converter-gap", "reason": str(exc)})
@@ -1033,6 +1109,7 @@ def _convert_one_plan_object(
         and artifacts
     ):
         object_cache.put(cache_key, row=row, artifacts=artifacts)
+    row["convertElapsedMs"] = int((_time.perf_counter() - started) * 1000)
     return row, artifacts
 
 
@@ -1124,13 +1201,23 @@ def build_faction_conversion(
     except ValueError:
         workers = 0
     if workers <= 0:
-        workers = max(1, min(8, (os.cpu_count() or 4) - 1))
+        # Convert is CPU-bound (visual closure + compilers). Cap at 16 so a
+        # 32-thread host does not thrash the object-cache disk and GIL-heavy
+        # JSON paths; override with OPENBFME_FACTION_CONVERT_JOBS.
+        cpu = os.cpu_count() or 4
+        workers = max(1, min(16, cpu))
 
     progress_emit(
         "faction-convert",
         f"converting {len(plan_objects)} objects ({workers} workers"
         f"{', cache on' if object_cache else ', cache off'})",
         total_units=len(plan_objects),
+        extra={
+            "objectCount": len(plan_objects),
+            "workers": workers,
+            "objectCache": bool(object_cache),
+            "catalogFilter": catalog is not None,
+        },
     )
 
     writer_lock = threading.Lock()
@@ -1138,6 +1225,7 @@ def build_faction_conversion(
 
     def _work(index: int, plan_row: Mapping[str, object]) -> tuple[int, dict[str, object]]:
         assert isinstance(plan_row, Mapping)
+        work_started = time.perf_counter()
         try:
             row, artifacts = _convert_one_plan_object(
                 plan_row,
@@ -1167,6 +1255,7 @@ def build_faction_conversion(
                 "family": family,
                 "status": "converter-gap",
                 "reason": f"unexpected convert error: {type(exc).__name__}: {exc}",
+                "convertElapsedMs": int((time.perf_counter() - work_started) * 1000),
             }
             artifacts = {}
         if artifact_writer is not None and artifacts:
@@ -1190,17 +1279,31 @@ def build_faction_conversion(
         for index, plan_row in enumerate(plan_objects):
             assert isinstance(plan_row, Mapping)
             results[index] = dict(plan_row)
-    elif workers == 1 or len(plan_objects) <= 1:
+    convert_loop_started = time.perf_counter()
+
+    def _emit_object_done(row: Mapping[str, object]) -> None:
+        elapsed_ms = int(row.get("convertElapsedMs") or 0)
+        progress_emit(
+            "",
+            f"done {row.get('family')}: {row.get('id')} ({row.get('status')}"
+            f"{', cache' if row.get('cacheHit') else ''}"
+            f", {elapsed_ms}ms)",
+            unit_delta=1,
+            extra={
+                "objectId": row.get("id"),
+                "family": row.get("family"),
+                "status": row.get("status"),
+                "cacheHit": bool(row.get("cacheHit")),
+                "convertElapsedMs": elapsed_ms,
+            },
+        )
+
+    if workers == 1 or len(plan_objects) <= 1:
         for index, plan_row in enumerate(plan_objects):
             assert isinstance(plan_row, Mapping)
             idx, row = _work(index, plan_row)
             results[idx] = row
-            progress_emit(
-                "faction-convert",
-                f"done {row.get('family')}: {row.get('id')} ({row.get('status')}"
-                f"{', cache' if row.get('cacheHit') else ''})",
-                unit_delta=1,
-            )
+            _emit_object_done(row)
     else:
         with ThreadPoolExecutor(max_workers=min(workers, len(plan_objects))) as pool:
             futures = {
@@ -1211,13 +1314,9 @@ def build_faction_conversion(
             for future in as_completed(futures):
                 idx, row = future.result()
                 results[idx] = row
-                progress_emit(
-                    "",
-                    f"done {row.get('family')}: {row.get('id')} ({row.get('status')}"
-                    f"{', cache' if row.get('cacheHit') else ''})",
-                    unit_delta=1,
-                )
+                _emit_object_done(row)
 
+    convert_loop_ms = int((time.perf_counter() - convert_loop_started) * 1000)
     rows = [row for row in results if isinstance(row, dict)]
 
     counts = {
@@ -1228,6 +1327,32 @@ def build_faction_conversion(
     assert isinstance(plan_summary, Mapping)
     unresolved = int(plan_summary["unresolvedLeafCount"])
     cache_hits = sum(1 for row in rows if row.get("cacheHit"))
+    object_ms = [
+        int(row["convertElapsedMs"])
+        for row in rows
+        if isinstance(row.get("convertElapsedMs"), int)
+    ]
+    object_ms_sorted = sorted(object_ms)
+    p50 = object_ms_sorted[len(object_ms_sorted) // 2] if object_ms_sorted else 0
+    p95 = (
+        object_ms_sorted[max(0, int(len(object_ms_sorted) * 0.95) - 1)]
+        if object_ms_sorted
+        else 0
+    )
+    slowest = sorted(
+        (
+            {
+                "id": row.get("id"),
+                "family": row.get("family"),
+                "status": row.get("status"),
+                "convertElapsedMs": int(row.get("convertElapsedMs") or 0),
+                "cacheHit": bool(row.get("cacheHit")),
+            }
+            for row in rows
+        ),
+        key=lambda item: int(item["convertElapsedMs"]),
+        reverse=True,
+    )[:10]
     coverage: dict[str, object] = {
         "schema": COVERAGE_SCHEMA,
         "schemaVersion": COVERAGE_SCHEMA_VERSION,
@@ -1244,11 +1369,27 @@ def build_faction_conversion(
             "excludedCount": counts["excluded"],
             "converterGapCount": counts["converter-gap"],
             "unresolvedLeafCount": unresolved,
-            "conversionComplete": unresolved == 0
-            and counts["converter-gap"] == 0,
+            # Object conversion is complete when every planned object is
+            # converted or excluded. Census leaves that retail authors but does
+            # not ship (placeholder UI textures with source-null policy, voice
+            # samples missing from englishaudio.big, dead wall-hub object
+            # names) remain visible in unresolvedLeafCount without blocking
+            # the converter-gap bar.
+            "conversionComplete": counts["converter-gap"] == 0,
+            "censusLeafCoverageComplete": unresolved == 0,
             "blockingReason": "conversion artifacts lack a pack/runtime receipt",
             "cacheHits": cache_hits,
             "convertWorkers": workers,
+            "convertLoopMs": convert_loop_ms,
+            "objectElapsedMsTotal": sum(object_ms),
+            "objectElapsedMsP50": p50,
+            "objectElapsedMsP95": p95,
+            "objectsPerSecond": (
+                round(len(rows) / (convert_loop_ms / 1000.0), 2)
+                if convert_loop_ms > 0
+                else None
+            ),
+            "slowestObjects": slowest,
         },
     }
     # Ephemeral run metadata stays in the document for operators but is not
@@ -1309,7 +1450,7 @@ def convert_faction_import(
     progress_emit("faction-convert", f"convert faction objects: {faction}")
     return build_faction_conversion(
         graph,
-        spellbook_source_documents(effective_root),
+        spellbook_source_documents(effective_root, catalog=catalog),
         effective_root,
         catalog_identity_sha256=catalog.identity_sha256(),
         artifact_writer=artifact_writer,

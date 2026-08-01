@@ -74,6 +74,37 @@ PRODUCTION_EXTERNAL_FONT_BINDINGS = (
 _EXPECTED_FLAGGED_NULL_CLIP_ACTIONS = {
     ("ingameheroselect.apt", 166_756, 0xB6),
 }
+
+
+def register_expected_flagged_null_clip_actions(
+    identities: "Iterable[tuple[str, int, int]]",
+) -> None:
+    """Admit additional exact source-flagged-null PlaceObject records.
+
+    Retail authors a handful of PlaceObject records whose clip-action flag is
+    set while the pointer is zero; every one must be admitted BY EXACT
+    IDENTITY (casefolded virtual path, record offset, flags byte) or parsing
+    fails closed.  The HUD closure needed exactly one; other lanes (the RotWK
+    strategic closure measures eight, all in ``TimeLine.apt``) register their
+    own measured identities here instead of widening the parser for everyone.
+    Identities are keyed by virtual path, so a registration can never change
+    what another closure's movies are allowed to contain.
+    """
+
+    for identity in identities:
+        path, offset, flags = identity
+        if (
+            not str(path)
+            or str(path) != str(path).casefold()
+            or not isinstance(offset, int)
+            or offset < 0
+            or not isinstance(flags, int)
+            or not 0 <= flags <= 0xFF
+        ):
+            raise HudAptConvertError(
+                f"invalid flagged-null clip-action identity: {identity!r}"
+            )
+        _EXPECTED_FLAGGED_NULL_CLIP_ACTIONS.add((str(path), offset, flags))
 MAX_RECURSION = 64
 MAX_DRAWS = 100_000
 MAX_TIMELINES = 4_096

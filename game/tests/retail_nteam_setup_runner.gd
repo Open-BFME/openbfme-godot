@@ -203,9 +203,9 @@ func _run() -> void:
 	var VerticalSliceScript = load("res://src/retail_slice/retail_vertical_slice.gd")
 	var slice = VerticalSliceScript.new()
 	game_state.set("retail_team_setup", [
-		{"team": 0, "faction": "men", "controller": "human", "difficulty": "medium", "alliance": 1},
-		{"team": 1, "faction": "men", "controller": "ai", "difficulty": "hard", "alliance": 2},
-		{"team": 3, "faction": "men", "controller": "ai", "difficulty": "brutal", "alliance": 3},
+		{"team": 0, "faction": "men", "controller": "human", "difficulty": "medium", "alliance": 1, "start_index": 1},
+		{"team": 1, "faction": "men", "controller": "ai", "difficulty": "hard", "alliance": 2, "start_index": 2},
+		{"team": 3, "faction": "men", "controller": "ai", "difficulty": "brutal", "alliance": 3, "start_index": 3},
 	])
 	var normalized: Array = slice._menu_team_setup(game_state)
 	_check("slice_reads_injected_setup", normalized.size() == 3, "size=%d" % normalized.size())
@@ -224,7 +224,42 @@ func _run() -> void:
 				and String(stub.received[1].get("difficulty")) == "hard"
 				and int(stub.received[2].get("team")) == 3
 				and stub.received[2].get("alliance") == 3
+				and int(stub.received[0].get("start_index", -1)) == 0
+				and int(stub.received[1].get("start_index", -1)) == 1
+				and int(stub.received[2].get("start_index", -1)) == 2
 		)
+	var placeholder_roster: Array = slice._menu_sim_team_roster([
+		{"team": 0, "faction": "men", "controller": "human", "start_index": 0},
+	])
+	_check(
+		"lockstep_zero_start_is_absent_not_negative",
+		placeholder_roster.size() == 1
+			and not (placeholder_roster[0] as Dictionary).has("start_index")
+	)
+	var malformed_roster: Array = slice._menu_sim_team_roster([
+		{"team": 0, "faction": "men", "start_index": "1"},
+		{"team": 1, "faction": "men", "start_index": -1},
+	])
+	_check(
+		"malformed_start_values_are_not_coerced",
+		malformed_roster.size() == 2
+			and bool((malformed_roster[0] as Dictionary).get("start_index_invalid", false))
+			and not (malformed_roster[0] as Dictionary).has("start_index")
+			and bool((malformed_roster[1] as Dictionary).get("start_index_invalid", false))
+			and not (malformed_roster[1] as Dictionary).has("start_index")
+	)
+	var duplicate_roster: Array = slice._menu_sim_team_roster([
+		{"team": 0, "faction": "men", "start_index": 2},
+		{"team": 1, "faction": "men", "start_index": 2},
+	])
+	_check(
+		"duplicate_start_assignments_fail_closed_for_both_rows",
+		duplicate_roster.size() == 2
+			and not (duplicate_roster[0] as Dictionary).has("start_index")
+			and not (duplicate_roster[1] as Dictionary).has("start_index")
+			and bool((duplicate_roster[0] as Dictionary).get("start_index_invalid", false))
+			and bool((duplicate_roster[1] as Dictionary).get("start_index_invalid", false))
+	)
 	# An empty injected setup restores the legacy path: no roster is applied.
 	game_state.set("retail_team_setup", [])
 	var empty_stub := RosterStub.new()

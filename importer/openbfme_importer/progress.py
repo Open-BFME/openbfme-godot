@@ -78,10 +78,24 @@ def configure_progress(
     global _STAGE_PLAN, _STAGE_TOTAL_UNITS, _STAGE_DONE_UNITS
     global _RUN_TOTAL_UNITS, _RUN_DONE_UNITS
     with _LOCK:
-        _SINK = Path(sink) if sink else _env_sink()
-        if _SINK is not None:
-            _SINK.parent.mkdir(parents=True, exist_ok=True)
-            _SINK.write_text("", encoding="utf-8")
+        candidate = Path(sink) if sink else _env_sink()
+        _SINK = None
+        if candidate is not None:
+            # Progress is optional telemetry: never abort conversion if the sink
+            # cannot be created. Operators still get one stderr warning.
+            try:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                candidate.write_text("", encoding="utf-8")
+                _SINK = candidate
+            except OSError as exc:
+                try:
+                    print(
+                        f"[progress] WARN progress sink disabled ({candidate}): {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                except OSError:
+                    pass
         _STARTED = time.monotonic()
         _STAGE = "starting"
         _STAGE_STARTED = _STARTED

@@ -30,14 +30,10 @@ extends RefCounted
 ## Both members are implemented; this package registers no gaps. That is not
 ## optimism: the world surface carries every load-bearing argument of both
 ## members (units.set_object_status takes the status name AND the set/clear
-## flag; economy.money is one of the 36 simulation-backed methods in
-## game/data/script_world_surface.json, backed by the sim's economy.money).
-## The set_object_status WRITE is still blocked at runtime by the
-## `entity-status-flags` subsystem - the adapter refuses it - but that refusal
-## is the world's to make and arrives as a structured WORLD_REFUSED gap naming
-## the method; the surface itself is not missing a parameter, so a
-## blocked-registration here would misfile an adapter backlog item as a
-## signature gap.
+## flag; economy.money is simulation-backed). units.set_object_status is
+## simulation-backed for TEAM/PLAYER/UNIT living-entity scopes (exact authored
+## OBJECT_STATUS names stored on entity rows). Remaining entity-status-flags
+## members (emoticon, model-condition, stealth presentation, etc.) still refuse.
 ##
 ##
 ## THE ARGUMENT TRAP

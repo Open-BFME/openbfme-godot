@@ -19,6 +19,62 @@ const WINDOW_MODES: Array[String] = ["windowed", "borderless", "fullscreen_exclu
 const GRAPHICS_PRESETS: Array[String] = ["low", "medium", "high", "ultra_high", "custom"]
 const SILENT_DB := -80.0
 
+## ------------------------------------------------------------------------------
+## THE KEYBOARD, AS ONE TABLE - THE "KEY SETTINGS" THAT DID NOTHING
+## ------------------------------------------------------------------------------
+##
+## The owner's report was "the key settings does nothing". It was right twice: the
+## keys this game binds were never written down anywhere a player could read them,
+## and the OPTIONS screen's Controls column carried a scroll-speed slider and a
+## health-bar toggle and no keyboard section at all.
+##
+## The table lives HERE, in the settings store, because that is the one file every
+## surface that has to state the bindings can reach without dragging a dependency
+## behind it: the options screen already preloads this file, and the War of the
+## Ring screen's pause shell reads it through the `OpenBFMEUserSettings` class
+## name. One table, three readers, and a binding that is added without being added
+## here is a binding that goes undiscovered - which is exactly how F1 and ESCAPE
+## came to be secrets.
+##
+## `where` names the script that actually reads the keycode, so a reader can go
+## and check rather than trust this list.
+##
+## `player` IS NOT DECORATION. The War of the Ring HUD is held to a register rule
+## (`wotr_screen.gd:IMPLEMENTATION_VOCABULARY`): a shipped game's HUD makes
+## statements about the WORLD, never about its own conversion or its own
+## diagnosis, and a runner fails the build over any string on that surface that
+## breaks the rule. F1 opens the conversion-diagnosis overlay, which is a
+## developer surface by design, so naming it in the pause shell's key list would
+## put the word on the glass. It is therefore `player: false`: the OPTIONS screen
+## lists it (that screen IS where a player goes to find out what a key does, and
+## it is not held to the HUD's register), the pause shell does not.
+const KEY_BINDINGS: Array[Dictionary] = [
+	{"key": "ESC", "action": "Pause / resume", "where": "wotr_screen.gd", "player": true},
+	{"key": "F1", "action": "Diagnostics overlay", "where": "wotr_screen.gd", "player": false},
+	{"key": "F2", "action": "Hide / show the HUD", "where": "wotr_screen.gd", "player": true},
+	{"key": "F11", "action": "Fullscreen (persists)", "where": "main_menu.gd", "player": true},
+]
+
+
+## The bindings the in-game pause shell may draw - see `KEY_BINDINGS.player`.
+static func player_key_bindings() -> Array[Dictionary]:
+	var shown: Array[Dictionary] = []
+	for binding in KEY_BINDINGS:
+		if bool(binding.get("player", true)):
+			shown.append(binding)
+	return shown
+
+## WHY NO REMAP CONTROL IS OFFERED. Stated, not mocked up: these four keys are
+## literal keycodes compared in `_unhandled_key_input`, not `InputMap` actions, so
+## a rebind row would be a control that writes to nothing - which is the single
+## worst thing this repository allows onto a screen. Closing this gap means routing
+## the four bindings through `InputMap` actions first; until then the Controls
+## column says this sentence instead of showing a binder.
+const KEYBIND_REMAP_GAP := (
+	"Rebinding is not available: these keys are read directly in code rather than "
+	+ "through remappable input actions, so there is nothing a rebind could be "
+	+ "saved to. No rebind control is shown rather than one that would discard it.")
+
 
 static func load_audio() -> Dictionary:
 	var config := ConfigFile.new()

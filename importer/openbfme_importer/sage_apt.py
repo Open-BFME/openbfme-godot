@@ -360,11 +360,33 @@ def _pointer_spans(data: bytes, pointers: Iterable[int]) -> dict[int, int]:
 
 
 def parse_apt_movie(
-    data: bytes, constants: dict[str, Any], virtual_path: str
+    data: bytes,
+    constants: dict[str, Any],
+    virtual_path: str,
+    *,
+    max_bytes: int = MAX_APT_BYTES,
+    max_exports: int = MAX_EXPORTS,
 ) -> dict[str, Any]:
-    """Decode safe root identities and classify timelines without execution."""
+    """Decode safe root identities and classify timelines without execution.
 
-    if len(data) > MAX_APT_BYTES or len(data) < 12:
+    ``max_bytes`` exists because the bound is a per-closure statement, not a
+    format property: the BFME2 HUD/shell movies all fit 512 KiB, but RotWK's
+    ``LivingWorldUI.apt`` is 799,258 bytes.  A caller that admits a larger
+    movie must say so explicitly; the default keeps every existing closure
+    exactly as strict as before.
+
+    ``max_exports`` is the same statement about the export table.  BFME2's
+    ``MenuExport.apt`` exports 1,334 symbols; RotWK's rewrites the same
+    library with 4,574.  That is a MEASURED edition difference, not slack in
+    the format, so the RotWK strategic closure raises the bound explicitly
+    and every other caller keeps the 4,096 default untouched.
+    """
+
+    if max_bytes > 4 * 1024 * 1024:
+        raise AptParseError(f"{virtual_path} declared APT bound exceeds 4 MiB")
+    if not 1 <= max_exports <= 16 * 1024:
+        raise AptParseError(f"{virtual_path} declared export bound is out of range")
+    if len(data) > max_bytes or len(data) < 12:
         raise AptParseError(f"{virtual_path} violates APT size bounds")
     if data[:8] != APT_MAGIC or data[8:9] != b":" or data[10:12] != b"\x1a\x00":
         raise AptParseError(f"{virtual_path} has unsupported APT magic")
@@ -389,7 +411,7 @@ def parse_apt_movie(
     height = reader.u32(movie + 24, "movie height")
     milliseconds = reader.u32(movie + 28, "movie frame duration")
     import_count, import_table = reader.list_header(movie + 32, MAX_IMPORTS, "imports")
-    export_count, export_table = reader.list_header(movie + 40, MAX_EXPORTS, "exports")
+    export_count, export_table = reader.list_header(movie + 40, max_exports, "exports")
     if not 1 <= width <= 8192 or not 1 <= height <= 8192 or not 1 <= milliseconds <= 60_000:
         raise AptParseError(f"{virtual_path} movie dimensions/rate violate bounds")
 

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import unittest
 
+from openbfme_importer.pipeline import MEN_FORDS_SOURCE_ENTRY_COUNT
 from openbfme_importer.profile import ImportProfile
 
 
@@ -404,8 +405,10 @@ class MenFordsBuildingProfileTests(unittest.TestCase):
     def test_import_profile_loads_and_lifecycle_contract_is_exact(self) -> None:
         profile = ImportProfile.load(PROFILE_PATH)
         self.assertEqual(profile.id, "men-fords-v0")
-        # 83 asset/data rules plus the living-world strategic document.
-        self.assertEqual(len(profile.resources), 84)
+        # 83 asset/data rules, the living-world strategic document, and the
+        # exact map plus two-library script composite.
+        self.assertEqual(len(profile.resources), 85)
+        self.assertEqual(MEN_FORDS_SOURCE_ENTRY_COUNT, 394)
 
         payload = load_payload()
         objects = {

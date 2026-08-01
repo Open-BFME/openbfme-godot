@@ -519,6 +519,31 @@ func has_script(script_name: String) -> bool:
 	return _script_index_by_name.has(script_name)
 
 
+func true_actions_for_script(script_name: String) -> Dictionary:
+	## Action list for TEAM/UNIT_EXECUTE_SEQUENTIAL_SCRIPT. Sequential
+	## progress walks true_actions only - retail starts a named Script and
+	## steps its action list, not its condition tree (conditions already
+	## decided that the outer AI script queued this behavior script).
+	if not _script_index_by_name.has(script_name):
+		return {"ok": false, "reason": "script '%s' is not loaded" % script_name}
+	var script: Dictionary = _scripts[int(_script_index_by_name[script_name])]
+	return {
+		"ok": true,
+		"actions": (script.get("true_actions", []) as Array).duplicate(),
+	}
+
+
+func execute_action_record(action: Dictionary, script_name: String) -> int:
+	## Run one decoded ScriptAction through the normal dispatch seam. Used by
+	## sequential-script progress so tallies and gaps match atomic execution.
+	if not bool(action.get("enabled", true)):
+		return Dispatch.Status.OK
+	var status := dispatch.execute_action(action, env, world, script_name)
+	_tally(action_outcomes, status)
+	_count(action_executions, _record_opcode(action))
+	return status
+
+
 func unresolved_script_references() -> Array[String]:
 	## Enable bits written to the env (by ENABLE_SCRIPT / DISABLE_SCRIPT or
 	## anything else) that name no loaded script. A typo'd script reference

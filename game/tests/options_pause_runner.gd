@@ -100,6 +100,15 @@ func _run() -> void:
 		expected_local != Vector2.INF and fortress_position != Vector2.INF and fortress_position.distance_to(expected_local) < 35.0,
 		"fortress=%s expected≈%s" % [fortress_position, expected_local]
 	)
+	_check(
+		"start_choice_reaches_internal_player_descriptors",
+		int(slice.simulation.team_descriptor(0).get("start_index", -1)) == 0
+			and int(slice.simulation.team_descriptor(1).get("start_index", -1)) == 1,
+		"player=%s enemy=%s" % [
+			str(slice.simulation.team_descriptor(0)),
+			str(slice.simulation.team_descriptor(1)),
+		]
+	)
 	(root.get_node_or_null("GameState") as Node).set("retail_player_start_index", original_start)
 
 	# House-color override reaches the retail mask-recolor application.

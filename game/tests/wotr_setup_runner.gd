@@ -42,7 +42,41 @@ const WorldScript = preload("res://src/wotr/wotr_world.gd")
 ## three: the handicap rungs are on retail's ladder, the RULES payload carries
 ## exactly the rows that reach the strategic layer, and the handicap column's
 ## DECLARED reach matches what the payload really carries. 45 - 2 + 3 = 46.
-const EXPECTED_WITH_DOCUMENT := 46
+## Round two adds three more: every act-army hero resolves to retail's display
+## name, every colour block carries BOTH retail colours (lobby chip and
+## strategic tint) and they differ, and the opening seats wear the reference
+## capture's own colour order. 46 + 3 = 49.
+## Round two's second pass adds three more, all about the ground the map preview
+## stands its territories on: the terrain is retail's own living-map tiles or its
+## absence is on the screen's own list, no tile is drawn without the colour map
+## retail bound to it, and every tile is placed by retail's authored UVs rather
+## than by a projection this screen invented. 49 + 3 = 52.
+##
+## ROUND THREE ADDS NINE, and every one of them pins something the blind
+## adversarial read caught:
+##   * the screen opens on retail's OWN default - the freeform "War of the Ring"
+##     - rather than falling through to the first preset scenario, which is what
+##     put all 52 regions under a saturated colour wash;
+##   * the freeform seats are seeded from the SCENARIO'S OWN `defaultStartSpots`
+##     and no further, so nothing is dealt out that retail did not author;
+##   * PLAY refuses a freeform scenario until every seat has a start territory,
+##     and is offered once they do;
+##   * the session refuses start regions alongside a scenario that authors its
+##     own ownership, and refuses two seats in one territory;
+##   * the map shades EXACTLY the seats' start territories on a freeform
+##     scenario and exactly the ownership sets on a preset one;
+##   * the masthead is set in retail's own display face or its absence is NAMED;
+##   * no string on the player surface names this project (the footer developer
+##     line is gone and the absence list is behind F1, which still holds it);
+##   * the Scenario Description carries retail's victory block, not a trimmed
+##     copy that happens to fit;
+##   * the masthead face is bound or NAMED, F1 really opens and closes the
+##     absence list, and the human seat's name is a neutral default rather than
+##     this machine's account.
+## Twelve in all, and none of them replaces an old one - the two checks that
+## changed (the freeform refusal and PLAY being offered) kept their slots and
+## only their conditions moved. 52 + 12 = 64.
+const EXPECTED_WITH_DOCUMENT := 64
 const EXPECTED_WITHOUT_DOCUMENT := 6
 
 var _passed := 0
@@ -88,9 +122,66 @@ func _with_document(found: Dictionary) -> void:
 	_rules(screen)
 	_scenarios(screen, world, probe)
 	_seats(screen)
+	_surface(screen)
 	_map(screen, world)
 	_play(screen, document, world)
 	screen.queue_free()
+
+
+## THE PLAYER SURFACE: what a stranger reads, and what they must not.
+func _surface(screen) -> void:
+	# THE MASTHEAD FACE. Omnia LT Std is a PROVEN binding now - rendered against
+	# the oracle's own glyph mask at 0.83 intersection-over-union, against 0.18 for
+	# Albertus MT and 0.17 for SachaWynterTight - so either the file is loaded or
+	# the screen NAMES its absence. What it may never do again is silently set the
+	# game's own title in a lookalike serif, which the blind read identified as the
+	# single decisive tell.
+	var display_named := false
+	for line in screen.absences:
+		if String(line) == screen.display_font_reason and not screen.display_font_reason.is_empty():
+			display_named = true
+			break
+	_check("the masthead is set in retail's own display face, or its absence is named",
+		(screen._display_font != null and screen.display_font_reason.is_empty())
+			or display_named,
+		screen.display_font_reason if not screen.display_font_reason.is_empty()
+			else "loaded but a reason is recorded")
+	# THE ABSENCE LIST IS REACHABLE AND IS NOT ON THE SCREEN. Round two printed
+	# "OPEN BFME - 3 NOTES ON WHAT HERE IS NOT RETAIL'S" into the bottom-left of
+	# the player table; the blind read put it first on its defect list and said
+	# "This alone ends the conversation." It is now behind F1 - closed on arrival,
+	# still complete, still one key away.
+	_check("the absence list is complete and closed until it is asked for",
+		not screen.show_absences and not screen.absence_lines().is_empty(),
+		"open=%s, %d line(s)" % [str(screen.show_absences), screen.absence_lines().size()])
+	screen.toggle_absences()
+	var opened: bool = screen.show_absences
+	screen.toggle_absences(false)
+	_check("F1's toggle really opens it and really closes it again",
+		opened and not screen.show_absences, "")
+	# THE HUMAN SEAT'S NAME IS NEUTRAL. Round two showed the OS account name, so
+	# every capture shipped the developer's first name in seat one.
+	var profile := String(screen._player_name())
+	var account := OS.get_environment("USERNAME").strip_edges()
+	_check("the human seat carries a neutral profile name, not this machine's account",
+		profile == screen.DEFAULT_PROFILE_NAME
+			and (account.is_empty() or profile != account),
+		"seat shows '%s', account is '%s'" % [profile, account])
+	# THE SCENARIO DESCRIPTION IS RETAIL'S IN FULL. The blind read caught the
+	# shortfall as content: "A omits the victory-condition block entirely" - and
+	# the reason it was omitted was that there was no scrollbar to overflow into.
+	var row := screen.scenarios[screen.scenario_index] as Dictionary
+	var body := String(screen._scenario_description(row))
+	var victory: Dictionary = screen._selected_victory_type()
+	var type_text := ""
+	var objectives := ""
+	if not victory.is_empty():
+		type_text = String(screen._label(String(victory.get("label_key", ""))))
+		objectives = String(screen._string_or_key(String(victory.get("objectives_key", ""))))
+	_check("the scenario description carries retail's own victory block, not a trimmed copy",
+		not victory.is_empty() and not type_text.is_empty()
+			and body.contains(type_text) and body.contains(objectives.replace("\\n", "\n")),
+		body)
 
 
 func _bundles(screen) -> void:
@@ -208,7 +299,10 @@ func _scenarios(screen, world, probe) -> void:
 	_check("the list is the campaign's whole scenario set",
 		screen.scenarios.size() == in_campaign,
 		"%d listed, %d in campaign" % [screen.scenarios.size(), in_campaign])
-	var startable := Array(probe.startable_scenarios(2))
+	# `true` = INCLUDE THE FREEFORM ONES, which is what the screen asks for. A
+	# freeform scenario is startable when every seat can be given a territory, and
+	# `startable_scenarios(2)` alone still means what it always meant.
+	var startable := Array(probe.startable_scenarios(2, true))
 	var mislabelled: Array[String] = []
 	var reasonless: Array[String] = []
 	for row in screen.scenarios:
@@ -225,23 +319,49 @@ func _scenarios(screen, world, probe) -> void:
 		not screen.scenarios.is_empty()
 			and bool(screen.scenarios[screen.scenario_index]["startable"]),
 		"")
-	# Retail's headline scenario claims nothing and therefore cannot start. It
-	# must still be OFFERED - hiding it would answer "where is War of the Ring"
-	# with silence - and PLAY must refuse it by name.
-	var freeform := -1
-	for index in range(screen.scenarios.size()):
-		if int(screen.scenarios[index]["ownership_sets"]) == 0:
-			freeform = index
-			break
-	if freeform >= 0:
-		var opened: int = screen.scenario_index
-		screen._apply_choice("scenario", freeform)
-		_check("a freeform scenario is offered and PLAY refuses it with the reason",
-			not screen.play_refusal().is_empty(), screen.play_refusal())
-		screen._apply_choice("scenario", opened)
-	else:
-		_check("a freeform scenario is offered and PLAY refuses it with the reason",
-			false, "no freeform scenario in this document to test with")
+	# RETAIL'S HEADLINE SCENARIO IS FREEFORM AND IT IS THE ONE THE SCREEN OPENS ON.
+	# Round two could not start it, so the cursor fell through to the first PRESET
+	# scenario - `WOTRScenario007`, whose retail display name really is "War of the
+	# Ring (6, T)" and whose six ownership sets claim all 52 regions. Both of the
+	# blind read's disqualifying MAP-tab findings (the raw `(6, T)` tuple in the
+	# dropdown and the saturated flood over the whole landmass) were that one
+	# fallback, so this pins the cursor where retail puts it.
+	var opened_row := screen.scenarios[screen.scenario_index] as Dictionary
+	_check("the screen opens on retail's own freeform default scenario",
+		bool(opened_row.get("freeform", false))
+			and int(opened_row.get("ownership_sets", -1)) == 0,
+		"opened on %s (%d ownership set(s), freeform=%s)" % [
+			String(opened_row.get("name", "")), int(opened_row.get("ownership_sets", -1)),
+			str(opened_row.get("freeform", false))])
+	# AND ITS DISPLAY NAME IS A NAME, not an internal tuple. This is the string a
+	# stranger reads first on the MAP tab.
+	_check("the scenario dropdown shows a display name with no internal tuple in it",
+		not screen._scenario_display(opened_row).contains("(")
+			and not screen._scenario_display(opened_row).contains(","),
+		screen._scenario_display(opened_row))
+	# THE SEATS ARE SEEDED FROM THE SCENARIO'S OWN `defaultStartSpots` AND NO
+	# FURTHER. Every seeded start must BE one of the authored spots, in the
+	# document's own order, and every seat past them must be EMPTY - dealing out a
+	# region retail did not author is precisely the invented parity this forbids.
+	var spots: PackedStringArray = opened_row.get("default_start_spots", PackedStringArray())
+	var seeded_wrong: Array[String] = []
+	for index in range(screen.seats.size()):
+		var start := String(screen.seat_starts[index]) if index < screen.seat_starts.size() else ""
+		if index < spots.size():
+			if start != String(spots[index]):
+				seeded_wrong.append("seat %d seeded '%s', scenario authors '%s'" % [
+					index, start, String(spots[index])])
+		elif not start.is_empty():
+			seeded_wrong.append("seat %d was given '%s' and the scenario authors no spot for it"
+				% [index, start])
+	_check("freeform seats are seeded from the scenario's own defaultStartSpots and no further",
+		seeded_wrong.is_empty() and not spots.is_empty(),
+		", ".join(seeded_wrong) if not seeded_wrong.is_empty() else "the scenario authors no spots")
+	# PLAY REFUSES UNTIL EVERY SEAT HAS ONE, and the refusal says how many are
+	# missing and which seat is next.
+	var refusal := String(screen.play_refusal())
+	_check("a freeform scenario refuses PLAY until every seat has a start territory",
+		not refusal.is_empty() and refusal.to_lower().contains("freeform"), refusal)
 
 
 func _seats(screen) -> void:
@@ -264,6 +384,37 @@ func _seats(screen) -> void:
 		"%d listed, %d offered" % [options.size(), screen.seat_options.size()])
 	_check("the colour list is the six AvailableInWotR blocks of multiplayer.ini",
 		BindingsScript.COLORS.size() == 6, str(BindingsScript.COLORS.size()))
+	# BOTH retail colours per block, and they must DIFFER: `ui` is the muted
+	# RGBColor lobby chip and `rgb` the saturated LivingWorldColor map tint.
+	# On all six WotR blocks retail authors them apart, and a table where they
+	# match is a table someone flattened back to one neon set.
+	var flattened: Array[String] = []
+	for entry in BindingsScript.COLORS:
+		var record := entry as Dictionary
+		if not record.has("ui") or not record.has("rgb") \
+				or (record["ui"] as Color).is_equal_approx(record["rgb"] as Color):
+			flattened.append(String(record.get("block", "?")))
+	_check("every colour block carries retail's lobby chip AND its map tint, distinct",
+		flattened.is_empty(), ", ".join(flattened))
+	# The opening table wears the retail capture's own colours, top to bottom:
+	# Gold, Red, Blue, Green, Orange, Purple by block - NOT slot order, which
+	# was round one's guess and repainted the whole opening table.
+	var miscoloured: Array[String] = []
+	for index in range(screen.seats.size()):
+		var expected_slot: int = BindingsScript.DEFAULT_COLOR_SLOTS[
+			index % BindingsScript.DEFAULT_COLOR_SLOTS.size()]
+		if int(screen.seats[index]["color_slot"]) != expected_slot:
+			miscoloured.append("seat %d wears slot %d, capture shows %d" % [
+				index, int(screen.seats[index]["color_slot"]), expected_slot])
+	_check("the opening seats wear the retail capture's colour order",
+		miscoloured.is_empty(), ", ".join(miscoloured))
+	# EVERY act-army hero the document names resolves to retail text through
+	# HERO_DISPLAY_KEYS and the OBJECT: entries of the setup bundle. A raw
+	# template id in the Hero column was the loudest in-development tell on
+	# the first capture, and this pins it shut BY NAME.
+	_check("every act-army hero resolves to a retail display name",
+		screen.hero_name_misses.is_empty(),
+		"unresolved heroes: %s" % ", ".join(Array(screen.hero_name_misses)))
 	_check("the handicap ladder is retail's 21 levels from 0 to 100",
 		BindingsScript.HANDICAP_LEVELS.size() == 21
 			and BindingsScript.HANDICAP_LEVELS[0] == 0
@@ -310,8 +461,52 @@ func _map(screen, world) -> void:
 			accounted, world.region_ids.size()])
 	_check("retail's territory shapes are what the preview draws",
 		preview.drawn_regions.size() > 0, preview.unavailable_reason)
+
+	# THE GROUND UNDER THE SHAPES IS RETAIL'S TOO, or the screen says it is not.
+	# These three are the mechanical form of "the map preview is retail's painted
+	# Middle-earth, not a picture of it and not a stand-in colour":
+	#   * either every terrain tile came from the living-map bundle, or the
+	#     preview carries the reason it has none AND the screen repeats it on the
+	#     absence list - never a silently empty map;
+	#   * no tile is drawn without a texture retail's own bundle bound to it,
+	#     which is what a procedural fallback would look like from here;
+	#   * the UV list is the same length as the vertex list on every tile, so the
+	#     texture is being placed by retail's authored coordinates rather than by
+	#     a projection this screen invented.
+	var terrain_reason := String(preview.terrain_reason)
+	var terrain_named := false
+	for line in screen.absences:
+		if String(line).contains(terrain_reason) and not terrain_reason.is_empty():
+			terrain_named = true
+			break
+	_check("the preview's terrain is retail's own, or its absence is on the screen",
+		(terrain_reason.is_empty() and preview._terrain.size() > 0) or terrain_named,
+		terrain_reason if not terrain_reason.is_empty() else "no tile survived flattening")
+	var untextured: PackedStringArray = preview.terrain_tiles_without_texture
+	_check("no terrain tile is drawn without the colour map retail bound to it",
+		untextured.is_empty(), ", ".join(Array(untextured)))
+	var uvs_authored := true
+	for tile in preview._terrain:
+		var record := tile as Dictionary
+		if (record["uvs"] as PackedVector2Array).size() \
+				!= (record["points"] as PackedVector2Array).size():
+			uvs_authored = false
+			break
+	_check("every terrain tile is textured by retail's authored UVs, one per vertex",
+		uvs_authored, "a tile's UV count does not match its vertex count")
 	_check("the preview shades exactly the regions the scenario claims",
 		_ownership_matches(screen), "")
+	# THE FLOOD GUARD. On the scenario the screen OPENS ON, the tinted territories
+	# must be a light annotation on retail's painting - one per seat at most, which
+	# is what a freeform start is - and never the whole landmass. Round two opened
+	# on a preset scenario that claims all 52 regions for six seats, and the blind
+	# read called the result "in effect, a diagnostic readout rendered as
+	# production art. Disqualifying."
+	var shaded: int = screen.map_preview.owner_colors.size()
+	_check("the opening scenario tints no more territories than it has seats",
+		shaded <= screen.seats.size(),
+		"%d of %d regions tinted for %d seats" % [
+			shaded, world.region_ids.size(), screen.seats.size()])
 	# The territory panel is empty until a region is pointed at, exactly as
 	# retail's is, and then carries the region's own converted name.
 	_check("the territory panel is empty before anything is hovered",
@@ -331,6 +526,12 @@ func _ownership_matches(screen) -> bool:
 	for index in range(mini(sets.size(), screen.seats.size())):
 		for region_value in (sets[index] as Dictionary).get("regions", PackedStringArray()) as PackedStringArray:
 			expected[String(region_value)] = true
+	# A FREEFORM SCENARIO CLAIMS NOTHING, so what it shades is the seats' own
+	# start territories - and those are the only other thing it may shade.
+	for index in range(screen.seat_starts.size()):
+		var start := String(screen.seat_starts[index])
+		if not start.is_empty() and index < screen.seats.size():
+			expected[start] = true
 	var shaded: Dictionary = screen.map_preview.owner_colors
 	if expected.size() != shaded.size():
 		return false
@@ -343,7 +544,17 @@ func _ownership_matches(screen) -> bool:
 ## PLAY. The one path that matters: what the screen chose is what the strategic
 ## state ends up holding, and the session still decides.
 func _play(screen, document: Dictionary, world) -> void:
-	_check("PLAY is offered once a startable scenario is selected",
+	# GIVE EVERY SEAT A START TERRITORY, through the screen's own picker rather
+	# than by writing `seat_starts` here, so what is asserted below is a state the
+	# screen can actually be driven into. The regions are the first drawn ones no
+	# seat holds; the runner has no authored answer either and must not invent a
+	# better one than the screen would accept.
+	if screen._scenario_is_freeform():
+		for region_value in screen.map_preview.drawn_regions:
+			if screen._next_unplaced_seat() < 0:
+				break
+			screen._pick_start_region(String(region_value))
+	_check("placing a start territory for every seat makes PLAY offered",
 		screen.play_refusal().is_empty(), screen.play_refusal())
 	var payload: Array = screen.seat_payload()
 	var extra: Array[String] = []
@@ -385,13 +596,52 @@ func _play(screen, document: Dictionary, world) -> void:
 		(declared == "strategic") == carried and declared == "strategic",
 		"table says '%s', payload carries it: %s" % [declared, str(carried)])
 
+	var starts: PackedStringArray = screen.start_regions()
 	var session := SessionScript.new()
 	var began: bool = session.begin(
-		document, world.campaign_name, screen.scenario_name(), payload)
+		document, world.campaign_name, screen.scenario_name(), payload, {}, starts)
 	_check("the session begins on exactly what the screen chose",
 		began, ", ".join(Array(session.refusals)))
 	if not began:
 		return
+	# THE FREEFORM START REALLY CLAIMED THE TERRITORIES. A start the state did not
+	# apply would leave every region neutral and the campaign unplayable, and the
+	# screen would have no way to know.
+	if not starts.is_empty():
+		var unclaimed: Array[String] = []
+		for index in range(starts.size()):
+			if session.state.owner_of(String(starts[index])) != index:
+				unclaimed.append("%s is owned by %d, not seat %d" % [
+					String(starts[index]), session.state.owner_of(String(starts[index])), index])
+		_check("every seat's freeform start territory is that seat's in the strategic state",
+			unclaimed.is_empty(), ", ".join(unclaimed))
+	else:
+		_check("every seat's freeform start territory is that seat's in the strategic state",
+			false, "the screen offered no start regions to check")
+	# TWO SOURCES OF TRUTH ARE REFUSED. A preset scenario authors where every seat
+	# begins; handing it start regions as well is how a campaign comes to disagree
+	# with the picture of itself, so the session refuses rather than merging.
+	var preset := ""
+	for name in world.scenario_names:
+		if not (world.scenario(String(name)).get("ownership_sets", []) as Array).is_empty():
+			preset = String(name)
+			break
+	var mixed := SessionScript.new()
+	_check("the session refuses start regions alongside a scenario that authors ownership",
+		not preset.is_empty() and not mixed.begin(
+			document, world.campaign_name, preset, payload, {},
+			PackedStringArray(["Mordor", "Rivendell"])),
+		"preset scenario: %s" % preset)
+	# AND IT REFUSES A FREEFORM START THAT PUTS TWO SEATS IN ONE TERRITORY, rather
+	# than letting the second one quietly take it off the first.
+	var doubled: Array[String] = []
+	for index in range(payload.size()):
+		doubled.append(String(starts[0]) if not starts.is_empty() else "Mordor")
+	var clashing := SessionScript.new()
+	_check("the session refuses a freeform start with two seats in one territory",
+		not clashing.begin(document, world.campaign_name, screen.scenario_name(),
+			payload, {}, PackedStringArray(doubled)),
+		", ".join(Array(clashing.refusals)))
 	_check("the strategic state holds the screen's scenario",
 		session.scenario_name == screen.scenario_name(),
 		"%s vs %s" % [session.scenario_name, screen.scenario_name()])

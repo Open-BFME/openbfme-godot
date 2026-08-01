@@ -7,6 +7,7 @@ extends SceneTree
 ## stay deterministic across twin sims.
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
+const ManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
 
 var passed := 0
 var failed := 0
@@ -30,6 +31,8 @@ func _run() -> void:
 	_test_mode_on_accepts_on_plot_and_tracks_occupancy()
 	_test_mode_on_snapshot_round_trip()
 	_test_mode_on_twin_determinism()
+	_test_grant_upgrade_create_on_build_complete()
+	_test_inherit_upgrade_create_exact_creation_edge()
 	await _test_mode_on_non_men_and_cross_faction()
 	print("RETAIL_BUILD_PLOTS_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
@@ -134,6 +137,225 @@ func _test_mode_on_twin_determinism() -> void:
 		if diverged < 0 and sim_a.state_hash() != sim_b.state_hash():
 			diverged = tick
 	_check("mode_on_twin_determinism_200_ticks", diverged < 0, "first_divergence=%d" % diverged)
+
+
+func _test_grant_upgrade_create_on_build_complete() -> void:
+	var sim = _make_sim(false, false)
+	sim.configure_expansion_rules({
+		"test_grant_expansion": {
+			"cost": 1,
+			"seconds": 0.05,
+			"health": 1000,
+			"pad_kinds": ["side", "corner"],
+			"name": "Test Grant Expansion",
+			"object_id": "bfme2.object.test-grant-expansion",
+			"highlander_body": true,
+			"create_grants": [
+			{
+				"upgradeId": "Upgrade_TestBuiltObject",
+				"upgradeType": "OBJECT",
+				"onCreateWhenComplete": false,
+				"onBuildComplete": true,
+			},
+			{
+				"upgradeId": "Upgrade_TestBuiltPlayer",
+				"upgradeType": "PLAYER",
+				"onCreateWhenComplete": false,
+				"onBuildComplete": true,
+			},
+			],
+		},
+	})
+	var built: Dictionary = sim.issue_expansion_construct(
+		0, sim.fortress_id(0), "test_grant_expansion"
+	)
+	var structure_id := int(built.get("structure_id", 0))
+	var structure: Dictionary = sim.structures.get(structure_id, {})
+	_check(
+		"expansion_carries_authored_highlander_body_policy",
+		structure.get("highlander_body") == true,
+		str(structure)
+	)
+	structure["construction_elapsed_ticks"] = int(
+		structure.get("construction_build_ticks", 1)
+	) - 1
+	sim._step_construction()
+	# A repeated completion callback must remain idempotent.
+	sim._apply_structure_create_grants(structure, false, true)
+	_check(
+		"grant_upgrade_create_object_on_build_complete",
+		Array(structure.get("completed_upgrades", [])).has("Upgrade_TestBuiltObject"),
+		"built=%s progress=%s grants=%s completed=%s" % [
+			built,
+			structure.get("construction_progress"),
+			sim.structure_create_grants_for_team(0),
+			structure.get("completed_upgrades"),
+		]
+	)
+	_check(
+		"grant_upgrade_create_player_on_build_complete",
+		(sim.team_upgrades.get(0, {}) as Dictionary).has("Upgrade_TestBuiltPlayer"),
+		str(sim.team_upgrades.get(0, {}))
+	)
+	_check(
+		"grant_upgrade_create_object_is_idempotent",
+		Array(structure.get("completed_upgrades", [])).count(
+			"Upgrade_TestBuiltObject"
+		) == 1
+	)
+
+
+func _test_inherit_upgrade_create_exact_creation_edge() -> void:
+	const UPGRADE := "Upgrade_TestStonework"
+	var sim = _make_inherit_sim()
+	var fortress_id := int(sim.fortress_id(0))
+	var fortress: Dictionary = sim.structures[fortress_id]
+	fortress["completed_upgrades"] = [UPGRADE]
+	var fortress_position := Vector2(fortress.get("position", Vector2.ZERO))
+	var built: Dictionary = sim.issue_construct(
+		_ids(), "barracks", fortress_position + Vector2(10.0, 0.0)
+	)
+	var carrier: Dictionary = sim.structures.get(
+		int(built.get("structure_id", 0)), {}
+	)
+	_check(
+		"inherit_upgrade_create_runs_on_real_construct_edge",
+		bool(built.get("ok", false))
+			and Array(carrier.get("completed_upgrades", [])).has(UPGRADE),
+		"built=%s carrier=%s" % [built, carrier]
+	)
+
+	var snapshot: PackedByteArray = sim.snapshot()
+	var restored = _make_inherit_sim()
+	var restored_ok: bool = restored.restore(snapshot)
+	_check(
+		"inherit_upgrade_create_snapshot_and_hash_stable",
+		restored_ok
+			and restored.state_hash() == sim.state_hash()
+			and Array(
+				(restored.structures.get(int(built.get("structure_id", 0)), {}) as Dictionary)
+				.get("completed_upgrades", [])
+			).has(UPGRADE),
+		"%s != %s" % [restored.state_hash(), sim.state_hash()]
+	)
+
+	var probe := {
+		"id": 99001,
+		"team": 0,
+		"structure_kind": "barracks",
+		"position": fortress_position + Vector2(20.001, 0.0),
+		"completed_upgrades": [],
+	}
+	sim._apply_structure_inherit_upgrades(probe)
+	_check(
+		"inherit_upgrade_create_rejects_outside_radius",
+		not Array(probe["completed_upgrades"]).has(UPGRADE)
+	)
+
+	probe["position"] = fortress_position + Vector2(10.0, 0.0)
+	var boundary := probe.duplicate(true)
+	boundary["position"] = fortress_position + Vector2(20.0, 0.0)
+	boundary["completed_upgrades"] = []
+	sim._apply_structure_inherit_upgrades(boundary)
+	_check(
+		"inherit_upgrade_create_includes_exact_scaled_radius_boundary",
+		Array(boundary["completed_upgrades"]).has(UPGRADE)
+	)
+
+	for field in ["health", "construction_progress", "completed_upgrades"]:
+		var donor_sim = _make_inherit_sim()
+		var donor: Dictionary = donor_sim.structures[int(donor_sim.fortress_id(0))]
+		donor["completed_upgrades"] = [UPGRADE]
+		match field:
+			"health":
+				donor["health"] = 0
+			"construction_progress":
+				donor["construction_progress"] = 0.5
+			"completed_upgrades":
+				donor["completed_upgrades"] = []
+		var negative := probe.duplicate(true)
+		negative["completed_upgrades"] = []
+		donor_sim._apply_structure_inherit_upgrades(negative)
+		_check(
+			"inherit_upgrade_create_any_filter_%s" % field,
+			Array(negative["completed_upgrades"]).has(UPGRADE)
+				if field != "completed_upgrades"
+				else not Array(negative["completed_upgrades"]).has(UPGRADE)
+		)
+
+	var wrong_type_sim = _make_inherit_sim()
+	var wrong_donor: Dictionary = wrong_type_sim.structures[
+		int(wrong_type_sim.fortress_id(0))
+	]
+	wrong_donor["completed_upgrades"] = [UPGRADE]
+	(wrong_type_sim.team_manifest_for(0)["structure_source_object_ids"] as Dictionary)[
+		"fortress"
+	] = ["NotTheCitadel"]
+	var wrong_type_probe := probe.duplicate(true)
+	wrong_type_probe["completed_upgrades"] = []
+	wrong_type_sim._apply_structure_inherit_upgrades(wrong_type_probe)
+	_check(
+		"inherit_upgrade_create_requires_exact_source_type",
+		not Array(wrong_type_probe["completed_upgrades"]).has(UPGRADE)
+	)
+
+	var enemy_only_sim = _make_inherit_sim()
+	var own_fortress: Dictionary = enemy_only_sim.structures[
+		int(enemy_only_sim.fortress_id(0))
+	]
+	own_fortress["completed_upgrades"] = []
+	var enemy_fortress: Dictionary = enemy_only_sim.structures[
+		int(enemy_only_sim.fortress_id(1))
+	]
+	enemy_fortress["completed_upgrades"] = [UPGRADE]
+	var enemy_probe := probe.duplicate(true)
+	enemy_probe["position"] = Vector2(enemy_fortress.get("position", Vector2.ZERO))
+	enemy_probe["completed_upgrades"] = []
+	enemy_only_sim._apply_structure_inherit_upgrades(enemy_probe)
+	_check(
+		"inherit_upgrade_create_any_filter_allows_enemy_source",
+		Array(enemy_probe["completed_upgrades"]).has(UPGRADE)
+	)
+
+	var foreign_enemy_sim = _make_inherit_sim(true)
+	var foreign_own_fortress: Dictionary = foreign_enemy_sim.structures[
+		foreign_enemy_sim.fortress_id(0)
+	]
+	foreign_own_fortress["completed_upgrades"] = []
+	var dwarven_fortress: Dictionary = foreign_enemy_sim.structures[
+		foreign_enemy_sim.fortress_id(1)
+	]
+	dwarven_fortress["position"] = Vector2(-40.0, 18.0)
+	dwarven_fortress["completed_upgrades"] = [UPGRADE]
+	var foreign_probe: Dictionary = probe.duplicate(true)
+	foreign_probe["position"] = Vector2(-40.0, 18.0)
+	foreign_probe["completed_upgrades"] = []
+	foreign_enemy_sim._apply_structure_inherit_upgrades(foreign_probe)
+	_check(
+		"inherit_upgrade_create_rejects_enemy_with_same_kind_but_foreign_identity",
+		not Array(foreign_probe["completed_upgrades"]).has(UPGRADE)
+	)
+
+	var one_shot_sim = _make_inherit_sim()
+	var one_shot_fortress: Dictionary = one_shot_sim.structures[
+		int(one_shot_sim.fortress_id(0))
+	]
+	one_shot_fortress["completed_upgrades"] = []
+	var one_shot_built: Dictionary = one_shot_sim.issue_construct(
+		_ids(),
+		"barracks",
+		Vector2(one_shot_fortress.get("position", Vector2.ZERO))
+			+ Vector2(10.0, 0.0)
+	)
+	var one_shot_carrier: Dictionary = one_shot_sim.structures[
+		int(one_shot_built.get("structure_id", 0))
+	]
+	one_shot_fortress["completed_upgrades"] = [UPGRADE]
+	one_shot_sim.advance(5)
+	_check(
+		"inherit_upgrade_create_does_not_retroactively_rerun",
+		not Array(one_shot_carrier.get("completed_upgrades", [])).has(UPGRADE)
+	)
 
 
 ## Non-Men + plots and cross-faction + plots (the user-reported load failure):
@@ -247,6 +469,46 @@ func _make_sim(set_flag: bool, plots_only: bool):
 	if set_flag:
 		rules["build_plots_only"] = plots_only
 	sim.setup({}, rules)
+	sim.ai_enabled = false
+	return sim
+
+
+func _make_inherit_sim(heterogeneous_enemy: bool = false):
+	var manifest: Dictionary = ManifestScript.default_manifest()
+	manifest["structure_source_object_ids"] = {
+		"fortress": ["MenFortress", "MenFortressCitadel"],
+		"barracks": ["GondorBarracks"],
+	}
+	manifest["structure_inherit_upgrades"] = {
+		"barracks": [
+			{
+				"radius": {"authored": "40", "value": 40.0},
+				"upgradeId": "Upgrade_TestStonework",
+				"upgradeType": "OBJECT",
+				"objectFilter": "ANY +MenFortressCitadel",
+				"sourceObjectId": "MenFortressCitadel",
+				"module": "InheritUpgradeCreate",
+			},
+		],
+	}
+	var enemy_manifest := manifest
+	if heterogeneous_enemy:
+		enemy_manifest = manifest.duplicate(true)
+		enemy_manifest["faction"] = "dwarves"
+		enemy_manifest["structure_source_object_ids"] = {
+			"fortress": ["DwarvenFortress", "DwarvenFortressCitadel"],
+			"barracks": ["DwarvenBarracks"],
+		}
+	var sim = SimScript.new()
+	sim.setup({}, {
+		"enable_base_loop": true,
+		"starting_resources": 100000,
+		"member_health": 100,
+		"unit_rules": _unit_rules(),
+		"farm_income": 25,
+		"source_map_transform_scale": 0.5,
+		"team_faction_manifests": {0: manifest, 1: enemy_manifest},
+	})
 	sim.ai_enabled = false
 	return sim
 

@@ -339,7 +339,12 @@ def test_conversion_converts_units_and_structures_and_is_deterministic() -> None
             )
 
     first, second = results
-    assert first == second
+    # Content identity must match; wall-clock timing fields (convertElapsedMs,
+    # convertLoopMs, …) are ephemeral and intentionally excluded from the digest.
+    from openbfme_importer.faction_import import coverage_digest_payload
+
+    assert first["aggregateSha256"] == second["aggregateSha256"]
+    assert coverage_digest_payload(first) == coverage_digest_payload(second)
     rows = {row["id"]: row for row in first["objects"]}
     assert rows["HeroSeven"]["status"] == "converted"
     assert rows["HeroSeven"]["converter"] == "playable-unit"
@@ -416,6 +421,8 @@ def test_foundation_without_visuals_is_excluded_with_descriptor_evidence() -> No
         PlayableStructurePackCompilerError,
     )
 
+    # Non-CenterGeneric BASE_FOUNDATION still uses the legacy exception path
+    # (only *FortressCenterGeneric early-exits before visual closure).
     descriptor = {
         "objectId": "UniversalFactory",
         "descriptorSha256": "5" * 64,
@@ -450,6 +457,58 @@ def test_foundation_without_visuals_is_excluded_with_descriptor_evidence() -> No
     assert row["status"] == "excluded"
     assert "foundation composite" in row["reason"]
     assert row["descriptorSha256"] == "5" * 64
+
+
+def test_fortress_center_generic_skips_visual_closure() -> None:
+    """*FortressCenterGeneric exits before visual closure (perf)."""
+
+    from openbfme_importer.faction_import import _convert_one_plan_object
+
+    descriptor = {
+        "objectId": "AngmarFortressCenterGeneric",
+        "descriptorSha256": "5" * 64,
+        "kindOf": ["STRUCTURE", "BASE_FOUNDATION"],
+        "production": {"evidence": "engine-spawned-composite", "routes": []},
+    }
+    with (
+        mock.patch(
+            "openbfme_importer.faction_import."
+            "compile_playable_structure_descriptor",
+            return_value=descriptor,
+        ),
+        mock.patch(
+            "openbfme_importer.faction_import.build_retail_visual_closure",
+            side_effect=AssertionError("must not run visual closure"),
+        ),
+    ):
+        row, artifacts = _convert_one_plan_object(
+            {
+                "id": "AngmarFortressCenterGeneric",
+                "family": "structure",
+                "status": "descriptor-ready",
+                "descriptorSha256": "5" * 64,
+            },
+            documents={},
+            prepared=None,  # type: ignore[arg-type]
+            faction_graph={},
+            effective_root=Path("unused"),
+            catalog=None,
+            spawned=(),
+            wall_templates=(),
+            source_null_sets=(),
+            object_cache=None,
+            documents_fp="d",
+            catalog_identity_sha256="2" * 64,
+            assets_fp="a",
+            graph_input_set_sha256="g",
+            plan_aggregate_sha256="p",
+            policy_fp="y",
+            compiler_token="c",
+            game="rotwk",
+        )
+    assert row["status"] == "excluded"
+    assert "foundation composite" in row["reason"]
+    assert artifacts == {}
 
 
 def _construct_fixture() -> tuple[dict[str, bytes], dict[str, object]]:

@@ -52,9 +52,10 @@ ROAD_MATERIALS_RELATIVE_PATH = "road-materials.json"
 MAP_RESOURCE_ID = "fords-map-binary"
 PARTIAL_RESOURCE_ID = "gondor-fighter-definitions"
 
-# 83 asset/data rules plus the living-world strategic document rule.
-EXPECTED_BASE_RESOURCE_COUNT = 84
-EXPECTED_ROAD_RESOURCE_COUNT = 89
+# 83 asset/data rules, the living-world strategic document rule, and the exact
+# three-source map-script composite.
+EXPECTED_BASE_RESOURCE_COUNT = 85
+EXPECTED_ROAD_RESOURCE_COUNT = 90
 EXPECTED_FACTION_RESOURCE_COUNT = 85
 EXPECTED_STATIC_RESOURCE_COUNT = 53
 EXPECTED_STATIC_BINDING_COUNT = 38
@@ -68,7 +69,7 @@ EXPECTED_ANIMATED_REUSE_COUNT = 1
 EXPECTED_ANIMATED_ADDED_RESOURCE_COUNT = 21
 EXPECTED_PRE_ANIMATED_BINDING_COUNT = 44
 EXPECTED_FINAL_BINDING_COUNT = 54
-EXPECTED_FINAL_RESOURCE_COUNT = 241
+EXPECTED_FINAL_RESOURCE_COUNT = 242
 EXPECTED_SOURCE_VARIANTS = {
     "men-fortress-damaged-model": "men-fortress-intact-model",
 }
@@ -307,6 +308,7 @@ _BUNDLE_CONVERTERS = {
     "w3d-hierarchical",
     "w3d-static",
     "sage-terrain-materials",
+    "sage-script-composite",
 }
 
 
@@ -575,6 +577,10 @@ def _all_pattern_owners(
     resources: Sequence[Mapping[str, Any]], label: str
 ) -> dict[str, tuple[str, str]]:
     variants = _declared_source_variants(resources, label)
+    resources_by_id = {
+        _text(resource.get("id"), f"{label} resource id"): resource
+        for resource in resources
+    }
     owners: dict[str, tuple[str, str]] = {}
     for position, resource in enumerate(resources):
         resource_id = _text(resource.get("id"), f"{label} resource {position} id")
@@ -582,6 +588,21 @@ def _all_pattern_owners(
             key = pattern.casefold()
             previous = owners.get(key)
             if previous is not None:
+                options = resource.get("options")
+                map_virtual_path = (
+                    options.get("mapVirtualPath")
+                    if isinstance(options, Mapping)
+                    else None
+                )
+                previous_resource = resources_by_id.get(previous[0])
+                if (
+                    resource.get("converter") == "sage-script-composite"
+                    and isinstance(map_virtual_path, str)
+                    and pattern.casefold() == map_virtual_path.casefold()
+                    and isinstance(previous_resource, Mapping)
+                    and previous_resource.get("converter") == "sage-map"
+                ):
+                    continue
                 if (
                     variants.get(resource_id.casefold(), "").casefold()
                     == previous[0].casefold()
@@ -1084,6 +1105,31 @@ def _validate_animated_plan(
     return resources, bindings
 
 
+def _script_composite_shares_map_source(
+    resource: Any,
+    entry: Any,
+    previous_owner_id: str,
+    resources: Sequence[Any],
+) -> bool:
+    """Recognize the one intentional map-byte ownership overlap.
+
+    ``sage-map`` cooks geometry/setup while ``sage-script-composite`` decodes
+    the script container from those same bytes. No AI-library source is shared.
+    """
+
+    map_virtual_path = resource.rule.options.get("mapVirtualPath")
+    if (
+        resource.rule.converter != "sage-script-composite"
+        or not isinstance(map_virtual_path, str)
+        or entry.name.casefold() != map_virtual_path.casefold()
+    ):
+        return False
+    return any(
+        prior.rule.id == previous_owner_id and prior.rule.converter == "sage-map"
+        for prior in resources
+    )
+
+
 def _dedupe_hierarchical_resources(
     *,
     base_payload: Mapping[str, Any],
@@ -1107,6 +1153,10 @@ def _dedupe_hierarchical_resources(
             key = (entry.archive.casefold(), entry.name.casefold())
             previous = entry_owners.get(key)
             if previous is not None:
+                if _script_composite_shares_map_source(
+                    resource, entry, previous, resolved.resources
+                ):
+                    continue
                 if source_variants.get(resource.rule.id.casefold(), "").casefold() == (
                     previous.casefold()
                 ):
@@ -1212,6 +1262,10 @@ def _dedupe_animated_resources(
             key = (entry.archive.casefold(), entry.name.casefold())
             previous = entry_owners.get(key)
             if previous is not None:
+                if _script_composite_shares_map_source(
+                    resource, entry, previous, resolved.resources
+                ):
+                    continue
                 if source_variants.get(resource.rule.id.casefold(), "").casefold() == (
                     previous.casefold()
                 ):
@@ -1628,6 +1682,14 @@ def _validate_resolved_profile(
             key = (entry.archive.casefold(), entry.name.casefold())
             previous = entry_owners.get(key)
             if previous is not None:
+                if _script_composite_shares_map_source(
+                    resource, entry, previous, resolved.resources
+                ):
+                    # The decoded map and its script container are distinct
+                    # artifacts from the same exact retail .map bytes. The
+                    # composite explicitly owns that one shared source plus
+                    # two otherwise unclaimed AI-library sources.
+                    continue
                 if source_variants.get(resource.rule.id.casefold(), "").casefold() == (
                     previous.casefold()
                 ):

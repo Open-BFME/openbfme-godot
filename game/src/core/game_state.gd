@@ -1,6 +1,8 @@
 extends Node
 ## Match-level state. Pure data + sim world reference.
 
+const BootProfile = preload("res://src/core/boot_profile.gd")
+
 enum Side { PLAYER = 0, ENEMY = 1, WILD = 2 }
 enum Stance { AGGRESSIVE = 0, DEFENSIVE = 1, HOLD = 2 }
 
@@ -243,3 +245,8 @@ func set_control_group(n: int, ids: Array) -> void:
 func recall_control_group(n: int) -> void:
 	if control_groups.has(n):
 		set_selected(control_groups[n])
+
+## See events.gd:_init - per-autoload compile attribution for the boot profiler.
+## No-op unless boot profiling is on.
+func _init() -> void:
+	BootProfile.mark("autoload_compiled:GameState")

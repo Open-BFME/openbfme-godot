@@ -999,6 +999,46 @@ def build_module_census(
             "objectCount": objects,
             "families": families,
         }
+        if folded == "destroydie" and member["status"] == "consumed":
+            member["compilerConsumedSubset"] = (
+                "default ALL, explicit ALL, and ALL -TOPPLED declarations "
+                "reached by playable-unit descriptor compilation"
+            )
+            member["runtimeExecutableSubset"] = (
+                "default/explicit ALL on materialized playable-unit object "
+                "and container owners"
+            )
+            member["runtimeDeferredSubset"] = (
+                "primaryMember owners remain compiler evidence only because "
+                "the simulation has no independently materialized member "
+                "corpse/presentation lifecycle"
+            )
+        elif (
+            folded == "queueproductionexitupdate"
+            and member["status"] == "consumed"
+        ):
+            member["compilerConsumedSubset"] = (
+                "syntactically valid declarations reached by "
+                "playable-structure descriptor compilation"
+            )
+            member["knownFailClosedSubset"] = (
+                "RotWK AngmarKennelExpansion malformed NaturalRallyPoint"
+            )
+            member["runtimeExecutableSubset"] = "none; descriptor evidence only"
+        elif folded == "autodepositupdate" and member["status"] == "consumed":
+            member["compilerConsumedSubset"] = (
+                "consumer recognition is implemented; 29 BFME2 and 37 RotWK "
+                "are observed declaration sites, not measured descriptor "
+                "outputs"
+            )
+            member["runtimeExecutableSubset"] = (
+                "focused materialized descriptor fixture only; no real retail "
+                "materialized-descriptor receipt is recorded by this census"
+            )
+            member["runtimeDeferredSubset"] = (
+                "all unmeasured retail carriers, plus BFME-only "
+                "GiveNoXP/OnlyWhenGarrisoned rows"
+            )
         members.append(member)
     members.sort(
         key=lambda row: (

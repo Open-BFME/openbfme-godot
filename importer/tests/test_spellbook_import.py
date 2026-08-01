@@ -8,6 +8,7 @@ from openbfme_importer.sage_gameplay import _digest as _gameplay_digest
 from openbfme_importer.sage_ini import parse_flat_named_blocks
 from openbfme_importer.spellbook_compiler import (
     SpellbookCompilerError,
+    _digest,
     _particle_sys_bone_fields,
     compile_spellbook_descriptor,
     validate_spellbook_descriptor,
@@ -189,6 +190,22 @@ ModifierList TestRallyModifier
   Duration = 60000
   FX = FX_TestHealBuff
 End
+
+ModifierList TestSummonBonusRank5
+  Category = LEVEL
+  Modifier = HEALTH 40
+  Modifier = DAMAGE_ADD 15
+  Duration = 0
+End
+""",
+        "data/ini/experiencelevels.ini": b"""
+ExperienceLevel TestSummonedHordeLevel5
+  TargetNames = TestSummonedHorde
+  RequiredExperience = 1
+  Rank = 5
+  AttributeModifiers = TestSummonBonusRank5
+  Upgrades = Upgrade_ObjectLevel1 Upgrade_ObjectLevel2 Upgrade_ObjectLevel3 Upgrade_ObjectLevel4 Upgrade_ObjectLevel5
+End
 """,
         "data/ini/weapon.ini": b"""
 Weapon TestVolleyWeapon
@@ -234,6 +251,11 @@ Object TestSpellBook
   EditorSorting = SYSTEM
   KindOf = SPELL_BOOK IMMOBILE IGNORES_SELECT_ALL INERT
   CommandSet = TestSpellBookCommandSet
+  Behavior = CommandPointsUpgrade ModuleTag_CommandPointsUpgrade
+    TriggeredBy = Upgrade_MarketplaceUpgradeGrandHarvest
+    CommandPoints = 100
+    RequiredObject = NONE +GondorMarketPlace
+  End
   Behavior = PlayerHealSpecialPower ModuleTag_Heal
     SpecialPowerTemplate = SpellBookTestHeal
     HealAmount = 0.5
@@ -290,6 +312,10 @@ Object TestSummonedHorde
     MaxLifetime = 75000
     DeathType = FADED
   End
+  Behavior = ExperienceLevelCreate ModuleTag_LevelBonus
+    LevelToGrant = 5
+    MPOnly = No
+  End
   Behavior = HordeContain ModuleTag_HordeContain
     InitialPayload = TestSummonedMember 5
     Slots = 5
@@ -310,6 +336,9 @@ Object TestSummonedMember
   End
   WeaponSet
     Weapon = PRIMARY TestVolleyWeapon
+  End
+  Behavior = LockWeaponCreate ModuleTag_LockWeapon
+    SlotToLock = PRIMARY
   End
   LocomotorSet
     Locomotor = TestLocomotor
@@ -487,7 +516,69 @@ def test_descriptor_resolves_tree_costs_prerequisites_and_effect_leaves() -> Non
         "commandSetId": "TestSpellBookCommandSet",
         "spellStoreCommandSetId": "TestSpellStoreCommandSet",
         "intrinsicSciences": ["SCIENCE_ELVES"],
+        "commandPointsUpgrade": {
+            "triggeredBy": "Upgrade_MarketplaceUpgradeGrandHarvest",
+            "commandPoints": 100,
+            "requiredObject": "NONE +GondorMarketPlace",
+            "module": "CommandPointsUpgrade",
+            "sourceIni": "data/ini/object/system/test_system.ini",
+            "line": 6,
+        },
     }
+    summoned_member = next(
+        row
+        for row in descriptor["leaves"]["objects"]
+        if row["id"] == "TestSummonedMember"
+    )
+    assert summoned_member["weaponSlot"] == "PRIMARY"
+    assert summoned_member["permanentWeaponLocks"][0]["module"] == (
+        "LockWeaponCreate"
+    )
+    summoned_horde = next(
+        row
+        for row in descriptor["leaves"]["objects"]
+        if row["id"] == "TestSummonedHorde"
+    )
+    assert summoned_horde["experienceLevelCreate"]["rank"] == 5
+    assert summoned_horde["experience"]["initialRank"] == 5
+    assert "experienceAward" not in summoned_horde["experience"]["levels"][0]
+    assert (
+        summoned_horde["experience"]["levels"][0]["experienceAwardStatus"]
+        == "unauthored"
+    )
+    assert summoned_horde["experience"]["levels"][0]["attributeModifiers"][0][
+        "id"
+    ] == "TestSummonBonusRank5"
+    assert summoned_horde["experience"]["levels"][0]["upgrades"] == [
+        "Upgrade_ObjectLevel1",
+        "Upgrade_ObjectLevel2",
+        "Upgrade_ObjectLevel3",
+        "Upgrade_ObjectLevel4",
+        "Upgrade_ObjectLevel5",
+    ]
+    assert "ExperienceLevelCreate" not in summoned_horde.get(
+        "unconvertedBehaviors", []
+    )
+
+    corrupted = deepcopy(descriptor)
+    corrupted_member = next(
+        row
+        for row in corrupted["leaves"]["objects"]
+        if row["id"] == "TestSummonedMember"
+    )
+    corrupted_member["permanentWeaponLocks"][0].pop("sourceIni")
+    corrupted["descriptorSha256"] = _digest(
+        {
+            key: item
+            for key, item in corrupted.items()
+            if key != "descriptorSha256"
+        }
+    )
+    with pytest.raises(
+        SpellbookCompilerError,
+        match="LockWeaponCreate leaf evidence is invalid",
+    ):
+        validate_spellbook_descriptor(corrupted)
 
     sciences = {row["id"]: row for row in descriptor["sciences"]}
     assert set(sciences) == {
@@ -651,6 +742,19 @@ def test_descriptor_resolves_tree_costs_prerequisites_and_effect_leaves() -> Non
     assert descriptor["descriptorSha256"] == _compile()["descriptorSha256"]
 
 
+def test_command_points_upgrade_rejects_nonretail_points() -> None:
+    documents, graph = _fixture()
+    path = "data/ini/object/system/test_system.ini"
+    documents[path] = documents[path].replace(
+        b"    CommandPoints = 100\n",
+        b"    CommandPoints = 99\n",
+        1,
+    )
+
+    with pytest.raises(SpellbookCompilerError, match="outside the retail corpus"):
+        compile_spellbook_descriptor(graph, documents)
+
+
 def test_pack_recipe_and_runtime_bind_media_and_power_tree() -> None:
     descriptor = _compile()
     recipe = compile_spellbook_pack_recipe(descriptor)
@@ -658,6 +762,9 @@ def test_pack_recipe_and_runtime_bind_media_and_power_tree() -> None:
     kinds = {(row["kind"], row["converter"]) for row in recipe["resources"]}
     assert kinds == {("ui", "texture-atlas-crops"), ("audio", "audio")}
     registration = recipe["runtimeRegistration"]
+    assert registration["spellBook"]["commandPointsUpgrade"] == (
+        descriptor["spellBook"]["commandPointsUpgrade"]
+    )
     assert registration["imageBindings"]["SBTest_Heal"].startswith(
         "assets/ui/spellbook/testspellbook/"
     )
@@ -677,6 +784,9 @@ def test_pack_recipe_and_runtime_bind_media_and_power_tree() -> None:
     assert runtime["schema"] == "openbfme.spellbook-runtime"
     assert runtime["descriptorSha256"] == descriptor["descriptorSha256"]
     assert runtime["recipeSha256"] == recipe["recipeSha256"]
+    assert runtime["registration"]["spellBook"]["commandPointsUpgrade"] == (
+        descriptor["spellBook"]["commandPointsUpgrade"]
+    )
     tree = runtime["registration"]["powerTree"]
     assert len(tree["sciences"]) == 4
     assert len(tree["powers"]) == 2

@@ -23,9 +23,9 @@ bloat is wrong; `game/src` is a fifth of it.
 
 | requirement | verdict | reasoning | owner |
 |---|---|---|---|
-| "Vertical slice" as the product frame | **DROP** | Legacy of a one-faction/one-map parity goal the project has outgrown — 7 factions and 195 maps now convert. The name is load-bearing in code (`retail_vertical_slice.gd`, `RetailVerticalSlice`, pack id `bfme2-men-vslice`, `OPENBFME_SLICE_*` env vars) and misleads every reader about scope. | DIRECTION.md |
-| BFME2 1.06 as parity target | **REWRITE** | Owner moved the baseline to RotWK 2.01. `contracts/bfme2-106-product-scope.json` still declares `1.06` and `retail-campaigns: excluded`, contradicting the rewritten DIRECTION.md. The contract is machine-readable and wins by default — it must be reconciled deliberately. | contracts/ |
-| Campaign + WotR out of scope | **REWRITE** | Campaign is in scope and at 62.7% script coverage. WotR remains out and that is correct — it is a separate living-world project sharing almost nothing. | DIRECTION.md |
+| "Vertical slice" as the product frame | **DONE (docs)** | Owner 2026-07-30: systems-first iterative model in `DIRECTION.md` / `Agents.md` / `MILESTONE_CURRENT.md`. Code symbols (`retail_vertical_slice.gd`, pack ids) may still use historical names. | DIRECTION.md |
+| BFME2 1.06 as parity target | **DONE (docs+contract)** | RotWK 2.01 is baseline; `contracts/rotwk-201-product-scope.json` is checked by `tools/check-product-contracts.py`. Historical `bfme2-106-product-scope.json` superseded. | contracts/ |
+| Campaign + WotR out of scope | **DONE (docs)** | Both in product scope as deferred ladder domains under RotWK systems-first model. | DIRECTION.md |
 | stage1–15 proof ladder | **KEEP for now** | Still reachable: `gate-stage10.ps1` chains stage9→stage1, `boot.tscn` has Stage1–9 buttons, and `main_menu.gd::_collect_stage_buttons()` uses `get_node` so it *crashes* if they are missing. Retiring it needs a four-step order starting in the UI. Already filed separately. | PLAN.md |
 | Fords-only and Men-only profile modules | **REWRITE** | ~7.6k lines of `retail_fords_*` and `retail_men_*` modules encode single-map/single-faction assumptions. The generic replacements now exist (`map_prop_bindings.py` reproduces the hand-composed Fords profile exactly). These should collapse into the generic lane rather than persist beside it. | — |
 

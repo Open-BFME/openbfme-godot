@@ -140,6 +140,9 @@ def visual_object_ids(descriptor: Mapping[str, object]) -> list[str]:
 def build_spellbook_visual_closures(
     descriptor: Mapping[str, object],
     effective_root: Path | str,
+    *,
+    catalog: object | None = None,
+    catalog_identity_sha256: str | None = None,
 ) -> tuple[dict[str, dict[str, object]], dict[str, str]]:
     """Seal one visual closure per model-authoring spellbook leaf object.
 
@@ -148,6 +151,9 @@ def build_spellbook_visual_closures(
     definition source (``data/ini/object/system/system.ini``) that the CST
     rejects outside its macro context, and losing one projectile's art must not
     cost a faction its whole spellbook.
+
+    When ``catalog`` is provided, physical leaves are filtered to archive
+    winners (same pack-identity rule as unit/structure convert).
     """
 
     closures: dict[str, dict[str, object]] = {}
@@ -155,7 +161,10 @@ def build_spellbook_visual_closures(
     for object_id in visual_object_ids(descriptor):
         try:
             closures[object_id] = build_retail_visual_closure(
-                effective_root, [object_id]
+                effective_root,
+                [object_id],
+                catalog=catalog,
+                catalog_identity_sha256=catalog_identity_sha256,
             )
         except Exception as exc:  # noqa: BLE001 - recorded, never substituted
             failures[object_id] = f"{type(exc).__name__}: {exc}"

@@ -2,6 +2,8 @@ extends Node
 ## Discovers repository packs, mods, and one durable user-owned content pack.
 ## Pack load order is deterministic: ascending priority, then normalized path.
 
+const BootProfile = preload("res://src/core/boot_profile.gd")
+
 const BASE_PATH := "res://data"
 const RES_MODS := "res://mods"
 const USER_MODS := "user://mods"
@@ -24,15 +26,67 @@ var active_content_source := ""
 # boot-time asset resolution calls it for every path segment of every resolved
 # asset (tens of thousands of opens on large retail pack sets). Link status of
 # the immutable pack trees cannot change while a load generation is active, so
-# results are memoized per (parent, child) and flushed whenever the pack set is
-# re-scanned (list_pack_roots) or the selection is rewritten (select_user_pack).
-var _link_status_cache: Dictionary = {}
+# results are memoized per (parent, child) - now inside the parent's own
+# _dir_index_cache entry - and flushed whenever the pack set is re-scanned
+# (list_pack_roots) or the selection is rewritten (select_user_pack). Every
+# cache below shares that one generation lifetime through clear_path_caches.
 var _link_cache_mutex := Mutex.new()
+
+# MEASURED BOOT HOT PATH. ContentDB's playable-runtime validation calls
+# resolve_asset ~16,000 times per boot, and 2,889 ms of a 3,427 ms
+# resolve_asset total was spent right here in resolve_pack_path - NOT in the
+# link syscalls but in recomputing the same string transforms over and over.
+# One resolve_pack_path used to run _absolute_path six times and
+# _comparison_path four times over ~200-character absolute paths (every
+# converted asset lives under a sha-256 directory name), then re-walked all
+# five path segments through a per-(parent,child) cache that costs two mutex
+# operations and a string concatenation each.
+#
+# The two caches below remove that repetition. NEITHER SKIPS A CHECK:
+#  * _absolute_path_cache memoizes a pure function of its input string.
+#  * _clean_prefix_cache records directories already PROVEN link-free from the
+#    pack root down. A later candidate under a proven-clean parent still probes
+#    its own final segment; it only stops re-proving the ancestors that a
+#    previous candidate already walked segment by segment.
+# Both are flushed by clear_path_caches, so they share the generation lifetime
+# exactly: the pack trees are immutable while a load generation is active, and
+# any re-scan or selection rewrite invalidates every cache together.
+var _absolute_path_cache: Dictionary = {}
+var _clean_prefix_cache: Dictionary = {}
+
+# MEASURED, SECOND PASS. With the caches above in place a warm resolve_pack_path
+# still cost 46 us per call over 15,177 boot calls (~700 ms single-threaded, and
+# far worse across eight validation threads because every call took ~14 turns on
+# the one mutex below). Almost none of that was syscalls: it was re-deriving,
+# per call, facts that depend only on the PACK ROOT - its absolute form, its
+# comparison form, and whether the root itself is a link.
+#
+# _root_context_cache records those once per pack root per generation. There are
+# four roots and 15,177 calls, so this is the same proof done 4 times instead of
+# 15,177 times. See _root_context.
+var _root_context_cache: Dictionary = {}
+
+# One directory enumeration replacing N per-file syscalls.
+#
+# MEASURED: the 12,027 distinct assets validated at boot live in 361
+# directories. Asking the filesystem about them one file at a time cost 596 ms
+# of FileAccess.file_exists; ONE DirAccess enumeration per directory returns the
+# same 12,027 names in 85 ms. The entry also holds the per-child is_link answers
+# (see _link_status), keyed inside the directory's own dictionary instead of a
+# global cache keyed by a concatenated ~200-character string.
+#
+# Entry shape: {"readable": bool, "names": {folded_name: true}, "links":
+# {child_name: int}, "dir": DirAccess}. `readable` false means the directory
+# could not be opened, which callers must treat as "unknown", never as "absent".
+var _dir_index_cache: Dictionary = {}
 
 
 func clear_path_caches() -> void:
 	_link_cache_mutex.lock()
-	_link_status_cache.clear()
+	_absolute_path_cache.clear()
+	_clean_prefix_cache.clear()
+	_root_context_cache.clear()
+	_dir_index_cache.clear()
 	_link_cache_mutex.unlock()
 
 
@@ -315,9 +369,25 @@ func resolve_pack_path(pack_root: String, relative_path: String) -> String:
 	## fail-closed boundary violation, even when its text still looks contained.
 	if pack_root == "" or not is_safe_relative_path(relative_path):
 		return ""
-	var root := pack_root.replace("\\", "/").trim_suffix("/")
+	var context := _root_context(pack_root)
+	var root: String = context["root"]
 	var candidate := root.path_join(relative_path.replace("\\", "/")).simplify_path()
-	if not path_is_within(root, candidate):
+	# FAST CONTAINMENT, STRICTLY STRONGER THAN THE ONE IT REPLACES.
+	#
+	# `candidate` was built from `root` by path_join, and is_safe_relative_path
+	# has already rejected every segment simplify_path could have used to climb
+	# out of it: "", ".", "..", a leading "/" or "~", and any ":" drive
+	# specifier. So a BYTE-EXACT prefix match against `root` proves containment
+	# outright, and it proves MORE than path_is_within did - that comparison
+	# absolutized and case-folded both sides, so it also accepted candidates
+	# whose prefix merely matched case-insensitively.
+	#
+	# Byte-exact success therefore implies the old predicate. Byte-exact failure
+	# does NOT imply the old predicate failed (a caller may pass an unsimplified
+	# root, where simplify_path rewrites the prefix), so that case still runs
+	# the original check rather than rejecting a path that used to resolve.
+	var contained := candidate.begins_with(context["prefix"])
+	if not contained and not path_is_within(root, candidate):
 		return ""
 	# EXPORTED BUILDS: a res:// path lives inside the .pck, not on disk, so
 	# DirAccess.open(globalize_path(...)) returns null and the link probe
@@ -330,9 +400,47 @@ func resolve_pack_path(pack_root: String, relative_path: String) -> String:
 	# Bundled resources cannot contain links, so the probe is skipped for
 	# them. Every user:// and absolute external path is still fully checked -
 	# the boundary this guard exists to defend is unchanged.
-	if not root.begins_with("res://") and _path_has_link_component(root, candidate):
+	if not context["is_res"] and _context_has_link_component(context, candidate, contained):
 		return ""
 	return candidate
+
+
+func _root_context(pack_root: String) -> Dictionary:
+	## Everything about a pack root that resolve_pack_path used to re-derive on
+	## every single call: its normalized form, the "<root>/" prefix, whether it
+	## is a res:// path (link probe skipped, see resolve_pack_path), its absolute
+	## form, and whether the root directory is ITSELF a link. Computed once per
+	## root per generation and flushed by clear_path_caches together with every
+	## other path cache, so it shares their lifetime exactly - the pack trees are
+	## immutable while a load generation is active.
+	_link_cache_mutex.lock()
+	var cached: Variant = _root_context_cache.get(pack_root)
+	_link_cache_mutex.unlock()
+	if cached is Dictionary:
+		return cached as Dictionary
+	var root := pack_root.replace("\\", "/").trim_suffix("/")
+	var context: Dictionary = {
+		"root": root,
+		"prefix": root + "/",
+		"is_res": root.begins_with("res://"),
+		"absolute": root,
+		"absolute_is_root": true,
+		"root_is_link": false,
+	}
+	if not bool(context["is_res"]):
+		var absolute := _absolute_path(root).trim_suffix("/")
+		context["absolute"] = absolute
+		context["absolute_is_root"] = absolute == root
+		# Reject a pack/cache root that is itself a link or junction. Parents
+		# above the configured root define the trusted storage location and are
+		# out of this pack-relative boundary. Unchanged check, asked once.
+		var root_name := absolute.get_file()
+		if root_name != "":
+			context["root_is_link"] = _link_status(absolute.get_base_dir(), root_name) != 0
+	_link_cache_mutex.lock()
+	_root_context_cache[pack_root] = context
+	_link_cache_mutex.unlock()
+	return context
 
 
 func path_is_within(root_path: String, candidate_path: String) -> bool:
@@ -342,26 +450,208 @@ func path_is_within(root_path: String, candidate_path: String) -> bool:
 
 
 func _path_has_link_component(root_path: String, candidate_path: String) -> bool:
-	var root := _absolute_path(root_path).trim_suffix("/")
-	var candidate := _absolute_path(candidate_path)
-	if not path_is_within(root, candidate):
+	## Retained entry point for callers that have not already proved containment.
+	return _context_has_link_component(_root_context(root_path), candidate_path, false)
+
+
+func _context_has_link_component(context: Dictionary, candidate_path: String, contained: bool) -> bool:
+	var root: String = context["absolute"]
+	# _absolute_path is the IDENTITY on `candidate_path` whenever the root was
+	# already in absolute, forward-slash, simplified form: the candidate is that
+	# root plus "/" plus segments is_safe_relative_path already proved contain no
+	# backslash-vs-slash or "."/".." ambiguity, and resolve_pack_path ran
+	# simplify_path over the join. Proving that once per root (absolute_is_root)
+	# removes a cached-dictionary lookup keyed by a ~200-character string from
+	# every one of the boot's 15,177 calls.
+	var candidate := candidate_path if bool(context["absolute_is_root"]) else _absolute_path(candidate_path)
+	# THE DUPLICATE PROOF, REMOVED. This used to re-run path_is_within here, on
+	# the same two strings resolve_pack_path had just tested, costing two more
+	# simplify_path + to_lower passes over a ~200-character path per call.
+	# `contained` carries resolve_pack_path's byte-exact result forward: when it
+	# is true, containment is already proven and strictly more strongly than
+	# path_is_within states it (see resolve_pack_path). When it is false - the
+	# only case a caller can reach through _path_has_link_component - the check
+	# still runs in full.
+	if not contained and not path_is_within(root, candidate):
 		return true
-	# Reject a pack/cache root that is itself a link or junction. Parents above
-	# the configured root define the trusted storage location and are out of this
-	# pack-relative boundary.
-	var root_name := root.get_file()
-	if root_name != "":
-		var root_status := _link_status(root.get_base_dir(), root_name)
-		if root_status != 0:
-			return true
+	if bool(context["root_is_link"]):
+		return true
+	# A candidate whose PARENT directory is already in _clean_prefix_cache needs
+	# no segment walk at all. The proof is cumulative: a directory only enters
+	# that cache after every segment from the pack root down to it returned
+	# status 0, so a cached parent is exactly equivalent to re-walking those
+	# segments and getting 0 again. That is the whole cost for the 12,027 boot
+	# assets after the first file in each of their 361 directories.
+	var parent := candidate.get_base_dir()
+	var parent_proven := false
+	_link_cache_mutex.lock()
+	parent_proven = _clean_prefix_cache.has(parent)
+	_link_cache_mutex.unlock()
+	if parent_proven:
+		return _link_status(parent, candidate.get_file()) != 0
+	# Walk the segments, but start from the deepest ancestor a previous candidate
+	# already proved link-free.
 	var relative := candidate.substr(root.length() + 1)
+	var segments := relative.split("/", false)
 	var current := root
-	for segment in relative.split("/", false):
+	var first_unproven := 0
+	_link_cache_mutex.lock()
+	for index in segments.size():
+		var ancestor := current.path_join(segments[index])
+		if not _clean_prefix_cache.has(ancestor):
+			break
+		current = ancestor
+		first_unproven = index + 1
+	_link_cache_mutex.unlock()
+	for index in range(first_unproven, segments.size()):
+		var segment := segments[index]
 		var status := _link_status(current, segment)
 		if status != 0:
 			return true
 		current = current.path_join(segment)
+		# Record only interior components. The final component is usually the
+		# asset FILE, and caching one entry per file would grow the dictionary by
+		# tens of thousands of strings for no reuse - prefixes are what repeat.
+		if index < segments.size() - 1:
+			_link_cache_mutex.lock()
+			_clean_prefix_cache[current] = true
+			_link_cache_mutex.unlock()
 	return false
+
+
+func directory_contains(directory_path: String, file_name: String) -> int:
+	## 1 = the directory listing contains that FILE, 0 = it does not, -1 = the
+	## directory could not be enumerated and the answer is unknown.
+	##
+	## WHY: proving 12,027 declared assets exist cost 596 ms of one-stat-per-file.
+	## The same 12,027 names come back from 361 directory enumerations in 85 ms.
+	## Callers must treat -1 and 0 as "ask the filesystem directly" so that a
+	## directory this cannot enumerate (a res:// path served from the .pck, an
+	## imported-only resource) can never be reported as missing - see
+	## ContentDB._asset_exists.
+	if directory_path == "" or file_name == "":
+		return -1
+	var entry := _dir_index(directory_path)
+	if not bool(entry["readable"]):
+		return -1
+	var names: Dictionary = entry["names"]
+	return 1 if names.has(_fold_entry_name(file_name)) else 0
+
+
+func warm_directory_index(directories: Array) -> int:
+	## Enumerate the named directories up front, in parallel, recording every
+	## child name AND every child's link status. Returns how many were newly
+	## indexed.
+	##
+	## WHY THIS EXISTS. ContentDB validates playable-unit documents across the
+	## worker pool, and every asset reference in them reached the filesystem
+	## through _link_status / directory_contains while holding _link_cache_mutex.
+	## MEASURED: the eight-thread fan-out took 1,658 ms of wall time to do 1,101
+	## ms of single-threaded work - the threads were queueing on this mutex, not
+	## validating. Enumerating first turns every later probe into a lock-held
+	## dictionary read with no syscall under it.
+	##
+	## The directory list is a HINT and nothing more. An entry that turns out not
+	## to be needed only wastes one enumeration; a needed directory that is not
+	## listed is still indexed lazily on first use by _dir_index. No answer this
+	## function can give differs from the answer the lazy path would have given,
+	## because both come from the same enumeration of the same directory.
+	var pending: Array[String] = []
+	_link_cache_mutex.lock()
+	for value in directories:
+		var directory_path := String(value)
+		if directory_path != "" and not _dir_index_cache.has(directory_path):
+			pending.append(directory_path)
+	_link_cache_mutex.unlock()
+	if pending.is_empty():
+		return 0
+	var entries: Array = []
+	entries.resize(pending.size())
+	if pending.size() == 1 or OS.get_processor_count() <= 1:
+		for index in pending.size():
+			entries[index] = _build_dir_index(pending[index])
+	else:
+		# Each element builds its OWN entry into its own pre-sized slot and
+		# touches no shared state, so the parallel phase needs no lock at all.
+		var group := WorkerThreadPool.add_group_task(
+			func(element: int) -> void:
+				entries[element] = _build_dir_index(pending[element]),
+			pending.size()
+		)
+		WorkerThreadPool.wait_for_group_task_completion(group)
+	_link_cache_mutex.lock()
+	for index in pending.size():
+		# A concurrent lazy _dir_index may have won the race; its entry is built
+		# from the same enumeration, so either is correct. Keep the first.
+		# Unreadable directories are not recorded, for the reason _dir_index
+		# gives: absence is a fact about a moment, not about the pack tree.
+		if not bool((entries[index] as Dictionary)["readable"]):
+			continue
+		if not _dir_index_cache.has(pending[index]):
+			_dir_index_cache[pending[index]] = entries[index]
+	_link_cache_mutex.unlock()
+	return pending.size()
+
+
+func _build_dir_index(directory_path: String) -> Dictionary:
+	## One enumeration of one directory, with no shared state touched, so it is
+	## safe to run on the worker pool. Link status is recorded EAGERLY for every
+	## child here: the boot's 361 asset directories hold exactly the 12,027 files
+	## it validates, so asking per child during the walk costs what asking
+	## lazily costs, and it lets the fan-out run without a syscall under the lock.
+	var entry: Dictionary = {"readable": false, "names": {}, "links": {}, "dir": null}
+	var directory := DirAccess.open(directory_path)
+	if directory == null:
+		return entry
+	# Hidden entries are real entries: FileAccess.file_exists reports them, so
+	# the listing must too or this would answer "missing" where the filesystem
+	# answers "present".
+	directory.include_hidden = true
+	directory.list_dir_begin()
+	var names: Dictionary = entry["names"]
+	var links: Dictionary = entry["links"]
+	var name := directory.get_next()
+	while name != "":
+		if not directory.current_is_dir():
+			names[_fold_entry_name(name)] = true
+		links[name] = 1 if directory.is_link(name) else 0
+		name = directory.get_next()
+	directory.list_dir_end()
+	entry["readable"] = true
+	entry["dir"] = directory
+	return entry
+
+
+func _fold_entry_name(name: String) -> String:
+	## Windows filesystems answer FileAccess.file_exists case-insensitively, so a
+	## directory listing must be matched the same way or a pack that declares
+	## "Foo.tga" against an on-disk "foo.tga" would newly be refused.
+	return name.to_lower() if OS.get_name() == "Windows" else name
+
+
+func _dir_index(directory_path: String) -> Dictionary:
+	## One enumeration per directory per generation. The mutex is held across the
+	## enumeration exactly as _link_status holds it across DirAccess.open: the
+	## DirAccess handle stored in the entry is shared state and ContentDB
+	## validates runtime documents on the worker pool. Measured cost of every
+	## enumeration a boot performs: 85 ms total over 361 directories.
+	_link_cache_mutex.lock()
+	var cached: Variant = _dir_index_cache.get(directory_path)
+	if cached is Dictionary:
+		_link_cache_mutex.unlock()
+		return cached as Dictionary
+	var entry := _build_dir_index(directory_path)
+	# NEVER CACHE A DIRECTORY THAT COULD NOT BE OPENED. A present directory's
+	# contents are stable for the generation, but "this directory does not exist
+	# yet" is not a fact about the pack tree - it is a fact about a moment. The
+	# runtime-fixture runners create a pack directory and immediately load from
+	# it, and caching the earlier negative made every asset under it unresolvable
+	# for the rest of the process. Re-probing a genuinely missing directory costs
+	# one failed open on a path nothing resolves anyway.
+	if bool(entry["readable"]):
+		_dir_index_cache[directory_path] = entry
+	_link_cache_mutex.unlock()
+	return entry
 
 
 func _link_status(parent_path: String, child_name: String) -> int:
@@ -369,20 +659,33 @@ func _link_status(parent_path: String, child_name: String) -> int:
 	## Unknown is rejected by callers so an unreadable parent cannot weaken the
 	## containment boundary. The cache is mutex-guarded because threaded content
 	## loaders resolve assets concurrently.
-	var cache_key := parent_path + "|" + child_name
+	# MEASURED: DirAccess.open dominates this function, and the boot asset walk
+	# probes ~16,000 distinct FILES spread over only a few hundred directories -
+	# so the old code paid a fresh open per file to ask about its parent. The
+	# handle is reused per directory instead. The is_link() question asked of
+	# each child is unchanged; only the directory lookup is amortised.
+	#
+	# SECOND PASS: the answers now live in the parent's own _dir_index entry
+	# rather than in one global dictionary keyed by parent + "|" + child. That
+	# key was a fresh ~200-character string built and hashed on every call, for
+	# 15,177 calls per boot. The per-directory dictionary is keyed by the bare
+	# child name and is reached through a lookup the caller usually needs anyway.
+	#
+	# The mutex covers the DirAccess use as well as the caches, because a cached
+	# DirAccess is shared state and ContentDB validates runtime documents on the
+	# worker pool.
+	var entry := _dir_index(parent_path)
+	if not bool(entry["readable"]):
+		return -1
 	_link_cache_mutex.lock()
-	var cached: Variant = _link_status_cache.get(cache_key)
-	_link_cache_mutex.unlock()
+	var links: Dictionary = entry["links"]
+	var cached: Variant = links.get(child_name)
 	if cached is int:
+		_link_cache_mutex.unlock()
 		return cached as int
-	var parent := DirAccess.open(parent_path)
-	var status := 0
-	if parent == null:
-		status = -1
-	else:
-		status = 1 if parent.is_link(child_name) else 0
-	_link_cache_mutex.lock()
-	_link_status_cache[cache_key] = status
+	var parent: DirAccess = entry["dir"]
+	var status := 1 if parent.is_link(child_name) else 0
+	links[child_name] = status
 	_link_cache_mutex.unlock()
 	return status
 
@@ -445,9 +748,25 @@ func _read_json(path: String) -> Variant:
 
 
 func _absolute_path(path: String) -> String:
+	## Pure function of `path`, memoized: the boot-time asset walk calls this
+	## with the same handful of pack roots and the same long candidate strings
+	## thousands of times, and replace()+simplify_path() over ~200-character
+	## paths was measurable. Mutex-guarded because ContentDB validates playable
+	## runtime documents on the worker pool.
+	_link_cache_mutex.lock()
+	var cached: Variant = _absolute_path_cache.get(path)
+	_link_cache_mutex.unlock()
+	if cached is String:
+		return cached as String
+	var resolved := ""
 	if path.begins_with("res://") or path.begins_with("user://"):
-		return ProjectSettings.globalize_path(path).replace("\\", "/").simplify_path()
-	return path.replace("\\", "/").simplify_path()
+		resolved = ProjectSettings.globalize_path(path).replace("\\", "/").simplify_path()
+	else:
+		resolved = path.replace("\\", "/").simplify_path()
+	_link_cache_mutex.lock()
+	_absolute_path_cache[path] = resolved
+	_link_cache_mutex.unlock()
+	return resolved
 
 
 func _comparison_path(path: String) -> String:
@@ -478,3 +797,8 @@ func _pack_age_description(pack_root: String) -> String:
 func _diagnose(message: String) -> void:
 	diagnostics.append(message)
 	push_warning("[ModLoader] %s" % message)
+
+## See events.gd:_init - per-autoload compile attribution for the boot profiler.
+## No-op unless boot profiling is on.
+func _init() -> void:
+	BootProfile.mark("autoload_compiled:ModLoader")

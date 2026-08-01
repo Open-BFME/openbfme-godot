@@ -36,6 +36,19 @@ mesh per region, and the mesh's own name is the region's ``SubObject`` id:
                                    (Arnor, Eriador, Forodwaith, Gondor,
                                     Mordor, Rhovanion, Rhun)
 
+WHY SELECTION AND HOME-REGION ARE THEIR OWN LAYERS
+--------------------------------------------------
+Retail separates its five region effects BY GEOMETRY, not by colour:
+``RegionSelectionEffect`` draws ``LMR_Edge`` and ``HomeRegionHighlight`` draws
+``LMR_Highlight``, while ownership draws ``LMR_Fill`` and ``LMR_Border``. A
+consumer that owns only fill and border therefore has no way to draw retail's
+selection or home-region marks with retail's own shapes and has to recolour the
+ownership art instead - which is what this project was doing, and which a blind
+review read as "every owned region looks selected". ``edge`` and ``highlight``
+are consequently CONVERTED BY DEFAULT, measured at 52/52 RotWK regions each.
+
+``lmr_seledge.w3d`` IS NOT ONE OF THEM - see ``NAMED_GAPS`` below.
+
 They decode through this project's existing W3D scanner with zero unsupported
 chunks, and their vertices land in the SAME world-unit space as the living map
 - lmr_fill spans X[-2107, 3088] Y[-1190, 2537] inside the living map's
@@ -89,21 +102,65 @@ from .livingmap_bundle import CatalogReader, LivingMapError, decode_livingmap
 SCHEMA = "openbfme.living-map-regions"
 SCHEMA_VERSION = 1
 
-#: The five region-geometry models, keyed by the LAYER name they play in
+#: The region-geometry models, keyed by the LAYER name they play in
 #: ``livingworldregioneffects.ini``. The value is the virtual path in the
 #: archives. ``fill`` is the one the ownership shading uses.
+#:
+#: ``seledge`` is listed so it can be converted ON REQUEST and measured, but it
+#: is deliberately NOT in :data:`DEFAULT_LAYERS`; ``NAMED_GAPS`` says why.
 LAYERS: dict[str, str] = {
     "fill": "art/w3d/lm/lmr_fill.w3d",
     "border": "art/w3d/lm/lmr_border.w3d",
     "highlight": "art/w3d/lm/lmr_highlight.w3d",
     "edge": "art/w3d/lm/lmr_edge.w3d",
+    "seledge": "art/w3d/lm/lmr_seledge.w3d",
     "territory": "art/w3d/lm/lmr_regfill.w3d",
 }
 
-#: Layers written by default. ``highlight`` and ``edge`` are retail's
-#: home-region glow and selection edge; they are converted on request but are
-#: not needed for ownership shading and would triple the bundle for nothing.
-DEFAULT_LAYERS = ("fill", "border", "territory")
+#: Layers written by default.
+#:
+#: ``edge`` and ``highlight`` joined this list once it was established that a
+#: consumer holding only fill/border CANNOT draw retail's selection or
+#: home-region marks and had been recolouring the ownership band instead. They
+#: are retail's own answer to "which region am I on" and "which is my home", and
+#: they are the geometry ``livingworldregioneffects.ini`` names for exactly
+#: those two effects. Both cover 52/52 RotWK regions.
+DEFAULT_LAYERS = ("fill", "border", "territory", "edge", "highlight")
+
+#: NAMED GAPS. Stated, never smoothed over, the way
+#: ``wotr_handoff.gd:UNSUPPORTED_BY_TACTICAL_SIM`` is. These are copied verbatim
+#: into the manifest so the Godot side and any reviewer read the same sentence.
+NAMED_GAPS: dict[str, str] = {
+    # MEASURED, not assumed. `lmr_seledge.w3d` looks like a second selection
+    # edge and is not one:
+    #   * NO effect in `livingworldregioneffects.ini` references `LMR_SelEdge`.
+    #     The document's five sections name LMR_Border, LMR_Fill, LMR_Highlight,
+    #     LMR_Edge, LMR_RegFill and LMR_RegEdge. LMR_SelEdge appears nowhere.
+    #   * RotWK does not ship it. The catalog resolves it to `layer-1-bfme2/
+    #     w3d.big`, not `layer-0-rotwk/w3d.big`, and the two asset layers carry
+    #     BYTE-IDENTICAL copies (sha256 7cc94833ba4aee4b...), unlike every other
+    #     lmr_* model, all of which RotWK overrides.
+    #   * Its mesh names are BFME2's region set, not RotWK's: it carries ARNOR,
+    #     BUCKLAND, GONDOR, OSGILIATH and THE_DEAD_MARSHE, which are not RotWK
+    #     regions, and it is MISSING RotWK's Angmar-campaign regions entirely.
+    #     38 non-impassable meshes, only 33 of which match a document region,
+    #     against 52/52 for lmr_edge.
+    # Drawing it on the RotWK map would put a BFME2-era outline on 33 regions
+    # and nothing on 19. So it is not converted by default and no consumer is
+    # offered it as a selection mesh.
+    "SELEDGE_IS_STALE_BFME2_GEOMETRY": (
+        "art/w3d/lm/lmr_seledge.w3d is NOT retail's RotWK selection edge. No "
+        "section of livingworldregioneffects.ini references LMR_SelEdge; the "
+        "catalog resolves the file to the BFME2 asset layer (RotWK ships no "
+        "override, the two layers are byte-identical); and its 38 "
+        "non-impassable meshes are BFME2's region set, matching only 33 of the "
+        "52 RotWK document regions and carrying ARNOR/BUCKLAND/GONDOR/"
+        "OSGILIATH/THE_DEAD_MARSHE, which are not RotWK regions. "
+        "RegionSelectionEffect draws LMR_Edge (art/w3d/lm/lmr_edge.w3d), which "
+        "IS converted at 52/52 coverage and is the mesh to draw. lmr_seledge "
+        "is convertible with --layer seledge for measurement only."
+    ),
+}
 
 #: Mesh-name prefix retail uses for the land masses that are not regions -
 #: mountain ranges and seas that the fill model covers so the shading does not
@@ -222,6 +279,14 @@ def build_bundle(
     sources: list[dict] = []
     matched_keys: set[str] = set()
     matched_territories: set[str] = set()
+    # PER LAYER, because the layers do NOT all cover the same regions and a
+    # single union figure would hide that. `unmatchedRegions` below is the union
+    # (a region with no mesh in ANY layer), which is the right number for "this
+    # region is not on the map at all"; it is the wrong number for "can I draw
+    # this region's selection edge", and the two are different questions.
+    layer_matched: dict[str, set[str]] = {}
+    layer_meshes: dict[str, int] = {}
+    layer_impassable: dict[str, int] = {}
 
     requested = list(layers)
     for layer in requested:
@@ -252,9 +317,15 @@ def build_bundle(
             }
         )
 
+        layer_matched.setdefault(layer, set())
+        layer_meshes[layer] = len(sub_objects)
+        layer_impassable.setdefault(layer, 0)
+
         for sub in sorted(sub_objects, key=lambda s: s.name):
             key = sub.name.upper()
             impassable = key.startswith(IMPASSABLE_PREFIX)
+            if impassable:
+                layer_impassable[layer] += 1
             is_territory_layer = layer == "territory"
             match = None
             territory_name = None
@@ -268,6 +339,7 @@ def build_bundle(
                 match = by_key.get(key)
                 if match is not None:
                     matched_keys.add(key)
+                    layer_matched[layer].add(key)
 
             position_offset = len(blob)
             blob.extend(struct.pack(f"<{len(sub.positions)}f", *sub.positions))
@@ -321,6 +393,51 @@ def build_bundle(
         {name for key, name in territories.items() if key not in matched_territories}
     )
 
+    # PER-LAYER COVERAGE. What a consumer needs before it draws a layer: how many
+    # of the document's regions that layer can actually answer for, and which of
+    # its meshes answer for none of them. A layer that covers fewer regions than
+    # `fill` is a HOLE in that effect, and this is where it is named.
+    layer_coverage: dict[str, dict] = {}
+    for layer in requested:
+        if layer == "territory":
+            layer_coverage[layer] = {
+                "meshes": layer_meshes.get(layer, 0),
+                "impassableMeshes": layer_impassable.get(layer, 0),
+                "regionsMatched": 0,
+                "territoriesMatched": len(matched_territories),
+                "regionsWithoutMesh": [],
+                "unmatchedMeshes": sorted(
+                    record["mesh"]
+                    for record in records
+                    if record["layer"] == layer and record["territoryName"] is None
+                ),
+            }
+            continue
+        covered = layer_matched.get(layer, set())
+        layer_coverage[layer] = {
+            "meshes": layer_meshes.get(layer, 0),
+            "impassableMeshes": layer_impassable.get(layer, 0),
+            "regionsMatched": len(covered),
+            "territoriesMatched": 0,
+            # A SET, not a list comprehension: the document declares the same
+            # region id under more than one campaign, and listing it once per
+            # campaign would make a 38-region hole read as a 76-region one.
+            "regionsWithoutMesh": sorted(
+                {
+                    value["regionId"]
+                    for key, value in by_key.items()
+                    if key not in covered
+                }
+            ),
+            "unmatchedMeshes": sorted(
+                record["mesh"]
+                for record in records
+                if record["layer"] == layer
+                and record["regionId"] is None
+                and not record["impassable"]
+            ),
+        }
+
     mesh_path = output / "regions.bin"
     mesh_path.write_bytes(bytes(blob))
 
@@ -338,6 +455,12 @@ def build_bundle(
             "indexType": "uint32",
         },
         "layers": requested,
+        "layerCoverage": layer_coverage,
+        # Copied verbatim so the Godot side and a reviewer read the same
+        # sentence rather than two paraphrases that can drift apart.
+        "namedGaps": [
+            {"name": name, "text": text} for name, text in sorted(NAMED_GAPS.items())
+        ],
         "records": records,
         "document": {
             "path": None if document_path is None else str(document_path),
@@ -368,7 +491,8 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m openbfme_importer.livingmap_regions",
         description=(
             "Convert retail's War of the Ring region territory geometry "
-            "(lmr_fill / lmr_border / lmr_regfill) into a Godot bundle."
+            "(lmr_fill / lmr_border / lmr_regfill / lmr_edge / lmr_highlight) "
+            "into a Godot bundle."
         ),
     )
     parser.add_argument("--catalog", required=True, type=pathlib.Path)
@@ -384,7 +508,11 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         choices=sorted(LAYERS),
         default=None,
-        help="repeatable; defaults to fill, border and territory",
+        help=(
+            "repeatable; defaults to "
+            + ", ".join(DEFAULT_LAYERS)
+            + ". 'seledge' is available for measurement only - see NAMED_GAPS"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -415,6 +543,20 @@ def main(argv: list[str] | None = None) -> int:
             f"  MESHES MATCHING NO REGION ({len(document['unmatchedMeshes'])}): "
             + ", ".join(document["unmatchedMeshes"])
         )
+    for layer in manifest["layers"]:
+        coverage = manifest["layerCoverage"][layer]
+        if layer == "territory":
+            print(
+                f"  layer {layer}: {coverage['meshes']} meshes, "
+                f"{coverage['territoriesMatched']} territories matched"
+            )
+            continue
+        print(
+            f"  layer {layer}: {coverage['meshes']} meshes, "
+            f"{coverage['regionsMatched']}/{document['regionsDeclared']} regions matched"
+        )
+    for gap in manifest["namedGaps"]:
+        print(f"  NAMED GAP {gap['name']}: {gap['text']}")
     return 0
 
 

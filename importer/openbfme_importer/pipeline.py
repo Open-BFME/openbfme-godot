@@ -33,6 +33,7 @@ from .profile import (
     W3D_RETAIL_ABSENT_TEXTURES_OPTION,
     W3D_TEXTURE_SUFFIXES,
     W3D_TEXTURE_OVERRIDES_OPTION,
+    canonical_multiplayer_map_runtime_slug,
     normalize_excluded_optional_meshes,
     normalize_retail_absent_textures,
     normalize_texture_atlas_crops,
@@ -79,10 +80,13 @@ IMPORTER_REQUIREMENTS_NAMES = (
     "requirements-win.txt",
 )
 
-# 264 asset/data sources, plus the 56 documents the living-world strategic
-# rule resolves from the BFME2 1.06 catalog (the riskcampaign #include closure
-# and its entry points; provenance carries one row per resolved entry).
-MEN_FORDS_SOURCE_ENTRY_COUNT = 264 + 56
+# The current base profile resolves 335 per-resource asset/data rows, plus the
+# 56 documents the living-world strategic rule resolves from the BFME2 1.06
+# catalog (the riskcampaign #include closure and its entry points), plus the
+# exact map + two retail AI-library rows owned by the map-script composite.
+# Provenance is per resource, not a unique-physical-source census: intentional
+# W3D source variants therefore remain separate auditable rows.
+MEN_FORDS_SOURCE_ENTRY_COUNT = 335 + 56 + 3
 MAX_RENDERED_OUTPUT_PATH = 512
 W3D_ADAPTER_REPORT_CONTRACT = "openbfme.w3d-adapter-report"
 W3D_PRESENTATION_METADATA_CONTRACT = "openbfme.w3d-presentation-capabilities"
@@ -136,6 +140,7 @@ RESOURCE_BUNDLE_CONVERTERS = {
     "sage-apt-shell-runtime",
     "retail-unit-rules",
     "living-world",
+    "sage-script-composite",
     "texture-atlas-crops",
 }
 EFFECTIVE_ASSET_MANIFEST_SCHEMA = "openbfme.effective-assets-manifest"
@@ -3580,6 +3585,26 @@ class ImportPipeline:
                     if resource.rule.required and not allow_incomplete:
                         raise
                     bundle_outputs = []
+            elif (
+                resource.rule.converter == "sage-script-composite"
+                and resource.entries
+            ):
+                try:
+                    bundle_outputs = self._convert_script_composite_bundle(
+                        resource,
+                        extracted,
+                        resource.rule.output,
+                        resource.rule.options,
+                        staging,
+                    )
+                except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                    bundle_error = str(exc)
+                    incomplete.append(
+                        {"resource": resource.rule.id, "reason": bundle_error}
+                    )
+                    if resource.rule.required and not allow_incomplete:
+                        raise
+                    bundle_outputs = []
 
             for index, entry in enumerate(resource.entries):
                 cache = extracted[(entry.archive.casefold(), entry.name.casefold())]
@@ -3620,6 +3645,7 @@ class ImportPipeline:
                             staging,
                             index=index,
                             source_sha256=str(cache.get("source_sha256") or "") or None,
+                            source_virtual_path=entry.name,
                         )
                     except (FileNotFoundError, RuntimeError, ValueError) as exc:
                         incomplete.append(
@@ -4069,6 +4095,7 @@ class ImportPipeline:
         *,
         index: int,
         source_sha256: str | None = None,
+        source_virtual_path: str | None = None,
     ) -> list[Path]:
         relative_output = output or f"source/{source.name}"
         relative_output = _render_output_template(
@@ -4083,7 +4110,13 @@ class ImportPipeline:
             case "hash-only":
                 return []
             case "sage-map":
-                return self._convert_sage_map(source, target, options)
+                return self._convert_sage_map(
+                    source,
+                    target,
+                    options,
+                    source_sha256=source_sha256,
+                    source_virtual_path=source_virtual_path,
+                )
             case "sage-particle-definition":
                 return self._convert_sage_particle_definition(source, target, options)
             case "sage-scripts":
@@ -4396,6 +4429,9 @@ class ImportPipeline:
         source: Path,
         output_directory: Path,
         options: dict[str, Any],
+        *,
+        source_sha256: str | None = None,
+        source_virtual_path: str | None = None,
     ) -> list[Path]:
         if output_directory.suffix:
             raise ValueError("sage-map output must be a pack-relative directory")
@@ -4423,7 +4459,7 @@ class ImportPipeline:
         map_kind = options.get("profile", "multiplayer")
         if not isinstance(map_kind, str):
             raise ValueError("sage-map options.profile must be a string")
-        return convert_sage_map(
+        outputs = convert_sage_map(
             source,
             output_directory,
             metadata,
@@ -4431,6 +4467,147 @@ class ImportPipeline:
             object_bindings,
             profile=map_kind,
         )
+        map_path = output_directory / "map.json"
+        map_document = json.loads(map_path.read_text(encoding="utf-8"))
+        if not isinstance(map_document, dict):
+            raise RuntimeError("sage-map produced a non-object map document")
+        source_row = map_document.get("source")
+        if not isinstance(source_row, dict):
+            raise RuntimeError("sage-map produced no source identity")
+        actual_sha256 = source_sha256 or sha256_file(source)
+        if source_row.get("sha256") != actual_sha256:
+            raise RuntimeError("sage-map source identity disagrees with extraction")
+        if source_virtual_path is not None:
+            canonical_virtual_path = "/".join(safe_relative_parts(source_virtual_path))
+            if source_virtual_path != canonical_virtual_path:
+                raise ValueError("sage-map source virtual path is not canonical")
+            source_row["virtualPath"] = canonical_virtual_path.casefold()
+            source_row["sourceBytes"] = source.stat().st_size
+            write_json_atomic(map_path, map_document)
+        return outputs
+
+    def _convert_script_composite_bundle(
+        self,
+        resource: ResolvedResource,
+        extracted: Mapping[tuple[str, str], Mapping[str, Any]],
+        output: str | None,
+        options: dict[str, Any],
+        pack_root: Path,
+    ) -> list[Path]:
+        """Cook one exact map plus the two qualified retail AI libraries.
+
+        This remains a separate bundle converter rather than extending
+        ``sage-map``: each of its three source documents owns an independent
+        provenance row, while the composed artifact is declared only once.
+        """
+
+        from .sage_scripts import (
+            compose_map_scripts_document,
+            map_scripts_document,
+        )
+
+        if output is None:
+            raise ValueError("sage-script-composite requires an output")
+
+        expected_option_keys = {"mapVirtualPath", "libraryVirtualPaths"}
+        if set(options) != expected_option_keys:
+            unsupported = sorted(set(options) - expected_option_keys)
+            missing = sorted(expected_option_keys - set(options))
+            details: list[str] = []
+            if unsupported:
+                details.append("unsupported " + ", ".join(unsupported))
+            if missing:
+                details.append("missing " + ", ".join(missing))
+            raise ValueError(
+                "sage-script-composite options are invalid: " + "; ".join(details)
+            )
+        map_virtual_path = options.get("mapVirtualPath")
+        library_virtual_paths = options.get("libraryVirtualPaths")
+        expected_libraries = [
+            "libraries/ai_initialize/ai_initialize.map",
+            "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
+        ]
+        runtime_slug = canonical_multiplayer_map_runtime_slug(map_virtual_path)
+        if runtime_slug is None:
+            raise ValueError(
+                "sage-script-composite mapVirtualPath must name one canonical "
+                "multiplayer map source"
+            )
+        expected_output = f"maps/{runtime_slug}/scripts.json"
+        if output != expected_output:
+            raise ValueError(
+                "sage-script-composite output must be exactly "
+                f"{expected_output!r} for mapVirtualPath"
+            )
+        target = _safe_output(pack_root, output)
+        if target.exists():
+            raise ValueError(
+                f"sage-script-composite output collides with pack output: {output!r}"
+            )
+        # Archive lookup is case-insensitive, but emitted provenance has one
+        # canonical spelling so runtime comparison cannot vary by catalog
+        # casing or profile authoring.
+        map_virtual_path = str(map_virtual_path).casefold()
+        if library_virtual_paths != expected_libraries:
+            raise ValueError(
+                "sage-script-composite libraryVirtualPaths must be the ordered "
+                "ai_initialize and ai_mp_inherit_management closure"
+            )
+        requested_paths = [map_virtual_path, *expected_libraries]
+        if len({path.casefold() for path in requested_paths}) != 3:
+            raise ValueError(
+                "sage-script-composite source virtual paths must be unique"
+            )
+        if len(resource.entries) != 3:
+            raise ValueError(
+                "sage-script-composite requires exactly three resolved sources"
+            )
+
+        entries_by_path: dict[str, Any] = {}
+        for entry in resource.entries:
+            key = entry.name.casefold()
+            if key in entries_by_path:
+                raise ValueError(
+                    "sage-script-composite resolved an ambiguous virtual path: "
+                    f"{entry.name}"
+                )
+            entries_by_path[key] = entry
+        if set(entries_by_path) != {path.casefold() for path in requested_paths}:
+            raise ValueError(
+                "sage-script-composite resolved sources do not match its exact "
+                "map and AI-library closure"
+            )
+
+        def decoded_document(virtual_path: str) -> dict[str, Any]:
+            entry = entries_by_path[virtual_path.casefold()]
+            cached = extracted.get((entry.archive.casefold(), entry.name.casefold()))
+            if cached is None:
+                raise RuntimeError(
+                    "sage-script-composite source was not extracted: "
+                    f"{entry.name}"
+                )
+            source = Path(cached["source_path"])
+            return map_scripts_document(source.read_bytes(), container="map")
+
+        map_document = decoded_document(map_virtual_path)
+        library_documents = [
+            decoded_document(virtual_path)
+            for virtual_path in expected_libraries
+        ]
+        document = compose_map_scripts_document(map_document, library_documents)
+        # The composition helper deliberately knows only decoded SAGE
+        # documents.  This converter is the authority that resolved their
+        # archive virtual paths, so bind those paths to the emitted
+        # provenance rows here rather than trusting caller-supplied document
+        # metadata.
+        source_provenance = document["source"]
+        source_provenance["game"] = self.game.id
+        source_provenance["map"]["virtualPath"] = map_virtual_path
+        for index, virtual_path in enumerate(expected_libraries):
+            source_provenance["libraries"][index]["virtualPath"] = virtual_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(target, document)
+        return [target]
 
     def _convert_shell_apt_runtime_bundle(
         self,

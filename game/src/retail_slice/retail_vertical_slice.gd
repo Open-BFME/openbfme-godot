@@ -25,19 +25,26 @@ const ControlServerScript = preload("res://src/debug/retail_control_server.gd")
 const MemberRenderBatcherScript = preload("res://src/view/member_render_batcher.gd")
 const ScriptWorldScript = preload("res://src/retail_slice/retail_slice_script_world.gd")
 const ScriptExecutorScript = preload("res://src/script/script_executor.gd")
-const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
-const SOLDIER_HORDE_ID := "bfme2.object.gondor-fighter-horde"
+## The six values below are DEFINED IN `retail_slice_ids.gd` and re-exported here
+## so every existing `RetailVerticalSlice.SOLDIER_OBJECT_ID` reader is unchanged.
+##
+## They moved because the shell needs to name them and compiling this file to do
+## so cost a measured multi-second stall: reaching one string constant through
+## this class pulled in its whole 57-file / ~60k-line preload chain before the
+## main menu could draw a button. `retail_slice_ids.gd` is a leaf with no preloads
+## of its own, so the menu now reaches the same bytes for free. There is still
+## exactly one definition of each value - do not re-inline a literal here.
+const SliceIds = preload("res://src/retail_slice/retail_slice_ids.gd")
+const SOLDIER_OBJECT_ID := SliceIds.SOLDIER_OBJECT_ID
+const SOLDIER_HORDE_ID := SliceIds.SOLDIER_HORDE_ID
 const RANGER_OBJECT_ID := "bfme2.object.gondor-ranger"
 const RANGER_HORDE_ID := "bfme2.object.gondor-ranger-horde"
 const TREBUCHET_OBJECT_ID := "bfme2.object.gondor-trebuchet"
 const BUILDER_OBJECT_ID := "bfme2.object.men-porter"
-const MAP_ID := "bfme2.map.fords-of-isen-ii"
-## The five-maps supplement pack. The slice resolves non-default slice maps
-## from this pack's catalog when ContentDB has not registered it yet (the
-## integration step registers it in selection.json as a supplemental pack).
-const FIVE_MAPS_PACK_ID := "bfme2-five-maps-106-private"
-const MAP_CATALOG_MAX_BYTES := 1024 * 1024
-const MAP_DOCUMENT_MAX_BYTES := 2 * 1024 * 1024
+const MAP_ID := SliceIds.MAP_ID
+const FIVE_MAPS_PACK_ID := SliceIds.FIVE_MAPS_PACK_ID
+const MAP_CATALOG_MAX_BYTES := SliceIds.MAP_CATALOG_MAX_BYTES
+const MAP_DOCUMENT_MAX_BYTES := SliceIds.MAP_DOCUMENT_MAX_BYTES
 const UNIT_OBJECT_IDS: Array[String] = [
 	"bfme2.object.gondor-fighter",
 	"bfme2.object.gondor-archer",
@@ -1851,14 +1858,22 @@ func _menu_sim_team_roster(menu_setup: Array) -> Array:
 	## false; every other value (default "ai") -> AI. Alliance is passed through
 	## when present so allied rows share a non-null id.
 	var roster: Array = []
-	for index in menu_setup.size():
-		var entry := menu_setup[index] as Dictionary
+	var normalized_setup := RetailSliceSim.normalize_authored_start_assignments(menu_setup)
+	for index in normalized_setup.size():
+		var entry := normalized_setup[index] as Dictionary
 		var descriptor := {
 			"team": int(entry.get("team", index)),
 			"faction": String(entry.get("faction", "")).strip_edges().to_lower(),
 			"is_ai": String(entry.get("controller", "ai")).strip_edges().to_lower() != "human",
 			"difficulty": String(entry.get("difficulty", "medium")).strip_edges().to_lower(),
 		}
+		# Menu/lobby rows carry authored Player_N_Start numbers (1..N).
+		# Lockstep emits 0 as an unset placeholder, so only positive values
+		# become the sim's zero-based Player::getMpStartIndex() equivalent.
+		if entry.get("start_index_invalid") == true:
+			descriptor["start_index_invalid"] = true
+		elif entry.has("start_index"):
+			descriptor["start_index"] = int(entry["start_index"])
 		if entry.has("alliance") and entry.get("alliance") != null:
 			descriptor["alliance"] = entry.get("alliance")
 		roster.append(descriptor)
@@ -3427,7 +3442,7 @@ func _member_attack_target_globals(entity: Dictionary) -> Array:
 func _refresh_hud() -> void:
 	if hud == null or simulation == null:
 		return
-	hud.set_resources(simulation.resources_for_team(local_team), simulation.command_points_for_team(local_team), simulation.command_point_cap)
+	hud.set_resources(simulation.resources_for_team(local_team), simulation.command_points_for_team(local_team), simulation.command_point_total_for_team(local_team))
 	# Cooldown sweeps/purchase states move every tick, and the star orb's
 	# power-point count is always on screen: keep the spellbook surface live.
 	hud.refresh_powers(simulation.power_points(local_team), simulation.purchased_powers[local_team], simulation.spellbook_ui_state(local_team))
@@ -4512,7 +4527,12 @@ func _configure_simulation_expansions() -> void:
 		var scalar_fields := gameplay.get("scalarFields", {}) as Dictionary
 		var cost := int((scalar_fields.get("BuildCost", {}) as Dictionary).get("value", -1))
 		var seconds := float((scalar_fields.get("BuildTime", {}) as Dictionary).get("value", 0.0))
-		var health := int(((gameplay.get("health", {}) as Dictionary).get("primary", {}) as Dictionary).get("maxHealth", {}).get("value", 0))
+		var health_contract := gameplay.get("health", {}) as Dictionary
+		var health_primary := (
+			health_contract.get("primary", {}) as Dictionary
+		)
+		var health := int(health_primary.get("maxHealth", {}).get("value", 0))
+		var create_grants: Array = (gameplay.get("createGrants", []) as Array).duplicate(true)
 		var pad_kinds: Array = []
 		for route_value in (registration.get("production", {}) as Dictionary).get("routes", []) as Array:
 			var builder := String((route_value as Dictionary).get("builderObjectId", "")).to_lower()
@@ -4523,14 +4543,21 @@ func _configure_simulation_expansions() -> void:
 		if cost <= 0 or seconds <= 0.0 or health <= 0 or pad_kinds.is_empty():
 			# Incomplete doc: the kind is unavailable, never approximated.
 			continue
-		rules[kind] = {
+		var rule := {
 			"cost": cost,
 			"seconds": seconds,
 			"health": health,
 			"pad_kinds": pad_kinds,
 			"name": kind.replace("_", " ").capitalize(),
 			"object_id": runtime_id,
+			"create_grants": create_grants,
 		}
+		if bool(
+			(health_contract.get("highlanderBody", {}) as Dictionary)
+			.get("value", false)
+		):
+			rule["highlander_body"] = true
+		rules[kind] = rule
 	_expansion_object_ids = rules.duplicate(true)
 	simulation.configure_expansion_rules(rules)
 
@@ -4559,8 +4586,8 @@ func _install_map_scripts() -> void:
 	##
 	## INERT DEFAULT: a map without scripts.json installs nothing - no env,
 	## no executor, no registration, zero state bytes (the b177804c pin's
-	## guarantee). No pack ships the file yet; this is the lane the importer's
-	## map-script emitter lands in.
+	## guarantee). Qualified multiplayer map packs now ship this file through
+	## the importer's provenance-owned script-composite emitter.
 	##
 	## FAIL-CLOSED: a present-but-invalid file refuses the WHOLE install with
 	## its reason named - half a script layer running is worse than none, and
@@ -4573,7 +4600,6 @@ func _install_map_scripts() -> void:
 	##             one executor per source, running as that script player,
 	##             its env attached under that player's team (retail runs each
 	##             AI player's libraries in that player's own environment).
-	script_runtimes = []
 	if simulation == null or source_map_data == null or String(source_map_data.map_root) == "":
 		return
 	var path := String(ModLoader.resolve_pack_path(source_map_data.map_root, "scripts.json"))
@@ -4583,53 +4609,831 @@ func _install_map_scripts() -> void:
 	if typeof(document) != TYPE_DICTIONARY:
 		push_error("map scripts: %s is not a JSON object; installing NO scripts" % path)
 		return
-	var doc := document as Dictionary
-	if String(doc.get("schema", "")) != "openbfme.map-scripts" or int(doc.get("schemaVersion", -1)) != 0:
-		push_error("map scripts: %s has schema '%s' v%s, expected openbfme.map-scripts v0; installing NO scripts" % [path, String(doc.get("schema", "")), str(doc.get("schemaVersion", "?"))])
-		return
+	_install_map_scripts_document(document as Dictionary, path)
+
+
+static func _json_integral_number(value: Variant) -> bool:
+	if typeof(value) == TYPE_INT:
+		return true
+	if typeof(value) != TYPE_FLOAT:
+		return false
+	var number := float(value)
+	return is_finite(number) and number == floor(number) and absf(number) <= 2147483647.0
+
+
+static func _json_finite_number(value: Variant) -> bool:
+	return (
+		(typeof(value) == TYPE_INT or typeof(value) == TYPE_FLOAT)
+		and is_finite(float(value))
+	)
+
+
+static func _lowerhex_sha256(value: Variant) -> bool:
+	if typeof(value) != TYPE_STRING:
+		return false
+	var text := String(value)
+	if text.length() != 64:
+		return false
+	for character in text:
+		if not "0123456789abcdef".contains(character):
+			return false
+	return true
+
+
+static func _canonical_multiplayer_map_slug(value: Variant) -> String:
+	if typeof(value) != TYPE_STRING:
+		return ""
+	var virtual_path := String(value)
+	if virtual_path != virtual_path.to_lower() or virtual_path.contains("\\"):
+		return ""
+	var parts := virtual_path.split("/", false)
+	if parts.size() != 3 or parts[0] != "maps":
+		return ""
+	var map_name := String(parts[1])
+	if (
+		not map_name.begins_with("map mp ")
+		or map_name.length() <= len("map mp ")
+		or String(parts[2]) != map_name + ".map"
+	):
+		return ""
+	var slug := map_name.trim_prefix("map mp ").replace(" ", "-")
+	if slug == "" or slug.begins_with("-") or slug.ends_with("-") or slug.contains("--"):
+		return ""
+	for character in slug:
+		if not "abcdefghijklmnopqrstuvwxyz0123456789-".contains(character):
+			return ""
+	return slug
+
+
+func _normalized_composite_map_scripts_document(doc: Dictionary) -> Dictionary:
+	var templates_value: Variant = doc.get("libraryTemplates")
+	if typeof(templates_value) != TYPE_ARRAY:
+		return {"ok": false, "reason": "schema-v2 libraryTemplates is not an array"}
+	var templates := templates_value as Array
+	if templates.size() != 2:
+		return {"ok": false, "reason": "schema-v2 requires exactly two library templates"}
+	var composite_source_value: Variant = doc.get("source")
+	if typeof(composite_source_value) != TYPE_DICTIONARY:
+		return {"ok": false, "reason": "schema-v2 source is not an object"}
+	var provenance_source_doc := composite_source_value as Dictionary
+	if String(provenance_source_doc.get("container", "")) != "composite":
+		return {"ok": false, "reason": "schema-v2 source is not composite"}
+	var active_game := String(source_map_data.map_id).get_slice(".", 0) if source_map_data != null else ""
+	if (
+		not ["bfme2", "rotwk"].has(active_game)
+		or String(provenance_source_doc.get("game", "")) != active_game
+	):
+		return {"ok": false, "reason": "schema-v2 source game does not match the active map"}
+	var provenance_map_value: Variant = provenance_source_doc.get("map")
+	if typeof(provenance_map_value) != TYPE_DICTIONARY:
+		return {"ok": false, "reason": "schema-v2 source map row is not an object"}
+	var provenance_map_row := provenance_map_value as Dictionary
+	var map_slug := _canonical_multiplayer_map_slug(
+		provenance_map_row.get("virtualPath")
+	)
+	if map_slug == "":
+		return {"ok": false, "reason": "schema-v2 map virtualPath is invalid"}
+	if (
+		source_map_data == null
+		or String(source_map_data.map_id) == ""
+		or String(source_map_data.map_id) != active_game + ".map." + map_slug
+		or String(provenance_map_row.get("virtualPath", ""))
+		!= String(source_map_data.source_virtual_path)
+	):
+		return {
+			"ok": false,
+			"reason": "schema-v2 map virtualPath does not match the active map",
+		}
+	if not _lowerhex_sha256(provenance_map_row.get("sourceSha256")):
+		return {"ok": false, "reason": "schema-v2 map sourceSha256 is invalid"}
+	if (
+		not _json_integral_number(provenance_map_row.get("sourceBytes"))
+		or int(provenance_map_row.get("sourceBytes")) <= 0
+		or int(provenance_map_row.get("sourceBytes")) != source_map_data.source_bytes
+		or String(provenance_map_row.get("sourceSha256", ""))
+		!= String(source_map_data.source_sha256)
+	):
+		return {"ok": false, "reason": "schema-v2 map source identity does not match the active cooked map"}
+	var provenance_libraries_value: Variant = provenance_source_doc.get("libraries")
+	if typeof(provenance_libraries_value) != TYPE_ARRAY:
+		return {"ok": false, "reason": "schema-v2 source libraries is not an array"}
+	var provenance_library_rows := provenance_libraries_value as Array
+	if provenance_library_rows.size() != 2:
+		return {"ok": false, "reason": "schema-v2 requires exactly two source libraries"}
+	var expected_library_paths := [
+		"libraries/ai_initialize/ai_initialize.map",
+		"libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
+	]
+	# Retail-byte authenticity belongs to the normal pack audit/receipt trust
+	# boundary. Runtime does not possess the proprietary library bytes and must
+	# not pretend to re-attest them cryptographically. It instead requires the
+	# exact audited structural closure and that each source row stays coupled
+	# to the template identity the importer derived from those bytes.
+	for index in range(2):
+		if typeof(provenance_library_rows[index]) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "schema-v2 source library row is not an object"}
+		if typeof(templates[index]) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "schema-v2 library template is not an object"}
+		var provenance_source_identity: Variant = (
+			provenance_library_rows[index] as Dictionary
+		).get(
+			"sourceSha256"
+		)
+		var provenance_library_row := provenance_library_rows[index] as Dictionary
+		if String(provenance_library_row.get("virtualPath", "")) != expected_library_paths[index]:
+			return {
+				"ok": false,
+				"reason": "schema-v2 source library virtualPath order mismatches",
+			}
+		if (
+			not _json_integral_number(provenance_library_row.get("sourceBytes"))
+			or int(provenance_library_row.get("sourceBytes")) <= 0
+		):
+			return {"ok": false, "reason": "schema-v2 library sourceBytes is invalid"}
+		var provenance_template_identity: Variant = (templates[index] as Dictionary).get(
+			"identity"
+		)
+		if not _lowerhex_sha256(provenance_source_identity):
+			return {"ok": false, "reason": "schema-v2 library sourceSha256 is invalid"}
+		if not _lowerhex_sha256(provenance_template_identity):
+			return {"ok": false, "reason": "schema-v2 library template identity is invalid"}
+		if String(provenance_source_identity) != String(provenance_template_identity):
+			return {
+				"ok": false,
+				"reason": "schema-v2 source/template library order or identity mismatches",
+			}
+	var base_doc := doc.duplicate(true)
+	base_doc["schemaVersion"] = 1
+	base_doc.erase("libraryTemplates")
+	var normalized := _normalized_map_scripts_document(base_doc)
+	if not bool(normalized.get("ok", false)):
+		return normalized
+
+	var source_by_player: Dictionary = {}
+	for source_value in normalized.get("sources", []) as Array:
+		var source := (source_value as Dictionary).duplicate(true)
+		source["library_teams"] = []
+		source_by_player[String(source["player"])] = source
+	var target_players: Array[String] = []
+	for player_name_value in (normalized["players"] as Dictionary).keys():
+		var player_name := String(player_name_value)
+		var owner := int((normalized["players"] as Dictionary)[player_name])
+		if simulation._is_combatant_team(owner) and simulation.team_is_ai(owner):
+			target_players.append(player_name)
+	target_players.sort()
+
+	var identities: Dictionary = {}
+	var local_teams_by_player: Dictionary = {}
+	for target_player in target_players:
+		local_teams_by_player[target_player] = {}
+	for template_value in templates:
+		if typeof(template_value) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "schema-v2 library template is not an object"}
+		var template := template_value as Dictionary
+		if (
+			not _lowerhex_sha256(template.get("identity"))
+			or identities.has(String(template.get("identity")))
+		):
+			return {"ok": false, "reason": "schema-v2 library identity is invalid or duplicated"}
+		var identity := String(template["identity"])
+		identities[identity] = true
+		if (
+			String(template.get("instantiateFor", "")) != "aiPlayers"
+			or String(template.get("playerPlaceholder", "")) != "Player"
+			or typeof(template.get("world")) != TYPE_DICTIONARY
+			or typeof(template.get("scripts")) != TYPE_ARRAY
+		):
+			return {"ok": false, "reason": "schema-v2 library template contract is invalid"}
+		var library_world := template["world"] as Dictionary
+		if (
+			typeof(library_world.get("players")) != TYPE_ARRAY
+			or typeof(library_world.get("teams")) != TYPE_ARRAY
+			or typeof(library_world.get("objects")) != TYPE_ARRAY
+			or typeof(library_world.get("namedObjects")) != TYPE_ARRAY
+		):
+			return {"ok": false, "reason": "schema-v2 library world shape is invalid"}
+		var placeholder_indices: Array[int] = []
+		for row_value in library_world["players"] as Array:
+			if typeof(row_value) != TYPE_DICTIONARY:
+				return {"ok": false, "reason": "schema-v2 library player row is invalid"}
+			var row := row_value as Dictionary
+			if (
+				not _json_integral_number(row.get("index", -1))
+				or typeof(row.get("name")) != TYPE_STRING
+			):
+				return {"ok": false, "reason": "schema-v2 library player types are invalid"}
+			if String(row["name"]) == "Player":
+				placeholder_indices.append(int(row["index"]))
+		if placeholder_indices.size() != 1:
+			return {"ok": false, "reason": "schema-v2 library must have one Player placeholder"}
+		var placeholder_index := placeholder_indices[0]
+		var payloads: Array = []
+		for script_value in template["scripts"] as Array:
+			if typeof(script_value) != TYPE_DICTIONARY:
+				return {"ok": false, "reason": "schema-v2 library script row is invalid"}
+			var script_row := script_value as Dictionary
+			if (
+				not _json_integral_number(script_row.get("playerIndex", -1))
+				or int(script_row.get("playerIndex", -1)) != placeholder_index
+				or typeof(script_row.get("payload")) != TYPE_DICTIONARY
+				or (script_row["payload"] as Dictionary).is_empty()
+			):
+				return {"ok": false, "reason": "schema-v2 library script is outside Player"}
+			payloads.append((script_row["payload"] as Dictionary).duplicate(true))
+		if payloads.is_empty():
+			return {"ok": false, "reason": "schema-v2 library carries no scripts"}
+
+		var library_team_rows: Array = []
+		var library_team_names: Dictionary = {}
+		for team_value in library_world["teams"] as Array:
+			if typeof(team_value) != TYPE_DICTIONARY:
+				return {"ok": false, "reason": "schema-v2 library team row is invalid"}
+			var team_row := team_value as Dictionary
+			if (
+				typeof(team_row.get("name")) != TYPE_STRING
+				or typeof(team_row.get("owner")) != TYPE_STRING
+				or not ["", "Player"].has(String(team_row.get("owner", "")))
+				or not _json_integral_number(team_row.get("objectCount", -1))
+				or int(team_row.get("objectCount", -1)) < 0
+				or typeof(team_row.get("namedMembers")) != TYPE_ARRAY
+			):
+				return {"ok": false, "reason": "schema-v2 library team contract is invalid"}
+			var local_name := String(team_row["name"])
+			if local_name == "" or local_name == "team":
+				continue
+			if library_team_names.has(local_name):
+				return {"ok": false, "reason": "schema-v2 library team name is duplicated"}
+			library_team_names[local_name] = true
+			var enumerated_objects := 0
+			var tactical_markers_only := int(team_row["objectCount"]) > 0
+			for object_value in library_world["objects"] as Array:
+				if typeof(object_value) != TYPE_DICTIONARY:
+					return {"ok": false, "reason": "schema-v2 library object row is invalid"}
+				var object_row := object_value as Dictionary
+				if String(object_row.get("team", "")) != local_name:
+					continue
+				enumerated_objects += 1
+				if String(object_row.get("typeName", "")) != "CampFlag":
+					tactical_markers_only = false
+			if enumerated_objects != int(team_row["objectCount"]):
+				return {
+					"ok": false,
+					"reason": "schema-v2 library team '%s' object census is incomplete" % local_name,
+				}
+			library_team_rows.append({
+				"name": local_name,
+				"owner_player": "Player",
+				"default": local_name == "teamPlayer",
+				"object_count": int(team_row["objectCount"]),
+				"named_members": (team_row["namedMembers"] as Array).duplicate(),
+				"marker_only": tactical_markers_only,
+				"library_identity": identity,
+			})
+
+		for target_player in target_players:
+			var source: Dictionary = source_by_player.get(target_player, {
+				"player": target_player,
+				"scripts": [],
+				"library_teams": [],
+			})
+			(source["scripts"] as Array).append_array(payloads.duplicate(true))
+			var merged_teams := local_teams_by_player[target_player] as Dictionary
+			for row_value in library_team_rows:
+				var row := (row_value as Dictionary).duplicate(true)
+				row["owner_player"] = target_player
+				var local_name := String(row["name"])
+				if merged_teams.has(local_name):
+					var prior := (merged_teams[local_name] as Dictionary).duplicate(true)
+					prior.erase("library_identity")
+					var candidate := row.duplicate(true)
+					candidate.erase("library_identity")
+					if prior != candidate:
+						return {
+							"ok": false,
+							"reason": "schema-v2 library team '%s' conflicts across templates" % local_name,
+						}
+				else:
+					merged_teams[local_name] = row
+			source_by_player[target_player] = source
+
+	var sources: Array = []
+	var source_names := source_by_player.keys()
+	source_names.sort()
+	for player_name_value in source_names:
+		var player_name := String(player_name_value)
+		var source := source_by_player[player_name] as Dictionary
+		var local_rows: Array = []
+		if local_teams_by_player.has(player_name):
+			var local_names := (local_teams_by_player[player_name] as Dictionary).keys()
+			local_names.sort()
+			for local_name in local_names:
+				local_rows.append(
+					((local_teams_by_player[player_name] as Dictionary)[local_name] as Dictionary)
+					.duplicate(true)
+				)
+		source["library_teams"] = local_rows
+		sources.append(source)
+	normalized["sources"] = sources
+	return normalized
+
+
+func _normalized_map_scripts_document(doc: Dictionary) -> Dictionary:
+	if (
+		typeof(doc.get("schema")) != TYPE_STRING
+		or String(doc.get("schema")) != "openbfme.map-scripts"
+	):
+		return {"ok": false, "reason": "schema is not openbfme.map-scripts"}
+	var version_value: Variant = doc.get("schemaVersion", -1)
+	if not _json_integral_number(version_value):
+		return {"ok": false, "reason": "schemaVersion is not an integral JSON number"}
+	var version := int(version_value)
+	if version == 2:
+		return _normalized_composite_map_scripts_document(doc)
+	if version == 0:
+		if (
+			typeof(doc.get("players")) != TYPE_DICTIONARY
+			or typeof(doc.get("teams")) != TYPE_DICTIONARY
+			or typeof(doc.get("sources")) != TYPE_ARRAY
+		):
+			return {"ok": false, "reason": "schema-v0 players/teams/sources shape is invalid"}
+		var team_rows: Array = []
+		for team_name in (doc["teams"] as Dictionary).keys():
+			team_rows.append({
+				"name": String(team_name),
+				"owner_team": int((doc["teams"] as Dictionary)[team_name]),
+				"default": true,
+			})
+		return {
+			"ok": true,
+			"players": (doc["players"] as Dictionary).duplicate(true),
+			"teams": team_rows,
+			"sources": (doc["sources"] as Array).duplicate(true),
+		}
+	if version != 1:
+		return {"ok": false, "reason": "unsupported schema version %d" % version}
+	var world_value: Variant = doc.get("world")
+	if (
+		typeof(world_value) != TYPE_DICTIONARY
+		or typeof((world_value as Dictionary).get("players")) != TYPE_ARRAY
+		or typeof((world_value as Dictionary).get("teams")) != TYPE_ARRAY
+		or typeof((world_value as Dictionary).get("namedObjects")) != TYPE_ARRAY
+		or typeof(doc.get("scripts")) != TYPE_ARRAY
+	):
+		return {"ok": false, "reason": "schema-v1 world/scripts shape is invalid"}
+	var world_doc := world_value as Dictionary
+	var player_rows: Dictionary = {}
+	var nonempty_player_names: Dictionary = {}
+	for row_value in world_doc["players"] as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "schema-v1 player row is not an object"}
+		var row := row_value as Dictionary
+		var index_value: Variant = row.get("index", -1)
+		var name_value: Variant = row.get("name")
+		if not _json_integral_number(index_value) or typeof(name_value) != TYPE_STRING:
+			return {"ok": false, "reason": "schema-v1 player index/name types are invalid"}
+		var index := int(index_value)
+		var name := String(name_value)
+		if index < 0 or player_rows.has(index):
+			return {"ok": false, "reason": "schema-v1 player indices are invalid"}
+		if name != "" and nonempty_player_names.has(name):
+			return {"ok": false, "reason": "schema-v1 player name '%s' is duplicated" % name}
+		player_rows[index] = name
+		if name != "":
+			nonempty_player_names[name] = true
+	var players: Dictionary = {}
+	for index_value in player_rows.keys():
+		var player_name := String(player_rows[index_value])
+		if player_name == "PlyrCivilian" or player_name == "PlyrNeutral":
+			players[player_name] = RetailSliceSim.NEUTRAL_TEAM
+		elif player_name == "PlyrCreeps":
+			players[player_name] = RetailSliceSim.CREEP_TEAM
+	# Roster-to-map binding is exact through the authored start index:
+	# start_index 0 is Player_1, etc. No SidesList ordinal is used (neutral,
+	# civilian and faction-library players occupy earlier/later rows).
+	for team_value in simulation.team_ids():
+		var team := int(team_value)
+		var descriptor: Dictionary = simulation.team_descriptor(team)
+		if not descriptor.has("start_index"):
+			continue
+		var player_name := "Player_%d" % (int(descriptor["start_index"]) + 1)
+		if player_rows.values().has(player_name):
+			players[player_name] = team
+	var sources_by_player: Dictionary = {}
+	for script_value in doc["scripts"] as Array:
+		if typeof(script_value) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "schema-v1 script row is not an object"}
+		var script_row := script_value as Dictionary
+		var player_index_value: Variant = script_row.get("playerIndex", -1)
+		if not _json_integral_number(player_index_value):
+			return {"ok": false, "reason": "schema-v1 script playerIndex is not integral"}
+		var player_index := int(player_index_value)
+		if not player_rows.has(player_index):
+			return {"ok": false, "reason": "schema-v1 script references an unknown player index"}
+		var player_name := String(player_rows[player_index])
+		if not players.has(player_name):
+			return {"ok": false, "reason": "script player '%s' has no exact runtime owner binding" % player_name}
+		if typeof(script_row.get("payload")) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "schema-v1 script row has no payload"}
+		if not sources_by_player.has(player_name):
+			sources_by_player[player_name] = []
+		(sources_by_player[player_name] as Array).append(script_row["payload"])
+	var sources: Array = []
+	var source_names := sources_by_player.keys()
+	source_names.sort()
+	for player_name in source_names:
+		sources.append({"player": String(player_name), "scripts": sources_by_player[player_name]})
+	var named_objects: Dictionary = {}
+	for row_value in world_doc["namedObjects"] as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "schema-v1 named-object row is not an object"}
+		var row := row_value as Dictionary
+		for key in ["name", "typeName", "owner", "team"]:
+			if typeof(row.get(key)) != TYPE_STRING:
+				return {"ok": false, "reason": "schema-v1 named-object %s is not a string" % key}
+		var object_name := String(row["name"])
+		if object_name == "":
+			return {"ok": false, "reason": "schema-v1 named-object name is empty"}
+		var position_value: Variant = row.get("godotPosition")
+		if typeof(position_value) != TYPE_ARRAY or (position_value as Array).size() != 3:
+			return {"ok": false, "reason": "schema-v1 named-object '%s' position is invalid" % object_name}
+		for coordinate in position_value as Array:
+			if not _json_finite_number(coordinate):
+				return {"ok": false, "reason": "schema-v1 named-object '%s' position is nonnumeric" % object_name}
+		if not named_objects.has(object_name):
+			named_objects[object_name] = []
+		(named_objects[object_name] as Array).append(row.duplicate(true))
+	var team_rows: Array = []
+	var team_names: Dictionary = {}
+	var team_indices: Dictionary = {}
+	var authored_player_names: Array = player_rows.values()
+	var runtime_owner_player_counts: Dictionary = {}
+	for mapped_player_name in players.keys():
+		var mapped_owner := int(players[mapped_player_name])
+		runtime_owner_player_counts[mapped_owner] = (
+			int(runtime_owner_player_counts.get(mapped_owner, 0)) + 1
+		)
+	for row_value in world_doc["teams"] as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "schema-v1 team row is not an object"}
+		var row := row_value as Dictionary
+		var team_index_value: Variant = row.get("index", -1)
+		if (
+			not _json_integral_number(team_index_value)
+			or int(team_index_value) < 0
+			or team_indices.has(int(team_index_value))
+			or typeof(row.get("name")) != TYPE_STRING
+			or typeof(row.get("owner")) != TYPE_STRING
+			or not _json_integral_number(row.get("objectCount", -1))
+			or int(row.get("objectCount", -1)) < 0
+			or typeof(row.get("namedMembers")) != TYPE_ARRAY
+			or (
+				row.has("markerOnly")
+				and typeof(row.get("markerOnly")) != TYPE_BOOL
+			)
+		):
+			return {"ok": false, "reason": "schema-v1 team scalar/list types are invalid"}
+		team_indices[int(team_index_value)] = true
+		var team_name := String(row["name"])
+		var authored_owner_name := String(row["owner"])
+		if team_name == "":
+			return {"ok": false, "reason": "schema-v1 team row has an empty name"}
+		if team_names.has(team_name):
+			return {"ok": false, "reason": "schema-v1 team name '%s' is duplicated" % team_name}
+		team_names[team_name] = true
+		if not authored_player_names.has(authored_owner_name):
+			return {"ok": false, "reason": "script team '%s' owner '%s' is not an authored player" % [team_name, authored_owner_name]}
+		# EA validates each player's default team by the exact, case-sensitive
+		# spelling "team" + player name and repairs that team's runtime owner
+		# to the player. This is importer-attested source behavior, not a
+		# faction/name guess.
+		var default_owner_name := ""
+		for player_name_value in authored_player_names:
+			var candidate_name := String(player_name_value)
+			if team_name == "team" + candidate_name:
+				default_owner_name = candidate_name
+				break
+		var default_team := default_owner_name != ""
+		var runtime_owner_name := default_owner_name if default_team else authored_owner_name
+		# Authored library/inactive players remain in the decoded world but do
+		# not acquire a simulation owner. Only teams whose exact runtime owner
+		# exists are installed. A script source for such an inactive player was
+		# already rejected above.
+		if not players.has(runtime_owner_name):
+			continue
+		var member_names: Array[String] = []
+		var member_rows: Array = []
+		var member_name_occurrences: Dictionary = {}
+		for member_value in row["namedMembers"] as Array:
+			if typeof(member_value) != TYPE_STRING or String(member_value) == "":
+				return {"ok": false, "reason": "script team '%s' has a malformed named member" % team_name}
+			var member_name := String(member_value)
+			if not named_objects.has(member_name):
+				return {"ok": false, "reason": "script team '%s' has an unknown named member '%s'" % [team_name, member_name]}
+			var matching_rows: Array = []
+			for named_value in named_objects[member_name] as Array:
+				var named_row := named_value as Dictionary
+				if String(named_row.get("team", "")) == team_name:
+					matching_rows.append(named_row)
+			var occurrence := int(member_name_occurrences.get(member_name, 0))
+			if occurrence >= matching_rows.size():
+				return {"ok": false, "reason": "named member '%s' occurrence disagrees with team '%s'" % [member_name, team_name]}
+			member_names.append(member_name)
+			member_rows.append((matching_rows[occurrence] as Dictionary).duplicate(true))
+			member_name_occurrences[member_name] = occurrence + 1
+		team_rows.append({
+			"name": team_name,
+			"owner_player": runtime_owner_name,
+			"owner_team": int(players[runtime_owner_name]),
+			"default": default_team,
+			"dynamic_default_roster": (
+				default_team
+				and int(runtime_owner_player_counts.get(int(players[runtime_owner_name]), 0))
+				== 1
+			),
+			"object_count": int(row["objectCount"]),
+			"named_members": member_names,
+			"named_member_rows": member_rows,
+			"marker_only": bool(row.get("markerOnly", false)),
+		})
+	return {"ok": true, "players": players, "teams": team_rows, "sources": sources}
+
+
+func _script_named_member_handle(named_row: Dictionary, owner_team: int) -> Dictionary:
+	var position_values := named_row["godotPosition"] as Array
+	var source_position := Vector3(
+		float(position_values[0]), float(position_values[1]), float(position_values[2])
+	)
+	var wanted_position := Vector2(source_position.x, source_position.z)
+	if source_map_data != null and source_map_data.ready:
+		var local_position: Vector3 = source_map_data.source_to_local(source_position)
+		wanted_position = Vector2(local_position.x, local_position.z)
+	var wanted_type := String(named_row["typeName"])
+	var candidates: Array[Dictionary] = []
+	for entity_id_value in simulation.entity_ids():
+		var entity_id := int(entity_id_value)
+		var row := simulation.entities[entity_id] as Dictionary
+		if int(row.get("team", -1)) != owner_team:
+			continue
+		if not [
+			String(row.get("object_id", "")),
+			String(row.get("unit_type", "")),
+			String(row.get("map_type_name", "")),
+		].has(wanted_type):
+			continue
+		# 0.05 source-units after map scale round-trip; 0.001 was too tight for
+		# heightmap/source scale float noise while still rejecting wrong rows.
+		if Vector2(row.get("position", Vector2.INF)).distance_to(wanted_position) <= 0.05:
+			candidates.append({"kind": "entity", "id": entity_id})
+	for structure_id_value in simulation.structure_ids():
+		var structure_id := int(structure_id_value)
+		var row := simulation.structures[structure_id] as Dictionary
+		if int(row.get("team", -1)) != owner_team:
+			continue
+		var structure_kind := String(row.get("structure_kind", ""))
+		var structure_object_id := String(
+			(
+				simulation.team_manifest_for(owner_team).get(
+					"structure_object_ids", {}
+				) as Dictionary
+			).get(structure_kind, "")
+		)
+		if not [
+			String(row.get("object_id", "")),
+			structure_kind,
+			structure_object_id,
+			String(row.get("creep_type_name", "")),
+			String(row.get("map_type_name", "")),
+			String(row.get("building_type", "")),
+			String(row.get("kind", "")),
+		].has(wanted_type):
+			continue
+		if Vector2(row.get("position", Vector2.INF)).distance_to(wanted_position) <= 0.05:
+			candidates.append({"kind": "structure", "id": structure_id})
+	if candidates.size() != 1:
+		return {
+			"ok": false,
+			"reason": (
+				"named object '%s' resolved to %d materialized runtime rows"
+				% [String(named_row["name"]), candidates.size()]
+			),
+		}
+	return {"ok": true, "handle": candidates[0]}
+
+
+static func _library_team_registry_name(player_name: String, team_name: String) -> String:
+	return "@library[%d]%s[%d]%s" % [
+		player_name.length(), player_name, team_name.length(), team_name,
+	]
+
+
+func _install_map_scripts_document(
+	doc: Dictionary, source_label: String = "<memory>", report_errors: bool = true
+) -> bool:
+	var report := func(message: String) -> void:
+		if report_errors:
+			push_error(message)
+	var normalized := _normalized_map_scripts_document(doc)
+	if not bool(normalized.get("ok", false)):
+		report.call("map scripts: %s: %s; installing NO scripts" % [source_label, String(normalized.get("reason", "invalid document"))])
+		return false
+	var players := normalized["players"] as Dictionary
+	var team_rows: Array = []
+	for team_value in normalized["teams"] as Array:
+		var prepared := (team_value as Dictionary).duplicate(true)
+		var handles: Array = []
+		var unresolved: Array[String] = []
+		for member_row_value in prepared.get("named_member_rows", []) as Array:
+			var member_row := member_row_value as Dictionary
+			var member_name := String(member_row["name"])
+			var resolved: Dictionary = _script_named_member_handle(
+				member_row, int(prepared["owner_team"])
+			)
+			if bool(resolved.get("ok", false)):
+				handles.append((resolved["handle"] as Dictionary).duplicate(true))
+			else:
+				unresolved.append(member_name)
+		var unmodeled := maxi(
+			0,
+			int(prepared.get("object_count", 0))
+			- (prepared.get("named_members", []) as Array).size()
+		)
+		prepared["handles"] = handles
+		prepared["membership_complete"] = unresolved.is_empty() and unmodeled == 0
+		prepared["unresolved_members"] = unresolved
+		prepared["unmodeled_object_count"] = unmodeled
+		prepared.erase("named_member_rows")
+		team_rows.append(prepared)
+	var prior_script_teams := simulation.script_teams.duplicate(true)
+	var prior_env_state := simulation.script_env_state.duplicate(true)
+	var prior_runtimes := script_runtimes.duplicate()
+	var planned_owner_teams: Array = []
+	for source_value in normalized["sources"] as Array:
+		if typeof(source_value) != TYPE_DICTIONARY:
+			report.call("map scripts: non-object source entry; installing NO scripts")
+			return false
+		var source := source_value as Dictionary
+		var player_name := String(source.get("player", ""))
+		if player_name == "" or not players.has(player_name):
+			report.call("map scripts: source player '%s' is not in the players table; installing NO scripts" % player_name)
+			return false
+		var owner_team := int(players[player_name])
+		if planned_owner_teams.has(owner_team) or simulation.registered_script_executor_teams().has(owner_team):
+			report.call("map scripts: owner team %d already has or would receive a second executor; installing NO scripts" % owner_team)
+			return false
+		planned_owner_teams.append(owner_team)
+		if typeof(source.get("scripts")) != TYPE_ARRAY or (source["scripts"] as Array).is_empty():
+			report.call("map scripts: source for '%s' carries no script payloads; installing NO scripts" % player_name)
+			return false
+		for payload_value in source["scripts"] as Array:
+			if typeof(payload_value) != TYPE_DICTIONARY or (payload_value as Dictionary).is_empty():
+				report.call("map scripts: source for '%s' carries a malformed/empty payload; installing NO scripts" % player_name)
+				return false
+		if typeof(source.get("library_teams", [])) != TYPE_ARRAY:
+			report.call("map scripts: source for '%s' carries malformed library teams; installing NO scripts" % player_name)
+			return false
+		var local_names: Dictionary = {}
+		for local_value in source.get("library_teams", []) as Array:
+			if typeof(local_value) != TYPE_DICTIONARY:
+				report.call("map scripts: source for '%s' carries a malformed library team; installing NO scripts" % player_name)
+				return false
+			var local := local_value as Dictionary
+			var local_name := String(local.get("name", ""))
+			if (
+				local_name == ""
+				or local_names.has(local_name)
+				or String(local.get("owner_player", "")) != player_name
+				or not _json_integral_number(local.get("object_count", -1))
+				or int(local.get("object_count", -1)) < 0
+				or typeof(local.get("marker_only", false)) != TYPE_BOOL
+			):
+				report.call("map scripts: source for '%s' has an invalid library-team contract; installing NO scripts" % player_name)
+				return false
+			local_names[local_name] = true
+	for team_value in team_rows:
+		var team_row := team_value as Dictionary
+		var team_name := String(team_row["name"])
+		if simulation.script_teams.has(team_name):
+			var existing := simulation.script_teams[team_name] as Dictionary
+			if (
+				int(existing.get("owner", -1)) != int(team_row["owner_team"])
+				or bool(existing.get("default", false)) != bool(team_row.get("default", false))
+				or bool(existing.get("membership_incomplete", false))
+				!= not bool(team_row.get("membership_complete", true))
+				or (existing.get("unresolved_members", []) as Array)
+				!= (team_row.get("unresolved_members", []) as Array)
+				or int(existing.get("unmodeled_object_count", 0))
+				!= int(team_row.get("unmodeled_object_count", 0))
+				or bool(existing.get("marker_only", false))
+				!= bool(team_row.get("marker_only", false))
+				or (
+					bool(team_row.get("default", false))
+					and bool(existing.get("explicit_default_membership", false))
+					== bool(team_row.get("dynamic_default_roster", true))
+				)
+			):
+				report.call("map scripts: team '%s' conflicts with the installed registry; installing NO scripts" % team_name)
+				return false
 	var runtimes: Array = []
 	var installed_teams: Array = []
 	var ok := true
-	for source_value in doc.get("sources", []) as Array:
+	for source_value in normalized["sources"] as Array:
 		if typeof(source_value) != TYPE_DICTIONARY:
-			push_error("map scripts: non-object source entry; installing NO scripts")
+			report.call("map scripts: non-object source entry; installing NO scripts")
 			ok = false
 			break
 		var source := source_value as Dictionary
 		var player_name := String(source.get("player", ""))
-		var players: Dictionary = doc.get("players", {}) as Dictionary
 		if player_name == "" or not players.has(player_name):
-			push_error("map scripts: source player '%s' is not in the players table; installing NO scripts" % player_name)
+			report.call("map scripts: source player '%s' is not in the players table; installing NO scripts" % player_name)
 			ok = false
 			break
 		var team := int(players[player_name])
 		if installed_teams.has(team):
-			push_error("map scripts: two sources resolve to team %d (one executor per team); installing NO scripts" % team)
+			report.call("map scripts: two sources resolve to team %d (one executor per team); installing NO scripts" % team)
 			ok = false
 			break
 		var world: RetailSliceScriptWorld = ScriptWorldScript.new(simulation)
 		for bind_name in players.keys():
 			if not world.bind_player(String(bind_name), int(players[bind_name])):
-				push_error("map scripts: player binding '%s' -> %s refused; installing NO scripts" % [String(bind_name), str(players[bind_name])])
+				report.call("map scripts: player binding '%s' -> %s refused; installing NO scripts" % [String(bind_name), str(players[bind_name])])
 				ok = false
 				break
 		if not ok:
 			break
-		var team_names: Dictionary = doc.get("teams", {}) as Dictionary
-		for team_name in team_names.keys():
-			if not world.bind_team(String(team_name), int(team_names[team_name])):
-				push_error("map scripts: team binding '%s' -> %s refused; installing NO scripts" % [String(team_name), str(team_names[team_name])])
+		for team_value in team_rows:
+			var team_row := team_value as Dictionary
+			var team_name := String(team_row["name"])
+			var bound := (
+				(
+					world.bind_default_script_team(
+						team_name,
+						String(team_row["owner_player"]),
+						team_row.get("handles", []) as Array,
+						bool(team_row.get("membership_complete", true)),
+						team_row.get("unresolved_members", []) as Array,
+						int(team_row.get("unmodeled_object_count", 0)),
+						bool(team_row.get("dynamic_default_roster", true))
+					)
+					if team_row.has("owner_player")
+					else world.bind_team(team_name, int(team_row["owner_team"]))
+				)
+				if bool(team_row.get("default", false))
+				else world.bind_script_team_to_owner(
+					team_name,
+					int(team_row["owner_team"]),
+					String(team_row.get("owner_player", "")),
+					team_row.get("handles", []) as Array,
+					bool(team_row.get("membership_complete", true)),
+					team_row.get("unresolved_members", []) as Array,
+					int(team_row.get("unmodeled_object_count", 0)),
+					bool(team_row.get("marker_only", false))
+				)
+			)
+			if not bound:
+				report.call("map scripts: team binding '%s' refused; installing NO scripts" % team_name)
+				ok = false
+				break
+		if not ok:
+			break
+		for local_value in source.get("library_teams", []) as Array:
+			var local := local_value as Dictionary
+			var local_name := String(local["name"])
+			var default_team := bool(local.get("default", false))
+			var marker_only := bool(local.get("marker_only", false))
+			var object_count := int(local.get("object_count", 0))
+			# teamPlayer is the library spelling of this executor's concrete
+			# map default team. Its CampFlag rows are tactical anchors, not
+			# combat members; bind the alias to the already-registered
+			# teamPlayer_N record.
+			var registry_name := (
+				"team" + player_name
+				if default_team
+				else _library_team_registry_name(player_name, local_name)
+			)
+			var membership_complete := object_count == 0 or marker_only
+			if not world.bind_library_script_team(
+				local_name,
+				registry_name,
+				player_name,
+				default_team,
+				[],
+				membership_complete,
+				[],
+				0 if membership_complete else object_count,
+				marker_only and not default_team
+			):
+				report.call("map scripts: library team '%s' for '%s' refused; installing NO scripts" % [local_name, player_name])
 				ok = false
 				break
 		if not ok:
 			break
 		if not world.bind_script_player(player_name):
-			push_error("map scripts: bind_script_player('%s') refused; installing NO scripts" % player_name)
+			report.call("map scripts: bind_script_player('%s') refused; installing NO scripts" % player_name)
 			ok = false
 			break
 		var executor: SageScriptExecutor = ScriptExecutorScript.new(world)
 		if executor.load_script_payloads(source.get("scripts", []) as Array) <= 0:
-			push_error("map scripts: source for '%s' carries no loadable script payloads; installing NO scripts" % player_name)
+			report.call("map scripts: source for '%s' carries no loadable script payloads; installing NO scripts" % player_name)
 			ok = false
 			break
 		if not simulation.attach_script_env(executor.env, team) \
@@ -4643,8 +5447,13 @@ func _install_map_scripts() -> void:
 		# Tear down whatever half got wired so NOTHING runs: fail-closed.
 		for team_value in installed_teams:
 			simulation.unregister_script_executor(int(team_value))
-		return
+		simulation.script_teams = prior_script_teams.duplicate(true)
+		simulation.script_env_state.clear()
+		simulation.script_env_state.merge(prior_env_state, true)
+		script_runtimes = prior_runtimes
+		return false
 	script_runtimes = runtimes
+	return true
 
 
 func _faction_spellbook_document(faction_override: String = "") -> Dictionary:
@@ -4746,6 +5555,12 @@ func _match_configuration() -> Dictionary:
 	spawn_positions[101] = source_map_data._walkable_spawn(Vector2(enemy_local.x, enemy_local.y - 4.5))
 	spawn_positions[102] = source_map_data._walkable_spawn(Vector2(enemy_local.x, enemy_local.y + 4.5))
 	configuration["spawn_positions"] = spawn_positions
+	var team_start_indices := (
+		configuration.get("team_start_indices", {}) as Dictionary
+	).duplicate(true)
+	team_start_indices[0] = choice - 1
+	team_start_indices[1] = enemy_index - 1
+	configuration["team_start_indices"] = team_start_indices
 	# The authored home layout is pinned to the default starts; a chosen start
 	# makes the sim derive the base around the new anchor instead.
 	if configuration.has("home_layout"):
@@ -5389,7 +6204,7 @@ func _grant_test_resources() -> void:
 	if simulation.team_power_points is Dictionary:
 		simulation.team_power_points[0] = int(simulation.team_power_points.get(0, 0)) + 10
 		simulation.team_power_points[1] = int(simulation.team_power_points.get(1, 0)) + 10
-	hud.set_resources(simulation.resources_for_team(local_team), simulation.command_points_for_team(local_team), simulation.command_point_cap)
+	hud.set_resources(simulation.resources_for_team(local_team), simulation.command_points_for_team(local_team), simulation.command_point_total_for_team(local_team))
 	hud.refresh_powers(simulation.power_points(local_team), simulation.purchased_powers[local_team], simulation.spellbook_ui_state(local_team))
 	hud.set_feedback("Cheat: +%d resources and +10 power points (both teams)." % grant)
 
@@ -5597,6 +6412,14 @@ func _apply_stored_display_settings() -> void:
 
 
 func _exit_tree() -> void:
+	_release_script_runtimes()
+	# Drop sim last so no executor/world can still tick into a half-free object
+	# (Windows null+0x58 AV during scene change / quit).
+	if simulation != null:
+		if simulation.parity != null:
+			simulation.parity.clear()
+			simulation.parity = null
+		simulation = null
 	if control_server != null:
 		control_server.stop()
 		control_server = null
@@ -5604,3 +6427,25 @@ func _exit_tree() -> void:
 		audio_system.dispose()
 	var asset_factory = load("res://src/view/asset_factory.gd")
 	asset_factory.clear_mesh_cache()
+
+
+func _release_script_runtimes() -> void:
+	## Drop executor↔world↔sim ownership before scene free. Facets now weakref
+	## the world, but executors still hold a strong world and worlds hold sim;
+	## leave no dangling graph for ObjectDB/Windows teardown (null+0x58 AVs).
+	for runtime_value in script_runtimes:
+		if typeof(runtime_value) != TYPE_DICTIONARY:
+			continue
+		var runtime := runtime_value as Dictionary
+		var team := int(runtime.get("team", -1))
+		if simulation != null and team >= 0:
+			simulation.unregister_script_executor(team)
+		var executor: Variant = runtime.get("executor", null)
+		if executor != null:
+			executor.world = null
+		var world: Variant = runtime.get("world", null)
+		if world != null:
+			if world.has_method("_release_facets"):
+				world._release_facets()
+			world.sim = null
+	script_runtimes.clear()

@@ -77,6 +77,10 @@ dependencies. Treat warnings and errors as failures for the compatibility path.
 ## 4. Import your local BFME2 content
 
 ```bat
+rem RotWK systems-first (preferred):
+run_rotwk_systems.bat "F:\RotWK"
+
+rem Legacy BFME2 Men/Fords profile build:
 run_importer.bat "D:\Games\BFME2"
 ```
 

@@ -84,7 +84,14 @@ $script:WotrStagingRules = @(
         env    = 'OPENBFME_LIVING_MAP_REGIONS'
         schema = ''
         host   = ''
-        loses  = "filled territories - regions are drawn as markers instead of retail's own lmr_fill/lmr_border shapes"
+        # The bundle grew from three layers to five when it was established that
+        # retail separates its region effects BY GEOMETRY, not by colour:
+        # RegionSelectionEffect draws LMR_Edge and HomeRegionHighlight draws
+        # LMR_Highlight, so a bundle carrying only fill/border/territory left the
+        # screen recolouring the ownership band to stand in for both. The `loses`
+        # line names all three losses because they are three different things a
+        # player sees, not one.
+        loses  = "filled territories, the selection outline and the home-region glow - regions are drawn as markers instead of retail's own lmr_fill/lmr_border shapes, and retail's own lmr_edge/lmr_highlight marks are not drawn at all"
     }
     [pscustomobject]@{
         env    = 'OPENBFME_LIVING_WORLD_MARKERS'
@@ -124,6 +131,26 @@ $script:WotrStagingRules = @(
         loses  = "the unit-to-table bindings - auto-resolve would know retail's numbers but not which unit uses which of them"
     }
     [pscustomobject]@{
+        # THE OPPONENT'S RETAIL WEIGHTS. `wotr_ai.gd` scores which region is
+        # worth taking with retail's own `BonusPreference*` numbers out of
+        # `data/ini/livingworldaitemplate.ini`.
+        #
+        # THIS ROW IS EXPECTED TO REPORT ABSENT TODAY, and that is the point of
+        # adding it rather than hiding the loader from the census. No importer
+        # stage emits an `openbfme.living-world-ai-template` document yet -
+        # `retail_strategic_apt_convert.py` stages six `livingworld*.ini` files
+        # and this is not one of them - so the workspace scan finds nothing and
+        # the build reports War of the Ring as DEGRADED with the line below.
+        # That is a true statement about the release: the opponent still plays,
+        # by its own openly project-authored rules, with retail's taste absent.
+        # Closing it is a one-line addition to that converter's supporting-data
+        # list plus a converter that writes the weights out as JSON.
+        env    = 'OPENBFME_LIVING_WORLD_AI_TEMPLATE'
+        schema = 'openbfme.living-world-ai-template'
+        host   = 'OPENBFME_LIVING_MAP_REGIONS'
+        loses  = "retail's own AI preference weights - the War of the Ring opponent still takes its turn, but it ranks regions by this project's rules alone instead of by retail's BonusPreference numbers"
+    }
+    [pscustomobject]@{
         env    = 'OPENBFME_LIVING_WORLD_REGION_IMAGES'
         schema = ''
         host   = 'OPENBFME_LIVING_MAP_REGIONS'
@@ -152,6 +179,25 @@ $script:WotrStagingRules = @(
         schema = ''
         host   = 'OPENBFME_LIVING_MAP_REGIONS'
         loses  = "retail's gamedata #define table - numbers the strategic rules quote resolve to their macro names"
+    }
+    [pscustomobject]@{
+        # The RotWK strategic APT screens (openbfme.strategic-ui): 24 flattened
+        # retail movies - the gold filigree frames, strategic palantir, END
+        # TURN button states, TERRITORY/ARMIES/STRUCTURES tray, parchment
+        # build-queue cards, timeline - plus their atlases, the retail font
+        # winners and the livingworld ini/lm-texture support set.
+        #
+        # The honest `loses`: TODAY no screen consumes this bundle yet - the
+        # loader and its runner exist, the HUD streams that will draw from it
+        # are being built concurrently. It ships anyway for the same reason
+        # the auto-resolve tables did: the loader is real, and when the HUD
+        # streams land the art must already be in the field. The moment a
+        # screen binds it, rewrite this line to say what the player actually
+        # sees without it (diagnostic chrome instead of retail ornament).
+        env    = 'OPENBFME_STRATEGIC_UI'
+        schema = ''
+        host   = 'OPENBFME_LIVING_MAP_REGIONS'
+        loses  = "retail's strategic-screen art (palantir, gold frames, END TURN button, tray cards) - nothing binds it on screen yet, but the HUD streams under construction resolve their ornament from it"
     }
 )
 

@@ -53,6 +53,13 @@ MAX_SAGE_SOURCE_FILES = 25_000
 # Per-process inventory/index memo for one effective-assets root. Rebuilds of
 # many object closures in one convert run were re-walking ~40k files each call.
 _ASSET_CONTEXT_CACHE: dict[str, tuple[object, ...]] = {}
+# Catalog-filtered path catalogs + path-only W3D index. Convert walks many
+# objects against one catalog; rebuilding the filter/index each call dominated
+# cold convert cost after the pack-identity filter was introduced.
+_PACK_FILTERED_CONTEXT_CACHE: dict[tuple[str, str], tuple[object, ...]] = {}
+# Single-flight builders so 16 convert workers do not stampede the same filter
+# key (lock protects lookup + publish; construction waits on the Event).
+_PACK_FILTERED_INFLIGHT: dict[tuple[str, str], threading.Event] = {}
 _ASSET_CONTEXT_LOCK = threading.Lock()
 MAX_SAGE_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_TARGET_OBJECTS = 4_096
@@ -1099,6 +1106,148 @@ def clear_visual_closure_asset_cache() -> None:
 
     with _ASSET_CONTEXT_LOCK:
         _ASSET_CONTEXT_CACHE.clear()
+        _PACK_FILTERED_CONTEXT_CACHE.clear()
+        _PACK_FILTERED_INFLIGHT.clear()
+
+
+def _catalog_pack_filter_token(catalog: object) -> str:
+    """Stable process key for one install catalog identity."""
+
+    identity = getattr(catalog, "identity_sha256", None)
+    if callable(identity):
+        try:
+            token = identity()
+        except Exception:  # noqa: BLE001 — fall back to object id
+            token = None
+        if isinstance(token, str) and token:
+            return token.casefold()
+    return f"id:{id(catalog)}"
+
+
+def _build_pack_filtered_context(
+    effective_assets_root: Path | str,
+    catalog: object,
+) -> tuple[object, ...]:
+    """Construct one catalog-filtered asset context (no memo; may be heavy)."""
+
+    resolve_exact = getattr(catalog, "resolve_exact", None)
+    if not callable(resolve_exact):
+        raise TypeError("catalog must provide resolve_exact(virtual_path)")
+
+    (
+        assets,
+        sources,
+        definitions,
+        w3d_paths,
+        visual_paths,
+        w3d_records,
+        _initial_index,
+    ) = _asset_context(effective_assets_root)
+
+    # Build a casefolded winner set once. resolve_exact is O(1) but calling it
+    # hundreds of thousands of times across objects was still measurable; one
+    # set comprehension keeps the filter cheap and cacheable.
+    if hasattr(catalog, "entries"):
+        winners = {
+            str(getattr(entry, "name", "")).replace("\\", "/").casefold()
+            for entry in catalog.entries  # type: ignore[attr-defined]
+            if getattr(entry, "name", None)
+        }
+
+        def _in_catalog(path: str) -> bool:
+            return path.replace("\\", "/").casefold() in winners
+
+    else:
+
+        def _in_catalog(path: str) -> bool:
+            return resolve_exact(path) is not None
+
+    filtered_w3d = tuple(path for path in w3d_paths if _in_catalog(path))
+    filtered_visual = tuple(path for path in visual_paths if _in_catalog(path))
+    filtered_records = {
+        path: record
+        for path, record in w3d_records.items()
+        if _in_catalog(path)
+    }
+    filtered_index = build_w3d_index(filtered_w3d, ())
+    return (
+        assets,
+        sources,
+        definitions,
+        filtered_w3d,
+        filtered_visual,
+        filtered_records,
+        filtered_index,
+    )
+
+
+def _pack_filtered_asset_context(
+    effective_assets_root: Path | str,
+    catalog: object,
+    *,
+    catalog_identity_sha256: str | None = None,
+) -> tuple[object, ...]:
+    """Return asset context with W3D/visual inventory intersected to catalog.
+
+    Unfiltered inventory stays in ``_ASSET_CONTEXT_CACHE``. Filtered path sets
+    and the path-only W3D index are memoized per (assets root, catalog id) so
+    multi-object faction convert does not re-filter ~tens of thousands of paths
+    and rebuild the index on every object.
+
+    Construction is single-flight per key: concurrent convert workers wait on
+    one builder instead of stampeding identical filter/index rebuilds.
+    """
+
+    root = Path(effective_assets_root).expanduser()
+    try:
+        resolved = root.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"effective-assets root is unavailable: {root}") from exc
+    assets_key = _assets_root_fingerprint(resolved)
+    if isinstance(catalog_identity_sha256, str) and catalog_identity_sha256.strip():
+        catalog_token = catalog_identity_sha256.casefold().strip()
+    else:
+        catalog_token = _catalog_pack_filter_token(catalog)
+    filter_key = (assets_key, catalog_token)
+
+    with _ASSET_CONTEXT_LOCK:
+        cached = _PACK_FILTERED_CONTEXT_CACHE.get(filter_key)
+        if cached is not None:
+            return cached
+        inflight = _PACK_FILTERED_INFLIGHT.get(filter_key)
+        if inflight is None:
+            inflight = threading.Event()
+            _PACK_FILTERED_INFLIGHT[filter_key] = inflight
+            is_builder = True
+        else:
+            is_builder = False
+
+    if not is_builder:
+        # Wait for the builder; re-check cache after wake.
+        if not inflight.wait(timeout=900):
+            raise TimeoutError(
+                "timed out waiting for pack-filtered visual inventory build"
+            )
+        with _ASSET_CONTEXT_LOCK:
+            cached = _PACK_FILTERED_CONTEXT_CACHE.get(filter_key)
+            if cached is None:
+                raise RuntimeError(
+                    "pack-filtered visual inventory build failed in another worker"
+                )
+            return cached
+
+    try:
+        packed = _build_pack_filtered_context(effective_assets_root, catalog)
+        with _ASSET_CONTEXT_LOCK:
+            # Bound growth: one assets root + a few catalogs is the convert shape.
+            if len(_PACK_FILTERED_CONTEXT_CACHE) > 8:
+                _PACK_FILTERED_CONTEXT_CACHE.clear()
+            _PACK_FILTERED_CONTEXT_CACHE[filter_key] = packed
+            return packed
+    finally:
+        with _ASSET_CONTEXT_LOCK:
+            _PACK_FILTERED_INFLIGHT.pop(filter_key, None)
+        inflight.set()
 
 
 def effective_assets_fingerprint(effective_assets_root: Path | str) -> str:
@@ -1115,6 +1264,9 @@ def effective_assets_fingerprint(effective_assets_root: Path | str) -> str:
 def build_retail_visual_closure(
     effective_assets_root: Path | str,
     object_names: Iterable[str],
+    *,
+    catalog: object | None = None,
+    catalog_identity_sha256: str | None = None,
 ) -> dict[str, object]:
     """Build a neutral conversion closure for exact Object targets.
 
@@ -1123,18 +1275,41 @@ def build_retail_visual_closure(
     closure have neither diagnostics nor missing, ambiguous, or invalid leaves.
     A non-ready report is still useful evidence and intentionally retains every
     unresolved authored reference.
+
+    When ``catalog`` is provided (InstallCatalog-like with ``resolve_exact``),
+    physical visual/W3D inventory is intersected with archive winners. Paths
+    that exist only on the effective-assets tree (orphan extract debris) are
+    treated as absent so pack recipes never bind un-cookable patterns.
+
+    Pass ``catalog_identity_sha256`` from the convert batch (already computed
+    once per run) so every object does not re-serialize the full catalog.
     """
 
     targets = _validated_targets(object_names)
-    (
-        assets,
-        sources,
-        definitions,
-        w3d_paths,
-        visual_paths,
-        w3d_records,
-        initial_index,
-    ) = _asset_context(effective_assets_root)
+    if catalog is not None:
+        (
+            assets,
+            sources,
+            definitions,
+            w3d_paths,
+            visual_paths,
+            w3d_records,
+            initial_index,
+        ) = _pack_filtered_asset_context(
+            effective_assets_root,
+            catalog,
+            catalog_identity_sha256=catalog_identity_sha256,
+        )
+    else:
+        (
+            assets,
+            sources,
+            definitions,
+            w3d_paths,
+            visual_paths,
+            w3d_records,
+            initial_index,
+        ) = _asset_context(effective_assets_root)
     target_records, definition_closure, missing_definitions = _definition_closure(
         targets, definitions
     )
@@ -1263,6 +1438,7 @@ def build_retail_visual_closure(
             "w3dPathCount": len(w3d_paths),
             "visualPathCount": len(visual_paths),
             "w3dCatalogMode": "path-only-plus-targeted-headers",
+            "packArchiveIdentityFilter": catalog is not None,
         },
         "objects": _object_summaries(graph),
         "exactLeaves": exact,

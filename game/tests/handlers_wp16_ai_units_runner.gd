@@ -53,14 +53,16 @@ const SERVED_ACTIONS := [
 	"GATE_OPEN",
 	"GATE_CLOSE",
 	"PLAYER_ENABLE_UNIT_CONSTRUCTION",
+	"CREATE_OBJECT",
 ]
 
 const SERVED_CONDITIONS := [
 	"NAMED_OWNED_BY_PLAYER",
+	"TYPE_SIGHTED",
 ]
 
-const GAP_REGISTERED_ACTIONS := ["CREATE_OBJECT"]
-const GAP_REGISTERED_CONDITIONS := ["TYPE_SIGHTED"]
+const GAP_REGISTERED_ACTIONS: Array = []
+const GAP_REGISTERED_CONDITIONS: Array = []
 
 ## LIVENESS GUARD. A GDScript RUNTIME error aborts the enclosing function
 ## on the spot without propagating, so every later _check() in that function
@@ -69,7 +71,7 @@ const GAP_REGISTERED_CONDITIONS := ["TYPE_SIGHTED"]
 ## the exact count a HEALTHY run makes; if the run makes any other number,
 ## something aborted (or an assertion was added without updating this) and
 ## the result is not to be trusted.
-const EXPECTED_CHECKS := 44
+const EXPECTED_CHECKS := 43
 
 var passed := 0
 var failed := 0
@@ -82,7 +84,7 @@ func _initialize() -> void:
 func _run() -> void:
 	_test_registration_covers_the_ai_subset()
 	_test_owned_by_player_compares_the_world_owner_exactly()
-	_test_owned_by_player_refuses_placeholder_player_tokens()
+	_test_owned_by_player_resolves_placeholder_player_tokens()
 	_test_an_unanswerable_condition_is_never_a_plain_false()
 	_test_conditions_have_no_side_effects()
 	_test_set_unit_reference_binds_destination_first()
@@ -281,38 +283,37 @@ func _test_owned_by_player_compares_the_world_owner_exactly() -> void:
 	)
 
 
-func _test_owned_by_player_refuses_placeholder_player_tokens() -> void:
-	# The equality runs in the HANDLER, against units.owner's concrete name,
-	# so a placeholder token ("<This Player>" and family) has nothing to
-	# resolve it there. Comparing it literally would be a confident wrong
-	# "false"; the handler must refuse instead, without asking the world a
-	# question whose answer it could not use.
+func _test_owned_by_player_resolves_placeholder_player_tokens() -> void:
+	# Placeholder resolution belongs to the world. The handler must preserve
+	# the exact token and argument order so the executing world's player
+	# binding, not a literal string comparison, decides ownership.
 	var harness := _harness()
 	var world: UnitWorld = harness["world"]
 	var dispatch: SageScriptDispatch = harness["dispatch"]
 	world.set_unit_owner("Synthetic_Gate_House", "Player_1")
 
 	_check(
-		"a_placeholder_token_reads_false_at_the_call_site",
-		not _cond(harness, "NAMED_OWNED_BY_PLAYER", [
+		"a_placeholder_token_resolves_at_the_call_site",
+		_cond(harness, "NAMED_OWNED_BY_PLAYER", [
 			_name_arg("Synthetic_Gate_House"), _player_arg("<This Player>")
 		])
 	)
 	_check(
-		"the_token_refusal_is_recorded_as_world_refused",
-		dispatch.gaps.has(
+		"the_resolved_token_records_no_gap",
+		not dispatch.gaps.has(
 			"condition", "NAMED_OWNED_BY_PLAYER", GapLog.REASON_WORLD_REFUSED
 		),
 		str(dispatch.gaps.to_lines())
 	)
 	_check(
-		"the_token_refusal_names_the_missing_world_surface",
-		_gap_detail(dispatch, "condition", "NAMED_OWNED_BY_PLAYER", GapLog.REASON_WORLD_REFUSED)
-			.contains("units.is_owned_by(object_name: String, player: String)"),
-		str(dispatch.gaps.to_lines())
+		"the_handler_preserves_object_then_player_order",
+		world.ownership_queries == [
+			["Synthetic_Gate_House", "<This Player>"]
+		],
+		str(world.ownership_queries)
 	)
 	_check(
-		"the_token_case_never_asked_the_world",
+		"the_token_case_issued_no_command_or_refusal",
 		world.calls.is_empty() and world.refusal_log.is_empty(),
 		"calls=%s refusals=%s" % [str(world.calls), str(world.refusal_log)]
 	)
@@ -341,7 +342,7 @@ func _test_an_unanswerable_condition_is_never_a_plain_false() -> void:
 	)
 	_check(
 		"the_refusal_names_the_missing_world_method",
-		world.refused("units.owner"),
+		world.refused("units.is_owned_by"),
 		str(world.refusal_log)
 	)
 
@@ -594,56 +595,36 @@ func _test_argument_type_codes_are_enforced_where_observed() -> void:
 
 
 func _test_gap_registered_members() -> void:
+	## CREATE_OBJECT and TYPE_SIGHTED are now served through team spawn / sighting.
 	var harness := _harness()
 	var dispatch: SageScriptDispatch = harness["dispatch"]
 	var world: UnitWorld = harness["world"]
+	world.sighted_triples["Synthetic_Scout|Synthetic_Fortress_Type|Player_2"] = true
 
-	# CREATE_OBJECT carries a TEAM the facet spells player and an ANGLE its
-	# team-capable sibling lacks. It must report BLOCKED and must not reach
-	# the world at all: spawning on a derived player would strand the object
-	# outside every team script.
 	var create_status := _act(harness, "CREATE_OBJECT", [
 		_name_arg("Synthetic_Sentry_Type"), _name_arg("Synthetic_Team_Front"),
 		_position_arg(100.0, 0.0, 250.0), _real_arg(90.0)
 	])
 	_check(
-		"create_object_reports_blocked",
-		create_status == Dispatch.Status.BLOCKED,
+		"create_object_is_served",
+		create_status == Dispatch.Status.OK,
 		"status=%d" % create_status
 	)
 	_check(
-		"the_create_object_gap_names_the_missing_world_signature",
-		_gap_detail(
-			dispatch, "action", "CREATE_OBJECT", GapLog.REASON_BLOCKED_SUBSYSTEM
-		).contains(
-			"units.create_object(object_type: String, team: String, position: "
-			+ "Vector3, angle: float)"
-		),
-		str(dispatch.gaps.to_lines())
+		"create_object_reaches_team_spawn_surface",
+		not world.calls.is_empty(),
+		str(world.calls)
 	)
 
-	# TYPE_SIGHTED carries an observer UNIT the two-slot facet method cannot.
-	# Blocked reads false at the call site - the only safe answer for an
-	# unevaluable gate.
 	var sighted := _cond(harness, "TYPE_SIGHTED", [
 		_name_arg("Synthetic_Scout"), _name_arg("Synthetic_Fortress_Type"),
 		_player_arg("Player_2")
 	])
-	_check("a_gap_registered_condition_reads_false", not sighted)
+	_check("type_sighted_evaluates_from_fixture", sighted)
 	_check(
-		"the_type_sighted_gap_names_the_missing_world_signature",
-		_gap_detail(
-			dispatch, "condition", "TYPE_SIGHTED", GapLog.REASON_BLOCKED_SUBSYSTEM
-		).contains(
-			"units.type_was_sighted(observer: String, object_type: String, owner: String)"
-		),
-		str(dispatch.gaps.to_lines())
-	)
-
-	_check(
-		"a_gap_registered_member_never_reaches_the_world",
-		world.calls.is_empty() and world.refusal_log.is_empty(),
-		"calls=%s refusals=%s" % [str(world.calls), str(world.refusal_log)]
+		"formerly_gap_members_are_not_dispatch_blocked",
+		not dispatch.blocked_names().has("CREATE_OBJECT")
+		and not dispatch.blocked_names().has("TYPE_SIGHTED")
 	)
 
 
@@ -663,6 +644,8 @@ class UnitWorld:
 	extends SageScriptWorldStub
 
 	var calls: Array[String] = []
+	var ownership_queries: Array = []
+	var sighted_triples: Dictionary = {}
 
 	## unit name -> owning player name, for units.owner.
 	var unit_owners: Dictionary = {}
@@ -692,6 +675,18 @@ class AiStubUnits:
 			)
 		return SageWorldQuery.hit(stub.unit_owners[object_name])
 
+	func is_owned_by(object_name: String, player: String) -> SageWorldQuery:
+		var stub := world as UnitWorld
+		stub.ownership_queries.append([object_name, player])
+		if not stub.unit_owners.has(object_name):
+			return _refuse_query(
+				"units.is_owned_by", "no fixture owner for object '%s'" % object_name
+			)
+		var resolved_player := "Player_1" if player == "<This Player>" else player
+		return SageWorldQuery.hit(
+			String(stub.unit_owners[object_name]) == resolved_player
+		)
+
 	func set_reference(reference: String, object_name: String) -> bool:
 		return _log("units.set_reference|%s|%s" % [reference, object_name])
 
@@ -700,6 +695,22 @@ class AiStubUnits:
 			"units.set_gate_state|%s|%s|%s"
 			% [object_name, str(open).to_lower(), str(ready).to_lower()]
 		)
+
+	func create_object_on_team(
+		object_type: String, team: String, position: Vector3, angle: float
+	) -> SageWorldQuery:
+		_log(
+			"units.create_object_on_team|%s|%s|%s|%s"
+			% [object_type, team, str(position), str(angle)]
+		)
+		return SageWorldQuery.hit("spawned_%s" % object_type)
+
+	func type_sighted_by(
+		observer: String, object_type: String, owner: String
+	) -> SageWorldQuery:
+		var key := "%s|%s|%s" % [observer, object_type, owner]
+		var fixtures: Dictionary = (world as UnitWorld).sighted_triples
+		return SageWorldQuery.hit(bool(fixtures.get(key, false)))
 
 
 class AiStubUnitPlayers:

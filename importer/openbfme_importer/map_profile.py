@@ -41,6 +41,11 @@ from .terrain_materials import (
 
 
 TERRAIN_INI_PATH = "data/ini/terrain.ini"
+AI_INITIALIZE_LIBRARY_PATH = "libraries/ai_initialize/ai_initialize.map"
+AI_MP_INHERIT_LIBRARY_PATH = (
+    "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map"
+)
+from .profile import is_canonical_multiplayer_map_virtual_path
 
 #: Retail map directories are named ``map <kind> <name>``; the multiplayer
 #: skirmish set is exactly the ``mp`` kind.
@@ -641,6 +646,32 @@ def build_map_profile(
                 },
             }
         ]
+        if (
+            target.category == SKIRMISH_CATEGORY
+            and is_canonical_multiplayer_map_virtual_path(map_entry.name)
+        ):
+            map_resources.append(
+                {
+                    "id": f"map-{target.slug}-scripts",
+                    "kind": "map",
+                    "converter": "sage-script-composite",
+                    "patterns": [
+                        map_entry.name,
+                        AI_INITIALIZE_LIBRARY_PATH,
+                        AI_MP_INHERIT_LIBRARY_PATH,
+                    ],
+                    "output": f"{output_root}/scripts.json",
+                    "limit": 3,
+                    "expected_count": 3,
+                    "options": {
+                        "mapVirtualPath": map_entry.name,
+                        "libraryVirtualPaths": [
+                            AI_INITIALIZE_LIBRARY_PATH,
+                            AI_MP_INHERIT_LIBRARY_PATH,
+                        ],
+                    },
+                }
+            )
         if map_kind != "multiplayer":
             map_resources[0]["options"]["profile"] = map_kind
         if map_ini_entry is not None:
@@ -949,6 +980,7 @@ def build_category_map_profile(
         pack_id=f"{game}-{map_set}-maps-private",
         pack_version=f"{map_set}-generated-v0",
         terrain_output=f"assets/terrain/{map_set}-maps",
+        map_id_prefix=f"{game}.map.",
         priority=905,
         rejections=rejections,
         strict=strict,
@@ -970,6 +1002,7 @@ def build_skirmish_map_profile(
         pack_id=f"{game}-skirmish-maps-private",
         pack_version="skirmish-generated-v0",
         terrain_output="assets/terrain/skirmish-maps",
+        map_id_prefix=f"{game}.map.",
         priority=905,
         rejections=rejections,
         strict=strict,

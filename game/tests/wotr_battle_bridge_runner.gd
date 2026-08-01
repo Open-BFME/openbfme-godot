@@ -24,6 +24,7 @@ const WorldScript = preload("res://src/wotr/wotr_world.gd")
 const StateScript = preload("res://src/wotr/wotr_state.gd")
 const HandoffScript = preload("res://src/wotr/wotr_handoff.gd")
 const BattleScript = preload("res://src/wotr/wotr_battle.gd")
+const ReinforcementsScript = preload("res://src/wotr/wotr_battle_reinforcements.gd")
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 
 ## The binding the strategic layer does not carry and this runner must supply.
@@ -51,13 +52,42 @@ const ATTACKER := 0
 const DEFENDER := 1
 const TARGET_REGION := "Cinderfen"
 
+## Auto-resolve-shaped unit records for the fixture rosters, the way the
+## session's binding bundle would produce them. The armies the fixture places
+## therefore carry REAL unit records, which the staged reinforcement feed and
+## the fought-outcome survivor contract both require - an army with no unit
+## records refuses by name, exactly as auto-resolve refuses one. Integer
+## thousandths throughout, because these records enter the strategic hash.
+const ROSTER_UNITS := {
+	"TestHeroArmy": [
+		{"template": "TestHero", "unit_type": "AutoResolveUnit_Hero",
+			"body": "TestHeroBody", "combat_chain": "TestChain", "leadership": "",
+			"armor": "TestHeroArmor", "weapon": "TestHeroWeapon", "level": 1,
+			"hitpoints_milli": 800000, "max_hitpoints_milli": 800000},
+	],
+	"TestGarrisonArmy": [
+		{"template": "TestArcherHorde", "unit_type": "AutoResolveUnit_Archer",
+			"body": "TestArcherBody", "combat_chain": "TestChain", "leadership": "",
+			"armor": "TestArcherArmor", "weapon": "TestArcherWeapon", "level": 1,
+			"hitpoints_milli": 300000, "max_hitpoints_milli": 300000},
+		{"template": "TestArcherHorde", "unit_type": "AutoResolveUnit_Archer",
+			"body": "TestArcherBody", "combat_chain": "TestChain", "leadership": "",
+			"armor": "TestArcherArmor", "weapon": "TestArcherWeapon", "level": 1,
+			"hitpoints_milli": 300000, "max_hitpoints_milli": 300000},
+		{"template": "TestFighterHorde", "unit_type": "AutoResolveUnit_Soldier",
+			"body": "TestFighterBody", "combat_chain": "TestChain", "leadership": "",
+			"armor": "TestFighterArmor", "weapon": "TestFighterWeapon", "level": 1,
+			"hitpoints_milli": 480000, "max_hitpoints_milli": 480000},
+	],
+}
+
 ## LIVENESS. A GDScript runtime error aborts the enclosing function without ever
 ## reaching a `_check`, so a runner that only counts failures reports GREEN when
 ## its fixture collapses - which is exactly what this file did on its first run
 ## (`passed=4 failed=0`, with eleven script errors above it). The expected count
 ## makes an inert run impossible to mistake for a passing one. Raise it
 ## deliberately when tests are added; never lower it to make a run go green.
-const EXPECTED_CHECKS := 132
+const EXPECTED_CHECKS := 165
 
 var passed := 0
 var failed := 0
@@ -81,6 +111,8 @@ func _run() -> void:
 	_test_begin_battle_validates_the_commitment()
 	_test_the_defeated_garrison_does_not_survive_the_capture()
 	_test_a_partial_advance_is_reported_not_hidden()
+	_test_the_reinforcement_feed_is_staged_from_retails_cadence()
+	_test_a_fought_battle_reports_the_surviving_roster()
 	_finish()
 
 
@@ -134,11 +166,26 @@ func _test_brief_translates() -> void:
 	var rules: Dictionary = configured["gameplay_rules"]
 	_check("starting_cash_reaches_the_rules_overlay",
 		int(rules.get("starting_resources", -1)) == 1000, str(rules))
-	# The overlay carries ONLY what the strategic layer authorises. A unit_rules
-	# or faction_manifest key appearing here would mean this file had started
-	# describing units, which it has no source for.
-	_check("the_overlay_carries_nothing_it_cannot_source",
-		rules.keys() == ["starting_resources"], str(rules.keys()))
+	# The overlay carries ONLY what the strategic layer authorises - and now
+	# EVERYTHING it authorises: the purse, the region's standing fort, and the
+	# region's own authored bonuses. A unit_rules or faction_manifest key
+	# appearing here would mean this file had started describing units, which
+	# it has no source for; a fourth authorised key must be added to this exact
+	# list deliberately, never discovered in it.
+	_check("the_overlay_carries_exactly_what_the_strategic_layer_authorises",
+		rules.keys() == ["starting_resources", "prebuilt_fortress", "region_bonuses"],
+		str(rules.keys()))
+	# Cinderfen carries createAutoFort, so the strategic layer authorises a
+	# standing fortress - the same fact the WITH-FORT purse above answered to.
+	_check("the_with_fort_region_reaches_the_overlay_as_a_prebuilt_fortress",
+		bool(rules.get("prebuilt_fortress", false)))
+	# The fixture region authors {"experience": 5}; the overlay carries it
+	# VERBATIM. What a tactical rule does with an experience bonus is the
+	# tactical half of the region_bonus_modifiers gap - nothing is turned into
+	# a multiplier here.
+	_check("the_regions_authored_bonuses_reach_the_overlay_verbatim",
+		(rules.get("region_bonuses", {}) as Dictionary) == {"experience": 5},
+		str(rules.get("region_bonuses", {})))
 
 	var commitment: Dictionary = configured["commitment"]
 	_check("commitment_names_the_contested_region",
@@ -174,14 +221,28 @@ func _test_translation_refuses_rather_than_guesses() -> void:
 			and (unbound["gameplay_rules"] as Dictionary).is_empty()
 			and (unbound["commitment"] as Dictionary).is_empty())
 
-	# An unowned region has no defending side: a named boundary, not a hole.
+	# UNOWNED GROUND IS NOT A BATTLE, and now it does not even reach here.
+	#
+	# `state.can_attack()` says no to an unowned region (it has no owning seat, so
+	# no defending faction and no defending armies), so the handoff refuses to
+	# build a brief for one at all. Retail does not fight for unowned ground
+	# either - it is CLAIMED, by marching a hero army in; see
+	# `CLAIM_RECORD_SCHEMA` in `wotr_state.gd` for the shipped strings and
+	# `wotr_strategic_runner.gd` for the rule's own tests.
 	var neutral_state := _staged_state()
 	neutral_state.transfer_region(TARGET_REGION, StateScript.NEUTRAL)
-	var neutral_brief := HandoffScript.build_request(
-		neutral_state.world, neutral_state, ATTACKER, TARGET_REGION)
-	_check("attacking_an_unowned_region_still_produces_a_brief",
-		not neutral_brief.is_empty())
-	var neutral: Dictionary = BattleScript.configure(neutral_brief, FACTION_BINDINGS, MAP_BINDINGS)
+	_check("no_brief_is_built_for_unowned_ground",
+		HandoffScript.build_request(
+			neutral_state.world, neutral_state, ATTACKER, TARGET_REGION).is_empty(),
+		"unowned ground is claimed, not attacked")
+
+	# THE BRIDGE STILL GUARDS THE BOUNDARY ITSELF, because a brief is a plain
+	# dictionary and a caller could hand it one the handoff would never have
+	# minted. A defenderless brief must refuse BY NAME rather than configure a
+	# match with one side.
+	var forged := HandoffScript.build_request(state.world, state, ATTACKER, TARGET_REGION)
+	(forged["defender"] as Dictionary)["player"] = StateScript.NEUTRAL
+	var neutral: Dictionary = BattleScript.configure(forged, FACTION_BINDINGS, MAP_BINDINGS)
 	_check("an_unowned_region_refuses_a_tactical_match", not bool(neutral["ok"]))
 	_check("the_refusal_explains_the_missing_defending_side",
 		_refusal_mentions(neutral, "unowned"), str(neutral["refusals"]))
@@ -725,6 +786,224 @@ func _test_a_partial_advance_is_reported_not_hidden() -> void:
 		state.pending_battle.is_empty())
 
 
+# --- the staged feed: retail's SecondsPerReinforcement, honoured --------------
+
+## Retail feeds a WOTR army into a tactical battle ONE UNIT AT A TIME,
+## `SecondsPerReinforcement` apart - the RotWK living-world document authors
+## 300 in every campaign's `rtsSettings`, the BFME2-era fixture value here is
+## 900. The slice used to spawn the whole roster at match start, which is what
+## the `reinforcement_schedule` gap in `wotr_handoff.gd` names. The bridge now
+## derives the exact feed from the brief, so a launcher has a schedule to obey
+## instead of a roster to dump - and the sim-side consumption is the remaining
+## half of that gap, not the whole of it.
+func _test_the_reinforcement_feed_is_staged_from_retails_cadence() -> void:
+	var state := _staged_state()
+	var configured := _configured_for(state)
+	var feed := configured["reinforcement_feed"] as Dictionary
+	_check("a_configured_match_carries_a_staged_reinforcement_feed",
+		bool(feed.get("ok", false)), str(feed.get("refusals", [])))
+	_check("the_cadence_is_the_documents_own_SecondsPerReinforcement",
+		int(feed.get("seconds_per_reinforcement", -1)) == 900,
+		str(feed.get("seconds_per_reinforcement", -1)))
+	var attacker_entries := feed["attacker"] as Array
+	var defender_entries := feed["defender"] as Array
+	_check("every_unit_of_both_sides_is_in_the_feed",
+		attacker_entries.size() == 1 and defender_entries.size() == 3,
+		"%d vs %d" % [attacker_entries.size(), defender_entries.size()])
+	var arrivals: Array[int] = []
+	for entry in defender_entries:
+		arrivals.append(int((entry as Dictionary)["arrival_seconds"]))
+	_check("units_arrive_one_at_a_time_a_full_cadence_apart",
+		arrivals == [0, 900, 1800], str(arrivals))
+	# Retail's own auto-resolve schedule pins army 1 to round 0 - "do not
+	# change this, or battles will end immediately" - and the same reasoning
+	# holds here: the battlefield is never empty while a feed is pending.
+	_check("the_battle_starts_manned_rather_than_empty",
+		int((attacker_entries[0] as Dictionary)["arrival_seconds"]) == 0
+			and int((defender_entries[0] as Dictionary)["arrival_seconds"]) == 0)
+	var commitment := configured["commitment"] as Dictionary
+	var committed: PackedInt32Array = commitment["committed_armies"]
+	var defending: PackedInt32Array = commitment["defending_armies"]
+	var identities_hold := String((attacker_entries[0] as Dictionary)["template"]) == "TestHero" \
+		and int((attacker_entries[0] as Dictionary)["army_id"]) == int(committed[0])
+	for entry in defender_entries:
+		if int((entry as Dictionary)["army_id"]) != int(defending[0]):
+			identities_hold = false
+	_check("every_entry_names_the_army_and_template_it_stages", identities_hold)
+
+	# DETERMINISM: an independently rebuilt state configures the identical feed.
+	var again := _configured_for(_staged_state())["reinforcement_feed"] as Dictionary
+	_check("two_peers_of_the_same_state_stage_the_identical_feed",
+		StateScript.canonical_digest(feed) == StateScript.canonical_digest(again))
+
+	# THE VALUE FLOWS FROM THE DOCUMENT, NEVER FROM A CONSTANT. Authoring
+	# retail's own RotWK cadence (300) must move every arrival with it.
+	var rotwk := _document()
+	(rotwk["rtsSettings"] as Dictionary)["secondsPerReinforcement"] = 300
+	var rotwk_world := WorldScript.new()
+	rotwk_world.load_from_dict(rotwk, "TestCampaign")
+	var rotwk_feed := (_configured_for(
+		_staged_state_in(rotwk_world))["reinforcement_feed"]) as Dictionary
+	var rotwk_arrivals: Array[int] = []
+	for entry in rotwk_feed["defender"] as Array:
+		rotwk_arrivals.append(int((entry as Dictionary)["arrival_seconds"]))
+	_check("a_document_authoring_retails_300_second_cadence_moves_every_arrival",
+		int(rotwk_feed.get("seconds_per_reinforcement", -1)) == 300
+			and rotwk_arrivals == [0, 300, 600],
+		str(rotwk_arrivals))
+
+	# UNAUTHORED IS NOT A DEFAULT. -1 is the world reader's sentinel; the feed
+	# refuses BY NAME while the configuration stays usable, because an
+	# auto-resolved battle needs no feed at all.
+	var silent := _document()
+	(silent["rtsSettings"] as Dictionary)["secondsPerReinforcement"] = -1
+	var silent_world := WorldScript.new()
+	silent_world.load_from_dict(silent, "TestCampaign")
+	var silent_config := _configured_for(_staged_state_in(silent_world))
+	var silent_feed := silent_config["reinforcement_feed"] as Dictionary
+	_check("an_unauthored_cadence_still_configures_the_match",
+		bool(silent_config["ok"]), str(silent_config["refusals"]))
+	_check("an_unauthored_cadence_refuses_the_feed_rather_than_inventing_one",
+		not bool(silent_feed.get("ok", false)))
+	_check("the_feed_refusal_names_SecondsPerReinforcement",
+		_refusal_mentions(silent_feed, "SecondsPerReinforcement"),
+		str(silent_feed.get("refusals", [])))
+
+	# A NO-FORT REGION authorises no prebuilt fortress: the overlay key is
+	# ABSENT, not false - empty-is-absent, the discipline the whole hash uses.
+	var fortless := _document()
+	for region in (fortless["regionCampaigns"] as Array)[0]["regions"] as Array:
+		(region as Dictionary)["createAutoFort"] = false
+	var fortless_world := WorldScript.new()
+	fortless_world.load_from_dict(fortless, "TestCampaign")
+	var fortless_rules := (_configured_for(
+		_staged_state_in(fortless_world))["gameplay_rules"]) as Dictionary
+	_check("a_region_without_a_fort_authorises_no_prebuilt_fortress",
+		not fortless_rules.has("prebuilt_fortress"), str(fortless_rules.keys()))
+
+	# AN ARMY WITH NO UNIT RECORDS refuses by name - a missing binding must
+	# never be staged around as though the army were empty on purpose.
+	var unbound_feed := (_configured_for(
+		_staged_state_without_units())["reinforcement_feed"]) as Dictionary
+	_check("an_army_with_no_unit_records_refuses_the_feed_by_name",
+		not bool(unbound_feed.get("ok", false))
+			and _refusal_mentions(unbound_feed, "fields no unit records"),
+		str(unbound_feed.get("refusals", [])))
+
+	# THE CURSOR-FREE POLL: due() answers from the caller's own fed-count, so
+	# two launchers polling at different rates cannot disagree about which unit
+	# comes next.
+	_check("due_returns_exactly_the_entries_whose_time_has_come",
+		ReinforcementsScript.due(defender_entries, 900, 0).size() == 2
+			and ReinforcementsScript.due(defender_entries, 900, 2).is_empty()
+			and ReinforcementsScript.due(defender_entries, 1799, 1).size() == 1
+			and int((ReinforcementsScript.due(defender_entries, 1799, 1)[0]
+				as Dictionary)["feed_index"]) == 1)
+
+	# THE WAY HOME: a feed entry plus the tactical layer's own strength
+	# fraction becomes a strategic survivor row, integer end to end.
+	var survivors := ReinforcementsScript.survivors_from_feed(defender_entries, {0: 500})
+	_check("a_fed_unit_returns_as_a_strategic_survivor_row",
+		survivors.size() == 1
+			and int((survivors[0] as Dictionary)["hitpoints_milli"]) == 150000
+			and int((survivors[0] as Dictionary)["army_id"]) == int(defending[0]),
+		str(survivors))
+
+
+# --- the fought battle comes home as a roster, not a boolean -------------------
+
+## `tactical_battle_outcome_report`: a fought battle used to come home as
+## `apply_outcome(winner_team)`, a boolean - so the winner's army returned
+## untouched and the loser's vanished, two fidelities depending on which
+## resolver ran. `apply_fought_outcome` takes the SURVIVING ROSTER, the exact
+## contract auto-resolve already settles under, through the same settlement
+## code, so the strategic consequences of a battle cannot depend on how it was
+## decided.
+func _test_a_fought_battle_reports_the_surviving_roster() -> void:
+	var state := _staged_state()
+	var configured := _configured_for(state)
+	var commitment := configured["commitment"] as Dictionary
+	var committed: PackedInt32Array = commitment["committed_armies"]
+	var defending: PackedInt32Array = commitment["defending_armies"]
+	state.begin_battle(commitment)
+
+	# The attacker wins, wounded: the hero came through on half hitpoints and
+	# the whole garrison died.
+	var hero := ((state.armies[int(committed[0])] as Dictionary)["units"][0]
+		as Dictionary).duplicate(true)
+	hero["hitpoints_milli"] = 400000
+	var outcome: Dictionary = BattleScript.apply_fought_outcome(
+		state, BattleScript.ATTACKER_TEAM, [hero])
+	_check("a_fought_victory_with_survivors_applies",
+		bool(outcome["ok"]), str(outcome["refusals"]))
+	_check("fought_the_region_changed_hands", state.owner_of(TARGET_REGION) == ATTACKER)
+	_check("fought_the_wound_came_home_with_the_army",
+		int(((state.armies[int(committed[0])] as Dictionary)["units"][0]
+			as Dictionary)["hitpoints_milli"]) == 400000)
+	_check("fought_the_survivors_advanced_into_the_region",
+		Array(outcome["armies_advanced"] as PackedInt32Array) == [int(committed[0])],
+		str(outcome["armies_advanced"]))
+	_check("fought_the_reduced_and_lost_armies_are_reported_apart",
+		Array(outcome["armies_reduced"] as PackedInt32Array) == [int(committed[0])]
+			and Array(outcome["armies_lost"] as PackedInt32Array) == [int(defending[0])],
+		"%s / %s" % [str(outcome["armies_reduced"]), str(outcome["armies_lost"])])
+	_check("fought_the_defeated_garrison_is_gone", not state.armies.has(int(defending[0])))
+	_check("fought_the_transaction_closed", state.pending_battle.is_empty())
+
+	# A defence that HOLDS no longer wipes the attacker: the beaten army limps
+	# home reduced, which the boolean path could never say.
+	var held := _staged_state()
+	var held_configured := _configured_for(held)
+	var held_commitment := held_configured["commitment"] as Dictionary
+	var held_committed: PackedInt32Array = held_commitment["committed_armies"]
+	var held_defending: PackedInt32Array = held_commitment["defending_armies"]
+	held.begin_battle(held_commitment)
+	var beaten := ((held.armies[int(held_committed[0])] as Dictionary)["units"][0]
+		as Dictionary).duplicate(true)
+	beaten["hitpoints_milli"] = 250000
+	var report: Array = [beaten]
+	for unit in (held.armies[int(held_defending[0])] as Dictionary)["units"] as Array:
+		report.append((unit as Dictionary).duplicate(true))
+	var held_outcome: Dictionary = BattleScript.apply_fought_outcome(
+		held, BattleScript.DEFENDER_TEAM, report)
+	_check("a_fought_defence_applies", bool(held_outcome["ok"]), str(held_outcome["refusals"]))
+	_check("fought_a_beaten_army_survives_reduced_rather_than_vanishing",
+		held.armies.has(int(held_committed[0]))
+			and int(((held.armies[int(held_committed[0])] as Dictionary)["units"][0]
+				as Dictionary)["hitpoints_milli"]) == 250000)
+	_check("fought_the_region_did_not_move", held.owner_of(TARGET_REGION) == DEFENDER)
+	_check("fought_the_garrison_still_stands_at_full_strength",
+		((held.armies[int(held_defending[0])] as Dictionary)["units"] as Array).size() == 3)
+
+	# Refusals: an undecided match, a smuggled army, and a spent transaction.
+	var guarded := _staged_state()
+	guarded.begin_battle(_commitment_for(guarded))
+	var before := guarded.state_hash()
+	_check("a_fought_undecided_refuses",
+		not bool((BattleScript.apply_fought_outcome(
+			guarded, BattleScript.UNDECIDED, []) as Dictionary)["ok"]))
+	var smuggled: Dictionary = BattleScript.apply_fought_outcome(
+		guarded, BattleScript.ATTACKER_TEAM,
+		[{"army_id": 99, "template": "Smuggler", "hitpoints_milli": 1000}])
+	_check("a_survivor_naming_an_army_outside_the_battle_refuses_by_name",
+		not bool(smuggled["ok"]) and _refusal_mentions(smuggled, "99"),
+		str(smuggled["refusals"]))
+	_check("a_refused_report_changes_nothing",
+		guarded.state_hash() == before and not guarded.pending_battle.is_empty())
+	# An honest walkover: no survivors at all still captures, exactly as an
+	# auto-resolved walkover does - and nothing advances, because nothing lived.
+	var walkover: Dictionary = BattleScript.apply_fought_outcome(
+		guarded, BattleScript.ATTACKER_TEAM, [])
+	_check("a_victory_with_no_survivors_still_captures_the_region",
+		bool(walkover["ok"]) and bool(walkover["captured"])
+			and guarded.owner_of(TARGET_REGION) == ATTACKER
+			and (walkover["armies_advanced"] as PackedInt32Array).is_empty(),
+		str(walkover))
+	_check("a_spent_transaction_refuses_a_second_report",
+		not bool((BattleScript.apply_fought_outcome(
+			guarded, BattleScript.ATTACKER_TEAM, []) as Dictionary)["ok"]))
+
+
 # --- strategic fixture -------------------------------------------------------
 
 ## PlayerAlpha (seat 0) holds Ashfall+Bramblewold with a hero army; PlayerBeta
@@ -752,12 +1031,34 @@ func _staged_state_seated(
 		{"template": "PlayerAlpha", "team": 1, "controller": attacker_controller},
 		{"template": "PlayerBeta", "team": 2, "controller": defender_controller},
 	])
+	# BEFORE any army is placed, exactly as `wotr_session.begin()` orders it,
+	# because `place_army()` copies the unit records onto the army at placement.
+	state.roster_units = ROSTER_UNITS
 	state.apply_ownership_sets("TestScenario")
 	var hero := state.armies_in_region("Ashfall")
 	if hero.is_empty() or not state.move_army(int(hero[0]), "Bramblewold"):
 		printerr("WOTR_BATTLE FAIL fixture could not stage the attacking army")
 	if state.place_army(DEFENDER, TARGET_REGION, "GarrisonArmy1") < 0:
 		printerr("WOTR_BATTLE FAIL fixture could not place the defending garrison")
+	return state
+
+
+## The same fixture with NO roster_units table bound - the state a session
+## reaches when the binding bundle is absent. Armies then carry no unit
+## records, which the staged feed must refuse BY NAME rather than staging
+## around.
+func _staged_state_without_units() -> StateScript:
+	var state := StateScript.new()
+	state.setup(_world(), [
+		{"template": "PlayerAlpha", "team": 1, "controller": StateScript.CONTROLLER_HUMAN},
+		{"template": "PlayerBeta", "team": 2, "controller": StateScript.CONTROLLER_AI},
+	])
+	state.apply_ownership_sets("TestScenario")
+	var hero := state.armies_in_region("Ashfall")
+	if hero.is_empty() or not state.move_army(int(hero[0]), "Bramblewold"):
+		printerr("WOTR_BATTLE FAIL fixture could not stage the unbound attacking army")
+	if state.place_army(DEFENDER, TARGET_REGION, "GarrisonArmy1") < 0:
+		printerr("WOTR_BATTLE FAIL fixture could not place the unbound garrison")
 	return state
 
 

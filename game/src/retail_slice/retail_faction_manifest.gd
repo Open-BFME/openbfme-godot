@@ -106,8 +106,14 @@ static func default_manifest() -> Dictionary:
 		# Tiny pack seeds the full five-building starter base (historical slice).
 		"seed_structure_kinds": SimScript.STRUCTURE_KINDS.duplicate(),
 		"structure_object_ids": DEFAULT_STRUCTURE_OBJECT_IDS.duplicate(true),
+		"structure_source_object_ids": {},
 		"structure_max_health": SimScript.STRUCTURE_MAX_HEALTH.duplicate(true),
 		"structure_build_rules": SimScript.STRUCTURE_BUILD_RULES.duplicate(true),
+		"structure_inherit_upgrades": {},
+		"deferred_structure_inherit_upgrades": {},
+		"deferred_structure_production_exit_updates": {},
+		"structure_auto_deposit_updates": {},
+		"deferred_structure_auto_deposit_updates": {},
 		"producer_kind_registry": DEFAULT_PRODUCER_KIND_REGISTRY.duplicate(true),
 		"unit_production_rules": SimScript.UNIT_PRODUCTION_RULES.duplicate(true),
 		"ai_production_plan": SimScript.AI_PRODUCTION_PLAN.duplicate(),
@@ -161,6 +167,12 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	var structure_upgrade_chains: Dictionary = {}
 	var structure_research: Dictionary = {}
 	var structure_upgrade_effects: Dictionary = {}
+	var structure_create_grants: Dictionary = {}
+	var structure_inherit_upgrades: Dictionary = {}
+	var deferred_structure_inherit_upgrades: Dictionary = {}
+	var deferred_structure_production_exit_updates: Dictionary = {}
+	var structure_auto_deposit_updates: Dictionary = {}
+	var deferred_structure_auto_deposit_updates: Dictionary = {}
 	var producer_kind_registry: Dictionary = {}
 	var builder_sources: Dictionary = {}
 	var pack_roots: Dictionary = {}
@@ -179,6 +191,42 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		# a producer component of the fortress below, when a unit's authored
 		# producer binding cross-checks against its recorded command sets.
 		if evidence != "authored-construct-command":
+			var deferred_auto_deposit: Variant = (
+				registration.get("gameplay", {}) as Dictionary
+			).get("autoDepositUpdates")
+			if deferred_auto_deposit != null:
+				var auto_deposit_error := _validate_structure_auto_deposit_updates(
+					object_id, deferred_auto_deposit
+				)
+				if auto_deposit_error != "":
+					return {"_error": auto_deposit_error}
+				deferred_structure_auto_deposit_updates[object_id] = (
+					deferred_auto_deposit as Array
+				).duplicate(true)
+			var deferred_exit: Variant = (
+				registration.get("gameplay", {}) as Dictionary
+			).get("productionExitUpdates")
+			if deferred_exit != null:
+				var deferred_exit_error := _validate_structure_production_exit_updates(
+					object_id, deferred_exit
+				)
+				if deferred_exit_error != "":
+					return {"_error": deferred_exit_error}
+				deferred_structure_production_exit_updates[object_id] = (
+					deferred_exit as Array
+				).duplicate(true)
+			var deferred_inherit: Variant = (
+				registration.get("gameplay", {}) as Dictionary
+			).get("inheritUpgradesOnCreate")
+			if deferred_inherit != null:
+				var deferred_error := _validate_structure_inherit_upgrades(
+					object_id, deferred_inherit
+				)
+				if deferred_error != "":
+					return {"_error": deferred_error}
+				deferred_structure_inherit_upgrades[object_id] = (
+					deferred_inherit as Array
+				).duplicate(true)
 			excluded_structures[object_id.to_lower()] = {
 				"object_id": object_id,
 				"evidence": evidence,
@@ -211,7 +259,17 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		structure_source_by_kind[kind] = object_id
 		structure_object_ids[kind] = PlayableUnitAdapter._runtime_id(object_id)
 		structure_max_health[kind] = maximum_health
-		structure_build_rules[kind] = {"cost": int(cost), "seconds": seconds}
+		var health_contract := (
+			(registration.get("gameplay", {}) as Dictionary).get("health", {})
+			as Dictionary
+		)
+		var build_rule := {"cost": int(cost), "seconds": seconds}
+		if bool(
+			(health_contract.get("highlanderBody", {}) as Dictionary)
+			.get("value", false)
+		):
+			build_rule["highlander_body"] = true
+		structure_build_rules[kind] = build_rule
 		var armor_rule := _compiled_structure_armor(document)
 		if not armor_rule.is_empty():
 			structure_armor[kind] = armor_rule
@@ -238,6 +296,54 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 			if effects_error != "":
 				return {"_error": effects_error}
 			structure_upgrade_effects[kind] = (upgrade_effects as Dictionary).duplicate(true)
+		var create_grants: Variant = (registration.get("gameplay", {}) as Dictionary).get("createGrants")
+		if create_grants != null:
+			var grants_error := _validate_structure_create_grants(object_id, create_grants)
+			if grants_error != "":
+				return {"_error": grants_error}
+			structure_create_grants[kind] = (create_grants as Array).duplicate(true)
+		var inherit_upgrades: Variant = (registration.get("gameplay", {}) as Dictionary).get("inheritUpgradesOnCreate")
+		if inherit_upgrades != null:
+			var inherit_error := _validate_structure_inherit_upgrades(object_id, inherit_upgrades)
+			if inherit_error != "":
+				return {"_error": inherit_error}
+			structure_inherit_upgrades[kind] = (inherit_upgrades as Array).duplicate(true)
+		var production_exit_updates: Variant = (
+			registration.get("gameplay", {}) as Dictionary
+		).get("productionExitUpdates")
+		if production_exit_updates != null:
+			var production_exit_error := _validate_structure_production_exit_updates(
+				object_id, production_exit_updates
+			)
+			if production_exit_error != "":
+				return {"_error": production_exit_error}
+			# Parsed producer geometry/cadence evidence only. RetailSliceSim has
+			# no model-space exit transform, rally path, exit-door delay, burst,
+			# or airborne-creation implementation yet.
+			deferred_structure_production_exit_updates[object_id] = (
+				production_exit_updates as Array
+			).duplicate(true)
+		var auto_deposit_updates: Variant = (
+			registration.get("gameplay", {}) as Dictionary
+		).get("autoDepositUpdates")
+		if auto_deposit_updates != null:
+			var auto_deposit_error := _validate_structure_auto_deposit_updates(
+				object_id, auto_deposit_updates
+			)
+			if auto_deposit_error != "":
+				return {"_error": auto_deposit_error}
+			var executable_rows: Array = []
+			var deferred_rows: Array = []
+			for auto_deposit_value in auto_deposit_updates as Array:
+				var auto_deposit_row := auto_deposit_value as Dictionary
+				if String(auto_deposit_row.get("runtimeStatus", "")) == "executable":
+					executable_rows.append(auto_deposit_row.duplicate(true))
+				else:
+					deferred_rows.append(auto_deposit_row.duplicate(true))
+			if not executable_rows.is_empty():
+				structure_auto_deposit_updates[kind] = executable_rows
+			if not deferred_rows.is_empty():
+				deferred_structure_auto_deposit_updates[object_id] = deferred_rows
 		producer_kind_registry[object_id] = kind
 		pack_roots[String(document.get("_pack_root", ""))] = true
 		# Doc-driven construct icon: the structure's own converted construct
@@ -603,6 +709,50 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 
 	var sorted_pack_roots: Array = pack_roots.keys()
 	sorted_pack_roots.sort()
+	# Exact retail object identities carried by each live structure kind.
+	# Besides the independently constructed root, this includes only composite
+	# aliases proven by the producer binding above (for example
+	# MenFortressCitadel -> fortress). InheritUpgradeCreate matches this table;
+	# it never guesses from runtime slugs or KindOf.
+	var structure_source_object_ids: Dictionary = {}
+	for kind_value in structure_kinds:
+		var kind := String(kind_value)
+		structure_source_object_ids[kind] = [String(structure_source_by_kind[kind])]
+	for source_id_value in producer_kind_registry.keys():
+		var source_id := String(source_id_value)
+		var kind := String(producer_kind_registry[source_id_value])
+		if not structure_source_object_ids.has(kind):
+			continue
+		var aliases: Array = structure_source_object_ids[kind]
+		if not aliases.has(source_id):
+			aliases.append(source_id)
+			aliases.sort_custom(func(a, b) -> bool:
+				return String(a).naturalnocasecmp_to(String(b)) < 0
+			)
+	for carrier_kind_value in structure_inherit_upgrades.keys():
+		var carrier_kind := String(carrier_kind_value)
+		for rule_value in structure_inherit_upgrades[carrier_kind] as Array:
+			var rule := rule_value as Dictionary
+			var source_id := String(rule.get("sourceObjectId", ""))
+			var matches: Array[String] = []
+			for donor_kind_value in structure_source_object_ids.keys():
+				var donor_kind := String(donor_kind_value)
+				for alias_value in structure_source_object_ids[donor_kind] as Array:
+					if String(alias_value).nocasecmp_to(source_id) == 0:
+						matches.append(donor_kind)
+						break
+			if matches.size() != 1:
+				return {
+					"_error": (
+						"structure '%s' InheritUpgradeCreate source '%s' "
+						+ "resolves to %d live structure kinds"
+					) % [
+						String(structure_source_by_kind.get(carrier_kind, carrier_kind)),
+						source_id,
+						matches.size(),
+					]
+				}
+			rule["sourceKind"] = matches[0]
 	# Prefer the real pack.json id from faction content roots. Composed alpha
 	# packs (e.g. bfme2-men-elves-...) replace the historical men-vslice host
 	# id; asserting DEFAULT_PACK_ID when that pack is not mounted makes the
@@ -620,6 +770,7 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		# Retail start: only fortresses are pre-placed; everything else is built.
 		"seed_structure_kinds": ["fortress"],
 		"structure_object_ids": structure_object_ids,
+		"structure_source_object_ids": structure_source_object_ids,
 		"structure_max_health": structure_max_health,
 		"structure_build_rules": structure_build_rules,
 		# Compiled armor.ini table per kind (fractions); kinds whose structure
@@ -635,6 +786,19 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		# Authored per-structure effect bindings keyed by technology id
 		# (discounts, refunds, income bonuses); kinds without one are absent.
 		"structure_upgrade_effects": structure_upgrade_effects,
+		# Source-backed GrantUpgradeCreate rows, applied by the simulation at
+		# the exact create/build-complete lifecycle edge.
+		"structure_create_grants": structure_create_grants,
+		# Retail InheritUpgradeCreate contracts, evaluated once on the
+		# carrier's create edge against the exact source identities above.
+		"structure_inherit_upgrades": structure_inherit_upgrades,
+		# Parsed but not executable until their owning wall/composite lifecycle
+		# is materialized. Keeping these separate prevents importer coverage
+		# from masquerading as live runtime coverage.
+		"deferred_structure_inherit_upgrades": deferred_structure_inherit_upgrades,
+		"deferred_structure_production_exit_updates": deferred_structure_production_exit_updates,
+		"structure_auto_deposit_updates": structure_auto_deposit_updates,
+		"deferred_structure_auto_deposit_updates": deferred_structure_auto_deposit_updates,
 		"producer_kind_registry": producer_kind_registry,
 		"unit_production_rules": unit_production_rules,
 		# Doc-derived "Trains <units>" per producer kind for honest construct
@@ -804,6 +968,649 @@ static func _validate_structure_upgrade_effects(object_id: String, effects_value
 		if upgrade_id == "" or kind == "":
 			return "structure '%s' upgrade effect row is malformed" % object_id
 	return ""
+
+
+static func _validate_structure_create_grants(object_id: String, grants_value: Variant) -> String:
+	if typeof(grants_value) != TYPE_ARRAY or (grants_value as Array).is_empty():
+		return "structure '%s' createGrants is not a non-empty array" % object_id
+	var seen: Dictionary = {}
+	for row_value in grants_value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return "structure '%s' createGrants contains a non-dictionary row" % object_id
+		var row := row_value as Dictionary
+		var upgrade_id := String(row.get("upgradeId", ""))
+		var upgrade_type := String(row.get("upgradeType", ""))
+		var on_create: Variant = row.get("onCreateWhenComplete")
+		var on_complete: Variant = row.get("onBuildComplete")
+		if (
+			upgrade_id == ""
+			or upgrade_type not in ["OBJECT", "PLAYER"]
+			or typeof(on_create) != TYPE_BOOL
+			or typeof(on_complete) != TYPE_BOOL
+			or (not bool(on_create) and not bool(on_complete))
+			or String(row.get("module", "")) != "GrantUpgradeCreate"
+			or String(row.get("sourceIni", "")) == ""
+			or int(row.get("line", 0)) <= 0
+		):
+			return "structure '%s' has an invalid GrantUpgradeCreate row" % object_id
+		var identity := "%s|%s|%s" % [
+			upgrade_id.to_lower(), str(bool(on_create)), str(bool(on_complete))
+		]
+		if seen.has(identity):
+			return "structure '%s' has duplicate GrantUpgradeCreate rows" % object_id
+		seen[identity] = true
+	return ""
+
+
+static func _validate_structure_inherit_upgrades(object_id: String, rules_value: Variant) -> String:
+	if typeof(rules_value) != TYPE_ARRAY or (rules_value as Array).is_empty():
+		return "structure '%s' inheritUpgradesOnCreate is not a non-empty array" % object_id
+	var seen: Dictionary = {}
+	for row_value in rules_value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return "structure '%s' inheritUpgradesOnCreate contains a non-dictionary row" % object_id
+		var row := row_value as Dictionary
+		var radius_value: Variant = row.get("radius")
+		if typeof(radius_value) != TYPE_DICTIONARY:
+			return "structure '%s' has an invalid InheritUpgradeCreate radius" % object_id
+		var radius := radius_value as Dictionary
+		var upgrade_id := String(row.get("upgradeId", ""))
+		var source_id := String(row.get("sourceObjectId", ""))
+		if (
+			upgrade_id == ""
+			or String(row.get("upgradeType", "")) != "OBJECT"
+			or source_id == ""
+			or String(row.get("objectFilter", "")) != "ANY +%s" % source_id
+			or String(row.get("module", "")) != "InheritUpgradeCreate"
+			or String(radius.get("authored", "")) == ""
+			or float(radius.get("value", 0.0)) <= 0.0
+			or String(row.get("sourceIni", "")) == ""
+			or int(row.get("line", 0)) <= 0
+		):
+			return "structure '%s' has an invalid InheritUpgradeCreate row" % object_id
+		var identity := "%s|%s|%s" % [
+			upgrade_id.to_lower(), source_id.to_lower(), str(float(radius["value"]))
+		]
+		if seen.has(identity):
+			return "structure '%s' has duplicate InheritUpgradeCreate rows" % object_id
+		seen[identity] = true
+	return ""
+
+
+static func _validate_structure_production_exit_updates(
+	object_id: String, rules_value: Variant
+) -> String:
+	# The composed runtime envelope intentionally carries only the
+	# compiler-validated gameplay projection, not descriptor sourceDocuments.
+	# compose_structure_runtime_document() validates the descriptor self-digest
+	# (integrity, not retail authenticity), its closed schema, and its internally
+	# consistent SHA-bearing source-path table before creating this envelope.
+	# Source-byte authenticity belongs to the importer build and pack-receipt
+	# boundary. Keep this runtime boundary shape-only; it cannot re-attest source
+	# bytes from a projection which deliberately omits that provenance table.
+	if typeof(rules_value) != TYPE_ARRAY or (rules_value as Array).is_empty():
+		return "structure '%s' productionExitUpdates is not a non-empty array" % object_id
+	for row_value in rules_value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return "structure '%s' productionExitUpdates contains a non-dictionary row" % object_id
+		var row := row_value as Dictionary
+		if (
+			not _has_exact_dictionary_keys(
+				row,
+				[
+					"module",
+					"unitCreatePoint",
+					"naturalRallyPoint",
+					"exitDelay",
+					"allowAirborneCreation",
+					"initialBurst",
+					"deferredFields",
+					"runtimeStatus",
+					"sourceIni",
+					"line",
+				]
+			)
+			or
+			String(row.get("module", "")) != "QueueProductionExitUpdate"
+			or String(row.get("runtimeStatus", "")) != "deferred"
+			or typeof(row.get("sourceIni")) != TYPE_STRING
+			or String(row.get("sourceIni", "")) == ""
+			or typeof(row.get("line")) != TYPE_INT
+			or int(row.get("line", 0)) <= 0
+		):
+			return "structure '%s' has an invalid deferred QueueProductionExitUpdate row" % object_id
+		for field_name in ["unitCreatePoint", "naturalRallyPoint"]:
+			var coord_field_value: Variant = row.get(field_name)
+			if typeof(coord_field_value) != TYPE_DICTIONARY:
+				return "structure '%s' has an invalid QueueProductionExitUpdate coordinate" % object_id
+			var coord_field := coord_field_value as Dictionary
+			var coord_defaulted_value: Variant = coord_field.get("defaulted")
+			var coord_defaulted := coord_field.has("defaulted")
+			var expected_coord_keys := (
+				["authored", "value", "defaulted"]
+				if coord_defaulted
+				else ["authored", "value", "sourceIni", "line"]
+			)
+			if (
+				not _has_exact_dictionary_keys(coord_field, expected_coord_keys)
+				or (
+					coord_defaulted
+					and (
+						typeof(coord_defaulted_value) != TYPE_BOOL
+						or coord_defaulted_value != true
+					)
+				)
+			):
+				return "structure '%s' has an invalid QueueProductionExitUpdate coordinate" % object_id
+			var coordinate_value: Variant = coord_field.get("value")
+			if typeof(coordinate_value) != TYPE_DICTIONARY:
+				return "structure '%s' has an invalid QueueProductionExitUpdate coordinate" % object_id
+			var coordinate := coordinate_value as Dictionary
+			var authored_coordinate := _queue_exit_authored_coordinate(
+				String(coord_field.get("authored", ""))
+			)
+			if (
+				coordinate.size() != 3
+				or not coordinate.has("x")
+				or not coordinate.has("y")
+				or not coordinate.has("z")
+				or typeof(coordinate["x"]) != TYPE_FLOAT
+				or typeof(coordinate["y"]) != TYPE_FLOAT
+				or typeof(coordinate["z"]) != TYPE_FLOAT
+			):
+				return "structure '%s' has an invalid QueueProductionExitUpdate coordinate" % object_id
+			if (
+				typeof(coord_field.get("authored")) != TYPE_STRING
+				or (
+					coord_defaulted
+					and (
+						String(coord_field["authored"]) != ""
+						or float(coordinate["x"]) != 0.0
+						or float(coordinate["y"]) != 0.0
+						or float(coordinate["z"]) != 0.0
+					)
+				)
+				or (
+					not coord_defaulted
+					and (
+						String(coord_field["authored"]) == ""
+						or authored_coordinate.is_empty()
+						or float(authored_coordinate.get("x", NAN))
+						!= float(coordinate["x"])
+						or float(authored_coordinate.get("y", NAN))
+						!= float(coordinate["y"])
+						or float(authored_coordinate.get("z", NAN))
+						!= float(coordinate["z"])
+						or typeof(coord_field.get("sourceIni")) != TYPE_STRING
+						or String(coord_field.get("sourceIni", "")) == ""
+						or typeof(coord_field.get("line")) != TYPE_INT
+						or int(coord_field.get("line", 0)) <= 0
+					)
+				)
+			):
+				return "structure '%s' has an invalid QueueProductionExitUpdate coordinate" % object_id
+		for field_name in ["exitDelay", "initialBurst"]:
+			var integer_field_value: Variant = row.get(field_name)
+			if typeof(integer_field_value) != TYPE_DICTIONARY:
+				return "structure '%s' has an invalid QueueProductionExitUpdate integer" % object_id
+			var integer_field := integer_field_value as Dictionary
+			var integer_defaulted_value: Variant = integer_field.get("defaulted")
+			var integer_defaulted := integer_field.has("defaulted")
+			var expected_integer_keys: Array = []
+			if integer_defaulted:
+				expected_integer_keys = (
+					["authored", "value", "defaulted", "unit"]
+					if field_name == "exitDelay"
+					else ["authored", "value", "defaulted"]
+				)
+			else:
+				expected_integer_keys = ["authored", "value", "sourceIni", "line"]
+				if field_name == "exitDelay":
+					expected_integer_keys.append("unit")
+				if integer_field.has("resolvedDefine"):
+					expected_integer_keys.append("resolvedDefine")
+			if (
+				not _has_exact_dictionary_keys(integer_field, expected_integer_keys)
+				or (
+					integer_defaulted
+					and (
+						typeof(integer_defaulted_value) != TYPE_BOOL
+						or integer_defaulted_value != true
+					)
+				)
+				or typeof(integer_field.get("authored")) != TYPE_STRING
+				or typeof(integer_field.get("value")) != TYPE_INT
+				or not _queue_exit_authored_integer_matches(integer_field)
+				or int(integer_field["value"]) < 0
+				or int(integer_field["value"]) > 4294967295
+				or (
+					field_name == "exitDelay"
+					and String(integer_field.get("unit", "")) != "milliseconds"
+				)
+				or (
+					field_name != "exitDelay"
+					and integer_field.has("unit")
+				)
+				or (
+					integer_defaulted
+					and (
+						String(integer_field["authored"]) != "0"
+						or int(integer_field["value"]) != 0
+					)
+				)
+				or (
+					not integer_defaulted
+					and (
+						String(integer_field["authored"]) == ""
+						or typeof(integer_field.get("sourceIni")) != TYPE_STRING
+						or String(integer_field.get("sourceIni", "")) == ""
+						or typeof(integer_field.get("line")) != TYPE_INT
+						or int(integer_field.get("line", 0)) <= 0
+					)
+				)
+			):
+				return "structure '%s' has an invalid QueueProductionExitUpdate integer" % object_id
+		var airborne_value: Variant = row.get("allowAirborneCreation")
+		if typeof(airborne_value) != TYPE_DICTIONARY:
+			return "structure '%s' has an invalid QueueProductionExitUpdate boolean" % object_id
+		var airborne := airborne_value as Dictionary
+		var airborne_defaulted_value: Variant = airborne.get("defaulted")
+		var airborne_defaulted := airborne.has("defaulted")
+		var expected_airborne_keys := (
+			["authored", "value", "defaulted"]
+			if airborne_defaulted
+			else ["authored", "value", "sourceIni", "line"]
+		)
+		if (
+			not _has_exact_dictionary_keys(airborne, expected_airborne_keys)
+			or (
+				airborne_defaulted
+				and (
+					typeof(airborne_defaulted_value) != TYPE_BOOL
+					or airborne_defaulted_value != true
+				)
+			)
+			or typeof(airborne.get("authored")) != TYPE_STRING
+			or typeof(airborne.get("value")) != TYPE_BOOL
+			or (
+				airborne_defaulted
+				and (
+					String(airborne["authored"]) != "No"
+					or bool(airborne["value"])
+				)
+			)
+			or (
+				not airborne_defaulted
+				and (
+					String(airborne["authored"]) == ""
+					or not ["yes", "no"].has(
+						String(airborne["authored"]).strip_edges().to_lower()
+					)
+					or bool(airborne["value"])
+					!= (
+						String(airborne["authored"]).strip_edges().to_lower()
+						== "yes"
+					)
+					or typeof(airborne.get("sourceIni")) != TYPE_STRING
+					or String(airborne.get("sourceIni", "")) == ""
+					or typeof(airborne.get("line")) != TYPE_INT
+					or int(airborne.get("line", 0)) <= 0
+				)
+			)
+		):
+			return "structure '%s' has an invalid QueueProductionExitUpdate boolean" % object_id
+		var deferred_value: Variant = row.get("deferredFields")
+		if typeof(deferred_value) != TYPE_ARRAY:
+			return "structure '%s' has invalid QueueProductionExitUpdate deferred fields" % object_id
+		var seen: Dictionary = {}
+		for deferred_row_value in deferred_value as Array:
+			if typeof(deferred_row_value) != TYPE_DICTIONARY:
+				return "structure '%s' has invalid QueueProductionExitUpdate deferred fields" % object_id
+			var deferred_row := deferred_row_value as Dictionary
+			var deferred_name := String(deferred_row.get("name", "")).to_lower()
+			if (
+				not _has_exact_dictionary_keys(
+					deferred_row,
+					["name", "authored", "sourceIni", "line", "reason"]
+				)
+				or typeof(deferred_row.get("name")) != TYPE_STRING
+				or not [
+					"placementviewangle",
+					"usereturntoformation",
+					"noexitpath",
+				].has(deferred_name)
+				or seen.has(deferred_name)
+				or typeof(deferred_row.get("authored")) != TYPE_STRING
+				or String(deferred_row.get("authored", "")) == ""
+				or typeof(deferred_row.get("sourceIni")) != TYPE_STRING
+				or String(deferred_row.get("sourceIni", "")) == ""
+				or typeof(deferred_row.get("line")) != TYPE_INT
+				or int(deferred_row.get("line", 0)) <= 0
+				or typeof(deferred_row.get("reason")) != TYPE_STRING
+				or String(deferred_row.get("reason", ""))
+				!= "bfme-field-without-local-runtime-oracle"
+			):
+				return "structure '%s' has invalid QueueProductionExitUpdate deferred fields" % object_id
+			seen[deferred_name] = true
+	return ""
+
+
+static func _validate_structure_auto_deposit_updates(
+	object_id: String, rules_value: Variant
+) -> String:
+	if typeof(rules_value) != TYPE_ARRAY or (rules_value as Array).is_empty():
+		return "structure '%s' autoDepositUpdates is not a non-empty array" % object_id
+	for row_value in rules_value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return "structure '%s' autoDepositUpdates contains a non-dictionary row" % object_id
+		var row := row_value as Dictionary
+		if (
+			not _has_exact_dictionary_keys(
+				row,
+				[
+					"module",
+					"depositTiming",
+					"depositAmount",
+					"initialCaptureBonus",
+					"actualMoney",
+					"upgradedBoosts",
+					"deferredFields",
+					"runtimeStatus",
+					"sourceIni",
+					"line",
+				]
+			)
+			or String(row.get("module", "")) != "AutoDepositUpdate"
+			or not ["executable", "deferred"].has(
+				String(row.get("runtimeStatus", ""))
+			)
+			or typeof(row.get("sourceIni")) != TYPE_STRING
+			or String(row.get("sourceIni", "")) == ""
+			or typeof(row.get("line")) != TYPE_INT
+			or int(row.get("line", 0)) <= 0
+		):
+			return "structure '%s' has an invalid AutoDepositUpdate row" % object_id
+		var timing_value: Variant = row.get("depositTiming")
+		if typeof(timing_value) != TYPE_DICTIONARY:
+			return "structure '%s' has invalid AutoDepositUpdate timing" % object_id
+		var timing := timing_value as Dictionary
+		var timing_copy := timing.duplicate()
+		if (
+			String(timing_copy.get("unit", "")) != "milliseconds"
+			or typeof(timing_copy.get("simulationTicks")) != TYPE_INT
+		):
+			return "structure '%s' has invalid AutoDepositUpdate timing" % object_id
+		timing_copy.erase("unit")
+		var simulation_ticks := int(timing_copy.get("simulationTicks", -1))
+		timing_copy.erase("simulationTicks")
+		if (
+			not _valid_auto_deposit_integer(timing_copy, true)
+			or simulation_ticks
+			!= (
+				(int(timing.get("value", 0)) + 99) / 100
+				if int(timing.get("value", 0)) > 0
+				else 0
+			)
+		):
+			return "structure '%s' has invalid AutoDepositUpdate timing" % object_id
+		if (
+			not _valid_auto_deposit_integer(row.get("depositAmount"), false)
+			or not _valid_auto_deposit_integer(
+				row.get("initialCaptureBonus"), false
+			)
+			or not _valid_auto_deposit_bool(row.get("actualMoney"))
+		):
+			return "structure '%s' has invalid AutoDepositUpdate scalar" % object_id
+		var boosts_value: Variant = row.get("upgradedBoosts")
+		if typeof(boosts_value) != TYPE_ARRAY:
+			return "structure '%s' has invalid AutoDepositUpdate boosts" % object_id
+		for boost_value in boosts_value as Array:
+			if typeof(boost_value) != TYPE_DICTIONARY:
+				return "structure '%s' has invalid AutoDepositUpdate boost" % object_id
+			var boost := boost_value as Dictionary
+			if (
+				not _has_exact_dictionary_keys(
+					boost,
+					[
+						"upgradeId",
+						"upgradeType",
+						"upgradeAttestation",
+						"boost",
+						"authored",
+						"sourceIni",
+						"line",
+					]
+				)
+				or String(boost.get("upgradeId", "")) == ""
+				or String(boost.get("upgradeType", "")) != "PLAYER"
+				or typeof(boost.get("upgradeAttestation")) != TYPE_DICTIONARY
+				or typeof(boost.get("boost")) != TYPE_INT
+				or String(boost.get("authored", "")) == ""
+				or String(boost.get("sourceIni", "")) == ""
+				or int(boost.get("line", 0)) <= 0
+			):
+				return "structure '%s' has invalid AutoDepositUpdate boost" % object_id
+			var attestation := boost["upgradeAttestation"] as Dictionary
+			if (
+				not _has_exact_dictionary_keys(
+					attestation,
+					[
+						"upgradeId",
+						"upgradeType",
+						"sourceIni",
+						"sourceSha256",
+					]
+				)
+				or String(attestation.get("upgradeId", ""))
+				!= String(boost["upgradeId"])
+				or String(attestation.get("upgradeType", "")) != "PLAYER"
+				or String(attestation.get("sourceIni", "")).to_lower()
+				!= "data/ini/upgrade.ini"
+				or String(attestation.get("sourceSha256", "")).length() != 64
+				or not String(attestation.get("sourceSha256", ""))
+				.is_valid_hex_number(false)
+			):
+				return "structure '%s' has invalid AutoDepositUpdate upgrade attestation" % object_id
+			var authored_tokens := (
+				String(boost["authored"])
+				.replace(":", " ")
+				.split(" ", false)
+			)
+			if (
+				authored_tokens.size() != 4
+				or String(authored_tokens[0]).to_lower() != "upgradetype"
+				or String(authored_tokens[1]) != String(boost["upgradeId"])
+				or String(authored_tokens[2]).to_lower() != "boost"
+				or not String(authored_tokens[3]).is_valid_int()
+				or int(authored_tokens[3]) != int(boost["boost"])
+			):
+				return "structure '%s' has invalid AutoDepositUpdate boost projection" % object_id
+		var deferred_value: Variant = row.get("deferredFields")
+		if typeof(deferred_value) != TYPE_ARRAY:
+			return "structure '%s' has invalid AutoDepositUpdate deferred fields" % object_id
+		var seen_deferred: Dictionary = {}
+		for deferred_value_row in deferred_value as Array:
+			if typeof(deferred_value_row) != TYPE_DICTIONARY:
+				return "structure '%s' has invalid AutoDepositUpdate deferred field" % object_id
+			var deferred := deferred_value_row as Dictionary
+			var deferred_name := String(deferred.get("name", "")).to_lower()
+			if (
+				not _has_exact_dictionary_keys(
+					deferred,
+					["name", "authored", "sourceIni", "line", "reason"]
+				)
+				or not ["givenoxp", "onlywhengarrisoned"].has(deferred_name)
+				or seen_deferred.has(deferred_name)
+				or String(deferred.get("authored", "")) == ""
+				or String(deferred.get("sourceIni", "")) == ""
+				or int(deferred.get("line", 0)) <= 0
+				or String(deferred.get("reason", ""))
+				!= "bfme-field-without-local-runtime-oracle"
+			):
+				return "structure '%s' has invalid AutoDepositUpdate deferred field" % object_id
+			seen_deferred[deferred_name] = true
+		if (
+			(String(row.get("runtimeStatus", "")) == "executable")
+			!= (deferred_value as Array).is_empty()
+		):
+			return "structure '%s' has invalid AutoDepositUpdate runtime status" % object_id
+		for default_pair in [
+			[timing, 0],
+			[row.get("depositAmount"), 0],
+			[row.get("initialCaptureBonus"), 0],
+		]:
+			var default_field := default_pair[0] as Dictionary
+			if (
+				default_field.has("defaulted")
+				and (
+					bool(default_field.get("defaulted", false)) != true
+					or int(default_field.get("value", -1)) != int(default_pair[1])
+					or String(default_field.get("authored", ""))
+					!= str(int(default_pair[1]))
+				)
+			):
+				return "structure '%s' has invalid AutoDepositUpdate default" % object_id
+	return ""
+
+
+static func _valid_auto_deposit_integer(
+	field_value: Variant, unsigned: bool
+) -> bool:
+	if typeof(field_value) != TYPE_DICTIONARY:
+		return false
+	var field := field_value as Dictionary
+	var defaulted := field.has("defaulted")
+	var expected_keys := (
+		["authored", "value", "defaulted"]
+		if defaulted
+		else ["authored", "value", "sourceIni", "line"]
+	)
+	if not defaulted and field.has("resolvedDefine"):
+		expected_keys.append("resolvedDefine")
+	if (
+		not _has_exact_dictionary_keys(field, expected_keys)
+		or typeof(field.get("authored")) != TYPE_STRING
+		or typeof(field.get("value")) != TYPE_INT
+	):
+		return false
+	var value := int(field["value"])
+	if (
+		(unsigned and (value < 0 or value > 4294967295))
+		or (
+			not unsigned
+			and (value < -2147483648 or value > 2147483647)
+		)
+	):
+		return false
+	if defaulted:
+		return (
+			typeof(field.get("defaulted")) == TYPE_BOOL
+			and bool(field["defaulted"])
+			and String(field["authored"]) == str(value)
+		)
+	return (
+		String(field["authored"]) != ""
+		and typeof(field.get("sourceIni")) == TYPE_STRING
+		and String(field["sourceIni"]) != ""
+		and typeof(field.get("line")) == TYPE_INT
+		and int(field["line"]) > 0
+	)
+
+
+static func _valid_auto_deposit_bool(field_value: Variant) -> bool:
+	if typeof(field_value) != TYPE_DICTIONARY:
+		return false
+	var field := field_value as Dictionary
+	var defaulted := field.has("defaulted")
+	var expected_keys := (
+		["authored", "value", "defaulted"]
+		if defaulted
+		else ["authored", "value", "sourceIni", "line"]
+	)
+	var authored := String(field.get("authored", "")).strip_edges().to_lower()
+	return (
+		_has_exact_dictionary_keys(field, expected_keys)
+		and ["yes", "no"].has(authored)
+		and typeof(field.get("value")) == TYPE_BOOL
+		and bool(field["value"]) == (authored == "yes")
+		and (
+			not defaulted
+			or (
+				typeof(field.get("defaulted")) == TYPE_BOOL
+				and bool(field["defaulted"])
+				and authored == "yes"
+			)
+		)
+		and (
+			defaulted
+			or (
+				String(field.get("sourceIni", "")) != ""
+				and int(field.get("line", 0)) > 0
+			)
+		)
+	)
+
+
+static func _has_exact_dictionary_keys(value: Dictionary, expected: Array) -> bool:
+	if value.size() != expected.size():
+		return false
+	for key_value in expected:
+		if not value.has(key_value):
+			return false
+	return true
+
+
+static func _queue_exit_authored_integer_matches(field: Dictionary) -> bool:
+	var authored := String(field.get("authored", ""))
+	var value_value: Variant = field.get("value")
+	if typeof(value_value) != TYPE_INT:
+		return false
+	var decimal_expression := RegEx.new()
+	if decimal_expression.compile("^[0-9]+$") != OK:
+		return false
+	if decimal_expression.search(authored) != null:
+		return (
+			not field.has("resolvedDefine")
+			and authored.is_valid_int()
+			and authored.to_int() == int(value_value)
+		)
+	var define_expression := RegEx.new()
+	if define_expression.compile("^[A-Za-z_][A-Za-z0-9_]*$") != OK:
+		return false
+	if define_expression.search(authored) == null:
+		return false
+	var resolved_value: Variant = field.get("resolvedDefine")
+	if typeof(resolved_value) != TYPE_DICTIONARY:
+		return false
+	var resolved := resolved_value as Dictionary
+	return (
+		resolved.size() == 2
+		and resolved.has("name")
+		and resolved.has("value")
+		and typeof(resolved.get("name")) == TYPE_STRING
+		and String(resolved["name"]) == authored
+		and typeof(resolved.get("value")) == TYPE_INT
+		and int(resolved["value"]) == int(value_value)
+	)
+
+
+static func _queue_exit_authored_coordinate(authored: String) -> Dictionary:
+	var expression := RegEx.new()
+	var compile_error := expression.compile(
+		"(?i)^\\s*X\\s*:\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)\\s+"
+		+ "Y\\s*:\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)\\s+"
+		+ "Z\\s*:\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)\\s*$"
+	)
+	if compile_error != OK:
+		return {}
+	var matched := expression.search(authored)
+	if matched == null:
+		return {}
+	return {
+		"x": float(matched.get_string(1)),
+		"y": float(matched.get_string(2)),
+		"z": float(matched.get_string(3)),
+	}
 
 
 static func _content_db_pack_index() -> Dictionary:

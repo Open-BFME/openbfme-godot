@@ -2,6 +2,7 @@ class_name RetailSliceSim
 extends RefCounted
 
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+const ParitySystems = preload("res://src/retail_slice/retail_slice_parity.gd")
 const CommandScript = preload("res://src/retail_slice/retail_command.gd")
 
 const MAX_RETAINED_EVENT_HISTORY := 2048
@@ -347,6 +348,37 @@ func _seed_team_roster() -> void:
 		if not _team_roster.has(team):
 			_team_roster.append(team)
 		_team_descriptors[team] = descriptor
+
+
+static func normalize_authored_start_assignments(descriptors: Array) -> Array:
+	## Normalize menu/lobby Player_N_Start numbers without coercion. Positive
+	## exact integers become the engine's zero-based mpStartIndex; zero stays
+	## absent; malformed, negative, and duplicate assignments carry an invalid
+	## marker and no plausible value. The roster itself is preserved so invalid
+	## input cannot silently select the legacy default roster instead.
+	var normalized: Array = []
+	var start_owners := {}
+	for index in descriptors.size():
+		var entry := (descriptors[index] as Dictionary).duplicate(true)
+		var authored_start: Variant = entry.get("start_index", 0)
+		entry.erase("start_index")
+		entry.erase("start_index_invalid")
+		if typeof(authored_start) != TYPE_INT or int(authored_start) < 0:
+			entry["start_index_invalid"] = true
+		elif int(authored_start) > 0:
+			var internal_start := int(authored_start) - 1
+			if start_owners.has(internal_start):
+				var previous_index := int(start_owners[internal_start])
+				var previous := normalized[previous_index] as Dictionary
+				previous.erase("start_index")
+				previous["start_index_invalid"] = true
+				normalized[previous_index] = previous
+				entry["start_index_invalid"] = true
+			else:
+				entry["start_index"] = internal_start
+				start_owners[internal_start] = index
+		normalized.append(entry)
+	return normalized
 
 
 func configure_team_roster(descriptors: Array) -> void:
@@ -1101,6 +1133,37 @@ func structure_upgrade_effects_for_team(team: int) -> Dictionary:
 	return _team_structure_upgrade_effects.get(team, _structure_upgrade_effects) as Dictionary
 
 
+func structure_create_grants_for_team(team: int) -> Dictionary:
+	var grants := (
+		team_manifest_for(team).get("structure_create_grants", {}) as Dictionary
+	).duplicate(true)
+	for kind_value in _expansion_build_rules.keys():
+		var rule := _expansion_build_rules[kind_value] as Dictionary
+		var rows: Variant = rule.get("create_grants")
+		if typeof(rows) == TYPE_ARRAY and not (rows as Array).is_empty():
+			grants[String(kind_value)] = (rows as Array).duplicate(true)
+	return grants
+
+
+func structure_inherit_upgrades_for_team(team: int) -> Dictionary:
+	return (
+		team_manifest_for(team).get("structure_inherit_upgrades", {}) as Dictionary
+	)
+
+
+func structure_auto_deposit_updates_for_team(team: int) -> Dictionary:
+	return (
+		team_manifest_for(team).get("structure_auto_deposit_updates", {})
+		as Dictionary
+	)
+
+
+func structure_source_object_ids_for_team(team: int) -> Dictionary:
+	return (
+		team_manifest_for(team).get("structure_source_object_ids", {}) as Dictionary
+	)
+
+
 func compiled_research_kinds_for_team(team: int) -> Dictionary:
 	return _team_compiled_research_kinds.get(team, _compiled_research_kinds) as Dictionary
 
@@ -1115,6 +1178,14 @@ var entities: Dictionary = {}
 var structures: Dictionary = {}
 var team_resources: Dictionary = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
 var team_command_points: Dictionary = {PLAYER_TEAM: 0, ENEMY_TEAM: 0}
+## Residual parity subsystems (FoW, path, wall helpers, OCL leaf registry, mood/meta).
+## Never store a back-ref from parity to this sim (RefCounted cycle → leak/AV).
+var parity = null
+
+
+func _ensure_parity() -> void:
+	if parity == null:
+		parity = ParitySystems.new()
 ## Explicit team registry (N-team foundation, step 1-2). Seeded at setup() from
 ## an injected descriptor list; defaults to the historical 2-team roster so
 ## every existing behavior stays byte-identical. Each descriptor is
@@ -1156,6 +1227,9 @@ var _team_structure_upgrade_contracts: Dictionary = {}
 var _team_structure_upgrade_effects: Dictionary = {}
 var _team_compiled_research_kinds: Dictionary = {}
 var command_point_cap := 200
+## Script-authored per-team {total, maximum}. Empty means the global cap
+## remains the exact legacy default and contributes no bytes to snapshots.
+var command_point_overrides_by_team: Dictionary = {}
 var base_loop_enabled := false
 var source_map_configured := false
 var ford_gates: Array[Dictionary] = []
@@ -1235,6 +1309,8 @@ var _next_creep_structure_id := 60001
 
 
 func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) -> void:
+	_ensure_parity()
+	parity.clear()
 	_seed_team_roster()
 	if not map_configuration.is_empty():
 		_apply_map_configuration(map_configuration)
@@ -1259,16 +1335,47 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	build_plots.clear()
 	_next_expansion_structure_id = 9000
 	script_unit_references.clear()
+	script_entity_references.clear()
+	create_object_die_pending.clear()
 	# Script-built OBJECT_TYPE_LIST stores are match STATE (mutated by script
 	# actions, persisted by retail save games), never configuration: a reused
 	# sim must not carry one match's lists into the next.
 	script_object_type_lists.clear()
+	# Script-team identities are match configuration and worlds retain their
+	# bindings across reset_match(). Mutable member handles/recruitable flags
+	# point into the old match and are stripped.
+	for script_team_name in script_teams.keys():
+		var previous := script_teams[script_team_name] as Dictionary
+		script_teams[script_team_name] = _script_team_definition(previous)
+	building_permissions_by_team.clear()
+	command_point_overrides_by_team.clear()
 	# Team behavior state (TEAM_STATE + custom-state tokens) is match state by
 	# the same rule: mutated by script actions, save-persisted in retail
 	# (Team::xfer writes m_state), and one match's AI blackboard must never
 	# leak into the next - a reused sim would diverge from a fresh one on the
 	# first TEAM_STATE_IS the adopted AI evaluates.
 	team_behavior_states.clear()
+	# Sequential-script heads are match state (queued behavior scripts progress
+	# across ticks). Clear so a reused sim does not inherit another match's AI
+	# behavior chains.
+	sequential_script_queues.clear()
+	production_controls_by_team.clear()
+	tech_buildability.clear()
+	script_team_references.clear()
+	player_progression.clear()
+	player_economy_extras.clear()
+	player_diplomacy_overrides.clear()
+	script_event_counts.clear()
+	containment.clear()
+	entity_container.clear()
+	script_areas.clear()
+	script_waypoints.clear()
+	script_waypoint_paths.clear()
+	team_created_edge.clear()
+	match_script_flags.clear()
+	attack_priority_names.clear()
+	selection_script_names.clear()
+	script_surface_bag.clear()
 	# The logic random stream is match state too: cleared back to the
 	# never-drawn form so a reused sim re-derives the words from the (rules-
 	# configured) seed on first draw, exactly like a freshly built one.
@@ -1288,6 +1395,7 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_script_executor_faults.clear()
 	_rebase_script_executor_offsets()
 	_completed_hero_identities.clear()
+	_hero_peak_ranks_by_team.clear()
 	_next_event_sequence = 1
 	_next_order_sequence = 1
 	_music_state = ""
@@ -1411,6 +1519,33 @@ func _apply_map_configuration(configuration: Dictionary) -> void:
 			var center_value: Variant = (configured_team_centers as Dictionary)[team_key]
 			if typeof(center_value) == TYPE_VECTOR2:
 				_extra_team_centers[int(team_key)] = center_value
+	# Optional map-owned start assignment. Validate the complete table before
+	# applying any row: a malformed entry must not leave a partially credible
+	# START_POSITION_IS surface. Explicit roster descriptors (menu/WotR setup)
+	# are authoritative and are never overwritten by the legacy map defaults.
+	var configured_team_starts: Variant = configuration.get("team_start_indices", {})
+	var validated_team_starts := {}
+	var team_starts_valid := typeof(configured_team_starts) == TYPE_DICTIONARY
+	# An injected menu/WotR roster owns its assignments, including explicit
+	# unset or invalid rows. Map defaults belong only to the true legacy roster.
+	if team_starts_valid and _pending_team_roster.is_empty():
+		for team_key in (configured_team_starts as Dictionary).keys():
+			var start_value: Variant = (configured_team_starts as Dictionary)[team_key]
+			if (
+				typeof(team_key) != TYPE_INT
+				or typeof(start_value) != TYPE_INT
+				or int(start_value) < 0
+				or not _team_descriptors.has(int(team_key))
+			):
+				team_starts_valid = false
+				break
+			validated_team_starts[int(team_key)] = int(start_value)
+	if team_starts_valid:
+		for team in validated_team_starts:
+			var descriptor := (_team_descriptors.get(team, {}) as Dictionary).duplicate(true)
+			if not descriptor.has("start_index"):
+				descriptor["start_index"] = int(validated_team_starts[team])
+				_team_descriptors[team] = descriptor
 	source_map_configured = bool(configuration.get("source_map_configured", false))
 	# Optional authored creep-lair placements (PlyrCreeps camps). Inert until
 	# the opt-in creep rule enables seeding; malformed rows are dropped here so
@@ -1471,10 +1606,13 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	_unit_level_upgrades.clear()
 	units_without_upgrade_commands.clear()
 	_unit_experience_rules.clear()
+	_unit_module_contracts.clear()
+	_structure_module_contracts.clear()
 	_experience_unauthored_victims.clear()
 	_configure_ranger_runtime_contract()
 	_configure_trebuchet_runtime_contract()
 	_configure_playable_unit_runtime_contracts()
+	_configure_playable_structure_module_contracts()
 	_configure_structure_upgrade_chains()
 	_configure_structure_research_contracts()
 	_configure_manifest_builders()
@@ -2176,6 +2314,12 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		var experience_rule := PlayableUnitAdapter.experience_rule(document_value as Dictionary)
 		if not experience_rule.is_empty():
 			_unit_experience_rules[unit_type] = experience_rule
+		# Converter moduleContracts (typed + opaque deferred): index for runtime
+		# consumers. Deferred rows are still attached as authored evidence; only
+		# executable rows drive behavior until their subsystems land.
+		var contracts := PlayableUnitAdapter.module_contracts(document_value as Dictionary)
+		if not contracts.is_empty():
+			_unit_module_contracts[unit_type] = contracts
 	_rules["unit_rules"] = configured_unit_rules
 
 
@@ -2789,6 +2933,7 @@ func _initialize_base_loop() -> void:
 		if team_seed_kinds.is_empty():
 			team_seed_kinds = structure_kinds_for_team(team)
 		var team_max_health := structure_max_health_for_team(team)
+		var team_build_rules := structure_build_rules_for_team(team)
 		var team_production_order := production_unit_order_for_team(team)
 		var team_production_rules := unit_production_rules_for_team(team)
 		var team_scope := production_scope_for_team(team)
@@ -2804,8 +2949,9 @@ func _initialize_base_loop() -> void:
 				var producer_kinds_for_rule: Array = production_rule.get("producer_kinds", [String(production_rule.get("producer_kind", ""))])
 				if producer_kinds_for_rule.has(kind):
 					production.append(unit_type)
-			structures[base_id + index + 1] = {
-				"id": base_id + index + 1,
+			var structure_id := base_id + index + 1
+			structures[structure_id] = {
+				"id": structure_id,
 				"team": team,
 				"kind": "structure",
 				"structure_kind": kind,
@@ -2823,6 +2969,13 @@ func _initialize_base_loop() -> void:
 				"damage_remainders": {},
 				"income_per_payout": int(_rules.get("farm_income", 25)) if kind == "farm" else 0,
 			}
+			if bool((team_build_rules.get(kind, {}) as Dictionary).get("highlander_body", false)):
+				structures[structure_id]["highlander_body"] = true
+			_apply_structure_create_grants(
+				structures[structure_id] as Dictionary, true, true
+			)
+			_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
+			_initialize_structure_auto_deposit(structures[structure_id] as Dictionary)
 	_seed_all_expansion_pads()
 	if build_plots_only:
 		_seed_all_build_plots()
@@ -2980,6 +3133,7 @@ func _add_battalion(
 	var member_damage := maxi(1, int(unit_rule.get("member_damage", 0)))
 	var fallback_weapon := {
 		"name": "legacy-default",
+		"weapon_slot": String(unit_rule.get("default_weapon_slot", "")),
 		"attack_range": float(unit_rule["attack_range"]),
 		"attack_range_source": float(unit_rule["attack_range_source"]),
 		"minimum_attack_range": float(unit_rule["minimum_attack_range"]),
@@ -3078,6 +3232,11 @@ func _add_battalion(
 		"continuous_fire_coast_ticks": int(unit_rule.get("continuous_fire_coast_ticks", 0)),
 		"continuous_fire_rate_multiplier": float(unit_rule.get("continuous_fire_rate_multiplier", 1.0)),
 		"active_weapon_mode": String(unit_rule.get("default_weapon_mode", "default")),
+		# LockWeaponCreate applies at build completion and remains permanent.
+		# The importer currently accepts only the exact retail PRIMARY corpus.
+		"permanent_weapon_locks": Array(
+			unit_rule.get("permanent_weapon_locks", [])
+		).duplicate(),
 		"stance": String((unit_rule.get("stances", {}) as Dictionary).get("default", "Battle")),
 		"stance_contract": (unit_rule.get("stances", {}) as Dictionary).duplicate(true),
 		"formation_mode": "Line",
@@ -3121,6 +3280,44 @@ func _add_battalion(
 		# extraction is an importer follow-up; absent means not resistant).
 		"fear_resistant": bool(unit_rule.get("fear_resistant", false)),
 	}
+	# Body policy is optional authoritative state. Keep the key absent for
+	# ordinary ActiveBody units so their snapshots/hashes do not change.
+	if unit_rule.get("highlander_body") == true:
+		entities[id]["highlander_body"] = true
+	# Optional object lifecycle policy. Its absence contributes no entity,
+	# snapshot, or authoritative-hash bytes.
+	if unit_rule.has("destroy_die"):
+		entities[id]["destroy_die"] = Array(
+			unit_rule["destroy_die"]
+		).duplicate(true)
+	# Optional AIUpdateInterface field slice. Keep the keys absent unless the
+	# compiler authored the complete contract, so legacy/missing-field entity
+	# snapshots and hashes remain byte-identical.
+	if (
+		unit_rule.has("auto_acquire_enabled")
+		and unit_rule.has("auto_acquire_attack_buildings")
+		and unit_rule.has("auto_acquire_while_stealthed")
+	):
+		entities[id]["auto_acquire_enabled"] = bool(unit_rule["auto_acquire_enabled"])
+		entities[id]["auto_acquire_attack_buildings"] = bool(
+			unit_rule["auto_acquire_attack_buildings"]
+		)
+		entities[id]["auto_acquire_while_stealthed"] = bool(
+			unit_rule["auto_acquire_while_stealthed"]
+		)
+	# Optional AIUpdateInterface idle-rescan cadence. The one-shot jitter flag
+	# is armed at spawn/reset; the next-check tick is created only by the first
+	# eligible idle scan. Absent authoring preserves legacy bytes and RNG order.
+	if (
+		int(unit_rule.get("mood_attack_check_rate_ticks", 0)) > 0
+		and unit_rule.has("auto_acquire_enabled")
+		and unit_rule.has("auto_acquire_attack_buildings")
+		and unit_rule.has("auto_acquire_while_stealthed")
+	):
+		entities[id]["mood_attack_check_rate_ticks"] = int(
+			unit_rule["mood_attack_check_rate_ticks"]
+		)
+		entities[id]["mood_randomize_next_check"] = true
 	# File the new battalion immediately: units spawned mid-tick (production
 	# exits, summons) must be acquirable by battalions stepped later in the same
 	# tick, exactly as the old full scans saw them.
@@ -3129,7 +3326,22 @@ func _add_battalion(
 		_apply_equipment_to_horde(entities[id], _equipment_ids_for_forge_upgrade(String(tech_id_value)))
 	if String(unit_rule.get("category", "")) == "hero":
 		_attach_hero_ability_state(entities[id])
+	var has_registered_experience := not (
+		_unit_experience_rules.get(String(entities[id].get("unit_type", "")), {}) as Dictionary
+	).is_empty()
 	_attach_experience_state(entities[id])
+	_attach_module_contracts(entities[id])
+	# ExperienceLevelCreate is a creation module, independent of whether this
+	# bounded summon leaf carries a complete ExperienceLevel progression table.
+	# Ordinary unit rules omit this key and preserve their existing XP path.
+	if int(unit_rule.get("creation_experience_rank", 0)) > 0:
+		entities[id]["level"] = int(unit_rule["creation_experience_rank"])
+		if not has_registered_experience:
+			_apply_experience_level_effects(
+				entities[id],
+				unit_rule.get("creation_experience_effects", {}) as Dictionary
+			)
+	_record_hero_rank_attainment(entities[id])
 
 
 func _recorded_damage_type(object_id: String, unit_rule: Dictionary) -> String:
@@ -3210,6 +3422,49 @@ func resources_for_team(team: int) -> int:
 
 func command_points_for_team(team: int) -> int:
 	return int(team_command_points.get(team, 0))
+
+
+func _command_points_upgrade_bonus(team: int) -> int:
+	var contract: Dictionary = (
+		_team_tree(team).get("command_points_upgrade", {}) as Dictionary
+	)
+	if contract.is_empty():
+		return 0
+	var owned: Dictionary = team_upgrades.get(team, {}) as Dictionary
+	if not owned.has(String(contract.get("triggeredBy", ""))):
+		return 0
+	if not _team_has_required_object(
+		team, String(contract.get("requiredObject", ""))
+	):
+		return 0
+	return int(contract.get("commandPoints", 0))
+
+
+func command_point_total_for_team(team: int) -> int:
+	if command_point_overrides_by_team.has(team):
+		return int((command_point_overrides_by_team[team] as Dictionary).get(
+			"total", command_point_cap
+		))
+	return command_point_cap + _command_points_upgrade_bonus(team)
+
+
+func command_point_maximum_for_team(team: int) -> int:
+	if command_point_overrides_by_team.has(team):
+		return int((command_point_overrides_by_team[team] as Dictionary).get(
+			"maximum", command_point_cap
+		))
+	return command_point_cap + _command_points_upgrade_bonus(team)
+
+
+func override_command_points_for_team(team: int, total: int, maximum: int) -> bool:
+	if not _roster_team_ids().has(team) or total < 0 or maximum < 0 or total > maximum:
+		return false
+	command_point_overrides_by_team[team] = {
+		"total": total,
+		"maximum": maximum,
+	}
+	_state_hash_static_digest.clear()
+	return true
 
 
 func _production_rule_value(unit_type: String, rule_key: String, default_key: String) -> int:
@@ -3383,6 +3638,108 @@ func _apply_team_upgrade_to_hordes(team: int, upgrade_id: String) -> void:
 		if int(row.get("team", -1)) != team:
 			continue
 		_apply_equipment_to_horde(row, equipment)
+
+
+func _apply_structure_create_grants(
+	building: Dictionary,
+	apply_create_when_complete: bool,
+	apply_build_complete: bool
+) -> void:
+	## GrantUpgradeCreate is idempotent in retail's upgrade sinks. Keep the
+	## converted lifecycle edge explicit: an UNDER_CONSTRUCTION exemption may
+	## grant on creation only for an already-complete object, while the BFME
+	## foundation form grants when construction completes.
+	var team := int(building.get("team", -1))
+	var kind := String(building.get("structure_kind", ""))
+	var grants: Array = structure_create_grants_for_team(team).get(kind, [])
+	for grant_value in grants:
+		var grant := grant_value as Dictionary
+		if (
+			apply_create_when_complete
+			and bool(grant.get("onCreateWhenComplete", false))
+			and float(building.get("construction_progress", 0.0)) >= 1.0
+		):
+			_apply_structure_granted_upgrade(building, grant)
+		if apply_build_complete and bool(grant.get("onBuildComplete", false)):
+			_apply_structure_granted_upgrade(building, grant)
+
+
+func _apply_structure_granted_upgrade(building: Dictionary, grant: Dictionary) -> void:
+	var upgrade_id := String(grant.get("upgradeId", ""))
+	var team := int(building.get("team", -1))
+	if upgrade_id == "" or team < 0:
+		return
+	if String(grant.get("upgradeType", "")) == "PLAYER":
+		var owned: Dictionary = team_upgrades.get(team, {}) as Dictionary
+		owned[upgrade_id] = true
+		team_upgrades[team] = owned
+		return
+	var completed: Array = building.get("completed_upgrades", [])
+	if not completed.has(upgrade_id):
+		completed.append(upgrade_id)
+		completed.sort()
+		building["completed_upgrades"] = completed
+
+
+func _apply_structure_inherit_upgrades(building: Dictionary) -> void:
+	## InheritUpgradeCreate is a one-shot create-module query, not an aura.
+	## Search stable structure ids and require the exact authored source Object
+	## identity. ObjectFilter = ANY +Type does not author owner, health, or
+	## completion restrictions, so this path must not invent them.
+	var team := int(building.get("team", -1))
+	var kind := String(building.get("structure_kind", ""))
+	var rules: Array = structure_inherit_upgrades_for_team(team).get(kind, [])
+	if team < 0 or rules.is_empty():
+		return
+	var carrier_id := int(building.get("id", 0))
+	var carrier_position := Vector2(building.get("position", Vector2.ZERO))
+	var scale := maxf(
+		0.000001, float(_rules.get("source_map_transform_scale", 1.0))
+	)
+	var completed: Array = building.get("completed_upgrades", [])
+	for rule_value in rules:
+		var rule := rule_value as Dictionary
+		var upgrade_id := String(rule.get("upgradeId", ""))
+		var source_id := String(rule.get("sourceObjectId", ""))
+		var source_kind := String(rule.get("sourceKind", ""))
+		var radius_source := float(
+			(rule.get("radius", {}) as Dictionary).get("value", 0.0)
+		)
+		if upgrade_id == "" or source_id == "" or radius_source <= 0.0:
+			continue
+		var limit_squared := pow(radius_source * scale, 2.0)
+		for donor_id in structure_ids():
+			if donor_id == carrier_id:
+				continue
+			var donor: Dictionary = structures[donor_id]
+			if not Array(donor.get("completed_upgrades", [])).has(upgrade_id):
+				continue
+			var donor_kind := String(donor.get("structure_kind", ""))
+			if source_kind != "" and donor_kind != source_kind:
+				continue
+			# Runtime kinds such as "fortress" are deliberately shared across
+			# factions. Resolve the exact retail identity through the donor's
+			# own faction manifest, never through the carrier's aliases: a
+			# DwarvenFortress must not satisfy +MenFortressCitadel merely
+			# because both rows use the generic fortress runtime kind.
+			var donor_team := int(donor.get("team", -1))
+			var donor_source_ids := structure_source_object_ids_for_team(donor_team)
+			var aliases: Array = donor_source_ids.get(donor_kind, [])
+			var exact_source_match := false
+			for alias_value in aliases:
+				if String(alias_value).nocasecmp_to(source_id) == 0:
+					exact_source_match = true
+					break
+			if not exact_source_match:
+				continue
+			var donor_position := Vector2(donor.get("position", Vector2.ZERO))
+			if carrier_position.distance_squared_to(donor_position) > limit_squared:
+				continue
+			if not completed.has(upgrade_id):
+				completed.append(upgrade_id)
+				completed.sort()
+				building["completed_upgrades"] = completed
+			break
 
 
 func queue_structure_upgrade(team: int, structure_id: int, upgrade_id: String) -> Dictionary:
@@ -3847,6 +4204,7 @@ var _spellbook_order: Array[String] = []
 var _spellbook_sciences: Dictionary = {}
 var _spellbook_intrinsic: Array = []
 var _science_to_power: Dictionary = {}
+var _spellbook_command_points_upgrade: Dictionary = {}
 var _team_sciences := {PLAYER_TEAM: [], ENEMY_TEAM: []}
 var _power_cooldown_until := {PLAYER_TEAM: {}, ENEMY_TEAM: {}}
 ## Picks made since the last ACCEPT: RESET refunds exactly these ("unspent
@@ -3880,12 +4238,44 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 	_spellbook_sciences.clear()
 	_spellbook_intrinsic.clear()
 	_science_to_power.clear()
+	_spellbook_command_points_upgrade.clear()
 	if typeof(document) != TYPE_DICTIONARY or String(document.get("schema", "")) != SPELLBOOK_SCHEMA:
 		_spellbook_error = "spellbook document is missing or not an %s" % SPELLBOOK_SCHEMA
 		return false
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
 	var power_tree: Dictionary = registration.get("powerTree", {}) as Dictionary
 	var spell_book_object: Dictionary = registration.get("spellBook", {}) as Dictionary
+	var command_points_upgrade_value: Variant = spell_book_object.get("commandPointsUpgrade")
+	if command_points_upgrade_value != null:
+		if typeof(command_points_upgrade_value) != TYPE_DICTIONARY:
+			_spellbook_error = "spellbook CommandPointsUpgrade is malformed"
+			return false
+		var command_points_upgrade := command_points_upgrade_value as Dictionary
+		var command_points_upgrade_keys := [
+			"triggeredBy", "commandPoints", "requiredObject",
+			"module", "sourceIni", "line",
+		]
+		if command_points_upgrade.size() != command_points_upgrade_keys.size():
+			_spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
+			return false
+		for key in command_points_upgrade_keys:
+			if not command_points_upgrade.has(key):
+				_spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
+				return false
+		if (
+			String(command_points_upgrade.get("triggeredBy", "")) != "Upgrade_MarketplaceUpgradeGrandHarvest"
+			or typeof(command_points_upgrade.get("commandPoints")) != TYPE_INT
+			or int(command_points_upgrade.get("commandPoints", 0)) != 100
+			or String(command_points_upgrade.get("requiredObject", "")) != "NONE +GondorMarketPlace"
+			or String(command_points_upgrade.get("module", "")) != "CommandPointsUpgrade"
+			or typeof(command_points_upgrade.get("sourceIni")) != TYPE_STRING
+			or String(command_points_upgrade.get("sourceIni", "")).strip_edges() == ""
+			or typeof(command_points_upgrade.get("line")) != TYPE_INT
+			or int(command_points_upgrade.get("line", 0)) <= 0
+		):
+			_spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
+			return false
+		_spellbook_command_points_upgrade = command_points_upgrade.duplicate(true)
 	for intrinsic_value in Array(spell_book_object.get("intrinsicSciences", [])):
 		if typeof(intrinsic_value) != TYPE_STRING or String(intrinsic_value).strip_edges() == "":
 			_spellbook_error = "spellbook intrinsic sciences are malformed"
@@ -3940,6 +4330,8 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 	for ocl_value in Array(leaves.get("objectCreationLists", [])):
 		if typeof(ocl_value) == TYPE_DICTIONARY:
 			ocl_leaves[String((ocl_value as Dictionary).get("id", ""))] = ocl_value
+	# Production path: register converted OCL leaves for CreateObjectDie hatch.
+	ingest_ocl_leaves_from_document({"leaves": leaves})
 	var weapon_leaves: Dictionary = {}
 	for weapon_value in Array(leaves.get("weapons", [])):
 		if typeof(weapon_value) == TYPE_DICTIONARY:
@@ -4025,6 +4417,7 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 	_spellbook_order = ordered
 	_reset_spellbook_match_state()
 	_spellbook_ready = true
+	_state_hash_static_digest.clear()
 	return true
 
 
@@ -4091,6 +4484,7 @@ func _spellbook_global_bundle() -> Dictionary:
 		"sciences": _spellbook_sciences,
 		"science_to_power": _science_to_power,
 		"intrinsic": _spellbook_intrinsic,
+		"command_points_upgrade": _spellbook_command_points_upgrade,
 	}
 
 
@@ -4107,6 +4501,7 @@ func _spellbook_global_bundle_copy() -> Dictionary:
 		"sciences": _spellbook_sciences.duplicate(true),
 		"science_to_power": _science_to_power.duplicate(true),
 		"intrinsic": (_spellbook_intrinsic as Array).duplicate(true),
+		"command_points_upgrade": _spellbook_command_points_upgrade.duplicate(true),
 	}
 
 
@@ -4117,6 +4512,7 @@ func _apply_spellbook_bundle(bundle: Dictionary) -> void:
 	_spellbook_sciences = bundle.get("sciences", {}) as Dictionary
 	_science_to_power = bundle.get("science_to_power", {}) as Dictionary
 	_spellbook_intrinsic = bundle.get("intrinsic", []) as Array
+	_spellbook_command_points_upgrade = bundle.get("command_points_upgrade", {}) as Dictionary
 
 
 func _team_tree(team: int) -> Dictionary:
@@ -4510,9 +4906,75 @@ func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, 
 		"clip_reload_time_ms": clip_reload_ms,
 		"formation_positions": positions,
 		"default_weapon_mode": "default",
+		"default_weapon_slot": String(member.get("weaponSlot", "")).to_lower(),
 		"damage_type": String(damage_nugget.get("damagetype", "")).to_lower(),
 		"provenance": {"source": "spellbook-summon", "object_id": String(target_leaf.get("id", ""))},
 	}
+	var permanent_locks: Array[String] = []
+	for lock_value in Array(member.get("permanentWeaponLocks", [])):
+		if typeof(lock_value) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "summoned member '%s' has a malformed permanent weapon lock" % member_id}
+		var lock_row := lock_value as Dictionary
+		var slot := String(lock_row.get("slot", "")).to_lower()
+		var lock_line: Variant = lock_row.get("line")
+		if (
+			slot != "primary"
+			or String(lock_row.get("state", "")) != "LOCKED_PERMANENTLY"
+			or String(lock_row.get("module", "")) != "LockWeaponCreate"
+			or String(lock_row.get("sourceIni", "")).strip_edges() == ""
+			or typeof(lock_line) != TYPE_INT
+			or int(lock_line) <= 0
+			or permanent_locks.has(slot)
+			or slot != String(rule.get("default_weapon_slot", ""))
+		):
+			return {"ok": false, "reason": "summoned member '%s' permanent weapon lock is unsupported" % member_id}
+		permanent_locks.append(slot)
+	if not permanent_locks.is_empty():
+		rule["permanent_weapon_locks"] = permanent_locks
+	var creation_leaf: Dictionary = (
+		target_leaf
+		if target_leaf.has("experienceLevelCreate")
+		else member
+	)
+	var creation_grant: Variant = creation_leaf.get("experienceLevelCreate")
+	if creation_grant != null:
+		if typeof(creation_grant) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "summoned member '%s' has malformed ExperienceLevelCreate evidence" % member_id}
+		var grant := creation_grant as Dictionary
+		var grant_rank: Variant = grant.get("rank")
+		var grant_line: Variant = grant.get("line")
+		if (
+			String(grant.get("module", "")) != "ExperienceLevelCreate"
+			or grant.get("mpOnly") != false
+			or typeof(grant_rank) != TYPE_INT
+			or int(grant_rank) < 1
+			or String(grant.get("sourceIni", "")).strip_edges() == ""
+			or typeof(grant_line) != TYPE_INT
+			or int(grant_line) <= 0
+		):
+			return {"ok": false, "reason": "summoned member '%s' ExperienceLevelCreate evidence is unsupported" % member_id}
+		var creation_experience_rule := PlayableUnitAdapter.experience_rule_from_contract(
+			creation_leaf.get("experience")
+		)
+		if (
+			creation_experience_rule.is_empty()
+			or int(creation_experience_rule.get("initial_rank", 0)) != int(grant_rank)
+		):
+			return {"ok": false, "reason": "summoned member '%s' creation experience chain is unsupported" % member_id}
+		var creation_effects: Dictionary = {}
+		for level_value in Array(creation_experience_rule.get("levels", [])):
+			var level_row := level_value as Dictionary
+			if int(level_row.get("rank", 0)) == int(grant_rank):
+				creation_effects = level_row
+				break
+		if (
+			creation_effects.is_empty()
+			or not Array(creation_effects.get("unsupported_modifiers", [])).is_empty()
+			or float(creation_effects.get("production_multiplier", 1.0)) != 1.0
+		):
+			return {"ok": false, "reason": "summoned member '%s' creation experience effects are unsupported" % member_id}
+		rule["creation_experience_rank"] = int(grant_rank)
+		rule["creation_experience_effects"] = creation_effects.duplicate(true)
 	return {"ok": true, "rule": rule, "lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / TICK_SECONDS))}
 
 
@@ -5136,6 +5598,8 @@ func _cast_spellbook_structure_summon(team: int, effect: Dictionary, point: Vect
 			"affects": String(weapon.get("affects", "ENEMIES")),
 		},
 	}
+	_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
+	_initialize_structure_auto_deposit(structures[structure_id] as Dictionary)
 	_emit_event("power.structure_summon", 0, structure_id, {"team": team, "object_id": String(effect.get("object_id", "")), "build_ticks": build_ticks, "health": health})
 	return {"ok": true, "reason": "", "battalions": 0}
 
@@ -5246,6 +5710,7 @@ func _apply_area_damage_to_battalion(id: int, amount: float, damage_type: String
 	var total := maxf(0.0, amount * float(_stance_state(row).get("incomingDamageMultiplier", 1.0)) * float(_formation_effects(row).get("incoming_damage_multiplier", 1.0)))
 	var health_values: Array = row.get("member_health", [])
 	var remaining := total
+	var defeated_members: Array[int] = []
 	for member_index in health_values.size():
 		if remaining <= 0.0:
 			break
@@ -5254,6 +5719,8 @@ func _apply_area_damage_to_battalion(id: int, amount: float, damage_type: String
 			continue
 		var applied := mini(float(current), remaining)
 		health_values[member_index] = maxi(0, current - int(round(applied)))
+		if int(health_values[member_index]) == 0:
+			defeated_members.append(member_index)
 		remaining -= applied
 	row["member_health"] = health_values
 	var aggregate := 0
@@ -5261,8 +5728,10 @@ func _apply_area_damage_to_battalion(id: int, amount: float, damage_type: String
 		aggregate += int(value)
 	row["health"] = aggregate
 	row["last_damage_tick"] = tick_index
+	var death_policy := _apply_playable_unit_death_policy(
+		row, "NORMAL", defeated_members
+	)
 	if aggregate <= 0:
-		row["corpse_expire_tick"] = tick_index + CORPSE_LIFETIME_TICKS
 		row["state"] = "death"
 		row["target_id"] = 0
 		_clear_pending_route(row, true)
@@ -5272,6 +5741,8 @@ func _apply_area_damage_to_battalion(id: int, amount: float, damage_type: String
 			team_command_points[row_team] = maxi(0, command_points_for_team(row_team) - int(row.get("command_points", 0)))
 		prune_control_groups()
 		_emit_event("battalion.defeated", 0, id)
+		if bool(death_policy.get("destroy_object", false)):
+			entities.erase(id)
 
 
 func _apply_area_damage_to_structure(structure_id: int, amount: float, damage_type: String) -> void:
@@ -5390,11 +5861,16 @@ func _step_summon_despawns() -> void:
 		# credit — there is no attacker).
 		var row: Dictionary = entities[entity_id]
 		var health_values: Array = row.get("member_health", [])
+		var defeated_members: Array[int] = []
 		for index in health_values.size():
-			health_values[index] = 0
+			if int(health_values[index]) > 0:
+				defeated_members.append(index)
+				health_values[index] = 0
 		row["member_health"] = health_values
 		row["health"] = 0
-		row["corpse_expire_tick"] = tick_index + CORPSE_LIFETIME_TICKS
+		var death_policy := _apply_playable_unit_death_policy(
+			row, "NORMAL", defeated_members
+		)
 		row["state"] = "death"
 		row["target_id"] = 0
 		_clear_pending_route(row, true)
@@ -5404,6 +5880,8 @@ func _step_summon_despawns() -> void:
 			team_command_points[row_team] = maxi(0, command_points_for_team(row_team) - int(row.get("command_points", 0)))
 		prune_control_groups()
 		_emit_event("power.summon_expired", 0, entity_id, {"team": int(row.get("team", -1))})
+		if bool(death_policy.get("destroy_object", false)):
+			entities.erase(entity_id)
 		expired.append(entity_id)
 	for entity_id in expired:
 		_summon_despawn_ticks.erase(entity_id)
@@ -5486,6 +5964,8 @@ func _step_structure_weapons() -> void:
 			structure["construction_elapsed_ticks"] = elapsed
 			var build_ticks := maxi(1, int(structure.get("construction_build_ticks", 1)))
 			structure["construction_progress"] = minf(1.0, float(elapsed) / float(build_ticks))
+			if elapsed >= build_ticks:
+				_apply_structure_create_grants(structure, false, true)
 			continue
 		if float(structure.get("construction_progress", 1.0)) < 1.0:
 			continue
@@ -5517,21 +5997,29 @@ func _step_structure_weapons() -> void:
 		if member_index < 0:
 			continue
 		var amount := maxi(1, roundi(float(attack.get("damage", 0.0))))
-		health_values[member_index] = maxi(0, int(health_values[member_index]) - amount)
+		var prior_member_health := int(health_values[member_index])
+		health_values[member_index] = maxi(0, prior_member_health - amount)
 		target["member_health"] = health_values
 		var aggregate := 0
 		for value in health_values:
 			aggregate += int(value)
 		target["health"] = aggregate
 		target["last_damage_tick"] = tick_index
+		var defeated_members: Array[int] = []
+		if prior_member_health > 0 and int(health_values[member_index]) == 0:
+			defeated_members.append(member_index)
+		var death_policy := _apply_playable_unit_death_policy(
+			target, "NORMAL", defeated_members
+		)
 		if aggregate <= 0:
-			target["corpse_expire_tick"] = tick_index + CORPSE_LIFETIME_TICKS
 			target["state"] = "death"
 			target["target_id"] = 0
 			_clear_pending_route(target, true)
 			selected_ids.erase(best_id)
 			prune_control_groups()
 			_emit_event("battalion.defeated", structure_id, best_id)
+			if bool(death_policy.get("destroy_object", false)):
+				entities.erase(best_id)
 		else:
 			_emit_event("power.structure_weapon_hit", structure_id, best_id, {"amount": amount})
 		attack["cooldown"] = tick_index + int(attack.get("period_ticks", 1)) + int(attack.get("pre_attack_ticks", 0))
@@ -5715,6 +6203,19 @@ func issue_expansion_construct(team: int, fortress_id: int, expansion_kind: Stri
 	var rule: Dictionary = _expansion_build_rules.get(expansion_kind, {})
 	if rule.is_empty():
 		return {"ok": false, "reason": "unsupported-expansion"}
+	var permission := building_permission_for_kind(team, expansion_kind)
+	if not bool(permission.get("known", false)):
+		return {
+			"ok": false,
+			"reason": "building-permission-identity-unresolved",
+			"detail": String(permission.get("reason", "")),
+		}
+	if not bool(permission.get("allowed", false)):
+		return {
+			"ok": false,
+			"reason": "building-disallowed",
+			"object_type": String(permission.get("object_type", "")),
+		}
 	if not expansion_pads.has(fortress_id):
 		return {"ok": false, "reason": "no-expansion-pads"}
 	var pad_kinds: Array = rule.get("pad_kinds", [])
@@ -5774,6 +6275,10 @@ func issue_expansion_construct(team: int, fortress_id: int, expansion_kind: Stri
 		"expansion_of_fortress": fortress_id,
 		"expansion_pad_index": pad_index,
 	}
+	if bool(rule.get("highlander_body", false)):
+		structures[structure_id]["highlander_body"] = true
+	_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
+	_initialize_structure_auto_deposit(structures[structure_id] as Dictionary)
 	(pads[pad_index] as Dictionary)["expansion_structure_id"] = structure_id
 	_emit_event("construction.started", 0, structure_id, {"team": team, "structure_kind": expansion_kind, "cost": cost, "build_ticks": build_ticks})
 	return {"ok": true, "structure_id": structure_id, "cost": cost, "build_ticks": build_ticks}
@@ -5936,6 +6441,16 @@ func unpack_base(team: int, base_name: String, free: bool) -> Dictionary:
 		"income_per_payout": 0,
 		"unpacked_from_base": base_name,
 	}
+	var fortress_build_rule: Dictionary = (
+		structure_build_rules_for_team(team).get("fortress", {}) as Dictionary
+	)
+	if bool(fortress_build_rule.get("highlander_body", false)):
+		structures[structure_id]["highlander_body"] = true
+	_apply_structure_create_grants(
+		structures[structure_id] as Dictionary, true, true
+	)
+	_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
+	_initialize_structure_auto_deposit(structures[structure_id] as Dictionary)
 	_seed_expansion_pads_for(structure_id)
 	row["unpacked_by"] = team
 	row["structure_id"] = structure_id
@@ -5969,6 +6484,118 @@ func unpack_base(team: int, base_name: String, free: bool) -> Dictionary:
 ## kinds of entry the shared namespace carries; see
 ## bind_script_unit_reference_to_base for why the flag kind exists.
 var script_unit_references: Dictionary = {}
+## team -> reference name -> entity id. Companion to script_unit_references
+## (structure/base-flag store). Entity nearest-ref binds land here so AI
+## SET_REF_TO_NEREST_* is not bag-only.
+var script_entity_references: Dictionary = {}
+## Pending CreateObjectDie spawns: {team, position, creation_list, source_entity, tick}.
+## Observable sim state when an executable CreateObjectDie fires on death.
+var create_object_die_pending: Array = []
+## Match-scoped script construction permissions:
+## team -> exact retail object type -> false. Absence means retail's default
+## allowed state; an allow write erases the override and returns to pristine.
+## Stored in the authoritative snapshot only while nonempty.
+var building_permissions_by_team: Dictionary = {}
+
+
+func set_building_allowed(team: int, object_type: String, allowed: bool) -> bool:
+	if not _team_roster.has(team) or object_type == "":
+		return false
+	var permissions: Dictionary = building_permissions_by_team.get(team, {})
+	var matching_key := ""
+	for authored_value in permissions.keys():
+		if String(authored_value).to_lower() == object_type.to_lower():
+			matching_key = String(authored_value)
+			break
+	if matching_key != "":
+		permissions.erase(matching_key)
+	if not allowed:
+		permissions[object_type] = false
+	if permissions.is_empty():
+		building_permissions_by_team.erase(team)
+	else:
+		building_permissions_by_team[team] = permissions
+	return true
+
+
+func _building_object_identity_key(value: String) -> String:
+	## Source names are case-insensitive SAGE identifiers; converted runtime
+	## ids are their punctuation-separated slugs. Collapse both to the same
+	## alphanumeric key so MENFORTRESS, MenFortress, and
+	## bfme2.object.men-fortress retain one identity.
+	var folded := value.to_lower()
+	var runtime_separator := folded.find(".object.")
+	if runtime_separator >= 0:
+		folded = folded.substr(runtime_separator + 8)
+	var key := ""
+	for index in folded.length():
+		var code := folded.unicode_at(index)
+		if (code >= 97 and code <= 122) or (code >= 48 and code <= 57):
+			key += String.chr(code)
+	return key
+
+
+func building_permission_for_kind(team: int, structure_kind: String) -> Dictionary:
+	var permissions: Dictionary = building_permissions_by_team.get(team, {})
+	if permissions.is_empty():
+		return {"known": true, "allowed": true}
+	var source_types: Dictionary = {}
+	var runtime_types: Dictionary = {}
+	var identity_keys: Dictionary = {}
+	var registry := _structure_source_registry(team_manifest_for(team))
+	for source_value in registry.keys():
+		if String(registry[source_value]) == structure_kind:
+			source_types[String(source_value).to_lower()] = true
+			identity_keys[_building_object_identity_key(String(source_value))] = true
+	var structure_ids: Dictionary = (
+		team_manifest_for(team).get("structure_object_ids", {}) as Dictionary
+	)
+	if structure_ids.has(structure_kind):
+		var structure_object_id := String(structure_ids[structure_kind])
+		runtime_types[structure_object_id] = true
+		identity_keys[_building_object_identity_key(structure_object_id)] = true
+	var expansion_rule: Dictionary = _expansion_build_rules.get(structure_kind, {})
+	var expansion_object_id := String(expansion_rule.get("object_id", ""))
+	if expansion_object_id != "":
+		runtime_types[expansion_object_id] = true
+		identity_keys[_building_object_identity_key(expansion_object_id)] = true
+	if source_types.is_empty() and runtime_types.is_empty():
+		return {
+			"known": false,
+			"allowed": false,
+			"reason": "no retail object identity is registered for structure kind '%s'" % structure_kind,
+		}
+	var authored_types: Array = permissions.keys()
+	authored_types.sort()
+	for authored_value in authored_types:
+		var authored_type := String(authored_value)
+		if (
+			source_types.has(authored_type.to_lower())
+			or runtime_types.has(authored_type)
+			or runtime_types.has(PlayableUnitAdapter.runtime_object_id(authored_type))
+			or identity_keys.has(_building_object_identity_key(authored_type))
+		):
+			return {
+				"known": true,
+				"allowed": false,
+				"object_type": authored_type,
+			}
+	return {"known": true, "allowed": true}
+
+
+func bind_script_entity_reference(team: int, reference: String, entity_id: int) -> bool:
+	if team < 0 or reference == "" or entity_id <= 0:
+		return false
+	if not entities.has(entity_id):
+		return false
+	if not script_entity_references.has(team):
+		script_entity_references[team] = {}
+	(script_entity_references[team] as Dictionary)[reference] = entity_id
+	return true
+
+
+func script_entity_reference(team: int, reference: String) -> int:
+	return int((script_entity_references.get(team, {}) as Dictionary).get(reference, 0))
 
 
 func bind_script_unit_reference(team: int, reference: String, structure_id: int) -> bool:
@@ -6138,6 +6765,284 @@ func resolve_object_type_names(object_type_list: String) -> Array:
 	return [object_type_list]
 
 
+# --- Script-team registry (named sub-player teams, SIM-owned) ---------------
+#
+# SAGE teams are independent identities even when they share a player owner.
+# Definitions come from decoded map configuration, but membership and flags
+# affect gameplay and therefore live inside snapshots/state_hash. Handles are
+# typed because entity and structure ids occupy overlapping id spaces.
+# Imported objectCount is evidence only: it can never mint a phantom member.
+var script_teams: Dictionary = {}
+
+
+func _script_owner_exists(owner: int) -> bool:
+	return _is_combatant_team(owner) or owner == NEUTRAL_TEAM or owner == CREEP_TEAM
+
+
+func register_script_team(
+	team_name: String,
+	owner: int,
+	default_team: bool = false,
+	handles: Array = [],
+	membership_complete: bool = true,
+	unresolved_members: Array = [],
+	unmodeled_object_count: int = 0,
+	dynamic_default_roster: bool = true,
+	marker_only: bool = false
+) -> Dictionary:
+	if team_name == "":
+		return {"ok": false, "reason": "script-team name is empty"}
+	if not _script_owner_exists(owner):
+		return {"ok": false, "reason": "script-team owner %d is unavailable" % owner}
+	if script_teams.has(team_name):
+		var existing := script_teams[team_name] as Dictionary
+		if (
+			int(existing.get("configured_owner", existing.get("owner", -1))) != owner
+			or bool(existing.get("default", false)) != default_team
+			or bool(existing.get("membership_incomplete", false)) == membership_complete
+			or (existing.get("unresolved_members", []) as Array) != unresolved_members
+			or int(existing.get("unmodeled_object_count", 0)) != unmodeled_object_count
+			or bool(existing.get("explicit_default_membership", false))
+			== dynamic_default_roster
+			or bool(existing.get("marker_only", false)) != marker_only
+		):
+			return {"ok": false, "reason": "script team '%s' was rebound" % team_name}
+		return {"ok": true, "reason": ""}
+	if unmodeled_object_count < 0:
+		return {"ok": false, "reason": "script team '%s' has a negative unmodeled count" % team_name}
+	var canonical_unresolved: Array[String] = []
+	for unresolved_value in unresolved_members:
+		if typeof(unresolved_value) != TYPE_STRING or String(unresolved_value) == "":
+			return {"ok": false, "reason": "script team '%s' has a malformed unresolved member name" % team_name}
+		var unresolved_name := String(unresolved_value)
+		canonical_unresolved.append(unresolved_name)
+	canonical_unresolved.sort()
+	var members: Array = []
+	for handle_value in handles:
+		if typeof(handle_value) != TYPE_DICTIONARY:
+			return {"ok": false, "reason": "script team '%s' has a malformed member handle" % team_name}
+		var handle := handle_value as Dictionary
+		if (
+			typeof(handle.get("kind")) != TYPE_STRING
+			or not ["entity", "structure"].has(handle.get("kind"))
+			or typeof(handle.get("id")) != TYPE_INT
+			or typeof(handle.get("id")) == TYPE_BOOL
+		):
+			return {"ok": false, "reason": "script team '%s' has a malformed typed member handle" % team_name}
+		var kind := String(handle["kind"])
+		var object_id := int(handle["id"])
+		var row: Dictionary
+		if kind == "entity" and entities.has(object_id):
+			row = entities[object_id] as Dictionary
+		elif kind == "structure" and structures.has(object_id):
+			row = structures[object_id] as Dictionary
+		else:
+			return {"ok": false, "reason": "script team '%s' references an unavailable %s %d" % [team_name, kind, object_id]}
+		if int(row.get("team", -1)) != owner:
+			return {"ok": false, "reason": "script team '%s' member owner disagrees" % team_name}
+		var canonical := {"kind": kind, "id": object_id}
+		if not members.has(canonical):
+			members.append(canonical)
+	members.sort_custom(_script_member_less)
+	var record := {
+		"owner": owner,
+		# Match configuration is immutable even when a retail script later
+		# changes the team's controlling player. Keeping the original owner
+		# lets setup() reset the match and lets the snapshot view omit teams
+		# whose controlling owner was never changed.
+		"configured_owner": owner,
+	}
+	if default_team:
+		record["default"] = true
+		if not dynamic_default_roster:
+			record["explicit_default_membership"] = true
+	if not membership_complete:
+		record["membership_incomplete"] = true
+		if not canonical_unresolved.is_empty():
+			record["unresolved_members"] = canonical_unresolved
+		if unmodeled_object_count > 0:
+			record["unmodeled_object_count"] = unmodeled_object_count
+	if not members.is_empty():
+		record["members"] = members
+	if marker_only:
+		if default_team or not members.is_empty():
+			return {
+				"ok": false,
+				"reason": "marker-only team '%s' cannot be default or materialized" % team_name,
+			}
+		record["marker_only"] = true
+	script_teams[team_name] = record
+	mark_team_created(team_name)
+	return {"ok": true, "reason": ""}
+
+
+func _script_member_less(a: Dictionary, b: Dictionary) -> bool:
+	var a_kind := String(a.get("kind", ""))
+	var b_kind := String(b.get("kind", ""))
+	return a_kind < b_kind or (a_kind == b_kind and int(a.get("id", -1)) < int(b.get("id", -1)))
+
+
+func script_team_owner(team_name: String) -> Dictionary:
+	if not script_teams.has(team_name):
+		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
+	return {"ok": true, "owner": int((script_teams[team_name] as Dictionary).get("owner", -1))}
+
+
+func transfer_script_team_controlling_player(
+	team_name: String, destination_owner: int
+) -> Dictionary:
+	## Retail TEAM_TRANSFER_TO_PLAYER calls Team::setControllingPlayer. It
+	## changes the Team identity's controlling player; it is not Player asset
+	## transfer and it does not merge/capture the Team's Object list.
+	##
+	## The measured BFME2/RotWK AI sites address civilian inheritance teams
+	## containing tactical markers, which this sim deliberately does not
+	## materialize. Restrict this surface to that exact safe shape. A later
+	## combat-team transfer needs entity ownership, CP, upgrade, queue and
+	## spatial invariants and must be a separate packet.
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not script_teams.has(team_name):
+		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
+	if not _script_owner_exists(destination_owner):
+		return {
+			"ok": false,
+			"reason": "destination player %d is unavailable" % destination_owner,
+		}
+	if not _is_combatant_team(destination_owner):
+		return {
+			"ok": false,
+			"reason": "destination player %d is not a combatant" % destination_owner,
+		}
+	var record := script_teams[team_name] as Dictionary
+	if bool(record.get("default", false)):
+		return {
+			"ok": false,
+			"reason": "default team '%s' is outside the retail inheritance-team scope" % team_name,
+		}
+	if not bool(record.get("marker_only", false)):
+		return {
+			"ok": false,
+			"reason": "team '%s' lacks source-attested marker-only evidence" % team_name,
+		}
+	if int(record.get("configured_owner", -1)) != NEUTRAL_TEAM:
+		return {
+			"ok": false,
+			"reason": "marker-only team '%s' was not configured under the civilian owner" % team_name,
+		}
+	if not (record.get("members", []) as Array).is_empty():
+		return {
+			"ok": false,
+			"reason": "team '%s' has materialized members and requires entity transfer" % team_name,
+		}
+	record["owner"] = destination_owner
+	script_teams[team_name] = record
+	return {"ok": true, "reason": ""}
+
+
+func script_team_members(team_name: String, living_only: bool = true) -> Dictionary:
+	if not script_teams.has(team_name):
+		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
+	var record := script_teams[team_name] as Dictionary
+	var owner := int(record.get("owner", -1))
+	var source: Array = []
+	if (
+		bool(record.get("default", false))
+		and not bool(record.get("explicit_default_membership", false))
+	):
+		for id_value in entity_ids():
+			var entity_id := int(id_value)
+			if int((entities[entity_id] as Dictionary).get("team", -1)) == owner:
+				source.append({"kind": "entity", "id": entity_id})
+		for id_value in structure_ids():
+			var structure_id := int(id_value)
+			if int((structures[structure_id] as Dictionary).get("team", -1)) == owner:
+				source.append({"kind": "structure", "id": structure_id})
+	else:
+		source = (record.get("members", []) as Array).duplicate(true)
+	var answer: Array = []
+	for handle_value in source:
+		var handle := handle_value as Dictionary
+		var kind := String(handle.get("kind", ""))
+		var object_id := int(handle.get("id", -1))
+		var row: Dictionary
+		if kind == "entity" and entities.has(object_id):
+			row = entities[object_id] as Dictionary
+		elif kind == "structure" and structures.has(object_id):
+			row = structures[object_id] as Dictionary
+		else:
+			continue
+		if int(row.get("team", -1)) != owner:
+			continue
+		if living_only and int(row.get("health", 0)) <= 0:
+			continue
+		answer.append({"kind": kind, "id": object_id})
+	answer.sort_custom(_script_member_less)
+	return {
+		"ok": true,
+		"members": answer,
+		"complete": not bool(record.get("membership_incomplete", false)),
+		"unresolved_members": (record.get("unresolved_members", []) as Array).duplicate(),
+		"unmodeled_object_count": int(record.get("unmodeled_object_count", 0)),
+	}
+
+
+func _script_team_definition(record: Dictionary) -> Dictionary:
+	var configured_owner := int(record.get("configured_owner", record.get("owner", -1)))
+	var definition := {
+		"owner": configured_owner,
+		"configured_owner": configured_owner,
+	}
+	for key in [
+		"default",
+		"explicit_default_membership",
+		"membership_incomplete",
+		"unresolved_members",
+		"unmodeled_object_count",
+		"marker_only",
+	]:
+		if record.has(key):
+			var value: Variant = record[key]
+			definition[key] = value.duplicate(true) if value is Array or value is Dictionary else value
+	return definition
+
+
+func set_script_team_recruitable(team_name: String, enabled: bool) -> Dictionary:
+	if not script_teams.has(team_name):
+		return {"ok": false, "reason": "script team '%s' is not registered" % team_name}
+	var record := script_teams[team_name] as Dictionary
+	# This is a tri-state override in retail: never-set, explicitly true, and
+	# explicitly false are distinct. Team::tryToRecruit first checks whether
+	# setRecruitable() was called, then lets that value override the default
+	# team / prototype setting. Erasing false would silently turn a scripted
+	# refusal back into the prototype default.
+	record["recruitable"] = enabled
+	script_teams[team_name] = record
+	return {"ok": true, "reason": ""}
+
+
+func _script_team_state_view() -> Dictionary:
+	## Team definitions are match configuration and are rebuilt when worlds are
+	## installed. Only mutable membership/recruitable state crosses the dynamic
+	## snapshot boundary. A changed controlling owner is mutable too. Default-
+	## team aliases with none of these contribute zero
+	## bytes, preserving the pristine-hash contract of merely binding a world.
+	var view: Dictionary = {}
+	var names := script_teams.keys()
+	names.sort()
+	for name_value in names:
+		var name := String(name_value)
+		var record := script_teams[name] as Dictionary
+		if (
+			record.has("members")
+			or record.has("recruitable")
+			or int(record.get("owner", -1))
+			!= int(record.get("configured_owner", record.get("owner", -1)))
+		):
+			view[name] = record
+	return view
+
+
 # --- Team behavior state (TEAM_STATE + custom-state tokens, SIM-owned) ------
 #
 # The retail AI's own blackboard: the per-team state token TEAM_SET_STATE
@@ -6189,19 +7094,19 @@ func resolve_object_type_names(object_type_list: String) -> Array:
 # the frozen cross-platform pin stands untouched. setup() clears it (match
 # state, exactly like the OBJECT_TYPE_LIST stores).
 
-## sim team id (int) -> {"state": String (present iff != ""),
+## script team name -> {"state": String (present iff != ""),
 ## "custom": sorted unique Array[String] (present iff non-empty)}.
 ## See the block comment above. setup() clears it; hashed only when non-empty.
 var team_behavior_states: Dictionary = {}
 
 
-func set_team_behavior_state(team: int, token: String) -> Dictionary:
+func set_team_behavior_state(team: String, token: String) -> Dictionary:
 	## TEAM_SET_STATE: overwrite the team's single state string. Any token is
 	## admitted, including ones no condition ever reads (retail validates
 	## nothing). Setting "" IS meaningful - it returns the team to the retail
 	## default - and canonically drops the key rather than storing "".
-	if not _is_combatant_team(team):
-		return {"ok": false, "reason": "team %d is not a rostered combatant team" % team}
+	if not script_teams.has(team):
+		return {"ok": false, "reason": "script team '%s' is not registered" % team}
 	if token == "":
 		_prune_team_behavior_key(team, "state")
 		return {"ok": true, "reason": ""}
@@ -6211,25 +7116,25 @@ func set_team_behavior_state(team: int, token: String) -> Dictionary:
 	return {"ok": true, "reason": ""}
 
 
-func team_behavior_state(team: int) -> Dictionary:
+func team_behavior_state(team: String) -> Dictionary:
 	## The team's current state string. {"ok": true, "state": String} - "" for
 	## a rostered team never set, which is retail's default, not a dodge.
-	if not _is_combatant_team(team):
-		return {"ok": false, "reason": "team %d is not a rostered combatant team" % team}
+	if not script_teams.has(team):
+		return {"ok": false, "reason": "script team '%s' is not registered" % team}
 	return {
 		"ok": true,
 		"state": String((team_behavior_states.get(team, {}) as Dictionary).get("state", "")),
 	}
 
 
-func set_team_custom_state(team: int, token: String, enabled: bool) -> Dictionary:
+func set_team_custom_state(team: String, token: String, enabled: bool) -> Dictionary:
 	## TEAM_SET_CUSTOM_STATE: enable inserts `token` into the team's set,
 	## disable removes it. Duplicate enables and absent disables are
 	## successful no-ops (set semantics - the assumption block above). An
 	## empty token refuses: "" names nothing in the retail vocabulary and
 	## would mint an unreachable membership entry.
-	if not _is_combatant_team(team):
-		return {"ok": false, "reason": "team %d is not a rostered combatant team" % team}
+	if not script_teams.has(team):
+		return {"ok": false, "reason": "script team '%s' is not registered" % team}
 	if token == "":
 		return {"ok": false, "reason": "empty custom-state token names nothing"}
 	if enabled:
@@ -6252,18 +7157,18 @@ func set_team_custom_state(team: int, token: String, enabled: bool) -> Dictionar
 	return {"ok": true, "reason": ""}
 
 
-func team_custom_states(team: int) -> Dictionary:
+func team_custom_states(team: String) -> Dictionary:
 	## The team's enabled custom-state tokens, sorted, as a defensive copy.
 	## {"ok": true, "tokens": Array} - empty for a team never toggled.
-	if not _is_combatant_team(team):
-		return {"ok": false, "reason": "team %d is not a rostered combatant team" % team}
+	if not script_teams.has(team):
+		return {"ok": false, "reason": "script team '%s' is not registered" % team}
 	return {
 		"ok": true,
 		"tokens": ((team_behavior_states.get(team, {}) as Dictionary).get("custom", []) as Array).duplicate(),
 	}
 
 
-func _prune_team_behavior_key(team: int, key: String) -> void:
+func _prune_team_behavior_key(team: String, key: String) -> void:
 	## Drop `key` from the team's record, and the record itself when it
 	## empties - the canonical form the hash discipline requires (a lingering
 	## empty record would be a hash-visible phantom, the e56a0d4 class).
@@ -6273,6 +7178,871 @@ func _prune_team_behavior_key(team: int, key: String) -> void:
 	record.erase(key)
 	if record.is_empty():
 		team_behavior_states.erase(team)
+
+
+# --- Sequential scripts (SIM-owned, ScriptEngine m_sequentialScripts) ------
+#
+# Retail ScriptEngine holds a global vector of SequentialScript heads, one
+# active head per team/object, with further scripts chained via
+# m_nextScriptInSequence. TEAM_EXECUTE_SEQUENTIAL_SCRIPT appends;
+# evaluateAndProgressAllSequentialScripts steps idle heads one action at a
+# time with m_conditionTeam latched for <This Team>.
+#
+# Mapping:
+#   * times_to_loop: -1 forever, 0 run once (no re-append), matching the
+#     boolean facet (looping true/false). Finite counts >1 stay refused at
+#     the handler (retail AI sites pass 0).
+#   * current_instruction starts at -1; progress increments before execute.
+#   * frames_to_wait: -1 none, 0 force progress, >0 countdown each tick.
+#   * idle: set true at queue (doTeamStartSequentialScript groupIdle); order
+#     verbs that take control of members call mark_team_sequential_busy.
+#   * empty-is-absent for hash inertness on scriptless matches.
+#
+# Unit sequential scripts are not stored here (separate object-id key space).
+
+## script team name -> Array of sequential entries (head + chained nexts).
+var sequential_script_queues: Dictionary = {}
+
+const _SEQUENTIAL_SPIN_LIMIT := 32
+
+
+func queue_team_sequential_script(
+	script_team: String, script_name: String, times_to_loop: int
+) -> Dictionary:
+	## ScriptActions::doTeamStartSequentialScript. Requires the named script
+	## to be loaded on at least one registered executor (loud refuse rather
+	## than retail's silent no-op when findScriptByName fails).
+	if not script_teams.has(script_team):
+		return {"ok": false, "reason": "script team '%s' is not registered" % script_team}
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if script_name.strip_edges() == "":
+		return {"ok": false, "reason": "sequential script name is empty"}
+	if _executor_for_script(script_name) == null:
+		return {
+			"ok": false,
+			"reason": "script '%s' is not loaded on any registered executor" % script_name,
+		}
+	var owner := int((script_teams[script_team] as Dictionary).get("owner", -1))
+	if _script_owner_exists(owner):
+		# Retail groupIdle so the sequential head can start immediately.
+		issue_stop(living_ids(owner), owner)
+	var entry := {
+		"script_name": script_name,
+		"times_to_loop": times_to_loop,
+		"current_instruction": -1,
+		"frames_to_wait": -1,
+		"dont_advance": false,
+		"idle": true,
+	}
+	var chain: Array = sequential_script_queues.get(script_team, []) as Array
+	chain.append(entry)
+	sequential_script_queues[script_team] = chain
+	return {"ok": true, "reason": ""}
+
+
+func clear_team_sequential_scripts(script_team: String) -> Dictionary:
+	if not script_teams.has(script_team):
+		return {"ok": false, "reason": "script team '%s' is not registered" % script_team}
+	sequential_script_queues.erase(script_team)
+	return {"ok": true, "reason": ""}
+
+
+func mark_team_sequential_busy(script_team: String) -> void:
+	## Order verbs that assign AI work clear sequential idle so further
+	## instructions wait (retail ai/aigroup isIdle gate).
+	if not sequential_script_queues.has(script_team):
+		return
+	var chain: Array = sequential_script_queues[script_team]
+	if chain.is_empty():
+		return
+	var head := chain[0] as Dictionary
+	head["idle"] = false
+	chain[0] = head
+	sequential_script_queues[script_team] = chain
+
+
+func mark_team_sequential_idle(script_team: String) -> void:
+	if not sequential_script_queues.has(script_team):
+		return
+	var chain: Array = sequential_script_queues[script_team]
+	if chain.is_empty():
+		return
+	var head := chain[0] as Dictionary
+	head["idle"] = true
+	chain[0] = head
+	sequential_script_queues[script_team] = chain
+
+
+# --- Object status bits (script Object_STATUS vocabulary, SIM-owned) --------
+#
+# Retail ObjectStatus bits ride the object; scripts set/clear named bits via
+# UNIT/TEAM_CHANGE_OBJECT_STATUS and read them via UNIT_HAS_OBJECT_STATUS /
+# TEAM_ALL/SOME_HAVE_OBJECT_STATUS. Storage is a per-entity map of exact
+# authored status names -> true. Absent name is false. Empty map is erased
+# (empty-is-absent on the entity row) so scriptless matches keep frozen
+# hashes. The bit vocabulary is content-defined; unknown names are still
+# stored (retail admits authoring any token).
+
+
+func set_entity_object_status(
+	entity_id: int, status: String, enabled: bool
+) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if status.strip_edges() == "":
+		return {"ok": false, "reason": "empty object status names nothing"}
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d is not in the simulation" % entity_id}
+	var row := entities[entity_id] as Dictionary
+	if int(row.get("health", 0)) <= 0:
+		return {"ok": false, "reason": "entity %d is not living" % entity_id}
+	var flags: Dictionary = row.get("object_status", {}) as Dictionary
+	if enabled:
+		flags[status] = true
+		row["object_status"] = flags
+	else:
+		flags.erase(status)
+		if flags.is_empty():
+			row.erase("object_status")
+		else:
+			row["object_status"] = flags
+	entities[entity_id] = row
+	return {"ok": true, "reason": ""}
+
+
+func entity_has_object_status(entity_id: int, status: String) -> bool:
+	if not entities.has(entity_id) or status.strip_edges() == "":
+		return false
+	var row := entities[entity_id] as Dictionary
+	if int(row.get("health", 0)) <= 0:
+		return false
+	var flags: Dictionary = row.get("object_status", {}) as Dictionary
+	return bool(flags.get(status, false))
+
+
+func set_entities_object_status(
+	entity_ids: Array, status: String, enabled: bool
+) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if status.strip_edges() == "":
+		return {"ok": false, "reason": "empty object status names nothing"}
+	for id_value in entity_ids:
+		var result := set_entity_object_status(int(id_value), status, enabled)
+		if not bool(result.get("ok", false)):
+			return result
+	return {"ok": true, "reason": ""}
+
+
+# --- Production / AI build-loop control flags (script surface) -------------
+#
+# Retail AI toggles base construction, factories, auto-build, and per-type
+# unit construction. Absence of an override means retail's default (enabled /
+# speed 1.0). Non-default values are match state and hash-visible.
+
+var production_controls_by_team: Dictionary = {}
+## object_type -> buildability enum int (content-defined). Empty = untouched.
+var tech_buildability: Dictionary = {}
+## owner team id -> reference name -> script team name (TEAM_REF store).
+var script_team_references: Dictionary = {}
+
+
+func _production_controls_for(team: int) -> Dictionary:
+	return production_controls_by_team.get(team, {}) as Dictionary
+
+
+func _set_production_control_flag(team: int, key: String, enabled: bool) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not _script_owner_exists(team):
+		return {"ok": false, "reason": "team %d is unavailable" % team}
+	var row: Dictionary = _production_controls_for(team).duplicate(true)
+	# Default is enabled; store only explicit disables, erase on re-enable.
+	if enabled:
+		row.erase(key)
+	else:
+		row[key] = false
+	if row.is_empty():
+		production_controls_by_team.erase(team)
+	else:
+		production_controls_by_team[team] = row
+	return {"ok": true, "reason": ""}
+
+
+func set_auto_build_enabled(team: int, enabled: bool) -> Dictionary:
+	return _set_production_control_flag(team, "auto_build", enabled)
+
+
+func set_base_construction_enabled(team: int, enabled: bool) -> Dictionary:
+	return _set_production_control_flag(team, "base_construction", enabled)
+
+
+func set_factories_enabled(team: int, enabled: bool) -> Dictionary:
+	return _set_production_control_flag(team, "factories", enabled)
+
+
+func set_base_construction_speed(team: int, factor: float) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not _script_owner_exists(team):
+		return {"ok": false, "reason": "team %d is unavailable" % team}
+	if factor < 0.0:
+		return {"ok": false, "reason": "construction speed factor cannot be negative"}
+	var row: Dictionary = _production_controls_for(team).duplicate(true)
+	if is_equal_approx(factor, 1.0):
+		row.erase("base_construction_speed")
+	else:
+		row["base_construction_speed"] = factor
+	if row.is_empty():
+		production_controls_by_team.erase(team)
+	else:
+		production_controls_by_team[team] = row
+	return {"ok": true, "reason": ""}
+
+
+func set_unit_construction_enabled(
+	team: int, object_type: String, enabled: bool
+) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not _script_owner_exists(team):
+		return {"ok": false, "reason": "team %d is unavailable" % team}
+	if object_type.strip_edges() == "":
+		return {"ok": false, "reason": "empty object type names nothing"}
+	var row: Dictionary = _production_controls_for(team).duplicate(true)
+	var unit_map: Dictionary = row.get("unit_construction", {}) as Dictionary
+	var match_key := ""
+	for key_value in unit_map.keys():
+		if String(key_value).to_lower() == object_type.to_lower():
+			match_key = String(key_value)
+			break
+	if match_key != "":
+		unit_map.erase(match_key)
+	if not enabled:
+		unit_map[object_type] = false
+	if unit_map.is_empty():
+		row.erase("unit_construction")
+	else:
+		row["unit_construction"] = unit_map
+	if row.is_empty():
+		production_controls_by_team.erase(team)
+	else:
+		production_controls_by_team[team] = row
+	return {"ok": true, "reason": ""}
+
+
+func production_control_enabled(team: int, key: String) -> bool:
+	## Default true when no override is stored.
+	var row := _production_controls_for(team)
+	if not row.has(key):
+		return true
+	return bool(row.get(key, true))
+
+
+func unit_construction_enabled(team: int, object_type: String) -> bool:
+	var row := _production_controls_for(team)
+	var unit_map: Dictionary = row.get("unit_construction", {}) as Dictionary
+	for key_value in unit_map.keys():
+		if String(key_value).to_lower() == object_type.to_lower():
+			return bool(unit_map[key_value])
+	return true
+
+
+func set_tech_buildability(object_type: String, buildability: int) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if object_type.strip_edges() == "":
+		return {"ok": false, "reason": "empty object type names nothing"}
+	tech_buildability[object_type] = buildability
+	return {"ok": true, "reason": ""}
+
+
+func has_prerequisite_to_build(team: int, object_type: String) -> Dictionary:
+	## True when every authored prerequisite upgrade for the unit type is
+	## completed for the team, or the type has no prerequisite map (fieldable
+	## without tech). Unknown/unmapped types refuse rather than guessing.
+	if not _script_owner_exists(team):
+		return {"ok": false, "reason": "team %d is unavailable" % team}
+	if object_type.strip_edges() == "":
+		return {"ok": false, "reason": "empty object type names nothing"}
+	var unit_type := trainable_unit_type_for(team, object_type)
+	if unit_type == "":
+		# Fall back to casefold match against production-rule keys.
+		for key_value in _unit_production_rules.keys():
+			if String(key_value).to_lower() == object_type.to_lower():
+				unit_type = String(key_value)
+				break
+	if unit_type == "" and not _unit_production_rules.has(object_type):
+		return {
+			"ok": false,
+			"reason": (
+				"object type '%s' is not a production rule this simulation models"
+				% object_type
+			),
+		}
+	if unit_type == "":
+		unit_type = object_type
+	var prereq_value: Variant = _unit_prerequisites.get(unit_type, {})
+	var completed: Dictionary = team_upgrades.get(team, {}) as Dictionary
+	if typeof(prereq_value) == TYPE_STRING:
+		var upgrade_id := String(prereq_value)
+		if upgrade_id == "":
+			return {"ok": true, "value": true}
+		return {"ok": true, "value": completed.has(upgrade_id)}
+	if typeof(prereq_value) != TYPE_DICTIONARY:
+		return {"ok": true, "value": true}
+	var by_producer: Dictionary = prereq_value
+	if by_producer.is_empty():
+		return {"ok": true, "value": true}
+	# Trainable if ANY producer path has all its prerequisites completed.
+	for producer_key in by_producer.keys():
+		var reqs: Array = by_producer[producer_key] as Array
+		var ok_path := true
+		for req_value in reqs:
+			if not completed.has(String(req_value)):
+				ok_path = false
+				break
+		if ok_path:
+			return {"ok": true, "value": true}
+	return {"ok": true, "value": false}
+
+
+func bind_script_team_reference(
+	owner_team: int, reference: String, script_team: String
+) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if reference.strip_edges() == "":
+		return {"ok": false, "reason": "empty team reference names nothing"}
+	if not script_teams.has(script_team):
+		return {
+			"ok": false,
+			"reason": "script team '%s' is not registered" % script_team,
+		}
+	var table: Dictionary = script_team_references.get(owner_team, {}) as Dictionary
+	table[reference] = script_team
+	script_team_references[owner_team] = table
+	return {"ok": true, "reason": ""}
+
+
+func script_team_reference(owner_team: int, reference: String) -> String:
+	var table: Dictionary = script_team_references.get(owner_team, {}) as Dictionary
+	return String(table.get(reference, ""))
+
+
+func set_entity_stopping_distance(entity_id: int, distance: float) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d is not in the simulation" % entity_id}
+	if distance < 0.0:
+		return {"ok": false, "reason": "stopping distance cannot be negative"}
+	var row := entities[entity_id] as Dictionary
+	if is_equal_approx(distance, 0.0):
+		row.erase("stopping_distance")
+	else:
+		row["stopping_distance"] = distance
+	entities[entity_id] = row
+	return {"ok": true, "reason": ""}
+
+
+func set_entities_idle_until(entity_ids: Array, until_tick: int) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	for id_value in entity_ids:
+		var entity_id := int(id_value)
+		if not entities.has(entity_id):
+			continue
+		var row := entities[entity_id] as Dictionary
+		if int(row.get("health", 0)) <= 0:
+			continue
+		row["script_idle_until"] = until_tick
+		row["state"] = "idle"
+		row.erase("target_id")
+		_clear_pending_route(row, true)
+		entities[entity_id] = row
+	return {"ok": true, "reason": ""}
+
+
+func set_entities_spin_until(entity_ids: Array, until_tick: int) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	for id_value in entity_ids:
+		var entity_id := int(id_value)
+		if not entities.has(entity_id):
+			continue
+		var row := entities[entity_id] as Dictionary
+		if int(row.get("health", 0)) <= 0:
+			continue
+		row["script_spin_until"] = until_tick
+		row["state"] = "idle"
+		entities[entity_id] = row
+	return {"ok": true, "reason": ""}
+
+
+func issue_hunt(ids: Array[int], team: int = PLAYER_TEAM) -> int:
+	## TEAM/NAMED/PLAYER_HUNT with empty command button: aggressive stance and
+	## clear hold so the existing acquire loop hunts hostiles.
+	var count := 0
+	for id_value in ids:
+		var entity_id := int(id_value)
+		if not entities.has(entity_id):
+			continue
+		var row := entities[entity_id] as Dictionary
+		if int(row.get("team", -1)) != team or int(row.get("health", 0)) <= 0:
+			continue
+		row["stance"] = "Aggressive"
+		row.erase("script_idle_until")
+		entities[entity_id] = row
+		count += 1
+	issue_set_stance(ids, "Aggressive", team)
+	return count
+
+
+
+# --- Bulk script surface stores (flags, progression, containment, events) ---
+#
+# These back high-volume script facet methods with exact authored keys and
+# empty-is-absent defaults. They do not invent pathfinding, area geometry, or
+# presentation. Combat effects of flags (stealth vision, etc.) remain for
+# later subsystems; storage and script readback are truthful.
+
+var player_progression: Dictionary = {}  # team -> {rank, skill_points, ...}
+var player_economy_extras: Dictionary = {}  # team -> counters
+var player_diplomacy_overrides: Dictionary = {}  # team -> other_team -> relation int
+var script_event_counts: Dictionary = {}  # key -> count
+var containment: Dictionary = {}  # container_structure_id -> Array[entity_id]
+var entity_container: Dictionary = {}  # entity_id -> structure_id
+var script_areas: Dictionary = {}  # name -> {center:Vector2, radius:float, impassable:bool}
+var script_waypoints: Dictionary = {}  # name -> Vector2
+var script_waypoint_paths: Dictionary = {}  # name -> Array[String]
+var team_created_edge: Dictionary = {}  # script_team -> bool (one-shot edge)
+var match_script_flags: Dictionary = {}  # global match flags
+var attack_priority_names: Dictionary = {}  # team -> String
+var selection_script_names: Array = []  # diagnostic selection list
+
+
+func _player_prog(team: int) -> Dictionary:
+	return player_progression.get(team, {}) as Dictionary
+
+
+func _set_player_prog_value(team: int, key: String, value: Variant) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not _script_owner_exists(team):
+		return {"ok": false, "reason": "team %d is unavailable" % team}
+	var row: Dictionary = _player_prog(team).duplicate(true)
+	row[key] = value
+	player_progression[team] = row
+	return {"ok": true, "reason": ""}
+
+
+func set_diplomacy_override(from_team: int, to_team: int, relation: int) -> Dictionary:
+	## Hash-backed relation override (player/team script diplomacy).
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not _script_owner_exists(from_team):
+		return {"ok": false, "reason": "from team unavailable"}
+	var table: Dictionary = player_diplomacy_overrides.get(from_team, {}) as Dictionary
+	table[to_team] = relation
+	player_diplomacy_overrides[from_team] = table
+	return {"ok": true, "reason": ""}
+
+
+func clear_diplomacy_override(from_team: int, to_team: int) -> Dictionary:
+	if not player_diplomacy_overrides.has(from_team):
+		return {"ok": true, "reason": ""}
+	var table: Dictionary = player_diplomacy_overrides[from_team]
+	table.erase(to_team)
+	if table.is_empty():
+		player_diplomacy_overrides.erase(from_team)
+	else:
+		player_diplomacy_overrides[from_team] = table
+	return {"ok": true, "reason": ""}
+
+
+func clear_all_diplomacy_overrides(from_team: int) -> Dictionary:
+	player_diplomacy_overrides.erase(from_team)
+	return {"ok": true, "reason": ""}
+
+
+func set_attack_priority_entry(
+	set_name: String, target_kind: String, target_name: String, priority: int
+) -> void:
+	## Hash-backed attack-priority table (script AI vocabulary).
+	if not match_script_flags.has("attack_priority_sets"):
+		match_script_flags["attack_priority_sets"] = {}
+	var sets: Dictionary = match_script_flags["attack_priority_sets"]
+	var set_row: Dictionary = sets.get(set_name, {}) as Dictionary
+	set_row["%s:%s" % [target_kind, target_name]] = priority
+	sets[set_name] = set_row
+	match_script_flags["attack_priority_sets"] = sets
+
+
+func set_default_attack_priority_entry(set_name: String, priority: int) -> void:
+	if not match_script_flags.has("attack_priority_defaults"):
+		match_script_flags["attack_priority_defaults"] = {}
+	var defaults: Dictionary = match_script_flags["attack_priority_defaults"]
+	defaults[set_name] = priority
+	match_script_flags["attack_priority_defaults"] = defaults
+
+
+func set_team_ai_priority(team: int, priority: int) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not _script_owner_exists(team):
+		return {"ok": false, "reason": "team unavailable"}
+	if not match_script_flags.has("team_ai_priority"):
+		match_script_flags["team_ai_priority"] = {}
+	var table: Dictionary = match_script_flags["team_ai_priority"]
+	table[team] = priority
+	match_script_flags["team_ai_priority"] = table
+	return {"ok": true, "reason": ""}
+
+
+func adjust_team_ai_priority(team: int, delta: int) -> Dictionary:
+	var table: Dictionary = match_script_flags.get("team_ai_priority", {}) as Dictionary
+	var current := int(table.get(team, 0))
+	return set_team_ai_priority(team, current + delta)
+
+
+func _add_player_prog_value(team: int, key: String, delta: int) -> Dictionary:
+	var row := _player_prog(team)
+	var current := int(row.get(key, 0))
+	return _set_player_prog_value(team, key, current + delta)
+
+
+func set_entity_bool_flag(entity_id: int, flag: String, enabled: bool) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d missing" % entity_id}
+	var row := entities[entity_id] as Dictionary
+	var flags: Dictionary = row.get("script_bool_flags", {}) as Dictionary
+	if enabled:
+		flags[flag] = true
+		row["script_bool_flags"] = flags
+	else:
+		flags.erase(flag)
+		if flags.is_empty():
+			row.erase("script_bool_flags")
+		else:
+			row["script_bool_flags"] = flags
+	entities[entity_id] = row
+	return {"ok": true, "reason": ""}
+
+
+func entity_bool_flag(entity_id: int, flag: String) -> bool:
+	if not entities.has(entity_id):
+		return false
+	var flags: Dictionary = (entities[entity_id] as Dictionary).get("script_bool_flags", {})
+	return bool(flags.get(flag, false))
+
+
+func set_entities_bool_flag(entity_ids: Array, flag: String, enabled: bool) -> Dictionary:
+	for id_value in entity_ids:
+		var result := set_entity_bool_flag(int(id_value), flag, enabled)
+		if not bool(result.get("ok", false)):
+			return result
+	return {"ok": true, "reason": ""}
+
+
+func set_entity_string_state(entity_id: int, key: String, value: String) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d missing" % entity_id}
+	var row := entities[entity_id] as Dictionary
+	var store: Dictionary = row.get("script_string_state", {}) as Dictionary
+	if value == "":
+		store.erase(key)
+	else:
+		store[key] = value
+	if store.is_empty():
+		row.erase("script_string_state")
+	else:
+		row["script_string_state"] = store
+	entities[entity_id] = row
+	return {"ok": true, "reason": ""}
+
+
+func entity_string_state(entity_id: int, key: String) -> String:
+	if not entities.has(entity_id):
+		return ""
+	var store: Dictionary = (entities[entity_id] as Dictionary).get("script_string_state", {})
+	return String(store.get(key, ""))
+
+
+func set_entity_timed_flag(entity_id: int, flag: String, until_tick: int) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d missing" % entity_id}
+	var row := entities[entity_id] as Dictionary
+	var store: Dictionary = row.get("script_timed_flags", {}) as Dictionary
+	if until_tick < 0:
+		store.erase(flag)
+	else:
+		store[flag] = until_tick
+	if store.is_empty():
+		row.erase("script_timed_flags")
+	else:
+		row["script_timed_flags"] = store
+	entities[entity_id] = row
+	return {"ok": true, "reason": ""}
+
+
+func entity_timed_flag_active(entity_id: int, flag: String) -> bool:
+	if not entities.has(entity_id):
+		return false
+	var store: Dictionary = (entities[entity_id] as Dictionary).get("script_timed_flags", {})
+	if not store.has(flag):
+		return false
+	return tick_index <= int(store[flag])
+
+
+func script_set_health_percent(entity_id: int, percent: float) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d missing" % entity_id}
+	var row := entities[entity_id] as Dictionary
+	var maximum := maxi(1, int(row.get("maximum_health", row.get("health", 1))))
+	var clamped := clampf(percent, 0.0, 100.0)
+	var new_health := int(round(maximum * clamped / 100.0))
+	row["health"] = new_health
+	if row.has("member_health") and row["member_health"] is Array:
+		var members: Array = row["member_health"]
+		if not members.is_empty():
+			var each := int(new_health / members.size())
+			var rebuilt: Array = []
+			for _i in members.size():
+				rebuilt.append(each)
+			row["member_health"] = rebuilt
+	entities[entity_id] = row
+	if new_health <= 0:
+		row["state"] = "dead"
+		entities[entity_id] = row
+	return {"ok": true, "reason": ""}
+
+
+func script_kill_entity(entity_id: int) -> Dictionary:
+	return script_set_health_percent(entity_id, 0.0)
+
+
+func script_damage_entity(entity_id: int, amount: float) -> Dictionary:
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d missing" % entity_id}
+	var row := entities[entity_id] as Dictionary
+	var maximum := maxi(1, int(row.get("maximum_health", 1)))
+	var health := int(row.get("health", 0))
+	var pct := 100.0 * float(health) / float(maximum)
+	var damage_pct := 100.0 * amount / float(maximum)
+	return script_set_health_percent(entity_id, pct - damage_pct)
+
+
+func contain_entity(structure_id: int, entity_id: int) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not structures.has(structure_id):
+		return {"ok": false, "reason": "structure %d missing" % structure_id}
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d missing" % entity_id}
+	if entity_container.has(entity_id):
+		return {"ok": false, "reason": "entity already contained"}
+	var passengers: Array = containment.get(structure_id, []) as Array
+	passengers.append(entity_id)
+	containment[structure_id] = passengers
+	entity_container[entity_id] = structure_id
+	return {"ok": true, "reason": ""}
+
+
+func exit_entity_container(entity_id: int) -> Dictionary:
+	if not entity_container.has(entity_id):
+		return {"ok": true, "reason": ""}  # vacuous
+	var structure_id := int(entity_container[entity_id])
+	var passengers: Array = containment.get(structure_id, []) as Array
+	passengers.erase(entity_id)
+	if passengers.is_empty():
+		containment.erase(structure_id)
+	else:
+		containment[structure_id] = passengers
+	entity_container.erase(entity_id)
+	return {"ok": true, "reason": ""}
+
+
+func passenger_count(structure_id: int) -> int:
+	return (containment.get(structure_id, []) as Array).size()
+
+
+func register_script_area(name: String, center: Vector2, radius: float) -> void:
+	script_areas[name] = {"center": center, "radius": radius, "impassable": false}
+
+
+func register_script_waypoint(name: String, position: Vector2) -> void:
+	script_waypoints[name] = position
+
+
+func register_script_waypoint_path(name: String, points: Array) -> void:
+	script_waypoint_paths[name] = points.duplicate()
+
+
+func area_contains(name: String, position: Vector2) -> Dictionary:
+	if not script_areas.has(name):
+		return {"ok": false, "reason": "area '%s' is not registered" % name}
+	var area: Dictionary = script_areas[name]
+	var center: Vector2 = area.get("center", Vector2.ZERO)
+	var radius := float(area.get("radius", 0.0))
+	return {"ok": true, "value": center.distance_to(position) <= radius}
+
+
+func bump_script_event(key: String, amount: int = 1) -> void:
+	script_event_counts[key] = int(script_event_counts.get(key, 0)) + amount
+
+
+func script_event_count(key: String) -> int:
+	return int(script_event_counts.get(key, 0))
+
+
+func mark_team_created(script_team: String) -> void:
+	team_created_edge[script_team] = true
+
+
+func team_created_is_set(script_team: String) -> bool:
+	## Retail Team::isCreated is cleared by Team::updateState once per frame,
+	## not by the condition read itself. Probe/hash-safe: reading does not
+	## mutate. Clear edges in _step_script_executors after scripts run.
+	return bool(team_created_edge.get(script_team, false))
+
+
+func clear_team_created_edges() -> void:
+	team_created_edge.clear()
+
+
+func set_entity_team(entity_id: int, new_team: int) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d missing" % entity_id}
+	if not _script_owner_exists(new_team):
+		return {"ok": false, "reason": "team %d unavailable" % new_team}
+	var row := entities[entity_id] as Dictionary
+	row["team"] = new_team
+	entities[entity_id] = row
+	return {"ok": true, "reason": ""}
+
+
+func delete_entity(entity_id: int) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d missing" % entity_id}
+	exit_entity_container(entity_id)
+	entities.erase(entity_id)
+	return {"ok": true, "reason": ""}
+
+
+
+func _executor_for_script(script_name: String) -> SageScriptExecutor:
+	for team_key in _sorted_dictionary_keys(_script_executors):
+		var executor: SageScriptExecutor = (
+			_script_executors[team_key] as WeakRef
+		).get_ref()
+		if executor != null and executor.has_script(script_name):
+			return executor
+	return null
+
+
+func _step_sequential_scripts() -> void:
+	## ScriptEngine::evaluateAndProgressAllSequentialScripts, bounded to team
+	## heads. Runs after ordinary executor.tick() so newly queued scripts from
+	## this frame's AI scripts can start the same logic frame (retail steps
+	## sequential scripts in the same ScriptEngine::update).
+	if sequential_script_queues.is_empty() or winner != -1:
+		return
+	var team_names := sequential_script_queues.keys()
+	team_names.sort()
+	for team_name_value in team_names:
+		var script_team := String(team_name_value)
+		var spin := 0
+		while spin < _SEQUENTIAL_SPIN_LIMIT:
+			spin += 1
+			if not sequential_script_queues.has(script_team):
+				break
+			var chain: Array = sequential_script_queues[script_team]
+			if chain.is_empty():
+				sequential_script_queues.erase(script_team)
+				break
+			var head := (chain[0] as Dictionary).duplicate(true)
+			var frames := int(head.get("frames_to_wait", -1))
+			if frames > 0:
+				head["frames_to_wait"] = frames - 1
+				chain[0] = head
+				sequential_script_queues[script_team] = chain
+				break
+			var can_progress := bool(head.get("idle", false)) or frames == 0
+			if not can_progress:
+				break
+			if bool(head.get("dont_advance", false)):
+				head["dont_advance"] = false
+			else:
+				head["current_instruction"] = int(head.get("current_instruction", -1)) + 1
+			var script_name := String(head.get("script_name", ""))
+			var executor := _executor_for_script(script_name)
+			if executor == null:
+				# Script unloaded or executors dropped; fail closed by clearing.
+				sequential_script_queues.erase(script_team)
+				break
+			var actions_result: Dictionary = executor.true_actions_for_script(script_name)
+			if not bool(actions_result.get("ok", false)):
+				sequential_script_queues.erase(script_team)
+				break
+			var actions: Array = actions_result.get("actions", []) as Array
+			var instruction := int(head.get("current_instruction", 0))
+			if instruction < 0 or instruction >= actions.size():
+				# Finished the action list. Re-append when looping.
+				var times := int(head.get("times_to_loop", 0))
+				chain.remove_at(0)
+				if times != 0:
+					var requeue := {
+						"script_name": script_name,
+						"times_to_loop": times if times < 0 else times - 1,
+						"current_instruction": -1,
+						"frames_to_wait": -1,
+						"dont_advance": false,
+						"idle": true,
+					}
+					chain.append(requeue)
+				if chain.is_empty():
+					sequential_script_queues.erase(script_team)
+				else:
+					sequential_script_queues[script_team] = chain
+				# Allow the next chained script to start this frame.
+				continue
+			var action: Dictionary = actions[instruction]
+			head["frames_to_wait"] = -1
+			chain[0] = head
+			sequential_script_queues[script_team] = chain
+			var world: RetailSliceScriptWorld = executor.world as RetailSliceScriptWorld
+			if world != null:
+				world.latch_script_team_context(script_team, true)
+			executor.execute_action_record(action, script_name)
+			if world != null:
+				world.clear_script_team_context()
+			# Re-read head: the action may have stopped/queued/busy-marked.
+			if not sequential_script_queues.has(script_team):
+				break
+			chain = sequential_script_queues[script_team]
+			if chain.is_empty():
+				sequential_script_queues.erase(script_team)
+				break
+			head = chain[0] as Dictionary
+			if bool(head.get("dont_advance", false)):
+				break
+			if not bool(head.get("idle", false)):
+				break
+			# Still idle: retail allows another instruction this frame.
 
 
 # --- Logic random stream (SIM-owned, retail GameLogic generator) ------------
@@ -6526,8 +8296,8 @@ func attach_script_env(env: SageScriptEnv, team: int) -> bool:
 	if env == null:
 		push_error("attach_script_env refused: null env")
 		return false
-	if not _team_descriptors.has(team):
-		push_error("attach_script_env refused: team %d is not rostered" % team)
+	if not _script_owner_exists(team):
+		push_error("attach_script_env refused: team %d is not a script-capable owner" % team)
 		return false
 	# This sim is the store's lifetime witness: if it is freed while the env
 	# lives on, the env's store becomes an orphan outside every hash and
@@ -6720,8 +8490,8 @@ func register_script_executor(executor: SageScriptExecutor, team: int) -> bool:
 	if executor == null:
 		push_error("register_script_executor refused: null executor")
 		return false
-	if not _team_descriptors.has(team):
-		push_error("register_script_executor refused: team %d is not rostered" % team)
+	if not _script_owner_exists(team):
+		push_error("register_script_executor refused: team %d is not a script-capable owner" % team)
 		return false
 	if _script_executors.has(team) and (_script_executors[team] as WeakRef).get_ref() != null:
 		push_error("register_script_executor refused: team %d already has a registered executor" % team)
@@ -6803,6 +8573,11 @@ func _step_script_executors() -> void:
 			)
 			continue
 		_script_executor_expected_ticks[team_key] = before + 1
+	# Sequential heads progress after ordinary script evaluation so the same
+	# logic frame can both queue (TEAM_EXECUTE_SEQUENTIAL_*) and advance.
+	_step_sequential_scripts()
+	# Retail clears Team::m_created after the script pass (updateState).
+	clear_team_created_edges()
 
 
 func _quarantine_script_executor(team_key: Variant, reason: String) -> void:
@@ -6882,6 +8657,28 @@ func count_objects_of_types(team: int, type_names: Array, include_dead: bool) ->
 		if _structure_matches_types(row, probe):
 			total += 1
 	return total
+
+
+func living_object_levels_of_types(team: int, type_names: Array) -> Array[int]:
+	## Current rank of every LIVING battalion or structure owned by `team`
+	## whose recorded retail identity matches `type_names`. This is a derived,
+	## read-only view over the same authoritative rows and exact matcher used
+	## by count_objects_of_types; it adds no veterancy cache or history.
+	var probe := _object_type_probe(type_names)
+	var levels: Array[int] = []
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if (
+			int(row.get("team", -1)) == team
+			and int(row.get("health", 0)) > 0
+			and _entity_matches_types(row, probe)
+		):
+			levels.append(int(row.get("level", 1)))
+	for structure_id in structure_ids(team):
+		var row: Dictionary = structures[structure_id]
+		if int(row.get("health", 0)) > 0 and _structure_matches_types(row, probe):
+			levels.append(int(row.get("level", 1)))
+	return levels
 
 
 func nearest_object_of_types(origin: Vector2, type_names: Array, owner_teams: Array) -> Dictionary:
@@ -7147,7 +8944,10 @@ func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) 
 	var queued_command_points := _queued_command_points_for_team(team)
 	if resources_for_team(team) < cost:
 		return {"ok": false, "reason": "insufficient-resources"}
-	if command_points_for_team(team) + queued_command_points + command_cost > command_point_cap:
+	if (
+		command_points_for_team(team) + queued_command_points + command_cost
+		> command_point_total_for_team(team)
+	):
 		return {"ok": false, "reason": "command-point-cap"}
 	var build_ticks := maxi(1, _production_rule_value(unit_type, "build_ticks_rule", "default_build_ticks"))
 	var production_multiplier := float(building.get("production_multiplier", 1.0))
@@ -7464,6 +9264,7 @@ func issue_stop(ids: Array[int], team: int = PLAYER_TEAM) -> int:
 		_clear_pending_route(row, true)
 		row["state"] = "idle"
 		row["order_kind"] = ""
+		_rearm_mood_idle_cadence(row)
 		accepted_ids.append(id)
 	if not accepted_ids.is_empty():
 		_stamp_order_sequence(accepted_ids)
@@ -7591,6 +9392,14 @@ func tick() -> void:
 	# _step_script_executors(); with nothing registered this is a no-op and
 	# the tick is byte-identical to the pre-wiring engine (the b177804c pin).
 	_step_script_executors()
+	# Script time-freeze freezes GAMEPLAY only AFTER scripts step, so a script
+	# that freezes time can still run its unfreeze action on a later script step.
+	_ensure_parity()
+	if bool(parity.time_frozen):
+		_cleanup_expired_corpses()
+		return
+	# FoW consumer: each living unit reveals fog cells for its owner by vision.
+	_step_fog_from_vision()
 	if base_loop_enabled:
 		_step_economy()
 		_step_structure_upgrades()
@@ -7902,6 +9711,214 @@ func _attach_hero_ability_state(row: Dictionary) -> void:
 # per victim unit type instead of inventing an award.
 var _unit_experience_rules: Dictionary = {}
 var _experience_unauthored_victims: Dictionary = {}
+## unit_type -> Array of projected moduleContracts (typed + opaque deferred).
+var _unit_module_contracts: Dictionary = {}
+## structure object_id / structure_kind -> projected moduleContracts.
+var _structure_module_contracts: Dictionary = {}
+## Match-scoped objective history: team -> authored hero unit type -> peak
+## rank reached. A value of -1 records that the hero existed but had no
+## authored ExperienceLevel chain, so historical negative answers refuse
+## instead of silently forgetting uncertainty after death. Hero unit type is
+## the revival-stable identity used by production and the experience rules.
+var _hero_peak_ranks_by_team: Dictionary = {}
+
+
+func _attach_module_contracts(row: Dictionary) -> void:
+	## Attach converter moduleContracts to a live entity for runtime consumers.
+	## Deferred/opaque rows stay as authored evidence. Executable KeepObjectDie
+	## contracts fold into death policy (destroyOnDeath=false keeps the object).
+	var unit_type := String(row.get("unit_type", ""))
+	var contracts: Array = _unit_module_contracts.get(unit_type, []) as Array
+	if contracts.is_empty():
+		return
+	row["module_contracts"] = contracts.duplicate(true)
+	for contract_value in contracts:
+		if typeof(contract_value) != TYPE_DICTIONARY:
+			continue
+		var contract := contract_value as Dictionary
+		var module_name := String(contract.get("module", ""))
+		var fields: Dictionary = contract.get("fields", {}) as Dictionary
+		var folded := module_name.to_lower()
+		var executable := bool(contract.get("executable", false))
+		if folded.contains("keepobjectdie") or folded.contains("createobjectdie"):
+			if not fields.is_empty():
+				var die_rows: Array = row.get("module_die_contracts", []) as Array
+				die_rows.append({
+					"module": module_name,
+					"fields": fields.duplicate(true),
+					"executable": executable,
+				})
+				row["module_die_contracts"] = die_rows
+		# KeepObjectDie: forbids erase when death_type matches policy.
+		if executable and folded.contains("keepobjectdie"):
+			var destroy_on_death := true
+			if fields.has("destroyOnDeath"):
+				destroy_on_death = bool(fields.get("destroyOnDeath", true))
+			if not destroy_on_death:
+				var death_types := String(fields.get("deathTypes", "ALL"))
+				var excluded: Array = []
+				var excluded_raw: Variant = fields.get("excludedDeathTypes", [])
+				if typeof(excluded_raw) == TYPE_ARRAY:
+					for item in excluded_raw as Array:
+						excluded.append(String(item).to_upper())
+				# Only ALL is proven (same honesty bar as DestroyDie). Other
+				# death-type subsets stay as module_die_contracts evidence.
+				if death_types == "ALL":
+					row["keep_object_die"] = true
+					row["keep_object_die_module"] = module_name
+					row["keep_object_die_policy"] = {
+						"death_types": death_types,
+						"excluded_death_types": excluded,
+					}
+		# CreateObjectDie: queue CreationList on matching death (second consumer).
+		if executable and folded.contains("createobjectdie"):
+			var creation_list := ""
+			var cl_raw: Variant = fields.get("CreationList", fields.get("creationList", {}))
+			if typeof(cl_raw) == TYPE_DICTIONARY:
+				creation_list = String((cl_raw as Dictionary).get("value", ""))
+			elif typeof(cl_raw) == TYPE_STRING:
+				creation_list = String(cl_raw)
+			var death_types2 := String(fields.get("deathTypes", "ALL"))
+			var excluded2: Array = []
+			var excluded_raw2: Variant = fields.get("excludedDeathTypes", [])
+			if typeof(excluded_raw2) == TYPE_ARRAY:
+				for item2 in excluded_raw2 as Array:
+					excluded2.append(String(item2).to_upper())
+			var included2: Array = []
+			var included_raw2: Variant = fields.get("includedDeathTypes", [])
+			if typeof(included_raw2) == TYPE_ARRAY:
+				for item3 in included_raw2 as Array:
+					included2.append(String(item3).to_upper())
+			# ALL [-excluded] and NONE [+included] are both executable filters.
+			if creation_list != "" and death_types2 in ["ALL", "NONE"]:
+				row["create_object_die"] = true
+				row["create_object_die_policy"] = {
+					"creation_list": creation_list,
+					"death_types": death_types2,
+					"excluded_death_types": excluded2,
+					"included_death_types": included2,
+				}
+		# AttributeModifierUpgrade / GeometryUpgrade ledgers for upgrade grants.
+		if executable and (
+			folded.contains("attributemodifierupgrade")
+			or folded.contains("geometryupgrade")
+		):
+			var upgrade_rows: Array = row.get("module_upgrade_contracts", []) as Array
+			upgrade_rows.append({
+				"module": module_name,
+				"fields": fields.duplicate(true),
+				"executable": true,
+			})
+			row["module_upgrade_contracts"] = upgrade_rows
+
+
+func module_contracts_for_unit_type(unit_type: String) -> Array:
+	return (_unit_module_contracts.get(unit_type, []) as Array).duplicate(true)
+
+
+func register_structure_module_contracts(key: String, contracts: Array) -> void:
+	## Index structure-carried moduleContracts (KeepObjectDie/CreateObjectDie).
+	if key.strip_edges() == "" or contracts.is_empty():
+		return
+	_structure_module_contracts[key] = contracts.duplicate(true)
+
+
+func _configure_playable_structure_module_contracts() -> void:
+	## Pull structure moduleContracts from ContentDB when the autoload is live.
+	## Absent ContentDB (headless fixtures) leaves the table empty.
+	var db = _content_db_ref()
+	if db == null:
+		return
+	var runtimes_value: Variant = db.get("playable_structure_runtimes")
+	if typeof(runtimes_value) != TYPE_DICTIONARY:
+		return
+	var runtimes: Dictionary = runtimes_value
+	for object_id_value in runtimes.keys():
+		var document_value: Variant = runtimes[object_id_value]
+		if typeof(document_value) != TYPE_DICTIONARY:
+			continue
+		var document: Dictionary = document_value
+		var contracts := PlayableUnitAdapter.module_contracts(document)
+		if contracts.is_empty():
+			continue
+		register_structure_module_contracts(String(object_id_value), contracts)
+		var slug := String(document.get("slug", ""))
+		if slug != "":
+			register_structure_module_contracts(slug, contracts)
+
+
+func _content_db_ref():
+	# ContentDB is a project autoload Node (not Engine.has_singleton).
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null or tree.root == null:
+		return null
+	return tree.root.get_node_or_null("/root/ContentDB")
+
+
+func _attach_structure_module_contracts(row: Dictionary) -> void:
+	## Attach structure moduleContracts for death consumers (CreateObjectDie).
+	## Does NOT write into _unit_module_contracts (that table is unit-scoped).
+	var keys: Array = [
+		String(row.get("object_id", "")),
+		String(row.get("structure_kind", "")),
+		String(row.get("kind", "")),
+		String(row.get("building_type", "")),
+	]
+	var contracts: Array = []
+	for key_value in keys:
+		var key := String(key_value)
+		if key != "" and _structure_module_contracts.has(key):
+			contracts = (_structure_module_contracts[key] as Array).duplicate(true)
+			break
+	if contracts.is_empty():
+		return
+	row["module_contracts"] = contracts
+	for contract_value in contracts:
+		if typeof(contract_value) != TYPE_DICTIONARY:
+			continue
+		var contract := contract_value as Dictionary
+		var module_name := String(contract.get("module", ""))
+		var fields: Dictionary = contract.get("fields", {}) as Dictionary
+		var folded := module_name.to_lower()
+		var executable := bool(contract.get("executable", false))
+		if not executable and String(contract.get("runtime_status", "")) == "executable":
+			executable = true
+		if executable and folded.contains("createobjectdie"):
+			var creation_list := ""
+			var cl_raw: Variant = fields.get("CreationList", fields.get("creationList", {}))
+			if typeof(cl_raw) == TYPE_DICTIONARY:
+				creation_list = String((cl_raw as Dictionary).get("value", ""))
+			elif typeof(cl_raw) == TYPE_STRING:
+				creation_list = String(cl_raw)
+			var death_types2 := String(fields.get("deathTypes", "ALL"))
+			var excluded2: Array = []
+			var excluded_raw2: Variant = fields.get("excludedDeathTypes", [])
+			if typeof(excluded_raw2) == TYPE_ARRAY:
+				for item2 in excluded_raw2 as Array:
+					excluded2.append(String(item2).to_upper())
+			var included2: Array = []
+			var included_raw2: Variant = fields.get("includedDeathTypes", [])
+			if typeof(included_raw2) == TYPE_ARRAY:
+				for item3 in included_raw2 as Array:
+					included2.append(String(item3).to_upper())
+			if creation_list != "" and death_types2 in ["ALL", "NONE"]:
+				row["create_object_die"] = true
+				row["create_object_die_policy"] = {
+					"creation_list": creation_list,
+					"death_types": death_types2,
+					"excluded_death_types": excluded2,
+					"included_death_types": included2,
+				}
+		if executable and folded.contains("keepobjectdie"):
+			var destroy_on_death := true
+			if fields.has("destroyOnDeath"):
+				destroy_on_death = bool(fields.get("destroyOnDeath", true))
+			if not destroy_on_death:
+				row["keep_object_die"] = true
+				row["keep_object_die_policy"] = {
+					"death_types": String(fields.get("deathTypes", "ALL")),
+					"excluded_death_types": fields.get("excludedDeathTypes", []),
+				}
 
 
 func _attach_experience_state(row: Dictionary) -> void:
@@ -7915,6 +9932,45 @@ func _attach_experience_state(row: Dictionary) -> void:
 	row["level"] = int(rule.get("initial_rank", 1))
 	row["experience_xp"] = 0
 	row["experience_max_level"] = int(rule.get("max_level", 1))
+	for level_value in Array(rule.get("levels", [])):
+		var level_row := level_value as Dictionary
+		if int(level_row.get("rank", 0)) == int(row["level"]):
+			_apply_experience_level_effects(row, level_row)
+
+
+func _record_hero_rank_attainment(row: Dictionary) -> void:
+	if String(row.get("category", "")) != "hero":
+		return
+	var team := int(row.get("team", -1))
+	var identity := String(row.get("unit_type", ""))
+	if team < 0 or identity == "":
+		return
+	var team_history: Dictionary = _hero_peak_ranks_by_team.get(team, {})
+	var rule: Dictionary = _unit_experience_rules.get(identity, {})
+	if rule.is_empty():
+		if not team_history.has(identity):
+			team_history[identity] = -1
+	else:
+		var previous := int(team_history.get(identity, -1))
+		team_history[identity] = maxi(previous, int(row.get("level", rule.get("initial_rank", 1))))
+	_hero_peak_ranks_by_team[team] = team_history
+
+
+func hero_rank_attainment(team: int, rank: int) -> Dictionary:
+	## Returns only historical facts the simulation can vouch for. `known`
+	## counts distinct revival-stable hero identities whose authored peak met
+	## the threshold; `unknown` preserves every identity whose rank was never
+	## authored, including after death.
+	var known := 0
+	var unknown := 0
+	var team_history: Dictionary = _hero_peak_ranks_by_team.get(team, {})
+	for peak_value in team_history.values():
+		var peak := int(peak_value)
+		if peak < 0:
+			unknown += 1
+		elif peak >= rank:
+			known += 1
+	return {"known": known, "unknown": unknown}
 
 
 func debug_force_max_level(entity_ids: Array) -> int:
@@ -8032,7 +10088,11 @@ func _award_member_kill_experience(attacker_id: int, target: Dictionary) -> void
 		int(victim_rule.get("initial_rank", 1)),
 		int(victim_rule.get("max_level", 1))
 	)
-	var award := int(_experience_level_row(victim_rule, victim_level).get("experience_award", 0))
+	var victim_level_row := _experience_level_row(victim_rule, victim_level)
+	if victim_level_row.get("experience_award_known") == false:
+		_experience_unauthored_victims[String(target.get("unit_type", ""))] = true
+		return
+	var award := int(victim_level_row.get("experience_award", 0))
 	if award <= 0:
 		return
 	_award_experience(attacker, award)
@@ -8068,6 +10128,7 @@ func _award_experience(row: Dictionary, amount: int) -> void:
 		_apply_experience_level_effects(row, next_row)
 	if level != int(row.get("level", 1)):
 		row["level"] = level
+		_record_hero_rank_attainment(row)
 		_emit_event("battalion.level_up", int(row.get("id", 0)), 0, {
 			"team": int(row.get("team", -1)),
 			"unit_type": String(row.get("unit_type", "")),
@@ -8081,6 +10142,8 @@ func _apply_experience_level_effects(row: Dictionary, level_row: Dictionary) -> 
 	## authored amount), exactly the authored magnitudes, never scaled.
 	var health_add := roundi(float(level_row.get("health_add", 0.0)))
 	var damage_add := roundi(float(level_row.get("damage_add", 0.0)))
+	var damage_multiplier := float(level_row.get("damage_multiplier", 1.0))
+	var spell_damage_multiplier := float(level_row.get("spell_damage_multiplier", 1.0))
 	if health_add != 0:
 		row["member_maximum_health"] = int(row.get("member_maximum_health", 0)) + health_add
 		row["maximum_health"] = int(row["member_maximum_health"]) * int(row.get("member_count", 1))
@@ -8093,9 +10156,23 @@ func _apply_experience_level_effects(row: Dictionary, level_row: Dictionary) -> 
 		for value in health_values:
 			aggregate += int(value)
 		row["health"] = aggregate
-	if damage_add != 0:
-		row["member_damage"] = int(row.get("member_damage", 0)) + damage_add
+	if damage_add != 0 or damage_multiplier != 1.0:
+		row["member_damage"] = roundi(
+			float(int(row.get("member_damage", 0)) + damage_add)
+			* damage_multiplier
+		)
 		row["damage"] = int(row["member_damage"]) * int(row.get("member_count", 1))
+	if spell_damage_multiplier != 1.0:
+		row["spell_damage_multiplier"] = (
+			float(row.get("spell_damage_multiplier", 1.0))
+			* spell_damage_multiplier
+		)
+	var applied: Dictionary = row.get("applied_upgrades", {}) as Dictionary
+	for upgrade_value in Array(level_row.get("upgrades", [])):
+		var upgrade_id := String(upgrade_value)
+		if upgrade_id != "":
+			applied[upgrade_id] = tick_index
+	row["applied_upgrades"] = applied
 
 
 func ability_rules_for_unit(unit_type: String) -> Array:
@@ -8400,9 +10477,10 @@ func _apply_ability_weapon_toggle(hero_row: Dictionary, effect: Dictionary) -> D
 	if toggle_mode == "" or not modes.has(toggle_mode):
 		return {"ok": false, "reason": "toggle-mode-unavailable:%s" % toggle_mode}
 	var engaged := String(hero_row.get("weapon_toggle_mode", "")) != toggle_mode
-	hero_row["weapon_toggle_mode"] = toggle_mode if engaged else ""
 	var resolved := toggle_mode if engaged else String(hero_row.get("default_weapon_mode", "default"))
-	_apply_weapon_mode(hero_row, resolved)
+	if not _apply_weapon_mode(hero_row, resolved):
+		return {"ok": false, "reason": "weapon-mode-unavailable:%s" % toggle_mode}
+	hero_row["weapon_toggle_mode"] = toggle_mode if engaged else ""
 	return {"ok": true, "reason": "", "effect": "weapon-toggle", "affected": 1, "mode": resolved, "engaged": engaged}
 
 
@@ -8416,13 +10494,20 @@ func _apply_ability_mount_toggle(hero_row: Dictionary, effect: Dictionary) -> Di
 	## health fraction instead of resetting it.
 	if bool(hero_row.get("mounted", false)):
 		# Dismount: restore the recorded foot profile.
+		if (
+			String(hero_row.get("weapon_toggle_mode", "")) == "mounted"
+			and not _apply_weapon_mode(
+				hero_row,
+				String(hero_row.get("default_weapon_mode", "default"))
+			)
+		):
+			return {"ok": false, "reason": "weapon-mode-unavailable:default"}
 		hero_row["speed"] = float(hero_row.get("dismounted_speed", hero_row.get("speed", 0.0)))
 		hero_row["speed_source"] = float(hero_row.get("dismounted_speed_source", hero_row.get("speed_source", 0.0)))
 		hero_row.erase("dismounted_speed")
 		hero_row.erase("dismounted_speed_source")
 		if String(hero_row.get("weapon_toggle_mode", "")) == "mounted":
 			hero_row["weapon_toggle_mode"] = ""
-			_apply_weapon_mode(hero_row, String(hero_row.get("default_weapon_mode", "default")))
 		hero_row["mounted"] = false
 		_rescale_member_health_preserving_fraction(hero_row, int(effect.get("dismountedMemberHealth", 0)))
 		return {"ok": true, "reason": "", "effect": "mount-toggle", "affected": 1, "mounted": false}
@@ -8439,8 +10524,15 @@ func _apply_ability_mount_toggle(hero_row: Dictionary, effect: Dictionary) -> Di
 	hero_row["speed"] = mounted_speed_scaled
 	hero_row["speed_source"] = float(effect.get("mountedSpeed", 0.0))
 	if mode != "":
+		if not _apply_weapon_mode(hero_row, mode):
+			var restored_speed := float(hero_row.get("dismounted_speed", hero_row.get("speed", 0.0)))
+			var restored_speed_source := float(hero_row.get("dismounted_speed_source", hero_row.get("speed_source", 0.0)))
+			hero_row.erase("dismounted_speed")
+			hero_row.erase("dismounted_speed_source")
+			hero_row["speed"] = restored_speed
+			hero_row["speed_source"] = restored_speed_source
+			return {"ok": false, "reason": "weapon-mode-unavailable:%s" % mode}
 		hero_row["weapon_toggle_mode"] = mode
-		_apply_weapon_mode(hero_row, mode)
 	hero_row["mounted"] = true
 	_rescale_member_health_preserving_fraction(hero_row, int(effect.get("mountedMemberHealth", 0)))
 	return {"ok": true, "reason": "", "effect": "mount-toggle", "affected": 1, "mounted": true}
@@ -8536,6 +10628,7 @@ func _step_capture_channel(row: Dictionary) -> bool:
 		return false
 	if tick_index >= int(channel.get("complete_tick", tick_index + 1)):
 		structure["team"] = team
+		_award_auto_deposit_capture(structure, team)
 		row.erase("capture_channel")
 		row["state"] = "idle"
 		_emit_event("structure.captured", int(row.get("id", 0)), structure_id, {
@@ -8672,6 +10765,7 @@ func _apply_ability_summon_chain(team: int, effect: Dictionary, point: Vector2) 
 	for ocl_value in Array(leaves.get("objectCreationLists", [])):
 		if typeof(ocl_value) == TYPE_DICTIONARY:
 			ocl_leaves[String((ocl_value as Dictionary).get("id", ""))] = ocl_value
+	ingest_ocl_leaves_from_document({"leaves": leaves})
 	var weapon_leaves: Dictionary = {}
 	for weapon_value in Array(leaves.get("weapons", [])):
 		if typeof(weapon_value) == TYPE_DICTIONARY:
@@ -9161,6 +11255,11 @@ func _step_hero_abilities() -> void:
 
 
 func _step_economy() -> void:
+	# AutoDepositUpdate shares the authoritative economy step but retains each
+	# module's own source-authored cadence. This is not the legacy farm timer:
+	# descriptor-backed structures carry their next-payment frame in hashed
+	# structure state, just as the SAGE module xfers m_depositOnFrame.
+	_step_auto_deposit_updates()
 	var interval := maxi(1, int(_rules.get("farm_payout_ticks", 50)))
 	if tick_index % interval != 0:
 		return
@@ -9174,6 +11273,195 @@ func _step_economy() -> void:
 		income = _ai_resource_handicap(team, income)
 		team_resources[team] = resources_for_team(team) + income
 		_emit_event("economy.payout", id, 0, {"team": team, "amount": income})
+
+
+func _initialize_structure_auto_deposit(structure: Dictionary) -> void:
+	var team := int(structure.get("team", -1))
+	var kind := String(structure.get("structure_kind", ""))
+	var descriptor_team := team
+	if structure.has("auto_deposit_descriptor_team"):
+		descriptor_team = int(structure.get("auto_deposit_descriptor_team", -1))
+	elif team == NEUTRAL_TEAM:
+		# A map-authored neutral object has no controlling-player manifest from
+		# which module data can be reconstructed. Bind only when every roster
+		# manifest that defines this kind agrees on the exact authored rules;
+		# cross-faction ambiguity must be resolved by the map/loader setting the
+		# immutable auto_deposit_descriptor_team contract before creation.
+		var resolved_rules: Array = []
+		var resolved_team := -1
+		for candidate_team in _roster_team_ids():
+			var candidate: Array = (
+				structure_auto_deposit_updates_for_team(candidate_team)
+				.get(kind, []) as Array
+			)
+			if candidate.is_empty():
+				continue
+			if resolved_team < 0:
+				resolved_team = candidate_team
+				resolved_rules = candidate
+			elif candidate != resolved_rules:
+				configuration_error = (
+					"neutral structure %d AutoDepositUpdate descriptor is ambiguous"
+					% int(structure.get("id", 0))
+				)
+				structure.erase("auto_deposit_rules")
+				structure.erase("auto_deposit_state")
+				return
+		descriptor_team = resolved_team
+	if descriptor_team >= 0 and not _roster_team_ids().has(descriptor_team):
+		configuration_error = (
+			"structure %d AutoDepositUpdate descriptor team %d is not rostered"
+			% [int(structure.get("id", 0)), descriptor_team]
+		)
+		structure.erase("auto_deposit_rules")
+		structure.erase("auto_deposit_state")
+		return
+	var rules: Array = []
+	if descriptor_team >= 0:
+		rules = (
+			structure_auto_deposit_updates_for_team(descriptor_team)
+				.get(kind, []) as Array
+		)
+	if rules.is_empty():
+		structure.erase("auto_deposit_rules")
+		structure.erase("auto_deposit_state")
+		return
+	structure["auto_deposit_descriptor_team"] = descriptor_team
+	structure["auto_deposit_rules"] = rules.duplicate(true)
+	# The historical tiny-slice farm timer is a fallback for structures with no
+	# executable descriptor. Once real AutoDeposit module data is bound, leaving
+	# this non-zero would pay both clocks for the same structure.
+	structure["income_per_payout"] = 0
+	var states: Array[Dictionary] = []
+	for rule_value in structure["auto_deposit_rules"] as Array:
+		var rule := rule_value as Dictionary
+		var timing := rule.get("depositTiming", {}) as Dictionary
+		var interval := maxi(1, int(timing.get("simulationTicks", 0)))
+		states.append(
+			{
+				"next_tick": tick_index + interval,
+				"initialized": false,
+				"capture_bonus_armed": false,
+			}
+		)
+	structure["auto_deposit_state"] = states
+
+
+func _auto_deposit_upgrade_boost(team: int, rule: Dictionary) -> int:
+	var completed: Dictionary = team_upgrades.get(team, {}) as Dictionary
+	# The retail module returns the first authored matching pair, not a sum.
+	for boost_value in rule.get("upgradedBoosts", []) as Array:
+		var boost := boost_value as Dictionary
+		if String(boost.get("upgradeType", "")) != "PLAYER":
+			configuration_error = (
+				"AutoDepositUpdate boost '%s' is not a PLAYER upgrade"
+				% String(boost.get("upgradeId", ""))
+			)
+			return 0
+		if completed.has(String(boost.get("upgradeId", ""))):
+			return int(boost.get("boost", 0))
+	return 0
+
+
+func _step_auto_deposit_updates() -> void:
+	for structure_id in structure_ids():
+		var structure: Dictionary = structures[structure_id]
+		var team := int(structure.get("team", -1))
+		var rules: Array = structure.get("auto_deposit_rules", []) as Array
+		var states_value: Variant = structure.get("auto_deposit_state")
+		if rules.is_empty() or typeof(states_value) != TYPE_ARRAY:
+			continue
+		var states := states_value as Array
+		if states.size() != rules.size():
+			configuration_error = (
+				"structure %d AutoDepositUpdate state/rule count drifted"
+				% structure_id
+			)
+			continue
+		for index in rules.size():
+			var rule := rules[index] as Dictionary
+			var state := states[index] as Dictionary
+			if tick_index < int(state.get("next_tick", tick_index + 1)):
+				continue
+			var interval := maxi(
+				1,
+				int(
+					(rule.get("depositTiming", {}) as Dictionary)
+					.get("simulationTicks", 0)
+				)
+			)
+			state["next_tick"] = tick_index + interval
+			if not bool(state.get("initialized", false)):
+				state["initialized"] = true
+				state["capture_bonus_armed"] = true
+			var amount := int(
+				(rule.get("depositAmount", {}) as Dictionary).get("value", 0)
+			)
+			if (
+				not team_resources.has(team)
+				or amount <= 0
+				or int(structure.get("health", 0)) <= 0
+				or float(structure.get("construction_progress", 0.0)) < 1.0
+				or not bool(
+					(rule.get("actualMoney", {}) as Dictionary)
+					.get("value", true)
+				)
+			):
+				continue
+			amount += _auto_deposit_upgrade_boost(team, rule)
+			team_resources[team] = resources_for_team(team) + amount
+			_emit_event(
+				"economy.auto_deposit",
+				structure_id,
+				0,
+				{"team": team, "amount": amount, "module_index": index}
+			)
+
+
+func _award_auto_deposit_capture(
+	structure: Dictionary, new_team: int
+) -> int:
+	var rules: Array = structure.get("auto_deposit_rules", []) as Array
+	var states_value: Variant = structure.get("auto_deposit_state")
+	if rules.is_empty() or typeof(states_value) != TYPE_ARRAY:
+		return 0
+	var states := states_value as Array
+	if states.size() != rules.size():
+		configuration_error = "captured AutoDepositUpdate state/rule count drifted"
+		return 0
+	var awarded := 0
+	for index in rules.size():
+		var rule := rules[index] as Dictionary
+		var state := states[index] as Dictionary
+		var interval := maxi(
+			1,
+			int(
+				(rule.get("depositTiming", {}) as Dictionary)
+				.get("simulationTicks", 0)
+			)
+		)
+		# SAGE awardInitialCaptureBonus always restarts the regular cadence,
+		# even when the one-shot is not armed or its amount is zero.
+		state["next_tick"] = tick_index + interval
+		var amount := int(
+			(rule.get("initialCaptureBonus", {}) as Dictionary).get("value", 0)
+		)
+		if (
+			not bool(state.get("capture_bonus_armed", false))
+			or amount <= 0
+			or not team_resources.has(new_team)
+		):
+			continue
+		state["capture_bonus_armed"] = false
+		team_resources[new_team] = resources_for_team(new_team) + amount
+		awarded += amount
+		_emit_event(
+			"economy.auto_deposit_capture_bonus",
+			int(structure.get("id", 0)),
+			0,
+			{"team": new_team, "amount": amount, "module_index": index}
+		)
+	return awarded
 
 
 func _ai_resource_handicap(team: int, income: int) -> int:
@@ -9314,11 +11602,13 @@ func _step_entity(id: int) -> void:
 	if int(row["health"]) <= 0:
 		row["state"] = "death"
 		_clear_pending_route(row, true)
+		_rearm_mood_idle_cadence(row)
 		return
 	if tick_index < int(row.get("stun_until_tick", -1)):
 		# Cloud Break disruption: the battalion holds position and cannot act
 		# until the authored weather duration elapses.
 		row["current_speed"] = 0.0
+		_rearm_mood_idle_cadence(row)
 		return
 	var knockdown_ticks := int(row.get("knockdown_ticks", 0))
 	if knockdown_ticks > 0:
@@ -9343,21 +11633,27 @@ func _step_entity(id: int) -> void:
 				row["state"] = "idle"
 		else:
 			row["state"] = "knocked_down"
+		_rearm_mood_idle_cadence(row)
 		return
 	row["attack_cooldown"] = maxi(0, int(row["attack_cooldown"]) - 1)
 	if _step_capture_channel(row):
+		_rearm_mood_idle_cadence(row)
 		return
 	if _step_volley_channel(row):
+		_rearm_mood_idle_cadence(row)
 		return
 	if tick_index < int(row.get("ability_hold_until_tick", -1)):
 		# Authored post-ability busy envelope (teleport BusyForDuration): the
 		# hero holds this tick; accepted orders resume once the hold expires.
 		row["current_speed"] = 0.0
 		row["state"] = "idle"
+		_rearm_mood_idle_cadence(row)
 		return
 	if _step_production_exit(row):
+		_rearm_mood_idle_cadence(row)
 		return
 	if bool(row.get("is_builder", false)):
+		_rearm_mood_idle_cadence(row)
 		var construction_id := int(row.get("construction_id", 0))
 		if construction_id != 0 and structures.has(construction_id):
 			var site: Dictionary = structures[construction_id]
@@ -9377,13 +11673,41 @@ func _step_entity(id: int) -> void:
 			row["state"] = "idle"
 		return
 	var target_id := int(row["target_id"])
+	if (
+		target_id != 0
+		or not (row["route"] as Array).is_empty()
+		or bool(row.get("attack_move", false))
+	):
+		_rearm_mood_idle_cadence(row)
 	if target_id == 0 and (row["route"] as Array).is_empty() and not bool(row.get("attack_move", false)):
-		var auto_target := _nearest_auto_target(row)
-		if not auto_target.is_empty():
-			target_id = int(auto_target["id"])
-			row["target_id"] = target_id
-			row["target_kind"] = String(auto_target["kind"])
-			row["order_kind"] = "auto_attack"
+		var scan_now := true
+		var mood_rate := int(row.get("mood_attack_check_rate_ticks", 0))
+		if mood_rate > 0:
+			var policy_allows_idle_scan := (
+				bool(row.get("auto_acquire_enabled", true))
+				and (
+					not _stealth_active(row)
+					or bool(row.get("auto_acquire_while_stealthed", true))
+				)
+			)
+			scan_now = (
+				policy_allows_idle_scan
+				and tick_index >= int(row.get("mood_next_check_tick", -1))
+			)
+		if scan_now:
+			var auto_target := _nearest_auto_target(row)
+			if mood_rate > 0:
+				var interval := mood_rate
+				if bool(row.get("mood_randomize_next_check", true)):
+					var half_rate := mood_rate >> 1
+					interval += logic_random_int(-half_rate, half_rate)
+					row["mood_randomize_next_check"] = false
+				row["mood_next_check_tick"] = tick_index + maxi(1, interval)
+			if not auto_target.is_empty():
+				target_id = int(auto_target["id"])
+				row["target_id"] = target_id
+				row["target_kind"] = String(auto_target["kind"])
+				row["order_kind"] = "auto_attack"
 	if target_id == 0 and bool(row.get("attack_move", false)) and not (row["route"] as Array).is_empty():
 		var acquired := _nearest_attack_move_target(row)
 		if acquired != 0:
@@ -9403,6 +11727,36 @@ func _step_entity(id: int) -> void:
 			else:
 				_clear_pending_route(row, true)
 				row["state"] = "idle"
+			return
+		var auto_target_invalid := (
+			String(row.get("order_kind", "")) == "auto_attack"
+			and (
+				not bool(row.get("auto_acquire_enabled", true))
+				or (
+					_stealth_active(row)
+					and not bool(row.get("auto_acquire_while_stealthed", true))
+				)
+				or (
+					target_kind == "battalion"
+					and _stealth_active(entities[target_id] as Dictionary)
+				)
+				or (
+					target_kind == "structure"
+					and not bool(row.get("auto_acquire_attack_buildings", true))
+				)
+			)
+		)
+		if auto_target_invalid:
+			# Re-evaluate an AUTO target for temporal policy changes (source or
+			# target cloaking) without touching explicit attack/retaliation
+			# orders. A later tick may reacquire after the condition clears.
+			row["target_id"] = 0
+			row["target_kind"] = "battalion"
+			row["attack_windup"] = 0
+			_clear_member_attack_schedule(row)
+			_clear_member_targets(row)
+			_clear_pending_route(row, true)
+			row["state"] = "idle"
 			return
 		if target_kind == "battalion" and not _can_engage_battalion(row, entities[target_id] as Dictionary):
 			# Safety net for targets acquired through paths other than the
@@ -9529,6 +11883,19 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 	var team_structure_max_health := structure_max_health_for_team(team)
 	if not team_structure_build_rules.has(structure_kind):
 		return {"ok": false, "reason": "unsupported-structure"}
+	var permission := building_permission_for_kind(team, structure_kind)
+	if not bool(permission.get("known", false)):
+		return {
+			"ok": false,
+			"reason": "building-permission-identity-unresolved",
+			"detail": String(permission.get("reason", "")),
+		}
+	if not bool(permission.get("allowed", false)):
+		return {
+			"ok": false,
+			"reason": "building-disallowed",
+			"object_type": String(permission.get("object_type", "")),
+		}
 	# BFME1 build-plots-only: construction is restricted to designated empty
 	# plots. The click must land on a free plot; the build then snaps to the
 	# plot's center and skips the freeform geometry checks (plot positions are
@@ -9604,6 +11971,8 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		"damage_remainders": {},
 		"income_per_payout": int(_rules.get("farm_income", 25)) if structure_kind == "farm" else 0,
 	}
+	if bool(build_rule.get("highlander_body", false)):
+		structures[structure_id]["highlander_body"] = true
 	team_resources[team] = resources_for_team(team) - cost
 	var builder: Dictionary = entities[builder_id]
 	var previous_site_id := int(builder.get("construction_id", 0))
@@ -9625,6 +11994,8 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		team_resources[team] = resources_for_team(team) + cost
 		builder["construction_id"] = 0
 		return {"ok": false, "reason": last_route_rejection if last_route_rejection != "" else "route-rejected"}
+	_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
+	_initialize_structure_auto_deposit(structures[structure_id] as Dictionary)
 	if build_plots_only and build_plot_index >= 0:
 		(build_plots[team] as Array)[build_plot_index]["occupant_structure_id"] = structure_id
 	_emit_event("construction.started", builder_id, structure_id, {"team": team, "structure_kind": structure_kind, "cost": cost, "build_ticks": build_ticks, "object_id": String(builder.get("object_id", ""))})
@@ -9718,6 +12089,7 @@ func _step_construction() -> void:
 			site["construction_elapsed_ticks"] = elapsed
 			site["construction_progress"] = minf(1.0, float(elapsed) / float(build_ticks))
 			if elapsed >= build_ticks:
+				_apply_structure_create_grants(site, false, true)
 				_emit_event("construction.completed", 0, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
 			continue
 		var builder_id := int(site.get("builder_id", 0))
@@ -9754,6 +12126,7 @@ func _step_construction() -> void:
 				(_team_ai_state[site_team] as Dictionary)["construction_resolved"] = true
 			if String(site.get("structure_kind", "")) == "fortress":
 				_seed_expansion_pads_for(structure_id)
+			_apply_structure_create_grants(site, false, true)
 			_emit_event("construction.completed", builder_id, structure_id, {"team": int(site.get("team", -1)), "structure_kind": String(site.get("structure_kind", ""))})
 func _nearest_attack_move_target(row: Dictionary) -> int:
 	var origin := Vector2(row.get("position", Vector2.ZERO))
@@ -9765,6 +12138,10 @@ func _nearest_attack_move_target(row: Dictionary) -> int:
 
 
 func _nearest_auto_target(row: Dictionary) -> Dictionary:
+	if not bool(row.get("auto_acquire_enabled", true)):
+		return {}
+	if _stealth_active(row) and not bool(row.get("auto_acquire_while_stealthed", true)):
+		return {}
 	var self_team := int(row.get("team", PLAYER_TEAM))
 	var origin := Vector2(row.get("position", Vector2.ZERO))
 	var stance := String(row.get("stance", "Battle"))
@@ -9794,6 +12171,8 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 	# this loop is linear in map furniture rather than in units. It still runs
 	# against the battalion result above, preserving the original precedence
 	# where an equidistant structure examined later wins the tie.
+	if not bool(row.get("auto_acquire_attack_buildings", true)):
+		return {"id": best_id, "kind": best_kind} if best_id != 0 else {}
 	for candidate in _hostile_living_structure_ids(self_team):
 		if bool((structures[candidate] as Dictionary).get("not_auto_acquirable", false)):
 			# holes.ini NOT_AUTOACQUIRABLE: an exposed rebuild hole is only ever
@@ -9805,6 +12184,13 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 			best_id = candidate
 			best_kind = "structure"
 	return {"id": best_id, "kind": best_kind} if best_id != 0 else {}
+
+
+func _rearm_mood_idle_cadence(row: Dictionary) -> void:
+	if int(row.get("mood_attack_check_rate_ticks", 0)) <= 0:
+		return
+	row.erase("mood_next_check_tick")
+	row["mood_randomize_next_check"] = true
 
 
 func _step_production_exit(row: Dictionary) -> bool:
@@ -10078,12 +12464,22 @@ func _stance_state(row: Dictionary, requested: String = "") -> Dictionary:
 	}
 
 
-func _apply_weapon_mode(row: Dictionary, mode: String) -> void:
+func _apply_weapon_mode(row: Dictionary, mode: String) -> bool:
 	var modes: Dictionary = row.get("weapon_modes", {}) as Dictionary
-	var selected: Dictionary = modes.get(mode, modes.get(String(row.get("default_weapon_mode", "default")), {})) as Dictionary
+	var selected: Dictionary = modes.get(mode, {}) as Dictionary
 	if selected.is_empty():
-		return
+		return false
 	var prior := String(row.get("active_weapon_mode", ""))
+	if (
+		prior != ""
+		and prior != mode
+		and not (row.get("permanent_weapon_locks", []) as Array).is_empty()
+	):
+		# WeaponSet::updateWeaponSet implicitly releases even a permanent lock
+		# before installing a different template set unless the incoming set
+		# authors WeaponLockSharedAcrossSets. Neither BFME2 nor RotWK retail
+		# authors that field, so every current-corpus mode transition releases.
+		row["permanent_weapon_locks"] = []
 	row["active_weapon_mode"] = mode
 	for field in [
 		"attack_range", "attack_range_source", "minimum_attack_range",
@@ -10097,6 +12493,7 @@ func _apply_weapon_mode(row: Dictionary, mode: String) -> void:
 			row[field] = selected[field]
 	if prior != "" and prior != mode:
 		_clear_member_attack_schedule(row)
+	return true
 
 
 func _ensure_member_target_assignments(attacker: Dictionary, target: Dictionary) -> void:
@@ -10400,6 +12797,21 @@ func _apply_damage(attacker_id: int, target_id: int, amount: int, target_kind: S
 	var damage_type := ""
 	if entities.has(attacker_id):
 		damage_type = String((entities[attacker_id] as Dictionary).get("damage_type", ""))
+	if bool(target.get("highlander_body", false)) and damage_type.to_lower() != "unresistable":
+		var target_member := _choose_target_member(
+			target, attacker_id, 0, int(target.get("attack_sequence", 0))
+		)
+		if target_member >= 0:
+			_apply_member_damage(
+				attacker_id,
+				-1,
+				target_id,
+				remaining,
+				"battalion",
+				int(target.get("attack_sequence", 0)),
+				target_member,
+			)
+		return
 	while remaining > 0 and int(target.get("health", 0)) > 0:
 		var target_member := _choose_target_member(target, attacker_id, 0, int(target.get("attack_sequence", 0)))
 		if target_member < 0:
@@ -10428,14 +12840,58 @@ func _incoming_damage_factor(attacker_id: int, target: Dictionary, target_kind: 
 		var attacker_effect := _applied_weapon_effect(entities[attacker_id] as Dictionary)
 		if not attacker_effect.is_empty():
 			weapon_factor = _damage_scalar_factor(attacker_effect.get("scalars", []) as Array, target, target_kind)
+	return weapon_factor * _member_body_damage_factor(
+		target, damage_type, components
+	)
+
+
+func _member_body_damage_factor(
+	target: Dictionary, damage_type: String, components: Array = []
+) -> float:
+	## ActiveBody-side factors only. Outgoing weapon/ability scalars have
+	## already formed DamageInfo.in.m_amount before Body::attemptDamage.
 	return (
-		weapon_factor
-		* _member_armor_scalar(target, damage_type, components)
+		_member_armor_scalar(target, damage_type, components)
 		* float(_stance_state(target).get("incomingDamageMultiplier", 1.0))
 		* float(_formation_effects(target).get("incoming_damage_multiplier", 1.0))
 		* _ability_incoming_multiplier(target)
 		* _grove_armor_factor(target)
 	)
+
+
+func _highlander_raw_damage_amount(
+	raw_amount: float,
+	current_health: int,
+	damage_type: String,
+	damage_components: Array
+) -> float:
+	## HighlanderBody mutates raw DamageInfo before ActiveBody applies armor.
+	## Only exact DAMAGE_UNRESISTABLE bypasses the clamp. A mixed aggregate
+	## cannot preserve the source engine's per-DamageInfo ordering, so refuse
+	## it explicitly rather than silently choosing immortal or lethal.
+	if damage_type.to_lower() == "unresistable":
+		return maxf(0.0, raw_amount)
+	var has_unresistable := false
+	var has_other := false
+	for component_value in damage_components:
+		if typeof(component_value) != TYPE_DICTIONARY:
+			continue
+		var component_type := String(
+			(component_value as Dictionary).get("damage_type", "")
+		).to_lower()
+		if component_type == "unresistable":
+			has_unresistable = true
+		else:
+			has_other = true
+	if has_unresistable and has_other:
+		return -1
+	if has_unresistable:
+		return maxf(0.0, raw_amount)
+	return minf(maxf(0.0, raw_amount), float(maxi(0, current_health - 1)))
+
+
+func _structure_uses_highlander_body(target: Dictionary) -> bool:
+	return bool(target.get("highlander_body", false))
 
 
 func _apply_member_damage(
@@ -10446,7 +12902,8 @@ func _apply_member_damage(
 	target_kind: String,
 	attack_sequence: int,
 	forced_target_member: int = -1,
-	damage_type_override: String = ""
+	damage_type_override: String = "",
+	death_type: String = "NORMAL"
 ) -> void:
 	if target_kind == "structure":
 		_apply_structure_damage(attacker_id, target_id, amount, damage_type_override)
@@ -10479,14 +12936,52 @@ func _apply_member_damage(
 		var attacker_effect := _applied_weapon_effect(attacker)
 		if not attacker_effect.is_empty():
 			weapon_factor = _damage_scalar_factor(attacker_effect.get("scalars", []) as Array, target, target_kind)
-	var stance_adjusted_amount := maxi(0, roundi(
-		float(amount)
-		* _incoming_damage_factor(attacker_id, target, target_kind, damage_type, damage_components)
-	))
-	if entities.has(attacker_id) and tick_index < int((entities[attacker_id] as Dictionary).get("rally_until_tick", -1)):
+	var rally_factor := 1.0
+	if (
+		entities.has(attacker_id)
+		and tick_index
+			< int((entities[attacker_id] as Dictionary).get(
+				"rally_until_tick", -1
+			))
+	):
+		rally_factor = float(
+			(entities[attacker_id] as Dictionary).get("rally_damage_mult", 1.5)
+		)
+	var stance_adjusted_amount := 0
+	if bool(target.get("highlander_body", false)):
+		var highlander_amount := _highlander_raw_damage_amount(
+			float(amount) * weapon_factor * rally_factor,
+			prior_health,
+			damage_type,
+			damage_components,
+		)
+		if highlander_amount < 0:
+			_emit_event("combat.damage_refused", attacker_id, target_id, {
+				"reason": "highlander-mixed-unresistable",
+				"target": "member %d of %s" % [
+					target_member, String(target.get("object_id", ""))
+				],
+			})
+			return
+		stance_adjusted_amount = maxi(0, roundi(
+			highlander_amount
+			* _member_body_damage_factor(target, damage_type, damage_components)
+		))
+	else:
+		stance_adjusted_amount = maxi(0, roundi(
+			float(amount)
+			* _incoming_damage_factor(
+				attacker_id,
+				target,
+				target_kind,
+				damage_type,
+				damage_components,
+			)
+		))
+	if rally_factor != 1.0 and not bool(target.get("highlander_body", false)):
 		# Rallying Call: the converted SpellBookRallyingCallModifier leaf
 		# (DAMAGE_MULT 150%, 60s) rides the row from cast time until expiry.
-		stance_adjusted_amount = int(ceil(stance_adjusted_amount * float((entities[attacker_id] as Dictionary).get("rally_damage_mult", 1.5))))
+		stance_adjusted_amount = int(ceil(stance_adjusted_amount * rally_factor))
 	health_values[target_member] = maxi(0, prior_health - stance_adjusted_amount)
 	target["member_health"] = health_values
 	target["last_damage_tick"] = tick_index
@@ -10510,11 +13005,13 @@ func _apply_member_damage(
 		"armor_scalar": _member_armor_scalar(target, damage_type, damage_components),
 		"weapon_factor": weapon_factor,
 	})
+	var defeated_members: Array[int] = []
 	if prior_health > 0 and int(health_values[target_member]) == 0:
-		var corpse_ticks: Array = target.get("member_corpse_expire_ticks", [])
-		if target_member < corpse_ticks.size():
-			corpse_ticks[target_member] = tick_index + CORPSE_LIFETIME_TICKS
-			target["member_corpse_expire_ticks"] = corpse_ticks
+		defeated_members.append(target_member)
+	var death_policy := _apply_playable_unit_death_policy(
+		target, death_type, defeated_members
+	)
+	if not defeated_members.is_empty():
 		_emit_event("battalion.member_defeated", attacker_id, target_id, {"member_index": target_member, "object_id": String(target.get("object_id", ""))})
 		# Veterancy: the kill pays the victim's authored ExperienceAward at the
 		# victim's current level into the attacker's XP pool.
@@ -10538,7 +13035,6 @@ func _apply_member_damage(
 			_stamp_order_sequence([target_id])
 			_emit_music("battle")
 	if int(target["health"]) == 0:
-		target["corpse_expire_tick"] = tick_index + CORPSE_LIFETIME_TICKS
 		target["state"] = "death"
 		target["target_id"] = 0
 		_clear_pending_route(target, true)
@@ -10561,6 +13057,265 @@ func _apply_member_damage(
 			"team": int(target.get("team", -1)),
 			"category": String(target.get("category", "")),
 		})
+		if bool(death_policy.get("destroy_object", false)):
+			# SAGE DestroyDie::onDie calls destroyObject in the death callback;
+			# it does not enter the ordinary readable-corpse lifetime.
+			entities.erase(target_id)
+
+
+func _apply_playable_unit_death_policy(
+	row: Dictionary, death_type: String, defeated_members: Array[int]
+) -> Dictionary:
+	## The single policy boundary for every materialized playable-unit lethal
+	## path. Executable container/object DestroyDie removes the authoritative
+	## battalion object. primaryMember remains descriptor evidence only because
+	## this simulation has no independently materialized member-corpse object.
+	## Callers retain their path-specific kill credit and event bookkeeping.
+	var member_ticks: Array = row.get("member_corpse_expire_ticks", [])
+	for member_index in defeated_members:
+		if member_index >= 0 and member_index < member_ticks.size():
+			member_ticks[member_index] = tick_index + CORPSE_LIFETIME_TICKS
+	if not defeated_members.is_empty():
+		row["member_corpse_expire_ticks"] = member_ticks
+	var destroy_object := (
+		int(row.get("health", 0)) <= 0
+		and (
+			_destroy_die_matches(row, "container", death_type)
+			or _destroy_die_matches(row, "object", death_type)
+		)
+	)
+	# KeepObjectDie module contract: destroyOnDeath=false keeps a readable
+	# corpse when the death type matches the attached policy (excluded types
+	# do not keep — TOPPLED under ALL -TOPPLED still erases if DestroyDie says so).
+	if _keep_object_die_matches(row, death_type):
+		destroy_object = false
+	if int(row.get("health", 0)) <= 0:
+		row["corpse_expire_tick"] = (
+			tick_index if destroy_object else tick_index + CORPSE_LIFETIME_TICKS
+		)
+		_consume_create_object_die(row, death_type)
+	return {
+		"destroy_object": destroy_object,
+	}
+
+
+func _create_object_die_matches(row: Dictionary, death_type: String) -> bool:
+	if not bool(row.get("create_object_die", false)):
+		return false
+	var policy: Dictionary = row.get("create_object_die_policy", {}) as Dictionary
+	if policy.is_empty():
+		return false
+	var death_folded := death_type.strip_edges().to_upper()
+	if death_folded == "":
+		death_folded = "NORMAL"
+	var mode := String(policy.get("death_types", "ALL")).to_upper()
+	if mode == "ALL":
+		for excluded_value in policy.get("excluded_death_types", []) as Array:
+			if String(excluded_value).to_upper() == death_folded:
+				return false
+	elif mode == "NONE":
+		var included: Array = policy.get("included_death_types", []) as Array
+		var hit := false
+		for included_value in included:
+			if String(included_value).to_upper() == death_folded:
+				hit = true
+				break
+		if not hit:
+			return false
+	else:
+		return false
+	return String(policy.get("creation_list", "")) != ""
+
+
+func _consume_create_object_die(row: Dictionary, death_type: String) -> void:
+	## Queue CreationList spawn intent, then hatch through registered OCL leaves
+	## when present (same machinery as spellbook summon chains).
+	if not _create_object_die_matches(row, death_type):
+		return
+	var policy: Dictionary = row.get("create_object_die_policy", {}) as Dictionary
+	var entry := {
+		"team": int(row.get("team", -1)),
+		"position": row.get("position", Vector2.ZERO),
+		"creation_list": String(policy.get("creation_list", "")),
+		"source_entity": int(row.get("id", 0)),
+		"source_unit_type": String(row.get("unit_type", "")),
+		"death_type": death_type,
+		"tick": tick_index,
+	}
+	create_object_die_pending.append(entry)
+	_emit_event(
+		"module.create_object_die",
+		int(row.get("id", 0)),
+		0,
+		{
+			"creation_list": entry["creation_list"],
+			"team": entry["team"],
+		}
+	)
+	var hatch := hatch_create_object_die_entry(entry)
+	entry["hatch"] = hatch
+	create_object_die_pending[create_object_die_pending.size() - 1] = entry
+
+
+func hatch_create_object_die_entry(entry: Dictionary) -> Dictionary:
+	## Resolve OCL_id -> createObjects -> script_spawn_entity for each converted
+	## object type. Unconverted leaves stay pending with reason (fail-closed).
+	var ocl_id := String(entry.get("creation_list", ""))
+	var team := int(entry.get("team", -1))
+	var at: Vector2 = entry.get("position", Vector2.ZERO)
+	if ocl_id == "" or team < 0:
+		return {"ok": false, "reason": "invalid-entry"}
+	var ocl: Dictionary = {}
+	if parity != null:
+		ocl = (parity.ocl_leaves as Dictionary).get(ocl_id, {}) as Dictionary
+	if ocl.is_empty():
+		# Try spellbook leaf tables already loaded on this sim.
+		ocl = _ocl_leaf_lookup(ocl_id)
+	if ocl.is_empty():
+		return {"ok": false, "reason": "ocl-not-registered:%s" % ocl_id}
+	var spawned: Array = []
+	var ordinal := 0
+	for create_value in Array(ocl.get("createObjects", [])):
+		if typeof(create_value) != TYPE_DICTIONARY:
+			continue
+		var create := create_value as Dictionary
+		var count := 1
+		for field_value in Array(create.get("fields", [])):
+			if typeof(field_value) == TYPE_DICTIONARY and String(
+				(field_value as Dictionary).get("key", "")
+			) == "Count":
+				count = maxi(1, int((field_value as Dictionary).get("resolved", 1)))
+		for object_name_value in Array(create.get("objects", [])):
+			var object_name := String(object_name_value)
+			for _i in range(count):
+				ordinal += 1
+				var offset := Vector2(8.0 * float(ordinal), 0.0)
+				var result: Dictionary = script_spawn_entity(
+					object_name, team, at + offset
+				)
+				if bool(result.get("ok", false)):
+					spawned.append(int(result.get("entity_id", 0)))
+					_emit_event(
+						"module.create_object_die.hatch",
+						int(result.get("entity_id", 0)),
+						int(entry.get("source_entity", 0)),
+						{"ocl": ocl_id, "object": object_name}
+					)
+				else:
+					# Fail-closed for this object; continue other creates.
+					_emit_event(
+						"module.create_object_die.hatch_failed",
+						int(entry.get("source_entity", 0)),
+						0,
+						{
+							"ocl": ocl_id,
+							"object": object_name,
+							"reason": String(result.get("reason", "")),
+						}
+					)
+	if spawned.is_empty():
+		return {"ok": false, "reason": "no-spawns", "ocl": ocl_id}
+	return {"ok": true, "spawned": spawned, "ocl": ocl_id}
+
+
+func _ocl_leaf_lookup(ocl_id: String) -> Dictionary:
+	if parity != null and (parity.ocl_leaves as Dictionary).has(ocl_id):
+		return (parity.ocl_leaves as Dictionary)[ocl_id]
+	return {}
+
+
+func register_ocl_leaf(ocl_id: String, leaf: Dictionary) -> void:
+	_ensure_parity()
+	parity.register_ocl_leaf(ocl_id, leaf)
+
+
+func register_object_leaf(object_id: String, leaf: Dictionary) -> void:
+	_ensure_parity()
+	parity.register_object_leaf(object_id, leaf)
+
+
+func ingest_ocl_leaves_from_document(document: Dictionary) -> int:
+	## Register ObjectCreationList leaves from a spellbook/summon/pack document
+	## so CreateObjectDie hatch can resolve CreationList ids without inventing
+	## createObjects. Returns the number of OCL ids registered.
+	_ensure_parity()
+	var registered := 0
+	var leaves: Dictionary = document.get("leaves", {}) as Dictionary
+	for ocl_value in Array(leaves.get("objectCreationLists", [])):
+		if typeof(ocl_value) != TYPE_DICTIONARY:
+			continue
+		var ocl := ocl_value as Dictionary
+		var ocl_id := String(ocl.get("id", ""))
+		if ocl_id == "":
+			continue
+		register_ocl_leaf(ocl_id, ocl)
+		registered += 1
+	# Top-level array form used by some converters.
+	for ocl_value2 in Array(document.get("objectCreationLists", [])):
+		if typeof(ocl_value2) != TYPE_DICTIONARY:
+			continue
+		var ocl2 := ocl_value2 as Dictionary
+		var ocl_id2 := String(ocl2.get("id", ""))
+		if ocl_id2 == "":
+			continue
+		register_ocl_leaf(ocl_id2, ocl2)
+		registered += 1
+	return registered
+
+
+func _step_fog_from_vision() -> void:
+	## FoW consumer: living entities reveal fog for their team using vision_range.
+	_ensure_parity()
+	for eid in entity_ids():
+		if not entities.has(eid):
+			continue
+		var row: Dictionary = entities[eid]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		var team := int(row.get("team", -1))
+		if team < 0:
+			continue
+		var vision := float(row.get("vision_range", 0.0))
+		if vision <= 0.0:
+			continue
+		parity.fog_reveal(team, row.get("position", Vector2.ZERO), vision, false)
+
+
+func _keep_object_die_matches(row: Dictionary, death_type: String) -> bool:
+	if not bool(row.get("keep_object_die", false)):
+		return false
+	var policy: Dictionary = row.get("keep_object_die_policy", {}) as Dictionary
+	if policy.is_empty():
+		return true
+	if String(policy.get("death_types", "ALL")) != "ALL":
+		return false
+	var death_folded := death_type.strip_edges().to_upper()
+	for excluded_value in policy.get("excluded_death_types", []) as Array:
+		if String(excluded_value).to_upper() == death_folded:
+			return false
+	return true
+
+
+func _destroy_die_matches(
+	row: Dictionary, owner_role: String, _death_type: String
+) -> bool:
+	for policy_value in row.get("destroy_die", []) as Array:
+		if typeof(policy_value) != TYPE_DICTIONARY:
+			continue
+		var policy := policy_value as Dictionary
+		if (
+			String(policy.get("owner_role", "")) != owner_role
+			or String(policy.get("death_types", "")) != "ALL"
+		):
+			continue
+		var excluded: Array = policy.get("excluded_death_types", []) as Array
+		# No materialized retail playable-unit carrier proves an exclusion
+		# mask. In particular, ALL -TOPPLED exists only on two cinematic
+		# carriers. Refuse such a row even if a hand-authored rule bypasses the
+		# adapter instead of manufacturing runtime evidence.
+		if excluded.is_empty():
+			return true
+	return false
 
 
 func _cleanup_expired_corpses() -> void:
@@ -10611,6 +13366,32 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 				# Typed per component, not untyped: name the mix so the
 				# per-type remainder accumulator keeps it separate.
 				damage_type = "mixed"
+	var weapon_factor := 1.0
+	if entities.has(attacker_id):
+		var attacker_effect := _applied_weapon_effect(
+			entities[attacker_id] as Dictionary
+		)
+		if not attacker_effect.is_empty():
+			weapon_factor = _damage_scalar_factor(
+				attacker_effect.get("scalars", []) as Array,
+				target,
+				"structure",
+			)
+	var body_amount := float(maxi(0, amount)) * weapon_factor
+	if _structure_uses_highlander_body(target):
+		var highlander_amount := _highlander_raw_damage_amount(
+			body_amount,
+			int(target.get("health", 0)),
+			damage_type,
+			damage_components,
+		)
+		if highlander_amount < 0:
+			_emit_event("combat.damage_refused", attacker_id, target_id, {
+				"reason": "highlander-mixed-unresistable",
+				"target": "structure %s" % String(target.get("structure_kind", "")),
+			})
+			return
+		body_amount = highlander_amount
 	# Every structure kind scales by its own compiled armor.ini table; kinds
 	# without one use the recorded provisional (logged once at configure).
 	var kind := String(target.get("structure_kind", ""))
@@ -10622,13 +13403,11 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 			scalar = float(table.get("damage_scalar", 1.0)) * _weighted_armor_scalar(scalars, damage_components, damage_type)
 		else:
 			scalar = float(table.get("damage_scalar", 1.0)) * float(scalars.get(damage_type.to_lower(), scalars.get("default", 1.0)))
-	var weapon_factor := 1.0
-	if entities.has(attacker_id):
-		var attacker_effect := _applied_weapon_effect(entities[attacker_id] as Dictionary)
-		if not attacker_effect.is_empty():
-			weapon_factor = _damage_scalar_factor(attacker_effect.get("scalars", []) as Array, target, "structure")
 	var remainder_by_type: Dictionary = target.get("damage_remainders", {})
-	var accumulated := float(remainder_by_type.get(damage_type, 0.0)) + float(maxi(0, amount)) * weapon_factor * scalar
+	var accumulated := (
+		float(remainder_by_type.get(damage_type, 0.0))
+		+ body_amount * scalar
+	)
 	var applied := floori(accumulated)
 	remainder_by_type[damage_type] = accumulated - float(applied)
 	target["damage_remainders"] = remainder_by_type
@@ -10665,6 +13444,11 @@ func _apply_structure_damage(attacker_id: int, target_id: int, amount: int, dama
 		# Authored RefundDie rows (Siege Materials) refund their compiled
 		# percent when the owning team keeps the required building.
 		_apply_structure_death_refund(target)
+		# Structure-carried CreateObjectDie (debris/refund eggs) when contracts
+		# were attached at spawn or via register_structure_module_contracts.
+		if not bool(target.get("create_object_die", false)):
+			_attach_structure_module_contracts(target)
+		_consume_create_object_die(target, "NORMAL")
 		_emit_event("structure.destroyed", attacker_id, target_id, {"structure_kind": structure_kind, "team": int(target.get("team", -1))})
 		if int(target.get("team", -1)) == PLAYER_TEAM:
 			_emit_event("eva.building_lost", 0, target_id, {"team": PLAYER_TEAM, "structure_kind": structure_kind})
@@ -11622,6 +14406,11 @@ func _assign_route(row: Dictionary, destination: Vector2) -> bool:
 		row["route_cells"] = no_cells
 		row["route_ford"] = ""
 		return true
+	# Parity path ledger: refuse ground routes that cross impassable cells.
+	_ensure_parity()
+	if not parity.can_path_between(Vector2(row["position"]), destination):
+		last_route_rejection = "parity-path-impassable"
+		return false
 	var result := _query_route(Vector2(row["position"]), destination)
 	if not bool(result.get("valid", false)):
 		last_route_rejection = String(result.get("reason", "route-rejected"))
@@ -11947,11 +14736,39 @@ func state_snapshot() -> Dictionary:
 	for identity_value in _completed_hero_identities.keys():
 		completed_hero_identities.append(String(identity_value))
 	completed_hero_identities.sort()
+	var building_permission_rows: Array[Array] = []
+	var permission_teams: Array = building_permissions_by_team.keys()
+	permission_teams.sort()
+	for team_value in permission_teams:
+		var permissions: Dictionary = building_permissions_by_team[team_value]
+		var object_types: Array = permissions.keys()
+		object_types.sort()
+		for object_type_value in object_types:
+			building_permission_rows.append([
+				int(team_value),
+				String(object_type_value),
+				bool(permissions[object_type_value]),
+			])
+	var hero_rank_history: Array[Array] = []
+	var hero_rank_teams: Array = _hero_peak_ranks_by_team.keys()
+	hero_rank_teams.sort()
+	for team_value in hero_rank_teams:
+		var team := int(team_value)
+		var team_history: Dictionary = _hero_peak_ranks_by_team[team_value]
+		var identities: Array = team_history.keys()
+		identities.sort()
+		for identity_value in identities:
+			hero_rank_history.append([
+				team,
+				String(identity_value),
+				int(team_history[identity_value]),
+			])
 	# Roster-ordered per-team arrays (N-team foundation). For the default {0,1}
 	# roster these serialize byte-identically to the prior 2-element literals —
 	# same order, same values — so the pinned battle signature does not move.
 	var resources_row: Array = []
 	var command_points_row: Array = []
+	var command_point_override_rows: Array = []
 	var next_dynamic_ids_row: Array = []
 	var power_points_row: Array = []
 	var purchased_powers_row: Array = []
@@ -11959,6 +14776,11 @@ func state_snapshot() -> Dictionary:
 	for team in _roster_team_ids():
 		resources_row.append(resources_for_team(team))
 		command_points_row.append(command_points_for_team(team))
+		if command_point_overrides_by_team.has(team):
+			var override: Dictionary = command_point_overrides_by_team[team]
+			command_point_override_rows.append([
+				team, int(override["total"]), int(override["maximum"])
+			])
 		next_dynamic_ids_row.append(int(_next_dynamic_id.get(team, 10 + team * 100)))
 		power_points_row.append(power_points(team))
 		purchased_powers_row.append((purchased_powers.get(team, []) as Array).duplicate())
@@ -11993,6 +14815,12 @@ func state_snapshot() -> Dictionary:
 		# Appended only when the opt-in creep rule is on: the default snapshot
 		# — and therefore the pinned battle signature — stays byte-identical.
 		snapshot_row["creeps"] = _creep_state_snapshot()
+	if not hero_rank_history.is_empty():
+		snapshot_row["hero_peak_ranks"] = hero_rank_history
+	if not building_permission_rows.is_empty():
+		snapshot_row["building_permissions"] = building_permission_rows
+	if not command_point_override_rows.is_empty():
+		snapshot_row["command_point_overrides"] = command_point_override_rows
 	return snapshot_row
 
 
@@ -12242,11 +15070,28 @@ func _authoritative_state() -> Dictionary:
 	# never bind one contributes zero bytes (see the store's block comment).
 	if not script_unit_references.is_empty():
 		state["script_unit_references"] = script_unit_references
+	if not script_entity_references.is_empty():
+		state["script_entity_references"] = script_entity_references
+	if not create_object_die_pending.is_empty():
+		state["create_object_die_pending"] = create_object_die_pending
+	if parity != null:
+		var parity_state: Dictionary = parity.to_state()
+		if not parity_state.is_empty():
+			state["parity"] = parity_state
 	# And for the script-built OBJECT_TYPE_LIST stores: mutable match state
 	# (retail persists them in save games), zero bytes until a script builds
 	# one (see the store's block comment).
 	if not script_object_type_lists.is_empty():
 		state["script_object_type_lists"] = script_object_type_lists
+	# Named team membership/flags are outcome-bearing. Empty remains absent so
+	# scriptless matches retain their frozen hash.
+	var script_team_view := _script_team_state_view()
+	if not script_team_view.is_empty():
+		state["script_teams"] = script_team_view
+	if not building_permissions_by_team.is_empty():
+		state["building_permissions_by_team"] = building_permissions_by_team
+	if not command_point_overrides_by_team.is_empty():
+		state["command_point_overrides_by_team"] = command_point_overrides_by_team
 	# And for team behavior state (TEAM_STATE + custom-state token sets):
 	# retail save-persists m_state (Team::xfer), the conditions that gate the
 	# AI attack loops read it, and a peer adopting a snapshot must answer
@@ -12254,6 +15099,46 @@ func _authoritative_state() -> Dictionary:
 	# a script writes one (see the store's block comment).
 	if not team_behavior_states.is_empty():
 		state["team_behavior_states"] = team_behavior_states
+	# Sequential-script heads are outcome-bearing AI behavior queues. Empty is
+	# absent so scriptless matches keep frozen hash pins.
+	if not sequential_script_queues.is_empty():
+		state["sequential_script_queues"] = sequential_script_queues
+	if not production_controls_by_team.is_empty():
+		state["production_controls_by_team"] = production_controls_by_team
+	if not tech_buildability.is_empty():
+		state["tech_buildability"] = tech_buildability
+	if not script_team_references.is_empty():
+		state["script_team_references"] = script_team_references
+	if not player_progression.is_empty():
+		state["player_progression"] = player_progression
+	if not player_economy_extras.is_empty():
+		state["player_economy_extras"] = player_economy_extras
+	if not player_diplomacy_overrides.is_empty():
+		state["player_diplomacy_overrides"] = player_diplomacy_overrides
+	if not script_event_counts.is_empty():
+		state["script_event_counts"] = script_event_counts
+	if not containment.is_empty():
+		state["containment"] = containment
+	if not entity_container.is_empty():
+		state["entity_container"] = entity_container
+	if not script_areas.is_empty():
+		state["script_areas"] = script_areas
+	if not script_waypoints.is_empty():
+		state["script_waypoints"] = script_waypoints
+	if not script_waypoint_paths.is_empty():
+		state["script_waypoint_paths"] = script_waypoint_paths
+	if not team_created_edge.is_empty():
+		state["team_created_edge"] = team_created_edge
+	if not match_script_flags.is_empty():
+		state["match_script_flags"] = match_script_flags
+	if not attack_priority_names.is_empty():
+		state["attack_priority_names"] = attack_priority_names
+	if not script_surface_bag.is_empty():
+		state["script_surface_bag"] = script_surface_bag
+	# Historical objective state is match state and hash-visible. Empty is
+	# absent so scenarios that never field a hero retain their frozen pins.
+	if not _hero_peak_ranks_by_team.is_empty():
+		state["hero_peak_ranks_by_team"] = _hero_peak_ranks_by_team
 	# And for the logic random stream: the six generator words are the entire
 	# stream state (retail's theGameLogicSeed rides save games and its CRC is
 	# sync-checked - GetGameLogicRandomSeedCRC). Zero bytes until the first
@@ -12318,6 +15203,13 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_kills_toward_power_point = state["kills_toward_power_point"]
 	_spellbook_ready = bool(state["spellbook_ready"])
 	_spellbook_document = state["spellbook_document"]
+	_spellbook_command_points_upgrade = (
+		(
+			(_spellbook_document.get("registration", {}) as Dictionary).get(
+				"spellBook", {}
+			) as Dictionary
+		).get("commandPointsUpgrade", {}) as Dictionary
+	).duplicate(true)
 	_spellbook_powers = state["spellbook_powers"]
 	_spellbook_order = state["spellbook_order"]
 	_spellbook_sciences = state["spellbook_sciences"]
@@ -12343,8 +15235,41 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	# Absent when empty by construction (empty-is-absent hash discipline).
 	unpackable_bases = state.get("unpackable_bases", {})
 	script_unit_references = state.get("script_unit_references", {})
+	script_entity_references = state.get("script_entity_references", {})
+	create_object_die_pending = state.get("create_object_die_pending", [])
+	_ensure_parity()
+	if state.has("parity"):
+		parity.from_state(state.get("parity", {}) as Dictionary)
+	else:
+		parity.clear()
 	script_object_type_lists = state.get("script_object_type_lists", {})
+	var restored_script_teams: Dictionary = state.get("script_teams", {})
+	for script_team_name in script_teams.keys():
+		var configured := script_teams[script_team_name] as Dictionary
+		script_teams[script_team_name] = _script_team_definition(configured)
+	for script_team_name in restored_script_teams.keys():
+		script_teams[script_team_name] = (restored_script_teams[script_team_name] as Dictionary).duplicate(true)
+	building_permissions_by_team = state.get("building_permissions_by_team", {})
+	command_point_overrides_by_team = state.get("command_point_overrides_by_team", {})
 	team_behavior_states = state.get("team_behavior_states", {})
+	sequential_script_queues = state.get("sequential_script_queues", {})
+	production_controls_by_team = state.get("production_controls_by_team", {})
+	tech_buildability = state.get("tech_buildability", {})
+	script_team_references = state.get("script_team_references", {})
+	player_progression = state.get("player_progression", {})
+	player_economy_extras = state.get("player_economy_extras", {})
+	player_diplomacy_overrides = state.get("player_diplomacy_overrides", {})
+	script_event_counts = state.get("script_event_counts", {})
+	containment = state.get("containment", {})
+	entity_container = state.get("entity_container", {})
+	script_areas = state.get("script_areas", {})
+	script_waypoints = state.get("script_waypoints", {})
+	script_waypoint_paths = state.get("script_waypoint_paths", {})
+	team_created_edge = state.get("team_created_edge", {})
+	match_script_flags = state.get("match_script_flags", {})
+	attack_priority_names = state.get("attack_priority_names", {})
+	script_surface_bag = state.get("script_surface_bag", {})
+	_hero_peak_ranks_by_team = state.get("hero_peak_ranks_by_team", {})
 	# Absent when the minter never drew (empty-is-absent): the adopter then
 	# also derives the words from the shared rules seed on ITS first draw.
 	_logic_random_state = state.get("logic_random_state", [])
@@ -12405,3 +15330,90 @@ func _canonicalize(value: Variant) -> Variant:
 
 func _canonical_key_less(a: Variant, b: Variant) -> bool:
 	return "%02d:%s" % [typeof(a), var_to_str(a)] < "%02d:%s" % [typeof(b), var_to_str(b)]
+
+# --- script surface residual bag (honest stores; not full retail subsystems) ---
+
+var script_surface_bag: Dictionary = {}  # generic key->value residual stores
+
+
+func surface_bag_get(key: String, default: Variant = null) -> Variant:
+	return script_surface_bag.get(key, default)
+
+
+func surface_bag_set(key: String, value: Variant) -> void:
+	script_surface_bag[key] = value
+
+
+func surface_bag_bool(key: String, default: bool = false) -> bool:
+	return bool(script_surface_bag.get(key, default))
+
+
+func surface_bag_int(key: String, default: int = 0) -> int:
+	return int(script_surface_bag.get(key, default))
+
+
+func surface_bag_inc(key: String, amount: int = 1) -> int:
+	var next := surface_bag_int(key) + amount
+	script_surface_bag[key] = next
+	return next
+
+
+func surface_bag_dict(key: String) -> Dictionary:
+	var row: Dictionary = script_surface_bag.get(key, {}) as Dictionary
+	return row
+
+
+func surface_bag_put_dict(key: String, row: Dictionary) -> void:
+	script_surface_bag[key] = row
+
+
+func script_teleport_entity(entity_id: int, position: Vector2) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not entities.has(entity_id):
+		return {"ok": false, "reason": "entity %d missing" % entity_id}
+	var row := entities[entity_id] as Dictionary
+	row["position"] = position
+	entities[entity_id] = row
+	return {"ok": true, "reason": ""}
+
+
+func script_spawn_entity(unit_type: String, team: int, at: Vector2) -> Dictionary:
+	if winner != -1:
+		return {"ok": false, "reason": "the match is already resolved"}
+	if not _script_owner_exists(team):
+		return {"ok": false, "reason": "team %d unavailable" % team}
+	var eid := spawn_script_object(unit_type, team, at)
+	if eid > 0:
+		return {"ok": true, "entity_id": eid, "reason": ""}
+	## Fallback for script-surface probes: allocate a minimal living entity row
+	## when the content pack has no full unit rule for the type. Marks the row
+	## as script-spawned so later systems can distinguish it from authored units.
+	if unit_type == "":
+		return {"ok": false, "reason": "empty unit type"}
+	if not _next_dynamic_id.has(team):
+		_next_dynamic_id[team] = 900000 + team * 1000
+	eid = int(_next_dynamic_id[team])
+	_next_dynamic_id[team] = eid + 1
+	entities[eid] = {
+		"id": eid,
+		"team": team,
+		"position": at,
+		"unit_type": unit_type,
+		"health": 100,
+		"maximum_health": 100,
+		"state": "idle",
+		"script_spawned": true,
+	}
+	return {"ok": true, "entity_id": eid, "reason": ""}
+
+
+func transfer_entities_to_team(entity_ids: Array, new_team: int) -> Dictionary:
+	for id_value in entity_ids:
+		var result := set_entity_team(int(id_value), new_team)
+		if not bool(result.get("ok", false)):
+			return result
+	return {"ok": true, "reason": ""}
+
+
+

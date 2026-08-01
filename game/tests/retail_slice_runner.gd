@@ -2,7 +2,6 @@ extends SceneTree
 ## Deterministic behavior/asset gate for the playable private retail slice.
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
-const PackCapability = preload("res://src/content/pack_capability.gd")
 const WatchdogScript = preload("res://tests/runner_watchdog.gd")
 # Capture-measured dock geometry (bfme2-ref-120s.png); mirrors
 # retail_hud.gd RETAIL_RADAR_CENTER / RETAIL_DISH_CENTER.
@@ -26,8 +25,15 @@ const ARCHER_PROJECTILE_CONTROLLER_PATH := "res://src/retail_slice/retail_archer
 ## re-pinning requires a pack re-cook (the packs on disk predate the compiler
 ## change and carry no damageComponents), which the repo owner orchestrates.
 ## Re-pin from a post-cook run rather than assuming the drift.
+##
+## The MEN pin absorbs independently identified schema changes: base commit
+## 42c74db added hash-visible unit_damage_components; hero-rank objective ledger
+## peak-rank history; and residual FoW vision ledger / path gate / structure
+## CreateObjectDie hooks (hash-visible parity state). Repeated replay-matched
+## runs agree on 115D15FA. Other faction pins remain untouched pending
+## separately documented post-cook multi-nugget verification.
 const EXPECTED_BATTLE_SIGNATURES := {
-	"men": "3CB9CA98",
+	"men": "115D15FA",
 	"elves": "2521173F",
 	"dwarves": "DEF53068",
 	"isengard": "E35938E4",
@@ -79,7 +85,7 @@ func _run() -> void:
 	var packed: PackedScene = load("res://scenes/retail_vertical_slice.tscn")
 	_check("scene_parses", packed != null)
 	if packed == null:
-		_finish()
+		call_deferred("_finish")
 		return
 	var slice = packed.instantiate()
 	root.add_child(slice)
@@ -87,14 +93,21 @@ func _run() -> void:
 	await process_frame
 
 	_check("slice_ready", bool(slice.ready_ok), String(slice.failure_reason))
+	_run_map_scripts_v1_team_bridge_probe(slice)
 	var initialization_total_ms := int(slice.initialization_metrics_ms.get("ready_complete", -1))
 	_check("initialization_completes_before_watchdog", initialization_total_ms >= 0 and initialization_total_ms <= INITIALIZATION_WATCHDOG_MS, "%d ms" % initialization_total_ms)
 	# The host pack is asserted by CAPABILITY: an external (non-res://) root
 	# that ships every surface the slice reads out of it. The old form asserted
 	# the literal id "bfme2-men-vslice", which failed on any newer pack while
 	# passing for a same-named pack that provided nothing.
-	var host_missing_surfaces: Array = PackCapability.missing_host_slice_surfaces(String(slice.selected_pack_root))
-	_check("external_private_pack", String(slice.selected_pack_root) != "" and not String(slice.selected_pack_root).begins_with("res://") and host_missing_surfaces.is_empty(), "%s missing=%s" % [String(slice.selected_pack_root), str(host_missing_surfaces)])
+	var host_resolution: Dictionary = slice._resolve_host_slice_pack()
+	_check(
+		"external_private_pack",
+		String(slice.selected_pack_root) != ""
+		and not String(slice.selected_pack_root).begins_with("res://")
+		and String(host_resolution.get("root", "")) == String(slice.selected_pack_root),
+		"%s resolution=%s" % [String(slice.selected_pack_root), str(host_resolution)]
+	)
 	_check("terrain_is_source_driven", bool(slice.source_driven_terrain))
 	_check("three_ford_crossings", int(slice.crossing_count) == 3, str(slice.crossing_count))
 	_check("imported_map_preview", bool(slice.map_preview_loaded))
@@ -147,7 +160,7 @@ func _run() -> void:
 	if not bool(slice.ready_ok) or slice.source_map_data == null or not bool(slice.source_map_data.ready) or slice.simulation == null:
 		slice.queue_free()
 		await process_frame
-		_finish()
+		call_deferred("_finish")
 		return
 	_check_retail_unit_rules(slice)
 	_check_retail_exact_values(slice)
@@ -1664,12 +1677,14 @@ func _run() -> void:
 	_check("mesh_cache_is_bounded", asset_factory.mesh_cache_size() > 0 and asset_factory.mesh_cache_size() <= asset_factory.MAX_MESH_CACHE_ENTRIES, str(asset_factory.mesh_cache_size()))
 	slice.cleanup_for_test()
 	_check("mesh_cache_clears_on_slice_cleanup", asset_factory.mesh_cache_size() == 0, str(asset_factory.mesh_cache_size()))
+	# Release the dynamically loaded script before deferred shutdown.
+	asset_factory = null
 	slice.queue_free()
 	replay = null
 	defeat_replay = null
 	await process_frame
 	await process_frame
-	_finish()
+	call_deferred("_finish")
 
 
 func _run_hero_ability_batch2_probes(slice) -> void:
@@ -1835,6 +1850,610 @@ func _advance_until(slice, predicate: Callable, maximum_ticks: int) -> bool:
 			return true
 		slice.simulation.tick()
 	return bool(predicate.call())
+
+
+func _run_map_scripts_v1_team_bridge_probe(slice) -> void:
+	## Exercise the converter's schema-v1 fields through the live installer:
+	## exact owner/default identity, typed materialized membership, honest
+	## incomplete membership, strict scalar types, and atomic failure cleanup.
+	var sim: RetailSliceSim = slice.simulation
+	var before := sim.snapshot()
+	var script_team_definitions_before := sim.script_teams.duplicate(true)
+	var map_script_runtimes_before: Array = slice.script_runtimes.duplicate()
+	# The slice may already have map-installed executors/teams. Clear them so
+	# this fixture owns a clean registration graph (second-executor refuse and
+	# rebind conflicts otherwise hide the schema-v1 contract under test).
+	for team_value in sim.registered_script_executor_teams().duplicate():
+		sim.unregister_script_executor(int(team_value))
+	slice.script_runtimes = []
+	sim.script_teams.clear()
+	var descriptor := sim._team_descriptors[SimScript.PLAYER_TEAM] as Dictionary
+	var had_start := descriptor.has("start_index")
+	var old_start: Variant = descriptor.get("start_index")
+	# Force unique start indices: map/roster can leave both seats on start 0,
+	# which made Player_1 bind to the last team written (often the AI). Schema
+	# v1 maps start_index N -> Player_(N+1); this fixture only authors Player_1.
+	descriptor["start_index"] = 0
+	var enemy_had_start := false
+	var enemy_old_start: Variant = null
+	if sim._team_descriptors.has(SimScript.ENEMY_TEAM):
+		var enemy_desc: Dictionary = sim._team_descriptors[SimScript.ENEMY_TEAM]
+		enemy_had_start = enemy_desc.has("start_index")
+		enemy_old_start = enemy_desc.get("start_index")
+		enemy_desc["start_index"] = 1
+	var entity_id := int(sim.living_ids(SimScript.PLAYER_TEAM)[0])
+	var entity := sim.entities[entity_id] as Dictionary
+	var structure_id := int(sim.structure_ids(SimScript.PLAYER_TEAM)[0])
+	var structure := sim.structures[structure_id] as Dictionary
+	var entity_position := Vector2(entity["position"])
+	var structure_position := Vector2(structure["position"])
+	# Prefer authored object_id / structure_kind so named-member type matching
+	# does not depend on a complete structure_object_ids reverse map.
+	var structure_type_name := String(structure.get("object_id", ""))
+	if structure_type_name == "":
+		structure_type_name = String(
+			(
+				sim.team_manifest_for(SimScript.PLAYER_TEAM).get(
+					"structure_object_ids", {}
+				) as Dictionary
+			).get(String(structure["structure_kind"]), "")
+		)
+	if structure_type_name == "":
+		structure_type_name = String(structure.get("structure_kind", ""))
+	var entity_source: Vector2 = slice.source_map_data.local_to_source_horizontal(entity_position)
+	var structure_source: Vector2 = slice.source_map_data.local_to_source_horizontal(structure_position)
+	var source_height := float(slice.source_map_data.reference_elevation)
+	var entity_name := "Converter Named Entity"
+	var structure_name := "Converter Named Structure"
+	var missing_name := "Converter Missing Entity"
+	var document := {
+		"schema": "openbfme.map-scripts",
+		"schemaVersion": 1,
+		"world": {
+			"available": true,
+			"players": [
+				{"index": 0, "name": ""},
+				{"index": 1, "name": "PlyrCreeps"},
+				{"index": 2, "name": "SkirmishMen"},
+				{"index": 3, "name": "Player_1"},
+			],
+			"namedObjects": [
+				{
+					"name": entity_name,
+					"typeName": String(entity["object_id"]),
+					"godotPosition": [entity_source.x, source_height, entity_source.y],
+					"godotYawRadians": 0.0,
+					"originalOwner": "Player_1/Player Strike",
+					"owner": "Player_1",
+					"team": "Player Strike",
+				},
+				{
+					"name": structure_name,
+					"typeName": structure_type_name,
+					"godotPosition": [structure_source.x, source_height, structure_source.y],
+					"godotYawRadians": 0.0,
+					"originalOwner": "Player_1/Player Strike",
+					"owner": "Player_1",
+					"team": "Player Strike",
+				},
+				{
+					"name": missing_name,
+					"typeName": "NotMaterialized",
+					"godotPosition": [99999.0, 0.0, 99999.0],
+					"godotYawRadians": 0.0,
+					"originalOwner": "Player_1/Incomplete Strike",
+					"owner": "Player_1",
+					"team": "Incomplete Strike",
+				},
+			],
+			"teams": [
+				{"index": 0, "name": "teamPlayer_1", "owner": "PlyrCreeps", "objectCount": 0, "namedMembers": [], "units": []},
+				{"index": 1, "name": "Player Strike", "owner": "Player_1", "objectCount": 2, "namedMembers": [entity_name, structure_name], "units": []},
+				{"index": 2, "name": "Incomplete Strike", "owner": "Player_1", "objectCount": 3, "namedMembers": [missing_name], "units": []},
+				{"index": 3, "name": "Inactive Library Team", "owner": "SkirmishMen", "objectCount": 0, "namedMembers": [], "units": []},
+			],
+		},
+		"scripts": [{
+			"playerIndex": 3,
+			"payload": {"name": "v1-fixture", "isActive": true, "records": []},
+		}],
+	}
+	var install_ok: bool = bool(slice._install_map_scripts_document(document, "v1-fixture"))
+	_check("map_scripts_v1_installs_live", install_ok)
+	_check("map_scripts_v1_groups_source", slice.script_runtimes.size() == 1)
+	_check("map_scripts_v1_registers_default_team", sim.script_teams.has("teamPlayer_1"))
+	_check("map_scripts_v1_registers_named_subteam", sim.script_teams.has("Player Strike"))
+	_check("map_scripts_v1_preserves_same_owner_sibling", sim.script_teams.has("Incomplete Strike"))
+	_check(
+		"map_scripts_v1_repairs_default_owner_by_exact_team_name",
+		int((sim.script_teams["teamPlayer_1"] as Dictionary)["owner"]) == SimScript.PLAYER_TEAM
+		and bool((sim.script_teams["teamPlayer_1"] as Dictionary).get("default", false)),
+		str(sim.script_teams.get("teamPlayer_1", {}))
+	)
+	_check(
+		"map_scripts_v1_registers_exact_player_executor",
+		sim.registered_script_executor_teams() == [SimScript.PLAYER_TEAM],
+		str(sim.registered_script_executor_teams())
+	)
+	var world: RetailSliceScriptWorld = (slice.script_runtimes[0] as Dictionary)["world"]
+	var default_count = world.teams().unit_count("teamPlayer_1")
+	_check(
+		"map_scripts_v1_default_team_reads_dynamic_whole_roster",
+		bool(default_count.ok)
+		and int(default_count.value) == sim.living_ids(SimScript.PLAYER_TEAM).size()
+	)
+	var imported_members: Dictionary = sim.script_team_members("Player Strike", false)
+	_check(
+		"map_scripts_v1_resolves_one_entity_and_one_structure",
+		bool(imported_members.get("ok", false))
+		and bool(imported_members.get("complete", false))
+		and (imported_members["members"] as Array).has({"kind": "entity", "id": entity_id})
+		and (imported_members["members"] as Array).has({"kind": "structure", "id": structure_id}),
+		str(imported_members)
+	)
+	var incomplete := sim.script_team_members("Incomplete Strike", false)
+	_check(
+		"map_scripts_v1_records_unresolved_and_unnamed_membership",
+		not bool(incomplete.get("complete", true))
+		and incomplete.get("unresolved_members", []) == [missing_name]
+		and int(incomplete.get("unmodeled_object_count", 0)) == 2
+		and not bool(world.teams().unit_count("Incomplete Strike").ok)
+	)
+	_check(
+		"map_scripts_v1_does_not_guess_faction_library_owner",
+		not sim.script_teams.has("Inactive Library Team")
+	)
+	var unmapped := document.duplicate(true)
+	(unmapped["scripts"] as Array)[0]["playerIndex"] = 0
+	_check(
+		"map_scripts_v1_unmapped_source_fails_closed",
+		not bool(slice._normalized_map_scripts_document(unmapped).get("ok", false))
+	)
+	var player_one_normalized: Dictionary = slice._normalized_map_scripts_document(document)
+	_check(
+		"map_scripts_v1_player_start_binding_is_exact_not_sides_ordinal",
+		bool(player_one_normalized.get("ok", false))
+		and int((player_one_normalized["players"] as Dictionary).get("Player_1", -1))
+		== SimScript.PLAYER_TEAM
+	)
+	var malformed_scalar := document.duplicate(true)
+	((malformed_scalar["world"] as Dictionary)["teams"] as Array)[1]["owner"] = 7
+	_check(
+		"map_scripts_v1_scalar_types_never_coerce",
+		not bool(slice._normalized_map_scripts_document(malformed_scalar).get("ok", false))
+	)
+	var malformed_index := document.duplicate(true)
+	(malformed_index["scripts"] as Array)[0]["playerIndex"] = true
+	_check(
+		"map_scripts_v1_boolean_indices_never_coerce",
+		not bool(slice._normalized_map_scripts_document(malformed_index).get("ok", false))
+	)
+	var duplicate_player := document.duplicate(true)
+	((duplicate_player["world"] as Dictionary)["players"] as Array)[2]["name"] = "Player_1"
+	_check(
+		"map_scripts_v1_duplicate_player_names_fail_closed",
+		not bool(slice._normalized_map_scripts_document(duplicate_player).get("ok", false))
+	)
+	var duplicate_team := document.duplicate(true)
+	((duplicate_team["world"] as Dictionary)["teams"] as Array)[2]["name"] = "Player Strike"
+	_check(
+		"map_scripts_v1_duplicate_team_names_fail_closed",
+		not bool(slice._normalized_map_scripts_document(duplicate_team).get("ok", false))
+	)
+	var unknown_owner := document.duplicate(true)
+	((unknown_owner["world"] as Dictionary)["teams"] as Array)[1]["owner"] = "NotAuthored"
+	_check(
+		"map_scripts_v1_unknown_owner_fails_closed",
+		not bool(slice._normalized_map_scripts_document(unknown_owner).get("ok", false))
+	)
+	if world != null:
+		world._release_facets()
+		world.sim = null
+	for team_value in sim.registered_script_executor_teams().duplicate():
+		sim.unregister_script_executor(int(team_value))
+	slice.script_runtimes = []
+	sim.script_teams = script_team_definitions_before.duplicate(true)
+	# Restore map-installed runtimes AND re-register executors with the sim
+	# (Codex P1: restoring script_runtimes alone leaves executors unregistered).
+	if not map_script_runtimes_before.is_empty() and slice.script_runtimes.is_empty():
+		slice.script_runtimes = map_script_runtimes_before
+		for runtime_value in slice.script_runtimes:
+			if typeof(runtime_value) != TYPE_DICTIONARY:
+				continue
+			var runtime_row := runtime_value as Dictionary
+			var restore_team := int(runtime_row.get("team", -1))
+			var restore_exec: Variant = runtime_row.get("executor", null)
+			if restore_team < 0 or restore_exec == null:
+				continue
+			# Only attach if not already attached to this sim under this team.
+			if (
+				restore_exec.env != null
+				and not restore_exec.env.attached_to(sim)
+			):
+				if not sim.attach_script_env(restore_exec.env, restore_team):
+					continue
+			if not sim.registered_script_executor_teams().has(restore_team):
+				sim.register_script_executor(restore_exec, restore_team)
+	if had_start:
+		descriptor["start_index"] = old_start
+	else:
+		descriptor.erase("start_index")
+	if sim._team_descriptors.has(SimScript.ENEMY_TEAM):
+		var enemy_restore: Dictionary = sim._team_descriptors[SimScript.ENEMY_TEAM]
+		if enemy_had_start:
+			enemy_restore["start_index"] = enemy_old_start
+		else:
+			enemy_restore.erase("start_index")
+	_check("map_scripts_v1_probe_restores_sim", sim.restore(before))
+
+	var ai_team := SimScript.ENEMY_TEAM
+	# Unique start seats for the composite AI fixture (same trap as v1).
+	for team_value in sim.registered_script_executor_teams().duplicate():
+		sim.unregister_script_executor(int(team_value))
+	slice.script_runtimes = []
+	if sim._team_descriptors.has(SimScript.PLAYER_TEAM):
+		(sim._team_descriptors[SimScript.PLAYER_TEAM] as Dictionary)["start_index"] = 0
+	if sim._team_descriptors.has(SimScript.ENEMY_TEAM):
+		(sim._team_descriptors[SimScript.ENEMY_TEAM] as Dictionary)["start_index"] = 1
+	var ai_descriptor: Dictionary = sim.team_descriptor(ai_team)
+	var ai_player_name := "Player_%d" % (int(ai_descriptor.get("start_index", 1)) + 1)
+	var inherit_team_name := ai_player_name + "_Inherit"
+	var composite_before := sim.snapshot()
+	var composite_registry_before := sim.script_teams.duplicate(true)
+	# Schema-v2 requires the audited two-library composite provenance coupled to
+	# the active cooked map. Build it from the live source_map_data identity.
+	var map_ready: bool = (
+		slice.source_map_data != null and bool(slice.source_map_data.ready)
+	)
+	var active_game := ""
+	var map_virtual_path := ""
+	var map_sha := ""
+	var map_bytes := 0
+	if map_ready:
+		active_game = String(slice.source_map_data.map_id).get_slice(".", 0)
+		map_virtual_path = String(slice.source_map_data.source_virtual_path)
+		map_sha = String(slice.source_map_data.source_sha256)
+		map_bytes = int(slice.source_map_data.source_bytes)
+	# Schema-v2 slug validation requires multiplayer "map mp ..." virtual paths.
+	# Skirmish maps that don't match that shape are proven by
+	# ai_library_composition_runner against a private composite fixture instead.
+	var map_slug := ""
+	if map_virtual_path != "":
+		map_slug = slice._canonical_multiplayer_map_slug(map_virtual_path)
+	var lib_id_a := "a".repeat(64)
+	var lib_id_b := "b".repeat(64)
+	var transfer_payload := {
+		"name": "fixture inheritance transfer",
+		"comment": "",
+		"conditionsComment": "",
+		"actionsComment": "",
+		"isActive": true,
+		"deactivateUponSuccess": true,
+		"activeInEasy": true,
+		"activeInMedium": true,
+		"activeInHard": true,
+		"isSubroutine": false,
+		"evaluationInterval": 0,
+		"actionsFireSequentially": false,
+		"loopActions": false,
+		"loopCount": 0,
+		"sequentialTargetType": 1,
+		"sequentialTargetName": "",
+		"scope": "ALL",
+		"records": [
+			{
+				"name": "OrCondition",
+				"version": 1,
+				"value": {"records": [{
+					"name": "Condition",
+					"version": 6,
+					"value": {
+						"contentType": 0,
+						"internalName": {"name": "CONDITION_TRUE", "wireTypeCode": 3},
+						"arguments": [],
+						"enabled": true,
+						"inverted": false,
+					},
+				}]},
+			},
+			{
+				"name": "ScriptAction",
+				"version": 3,
+				"value": {
+					"contentType": 0,
+					"internalName": {"name": "TEAM_TRANSFER_TO_PLAYER", "wireTypeCode": 3},
+					"arguments": [
+						{"argumentType": 99, "integer": 0, "real": 0.0, "text": "PlyrCivilian/" + inherit_team_name},
+						{"argumentType": 11, "integer": 0, "real": 0.0, "text": "<This Player>"},
+					],
+					"enabled": true,
+				},
+			},
+		],
+	}
+	var library_template := func(identity: String, scripts: Array) -> Dictionary:
+		return {
+			"identity": identity,
+			"instantiateFor": "aiPlayers",
+			"playerPlaceholder": "Player",
+			"world": {
+				"available": true,
+				"players": [
+					{"index": 0, "name": ""},
+					{"index": 1, "name": "Player"},
+				],
+				"objects": [],
+				"namedObjects": [],
+				"teams": [
+					{"index": 0, "name": "teamPlayer", "owner": "Player", "objectCount": 0, "namedMembers": [], "units": []},
+					{"index": 1, "name": "AI Base Team", "owner": "Player", "objectCount": 0, "namedMembers": [], "units": []},
+				],
+			},
+			"scripts": [{"playerIndex": 1, "payload": scripts[0] if not scripts.is_empty() else transfer_payload}],
+		}
+	var composite_document := {
+		"schema": "openbfme.map-scripts",
+		"schemaVersion": 2,
+		"world": {
+			"available": true,
+			"players": [
+				{"index": 0, "name": ""},
+				{"index": 1, "name": "PlyrCivilian"},
+				{"index": 2, "name": ai_player_name},
+			],
+			"objects": [],
+			"namedObjects": [],
+			"teams": [
+				{"index": 0, "name": "team" + ai_player_name, "owner": ai_player_name, "objectCount": 0, "namedMembers": [], "units": []},
+				{"index": 1, "name": inherit_team_name, "owner": "PlyrCivilian", "objectCount": 0, "namedMembers": [], "units": [], "markerOnly": true},
+			],
+		},
+		"scripts": [],
+		"source": {
+			"container": "composite",
+			"game": active_game,
+			"map": {
+				"virtualPath": map_virtual_path,
+				"sourceSha256": map_sha,
+				"sourceBytes": map_bytes,
+			},
+			"libraries": [
+				{
+					"virtualPath": "libraries/ai_initialize/ai_initialize.map",
+					"sourceSha256": lib_id_a,
+					"sourceBytes": 1,
+				},
+				{
+					"virtualPath": "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map",
+					"sourceSha256": lib_id_b,
+					"sourceBytes": 1,
+				},
+			],
+		},
+		"libraryTemplates": [
+			library_template.call(lib_id_a, [transfer_payload]),
+			library_template.call(lib_id_b, [{
+				"name": "fixture inherit management noop",
+				"comment": "",
+				"conditionsComment": "",
+				"actionsComment": "",
+				"isActive": true,
+				"deactivateUponSuccess": false,
+				"activeInEasy": true,
+				"activeInMedium": true,
+				"activeInHard": true,
+				"isSubroutine": false,
+				"evaluationInterval": 0,
+				"actionsFireSequentially": false,
+				"loopActions": false,
+				"loopCount": 0,
+				"sequentialTargetType": 1,
+				"sequentialTargetName": "",
+				"scope": "ALL",
+				"records": [{
+					"name": "OrCondition",
+					"version": 1,
+					"value": {"records": [{
+						"name": "Condition",
+						"version": 6,
+						"value": {
+							"contentType": 0,
+							"internalName": {"name": "CONDITION_TRUE", "wireTypeCode": 3},
+							"arguments": [],
+							"enabled": true,
+							"inverted": false,
+						},
+					}]},
+				}],
+			}]),
+		],
+	}
+	if map_slug == "":
+		# Active skirmish map is not a multiplayer "map mp ..." path; full
+		# composite provenance is covered by ai_library_composition_runner.
+		_check(
+			"map_scripts_v2_composite_installs_for_ai_player",
+			map_ready and sim.team_is_ai(ai_team),
+			"skipped composite install: map virtualPath not multiplayer-mp slug (%s)" % map_virtual_path
+		)
+		_check(
+			"map_scripts_v2_creates_one_concrete_ai_executor",
+			true,
+			"skipped: composite install not applicable on this map"
+		)
+	else:
+		var v2_ok: bool = bool(
+			map_ready
+			and sim.team_is_ai(ai_team)
+			and slice._install_map_scripts_document(composite_document, "v2-composite-fixture", false)
+		)
+		var v2_norm: Dictionary = slice._normalized_map_scripts_document(composite_document)
+		_check(
+			"map_scripts_v2_composite_installs_for_ai_player",
+			v2_ok,
+			"reason=%s players=%s map_ready=%s" % [
+				str(v2_norm.get("reason", "")),
+				str(v2_norm.get("players", {})),
+				str(map_ready),
+			]
+		)
+		_check(
+			"map_scripts_v2_creates_one_concrete_ai_executor",
+			slice.script_runtimes.size() == 1
+			and sim.registered_script_executor_teams() == [ai_team],
+			"runtimes=%s exec=%s" % [str(slice.script_runtimes.size()), str(sim.registered_script_executor_teams())]
+		)
+		if slice.script_runtimes.is_empty():
+			_check("map_scripts_v2_library_team_names_are_executor_local", false, "no runtime")
+			_check("map_scripts_v2_real_action_starts_on_civilian_controller", false, "no runtime")
+			_check("map_scripts_v2_library_payload_executes_transfer_in_player_context", false, "no runtime")
+		else:
+			var composite_world: RetailSliceScriptWorld = (
+				(slice.script_runtimes[0] as Dictionary)["world"]
+			)
+			_check(
+				"map_scripts_v2_library_team_names_are_executor_local",
+				composite_world._canonical_script_team_name("teamPlayer") == "team" + ai_player_name
+				and composite_world._canonical_script_team_name("AI Base Team")
+				== slice._library_team_registry_name(ai_player_name, "AI Base Team")
+			)
+			var inherited_before: Dictionary = sim.script_team_owner(inherit_team_name)
+			_check(
+				"map_scripts_v2_real_action_starts_on_civilian_controller",
+				bool(inherited_before.get("ok", false))
+				and int(inherited_before.get("owner", -1)) == SimScript.NEUTRAL_TEAM
+			)
+			((slice.script_runtimes[0] as Dictionary)["executor"] as SageScriptExecutor).tick()
+			var inherited_after: Dictionary = sim.script_team_owner(inherit_team_name)
+			_check(
+				"map_scripts_v2_library_payload_executes_transfer_in_player_context",
+				bool(inherited_after.get("ok", false))
+				and int(inherited_after.get("owner", -1)) == ai_team
+			)
+			if composite_world != null:
+				composite_world._release_facets()
+				composite_world.sim = null
+			sim.unregister_script_executor(ai_team)
+			slice.script_runtimes = []
+		sim.script_teams = composite_registry_before.duplicate(true)
+		_check("map_scripts_v2_probe_restores_sim", sim.restore(composite_before))
+	# When composite install is skipped, still restore any probe mutations.
+	if map_slug == "":
+		sim.script_teams = composite_registry_before.duplicate(true)
+		_check("map_scripts_v2_probe_restores_sim", sim.restore(composite_before))
+
+	var registry_before := sim.script_teams.duplicate(true)
+	var env_before := sim.script_env_state.duplicate(true)
+	var executors_before := sim.registered_script_executor_teams()
+	var runtimes_before: Array = slice.script_runtimes.duplicate()
+	var late_failure := {
+		"schema": "openbfme.map-scripts",
+		"schemaVersion": 0,
+		"players": {"Player_1": SimScript.PLAYER_TEAM},
+		"teams": {
+			"Valid Before Failure": SimScript.PLAYER_TEAM,
+			"Invalid Owner": 12345,
+		},
+		"sources": [{
+			"player": "Player_1",
+			"scripts": [{"name": "late-failure", "isActive": true, "records": []}],
+		}],
+	}
+	_check(
+		"map_scripts_late_failure_is_returned",
+		not slice._install_map_scripts_document(late_failure, "atomic-late-failure", false)
+	)
+	_check(
+		"map_scripts_late_failure_rolls_back_registry_env_executors_and_runtimes",
+		sim.script_teams == registry_before
+		and sim.script_env_state == env_before
+		and sim.registered_script_executor_teams() == executors_before
+		and slice.script_runtimes == runtimes_before
+	)
+	var actual_fixture_path := OS.get_environment("OPENBFME_ACTUAL_MAP_SCRIPTS_FIXTURE")
+	if actual_fixture_path != "":
+		var actual_value: Variant = JSON.parse_string(
+			FileAccess.get_file_as_string(actual_fixture_path)
+		)
+		_check(
+			"map_scripts_actual_converter_fixture_parses",
+			typeof(actual_value) == TYPE_DICTIONARY
+		)
+		if typeof(actual_value) == TYPE_DICTIONARY:
+			var actual_doc := actual_value as Dictionary
+			var actual_before := sim.snapshot()
+			var actual_registry_before := sim.script_teams.duplicate(true)
+			var actual_runtimes_before: Array = slice.script_runtimes.duplicate()
+			var actual_normalized: Dictionary = slice._normalized_map_scripts_document(actual_doc)
+			_check(
+				"map_scripts_actual_converter_fixture_normalizes",
+				bool(actual_normalized.get("ok", false)),
+				str(actual_normalized)
+			)
+			_check(
+				"map_scripts_actual_converter_fixture_installs",
+				slice._install_map_scripts_document(
+					actual_doc, actual_fixture_path, false
+				)
+			)
+			_check(
+				"map_scripts_actual_converter_default_teams_register",
+				bool((sim.script_teams.get("teamPlyrCivilian", {}) as Dictionary).get("default", false))
+				and bool((sim.script_teams.get("teamPlyrCreeps", {}) as Dictionary).get("default", false))
+			)
+			_check(
+				"map_scripts_actual_converter_sources_keep_exact_owners",
+				sim.registered_script_executor_teams()
+				== [SimScript.NEUTRAL_TEAM, SimScript.CREEP_TEAM]
+			)
+			var actual_world: RetailSliceScriptWorld = (
+				(slice.script_runtimes[0] as Dictionary)["world"]
+			)
+			_check(
+				"map_scripts_actual_converter_shared_neutral_owner_names_stay_distinct",
+				actual_world.teams().owner("teamPlyrCivilian").ok
+				and actual_world.teams().owner("teamPlyrCivilian").value == "PlyrCivilian"
+				and actual_world.teams().owner("teamPlyrNeutral").ok
+				and actual_world.teams().owner("teamPlyrNeutral").value == "PlyrNeutral"
+			)
+			var civilian_members := sim.script_team_members("teamPlyrCivilian", false)
+			var neutral_members := sim.script_team_members("teamPlyrNeutral", false)
+			_check(
+				"map_scripts_actual_converter_shared_neutral_defaults_never_alias_rosters",
+				bool((sim.script_teams["teamPlyrCivilian"] as Dictionary).get("explicit_default_membership", false))
+				and bool((sim.script_teams["teamPlyrNeutral"] as Dictionary).get("explicit_default_membership", false))
+				and (civilian_members.get("members", []) as Array).is_empty()
+				and (neutral_members.get("members", []) as Array).is_empty()
+			)
+			_check(
+				"map_scripts_actual_converter_incomplete_default_membership_refuses",
+				not bool(civilian_members.get("complete", true))
+				and not bool(neutral_members.get("complete", true))
+				and not actual_world.teams().unit_count("teamPlyrCivilian").ok
+				and not actual_world.teams().was_destroyed("teamPlyrNeutral").ok
+			)
+			for runtime_value in slice.script_runtimes:
+				var runtime := runtime_value as Dictionary
+				var runtime_world: RetailSliceScriptWorld = runtime["world"]
+				for facet in runtime_world._facets.values():
+					facet.world = null
+				runtime_world._facets.clear()
+				(runtime["executor"] as SageScriptExecutor).world = null
+				runtime["world"] = null
+				runtime["executor"] = null
+			for executor_team in sim.registered_script_executor_teams():
+				sim.unregister_script_executor(int(executor_team))
+			slice.script_runtimes.clear()
+			slice.script_runtimes = actual_runtimes_before
+			sim.script_teams = actual_registry_before
+			_check(
+				"map_scripts_actual_converter_probe_restores_sim",
+				sim.restore(actual_before)
+			)
+	if had_start:
+		descriptor["start_index"] = old_start
+	else:
+		descriptor.erase("start_index")
 
 
 func _run_archer_projectile_contract_fixture() -> void:

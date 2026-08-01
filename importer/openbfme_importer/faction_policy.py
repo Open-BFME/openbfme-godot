@@ -49,24 +49,27 @@ IMPLICIT_OBJECT_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = {
 }
 
 
-# Retail 1.06 authors button images whose atlas texture no shipped archive
+# Retail authors button images whose atlas texture no shipped archive
 # contains (the spawn-orcs/test buttons carry "; @todo get image" markers).
 # Each entry is consumed only when the texture is genuinely absent; a texture
 # which later resolves fails the census closed instead of being masked.
+# Shared by BFME2 1.06 and RotWK 2.01 — both ship the MappedImage rows without
+# the compiled atlas textures.
+_RETAIL_ABSENT_MAPPED_IMAGE_TEXTURES: tuple[tuple[str, str], ...] = (
+    (
+        "SCUserInterface_001.tga",
+        "retail authors the SMSpawnOrcs MappedImage but ships no "
+        "compiled atlas for SCUserInterface_001.tga",
+    ),
+    (
+        "TrollPickup_but.tga",
+        "retail authors the SCGrabPassenger MappedImage but ships no "
+        "compiled atlas for TrollPickup_but.tga",
+    ),
+)
+
 SOURCE_NULL_MAPPED_IMAGE_TEXTURES: Mapping[str, tuple[tuple[str, str], ...]] = {
-    key: (
-        (
-            "SCUserInterface_001.tga",
-            "retail 1.06 authors the SMSpawnOrcs MappedImage but ships no "
-            "compiled atlas for SCUserInterface_001.tga",
-        ),
-        (
-            "TrollPickup_but.tga",
-            "retail 1.06 authors the SCGrabPassenger MappedImage but ships no "
-            "compiled atlas for TrollPickup_but.tga",
-        ),
-    )
-    for key in IMPLICIT_OBJECT_ROOTS
+    key: _RETAIL_ABSENT_MAPPED_IMAGE_TEXTURES for key in IMPLICIT_OBJECT_ROOTS
 }
 
 # Retail 1.06 authors CommandSet references without a matching definition.
@@ -119,6 +122,23 @@ ROTWK_IMPLICIT_OBJECT_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = {
 }
 
 
+# RotWK reuses the BFME2 base-faction fortress composites and retail-absent UI
+# texture nulls, plus Angmar's expansion fortress roots.
+_ROTWK_IMPLICIT_OBJECT_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = {
+    **IMPLICIT_OBJECT_ROOTS,
+    **ROTWK_IMPLICIT_OBJECT_ROOTS,
+}
+_ROTWK_SOURCE_NULL_MAPPED_IMAGE_TEXTURES: Mapping[
+    str, tuple[tuple[str, str], ...]
+] = {
+    key: _RETAIL_ABSENT_MAPPED_IMAGE_TEXTURES
+    for key in _ROTWK_IMPLICIT_OBJECT_ROOTS
+}
+_ROTWK_MUSIC_ROOTS: Mapping[str, tuple[tuple[str, str], ...]] = {
+    key: MUSIC_ROOTS[next(iter(MUSIC_ROOTS))]
+    for key in _ROTWK_IMPLICIT_OBJECT_ROOTS
+}
+
 FACTION_POLICY_PROFILES: Mapping[str, FactionPolicyProfile] = {
     "bfme2": FactionPolicyProfile(
         implicit_object_roots=IMPLICIT_OBJECT_ROOTS,
@@ -126,14 +146,11 @@ FACTION_POLICY_PROFILES: Mapping[str, FactionPolicyProfile] = {
         source_null_command_sets=SOURCE_NULL_COMMAND_SETS,
         music_roots=MUSIC_ROOTS,
     ),
-    # Expansion analysis is admitted without inventing RotWK curations beyond
-    # the explicitly curated fortress-composite roots above; factions without
-    # an entry keep the prior empty-roots behavior.
     "rotwk": FactionPolicyProfile(
-        implicit_object_roots=ROTWK_IMPLICIT_OBJECT_ROOTS,
-        source_null_mapped_image_textures={},
-        source_null_command_sets={},
-        music_roots={},
+        implicit_object_roots=_ROTWK_IMPLICIT_OBJECT_ROOTS,
+        source_null_mapped_image_textures=_ROTWK_SOURCE_NULL_MAPPED_IMAGE_TEXTURES,
+        source_null_command_sets=SOURCE_NULL_COMMAND_SETS,
+        music_roots=_ROTWK_MUSIC_ROOTS,
     ),
 }
 
@@ -155,12 +172,12 @@ def implicit_object_roots(
     if not player_template or not isinstance(player_template, str):
         raise FactionPolicyError("player template identity is invalid")
     profile = _profile(game)
-    if game.casefold().strip() == "rotwk":
-        # RotWK factions without an explicitly curated entry keep the prior
-        # empty-roots behavior instead of failing the whole census.
-        return profile.implicit_object_roots.get(player_template.casefold(), ())
     roots = profile.implicit_object_roots.get(player_template.casefold())
     if roots is None:
+        if game.casefold().strip() == "rotwk":
+            # Unknown expansion templates keep empty roots rather than failing
+            # the whole census before discovery can name them.
+            return ()
         raise FactionPolicyError(
             f"faction has no curated implicit census roots: {player_template}"
         )
@@ -177,10 +194,10 @@ def source_null_mapped_image_textures(
     if not player_template or not isinstance(player_template, str):
         raise FactionPolicyError("player template identity is invalid")
     profile = _profile(game)
-    if game.casefold().strip() == "rotwk":
-        return ()
     entries = profile.source_null_mapped_image_textures.get(player_template.casefold())
     if entries is None:
+        if game.casefold().strip() == "rotwk":
+            return _RETAIL_ABSENT_MAPPED_IMAGE_TEXTURES
         raise FactionPolicyError(
             "faction has no curated source-null MappedImage texture policy: "
             f"{player_template}"
@@ -196,13 +213,14 @@ def source_null_command_sets(
     if not player_template or not isinstance(player_template, str):
         raise FactionPolicyError("player template identity is invalid")
     profile = _profile(game)
-    if game.casefold().strip() == "rotwk":
-        return ()
-    if player_template.casefold() not in profile.implicit_object_roots:
+    key = player_template.casefold()
+    if key not in profile.implicit_object_roots:
+        if game.casefold().strip() == "rotwk":
+            return ()
         raise FactionPolicyError(
             f"faction has no curated source-null CommandSet policy: {player_template}"
         )
-    return profile.source_null_command_sets.get(player_template.casefold(), ())
+    return profile.source_null_command_sets.get(key, ())
 
 
 def music_roots(
@@ -213,10 +231,10 @@ def music_roots(
     if not player_template or not isinstance(player_template, str):
         raise FactionPolicyError("player template identity is invalid")
     profile = _profile(game)
-    if game.casefold().strip() == "rotwk":
-        return ()
     entries = profile.music_roots.get(player_template.casefold())
     if entries is None:
+        if game.casefold().strip() == "rotwk":
+            return ()
         raise FactionPolicyError(
             f"faction has no curated music root policy: {player_template}"
         )

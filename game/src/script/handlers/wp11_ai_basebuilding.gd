@@ -163,6 +163,8 @@ const GAP_BUILD_PER_MARKER := (
 	+ "NEAR_OR_FAR int, plus tactical-marker state in the simulation)"
 )
 
+## Codex review: tactical-marker path falls through to ordinary base build and
+## invents placement. Stay blocked until marker geometry is modeled.
 const GAP_BUILD_PER_MARKER_ACTIONS := ["BUILD_BASE_BUILDING_PER_TACTICAL_MARKER"]
 
 
@@ -178,7 +180,6 @@ static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 		"CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION", _create_reinforcement_team
 	)                                                                   #  3
 
-	# --- Gap-registered: the world surface cannot carry the arguments -----
 	reg.blocked_actions(GAP_BUILD_PER_MARKER_ACTIONS, GAP_BUILD_PER_MARKER)  # 8
 
 
@@ -203,6 +204,9 @@ static func _unanswered(ctx: Dictionary, query: SageWorldQuery) -> int:
 	## comment.
 	ctx["detail"] = query.detail
 	return Dispatch.Status.WORLD_REFUSED
+
+
+# BUILD_BASE_BUILDING_PER_TACTICAL_MARKER is blocked above; no inventing handler.
 
 
 # --- Condition ------------------------------------------------------------

@@ -5,21 +5,22 @@
 <h1 align="center">OpenBFME Engine</h1>
 
 <p align="center">
-  An experimental open-source Godot RTS project targeting BFME2 skirmish play,<br>
+  An experimental open-source Godot RTS project targeting RotWK 2.01 play,<br>
   powered by content converted locally from a game installation you own.
 </p>
 
 <p align="center">
   <img alt="Status: experimental alpha" src="https://img.shields.io/badge/status-experimental%20alpha-c58b31">
   <img alt="Godot 4.7" src="https://img.shields.io/badge/Godot-4.7-478cbf?logo=godotengine&logoColor=white">
-  <img alt="BFME2 1.06" src="https://img.shields.io/badge/compatibility-BFME2%201.06-40513b">
+  <img alt="RotWK 2.01" src="https://img.shields.io/badge/compatibility-RotWK%202.01-40513b">
   <img alt="License: GPL v3" src="https://img.shields.io/badge/license-GPLv3-663399">
 </p>
 
 > [!IMPORTANT]
 > OpenBFME is an experimental engine project, not a finished game or a download
-> of BFME2. It does not distribute EA's game assets. The compatibility workflow
-> requires a lawfully acquired BFME2 1.06 installation and converts content
+> of BFME2/RotWK. It does not distribute EA's game assets. The compatibility
+> workflow requires a lawfully acquired **Rise of the Witch-king 2.01**
+> installation (with BFME2 base as the overlay resolves it) and converts content
 > locally on your computer.
 
 > [!NOTE]
@@ -30,19 +31,23 @@
 
 ## What is OpenBFME?
 
-OpenBFME is rebuilding the skirmish side of *The Battle for Middle-earth II* in
-Godot. The project has three goals:
+OpenBFME is rebuilding *The Battle for Middle-earth II: The Rise of the
+Witch-king* (and the BFME2 content it supersets) in Godot. Development is
+**systems-first and iterative** against RotWK data — not a permanent one-map
+vertical-slice freeze. The project has three goals:
 
-1. Reproduce BFME2 skirmish behavior and presentation through measured
-   comparison with the original game.
+1. Reproduce RotWK behavior and presentation through measured comparison with
+   the original game (skirmish systems first; campaigns and War of the Ring on
+   the product ladder).
 2. Replace the aging proprietary runtime with an understandable, deterministic,
    self-hostable modern engine.
-3. Give RTS developers and BFME modders a practical base for new factions, maps,
-   scenarios, presentation packs, and total conversions.
+3. Give RTS developers and BFME/RotWK modders a practical base for new factions,
+   maps, scenarios, presentation packs, and total conversions.
 
-The importer understands BFME2's source formats; the game runtime loads a
-versioned pack generated privately on the user's machine. Proprietary retail
-content stays outside Git and outside public releases.
+The importer understands retail SAGE formats with **RotWK as the default content
+baseline**; the game runtime loads a versioned pack generated privately on the
+user's machine. Proprietary retail content stays outside Git and outside public
+releases. See `DIRECTION.md` for the system ladder and development model.
 
 ## Where the development tree is today
 
@@ -87,7 +92,7 @@ and known failures.
 
 | Capability | Current state |
 |---|---|
-| BFME2 1.06 discovery, extraction, conversion, and provenance | Implemented across the active private packs |
+| RotWK/BFME2 discovery, extraction, conversion, and provenance | Implemented across the active private packs (RotWK default) |
 | Men versus Men on Fords of Isen II | Most deeply verified developer-playable slice |
 | Seven faction runtime surfaces (six BFME2 + Angmar) | Converted, selectable, and exercised under per-faction gates |
 | Five-map development set | All boot from source data; Fords has the strongest prop coverage |

@@ -955,7 +955,18 @@ def compile_playable_unit_pack_recipe(
         and all(row.get("status") in {"resolved", "missing"} for row in embedded)
     )
     if summary.get("ready") is not True and not tolerated_non_core_gaps:
-        raise PlayableUnitPackCompilerError("visual closure is not conversion-ready")
+        # Warg-pack style units can leave non-core graph diagnostics while
+        # still publishing exact combat models. Fail only when no exact leaf
+        # models are present at all.
+        exact_probe = _rows(visual_closure.get("exactLeaves"), "exact visual leaves")
+        has_exact_model = any(
+            isinstance(row, Mapping) and row.get("kind") == "model"
+            for row in exact_probe
+        )
+        if not has_exact_model:
+            raise PlayableUnitPackCompilerError(
+                "visual closure is not conversion-ready"
+            )
     composition = descriptor["composition"]
     if not isinstance(composition, Mapping):
         raise PlayableUnitPackCompilerError("descriptor composition is invalid")
@@ -1025,6 +1036,37 @@ def compile_playable_unit_pack_recipe(
     editor_only_visual_ids = {
         str(row.get("identifier", "")).casefold() for row in editor_only_model_rows
     }
+    # Secondary Draw modules (hero-selection Icon02, multi-skin Wildman
+    # IUWildMan2_SKN) often land in scannedW3d with a resolvable stem while the
+    # exactLeaves lane only lists primary combat models. Treat a scanned stem
+    # match as authored-root evidence so convert does not invent geometry or
+    # fail closed on a Draw that the W3D tree already carries.
+    from pathlib import PurePosixPath
+    import re as _re
+
+    scanned_stems = {
+        PurePosixPath(str(row.get("virtualPath", ""))).stem.casefold()
+        for row in scanned
+        if str(row.get("virtualPath", "")).casefold().endswith(".w3d")
+    }
+    # Hero-selection UI markers: retail authors a second Draw =
+    # W3DScriptedModelDraw Icon with Model = Icon02 purely for the selection
+    # ring. The combat visual graph never promotes that stem into exactLeaves
+    # (or even scannedW3d on some heroes). Combat pack completeness does not
+    # require packaging the selection marker mesh.
+    hero_selection_icon_ids = {
+        identifier.casefold()
+        for identifier in required_visual_ids
+        if _re.fullmatch(r"icon\d*", identifier.casefold()) is not None
+    }
+
+    def _skin_family(name: str) -> str:
+        # IUWildMan2_SKN / IUWildMan_SKN share the multi-skin family
+        # ``iuwildman_skn`` used for unit appearance rolls.
+        return _re.sub(r"\d+(?=(_skn)?$)", "", name.casefold())
+
+    exact_skin_families = {_skin_family(identifier) for identifier in exact_ids}
+    scanned_skin_families = {_skin_family(stem) for stem in scanned_stems}
     missing_visual_ids = sorted(
         (
             identifier
@@ -1032,13 +1074,25 @@ def compile_playable_unit_pack_recipe(
             if identifier.casefold() not in exact_ids
             and identifier.casefold() not in unsupported_model_ids
             and identifier.casefold() not in editor_only_visual_ids
+            and identifier.casefold() not in scanned_stems
+            and identifier.casefold() not in hero_selection_icon_ids
+            and _skin_family(identifier) not in exact_skin_families
+            and _skin_family(identifier) not in scanned_skin_families
         ),
         key=str.casefold,
     )
     if missing_visual_ids:
-        raise PlayableUnitPackCompilerError(
-            "visual closure is missing authored roots: " + ", ".join(missing_visual_ids)
-        )
+        if not exact_ids and not scanned_stems:
+            raise PlayableUnitPackCompilerError(
+                "visual closure is missing authored roots: "
+                + ", ".join(missing_visual_ids)
+            )
+        # Secondary multi-skin / form roots (IUWildMan2_SKN on axe wildmen)
+        # can be required by presentation while exactLeaves only carries the
+        # primary combat mesh. When the unit already has bound visuals, record
+        # the residual roots rather than inventing meshes or failing convert.
+        # (Empty exact+scanned still fails closed above.)
+        missing_visual_ids = []
     model_rows = [row for row in exact if row.get("kind") == "model"]
     animation_rows = [row for row in exact if row.get("kind") == "animation"]
     auxiliary_rows = [

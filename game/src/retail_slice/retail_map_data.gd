@@ -99,6 +99,9 @@ var error := ""
 var pack_root := ""
 var map_root := ""
 var map_id := ""
+var source_virtual_path := ""
+var source_sha256 := ""
+var source_bytes := 0
 var _map_runtime_profile: Dictionary = DEFAULT_MAP_RUNTIME_PROFILE
 var width := 0
 var height := 0
@@ -222,6 +225,10 @@ func load_from_pack(selected_pack_root: String, map_definition: Dictionary) -> b
 		return _fail("retail source map must not be packaged")
 	map_id = String(map_definition.get("id", ""))
 	_map_runtime_profile = MAP_RUNTIME_PROFILES.get(map_id, DEFAULT_MAP_RUNTIME_PROFILE)
+	var source_identity := _dictionary(map_definition.get("source", {}))
+	source_virtual_path = String(source_identity.get("virtualPath", ""))
+	source_sha256 = String(source_identity.get("sha256", ""))
+	source_bytes = int(source_identity.get("sourceBytes", 0))
 
 	# Roads are an optional cooked layer: maps whose cook emitted no road network
 	# declare no roads/roadMaterials documents at all. When the map definition
@@ -1901,6 +1908,13 @@ func simulation_configuration() -> Dictionary:
 		1: _home_layout_for(player_one_horizontal, player_two_horizontal),
 	}
 	var team_start_centers := {}
+	# Script START_POSITION_IS is authored with 1-based Player_N_Start values,
+	# while Player::getMpStartIndex() stores the corresponding zero-based
+	# multiplayer start index. Keep that internal value beside each roster team.
+	var team_start_indices := {
+		0: 1, # default human team owns authored Player_2_Start
+		1: 0, # default enemy team owns authored Player_1_Start
+	}
 	var extra_seat := 3
 	while local_player_starts.has("Player_%d_Start" % extra_seat):
 		var seat_local: Vector3 = local_player_starts["Player_%d_Start" % extra_seat]
@@ -1908,6 +1922,7 @@ func simulation_configuration() -> Dictionary:
 		var team := extra_seat - 1
 		team_centers.append(seat_horizontal)
 		team_start_centers[team] = seat_horizontal
+		team_start_indices[team] = extra_seat - 1
 		extra_seat += 1
 	# Give each extra seat a base layout aimed at the roster centroid.
 	if not team_start_centers.is_empty():
@@ -1929,6 +1944,7 @@ func simulation_configuration() -> Dictionary:
 		},
 		"home_layout": home_layout,
 		"team_start_centers": team_start_centers,
+		"team_start_indices": team_start_indices,
 		"ford_gates": _simulation_ford_gates(),
 		# Authored PlyrCreeps lairs. The simulation only seeds them when its
 		# opt-in creep rule is enabled; carrying them here is inert otherwise.
@@ -2196,6 +2212,9 @@ func _reset() -> void:
 	ready = false
 	error = ""
 	map_id = ""
+	source_virtual_path = ""
+	source_sha256 = ""
+	source_bytes = 0
 	_map_runtime_profile = DEFAULT_MAP_RUNTIME_PROFILE
 	height_samples = PackedByteArray()
 	passability_bits = PackedByteArray()

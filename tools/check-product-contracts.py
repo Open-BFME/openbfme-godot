@@ -10,8 +10,9 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PRODUCT_PATH = ROOT / "contracts" / "bfme2-106-product-scope.json"
+PRODUCT_PATH = ROOT / "contracts" / "rotwk-201-product-scope.json"
 MODDING_PATH = ROOT / "contracts" / "openbfme-modding-contract.json"
+# Historical BFME2-only policy (superseded): contracts/bfme2-106-product-scope.json
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -88,7 +89,7 @@ def validate_documents(
     roots = _ids(product["root_discovery_queries"], "root discovery queries")
     lanes = _ids(product["evidence_lanes"], "evidence lanes")
     claims = _ids(product["claim_profiles"], "claim profiles")
-    if "bfme2-106-complete" not in claims:
+    if "rotwk-201-complete" not in claims:
         raise ValueError("product contract: missing complete claim profile")
 
     for domain in product["product_domains"]:
@@ -123,7 +124,7 @@ def validate_documents(
     }
     complete = next(
         row for row in product["claim_profiles"]
-        if row["id"] == "bfme2-106-complete"
+        if row["id"] == "rotwk-201-complete"
     )
     if set(complete.get("required_domains", [])) != retail_domains:
         raise ValueError("complete claim must require every retail domain")

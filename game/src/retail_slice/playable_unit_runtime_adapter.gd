@@ -212,6 +212,20 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 			"fearResistant": _resolved_value(resolved.get("fearResistant")),
 			"weaponModes": _resolved_weapon_modes(resolved.get("weaponModes", {})),
 		}
+		if resolved.has("permanentWeaponLocks"):
+			row["permanentWeaponLocks"] = resolved["permanentWeaponLocks"]
+		if resolved.has("destroyDie"):
+			row["destroyDie"] = resolved["destroyDie"]
+		if _resolved_value(resolved.get("highlanderBody")) == true:
+			row["highlanderBody"] = true
+		var auto_acquire := _resolved_dictionary(
+			resolved.get("autoAcquireEnemiesWhenIdle", {})
+		)
+		if not auto_acquire.is_empty():
+			row["autoAcquireEnemiesWhenIdle"] = auto_acquire
+		var mood_rate := _resolved_dictionary(resolved.get("moodAttackCheckRate", {}))
+		if not mood_rate.is_empty():
+			row["moodAttackCheckRate"] = mood_rate
 	for field in ["displayName", "buildCost", "buildTimeSeconds", "commandPoints", "memberCount", "memberHealth", "speed", "visionRange"]:
 		if not row.has(field):
 			return {}
@@ -234,7 +248,7 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 	# the pack's reviewed string bindings localize it when they cover the id.
 	var string_bindings: Dictionary = registration.get("stringBindings", {}) as Dictionary
 	display_name = String(string_bindings.get(display_name, display_name))
-	return {
+	var output := {
 		"unit_type": runtime_unit_id(document),
 		"object_id": runtime_member_id(document),
 		"source_object_id": String(document.get("objectId", "")),
@@ -255,6 +269,39 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 		"producers": producers,
 		"prerequisites": (producers[0].get("prerequisites", []) as Array).duplicate(),
 	}
+	if row.has("destroyDie"):
+		var destroy_die := _resolved_destroy_die(row.get("destroyDie"))
+		if destroy_die.is_empty() and not _destroy_die_is_deferred_primary_member_only(
+			row.get("destroyDie")
+		):
+			return {}
+		if not destroy_die.is_empty():
+			output["destroy_die"] = destroy_die
+	if row.has("permanentWeaponLocks"):
+		var permanent_locks := _normalized_permanent_weapon_locks(
+			row.get("permanentWeaponLocks")
+		)
+		var combat_slot := String(
+			(row.get("combat", {}) as Dictionary).get("weaponSlot", "")
+		).to_lower()
+		if permanent_locks.is_empty() or not permanent_locks.has(combat_slot):
+			return {}
+		output["permanent_weapon_locks"] = permanent_locks
+	if row.get("highlanderBody") == true:
+		output["highlander_body"] = true
+	if typeof(row.get("autoAcquireEnemiesWhenIdle")) == TYPE_DICTIONARY:
+		output["auto_acquire_enemies_when_idle"] = (
+			row.get("autoAcquireEnemiesWhenIdle", {}) as Dictionary
+		).duplicate(true)
+	if typeof(row.get("moodAttackCheckRate")) == TYPE_DICTIONARY:
+		var mood_rate := row.get("moodAttackCheckRate", {}) as Dictionary
+		var milliseconds := int(mood_rate.get("milliseconds", 0))
+		if (
+			milliseconds > 0
+			and typeof(row.get("autoAcquireEnemiesWhenIdle")) == TYPE_DICTIONARY
+		):
+			output["mood_attack_check_rate_ms"] = milliseconds
+	return output
 
 
 static func builder_production_rule(document: Dictionary) -> Dictionary:
@@ -361,6 +408,7 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 	if not weapon_modes.is_empty():
 		weapon_modes["default"] = {
 			"name": String(combat.get("weaponId", "default")),
+			"weapon_slot": String(combat.get("weaponSlot", "")).to_lower(),
 			"attack_range": attack_range * source_scale,
 			"attack_range_source": attack_range,
 			"minimum_attack_range": minimum_range * source_scale,
@@ -378,7 +426,7 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 			"continuous_fire_coast_ticks": maxi(0, roundi(float(combat.get("continuousFireCoastMs", 0.0)) / (TICK_SECONDS * 1000.0))),
 			"continuous_fire_rate_multiplier": 1.0,
 		}
-	return {
+	var output := {
 		"horde_id": String(simulation.get("unit_type", "")),
 		"member_count": int(simulation.get("member_count", 0)),
 		"member_health": int(simulation.get("member_health", 0)),
@@ -411,9 +459,47 @@ static func normalized_unit_rule(simulation: Dictionary, source_scale: float) ->
 		"fear_resistant": bool(simulation.get("fear_resistant", false)),
 		"weapon_modes": weapon_modes,
 		"default_weapon_mode": "default",
+		"default_weapon_slot": String(combat.get("weaponSlot", "")).to_lower(),
 		"formation_positions": positions,
 		"provenance": {"source_object_id": String(simulation.get("source_object_id", "")), "source_contract": "openbfme.playable-unit-runtime"},
 	}
+	var permanent_locks: Array = simulation.get("permanent_weapon_locks", []) as Array
+	if not permanent_locks.is_empty():
+		if not permanent_locks.has(String(output["default_weapon_slot"])):
+			return {}
+		for mode_value in weapon_modes.values():
+			if String((mode_value as Dictionary).get("weapon_slot", "")) == "":
+				return {}
+		output["permanent_weapon_locks"] = permanent_locks.duplicate()
+	if simulation.get("highlander_body") == true:
+		output["highlander_body"] = true
+	if simulation.has("destroy_die"):
+		var destroy_die := _normalized_destroy_die(simulation.get("destroy_die"))
+		if destroy_die.is_empty():
+			return {}
+		output["destroy_die"] = destroy_die
+	var auto_acquire: Variant = simulation.get("auto_acquire_enemies_when_idle")
+	if typeof(auto_acquire) == TYPE_DICTIONARY:
+		var auto_row := auto_acquire as Dictionary
+		if (
+			typeof(auto_row.get("enabled")) == TYPE_BOOL
+			and typeof(auto_row.get("attackBuildings")) == TYPE_BOOL
+			and typeof(auto_row.get("whileStealthed")) == TYPE_BOOL
+		):
+			output["auto_acquire_enabled"] = bool(auto_row["enabled"])
+			output["auto_acquire_attack_buildings"] = bool(auto_row["attackBuildings"])
+			output["auto_acquire_while_stealthed"] = bool(auto_row["whileStealthed"])
+	var mood_rate_ms := int(simulation.get("mood_attack_check_rate_ms", 0))
+	if (
+		mood_rate_ms > 0
+		and output.has("auto_acquire_enabled")
+		and output.has("auto_acquire_attack_buildings")
+		and output.has("auto_acquire_while_stealthed")
+	):
+		output["mood_attack_check_rate_ticks"] = maxi(
+			1, roundi(float(mood_rate_ms) / (TICK_SECONDS * 1000.0))
+		)
+	return output
 
 
 static func _normalized_weapon_mode(mode_key: String, profile: Dictionary, source_scale: float) -> Dictionary:
@@ -438,6 +524,7 @@ static func _normalized_weapon_mode(mode_key: String, profile: Dictionary, sourc
 		period_ms = clip_reload_ms
 	return {
 		"name": String(profile.get("weaponId", mode_key)),
+		"weapon_slot": String(profile.get("weaponSlot", "")).to_lower(),
 		"attack_range": attack_range * source_scale,
 		"attack_range_source": attack_range,
 		"minimum_attack_range": minimum_range * source_scale,
@@ -455,6 +542,30 @@ static func _normalized_weapon_mode(mode_key: String, profile: Dictionary, sourc
 		"continuous_fire_coast_ticks": maxi(0, roundi(float(profile.get("continuousFireCoastMs", 0.0)) / (TICK_SECONDS * 1000.0))),
 		"continuous_fire_rate_multiplier": 1.0,
 	}
+
+
+static func _normalized_permanent_weapon_locks(value: Variant) -> Array[String]:
+	if typeof(value) != TYPE_ARRAY:
+		return []
+	var output: Array[String] = []
+	for row_value in value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return []
+		var row := row_value as Dictionary
+		var slot := String(row.get("slot", "")).to_lower()
+		var line: Variant = row.get("line")
+		if (
+			slot != "primary"
+			or String(row.get("state", "")) != "LOCKED_PERMANENTLY"
+			or String(row.get("module", "")) != "LockWeaponCreate"
+			or String(row.get("sourceIni", "")).strip_edges() == ""
+			or typeof(line) != TYPE_INT
+			or int(line) <= 0
+			or output.has(slot)
+		):
+			return []
+		output.append(slot)
+	return output
 
 
 static func audio_event_ids(document: Dictionary, kind: String) -> Array[String]:
@@ -527,6 +638,66 @@ static func experience_rule(document: Dictionary) -> Dictionary:
 	## ("unauthored"/"unavailable") project an empty rule.
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
 	var experience_value: Variant = registration.get("experience")
+	return experience_rule_from_contract(experience_value)
+
+
+static func module_contracts(document: Dictionary) -> Array:
+	## Project converter moduleContracts into a flat runtime array. Deferred/
+	## opaque rows are still indexed so the sim can attach authored evidence
+	## without inventing execution. Executable rows (runtimeStatus == executable)
+	## are flagged for subsystem consumers.
+	## Sources (first non-empty wins):
+	##   simulation.resolved.moduleContracts (units)
+	##   registration.gameplay.moduleContracts (structures)
+	##   registration.moduleContracts (legacy top-level)
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var simulation: Dictionary = registration.get("simulation", {}) as Dictionary
+	var resolved: Dictionary = simulation.get("resolved", {}) as Dictionary
+	var gameplay: Dictionary = registration.get("gameplay", {}) as Dictionary
+	var raw: Variant = resolved.get("moduleContracts", null)
+	if raw == null or (typeof(raw) == TYPE_ARRAY and (raw as Array).is_empty()):
+		raw = gameplay.get("moduleContracts", null)
+	if raw == null or (typeof(raw) == TYPE_ARRAY and (raw as Array).is_empty()):
+		raw = registration.get("moduleContracts", [])
+	if typeof(raw) != TYPE_ARRAY:
+		return []
+	var out: Array = []
+	for row_value in raw as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var row := row_value as Dictionary
+		var module_name := String(row.get("module", "")).strip_edges()
+		if module_name == "":
+			continue
+		out.append({
+			"module": module_name,
+			"fields": (row.get("fields", {}) as Dictionary).duplicate(true),
+			"runtime_status": String(row.get("runtimeStatus", "deferred")),
+			"extraction": String(row.get("extraction", "")),
+			"carrier": String(row.get("carrier", "")),
+			"source_ini": String(row.get("sourceIni", "")),
+			"line": int(row.get("line", 0)),
+			"tag": String(row.get("tag", "")),
+			"executable": String(row.get("runtimeStatus", "")) == "executable",
+		})
+	return out
+
+
+static func module_contracts_by_kind(document: Dictionary) -> Dictionary:
+	## Index module_contracts() by module kind for O(1) lookup at spawn.
+	var by_kind: Dictionary = {}
+	for row_value in module_contracts(document):
+		var row := row_value as Dictionary
+		var kind := String(row.get("module", ""))
+		if not by_kind.has(kind):
+			by_kind[kind] = []
+		(by_kind[kind] as Array).append(row)
+	return by_kind
+
+
+static func experience_rule_from_contract(experience_value: Variant) -> Dictionary:
+	## Shared projection for playable-unit registration and spellbook summon
+	## leaves. Both compiler lanes emit the same strict ExperienceLevel shape.
 	if typeof(experience_value) != TYPE_DICTIONARY:
 		return {}
 	var experience := experience_value as Dictionary
@@ -543,6 +714,7 @@ static func experience_rule(document: Dictionary) -> Dictionary:
 		or (levels_value as Array).is_empty()
 	):
 		return {}
+	var creation_grant: Variant = experience.get("experienceLevelCreate")
 	var levels: Array[Dictionary] = []
 	var previous_rank := 0
 	for row_value in levels_value as Array:
@@ -552,14 +724,33 @@ static func experience_rule(document: Dictionary) -> Dictionary:
 		var rank := int(row.get("rank", 0))
 		var required: Variant = row.get("requiredExperience")
 		var award: Variant = row.get("experienceAward")
+		var award_unknown := (
+			award == null
+			and String(row.get("experienceAwardStatus", "")) == "unauthored"
+			and typeof(creation_grant) == TYPE_DICTIONARY
+			and rank <= initial_rank
+		)
 		# Authored ranks ascend but are not always 1..N (retail summons such as
 		# the ring hero enter at their authored top rank); rows keep their
 		# authored ranks verbatim.
-		if rank <= previous_rank or required == null or award == null:
+		if (
+			rank <= previous_rank
+			or required == null
+			or (
+				not award_unknown
+				and award == null
+			)
+			or (
+				award != null
+				and row.has("experienceAwardStatus")
+			)
+		):
 			return {}
 		previous_rank = rank
 		var health_add := 0.0
 		var damage_add := 0.0
+		var damage_mult := 1.0
+		var spell_damage_mult := 1.0
 		var production_mult := 1.0
 		var unsupported: Array[String] = []
 		for leaf_value in Array(row.get("attributeModifiers", [])):
@@ -575,26 +766,66 @@ static func experience_rule(document: Dictionary) -> Dictionary:
 						health_add += float(modifier.get("value", 0.0))
 					"DAMAGE_ADD":
 						damage_add += float(modifier.get("value", 0.0))
+					"DAMAGE_MULT":
+						damage_mult *= float(modifier.get("value", 1.0))
+					"SPELL_DAMAGE":
+						spell_damage_mult *= float(modifier.get("value", 1.0))
 					"PRODUCTION":
 						production_mult *= float(modifier.get("value", 1.0))
 					_:
 						return {}
 			for unsupported_value in Array(leaf.get("unsupportedModifiers", [])):
 				unsupported.append(String(unsupported_value))
+		var upgrades_value: Variant = row.get("upgrades", [])
+		if typeof(upgrades_value) != TYPE_ARRAY:
+			return {}
+		var upgrades: Array[String] = []
+		for upgrade_value in upgrades_value as Array:
+			var upgrade_id := String(upgrade_value)
+			if upgrade_id == "" or upgrades.has(upgrade_id):
+				return {}
+			upgrades.append(upgrade_id)
 		var level_row: Dictionary = {
 			"rank": rank,
 			"required_experience": int(required),
-			"experience_award": int(award),
+			"experience_award": 0 if award_unknown else int(award),
+			"experience_award_known": not award_unknown,
 			"health_add": health_add,
 			"damage_add": damage_add,
+			"damage_multiplier": damage_mult,
+			"spell_damage_multiplier": spell_damage_mult,
 			"production_multiplier": production_mult,
+			"upgrades": upgrades,
 		}
 		if not unsupported.is_empty():
 			level_row["unsupported_modifiers"] = unsupported
 		if String(row.get("selectionDecalTextureId", "")) != "":
 			level_row["selection_decal_texture_id"] = String(row.get("selectionDecalTextureId", ""))
 		levels.append(level_row)
-	if previous_rank != max_level or int((levels[0] as Dictionary).get("rank", 0)) != initial_rank:
+	var grant_rank_rows := 0
+	for level_row in levels:
+		if int(level_row.get("rank", 0)) == initial_rank:
+			grant_rank_rows += 1
+	if (
+		previous_rank != max_level
+		or (
+			creation_grant == null
+			and initial_rank != 1
+		)
+		or (
+			creation_grant != null
+			and (
+				typeof(creation_grant) != TYPE_DICTIONARY
+				or int((creation_grant as Dictionary).get("rank", 0)) != initial_rank
+				or String((creation_grant as Dictionary).get("module", "")) != "ExperienceLevelCreate"
+				or (creation_grant as Dictionary).get("mpOnly") != false
+				or String((creation_grant as Dictionary).get("sourceIni", "")).strip_edges() == ""
+				or typeof((creation_grant as Dictionary).get("line")) != TYPE_INT
+				or int((creation_grant as Dictionary).get("line", 0)) <= 0
+				or grant_rank_rows != 1
+			)
+		)
+	):
 		return {}
 	return {
 		"max_level": max_level,
@@ -696,6 +927,86 @@ static func _resolved_dictionary(value: Variant) -> Dictionary:
 	var output: Dictionary = {}
 	for key in (value as Dictionary).keys():
 		output[key] = _resolved_value((value as Dictionary)[key])
+	return output
+
+
+static func _resolved_destroy_die(value: Variant) -> Array[Dictionary]:
+	if typeof(value) != TYPE_ARRAY or (value as Array).is_empty():
+		return []
+	var output: Array[Dictionary] = []
+	for policy_value in value as Array:
+		if typeof(policy_value) != TYPE_DICTIONARY:
+			return []
+		var policy := policy_value as Dictionary
+		var role := String(policy.get("ownerRole", ""))
+		var excluded_value: Variant = policy.get("excludedDeathTypes", [])
+		if (
+			role not in ["object", "container", "primaryMember"]
+			or String(policy.get("module", "")) != "DestroyDie"
+			or String(policy.get("deathTypes", "")) != "ALL"
+			or typeof(excluded_value) != TYPE_ARRAY
+		):
+			return []
+		var excluded: Array = (excluded_value as Array).duplicate()
+		# The retail ALL -TOPPLED declarations belong to cinematic carriers
+		# that this playable-unit lane does not materialize.  Keep that shape
+		# compiler-visible, but refuse to advertise executable TOPPLED
+		# semantics until one of those carriers has an authoritative runtime.
+		if not excluded.is_empty():
+			return []
+		# The member object has no independent materialized corpse/presentation
+		# lifecycle in RetailSliceSim. Keep this compiler-visible evidence out
+		# of the executable projection until such a lifecycle exists.
+		if role == "primaryMember":
+			continue
+		output.append({
+			"owner_role": role,
+			"death_types": "ALL",
+			"excluded_death_types": excluded,
+		})
+	return output
+
+
+static func _destroy_die_is_deferred_primary_member_only(value: Variant) -> bool:
+	if typeof(value) != TYPE_ARRAY or (value as Array).is_empty():
+		return false
+	for policy_value in value as Array:
+		if typeof(policy_value) != TYPE_DICTIONARY:
+			return false
+		var policy := policy_value as Dictionary
+		var excluded_value: Variant = policy.get("excludedDeathTypes", [])
+		if (
+			String(policy.get("ownerRole", "")) != "primaryMember"
+			or String(policy.get("module", "")) != "DestroyDie"
+			or String(policy.get("deathTypes", "")) != "ALL"
+			or typeof(excluded_value) != TYPE_ARRAY
+			or not (excluded_value as Array).is_empty()
+		):
+			return false
+	return true
+
+
+static func _normalized_destroy_die(value: Variant) -> Array[Dictionary]:
+	if typeof(value) != TYPE_ARRAY or (value as Array).is_empty():
+		return []
+	var output: Array[Dictionary] = []
+	for policy_value in value as Array:
+		if typeof(policy_value) != TYPE_DICTIONARY:
+			return []
+		var policy := policy_value as Dictionary
+		var role := String(policy.get("owner_role", ""))
+		var excluded_value: Variant = policy.get("excluded_death_types", [])
+		if (
+			role not in ["object", "container"]
+			or String(policy.get("death_types", "")) != "ALL"
+			or typeof(excluded_value) != TYPE_ARRAY
+			or not (excluded_value as Array).is_empty()
+		):
+			return []
+		output.append({
+			"owner_role": role,
+			"death_types": "ALL",
+		})
 	return output
 
 

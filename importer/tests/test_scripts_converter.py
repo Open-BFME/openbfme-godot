@@ -1,21 +1,29 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 from pathlib import Path, PurePosixPath
 import tempfile
 import unittest
 
 from importer.tests.test_sage_scb import _fixture
+from importer.tests.test_sage_map import _synthetic_map
 
 from openbfme_importer.pipeline import ImportPipeline
+from openbfme_importer.map_profile import discover_registry_map_targets
 from openbfme_importer.sage_scb import SageScbError
 from openbfme_importer.sage_scripts import (
+    _INHERITANCE_TACTICAL_MARKER_TYPES,
+    _build_world,
+    _marker_only_team_attested,
+    MAP_SCRIPTS_COMPOSITE_SCHEMA_VERSION,
     MAP_SCRIPTS_SCHEMA,
     MAP_SCRIPTS_SCHEMA_VERSION,
     RECORDED_ACTION_OPCODES,
     RECORDED_CONDITION_OPCODES,
     SEMANTIC_ACTION_OPCODES,
     SEMANTIC_CONDITION_OPCODES,
+    compose_map_scripts_document,
     map_scripts_document,
 )
 
@@ -23,6 +31,7 @@ from openbfme_importer.sage_scripts import (
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_GDSCRIPT = ROOT / "game/src/retail_slice/retail_map_scripts.gd"
 CATALOG = ROOT / ".private/retail-work/catalog/rotwk.json"
+BFME2_CATALOG = ROOT / ".private/retail-work/catalog/bfme2.json"
 CONTRACT = (
     ROOT
     / ".private/retail-work/reports/skirmish-script-contract"
@@ -42,6 +51,247 @@ def _pipeline() -> ImportPipeline:
 
 
 class SageScriptsConverterTests(unittest.TestCase):
+    def test_marker_only_attestation_requires_exact_complete_source_rows(
+        self,
+    ) -> None:
+        def source_object(
+            type_name: str,
+            *,
+            owner: str = "PlyrCivilian/Player_1_Inherit",
+            name: str = "",
+        ) -> dict:
+            return {
+                "typeName": type_name,
+                "godotPosition": [1.0, 2.0, 3.0],
+                "godotYawRadians": 0.0,
+                "properties": {
+                    "originalOwner": owner,
+                    "objectName": name,
+                },
+            }
+
+        world = _build_world(
+            sides={"players": []},
+            teams={
+                "teams": [
+                    {
+                        "index": 0,
+                        "name": "Player_1_Inherit",
+                        "owner": "PlyrCivilian",
+                        "properties": [],
+                    },
+                    {
+                        "index": 1,
+                        "name": "Player_2_Inherit",
+                        "owner": "PlyrCivilian",
+                        "properties": [],
+                    },
+                    {
+                        "index": 2,
+                        "name": "OrdinaryTeam",
+                        "owner": "PlyrCivilian",
+                        "properties": [],
+                    },
+                ]
+            },
+            objects=[
+                source_object("Center1", name="Center"),
+                source_object("Backdoor3"),
+                # The same local team spelling under another player is a
+                # distinct qualified identity and must not contaminate the
+                # PlyrCivilian team's enumeration.
+                source_object(
+                    "RealCombatUnit",
+                    owner="Player_1/Player_1_Inherit",
+                ),
+                source_object(
+                    "RealCombatUnit",
+                    owner="PlyrCivilian/Player_2_Inherit",
+                ),
+                source_object(
+                    "Center1",
+                    owner="PlyrCivilian/OrdinaryTeam",
+                ),
+            ],
+            waypoints=[],
+            waypoint_edges=[],
+            trigger_areas=[],
+        )
+        rows = {row["name"]: row for row in world["teams"]}
+
+        self.assertTrue(rows["Player_1_Inherit"]["markerOnly"])
+        self.assertEqual(rows["Player_1_Inherit"]["objectCount"], 2)
+        self.assertEqual(rows["Player_1_Inherit"]["namedMembers"], ["Center"])
+        self.assertNotIn("markerOnly", rows["Player_2_Inherit"])
+        self.assertNotIn("markerOnly", rows["OrdinaryTeam"])
+
+        mismatched = dict(rows["Player_1_Inherit"])
+        mismatched["objectCount"] += 1
+        self.assertFalse(
+            _marker_only_team_attested(mismatched, world["objects"])
+        )
+
+    def test_empty_inheritance_team_is_completely_enumerated(self) -> None:
+        world = _build_world(
+            sides={"players": []},
+            teams={
+                "teams": [
+                    {
+                        "index": 0,
+                        "name": "Player_8_Inherit",
+                        "owner": "PlyrCivilian",
+                        "properties": [],
+                    }
+                ]
+            },
+            objects=[],
+            waypoints=[],
+            waypoint_edges=[],
+            trigger_areas=[],
+        )
+
+        self.assertEqual(
+            world["teams"][0],
+            {
+                "index": 0,
+                "name": "Player_8_Inherit",
+                "owner": "PlyrCivilian",
+                "objectCount": 0,
+                "namedMembers": [],
+                "units": [],
+                "markerOnly": True,
+            },
+        )
+
+    def test_composite_preserves_per_player_library_template(self) -> None:
+        map_document = {
+            "schema": MAP_SCRIPTS_SCHEMA,
+            "schemaVersion": MAP_SCRIPTS_SCHEMA_VERSION,
+            "source": {"container": "map", "sourceSha256": "1" * 64},
+            "world": {
+                "available": True,
+                "players": [
+                    {"index": 0, "name": ""},
+                    {"index": 1, "name": "PlyrCivilian"},
+                    {"index": 2, "name": "Player_1"},
+                ],
+                "teams": [
+                    {
+                        "index": 0,
+                        "name": "Player_1_Inherit",
+                        "owner": "PlyrCivilian",
+                        "objectCount": 0,
+                        "namedMembers": [],
+                    }
+                ],
+                "namedObjects": [],
+                "waypoints": [],
+                "waypointPaths": [],
+                "triggerAreas": [],
+            },
+            "scripts": [],
+        }
+        library = {
+            "schema": MAP_SCRIPTS_SCHEMA,
+            "schemaVersion": MAP_SCRIPTS_SCHEMA_VERSION,
+            "source": {"container": "map", "sourceSha256": "2" * 64},
+            "world": {
+                "available": True,
+                "players": [
+                    {"index": 0, "name": ""},
+                    {"index": 1, "name": "Player"},
+                ],
+                "teams": [
+                    {
+                        "index": 0,
+                        "name": "teamPlayer",
+                        "owner": "Player",
+                        "objectCount": 0,
+                        "namedMembers": [],
+                    },
+                    {
+                        "index": 1,
+                        "name": "AI Base Team",
+                        "owner": "Player",
+                        "objectCount": 0,
+                        "namedMembers": [],
+                    },
+                ],
+                "namedObjects": [],
+                "waypoints": [],
+                "waypointPaths": [],
+                "triggerAreas": [],
+            },
+            "scripts": [
+                {
+                    "playerIndex": 1,
+                    "payload": {
+                        "name": "inherit",
+                        "isActive": True,
+                        "records": [],
+                    },
+                }
+            ],
+        }
+
+        composite = compose_map_scripts_document(map_document, [library])
+
+        self.assertEqual(
+            composite["schemaVersion"], MAP_SCRIPTS_COMPOSITE_SCHEMA_VERSION
+        )
+        self.assertEqual(composite["world"], map_document["world"])
+        self.assertEqual(composite["scripts"], [])
+        self.assertEqual(
+            composite["libraryTemplates"][0]["playerPlaceholder"], "Player"
+        )
+        self.assertEqual(
+            composite["libraryTemplates"][0]["scripts"][0]["payload"]["name"],
+            "inherit",
+        )
+        # The library remains a template rather than being falsely attributed
+        # to one concrete Player_N at conversion time.
+        self.assertNotIn("Player_1", composite["libraryTemplates"][0])
+
+    def test_composite_refuses_ambiguous_or_duplicate_library_templates(
+        self,
+    ) -> None:
+        map_document = {
+            "schema": MAP_SCRIPTS_SCHEMA,
+            "schemaVersion": MAP_SCRIPTS_SCHEMA_VERSION,
+            "source": {"container": "map", "sourceSha256": "1" * 64},
+            "world": {
+                "available": True,
+                "players": [],
+                "teams": [],
+                "namedObjects": [],
+            },
+            "scripts": [],
+        }
+        library = {
+            "schema": MAP_SCRIPTS_SCHEMA,
+            "schemaVersion": MAP_SCRIPTS_SCHEMA_VERSION,
+            "source": {"container": "map", "sourceSha256": "2" * 64},
+            "world": {
+                "available": True,
+                "players": [{"index": 1, "name": "Player"}],
+                "teams": [],
+                "namedObjects": [],
+            },
+            "scripts": [],
+        }
+        with self.assertRaisesRegex(ValueError, "duplicate library"):
+            compose_map_scripts_document(map_document, [library, library])
+
+        ambiguous = json.loads(json.dumps(library))
+        ambiguous["world"]["players"].append({"index": 2, "name": "Player"})
+        with self.assertRaisesRegex(ValueError, "exactly one Player"):
+            compose_map_scripts_document(map_document, [ambiguous])
+
+        foreign = json.loads(json.dumps(library))
+        foreign["scripts"] = [{"playerIndex": 99, "payload": {}}]
+        with self.assertRaisesRegex(ValueError, "outside the Player"):
+            compose_map_scripts_document(map_document, [foreign])
+
     def test_synthetic_scb_round_trips_through_the_converter(self) -> None:
         source_bytes = _fixture()
         with tempfile.TemporaryDirectory() as raw:
@@ -94,6 +344,19 @@ class SageScriptsConverterTests(unittest.TestCase):
         self.assertEqual(document["counts"]["scripts"], 2)
         self.assertEqual(document["counts"]["actionSlots"], 4)
         self.assertEqual(document["counts"]["conditionSlots"], 2)
+
+    def test_one_cell_structural_map_decodes_for_script_extraction(self) -> None:
+        source, _elevations = _synthetic_map(height_dimensions=(1, 1))
+
+        document = map_scripts_document(source, container="map")
+
+        self.assertEqual(document["schema"], MAP_SCRIPTS_SCHEMA)
+        self.assertEqual(document["schemaVersion"], MAP_SCRIPTS_SCHEMA_VERSION)
+        self.assertEqual(document["source"]["container"], "map")
+        self.assertEqual(document["counts"]["scripts"], 0)
+        self.assertTrue(document["world"]["available"])
+        self.assertEqual(document["counts"]["players"], 1)
+        self.assertEqual(document["counts"]["teams"], 1)
 
     def test_two_runs_are_byte_identical(self) -> None:
         source_bytes = _fixture()
@@ -226,7 +489,11 @@ class RuntimeOpcodeContractTests(unittest.TestCase):
         # Semantic actions must appear in the action match statement; recorded
         # actions are dispatched through the RECORDED_ACTIONS fallback.
         body = self.source[self.source.index("func _execute_action") :]
-        body = body[: body.index("\nfunc _set_counter")]
+        # Archived runtime ends the action match before _compare helpers.
+        end_marker = "\nfunc _compare"
+        if end_marker not in body:
+            end_marker = "\nfunc _set_counter"
+        body = body[: body.index(end_marker)]
         for opcode in SEMANTIC_ACTION_OPCODES:
             self.assertIn(f'"{opcode}"', body, f"{opcode} has no runtime branch")
 
@@ -363,6 +630,141 @@ class SageScriptsRealCorpusTests(unittest.TestCase):
                 set(),
             )
             self.assertTrue(names <= set(document[histogram_key]))
+
+
+@unittest.skipUnless(
+    BFME2_CATALOG.is_file() and CATALOG.is_file(),
+    "BFME2 or RotWK catalog is not present",
+)
+class InheritanceMarkerRealCorpusTests(unittest.TestCase):
+    EXPECTED = {
+        "BFME2": {
+            "catalog": BFME2_CATALOG,
+            "maps": 8,
+            "rejections": 5,
+            "inheritMaps": {
+                "maps/map mp fords of isen ii/map mp fords of isen ii.map": 2,
+                "maps/map mp harlindon/map mp harlindon.map": 3,
+            },
+            "teams": 5,
+            "objects": 12,
+            "types": {
+                "Backdoor1": 2,
+                "Backdoor2": 2,
+                "Center1": 2,
+                "Center2": 2,
+                "Flank1": 2,
+                "Flank2": 2,
+            },
+        },
+        "RotWK": {
+            "catalog": CATALOG,
+            "maps": 22,
+            "rejections": 0,
+            "inheritMaps": {
+                "maps/map mp adorn river/map mp adorn river.map": 8,
+                "maps/map mp anfalas/map mp anfalas.map": 6,
+                "maps/map mp argonath/map mp argonath.map": 2,
+                "maps/map mp brown lands/map mp brown lands.map": 8,
+                "maps/map mp fords of isen ii/map mp fords of isen ii.map": 2,
+                "maps/map mp harlindon/map mp harlindon.map": 3,
+                "maps/map mp weathertop/map mp weathertop.map": 4,
+            },
+            "teams": 33,
+            "objects": 113,
+            "types": {
+                "Backdoor1": 16,
+                "Backdoor2": 16,
+                "Backdoor3": 5,
+                "Center1": 16,
+                "Center2": 17,
+                "Center3": 5,
+                "Flank1": 16,
+                "Flank2": 16,
+                "Flank3": 6,
+            },
+        },
+    }
+
+    def test_effective_official_skirmish_inheritance_teams_are_attested(
+        self,
+    ) -> None:
+        from openbfme_importer.catalog import InstallCatalog
+
+        for tree, expected in self.EXPECTED.items():
+            catalog = InstallCatalog.load(expected["catalog"])
+            stale = catalog.stale_reasons()
+            if stale:
+                self.skipTest(f"stale {tree} catalog: {stale}")
+            targets, rejections = discover_registry_map_targets(catalog)
+            map_team_counts: Counter = Counter()
+            type_counts: Counter = Counter()
+            team_count = 0
+            object_count = 0
+
+            self.assertEqual(len(targets), expected["maps"], tree)
+            self.assertEqual(len(rejections), expected["rejections"], tree)
+            for target in targets:
+                entry = catalog.resolve_exact(target.virtual_path)
+                self.assertIsNotNone(entry, target.virtual_path)
+                archive = catalog.open_archive_for(entry)
+                payload = archive.read_entry(
+                    catalog.as_entry(entry),
+                    max_bytes=max(entry.size, 1),
+                )
+                world = map_scripts_document(
+                    payload, container="map"
+                )["world"]
+                objects_by_team: dict[str, list[dict]] = {}
+                for object_row in world["objects"]:
+                    objects_by_team.setdefault(
+                        object_row["team"], []
+                    ).append(object_row)
+                for team_row in world["teams"]:
+                    is_inheritance = (
+                        team_row["owner"] == "PlyrCivilian"
+                        and team_row["name"]
+                        in {
+                            f"Player_{index}_Inherit"
+                            for index in range(1, 9)
+                        }
+                    )
+                    if not is_inheritance:
+                        self.assertNotIn("markerOnly", team_row)
+                        continue
+                    members = objects_by_team.get(team_row["name"], [])
+                    self.assertEqual(
+                        team_row["objectCount"],
+                        len(members),
+                        (tree, target.virtual_path, team_row["name"]),
+                    )
+                    self.assertTrue(
+                        team_row.get("markerOnly", False),
+                        (tree, target.virtual_path, team_row["name"]),
+                    )
+                    self.assertTrue(
+                        {
+                            row["typeName"] for row in members
+                        }
+                        <= _INHERITANCE_TACTICAL_MARKER_TYPES
+                    )
+                    map_team_counts[target.virtual_path] += 1
+                    team_count += 1
+                    object_count += len(members)
+                    type_counts.update(
+                        row["typeName"] for row in members
+                    )
+
+            self.assertEqual(
+                dict(sorted(map_team_counts.items())),
+                expected["inheritMaps"],
+                tree,
+            )
+            self.assertEqual(team_count, expected["teams"], tree)
+            self.assertEqual(object_count, expected["objects"], tree)
+            self.assertEqual(
+                dict(sorted(type_counts.items())), expected["types"], tree
+            )
 
 
 if __name__ == "__main__":

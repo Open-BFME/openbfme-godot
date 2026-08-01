@@ -101,6 +101,52 @@ const DEFAULT_COMBAT_CHAIN := AutoResolve.DEFAULT_COMBAT_CHAIN
 ## abbreviated. Presentation only - it never reaches strategic state.
 const DETAILED_ROUNDS := 12
 
+## THE HONEST REGISTER for this resolver, in the same spirit as
+## `wotr_handoff.UNSUPPORTED_BY_TACTICAL_SIM`: things retail's own data shows
+## retail MODELS in auto-resolve that this resolver does not yet, each with the
+## evidence and the reason nothing was invented in its place. The runner
+## asserts on this register so it can never quietly rot, and an entry may only
+## leave it by being implemented from retail data.
+##
+## NOT in this register, because they are NOT gaps:
+##   * resource and science purchase-point tiers - consumed, and retail ships
+##     every non-1.0 tier commented out, so they look up to 1.0 (retail's data
+##     saying nothing, asserted in the runner rather than assumed).
+##   * hero contribution - a WOTR hero IS a unit here: it fights on its own
+##     retail body/weapon/armor blocks (unitType Hero) and projects its
+##     leadership through `assign_leadership()`, which is retail's own
+##     leadership table.
+##   * army composition counters - retail's counters ARE the per-type
+##     DamagePerRound rows, the per-attacker-type armor rows and the combat
+##     chain priorities, all of which every strike consumes.
+##   * the setup screen's "Auto-Resolve Display" (Dynamic / Quick) - retail's
+##     rule decides the PRESENTATION of a resolution, not its arithmetic; the
+##     row is documented as locked in `wotr_setup_bindings.gd` because this
+##     project draws a written working where retail animates one.
+const UNMODELLED_RETAIL_BEHAVIOUR := {
+	"fortress_combatant": (
+		"Retail auto-resolves a standing fortress as a UNIT: the tables type "
+		+ "AutoResolveUnit_Fortress and ship per-faction fortress blocks "
+		+ "(AutoResolve_MenFortressArmor/Body/Weapon and seven more factions), "
+		+ "and the object bindings bind MenFortress, MordorFortress and their "
+		+ "kin onto them. This resolver fields only ARMIES, because neither the "
+		+ "living-world document nor the strategic state names WHICH fortress "
+		+ "object stands in a region - the region's `fortress` block carries a "
+		+ "display name and a portrait, not a template - and deriving MenFortress "
+		+ "from FactionMen would be a guessed mapping wearing a lookup's costume. "
+		+ "Closes when the strategic layer (prebuilt_fortress, Stream E) carries "
+		+ "a fortress TEMPLATE the bindings can answer for."),
+	"region_bonus_modifiers": (
+		"Living-world regions author attack/defense/experience/resource bonuses "
+		+ "and territories add more, but retail's nine auto-resolve documents "
+		+ "state NO mechanism by which any of them reaches auto-resolve "
+		+ "arithmetic - the only battle multipliers retail authors are armor, "
+		+ "weapon, level, leadership, handicap, resource-treasury and science "
+		+ "tiers. The region bonuses now RIDE the tactical rules overlay "
+		+ "(wotr_battle.gd `region_bonuses`); no auto-resolve multiplier is "
+		+ "invented for them until retail's own mechanism is identified."),
+}
+
 
 # --- the seed -----------------------------------------------------------------
 

@@ -449,6 +449,71 @@ func chrome_ring(which: String) -> Texture2D:
 	return _sheet_crop("%s:%s" % [file, which], best)
 
 
+## THE PHASE-BAND STRIPS off the same APT sheet - the two wide dark bands with
+## a lit hairline that retail's strategic HUD hangs its phase banner on. Chosen,
+## like the rings, by a STATED RULE over the sheet rather than by an index
+## someone wrote down: a band candidate is an island whose opaque pixels cover
+## MORE than 60% of its own box (a filled bar; every ring on the sheet covers
+## 33-43%). Retail's sheet carries exactly one such island, and it holds BOTH
+## strips stacked with fully-transparent rows between them, so the island is
+## split at those rows - a derivation from retail's own alpha channel, exactly
+## the way the converter derived the islands in the first place.
+##
+## `which` is "top" or "bottom". Returns null (no substitute) when the sheet is
+## not converted or carries no bar-shaped island; the caller names the gap.
+func chrome_band(which: String = "top") -> Texture2D:
+	var components: Array = chrome_sheet.get("components", []) as Array
+	var file := String(chrome_sheet.get("file", ""))
+	if components.is_empty() or file.is_empty():
+		return null
+	var key := "%s:band:%s" % [file, which]
+	if _crop_cache.has(key):
+		return _crop_cache[key] as AtlasTexture
+	var bar: Dictionary = {}
+	for value in components:
+		var row := value as Dictionary
+		if float(row.get("coverage", 0.0)) > 0.6:
+			bar = row
+			break
+	if bar.is_empty():
+		return null
+	var atlas := _atlas(file)
+	if atlas == null:
+		return null
+	var picture := atlas.get_image()
+	if picture == null:
+		return null
+	var left := int(bar.get("left", 0))
+	var top := int(bar.get("top", 0))
+	var right := int(bar.get("right", 0))
+	var bottom := mini(int(bar.get("bottom", 0)), picture.get_height())
+	# Runs of rows that carry any opaque pixel (alpha > 8, the converter's own
+	# threshold), sampled on the same 4-pixel grid the converter used.
+	var runs: Array[Vector2i] = []
+	var run_start := -1
+	for y in range(top, bottom):
+		var occupied := false
+		var x := left
+		while x < right:
+			if picture.get_pixel(x, y).a > 8.0 / 255.0:
+				occupied = true
+				break
+			x += 4
+		if occupied and run_start < 0:
+			run_start = y
+		elif not occupied and run_start >= 0:
+			runs.append(Vector2i(run_start, y))
+			run_start = -1
+	if run_start >= 0:
+		runs.append(Vector2i(run_start, bottom))
+	if runs.is_empty():
+		return null
+	var chosen: Vector2i = runs[0] if which == "top" else runs[runs.size() - 1]
+	return _sheet_crop(key, {
+		"left": left, "top": chosen.x, "right": right, "bottom": chosen.y,
+	})
+
+
 func _sheet_crop(key: String, box: Dictionary) -> Texture2D:
 	if _crop_cache.has(key):
 		return _crop_cache[key] as AtlasTexture
@@ -474,6 +539,47 @@ func _sheet_crop(key: String, box: Dictionary) -> Texture2D:
 func faction_icon(player_template: String) -> String:
 	var template: Dictionary = player_templates.get(player_template, {}) as Dictionary
 	return String(template.get("factionIcon", ""))
+
+
+## RETAIL'S OWN PICTURE OF AN EMPTY BUILD PLOT, for one seat.
+##
+## `LivingWorldPlayerTemplate` authors `BuildPlotSelectionPortraitName` beside
+## `BuildPlotIconName`, and it is a MappedImage id like every other portrait here
+## (`BPMFortress_BuildPlot` for Mordor, `KUFortressBuildPlot` for Angmar). It is
+## the engraved stone tile carrying the faction's device - the Lidless Eye for
+## Mordor, the crown for Angmar - and RETAIL DRAWS IT IN TWO PLACES AT ONCE:
+##
+##   * inside the palantir's right-hand lens, which is the SELECTION portrait
+##     slot, whenever the thing selected is a build plot; and
+##   * inside every empty card on the build-queue rail, whose authored picture
+##     host `StrategicDetailsBuildQueue` ships filled with the Men-of-the-West
+##     default (`5/4/34/*/8`, the navy White Tree plate) for the artist's benefit
+##     and the engine replaces per seat.
+##
+## THAT IT IS ONE ASSET IN BOTH PLACES WAS MEASURED, not assumed, against the
+## oracle capture `game.dat_l1eJcM0zCw.jpg`: the engraving inside the tray card
+## (x 1290..1400, y 1215..1272) template-matches the engraving inside the palantir
+## lens (x 560..920, y 1120..1360) at a normalised cross-correlation of 0.625 on
+## gradient magnitude, at a scale ratio of 2.4, against 0.175 for the same
+## template over an unrelated piece of that frame's gold chrome. Of the six
+## shipped `BP*Fortress_BuildPlot` tiles, Mordor's is the best match at BOTH
+## sites; the other five score lower at both. Same id, two hosts.
+##
+## A PRIOR ROUND OF THIS LANE CONCLUDED THE FACE WAS NOT IN THE DATA and drew a
+## blank stone plate instead. That search was for a compass, a dial, a rosette or
+## a medallion, and it failed because retail names this art after what it MEANS -
+## a fortress build plot - and not after what it looks like. The face was in the
+## living-world UI bundle the whole time, one field away from `build_plot_icon`.
+func build_plot_portrait_id(player_template: String) -> String:
+	var template: Dictionary = player_templates.get(player_template, {}) as Dictionary
+	return String(template.get("buildPlotSelectionPortraitName", ""))
+
+
+## The same tile as a texture, or NULL when the seat authors none or its atlas is
+## in no archive. A null is recorded in `missing_images` by `image()`; callers
+## must not substitute another faction's tile.
+func build_plot_portrait(player_template: String) -> Texture2D:
+	return image(build_plot_portrait_id(player_template))
 
 
 ## The build-plot marker family a template uses, and the W3D models it names.

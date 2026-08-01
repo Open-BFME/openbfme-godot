@@ -306,18 +306,44 @@ const HANDICAP_NOTE := "retail's own ladder: a higher rung scales that seat's au
 # blocks exist (SkyBlue, Pink, Gray, White) and are NOT here because retail
 # marks them unavailable in War of the Ring.
 #
-# The RGB is each block's `LivingWorldColor`, NOT its `RGBColor`: the strategic
-# map is what these paint, and retail authors a separate, more saturated value
-# for exactly that. On these six the two differ; on the four excluded ones they
-# do not, which is its own small confirmation that the six are the strategic set.
+# EACH BLOCK AUTHORS TWO COLOURS AND THIS TABLE CARRIES BOTH, because retail
+# uses them in two different places and the first pass of this screen mixed
+# them up:
+#
+#   * `ui`  is the block's `RGBColor` - the muted lobby swatch. The retail
+#     GAME SETUP capture's chips are olive (175,189,76), brick (158,56,42),
+#     slate (70,91,156), sage (62,152,100), amber (206,135,69) and dusty violet
+#     (148,116,183), and those are these `RGBColor` lines exactly. Drawing the
+#     swatch in `LivingWorldColor` produced the neon chips the first capture
+#     showed and retail never does.
+#   * `rgb` is the block's `LivingWorldColor` - the saturated tint retail
+#     authors FOR THE STRATEGIC MAP, and what the setup map preview and the
+#     campaign's ownership washes paint with.
+#
+# On these six the two differ; on the four excluded ones they do not, which is
+# its own small confirmation that the six are the strategic set.
 const COLORS: Array[Dictionary] = [
-	{"slot": 0, "block": "ColorBlue", "name_key": "Color:Blue", "rgb": Color8(68, 40, 255)},
-	{"slot": 1, "block": "ColorRed", "name_key": "Color:Red", "rgb": Color8(146, 17, 2)},
-	{"slot": 2, "block": "ColorGold", "name_key": "Color:Gold", "rgb": Color8(189, 157, 16)},
-	{"slot": 3, "block": "ColorGreen", "name_key": "Color:Green", "rgb": Color8(82, 229, 53)},
-	{"slot": 4, "block": "ColorOrange", "name_key": "Color:Orange", "rgb": Color8(255, 102, 0)},
-	{"slot": 6, "block": "ColorPurple", "name_key": "Color:Purple", "rgb": Color8(177, 68, 255)},
+	{"slot": 0, "block": "ColorBlue", "name_key": "Color:Blue",
+		"rgb": Color8(68, 40, 255), "ui": Color8(70, 91, 156)},
+	{"slot": 1, "block": "ColorRed", "name_key": "Color:Red",
+		"rgb": Color8(146, 17, 2), "ui": Color8(158, 56, 42)},
+	{"slot": 2, "block": "ColorGold", "name_key": "Color:Gold",
+		"rgb": Color8(189, 157, 16), "ui": Color8(175, 189, 76)},
+	{"slot": 3, "block": "ColorGreen", "name_key": "Color:Green",
+		"rgb": Color8(82, 229, 53), "ui": Color8(62, 152, 100)},
+	{"slot": 4, "block": "ColorOrange", "name_key": "Color:Orange",
+		"rgb": Color8(255, 102, 0), "ui": Color8(206, 135, 69)},
+	{"slot": 6, "block": "ColorPurple", "name_key": "Color:Purple",
+		"rgb": Color8(177, 68, 255), "ui": Color8(148, 116, 183)},
 ]
+
+## The colour each SEAT opens on, as slots into `COLORS`. Read off the retail
+## GAME SETUP capture's own table, top to bottom: olive gold, brick red, slate
+## blue, sage green, amber orange, dusty violet - which is Gold, Red, Blue,
+## Green, Orange, Purple by block, NOT slot order. EVIDENCE: screenshot. Slot
+## order (blue first) was the first authoring of this and it repainted retail's
+## whole opening table.
+const DEFAULT_COLOR_SLOTS: Array[int] = [2, 1, 0, 3, 4, 6]
 
 
 # --- the Army column -----------------------------------------------------------
@@ -344,6 +370,94 @@ const ARMY_SIDE_KEYS := {
 }
 
 
+# --- the Territory Description panel ---------------------------------------------
+#
+# Retail's own region-bonus wording, keyed by the living-world document's own
+# bonus field - the SAME binding `wotr_screen.gd:BONUS_STRING_KEYS` carries for
+# the strategic screen's region card, repeated here because the setup screen
+# may not drag the whole strategic screen in as a preload to read two consts.
+# KEEP IN STEP with that table; each value is a retail `LW:` format key.
+const BONUS_STRING_KEYS := {
+	"army": "LW:RegionBonusArmy",
+	"attack": "LW:RegionAttackBonus",
+	"buildingDiscount": "LW:RegionBuildingDiscountBonus",
+	"defense": "LW:RegionDefenseBonus",
+	"discountedBarracksUnits": "LW:RegionBarracksUnitDiscountBonus",
+	"discountedHeroUnits": "LW:RegionHeroDiscountBonus",
+	"discountedSiegeUnits": "LW:RegionSeigeDiscountBonus",
+	"experience": "LW:RegionExperienceBonus",
+	"extraStartResources": "LW:RegionExtraResourcesBonus",
+	"fertileTerritory": "LW:RegionTreasuryBonus",
+	"freeBuilder": "LW:RegionFreeBuildersBonus",
+	"freeInnUnits": "LW:RegionFreeInnUnitsBonus",
+	"legendary": "LW:RegionLegendaryBonus",
+	"resource": "LW:RegionBonusResource",
+}
+## The order the panel lists bonuses in - `wotr_screen.gd:BONUS_ORDER`, same
+## stated presentation choice: retail records no order in any file this lane
+## read, so treasure first, then a fixed order by field.
+const BONUS_ORDER := [
+	"fertileTerritory", "army", "legendary", "resource", "attack", "defense",
+	"experience", "buildingDiscount", "discountedBarracksUnits",
+	"discountedHeroUnits", "discountedSiegeUnits", "extraStartResources",
+	"freeBuilder", "freeInnUnits",
+]
+
+
+# --- the Hero column -----------------------------------------------------------
+#
+# ACT-ARMY HERO TEMPLATE -> the `OBJECT:` key whose text goes in the cell.
+#
+# The TEXT is retail's, resolved through the setup string bundle out of
+# `data/lotr.str`; only this binding of template id to key is authored, and for
+# 23 of the 28 templates it is the identity binding `OBJECT:<template>`. The
+# five that are NOT identity are exactly why this is a TABLE and not a rule -
+# each one is retail's own `DisplayName` line (or `ChildObject` parent) in the
+# object INI, quoted per row. EVIDENCE: "data" for every row; sources are
+# `data/lotr.str` plus the named INI lines.
+#
+# A template this table does not name, or whose key the bundle does not carry,
+# shows THE TEMPLATE ID and the screen records the absence - never a guessed
+# name, and never a stripped suffix ("GondorAragornMP" minus "MP" happens to
+# work and "KhamulFellBeast" minus nothing does not, which is how derivation
+# rules die).
+const HERO_DISPLAY_KEYS := {
+	"AngmarHwaldar": "OBJECT:AngmarHwaldar",
+	"AngmarMorgramir": "OBJECT:AngmarMorgramir",
+	"AngmarRogash": "OBJECT:AngmarRogash",
+	# angmarwitchking.ini:730  DisplayName = OBJECT:MordorWitchKing
+	"AngmarWitchking": "OBJECT:MordorWitchKing",
+	"Drogoth": "OBJECT:Drogoth",
+	"DwarvenCaptainofDale": "OBJECT:DwarvenCaptainofDale",
+	"DwarvenDain": "OBJECT:DwarvenDain",
+	# gimli.ini:1122  ChildObject DwarvenGimli RohanGimli (no DisplayName override)
+	"DwarvenGimli": "OBJECT:RohanGimli",
+	# gloin.ini:346  DisplayName = OBJECT:Gloin
+	"DwarvenGloin": "OBJECT:Gloin",
+	"ElvenElrond": "OBJECT:ElvenElrond",
+	"ElvenGlorfindel": "OBJECT:ElvenGlorfindel",
+	"ElvenHaldir": "OBJECT:ElvenHaldir",
+	"ElvenThranduil": "OBJECT:ElvenThranduil",
+	# aragorn.ini:973  ChildObject GondorAragornMP GondorAragorn (no override)
+	"GondorAragornMP": "OBJECT:GondorAragorn",
+	"GondorBoromir": "OBJECT:GondorBoromir",
+	"IsengardLurtz": "OBJECT:IsengardLurtz",
+	"IsengardSaruman": "OBJECT:IsengardSaruman",
+	"IsengardSharku": "OBJECT:IsengardSharku",
+	"IsengardWormTongue": "OBJECT:IsengardWormTongue",
+	# fellbeast.ini:1153  DisplayName = OBJECT:MordorKhamul
+	"KhamulFellBeast": "OBJECT:MordorKhamul",
+	"MordorGothmog": "OBJECT:MordorGothmog",
+	"MordorMouthOfSauron": "OBJECT:MordorMouthOfSauron",
+	"MordorWitchKingOnFellBeast": "OBJECT:MordorWitchKingOnFellBeast",
+	"RohanEomer": "OBJECT:RohanEomer",
+	"RohanTheoden": "OBJECT:RohanTheoden",
+	"WildAzog": "OBJECT:WildAzog",
+	"WildGoblinKing": "OBJECT:WildGoblinKing",
+	"WildShelob": "OBJECT:WildShelob",
+}
+
+
 # --- the Player column ---------------------------------------------------------
 #
 # Retail puts a profile name in a human seat's Player cell and an AI TIER in a
@@ -361,6 +475,28 @@ const AI_TIER_KEYS := {
 ## The simulation's own default, matching `main_menu.RETAIL_AI_DEFAULT_DIFFICULTY`.
 const AI_TIER_FIXED := "medium"
 const AI_TIER_LOCKED_REASON := "the AI tier is the simulation's default and is deliberately not per-session; a chosen tier would not ride the strategic hash"
+
+
+# --- the opening seating ---------------------------------------------------------
+#
+# WHAT THE SCREEN SEATS BEFORE THE PLAYER TOUCHES IT. Read off the owner's own
+# retail GAME SETUP capture (`game.dat_Ad3nUmiefL.png`), which opens with EVERY
+# seat the scenario allows filled: six rows, Mordor / Isengard / Goblins on team
+# 1 and Men / Elves / Dwarves on team 2, machine seats at the fixed tier.
+# EVIDENCE: screenshot. The order below is that capture's own top-to-bottom
+# order; a template the pack cannot field is skipped rather than substituted,
+# and any fieldable army the list does not name is appended after it in the
+# session's sorted order, so a modded seventh faction still gets a chair.
+const DEFAULT_SEAT_ORDER: Array[String] = [
+	"PlayerMordor", "PlayerIsengard", "PlayerWild",
+	"PlayerMen", "PlayerElves", "PlayerDwarves",
+]
+## The capture's own team split: the first half of the table on team 1, the
+## second half on team 2 - which with the order above is retail's evil-versus-
+## good opening. EVIDENCE: screenshot, applied as "first ceil(n/2) rows are team
+## 1" so it degrades to 1-versus-1 on a two-seat scenario.
+static func default_team(row_index: int, seat_count: int) -> int:
+	return 1 if row_index < int(ceilf(float(seat_count) / 2.0)) else 2
 
 
 # --- what the seat rows may change ---------------------------------------------
@@ -410,7 +546,12 @@ static func victory_options(document_victory_types: Array) -> Dictionary:
 	return {"options": options, "reason": ""}
 
 
-## The colour a seat starts on: slot order, wrapping. AUTHORED and presentation
-## only - retail's own assignment is per lobby seat and is not in any file.
+## The colour a seat starts on: the retail capture's own top-to-bottom order
+## (`DEFAULT_COLOR_SLOTS`), wrapping. Presentation only - retail's runtime
+## reassignment when a player picks a taken colour is not reproduced.
 static func default_color(seat_index: int) -> Dictionary:
-	return COLORS[seat_index % COLORS.size()]
+	var slot := DEFAULT_COLOR_SLOTS[seat_index % DEFAULT_COLOR_SLOTS.size()]
+	for entry in COLORS:
+		if int(entry["slot"]) == slot:
+			return entry
+	return COLORS[0]

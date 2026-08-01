@@ -68,6 +68,12 @@ func _run() -> void:
 
 	# --- Phase 1: menu -> lobby -> launch ------------------------------------
 	# Intercept the scene change: this runner boots the match itself.
+	# The GAME LOBBY panel is built at the moment a host/join is attempted, not
+	# during the menu's _ready (its script and the lockstep session are ~2,500
+	# lines the menu does not need to draw itself). This runner reaches into the
+	# lobby BEFORE hosting, so it asks for it explicitly.
+	host_menu.ensure_multiplayer_lobby()
+	guest_menu.ensure_multiplayer_lobby()
 	host_menu.multiplayer_lobby.launch_confirmed.disconnect(host_menu._on_lobby_launch_confirmed)
 	guest_menu.multiplayer_lobby.launch_confirmed.disconnect(guest_menu._on_lobby_launch_confirmed)
 	host_menu.multiplayer_lobby.launch_confirmed.connect(func() -> void: host_launch_confirms += 1)

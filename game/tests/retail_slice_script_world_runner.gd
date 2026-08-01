@@ -86,10 +86,36 @@ const ENEMY_TEAM_NAME := "teamEnemyOne"
 ## (one fixture precondition plus one _check_hit at 2). It exists because a
 ## mutation run proved severing the ENTITY carry from snapshot() left all
 ## six checks above green. Nothing removed.
-const EXPECTED_CHECKS := 498
+## 500 -> 510: RAISED by the historical ANY_HERO_REACHED_RANK proof: death
+## persistence (2), non-simultaneous second-hero attainment (2), revival at
+## rank 1 cannot lower the recorded peak (2), nonpositive refusal (1), and
+## snapshot adoption plus its answer (3). Nothing removed.
+## 510 -> 514: RAISED by direct deterministic-boundary checks: adopted
+## canonical hero-history rows and authoritative state_hash equality (2), plus
+## the reset-match query proving history was cleared (2). Nothing removed.
+## 535 -> 553: RAISED by the 18 script-team registry checks: two distinct
+## same-owner identities, typed membership reads, exact owner/state isolation,
+## hash visibility, snapshot adoption, and setup reset.
+## 553 -> 554: recruitment-availability flag joins typed membership in the
+## same snapshot/reset proof.
+## 554 -> 556: malformed string/bool ids prove typed handles never coerce.
+## 556 -> 559: TEAM_AVAILABLE_FOR_RECRUITMENT reaches the named-team registry,
+## explicit false moves/crosses the snapshot boundary, and unknown teams refuse.
+## 559 -> 573: START_POSITION_IS proof: missing/negative assignments refuse
+## (2), internal index 7 answers authored position 8 (2), <This Player> binds
+## and answers the same value (3), the read is hash-inert (1), and an injected
+## unset roster cannot be overwritten by legacy map defaults (2), and menu
+## normalization proves positive, zero, malformed and duplicate cases (4).
+## 598 -> 620: TEAM_TRANSFER_TO_PLAYER proof covers exact qualified lookup,
+## token-aware destination, controlling-owner mutation, state preservation,
+## snapshot/hash, idempotence, incomplete-membership and ambiguous-destination
+## refusal at both world and sim authority boundaries, and all remaining
+## scoped refusal boundaries (26).
+const EXPECTED_CHECKS := 624
 
 var passed := 0
 var failed := 0
+var worlds_to_release: Array = []
 
 
 func _initialize() -> void:
@@ -101,10 +127,14 @@ func _run() -> void:
 	_test_base_world()
 	_test_logic_random_stream()
 	_test_players_exists_and_faction()
+	_test_players_start_position()
+	_test_start_position_roster_normalization()
 	_test_players_command_points()
 	_test_players_building_count()
 	_test_players_relation_to()
 	_test_teams_reads()
+	_test_named_script_team_registry()
+	_test_team_transfer_to_player()
 	_test_teams_was_destroyed()
 	_test_teams_stop()
 	_test_teams_behavior_state()
@@ -128,6 +158,7 @@ func _run() -> void:
 	_test_reference_namespace()
 	_test_base_state_is_hash_inert()
 	_test_players_object_count_of_types()
+	_test_progression_object_veterancy()
 	_test_single_player_token_routing()
 	_test_object_type_list_editing()
 	_test_units_has_command_points_to_build()
@@ -138,6 +169,7 @@ func _run() -> void:
 	_test_named_object_reads()
 	_test_named_object_refusals()
 	_test_units_set_reference()
+	_release_worlds()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
 		failed += 1
@@ -228,11 +260,453 @@ func _make_sim(roster: Array = []) -> RetailSliceSim:
 
 func _make_world(sim: RetailSliceSim) -> RetailSliceScriptWorld:
 	var world: RetailSliceScriptWorld = WorldScript.new(sim)
+	worlds_to_release.append(world)
 	world.bind_player(PLAYER, SimScript.PLAYER_TEAM)
 	world.bind_player(ENEMY, SimScript.ENEMY_TEAM)
 	world.bind_team(PLAYER_TEAM_NAME, SimScript.PLAYER_TEAM)
 	world.bind_team(ENEMY_TEAM_NAME, SimScript.ENEMY_TEAM)
 	return world
+
+
+func _test_players_start_position() -> void:
+	var missing_sim := _make_sim()
+	var missing_world := _make_world(missing_sim)
+	_check_refused(
+		"players.start_position refuses without an authoritative assignment",
+		missing_world.players().start_position(PLAYER)
+	)
+
+	var configured_sim := _make_sim([
+		{"team": 0, "faction": "men", "start_index": 7},
+		{"team": 1, "faction": "men", "start_index": 0},
+	])
+	var configured_world := _make_world(configured_sim)
+	_check_hit(
+		"players.start_position converts internal index 7 to authored position 8",
+		configured_world.players().start_position(PLAYER),
+		8
+	)
+	_check("start-position script player binds", configured_world.bind_script_player(PLAYER))
+	_check_hit(
+		"players.start_position resolves <This Player>",
+		configured_world.players().start_position(
+			RetailSliceScriptWorld.THIS_PLAYER_TOKEN
+		),
+		8
+	)
+	var before_hash := configured_sim.state_hash()
+	configured_world.players().start_position(PLAYER)
+	_check(
+		"players.start_position is read-only",
+		configured_sim.state_hash() == before_hash
+	)
+
+	var invalid_sim := _make_sim([
+		{"team": 0, "faction": "men", "start_index": -1},
+		{"team": 1, "faction": "men", "start_index": 0},
+	])
+	var invalid_world := _make_world(invalid_sim)
+	_check_refused(
+		"players.start_position refuses a negative internal assignment",
+		invalid_world.players().start_position(PLAYER)
+	)
+
+	var unset_sim := _make_sim([
+		{"team": 0, "faction": "men"},
+		{"team": 1, "faction": "men"},
+	])
+	unset_sim._apply_map_configuration(_start_map_configuration({0: 1, 1: 0}))
+	var unset_world := _make_world(unset_sim)
+	_check(
+		"injected unset roster is not backfilled from legacy map defaults",
+		not unset_sim.team_descriptor(0).has("start_index")
+	)
+	_check_refused(
+		"players.start_position refuses after legacy defaults meet injected unset roster",
+		unset_world.players().start_position(PLAYER)
+	)
+
+
+func _start_map_configuration(team_starts: Dictionary) -> Dictionary:
+	var gates: Array = []
+	for x in [10.0, 20.0, 30.0]:
+		gates.append({
+			"edge_a": Vector2(x, 0.0),
+			"edge_b": Vector2(x, 2.0),
+			"center": Vector2(x, 1.0),
+		})
+	return {
+		"spawn_positions": {
+			1: Vector2(-10.0, -1.0),
+			2: Vector2(-10.0, 1.0),
+			101: Vector2(10.0, -1.0),
+			102: Vector2(10.0, 1.0),
+		},
+		"ford_gates": gates,
+		"player_starts": {},
+		"route_provider": RouteStub.new(),
+		"playable_outline": PackedVector2Array(),
+		"team_start_indices": team_starts,
+	}
+
+
+class RouteStub:
+	extends RefCounted
+	func query_route(_start: Vector2, _goal: Vector2, _radius: float = 0.0) -> Array:
+		return []
+
+
+func _test_start_position_roster_normalization() -> void:
+	var positive: Array = SimScript.normalize_authored_start_assignments([
+		{"team": 0, "faction": "men", "start_index": 1},
+		{"team": 1, "faction": "men", "start_index": 3},
+	])
+	_check(
+		"menu positive starts normalize from one-based to zero-based",
+		positive.size() == 2
+			and int((positive[0] as Dictionary).get("start_index", -1)) == 0
+			and int((positive[1] as Dictionary).get("start_index", -1)) == 2
+	)
+	var placeholder: Array = SimScript.normalize_authored_start_assignments([
+		{"team": 0, "faction": "men", "start_index": 0},
+	])
+	_check(
+		"menu zero start remains authoritatively absent",
+		placeholder.size() == 1
+			and not (placeholder[0] as Dictionary).has("start_index")
+	)
+	var malformed: Array = SimScript.normalize_authored_start_assignments([
+		{"team": 0, "faction": "men", "start_index": "1"},
+		{"team": 1, "faction": "men", "start_index": -1},
+	])
+	_check(
+		"menu malformed starts are never coerced",
+		malformed.size() == 2
+			and bool((malformed[0] as Dictionary).get("start_index_invalid", false))
+			and bool((malformed[1] as Dictionary).get("start_index_invalid", false))
+			and not (malformed[0] as Dictionary).has("start_index")
+			and not (malformed[1] as Dictionary).has("start_index")
+	)
+	var duplicate: Array = SimScript.normalize_authored_start_assignments([
+		{"team": 0, "faction": "men", "start_index": 2},
+		{"team": 1, "faction": "men", "start_index": 2},
+	])
+	_check(
+		"menu duplicate starts invalidate both rows",
+		duplicate.size() == 2
+			and bool((duplicate[0] as Dictionary).get("start_index_invalid", false))
+			and bool((duplicate[1] as Dictionary).get("start_index_invalid", false))
+			and not (duplicate[0] as Dictionary).has("start_index")
+			and not (duplicate[1] as Dictionary).has("start_index")
+	)
+
+
+func _track_world(world: RetailSliceScriptWorld) -> RetailSliceScriptWorld:
+	worlds_to_release.append(world)
+	return world
+
+
+func _release_worlds() -> void:
+	## Facets are cached by their world and point back to it. Release every
+	## runner-created world explicitly so successful checks cannot hide leaks.
+	for world in worlds_to_release:
+		for facet in world._facets.values():
+			facet.world = null
+		world._facets.clear()
+	worlds_to_release.clear()
+
+
+func _test_named_script_team_registry() -> void:
+	var sim := _make_sim()
+	var world := _make_world(sim)
+	var baseline_hash := sim.state_hash()
+	var player_entities := sim.living_ids(SimScript.PLAYER_TEAM)
+	var player_structures := sim.living_structure_ids(SimScript.PLAYER_TEAM)
+	var alpha_handles: Array = [{"kind": "entity", "id": int(player_entities[0])}]
+	if not player_structures.is_empty():
+		alpha_handles.append({"kind": "structure", "id": int(player_structures[0])})
+	var beta_handles: Array = [{"kind": "entity", "id": int(player_entities[1])}]
+	_check(
+		"script-team member id strings never coerce to entity ids",
+		not bool(sim.register_script_team("badStringId", SimScript.PLAYER_TEAM, false, [{"kind": "entity", "id": str(player_entities[0])}]).get("ok", false))
+	)
+	_check(
+		"script-team boolean ids never coerce to entity ids",
+		not bool(sim.register_script_team("badBoolId", SimScript.PLAYER_TEAM, false, [{"kind": "entity", "id": true}]).get("ok", false))
+	)
+	_check(
+		"first named sub-player team binds",
+		world.bind_script_team("teamAlpha", PLAYER, alpha_handles)
+	)
+	_check(
+		"second same-owner team remains a distinct identity",
+		world.bind_script_team("teamBeta", PLAYER, beta_handles)
+	)
+	_check_hit(
+		"team unit_count counts only entity handles, not structures",
+		world.teams().unit_count("teamAlpha"),
+		1
+	)
+	_check_hit(
+		"same-owner sibling keeps its own member set",
+		world.teams().unit_count("teamBeta"),
+		1
+	)
+	_check_hit(
+		"named team retains its exact player owner",
+		world.teams().owner("teamAlpha"),
+		PLAYER
+	)
+	_check(
+		"named teams sharing an owner do not alias one registry row",
+		(sim.script_teams["teamAlpha"] as Dictionary) != (sim.script_teams["teamBeta"] as Dictionary)
+	)
+	_check(
+		"team state writes against the named identity",
+		world.teams().set_state("teamAlpha", "AI_SYNTH_ALPHA")
+	)
+	_check_hit(
+		"same-owner sibling state remains independent",
+		world.teams().state("teamBeta"),
+		""
+	)
+	_check(
+		"installing outcome-bearing team registry state changes the hash",
+		sim.state_hash() != baseline_hash
+	)
+	var before_recruitable_override := sim.state_hash()
+	_check(
+		"explicit false recruitment availability writes through the live world",
+		world.teams().set_available_for_recruitment("teamAlpha", false)
+		and (sim.script_teams["teamAlpha"] as Dictionary).has("recruitable")
+		and not bool((sim.script_teams["teamAlpha"] as Dictionary)["recruitable"])
+	)
+	_check(
+		"explicit false recruitment availability changes authoritative state",
+		sim.state_hash() != before_recruitable_override
+	)
+	_check(
+		"recruitment availability refuses an unknown team identity",
+		not world.teams().set_available_for_recruitment("teamGhost", true)
+	)
+	var state := bytes_to_var(sim.snapshot()) as Dictionary
+	_check(
+		"snapshot carries typed named-team registry rows",
+		state.has("script_teams")
+		and ((state["script_teams"] as Dictionary)["teamAlpha"] as Dictionary).has("members")
+		and ((state["script_teams"] as Dictionary)["teamAlpha"] as Dictionary).has("recruitable")
+		and not bool(((state["script_teams"] as Dictionary)["teamAlpha"] as Dictionary)["recruitable"])
+	)
+	var adopted := _make_sim()
+	_check("snapshot with named teams restores", adopted.restore(sim.snapshot()))
+	_check("adopted named-team registry has the same hash", adopted.state_hash() == sim.state_hash())
+	_check(
+		"adopted membership is byte-equivalent",
+		adopted.script_team_members("teamAlpha", true)
+		== sim.script_team_members("teamAlpha", true)
+	)
+	_check(
+		"adopted registry preserves an explicit false recruitment override",
+		(adopted.script_teams["teamAlpha"] as Dictionary).has("recruitable")
+		and not bool((adopted.script_teams["teamAlpha"] as Dictionary)["recruitable"])
+	)
+	adopted.setup({}, {})
+	_check(
+		"setup retains configured identity but clears old member handles",
+		adopted.script_teams.has("teamAlpha")
+		and not (adopted.script_teams["teamAlpha"] as Dictionary).has("members")
+		and not (adopted.script_teams["teamAlpha"] as Dictionary).has("recruitable")
+	)
+
+
+func _test_team_transfer_to_player() -> void:
+	var sim := _make_sim()
+	var world := _make_world(sim)
+	_check(
+		"team transfer binds the exact civilian player",
+		world.bind_player("PlyrCivilian", SimScript.NEUTRAL_TEAM)
+	)
+	_check(
+		"team transfer binds complete memberless inheritance team evidence",
+		world.bind_script_team(
+			"Player_1_Inherit",
+			"PlyrCivilian",
+			[],
+			true,
+			[],
+			0,
+			true
+		)
+	)
+	_check("team transfer binds executing player", world.bind_script_player(PLAYER))
+	_check_hit(
+		"inheritance team begins controlled by exact civilian player",
+		world.teams().owner("PlyrCivilian/Player_1_Inherit"),
+		"PlyrCivilian"
+	)
+	_check(
+		"inheritance team accepts independent mutable state before transfer",
+		world.teams().set_state("Player_1_Inherit", "AI_INHERIT_READY")
+			and world.teams().set_available_for_recruitment(
+				"Player_1_Inherit", false
+			)
+	)
+	var before_transfer_hash := sim.state_hash()
+	_check(
+		"qualified inheritance team transfers to executing player",
+		world.teams().transfer_to_player(
+			"PlyrCivilian/Player_1_Inherit",
+			WorldScript.THIS_PLAYER_TOKEN
+		)
+	)
+	_check_hit(
+		"team owner reads authoritative transferred controller",
+		world.teams().owner("Player_1_Inherit"),
+		PLAYER
+	)
+	var transferred := sim.script_teams["Player_1_Inherit"] as Dictionary
+	_check(
+		"team transfer preserves identity complete membership state and flags",
+		String((sim.team_behavior_states["Player_1_Inherit"] as Dictionary).get("state", ""))
+				== "AI_INHERIT_READY"
+			and not bool(transferred.get("membership_incomplete", false))
+			and bool(transferred.get("marker_only", false))
+			and (transferred.get("members", []) as Array).is_empty()
+			and transferred.has("recruitable")
+			and not bool(transferred["recruitable"])
+	)
+	_check(
+		"team controlling-owner transfer is hash-visible",
+		sim.state_hash() != before_transfer_hash
+	)
+	var after_transfer_hash := sim.state_hash()
+	_check(
+		"team transfer is idempotent for the same destination",
+		world.teams().transfer_to_player(
+			"PlyrCivilian/Player_1_Inherit", PLAYER
+		)
+			and sim.state_hash() == after_transfer_hash
+	)
+	_check(
+		"malformed multi-slash team qualifier refuses without mutation",
+		not world.teams().transfer_to_player(
+			"PlyrCivilian/extra/Player_1_Inherit", ENEMY
+		)
+			and sim.state_hash() == after_transfer_hash
+	)
+	_check(
+		"wrong team-owner qualifier refuses without mutation",
+		not world.teams().transfer_to_player(
+			"WrongOwner/Player_1_Inherit", ENEMY
+		)
+			and sim.state_hash() == after_transfer_hash
+	)
+	_check(
+		"unknown destination player refuses without mutation",
+		not world.teams().transfer_to_player(
+			"PlyrCivilian/Player_1_Inherit", "Nobody"
+		)
+			and sim.state_hash() == after_transfer_hash
+	)
+	_check(
+		"incomplete inheritance team binds as preserved refusal evidence",
+		world.bind_script_team(
+			"IncompleteInherit",
+			"PlyrCivilian",
+			[],
+			false,
+			["UnresolvedCombatObject"],
+			1
+		)
+	)
+	var before_incomplete_refusal := sim.state_hash()
+	_check(
+		"incomplete or unmodeled team refuses transfer without mutation",
+		not world.teams().transfer_to_player(
+			"PlyrCivilian/IncompleteInherit", PLAYER
+		)
+			and sim.state_hash() == before_incomplete_refusal
+			and int(
+				(sim.script_team_owner("IncompleteInherit") as Dictionary).get(
+					"owner", -1
+				)
+			) == SimScript.NEUTRAL_TEAM
+	)
+	_check(
+		"second noncombatant player name may share the neutral sim owner",
+		world.bind_player("PlyrNeutralAlias", SimScript.NEUTRAL_TEAM)
+	)
+	var before_ambiguous_destination := sim.state_hash()
+	_check(
+		"aliased noncombatant destination refuses without mutation",
+		not world.teams().transfer_to_player(
+			"Player_1_Inherit", "PlyrNeutralAlias"
+		)
+			and sim.state_hash() == before_ambiguous_destination
+			and int(
+				(sim.script_team_owner("Player_1_Inherit") as Dictionary).get(
+					"owner", -1
+				)
+			) == SimScript.PLAYER_TEAM
+	)
+	var before_direct_noncombatant := sim.state_hash()
+	_check(
+		"authoritative sim also refuses a noncombatant destination",
+		not bool(
+			sim.transfer_script_team_controlling_player(
+				"Player_1_Inherit", SimScript.NEUTRAL_TEAM
+			).get("ok", false)
+		)
+			and sim.state_hash() == before_direct_noncombatant
+	)
+	var snapshot := sim.snapshot()
+	var adopted := _make_sim()
+	var adopted_world := _make_world(adopted)
+	adopted_world.bind_player("PlyrCivilian", SimScript.NEUTRAL_TEAM)
+	adopted_world.bind_script_team(
+		"Player_1_Inherit",
+		"PlyrCivilian",
+		[],
+		true,
+		[],
+		0,
+		true
+	)
+	_check(
+		"transferred controlling owner restores with identical state hash",
+		adopted.restore(snapshot) and adopted.state_hash() == sim.state_hash()
+	)
+	_check_hit(
+		"restored world resolves transferred controlling player",
+		adopted_world.teams().owner("Player_1_Inherit"),
+		PLAYER
+	)
+	var player_entity := int(sim.living_ids(SimScript.PLAYER_TEAM)[0])
+	_check(
+		"materialized combat team refuses controlling-player shortcut",
+		world.bind_script_team(
+			"MaterializedTeam",
+			PLAYER,
+			[{"kind": "entity", "id": player_entity}]
+		)
+			and not world.teams().transfer_to_player(
+				"PlayerOne/MaterializedTeam", ENEMY
+			)
+	)
+	_check(
+		"default whole-roster team refuses inheritance-team transfer",
+		not world.teams().transfer_to_player(PLAYER_TEAM_NAME, ENEMY)
+	)
+	sim.winner = SimScript.PLAYER_TEAM
+	_check(
+		"post-match team transfer refuses without changing owner",
+		not world.teams().transfer_to_player("Player_1_Inherit", ENEMY)
+			and int(
+				(sim.script_team_owner("Player_1_Inherit") as Dictionary).get(
+					"owner", -1
+				)
+			) == SimScript.PLAYER_TEAM
+	)
 
 
 func _spellbook_document() -> Dictionary:
@@ -302,7 +776,7 @@ func _inject_research_contract(sim: RetailSliceSim) -> void:
 
 func _test_bindings() -> void:
 	var sim := _make_sim()
-	var world: RetailSliceScriptWorld = WorldScript.new(sim)
+	var world: RetailSliceScriptWorld = _track_world(WorldScript.new(sim))
 	_check("bind_player accepts a rostered team", world.bind_player(PLAYER, 0))
 	_check("bind_player rejects an unknown team", not world.bind_player("Ghost", 7))
 	_check("bind_player rejects an empty name", not world.bind_player("", 1))
@@ -650,7 +1124,7 @@ func _test_teams_reads() -> void:
 		world.teams().owner(PLAYER_TEAM_NAME),
 		PLAYER
 	)
-	var half_bound: RetailSliceScriptWorld = WorldScript.new(sim)
+	var half_bound: RetailSliceScriptWorld = _track_world(WorldScript.new(sim))
 	half_bound.bind_team(PLAYER_TEAM_NAME, 0)
 	_check_refused(
 		"teams.owner refuses when no player name is bound to the team",
@@ -1132,18 +1606,65 @@ func _attack_on_emptied_team() -> bool:
 func _test_orders_stand_ground() -> void:
 	var sim := _make_sim()
 	var world := _make_world(sim)
+	var player_ids := sim.living_ids(0)
+	_check("stand-ground fixture has two player battalions", player_ids.size() >= 2)
 	_check(
-		"orders.stand_ground TEAM scope is accepted",
-		world.orders().stand_ground(SageScriptWorld.Scope.TEAM, PLAYER_TEAM_NAME)
+		"stand-ground first named sub-team binds",
+		world.bind_script_team(
+			"StandAlpha", PLAYER, [{"kind": "entity", "id": int(player_ids[0])}]
+		)
+	)
+	_check(
+		"stand-ground same-owner sibling binds independently",
+		world.bind_script_team(
+			"StandBeta", PLAYER, [{"kind": "entity", "id": int(player_ids[1])}]
+		)
+	)
+	sim.issue_set_stance(player_ids, "Aggressive", 0)
+	_check(
+		"orders.stand_ground named TEAM scope is accepted",
+		world.orders().stand_ground(SageScriptWorld.Scope.TEAM, "StandAlpha", true)
+	)
+	_check(
+		"TEAM SET touches only the addressed named sub-team",
+		String((sim.entities[player_ids[0]] as Dictionary)["stance"]) == "HoldGround"
+		and String((sim.entities[player_ids[1]] as Dictionary)["stance"]) == "Aggressive"
+	)
+	_check(
+		"orders.stand_ground CLEAR is accepted",
+		world.orders().stand_ground(SageScriptWorld.Scope.TEAM, "StandAlpha", false)
+	)
+	_check(
+		"TEAM CLEAR selects Battle without restoring or contaminating its sibling",
+		String((sim.entities[player_ids[0]] as Dictionary)["stance"]) == "Battle"
+		and String((sim.entities[player_ids[1]] as Dictionary)["stance"]) == "Aggressive"
+	)
+	_check(
+		"orders.stand_ground PLAYER scope is accepted",
+		world.orders().stand_ground(SageScriptWorld.Scope.PLAYER, PLAYER, true)
 	)
 	var all_hold := true
-	for id in sim.living_ids(0):
+	for id in player_ids:
 		if String((sim.entities[id] as Dictionary)["stance"]) != "HoldGround":
 			all_hold = false
-	_check("orders.stand_ground sets the retail HoldGround stance", all_hold)
+	_check("PLAYER scope applies HoldGround to the resolved whole roster", all_hold)
+	_check(
+		"orders.stand_ground refuses an unknown TEAM identity",
+		not world.orders().stand_ground(
+			SageScriptWorld.Scope.TEAM, "StandGhost", true
+		)
+	)
+	_check(
+		"orders.stand_ground refuses <This Team> without execution context",
+		not world.orders().stand_ground(
+			SageScriptWorld.Scope.TEAM, "<This Team>", false
+		)
+	)
 	_check(
 		"orders.stand_ground refuses UNIT scope",
-		not world.orders().stand_ground(SageScriptWorld.Scope.UNIT, "SomeNamedUnit")
+		not world.orders().stand_ground(
+			SageScriptWorld.Scope.UNIT, "SomeNamedUnit", true
+		)
 	)
 
 
@@ -1359,40 +1880,119 @@ func _test_progression_hero_rank() -> void:
 	var world := _make_world(sim)
 	_check_hit(
 		"any_hero_reached_rank is false with no heroes fielded",
-		world.progression().any_hero_reached_rank(PLAYER, 2),
+		world.progression().any_hero_reached_rank(PLAYER, 1, 2),
 		false
 	)
-	# Promote the archer battalion to an authored hero at level 3.
+	# Promote the archer battalion to an authored hero, then drive the real
+	# authored XP transition that must record the historical attainment.
 	var hero: Dictionary = sim.entities[2]
 	hero["category"] = "hero"
-	hero["level"] = 3
+	hero["level"] = 1
 	hero["experience_xp"] = 0
 	sim._unit_experience_rules[String(hero["unit_type"])] = {
 		"initial_rank": 1,
-		"max_level": 5,
-		"levels": [],
+		"max_level": 3,
+		"levels": [
+			{"rank": 1, "required_experience": 0},
+			{"rank": 3, "required_experience": 100},
+		],
 	}
+	sim._record_hero_rank_attainment(hero)
+	sim._award_experience(hero, 100)
 	_check_hit(
 		"any_hero_reached_rank sees the authored hero at rank",
-		world.progression().any_hero_reached_rank(PLAYER, 3),
+		world.progression().any_hero_reached_rank(PLAYER, 1, 3),
 		true
 	)
 	_check_hit(
 		"any_hero_reached_rank is false above the hero's rank",
-		world.progression().any_hero_reached_rank(PLAYER, 4),
+		world.progression().any_hero_reached_rank(PLAYER, 1, 4),
 		false
+	)
+	_check_hit(
+		"any_hero_reached_rank honors the requested hero count",
+		world.progression().any_hero_reached_rank(PLAYER, 2, 3),
+		false
+	)
+	hero["health"] = 0
+	_check_hit(
+		"rank attainment remains true after the qualifying hero dies",
+		world.progression().any_hero_reached_rank(PLAYER, 1, 3),
+		true
+	)
+	# A second distinct hero reaches rank 3 later. The first is already dead,
+	# so a living-only scan cannot satisfy this count.
+	var second_hero: Dictionary = sim.entities[1]
+	second_hero["category"] = "hero"
+	second_hero["level"] = 1
+	second_hero["experience_xp"] = 0
+	sim._unit_experience_rules[String(second_hero["unit_type"])] = {
+		"initial_rank": 1,
+		"max_level": 3,
+		"levels": [
+			{"rank": 1, "required_experience": 0},
+			{"rank": 3, "required_experience": 100},
+		],
+	}
+	sim._record_hero_rank_attainment(second_hero)
+	sim._award_experience(second_hero, 100)
+	_check_hit(
+		"heroes reaching rank at different times accumulate historically",
+		world.progression().any_hero_reached_rank(PLAYER, 2, 3),
+		true
+	)
+	# Revival uses the same production/experience identity at rank 1. Recording
+	# it again must preserve, not lower or double-count, the historical peak.
+	sim._record_hero_rank_attainment({
+		"team": SimScript.PLAYER_TEAM,
+		"unit_type": String(hero["unit_type"]),
+		"category": "hero",
+		"level": 1,
+	})
+	_check_hit(
+		"a revived rank-1 hero preserves the historical peak without double-counting",
+		world.progression().any_hero_reached_rank(PLAYER, 2, 3),
+		true
 	)
 	# An UNAUTHORED hero makes the negative answer unknowable - but a positive
 	# answer from an authored hero still stands.
 	(sim.entities[3] as Dictionary)["category"] = "hero"
+	sim._record_hero_rank_attainment(sim.entities[3])
 	_check_hit(
 		"an authored hero at rank still answers true alongside an unauthored one",
-		world.progression().any_hero_reached_rank(PLAYER, 3),
+		world.progression().any_hero_reached_rank(PLAYER, 1, 3),
 		true
 	)
 	_check_refused(
 		"the negative refuses while an unauthored hero's rank is unknown",
-		world.progression().any_hero_reached_rank(PLAYER, 4)
+		world.progression().any_hero_reached_rank(PLAYER, 1, 4)
+	)
+	_check_refused(
+		"a nonpositive hero count refuses instead of inventing vacuous truth",
+		world.progression().any_hero_reached_rank(PLAYER, 0, 3)
+	)
+	var adopted := _make_sim()
+	_check("historical hero-rank state restores from a snapshot", adopted.restore(sim.snapshot()))
+	var adopted_world := _make_world(adopted)
+	_check(
+		"snapshot adoption preserves the canonical hero-rank history rows",
+		adopted.state_snapshot().get("hero_peak_ranks", []) \
+			== sim.state_snapshot().get("hero_peak_ranks", [])
+	)
+	_check(
+		"snapshot adoption preserves the authoritative state hash",
+		adopted.state_hash() == sim.state_hash()
+	)
+	_check_hit(
+		"the adopting peer answers from restored historical attainment",
+		adopted_world.progression().any_hero_reached_rank(PLAYER, 2, 3),
+		true
+	)
+	adopted.setup({}, {})
+	_check_hit(
+		"setup clears historical hero-rank attainment for the next match",
+		adopted_world.progression().any_hero_reached_rank(PLAYER, 1, 3),
+		false
 	)
 
 
@@ -2039,6 +2639,105 @@ func _test_players_object_count_of_types() -> void:
 	)
 
 
+func _test_progression_object_veterancy() -> void:
+	var world := _make_identity_world()
+	var sim: RetailSliceSim = world.sim
+	var progression := world.progression()
+	_check_hit(
+		"a rank-one matching battalion does not satisfy rank >= 2",
+		progression.has_object_of_veterancy(
+			PLAYER, "SynthSoldierHorde", ParamTypes.COMPARE_GREATER_EQUAL, 2
+		),
+		false
+	)
+	(sim.entities[1] as Dictionary)["level"] = 2
+	_check_hit(
+		"single-type fallback finds a living rank-two battalion",
+		progression.has_object_of_veterancy(
+			PLAYER, "SynthSoldierHorde", ParamTypes.COMPARE_GREATER_EQUAL, 2
+		),
+		true
+	)
+	_check_hit(
+		"the sourced comparison is applied to each matching object's rank",
+		progression.has_object_of_veterancy(
+			PLAYER, "SynthSoldierHorde", ParamTypes.COMPARE_GREATER, 2
+		),
+		false
+	)
+	_check_hit(
+		"the player predicate does not inspect another owner's matching row",
+		progression.has_object_of_veterancy(
+			ENEMY, "SynthSoldierHorde", ParamTypes.COMPARE_GREATER_EQUAL, 2
+		),
+		false
+	)
+	var farm := _structure_id_of_kind(sim, SimScript.PLAYER_TEAM, "farm")
+	(sim.structures[farm] as Dictionary)["level"] = 3
+	_check_hit(
+		"the predicate includes living structures and exact-rank comparison",
+		progression.has_object_of_veterancy(
+			PLAYER, "SynthFarmHouse", ParamTypes.COMPARE_EQUAL, 3
+		),
+		true
+	)
+	_check(
+		"fixture: the veteran object list builds",
+		world.meta().object_list_change(
+			"Synth_Veterans", "SynthSoldierHorde", true
+		)
+		and world.meta().object_list_change(
+			"Synth_Veterans", "SynthFarmHouse", true
+		)
+	)
+	_check_hit(
+		"the observed retail list-like token grammar expands before rank testing",
+		progression.has_object_of_veterancy(
+			PLAYER, "Synth_Veterans", ParamTypes.COMPARE_GREATER_EQUAL, 3
+		),
+		true
+	)
+	(sim.structures[farm] as Dictionary)["health"] = 0
+	_check_hit(
+		"a dead rank-three object is excluded from the present-tense predicate",
+		progression.has_object_of_veterancy(
+			PLAYER, "Synth_Veterans", ParamTypes.COMPARE_GREATER_EQUAL, 3
+		),
+		false
+	)
+	_check_hit(
+		"an unfielded exact type is a truthful false over the enumerable census",
+		progression.has_object_of_veterancy(
+			PLAYER, "GhostType", ParamTypes.COMPARE_GREATER_EQUAL, 2
+		),
+		false
+	)
+	_check_refused(
+		"an empty object type refuses",
+		progression.has_object_of_veterancy(
+			PLAYER, "", ParamTypes.COMPARE_GREATER_EQUAL, 2
+		)
+	)
+	_check_refused(
+		"an invalid comparison refuses",
+		progression.has_object_of_veterancy(PLAYER, "SynthSoldierHorde", 99, 2)
+	)
+	_check_refused(
+		"an unbound player refuses",
+		progression.has_object_of_veterancy(
+			"Nobody", "SynthSoldierHorde", ParamTypes.COMPARE_GREATER_EQUAL, 2
+		)
+	)
+	var before := sim.state_hash()
+	progression.has_object_of_veterancy(
+		PLAYER, "Synth_Veterans", ParamTypes.COMPARE_GREATER_EQUAL, 2
+	)
+	_check(
+		"the veteran-object predicate leaves authoritative state untouched",
+		sim.state_hash() == before
+	)
+
+
 func _test_single_player_token_routing() -> void:
 	## Regression for the 0dce37e execution census's 84% gap: every
 	## single-player facet slot resolved its argument through the literal
@@ -2122,7 +2821,9 @@ func _test_single_player_token_routing() -> void:
 	)
 	_check(
 		"orders PLAYER scope resolves '<This Player>'",
-		world.orders().stand_ground(SageScriptWorld.Scope.PLAYER, this_player)
+		world.orders().stand_ground(
+			SageScriptWorld.Scope.PLAYER, this_player, true
+		)
 	)
 
 	# The refusals that MUST survive: turning any of these into an answer
@@ -2163,7 +2864,7 @@ func _test_single_player_token_routing() -> void:
 	# A binding may never shadow token resolution: on a world with NO existing
 	# bindings (so nothing else can reject the call), a reserved token spelling
 	# is refused as a player name.
-	var bare: RetailSliceScriptWorld = WorldScript.new(sim)
+	var bare: RetailSliceScriptWorld = _track_world(WorldScript.new(sim))
 	_check(
 		"bind_player rejects a reserved token spelling as a player name",
 		not bare.bind_player(RetailSliceScriptWorld.LOCAL_PLAYER_TOKEN, 1)
@@ -2433,7 +3134,10 @@ func _test_queries_are_read_only() -> void:
 		world.progression().has_science(PLAYER, "SCIENCE_TestHeal")
 		world.progression().can_purchase_science(PLAYER, "SCIENCE_TestHeal")
 		world.progression().science_purchase_points(PLAYER)
-		world.progression().any_hero_reached_rank(PLAYER, 2)
+		world.progression().has_object_of_veterancy(
+			PLAYER, "GondorArcher", ParamTypes.COMPARE_GREATER_EQUAL, 2
+		)
+		world.progression().any_hero_reached_rank(PLAYER, 1, 2)
 		world.economy().money(PLAYER)
 		world.meta().player_count(true)
 		world.meta().multiplayer_outcome(PLAYER, "defeat")
@@ -2497,7 +3201,7 @@ func _twin_fixture() -> Array:
 		PLAYER_TEAM_NAME,
 		SageScriptWorld.target_team(ENEMY_TEAM_NAME)
 	)
-	world.orders().stand_ground(SageScriptWorld.Scope.PLAYER, ENEMY)
+	world.orders().stand_ground(SageScriptWorld.Scope.PLAYER, ENEMY, true)
 	sim.advance(30)
 	return [sim, world]
 
@@ -2521,6 +3225,9 @@ func _query_battery(world: RetailSliceScriptWorld) -> Array:
 		).value,
 		world.progression().has_science(PLAYER, "SCIENCE_TestHeal").value,
 		world.progression().science_purchase_points(PLAYER).value,
+		world.progression().has_object_of_veterancy(
+			PLAYER, "Synth_Targets", ParamTypes.COMPARE_GREATER_EQUAL, 1
+		).value,
 		world.economy().money(PLAYER).value,
 		world.meta().player_count(false).value,
 		world.meta().multiplayer_outcome(PLAYER, "defeat").value,
@@ -2594,10 +3301,35 @@ func _test_named_object_reads() -> void:
 		world.units().position("BASE_FLAG_1"),
 		Vector3(60.0, 0.0, 60.0)
 	)
+	_check_hit(
+		"units.is_owned_by is false for a packed neutral flag and a rostered player",
+		world.units().is_owned_by("BASE_FLAG_1", PLAYER),
+		false
+	)
+	_check_hit(
+		"units.is_owned_by resolves <This Player> while the flag remains neutral",
+		world.units().is_owned_by("BASE_FLAG_1", "<This Player>"),
+		false
+	)
 	# Unpack it: now it resolves to a live fortress the script player owns.
 	_check("fixture: BASE_FLAG_1 unpacks behind AI_BASE", world.ai().base_unpack("BASE_FLAG_1", true, "AI_BASE"))
 	_check_hit("units.owner answers the unpacking player", world.units().owner("BASE_FLAG_1"), PLAYER)
 	_check_hit("units.owner answers identically through the bound reference", world.units().owner("AI_BASE"), PLAYER)
+	_check_hit(
+		"units.is_owned_by answers true for the unpacking player",
+		world.units().is_owned_by("BASE_FLAG_1", PLAYER),
+		true
+	)
+	_check_hit(
+		"units.is_owned_by resolves <This Player> world-side",
+		world.units().is_owned_by("AI_BASE", "<This Player>"),
+		true
+	)
+	_check_hit(
+		"units.is_owned_by answers false for the enemy",
+		world.units().is_owned_by("AI_BASE", ENEMY),
+		false
+	)
 	_check_hit("units.health_percent is 100 for an undamaged base", world.units().health_percent("AI_BASE"), 100.0)
 	_check_hit("units.exists is true for the unpacked base", world.units().exists("AI_BASE"), true)
 	# Kill it. The sim keeps a destroyed structure row at health 0 - retail's
@@ -2614,12 +3346,22 @@ func _test_named_object_reads() -> void:
 		true
 	)
 	_check_hit("units.health_percent reports 0 for the dead object", world.units().health_percent("AI_BASE"), 0.0)
+	_check_hit(
+		"units.is_owned_by retains controlling-player ownership while the dead object row exists",
+		world.units().is_owned_by("AI_BASE", PLAYER),
+		true
+	)
 	# Remove the row entirely - retail's nulled name-table pointer.
 	sim.structures.erase(structure_id)
 	_check_hit("units.was_created is false once the object is gone", world.units().was_created("AI_BASE"), false)
 	_check_hit("units.was_destroyed stays true once the object is gone", world.units().was_destroyed("AI_BASE"), true)
 	_check_refused("units.position refuses for an object that is gone", world.units().position("AI_BASE"))
 	_check_refused("units.owner refuses for an object that is gone", world.units().owner("AI_BASE"))
+	_check_hit(
+		"units.is_owned_by remains false once the known object is gone",
+		world.units().is_owned_by("AI_BASE", PLAYER),
+		false
+	)
 	_check_refused("units.health_percent refuses for an object that is gone", world.units().health_percent("AI_BASE"))
 
 
@@ -2634,6 +3376,14 @@ func _test_named_object_refusals() -> void:
 	_check_refused("units.is_dying refuses a name outside the namespace", world.units().is_dying("GHOST"))
 	_check_refused("units.position refuses a name outside the namespace", world.units().position("GHOST"))
 	_check_refused("units.owner refuses a name outside the namespace", world.units().owner("GHOST"))
+	_check_refused(
+		"units.is_owned_by refuses a name outside the namespace",
+		world.units().is_owned_by("GHOST", PLAYER)
+	)
+	_check_refused(
+		"units.is_owned_by refuses an unbound player",
+		world.units().is_owned_by("BASE_FLAG_1", "Nobody")
+	)
 	_check_refused("units.health_percent refuses a name outside the namespace", world.units().health_percent("GHOST"))
 	# Case sensitivity: retail's name table compares with strcmp, not stricmp.
 	_check_refused("the namespace is case-sensitive, like retail's strcmp", world.units().exists("base_flag_1"))

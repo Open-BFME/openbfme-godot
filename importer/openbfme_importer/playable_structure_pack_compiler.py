@@ -1578,6 +1578,21 @@ def _phase_animation(
                 phase_model_source=phase_model_source,
                 embedded_clip_ids=embedded_clip_ids,
             )
+        if len(manual) == 0:
+            # Retail authors MANUAL construction (e.g. IsengardTavern
+            # MBTavern_ASKL.MBTavern_ABLD) but the construction W3D may not
+            # have landed in the bundled clip set for this convert pass. Keep
+            # the structure convertible with an explicit none-mode phase
+            # rather than inventing a clip or failing the whole faction.
+            notes.append(
+                {
+                    "kind": "animation-clip",
+                    "phase": phase,
+                    "reason": "construction-manual-clip-unbundled",
+                    "phaseModelSource": phase_model_source,
+                }
+            )
+            return {"clip": None, "mode": "none"}
         if len(manual) != 1:
             raise PlayableStructurePackCompilerError(
                 "structure construction phase requires exactly one bundled "
@@ -1617,9 +1632,19 @@ def _floor_draw_bib(
     if not recipe_bib_states and not floor_draws:
         return None
     if bool(recipe_bib_states) != bool(floor_draws):
-        raise PlayableStructurePackCompilerError(
-            "structure floor-draw evidence and bib model closure disagree"
+        # Some RotWK wild structures author floor draws without a matching
+        # bib model closure (or the reverse) for mine/fissure/trove shapes.
+        # Record the mismatch and omit floor-draw binding rather than invent
+        # a bib model or fail the whole structure convert.
+        notes.append(
+            {
+                "kind": "floor-draw-bib",
+                "reason": "floor-draw-and-bib-presence-disagree",
+                "bibStateCount": len(recipe_bib_states),
+                "floorDrawCount": len(floor_draws),
+            }
         )
+        return None
 
     def _correlated_draws(state: Mapping[str, object]) -> list[Mapping[str, object]]:
         # The authored link between a floor draw and its bib model is the
@@ -1629,9 +1654,13 @@ def _floor_draw_bib(
             for identifier in state.get("identifiers", [])
         }
         if not identifiers:
-            raise PlayableStructurePackCompilerError(
-                "structure floor-draw evidence and bib model closure disagree"
+            notes.append(
+                {
+                    "kind": "floor-draw-bib",
+                    "reason": "bib-state-missing-identifiers",
+                }
             )
+            return []
         correlated = [
             draw
             for draw in floor_draws
@@ -1644,8 +1673,12 @@ def _floor_draw_bib(
             )
         ]
         if not correlated:
-            raise PlayableStructurePackCompilerError(
-                "structure floor-draw evidence and bib model closure disagree"
+            notes.append(
+                {
+                    "kind": "floor-draw-bib",
+                    "reason": "bib-state-uncorrelated-to-floor-draw",
+                    "identifiers": sorted(identifiers),
+                }
             )
         return correlated
 
@@ -1699,10 +1732,14 @@ def _floor_draw_bib(
         evidence_outputs = outputs or {
             str(state["output"]) for state in candidates
         }
-        raise PlayableStructurePackCompilerError(
-            "structure bib visual is absent or ambiguous after weather/editor "
-            "filtering: " + ", ".join(sorted(evidence_outputs))
+        notes.append(
+            {
+                "kind": "floor-draw-bib",
+                "reason": "bib-visual-absent-or-ambiguous-after-filter",
+                "outputs": sorted(evidence_outputs),
+            }
         )
+        return None
     selected = visible[0]
     hide_conditions: set[str] = set()
     start_hidden = True

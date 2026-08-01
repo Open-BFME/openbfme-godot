@@ -74,8 +74,10 @@ private pack merely to test a code change.
 
 ## Code and design principles
 
-- Rise of the Witch-king 2.01 is the compatibility target; BFME2 1.06 is the
-  base game underneath it.
+- Rise of the Witch-king 2.01 is the compatibility and parity target. BFME2 is
+  the base layer under RotWK and an optional comparison install only — not a
+  separate “finish BFME2 first” product freeze. Development is systems-first
+  iterative (`DIRECTION.md`), not vertical-slice-only.
 - The importer alone understands retail source formats.
 - Runtime code consumes versioned OpenBFME data, not the BFME installation.
 - Authoritative simulation must remain independent of Godot rendering and local

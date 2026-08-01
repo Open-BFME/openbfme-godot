@@ -1464,16 +1464,44 @@ def build_retail_animated_prop_plan(
         [str(item["output"]) for item in model_resources],
         "profile model output",
     )
+    # One owner per retail source path. Distinct animated groups can both need
+    # the same W3D (e.g. cupig_anta as one unit's model and another's hierarchy).
+    # First claimer keeps the pattern; later resources depend on it via
+    # inputResourceIds instead of re-declaring the path.
     pattern_owners: dict[str, str] = {}
     for resource in resources:
         resource_id = str(resource["id"])
-        for pattern in resource["patterns"]:
-            previous = pattern_owners.setdefault(str(pattern).casefold(), resource_id)
-            if previous != resource_id:
-                raise ValueError(
-                    "profile source pattern is owned by multiple resources: "
-                    f"{pattern!r} ({previous!r}, {resource_id!r})"
-                )
+        kept_patterns: list[str] = []
+        for pattern in list(resource["patterns"]):
+            key = str(pattern).casefold()
+            previous = pattern_owners.get(key)
+            if previous is None:
+                pattern_owners[key] = resource_id
+                kept_patterns.append(str(pattern))
+                continue
+            if previous == resource_id:
+                kept_patterns.append(str(pattern))
+                continue
+            options = resource.setdefault("options", {})
+            if not isinstance(options, dict):
+                options = {}
+                resource["options"] = options
+            input_ids = options.setdefault("inputResourceIds", [])
+            if not isinstance(input_ids, list):
+                input_ids = []
+                options["inputResourceIds"] = input_ids
+            if previous not in {str(value) for value in input_ids}:
+                input_ids.insert(0, previous)
+        resource["patterns"] = kept_patterns
+        if "limit" in resource:
+            resource["limit"] = len(kept_patterns)
+        if "expected_count" in resource:
+            resource["expected_count"] = len(kept_patterns)
+        if not kept_patterns and str(resource.get("kind")) == "model":
+            raise ValueError(
+                "animated model resource lost every source pattern after "
+                f"shared-path dedupe: {resource_id}"
+            )
     profile_validated = _validate_generated_profile(resources)
 
     eligible_names = {str(item["targetObject"]) for item in eligible}

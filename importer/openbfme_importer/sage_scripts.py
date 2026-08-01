@@ -12,6 +12,7 @@ surprise raises instead of degrading, and the emitted JSON is byte-stable
 from __future__ import annotations
 
 from collections import Counter
+import copy
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ from .util import write_json_atomic
 
 MAP_SCRIPTS_SCHEMA = "openbfme.map-scripts"
 MAP_SCRIPTS_SCHEMA_VERSION = 1
+MAP_SCRIPTS_COMPOSITE_SCHEMA_VERSION = 2
 
 # Containers this converter admits, keyed by source suffix (casefolded).
 _CONTAINERS = {".map": "map", ".scb": "scb"}
@@ -68,161 +70,31 @@ _ACTION_RECORD_NAMES = frozenset({"ScriptAction", "ScriptActionFalse"})
 # never counted as gameplay coverage.
 # ---------------------------------------------------------------------------
 
+# Must match IMPLEMENTED_* / SEMANTIC_* tables in the archived Godot
+# interpreter game/src/retail_slice/retail_map_scripts.gd. The live vocabulary
+# path is game/src/script/; this contract only covers the archived reference.
 SEMANTIC_CONDITION_OPCODES = frozenset(
     {
         "CONDITION_TRUE",
         "CONDITION_FALSE",
         "COUNTER",
-        "COUNTER_COUNTER",
-        "COUNTER_SECONDS",
         "FLAG",
-        "HAS_FINISHED_AUDIO",
-        "NAMED_DESTROYED",
-        "NAMED_DISCOVERED",
-        "NAMED_INSIDE_AREA",
-        "NAMED_NOT_DESTROYED",
-        "NAMED_OWNED_BY_PLAYER",
-        "PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA",
-        "PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_COMPLETELY_BUILT",
-        "SKIRMISH_PLAYER_HAS_UNITS_IN_AREA",
-        "TEAM_DESTROYED",
-        "TEAM_DISCOVERED",
-        "TEAM_HAS_UNITS",
-        "TEAM_INSIDE_AREA_ENTIRELY",
-        "TEAM_INSIDE_AREA_PARTIALLY",
         "TIMER_EXPIRED",
     }
 )
 
 SEMANTIC_ACTION_OPCODES = frozenset(
     {
-        "ATTACK_MOVE_NAMED_UNIT_TO",
-        "ATTACK_MOVE_TEAM_TO",
-        "CALL_SUBROUTINE",
-        "CREATE_NAMED_ON_TEAM_AT_WAYPOINT",
-        "CREATE_REINFORCEMENT_TEAM",
-        "CREATE_UNNAMED_ON_TEAM_AT_WAYPOINT",
-        "DISABLE_SCRIPT",
-        "ENABLE_SCRIPT",
-        "INCREMENT_COUNTER",
-        "MAP_REVEAL_ALL_PERM",
-        "MAP_REVEAL_ALL_UNDO_PERM",
-        "MAP_REVEAL_PERMANENTLY_AT_WAYPOINT",
-        "MAP_REVEAL_PERMANENTLY_IN_TRIGGER",
-        "MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT",
-        "MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER",
-        "MOVE_NAMED_UNIT_TO",
-        "MOVE_TEAM_TO",
-        "NAMED_ATTACK_FOLLOW_WAYPOINTS",
-        "NAMED_DELETE",
-        "NAMED_FOLLOW_WAYPOINTS",
-        "NAMED_FOLLOW_WAYPOINTS_EXACT",
-        "NAMED_HUNT",
-        "NAMED_SET_ATTITUDE",
-        "NO_OP",
-        "OBJECTLIST_ADDOBJECTTYPE",
-        "PLAYER_SET_MONEY",
         "SET_COUNTER",
+        "INCREMENT_COUNTER",
         "SET_FLAG",
         "SET_MILLISECOND_TIMER",
-        "SET_RANDOM_COUNTER",
-        "SET_TIMER",
-        "TEAM_ATTACK_MOVE_FOLLOW_WAYPOINTS",
-        "TEAM_ATTACK_NAMED",
-        "TEAM_FACE_WAYPOINT",
-        "TEAM_FOLLOW_WAYPOINTS",
-        "TEAM_FOLLOW_WAYPOINTS_EXACT",
-        "TEAM_HUNT",
-        "TEAM_MERGE_INTO_TEAM",
-        "TEAM_SET_ATTITUDE",
-        "TEAM_TRANSFER_TO_PLAYER",
-        "UNIT_SET_TEAM",
+        "PLAYER_SET_MONEY",
     }
 )
 
-RECORDED_ACTION_OPCODES = frozenset(
-    {
-        "AUDIO_FADE_VOLUME",
-        "AUDIO_MAKE_SOUND_IMMUNE_TO_FADE",
-        "AUDIO_PUSH_MUSIC",
-        "AUDIO_SET_REVERB_ROOM_TYPE",
-        "AUDIO_SET_REVERB_SUPPRESSION_POLYGON",
-        "CAMEO_FLASH",
-        "CAMERA_FADE_ADD",
-        "CAMERA_FADE_MULTIPLY",
-        "CAMERA_FADE_SUBTRACT",
-        "CAMERA_FOLLOW_NAMED",
-        "CAMERA_LETTERBOX_BEGIN",
-        "CAMERA_LETTERBOX_END",
-        "CAMERA_LOOK_TOWARD_OBJECT",
-        "CAMERA_LOOK_TOWARD_WAYPOINT",
-        "CAMERA_MOD_LOOK_TOWARD",
-        "CAMERA_MOVE_HOME",
-        "CAMERA_RESTRICT_TO_AREA",
-        "CAMERA_STOP_FOLLOW",
-        "CLOSE_OBJECTIVES_SCREEN",
-        "DEFEAT",
-        "DISABLE_COUNTDOWN_TIMER_DISPLAY",
-        "DISABLE_INPUT",
-        "DISPLAY_COUNTDOWN_TIMER",
-        "DISPLAY_COUNTER",
-        "DISPLAY_NOTIFICATION_BOX",
-        "DISPLAY_NOTIFICATION_BOX_WITH_OBJECT_TYPE_IMAGE_OVERRIDE",
-        "ENABLE_COUNTDOWN_TIMER_DISPLAY",
-        "ENABLE_HOUSE_COLOR",
-        "ENABLE_INPUT",
-        "ENABLE_OBJECTIVES_SCREEN",
-        "ENABLE_OBJECT_SOUND",
-        "EVA_SET_ENABLED_DISABLED",
-        "FLASH_OBJECTIVES_BUTTON",
-        "FLASH_SPELL_STORE_BUTTON",
-        "FOCAL_LENGTH_CAMERA",
-        "HERO_SELECT_BUTTON_FLASH",
-        "HIDE_COUNTDOWN_TIMER",
-        "HIDE_COUNTER",
-        "HIDE_MISSION_OBJECTIVE",
-        "HIDE_UI",
-        "LOCK_CAMERA",
-        "MARK_MISSION_OBJECTIVE_COMPLETED",
-        "MOVE_CAMERA_ALONG_SPLINE_PATH",
-        "MOVE_CAMERA_BY_ANIMATION",
-        "MOVE_CAMERA_TO",
-        "MUSIC_PLAY_TRACK_FINITE_TIMES",
-        "MUSIC_PLAY_TRACK_FINITE_TIMES_AND_NOTIFY",
-        "MUSIC_RESET_MUSIC_SCRIPTING_SYSTEM",
-        "MUSIC_RETURN_TO_MUSIC_SCRIPTING",
-        "MUSIC_SET_VOLUME",
-        "NAMED_FLASH",
-        "NAMED_FLASH_WHITE",
-        "OBJECT_CREATE_RADAR_EVENT",
-        "PITCH_CAMERA",
-        "PLAY_MOVIE_IN_GAME",
-        "PLAY_SOUND_EFFECT",
-        "PLAY_SOUND_EFFECT_AT",
-        "PLAY_SOUND_EFFECT_AT_TEAM",
-        "QUICKVICTORY",
-        "RADAR_CREATE_EVENT",
-        "REFRESH_RADAR",
-        "RESET_CAMERA",
-        "RESUME_BACKGROUND_SOUNDS",
-        "ROTATE_CAMERA",
-        "SCREEN_SHAKE",
-        "SELECT_BUILDER_BUTTON_FLASH",
-        "SETUP_CAMERA",
-        "SHOW_MILITARY_CAPTION",
-        "SHOW_MISSION_OBJECTIVE",
-        "SOUND_DISABLE_TYPE",
-        "SOUND_PLAY_NAMED",
-        "SPEECH_PLAY",
-        "SUSPEND_BACKGROUND_SOUNDS",
-        "TEAM_CREATE_RADAR_EVENT",
-        "TEAM_FLASH",
-        "TEAM_FLASH_WHITE",
-        "VICTORY",
-        "VICTORY_SCREEN",
-        "ZOOM_CAMERA",
-    }
-)
+# Archived runtime emits no presentation-only recorded path; empty is honest.
+RECORDED_ACTION_OPCODES: frozenset[str] = frozenset()
 
 RECORDED_CONDITION_OPCODES: frozenset[str] = frozenset()
 
@@ -230,6 +102,27 @@ RECORDED_CONDITION_OPCODES: frozenset[str] = frozenset()
 _OBJECT_NAME_PROPERTY = "objectName"
 _OBJECT_OWNER_PROPERTY = "originalOwner"
 _WAYPOINT_TYPE_NAME = "*Waypoints/Waypoint"
+
+# Exact tactical-marker object types measured on the catalog-winning official
+# skirmish maps of BFME2 1.06 and RotWK 2.01.  This is deliberately a closed
+# set: a new type makes marker-only attestation disappear until a new source
+# census establishes that type's semantics.
+_INHERITANCE_TEAM_NAMES = frozenset(
+    f"Player_{index}_Inherit" for index in range(1, 9)
+)
+_INHERITANCE_TACTICAL_MARKER_TYPES = frozenset(
+    {
+        "Backdoor1",
+        "Backdoor2",
+        "Backdoor3",
+        "Center1",
+        "Center2",
+        "Center3",
+        "Flank1",
+        "Flank2",
+        "Flank3",
+    }
+)
 
 # Authored team unit composition.  WorldBuilder writes a Teams entry's
 # reinforcement template as seven parallel property triples
@@ -294,6 +187,48 @@ def _split_owner(value: Any) -> tuple[str, str]:
     return player, team
 
 
+def _marker_only_team_attested(
+    team_row: dict[str, Any], object_rows: list[dict[str, Any]]
+) -> bool:
+    """True only for a fully enumerated retail inheritance-marker team.
+
+    ``objectCount`` alone is not evidence: every counted member must have a
+    corresponding emitted ``world.objects`` row, every row must retain the
+    exact qualified owner/team identity, and every type must belong to the
+    closed two-tree tactical-marker census above.  Empty inheritance teams are
+    safe and attested when their source count and enumeration are both zero.
+    """
+
+    team_name = team_row.get("name")
+    owner = team_row.get("owner")
+    if (
+        owner != "PlyrCivilian"
+        or team_name not in _INHERITANCE_TEAM_NAMES
+        or not isinstance(team_row.get("objectCount"), int)
+        or not isinstance(team_row.get("namedMembers"), list)
+    ):
+        return False
+    members = [
+        row
+        for row in object_rows
+        if row.get("owner") == owner and row.get("team") == team_name
+    ]
+    if team_row["objectCount"] != len(members):
+        return False
+    if sorted(
+        row.get("name")
+        for row in members
+        if isinstance(row.get("name"), str) and row["name"]
+    ) != team_row["namedMembers"]:
+        return False
+    return all(
+        row.get("owner") == owner
+        and row.get("team") == team_name
+        and row.get("typeName") in _INHERITANCE_TACTICAL_MARKER_TYPES
+        for row in members
+    )
+
+
 def _map_chunks_and_world(
     source: bytes,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -340,7 +275,10 @@ def _map_chunks_and_world(
                     }
                 )
             elif record.name == "HeightMapData":
-                heightmap = _parse_height(record)
+                # Script libraries are structural maps and legitimately use a
+                # one-cell heightmap. This lane emits no runnable terrain; the
+                # multiplayer/scenario map profiles retain their 2x2 minimum.
+                heightmap = _parse_height(record, minimum_dimension=1)
             elif record.name == "ObjectsList":
                 if heightmap is None:
                     # Retail maps always carry HeightMapData first; a
@@ -482,41 +420,70 @@ def _build_world(
         }
         for index, player in enumerate(sides.get("players", []))
     ]
-    # Authored team membership.  Every non-waypoint object on the map belongs
-    # to exactly one team through its ``originalOwner`` property, and retail
-    # ``TEAM_HAS_UNITS`` / ``TEAM_DESTROYED`` answer over all of them, not just
-    # the named ones.  Named members are listed individually because scripts
-    # move them between teams; the rest are counted, because the runtime can
-    # only track a bounded roster and an unnamed object is unaddressable.
-    team_named_members: dict[str, list[str]] = {}
-    team_object_counts: Counter = Counter()
+    object_rows = []
+    named_objects = []
     for item in objects:
         if item.get("typeName") == _WAYPOINT_TYPE_NAME:
             continue
         properties = item.get("properties", {})
-        _player, team_name = _split_owner(properties.get(_OBJECT_OWNER_PROPERTY))
-        if not team_name:
-            continue
-        team_object_counts[team_name] += 1
-        object_name = properties.get(_OBJECT_NAME_PROPERTY)
-        if isinstance(object_name, str) and object_name:
-            team_named_members.setdefault(team_name, []).append(object_name)
+        owner_value = properties.get(_OBJECT_OWNER_PROPERTY, "") or ""
+        player_name, team_name = _split_owner(owner_value)
+        object_name_value = properties.get(_OBJECT_NAME_PROPERTY)
+        object_name = (
+            object_name_value
+            if isinstance(object_name_value, str)
+            else ""
+        )
+        row = {
+            "name": object_name,
+            "typeName": str(item.get("typeName", "")),
+            "godotPosition": list(item["godotPosition"]),
+            "godotYawRadians": float(item["godotYawRadians"]),
+            "originalOwner": str(owner_value),
+            "owner": player_name,
+            "team": team_name,
+        }
+        object_rows.append(row)
+        if object_name:
+            named_objects.append(dict(row))
+    object_rows.sort(
+        key=lambda row: (
+            row["team"],
+            row["name"],
+            row["typeName"],
+            row["godotPosition"],
+        )
+    )
+    named_objects.sort(key=lambda row: (row["name"], row["typeName"]))
 
-    team_rows = [
-        {
+    # Authored team membership.  Every non-waypoint object on the map belongs
+    # to exactly one team through its ``originalOwner`` property, and retail
+    # ``TEAM_HAS_UNITS`` / ``TEAM_DESTROYED`` answer over all of them, not just
+    # the named ones.  Derive the count and named subset from the same emitted
+    # object rows used by marker-only attestation, so a lossy parallel census
+    # cannot accidentally certify an incomplete team.
+    team_rows = []
+    for index, team in enumerate(teams.get("teams", [])):
+        team_name = str(team.get("name", ""))
+        team_owner = str(team.get("owner", ""))
+        members = [
+            row
+            for row in object_rows
+            if row["owner"] == team_owner and row["team"] == team_name
+        ]
+        team_row = {
             "index": int(team.get("index", index)),
-            "name": str(team.get("name", "")),
-            "owner": str(team.get("owner", "")),
-            "objectCount": int(
-                team_object_counts.get(str(team.get("name", "")), 0)
-            ),
+            "name": team_name,
+            "owner": team_owner,
+            "objectCount": len(members),
             "namedMembers": sorted(
-                team_named_members.get(str(team.get("name", "")), [])
+                row["name"] for row in members if row["name"]
             ),
             "units": _team_units(team),
         }
-        for index, team in enumerate(teams.get("teams", []))
-    ]
+        if _marker_only_team_attested(team_row, object_rows):
+            team_row["markerOnly"] = True
+        team_rows.append(team_row)
     waypoint_rows = [
         {
             "id": int(waypoint["id"]),
@@ -533,28 +500,6 @@ def _build_world(
         }
         for area in trigger_areas
     ]
-    named_objects = []
-    for item in objects:
-        properties = item.get("properties", {})
-        object_name = properties.get(_OBJECT_NAME_PROPERTY)
-        if not isinstance(object_name, str) or not object_name:
-            continue
-        if item.get("typeName") == _WAYPOINT_TYPE_NAME:
-            continue
-        owner_value = properties.get(_OBJECT_OWNER_PROPERTY, "") or ""
-        player_name, team_name = _split_owner(owner_value)
-        named_objects.append(
-            {
-                "name": object_name,
-                "typeName": str(item.get("typeName", "")),
-                "godotPosition": list(item["godotPosition"]),
-                "godotYawRadians": float(item["godotYawRadians"]),
-                "originalOwner": str(owner_value),
-                "owner": player_name,
-                "team": team_name,
-            }
-        )
-    named_objects.sort(key=lambda row: (row["name"], row["typeName"]))
     return {
         "available": True,
         "players": players,
@@ -562,6 +507,10 @@ def _build_world(
         "waypoints": sorted(waypoint_rows, key=lambda row: row["id"]),
         "waypointPaths": _waypoint_paths(waypoints, waypoint_edges),
         "triggerAreas": sorted(area_rows, key=lambda row: row["id"]),
+        # Every non-waypoint map object, including unnamed tactical markers.
+        # Script-team authority decisions must not infer their type from a
+        # lossy objectCount alone.
+        "objects": object_rows,
         "namedObjects": named_objects,
     }
 
@@ -574,6 +523,7 @@ def _empty_world() -> dict[str, Any]:
         "waypoints": [],
         "waypointPaths": [],
         "triggerAreas": [],
+        "objects": [],
         "namedObjects": [],
     }
 
@@ -777,6 +727,116 @@ def map_scripts_document(source: bytes, *, container: str) -> dict[str, Any]:
         "conditionOpcodes": dict(sorted(total_conditions.items())),
         "world": world,
         "scripts": rows,
+    }
+
+
+def compose_map_scripts_document(
+    map_document: dict[str, Any],
+    library_documents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compose one decoded map world with per-player retail AI libraries.
+
+    Library ``.map`` files author a single placeholder player named
+    ``Player``.  SAGE instantiates that library separately for every active
+    skirmish player; concatenating its scripts into the map document would
+    lose that execution context and would collide library-local team names.
+    Schema v2 therefore preserves each library as an explicit template.  The
+    runtime binds ``Player`` and its local teams inside each concrete
+    ``Player_N`` executor.
+    """
+
+    def require_v1(document: dict[str, Any], label: str) -> None:
+        if (
+            not isinstance(document, dict)
+            or document.get("schema") != MAP_SCRIPTS_SCHEMA
+            or document.get("schemaVersion") != MAP_SCRIPTS_SCHEMA_VERSION
+            or not isinstance(document.get("world"), dict)
+            or not isinstance(document.get("scripts"), list)
+        ):
+            raise ValueError(f"{label} is not an openbfme.map-scripts v1 document")
+
+    require_v1(map_document, "map document")
+    map_world = map_document["world"]
+    if not map_world.get("available"):
+        raise ValueError("map document has no decoded script world")
+
+    templates: list[dict[str, Any]] = []
+    identities: set[str] = set()
+    for index, library in enumerate(library_documents):
+        label = f"library document {index}"
+        require_v1(library, label)
+        source = library.get("source")
+        if not isinstance(source, dict):
+            raise ValueError(f"{label} has no source identity")
+        identity = source.get("sourceSha256")
+        if (
+            not isinstance(identity, str)
+            or len(identity) != 64
+            or any(character not in "0123456789abcdef" for character in identity)
+        ):
+            raise ValueError(f"{label} has an invalid sourceSha256")
+        if identity in identities:
+            raise ValueError(f"duplicate library source identity {identity}")
+        identities.add(identity)
+
+        world = library["world"]
+        players = world.get("players")
+        if not isinstance(players, list):
+            raise ValueError(f"{label} has no player table")
+        player_rows = {
+            row.get("index"): row.get("name")
+            for row in players
+            if isinstance(row, dict)
+        }
+        placeholder_indices = [
+            player_index
+            for player_index, player_name in player_rows.items()
+            if player_name == "Player"
+        ]
+        if len(placeholder_indices) != 1:
+            raise ValueError(f"{label} must declare exactly one Player placeholder")
+        placeholder_index = placeholder_indices[0]
+        for script in library["scripts"]:
+            if (
+                not isinstance(script, dict)
+                or script.get("playerIndex") != placeholder_index
+                or not isinstance(script.get("payload"), dict)
+            ):
+                raise ValueError(
+                    f"{label} carries a script outside the Player placeholder"
+                )
+        for team in world.get("teams", []):
+            if (
+                not isinstance(team, dict)
+                or team.get("owner") not in ("", "Player")
+            ):
+                raise ValueError(
+                    f"{label} carries a team outside the Player placeholder"
+                )
+        templates.append(
+            {
+                "identity": identity,
+                "instantiateFor": "aiPlayers",
+                "playerPlaceholder": "Player",
+                "world": copy.deepcopy(world),
+                "scripts": copy.deepcopy(library["scripts"]),
+            }
+        )
+
+    return {
+        "schema": MAP_SCRIPTS_SCHEMA,
+        "schemaVersion": MAP_SCRIPTS_COMPOSITE_SCHEMA_VERSION,
+        "source": {
+            "container": "composite",
+            "map": copy.deepcopy(map_document.get("source", {})),
+            "libraries": [
+                copy.deepcopy(library.get("source", {}))
+                for library in library_documents
+            ],
+        },
+        "world": copy.deepcopy(map_world),
+        "scripts": copy.deepcopy(map_document["scripts"]),
+        "libraryTemplates": templates,
     }
 
 

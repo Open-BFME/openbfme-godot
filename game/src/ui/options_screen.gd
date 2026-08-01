@@ -81,6 +81,17 @@ func open() -> void:
 	visible = true
 
 
+func reload_from_store() -> void:
+	## Re-read the persisted settings into the controls WITHOUT opening the screen.
+	## The F11 fullscreen binding writes the window mode straight to the store (see
+	## `main_menu.gd:toggle_fullscreen`), and an options screen still showing
+	## "Windowed" after the player put the game fullscreen is a settings panel that
+	## lies about the state of the machine it is settings for.
+	if window_mode_opt == null:
+		return
+	_load_from_store()
+
+
 func accept() -> void:
 	apply_and_persist()
 	closed.emit(true)
@@ -310,6 +321,60 @@ func _build_controls_column(parent: Control) -> void:
 	scroll_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	scroll_value_label.add_theme_color_override("font_color", Color("c9d4b8"))
 	panel.add_child(scroll_value_label)
+	_build_key_bindings(panel)
+
+
+## THE KEYBOARD SECTION - THE "KEY SETTINGS" THAT USED TO DO NOTHING.
+##
+## The owner's report was "the key settings does nothing", and this column was the
+## reason: it offered a scroll-speed slider and a health-bar toggle and never said
+## a word about the keyboard, while the game quietly bound four keys nobody could
+## discover. What goes here is the honest version of a key-settings panel:
+##
+##   * EVERY BINDING, BY NAME, read from `OpenBFMEUserSettings.KEY_BINDINGS` so
+##     this list cannot drift away from the code that reads the keycodes.
+##   * NO REBIND CONTROL, because there is nothing a rebind could be written to
+##     (see `KEYBIND_REMAP_GAP`). A row of "click to rebind" buttons that discarded
+##     the result would be exactly the dead control this repository forbids, and it
+##     is the specific complaint being answered here - so the gap is stated in
+##     words on the panel instead.
+##
+## Every row is a Label with `MOUSE_FILTER_IGNORE`: it is a readout, it does not
+## take a click, and it does not sit in the focus chain pretending it might.
+func _build_key_bindings(panel: Control) -> void:
+	var heading := Label.new()
+	heading.name = "KeyBindingsHeading"
+	heading.text = "Key Settings"
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_color_override("font_color", Color("b7dc94"))
+	heading.add_theme_font_size_override("font_size", 15)
+	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(heading)
+	var rows := VBoxContainer.new()
+	rows.name = "KeyBindingRows"
+	rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rows.add_theme_constant_override("separation", 2)
+	panel.add_child(rows)
+	for binding_value in UserSettingsScript.KEY_BINDINGS:
+		var binding := binding_value as Dictionary
+		var row := Label.new()
+		row.name = "KeyBinding%s" % String(binding["key"])
+		row.text = "%s        %s" % [String(binding["key"]), String(binding["action"])]
+		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		row.add_theme_color_override("font_color", Color("d8e6da"))
+		row.add_theme_font_size_override("font_size", 14)
+		row.tooltip_text = "Read in %s" % String(binding["where"])
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rows.add_child(row)
+	var gap := Label.new()
+	gap.name = "KeyBindingGap"
+	gap.text = UserSettingsScript.KEYBIND_REMAP_GAP
+	gap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	gap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	gap.add_theme_color_override("font_color", Color("9aa78d"))
+	gap.add_theme_font_size_override("font_size", 11)
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(gap)
 
 
 func _make_column(parent: Control, node_name: String, heading: String) -> VBoxContainer:

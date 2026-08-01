@@ -1606,7 +1606,10 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 value["bundle_sha256"] = bundle_digest(pack)
             value["conversion_cache"] = pipeline.conversion_cache_stats
-            value.update(_conversion_failure_report(pack_root))
+            # pipeline.build returns the pack directory as `pack` in this
+            # command path; do not reference an undefined pack_root here
+            # (prior UnboundLocalError after a successful audit).
+            value.update(_conversion_failure_report(pack))
             if not args.no_publish:
                 progress_emit("assemble", "publishing pack to Godot content root")
                 value.update(

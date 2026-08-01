@@ -45,7 +45,18 @@ digests may appear only as non-payload provenance metadata in contained reports.
 
 ## Deterministic, resumable flow
 
-The supported operator entry point is:
+The supported **RotWK systems-first** operator entry point is:
+
+```bat
+run_rotwk_systems.bat <RotWK>
+```
+
+That path runs doctor, map/faction census, map-cook corpus, and faction
+plan-only gap accounting against RotWK (see `tools/rotwk-systems.ps1` and
+`tools/gate-rotwk-systems.ps1`). It does not rewrite `selection.json` unless
+you explicitly pass publish flags to a later build stage.
+
+The legacy BFME2 Men/Fords wrapper remains:
 
 ```bat
 run_importer.bat <BFME2>

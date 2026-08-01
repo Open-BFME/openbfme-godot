@@ -115,8 +115,11 @@ func _run() -> void:
 
 	_run_fortress_armor_contract()
 	_run_armor_system_contract()
+	_run_highlander_body_contract()
 	_run_archer_dual_weapon_contract()
 	_run_stance_contract()
+	_run_auto_acquire_policy_contract()
+	_run_mood_attack_check_cadence_contract()
 	_run_corpse_lifecycle_contract()
 	_run_ai_visual_acquisition_contract()
 
@@ -415,6 +418,160 @@ func _run_armor_system_contract() -> void:
 	_check("fire_arrows_bonus_is_unscaled_vs_structures", is_equal_approx(structure_factor, 1.0), str(structure_factor))
 
 
+func _run_highlander_body_contract() -> void:
+	var rules := _unit_rules(5, 50)
+	(rules[SimScript.KNIGHT_OBJECT_ID] as Dictionary)["highlander_body"] = true
+	var build_rules := SimScript.STRUCTURE_BUILD_RULES.duplicate(true)
+	(build_rules["fortress"] as Dictionary)["highlander_body"] = true
+	var sim = SimScript.new()
+	sim.setup({}, {
+		"enable_base_loop": true,
+		"unit_rules": rules,
+		"faction_manifest": {
+			"structure_build_rules": build_rules,
+		},
+	})
+	sim.ai_enabled = false
+	var normal: Dictionary = sim.entities[1]
+	var highlander: Dictionary = sim.entities[103]
+	_check(
+		"ordinary_body_keeps_optional_policy_key_absent",
+		not normal.has("highlander_body")
+	)
+	_check(
+		"authored_highlander_policy_is_per_member",
+		highlander.get("highlander_body") == true
+	)
+	# Distinguish the complete source ordering: Rallying Call first turns 200
+	# into 400 DamageInfo input, Highlander clamps that to 199, then 40% armor
+	# rounds to 80, leaving 120. Clamping before the outgoing boost leaves 40.
+	highlander["object_id"] = SimScript.KNIGHT_OBJECT_ID
+	normal["rally_until_tick"] = sim.tick_index + 1
+	normal["rally_damage_mult"] = 2.0
+	sim._unit_armor[SimScript.KNIGHT_OBJECT_ID] = {
+		"set_id": "HighlanderProbeArmor",
+		"damage_scalar": 1.0,
+		"scalars": {"default": 0.4, "slash": 0.4},
+		"upgrades": {},
+	}
+	sim._apply_member_damage(1, 0, 103, 200, "battalion", 0, 0, "slash")
+	_check(
+		"highlander_member_clamps_raw_before_armor",
+		int((highlander.get("member_health", []) as Array)[0]) == 120,
+		str(highlander.get("member_health", []))
+	)
+	normal["rally_until_tick"] = -1
+	var mixed_health_before := int(
+		(highlander.get("member_health", []) as Array)[1]
+	)
+	normal["damage_type"] = ""
+	normal["damage_components"] = [
+		{"damage_type": "slash", "value": 50.0},
+		{"damage_type": "unresistable", "value": 50.0},
+	]
+	sim._apply_member_damage(1, 0, 103, 100, "battalion", 0, 1)
+	var refusal_event: Dictionary = sim.events.back()
+	_check(
+		"highlander_mixed_unresistable_damage_refuses_without_mutation",
+		int((highlander.get("member_health", []) as Array)[1])
+				== mixed_health_before
+			and String(refusal_event.get("kind", ""))
+				== "combat.damage_refused"
+			and String(refusal_event.get("reason", ""))
+				== "highlander-mixed-unresistable",
+		str(refusal_event)
+	)
+	normal["damage_components"] = []
+	normal["damage_type"] = "slash"
+	# With neutral armor, repeated ordinary hits consume every remaining raw
+	# point except the final one, independently for the selected member.
+	(sim._unit_armor[SimScript.KNIGHT_OBJECT_ID] as Dictionary)["scalars"] = {
+		"default": 1.0,
+		"slash": 1.0,
+		"unresistable": 1.0,
+	}
+	sim._apply_member_damage(1, 0, 103, 9999, "battalion", 0, 0, "slash")
+	sim._apply_member_damage(1, 0, 103, 9999, "battalion", 0, 0, "slash")
+	_check(
+		"highlander_member_repeated_normal_damage_stops_at_one",
+		int((highlander.get("member_health", []) as Array)[0]) == 1
+	)
+	sim._apply_member_damage(
+		1, 0, 103, 1, "battalion", 0, 0, "UNRESISTABLE"
+	)
+	_check(
+		"highlander_member_unresistable_uses_normal_death_path",
+		int((highlander.get("member_health", []) as Array)[0]) == 0
+	)
+
+	var fortress_id: int = sim.fortress_id(SimScript.ENEMY_TEAM)
+	var fortress: Dictionary = sim.structures[fortress_id]
+	_check(
+		"highlander_structure_policy_is_authored_state",
+		fortress.get("highlander_body") == true
+	)
+	fortress["health"] = 100
+	fortress["maximum_health"] = 100
+	sim._structure_armor["fortress"] = {
+		"damage_scalar": 1.0,
+		"scalars": {"default": 1.0, "slash": 1.0, "unresistable": 1.0},
+	}
+	sim._unit_weapon_upgrades[SimScript.SOLDIER_OBJECT_ID] = {
+		"Upgrade_HighlanderStructureProbe": {
+			"kind": "weapon-swap",
+			"damage": 9999.0,
+			"damage_type": "slash",
+			"scalars": [{
+				"percent": 2.0,
+				"filter": "ANY +STRUCTURE",
+				"relation": "ANY",
+				"plus": ["STRUCTURE"],
+				"minus": [],
+			}],
+		},
+	}
+	sim._apply_equipment_to_horde(
+		normal, ["Upgrade_HighlanderStructureProbe"]
+	)
+	sim._apply_structure_damage(1, fortress_id, 9999, "slash")
+	sim._apply_structure_damage(1, fortress_id, 9999, "slash")
+	_check(
+		"highlander_structure_repeated_normal_damage_stops_at_one",
+		int(fortress.get("health", 0)) == 1
+	)
+	sim._apply_structure_damage(1, fortress_id, 1, "unresistable")
+	_check(
+		"highlander_structure_unresistable_uses_normal_destruction_path",
+		int(fortress.get("health", -1)) == 0
+	)
+	var restored = SimScript.new()
+	restored.setup({}, {
+		"enable_base_loop": true,
+		"unit_rules": rules,
+		"faction_manifest": {"structure_build_rules": build_rules},
+	})
+	_check("highlander_snapshot_restores", restored.restore(sim.snapshot()))
+	_check(
+		"highlander_snapshot_restores_policy_and_hash",
+		(restored.entities[103] as Dictionary).get("highlander_body") == true
+			and (restored.structures[fortress_id] as Dictionary)
+				.get("highlander_body") == true
+			and restored.state_hash() == sim.state_hash()
+	)
+	var removal_sim = SimScript.new()
+	removal_sim.setup({}, {"unit_rules": rules})
+	removal_sim.ai_enabled = false
+	var removable: Dictionary = removal_sim.entities[103]
+	removable["health"] = 0
+	removable["member_health"] = [0, 0, 0, 0, 0]
+	removable["corpse_expire_tick"] = 0
+	removal_sim._cleanup_expired_corpses()
+	_check(
+		"highlander_policy_does_not_block_non_damage_lifecycle_removal",
+		not removal_sim.entities.has(103)
+	)
+
+
 func _last_hit_event(sim) -> Dictionary:
 	## The most recent combat.hit event (music/voice intents may follow it).
 	for index in range(sim.events.size() - 1, -1, -1):
@@ -489,6 +646,215 @@ func _run_stance_contract() -> void:
 		"battle_stance_auto_acquires_inside_source_vision",
 		int(sim.entity(1).get("target_id", 0)) == 101 and String(sim.entity(1).get("state", "")) == "run",
 		str(sim.entity(1))
+	)
+
+
+func _run_auto_acquire_policy_contract() -> void:
+	var disabled = _make_sim()
+	var source: Dictionary = disabled.entities[1]
+	_check(
+		"missing_aiupdate_field_keeps_entity_state_absent",
+		not source.has("auto_acquire_enabled")
+			and not source.has("auto_acquire_attack_buildings")
+			and not source.has("auto_acquire_while_stealthed")
+			and not source.has("mood_attack_check_rate_ticks")
+	)
+	source["auto_acquire_enabled"] = false
+	_check(
+		"authored_no_disables_idle_acquisition",
+		disabled._nearest_auto_target(source).is_empty()
+	)
+	_check(
+		"authored_no_does_not_block_explicit_attack_orders",
+		disabled.issue_attack([1], 101) == 1
+	)
+
+	var structures_only = _make_sim()
+	(structures_only.entities[101] as Dictionary)["health"] = 0
+	var structure_source: Dictionary = structures_only.entities[1]
+	var enemy_fortress := 900
+	structures_only.structures[enemy_fortress] = {
+		"id": enemy_fortress,
+		"team": SimScript.ENEMY_TEAM,
+		"health": 1000,
+		"maximum_health": 1000,
+		"position": Vector2(5.0, 0.0),
+		"structure_kind": "fortress",
+	}
+	structure_source["auto_acquire_attack_buildings"] = false
+	_check(
+		"yes_without_attack_buildings_skips_structures",
+		structures_only._nearest_auto_target(structure_source).is_empty()
+	)
+	structure_source["auto_acquire_attack_buildings"] = true
+	var structure_target: Dictionary = structures_only._nearest_auto_target(structure_source)
+	_check(
+		"attack_buildings_admits_hostile_structures",
+		int(structure_target.get("id", 0)) == enemy_fortress
+			and String(structure_target.get("kind", "")) == "structure",
+		str(structure_target)
+	)
+
+	var stealth_source = _make_sim()
+	stealth_source._spatial_rebuild()
+	var cloaked: Dictionary = stealth_source.entities[1]
+	cloaked["stealth_until_tick"] = stealth_source.tick_index + 10
+	cloaked["auto_acquire_while_stealthed"] = false
+	_check(
+		"yes_without_stealthed_skips_cloaked_source_acquisition",
+		stealth_source._nearest_auto_target(cloaked).is_empty()
+	)
+	cloaked["auto_acquire_while_stealthed"] = true
+	_check(
+		"stealthed_flag_allows_cloaked_source_acquisition",
+		int(stealth_source._nearest_auto_target(cloaked).get("id", 0)) == 101
+	)
+	(stealth_source.entities[101] as Dictionary)["stealth_until_tick"] = stealth_source.tick_index + 10
+	_check(
+		"stealthed_flag_does_not_reveal_cloaked_targets",
+		stealth_source._nearest_auto_target(cloaked).is_empty()
+	)
+	_check(
+		"explicit_orders_remain_independent_of_target_auto_acquisition",
+		stealth_source.issue_attack([1], 101) == 1
+	)
+
+	var temporal_source = _make_sim()
+	temporal_source._spatial_rebuild()
+	var temporal_row: Dictionary = temporal_source.entities[1]
+	temporal_row["target_id"] = 101
+	temporal_row["target_kind"] = "battalion"
+	temporal_row["order_kind"] = "auto_attack"
+	temporal_row["auto_acquire_while_stealthed"] = false
+	temporal_row["stealth_until_tick"] = temporal_source.tick_index + 10
+	temporal_source.advance(1)
+	_check(
+		"cloaking_source_drops_existing_disallowed_auto_target",
+		int(temporal_source.entity(1).get("target_id", -1)) == 0
+	)
+
+	var temporal_target = _make_sim()
+	temporal_target._spatial_rebuild()
+	var target_row: Dictionary = temporal_target.entities[1]
+	target_row["target_id"] = 101
+	target_row["target_kind"] = "battalion"
+	target_row["order_kind"] = "auto_attack"
+	(temporal_target.entities[101] as Dictionary)["stealth_until_tick"] = temporal_target.tick_index + 10
+	temporal_target.advance(1)
+	_check(
+		"cloaking_target_drops_existing_auto_target",
+		int(temporal_target.entity(1).get("target_id", -1)) == 0
+	)
+	var explicit_target = _make_sim()
+	explicit_target._spatial_rebuild()
+	_check("explicit_transition_order_is_accepted", explicit_target.issue_attack([1], 101) == 1)
+	(explicit_target.entities[101] as Dictionary)["stealth_until_tick"] = explicit_target.tick_index + 10
+	explicit_target.advance(1)
+	_check(
+		"target_cloaking_does_not_cancel_explicit_attack",
+		int(explicit_target.entity(1).get("target_id", 0)) == 101
+	)
+
+
+func _run_mood_attack_check_cadence_contract() -> void:
+	var cadence = _make_sim()
+	var source: Dictionary = cadence.entities[1]
+	source["mood_attack_check_rate_ticks"] = 6
+	for hostile_id in [101, 102]:
+		(cadence.entities[hostile_id] as Dictionary)["position"] = Vector2(100.0, 0.0)
+	cadence._spatial_rebuild()
+	cadence.advance(1)
+	var next_check := int(source.get("mood_next_check_tick", -1))
+	var rng_after_first_scan: Array = cadence._logic_random_state.duplicate()
+	_check(
+		"first_eligible_idle_scan_schedules_authored_jittered_interval",
+		next_check >= cadence.tick_index + 3
+			and next_check <= cadence.tick_index + 9
+			and rng_after_first_scan.size() == 6,
+		str(source)
+	)
+	(cadence.entities[101] as Dictionary)["position"] = Vector2(5.0, 0.0)
+	cadence._spatial_rebuild()
+	var ticks_before_boundary: int = next_check - cadence.tick_index - 1
+	if ticks_before_boundary > 0:
+		cadence.advance(ticks_before_boundary)
+	_check(
+		"authored_cadence_blocks_rescan_before_boundary",
+		int(cadence.entity(1).get("target_id", 0)) == 0
+			and cadence._logic_random_state == rng_after_first_scan
+	)
+	var adopted = _make_sim()
+	_check("mood_cadence_snapshot_restores", adopted.restore(cadence.snapshot()))
+	_check("mood_cadence_restored_hash_matches", adopted.state_hash() == cadence.state_hash())
+	cadence.advance(1)
+	adopted.advance(1)
+	_check(
+		"authored_cadence_rescans_on_exact_boundary",
+		int(cadence.entity(1).get("target_id", 0)) == 101
+			and int(adopted.entity(1).get("target_id", 0)) == 101
+	)
+	_check(
+		"only_first_scheduled_interval_consumes_rng",
+		cadence._logic_random_state == rng_after_first_scan
+			and adopted._logic_random_state == rng_after_first_scan
+			and cadence.state_hash() == adopted.state_hash()
+	)
+
+	var routed = _make_sim()
+	(routed.entities[1] as Dictionary)["mood_attack_check_rate_ticks"] = 5
+	(routed.entities[1] as Dictionary)["route"] = [Vector2(5.0, 0.0)]
+	routed.advance(1)
+	_check(
+		"routed_unit_does_not_scan_or_consume_rng",
+		routed._logic_random_state.is_empty()
+			and not (routed.entities[1] as Dictionary).has("mood_next_check_tick")
+	)
+
+	var disabled = _make_sim()
+	var disabled_source: Dictionary = disabled.entities[1]
+	disabled_source["mood_attack_check_rate_ticks"] = 5
+	disabled_source["auto_acquire_enabled"] = false
+	disabled.advance(1)
+	_check(
+		"disabled_auto_acquire_does_not_consume_mood_rng",
+		disabled._logic_random_state.is_empty()
+			and not disabled_source.has("mood_next_check_tick")
+	)
+
+	var explicit = _make_sim()
+	(explicit.entities[1] as Dictionary)["mood_attack_check_rate_ticks"] = 5
+	_check("explicit_mood_fixture_attack_is_accepted", explicit.issue_attack([1], 101) == 1)
+	explicit.advance(1)
+	_check(
+		"explicit_attack_does_not_scan_or_consume_rng",
+		explicit._logic_random_state.is_empty()
+			and not (explicit.entities[1] as Dictionary).has("mood_next_check_tick")
+			and bool((explicit.entities[1] as Dictionary).get(
+				"mood_randomize_next_check", false
+			))
+	)
+	_check("explicit_stop_reenters_idle", explicit.issue_stop([1]) == 1)
+	explicit.advance(1)
+	_check(
+		"new_idle_epoch_consumes_one_new_jitter_draw",
+		explicit._logic_random_state.size() == 6
+			and not bool((explicit.entities[1] as Dictionary).get(
+				"mood_randomize_next_check", true
+			))
+			and (explicit.entities[1] as Dictionary).has("mood_next_check_tick")
+	)
+
+	var attack_move = _make_sim()
+	(attack_move.entities[1] as Dictionary)["mood_attack_check_rate_ticks"] = 5
+	_check(
+		"attack_move_mood_fixture_is_accepted",
+		attack_move.issue_attack_move([1], Vector2(20.0, 0.0)) == 1
+	)
+	attack_move.advance(1)
+	_check(
+		"attack_move_does_not_consume_mood_rng",
+		attack_move._logic_random_state.is_empty()
+			and not (attack_move.entities[1] as Dictionary).has("mood_next_check_tick")
 	)
 
 

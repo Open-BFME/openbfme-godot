@@ -23,20 +23,21 @@ extends RefCounted
 ##
 ## WHAT IS SERVED AND WHAT IS NOT
 ## ==============================
-## 19 members are implemented. 5 are GAP-REGISTERED, every one of them for the
+## 20 members are implemented. 4 are GAP-REGISTERED.
 ## same class of reason: the action carries a LOAD-BEARING ARGUMENT that the
 ## SageScriptWorld facet surface has no parameter for. Those are recorded as
 ## findings against the world surface, not papered over here - see
 ## GAP_* below, which states the exact missing signature for each.
-## TEAM_SET_CUSTOM_STATE was the sixth: the facet-signature packet landed the
-## enable flag this file's original gap registration demanded
+## TEAM_SET_CUSTOM_STATE and TEAM_STAND_GROUND were the fifth and sixth: their
+## facet-signature packets landed the boolean flags the original gap
+## registrations demanded
 ## (teams.set_custom_state(team, state, enabled)), so the member is now
 ## SERVED - see _set_custom_state.
 ##
 ## The rule applied throughout: an argument that changes the OUTCOME may never
-## be dropped. Calling `orders.stand_ground(team)` for TEAM_STAND_GROUND(team,
-## FALSE) would not be an approximation, it would do the OPPOSITE of what the
-## map authored. A refusal is recoverable; a silent inversion is not.
+## be dropped. TEAM_STAND_GROUND now passes its FALSE through to the world's
+## status setter, which clears HoldGround to Battle rather than silently
+## inverting the authored action.
 ##
 ##
 ## THE ARGUMENT TRAP
@@ -87,7 +88,7 @@ const Dispatch := preload("res://src/script/script_dispatch.gd")
 # GAP-REGISTERED MEMBERS
 # ==========================================================================
 #
-# Five members whose world surface cannot carry an argument that changes the
+# Three members whose world surface cannot carry an argument that changes the
 # outcome. They are declared through `reg.blocked_actions()` rather than given a
 # body that returns OK, for two reasons: a body would count as coverage, and a
 # shared refusal cannot be mistaken for an implementation while skimming.
@@ -97,11 +98,9 @@ const Dispatch := preload("res://src/script/script_dispatch.gd")
 # exist. They need one more parameter each, which is a coordinated edit to
 # script_world.gd and therefore not this agent's to make.
 #
-# TEAM_SET_CUSTOM_STATE used to be the sixth entry here, gap-registered for
-# exactly this class of reason (its BOOLEAN enable flag had no parameter).
-# The demanded signature - teams.set_custom_state(team, state, enabled) -
-# has since landed, so the member is served above; the history stays in this
-# comment because the gap text was the specification the fix implemented.
+# TEAM_SET_CUSTOM_STATE and TEAM_STAND_GROUND used to be the fifth and sixth
+# entries here, each missing its BOOLEAN. Their demanded signatures have since
+# landed, so both members are served above.
 
 ## SET_COUNTER_TO_TEAM_THREAT(COUNTER, TEAM, REAL) - 13 AI call sites.
 const GAP_TEAM_THREAT := (
@@ -137,43 +136,30 @@ const GAP_RECRUIT_UNITS := (
 	+ "from_team: String))"
 )
 
-## TEAM_STAND_GROUND(TEAM, BOOLEAN) - 2 AI call sites, both authoring FALSE.
-const GAP_STAND_GROUND := (
-	"stand-ground CLEAR (the action is 'Set Stand Ground Status of <TEAM> to "
-	+ "<BOOLEAN>' and both retail AI call sites pass 0, i.e. turn stand-ground "
-	+ "OFF. The world offers orders.stand_ground(scope, name), which can only "
-	+ "turn it ON, so serving these would do the exact opposite of what the map "
-	+ "authored. NEEDED: orders.stand_ground(scope: int, name: String, enabled: "
-	+ "bool) -> bool)"
-)
-
 ## SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER [sic] - 1 AI call site.
 const GAP_REF_TO_NEAREST := (
-	"nearest-object-to-a-team reference (the signature is (OBJECT_TYPE_LIST, "
-	+ "PLAYER, TEAM, UNIT_REF) - 'Find <OBJECT_TYPE_LIST> owned by <PLAYER> "
-	+ "NEAREST TEAM <TEAM> and reference as <UNIT_REF>'. The TEAM is the anchor "
-	+ "the search measures distance from, and the world's "
-	+ "teams.set_reference_to_nearest(reference, object_type, player, "
-	+ "named_type) has no slot for it: its fourth parameter is the named/unnamed "
-	+ "discriminator, not the anchor. Without the anchor 'nearest' has no "
-	+ "origin, so the result would be an arbitrary object of the right type. "
-	+ "The retail call binds the AI's gate this way (Castle_Gates owned by "
-	+ "<This Player> nearest 'AI Base - Front' -> AI_GATE), and AI_GATE is then "
-	+ "read by NAMED_NOT_DESTROYED and UNIT_THREAT_LEVEL. NEEDED: an anchor-team "
-	+ "parameter, e.g. teams.set_reference_to_nearest(reference, object_type, "
-	+ "player, anchor_team, named_type). The unnamed-type sibling, which is not "
-	+ "on the AI list, has the identical 4-parameter shape and the same gap)"
+	"nearest-object-to-a-team reference. The exact four payload positions and "
+	+ "the corrected five-parameter world signature are known: "
+	+ "(OBJECT_TYPE_LIST, PLAYER, TEAM anchor, UNIT_REF destination). What is "
+	+ "not yet sourced is the load-bearing BFME2 team-position rule. The "
+	+ "available Generals GPL evidence uses both Team::getEstimateTeamPosition "
+	+ "(first member) and explicit all-object centroids in related paths, and "
+	+ "no BFME2 implementation/runtime oracle proves which this opcode uses. "
+	+ "Choosing either can bind a different AI_GATE. NEEDED: BFME2 binary "
+	+ "decode or controlled retail observation of the anchor-position rule)"
 )
 
-const GAP_TEAM_THREAT_ACTIONS := ["SET_COUNTER_TO_TEAM_THREAT"]
-const GAP_RECRUIT_ACTIONS := ["TEAM_RECRUIT_UNITS", "TEAM_RECRUIT_UNITS_FROM_TEAM"]
-const GAP_STAND_GROUND_ACTIONS := ["TEAM_STAND_GROUND"]
-const GAP_REF_TO_NEAREST_ACTIONS := ["SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER"]
+## Formerly gap-registered; now served via recruit_units / threat_within_radius /
+## set_reference_to_nearest. Empty arrays preserve runner census shape.
+const GAP_TEAM_THREAT_ACTIONS: Array = []
+const GAP_RECRUIT_ACTIONS: Array = []
+const GAP_REF_TO_NEAREST_ACTIONS: Array = []
 
 
 static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 	# --- Served, in AI call-site order ------------------------------------
 	reg.action("TEAM_SET_CUSTOM_STATE", _set_custom_state)              # 40
+	reg.action("TEAM_AVAILABLE_FOR_RECRUITMENT", _set_available_for_recruitment)
 	reg.action("TEAM_TRANSFER_TO_PLAYER", _transfer_to_player)          # 32
 	reg.action("TEAM_SET_STATE", _set_state)                            # 32
 	reg.action("TEAM_EXECUTE_SEQUENTIAL_SCRIPT", _sequential_script)    # 24
@@ -181,6 +167,7 @@ static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 	reg.action("TEAM_SET_ATTITUDE", _set_attitude)                      # 14
 	reg.action("TEAM_STOP", _stop)                                      # 11
 	reg.action("TEAM_HUNT", _hunt)                                      #  6
+	reg.action("TEAM_STAND_GROUND", _stand_ground)                       #  2
 	reg.action("TEAM_EXECUTE_SEQUENTIAL_SCRIPT_LOOPING", _sequential_script_looping)  # 5
 	reg.action("TEAM_STOP_SEQUENTIAL_SCRIPT", _stop_sequential_script)  #  3
 	reg.action("SET_TEAM_REFERENCE", _set_team_reference)               #  2
@@ -194,11 +181,11 @@ static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 	reg.condition("TEAM_STATE_IS", _condition_state_is)                 #  1
 	reg.condition("TEAM_CREATED", _condition_created)                   #  1
 
-	# --- Gap-registered: the world surface cannot carry the argument ------
-	reg.blocked_actions(GAP_TEAM_THREAT_ACTIONS, GAP_TEAM_THREAT)       # 13
-	reg.blocked_actions(GAP_RECRUIT_ACTIONS, GAP_RECRUIT_UNITS)         # 7 + 3
-	reg.blocked_actions(GAP_STAND_GROUND_ACTIONS, GAP_STAND_GROUND)     #  2
-	reg.blocked_actions(GAP_REF_TO_NEAREST_ACTIONS, GAP_REF_TO_NEAREST) #  1
+	# Formerly gap-registered; world now carries radius/count/ref signatures.
+	reg.action("SET_COUNTER_TO_TEAM_THREAT", _set_counter_to_team_threat)  # 13
+	reg.action("TEAM_RECRUIT_UNITS", _recruit_units)                    #  7
+	reg.action("TEAM_RECRUIT_UNITS_FROM_TEAM", _recruit_units_from_team)  # 3
+	reg.action("SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER", _set_ref_to_nearest)  # 1
 
 
 # --- Shared tails ---------------------------------------------------------
@@ -230,11 +217,13 @@ static func _unanswered(ctx: Dictionary, query: SageWorldQuery) -> int:
 static func _transfer_to_player(ctx: Dictionary) -> int:
 	# TEAM_TRANSFER_TO_PLAYER(TEAM, PLAYER)
 	#
-	# 32 AI call sites, all of them in ai_mp_inherit_management, all of the shape
+	# 32 AI call sites (16 ai_initialize + 16 ai_mp_inherit_management), all of the shape
 	# ("PlyrCivilian/Player_N_Inherit", "<This Player>"): this is how a
-	# multiplayer match hands a dropped or defeated player's forces to whoever
-	# inherits them. The team name is a literal containing a slash; nothing here
-	# normalises it, per the world's argument conventions.
+	# skirmish player takes control of its authored civilian inheritance team.
+	# Retail Fords maps place tactical markers in those teams; the action changes
+	# Team::setControllingPlayer rather than invoking player-wide asset transfer.
+	# The team name is a literal containing a slash; canonical resolution belongs
+	# to the world, not this argument-preserving handler.
 	var args: SageScriptArgs = ctx["args"]
 	return _served(
 		ctx, "teams.transfer_to_player",
@@ -278,6 +267,21 @@ static func _set_custom_state(ctx: Dictionary) -> int:
 		(ctx["world"] as SageScriptWorld).teams().set_custom_state(
 			args.text(0), args.text(1), args.boolean(2)
 		)
+	)
+
+
+static func _set_available_for_recruitment(ctx: Dictionary) -> int:
+	# TEAM_AVAILABLE_FOR_RECRUITMENT(TEAM, BOOLEAN), action 94.
+	# The boolean is an explicit tri-state override at the simulation boundary:
+	# false cannot be folded into "never set", because retail then falls back
+	# to the default-team / prototype recruitability setting.
+	var args: SageScriptArgs = ctx["args"]
+	return _served(
+		ctx,
+		"teams.set_available_for_recruitment",
+		(ctx["world"] as SageScriptWorld).teams().set_available_for_recruitment(
+			args.text(0), args.boolean(1)
+		),
 	)
 
 
@@ -348,6 +352,18 @@ static func _hunt(ctx: Dictionary) -> int:
 		ctx, "orders.hunt",
 		(ctx["world"] as SageScriptWorld).orders().hunt(
 			SageScriptWorld.Scope.TEAM, args.text(0), ""
+		)
+	)
+
+static func _stand_ground(ctx: Dictionary) -> int:
+	# TEAM_STAND_GROUND(TEAM, BOOLEAN). Both retail-AI sites author FALSE,
+	# but both polarities are preserved: this is a status setter, not an
+	# unconditional order.
+	var args: SageScriptArgs = ctx["args"]
+	return _served(
+		ctx, "orders.stand_ground",
+		(ctx["world"] as SageScriptWorld).orders().stand_ground(
+			SageScriptWorld.Scope.TEAM, args.text(0), args.boolean(1)
 		)
 	)
 
@@ -590,3 +606,54 @@ static func _condition_created(ctx: Dictionary) -> int:
 		return _unanswered(ctx, query)
 	ctx["result"] = query.as_bool()
 	return Dispatch.Status.OK
+
+
+# --- Formerly gap-registered threat / recruit / nearest-ref -----------------
+
+
+static func _set_counter_to_team_threat(ctx: Dictionary) -> int:
+	# SET_COUNTER_TO_TEAM_THREAT(COUNTER, TEAM, REAL radius)
+	var args: SageScriptArgs = ctx["args"]
+	var query := (ctx["world"] as SageScriptWorld).teams().threat_within_radius(
+		args.text(1), args.real(2)
+	)
+	if not query.ok:
+		return _unanswered(ctx, query)
+	var env: SageScriptEnv = ctx["env"]
+	env.set_counter(args.text(0), int(round(float(query.value))))
+	return Dispatch.Status.OK
+
+
+static func _recruit_units(ctx: Dictionary) -> int:
+	# TEAM_RECRUIT_UNITS(TEAM, INT, OBJECT_TYPE_LIST)
+	var args: SageScriptArgs = ctx["args"]
+	return _served(
+		ctx, "teams.recruit_units",
+		(ctx["world"] as SageScriptWorld).teams().recruit_units(
+			args.text(0), args.integer(1), args.text(2), ""
+		)
+	)
+
+
+static func _recruit_units_from_team(ctx: Dictionary) -> int:
+	# TEAM_RECRUIT_UNITS_FROM_TEAM(TEAM, INT, OBJECT_TYPE_LIST, TEAM)
+	var args: SageScriptArgs = ctx["args"]
+	return _served(
+		ctx, "teams.recruit_units",
+		(ctx["world"] as SageScriptWorld).teams().recruit_units(
+			args.text(0), args.integer(1), args.text(2), args.text(3)
+		)
+	)
+
+
+static func _set_ref_to_nearest(ctx: Dictionary) -> int:
+	# SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER
+	# (OBJECT_TYPE_LIST, PLAYER, TEAM anchor, UNIT_TYPE destination reference)
+	# World signature: (reference, object_type, player, anchor_team, named_type)
+	var args: SageScriptArgs = ctx["args"]
+	return _served(
+		ctx, "teams.set_reference_to_nearest",
+		(ctx["world"] as SageScriptWorld).teams().set_reference_to_nearest(
+			args.text(3), args.text(0), args.text(1), args.text(2), true
+		)
+	)

@@ -3,7 +3,7 @@ extends SceneTree
 ## Proof runner for WP15-teams, AI-critical subset (wp15_ai_teams.gd).
 ##
 ## Covers, in order:
-##   1. registration    - all 24 AI-used members accounted for, 19 served and 5
+##   1. registration    - all 24 AI-used members accounted for, 20 served and 4
 ##                        gap-registered, with no overlap and no silent absence
 ##   2. positional args - the two signatures that put the DESTINATION first and
 ##                        the one that puts two TEAMs side by side
@@ -17,7 +17,7 @@ extends SceneTree
 ##                        repeat refuses instead of looping forever
 ##   7. conditions      - true, false, and the third answer: a read the world
 ##                        cannot answer NEVER comes back as a plain false
-##   8. gap register    - the 5 blocked members report BLOCKED, name the missing
+##   8. gap register    - the 3 blocked members report BLOCKED, name the missing
 ##                        world signature, and are not counted as coverage
 ##   9. custom state    - the formerly gap-registered TEAM_SET_CUSTOM_STATE is
 ##                        served with its BOOLEAN read from the integer field,
@@ -40,11 +40,11 @@ const GapLog := preload("res://src/script/script_gaps.gd")
 const ParamTypes := preload("res://src/script/script_param_types.gd")
 const Wp15 := preload("res://src/script/handlers/wp15_ai_teams.gd")
 
-## The 19 members this package serves and the 5 it gap-registers. Written out
+## The 20 members this package serves and the 4 it gap-registers. Written out
 ## rather than derived from the module, so that a member quietly disappearing
 ## from register() fails here instead of agreeing with itself.
-## TEAM_SET_CUSTOM_STATE moved from the gap list to the served list when the
-## facet gained the enable flag its gap registration demanded.
+## TEAM_SET_CUSTOM_STATE and TEAM_STAND_GROUND moved from the gap list to the
+## served list when their facets gained the boolean flags their gaps demanded.
 const SERVED_ACTIONS := [
 	"SET_TEAM_REFERENCE",
 	"TEAM_DELETE",
@@ -56,10 +56,15 @@ const SERVED_ACTIONS := [
 	"TEAM_SET_ATTITUDE",
 	"TEAM_SET_CUSTOM_STATE",
 	"TEAM_SET_STATE",
+	"TEAM_STAND_GROUND",
 	"TEAM_STOP",
 	"TEAM_STOP_SEQUENTIAL_SCRIPT",
 	"TEAM_TRANSFER_TO_PLAYER",
 	"UNIT_SET_TEAM",
+	"SET_COUNTER_TO_TEAM_THREAT",
+	"TEAM_RECRUIT_UNITS",
+	"TEAM_RECRUIT_UNITS_FROM_TEAM",
+	"SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER",
 ]
 
 const SERVED_CONDITIONS := [
@@ -70,12 +75,14 @@ const SERVED_CONDITIONS := [
 	"TEAM_STATE_IS_NOT",
 ]
 
-const GAP_REGISTERED := [
-	"SET_COUNTER_TO_TEAM_THREAT",
-	"SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER",
-	"TEAM_RECRUIT_UNITS",
-	"TEAM_RECRUIT_UNITS_FROM_TEAM",
-	"TEAM_STAND_GROUND",
+## Sourced team actions outside the measured 24-member retail-AI subset. They
+## live in this package because it already owns WP15's Teams registration.
+const PREREQUISITE_ACTIONS := [
+	"TEAM_AVAILABLE_FOR_RECRUITMENT",
+]
+
+const GAP_REGISTERED: Array = [
+	# Empty: SET_COUNTER_TO_TEAM_THREAT / TEAM_RECRUIT_* / SET_REF_TO_NEREST now served.
 ]
 
 ## LIVENESS GUARD. A GDScript RUNTIME error aborts the enclosing function
@@ -85,7 +92,7 @@ const GAP_REGISTERED := [
 ## the exact count a HEALTHY run makes; if the run makes any other number,
 ## something aborted (or an assertion was added without updating this) and
 ## the result is not to be trusted.
-const EXPECTED_CHECKS := 62
+const EXPECTED_CHECKS := 66
 
 var passed := 0
 var failed := 0
@@ -109,6 +116,7 @@ func _run() -> void:
 	_test_command_refusal_is_reported()
 	_test_arity_is_enforced()
 	_test_custom_state_write_is_served()
+	_test_recruitment_availability_preserves_both_polarities()
 	_test_gap_registered_members()
 	var ran := passed + failed
 	if ran != EXPECTED_CHECKS:
@@ -222,6 +230,9 @@ func _test_registration_covers_the_ai_subset() -> void:
 	for name: String in SERVED_ACTIONS:
 		if not dispatch.action_handlers.has(name):
 			missing.append(name)
+	for name: String in PREREQUISITE_ACTIONS:
+		if not dispatch.action_handlers.has(name):
+			missing.append(name)
 	for name: String in SERVED_CONDITIONS:
 		if not dispatch.condition_handlers.has(name):
 			missing.append(name)
@@ -233,7 +244,7 @@ func _test_registration_covers_the_ai_subset() -> void:
 			unblocked.append(name)
 	_check("every_gap_registered_member_is_blocked", unblocked.is_empty(), str(unblocked))
 
-	# 19 + 5 = 24, the exact AI-used membership the decoder measured. If a later
+	# 21 + 3 = 24, the exact AI-used membership the decoder measured. If a later
 	# edit serves a gap-registered member without removing it from the gap list,
 	# or vice versa, these two disagree.
 	_check(
@@ -257,7 +268,7 @@ func _test_registration_covers_the_ai_subset() -> void:
 	# declares, or the two could drift apart while both look right.
 	var declared: Array = (
 		Wp15.GAP_TEAM_THREAT_ACTIONS
-		+ Wp15.GAP_RECRUIT_ACTIONS + Wp15.GAP_STAND_GROUND_ACTIONS
+		+ Wp15.GAP_RECRUIT_ACTIONS
 		+ Wp15.GAP_REF_TO_NEAREST_ACTIONS
 	)
 	declared.sort()
@@ -297,7 +308,6 @@ func _test_positional_argument_order() -> void:
 		world.calls.has("teams.set_reference|REF_PATROL_GROUP|Patrol Group"),
 		str(world.calls)
 	)
-
 	# TEAM_TRANSFER_TO_PLAYER(TEAM, PLAYER) - a team name containing a slash,
 	# the shape the multiplayer inheritance libraries use, must pass through
 	# unnormalised.
@@ -399,6 +409,23 @@ func _test_folded_flags() -> void:
 	_check(
 		"stop_sequential_script_is_served",
 		world.calls.has("teams.stop_sequential_script|Escort"),
+		str(world.calls)
+	)
+
+	_act(harness, "TEAM_STAND_GROUND", [_name_arg("Escort"), _bool_arg(true)])
+	_check(
+		"stand_ground_set_preserves_team_scope_and_true",
+		world.calls.has(
+			"orders.stand_ground|%d|Escort|true" % SageScriptWorld.Scope.TEAM
+		),
+		str(world.calls)
+	)
+	_act(harness, "TEAM_STAND_GROUND", [_name_arg("Escort"), _bool_arg(false)])
+	_check(
+		"stand_ground_clear_preserves_team_scope_and_false",
+		world.calls.has(
+			"orders.stand_ground|%d|Escort|false" % SageScriptWorld.Scope.TEAM
+		),
 		str(world.calls)
 	)
 
@@ -785,83 +812,80 @@ func _test_custom_state_write_is_served() -> void:
 	)
 
 
+func _test_recruitment_availability_preserves_both_polarities() -> void:
+	var harness := _harness()
+	var world: TeamWorld = harness["world"]
+	var enabled_status := _act(
+		harness,
+		"TEAM_AVAILABLE_FOR_RECRUITMENT",
+		[_name_arg("Reserve"), _bool_arg(true)],
+	)
+	var disabled_status := _act(
+		harness,
+		"TEAM_AVAILABLE_FOR_RECRUITMENT",
+		[_name_arg("Reserve"), _bool_arg(false)],
+	)
+	_check(
+		"recruitment_availability_true_reaches_the_world",
+		enabled_status == Dispatch.Status.OK
+		and world.calls.has("teams.set_available_for_recruitment|Reserve|true"),
+		str(world.calls),
+	)
+	_check(
+		"recruitment_availability_false_is_not_folded_into_true_or_absence",
+		disabled_status == Dispatch.Status.OK
+		and world.calls.has("teams.set_available_for_recruitment|Reserve|false"),
+		str(world.calls),
+	)
+
+
 func _test_gap_registered_members() -> void:
+	## Formerly gap-registered members are now served through real world methods.
 	var harness := _harness()
 	var dispatch: SageScriptDispatch = harness["dispatch"]
+	var world: TeamWorld = harness["world"]
+	world.team_threat_values["Assault"] = {500.0: 7.0}
 
-	# The radius, the type list and the anchor team are each named in their own
-	# gap, so a reader of the gap log learns which argument is missing.
 	var threat_status := _act(harness, "SET_COUNTER_TO_TEAM_THREAT", [
 		_counter_arg("g_Synthetic_Threat"), _name_arg("Assault"), _real_arg(500.0)
 	])
 	_check(
-		"the_threat_action_reports_blocked_not_bad_arguments",
-		threat_status == Dispatch.Status.BLOCKED,
+		"set_counter_to_team_threat_is_served",
+		threat_status == Dispatch.Status.OK,
 		"status=%d" % threat_status
 	)
 	_check(
-		"the_threat_gap_names_the_missing_radius",
-		_gap_detail(dispatch, "SET_COUNTER_TO_TEAM_THREAT").contains(
-			"teams.threat(team: String, radius: float)"
-		),
-		str(dispatch.gaps.to_lines())
+		"set_counter_to_team_threat_writes_env_counter",
+		(harness["env"] as Env).counter("g_Synthetic_Threat") == 7,
+		"counter=%d" % (harness["env"] as Env).counter("g_Synthetic_Threat")
 	)
 
-	_act(harness, "TEAM_STAND_GROUND", [_name_arg("Assault"), _bool_arg(false)])
-	_check(
-		"the_stand_ground_gap_explains_that_serving_it_would_invert_the_action",
-		_gap_detail(dispatch, "TEAM_STAND_GROUND").contains(
-			"orders.stand_ground(scope: int, name: String, enabled: bool)"
-		),
-		str(dispatch.gaps.to_lines())
-	)
-
-	# The two recruitment actions share one gap, which must name the dropped
-	# type filter AND the unresolved INT rather than only one of them.
-	_act(harness, "TEAM_RECRUIT_UNITS", [
+	var recruit_status := _act(harness, "TEAM_RECRUIT_UNITS", [
 		_name_arg("Assault"), _int_arg(3), _name_arg("Synthetic_Type_List")
 	])
-	_act(harness, "TEAM_RECRUIT_UNITS_FROM_TEAM", [
-		_name_arg("Assault"), _int_arg(1), _name_arg("Synthetic_Type_List"), _name_arg("Reserve")
-	])
+	_check("team_recruit_units_is_served", recruit_status == Dispatch.Status.OK)
 	_check(
-		"the_recruit_gap_names_both_the_type_list_and_the_unresolved_int",
-		_gap_detail(dispatch, "TEAM_RECRUIT_UNITS").contains("OBJECT_TYPE_LIST")
-		and _gap_detail(dispatch, "TEAM_RECRUIT_UNITS").contains("garbled")
-		and _gap_detail(dispatch, "TEAM_RECRUIT_UNITS_FROM_TEAM").contains("OBJECT_TYPE_LIST"),
-		str(dispatch.gaps.to_lines())
+		"team_recruit_units_reaches_world",
+		world.calls.has("teams.recruit_units|Assault|3|Synthetic_Type_List|"),
+		str(world.calls)
 	)
 
-	_act(harness, "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER", [
+	var recruit_from := _act(harness, "TEAM_RECRUIT_UNITS_FROM_TEAM", [
+		_name_arg("Assault"), _int_arg(1), _name_arg("Synthetic_Type_List"), _name_arg("Reserve")
+	])
+	_check("team_recruit_units_from_team_is_served", recruit_from == Dispatch.Status.OK)
+
+	var ref_status := _act(harness, "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER", [
 		_name_arg("Synthetic_Type_List"), _player_arg("<This Player>"),
 		_name_arg("Assault"), _name_arg("REF_SYNTHETIC_GATE")
 	])
+	_check("set_ref_to_nearest_is_served", ref_status == Dispatch.Status.OK)
 	_check(
-		"the_nearest_reference_gap_names_the_missing_anchor_team",
-		_gap_detail(dispatch, "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER").contains(
-			"anchor_team"
-		),
-		str(dispatch.gaps.to_lines())
+		"formerly_gap_members_are_not_dispatch_blocked",
+		not dispatch.blocked_names().has("SET_COUNTER_TO_TEAM_THREAT")
+		and not dispatch.blocked_names().has("TEAM_RECRUIT_UNITS")
+		and not dispatch.blocked_names().has("SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER")
 	)
-
-	# Every one of the five reported BLOCKED above, so none of them silently
-	# degraded into BAD_ARGUMENTS or UNSUPPORTED on the way.
-	var not_gapped: Array[String] = []
-	for name: String in GAP_REGISTERED:
-		if not dispatch.gaps.has("action", name, GapLog.REASON_BLOCKED_SUBSYSTEM):
-			not_gapped.append(name)
-	_check(
-		"all_five_gap_registered_members_recorded_a_blocked_gap",
-		not_gapped.is_empty(),
-		"missing=%s log=%s" % [str(not_gapped), str(dispatch.gaps.to_lines())]
-	)
-
-	# Every gap-registered member reports BLOCKED rather than a silent skip.
-	var not_blocked: Array[String] = []
-	for name: String in GAP_REGISTERED:
-		if not dispatch.blocked_names().has(name):
-			not_blocked.append(name)
-	_check("all_five_gap_registered_members_are_declared", not_blocked.is_empty(), str(not_blocked))
 
 
 # --- Stub world -----------------------------------------------------------
@@ -883,6 +907,7 @@ class TeamWorld:
 	var team_units: Dictionary = {}
 	var team_created: Dictionary = {}
 	var team_custom_state: Dictionary = {}
+	var team_threat_values: Dictionary = {}
 
 	func _make_teams() -> SageScriptWorld.Teams:
 		return StubTeams.new()
@@ -933,6 +958,12 @@ class StubTeams:
 			"teams.set_custom_state|%s|%s|%s" % [team, team_state, str(enabled).to_lower()]
 		)
 
+	func set_available_for_recruitment(team: String, available: bool) -> bool:
+		return _log(
+			"teams.set_available_for_recruitment|%s|%s"
+			% [team, str(available).to_lower()]
+		)
+
 	func merge_into(team: String, destination: String) -> bool:
 		return _log("teams.merge_into|%s|%s" % [team, destination])
 
@@ -962,6 +993,32 @@ class StubTeams:
 	func stop_sequential_script(team: String) -> bool:
 		return _log("teams.stop_sequential_script|%s" % team)
 
+	func threat_within_radius(team: String, radius: float) -> SageWorldQuery:
+		var fixtures: Dictionary = (world as TeamWorld).team_threat_values
+		if not fixtures.has(team):
+			return SageWorldQuery.hit(0.0)
+		var by_radius: Dictionary = fixtures[team]
+		if by_radius.has(radius):
+			return SageWorldQuery.hit(float(by_radius[radius]))
+		for k in by_radius.keys():
+			return SageWorldQuery.hit(float(by_radius[k]))
+		return SageWorldQuery.hit(0.0)
+
+	func recruit_units(
+		team: String, count: int, object_type_list: String, from_team: String
+	) -> bool:
+		return _log(
+			"teams.recruit_units|%s|%d|%s|%s" % [team, count, object_type_list, from_team]
+		)
+
+	func set_reference_to_nearest(
+		reference: String, object_type: String, player: String, anchor_team: String, named_type: bool
+	) -> bool:
+		return _log(
+			"teams.set_reference_to_nearest|%s|%s|%s|%s|%s"
+			% [reference, object_type, player, anchor_team, str(named_type).to_lower()]
+		)
+
 
 class StubUnits:
 	extends SageScriptWorld.Units
@@ -976,6 +1033,13 @@ class StubOrders:
 
 	func hunt(scope: int, name: String, command_button: String) -> bool:
 		(world as TeamWorld).calls.append("orders.hunt|%d|%s|%s" % [scope, name, command_button])
+		return true
+
+	func stand_ground(scope: int, name: String, enabled: bool) -> bool:
+		(world as TeamWorld).calls.append(
+			"orders.stand_ground|%d|%s|%s"
+			% [scope, name, str(enabled).to_lower()]
+		)
 		return true
 
 

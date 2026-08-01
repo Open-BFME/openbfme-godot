@@ -44,42 +44,94 @@ const MANIFEST_MAX_BYTES := 8 * 1024 * 1024
 const MESH_MAX_BYTES := 256 * 1024 * 1024
 const TEXTURE_MAX_BYTES := 64 * 1024 * 1024
 
-## Sub-objects that are retail's ATMOSPHERE rather than its ground: smoke cards,
-## the cloud layer, the border cloud, the lava planes and the text plane. They
-## are loaded and reported like everything else, but the strategic view leaves
-## them hidden by default because each one is a camera-facing card that retail
-## animates and this lane does not animate anything yet. Drawing a static smoke
-## card over Orthanc would be worse than drawing none.
+## Sub-objects that are retail's ATMOSPHERE rather than its ground, still held
+## back, each for a MEASURED reason rather than a general one:
+##
+## * `LAVAPLANE1`/`LAVAPLANE3` - `EXLavaSeq` is a FRAME-SEQUENCE SHEET; retail
+##   steps through sub-rectangles of it on a schedule this bundle does not
+##   carry, and playing it as one image shows the whole contact sheet at once.
+## * `LM_SMOKE01..05` and `LM_LAVAVENTSMOK` - round 2 TRIED to draw these as a
+##   two-frame cross-fade and measured why that cannot be honest: BOTH of
+##   retail's frames (`LM_Smoke`, `LM_Smoke2`) are flat mid-grey sheets - the
+##   JPEG's 5th and 95th percentile are the same 0.55 grey - so the plume's
+##   SHAPE is not in either texture. It lives in the cards' vertex alpha,
+##   which this bundle does not carry, and without it every card renders as
+##   the grey rectangle it is. Named, not approximated.
+##
+## `PLANE03` - Mount Doom's smoke column - LEFT this list in round 2: its
+## `LM_Doom01` frame is DXT5 with a real authored alpha mask, so the two-frame
+## cross-fade CAN be composed from shipped bytes alone. It is in
+## `PRESENTATION_SURFACES` below.
 const AMBIENT_SUB_OBJECTS := [
-	"BORDERCLOUD", "LAVAPLANE1", "LAVAPLANE3", "LM_CLOUDLAYER",
+	"LAVAPLANE1", "LAVAPLANE3",
 	"LM_LAVAVENTSMOK", "LM_SMOKE01", "LM_SMOKE02", "LM_SMOKE03",
-	"LM_SMOKE04", "LM_SMOKE05", "PLANE03", "TEXT PLANE",
+	"LM_SMOKE04", "LM_SMOKE05",
 ]
 
-## Retail's shoreline overlay strips. Each one is a MULTI-STAGE blend - a
-## reflection map in stage 0 and an animated whitecap in stage 1 - laid over a
-## coastline the terrain textures already draw in full. This lane composites one
-## stage, so drawing them puts stage 0's night-sky reflection along the shore as
-## an opaque band: a surface retail never shows anyone. Not drawn, and named.
-## `RIVERS` belongs here too, for the same reason and one more: it is a full-map
-## plane (X -2973..3416, Y -1373..3472) parked at z -124.8, a hair BELOW the
-## terrain's lowest vertex at -123.3. Retail scrolls two ocean textures across it
-## and lets it show through the riverbeds. Drawn opaque and unanimated it is
-## invisible under the terrain except where it protrudes past the map edge, where
-## it becomes two striped blue bands that are not part of Middle-earth.
-const COAST_OVERLAY_SUB_OBJECTS := [
-	"LM_COAST", "LM_COAST01", "LM_COAST02", "LM_COAST03", "LM_COAST04",
-	"LM_COAST05", "RIVERS",
+## Retail surfaces this lane draws with its OWN presentation treatment, keyed by
+## sub-object name to the treatment the map view applies:
+##
+##   * "water" - the WATER plane. Retail renders it with `WaterShader.FX`, a
+##     procedural shader with no diffuse texture; the view stands it under this
+##     project's procedural water shader, which is the same claim retail makes
+##     for it: colour from code, not from a texture.
+##   * "cloud" - BORDERCLOUD (the weather bank surrounding Middle-earth) and
+##     LM_CLOUDLAYER (the drift over the map), retail's own textures under a
+##     slow UV drift in place of retail's texture-coordinate animation.
+##   * "text" - TEXT PLANE, retail's engraved province names (`lm_text.dds`),
+##     drawn as the static overlay retail authored it as and faded with the
+##     camera so the lettering belongs to the strategic framing, not the close
+##     one.
+##   * "coast" - the six LM_COAST* shoreline strips. Retail authors each as a
+##     TWO-STAGE blend: stage 0 is `SkyBoxNightClouds` (the sky-reflection
+##     pass) and stage 1 is `WtrWhitecap_01` (the animated foam) on the mesh's
+##     own UVs. Round 1 held these back because it composited one stage only,
+##     which showed stage 0's night sky as an opaque band; the coast shader
+##     now composites BOTH stages - foam dominant, reflection faint - with a
+##     drift standing in for retail's texture-coordinate animation.
+##   * "smoke" - Mount Doom's smoke column (PLANE03), authored as TWO frames
+##     (`LM_Doom01` + `LM_Doom02`) where frame 0 carries a real DXT5 alpha
+##     mask; the smoke shader cross-fades the frames inside that mask and
+##     drifts them in place of retail's particle-sequence animation. The
+##     OTHER smoke cards stay held back - see AMBIENT_SUB_OBJECTS for the
+##     measurement that keeps them there.
+##
+## These carry `surface` in their sub-object row; `ambient`, `collision` and
+## `shader_only` are all false for them, so the screen's own NOT-DRAWN census
+## - which reads those three flags - stays truthful when they appear.
+const PRESENTATION_SURFACES := {
+	"WATER": "water",
+	"BORDERCLOUD": "cloud",
+	"LM_CLOUDLAYER": "cloud",
+	"TEXT PLANE": "text",
+	"LM_COAST": "coast",
+	"LM_COAST01": "coast",
+	"LM_COAST02": "coast",
+	"LM_COAST03": "coast",
+	"LM_COAST04": "coast",
+	"LM_COAST05": "coast",
+	"PLANE03": "smoke",
+}
+
+## `RIVERS`, still held back, and why the coast fix does not cover it: it is a
+## full-map plane (X -2973..3416, Y -1373..3472) parked at z -124.8, a hair
+## BELOW the terrain's lowest vertex at -123.3. Retail scrolls two ocean
+## textures across it and lets it show through the riverbeds - which requires
+## the terrain above it to cut alpha holes along every river, and this lane's
+## terrain tiles are opaque. Drawn as authored it is invisible under the
+## terrain except where it protrudes past the map edge, where it becomes two
+## striped blue bands that are not part of Middle-earth. Not drawn, and named.
+const RIVER_OVERLAY_SUB_OBJECTS := [
+	"RIVERS",
 ]
 
-## Sub-objects retail draws with a SHADER this lane does not implement, and which
-## therefore have no colour map to bind at all. `WATER` is the whole ocean plane
-## and retail renders it with `WaterShader.FX` - a procedural shader whose only
-## authored property is a dimming factor, with no diffuse texture anywhere in the
-## model. Drawing it as a flat grey slab would read as land, which is precisely
-## the kind of confident wrong answer this project refuses. It is loaded and
-## named; it is not drawn.
-const SHADER_ONLY_SUB_OBJECTS := ["WATER"]
+## Sub-objects retail draws with a SHADER this lane does not implement. `WATER`
+## was here while no water shader existed, because drawing it as a flat grey
+## slab would read as land; `wotr_map_water.gdshader` now implements the same
+## procedural claim retail's `WaterShader.FX` makes, so the list is empty. It is
+## kept (and the field it feeds is kept) so a future retail surface with an
+## unimplemented shader has somewhere honest to go.
+const SHADER_ONLY_SUB_OBJECTS: Array[String] = []
 
 ## Sub-objects retail uses as INVISIBLE gameplay volumes - the impassable
 ## barriers armies cannot cross. They carry no texture and no UVs because they
@@ -369,7 +421,13 @@ func load_from(root: String) -> bool:
 			return false
 		sub_objects.append(built)
 		_by_name[String(built["name"])] = built
-		var reportable := not bool(built["collision"]) and not bool(built["shader_only"])
+		# A presentation surface is not "untextured" in the defect sense: WATER
+		# binds no texture because RETAIL binds none - its colour is procedural
+		# there and procedural here - so listing it beside a landmark that lost
+		# its art would be a false alarm.
+		var reportable := (not bool(built["collision"])
+			and not bool(built["shader_only"])
+			and String(built["surface"]).is_empty())
 		if reportable and not bool(built["textured"]):
 			untextured.append(String(built["name"]))
 	untextured.sort()
@@ -535,17 +593,19 @@ func _build_sub_object(row: Dictionary, blob: PackedByteArray, textures: Diction
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
 
+	# NORMALS ARE DERIVED FROM RETAIL'S OWN TRIANGLES, not read from the file,
+	# and the authored ones are deliberately not used. The living map is drawn
+	# LIT now - a real key light is what gives the Misty Mountains and Mordor
+	# their relief - and under a light the authored normals showed whole terrain
+	# tiles black, because W3D strategic-map normals were authored for a renderer
+	# that never lit them. An area-weighted accumulation over the exact triangles
+	# retail shipped is derivation, not invention: every input is a retail vertex.
+	# (`normal_offset` stays validated so a truncated bundle still fails loudly.)
 	if bool(row.get("hasNormals", false)):
 		var normal_bytes := vertex_count * 3 * 4
 		if normal_offset < 0 or normal_offset + normal_bytes > blob.size():
 			_fail("sub-object %s normals run past the mesh block" % name)
 			return {}
-		var raw := blob.slice(normal_offset, normal_offset + normal_bytes).to_float32_array()
-		var normals := PackedVector3Array()
-		normals.resize(vertex_count)
-		for i in vertex_count:
-			normals[i] = world_to_godot(raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]).normalized()
-		arrays[Mesh.ARRAY_NORMAL] = normals
 
 	var textured := false
 	if bool(row.get("hasUVs", false)):
@@ -570,18 +630,23 @@ func _build_sub_object(row: Dictionary, blob: PackedByteArray, textures: Diction
 		flipped[triangle * 3 + 2] = indices[triangle * 3 + 1]
 		triangle += 1
 	arrays[Mesh.ARRAY_INDEX] = flipped
+	# The derived normals follow the FLIPPED winding, so they face the same way
+	# the visible faces do by construction.
+	arrays[Mesh.ARRAY_NORMAL] = _derive_normals(vertices, flipped)
 
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 	var material := StandardMaterial3D.new()
-	# UNSHADED, deliberately. Retail's living map is painted art: the terrain
-	# textures already carry their own light, shadow and relief, baked in by the
-	# artist. Lighting them again would show the map under a lighting rig retail
-	# never had and this lane would have invented - and it made whole terrain
-	# tiles read as black where their authored normals point away from a sun that
-	# does not exist. Unshaded shows retail's pixels as retail authored them.
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# LIT, deliberately, and the reversal of the old "unshaded" rule is stated:
+	# retail's terrain textures do carry painted light, but the retail screen
+	# still renders the map under a warm strategic key light - the reference
+	# captures show relief shading and a sun direction the flat blit never had.
+	# The material is fully rough with no metallic response, so the light MODELS
+	# the ground rather than putting a plastic sheen on painted art.
+	material.roughness = 1.0
+	material.metallic = 0.0
+	material.metallic_specular = 0.05
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	# The BASE texture is the surface's own colour map - the first stage of the
 	# first material pass, or a shader material's DiffuseTexture. Retail's later
@@ -610,15 +675,35 @@ func _build_sub_object(row: Dictionary, blob: PackedByteArray, textures: Diction
 		# for retail's shader-material and collision sub-objects.
 		material.albedo_color = Color(0.32, 0.34, 0.30)
 
+	# EVERY RESOLVED STAGE TEXTURE, by retail's declared name, not only the base.
+	# The coast and smoke presentation surfaces are MULTI-STAGE materials -
+	# stage 0 and stage 1 are both retail's - and the shader that composites
+	# them needs both by name. Rows that are not presentation surfaces simply
+	# carry the same references; nothing is duplicated.
+	var stage_textures: Dictionary = {}
+	var stage_order: Array[String] = []
+	for declared_value in row.get("textures", []) as Array:
+		stage_order.append(String(declared_value))
+		var stage_texture: ImageTexture = textures.get(String(declared_value), null)
+		if stage_texture != null:
+			stage_textures[String(declared_value)] = stage_texture
+
 	var collision := name.begins_with(COLLISION_PREFIX)
 	var built := {
 		"name": name,
 		"mesh": mesh,
 		"material": material,
 		"textured": textured,
-		"ambient": AMBIENT_SUB_OBJECTS.has(name) or COAST_OVERLAY_SUB_OBJECTS.has(name),
+		"stage_textures": stage_textures,
+		# Retail's declared stage order, kept even for stages that did not
+		# resolve, so a refusal can name exactly which stage is missing.
+		"stage_order": stage_order,
+		"ambient": AMBIENT_SUB_OBJECTS.has(name) or RIVER_OVERLAY_SUB_OBJECTS.has(name),
 		"collision": collision,
 		"shader_only": SHADER_ONLY_SUB_OBJECTS.has(name),
+		# Which presentation treatment the map view stands this surface under,
+		# or "" for ordinary textured geometry. See PRESENTATION_SURFACES.
+		"surface": String(PRESENTATION_SURFACES.get(name, "")),
 		"vertex_count": vertex_count,
 		"triangle_count": int(row.get("triangleCount", 0)),
 		"bounds_min": _vector_of(row.get("boundsMin", [])),
@@ -635,6 +720,38 @@ func _build_sub_object(row: Dictionary, blob: PackedByteArray, textures: Diction
 			"bounds_max": built["bounds_max"],
 		})
 	return built
+
+
+## Area-weighted vertex normals over the exact triangles retail shipped. The
+## cross product of each triangle's edges is proportional to its area, so simply
+## SUMMING the unnormalised face normals into each corner and normalising at the
+## end weights big faces more than slivers - the standard smooth-normal
+## derivation, over retail's own geometry, with nothing chosen by eye.
+static func _derive_normals(
+	vertices: PackedVector3Array, indices: PackedInt32Array
+) -> PackedVector3Array:
+	var normals := PackedVector3Array()
+	normals.resize(vertices.size())
+	var i := 0
+	while i + 2 < indices.size():
+		var a := vertices[indices[i]]
+		var b := vertices[indices[i + 1]]
+		var c := vertices[indices[i + 2]]
+		# (c-a) x (b-a), NOT the other order: measured on the shipped bundle,
+		# this is the order that puts the terrain's derived normals UP under the
+		# flipped winding - the other one lit Middle-earth by ambient alone and
+		# read as dusk everywhere.
+		var face := (c - a).cross(b - a)
+		normals[indices[i]] += face
+		normals[indices[i + 1]] += face
+		normals[indices[i + 2]] += face
+		i += 3
+	for v in normals.size():
+		var length := normals[v].length()
+		# A vertex only degenerate triangles touch has no derivable direction;
+		# straight up is the one direction that cannot invert terrain lighting.
+		normals[v] = normals[v] / length if length > 0.000001 else Vector3.UP
+	return normals
 
 
 func _vector_of(value: Variant) -> Vector3:

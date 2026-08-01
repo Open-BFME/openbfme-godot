@@ -15,9 +15,31 @@ This is an audit of a large, dirty development working tree based on
 stable current runtime identity. Results below are explicitly diagnostic and
 must not approve a milestone, release, or parity claim.
 
-The product target is the full game. BFME2 1.06 skirmish compatibility is the
-active acceptance milestone, not the scope; campaigns and War of the Ring are
-ladder steps 6 and 7 in DIRECTION.md.
+The product target is the full **RotWK 2.01** game under a **systems-first
+iterative** model (`DIRECTION.md`). BFME2-only freeze and Men/Fords vertical-slice
+acceptance are **not** the active strategy. Campaigns and War of the Ring remain
+in scope later on the system ladder. Volatile evidence below may still reference
+older slice audits until remeasured.
+
+### RotWK systems path (2026-07-30 operator tooling)
+
+- Entry: `run_rotwk_systems.bat` / `run_rotwk_one_button.bat` / `docs/ROTWK_SYSTEMS_PATH.md`
+- Gate: `tools/gate-rotwk-systems.ps1` (product contracts, ledger tests, doctor,
+  map cook smoke, binding factory smoke, multimap registry-catalog smoke, faction discovery)
+- Conversion ledger: `importer/openbfme_importer/conversion_ledger.py` — JSONL + %
+  converted/failed/gap with failure detail
+- Map cook corpus: **72** official MP maps
+- Binding factory full corpus: **72** unique paths/slugs (kind-preserving `mp-`/`wor-`),
+  ~**80%** types bound; unbound listed for burn-down (CaptureFlag, SignalFire, lairs, …)
+- Faction plan-only all **7** sides with honest gap ledgers (`-ConvertFactions` for convert)
+- Multi-map: registry-catalog **72** maps.json proof; `--full-profile` layered RotWK+BFME2 terrain cook
+  **23** skirmish maps built+published (`selection` → `rotwk-skirmish-maps-private/…`, proof_ok)
+- One-button: `--multi-map` / `--build` / `--publish` / `--full-profile` / `--launch`; fail-closed combos
+- Layered install: `tools/rotwk_layered_install.py` + `editions/rotwk/layered-install`
+- Faction convert batch (all 7): ran convert mode; **honest gaps remain** (~45% converted-like;
+  exit 3 = incomplete, not process crash). Gap themes: unresolved mapped images, fire-arrow scalars,
+  spellbook science digests, porter producers
+- **Still residual:** close converter gaps (UI images / damage scalars); runtime multi-map play smoke in Godot
 
 ## Audited identity
 

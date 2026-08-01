@@ -7,6 +7,9 @@ Validation: Validate each ready packet against this contract, verify non-overlap
 
 # Agent workflow
 
+Reasoning doctrine (orientation order, claim standards, fail-closed defaults,
+anti-patterns): [AGENT_REASONING_MANUAL.md](AGENT_REASONING_MANUAL.md).
+
 ## Authority
 
 The integration owner alone may promote work to `ready`, assign locks or worktrees, expand scope, accept findings, publish packs or selection, integrate changes, mark packets done, or approve workflow/skill changes.

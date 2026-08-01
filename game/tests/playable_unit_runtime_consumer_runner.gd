@@ -56,6 +56,54 @@ func _run() -> void:
 	_check(int(simulation.get("default_cost", -1)) == 700, "simulation build cost retained")
 	_check(int(simulation.get("default_build_ticks", -1)) == 450, "simulation build time becomes deterministic ticks")
 	_check(int(simulation.get("member_count", -1)) == 1, "single-object composition retained")
+	_check(
+		simulation.get("auto_acquire_enemies_when_idle", {}) == {
+			"enabled": true,
+			"attackBuildings": false,
+			"whileStealthed": true,
+		},
+		"simulation retains exact idle-acquisition flags"
+	)
+	_check(
+		int(simulation.get("mood_attack_check_rate_ms", 0)) == 500,
+		"simulation retains authored mood-check milliseconds"
+	)
+	var status_document := document.duplicate(true)
+	var status_registration := status_document.get("registration", {}) as Dictionary
+	var status_source := (
+		status_registration.get("simulation", {}) as Dictionary
+	).duplicate(true)
+	status_source["displayNameId"] = status_source.get("displayName", "")
+	status_source.erase("displayName")
+	status_registration["simulation"] = {
+		"status": "ready",
+		"resolved": status_source,
+	}
+	_check(
+		not Adapter.simulation_rule(status_document).is_empty(),
+		"status descriptor without LockWeaponCreate remains valid"
+	)
+	_check(
+		not simulation.has("highlander_body"),
+		"ordinary body keeps optional Highlander policy absent"
+	)
+	var highlander_document: Dictionary = document.duplicate(true)
+	var highlander_registration := (
+		highlander_document["registration"] as Dictionary
+	)
+	var highlander_simulation_row := (
+		highlander_registration.get("simulation", {}) as Dictionary
+	)
+	highlander_simulation_row["highlanderBody"] = true
+	var highlander_simulation := Adapter.simulation_rule(highlander_document)
+	var highlander_rule := Adapter.normalized_unit_rule(
+		highlander_simulation, 0.1
+	)
+	_check(
+		highlander_simulation.get("highlander_body") == true
+			and highlander_rule.get("highlander_body") == true,
+		"authored Highlander policy survives both runtime adapter stages"
+	)
 	var producers: Array = simulation.get("producers", [])
 	_check(producers.size() == 2 and String((producers[0] as Dictionary).get("producer_source_object_id", "")) == "UniversalMonsterPen", "all producers are descriptor-driven")
 	var sim = Sim.new()
@@ -83,6 +131,146 @@ func _run() -> void:
 	_check(not spawned.is_empty(), "imported unit completes production and spawns")
 	_check(String(spawned.get("object_id", "")) == "bfme2.object.fixture-monster", "spawned identity remains descriptor-driven")
 	_check(int(spawned.get("member_count", 0)) == 1 and int(spawned.get("member_damage", 0)) == 200, "spawned simulation rule comes from descriptor")
+	_check(
+		bool(spawned.get("auto_acquire_enabled", false))
+			and not bool(spawned.get("auto_acquire_attack_buildings", true))
+			and bool(spawned.get("auto_acquire_while_stealthed", false)),
+		"spawned battalion carries normalized idle-acquisition policy"
+	)
+	_check(
+		int(spawned.get("mood_attack_check_rate_ticks", 0)) == 5
+			and bool(spawned.get("mood_randomize_next_check", false))
+			and not spawned.has("mood_next_check_tick"),
+		"spawned battalion carries normalized mood cadence and sourced reset state"
+	)
+	var locked_document := document.duplicate(true)
+	var locked_simulation := (
+		(locked_document.get("registration", {}) as Dictionary).get("simulation", {})
+		as Dictionary
+	)
+	var locked_combat := locked_simulation.get("combat", {}) as Dictionary
+	locked_combat["weaponId"] = "FixturePrimarySword"
+	locked_combat["weaponSlot"] = "PRIMARY"
+	locked_simulation["permanentWeaponLocks"] = [{
+		"slot": "PRIMARY",
+		"state": "LOCKED_PERMANENTLY",
+		"module": "LockWeaponCreate",
+		"sourceIni": "data/ini/object/fixture/locked.ini",
+		"line": 42,
+	}]
+	var same_slot_profile := locked_combat.duplicate(true)
+	same_slot_profile["weaponId"] = "FixturePrimaryBow"
+	same_slot_profile["damage"] = 150
+	same_slot_profile["weaponSlot"] = "PRIMARY"
+	var cross_slot_profile := locked_combat.duplicate(true)
+	cross_slot_profile["weaponId"] = "FixtureSecondaryBow"
+	cross_slot_profile["damage"] = 175
+	cross_slot_profile["weaponSlot"] = "SECONDARY"
+	locked_simulation["weaponModes"] = {
+		"same_primary": same_slot_profile,
+		"cross_secondary": cross_slot_profile,
+	}
+	var lock_adapter_rule := Adapter.normalized_unit_rule(
+		Adapter.simulation_rule(locked_document), 0.1
+	)
+	_check(
+		lock_adapter_rule.get("permanent_weapon_locks", []) == ["primary"],
+		"permanent PRIMARY lock survives both runtime adapter stages"
+	)
+	var malformed_lock_document := locked_document.duplicate(true)
+	(
+		(
+			(malformed_lock_document.get("registration", {}) as Dictionary).get(
+				"simulation", {}
+			) as Dictionary
+		).get("combat", {}) as Dictionary
+	).erase("weaponSlot")
+	_check(
+		Adapter.simulation_rule(malformed_lock_document).is_empty(),
+		"permanent lock without its protected weapon slot fails closed"
+	)
+	var unproven_lock_document := locked_document.duplicate(true)
+	var unproven_locks: Array = (
+		(
+			(unproven_lock_document.get("registration", {}) as Dictionary).get(
+				"simulation", {}
+			) as Dictionary
+		).get("permanentWeaponLocks", []) as Array
+	)
+	(unproven_locks[0] as Dictionary).erase("sourceIni")
+	_check(
+		Adapter.simulation_rule(unproven_lock_document).is_empty(),
+		"permanent lock without compiler provenance fails closed"
+	)
+	var lock_sim = Sim.new()
+	lock_sim._rules["unit_rules"] = {
+		"bfme2.object.fixture-locked": lock_adapter_rule,
+	}
+	lock_sim._add_battalion(
+		99, 0, Vector2.ZERO, "Locked Fixture",
+		"bfme2.object.fixture-locked", "bfme2.object.fixture-locked", 0
+	)
+	var locked_row: Dictionary = lock_sim.entities.get(99, {}) as Dictionary
+	_check(
+		locked_row.get("permanent_weapon_locks", []) == ["primary"],
+		"LockWeaponCreate state is installed at battalion creation"
+	)
+	var initial_locked_row := locked_row.duplicate(true)
+	_check(
+		not lock_sim._apply_weapon_mode(locked_row, "missing_mode")
+			and locked_row == initial_locked_row,
+		"missing WeaponSet mode refuses without releasing the lock"
+	)
+	_check(
+		lock_sim._apply_weapon_mode(locked_row, "default")
+			and locked_row.get("permanent_weapon_locks", []) == ["primary"],
+		"remaining on the current WeaponSet preserves the permanent lock"
+	)
+	_check(
+		lock_sim._apply_weapon_mode(locked_row, "same_primary")
+			and String(locked_row.get("active_weapon_mode", "")) == "same_primary"
+			and int(locked_row.get("member_damage", 0)) == 150
+			and (locked_row.get("permanent_weapon_locks", []) as Array).is_empty(),
+		"same-slot WeaponSet transition implicitly releases the permanent lock"
+	)
+	locked_row = initial_locked_row.duplicate(true)
+	lock_sim.entities[99] = locked_row
+	_check(
+		lock_sim._apply_weapon_mode(locked_row, "cross_secondary")
+			and String(locked_row.get("active_weapon_mode", "")) == "cross_secondary"
+			and int(locked_row.get("member_damage", 0)) == 175
+			and (locked_row.get("permanent_weapon_locks", []) as Array).is_empty(),
+		"cross-slot WeaponSet transition releases the lock before applying"
+	)
+	var broken_dismount := {
+		"mounted": true,
+		"weapon_toggle_mode": "mounted",
+		"default_weapon_mode": "default",
+		"weapon_modes": {"mounted": cross_slot_profile},
+		"speed": 80.0,
+		"speed_source": 80.0,
+		"dismounted_speed": 50.0,
+		"dismounted_speed_source": 50.0,
+	}
+	var broken_dismount_before := broken_dismount.duplicate(true)
+	_check(
+		not bool(
+			lock_sim._apply_ability_mount_toggle(broken_dismount, {}).get(
+				"ok", true
+			)
+		)
+			and broken_dismount == broken_dismount_before,
+		"failed dismount preflights weapon mode before mutating mount state"
+	)
+	var absent_document: Dictionary = document.duplicate(true)
+	(((absent_document["registration"] as Dictionary)["simulation"]) as Dictionary).erase(
+		"moodAttackCheckRate"
+	)
+	var absent_rule := Adapter.simulation_rule(absent_document)
+	_check(
+		not absent_rule.has("mood_attack_check_rate_ms"),
+		"missing mood cadence remains absent from normalized simulation"
+	)
 	hud_runtime = load("res://src/retail_slice/retail_hud.gd").new()
 	_check(hud_runtime.enable_playable_unit_content({"FixtureMonster": document}, {"UniversalMonsterPen": "fixture_monster_pen", "AlternateMonsterPen": "alternate_monster_pen"}) == "", "multi-producer HUD registration succeeds")
 	hud_runtime.build()
@@ -278,8 +466,9 @@ func _run() -> void:
 		projected_levels.size() == 3
 			and int((projected_levels[1] as Dictionary).get("health_add", 0)) == 20
 			and int((projected_levels[1] as Dictionary).get("damage_add", 0)) == 10
+			and (projected_levels[1] as Dictionary).get("upgrades", []) == ["Upgrade_ObjectLevel2"]
 			and int((projected_levels[0] as Dictionary).get("health_add", 0)) == 0,
-		"adapter folds per-level HEALTH/DAMAGE_ADD modifiers"
+		"adapter folds per-level modifiers and preserves level upgrades"
 	)
 	_check(
 		projected_levels.size() == 3
@@ -344,27 +533,111 @@ func _run() -> void:
 		int(snapshot_row.get("level", 0)) == 3 and snapshot_row.has("experience_xp"),
 		"the deterministic snapshot carries XP and level state"
 	)
+	# A compiler-shaped ExperienceLevelCreate contract applies the exact
+	# granted row once through normal playable-unit registration.
+	var registered_creation_doc := _fixture_document()
+	(registered_creation_doc["registration"] as Dictionary)["experience"] = {
+		"status": "compiled",
+		"sourceIni": "data/ini/experiencelevels.ini",
+		"initialRank": 5,
+		"maxLevel": 5,
+		"targetCount": 1,
+		"modifierApplication": "cumulative-per-level",
+		"experienceLevelCreate": {
+			"rank": 5,
+			"mpOnly": false,
+			"module": "ExperienceLevelCreate",
+			"sourceIni": "data/ini/object/fixture.ini",
+			"line": 10,
+		},
+		"levels": [{
+			"experienceId": "FixtureSummonedLevel5",
+			"rank": 5,
+			"requiredExperience": 1,
+			"experienceAwardStatus": "unauthored",
+			"line": 20,
+			"attributeModifiers": [{
+				"id": "FixtureSummonBonusRank5",
+				"modifiers": [
+					{"kind": "HEALTH", "value": 80, "application": "additive"},
+					{"kind": "DAMAGE_ADD", "value": 40, "application": "additive"},
+					{"kind": "DAMAGE_MULT", "value": 1.2, "application": "multiplicative"},
+					{"kind": "SPELL_DAMAGE", "value": 1.5, "application": "multiplicative"},
+				],
+				"sourceIni": "data/ini/attributemodifier.ini",
+				"category": "LEVEL",
+			}],
+			"upgrades": [
+				"Upgrade_ObjectLevel1", "Upgrade_ObjectLevel2", "Upgrade_ObjectLevel3",
+				"Upgrade_ObjectLevel4", "Upgrade_ObjectLevel5",
+			],
+		}],
+	}
+	var registered_creation_sim = Sim.new()
+	registered_creation_sim._apply_gameplay_rules({
+		"enable_base_loop": true,
+		"playable_unit_runtimes": {"FixtureMonster": registered_creation_doc},
+		"producer_kind_by_source_object": {"UniversalMonsterPen": "fixture_monster_pen", "AlternateMonsterPen": "alternate_monster_pen"},
+		"unit_rules": {},
+		"starting_resources": 5000,
+		"source_map_transform_scale": 0.1,
+		"spawn_initial_battalions": false,
+	})
+	registered_creation_sim._add_battalion(10, 0, Vector2.ZERO, "Summoned", "bfme2.object.fixture-monster", "bfme2.object.fixture-monster", 10)
+	var registered_creation_row: Dictionary = registered_creation_sim.entity(10)
+	var registered_upgrades: Dictionary = registered_creation_row.get("applied_upgrades", {}) as Dictionary
+	_check(
+		int(registered_creation_row.get("level", 0)) == 5
+			and int(registered_creation_row.get("member_maximum_health", 0)) == base_health + 80
+			and int(registered_creation_row.get("member_damage", 0)) == roundi(float(base_damage + 40) * 1.2)
+			and float(registered_creation_row.get("spell_damage_multiplier", 0.0)) == 1.5
+			and registered_upgrades.size() == 5
+			and registered_upgrades.has("Upgrade_ObjectLevel1")
+			and registered_upgrades.has("Upgrade_ObjectLevel5"),
+		"registered creation rank applies the exact Dwarven-shaped row once"
+	)
+	registered_creation_sim._add_battalion(20, 1, Vector2.ONE, "Killer", "bfme2.object.fixture-monster", "bfme2.object.fixture-monster", 10)
+	var unknown_award_xp := int((registered_creation_sim.entity(20) as Dictionary).get("experience_xp", 0))
+	registered_creation_sim._apply_member_damage(20, -1, 10, 999999, "battalion", 0, 0)
+	_check(
+		int((registered_creation_sim.entity(20) as Dictionary).get("experience_xp", 0)) == unknown_award_xp
+			and registered_creation_sim.experience_unauthored_victims().has("bfme2.object.fixture-monster"),
+		"an unauthored creation-rank kill award is recorded and never invented"
+	)
 	# A victim retail never authored a chain for pays the recorded default and
 	# the fallback is recorded, never invented.
 	var chainless_sim = Sim.new()
+	var creation_rank_rule := {
+		"horde_id": "bfme2.object.fixture-victim", "member_count": 1, "member_health": 100,
+		"member_damage": 5, "speed": 1.0, "speed_source": 10.0, "acceleration": 1.0,
+		"acceleration_source": 10.0, "turn_rate_degrees_per_second": 180.0, "braking": 1.0,
+		"braking_source": 10.0, "attack_range": 1.0, "attack_range_source": 10.0,
+		"minimum_attack_range": 0.0, "minimum_attack_range_source": 0.0, "vision_range": 4.0,
+		"vision_range_source": 40.0, "delay_between_shots_ms": 100.0, "pre_attack_delay_ms": 0.0,
+		"firing_duration_ms": 100.0, "attack_period_ticks": 1, "pre_attack_ticks": 0,
+		"firing_duration_ticks": 1, "clip_size": 0, "clip_reload_time_ms": 0.0,
+		"continuous_fire_one": 0, "continuous_fire_coast_ticks": 0,
+		"continuous_fire_rate_multiplier": 1.0, "formation_positions": [Vector3.ZERO],
+		"creation_experience_rank": 10,
+		"creation_experience_effects": {
+			"rank": 10,
+			"health_add": 40.0,
+			"damage_add": 15.0,
+			"production_multiplier": 1.0,
+			"upgrades": ["Upgrade_ObjectLevel1", "Upgrade_ObjectLevel10"],
+		},
+		"provenance": {},
+	}
+	var ordinary_rank_rule := creation_rank_rule.duplicate(true)
+	ordinary_rank_rule["horde_id"] = "bfme2.object.fixture-ordinary"
+	ordinary_rank_rule.erase("creation_experience_rank")
 	chainless_sim._apply_gameplay_rules({
 		"enable_base_loop": true,
 		"playable_unit_runtimes": {"FixtureMonster": experience_doc},
 		"producer_kind_by_source_object": {"UniversalMonsterPen": "fixture_monster_pen", "AlternateMonsterPen": "alternate_monster_pen"},
 		"unit_rules": {
-			"bfme2.object.fixture-victim": {
-				"horde_id": "bfme2.object.fixture-victim", "member_count": 1, "member_health": 100,
-				"member_damage": 5, "speed": 1.0, "speed_source": 10.0, "acceleration": 1.0,
-				"acceleration_source": 10.0, "turn_rate_degrees_per_second": 180.0, "braking": 1.0,
-				"braking_source": 10.0, "attack_range": 1.0, "attack_range_source": 10.0,
-				"minimum_attack_range": 0.0, "minimum_attack_range_source": 0.0, "vision_range": 4.0,
-				"vision_range_source": 40.0, "delay_between_shots_ms": 100.0, "pre_attack_delay_ms": 0.0,
-				"firing_duration_ms": 100.0, "attack_period_ticks": 1, "pre_attack_ticks": 0,
-				"firing_duration_ticks": 1, "clip_size": 0, "clip_reload_time_ms": 0.0,
-				"continuous_fire_one": 0, "continuous_fire_coast_ticks": 0,
-				"continuous_fire_rate_multiplier": 1.0, "formation_positions": [Vector3.ZERO],
-				"provenance": {},
-			},
+			"bfme2.object.fixture-victim": creation_rank_rule,
+			"bfme2.object.fixture-ordinary": ordinary_rank_rule,
 		},
 		"starting_resources": 5000,
 		"source_map_transform_scale": 0.1,
@@ -373,6 +646,22 @@ func _run() -> void:
 	_check(chainless_sim.configuration_error == "", "chainless-victim simulation registration succeeds")
 	chainless_sim._add_battalion(10, 0, Vector2.ZERO, "Attacker", "bfme2.object.fixture-monster", "bfme2.object.fixture-monster", 10)
 	chainless_sim._add_battalion(110, 1, Vector2.ONE, "Victim", "bfme2.object.fixture-victim", "bfme2.object.fixture-victim", 0)
+	_check(
+		int((chainless_sim.entity(110) as Dictionary).get("level", 0)) == 10
+			and int((chainless_sim.entity(110) as Dictionary).get("member_maximum_health", 0)) == 140
+			and int((chainless_sim.entity(110) as Dictionary).get("member_damage", 0)) == 20
+			and ((chainless_sim.entity(110) as Dictionary).get("applied_upgrades", {}) as Dictionary).has("Upgrade_ObjectLevel1")
+			and ((chainless_sim.entity(110) as Dictionary).get("applied_upgrades", {}) as Dictionary).has("Upgrade_ObjectLevel10")
+			and not (chainless_sim.entity(110) as Dictionary).has("experience_xp"),
+		"creation-rank module applies its authored row once without inventing a missing XP chain"
+	)
+	chainless_sim._add_battalion(120, 1, Vector2(2.0, 2.0), "Ordinary", "bfme2.object.fixture-ordinary", "bfme2.object.fixture-ordinary", 0)
+	_check(
+		int((chainless_sim.entity(120) as Dictionary).get("level", 1)) == 1
+			and not (chainless_sim.entity(120) as Dictionary).has("level")
+			and not (chainless_sim.entity(120) as Dictionary).has("experience_xp"),
+		"omitting the creation-rank module preserves ordinary rank-one spawn"
+	)
 	var chainless_xp := int((chainless_sim.entity(10) as Dictionary).get("experience_xp", 0))
 	chainless_sim._apply_member_damage(10, -1, 110, 999999, "battalion", 0, 0)
 	_check(
@@ -443,6 +732,12 @@ func _fixture_document() -> Dictionary:
 				},
 				"movement": {"acceleration": 100.0, "braking": 100.0, "turnRateDegreesPerSecond": 360.0},
 				"formation": {"memberCount": 1, "positions": [{"x": 0.0, "y": 0.0}]},
+				"autoAcquireEnemiesWhenIdle": {
+					"enabled": true,
+					"attackBuildings": false,
+					"whileStealthed": true,
+				},
+				"moodAttackCheckRate": {"milliseconds": 500},
 			},
 			"capabilities": [{"id": "move"}, {"id": "attack"}, {"id": "death"}],
 			"visual": {

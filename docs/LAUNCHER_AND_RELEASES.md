@@ -72,9 +72,11 @@ Unknown or duplicate flags fail closed. Manifest and package URLs must use the
 configured GitHub host and repository release path; redirects are restricted to
 the approved GitHub release-asset hosts.
 
-The current milestone and release acceptance are BFME II Men-versus-Men on Fords
-of Isen II. The launcher exposes a RotWK import surface, but RotWK is not part of
-this release milestone and is not accepted by the Windows release VM.
+The product parity target is RotWK 2.01 under systems-first iterative development
+(`DIRECTION.md`). Historical Men/Fords M2 acceptance tooling may still exist in
+the tree; it is not the product strategy. Public release acceptance remains
+identity-bound and integration-owner controlled; do not treat an unsigned manual
+build as RotWK parity complete.
 
 ## Channel limitation before the first release
 

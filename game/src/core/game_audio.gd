@@ -1,6 +1,8 @@
 extends Node
 ## Lightweight audio bus: UI + combat SFX + adaptive music states.
 
+const BootProfile = preload("res://src/core/boot_profile.gd")
+
 var music_player: AudioStreamPlayer
 var sfx_player: AudioStreamPlayer
 var enabled: bool = true
@@ -20,6 +22,7 @@ func _ready() -> void:
 	if not Events.content_reloaded.is_connected(_load_pack_audio):
 		Events.content_reloaded.connect(_load_pack_audio)
 	_load_pack_audio()
+	BootProfile.mark("autoload:GameAudio+GameState")
 
 func _load_pack_audio() -> void:
 	_streams.clear()
@@ -104,3 +107,8 @@ func play_combat() -> void:
 		if ks.contains("sword") or ks.contains("hit") or ks.contains("impact") or ks.contains("clang"):
 			play_sfx(ks, randf_range(0.9, 1.1))
 			return
+
+## See events.gd:_init - per-autoload compile attribution for the boot profiler.
+## No-op unless boot profiling is on.
+func _init() -> void:
+	BootProfile.mark("autoload_compiled:GameAudio")

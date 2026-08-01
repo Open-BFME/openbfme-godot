@@ -30,11 +30,12 @@ extends RefCounted
 ##
 ## WHAT IS SERVED AND WHAT IS NOT
 ## ==============================
-## THREE are served (the science pair plus the AI upgrade order). All three map
+## FOUR are served (the science pair, the AI upgrade order, and the veteran
+## object predicate). All four map
 ## one-to-one onto a Progression facet method that already exists with the exact
 ## parameters the signature carries.
 ##
-## FOUR are gap-registered, because the world surface designed up front cannot
+## THREE are gap-registered, because the world surface designed up front cannot
 ## express their signature. In every case the world method exists but is
 ## UNDER-PARAMETERISED - it drops an argument that decides the outcome. Calling
 ## it anyway would produce a handler that returns OK while answering a different
@@ -63,6 +64,7 @@ extends RefCounted
 const PACKAGE := "WP09-experience-upgrades-spellbook-ai-core"
 
 const Dispatch := preload("res://src/script/script_dispatch.gd")
+const ParamTypes := preload("res://src/script/script_param_types.gd")
 
 ## The exact WP09 members the retail AI libraries call, with their call-site
 ## counts from the decode. Present so the runner can assert that this file
@@ -85,6 +87,7 @@ const SERVED_ACTIONS := [
 ]
 const SERVED_CONDITIONS := [
 	"PLAYER_CAN_PURCHASE_SCIENCE",
+	"PLAYER_HAS_OBJECT_OF_VETERANCY",
 ]
 
 
@@ -114,39 +117,18 @@ const SERVED_CONDITIONS := [
 ## than one, because `blocked_conditions()` attaches a single subsystem string to
 ## every name it is given, and a gap that names the wrong missing surface is
 ## worse than a gap that names none.
-const BLOCKED_VETERANCY_CONDITIONS := [
-	"PLAYER_HAS_OBJECT_OF_VETERANCY",
-]
+## Codex full-parity REJECT: re-block until retail-sourced threat/wall oracles.
 const BLOCKED_THREAT_CONDITIONS := [
 	"TEAM_THREAT_LEVEL",
 	"UNIT_THREAT_LEVEL",
 ]
-
-## Union of the two, for the census assertion in the runner.
 const BLOCKED_CONDITIONS := [
-	"PLAYER_HAS_OBJECT_OF_VETERANCY",
 	"TEAM_THREAT_LEVEL",
 	"UNIT_THREAT_LEVEL",
 ]
-
 const BLOCKED_ACTIONS := [
 	"UPGRADE_NEAREST_WALL",
 ]
-
-## PLAYER_HAS_OBJECT_OF_VETERANCY(PLAYER, OBJECT_TYPE, COMPARISON, INT)
-## "Player <PLAYER> has object of type <OBJECT_TYPE> with rank level
-## <COMPARISON> to <INT>". Retail AI example: <This Player> |
-## Economy_Buildings_Non_Flag | 3 | 2  ->  "has an economy building at rank >= 2".
-const VETERANCY_SUBSYSTEM := (
-	"rank-filtered object census (the world exposes "
-	+ "progression.has_object_of_veterancy(player, veterancy) - two arguments "
-	+ "for a four-argument condition. It cannot express WHICH object type or "
-	+ "type-list to look at, nor the comparison operator and rank threshold to "
-	+ "apply. Answering it from the type-blind form would report true whenever "
-	+ "the player owns ANY veteran object, which flips the AI's economy and "
-	+ "upgrade decisions; the needed surface is a query taking (player, "
-	+ "object_type, comparison, level))"
-)
 
 ## UNIT_THREAT_LEVEL(UNIT, COMPARISON, REAL, REAL) and
 ## TEAM_THREAT_LEVEL(TEAM, COMPARISON, REAL, REAL) - threat WITHIN A RADIUS of
@@ -186,10 +168,10 @@ static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 	# The pair that is 16.1% of everything the retail AI does.
 	reg.action("PLAYER_PURCHASE_SCIENCE", _player_purchase_science)
 	reg.condition("PLAYER_CAN_PURCHASE_SCIENCE", _player_can_purchase_science)
+	reg.condition("PLAYER_HAS_OBJECT_OF_VETERANCY", _player_has_object_of_veterancy)
 
 	reg.action("AI_PLAYER_BUILD_UPGRADE", _ai_player_build_upgrade)
 
-	reg.blocked_conditions(BLOCKED_VETERANCY_CONDITIONS, VETERANCY_SUBSYSTEM)
 	reg.blocked_conditions(BLOCKED_THREAT_CONDITIONS, THREAT_RADIUS_SUBSYSTEM)
 	reg.blocked_actions(BLOCKED_ACTIONS, WALL_UPGRADE_SUBSYSTEM)
 
@@ -305,6 +287,33 @@ static func _player_can_purchase_science(ctx: Dictionary) -> int:
 	return Dispatch.Status.OK
 
 
+static func _player_has_object_of_veterancy(ctx: Dictionary) -> int:
+	# PLAYER_HAS_OBJECT_OF_VETERANCY(PLAYER, OBJECT_TYPE, COMPARISON, INT)
+	# The predicate is existential: one living object of the resolved type (or
+	# declared type-list) whose current rank satisfies the comparison is enough.
+	# All 42 retail AI sites use <This Player>, >=, and rank 2 or 3, but the
+	# handler serves the complete sourced comparison enum rather than baking in
+	# those observed values.
+	if not _arity_ok(ctx, 4):
+		return Dispatch.Status.BAD_ARGUMENTS
+	var args: SageScriptArgs = ctx["args"]
+	var comparison := args.integer(2)
+	if comparison < ParamTypes.COMPARE_LESS or comparison > ParamTypes.COMPARE_NOT_EQUAL:
+		ctx["detail"] = (
+			"PLAYER_HAS_OBJECT_OF_VETERANCY was authored with comparison "
+			+ "operator %d, outside the sourced COMPARISON table (0..5)"
+		) % comparison
+		return Dispatch.Status.BAD_ARGUMENTS
+	var query := (ctx["world"] as SageScriptWorld).progression().has_object_of_veterancy(
+		args.text(0), args.text(1), comparison, args.integer(3)
+	)
+	if not query.ok:
+		ctx["detail"] = query.detail
+		return Dispatch.Status.WORLD_REFUSED
+	ctx["result"] = query.as_bool()
+	return Dispatch.Status.OK
+
+
 # --- The AI upgrade order --------------------------------------------------
 
 
@@ -330,5 +339,46 @@ static func _ai_player_build_upgrade(ctx: Dictionary) -> int:
 			"world does not implement progression.build_upgrade; player '%s' was "
 			+ "not ordered to build upgrade '%s'"
 		) % [player, upgrade]
+		return Dispatch.Status.WORLD_REFUSED
+	return Dispatch.Status.OK
+
+
+static func _team_threat_level(ctx: Dictionary) -> int:
+	if not _arity_ok(ctx, 4):
+		return Dispatch.Status.BAD_ARGUMENTS
+	var args: SageScriptArgs = ctx["args"]
+	var query := (ctx["world"] as SageScriptWorld).teams().threat_within_radius(
+		args.text(0), args.real(3)
+	)
+	if not query.ok:
+		ctx["detail"] = query.detail
+		return Dispatch.Status.WORLD_REFUSED
+	ctx["result"] = ParamTypes.compare(float(query.value), args.integer(1), args.real(2))
+	return Dispatch.Status.OK
+
+
+static func _unit_threat_level(ctx: Dictionary) -> int:
+	if not _arity_ok(ctx, 4):
+		return Dispatch.Status.BAD_ARGUMENTS
+	var args: SageScriptArgs = ctx["args"]
+	var query := (ctx["world"] as SageScriptWorld).units().threat_within_radius(
+		args.text(0), args.real(3)
+	)
+	if not query.ok:
+		ctx["detail"] = query.detail
+		return Dispatch.Status.WORLD_REFUSED
+	ctx["result"] = ParamTypes.compare(float(query.value), args.integer(1), args.real(2))
+	return Dispatch.Status.OK
+
+
+static func _upgrade_nearest_wall(ctx: Dictionary) -> int:
+	if not _arity_ok(ctx, 5):
+		return Dispatch.Status.BAD_ARGUMENTS
+	var args: SageScriptArgs = ctx["args"]
+	var world: SageScriptWorld = ctx["world"]
+	if not world.progression().upgrade_nearest_wall_bound(
+		args.text(0), args.text(1), args.text(2), args.text(3), args.text(4)
+	):
+		ctx["detail"] = "world does not implement progression.upgrade_nearest_wall_bound"
 		return Dispatch.Status.WORLD_REFUSED
 	return Dispatch.Status.OK

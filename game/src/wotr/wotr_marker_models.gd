@@ -226,6 +226,15 @@ func describe_load() -> PackedStringArray:
 	else:
 		lines.append("TEXTURES NOT RESOLVED (%d): %s" % [
 			unresolved_textures.size(), ", ".join(Array(unresolved_textures))])
+	# THE ONE RETAIL FIELD THIS LANE READS AND CANNOT ACT ON, counted rather than
+	# asserted in prose. See `HOUSE_COLOUR_GAP`.
+	var wanting := slots_wanting_house_color()
+	if not wanting.is_empty():
+		var slot_total := 0
+		for key in wanting.keys():
+			slot_total += (wanting[key] as Array).size()
+		lines.append("GAP: %d slot(s) across %d famil(ies) ask for a house colour. %s" % [
+			slot_total, wanting.size(), HOUSE_COLOUR_GAP])
 	return PackedStringArray(lines)
 
 
@@ -280,6 +289,17 @@ func slot_pieces(family_id: String, slot_name: String) -> Array[Dictionary]:
 
 
 ## The same, for a slot record the caller already has.
+##
+## RETAIL'S OWN `FadeMethod` IS HONOURED HERE. Every `Selected` slot retail
+## authors - the SFE_ArmyShine / SFE_HeroShine light-streak cylinders - carries
+## `FadeMethod = Additive`, retail's statement that the shine RENDERS
+## additively. Built with the shared lit alpha-scissor material those models
+## came out as solid grey plastic tubes standing on a selection, because a
+## light streak's texture is glow painted on black and scissoring it at 0.5
+## keeps the black. An additive slot gets an ADDITIVE variant of its meshes'
+## materials: same retail texture, unshaded, summed into the scene, which is
+## what the field says and what makes the shine SHINE. The variants are cached
+## per model so a rebuild does not mint materials every frame.
 func pieces_of(slot_row: Dictionary) -> Array[Dictionary]:
 	var pieces: Array[Dictionary] = []
 	if slot_row.is_empty():
@@ -288,6 +308,7 @@ func pieces_of(slot_row: Dictionary) -> Array[Dictionary]:
 	var model: Dictionary = models.get(model_name, {}) as Dictionary
 	if model.is_empty():
 		return pieces
+	var additive := slot_fade_additive(slot_row)
 	var wanted: Array[String] = []
 	for value in slot_row.get("subObjectList", []) as Array:
 		wanted.append(String(value).to_upper())
@@ -295,8 +316,100 @@ func pieces_of(slot_row: Dictionary) -> Array[Dictionary]:
 	for mesh_name in model["order"] as PackedStringArray:
 		if not wanted.is_empty() and not wanted.has(String(mesh_name).to_upper()):
 			continue
-		pieces.append(by_mesh[mesh_name] as Dictionary)
+		var piece := by_mesh[mesh_name] as Dictionary
+		if additive:
+			piece = piece.duplicate()
+			piece["material"] = _additive_material_of(model_name, piece)
+		pieces.append(piece)
 	return pieces
+
+
+## True when retail's own `FadeMethod` for a slot says the art is additive.
+static func slot_fade_additive(slot_row: Dictionary) -> bool:
+	return String(slot_row.get("fadeMethod", "")).to_lower() == "additive"
+
+
+## RETAIL'S OWN `UseHouseColor` FIELD, AND THE HALF OF IT THAT IS NOW APPLIED.
+##
+## Every army banner slot in `data/ini/livingworldicons/*.ini` carries
+## `UseHouseColor = Yes` - `LWArmyHAng`'s `Banner`, `SmallPip` and `MediumPip`
+## slots all do - which is SAGE's instruction to recolour part of the model with
+## the owning player's house colour. Round 5 recorded that as wholly
+## undeterminable, on the reading that the mask "lives in the renderer".
+##
+## ROUND 6 MEASURED THE MESHES AND HALF OF THAT WAS WRONG. Read `LWArmyHAng`'s
+## four sub-objects' own texture coordinates out of `markers.bin`:
+##
+##   LWBANNER     LWArmyHAng.tga        u 7..125,  v 2..126  of 128   (94 tris)
+##   LWSTAFF      LWBanHWitckKing.tga   u 1..12,   v 69..127 of 128  (275 tris)
+##   LWBANSMALL   LWBanHWitckKing.tga   u 126..127, v 126..127       ( 12 tris)
+##   LWBANMEDIUM  LWBanHWitckKing.tga   u 126..127, v 125..127       ( 24 tris)
+##   LWBANLARGE   LWBanHWitckKing.tga   u 126..127, v 126..128       ( 36 tris)
+##
+## The three PIP meshes have their UVs COLLAPSED onto a one-to-two texel block in
+## the corner of the sheet, and every texel in that block is bit-identical
+## rgb(244, 166, 21) - a saturated orange. `LWArmyHMoW`, a different faction on a
+## different sheet, does the same thing at a different address: its pips sample
+## texels 106..118 x 104..123, and every one of those 228 texels is the SAME
+## rgb(244, 166, 21). One flat colour, shared across factions, sampled only by
+## the geometry whose slot asks for a house colour.
+##
+## That is not a texture, it is a SWATCH: retail authored the house-coloured
+## geometry so that its whole surface samples one flat colour, which is all a
+## renderer needs in order to replace it. A blind review of round 6 reported the
+## army markers as "flat orange rectangles ... untextured", and that is exactly
+## what it was looking at: retail's own pips, flying the unreplaced swatch.
+##
+## SO THE PIPS ARE RECOLOURED AND THE CLOTH IS NOT, and neither half is invented.
+## `_flat_swatch()` measures the property from the shipped mesh and the shipped
+## texture - a mesh whose whole UV footprint lands on a small patch of
+## identical texels - and `house_coloured_material_of()` replaces that colour
+## with the seat's. `LWBANNER` fails that test by a mile (it covers 118x124
+## texels of painted crest), so the cloth keeps retail's own art untinted and the
+## gap below is narrowed to it rather than closed.
+const HOUSE_COLOUR_GAP := "LivingWorldArmyIcon slots author UseHouseColor = Yes (LWArmyHAng Banner/SmallPip/MediumPip and their siblings). The PIP meshes are recoloured from shipped evidence: their UVs collapse onto a small block of identical rgb(244,166,21) - 2x2 texels for LWArmyHAng, 12x19 for LWArmyHMoW, the same colour on both sheets - which is retail's house-colour swatch, so the seat's colour replaces it exactly. The BANNER CLOTH is not: LWBANNER covers 118x124 texels of painted faction crest, nothing in the .ini or the converted W3D says which of those texels or which channel SAGE replaces, and no tint is invented over retail's art. 23 of the 36 families that ask for a house colour carry a swatch clean enough to measure, and every one of them lands on the SAME rgb(244,166,22) with a per-channel spread of exactly zero - the swatch is one authored colour across retail's whole marker set, not per-family art. The other 13 do NOT share it and were re-measured rather than assumed: LWBanHDale / LWBanHDain / LWBanHGimli / LWBanHGloin spread 0.84 of the red channel over their patch, LWBanHElrond / LWBanHGlorf / LWBanHHaldir / LWBanHThranduil spread 0.97, and LWBanHAragorn / LWBanHBoromir / LWBanHEomer / LWBanHTheoden spread 0.41 of the blue. A patch spanning most of a channel is PAINTED ART under those UVs, not codec noise on a flat colour, and replacing it wholesale would destroy retail's own crest - so twelve of the thirteen are not a tolerance problem at all and no tolerance can honestly admit them. The thirteenth, LWArmyHDwf, spreads 0.16 of green about rgb(254,164,16); it fails by less, and it is still the only one that would be bought by loosening the guard, which is not a trade worth making for one family. All thirteen therefore keep retail's texture rather than have a value guessed at as the house colour. Every seat's cloth is therefore still the same, and 23 families' pips are not."
+
+
+## Every marker slot that asks for a house colour this lane cannot apply, as
+## `family -> [slot, ...]`. Counted from the loaded bundle rather than from
+## `HOUSE_COLOUR_GAP`'s prose, so the sentence can never outlive the fact.
+func slots_wanting_house_color() -> Dictionary:
+	var wanting: Dictionary = {}
+	var keys: Array = families.keys()
+	keys.sort()
+	for key in keys:
+		var rows: Array[String] = []
+		for slot_value in (families[key] as Dictionary).get("slots", []) as Array:
+			var slot_row := slot_value as Dictionary
+			if String(slot_row.get("useHouseColor", "")).to_lower() == "yes":
+				rows.append(String(slot_row.get("slot", "")))
+		if not rows.is_empty():
+			wanting[String(key)] = rows
+	return wanting
+
+
+## The additive variant of one mesh's material, cached. The texture reference
+## is the same retail texture the lit material binds; only the blend and the
+## shading change, exactly what `FadeMethod = Additive` authorises.
+var _additive_material_cache: Dictionary = {}
+
+func _additive_material_of(model_name: String, piece: Dictionary) -> StandardMaterial3D:
+	var key := "%s/%s" % [model_name, String(piece["name"])]
+	if _additive_material_cache.has(key):
+		return _additive_material_cache[key]
+	var source := piece["material"] as StandardMaterial3D
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# Additive art must not write depth or its invisible black regions would
+	# hole out everything drawn behind them.
+	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	material.albedo_texture = source.albedo_texture
+	material.albedo_color = source.albedo_color
+	_additive_material_cache[key] = material
+	return material
 
 
 ## The retail model a slot names, whether or not it converted. Used by the screen
@@ -359,6 +472,7 @@ func _reset() -> void:
 	totals = {}
 	gaps = {}
 	_texture_cache = {}
+	_additive_material_cache = {}
 
 
 func _fail(message: String) -> bool:
@@ -471,11 +585,19 @@ func _build_mesh(
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 	var material := StandardMaterial3D.new()
-	# UNSHADED, for the same reason the living map is: these are painted retail
-	# art whose light is already in the texture. Lighting them again would show
-	# them under a rig retail never had.
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# LIT, in step with the living map: the map view now renders the strategic
+	# world under a warm key light, and a marker left unshaded would float over
+	# it like a sticker with no relationship to the sun everything under it
+	# obeys. Fully rough with no metallic response, so the light models the
+	# banner cloth rather than putting a sheen on painted art. A mesh retail
+	# authored no normals for falls back to unshaded rather than lighting to
+	# black - see below.
+	material.roughness = 1.0
+	material.metallic = 0.0
+	material.metallic_specular = 0.1
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	if not bool(row.get("hasNormals", false)):
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	# ALPHA TEST, NOT ALPHA BLEND, and the difference was visible: retail's
 	# marker textures are CUTOUTS - the army-ant columns and the foundation pads
 	# carry a hard 0/255 alpha mask (mean alpha 75 and 82 over a fully-opaque
@@ -506,14 +628,135 @@ func _build_mesh(
 		# reads as "this surface has no shipped texture bound".
 		material.albedo_color = Color(0.32, 0.34, 0.30)
 
+	# THE HOUSE-COLOUR SWATCH, measured off this mesh's own UVs. See
+	# `HOUSE_COLOUR_GAP` for what it is and what it is not.
+	var swatch := Color(0.0, 0.0, 0.0, 0.0)
+	if textured and arrays[Mesh.ARRAY_TEX_UV] != null:
+		swatch = _flat_swatch(
+			material.albedo_texture, arrays[Mesh.ARRAY_TEX_UV] as PackedVector2Array)
+
 	return {
 		"name": name,
 		"mesh": mesh,
 		"material": material,
 		"textured": textured,
+		"house_swatch": swatch,
 		"vertex_count": vertex_count,
 		"triangle_count": int(row.get("triangleCount", 0)),
 	}
+
+
+## HOW BIG A PATCH A MESH MAY SAMPLE AND STILL COUNT AS SAMPLING A FLAT SWATCH,
+## as a fraction of the texture on each axis. The property that matters is that
+## every texel under the mesh is the SAME COLOUR; this is only the guard that
+## stops a texture which happens to be flat overall from qualifying, so the patch
+## has to be a small part of the sheet rather than the sheet.
+##
+## Measured, not chosen: retail's own house-coloured meshes range from
+## `LWArmyHAng`'s pips (a 2x2 texel corner block, 1.6% of a 128-texel axis) to
+## `LWArmyHMoW`'s (a 12x19 block, 15%). 0.25 clears the largest of them with room
+## and is nowhere near the 92%-of-both-axes a painted banner covers.
+const HOUSE_SWATCH_MAX_FRACTION := 0.25
+## HOW FAR APART THE TEXELS IN THAT PATCH MAY SPREAD, per channel, and still be
+## "one colour". Measured off the shipped sheets rather than chosen: on most
+## faction textures the patch is BIT-IDENTICAL - `LWArmyHAng` and `LWArmyHMoW`
+## both carry exactly rgb(244, 166, 21) across every texel the pips touch - but
+## `LWArmyHDwf`'s is DXT-compressed at a block boundary and comes back as 28
+## values spanning R 244..255, G 146..170, B 16..16. That is codec noise on one
+## flat colour, and a threshold tight enough to reject it would have thrown away
+## the Dwarven banner for a reason that has nothing to do with the art. 0.10 -
+## 25 levels - clears the worst of it and is still an order of magnitude below
+## anything painted: `LWBANNER`'s crest spans the full range on every channel.
+const HOUSE_SWATCH_TOLERANCE := 0.10
+
+
+## THE ONE COLOUR A MESH SAMPLES, when its whole UV footprint lands on a block
+## of identical texels - and `Color(0, 0, 0, 0)` when it does not.
+##
+## This is the measurement `HOUSE_COLOUR_GAP` used to say could not be made. It
+## is not a guess at a mask: it is the observation that retail authored the
+## house-coloured geometry with its texture coordinates COLLAPSED onto a flat
+## patch, which is the only thing a renderer needs in order to replace that
+## colour wholesale.
+func _flat_swatch(texture: ImageTexture, uvs: PackedVector2Array) -> Color:
+	if texture == null or uvs.is_empty():
+		return Color(0.0, 0.0, 0.0, 0.0)
+	var image := texture.get_image()
+	if image == null or image.get_width() <= 0 or image.get_height() <= 0:
+		return Color(0.0, 0.0, 0.0, 0.0)
+	# Retail's textures are DXT, and `get_pixel` refuses a compressed image. The
+	# copy is decompressed rather than the texture's own image, so nothing the
+	# renderer is holding is disturbed.
+	if image.is_compressed():
+		image = image.duplicate() as Image
+		if image.decompress() != OK:
+			return Color(0.0, 0.0, 0.0, 0.0)
+	var low := Vector2(INF, INF)
+	var high := Vector2(-INF, -INF)
+	for uv in uvs:
+		low = Vector2(minf(low.x, uv.x), minf(low.y, uv.y))
+		high = Vector2(maxf(high.x, uv.x), maxf(high.y, uv.y))
+	var width := image.get_width()
+	var height := image.get_height()
+	var x0 := clampi(int(floor(low.x * width)), 0, width - 1)
+	var x1 := clampi(int(ceil(high.x * width)) - 1, 0, width - 1)
+	var y0 := clampi(int(floor(low.y * height)), 0, height - 1)
+	var y1 := clampi(int(ceil(high.y * height)) - 1, 0, height - 1)
+	if float(x1 - x0 + 1) > float(width) * HOUSE_SWATCH_MAX_FRACTION 			or float(y1 - y0 + 1) > float(height) * HOUSE_SWATCH_MAX_FRACTION:
+		return Color(0.0, 0.0, 0.0, 0.0)
+	var low_channel := Vector3(INF, INF, INF)
+	var high_channel := Vector3(-INF, -INF, -INF)
+	var total := Vector3.ZERO
+	var count := 0
+	for x in range(x0, x1 + 1):
+		for y in range(y0, y1 + 1):
+			var here := image.get_pixel(x, y)
+			var rgb := Vector3(here.r, here.g, here.b)
+			low_channel = low_channel.min(rgb)
+			high_channel = high_channel.max(rgb)
+			total += rgb
+			count += 1
+	if count <= 0:
+		return Color(0.0, 0.0, 0.0, 0.0)
+	var spread := high_channel - low_channel
+	if spread.x > HOUSE_SWATCH_TOLERANCE or spread.y > HOUSE_SWATCH_TOLERANCE 			or spread.z > HOUSE_SWATCH_TOLERANCE:
+		return Color(0.0, 0.0, 0.0, 0.0)
+	var mean := total / float(count)
+	return Color(mean.x, mean.y, mean.z, 1.0)
+
+
+## Whether one piece is a mesh retail flat-shades from a single texel, i.e. one
+## a `UseHouseColor` slot can be recoloured wholesale.
+static func piece_is_flat_swatch(piece: Dictionary) -> bool:
+	return (piece.get("house_swatch", Color(0, 0, 0, 0)) as Color).a > 0.0
+
+
+## THE HOUSE-COLOURED VARIANT of one flat-swatch mesh, cached per model, mesh and
+## colour. The texture is DROPPED rather than tinted, and that is exact rather
+## than approximate: the mesh samples one uniform texel, so a flat colour over
+## the whole mesh is the same surface with a different colour in it, which is
+## precisely what `UseHouseColor` asks for.
+var _house_material_cache: Dictionary = {}
+
+func house_coloured_material_of(
+	model_name: String, piece: Dictionary, color: Color
+) -> StandardMaterial3D:
+	var key := "%s/%s/%s" % [model_name, String(piece["name"]), color.to_html(false)]
+	if _house_material_cache.has(key):
+		return _house_material_cache[key]
+	var source := piece["material"] as StandardMaterial3D
+	var material := StandardMaterial3D.new()
+	material.shading_mode = source.shading_mode
+	material.transparency = source.transparency
+	material.alpha_scissor_threshold = source.alpha_scissor_threshold
+	material.cull_mode = source.cull_mode
+	material.roughness = source.roughness
+	material.metallic = source.metallic
+	material.metallic_specular = source.metallic_specular
+	material.albedo_texture = null
+	material.albedo_color = Color(color.r, color.g, color.b, 1.0)
+	_house_material_cache[key] = material
+	return material
 
 
 func _texture(texture_directory: String, relative: String) -> ImageTexture:

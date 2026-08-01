@@ -52,6 +52,11 @@ KNOWN_SLICE_ARCHIVE_SHA256 = {
     "terrain.big": "bf2b3331d50b2f07138e79a3d75d9d78e6a6cf41738629bc9aa8c184e12edaba",
     "music.big": "6cc8cf58ad6b1e37ea36b4f49cae4ef3b8f6698be1b9e08614763c6dedb9ac5b",
     "lang/englishpatch105.big": "ffdc7e390e9c3f3196b105d60ec067546844a946917d2b021e616bb75ad75e56",
+    # BFME2 1.06 patch103 (fortress hierarchical models, HUD fonts). Hashed from
+    # a clean 1.06 tree at F:\BFME2\_patch103.big (12_865_477 bytes).
+    "_patch103.big": "4b9057b8c49053802797e22a171b378678f3b8f45edc9563c6480b254b968a1a",
+    # Script libraries BIG used by men-fords AI / map script import.
+    "libraries.big": "d6bf62be5d8b690226a3d0e0d1a6f7dcce0000482ade6b3d970620202023fd67",
 }
 
 class CatalogProvenanceError(RuntimeError):
@@ -734,6 +739,11 @@ class InstallCatalog:
         return self.source_policy.policy_sha256 if self.source_policy is not None else None
 
     def identity_sha256(self) -> str:
+        # Catalogs are immutable after build/load; memoize the expensive
+        # full-entry serialization so convert loops do not rehash ~50k rows.
+        cached = getattr(self, "_identity_sha256_memo", None)
+        if isinstance(cached, str) and len(cached) == 64:
+            return cached
         archives = [
             {
                 "relative_path": item.relative_path,
@@ -773,7 +783,9 @@ class InstallCatalog:
         encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
+        digest = hashlib.sha256(encoded).hexdigest()
+        object.__setattr__(self, "_identity_sha256_memo", digest)
+        return digest
 
     def resolve_exact(self, virtual_path: str) -> CatalogEntry | None:
         values = self._by_key.get(virtual_path.replace("\\", "/").casefold(), ())

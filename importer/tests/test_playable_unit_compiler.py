@@ -8,8 +8,11 @@ import pytest
 
 from openbfme_importer.playable_unit_compiler import (
     PlayableUnitCompilerError,
+    _ancestry,
     _apply_nugget_damage_types,
+    _default_set_target,
     _numeric_defines,
+    _permanent_weapon_locks,
     compile_playable_unit_descriptor,
     playable_object_kind_of,
     prepare_playable_unit_compiler,
@@ -2605,16 +2608,45 @@ def test_experience_top_rank_summon_chain_compiles_initial_rank() -> None:
     # unit enters at the top rank and never levels further.
     documents = _experience_documents(
         """
-ExperienceLevel FixtureSummonLevel1
+ExperienceLevel FixtureSummonNormalLevel
   TargetNames = InfantryHorde
   RequiredExperience = 1
   ExperienceAward = 100
+  Rank = 1
+End
+ExperienceLevel FixtureSummonLevel1
+  TargetNames = InfantryHorde
+  RequiredExperience = 1
   Rank = 10
+  AttributeModifiers = FixtureSummonBonus
+  Upgrades = Upgrade_ObjectLevel1 Upgrade_ObjectLevel10
   SelectionDecal
     Texture = decal_hero_good
   End
 End
-"""
+""",
+        modifiers="""
+ModifierList FixtureSummonBonus
+  Category = LEVEL
+  Modifier = HEALTH 40
+  Modifier = DAMAGE_ADD 15
+  Modifier = DAMAGE_MULT 120%
+  Modifier = SPELL_DAMAGE 150%
+  Duration = 0
+End
+""",
+    )
+    object_path = "data/ini/object/units/test_units.ini"
+    documents[object_path] = documents[object_path].replace(
+        b"Object InfantryHorde\n",
+        (
+            b"Object InfantryHorde\n"
+            b"  Behavior = ExperienceLevelCreate ModuleTag_LevelBonus\n"
+            b"    LevelToGrant = 10\n"
+            b"    MPOnly = No\n"
+            b"  End\n"
+        ),
+        1,
     )
 
     descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
@@ -2623,10 +2655,84 @@ End
     experience = descriptor["experience"]
     assert experience["status"] == "compiled"
     assert experience["initialRank"] == 10
+    assert experience["experienceLevelCreate"]["rank"] == 10
+    assert experience["experienceLevelCreate"]["mpOnly"] is False
+    evidence = next(
+        row
+        for row in descriptor["runtimeModuleEvidence"]
+        if row["kind"] == "ExperienceLevelCreate"
+    )
+    assert evidence["consumed"] is True
+    assert "ExperienceLevelCreate" not in descriptor["specialCapabilities"]
     assert experience["maxLevel"] == 10
-    assert len(experience["levels"]) == 1
-    assert experience["levels"][0]["rank"] == 10
-    assert experience["levels"][0]["experienceAward"] == 100
+    assert len(experience["levels"]) == 2
+    assert experience["levels"][1]["rank"] == 10
+    assert "experienceAward" not in experience["levels"][1]
+    assert experience["levels"][1]["experienceAwardStatus"] == "unauthored"
+    assert experience["levels"][1]["attributeModifiers"][0]["id"] == (
+        "FixtureSummonBonus"
+    )
+    assert {
+        row["kind"]
+        for row in experience["levels"][1]["attributeModifiers"][0]["modifiers"]
+    } == {"HEALTH", "DAMAGE_ADD", "DAMAGE_MULT", "SPELL_DAMAGE"}
+    assert experience["levels"][1]["upgrades"] == [
+        "Upgrade_ObjectLevel1",
+        "Upgrade_ObjectLevel10",
+    ]
+
+
+def test_top_rank_chain_without_creation_module_starts_at_rank_one() -> None:
+    documents = _experience_documents(
+        """
+ExperienceLevel FixtureTopRankOnly
+  TargetNames = InfantryHorde
+  RequiredExperience = 1
+  ExperienceAward = 100
+  Rank = 10
+End
+""",
+    )
+
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    experience = descriptor["experience"]
+    assert experience["status"] == "compiled"
+    assert experience["initialRank"] == 1
+    assert "experienceLevelCreate" not in experience
+    assert not any(
+        row["kind"] == "ExperienceLevelCreate"
+        for row in descriptor["runtimeModuleEvidence"]
+    )
+
+
+def test_experience_level_create_rejects_unproven_mp_only_mode() -> None:
+    documents = _experience_documents(
+        """
+ExperienceLevel FixtureSummonLevel1
+  TargetNames = InfantryHorde
+  RequiredExperience = 1
+  ExperienceAward = 100
+  Rank = 10
+End
+""",
+    )
+    object_path = "data/ini/object/units/test_units.ini"
+    documents[object_path] = documents[object_path].replace(
+        b"Object InfantryHorde\n",
+        (
+            b"Object InfantryHorde\n"
+            b"  Behavior = ExperienceLevelCreate ModuleTag_LevelBonus\n"
+            b"    LevelToGrant = 10\n"
+            b"    MPOnly = Yes\n"
+            b"  End\n"
+        ),
+        1,
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="MPOnly"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
 
 
 def test_experience_ambiguous_specificity_fails_closed() -> None:
@@ -3066,6 +3172,185 @@ def test_weapon_toggle_rows_record_the_authored_contract() -> None:
     assert profile["delayBetweenShotsMs"]["value"] == 0
     assert profile["preAttackDelayMs"]["value"] == 0
     assert profile["firingDurationMs"]["value"] == 0
+    assert profile["weaponSlot"] == "PRIMARY"
+
+
+def test_lock_weapon_create_projects_permanent_primary_slot() -> None:
+    documents = _hero_ability_documents()
+    text = documents["data/ini/object/units/test_units.ini"].decode()
+    documents["data/ini/object/units/test_units.ini"] = text.replace(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n",
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        "  Behavior = LockWeaponCreate ModuleTag_LockWeapon\n"
+        "    SlotToLock = PRIMARY\n"
+        "  End\n",
+        1,
+    ).encode()
+
+    descriptor = compile_playable_unit_descriptor("AbilityHero", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    resolved = descriptor["gameplay"]["simulation"]["resolved"]
+    assert resolved["combat"]["weaponSlot"] == "PRIMARY"
+    assert resolved["permanentWeaponLocks"] == [
+        {
+            "slot": "PRIMARY",
+            "state": "LOCKED_PERMANENTLY",
+            "module": "LockWeaponCreate",
+            "sourceIni": "data/ini/object/units/test_units.ini",
+            "line": resolved["permanentWeaponLocks"][0]["line"],
+        }
+    ]
+    lock_evidence = [
+        row
+        for row in descriptor["runtimeModuleEvidence"]
+        if row["kind"] == "LockWeaponCreate"
+    ]
+    assert len(lock_evidence) == 1
+    assert lock_evidence[0]["consumed"] is True
+    assert "LockWeaponCreate" not in descriptor["specialCapabilities"]
+
+    corrupted = deepcopy(descriptor)
+    corrupted["gameplay"]["simulation"]["resolved"]["permanentWeaponLocks"][0][
+        "sourceIni"
+    ] = ""
+    corrupted["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            {
+                key: value
+                for key, value in corrupted.items()
+                if key != "descriptorSha256"
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(
+        PlayableUnitCompilerError,
+        match="LockWeaponCreate policy evidence is invalid",
+    ):
+        validate_playable_unit_descriptor(corrupted)
+
+
+def test_lock_weapon_create_rejects_slots_outside_retail_corpus() -> None:
+    documents = _hero_ability_documents()
+    text = documents["data/ini/object/units/test_units.ini"].decode()
+    documents["data/ini/object/units/test_units.ini"] = text.replace(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n",
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        "  Behavior = LockWeaponCreate ModuleTag_LockWeapon\n"
+        "    SlotToLock = SECONDARY\n"
+        "  End\n",
+        1,
+    ).encode()
+
+    with pytest.raises(
+        PlayableUnitCompilerError, match="outside the retail corpus"
+    ):
+        compile_playable_unit_descriptor("AbilityHero", documents)
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    (
+        (
+            "  Behavior = LockWeaponCreate ModuleTag_LockWeapon\n"
+            "  End\n",
+            "exactly one SlotToLock",
+        ),
+        (
+            "  Behavior = LockWeaponCreate ModuleTag_LockWeapon\n"
+            "    SlotToLock = PRIMARY\n"
+            "    SlotToLock = PRIMARY\n"
+            "  End\n",
+            "exactly one SlotToLock",
+        ),
+        (
+            "  Behavior = LockWeaponCreate ModuleTag_LockWeaponA\n"
+            "    SlotToLock = PRIMARY\n"
+            "  End\n"
+            "  Behavior = LockWeaponCreate ModuleTag_LockWeaponB\n"
+            "    SlotToLock = PRIMARY\n"
+            "  End\n",
+            "multiple effective LockWeaponCreate",
+        ),
+    ),
+)
+def test_lock_weapon_create_rejects_malformed_or_ambiguous_modules(
+    body: str, message: str
+) -> None:
+    documents = _hero_ability_documents()
+    text = documents["data/ini/object/units/test_units.ini"].decode()
+    documents["data/ini/object/units/test_units.ini"] = text.replace(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n",
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        + body,
+        1,
+    ).encode()
+
+    with pytest.raises(PlayableUnitCompilerError, match=message):
+        compile_playable_unit_descriptor("AbilityHero", documents)
+
+
+def test_lock_weapon_create_inherited_module_tag_replaces_exactly_once() -> None:
+    documents = _hero_ability_documents()
+    path = "data/ini/object/units/test_units.ini"
+    text = documents[path].decode()
+    text = text.replace(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n",
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY AbilityHeroSword\n"
+        "  End\n"
+        "  Behavior = LockWeaponCreate ModuleTag_LockWeapon\n"
+        "    SlotToLock = PRIMARY\n"
+        "  End\n",
+        1,
+    )
+    text += (
+        "\nChildObject AbilityHeroSummoned AbilityHero\n"
+        "  Behavior = LockWeaponCreate ModuleTag_LockWeapon\n"
+        "    SlotToLock = PRIMARY\n"
+        "  End\n"
+        "End\n"
+    )
+    documents[path] = text.encode()
+    prepared = prepare_playable_unit_compiler(documents)
+    lineage = _ancestry(
+        prepared.objects, prepared.objects["abilityherosummoned"]
+    )
+    weapon_id = _default_set_target(lineage, "WeaponSet", "Weapon")
+
+    locks = _permanent_weapon_locks(lineage, weapon_id)
+
+    assert len(locks) == 1
+    assert locks[0]["slot"] == "PRIMARY"
+    child_line = (
+        text[: text.index("ChildObject AbilityHeroSummoned")].count("\n") + 1
+    )
+    assert locks[0]["line"] > child_line
 
 
 def test_weapon_toggle_with_unresolvable_weapon_stays_a_gap() -> None:
@@ -3428,6 +3713,378 @@ def test_fear_resistance_flag_compiles_from_emotion_tracker() -> None:
     descriptor = compile_playable_unit_descriptor("AbilityHero", no_emotions)
     validate_playable_unit_descriptor(descriptor)
     assert "fearResistant" not in descriptor["gameplay"]["simulation"]["resolved"]
+
+
+def test_highlander_body_policy_tracks_effective_primary_body() -> None:
+    path = "data/ini/object/units/test_units.ini"
+
+    inherited = _documents()
+    inherited[path] = inherited[path].replace(
+        b"Object InfantryMember\n",
+        b"Object InfantryMember\n"
+        b"  Body = HighlanderBody ModuleTag_Body\n"
+        b"    MaxHealth = 200\n"
+        b"  End\n",
+        1,
+    ).replace(
+        b"Object ReplacementMember\n",
+        b"ChildObject ReplacementMember InfantryMember\n",
+        1,
+    )
+    inherited_descriptor = compile_playable_unit_descriptor(
+        "ChildHorde", inherited
+    )
+    validate_playable_unit_descriptor(inherited_descriptor)
+    inherited_resolved = inherited_descriptor["gameplay"]["simulation"]["resolved"]
+    assert inherited_resolved["highlanderBody"]["value"] is True
+    assert inherited_resolved["highlanderBody"]["module"] == "HighlanderBody"
+    assert "module" not in inherited_resolved["memberHealth"]
+
+    replaced_with_active = deepcopy(inherited)
+    replaced_with_active[path] = replaced_with_active[path].replace(
+        b"ChildObject ReplacementMember InfantryMember\n",
+        b"ChildObject ReplacementMember InfantryMember\n"
+        b"  Body = ActiveBody ModuleTag_Body\n"
+        b"    MaxHealth = 150\n"
+        b"  End\n",
+        1,
+    )
+    active_descriptor = compile_playable_unit_descriptor(
+        "ChildHorde", replaced_with_active
+    )
+    active_resolved = active_descriptor["gameplay"]["simulation"]["resolved"]
+    assert active_resolved["memberHealth"]["value"] == 150
+    assert "highlanderBody" not in active_resolved
+
+    replaced_with_highlander = _documents()
+    replaced_with_highlander[path] = replaced_with_highlander[path].replace(
+        b"Object InfantryMember\n",
+        b"Object InfantryMember\n"
+        b"  Body = ActiveBody ModuleTag_Body\n"
+        b"    MaxHealth = 200\n"
+        b"  End\n",
+        1,
+    ).replace(
+        b"Object ReplacementMember\n",
+        b"ChildObject ReplacementMember InfantryMember\n"
+        b"  Body = HighlanderBody ModuleTag_Body\n"
+        b"    MaxHealth = 125\n"
+        b"  End\n",
+        1,
+    )
+    highlander_descriptor = compile_playable_unit_descriptor(
+        "ChildHorde", replaced_with_highlander
+    )
+    highlander_resolved = highlander_descriptor["gameplay"]["simulation"]["resolved"]
+    assert highlander_resolved["memberHealth"]["value"] == 125
+    assert highlander_resolved["highlanderBody"]["value"] is True
+    assert highlander_resolved["highlanderBody"]["module"] == "HighlanderBody"
+
+    corrupted = deepcopy(highlander_descriptor)
+    corrupted["gameplay"]["simulation"]["resolved"]["highlanderBody"]["module"] = (
+        "ActiveBody"
+    )
+    unsigned = dict(corrupted)
+    unsigned.pop("descriptorSha256")
+    corrupted["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(PlayableUnitCompilerError, match="HighlanderBody policy"):
+        validate_playable_unit_descriptor(corrupted)
+
+
+@pytest.mark.parametrize(
+    ("authored_filter", "excluded"),
+    [
+        ("", []),
+        ("    DeathTypes = ALL\n", []),
+        ("    DeathTypes = ALL -TOPPLED\n", ["TOPPLED"]),
+    ],
+)
+def test_destroy_die_compiles_measured_filters_and_consumes_module(
+    authored_filter: str, excluded: list[str]
+) -> None:
+    documents = _documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object HeroUnit\n",
+        (
+            "Object HeroUnit\n"
+            "  Behavior = DestroyDie ModuleTag_ImmediateRemoval\n"
+            f"{authored_filter}"
+            "  End\n"
+        ).encode("utf-8"),
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("HeroUnit", documents)
+    policies = descriptor["gameplay"]["simulation"]["resolved"]["destroyDie"]
+    assert len(policies) == 1
+    assert policies[0] == {
+        "ownerRole": "object",
+        "module": "DestroyDie",
+        "deathTypes": "ALL",
+        "excludedDeathTypes": excluded,
+        "sourceIni": path,
+        "line": policies[0]["line"],
+    }
+    assert policies[0]["line"] > 0
+    evidence = [
+        row
+        for row in descriptor["runtimeModuleEvidence"]
+        if row["kind"] == "DestroyDie"
+    ]
+    assert len(evidence) == 1
+    assert evidence[0]["consumed"] is True
+    assert "DestroyDie" not in descriptor["specialCapabilities"]
+    validate_playable_unit_descriptor(descriptor)
+    if excluded:
+        # The two measured ALL -TOPPLED retail carriers are cinematic and are
+        # not materialized by the playable-unit runtime. This assertion is
+        # compiler-consumption evidence, not a runtime execution claim.
+        assert policies[0]["ownerRole"] == "object"
+
+
+@pytest.mark.parametrize(
+    "unsupported_body",
+    [
+        "    DeathTypes = NONE +TOPPLED\n",
+        "    VeterancyLevels = LEVEL_1\n",
+        "    ExemptStatus = UNDER_CONSTRUCTION\n",
+    ],
+)
+def test_destroy_die_refuses_unmeasured_diemux_shapes(
+    unsupported_body: str,
+) -> None:
+    documents = _documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object HeroUnit\n",
+        (
+            "Object HeroUnit\n"
+            "  Behavior = DestroyDie ModuleTag_Unsupported\n"
+            f"{unsupported_body}"
+            "  End\n"
+        ).encode("utf-8"),
+        1,
+    )
+    with pytest.raises(
+        PlayableUnitCompilerError,
+        match=r"DestroyDie .* unsupported",
+    ):
+        compile_playable_unit_descriptor("HeroUnit", documents)
+
+
+def test_auto_acquire_enemies_when_idle_compiles_exact_flags() -> None:
+    documents = _documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object InfantryHorde\n",
+        (
+            b"Object InfantryHorde\n"
+            b"  Behavior = HordeAIUpdate ModuleTag_AI\n"
+            b"    AutoAcquireEnemiesWhenIdle = Yes ATTACK_BUILDINGS STEALTHED\n"
+            b"  End\n"
+        ),
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    contract = descriptor["gameplay"]["simulation"]["resolved"][
+        "autoAcquireEnemiesWhenIdle"
+    ]
+    assert contract["enabled"]["value"] is True
+    assert contract["attackBuildings"]["value"] is True
+    assert contract["whileStealthed"]["value"] is True
+    assert contract["sourceIni"] == path
+
+    absent = compile_playable_unit_descriptor("RangedHorde", documents)
+    assert (
+        "autoAcquireEnemiesWhenIdle"
+        not in absent["gameplay"]["simulation"]["resolved"]
+    )
+
+    # Aggregate ownership: a horde's HordeAIUpdate wins over its payload
+    # member's different AIUpdateInterface policy.
+    documents[path] = documents[path].replace(
+        b"Object InfantryMember\n",
+        (
+            b"Object InfantryMember\n"
+            b"  Behavior = AIUpdateInterface ModuleTag_MemberAI\n"
+            b"    AutoAcquireEnemiesWhenIdle = No\n"
+            b"  End\n"
+        ),
+        1,
+    )
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+    contract = descriptor["gameplay"]["simulation"]["resolved"][
+        "autoAcquireEnemiesWhenIdle"
+    ]
+    assert contract["enabled"]["value"] is True
+    assert contract["attackBuildings"]["value"] is True
+    assert contract["whileStealthed"]["value"] is True
+
+    # A singleton porter-style concrete subclass owns the same interface
+    # field; it must not fall back to legacy enabled behavior.
+    documents = _documents()
+    documents[path] = documents[path].replace(
+        b"Object SiegeUnit\n",
+        (
+            b"Object SiegeUnit\n"
+            b"  Behavior = DozerAIUpdate ModuleTag_DozerAI\n"
+            b"    AutoAcquireEnemiesWhenIdle = No\n"
+            b"  End\n"
+        ),
+        1,
+    )
+    descriptor = compile_playable_unit_descriptor("SiegeUnit", documents)
+    contract = descriptor["gameplay"]["simulation"]["resolved"][
+        "autoAcquireEnemiesWhenIdle"
+    ]
+    assert contract["enabled"]["value"] is False
+    assert contract["attackBuildings"]["value"] is False
+    assert contract["whileStealthed"]["value"] is False
+
+    # Retail cinematic/dragon objects author No with modifier bits. Preserve
+    # those bits even though enabled=false makes them inert at runtime.
+    documents = _documents()
+    documents[path] = documents[path].replace(
+        b"Object MonsterUnit\n",
+        (
+            b"Object MonsterUnit\n"
+            b"  Behavior = GiantBirdAIUpdate ModuleTag_BirdAI\n"
+            b"    AutoAcquireEnemiesWhenIdle = No ATTACK_BUILDINGS\n"
+            b"  End\n"
+        ),
+        1,
+    )
+    descriptor = compile_playable_unit_descriptor("MonsterUnit", documents)
+    contract = descriptor["gameplay"]["simulation"]["resolved"][
+        "autoAcquireEnemiesWhenIdle"
+    ]
+    assert contract["enabled"]["value"] is False
+    assert contract["attackBuildings"]["value"] is True
+    assert contract["whileStealthed"]["value"] is False
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "Yes ATTACK_BUILDINGS ATTACK_BUILDINGS",
+        "Yes ATTACK_BUILDINGS UNKNOWN_FLAG",
+        "Yes,ATTACK_BUILDINGS",
+    ),
+)
+def test_auto_acquire_enemies_when_idle_rejects_invalid_tokens(value: str) -> None:
+    documents = _documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object InfantryHorde\n",
+        (
+            "Object InfantryHorde\n"
+            "  Behavior = HordeAIUpdate ModuleTag_AI\n"
+            f"    AutoAcquireEnemiesWhenIdle = {value}\n"
+            "  End\n"
+        ).encode("utf-8"),
+        1,
+    )
+
+    with pytest.raises(PlayableUnitCompilerError, match="AutoAcquireEnemiesWhenIdle"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+@pytest.mark.parametrize("milliseconds", (20, 250, 500, 2500, 5000))
+def test_mood_attack_check_rate_compiles_exact_milliseconds(
+    milliseconds: int,
+) -> None:
+    documents = _documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object InfantryHorde\n",
+        (
+            "Object InfantryHorde\n"
+            "  Behavior = HordeAIUpdate ModuleTag_AI\n"
+            "    AutoAcquireEnemiesWhenIdle = Yes\n"
+            f"    MoodAttackCheckRate = {milliseconds}\n"
+            "  End\n"
+        ).encode("utf-8"),
+        1,
+    )
+
+    descriptor = compile_playable_unit_descriptor("InfantryHorde", documents)
+    contract = descriptor["gameplay"]["simulation"]["resolved"][
+        "moodAttackCheckRate"
+    ]
+    assert contract["milliseconds"]["value"] == milliseconds
+    assert contract["sourceIni"] == path
+    assert contract["semantic"] == "AIUpdateInterface.MoodAttackCheckRate"
+    absent = compile_playable_unit_descriptor("RangedHorde", documents)
+    assert "moodAttackCheckRate" not in absent["gameplay"]["simulation"]["resolved"]
+
+
+@pytest.mark.parametrize("value", ("0", "-1", "1.5", "RATE_500", "500 ms"))
+def test_mood_attack_check_rate_rejects_non_retail_forms(value: str) -> None:
+    documents = _documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object InfantryHorde\n",
+        (
+            "Object InfantryHorde\n"
+            "  Behavior = HordeAIUpdate ModuleTag_AI\n"
+            "    AutoAcquireEnemiesWhenIdle = Yes\n"
+            f"    MoodAttackCheckRate = {value}\n"
+            "  End\n"
+        ).encode("utf-8"),
+        1,
+    )
+    with pytest.raises(PlayableUnitCompilerError, match="MoodAttackCheckRate"):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+
+def test_mood_attack_check_rate_requires_policy_and_refuses_conflicts() -> None:
+    documents = _documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"Object InfantryHorde\n",
+        (
+            b"Object InfantryHorde\n"
+            b"  Behavior = HordeAIUpdate ModuleTag_AI\n"
+            b"    MoodAttackCheckRate = 500\n"
+            b"  End\n"
+        ),
+        1,
+    )
+    with pytest.raises(
+        PlayableUnitCompilerError,
+        match="without AutoAcquireEnemiesWhenIdle",
+    ):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
+
+    documents[path] = documents[path].replace(
+        b"    MoodAttackCheckRate = 500\n",
+        (
+            b"    AutoAcquireEnemiesWhenIdle = Yes\n"
+            b"    MoodAttackCheckRate = 500\n"
+            b"  End\n"
+            b"  Behavior = HordeAIUpdate ModuleTag_ConflictingAI\n"
+            b"    AutoAcquireEnemiesWhenIdle = Yes\n"
+            b"    MoodAttackCheckRate = 250\n"
+        ),
+        1,
+    )
+    with pytest.raises(
+        PlayableUnitCompilerError,
+        match="disagree on MoodAttackCheckRate",
+    ):
+        compile_playable_unit_descriptor("InfantryHorde", documents)
 
 
 # ---------------------------------------------------------------------------

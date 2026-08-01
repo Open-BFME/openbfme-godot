@@ -24,6 +24,10 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	if OS.get_cmdline_user_args().has("--manifest-only"):
+		_run_faction_manifest_checks()
+		_finish()
+		return
 	var content_db = root.get_node_or_null("ContentDB")
 	if content_db == null:
 		_fail("ContentDB autoload is missing")
@@ -137,20 +141,88 @@ func _run() -> void:
 
 
 func _run_faction_manifest_checks() -> void:
+	var deferred_production_exit := [{
+		"module": "QueueProductionExitUpdate",
+		"unitCreatePoint": {
+			"authored": "X:14 Y:0 Z:0",
+			"value": {"x": 14.0, "y": 0.0, "z": 0.0},
+			"sourceIni": "data/ini/object/fixture.ini",
+			"line": 50,
+		},
+		"naturalRallyPoint": {
+			"authored": "X:75 Y:0 Z:0",
+			"value": {"x": 75.0, "y": 0.0, "z": 0.0},
+			"sourceIni": "data/ini/object/fixture.ini",
+			"line": 51,
+		},
+		"exitDelay": {
+			"authored": "50",
+			"value": 50,
+			"unit": "milliseconds",
+			"sourceIni": "data/ini/object/fixture.ini",
+			"line": 52,
+		},
+		"allowAirborneCreation": {
+			"authored": "No",
+			"value": false,
+			"sourceIni": "data/ini/object/fixture.ini",
+			"line": 53,
+		},
+		"initialBurst": {
+			"authored": "0",
+			"value": 0,
+			"defaulted": true,
+		},
+		"deferredFields": [{
+			"name": "PlacementViewAngle",
+			"authored": "45",
+			"sourceIni": "data/ini/object/fixture.ini",
+			"line": 54,
+			"reason": "bfme-field-without-local-runtime-oracle",
+		}],
+		"runtimeStatus": "deferred",
+		"sourceIni": "data/ini/object/fixture.ini",
+		"line": 49,
+	}]
 	# Retail-shaped citadel: an engine-spawned fortress composite which carries
 	# the fortress command set (the porter construct button lives there).
 	var fixture_citadel := _fixture_document("FixtureCitadel", "fixturecitadel", "", 3000, true, false)
-	((fixture_citadel.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)["trainedCommandSets"] = [{
+	var citadel_gameplay := (
+		(fixture_citadel.get("registration", {}) as Dictionary)
+		.get("gameplay", {}) as Dictionary
+	)
+	citadel_gameplay["trainedCommandSets"] = [{
 		"id": "FixtureFortressCommandSet",
 		"kind": "direct",
 		"slots": [{"slot": 1, "commandId": "Command_ConstructFixturePorter"}],
 	}]
+	citadel_gameplay["productionExitUpdates"] = deferred_production_exit.duplicate(true)
 	var fixture_porter := _fixture_unit_document("FixturePorter", "FixtureCitadel", 1)
 	var fixture_porter_production: Array = (fixture_porter.get("registration", {}) as Dictionary).get("production", []) as Array
 	(fixture_porter_production[0] as Dictionary)["commandSetId"] = "FixtureFortressCommandSet"
+	var fixture_monster_pen := _fixture_document(
+		"FixtureMonsterPen", "fixturemonsterpen"
+	)
+	(
+		(fixture_monster_pen.get("registration", {}) as Dictionary)
+		.get("gameplay", {}) as Dictionary
+	)["inheritUpgradesOnCreate"] = [{
+		"radius": {"authored": "400", "value": 400.0},
+		"upgradeId": "Upgrade_FixtureStonework",
+		"upgradeType": "OBJECT",
+		"objectFilter": "ANY +FixtureCitadel",
+		"sourceObjectId": "FixtureCitadel",
+		"module": "InheritUpgradeCreate",
+		"sourceIni": "data/ini/object/fixture.ini",
+		"line": 42,
+	}]
+	(
+		(fixture_monster_pen.get("registration", {}) as Dictionary)
+		.get("gameplay", {}) as Dictionary
+	)["productionExitUpdates"] = deferred_production_exit.duplicate(true)
 	var structures := {
 		"FixtureFortress": _fixture_document("FixtureFortress", "fixturefortress", "fixturemonsterpen", 5000),
-		"FixtureMonsterPen": _fixture_document("FixtureMonsterPen", "fixturemonsterpen"),
+		"FixtureMonsterPen": fixture_monster_pen,
 		"FixtureCitadel": fixture_citadel,
 	}
 	var units := {
@@ -168,6 +240,286 @@ func _run_faction_manifest_checks() -> void:
 	var build_rule: Dictionary = (manifest.get("structure_build_rules", {}) as Dictionary).get("monsterpen", {}) as Dictionary
 	_check(int(build_rule.get("cost", -1)) == 300 and is_equal_approx(float(build_rule.get("seconds", 0.0)), 30.0), "build rules parse BuildCost/BuildTime scalars")
 	_check((manifest.get("producer_kind_registry", {}) as Dictionary) == {"FixtureFortress": "fortress", "FixtureMonsterPen": "monsterpen", "FixtureCitadel": "fortress"}, "producer registry maps source objects to kinds, folding the proven citadel into the fortress")
+	_check(
+		(manifest.get("structure_source_object_ids", {}) as Dictionary).get(
+			"fortress", []
+		) == ["FixtureCitadel", "FixtureFortress"],
+		"manifest preserves the proven composite citadel as an exact fortress source identity"
+	)
+	var inherit_rules: Array = (
+		manifest.get("structure_inherit_upgrades", {}) as Dictionary
+	).get("monsterpen", [])
+	_check(
+		inherit_rules.size() == 1
+			and String((inherit_rules[0] as Dictionary).get("sourceObjectId", ""))
+			== "FixtureCitadel"
+			and String((inherit_rules[0] as Dictionary).get("sourceKind", ""))
+			== "fortress"
+			and float(
+				(
+					(inherit_rules[0] as Dictionary).get("radius", {})
+					as Dictionary
+				).get("value", 0.0)
+			) == 400.0,
+		"manifest projects the exact InheritUpgradeCreate contract"
+	)
+	var deferred_exit_rules: Dictionary = (
+		manifest.get("deferred_structure_production_exit_updates", {})
+		as Dictionary
+	)
+	var deferred_exit_ids := deferred_exit_rules.keys()
+	deferred_exit_ids.sort()
+	_check(
+		deferred_exit_ids == ["FixtureCitadel", "FixtureMonsterPen"],
+		"manifest preserves QueueProductionExitUpdate for materialized and excluded structures"
+	)
+	var monster_pen_exit_rules: Array = deferred_exit_rules.get(
+		"FixtureMonsterPen", []
+	) as Array
+	_check(
+		monster_pen_exit_rules.size() == 1
+			and String(
+				(monster_pen_exit_rules[0] as Dictionary).get("runtimeStatus", "")
+			) == "deferred"
+			and int(
+				(
+					(monster_pen_exit_rules[0] as Dictionary).get("exitDelay", {})
+					as Dictionary
+				).get("value", -1)
+			) == 50,
+		"manifest keeps the exact deferred production-exit evidence without promoting it"
+	)
+	_check(
+		not manifest.has("structure_production_exit_updates"),
+		"manifest exposes no executable QueueProductionExitUpdate contract"
+	)
+	var promoted_exit_structures := structures.duplicate(true)
+	var promoted_exit_pen: Dictionary = (
+		promoted_exit_structures["FixtureMonsterPen"] as Dictionary
+	).duplicate(true)
+	promoted_exit_structures["FixtureMonsterPen"] = promoted_exit_pen
+	var promoted_exit_registration: Dictionary = (
+		promoted_exit_pen.get("registration", {}) as Dictionary
+	).duplicate(true)
+	promoted_exit_pen["registration"] = promoted_exit_registration
+	var promoted_exit_gameplay: Dictionary = (
+		promoted_exit_registration.get("gameplay", {}) as Dictionary
+	).duplicate(true)
+	promoted_exit_registration["gameplay"] = promoted_exit_gameplay
+	var promoted_exit_rules: Array = (
+		promoted_exit_gameplay.get("productionExitUpdates", []) as Array
+	).duplicate(true)
+	promoted_exit_gameplay["productionExitUpdates"] = promoted_exit_rules
+	var promoted_exit_rule: Dictionary = (
+		promoted_exit_rules[0] as Dictionary
+	).duplicate(true)
+	promoted_exit_rules[0] = promoted_exit_rule
+	promoted_exit_rule["runtimeStatus"] = "simulation-backed"
+	var promoted_exit_manifest := FactionManifest.from_registries(
+		"fixture", units, promoted_exit_structures
+	)
+	_check(
+		String(promoted_exit_manifest.get("_error", "")).contains(
+			"invalid deferred QueueProductionExitUpdate"
+		),
+		"manifest rejects QueueProductionExitUpdate promoted without runtime support"
+	)
+	var reordered_exit := deferred_production_exit.duplicate(true)
+	var reordered_exit_point := (
+		(reordered_exit[0] as Dictionary).get("unitCreatePoint", {}) as Dictionary
+	)
+	reordered_exit_point["authored"] = "Y:0 X:14 Z:0"
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", reordered_exit
+		).contains("invalid QueueProductionExitUpdate coordinate"),
+		"manifest rejects a re-signed production-exit coordinate with out-of-order axes"
+	)
+	var drifted_exit := deferred_production_exit.duplicate(true)
+	var drifted_exit_point := (
+		((drifted_exit[0] as Dictionary).get("unitCreatePoint", {}) as Dictionary)
+		.get("value", {}) as Dictionary
+	)
+	drifted_exit_point["x"] = 15.0
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", drifted_exit
+		).contains("invalid QueueProductionExitUpdate coordinate"),
+		"manifest rejects a re-signed production-exit coordinate whose authored and value forms drift"
+	)
+	var aliased_boolean_exit := deferred_production_exit.duplicate(true)
+	var aliased_boolean := (
+		((aliased_boolean_exit[0] as Dictionary).get(
+			"allowAirborneCreation", {}
+		) as Dictionary)
+	)
+	aliased_boolean["authored"] = "False"
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", aliased_boolean_exit
+		).contains("invalid QueueProductionExitUpdate boolean"),
+		"manifest rejects non-INI boolean aliases in re-signed production-exit evidence"
+	)
+	var drifted_boolean_exit := deferred_production_exit.duplicate(true)
+	var drifted_boolean := (
+		((drifted_boolean_exit[0] as Dictionary).get(
+			"allowAirborneCreation", {}
+		) as Dictionary)
+	)
+	drifted_boolean["authored"] = "Yes"
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", drifted_boolean_exit
+		).contains("invalid QueueProductionExitUpdate boolean"),
+		"manifest rejects re-signed production-exit booleans whose authored and value forms drift"
+	)
+	var mixed_case_boolean_exit := deferred_production_exit.duplicate(true)
+	var mixed_case_boolean := (
+		((mixed_case_boolean_exit[0] as Dictionary).get(
+			"allowAirborneCreation", {}
+		) as Dictionary)
+	)
+	mixed_case_boolean["authored"] = "nO"
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", mixed_case_boolean_exit
+		) == "",
+		"manifest accepts case-insensitive authored Yes/No when the stored boolean agrees"
+	)
+	for scalar_drift in [
+		{"field": "exitDelay", "member": "authored", "value": "51"},
+		{"field": "exitDelay", "member": "value", "value": 51},
+		{"field": "initialBurst", "member": "authored", "value": "1"},
+		{"field": "initialBurst", "member": "value", "value": 1},
+	]:
+		var drifted_scalar_exit := deferred_production_exit.duplicate(true)
+		var drifted_scalar := (
+			((drifted_scalar_exit[0] as Dictionary).get(
+				String(scalar_drift["field"]), {}
+			) as Dictionary)
+		)
+		drifted_scalar[String(scalar_drift["member"])] = scalar_drift["value"]
+		_check(
+			FactionManifest._validate_structure_production_exit_updates(
+				"FixtureMonsterPen", drifted_scalar_exit
+			).contains("invalid QueueProductionExitUpdate integer"),
+			"manifest rejects re-signed %s %s drift"
+			% [scalar_drift["field"], scalar_drift["member"]]
+		)
+	var resolved_define_exit := deferred_production_exit.duplicate(true)
+	var resolved_define_delay := (
+		((resolved_define_exit[0] as Dictionary).get("exitDelay", {}) as Dictionary)
+	)
+	resolved_define_delay["authored"] = "FIXTURE_EXIT_DELAY"
+	resolved_define_delay["resolvedDefine"] = {
+		"name": "FIXTURE_EXIT_DELAY",
+		"value": 50,
+	}
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", resolved_define_exit
+		) == "",
+		"manifest accepts internally consistent define-resolved unsigned evidence"
+	)
+	var drifted_define_exit := resolved_define_exit.duplicate(true)
+	(
+		((drifted_define_exit[0] as Dictionary).get("exitDelay", {}) as Dictionary)
+		.get("resolvedDefine", {}) as Dictionary
+	)["name"] = "OTHER_EXIT_DELAY"
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", drifted_define_exit
+		).contains("invalid QueueProductionExitUpdate integer"),
+		"manifest rejects re-signed define-resolution identity drift"
+	)
+	for unknown_field_attack in [
+		"row",
+		"coordinate",
+		"coordinate-value",
+		"integer",
+		"resolved-define",
+		"boolean",
+		"deferred",
+	]:
+		var unknown_exit := resolved_define_exit.duplicate(true)
+		var unknown_row := unknown_exit[0] as Dictionary
+		var unknown_target: Dictionary
+		match unknown_field_attack:
+			"row":
+				unknown_target = unknown_row
+			"coordinate":
+				unknown_target = unknown_row["unitCreatePoint"] as Dictionary
+			"coordinate-value":
+				unknown_target = (
+					(unknown_row["unitCreatePoint"] as Dictionary)["value"]
+					as Dictionary
+				)
+			"integer":
+				unknown_target = unknown_row["initialBurst"] as Dictionary
+			"resolved-define":
+				unknown_target = (
+					(unknown_row["exitDelay"] as Dictionary)["resolvedDefine"]
+					as Dictionary
+				)
+			"boolean":
+				unknown_target = (
+					unknown_row["allowAirborneCreation"] as Dictionary
+				)
+			_:
+				unknown_target = (
+					(unknown_row["deferredFields"] as Array)[0] as Dictionary
+				)
+		unknown_target["ignoredProjectionField"] = true
+		_check(
+			FactionManifest._validate_structure_production_exit_updates(
+				"FixtureMonsterPen", unknown_exit
+			) != "",
+			"manifest refuses unknown-field projection in QueueProductionExitUpdate %s schema"
+			% unknown_field_attack
+		)
+	var mistyped_default_exit := deferred_production_exit.duplicate(true)
+	var mistyped_default_row := mistyped_default_exit[0] as Dictionary
+	mistyped_default_row["initialBurst"] = {
+		"authored": "0",
+		"value": 0,
+		"defaulted": "true",
+	}
+	_check(
+		FactionManifest._validate_structure_production_exit_updates(
+			"FixtureMonsterPen", mistyped_default_exit
+		).contains("invalid QueueProductionExitUpdate integer"),
+		"manifest rejects a non-boolean defaulted marker"
+	)
+	var unresolved_structures := structures.duplicate(true)
+	var unresolved_pen: Dictionary = (
+		unresolved_structures["FixtureMonsterPen"] as Dictionary
+	).duplicate(true)
+	unresolved_structures["FixtureMonsterPen"] = unresolved_pen
+	var unresolved_registration: Dictionary = (
+		unresolved_pen.get("registration", {}) as Dictionary
+	).duplicate(true)
+	unresolved_pen["registration"] = unresolved_registration
+	var unresolved_gameplay: Dictionary = (
+		unresolved_registration.get("gameplay", {}) as Dictionary
+	).duplicate(true)
+	unresolved_registration["gameplay"] = unresolved_gameplay
+	var unresolved_rules: Array = (
+		unresolved_gameplay.get("inheritUpgradesOnCreate", []) as Array
+	).duplicate(true)
+	unresolved_gameplay["inheritUpgradesOnCreate"] = unresolved_rules
+	var unresolved_rule: Dictionary = (unresolved_rules[0] as Dictionary).duplicate(true)
+	unresolved_rules[0] = unresolved_rule
+	unresolved_rule["sourceObjectId"] = "MissingCitadel"
+	unresolved_rule["objectFilter"] = "ANY +MissingCitadel"
+	var unresolved_manifest := FactionManifest.from_registries(
+		"fixture", units, unresolved_structures
+	)
+	_check(
+		String(unresolved_manifest.get("_error", "")).contains(
+			"resolves to 0 live structure kinds"
+		),
+		"manifest rejects an unresolved InheritUpgradeCreate source alias"
+	)
 	var fixture_rules: Dictionary = manifest.get("unit_production_rules", {}) as Dictionary
 	var fixture_monster_rule: Dictionary = fixture_rules.get("bfme2.object.fixture-monster", {}) as Dictionary
 	_check(
@@ -246,7 +598,19 @@ func _run_faction_manifest_checks() -> void:
 	var foreign_units := units.duplicate(true)
 	foreign_units["FixtureStray"] = _fixture_unit_document("FixtureStray", "GondorBarracks", 50)
 	var missing_producer := FactionManifest.from_registries("fixture", foreign_units, structures)
-	_check(String(missing_producer.get("_error", "")).contains("GondorBarracks"), "unknown producer fails closed naming the structure")
+	var missing_producer_excluded := false
+	for exclusion_value in missing_producer.get("excluded_units", []) as Array:
+		var exclusion := exclusion_value as Dictionary
+		if (
+			String(exclusion.get("object_id", "")) == "FixtureStray"
+			and String(exclusion.get("reason", "")) == "producer-not-loaded:GondorBarracks"
+		):
+			missing_producer_excluded = true
+			break
+	_check(
+		not missing_producer.has("_error") and missing_producer_excluded,
+		"unknown producer route fails closed by excluding the unit with the exact structure identity"
+	)
 	var empty_faction := FactionManifest.from_registries("rohan", units, structures)
 	_check(String(empty_faction.get("_error", "")).contains("rohan"), "unconverted faction fails closed naming the faction")
 	# Men with empty registries keeps the legacy default manifest; with full
@@ -385,7 +749,17 @@ func _loadable_unit_document(object_id: String, producer_object_id: String) -> D
 				"primaryMemberObjectId": object_id,
 				"members": [{"objectId": object_id, "count": 1}],
 			},
-			"gameplay": {},
+			"gameplay": {
+				"armor": {
+					"setId": "FixtureUnitArmor",
+					"semantic": "authored-armor-set",
+					"table": {
+						"default": {"percent": 100.0},
+						"damageScalar": {"percent": 100.0},
+						"scalars": {},
+					},
+				},
+			},
 			"simulation": {
 				"displayName": "%s Display" % object_id,
 				"buildCost": 700,
@@ -402,6 +776,19 @@ func _loadable_unit_document(object_id: String, producer_object_id: String) -> D
 				},
 				"movement": {"acceleration": 100.0, "braking": 100.0, "turnRateDegreesPerSecond": 360.0},
 				"formation": {"memberCount": 1, "positions": [{"x": 0.0, "y": 0.0}]},
+				"resolved": {
+					"armor": {
+						"setId": "FixtureUnitArmor",
+						"semantic": "authored-armor-set",
+						"table": {
+							"default": {"percent": 100.0},
+							"damageScalar": {"percent": 100.0},
+							"scalars": {},
+						},
+						"upgrades": [],
+					},
+					"combat": {"damageType": "slash", "upgrades": []},
+				},
 			},
 			"capabilities": [{"id": "move"}],
 			"visual": {
@@ -487,9 +874,23 @@ func _fixture_unit_document(object_id: String, producer_object_id: String, damag
 					"attackRange": 30.0, "minimumAttackRange": 0.0,
 					"delayBetweenShotsMs": 1000.0, "preAttackDelayMs": 250.0,
 					"firingDurationMs": 250.0, "damage": damage,
+					"damageType": "slash",
 				},
 				"movement": {"acceleration": 100.0, "braking": 100.0, "turnRateDegreesPerSecond": 360.0},
 				"formation": {"memberCount": 1, "positions": [{"x": 0.0, "y": 0.0}]},
+				"resolved": {
+					"armor": {
+						"setId": "FixtureUnitArmor",
+						"semantic": "authored-armor-set",
+						"table": {
+							"default": {"percent": 100.0},
+							"damageScalar": {"percent": 100.0},
+							"scalars": {},
+						},
+						"upgrades": [],
+					},
+					"combat": {"damageType": "slash", "upgrades": []},
+				},
 			},
 			"capabilities": [{"id": "move"}],
 			"visual": {"components": [], "coreAnimations": {}},
@@ -637,6 +1038,15 @@ func _fixture_document(object_id: String, slug: String, asset_slug: String = "",
 		"registration": {
 			"production": production,
 			"gameplay": {
+				"armor": {
+					"setId": "FixtureStructureArmor",
+					"semantic": "authored-armor-set",
+					"table": {
+						"default": {"percent": 100.0},
+						"damageScalar": {"percent": 100.0},
+						"scalars": {},
+					},
+				},
 				"health": {
 					"primary": health_primary,
 					"evidence": [],

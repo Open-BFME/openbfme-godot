@@ -48,18 +48,20 @@ const FORBIDDEN_IN_RESOLVER := [
 ]
 
 ## LIVENESS ARITHMETIC.
-##   27 checks need no converted data at all: 6 on the rules table, 8 on the
-##      roller, 6 on the Risk contest, 2 on the source scan, 5 on the refusals.
-##   24 more need retail's auto-resolve tables AND the unit bindings AND a
+##   30 checks need no converted data at all: 6 on the rules table, 8 on the
+##      roller, 6 on the Risk contest, 2 on the source scan, 5 on the refusals,
+##      3 on the unmodelled-behaviour register.
+##   32 more need retail's auto-resolve tables AND the unit bindings AND a
 ##      living-world document: 5 on the corrected census, 4 on the roster-to-unit
 ##      conversion, 13 on a whole battle and its working, 7 on the two-peer
-##      determinism proof. 27 + 29 = 56.
+##      determinism proof, 3 proving retail's own data justifies the named gaps.
+##      30 + 32 = 62.
 ##
 ## THREE OF THOSE THIRTEEN EXIST BECAUSE A MUTATION SURVIVED, and each says so
 ## where it stands: a factor deleted from the order, and a survivor that had
 ## forgotten which army it belonged to, both left every earlier check green.
-const CHECKS_WITHOUT_DATA := 27
-const CHECKS_WITH_DATA := 56
+const CHECKS_WITHOUT_DATA := 30
+const CHECKS_WITH_DATA := 62
 
 var _passed := 0
 var _failed := 0
@@ -73,6 +75,7 @@ func _initialize() -> void:
 	_check_the_risk_contest_matches_its_own_stated_arithmetic()
 	_check_nothing_on_this_path_can_read_a_clock()
 	_check_a_battle_without_a_commitment_seed_refuses()
+	_check_the_unmodelled_register_is_honest()
 
 	var model := AutoResolve.new()
 	var rules_found: Dictionary = model.locate_and_load(_roots())
@@ -89,6 +92,7 @@ func _initialize() -> void:
 	print("living-world doc    : %s" % (String(located.get("path", "")) if bool(located.get("ok", false)) else "NONE"))
 
 	if have_everything:
+		_check_retails_own_data_justifies_the_named_gaps(model.rules, bound)
 		_check_the_bindings_report_the_corrected_census(bound)
 		_check_a_roster_becomes_units_with_retails_hitpoints(model.rules, bound)
 		_check_a_whole_battle_resolves_and_shows_its_working(model.rules, bound)
@@ -360,7 +364,50 @@ func _check_a_battle_without_a_commitment_seed_refuses() -> void:
 			])["units"] as Array).is_empty())
 
 
+## THE HONEST REGISTER. Retail models things in auto-resolve this resolver does
+## not, and the register in `wotr_autoresolve_battle.gd` names each one with
+## its evidence and the reason nothing was invented. These checks make the
+## register load-bearing: an entry cannot vanish without a deliberate edit
+## here, and an empty reason cannot pose as an entry.
+func _check_the_unmodelled_register_is_honest() -> void:
+	var register: Dictionary = Battle.UNMODELLED_RETAIL_BEHAVIOUR
+	_check("the_register_names_the_fortress_combatant_gap",
+		register.has("fortress_combatant"))
+	_check("the_register_names_the_region_bonus_gap",
+		register.has("region_bonus_modifiers"))
+	var every_entry_reasons := not register.is_empty()
+	for key in register.keys():
+		var reason := String(register[key])
+		# A reason must say what retail does AND why nothing was invented; a
+		# one-liner cannot do both.
+		if reason.length() < 120 or not reason.to_lower().contains("retail"):
+			every_entry_reasons = false
+	_check("every_register_entry_carries_evidence_and_a_reason", every_entry_reasons)
+
+
 # --- with the converted data ---------------------------------------------------
+
+
+## THE GAPS ARE RETAIL'S FACTS, NOT THEORIES. The fortress gap only exists
+## because retail really does auto-resolve a standing fortress as a unit; if
+## these rows ever left the converted tables, the register entry would be
+## stale and this check reddens either way.
+func _check_retails_own_data_justifies_the_named_gaps(
+	rules_in: Dictionary, bound: Bindings
+) -> void:
+	var unit_types: Array = rules_in.get("unitTypes", [])
+	_check("retail_types_the_fortress_as_an_auto_resolve_unit",
+		unit_types.has("AutoResolveUnit_Fortress"), str(unit_types))
+	_check("retail_authors_live_fortress_combat_blocks",
+		(rules_in.get("armors", {}) as Dictionary).has("AutoResolve_MenFortressArmor")
+			and (rules_in.get("weapons", {}) as Dictionary).has("AutoResolve_MenFortressWeapon")
+			and (rules_in.get("bodies", {}) as Dictionary).has("AutoResolve_MenFortressBody"))
+	_check("retail_binds_real_fortress_objects_onto_those_blocks",
+		(bound.objects() as Dictionary).has("MenFortress")
+			and (bound.objects() as Dictionary).has("MordorFortress"))
+
+
+# --- with the converted data (continued) -----------------------------------------
 
 
 func _check_the_bindings_report_the_corrected_census(bound: Bindings) -> void:

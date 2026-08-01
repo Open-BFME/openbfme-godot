@@ -29,7 +29,18 @@ const SCHEMA := "openbfme.wotr-battle-request"
 ## it is derived from authoritative state, so the brief stays a pure function of
 ## the state it was built from and its digest stays the chain link between the
 ## strategic and tactical hashes.
-const SCHEMA_VERSION := 2
+##
+## VERSION 3 closes the STRATEGIC half of three register entries by carrying:
+##   * the region's territory membership plus BOTH sides' unified-territory
+##     rosters and summed bonuses (`region_bonus_modifiers`' strategic half);
+##   * the region's standing strategic buildings, verbatim tokens, alongside
+##     the fort flag and purse the brief already carried (`prebuilt_fortress`'
+##     strategic half);
+##   * each hero army's campaign level from the hero ledger and each side's
+##     fallen heroes (`carried_hero_state`'s strategic half);
+##   * `data_gaps`, naming the retail data the document does NOT record, so the
+##     tactical side can never mistake "not carried" for "does not exist".
+const SCHEMA_VERSION := 3
 
 ## Named capabilities a real battle needs that the retail-slice simulation does
 ## not expose today. These are requirements, not excuses: each one is a thing a
@@ -38,28 +49,75 @@ const SCHEMA_VERSION := 2
 ## * `reinforcement_schedule` - retail feeds armies in one at a time,
 ##   `SecondsPerReinforcement` apart (900s in BFME2, 300s in RotWK). The slice
 ##   spawns its whole roster at match start.
-## * `carried_hero_state` - a WOTR hero keeps its level and its revive timer
-##   between battles, and early battles cap that level. The slice starts every
-##   hero fresh.
-## * `prebuilt_fortress` - a region with `CreateAutoFort` (or a built fort)
-##   starts the battle with a standing fortress and the reduced
-##   `StartingCashRTSWithFort` purse.
 ## * `battle_outcome_report` - the strategic layer needs the surviving roster
 ##   back, not just a winner, to write armies back into the region.
-## * `region_bonus_modifiers` - per-region and unified-territory attack/defence/
-##   experience/resource bonuses have to reach the tactical rules.
 ## `battle_outcome_report` has LEFT this list. It named the gap that the
 ## strategic layer needed the surviving roster back, not just a winner - and
 ## that is exactly what auto-resolve now returns and `apply_attrition()` now
 ## writes. The gap remains open for TACTICAL battles, and is named separately as
 ## `tactical_battle_outcome_report` so the two cannot be confused: an
 ## auto-resolved battle reports survivors, a fought one still reports a boolean.
+##
+## `carried_hero_state`, `prebuilt_fortress` and `region_bonus_modifiers` have
+## LEFT this list the same way, under the same renaming discipline: the brief
+## now CARRIES each of them (schema version 3 above says exactly what), so the
+## strategic half of each gap is closed and asserted closed by the strategic
+## runner. What remains open is CONSUMPTION - the tactical sim still starts
+## every hero fresh, still builds no authored fortress or building, and still
+## applies no region or territory bonus - and each remainder is named with a
+## `tactical_` prefix so it can never be confused with the closed half:
+##
+## * `tactical_carried_hero_state` - the brief's `hero_level` and
+##   `fallen_heroes` must set each hero's starting level and revival ledger in
+##   the match, and the level must come back out in the outcome report.
+## * `tactical_prebuilt_fortress` - the brief's `has_fort` and
+##   `standing_buildings` must become a standing fortress (and, once the LW_*
+##   macro expansions are recorded, standing buildings) on the battlefield; the
+##   reduced purse already arrives via `settings.starting_cash`.
+## * `tactical_region_bonus_modifiers` - the brief's region `bonuses`,
+##   `bonus_macros` and each side's `territory_bonuses` must reach the tactical
+##   (and auto-resolve) combat rules.
 const UNSUPPORTED_BY_TACTICAL_SIM := [
-	"carried_hero_state",
-	"prebuilt_fortress",
-	"region_bonus_modifiers",
 	"reinforcement_schedule",
 	"tactical_battle_outcome_report",
+	"tactical_carried_hero_state",
+	"tactical_prebuilt_fortress",
+	"tactical_region_bonus_modifiers",
+]
+
+## Named RETAIL DATA this brief cannot carry because the living-world document
+## (and the gamedata macro table) does not record it. FAIL-CLOSED companions to
+## the capability list above: each names something a parity implementation
+## would need, states where the hole is, and is carried in the brief so the
+## tactical side reads the absence instead of assuming a default.
+##
+## * `early_battle_hero_level_cap` - retail caps a WOTR hero's level in early
+##   battles; no cap ladder appears anywhere in the document or the gamedata
+##   `#define` table, so heroes carry their exact ledger level uncapped and the
+##   cap remains unimplementable without new extraction.
+## * `strategic_hero_revival` - the document authors the RTS-side revival
+##   multipliers (`initial_revival_cost_milli`, `initial_revival_time_milli`,
+##   both in `settings`) but NO strategic-turn revival rule, so a fallen hero
+##   stays fallen and re-placing one is refused by name.
+## * `lw_building_macro_expansion` - the buildings retail pre-places on the
+##   strategic map are `LW_FORT`/`LW_BARRACKS`/`LW_ARMORY`/`LW_FARM`
+##   preprocessor macros the importer recorded as unexpandable gaps; the brief
+##   carries the TOKENS verbatim in `standing_buildings` and interprets none of
+##   them - in particular a standing `LW_FORT` token does NOT set `has_fort`,
+##   because equating the two would be a reading retail never wrote down.
+## * `fortress_object_template` - `has_fort` says a fortress STANDS but cannot
+##   say WHICH: the region's `fortress` block records a display name and a
+##   portrait, not an object template, and no faction->fortress mapping appears
+##   in the document. Auto-resolve's fortress-combatant consumer (see
+##   `UNMODELLED_RETAIL_BEHAVIOUR.fortress_combatant` in
+##   `wotr_autoresolve_battle.gd`) needs a template its bindings can answer
+##   for, and deriving `MenFortress` from `FactionMen` would be a guessed
+##   mapping wearing a lookup's costume.
+const UNRECORDED_BY_LIVING_WORLD_DATA := [
+	"early_battle_hero_level_cap",
+	"fortress_object_template",
+	"lw_building_macro_expansion",
+	"strategic_hero_revival",
 ]
 
 
@@ -109,7 +167,20 @@ static func build_request(
 			"cp_limit": world.region_cp_limit(region_id),
 			"ally_cp_limit": world.region_ally_cp_limit(region_id),
 			"bonuses": region.get("bonuses", {}),
+			# The bonuses retail authored as MACROS (`FERTILE_TERRITORY_BONUS`),
+			# carried symbolically exactly as the world carries them; resolving
+			# them is the macro table's job, and an absent table must read as
+			# "unresolved", never as zero.
+			"bonus_macros": region.get("bonus_macros", {}),
+			# The territory this region belongs to, so the tactical side can say
+			# WHY a territory bonus applies. "" for a region outside every group.
+			"territory": String(world.territory_of(region_id).get("effect_name", "")),
 			"has_fort": has_fort,
+			# STANDING STRATEGIC BUILDINGS, from authoritative state, verbatim
+			# LW_* tokens (see `lw_building_macro_expansion` in the data-gap
+			# register - they are carried, not interpreted).
+			"standing_buildings": state.buildings_in_region(region_id),
+			"building_spot_count": int(region.get("building_spot_count", 0)),
 		},
 		"attacker": _side(world, state, attacker, staging),
 		"defender": _side(world, state, defender, region_id),
@@ -120,6 +191,7 @@ static func build_request(
 			"initial_revival_time_milli": int(settings.get("initial_revival_time_milli", -1)),
 		},
 		"unsupported": UNSUPPORTED_BY_TACTICAL_SIM,
+		"data_gaps": UNRECORDED_BY_LIVING_WORLD_DATA,
 	}
 
 
@@ -156,6 +228,9 @@ static func _side(
 			"staging_region": region_id,
 			"armies": [],
 			"command_points": 0,
+			"unified_territories": PackedStringArray(),
+			"territory_bonuses": {},
+			"fallen_heroes": [],
 		}
 	var seat := state.players[player] as Dictionary
 	var rows: Array[Dictionary] = []
@@ -169,6 +244,12 @@ static func _side(
 			"army_id": id,
 			"kind": String(army.get("kind", "")),
 			"hero_template": String(army.get("hero_template", "")),
+			# THE HERO'S CAMPAIGN LEVEL, from the ledger the strategic hash
+			# covers - the level this hero must START the battle at, uncapped
+			# because no early-battle cap ladder is recorded anywhere (see
+			# `early_battle_hero_level_cap` in the data-gap register). 0 for a
+			# garrison army, which has no hero to carry.
+			"hero_level": state.hero_level(String(army.get("hero_template", ""))),
 			"entries": roster.get("entries", []),
 			"command_points": int(army.get("command_points", 0)),
 			# THE ARMY AS IT STANDS RIGHT NOW, wounds and all. `entries` is the
@@ -195,4 +276,15 @@ static func _side(
 		"staging_region": region_id,
 		"armies": rows,
 		"command_points": total,
+		# THIS SIDE'S UNIFIED TERRITORIES and their summed bonuses, derived from
+		# the same hashed ownership map everything else here derives from. The
+		# names ride alongside the totals so the tactical side can report WHICH
+		# unification granted what, not merely a number.
+		"unified_territories": world.unified_territories(state.region_owner, player),
+		"territory_bonuses": world.territory_bonus_totals(state.region_owner, player),
+		# The seat's fallen heroes: name, the level they fell at, the turn they
+		# fell. What a revival rule would consume, carried so the tactical side
+		# can at least refuse to field them - a fallen hero arriving fresh would
+		# be the silent resurrection this ledger exists to prevent.
+		"fallen_heroes": state.fallen_heroes(player),
 	}

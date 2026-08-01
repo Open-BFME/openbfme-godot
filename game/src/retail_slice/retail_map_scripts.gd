@@ -82,6 +82,26 @@ const IMPLEMENTED_ACTIONS := {
 	"PLAYER_SET_MONEY": true,
 }
 
+# Literal tables required by importer RuntimeOpcodeContractTests
+# (sage_scripts.py parses `const NAME := { "OPCODE": true, ... }`).
+# Must stay identical to IMPLEMENTED_* above.
+const SEMANTIC_CONDITIONS := {
+	"CONDITION_TRUE": true,
+	"CONDITION_FALSE": true,
+	"COUNTER": true,
+	"FLAG": true,
+	"TIMER_EXPIRED": true,
+}
+const SEMANTIC_ACTIONS := {
+	"SET_COUNTER": true,
+	"INCREMENT_COUNTER": true,
+	"SET_FLAG": true,
+	"SET_MILLISECOND_TIMER": true,
+	"PLAYER_SET_MONEY": true,
+}
+const RECORDED_ACTIONS := {
+}
+
 # Interpreter variable state. Counter and flag namespaces are shared across
 # all loaded scripts, matching the retail per-player script environment.
 var counters: Dictionary = {}

@@ -1,6 +1,8 @@
 extends Node
 ## Fixed-step simulation clock. Gameplay time is independent of FPS.
 
+const BootProfile = preload("res://src/core/boot_profile.gd")
+
 const TICK_HZ := 10.0
 const TICK_DT := 1.0 / TICK_HZ
 
@@ -47,3 +49,8 @@ func step(n: int = 1) -> void:
 		time += TICK_DT
 		tick_index += 1
 		ticked.emit(TICK_DT)
+
+## See events.gd:_init - per-autoload compile attribution for the boot profiler.
+## No-op unless boot profiling is on.
+func _init() -> void:
+	BootProfile.mark("autoload_compiled:SimClock")

@@ -1,21 +1,24 @@
 ; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
 config_version=5
 
 [application]
 
-run/flush_stdout_on_print=true
-
 config/name="Open BFME"
 config/description="Desktop BFME2-inspired skirmish RTS (moddable)"
-; Shown bottom-left in the shell. The menu reads this setting and renders
-; "build version not set" when it is empty rather than inventing a number -
-; a stale hardcoded version is what made an older build claim to be newer
-; work than it was. Bump this when cutting a release.
 config/version="0.2.0-alpha"
-run/main_scene="res://scenes/boot.tscn"
+run/main_scene="res://scenes/startup_boot.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
-boot_splash/show_image=false
-boot_splash/bg_color=Color(0, 0, 0, 1)
+run/flush_stdout_on_print=true
+boot_splash/bg_color=Color(0.012, 0.027, 0.04, 1)
+boot_splash/stretch_mode=0
+boot_splash/image="res://icon_ring.png"
 config/icon="res://icon.svg"
 
 [autoload]
@@ -27,11 +30,15 @@ ContentDB="*res://src/content/content_db.gd"
 GameState="*res://src/core/game_state.gd"
 GameAudio="*res://src/core/game_audio.gd"
 
+[debug]
+
+gdscript/warnings/infer_variant=0
+gdscript/warnings/treat_warnings_as_errors=false
+
 [display]
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
-window/size/mode=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
@@ -102,14 +109,3 @@ stance_cycle={
 [rendering]
 
 anti_aliasing/quality/msaa_3d=2
-lights_and_shadows/directional_shadow/size=4096
-
-[debug]
-
-gdscript/warnings/infer_variant=0
-gdscript/warnings/return_value_discarded=0
-gdscript/warnings/untyped_declaration=0
-gdscript/warnings/unsafe_method_access=0
-gdscript/warnings/unsafe_cast=0
-gdscript/warnings/unsafe_call_argument=0
-gdscript/warnings/treat_warnings_as_errors=false

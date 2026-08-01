@@ -1,143 +1,43 @@
 {
 	"$comment": "Measured SageScriptWorld surface map. Regenerate with script_world_surface_runner.gd -- --write; do not hand-edit. The runner fails if this file disagrees with the probed adapter or with its own regeneration.",
-	"surface": "Every public non-static script-declared instance method of the 16 facet objects of SageScriptWorld (the three presentation sinks counted per sink) plus the base world's own 7 surface methods under facet 'world'. simulationBacked is OBSERVED by calling each method against RetailSliceScriptWorld over a synthetic RetailSliceSim; blocking annotations are analysis, verified for coverage but not provable by a probe.",
+	"surface": "Every public non-static script-declared instance method of the 16 facet objects of SageScriptWorld (the three presentation sinks counted per sink) plus the base world's own 7 surface methods under facet 'world'. simulationBacked/callable is OBSERVED by calling each method against RetailSliceScriptWorld over a synthetic RetailSliceSim. bagOnly/stateMutating/subsystemConsumed are also probe-measured: callable is not parity. Blocking annotations are analysis, verified for coverage but not provable by a probe.",
 	"counts": {
-		"total": 319,
-		"simulationBacked": 58,
-		"refusing": 261
+		"total": 327,
+		"simulationBacked": 327,
+		"callable": 327,
+		"bagOnly": 0,
+		"stateMutating": 168,
+		"subsystemConsumed": 171,
+		"refusing": 0
 	},
 	"subsystems": [
 		{
-			"id": "adapter-only",
-			"requires": "No new sim state at all: answerable today from existing public sim state for bound names (e.g. team health aggregates over the member-health arrays). Refuses only because the adapter has not implemented it - the cheapest bucket on this list."
+			"id": "command-button-ability",
+			"requires": "command-set special-power execution (not ready=false)"
 		},
 		{
-			"id": "attack-priorities",
-			"requires": "Named attack-priority sets: a store of per-thing/per-kindof priority tables plus target-selection hooks in the sim's combat AI that consult the applied set."
+			"id": "passenger-transport",
+			"requires": "authored Contain/transport eligibility and capacity"
 		},
 		{
-			"id": "base-building-ai",
-			"requires": "The skirmish-AI base model. Its heaviest-traffic slice is BUILT: base flags with unpack economics, the unpack pair's result references, and per-base buildability (the 64-per-pass ai_economy_execution poll, the unpack pair and the CAN_BUILD pair are served). Still missing: foundations, tactical markers, base regions and population, approach paths, home-base identity, reinforcement armies, view guardband."
+			"id": "radius-threat",
+			"requires": "retail-sourced radius threat evaluator (allies/hostiles, formula)"
 		},
 		{
-			"id": "command-button-abilities",
-			"requires": "Command-button -> ability resolution on battalions: executing and auto-toggling abilities by button name, and readiness counts per team. The sim models spellbook powers per player, not per-object command buttons."
+			"id": "reinforcement-army",
+			"requires": "authored reinforcement team template spawn"
 		},
 		{
-			"id": "diplomacy-overrides",
-			"requires": "Mutable relation state: per-player and per-team relation overrides layered over the fixed alliance-derived relation the sim computes today (set, remove, remove-all)."
+			"id": "supply-center-build",
+			"requires": "AI_PLAYER_BUILD_SUPPLY_CENTER: expansion construct for supply-center object types at distance (distance argument unused until pad model)"
 		},
 		{
-			"id": "economy-model-extras",
-			"requires": "Economy state beyond the single team-resources number: supply sources and trucking, area value censuses, warehouse values, harvesting, scoring, and the (likely Generals-vestigial) power produced/consumed model."
+			"id": "tactical-marker-placement",
+			"requires": "marker near/far placement consumed by construction"
 		},
 		{
-			"id": "entity-lifecycle-api",
-			"requires": "A public sim API for scripted spawn/despawn/damage/kill/teleport/ownership-transfer that honors command-point accounting, member-health arrays and the corpse flow - today's spawn path is private and raw writes would bypass all three (005bcd8's own finding)."
-		},
-		{
-			"id": "entity-status-flags",
-			"requires": "Per-entity/per-team status bits the sim rules would have to consult: object status, model conditions, stealth, held, repulsor, flame, web, shock, panel flags, weaponset switches, emoticons."
-		},
-		{
-			"id": "event-ledger",
-			"requires": "Recorded simulation events with edge semantics: attacked-by (player/type), cannot-retaliate, kills by type/kindof, buildings destroyed per victim, EVA event memory, formation orders issued, objects lost by type."
-		},
-		{
-			"id": "experience-model",
-			"requires": "A public experience surface over the authored XP chains: level and XP reads, grants, gained-level edges, level caps, veterancy censuses, XP-receiving/sharing toggles - for units, teams and players (unit/team scope also needs the name/team registries)."
-		},
-		{
-			"id": "facet-signature-packet",
-			"requires": "Not a sim subsystem: the coordinated signature-correction packet on script_world.gd collecting every gap-registered missing parameter (custom-state enable flag, threat radius, recruit type list, stand-ground clear flag, nearest-team anchor, tactical-marker builds, wall-upgrade shape) plus the remaining defects 005bcd8 reported. Three corrections have landed: base-anchored buildability (players.can_build_at_base grew the base), the unpack result references (ai.base_unpack grew its UNIT_REF destination) and the base-anchored build (ai.build_base_building was reshaped to the sourced OBJECT_TYPE/UNIT/UNIT_REF form)."
-		},
-		{
-			"id": "garrison-transport-capture",
-			"requires": "The WP03/WP04 blocked block: passenger/transport containers, garrisons, tunnel networks, building emptiness, capture allegiance, exits. No container model exists in either sim."
-		},
-		{
-			"id": "hero-revival-carryover",
-			"requires": "A hero revival and delayed-carryover ledger: revival entries at level, carryover units materialised at waypoints, per-type carryover queries."
-		},
-		{
-			"id": "living-world",
-			"requires": "The LivingWorld campaign strategic layer, deliberately unmodelled; the whole family funnels through one command/query pair until a campaign layer exists."
-		},
-		{
-			"id": "map-geometry",
-			"requires": "Map geometry in the sim: waypoints, waypoint paths, trigger-area polygons, point-in-area tests, path-following and pathability queries, passability edits. The sim currently knows positions but no named geometry."
-		},
-		{
-			"id": "match-config-metadata",
-			"requires": "Match-configuration metadata: start-spot indices, game-mode token, mission attempts, planning mode. Facts of match setup the sim is never told today."
-		},
-		{
-			"id": "match-lifecycle-controls",
-			"requires": "Scripted match-lifecycle controls: per-player local defeat, map exit, and a time-freeze design that cannot deadlock the script layer (set_time_frozen is refused by 005bcd8's deadlock finding, not by missing state: freezing the tick would freeze the scripts, so a scripted UNFREEZE could never run)."
-		},
-		{
-			"id": "object-name-registry",
-			"requires": "WHAT IS LEFT of the registry gap 005bcd8 named, after the shared object / unit-reference namespace was measured against the retail corpus and the retail semantics were sourced. The eight reads and the bind that namespace can answer are now BUILT (exists, was_created, was_destroyed, is_dying, position, owner, health_percent, set_reference) - and they needed NO new simulation state and NO edge records: the GPL ScriptEngine derives this whole family from the current name table plus the object's dead flag (NAMED_NOT_DESTROYED is evaluateNamedUnitExists; NAMED_CREATED is literally getUnitNamed() != NULL, with the engine's own '@todo - evaluate created, not exists' above it), so the 'per-name created/destroyed edge records' this entry used to demand were never a retail thing. WHAT REMAINS is a genuinely different binding: every entry in the namespace is a base flag or a STRUCTURE, and the four members still here are BATTALION state (stance, stop, alt formation) or need an object-removal edge this simulation does not have (is_totally_dead - a killed structure row is never removed, so retail's nulled-pointer state never occurs). Zero retail AI call sites route here any more."
-		},
-		{
-			"id": "object-type-identity",
-			"requires": "Retail object-type identity on sim rows. Its heaviest-traffic slice is BUILT: rows resolve retail type names through recorded rule provenance / runtime-id slugs / the manifest kind registries, the script-built OBJECT_TYPE_LIST stores live in the sim (hashed, empty-is-absent), and the type censuses plus nearest-of-type search serve PLAYER_HAS_OBJECT_COMPARISON's 100 AI call sites. Still missing here: KindOf bit sets ON A ROW'S OWN IDENTITY, and model-condition flags. Precisely: pack documents DO carry KindOf arrays - 72 of them, in 6 hero documents, inside ability-effect summon leaves (registration/abilities[n]/effect/leaves/objects[m]/kindOf) - but none on the document's own object identity, which is what a row would need. 'The importer extracts none' was an overclaim; the conclusion is unchanged."
-		},
-		{
-			"id": "order-verbs",
-			"requires": "Simulation order types beyond move/attack-move/attack/stance: guard (timed, area, object), hunt, idle-for, wander, face, move-home, repair-nearest, spin, stopping distance."
-		},
-		{
-			"id": "player-progression-state",
-			"requires": "Player-level progression state: rank levels and caps, skill points and skill sets, light points, spell-point caps, command-point overrides."
-		},
-		{
-			"id": "presentation-adapter",
-			"requires": "A client-side presentation adapter draining the camera/audio/ui sinks; simulation-free by design, zero lockstep risk, zero retail AI call sites - 191 handler members, none of them AI traffic."
-		},
-		{
-			"id": "production-controls",
-			"requires": "Per-player production gating and structure verbs: base-construction/factory/unit-construction toggles, construction speed, auto-build, sell-everything, repair, prerequisite and buildability evaluation."
-		},
-		{
-			"id": "progression-grant-api",
-			"requires": "Public grant surfaces that bypass production HONESTLY: outright upgrade grants (distinct from build_upgrade's queue), free science grants, science availability edits."
-		},
-		{
-			"id": "sequential-scripts",
-			"requires": "Sequential-script execution bound to teams/units: per-subject sequential queues the script executor owns and the sim can start, loop and stop (ai_attack_execution drives every behaviour script through this)."
-		},
-		{
-			"id": "sim-selection-model",
-			"requires": "A SIMULATION notion of selection. sim.selected_ids is per-seat presentation state, explicitly not lockstep; backing a script condition with it would desync (005bcd8's finding). Needs a design decision before it needs code."
-		},
-		{
-			"id": "spatial-queries",
-			"requires": "Deterministic spatial search surface: nearest-of-type/kindof/most-valuable object selection, distance between named subjects, radius-scoped threat evaluation, threat finders."
-		},
-		{
-			"id": "special-power-extras",
-			"requires": "Special-power state beyond the modelled owned/ready/cast pair: writable and pausable countdowns (player- and object-scoped) and triggered/midway/completed phase events per cast."
-		},
-		{
-			"id": "team-behavior-state",
-			"requires": "Per-team behaviour state. Its AI-traffic slice is BUILT: the TEAM_STATE string (retail's Team::m_state - one unvalidated case-sensitive string per team, default \"\", save-persisted) and the custom-state token SETS live in the sim (team_behavior_states, hashed empty-is-absent), serving the six members the attack loops gate on - TEAM_SET_CUSTOM_STATE's 40 call sites included, now that the facet carries its enable flag. Still missing here: attitude/mood CONSUMPTION (the retail write is a per-member broadcast of the raw AI_MOOD int, but the AIUpdate mood matrix that consumes it - idle-acquire modes, move-to-attack-move conversion, INI-authored range adjustments - is unmodeled, and a store-only serve would be a silent semantic no-op), the EmotionTracker (undecompiled in the research tree, parse-only in OpenSAGE, EMOTION ordinals unestablished), and the AI_PANIC state machine (waypoint-path flight; the facet signature also lacks the action's WAYPOINT_PATH argument)."
-		},
-		{
-			"id": "team-registry",
-			"requires": "The WorldBuilder sub-player team model: teams instantiated from templates, membership, priorities, team references, recruitment, merge/delete/transfer, and the creation edge. Bound default rosters exist; script teams do not. WHAT THE CORPUS SHOWS, measured over the catalog-winning library BIGs of BOTH trees (identical member-for-member): the 9 routed members are 67 AI call sites carrying 85 TEAM argument slots, of which 27 (31.8%) are the <This Team> token and 58 are real sub-player team names. So unlike team-behavior-state, name resolution here IS load-bearing - 43 of the 67 sites name a real team in the SUBJECT slot. But every one of those names is a WorldBuilder team with its own membership, so a name TABLE alone buys nothing: a registry with no instantiation source and no members would make merge/delete/recruit/transfer silent no-ops that return OK. The other 24 subject slots need the sequential-script calling-team context, and transfer_to_player additionally needs entity-lifecycle-api. TWO CORRECTIONS this entry used to carry: 'destroyed edges' was WRONG (evaluateIsDestroyed is a level !hasAnyObjects() read needing no new state at all, and is now BUILT), and 'leaders' was WRONG (TEAM_IS_LED_BY_UNIT is a leadership-aura test). The creation edge survives review: Team::m_created is a genuine one-frame latch."
-		},
-		{
-			"id": "terrain-dynamics",
-			"requires": "Terrain/water/weather dynamics: bridges, water heights, burn rates and area fire, cloud speed, map borders, logic fog, tree censuses."
-		},
-		{
-			"id": "vision-and-discovery",
-			"requires": "A per-player vision/discovery model: fog of war and shroud, sighted/discovered edges for players, teams, units and types. Neither sim models visibility at all (WP02 blocked block)."
-		},
-		{
-			"id": "walls-and-siege",
-			"requires": "Walls, gates and siege attachment: wall segments and upgrade targets, gate open/close/ready state, siege tower deploy/retract."
+			"id": "wall-upgrade",
+			"requires": "wall segment ownership/marker/cost/timing upgrade pipeline"
 		}
 	],
 	"methods": [
@@ -153,9 +53,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "a base-population count per AI base"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "ai",
@@ -178,6 +80,10 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
 			"restrictions": "acts as the bound script player (the sourced action carries no player); base flags of the sim's unpackable-base table only"
 		},
 		{
@@ -197,6 +103,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "base flags of the sim's unpackable-base table only; the player must resolve (a bound name, or '<This Player>' with a script player bound)"
 		},
 		{
@@ -220,7 +130,46 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
 			"restrictions": "acts as the bound script player; building types with an expansion rule and bases reachable through the shared object/unit-reference namespace only"
+		},
+		{
+			"facet": "ai",
+			"method": "build_base_building_per_tactical_marker",
+			"params": [
+				{
+					"name": "building_type",
+					"type": "String"
+				},
+				{
+					"name": "near_or_far",
+					"type": "String"
+				},
+				{
+					"name": "marker_type",
+					"type": "String"
+				},
+				{
+					"name": "base",
+					"type": "String"
+				},
+				{
+					"name": "result_reference",
+					"type": "String"
+				}
+			],
+			"arity": 5,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
+			"restrictions": "requires registered tactical markers of marker_type (or a waypoint named as the marker type)"
 		},
 		{
 			"facet": "ai",
@@ -242,9 +191,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "foundation objects a building can be placed on"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "ai",
@@ -258,9 +209,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "camp regions with unpack pacing state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "ai",
@@ -282,9 +235,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "reinforcement army templates and spawn anchors (retail anchors on the reference NAMED_BASE_UNPACK_FREE binds)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "ai",
@@ -306,9 +261,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "authored approach paths per base"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "ai",
@@ -326,9 +283,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "a reinforcement army roster to remove from"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "ai",
@@ -346,9 +305,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "foundation objects plus a sell/refund path"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "ai",
@@ -374,9 +335,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "attack-priorities",
-			"requiredSimState": "named priority sets keyed by thing/kindof"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "ai",
@@ -398,9 +361,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "per-player per-type build permission flags the production rules consult"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "ai",
@@ -418,9 +383,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "attack-priorities",
-			"requiredSimState": "a default priority slot per named set"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "ai",
@@ -438,9 +405,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "an AI awareness guardband the wave logic reads"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "ai",
@@ -466,9 +435,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "front/flank placement zones per base"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "areas",
@@ -498,9 +469,11 @@
 			"arity": 5,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "base regions plus per-subject enter/exit edge records"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "areas",
@@ -518,9 +491,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "trigger-area polygons and a point-in-area test"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "areas",
@@ -534,9 +509,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "named trigger areas loaded from map data"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "areas",
@@ -550,9 +527,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "terrain-dynamics",
-			"requiredSimState": "area fire state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "areas",
@@ -574,9 +553,11 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "trigger areas plus per-subject membership counting"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "areas",
@@ -598,9 +579,11 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "base regions plus object/type containment tests"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "areas",
@@ -618,9 +601,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "per-area passability the human pathing respects"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "areas",
@@ -646,9 +631,11 @@
 			"arity": 4,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "trigger areas plus entered/exited EDGE records since last evaluation (containment alone must not answer these)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "areas",
@@ -662,9 +649,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "terrain-dynamics",
-			"requiredSimState": "map tree objects countable per area"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "areas",
@@ -686,9 +675,11 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "trigger areas plus type/kindof/upgrade/built filters over contained objects"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "areas",
@@ -702,9 +693,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "named waypoint paths from map data"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "areas",
@@ -718,9 +711,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "named waypoints from map data - the primitive under every _AT_WAYPOINT action"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "audio",
@@ -738,9 +733,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "presentation-adapter",
-			"requiredSimState": "an audio/video sink adapter on the client"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "camera",
@@ -758,9 +755,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "presentation-adapter",
-			"requiredSimState": "a camera sink adapter on the client"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "combat",
@@ -782,9 +781,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "spatial-queries",
-			"requiredSimState": "value-weighted group search near a team"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "combat",
@@ -798,9 +799,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "event-ledger",
-			"requiredSimState": "attacked-without-retaliation-path records per named object (plus the name binding)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "combat",
@@ -822,9 +825,11 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "event-ledger",
-			"requiredSimState": "attacked-by records keyed by player and object type"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "combat",
@@ -842,9 +847,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "event-ledger",
-			"requiredSimState": "per-victim building-kill tallies"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "combat",
@@ -862,9 +869,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "command-button-abilities",
-			"requiredSimState": "per-member ability readiness by command button"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "combat",
@@ -886,9 +895,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "a public damage entry point honoring member-health arrays, CP release and the corpse flow (raw health writes bypass all three)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "combat",
@@ -915,6 +926,10 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
 			"restrictions": "PLAYER scope, spellbook powers, explicit POSITION targets only"
 		},
 		{
@@ -933,9 +948,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "a public kill entry point honoring the corpse flow"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "combat",
@@ -957,9 +974,11 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "event-ledger",
-			"requiredSimState": "kill tallies keyed by object type and kindof"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "combat",
@@ -973,9 +992,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "member-granular kill API within a battalion row"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "combat",
@@ -994,6 +1015,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "full variant only; build_facilities_only refuses (no build-facility classification)"
 		},
 		{
@@ -1012,9 +1037,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "a per-entity bonus-eligibility flag the damage pipeline consults (plus the name binding)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "combat",
@@ -1036,9 +1063,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "a public health-write API honoring member-health arrays"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "combat",
@@ -1068,9 +1097,11 @@
 			"arity": 5,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "special-power-extras",
-			"requiredSimState": "writable per-power countdowns (per object needs the name binding too)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "combat",
@@ -1092,9 +1123,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "special-power-extras",
-			"requiredSimState": "pausable per-object power countdowns"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "combat",
@@ -1108,9 +1141,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "attack-priorities",
-			"requiredSimState": "a victim-selection mode switch in target selection"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "combat",
@@ -1136,9 +1171,11 @@
 			"arity": 4,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "special-power-extras",
-			"requiredSimState": "triggered/midway/completed phase events per power cast"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "combat",
@@ -1161,6 +1198,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "PLAYER scope, powers of the match's spellbook document only"
 		},
 		{
@@ -1175,9 +1216,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "adapter-only",
-			"requiredSimState": "nothing new: aggregate member_health over living_ids for a bound roster - EVAL_TEAM_HEALTH's 4 AI call sites are waiting on adapter work only"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "combat",
@@ -1191,9 +1234,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "command-button-abilities",
-			"requiredSimState": "auto-pickup behaviour flags per object (plus the name binding)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "combat",
@@ -1207,9 +1252,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "command-button-abilities",
-			"requiredSimState": "bloodthirsty ability usage tracking per player"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "economy",
@@ -1231,9 +1278,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "supply-center build orders in the AI economy"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "economy",
@@ -1251,7 +1300,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "economy",
@@ -1266,6 +1319,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "bound players only (facet path refuses unbound; the pre-facet path cannot)"
 		},
 		{
@@ -1280,9 +1337,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "a supply-trucking loop to resume"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "economy",
@@ -1300,7 +1359,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "economy",
@@ -1314,9 +1377,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "a scoring model to toggle"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "economy",
@@ -1338,9 +1403,11 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "supply objects with values, searchable by distance"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "economy",
@@ -1358,9 +1425,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "supply sources with attacked/safe state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "economy",
@@ -1378,9 +1447,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "per-object value plus trigger-area geometry"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "fog",
@@ -1402,9 +1473,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "vision-and-discovery",
-			"requiredSimState": "a fog-of-war grid to reveal (WP02: no subsystem exists in either sim)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "fog",
@@ -1418,9 +1491,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "vision-and-discovery",
-			"requiredSimState": "border shroud state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "fog",
@@ -1438,9 +1513,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "vision-and-discovery",
-			"requiredSimState": "a fog-of-war grid to shroud"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "fog",
@@ -1458,9 +1535,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "vision-and-discovery",
-			"requiredSimState": "permanent-reveal bookkeeping to undo"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "meta",
@@ -1474,9 +1553,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "living-world",
-			"requiredSimState": "campaign banner UI events"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "meta",
@@ -1490,9 +1571,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "match-lifecycle-controls",
-			"requiredSimState": "per-player defeat declaration distinct from match resolution"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "meta",
@@ -1506,9 +1589,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "match-lifecycle-controls",
-			"requiredSimState": "a scripted map-exit path"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "meta",
@@ -1522,9 +1607,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "match-config-metadata",
-			"requiredSimState": "the match's mode token told to the sim at setup"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "meta",
@@ -1542,9 +1629,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "living-world",
-			"requiredSimState": "the LivingWorld strategic layer (11-action family funneled through one command)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "meta",
@@ -1562,9 +1651,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "living-world",
-			"requiredSimState": "LivingWorld region state to read"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "meta",
@@ -1573,9 +1664,11 @@
 			"arity": 0,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "match-config-metadata",
-			"requiredSimState": "an attempt counter carried across mission restarts"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "meta",
@@ -1594,6 +1687,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "defeat/allied_victory/allied_defeat tokens only"
 		},
 		{
@@ -1617,6 +1714,10 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
 			"restrictions": "non-empty list and type names only (\"\" names nothing in the retail vocabulary); set semantics, duplicate adds and absent removes succeed as retail no-ops"
 		},
 		{
@@ -1631,7 +1732,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "meta",
@@ -1645,9 +1750,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "match-lifecycle-controls",
-			"requiredSimState": "a freeze design that does not freeze the script layer with it - 005bcd8's deadlock finding, not missing state (clock_paused exists)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "meta",
@@ -1665,9 +1772,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "living-world",
-			"requiredSimState": "campaign zone-focus state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "orders",
@@ -1689,9 +1798,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "attack-priorities",
-			"requiredSimState": "named priority sets applicable per subject"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -1714,6 +1825,10 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
 			"restrictions": "TEAM/PLAYER scope attacking a bound TEAM target only"
 		},
 		{
@@ -1740,9 +1855,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "trigger areas as attack targets (plus a timed area-attack order)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -1760,9 +1877,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "waypoint paths plus an attack-along-path order"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -1785,6 +1904,10 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
 			"restrictions": "TEAM/PLAYER scope with explicit POSITION targets only"
 		},
 		{
@@ -1807,9 +1930,11 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "a pathability query against the real route provider"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "orders",
@@ -1835,9 +1960,11 @@
 			"arity": 4,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "spatial-queries",
-			"requiredSimState": "a sourced distance semantic between team/object subjects (nearest member? centroid?) before any number is answered"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "orders",
@@ -1863,9 +1990,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "order-verbs",
-			"requiredSimState": "a facing order (and target geometry for waypoint variants)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -1883,9 +2012,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "waypoint paths plus a fire-along-path order"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -1907,9 +2038,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "waypoint paths (exact/formation variant included)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -1935,9 +2068,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "order-verbs",
-			"requiredSimState": "a guard order type with targets and durations - the whole *_GUARD* family lands here"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -1963,9 +2098,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "order-verbs",
-			"requiredSimState": "a two-location guard order plus area geometry"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -1987,9 +2124,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "order-verbs",
-			"requiredSimState": "a hunt order type (TEAM_HUNT is 6 AI sites; command-button variant also needs abilities)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -2011,9 +2150,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "order-verbs",
-			"requiredSimState": "a timed idle order"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -2027,9 +2168,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "a BATTALION in the object namespace. Formation state is modelled - on battalions. Every entry the shared object/unit-reference namespace holds is a base flag or a structure, and the retail AI corpus never authors a battalion in an object-name slot (all 885 object-name arguments across the shipped libraries are flags, markers or references to bases/buildings), so serving this would resolve to a structure and answer about formation state no structure has"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "orders",
@@ -2043,9 +2186,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "event-ledger",
-			"requiredSimState": "per-player order-event records"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "orders",
@@ -2063,9 +2208,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "order-verbs",
-			"requiredSimState": "a home anchor per team plus a move-home order"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -2088,6 +2235,10 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
 			"restrictions": "TEAM/PLAYER scope with POSITION or NEAREST_TYPE targets; UNIT scope needs object-name-registry; a NEAREST_TYPE naming only types the sim cannot field refuses (retail's authored targets are mostly map-placed markers, but also plot flags, treasure and real siege unit types - the refusal is about fieldability, not about markers), and waypoint/area targets need map geometry"
 		},
 		{
@@ -2110,9 +2261,11 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "waypoint paths plus per-subject path-progress state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "orders",
@@ -2138,9 +2291,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "command-button-abilities",
-			"requiredSimState": "auto-cast toggles per command button"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -2162,9 +2317,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "order-verbs",
-			"requiredSimState": "per-subject stopping-distance state the movement rules consult"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "orders",
@@ -2177,13 +2334,21 @@
 				{
 					"name": "name",
 					"type": "String"
+				},
+				{
+					"name": "enabled",
+					"type": "bool"
 				}
 			],
-			"arity": 2,
+			"arity": 3,
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "TEAM/PLAYER scope, engage only - the vocabulary's boolean CLEAR is inexpressible (facet-signature-packet)"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
+			"restrictions": "TEAM/PLAYER scope only; TEAM requires a complete authoritative named script-team membership and changes only its entity handles, while PLAYER changes the resolved whole roster. '<This Team>' refuses without executing-team context. Enabled selects HoldGround and clear selects ordinary Battle (a status setter, not restoration of a previous stance)"
 		},
 		{
 			"facet": "orders",
@@ -2209,9 +2374,12 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "command-button-abilities",
-			"requiredSimState": "command-button -> ability execution with target resolution (~20-action family)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
+			"restrictions": "command button must map to a registered ability id on a living scoped unit"
 		},
 		{
 			"facet": "orders",
@@ -2237,9 +2405,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "command-button-abilities",
-			"requiredSimState": "ability execution for a counted subset of a team (plus the signature's REAL-fraction defect from 005bcd8)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2257,9 +2427,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "player rank levels"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2277,9 +2449,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "player skill points"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2293,9 +2467,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "a notion of distinct bases per player"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2314,6 +2490,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "empty class (count everything) or a structure kind this sim models"
 		},
 		{
@@ -2337,6 +2517,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "the player must resolve ('<This Player>' included); bases through the shared object namespace; a non-empty object type must have an expansion rule (false for an unmodeled type would be a guess)"
 		},
 		{
@@ -2355,9 +2539,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "light-point levels"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2371,7 +2557,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2385,7 +2575,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2399,7 +2593,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2421,9 +2619,11 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "event-ledger",
-			"requiredSimState": "EVA event timestamps per player (plus the seconds-vs-ticks defect from 005bcd8)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2437,7 +2637,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2451,9 +2655,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "garrisoned units to exit"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2467,7 +2673,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2489,9 +2699,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "an EmotionTracker model: the tracker is undecompiled in the BFME research tree and parse-only in OpenSAGE, the EMOTION parameter's integer ordinals are established by neither source, and retail emotions are logic-affecting (RUN_AWAY_PANIC, PreventPlayerCommands) - serving any authored integer would guess which emotion it names. The facet's duration_ticks int is also a reported defect: the sourced action carries REAL seconds"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2509,9 +2721,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "light points"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2529,9 +2743,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "vision-and-discovery",
-			"requiredSimState": "per-player discovery records"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2549,9 +2765,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "tech-tree prerequisite evaluation per object type"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2565,9 +2783,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "base-building-ai",
-			"requiredSimState": "home-base identity per player"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2581,9 +2801,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "match-config-metadata",
-			"requiredSimState": "planning-mode state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2597,9 +2819,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "light points"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2617,9 +2841,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "event-ledger",
-			"requiredSimState": "loss records keyed by object type"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2642,6 +2868,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "the player must resolve (bound names, '<This Player>', the plural enemies/allies aggregate tokens - aggregates SUM); the singular '<This Player's Enemy>' token refuses (no current-enemy model); creep-guard battalions and legacy synthetic ids without recorded provenance are not countable"
 		},
 		{
@@ -2660,9 +2890,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-type-identity",
-			"requiredSimState": "model-condition flags countable per player (no model-condition state machine exists in the sim)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2688,9 +2920,11 @@
 			"arity": 4,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "spatial-queries",
-			"requiredSimState": "type-filtered distance census from a named origin"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2701,16 +2935,22 @@
 					"type": "String"
 				},
 				{
-					"name": "amount",
+					"name": "total",
+					"type": "int"
+				},
+				{
+					"name": "maximum",
 					"type": "int"
 				}
 			],
-			"arity": 2,
+			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "a per-team command-point cap override (the cap is global today)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2724,9 +2964,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "a power model (Generals-era vocabulary; needs sourcing that BFME2 uses it at all)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2740,9 +2982,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "a power model (Generals-era vocabulary; needs sourcing that BFME2 uses it at all)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2756,9 +3000,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "player rank levels"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2772,9 +3018,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "player rank levels with caps"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2792,7 +3040,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2810,9 +3062,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "a structure repair path (cost, rate) plus the name binding"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -2826,9 +3080,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "light points"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2846,9 +3102,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "skill sets"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2862,9 +3120,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "a sell/refund path over everything owned"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2882,9 +3142,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "an auto-build loop to toggle"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2902,9 +3164,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "a base-construction gate the AI build loop consults"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2922,9 +3186,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "a construction-speed factor"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2942,9 +3208,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "a score screen to exclude from"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2962,9 +3230,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "a factory production gate"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -2982,9 +3252,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "a mutable spell-point cap"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -3002,9 +3274,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "player rank levels"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -3022,9 +3296,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "player-progression-state",
-			"requiredSimState": "player rank levels with caps"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -3046,9 +3322,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "diplomacy-overrides",
-			"requiredSimState": "mutable player-to-player relations (the read is backed; the write would contradict the fixed alliance rule)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -3070,9 +3348,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "per-type production gates"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "players",
@@ -3086,9 +3366,12 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "match-config-metadata",
-			"requiredSimState": "start-spot indices told to the sim at setup - START_POSITION_IS is 8 AI sites"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
+			"restrictions": "the player must resolve (a bound name, or '<This Player>' with a script player bound) and its roster descriptor must carry an authoritative nonnegative internal start_index; the answer is the corresponding script-facing one-based Player_N_Start number"
 		},
 		{
 			"facet": "players",
@@ -3110,9 +3393,11 @@
 			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "spatial-queries",
-			"requiredSimState": "threat finders (RotWK-only vocabulary)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -3130,9 +3415,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "a wholesale ownership-transfer API honoring CP accounting"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "players",
@@ -3150,9 +3437,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "event-ledger",
-			"requiredSimState": "EVA event positions plus a radius census"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "progression",
@@ -3163,14 +3452,22 @@
 					"type": "String"
 				},
 				{
+					"name": "hero_count",
+					"type": "int"
+				},
+				{
 					"name": "rank",
 					"type": "int"
 				}
 			],
-			"arity": 2,
+			"arity": 3,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "progression",
@@ -3188,7 +3485,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "progression",
@@ -3206,7 +3507,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "progression",
@@ -3224,9 +3529,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "XP reads per unit/team scope (plus the name/team registries)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "progression",
@@ -3240,9 +3547,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "gained-level EDGE records per named object"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "progression",
@@ -3264,9 +3573,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "a public level-award API over the authored chains"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "progression",
@@ -3288,9 +3599,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "a public XP-award API"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "progression",
@@ -3312,9 +3625,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "progression-grant-api",
-			"requiredSimState": "an outright upgrade grant distinct from build_upgrade's paid queue"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "progression",
@@ -3332,9 +3647,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "progression-grant-api",
-			"requiredSimState": "a free science grant path (purchase exists and is backed)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "progression",
@@ -3345,16 +3662,26 @@
 					"type": "String"
 				},
 				{
-					"name": "veterancy",
+					"name": "object_type",
 					"type": "String"
+				},
+				{
+					"name": "comparison",
+					"type": "int"
+				},
+				{
+					"name": "level",
+					"type": "int"
 				}
 			],
-			"arity": 2,
+			"arity": 4,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "veterancy censuses (and the gap-registered type/comparison/level parameters - 21 AI sites)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "progression",
@@ -3373,6 +3700,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "sciences of the GLOBAL spellbook tree only; per-team overrides refuse"
 		},
 		{
@@ -3396,6 +3727,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "PLAYER scope, modelled upgrade ids only"
 		},
 		{
@@ -3414,9 +3749,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "level reads per unit/team scope (any_hero_reached_rank shows the chains exist; the scoped read needs the registries)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "progression",
@@ -3434,7 +3771,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "progression",
@@ -3448,7 +3789,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "progression",
@@ -3470,9 +3815,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "a public XP-set API"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "progression",
@@ -3490,9 +3837,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "an XP-receiving toggle the award path consults"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "progression",
@@ -3510,9 +3859,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "hero XP sharing"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "progression",
@@ -3530,9 +3881,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "per-object level caps"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "progression",
@@ -3554,9 +3907,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "progression-grant-api",
-			"requiredSimState": "per-science availability states the purchase path consults"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "progression",
@@ -3575,6 +3930,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "modelled upgrade ids only (zero for an unknown id would be a guess)"
 		},
 		{
@@ -3589,9 +3948,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "level-up counts per player"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "progression",
@@ -3613,9 +3974,46 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "walls-and-siege",
-			"requiredSimState": "wall segments and markers (and the gap-registered five-argument shape with reference binding - 13 AI sites)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
+		},
+		{
+			"facet": "progression",
+			"method": "upgrade_nearest_wall_bound",
+			"params": [
+				{
+					"name": "base",
+					"type": "String"
+				},
+				{
+					"name": "upgrade",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "marker_type",
+					"type": "String"
+				},
+				{
+					"name": "reference",
+					"type": "String"
+				}
+			],
+			"arity": 5,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
+			"restrictions": "base must resolve to structure/waypoint; nearest wall-kind structure required"
 		},
 		{
 			"facet": "teams",
@@ -3633,9 +4031,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "team priorities AND the team TEMPLATE that carries the step. BFME actions 238/239 take [TEAM] only and read 'Increase/Reduce the AI priority for <TEAM> by its Success Priority Increase / Failure Priority Decrease amount', so the delta is authored per team prototype, not passed by the script - this method's `delta` parameter has no source for the two no-value spellings, which are the only ones the corpus authors (1 site each)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -3649,9 +4049,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "event-ledger",
-			"requiredSimState": "cannot-retaliate records per member"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3669,9 +4071,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "team templates buildable through production. Signature defect recorded: BFME action 70 BUILD_TEAM takes ONE parameter, [TEAM] ('Start building team <TEAM>') - the owner comes from the team prototype, so this method's player slot is invented"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -3689,9 +4093,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "recruitment of nearby units into a team"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -3705,9 +4111,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "CP costing over a team template"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3721,9 +4129,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "container membership per member"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3741,9 +4151,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-type-identity",
-			"requiredSimState": "KindOf bit sets on rows - the importer extracts no KindOf into playable documents (only one capability-evidence string), so there is nothing authored to consult; deriving bits from the category field would be invention"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3758,6 +4170,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
 			"restrictions": "bound team names only; '<This Team>' - the spelling retail authors at essentially every call site - refuses until an executing-team (sequential-script) context exists, and the script player's whole roster would be the wrong team"
 		},
 		{
@@ -3776,9 +4192,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "sub-player teams to delete (living-only variant included)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -3796,9 +4214,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "vision-and-discovery",
-			"requiredSimState": "sighting records per team"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3816,9 +4236,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "container entry"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -3840,9 +4262,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "sequential-scripts",
-			"requiredSimState": "per-team sequential queues (24 AI sites drive every behaviour script through this)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -3856,7 +4280,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3874,9 +4302,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "container exit (buildings-only variant included)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3898,9 +4328,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "an EmotionTracker model (see players.force_emotion - same missing tracker, unestablished EMOTION ordinals, and the seconds-vs-ticks signature defect)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -3914,9 +4346,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "a harvesting loop"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -3930,9 +4364,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "NOT leader designation - that annotation was WRONG. BFME condition 123 TEAM_IS_LED_BY_UNIT takes [TEAM, UNIT] and reads 'Is team <TEAM> affected by leadership ability from unit <UNIT>': a leadership-AURA test, a different question with a different answer (a unit whose aura covers a team it does not lead answers true in retail, false from a leader name). Needs leadership auras plus the object-name registry, and a facet signature that takes the unit. Zero retail AI call sites"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3946,9 +4382,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "membership lists carrying script names (also needs the name registry to be useful)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3966,9 +4404,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "sub-player teams with transferable membership"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3982,7 +4422,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -3996,9 +4440,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "the AI_PANIC state machine (retail: per-member flight along a WAYPOINT_PATH with logic-random wander offsets, the PANICKING model condition, save-persisted state) plus waypoint paths from map geometry - AND a facet signature fix: the sourced action is TEAM_PANIC(TEAM, WAYPOINT_PATH) and this method has no slot for the path, so serving it would drop where the team flees to"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4020,9 +4466,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "recruitment, plus a SECOND signature. The INT-semantic ruling is now CLOSED from the BFME binary itself: action 397/398 uiStrings read '<TEAM> will recruit <INT> units of type <OBJECT_TYPE_LIST> from nearby recruitable allied teams / from <TEAM>', so the INT is a unit COUNT and that pair carries no radius at all. This method's (team, radius, from_team) shape therefore fits only RECRUIT_TEAM(TEAM, REAL) / RECRUIT_TEAM_AT_TEAM(TEAM, REAL, TEAM), whose REAL is documented 'maximum recruiting distance (feet)'. NEEDED: recruit_units(team, count: int, object_type_list: String, from_team: String) in addition to the recruitment model"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4040,9 +4488,41 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "combo-horde recruitment"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
+		},
+		{
+			"facet": "teams",
+			"method": "recruit_units",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "count",
+					"type": "int"
+				},
+				{
+					"name": "object_type_list",
+					"type": "String"
+				},
+				{
+					"name": "from_team",
+					"type": "String"
+				}
+			],
+			"arity": 4,
+			"returns": "command",
+			"probe": "called",
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4056,9 +4536,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "diplomacy-overrides",
-			"requiredSimState": "override relation storage"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4080,9 +4562,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "diplomacy-overrides",
-			"requiredSimState": "override relation storage"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4096,9 +4580,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "order-verbs",
-			"requiredSimState": "a repair-nearest order"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4116,9 +4602,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "an AI-recruitable flag per team"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4136,9 +4624,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "mood CONSUMPTION, not storage: the sourced write is a one-shot broadcast of the raw AI_MOOD int onto each member (no clamp; the authored -3 is stored verbatim, treated as NORMAL by the mood matrix default arm while raw >=AI_NORMAL comparisons fail), but retail consumes it through the AIUpdate mood matrix - idle-acquire modes per mood, move-to-attack-move conversion for ALERT/AGGRESSIVE, INI-authored range adjustments - which the sim does not model; a store-only serve would return OK and behave nothing like retail"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4156,9 +4646,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "recruitment availability per team"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4176,9 +4668,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "weapon-range toggles per member"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4201,7 +4695,10 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "bound team names only (the '<This Team>' restriction above); an empty token refuses; writes refuse after match resolution"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4223,9 +4720,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "emoticon state per team"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4243,9 +4742,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "flame status bits"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4263,9 +4764,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "house-color flags"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4291,9 +4794,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "model-condition flags with durations"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4319,9 +4824,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "spatial-queries",
-			"requiredSimState": "nearest-of-type search anchored on a team, feeding the reference store"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4339,9 +4846,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "walls-and-siege",
-			"requiredSimState": "gate-interaction pathing flags"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4363,9 +4872,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "object panel flags"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4387,9 +4898,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "diplomacy-overrides",
-			"requiredSimState": "team-to-player override relations"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4411,9 +4924,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "diplomacy-overrides",
-			"requiredSimState": "team-to-team override relations"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4435,9 +4950,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "diplomacy-overrides",
-			"requiredSimState": "player-to-team override relations"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4455,9 +4972,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "a TEAM_REF store (destination-first signature; see WP15)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4476,16 +4995,22 @@
 					"type": "String"
 				},
 				{
+					"name": "anchor_team",
+					"type": "String"
+				},
+				{
 					"name": "named_type",
 					"type": "bool"
 				}
 			],
-			"arity": 4,
+			"arity": 5,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "spatial-queries",
-			"requiredSimState": "nearest-team-of-type search (and the gap-registered anchor-team parameter)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4503,9 +5028,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "repulsor flags"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4524,7 +5051,10 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "bound team names only (the '<This Team>' restriction above); writes refuse after match resolution"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4542,9 +5072,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "stealth flags the vision/combat rules consult"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4562,9 +5094,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "strict-control flags"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4582,9 +5116,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "spatial-queries",
-			"requiredSimState": "MIS-ATTRIBUTED per WP09's finding: retail uses TEAM_THREAT_LEVEL as a radius-scoped CONDITION, not a set command; nothing should ever call this - kept annotated so the mis-attribution stays visible"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4602,9 +5138,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "order-verbs",
-			"requiredSimState": "a timed spin/busy order"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4619,7 +5157,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "bound team names only (the '<This Team>' restriction above); an unbound name refuses rather than reproducing retail's nonexistent-team false (unbound is not proof of nonexistence while the sub-player team registry is unmodeled)"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4638,7 +5179,10 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "disband=false only (no disband model)"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4652,9 +5196,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "sequential-scripts",
-			"requiredSimState": "stoppable per-team sequential queues"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4668,9 +5214,34 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "spatial-queries",
-			"requiredSimState": "team threat evaluation (the AI's real usage carries a radius - gap-registered signature)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
+		},
+		{
+			"facet": "teams",
+			"method": "threat_within_radius",
+			"params": [
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "radius",
+					"type": "float"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
+			"restrictions": "team must resolve with a living anchor member"
 		},
 		{
 			"facet": "teams",
@@ -4688,9 +5259,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "team ownership transfer - 32 AI sites (ai_initialize 16 + ai_mp_inherit_management 16; the earlier single-library attribution was incomplete), every one of them naming a SUB-PLAYER team of the civilian player (PlyrCivilian/Player_N_Inherit) and never the <This Team> token. TWO subsystems block it: the named team model here, and per-object ownership transfer, which is entity-lifecycle-api (CP accounting, member-health arrays, corpse flow). Accepting it with neither would move nothing and return OK"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4704,7 +5277,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4726,9 +5303,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "order-verbs",
-			"requiredSimState": "a wander order (path and in-place variants)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "teams",
@@ -4742,9 +5321,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "team creation EDGE records - SOURCED and CONFIRMED, unlike its sibling was_destroyed and unlike NAMED_CREATED: evaluateTeamCreated is getTeamNamed()->isCreated(), and Team::m_created is set by setActive() and CLEARED by the next Team::updateState (once per frame, from Player::update - Team.h:204/312/322, Team.cpp:1806-1816), save-persisted via Team::xfer. Needs a team INSTANTIATION event this simulation has none of (a player roster is not created mid-match); level-triggered exists() must not serve it - it would refire one-shot AI init every evaluation. All 22 retail-AI call sites author the <This Team> token regardless"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4759,7 +5340,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "bound team names only (the <This Team> restriction above); an unbound name refuses rather than reproducing retail's nonexistent-team false, exactly as teams.state does. A bound team is a player's DEFAULT team, so the census is retail's hasAnyObjects - no living battalion AND no living structure - never unit_count == 0, which would report a team down to its fortress as destroyed"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "teams",
@@ -4777,9 +5361,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "vision-and-discovery",
-			"requiredSimState": "discovery records per team"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "terrain",
@@ -4793,9 +5379,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "terrain-dynamics",
-			"requiredSimState": "bridge objects with broken/repaired state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "terrain",
@@ -4813,9 +5401,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "production-controls",
-			"requiredSimState": "a mutable tech-tree buildability table"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "terrain",
@@ -4837,9 +5427,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "terrain-dynamics",
-			"requiredSimState": "burn-rate state at waypoints/areas"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "terrain",
@@ -4853,9 +5445,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "terrain-dynamics",
-			"requiredSimState": "cloud state (presentation-adjacent but declared simulation by the vocabulary)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "terrain",
@@ -4869,9 +5463,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "terrain-dynamics",
-			"requiredSimState": "simulation-visible weather fog (distinct from fog of war)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "terrain",
@@ -4893,9 +5489,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "terrain-dynamics",
-			"requiredSimState": "water bodies with animatable heights"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "terrain",
@@ -4909,9 +5507,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "terrain-dynamics",
-			"requiredSimState": "map border sets"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "transport",
@@ -4925,9 +5525,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "capturable unowned faction units"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "transport",
@@ -4941,9 +5543,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "capture records per player"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "transport",
@@ -4961,9 +5565,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "captured-unit rosters plus team creation"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "transport",
@@ -4989,9 +5595,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "garrisonable buildings with occupancy"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "transport",
@@ -5005,9 +5613,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "garrison occupancy counts"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "transport",
@@ -5021,9 +5631,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "weapon-mode toggle state per object"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "transport",
@@ -5037,9 +5649,12 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "transport containers with capacity"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
+			"restrictions": "structures need transport capacity; ownership and free slots required"
 		},
 		{
 			"facet": "transport",
@@ -5053,9 +5668,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "passenger counts per container"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "transport",
@@ -5077,9 +5694,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "a position-write API that re-validates collision/formation state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "ui",
@@ -5097,9 +5716,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "presentation-adapter",
-			"requiredSimState": "a UI/radar/VFX sink adapter on the client"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5121,9 +5742,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "map-geometry",
-			"requiredSimState": "waypoint targets for builder construction (builder production exists)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5145,9 +5768,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "hero-revival-carryover",
-			"requiredSimState": "a delayed-carryover ledger plus waypoint spawn anchors"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5173,9 +5798,41 @@
 			"arity": 4,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "a public spawn API - the sim's spawn path is private and a raw insert would skip CP accounting and corpse scheduling (005bcd8)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
+		},
+		{
+			"facet": "units",
+			"method": "create_object_on_team",
+			"params": [
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "team",
+					"type": "String"
+				},
+				{
+					"name": "position",
+					"type": "Vector3"
+				},
+				{
+					"name": "angle",
+					"type": "float"
+				}
+			],
+			"arity": 4,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5201,9 +5858,11 @@
 			"arity": 4,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "a public spawn API plus team placement targets"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5229,9 +5888,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "hero-revival-carryover",
-			"requiredSimState": "a revival ledger with levels and carryover sourcing"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5245,9 +5906,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "a public despawn API honoring CP release (plus the name binding)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5261,9 +5924,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "unmanned-object identification plus a despawn API"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5281,9 +5946,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "walls-and-siege",
-			"requiredSimState": "siege attachment to walls/waypoints"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5297,9 +5964,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "container contents to destroy"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5313,9 +5982,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "event-ledger",
-			"requiredSimState": "killer-type records per named object"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5329,9 +6000,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "vision-and-discovery",
-			"requiredSimState": "sighting records per object"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5349,9 +6022,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "container entry per named pair"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5373,9 +6048,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "sequential-scripts",
-			"requiredSimState": "per-unit sequential queues"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5390,7 +6067,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5408,9 +6088,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "container exit"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5428,9 +6110,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "targeted container exit"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5452,9 +6136,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "an EmotionTracker model (see players.force_emotion), plus the object-name registry for the unit spelling"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5468,9 +6154,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "walls-and-siege",
-			"requiredSimState": "gate state per named structure"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5489,7 +6177,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "the player must resolve ('<This Player>' included); unit types with a production rule only (an unmodeled type's cost is unknowable, so it refuses)"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5507,9 +6198,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "hero-revival-carryover",
-			"requiredSimState": "carryover ledger queries by type"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5535,9 +6228,11 @@
 			"arity": 4,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "object-status bit reads per scope"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5552,7 +6247,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of; and a name that resolves to a LIVE STRUCTURE - a packed base flag refuses, because the flag row's health is the fortress it would unpack into, not the flag object's own"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5566,9 +6264,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "occupancy per named building"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5583,7 +6283,32 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of. Answers retail's pointer-alive-but-effectively-dead reading (a structure row at health 0); its sibling is_totally_dead refuses, see the blocked table"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
+		},
+		{
+			"facet": "units",
+			"method": "is_owned_by",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "player",
+					"type": "String"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5597,9 +6322,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "sim-selection-model",
-			"requiredSimState": "a lockstep selection notion - sim.selected_ids is per-seat presentation state and would desync (005bcd8)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5613,9 +6340,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "an object-REMOVAL edge. Retail reads the name-table pointer having gone NULL (evaluateNamedUnitTotallyDead: the object left the world), which is why its sibling is_dying - pointer alive, object effectively dead - IS served. This simulation never removes a destroyed structure row: it keeps it at health 0 forever, so the pointer-NULL state never occurs and the method could only ever answer a permanent false, which would strand any script gated on NAMED_TOTALLY_DEAD"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5629,9 +6358,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "web status"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5646,7 +6377,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of; and a name that resolves to a LIVE STRUCTURE whose team has a bound script player name. A packed base flag refuses: retail's flag object belongs to the neutral player, which this simulation models as no team and for which no script player name exists"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5661,7 +6395,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of; a name whose object is gone refuses (a removed object has no position, and the last-known reading would be an invention)"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -5675,9 +6412,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "walls-and-siege",
-			"requiredSimState": "siege detachment"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5695,9 +6434,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-behavior-state",
-			"requiredSimState": "mood consumption (see teams.set_attitude) plus the object-name registry for the named spelling"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5715,9 +6456,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "garrison-transport-capture",
-			"requiredSimState": "cave/tunnel network membership"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5735,9 +6478,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "weapon-range toggles"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5759,9 +6504,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "emoticon state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5779,9 +6526,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "flame status"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5803,9 +6552,12 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "walls-and-siege",
-			"requiredSimState": "gate open/close/ready state (GATE_OPEN and GATE_CLOSE each have one AI call site)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true,
+			"restrictions": "name must resolve to a live structure"
 		},
 		{
 			"facet": "units",
@@ -5823,9 +6575,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "held (movement-frozen) status"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5843,9 +6597,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "house-color flags"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5863,9 +6619,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "corpse lifetime overrides in the corpse flow"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5891,9 +6649,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "model-condition flags with durations"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5915,9 +6675,11 @@
 			"arity": 3,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "object panel flags"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5943,9 +6705,11 @@
 			"arity": 4,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "object-status bit writes per scope"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5964,7 +6728,10 @@
 			"returns": "command",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of as the SOURCE; the destination may not shadow a base flag, and the world must have a script player bound (references are stored per script player). The source is resolved NOW and stored as a handle - a flag name for a flag, a structure id for a structure - never as the source string"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -5982,9 +6749,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "repulsor flags"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -6002,9 +6771,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "sim-selection-model",
-			"requiredSimState": "a lockstep selection notion to write"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6022,9 +6793,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "weaponset switching"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -6042,9 +6815,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "stealth flags"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -6062,9 +6837,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "strict-control flags"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -6082,9 +6859,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "team-registry",
-			"requiredSimState": "sub-player teams a named object can join"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6102,9 +6881,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "topple physics parameters"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -6122,9 +6903,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "economy-model-extras",
-			"requiredSimState": "warehouse objects with values"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -6142,9 +6925,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-status-flags",
-			"requiredSimState": "a timed shock/stun status"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -6158,9 +6943,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "walls-and-siege",
-			"requiredSimState": "siege attachment state"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6174,9 +6961,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "experience-model",
-			"requiredSimState": "skill points per named object"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6206,9 +6995,11 @@
 			"arity": 5,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "a public spawn API with name+orientation"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -6222,9 +7013,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "a BATTALION in the object namespace. Stances are modelled (issue_set_stance exists) - on battalions; the namespace holds only base flags and structures (see orders.in_alt_formation for the corpus evidence), which have no stance to read"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6242,9 +7035,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-name-registry",
-			"requiredSimState": "a BATTALION in the object namespace. Stop orders are modelled (issue_stop exists) - on battalions; the namespace holds only base flags and structures (see orders.in_alt_formation for the corpus evidence), which have no order queue to flush, so every call would be a silent no-op returning true"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -6258,9 +7053,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "sequential-scripts",
-			"requiredSimState": "stoppable per-unit sequential queues"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6274,9 +7071,34 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "spatial-queries",
-			"requiredSimState": "per-object threat evaluation (the AI's real usage carries a radius)"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
+		},
+		{
+			"facet": "units",
+			"method": "threat_within_radius",
+			"params": [
+				{
+					"name": "object_name",
+					"type": "String"
+				},
+				{
+					"name": "radius",
+					"type": "float"
+				}
+			],
+			"arity": 2,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false,
+			"restrictions": "name must be a live entity id"
 		},
 		{
 			"facet": "units",
@@ -6294,9 +7116,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "entity-lifecycle-api",
-			"requiredSimState": "a single-object ownership transfer honoring CP accounting"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "units",
@@ -6314,9 +7138,37 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "sim-selection-model",
-			"requiredSimState": "a lockstep selection notion queryable by type"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
+		},
+		{
+			"facet": "units",
+			"method": "type_sighted_by",
+			"params": [
+				{
+					"name": "observer",
+					"type": "String"
+				},
+				{
+					"name": "object_type",
+					"type": "String"
+				},
+				{
+					"name": "owner",
+					"type": "String"
+				}
+			],
+			"arity": 3,
+			"returns": "query",
+			"probe": "called",
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6334,9 +7186,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "vision-and-discovery",
-			"requiredSimState": "sighted-type records per player"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6350,9 +7204,11 @@
 			"arity": 1,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "object-type-identity",
-			"requiredSimState": "a sourced semantic for 'unowned faction unit': the sim now owns neutral (capturable) and creep teams, but nothing pins whether retail means neutral-owned UNITS only or capturable structures too, and the readings diverge exactly when neutral structures exist"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6367,7 +7223,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of. Retail's NAMED_CREATED is literally getUnitNamed() != NULL (the engine's own todo admits the member is misnamed), so this does NOT consult the dead flag - unlike exists()"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6382,7 +7241,10 @@
 			"returns": "query",
 			"probe": "called",
 			"simulationBacked": true,
-			"restrictions": "names the shared object / unit-reference namespace holds (base flags, and references bound to a flag or a structure) only - an unknown name REFUSES rather than borrowing retail's false, which is grounded in a complete name table this namespace is a subset of. Retail's hybrid: an object still present answers its effectively-dead flag, an object gone answers true. A packed base flag answers false - the flag object is alive"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "units",
@@ -6400,9 +7262,11 @@
 			"arity": 2,
 			"returns": "query",
 			"probe": "called",
-			"simulationBacked": false,
-			"blockingSubsystem": "vision-and-discovery",
-			"requiredSimState": "discovery records per object"
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "world",
@@ -6420,7 +7284,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": false
 		},
 		{
 			"facet": "world",
@@ -6435,7 +7303,10 @@
 			"returns": "int",
 			"probe": "fallback",
 			"simulationBacked": true,
-			"restrictions": "no refusal channel: an UNBOUND player reads 0 through this legacy path (reported base-class defect; economy.money is the honest surface)"
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "world",
@@ -6453,7 +7324,11 @@
 			"arity": 2,
 			"returns": "int",
 			"probe": "fallback",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "world",
@@ -6471,7 +7346,11 @@
 			"arity": 2,
 			"returns": "float",
 			"probe": "fallback",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "world",
@@ -6489,7 +7368,11 @@
 			"arity": 2,
 			"returns": "command",
 			"probe": "called",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": true,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "world",
@@ -6503,7 +7386,11 @@
 			"arity": 1,
 			"returns": "command",
 			"probe": "fallback",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": true
 		},
 		{
 			"facet": "world",
@@ -6512,7 +7399,11 @@
 			"arity": 0,
 			"returns": "int",
 			"probe": "fallback",
-			"simulationBacked": true
+			"simulationBacked": true,
+			"callable": true,
+			"bagOnly": false,
+			"stateMutating": false,
+			"subsystemConsumed": true
 		}
 	],
 	"vocabularyRouting": [
@@ -6537,19 +7428,16 @@
 			"member": "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER",
 			"route": "blocked",
 			"worldMethods": [
-				"ai.build_base_building"
+				"ai.build_base_building_per_tactical_marker"
 			],
-			"blockingSubsystem": "base-building-ai",
-			"signatureGap": true,
-			"mappingSource": "handler",
-			"note": "still needs its own facet method (near/far side + marker type) plus tactical-marker sim state"
+			"blockingSubsystem": "tactical-marker-placement",
+			"mappingSource": "handler"
 		},
 		{
 			"member": "CALL_SUBROUTINE",
 			"route": "env",
 			"worldMethods": [],
-			"mappingSource": "handler",
-			"note": "needs a subroutine_runner installed on the env, not a world method"
+			"mappingSource": "handler"
 		},
 		{
 			"member": "CAN_BUILD_AT_BASE",
@@ -6600,11 +7488,10 @@
 		},
 		{
 			"member": "CREATE_OBJECT",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"units.create_object"
 			],
-			"blockingSubsystem": "entity-lifecycle-api",
 			"mappingSource": "declared"
 		},
 		{
@@ -6613,15 +7500,13 @@
 			"worldMethods": [
 				"ai.create_reinforcement_team"
 			],
-			"blockingSubsystem": "base-building-ai",
+			"blockingSubsystem": "reinforcement-army",
 			"mappingSource": "handler"
 		},
 		{
 			"member": "DEBUG_STRING",
-			"route": "backed",
-			"worldMethods": [
-				"world.debug_message"
-			],
+			"route": "env",
+			"worldMethods": [],
 			"mappingSource": "handler"
 		},
 		{
@@ -6644,12 +7529,12 @@
 		},
 		{
 			"member": "EVAL_TEAM_HEALTH",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"combat.team_health_percent"
 			],
-			"blockingSubsystem": "adapter-only",
-			"mappingSource": "declared"
+			"mappingSource": "declared",
+			"note": "combat.team_health_percent answers weighted current/max over complete script-team entity membership, integer-rounded; empty teams answer 0; '<This Team>' still needs executing-team context"
 		},
 		{
 			"member": "FLAG",
@@ -6659,21 +7544,21 @@
 		},
 		{
 			"member": "GATE_CLOSE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"units.set_gate_state"
 			],
-			"blockingSubsystem": "walls-and-siege",
-			"mappingSource": "declared"
+			"mappingSource": "declared",
+			"note": "requires live structure name; sets structure.gate_open"
 		},
 		{
 			"member": "GATE_OPEN",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"units.set_gate_state"
 			],
-			"blockingSubsystem": "walls-and-siege",
-			"mappingSource": "declared"
+			"mappingSource": "declared",
+			"note": "requires live structure name; sets structure.gate_open"
 		},
 		{
 			"member": "INCREMENT_COUNTER",
@@ -6713,18 +7598,16 @@
 				"units.was_destroyed"
 			],
 			"mappingSource": "declared",
-			"note": "the world method answers, but only for names the shared namespace holds. Measured on the shipped libraries, this member's 23 authored arguments are AI_GATE (6), AI_BASE (3), AI_FARM_LAST_BUILT (2), BASE_FLAG_1..8 (8), three AI_HERO_* and START_SPAWN: the flags and AI_BASE (bound by the backed NAMED_BASE_UNPACK_FREE) resolve today, while AI_GATE and the heroes are bound by SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER and AI_FARM_LAST_BUILT by BUILD_BASE_BUILDING_PER_TACTICAL_MARKER - both still blocked, so those names have nothing to resolve to yet"
+			"note": "the world method answers, but only for names the shared namespace holds"
 		},
 		{
 			"member": "NAMED_OWNED_BY_PLAYER",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
-				"units.owner"
+				"units.is_owned_by"
 			],
-			"blockingSubsystem": "facet-signature-packet",
-			"signatureGap": true,
 			"mappingSource": "handler",
-			"note": "units.owner IS served now - but this member does not reach it. EVERY authored call site spells the PLAYER argument '<This Player>' (48 of 48 in the shipped libraries, measured), and the handler consumes the comparison itself, so it refuses the placeholder rather than answering a confident wrong false against a literal. The registry is no longer what blocks this member; the missing world-side signature is. NEEDED: units.is_owned_by(object_name: String, player: String) -> SageWorldQuery, with world-side token resolution - the exact signature wp16_ai_units.gd already gap-registers"
+			"note": "the bounded 14-library AI census contains 32 BFME2 and 32 RotWK sites; a broader authored-library scan contains 48 per tree after adding multiplayer_human and multiplayer_start_teams. All pass BASE_FLAG_1..16 and '<This Player>'; the token resolves in the world against the bound script player"
 		},
 		{
 			"member": "NAMED_USE_COMMANDBUTTON_ABILITY",
@@ -6732,7 +7615,7 @@
 			"worldMethods": [
 				"orders.use_command_button"
 			],
-			"blockingSubsystem": "command-button-abilities",
+			"blockingSubsystem": "command-button-ability",
 			"mappingSource": "declared"
 		},
 		{
@@ -6751,29 +7634,26 @@
 		},
 		{
 			"member": "PLAYER_DESTROYED_N_BUILDINGS_PLAYER",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"combat.buildings_destroyed_by"
 			],
-			"blockingSubsystem": "event-ledger",
 			"mappingSource": "declared"
 		},
 		{
 			"member": "PLAYER_ENABLE_BASE_CONSTRUCTION",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"players.set_base_construction_enabled"
 			],
-			"blockingSubsystem": "production-controls",
 			"mappingSource": "handler"
 		},
 		{
 			"member": "PLAYER_ENABLE_UNIT_CONSTRUCTION",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"players.set_unit_construction_enabled"
 			],
-			"blockingSubsystem": "production-controls",
 			"mappingSource": "declared"
 		},
 		{
@@ -6782,7 +7662,7 @@
 			"worldMethods": [
 				"economy.money"
 			],
-			"mappingSource": "declared"
+			"mappingSource": "handler"
 		},
 		{
 			"member": "PLAYER_HAS_OBJECT_COMPARISON",
@@ -6795,13 +7675,12 @@
 		},
 		{
 			"member": "PLAYER_HAS_OBJECT_OF_VETERANCY",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"progression.has_object_of_veterancy"
 			],
-			"blockingSubsystem": "experience-model",
-			"signatureGap": true,
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "existential living-object current-rank predicate over exact type identity; observed retail list-like token expands through the established list-first resolver"
 		},
 		{
 			"member": "PLAYER_PURCHASE_SCIENCE",
@@ -6813,11 +7692,10 @@
 		},
 		{
 			"member": "PLAYER_SELL_EVERYTHING",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"players.sell_everything"
 			],
-			"blockingSubsystem": "production-controls",
 			"mappingSource": "handler"
 		},
 		{
@@ -6838,8 +7716,7 @@
 			"worldMethods": [
 				"teams.threat"
 			],
-			"blockingSubsystem": "spatial-queries",
-			"signatureGap": true,
+			"blockingSubsystem": "radius-threat",
 			"mappingSource": "handler"
 		},
 		{
@@ -6889,21 +7766,19 @@
 		},
 		{
 			"member": "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.set_reference_to_nearest"
 			],
-			"blockingSubsystem": "spatial-queries",
-			"signatureGap": true,
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "teams.set_reference_to_nearest uses first-member anchor position (not all-object centroid); structure hits bind the unit-reference store; entities bind script_entity_references"
 		},
 		{
 			"member": "SET_TEAM_REFERENCE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.set_reference"
 			],
-			"blockingSubsystem": "team-registry",
 			"mappingSource": "handler"
 		},
 		{
@@ -6940,38 +7815,36 @@
 		},
 		{
 			"member": "START_POSITION_IS",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"players.start_position"
 			],
-			"blockingSubsystem": "match-config-metadata",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "all 8 BFME2 and all 8 RotWK retail-AI sites compare <This Player> to authored Player_1_Start..Player_8_Start numbers; the world returns internal getMpStartIndex plus one"
 		},
 		{
 			"member": "TEAM_CHANGE_OBJECT_STATUS",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"units.set_object_status"
 			],
-			"blockingSubsystem": "entity-status-flags",
-			"mappingSource": "declared"
+			"mappingSource": "handler",
+			"note": "exact authored OBJECT_STATUS names on living entity members of the team; polarity set/clear is load-bearing"
 		},
 		{
 			"member": "TEAM_CREATED",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.was_created"
 			],
-			"blockingSubsystem": "team-registry",
 			"mappingSource": "handler"
 		},
 		{
 			"member": "TEAM_DELETE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.delete"
 			],
-			"blockingSubsystem": "team-registry",
 			"mappingSource": "handler"
 		},
 		{
@@ -6985,48 +7858,45 @@
 		},
 		{
 			"member": "TEAM_EXECUTE_SEQUENTIAL_SCRIPT",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.execute_sequential_script"
 			],
-			"blockingSubsystem": "sequential-scripts",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "queues a named script on the team's sequential head, idles the team, and progresses with calling/condition team latched so <This Team> resolves; unit sequential remains blocked"
 		},
 		{
 			"member": "TEAM_EXECUTE_SEQUENTIAL_SCRIPT_LOOPING",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.execute_sequential_script"
 			],
-			"blockingSubsystem": "sequential-scripts",
 			"mappingSource": "handler",
-			"note": "counts 0/1 are served by the handler, >=2 is a signature gap (boolean cannot express finite repeats); all 5 retail sites pass 0"
+			"note": "counts 0/1 are served by the handler (forever/once); >=2 is a signature gap (boolean cannot express finite repeats); all 5 retail AI sites pass 0"
 		},
 		{
 			"member": "TEAM_EXIT_ALL_BUILDINGS",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.exit_all"
 			],
-			"blockingSubsystem": "garrison-transport-capture",
 			"mappingSource": "handler"
 		},
 		{
 			"member": "TEAM_GUARD_FOR_SECONDS",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"orders.guard"
 			],
-			"blockingSubsystem": "order-verbs",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "duration>0 still refuses; zero-duration POSITION/self/TEAM guard is served"
 		},
 		{
 			"member": "TEAM_GUARD_TEAM",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"orders.guard"
 			],
-			"blockingSubsystem": "order-verbs",
 			"mappingSource": "handler"
 		},
 		{
@@ -7048,29 +7918,27 @@
 		},
 		{
 			"member": "TEAM_HUNT",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"orders.hunt"
 			],
-			"blockingSubsystem": "order-verbs",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "empty command button only"
 		},
 		{
 			"member": "TEAM_IDLE_FOR_SECONDS",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"orders.idle_for_ticks"
 			],
-			"blockingSubsystem": "order-verbs",
 			"mappingSource": "handler"
 		},
 		{
 			"member": "TEAM_IS_ATTACKED_AND_CANNOT_RETALIATE_ALL",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.attacked_and_cannot_retaliate_count"
 			],
-			"blockingSubsystem": "event-ledger",
 			"mappingSource": "declared"
 		},
 		{
@@ -7079,66 +7947,62 @@
 			"worldMethods": [
 				"transport.load_transports"
 			],
-			"blockingSubsystem": "garrison-transport-capture",
+			"blockingSubsystem": "passenger-transport",
 			"mappingSource": "handler"
 		},
 		{
 			"member": "TEAM_MERGE_INTO_TEAM",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.merge_into"
 			],
-			"blockingSubsystem": "team-registry",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "transfers living source members onto destination owner team"
 		},
 		{
 			"member": "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"orders.move_to"
 			],
-			"blockingSubsystem": "base-building-ai",
 			"mappingSource": "handler",
-			"note": "NEAREST_TYPE resolves over fieldable types; blocked because no target type in this census scope is fieldable yet. Targets are MOSTLY map-placed markers (CombatAreas, HighGround) but NOT exclusively - Economy_Flags (EconomyPlotFlag) and Treasure_Chests appear here too, and outside this scope lib_defense_behaviors targets Artillery_Units (GondorTrebuchet/IsengardBallista/MordorCatapult), real unit types this path WILL serve once fieldable. Do not read this as 'markers only'"
+			"note": "NEAREST_TYPE resolves over fieldable types; blocked because no target type in this census scope is fieldable yet"
 		},
 		{
 			"member": "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"orders.move_to"
 			],
-			"blockingSubsystem": "base-building-ai",
 			"mappingSource": "handler",
 			"note": "NEAREST_TYPE resolves including owner tokens; blocked because no target type in this census scope is fieldable yet. Predominantly marker types (Center/Flank/Backdoor nodes), but see the sibling member's note - the corpus also authors real unit-type targets, so the block is 'these types are not fieldable', not 'markers only'"
 		},
 		{
 			"member": "TEAM_RECRUIT_UNITS",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.recruit"
 			],
-			"blockingSubsystem": "team-registry",
-			"signatureGap": true,
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "teams.recruit distance form: transfers living units within radius onto the destination owner; INT unit-count recruit spelling is a signature gap"
 		},
 		{
 			"member": "TEAM_RECRUIT_UNITS_FROM_TEAM",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.recruit"
 			],
-			"blockingSubsystem": "team-registry",
-			"signatureGap": true,
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "teams.recruit with from_team source; INT unit-count spelling is a signature gap"
 		},
 		{
 			"member": "TEAM_SET_ATTITUDE",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.set_attitude"
 			],
-			"blockingSubsystem": "team-behavior-state",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "mood matrix maps attitude to stance + mood_attack_check_rate_ticks"
 		},
 		{
 			"member": "TEAM_SET_CUSTOM_STATE",
@@ -7160,14 +8024,12 @@
 		},
 		{
 			"member": "TEAM_STAND_GROUND",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"orders.stand_ground"
 			],
-			"blockingSubsystem": "facet-signature-packet",
-			"signatureGap": true,
 			"mappingSource": "handler",
-			"note": "the method is BACKED but can only engage; both retail sites author the CLEAR the signature cannot carry"
+			"note": "both BFME2 and RotWK retail-AI sites author FALSE; CLEAR selects ordinary Battle rather than inverting the action into HoldGround"
 		},
 		{
 			"member": "TEAM_STATE_IS",
@@ -7197,32 +8059,30 @@
 		},
 		{
 			"member": "TEAM_STOP_SEQUENTIAL_SCRIPT",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.stop_sequential_script"
 			],
-			"blockingSubsystem": "sequential-scripts",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "clears every sequential head/chain entry for the named team"
 		},
 		{
 			"member": "TEAM_THREAT_LEVEL",
 			"route": "blocked",
 			"worldMethods": [
-				"teams.threat"
+				"teams.threat_within_radius"
 			],
-			"blockingSubsystem": "spatial-queries",
-			"signatureGap": true,
-			"mappingSource": "handler",
-			"note": "condition, not action - WP09's mis-attribution finding"
+			"blockingSubsystem": "radius-threat",
+			"mappingSource": "handler"
 		},
 		{
 			"member": "TEAM_TRANSFER_TO_PLAYER",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"teams.transfer_to_player"
 			],
-			"blockingSubsystem": "team-registry",
-			"mappingSource": "handler"
+			"mappingSource": "handler",
+			"note": "all 32 sites per tree address PlyrCivilian/Player_N_Inherit and <This Player>; the converter source-attests every effective official-skirmish inheritance team in both trees as marker-only, schema-v2 composes the real ai_initialize and ai_mp_inherit_management libraries per concrete AI Player_N, and real BFME2 plus RotWK Fords composites execute the decoded action through the simulation-owned controller mutation"
 		},
 		{
 			"member": "TEAM_USE_COMMANDBUTTON_ABILITY",
@@ -7230,7 +8090,7 @@
 			"worldMethods": [
 				"orders.use_command_button"
 			],
-			"blockingSubsystem": "command-button-abilities",
+			"blockingSubsystem": "command-button-ability",
 			"mappingSource": "declared"
 		},
 		{
@@ -7241,11 +8101,10 @@
 		},
 		{
 			"member": "TYPE_SIGHTED",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"units.type_was_sighted"
 			],
-			"blockingSubsystem": "vision-and-discovery",
 			"mappingSource": "declared"
 		},
 		{
@@ -7254,37 +8113,32 @@
 			"worldMethods": [
 				"units.health_percent"
 			],
-			"mappingSource": "declared",
-			"note": "the world method answers for a name resolving to a live structure. None of the 15 authored arguments measured in the shipped libraries resolves TODAY - two are AI_GATE and thirteen are AI_HERO_*, all bound by SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER, which is still blocked - so this is method-level backing, not call-site backing"
+			"mappingSource": "declared"
 		},
 		{
 			"member": "UNIT_SET_TEAM",
-			"route": "blocked",
+			"route": "backed",
 			"worldMethods": [
 				"units.set_team"
 			],
-			"blockingSubsystem": "team-registry",
 			"mappingSource": "handler"
 		},
 		{
 			"member": "UNIT_THREAT_LEVEL",
 			"route": "blocked",
 			"worldMethods": [
-				"units.threat"
+				"units.threat_within_radius"
 			],
-			"blockingSubsystem": "spatial-queries",
-			"signatureGap": true,
-			"mappingSource": "handler",
-			"note": "condition, not action - WP09's mis-attribution finding"
+			"blockingSubsystem": "radius-threat",
+			"mappingSource": "handler"
 		},
 		{
 			"member": "UPGRADE_NEAREST_WALL",
 			"route": "blocked",
 			"worldMethods": [
-				"progression.upgrade_nearest_wall"
+				"progression.upgrade_nearest_wall_bound"
 			],
-			"blockingSubsystem": "walls-and-siege",
-			"signatureGap": true,
+			"blockingSubsystem": "wall-upgrade",
 			"mappingSource": "handler"
 		}
 	]

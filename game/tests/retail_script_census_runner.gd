@@ -33,7 +33,11 @@ const CONTRACT_RELATIVE_PATH := ".private/retail-work/reports/skirmish-script-co
 const CENSUS_TICKS := 600
 const TOP_GAPS := 30
 
-const PLAYER := "CensusPlayer"
+## The loaded Amon Sul objective authors this exact retail player name in
+## ANY_HERO_REACHED_RANK. Using a made-up harness name leaves the real record
+## permanently world-refused and makes the execution census measure its own
+## missing binding instead of the condition implementation.
+const PLAYER := "PlayerHuman"
 const ENEMY := "CensusEnemy"
 
 
@@ -80,6 +84,60 @@ func _run() -> void:
 		quit(1)
 		return
 
+	# The retail RingHero_Gollum records sit behind other unresolved
+	# conditions, so the execution census cannot currently reach them. Probe
+	# the production dispatcher directly against an existing simulation
+	# object to prove that classifying the opcode implemented is live, not
+	# merely a registry-table count. The name binding happens before the hash
+	# baseline; evaluating this read-only condition must not change state.
+	world._bind_unit_reference(
+		"CENSUS_NAMED_CREATED", sim.fortress_id(SimScript.PLAYER_TEAM)
+	)
+	var named_created_hash_before: String = sim.state_hash()
+	var named_created_result: bool = executor.dispatch.evaluate_condition(
+		{
+			"contentType": 24,
+			"internalName": {"name": "NAMED_CREATED", "wireTypeCode": 3},
+			"arguments": [{
+				"argumentType": 14,
+				"integer": 0,
+				"real": 0.0,
+				"text": "CENSUS_NAMED_CREATED",
+			}],
+			"enabled": true,
+			"inverted": false,
+		},
+		executor.env,
+		world,
+		"census-named-created"
+	)
+	var named_created_probe_gaps := 0
+	for gap_value in executor.dispatch.gaps.entries.values():
+		var gap := gap_value as Dictionary
+		if String(gap.get("kind", "")) == "condition" \
+				and String(gap.get("name", "")) == "NAMED_CREATED":
+			named_created_probe_gaps += int(gap.get("count", 0))
+	var named_created_read_only: bool = sim.state_hash() == named_created_hash_before
+	print("PROBE condition NAMED_CREATED=%s gaps=%d hash_unchanged=%s" % [
+		str(named_created_result).to_lower(),
+		named_created_probe_gaps,
+		str(named_created_read_only).to_lower(),
+	])
+	if (
+		not named_created_result
+		or named_created_probe_gaps != 0
+		or not named_created_read_only
+	):
+		printerr(
+			"RETAIL_SCRIPT_CENSUS FAIL NAMED_CREATED direct dispatch expected true, gaps=0, read-only"
+		)
+		sim.unregister_script_executor(SimScript.PLAYER_TEAM)
+		for facet in world._facets.values():
+			facet.world = null
+		world._facets.clear()
+		quit(1)
+		return
+
 	for _tick in CENSUS_TICKS:
 		sim.tick()
 
@@ -88,12 +146,34 @@ func _run() -> void:
 		sources, loaded, int(report["subroutines"]), CENSUS_TICKS,
 	])
 	var census: Dictionary = report["census"]
+	var bucket_occurrences: Dictionary = {}
 	for bucket in ["implemented", "unimplemented", "blocked", "deliberate", "unknown"]:
 		var histogram: Dictionary = census[bucket]
 		var occurrences := 0
 		for count in histogram.values():
 			occurrences += int(count)
+		bucket_occurrences[bucket] = occurrences
 		print("CENSUS %s opcodes=%d occurrences=%d" % [bucket, histogram.size(), occurrences])
+	var named_created_count := int((census["implemented"] as Dictionary).get(
+		"NAMED_CREATED", 0
+	))
+	print("CENSUS implemented NAMED_CREATED=%d" % named_created_count)
+	if (
+		named_created_count != 8
+		or (census["implemented"] as Dictionary).size() != 38
+		or int(bucket_occurrences["implemented"]) != 4027
+		or (census["unimplemented"] as Dictionary).size() != 16
+		or int(bucket_occurrences["unimplemented"]) != 118
+	):
+		printerr(
+			"RETAIL_SCRIPT_CENSUS FAIL NAMED_CREATED/totals expected 8, 38/4027 implemented, 16/118 unimplemented"
+		)
+		sim.unregister_script_executor(SimScript.PLAYER_TEAM)
+		for facet in world._facets.values():
+			facet.world = null
+		world._facets.clear()
+		quit(1)
+		return
 	print("RUNTIME scripts_fired=%d conditions_evaluated=%d subroutine_calls=%d wiring_faults=%d" % [
 		executor.scripts_fired,
 		executor.conditions_evaluated,
@@ -111,6 +191,73 @@ func _run() -> void:
 	print("EXECUTED condition SKIRMISH_PLAYER_FACTION=%d" % int(executor.condition_executions.get("SKIRMISH_PLAYER_FACTION", 0)))
 	print("EXECUTED condition PLAYER_CAN_PURCHASE_SCIENCE=%d" % int(executor.condition_executions.get("PLAYER_CAN_PURCHASE_SCIENCE", 0)))
 	print("EXECUTED action PLAYER_PURCHASE_SCIENCE=%d" % int(executor.action_executions.get("PLAYER_PURCHASE_SCIENCE", 0)))
+	var hero_rank_executions := int(executor.condition_executions.get("ANY_HERO_REACHED_RANK", 0))
+	var hero_rank_gaps := 0
+	for gap_value in executor.dispatch.gaps.entries.values():
+		var gap := gap_value as Dictionary
+		if String(gap.get("kind", "")) == "condition" \
+				and String(gap.get("name", "")) == "ANY_HERO_REACHED_RANK":
+			hero_rank_gaps += int(gap.get("count", 0))
+	print("EXECUTED condition ANY_HERO_REACHED_RANK=%d gaps=%d" % [
+		hero_rank_executions, hero_rank_gaps,
+	])
+	if hero_rank_executions != CENSUS_TICKS or hero_rank_gaps != 0:
+		printerr(
+			"RETAIL_SCRIPT_CENSUS FAIL ANY_HERO_REACHED_RANK expected executions=%d gaps=0, got executions=%d gaps=%d"
+			% [CENSUS_TICKS, hero_rank_executions, hero_rank_gaps]
+		)
+		sim.unregister_script_executor(SimScript.PLAYER_TEAM)
+		for facet in world._facets.values():
+			facet.world = null
+		world._facets.clear()
+		quit(1)
+		return
+	var building_permission_executions := int(
+		executor.action_executions.get("ALLOW_DISALLOW_ONE_BUILDING", 0)
+	)
+	var building_permission_gaps := 0
+	for gap_value in executor.dispatch.gaps.entries.values():
+		var gap := gap_value as Dictionary
+		if String(gap.get("kind", "")) == "action" \
+				and String(gap.get("name", "")) == "ALLOW_DISALLOW_ONE_BUILDING":
+			building_permission_gaps += int(gap.get("count", 0))
+	print("EXECUTED action ALLOW_DISALLOW_ONE_BUILDING=%d gaps=%d" % [
+		building_permission_executions, building_permission_gaps,
+	])
+	if building_permission_executions != 6 or building_permission_gaps != 0:
+		printerr(
+			"RETAIL_SCRIPT_CENSUS FAIL ALLOW_DISALLOW_ONE_BUILDING expected executions=6 gaps=0, got executions=%d gaps=%d"
+			% [building_permission_executions, building_permission_gaps]
+		)
+		sim.unregister_script_executor(SimScript.PLAYER_TEAM)
+		for facet in world._facets.values():
+			facet.world = null
+		world._facets.clear()
+		quit(1)
+		return
+	var command_point_executions := int(
+		executor.action_executions.get("OVERRIDE_PLAYER_COMMAND_POINTS", 0)
+	)
+	var command_point_gaps := 0
+	for gap_value in executor.dispatch.gaps.entries.values():
+		var gap := gap_value as Dictionary
+		if String(gap.get("kind", "")) == "action" \
+				and String(gap.get("name", "")) == "OVERRIDE_PLAYER_COMMAND_POINTS":
+			command_point_gaps += int(gap.get("count", 0))
+	print("EXECUTED action OVERRIDE_PLAYER_COMMAND_POINTS=%d gaps=%d" % [
+		command_point_executions, command_point_gaps,
+	])
+	if command_point_executions != 1 or command_point_gaps != 0:
+		printerr(
+			"RETAIL_SCRIPT_CENSUS FAIL OVERRIDE_PLAYER_COMMAND_POINTS expected executions=1 gaps=0, got executions=%d gaps=%d"
+			% [command_point_executions, command_point_gaps]
+		)
+		sim.unregister_script_executor(SimScript.PLAYER_TEAM)
+		for facet in world._facets.values():
+			facet.world = null
+		world._facets.clear()
+		quit(1)
+		return
 	var by_reason: Dictionary = executor.dispatch.gaps.by_reason()
 	var reason_keys: Array = by_reason.keys()
 	reason_keys.sort()
@@ -134,6 +281,10 @@ func _run() -> void:
 			index + 1, row["kind"], row["name"], row["reason"], int(row["count"]),
 			row["first_script"], row["detail"],
 		])
+	sim.unregister_script_executor(SimScript.PLAYER_TEAM)
+	for facet in world._facets.values():
+		facet.world = null
+	world._facets.clear()
 	quit(0)
 
 

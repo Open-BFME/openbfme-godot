@@ -74,6 +74,9 @@ Object FixtureGhost
   WeaponSet
     Weapon = PRIMARY FixtureGhostSword
   End
+  Behavior = LockWeaponCreate ModuleTag_LockWeapon
+    SlotToLock = PRIMARY
+  End
   LocomotorSet
     Locomotor = FixtureLocomotor
     Speed = 40
@@ -194,6 +197,10 @@ class TestSummonLeafClosure:
         )
         assert member["maxHealth"] == 300
         assert member["weaponId"] == "FixtureGhostSword"
+        assert member["weaponSlot"] == "PRIMARY"
+        assert member["permanentWeaponLocks"][0]["slot"] == "PRIMARY"
+        assert member["permanentWeaponLocks"][0]["state"] == "LOCKED_PERMANENTLY"
+        assert "LockWeaponCreate" not in member.get("unconvertedBehaviors", [])
         assert member["locomotor"]["speed"] == 40
         assert member["draw"] == [
             {

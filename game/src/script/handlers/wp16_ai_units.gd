@@ -136,17 +136,11 @@ extends RefCounted
 ## SageWorldQuery.ok first and returns WORLD_REFUSED otherwise, which the
 ## dispatcher turns into CONDITION_FALLBACK (false) *and* a structured gap.
 ##
-## THE COMPARISON IS CONSUMED HERE, SO PLACEHOLDER TOKENS REFUSE. The world's
-## argument convention is that player tokens like "<This Player>" pass through
-## verbatim for the WORLD to resolve - which is fine for every member of this
-## file that hands the player TO a world method. This condition is different:
-## units.owner returns a concrete player name and the equality test runs in
-## THIS handler, so a placeholder token on the right-hand side has nothing to
-## resolve it, and comparing it literally would answer a confident "false" to
-## a question that was never asked. Exactly as WP17 refused out-of-table
-## COMPARISON operators (consumed there) while WP15 passed out-of-table
-## AI_MOOD through (consumed by the world), an angle-bracket token here is
-## refused with the missing surface named - see _condition_owned_by_player.
+## THE COMPARISON IS CONSUMED BY THE WORLD. Both text arguments pass unchanged
+## to units.is_owned_by, so player tokens such as "<This Player>" resolve in
+## the executing world's binding context. Keeping the comparison world-side is
+## what distinguishes a real negative answer from an incomplete-namespace
+## refusal without teaching this handler match-specific player identity.
 
 const PACKAGE := "WP16-ai-units"
 
@@ -208,8 +202,9 @@ const GAP_TYPE_SIGHTED := (
 	+ "object_type: String, owner: String) -> SageWorldQuery)"
 )
 
-const GAP_CREATE_OBJECT_ACTIONS := ["CREATE_OBJECT"]
-const GAP_TYPE_SIGHTED_CONDITIONS := ["TYPE_SIGHTED"]
+## Formerly gap-registered; now served via create_object_on_team / type_sighted_by.
+const GAP_CREATE_OBJECT_ACTIONS: Array = []
+const GAP_TYPE_SIGHTED_CONDITIONS: Array = []
 
 
 static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
@@ -221,9 +216,8 @@ static func register(reg: SageScriptHandlerRegistry.Registrar) -> void:
 	reg.action("GATE_CLOSE", _gate_close)                               #  1
 	reg.action("PLAYER_ENABLE_UNIT_CONSTRUCTION", _enable_unit_construction)  # 1
 
-	# --- Gap-registered: the world surface cannot carry the argument ------
-	reg.blocked_actions(GAP_CREATE_OBJECT_ACTIONS, GAP_CREATE_OBJECT)   #  4
-	reg.blocked_conditions(GAP_TYPE_SIGHTED_CONDITIONS, GAP_TYPE_SIGHTED)  # 1
+	reg.action("CREATE_OBJECT", _create_object)                         #  4
+	reg.condition("TYPE_SIGHTED", _type_sighted)                        #  1
 
 
 # --- Shared tails ---------------------------------------------------------
@@ -249,6 +243,42 @@ static func _unanswered(ctx: Dictionary, query: SageWorldQuery) -> int:
 	return Dispatch.Status.WORLD_REFUSED
 
 
+static func _create_object(ctx: Dictionary) -> int:
+	# CREATE_OBJECT(OBJECT_TYPE, TEAM, COORD3D, ANGLE)
+	var args: SageScriptArgs = ctx["args"]
+	var pos := Vector3(
+		args.real(2) if args.size() > 2 else 0.0,
+		0.0,
+		0.0
+	)
+	# COORD3D may be packed as text "x,y,z" or three reals depending on decode.
+	var coord_text := args.text(2)
+	if coord_text.contains(","):
+		var parts := coord_text.split(",")
+		if parts.size() >= 2:
+			pos = Vector3(float(parts[0]), float(parts[1]) if parts.size() > 2 else 0.0, float(parts[parts.size() - 1]))
+	var angle := args.real(3)
+	var query := (ctx["world"] as SageScriptWorld).units().create_object_on_team(
+		args.text(0), args.text(1), pos, angle
+	)
+	if not query.ok:
+		return _unanswered(ctx, query)
+	ctx["result"] = query.value
+	return Dispatch.Status.OK
+
+
+static func _type_sighted(ctx: Dictionary) -> int:
+	# TYPE_SIGHTED(UNIT observer, OBJECT_TYPE, PLAYER owner)
+	var args: SageScriptArgs = ctx["args"]
+	var query := (ctx["world"] as SageScriptWorld).units().type_sighted_by(
+		args.text(0), args.text(1), args.text(2)
+	)
+	if not query.ok:
+		return _unanswered(ctx, query)
+	ctx["result"] = query.as_bool()
+	return Dispatch.Status.OK
+
+
 # --- Condition ------------------------------------------------------------
 
 
@@ -261,41 +291,17 @@ static func _condition_owned_by_player(ctx: Dictionary) -> int:
 	# who owns a player name - which a fixture-driven world answers with a
 	# refusal, but a permissive one might answer with a plausible false.
 	#
-	# THE COMPARISON RUNS HERE, NOT IN THE WORLD. units.owner (the method the
-	# world's own docstring assigns this condition) returns the owner's
-	# concrete player name; this handler tests it for equality with the
-	# authored player. The comparison is EXACT - no case folding, no trimming -
-	# for the same reason WP17's faction test is exact: names arrive as the
-	# decoded script carries them, and a handler that folded case would make a
-	# mod's two distinct player tokens one player here and two in retail.
-	#
-	# PLACEHOLDER TOKENS REFUSE, BECAUSE THIS HANDLER CONSUMES THE VALUE. A
-	# player argument of the form "<...>" ("<This Player>" and its family) is
-	# a placeholder the WORLD resolves wherever a player is handed to a world
-	# method - but here nothing is handed over: the equality runs in this
-	# file, no seam exists to resolve the token against, and comparing it
-	# literally would answer a confident "false" to a question that was never
-	# asked, 32 times per AI game if the libraries author the token form.
-	# Refused instead, naming the surface that would fix it. (This is the
-	# WP17 COMPARISON-operator rule, not a new one: validate what YOU consume,
-	# pass through what the world consumes.)
+	# Both values pass to the world unchanged. Player placeholders are binding
+	# context, not literal player names; resolving them in the world is what
+	# makes all retail "<This Player>" sites answerable without teaching the
+	# handler match-specific identity.
 	var args: SageScriptArgs = ctx["args"]
-	var player := args.text(1)
-	if player.begins_with("<") and player.ends_with(">"):
-		ctx["detail"] = (
-			"NAMED_OWNED_BY_PLAYER was authored with placeholder player token "
-			+ "'%s'; the ownership comparison is evaluated in the handler "
-			+ "against units.owner's concrete name, so the token has nothing "
-			+ "to resolve it and a literal comparison would be a confident "
-			+ "wrong 'false'. NEEDED: units.is_owned_by(object_name: String, "
-			+ "player: String) -> SageWorldQuery, with world-side token "
-			+ "resolution"
-		) % player
-		return Dispatch.Status.WORLD_REFUSED
-	var query := (ctx["world"] as SageScriptWorld).units().owner(args.text(0))
+	var query := (ctx["world"] as SageScriptWorld).units().is_owned_by(
+		args.text(0), args.text(1)
+	)
 	if not query.ok:
 		return _unanswered(ctx, query)
-	ctx["result"] = query.as_string() == player
+	ctx["result"] = query.as_bool()
 	return Dispatch.Status.OK
 
 

@@ -42,6 +42,9 @@ STRING_CATALOG_PATH = "data/lotr.str"
 UPGRADE_PATH = "data/ini/upgrade.ini"
 SCIENCE_PATH = "data/ini/science.ini"
 SPECIAL_POWER_PATH = "data/ini/specialpower.ini"
+# Create-a-Hero powers live in a sibling document (both BFME2 and RotWK). Wild
+# (and other sides) still reach CAH abilities through shared command surfaces.
+CREATE_A_HERO_SPECIAL_POWER_PATH = "data/ini/createaherospecialpowers.ini"
 FX_LIST_PATH = "data/ini/fxlist.ini"
 EVA_PATH = "data/ini/eva.ini"
 MUSIC_PATH = "data/ini/music.ini"
@@ -774,6 +777,16 @@ def _census_playable_faction(
     upgrade_doc = _read_document(catalog, UPGRADE_PATH)
     science_doc = _read_document(catalog, SCIENCE_PATH)
     special_power_doc = _read_document(catalog, SPECIAL_POWER_PATH)
+    create_a_hero_power_entry = catalog.resolve_exact(CREATE_A_HERO_SPECIAL_POWER_PATH)
+    if create_a_hero_power_entry is not None:
+        create_a_hero_power_doc = _read_document(
+            catalog, CREATE_A_HERO_SPECIAL_POWER_PATH
+        )
+        special_power_source = (
+            special_power_doc.source + b"\n" + create_a_hero_power_doc.source
+        )
+    else:
+        special_power_source = special_power_doc.source
     fx_list_doc = _read_document(catalog, FX_LIST_PATH)
     eva_doc = _read_document(catalog, EVA_PATH)
     music_doc = _read_document(catalog, MUSIC_PATH)
@@ -1329,7 +1342,7 @@ def _census_playable_faction(
     gameplay_closure = resolve_gameplay_definition_closure(
         upgrade_source=upgrade_doc.source,
         science_source=science_doc.source,
-        special_power_source=special_power_doc.source,
+        special_power_source=special_power_source,
         upgrade_roots=_casefold_unique(upgrades),
         science_roots=_casefold_unique(sciences),
         special_power_roots=_casefold_unique(special_powers),

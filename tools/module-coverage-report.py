@@ -119,6 +119,93 @@ def main(argv: list[str] | None = None) -> int:
     print("It does NOT mean the behaviour runs. Class C members need simulation")
     print("work no importer change can provide; their consumed share is at most")
     print("the flattened half of the work.")
+    grant_create = next(
+        (member for member in members if member["name"] == "GrantUpgradeCreate"),
+        None,
+    )
+    if grant_create is not None and grant_create["status"] == "consumed":
+        print("GrantUpgradeCreate scope: playable structures only; playable-unit")
+        print("and non-playable cinematic/system declarations are not materialized.")
+    highlander = next(
+        (member for member in members if member["name"] == "HighlanderBody"),
+        None,
+    )
+    if highlander is not None and highlander["status"] == "consumed":
+        print("HighlanderBody scope: generic policy only for eligible playable")
+        print("unit/structure descriptors; other retail carriers are not instantiated.")
+    destroy_die = next(
+        (member for member in members if member["name"] == "DestroyDie"),
+        None,
+    )
+    if destroy_die is not None and destroy_die["status"] == "consumed":
+        compiled = destroy_die.get("compilerConsumedSubset", "not recorded")
+        executable = destroy_die.get("runtimeExecutableSubset", "not recorded")
+        print(f"DestroyDie compiler-consumed subset: {compiled}")
+        print(f"DestroyDie runtime-executable subset: {executable}")
+        print("Compiler consumption is not runtime coverage. Retail ALL -TOPPLED")
+        print("carriers are cinematic/unmaterialized and are not claimed executable.")
+        deferred = destroy_die.get("runtimeDeferredSubset")
+        if deferred:
+            print(f"DestroyDie runtime-deferred subset: {deferred}")
+    lock_weapon = next(
+        (member for member in members if member["name"] == "LockWeaponCreate"),
+        None,
+    )
+    if lock_weapon is not None and lock_weapon["status"] == "consumed":
+        print("LockWeaponCreate scope: playable-unit descriptors and spellbook")
+        print("summon leaves; cinematic carrier CINE_Sam is not materialized.")
+    inherit_upgrade = next(
+        (member for member in members if member["name"] == "InheritUpgradeCreate"),
+        None,
+    )
+    if inherit_upgrade is not None and inherit_upgrade["status"] == "consumed":
+        print("InheritUpgradeCreate scope: every declaration is compiled; only")
+        print("materialized construct carriers execute. Deferred wall/composite")
+        print("carriers remain recorded until their lifecycle systems exist.")
+    queue_exit = next(
+        (
+            member
+            for member in members
+            if member["name"] == "QueueProductionExitUpdate"
+        ),
+        None,
+    )
+    if queue_exit is not None and queue_exit["status"] == "consumed":
+        compiled = queue_exit.get("compilerConsumedSubset", "not recorded")
+        rejected = queue_exit.get("knownFailClosedSubset", "not recorded")
+        executable = queue_exit.get("runtimeExecutableSubset", "not recorded")
+        print(f"QueueProductionExitUpdate compiler-consumed subset: {compiled}")
+        print(f"QueueProductionExitUpdate known fail-closed subset: {rejected}")
+        print(f"QueueProductionExitUpdate runtime-executable subset: {executable}")
+        print("Valid compiled declarations are manifest-validated as deferred")
+        print("evidence only. No exit placement,")
+        print("rally, delay, burst, airborne, or BFME-only field executes yet.")
+    auto_deposit = next(
+        (member for member in members if member["name"] == "AutoDepositUpdate"),
+        None,
+    )
+    if auto_deposit is not None and auto_deposit["status"] == "consumed":
+        sites = auto_deposit.get("declarationSites", {})
+        print(
+            "AutoDepositUpdate observed declaration sites: "
+            f"BFME2={sites.get('bfme2-retail', 0)} "
+            f"RotWK={sites.get('rotwk-retail', 0)}"
+        )
+        compiled = auto_deposit.get(
+            "compilerConsumedSubset", "not recorded"
+        )
+        executable = auto_deposit.get(
+            "runtimeExecutableSubset", "not recorded"
+        )
+        deferred = auto_deposit.get(
+            "runtimeDeferredSubset", "not recorded"
+        )
+        print(f"AutoDepositUpdate compiler-consumed subset: {compiled}")
+        print(f"AutoDepositUpdate runtime-executable subset: {executable}")
+        print(f"AutoDepositUpdate runtime-deferred subset: {deferred}")
+        print("These corpus counts prove vocabulary occurrence only. Compiler")
+        print("and runtime coverage require a measured materialized-descriptor")
+        print("receipt; none is inferred from declaration counts.")
     print()
 
     for tree in trees:
