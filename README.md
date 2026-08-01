@@ -29,7 +29,7 @@ cd openbfme-godot
 set OPENBFME_GODOT=C:\Path\To\Godot_v4.7-stable_win64_console.exe
 set ROTWK_INSTALL=C:\Path\To\RotWK
 
-:: Offline tools check (no install required)
+:: Tools check without a game install (first run may download pinned Python packages)
 powershell -File tools\gate-rotwk-systems.ps1 -SkipLiveRetail
 
 :: Factory path only (does not select a play pack by itself)

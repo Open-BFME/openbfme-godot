@@ -13,7 +13,9 @@ guessing. That is intentional (see [Glossary](#glossary)).
 - **Rise of the Witch-king 2.01** (needs BFME2 base underneath - the tools
   layer them). Optional: BFME2 alone for comparison only
 - Godot **4.7** for Windows (console build preferred so you can see log text)
-- Python 3.12 on PATH (first run can install a private copy under `.private/`)
+- Python 3.12 on PATH once so tools can bootstrap a **private** env under
+  `.private/` (after that, the private env is used; first gate may download
+  pinned packages over the network)
 - Lots of free disk for `.private/` (full multi-faction work is tens of GB)
 
 Everything converted stays in the ignored `.private/` folder. Do not commit it.
@@ -66,7 +68,7 @@ Matches the product baseline and `tools/rotwk_*.py`.
 set OPENBFME_GODOT=C:\Path\To\Godot_v4.7-stable_win64_console.exe
 set ROTWK_INSTALL=C:\Path\To\RotWK
 
-:: Check tools without needing the game install
+:: Check tools without a game install (may download pinned Python packages once)
 powershell -File tools\gate-rotwk-systems.ps1 -SkipLiveRetail
 
 :: Full systems path (census, map cook plans, etc.)

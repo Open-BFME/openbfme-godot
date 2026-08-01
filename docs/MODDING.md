@@ -57,13 +57,22 @@ game/mods/example_hard_orcs/
 }
 ```
 
-How to try it:
+How to try it (loose / dev lane, not a retail multiplayer proof):
 
-1. Keep the example under `game/mods/` (already in the tree), or copy the folder
-   to Godot's `user://mods` on your machine.
-2. Launch with a content root that includes base data + this mod
-   (default game content discovery loads `game/mods` for loose packs).
-3. Higher `priority` packs override lower ones by the same object `id`.
+1. Keep `game/mods/example_hard_orcs/` in the tree (already committed).
+2. Set Godot and launch the client:
+   ```bat
+   set OPENBFME_GODOT=C:\Path\To\Godot_v4.7-stable_win64_console.exe
+   run_game.bat
+   ```
+3. Loose packs under `game/mods/` load with base game data for local experiments.
+4. Higher `priority` wins on the same object `id`. This example uses
+   `"priority": 50`. Converted **retail** packs often use **100+**, so if both
+   define `orc`, the retail pack may win. For a clear override against retail,
+   raise the example priority above the retail pack or load base content only.
+
+There is no single headless "orc HP = 620" gate for this sample yet. Treat it as
+a **layout + JSON schema demo** you can edit and re-launch.
 
 Optional: point at an external content root:
 
