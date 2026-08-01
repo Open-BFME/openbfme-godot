@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/retail_slice/retail_vertical_slice.gd" id="1_retail"]
+
+[node name="RetailVerticalSlice" type="Node3D"]
+script = ExtResource("1_retail")

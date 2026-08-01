@@ -1,0 +1,21 @@
+{
+  "id": "archery",
+  "name": "Archery Range",
+  "faction": "gondor",
+  "cost": 500,
+  "build_time": 10,
+  "hp": 1500,
+  "radius": 9,
+  "vision": 28,
+  "desc": "Trains archer battalions.",
+  "icon": "icons/archery.png",
+  "mesh": "models/buildings/archery",
+  "presentation": "glb_or_obj",
+  "trains": [
+    "archer"
+  ],
+  "research": [
+    "fireArrows",
+    "rangedArmor"
+  ]
+}

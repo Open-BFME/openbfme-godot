@@ -1,0 +1,25 @@
+{
+  "id": "elvenbarracks",
+  "name": "Elven Barracks",
+  "faction": "elves",
+  "cost": 450,
+  "build_time": 10,
+  "hp": 1500,
+  "radius": 9,
+  "vision": 28,
+  "desc": "Trains Lorien warriors and archers.",
+  "icon": "icons/elvenbarracks.png",
+  "mesh": "models/buildings/elvenbarracks",
+  "presentation": "glb_or_obj",
+  "trains": [
+    "lorienwarrior",
+    "lorienarcher",
+    "mirkwood"
+  ],
+  "research": [
+    "forgedBlades",
+    "heavyArmor",
+    "fireArrows",
+    "rangedArmor"
+  ]
+}

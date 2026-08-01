@@ -1,0 +1,21 @@
+{
+  "id": "stables",
+  "name": "Stables",
+  "faction": "gondor",
+  "cost": 600,
+  "build_time": 12,
+  "hp": 1500,
+  "radius": 10,
+  "vision": 28,
+  "desc": "Trains knight battalions.",
+  "icon": "icons/stables.png",
+  "mesh": "models/buildings/stables",
+  "presentation": "glb_or_obj",
+  "trains": [
+    "knight"
+  ],
+  "research": [
+    "forgedBlades",
+    "heavyArmor"
+  ]
+}

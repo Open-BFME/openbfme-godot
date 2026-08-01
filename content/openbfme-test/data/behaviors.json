@@ -1,0 +1,74 @@
+{
+  "schema": "openbfme.behaviors",
+  "schemaVersion": 0,
+  "behaviorSets": [
+    {
+      "id": "test.behavior-set.member-melee",
+      "behaviors": [
+        {
+          "kind": "stable-formation-slot",
+          "assignmentOrder": "entity-id",
+          "softCohesionRadiusSubcells": 1800,
+          "hardCohesionRadiusSubcells": 4200,
+          "maximumSeparationCorrectionSubcellsPerTick": 45
+        },
+        {
+          "kind": "deterministic-target-acquisition",
+          "scanIntervalTicks": 5,
+          "scanRadiusSubcells": 4800,
+          "tieBreakOrder": [
+            "distance-squared",
+            "entity-id"
+          ]
+        },
+        {
+          "kind": "bounded-melee-contact",
+          "contactSlotsPerTarget": 4,
+          "allocationOrder": [
+            "target-entity-id",
+            "attacker-entity-id"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "test.behavior-set.member-ranged",
+      "behaviors": [
+        {
+          "kind": "stable-formation-slot",
+          "assignmentOrder": "entity-id",
+          "softCohesionRadiusSubcells": 1800,
+          "hardCohesionRadiusSubcells": 4200,
+          "maximumSeparationCorrectionSubcellsPerTick": 45
+        },
+        {
+          "kind": "deterministic-target-acquisition",
+          "scanIntervalTicks": 5,
+          "scanRadiusSubcells": 7000,
+          "tieBreakOrder": [
+            "distance-squared",
+            "entity-id"
+          ]
+        },
+        {
+          "kind": "projectile-attack",
+          "retargetAfterLaunch": false
+        }
+      ]
+    },
+    {
+      "id": "test.behavior-set.fortress",
+      "behaviors": [
+        {
+          "kind": "static-blocker",
+          "footprintClass": "structure-medium"
+        },
+        {
+          "kind": "victory-objective",
+          "defeatWhenDestroyed": true,
+          "resolutionDelayTicks": 1
+        }
+      ]
+    }
+  ]
+}

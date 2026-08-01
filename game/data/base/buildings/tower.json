@@ -1,0 +1,19 @@
+{
+  "id": "tower",
+  "name": "Arrow Tower",
+  "faction": "gondor",
+  "cost": 450,
+  "build_time": 8,
+  "hp": 1400,
+  "radius": 5,
+  "vision": 48,
+  "desc": "Defensive turret that fires volleys at nearby enemies.",
+  "icon": "icons/tower.png",
+  "mesh": "models/buildings/tower",
+  "presentation": "glb_or_obj",
+  "tower": true,
+  "auto_attack": true,
+  "tower_range": 48,
+  "tower_damage": 18,
+  "tower_interval": 2.5
+}

@@ -1,0 +1,21 @@
+{
+  "id": "gtrollcage",
+  "name": "Troll Cage",
+  "faction": "goblins",
+  "cost": 650,
+  "build_time": 13,
+  "hp": 1600,
+  "radius": 10,
+  "vision": 28,
+  "desc": "Trains cave trolls.",
+  "icon": "icons/trollcage.png",
+  "mesh": "models/buildings/gtrollcage",
+  "presentation": "glb_or_obj",
+  "trains": [
+    "cavetroll"
+  ],
+  "research": [
+    "forgedBlades",
+    "heavyArmor"
+  ]
+}

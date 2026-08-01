@@ -1,0 +1,17 @@
+{
+  "id": "laststand",
+  "name": "Last Stand",
+  "kind": "buff_self",
+  "cooldown": 90,
+  "req_rank": 1,
+  "damage": 0,
+  "radius": 12,
+  "range": 8,
+  "heal_frac": 0,
+  "duration": 6,
+  "dmg_mul": 1.5,
+  "knockback": 0,
+  "knockdown": 0,
+  "hotkey": null,
+  "icon": "icons/laststand.png"
+}

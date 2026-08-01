@@ -1,0 +1,29 @@
+{
+  "id": "legolas",
+  "name": "Legolas",
+  "faction": "elves",
+  "cost": 1000,
+  "build_time": 14,
+  "size": 1,
+  "hp": 1100,
+  "dmg": 32,
+  "range": 50,
+  "attack_interval": 1.1,
+  "speed": 13,
+  "vision": 58,
+  "ranged": true,
+  "desc": "Prince of the Woodland Realm and peerless archer.",
+  "icon": "icons/legolas.png",
+  "mesh": "models/units/legolas",
+  "presentation": "glb_or_obj",
+  "damage_type": "pierce",
+  "armor_type": "hero",
+  "hero": true,
+  "abilities": [
+    "hawkstrike",
+    "arrowwind",
+    "knifefighter",
+    "huntermark",
+    "stormarrows"
+  ]
+}

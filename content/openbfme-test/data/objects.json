@@ -1,0 +1,126 @@
+{
+  "schema": "openbfme.objects",
+  "schemaVersion": 0,
+  "objects": [
+    {
+      "id": "test.object.member.melee",
+      "kind": "member",
+      "displayName": "Practice Block",
+      "maximumHealth": 100,
+      "collisionRadiusSubcells": 220,
+      "armorId": "test.armor.member-padding",
+      "locomotionId": "test.locomotion.foot",
+      "behaviorSetId": "test.behavior-set.member-melee",
+      "weaponIds": [
+        "test.weapon.practice-baton"
+      ],
+      "animationCapabilityId": "test.animation.member",
+      "presentation": {
+        "source": "generated-primitive",
+        "shape": "capsule",
+        "radiusMillimeters": 220,
+        "heightMillimeters": 720,
+        "material": "team-color-matte"
+      }
+    },
+    {
+      "id": "test.object.member.ranged",
+      "kind": "member",
+      "displayName": "Practice Pin",
+      "maximumHealth": 100,
+      "collisionRadiusSubcells": 200,
+      "armorId": "test.armor.member-padding",
+      "locomotionId": "test.locomotion.foot",
+      "behaviorSetId": "test.behavior-set.member-ranged",
+      "weaponIds": [
+        "test.weapon.foam-sphere-launcher"
+      ],
+      "animationCapabilityId": "test.animation.member",
+      "presentation": {
+        "source": "generated-primitive",
+        "shape": "cylinder",
+        "radiusMillimeters": 200,
+        "heightMillimeters": 680,
+        "material": "team-color-light"
+      }
+    },
+    {
+      "id": "test.object.fortress",
+      "kind": "structure",
+      "displayName": "Objective Cube",
+      "maximumHealth": 5000,
+      "collisionRadiusSubcells": 1100,
+      "armorId": "test.armor.objective-shell",
+      "locomotionId": "test.locomotion.immobile",
+      "behaviorSetId": "test.behavior-set.fortress",
+      "weaponIds": [],
+      "animationCapabilityId": "test.animation.structure",
+      "presentation": {
+        "source": "generated-primitive",
+        "shape": "box",
+        "widthMillimeters": 1800,
+        "heightMillimeters": 1400,
+        "depthMillimeters": 1800,
+        "material": "team-color-dark"
+      }
+    },
+    {
+      "id": "test.object.farm",
+      "kind": "structure",
+      "displayName": "Supply Depot",
+      "maximumHealth": 1200,
+      "collisionRadiusSubcells": 1200,
+      "armorId": "test.armor.objective-shell",
+      "locomotionId": "test.locomotion.immobile",
+      "behaviorSetId": "test.behavior-set.fortress",
+      "weaponIds": [],
+      "animationCapabilityId": "test.animation.structure",
+      "presentation": {
+        "source": "generated-primitive",
+        "shape": "cylinder",
+        "radiusMillimeters": 1100,
+        "heightMillimeters": 900,
+        "material": "team-color-light"
+      }
+    },
+    {
+      "id": "test.object.barracks",
+      "kind": "structure",
+      "displayName": "Assembly Hall",
+      "maximumHealth": 2000,
+      "collisionRadiusSubcells": 1400,
+      "armorId": "test.armor.objective-shell",
+      "locomotionId": "test.locomotion.immobile",
+      "behaviorSetId": "test.behavior-set.fortress",
+      "weaponIds": [],
+      "animationCapabilityId": "test.animation.structure",
+      "presentation": {
+        "source": "generated-primitive",
+        "shape": "box",
+        "widthMillimeters": 2300,
+        "heightMillimeters": 1300,
+        "depthMillimeters": 1900,
+        "material": "team-color-matte"
+      }
+    },
+    {
+      "id": "test.object.archery",
+      "kind": "structure",
+      "displayName": "Launcher Workshop",
+      "maximumHealth": 1800,
+      "collisionRadiusSubcells": 1400,
+      "armorId": "test.armor.objective-shell",
+      "locomotionId": "test.locomotion.immobile",
+      "behaviorSetId": "test.behavior-set.fortress",
+      "weaponIds": [],
+      "animationCapabilityId": "test.animation.structure",
+      "presentation": {
+        "source": "generated-primitive",
+        "shape": "cylinder",
+        "radiusMillimeters": 1300,
+        "heightMillimeters": 1500,
+        "material": "team-color-matte"
+      }
+    }
+  ]
+}

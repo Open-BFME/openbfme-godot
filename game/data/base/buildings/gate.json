@@ -1,0 +1,16 @@
+{
+  "id": "gate",
+  "name": "Gate",
+  "faction": "gondor",
+  "cost": 200,
+  "build_time": 6,
+  "hp": 1500,
+  "radius": 5.5,
+  "vision": 28,
+  "desc": "A wall your own troops can pass through (R rotates).",
+  "icon": "icons/gate.png",
+  "mesh": "models/buildings/gate",
+  "presentation": "glb_or_obj",
+  "wall": true,
+  "gate": true
+}

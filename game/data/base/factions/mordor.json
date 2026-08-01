@@ -1,0 +1,143 @@
+{
+  "id": "mordor",
+  "name": "Mordor",
+  "alignment": "evil",
+  "desc": "Cheap orcs, fast raiders, monsters, terror heroes, and dark late-game powers.",
+  "fortress": "mfortress",
+  "buildings": [
+    "mfortress",
+    "lumbermill",
+    "orcpit",
+    "wargpen",
+    "trollcage",
+    "mwell",
+    "mtower",
+    "spikedwall",
+    "spikedgate",
+    "spostern"
+  ],
+  "wall_keys": {
+    "wall": "spikedwall",
+    "gate": "spikedgate",
+    "postern": "spostern"
+  },
+  "hero_keys": [
+    "nazgul",
+    "mouthsauron"
+  ],
+  "starting_units": [
+    "orc"
+  ],
+  "reinforce_keys": [
+    "orc",
+    "orc",
+    "orcarcher"
+  ],
+  "powers": [
+    "heal",
+    "scout",
+    "reinforce",
+    "sunflare",
+    "cloudbreak",
+    "darkness",
+    "dead",
+    "eagles",
+    "balrog",
+    "earthquake"
+  ],
+  "ai_plan": {
+    "economy": [
+      "lumbermill",
+      "lumbermill",
+      "lumbermill"
+    ],
+    "production": [
+      "orcpit",
+      "wargpen",
+      "trollcage"
+    ],
+    "army": [
+      "orc",
+      "orc",
+      "orc",
+      "orc",
+      "orc",
+      "orc",
+      "orcarcher",
+      "orcarcher",
+      "orcarcher",
+      "warg",
+      "warg"
+    ],
+    "hero": "nazgul",
+    "monster": "troll",
+    "wave_size": 4,
+    "unit_mix": [
+      {
+        "key": "orc",
+        "weight": 6,
+        "minWave": 0
+      },
+      {
+        "key": "orcarcher",
+        "weight": 3,
+        "minWave": 1
+      },
+      {
+        "key": "warg",
+        "weight": 2,
+        "minWave": 2
+      }
+    ],
+    "econ_key": "lumbermill",
+    "well_key": "mwell",
+    "tower_key": "mtower",
+    "tech_keys": [
+      "forgedBlades",
+      "fireArrows",
+      "heavyArmor",
+      "rangedArmor"
+    ],
+    "fortress_tech_keys": [
+      "garrison",
+      "masonry",
+      "banners"
+    ],
+    "pit_slots": [
+      {
+        "x": -30,
+        "z": 16
+      },
+      {
+        "x": 16,
+        "z": -30
+      },
+      {
+        "x": -12,
+        "z": -38
+      },
+      {
+        "x": -44,
+        "z": -4
+      }
+    ],
+    "econ_slots": [
+      {
+        "x": -42,
+        "z": 30
+      },
+      {
+        "x": 30,
+        "z": -42
+      },
+      {
+        "x": -54,
+        "z": -24
+      },
+      {
+        "x": -12,
+        "z": 48
+      }
+    ]
+  }
+}

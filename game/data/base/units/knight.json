@@ -1,0 +1,22 @@
+{
+  "id": "knight",
+  "name": "Knights of Gondor",
+  "faction": "gondor",
+  "cost": 450,
+  "build_time": 10,
+  "size": 3,
+  "hp": 750,
+  "dmg": 20,
+  "range": 6,
+  "attack_interval": 1,
+  "speed": 17,
+  "vision": 38,
+  "ranged": false,
+  "desc": "Heavy cavalry that tramples infantry while moving.",
+  "icon": "icons/knight.png",
+  "mesh": "models/units/knight",
+  "presentation": "glb_or_obj",
+  "damage_type": "crush",
+  "armor_type": "cavalry",
+  "cavalry": true
+}

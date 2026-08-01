@@ -1,0 +1,17 @@
+{
+  "id": "wisdom",
+  "name": "Wisdom of the Eldar",
+  "kind": "nova_damage",
+  "cooldown": 75,
+  "req_rank": 1,
+  "damage": 0,
+  "radius": 24,
+  "range": 8,
+  "heal_frac": 0,
+  "duration": 0,
+  "dmg_mul": 1.0,
+  "knockback": 0,
+  "knockdown": 0,
+  "hotkey": "B",
+  "icon": "icons/wisdom.png"
+}

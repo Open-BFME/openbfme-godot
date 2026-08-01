@@ -1,0 +1,13 @@
+{
+  "id": "masonry",
+  "name": "Reinforced Masonry",
+  "cost": 700,
+  "time": 25,
+  "icon": "icons/bulwark.png",
+  "melee_dmg_mul": 1.0,
+  "ranged_dmg_mul": 1.0,
+  "melee_armor_mul": 1.0,
+  "ranged_armor_mul": 1.0,
+  "building_hp_mul": 1.25,
+  "replenish_mul": 1.0
+}

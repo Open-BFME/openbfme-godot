@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://6vkndhmkner3"
+path="res://.godot/imported/fords_linear_fog.glsl-27abd16c51e8d5d21c4940bdfc40890e.res"
+
+[deps]
+
+source_file="res://src/retail_slice/fords_linear_fog.glsl"
+dest_files=["res://.godot/imported/fords_linear_fog.glsl-27abd16c51e8d5d21c4940bdfc40890e.res"]
+
+[params]
+

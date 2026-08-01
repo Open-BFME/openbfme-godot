@@ -1,0 +1,15 @@
+{
+  "id": "earthquake",
+  "name": "Earthquake",
+  "tier": 3,
+  "cost_pp": 20,
+  "kind": "quake",
+  "radius": 22,
+  "damage": 0,
+  "heal_frac": 0.35,
+  "duration": 0,
+  "icon": "icons/earthquake.png",
+  "target": "point",
+  "requires_tier_spent": 2,
+  "building_damage": 400
+}

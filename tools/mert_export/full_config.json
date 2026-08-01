@@ -1,0 +1,2854 @@
+{
+  "UNIT_TYPES": {
+    "soldier": {
+      "name": "Gondor Soldiers",
+      "icon": "SW",
+      "faction": "gondor",
+      "cost": 200,
+      "buildTime": 6,
+      "size": 5,
+      "hp": 550,
+      "dmg": 13,
+      "range": 5.5,
+      "attackInterval": 1,
+      "speed": 10,
+      "vision": 32,
+      "ranged": false,
+      "desc": "Stalwart shields of the White City."
+    },
+    "archer": {
+      "name": "Gondor Archers",
+      "icon": "AR",
+      "faction": "gondor",
+      "cost": 300,
+      "buildTime": 8,
+      "size": 5,
+      "hp": 380,
+      "dmg": 9,
+      "range": 40,
+      "attackInterval": 1.7,
+      "speed": 10,
+      "vision": 46,
+      "ranged": true,
+      "desc": "Disciplined bowmen who thin enemies from afar."
+    },
+    "towerguard": {
+      "name": "Tower Guards",
+      "icon": "TG",
+      "faction": "gondor",
+      "cost": 350,
+      "buildTime": 8,
+      "size": 5,
+      "hp": 720,
+      "dmg": 11,
+      "range": 6,
+      "attackInterval": 1.1,
+      "speed": 8.5,
+      "vision": 32,
+      "ranged": false,
+      "spear": true,
+      "desc": "Pike wall. x2.5 vs cavalry and monsters."
+    },
+    "trebuchet": {
+      "name": "Trebuchet",
+      "icon": "TR",
+      "faction": "gondor",
+      "cost": 700,
+      "buildTime": 16,
+      "size": 1,
+      "hp": 650,
+      "dmg": 55,
+      "range": 62,
+      "attackInterval": 4.5,
+      "speed": 6,
+      "vision": 64,
+      "ranged": true,
+      "siege": true,
+      "desc": "Siege engine. x3 vs buildings, splash damage."
+    },
+    "knight": {
+      "name": "Knights of Gondor",
+      "icon": "KN",
+      "faction": "gondor",
+      "cost": 450,
+      "buildTime": 10,
+      "size": 3,
+      "hp": 750,
+      "dmg": 20,
+      "range": 6,
+      "attackInterval": 1,
+      "speed": 17,
+      "vision": 38,
+      "ranged": false,
+      "cavalry": true,
+      "desc": "Heavy cavalry that tramples infantry while moving."
+    },
+    "aragorn": {
+      "name": "Aragorn",
+      "icon": "AK",
+      "faction": "gondor",
+      "cost": 800,
+      "buildTime": 12,
+      "size": 1,
+      "hp": 1500,
+      "dmg": 70,
+      "range": 6,
+      "attackInterval": 0.9,
+      "speed": 12,
+      "vision": 38,
+      "ranged": false,
+      "hero": true,
+      "abilities": [
+        {
+          "key": "blademaster",
+          "name": "Blademaster",
+          "icon": "BM",
+          "cd": 30,
+          "hotkey": "F",
+          "dmg": 320,
+          "radius": 15
+        },
+        {
+          "key": "athelas",
+          "name": "Athelas",
+          "icon": "+",
+          "cd": 45,
+          "hotkey": "G",
+          "healFrac": 0.45,
+          "radius": 24
+        },
+        {
+          "key": "mount",
+          "name": "Mount",
+          "icon": "MH",
+          "cd": 0,
+          "hotkey": "V"
+        },
+        {
+          "key": "anduril",
+          "name": "Anduril",
+          "icon": "AN",
+          "cd": 25,
+          "hotkey": "B",
+          "targetDmg": 500,
+          "range": 8,
+          "color": 16774863
+        },
+        {
+          "key": "oathbreakers",
+          "name": "Oathbreakers",
+          "icon": "OB",
+          "cd": 120,
+          "summons": [
+            {
+              "typeKey": "soldier",
+              "count": 2,
+              "lifetime": 30,
+              "ghost": true,
+              "hp": 650,
+              "name": "Oathbreaker",
+              "spread": 7
+            }
+          ],
+          "color": 10485701
+        }
+      ],
+      "desc": "The returned king cuts through packed foes."
+    },
+    "gandalf": {
+      "name": "Gandalf the White",
+      "icon": "GW",
+      "faction": "gondor",
+      "cost": 1200,
+      "buildTime": 15,
+      "size": 1,
+      "hp": 1300,
+      "dmg": 50,
+      "range": 30,
+      "attackInterval": 1.4,
+      "speed": 12,
+      "vision": 44,
+      "ranged": true,
+      "hero": true,
+      "abilities": [
+        {
+          "key": "wordofpower",
+          "name": "Word of Power",
+          "icon": "WP",
+          "cd": 45,
+          "hotkey": "F",
+          "dmg": 500,
+          "radius": 24
+        },
+        {
+          "key": "istariLight",
+          "name": "Istari Light",
+          "icon": "IL",
+          "cd": 18,
+          "hotkey": "G",
+          "dmg": 250,
+          "range": 40
+        },
+        {
+          "key": "shieldbubble",
+          "name": "Shield of the Istari",
+          "icon": "SH",
+          "cd": 60,
+          "hotkey": "V",
+          "radius": 20,
+          "shield": 5,
+          "duration": 5,
+          "color": 16251903
+        },
+        {
+          "key": "wizardblast",
+          "name": "Wizard Blast",
+          "icon": "WB",
+          "cd": 12,
+          "hotkey": "B",
+          "dmg": 80,
+          "radius": 10,
+          "knockback": 7,
+          "knockdown": 1.1,
+          "color": 16251903
+        },
+        {
+          "key": "calleagles",
+          "name": "Call the Eagles",
+          "icon": "EG",
+          "cd": 110,
+          "summons": [
+            {
+              "typeKey": "eagle",
+              "count": 1,
+              "lifetime": 25,
+              "spread": 6
+            }
+          ],
+          "color": 14677759
+        }
+      ],
+      "desc": "Wizard hero with devastating ranged magic."
+    },
+    "boromir": {
+      "name": "Boromir",
+      "icon": "BO",
+      "faction": "gondor",
+      "cost": 600,
+      "buildTime": 10,
+      "size": 1,
+      "hp": 1300,
+      "dmg": 55,
+      "range": 6,
+      "attackInterval": 1,
+      "speed": 12,
+      "vision": 38,
+      "ranged": false,
+      "hero": true,
+      "abilities": [
+        {
+          "key": "horn",
+          "name": "Horn of Gondor",
+          "icon": "HN",
+          "cd": 40,
+          "hotkey": "F",
+          "stun": 4,
+          "radius": 22
+        },
+        {
+          "key": "captain",
+          "name": "Captain of Gondor",
+          "icon": "CP",
+          "cd": 50,
+          "hotkey": "G",
+          "radius": 26,
+          "duration": 12,
+          "dmgMul": 1.4
+        },
+        {
+          "key": "mount",
+          "name": "Mount",
+          "icon": "MH",
+          "cd": 0,
+          "hotkey": "V"
+        },
+        {
+          "key": "shieldbash",
+          "name": "Shield Bash",
+          "icon": "SB",
+          "cd": 20,
+          "hotkey": "B",
+          "radius": 10,
+          "cone": true,
+          "knockback": 7,
+          "knockdown": 1.4,
+          "color": 16774080
+        },
+        {
+          "key": "laststand",
+          "name": "Last Stand",
+          "icon": "LS",
+          "cd": 90,
+          "duration": 6,
+          "selfShield": 6,
+          "selfDmgMul": 1.5,
+          "color": 16766058
+        }
+      ],
+      "desc": "Captain of Gondor. Horn stuns enemy battalions."
+    },
+    "orc": {
+      "name": "Orc Warriors",
+      "icon": "OW",
+      "faction": "mordor",
+      "cost": 150,
+      "buildTime": 6,
+      "size": 6,
+      "hp": 480,
+      "dmg": 10,
+      "range": 5.5,
+      "attackInterval": 1.1,
+      "speed": 10.5,
+      "vision": 34,
+      "ranged": false,
+      "desc": "Cheap sword-fodder from the pits of Mordor."
+    },
+    "orcarcher": {
+      "name": "Orc Archers",
+      "icon": "OA",
+      "faction": "mordor",
+      "cost": 200,
+      "buildTime": 7,
+      "size": 5,
+      "hp": 350,
+      "dmg": 7,
+      "range": 36,
+      "attackInterval": 1.8,
+      "speed": 10,
+      "vision": 42,
+      "ranged": true,
+      "desc": "Crude archers that harass from behind the line."
+    },
+    "warg": {
+      "name": "Warg Riders",
+      "icon": "WR",
+      "faction": "mordor",
+      "cost": 350,
+      "buildTime": 9,
+      "size": 3,
+      "hp": 650,
+      "dmg": 17,
+      "range": 6,
+      "attackInterval": 1,
+      "speed": 17,
+      "vision": 38,
+      "ranged": false,
+      "cavalry": true,
+      "desc": "Fast raiders that trample infantry while moving."
+    },
+    "troll": {
+      "name": "Mountain Troll",
+      "icon": "MT",
+      "faction": "mordor",
+      "cost": 600,
+      "buildTime": 14,
+      "size": 1,
+      "hp": 1900,
+      "dmg": 95,
+      "range": 7.5,
+      "attackInterval": 1.9,
+      "speed": 8,
+      "vision": 34,
+      "ranged": false,
+      "monster": true,
+      "desc": "Monster brute. Spears deal bonus damage to it."
+    },
+    "nazgul": {
+      "name": "Black Rider",
+      "icon": "BR",
+      "faction": "mordor",
+      "cost": 800,
+      "buildTime": 18,
+      "size": 1,
+      "hp": 1700,
+      "dmg": 80,
+      "range": 6.5,
+      "attackInterval": 1,
+      "speed": 16,
+      "vision": 40,
+      "ranged": false,
+      "cavalry": true,
+      "hero": true,
+      "abilities": [
+        {
+          "key": "dread",
+          "name": "Dread",
+          "icon": "DR",
+          "cd": 35,
+          "hotkey": "F",
+          "radius": 20,
+          "duration": 10,
+          "dmgMul": 0.7
+        },
+        {
+          "key": "morgulblade",
+          "name": "Morgul Blade",
+          "icon": "MB",
+          "cd": 22,
+          "hotkey": "G",
+          "dmg": 200,
+          "range": 8,
+          "poisonDps": 20,
+          "poisonDuration": 6,
+          "color": 7786828
+        },
+        {
+          "key": "screech",
+          "name": "Screech",
+          "icon": "SC",
+          "cd": 35,
+          "hotkey": "V",
+          "radius": 18,
+          "fear": 4,
+          "color": 2756652
+        },
+        {
+          "key": "darkhaste",
+          "name": "Dark Haste",
+          "icon": "DH",
+          "cd": 40,
+          "hotkey": "B",
+          "duration": 8,
+          "selfSpeedMul": 1.8,
+          "color": 3807812
+        },
+        {
+          "key": "fellshape",
+          "name": "Fell Shape",
+          "icon": "FS",
+          "cd": 100,
+          "duration": 20,
+          "selfDmgMul": 1.4,
+          "selfSpeedMul": 1.25,
+          "form": "fell",
+          "color": 2363424
+        }
+      ],
+      "desc": "Dread mounted hero. Terror makes nearby troops cower; first contact can make non-hero, non-rank-5 troops flee. Heroes, veterans, statues, and rally buffs counter it."
+    },
+    "mouthsauron": {
+      "name": "Mouth of Sauron",
+      "icon": "MS",
+      "faction": "mordor",
+      "cost": 1000,
+      "buildTime": 16,
+      "size": 1,
+      "hp": 1700,
+      "dmg": 60,
+      "range": 6,
+      "attackInterval": 1,
+      "speed": 15,
+      "vision": 40,
+      "ranged": false,
+      "cavalry": true,
+      "hero": true,
+      "abilities": [
+        {
+          "key": "taunt",
+          "name": "Taunt",
+          "icon": "TA",
+          "cd": 35,
+          "hotkey": "F",
+          "radius": 24,
+          "duration": 5,
+          "taunt": true,
+          "color": 5904922
+        },
+        {
+          "key": "despair",
+          "name": "Despair",
+          "icon": "DS",
+          "cd": 45,
+          "hotkey": "G",
+          "radius": 18,
+          "stun": 3,
+          "color": 5057375
+        },
+        {
+          "key": "blackspeech",
+          "name": "Black Speech",
+          "icon": "BS",
+          "cd": 45,
+          "hotkey": "V",
+          "radius": 22,
+          "silence": 8,
+          "heroesOnly": true,
+          "color": 2363424
+        },
+        {
+          "key": "darkbargain",
+          "name": "Dark Bargain",
+          "icon": "DB",
+          "cd": 60,
+          "hotkey": "B",
+          "radius": 12,
+          "consumeBattalion": true,
+          "healFrac": 0.5,
+          "color": 2363424
+        },
+        {
+          "key": "heraldsdoom",
+          "name": "Herald's Doom",
+          "icon": "HD",
+          "cd": 70,
+          "radius": 18,
+          "dmg": 350,
+          "buildings": true,
+          "color": 2363424
+        }
+      ],
+      "desc": "A pale rider whose command breaks resolve. Terror makes nearby troops cower; first contact can make non-hero, non-rank-5 troops flee. Leadership counters cower."
+    },
+    "lorienwarrior": {
+      "name": "Lorien Warriors",
+      "icon": "LW",
+      "faction": "elves",
+      "cost": 300,
+      "buildTime": 8,
+      "size": 5,
+      "hp": 600,
+      "dmg": 15,
+      "range": 5.5,
+      "attackInterval": 1,
+      "speed": 10.5,
+      "vision": 36,
+      "ranged": false,
+      "desc": "Elegant gold-armored swordsmen."
+    },
+    "lorienarcher": {
+      "name": "Lorien Archers",
+      "icon": "LA",
+      "faction": "elves",
+      "cost": 350,
+      "buildTime": 9,
+      "size": 5,
+      "hp": 420,
+      "dmg": 11,
+      "range": 44,
+      "attackInterval": 1.65,
+      "speed": 10.5,
+      "vision": 50,
+      "ranged": true,
+      "desc": "Disciplined elven archers with excellent range."
+    },
+    "mirkwood": {
+      "name": "Mirkwood Sentinels",
+      "icon": "MW",
+      "faction": "elves",
+      "cost": 500,
+      "buildTime": 12,
+      "size": 3,
+      "hp": 450,
+      "dmg": 19,
+      "range": 50,
+      "attackInterval": 1.45,
+      "speed": 11,
+      "vision": 56,
+      "ranged": true,
+      "desc": "Elite woodland archers."
+    },
+    "ent": {
+      "name": "Ent",
+      "icon": "EN",
+      "faction": "elves",
+      "cost": 800,
+      "buildTime": 18,
+      "size": 1,
+      "hp": 2400,
+      "dmg": 110,
+      "range": 8,
+      "attackInterval": 2.2,
+      "speed": 5.2,
+      "vision": 42,
+      "ranged": false,
+      "siege": true,
+      "monster": true,
+      "desc": "Walking tree siege monster. x2 melee damage vs buildings."
+    },
+    "eagle": {
+      "name": "Great Eagle",
+      "icon": "EG",
+      "faction": "elves",
+      "cost": 0,
+      "buildTime": 0,
+      "size": 1,
+      "hp": 900,
+      "dmg": 120,
+      "range": 9,
+      "attackInterval": 2.5,
+      "speed": 20,
+      "vision": 54,
+      "ranged": false,
+      "fly": true,
+      "summon": true,
+      "desc": "Summoned eagle that swoops over terrain and strikes ground enemies."
+    },
+    "legolas": {
+      "name": "Legolas",
+      "icon": "LG",
+      "faction": "elves",
+      "cost": 1000,
+      "buildTime": 14,
+      "size": 1,
+      "hp": 1100,
+      "dmg": 32,
+      "range": 50,
+      "attackInterval": 1.1,
+      "speed": 13,
+      "vision": 58,
+      "ranged": true,
+      "hero": true,
+      "abilities": [
+        {
+          "key": "hawkstrike",
+          "name": "Hawk Strike",
+          "icon": "HS",
+          "cd": 20,
+          "hotkey": "F",
+          "dmg": 400,
+          "range": 45
+        },
+        {
+          "key": "arrowwind",
+          "name": "Arrow Wind",
+          "icon": "AW",
+          "cd": 35,
+          "hotkey": "G",
+          "dmg": 180,
+          "radius": 14,
+          "range": 50
+        },
+        {
+          "key": "knifefighter",
+          "name": "Knife Fighter",
+          "icon": "KF",
+          "cd": 25,
+          "hotkey": "V",
+          "dmg": 180,
+          "radius": 7,
+          "color": 14677759
+        },
+        {
+          "key": "huntermark",
+          "name": "Hunter's Mark",
+          "icon": "HM",
+          "cd": 50,
+          "hotkey": "B",
+          "radius": 24,
+          "duration": 12,
+          "dmgMul": 1.3,
+          "rangedOnly": true,
+          "color": 14677759
+        },
+        {
+          "key": "stormarrows",
+          "name": "Storm of Arrows",
+          "icon": "SA",
+          "cd": 60,
+          "dmg": 320,
+          "radius": 16,
+          "range": 50,
+          "targetClump": true,
+          "color": 14677759
+        }
+      ],
+      "desc": "Prince of the Woodland Realm and peerless archer."
+    },
+    "elrond": {
+      "name": "Elrond",
+      "icon": "ER",
+      "faction": "elves",
+      "cost": 1100,
+      "buildTime": 15,
+      "size": 1,
+      "hp": 1400,
+      "dmg": 60,
+      "range": 6,
+      "attackInterval": 0.95,
+      "speed": 12,
+      "vision": 44,
+      "ranged": false,
+      "hero": true,
+      "abilities": [
+        {
+          "key": "farsight",
+          "name": "Farsight",
+          "icon": "FS",
+          "cd": 45,
+          "hotkey": "F",
+          "healFrac": 0.4,
+          "radius": 24
+        },
+        {
+          "key": "whirlwind",
+          "name": "Whirlwind",
+          "icon": "WW",
+          "cd": 50,
+          "hotkey": "G",
+          "radius": 20,
+          "stun": 3.5
+        },
+        {
+          "key": "vilya",
+          "name": "Vilya",
+          "icon": "VY",
+          "cd": 50,
+          "hotkey": "V",
+          "healFrac": 0.35,
+          "radius": 24,
+          "clearStatus": true,
+          "color": 9428223
+        },
+        {
+          "key": "wisdom",
+          "name": "Wisdom of the Eldar",
+          "icon": "WE",
+          "cd": 75,
+          "hotkey": "B",
+          "radius": 24,
+          "xp": 200,
+          "color": 12445695
+        },
+        {
+          "key": "flood",
+          "name": "Flood",
+          "icon": "FL",
+          "cd": 90,
+          "lineRange": 40,
+          "lineWidth": 10,
+          "dmg": 220,
+          "knockback": 7,
+          "color": 9428223
+        }
+      ],
+      "desc": "Lord of Rivendell, healer and stormcaller."
+    },
+    "goblin": {
+      "name": "Wild Goblins",
+      "icon": "WG",
+      "faction": "wild",
+      "cost": 0,
+      "buildTime": 0,
+      "size": 5,
+      "hp": 420,
+      "dmg": 9,
+      "range": 5.5,
+      "attackInterval": 1.1,
+      "speed": 11,
+      "vision": 26,
+      "ranged": false,
+      "desc": "Wild lair guards who skulk near their caves."
+    },
+    "goblinwarrior": {
+      "name": "Goblin Warriors",
+      "icon": "GW",
+      "faction": "goblins",
+      "cost": 120,
+      "buildTime": 5,
+      "size": 6,
+      "hp": 330,
+      "dmg": 9,
+      "range": 5.4,
+      "attackInterval": 1.05,
+      "speed": 12,
+      "vision": 30,
+      "ranged": false,
+      "desc": "Cheap Misty Mountain swarm infantry."
+    },
+    "goblinarcher": {
+      "name": "Goblin Archers",
+      "icon": "GA",
+      "faction": "goblins",
+      "cost": 160,
+      "buildTime": 6,
+      "size": 5,
+      "hp": 280,
+      "dmg": 7,
+      "range": 34,
+      "attackInterval": 1.75,
+      "speed": 11.5,
+      "vision": 40,
+      "ranged": true,
+      "desc": "Weak but cheap archers."
+    },
+    "spiderrider": {
+      "name": "Spider Riders",
+      "icon": "SR",
+      "faction": "goblins",
+      "cost": 400,
+      "buildTime": 10,
+      "size": 3,
+      "hp": 600,
+      "dmg": 20,
+      "range": 6,
+      "attackInterval": 1,
+      "speed": 18,
+      "vision": 40,
+      "ranged": false,
+      "cavalry": true,
+      "desc": "Goblin cavalry on giant spiders."
+    },
+    "cavetroll": {
+      "name": "Cave Troll",
+      "icon": "CT",
+      "faction": "goblins",
+      "cost": 600,
+      "buildTime": 14,
+      "size": 1,
+      "hp": 2100,
+      "dmg": 100,
+      "range": 7.5,
+      "attackInterval": 1.9,
+      "speed": 8,
+      "vision": 34,
+      "ranged": false,
+      "monster": true,
+      "desc": "Pale cave brute for smashing lines and buildings."
+    },
+    "spiderling": {
+      "name": "Spiderlings",
+      "icon": "SL",
+      "faction": "goblins",
+      "cost": 0,
+      "buildTime": 0,
+      "size": 3,
+      "hp": 240,
+      "dmg": 7,
+      "range": 4.8,
+      "attackInterval": 0.75,
+      "speed": 19,
+      "vision": 28,
+      "ranged": false,
+      "cavalry": true,
+      "summon": true,
+      "desc": "Small summoned spiders that move quickly and bite exposed foes."
+    },
+    "goblinking": {
+      "name": "Goblin King",
+      "icon": "GK",
+      "faction": "goblins",
+      "cost": 900,
+      "buildTime": 14,
+      "size": 1,
+      "hp": 1500,
+      "dmg": 65,
+      "range": 6,
+      "attackInterval": 0.95,
+      "speed": 12,
+      "vision": 38,
+      "ranged": false,
+      "hero": true,
+      "abilities": [
+        {
+          "key": "warcry",
+          "name": "Warcry",
+          "icon": "WC",
+          "cd": 45,
+          "hotkey": "F",
+          "radius": 26,
+          "duration": 12,
+          "dmgMul": 1.4
+        },
+        {
+          "key": "summon",
+          "name": "Summon Goblins",
+          "icon": "SG",
+          "cd": 60,
+          "hotkey": "G",
+          "summons": [
+            {
+              "typeKey": "goblinwarrior",
+              "count": 1,
+              "lifetime": 30,
+              "spread": 7
+            }
+          ],
+          "color": 16766058
+        },
+        {
+          "key": "gluttony",
+          "name": "Gluttony",
+          "icon": "GL",
+          "cd": 30,
+          "hotkey": "V",
+          "radius": 8,
+          "devourMember": true,
+          "healFrac": 0.35,
+          "color": 9051919
+        },
+        {
+          "key": "tantrum",
+          "name": "Tantrum",
+          "icon": "TN",
+          "cd": 40,
+          "hotkey": "B",
+          "radius": 12,
+          "stun": 1.5,
+          "knockback": 7,
+          "knockdown": 1.3,
+          "color": 16766058
+        },
+        {
+          "key": "kingsfeast",
+          "name": "King's Feast",
+          "icon": "KF",
+          "cd": 100,
+          "duration": 12,
+          "dmgMul": 1.3,
+          "speedMul": 1.2,
+          "allFaction": true,
+          "color": 16766058
+        }
+      ],
+      "desc": "Bloated crowned goblin who drives the swarm forward."
+    },
+    "shelob": {
+      "name": "Shelob",
+      "icon": "SH",
+      "faction": "goblins",
+      "cost": 1100,
+      "buildTime": 16,
+      "size": 1,
+      "hp": 1900,
+      "dmg": 90,
+      "range": 7,
+      "attackInterval": 1.2,
+      "speed": 16,
+      "vision": 42,
+      "ranged": false,
+      "cavalry": true,
+      "monster": true,
+      "hero": true,
+      "abilities": [
+        {
+          "key": "venom",
+          "name": "Venom",
+          "icon": "VN",
+          "cd": 30,
+          "hotkey": "F",
+          "dmg": 150,
+          "range": 12,
+          "stun": 3
+        },
+        {
+          "key": "skitter",
+          "name": "Skitter",
+          "icon": "SK",
+          "cd": 40,
+          "hotkey": "G",
+          "duration": 8,
+          "speedMul": 1.8
+        },
+        {
+          "key": "web",
+          "name": "Web",
+          "icon": "WB",
+          "cd": 35,
+          "hotkey": "V",
+          "radius": 14,
+          "root": 4,
+          "color": 15790335
+        },
+        {
+          "key": "brood",
+          "name": "Brood",
+          "icon": "BD",
+          "cd": 80,
+          "hotkey": "B",
+          "summons": [
+            {
+              "typeKey": "spiderling",
+              "count": 2,
+              "lifetime": 25,
+              "spread": 6
+            }
+          ],
+          "color": 7786828
+        },
+        {
+          "key": "terrorfeast",
+          "name": "Terror Feast",
+          "icon": "TF",
+          "cd": 60,
+          "range": 10,
+          "targetKills": 2,
+          "targetFear": 3,
+          "healSelfFrac": 0.25,
+          "color": 2756652
+        }
+      ],
+      "desc": "A huge black spider that hunts isolated battalions. Terror makes nearby troops cower; first contact can make non-hero, non-rank-5 troops flee."
+    },
+    "balrog": {
+      "name": "Balrog",
+      "icon": "BG",
+      "faction": "mordor",
+      "cost": 0,
+      "buildTime": 0,
+      "size": 1,
+      "hp": 4200,
+      "dmg": 210,
+      "range": 8,
+      "attackInterval": 1.8,
+      "speed": 9,
+      "vision": 48,
+      "ranged": false,
+      "monster": true,
+      "summon": true,
+      "desc": "Temporary fire demon with brutal knockback attacks and terror that can make nearby troops cower or flee once."
+    },
+    "gollum": {
+      "name": "Gollum",
+      "icon": "?",
+      "faction": "wild",
+      "cost": 0,
+      "buildTime": 0,
+      "size": 1,
+      "hp": 300,
+      "dmg": 0,
+      "range": 0,
+      "attackInterval": 99,
+      "speed": 15,
+      "vision": 22,
+      "ranged": false,
+      "noAttack": true,
+      "gollum": true,
+      "desc": "A hidden wild wanderer carrying the One Ring."
+    },
+    "galadriel": {
+      "name": "Galadriel, Lady of Light",
+      "icon": "GL",
+      "faction": "elves",
+      "cost": 5000,
+      "buildTime": 25,
+      "size": 1,
+      "hp": 7000,
+      "dmg": 150,
+      "range": 35,
+      "attackInterval": 1.25,
+      "speed": 13,
+      "vision": 58,
+      "ranged": true,
+      "projectile": "bolt",
+      "hero": true,
+      "ringHero": true,
+      "abilities": [
+        {
+          "key": "nenya",
+          "name": "Nenya's Radiance",
+          "icon": "NR",
+          "cd": 40,
+          "hotkey": "F",
+          "reqRank": 1,
+          "dmg": 400,
+          "radius": 20,
+          "color": 16251903
+        },
+        {
+          "key": "earendil",
+          "name": "Light of Earendil",
+          "icon": "LE",
+          "cd": 70,
+          "hotkey": "G",
+          "reqRank": 1,
+          "healFrac": 0.5,
+          "radius": 25,
+          "shield": 4,
+          "color": 16774863
+        }
+      ],
+      "desc": "Ring hero. A white-gold queen whose light burns enemies and shields allies. Not revivable."
+    },
+    "sauron": {
+      "name": "Sauron, the Dark Lord",
+      "icon": "SA",
+      "faction": "mordor",
+      "cost": 5000,
+      "buildTime": 25,
+      "size": 1,
+      "hp": 7000,
+      "dmg": 190,
+      "range": 8,
+      "attackInterval": 1.45,
+      "speed": 11,
+      "vision": 54,
+      "ranged": false,
+      "monster": true,
+      "hero": true,
+      "ringHero": true,
+      "attackKnockbackRadius": 8,
+      "attackKnockback": 7,
+      "abilities": [
+        {
+          "key": "dominate",
+          "name": "Dominate",
+          "icon": "DM",
+          "cd": 50,
+          "hotkey": "F",
+          "reqRank": 1,
+          "radius": 24,
+          "stun": 5,
+          "color": 2756652
+        },
+        {
+          "key": "cataclysm",
+          "name": "Cataclysm",
+          "icon": "CT",
+          "cd": 80,
+          "hotkey": "G",
+          "reqRank": 1,
+          "radius": 22,
+          "dmg": 500,
+          "buildings": true,
+          "color": 16726528
+        }
+      ],
+      "desc": "Ring hero. A towering dark lord with crushing melee knockback and terror. Not revivable."
+    }
+  },
+  "BUILDING_TYPES": {
+    "fortress": {
+      "name": "Fortress of Gondor",
+      "icon": "FG",
+      "faction": "gondor",
+      "cost": 0,
+      "buildTime": 0,
+      "hp": 4500,
+      "radius": 18,
+      "income": 4,
+      "fortress": true,
+      "trains": [
+        "aragorn",
+        "boromir",
+        "gandalf"
+      ],
+      "researches": [
+        "garrison",
+        "masonry",
+        "banners"
+      ]
+    },
+    "farm": {
+      "name": "Farm",
+      "icon": "FA",
+      "faction": "gondor",
+      "cost": 300,
+      "buildTime": 8,
+      "hp": 900,
+      "radius": 9,
+      "income": 6,
+      "desc": "Generates resources."
+    },
+    "barracks": {
+      "name": "Barracks",
+      "icon": "BA",
+      "faction": "gondor",
+      "cost": 400,
+      "buildTime": 10,
+      "hp": 1600,
+      "radius": 9,
+      "trains": [
+        "soldier",
+        "towerguard"
+      ],
+      "researches": [
+        "forgedBlades",
+        "heavyArmor"
+      ],
+      "desc": "Trains swordsmen and tower guards."
+    },
+    "workshop": {
+      "name": "Siege Works",
+      "icon": "SW",
+      "faction": "gondor",
+      "cost": 800,
+      "buildTime": 14,
+      "hp": 1700,
+      "radius": 10,
+      "trains": [
+        "trebuchet"
+      ],
+      "researches": [
+        "fireArrows",
+        "rangedArmor"
+      ],
+      "desc": "Builds trebuchets to raze fortifications."
+    },
+    "statue": {
+      "name": "Statue of Kings",
+      "icon": "ST",
+      "faction": "gondor",
+      "cost": 350,
+      "buildTime": 8,
+      "hp": 800,
+      "radius": 6,
+      "desc": "Slowly heals nearby battalions.",
+      "healAura": 4,
+      "auraRadius": 30
+    },
+    "well": {
+      "name": "Well",
+      "icon": "WE",
+      "faction": "gondor",
+      "cost": 200,
+      "buildTime": 7,
+      "hp": 600,
+      "radius": 6,
+      "desc": "Heals nearby allies and restores lost soldiers out of combat.",
+      "well": true,
+      "auraRadius": 26
+    },
+    "archery": {
+      "name": "Archery Range",
+      "icon": "AR",
+      "faction": "gondor",
+      "cost": 500,
+      "buildTime": 10,
+      "hp": 1500,
+      "radius": 9,
+      "trains": [
+        "archer"
+      ],
+      "researches": [
+        "fireArrows",
+        "rangedArmor"
+      ],
+      "desc": "Trains archer battalions."
+    },
+    "stables": {
+      "name": "Stables",
+      "icon": "ST",
+      "faction": "gondor",
+      "cost": 600,
+      "buildTime": 12,
+      "hp": 1500,
+      "radius": 10,
+      "trains": [
+        "knight"
+      ],
+      "researches": [
+        "forgedBlades",
+        "heavyArmor"
+      ],
+      "desc": "Trains knight battalions."
+    },
+    "wall": {
+      "name": "Stone Wall",
+      "icon": "WA",
+      "faction": "gondor",
+      "cost": 100,
+      "buildTime": 4,
+      "hp": 1200,
+      "radius": 5.5,
+      "desc": "Blocks enemies. Chain segments together (R rotates).",
+      "wall": true
+    },
+    "gate": {
+      "name": "Gate",
+      "icon": "GT",
+      "faction": "gondor",
+      "cost": 200,
+      "buildTime": 6,
+      "hp": 1500,
+      "radius": 5.5,
+      "desc": "A wall your own troops can pass through (R rotates).",
+      "wall": true,
+      "gate": true
+    },
+    "postern": {
+      "name": "Postern Gate",
+      "icon": "PG",
+      "faction": "gondor",
+      "cost": 80,
+      "buildTime": 4,
+      "hp": 700,
+      "radius": 4.2,
+      "desc": "Small hidden gate. Your troops pass through; enemies must break it.",
+      "wall": true,
+      "gate": true,
+      "postern": true
+    },
+    "tower": {
+      "name": "Arrow Tower",
+      "icon": "AT",
+      "faction": "gondor",
+      "cost": 450,
+      "buildTime": 8,
+      "hp": 1400,
+      "radius": 5,
+      "desc": "Defensive turret that fires volleys at nearby enemies.",
+      "tower": true
+    },
+    "mfortress": {
+      "name": "Dark Citadel",
+      "icon": "DC",
+      "faction": "mordor",
+      "cost": 0,
+      "buildTime": 0,
+      "hp": 5500,
+      "radius": 17,
+      "income": 4,
+      "fortress": true,
+      "trains": [
+        "nazgul",
+        "mouthsauron"
+      ],
+      "researches": [
+        "garrison",
+        "masonry",
+        "banners"
+      ]
+    },
+    "lumbermill": {
+      "name": "Lumber Mill",
+      "icon": "LM",
+      "faction": "mordor",
+      "cost": 300,
+      "buildTime": 8,
+      "hp": 900,
+      "radius": 9,
+      "income": 6,
+      "desc": "Orc laborers strip the forest for resources."
+    },
+    "orcpit": {
+      "name": "Orc Pit",
+      "icon": "OP",
+      "faction": "mordor",
+      "cost": 300,
+      "buildTime": 10,
+      "hp": 1300,
+      "radius": 9,
+      "trains": [
+        "orc",
+        "orcarcher"
+      ],
+      "researches": [
+        "forgedBlades",
+        "heavyArmor",
+        "fireArrows",
+        "rangedArmor"
+      ],
+      "desc": "Trains orc warriors and archers."
+    },
+    "wargpen": {
+      "name": "Warg Pen",
+      "icon": "WP",
+      "faction": "mordor",
+      "cost": 450,
+      "buildTime": 11,
+      "hp": 1400,
+      "radius": 10,
+      "trains": [
+        "warg"
+      ],
+      "researches": [
+        "forgedBlades",
+        "heavyArmor"
+      ],
+      "desc": "Trains warg riders."
+    },
+    "trollcage": {
+      "name": "Troll Cage",
+      "icon": "TC",
+      "faction": "mordor",
+      "cost": 700,
+      "buildTime": 14,
+      "hp": 1700,
+      "radius": 10,
+      "trains": [
+        "troll"
+      ],
+      "researches": [
+        "forgedBlades",
+        "heavyArmor"
+      ],
+      "desc": "Trains mountain trolls."
+    },
+    "spikedwall": {
+      "name": "Spiked Barricade",
+      "icon": "SB",
+      "faction": "mordor",
+      "cost": 60,
+      "buildTime": 4,
+      "hp": 800,
+      "radius": 5.5,
+      "desc": "Cheap jagged barricade segment.",
+      "wall": true
+    },
+    "spikedgate": {
+      "name": "Barricade Gate",
+      "icon": "BG",
+      "faction": "mordor",
+      "cost": 120,
+      "buildTime": 5,
+      "hp": 1000,
+      "radius": 5.5,
+      "desc": "A crude gate your own troops can pass through.",
+      "wall": true,
+      "gate": true
+    },
+    "spostern": {
+      "name": "Postern Breach",
+      "icon": "PB",
+      "faction": "mordor",
+      "cost": 80,
+      "buildTime": 4,
+      "hp": 700,
+      "radius": 4.2,
+      "desc": "Small barricade gate. Your troops pass through; enemies must break it.",
+      "wall": true,
+      "gate": true,
+      "postern": true
+    },
+    "mtower": {
+      "name": "Spiked Tower",
+      "icon": "ST",
+      "faction": "mordor",
+      "cost": 450,
+      "buildTime": 8,
+      "hp": 1400,
+      "radius": 5,
+      "desc": "Timber watchtower that fires black-arrow volleys.",
+      "tower": true
+    },
+    "mwell": {
+      "name": "Dark Trough",
+      "icon": "TR",
+      "faction": "mordor",
+      "cost": 200,
+      "buildTime": 7,
+      "hp": 600,
+      "radius": 6,
+      "desc": "Heals nearby allies and restores lost soldiers out of combat.",
+      "well": true,
+      "auraRadius": 26
+    },
+    "efortress": {
+      "name": "Mallorn Fortress",
+      "icon": "MF",
+      "faction": "elves",
+      "cost": 0,
+      "buildTime": 0,
+      "hp": 4200,
+      "radius": 17,
+      "income": 4,
+      "fortress": true,
+      "trains": [
+        "legolas",
+        "elrond"
+      ],
+      "researches": [
+        "garrison",
+        "masonry",
+        "banners"
+      ]
+    },
+    "mallorntree": {
+      "name": "Mallorn Tree",
+      "icon": "MT",
+      "faction": "elves",
+      "cost": 300,
+      "buildTime": 8,
+      "hp": 850,
+      "radius": 8,
+      "income": 6,
+      "desc": "A golden tree that generates resources."
+    },
+    "elvenbarracks": {
+      "name": "Elven Barracks",
+      "icon": "EB",
+      "faction": "elves",
+      "cost": 450,
+      "buildTime": 10,
+      "hp": 1500,
+      "radius": 9,
+      "trains": [
+        "lorienwarrior",
+        "lorienarcher",
+        "mirkwood"
+      ],
+      "researches": [
+        "forgedBlades",
+        "heavyArmor",
+        "fireArrows",
+        "rangedArmor"
+      ],
+      "desc": "Trains Lorien warriors and archers."
+    },
+    "sacredgrove": {
+      "name": "Sacred Grove",
+      "icon": "SG",
+      "faction": "elves",
+      "cost": 700,
+      "buildTime": 13,
+      "hp": 1400,
+      "radius": 10,
+      "trains": [
+        "ent"
+      ],
+      "researches": [
+        "forgedBlades",
+        "heavyArmor"
+      ],
+      "desc": "Awakens Ents for siege."
+    },
+    "hedgewall": {
+      "name": "Hedge Wall",
+      "icon": "HW",
+      "faction": "elves",
+      "cost": 90,
+      "buildTime": 4,
+      "hp": 1000,
+      "radius": 5.5,
+      "desc": "Living green wall segment.",
+      "wall": true
+    },
+    "hedgegate": {
+      "name": "Hedge Gate",
+      "icon": "HG",
+      "faction": "elves",
+      "cost": 170,
+      "buildTime": 5,
+      "hp": 1200,
+      "radius": 5.5,
+      "desc": "Living gate your own troops can pass through.",
+      "wall": true,
+      "gate": true
+    },
+    "epostern": {
+      "name": "Green Postern",
+      "icon": "GP",
+      "faction": "elves",
+      "cost": 80,
+      "buildTime": 4,
+      "hp": 700,
+      "radius": 4.2,
+      "desc": "Small living gate. Your troops pass through; enemies must break it.",
+      "wall": true,
+      "gate": true,
+      "postern": true
+    },
+    "etower": {
+      "name": "Mallorn Tower",
+      "icon": "MT",
+      "faction": "elves",
+      "cost": 450,
+      "buildTime": 8,
+      "hp": 1400,
+      "radius": 5,
+      "desc": "Living tree platform that fires elven-arrow volleys.",
+      "tower": true
+    },
+    "ewell": {
+      "name": "Silver Fountain",
+      "icon": "FO",
+      "faction": "elves",
+      "cost": 200,
+      "buildTime": 7,
+      "hp": 600,
+      "radius": 6,
+      "desc": "Heals nearby allies and restores lost soldiers out of combat.",
+      "well": true,
+      "auraRadius": 26
+    },
+    "gfortress": {
+      "name": "Goblin Cave",
+      "icon": "GC",
+      "faction": "goblins",
+      "cost": 0,
+      "buildTime": 0,
+      "hp": 4000,
+      "radius": 17,
+      "income": 4,
+      "fortress": true,
+      "trains": [
+        "goblinking",
+        "shelob"
+      ],
+      "researches": [
+        "garrison",
+        "masonry",
+        "banners"
+      ]
+    },
+    "mineshaft": {
+      "name": "Mine Shaft",
+      "icon": "MS",
+      "faction": "goblins",
+      "cost": 300,
+      "buildTime": 8,
+      "hp": 800,
+      "radius": 8,
+      "income": 7,
+      "desc": "A crude mine that generates resources."
+    },
+    "goblinden": {
+      "name": "Goblin Den",
+      "icon": "GD",
+      "faction": "goblins",
+      "cost": 300,
+      "buildTime": 9,
+      "hp": 1200,
+      "radius": 9,
+      "trains": [
+        "goblinwarrior",
+        "goblinarcher"
+      ],
+      "researches": [
+        "forgedBlades",
+        "heavyArmor",
+        "fireArrows",
+        "rangedArmor"
+      ],
+      "desc": "Trains goblin warriors and archers."
+    },
+    "spiderpit": {
+      "name": "Spider Pit",
+      "icon": "SP",
+      "faction": "goblins",
+      "cost": 450,
+      "buildTime": 11,
+      "hp": 1300,
+      "radius": 10,
+      "trains": [
+        "spiderrider"
+      ],
+      "researches": [
+        "forgedBlades",
+        "heavyArmor"
+      ],
+      "desc": "Trains spider riders."
+    },
+    "gtrollcage": {
+      "name": "Troll Cage",
+      "icon": "TC",
+      "faction": "goblins",
+      "cost": 650,
+      "buildTime": 13,
+      "hp": 1600,
+      "radius": 10,
+      "trains": [
+        "cavetroll"
+      ],
+      "researches": [
+        "forgedBlades",
+        "heavyArmor"
+      ],
+      "desc": "Trains cave trolls."
+    },
+    "gspikedwall": {
+      "name": "Bone Barricade",
+      "icon": "BB",
+      "faction": "goblins",
+      "cost": 60,
+      "buildTime": 4,
+      "hp": 800,
+      "radius": 5.5,
+      "desc": "Cheap bone-spiked barricade segment.",
+      "wall": true
+    },
+    "gspikedgate": {
+      "name": "Bone Barricade Gate",
+      "icon": "BG",
+      "faction": "goblins",
+      "cost": 120,
+      "buildTime": 5,
+      "hp": 1000,
+      "radius": 5.5,
+      "desc": "A crude gate your own troops can pass through.",
+      "wall": true,
+      "gate": true
+    },
+    "gpostern": {
+      "name": "Bone Postern",
+      "icon": "BP",
+      "faction": "goblins",
+      "cost": 80,
+      "buildTime": 4,
+      "hp": 700,
+      "radius": 4.2,
+      "desc": "Small bone gate. Your troops pass through; enemies must break it.",
+      "wall": true,
+      "gate": true,
+      "postern": true
+    },
+    "gtower": {
+      "name": "Bone Tower",
+      "icon": "BT",
+      "faction": "goblins",
+      "cost": 450,
+      "buildTime": 8,
+      "hp": 1400,
+      "radius": 5,
+      "desc": "Bone totem tower that fires crude volleys.",
+      "tower": true
+    },
+    "gwell": {
+      "name": "Bone Trough",
+      "icon": "BT",
+      "faction": "goblins",
+      "cost": 200,
+      "buildTime": 7,
+      "hp": 600,
+      "radius": 6,
+      "desc": "Heals nearby allies and restores lost soldiers out of combat.",
+      "well": true,
+      "auraRadius": 26
+    },
+    "lair": {
+      "name": "Goblin Lair",
+      "icon": "GL",
+      "faction": "wild",
+      "cost": 0,
+      "buildTime": 0,
+      "hp": 1100,
+      "radius": 8,
+      "bounty": 400,
+      "desc": "A neutral cave guarded by wild goblins."
+    }
+  },
+  "FACTIONS": {
+    "gondor": {
+      "key": "gondor",
+      "name": "Gondor",
+      "icon": "SW",
+      "emblem": "assets/emblem-gondor.png",
+      "alignment": "good",
+      "desc": "Balanced soldiers, durable defenses, elite heroes, and strong late-game upgrades.",
+      "fortressKey": "fortress",
+      "buildKeys": [
+        "farm",
+        "barracks",
+        "archery",
+        "stables",
+        "workshop",
+        "statue",
+        "well",
+        "tower",
+        "wall",
+        "gate",
+        "postern"
+      ],
+      "wallKeys": {
+        "wall": "wall",
+        "gate": "gate",
+        "postern": "postern"
+      },
+      "heroKeys": [
+        "aragorn",
+        "boromir",
+        "gandalf"
+      ],
+      "starterUnitKeys": [
+        "soldier"
+      ],
+      "reinforceKeys": [
+        "soldier",
+        "soldier",
+        "archer"
+      ],
+      "aiPlan": {
+        "econKey": "farm",
+        "trainBuildingKeys": [
+          "barracks",
+          "archery",
+          "stables",
+          "workshop"
+        ],
+        "unitMix": [
+          {
+            "key": "soldier",
+            "weight": 5,
+            "minWave": 0
+          },
+          {
+            "key": "archer",
+            "weight": 3,
+            "minWave": 1
+          },
+          {
+            "key": "towerguard",
+            "weight": 2,
+            "minWave": 2
+          },
+          {
+            "key": "knight",
+            "weight": 2,
+            "minWave": 2
+          }
+        ],
+        "monsterKey": "trebuchet",
+        "lateHeroKey": "aragorn",
+        "pitSlots": [
+          {
+            "x": -30,
+            "z": 16
+          },
+          {
+            "x": 16,
+            "z": -30
+          },
+          {
+            "x": -12,
+            "z": -38
+          },
+          {
+            "x": -44,
+            "z": -4
+          }
+        ],
+        "econSlots": [
+          {
+            "x": -42,
+            "z": 30
+          },
+          {
+            "x": 30,
+            "z": -42
+          },
+          {
+            "x": -54,
+            "z": -24
+          },
+          {
+            "x": -12,
+            "z": 48
+          }
+        ],
+        "wellKey": "well",
+        "towerKey": "tower",
+        "statueKey": "statue",
+        "wellSlot": {
+          "x": -38,
+          "z": -42
+        },
+        "towerSlots": [
+          {
+            "x": -64,
+            "z": -26
+          },
+          {
+            "x": -26,
+            "z": -64
+          }
+        ],
+        "statueSlot": {
+          "x": -50,
+          "z": -46
+        },
+        "raidSize": 2,
+        "raidWave": 3,
+        "creepRange": 80,
+        "techKeys": [
+          "forgedBlades",
+          "fireArrows",
+          "heavyArmor",
+          "rangedArmor"
+        ],
+        "fortressTechKeys": [
+          "garrison",
+          "masonry",
+          "banners"
+        ]
+      }
+    },
+    "mordor": {
+      "key": "mordor",
+      "name": "Mordor",
+      "icon": "EY",
+      "emblem": "assets/emblem-mordor.png",
+      "alignment": "evil",
+      "desc": "Cheap orcs, fast raiders, monsters, terror heroes, and dark late-game powers.",
+      "fortressKey": "mfortress",
+      "buildKeys": [
+        "lumbermill",
+        "orcpit",
+        "wargpen",
+        "trollcage",
+        "mwell",
+        "mtower",
+        "spikedwall",
+        "spikedgate",
+        "spostern"
+      ],
+      "wallKeys": {
+        "wall": "spikedwall",
+        "gate": "spikedgate",
+        "postern": "spostern"
+      },
+      "heroKeys": [
+        "nazgul",
+        "mouthsauron"
+      ],
+      "starterUnitKeys": [
+        "orc"
+      ],
+      "reinforceKeys": [
+        "orc",
+        "orc",
+        "orcarcher"
+      ],
+      "aiPlan": {
+        "econKey": "lumbermill",
+        "trainBuildingKeys": [
+          "orcpit",
+          "wargpen",
+          "trollcage"
+        ],
+        "unitMix": [
+          {
+            "key": "orc",
+            "weight": 6,
+            "minWave": 0
+          },
+          {
+            "key": "orcarcher",
+            "weight": 3,
+            "minWave": 1
+          },
+          {
+            "key": "warg",
+            "weight": 2,
+            "minWave": 2
+          }
+        ],
+        "monsterKey": "troll",
+        "lateHeroKey": "nazgul",
+        "pitSlots": [
+          {
+            "x": -30,
+            "z": 16
+          },
+          {
+            "x": 16,
+            "z": -30
+          },
+          {
+            "x": -12,
+            "z": -38
+          },
+          {
+            "x": -44,
+            "z": -4
+          }
+        ],
+        "econSlots": [
+          {
+            "x": -42,
+            "z": 30
+          },
+          {
+            "x": 30,
+            "z": -42
+          },
+          {
+            "x": -54,
+            "z": -24
+          },
+          {
+            "x": -12,
+            "z": 48
+          }
+        ],
+        "wellKey": "mwell",
+        "towerKey": "mtower",
+        "statueKey": null,
+        "wellSlot": {
+          "x": -38,
+          "z": -42
+        },
+        "towerSlots": [
+          {
+            "x": -64,
+            "z": -26
+          },
+          {
+            "x": -26,
+            "z": -64
+          }
+        ],
+        "statueSlot": {
+          "x": -50,
+          "z": -46
+        },
+        "raidSize": 2,
+        "raidWave": 3,
+        "creepRange": 80,
+        "techKeys": [
+          "forgedBlades",
+          "fireArrows",
+          "heavyArmor",
+          "rangedArmor"
+        ],
+        "fortressTechKeys": [
+          "garrison",
+          "masonry",
+          "banners"
+        ]
+      }
+    },
+    "elves": {
+      "key": "elves",
+      "name": "Elves",
+      "icon": "TR",
+      "emblem": "assets/icons/efortress.png",
+      "alignment": "good",
+      "desc": "Precise archers, forest stealth, healing support, and expensive high-quality units.",
+      "fortressKey": "efortress",
+      "buildKeys": [
+        "mallorntree",
+        "elvenbarracks",
+        "sacredgrove",
+        "ewell",
+        "etower",
+        "hedgewall",
+        "hedgegate",
+        "epostern"
+      ],
+      "wallKeys": {
+        "wall": "hedgewall",
+        "gate": "hedgegate",
+        "postern": "epostern"
+      },
+      "heroKeys": [
+        "legolas",
+        "elrond"
+      ],
+      "starterUnitKeys": [
+        "lorienwarrior"
+      ],
+      "reinforceKeys": [
+        "lorienwarrior",
+        "lorienwarrior",
+        "lorienarcher"
+      ],
+      "aiPlan": {
+        "econKey": "mallorntree",
+        "trainBuildingKeys": [
+          "elvenbarracks",
+          "sacredgrove"
+        ],
+        "unitMix": [
+          {
+            "key": "lorienwarrior",
+            "weight": 4,
+            "minWave": 0
+          },
+          {
+            "key": "lorienarcher",
+            "weight": 4,
+            "minWave": 1
+          },
+          {
+            "key": "mirkwood",
+            "weight": 2,
+            "minWave": 3
+          }
+        ],
+        "monsterKey": "ent",
+        "lateHeroKey": "legolas",
+        "pitSlots": [
+          {
+            "x": -30,
+            "z": 16
+          },
+          {
+            "x": 16,
+            "z": -30
+          },
+          {
+            "x": -12,
+            "z": -38
+          },
+          {
+            "x": -44,
+            "z": -4
+          }
+        ],
+        "econSlots": [
+          {
+            "x": -42,
+            "z": 30
+          },
+          {
+            "x": 30,
+            "z": -42
+          },
+          {
+            "x": -54,
+            "z": -24
+          },
+          {
+            "x": -12,
+            "z": 48
+          }
+        ],
+        "wellKey": "ewell",
+        "towerKey": "etower",
+        "statueKey": null,
+        "wellSlot": {
+          "x": -38,
+          "z": -42
+        },
+        "towerSlots": [
+          {
+            "x": -64,
+            "z": -26
+          },
+          {
+            "x": -26,
+            "z": -64
+          }
+        ],
+        "statueSlot": {
+          "x": -50,
+          "z": -46
+        },
+        "raidSize": 2,
+        "raidWave": 3,
+        "creepRange": 80,
+        "techKeys": [
+          "forgedBlades",
+          "fireArrows",
+          "heavyArmor",
+          "rangedArmor"
+        ],
+        "fortressTechKeys": [
+          "garrison",
+          "masonry",
+          "banners"
+        ]
+      }
+    },
+    "goblins": {
+      "key": "goblins",
+      "name": "Goblins",
+      "icon": "GB",
+      "emblem": "assets/icons/gfortress.png",
+      "alignment": "evil",
+      "desc": "Fast swarms, spider cavalry, cheap caves, and brutal monster support.",
+      "fortressKey": "gfortress",
+      "buildKeys": [
+        "mineshaft",
+        "goblinden",
+        "spiderpit",
+        "gtrollcage",
+        "gwell",
+        "gtower",
+        "gspikedwall",
+        "gspikedgate",
+        "gpostern"
+      ],
+      "wallKeys": {
+        "wall": "gspikedwall",
+        "gate": "gspikedgate",
+        "postern": "gpostern"
+      },
+      "heroKeys": [
+        "goblinking",
+        "shelob"
+      ],
+      "starterUnitKeys": [
+        "goblinwarrior"
+      ],
+      "reinforceKeys": [
+        "goblinwarrior",
+        "goblinwarrior",
+        "goblinarcher"
+      ],
+      "aiPlan": {
+        "econKey": "mineshaft",
+        "trainBuildingKeys": [
+          "goblinden",
+          "spiderpit",
+          "gtrollcage"
+        ],
+        "unitMix": [
+          {
+            "key": "goblinwarrior",
+            "weight": 7,
+            "minWave": 0
+          },
+          {
+            "key": "goblinarcher",
+            "weight": 3,
+            "minWave": 1
+          },
+          {
+            "key": "spiderrider",
+            "weight": 2,
+            "minWave": 2
+          }
+        ],
+        "monsterKey": "cavetroll",
+        "lateHeroKey": "goblinking",
+        "pitSlots": [
+          {
+            "x": -30,
+            "z": 16
+          },
+          {
+            "x": 16,
+            "z": -30
+          },
+          {
+            "x": -12,
+            "z": -38
+          },
+          {
+            "x": -44,
+            "z": -4
+          }
+        ],
+        "econSlots": [
+          {
+            "x": -42,
+            "z": 30
+          },
+          {
+            "x": 30,
+            "z": -42
+          },
+          {
+            "x": -54,
+            "z": -24
+          },
+          {
+            "x": -12,
+            "z": 48
+          }
+        ],
+        "wellKey": "gwell",
+        "towerKey": "gtower",
+        "statueKey": null,
+        "wellSlot": {
+          "x": -38,
+          "z": -42
+        },
+        "towerSlots": [
+          {
+            "x": -64,
+            "z": -26
+          },
+          {
+            "x": -26,
+            "z": -64
+          }
+        ],
+        "statueSlot": {
+          "x": -50,
+          "z": -46
+        },
+        "raidSize": 2,
+        "raidWave": 3,
+        "creepRange": 80,
+        "techKeys": [
+          "forgedBlades",
+          "fireArrows",
+          "heavyArmor",
+          "rangedArmor"
+        ],
+        "fortressTechKeys": [
+          "garrison",
+          "masonry",
+          "banners"
+        ]
+      }
+    }
+  },
+  "POWERS": {
+    "heal": {
+      "name": "Heal",
+      "cost": 6,
+      "radius": 30,
+      "tier": 1,
+      "desc": "Restore allied battalions in an area."
+    },
+    "scout": {
+      "name": "Farsight",
+      "cost": 4,
+      "tier": 1,
+      "desc": "Ping enemy battalions and reveal the enemy base for 20 seconds."
+    },
+    "reinforce": {
+      "name": "Reinforcements",
+      "cost": 10,
+      "tier": 2,
+      "unlock": 12,
+      "desc": "Summon faction troops."
+    },
+    "sunflare": {
+      "name": "Sunflare",
+      "cost": 14,
+      "radius": 16,
+      "tier": 2,
+      "unlock": 12,
+      "desc": "Call down a blinding strike."
+    },
+    "cloudbreak": {
+      "name": "Cloud Break",
+      "cost": 12,
+      "tier": 2,
+      "unlock": 12,
+      "duration": 30,
+      "desc": "Brighten the sky and grant allied units +25% damage."
+    },
+    "darkness": {
+      "name": "Darkness",
+      "cost": 12,
+      "tier": 2,
+      "unlock": 12,
+      "duration": 30,
+      "desc": "Dim the sky and weaken enemy unit damage by 25%."
+    },
+    "dead": {
+      "name": "Army of the Dead",
+      "cost": 22,
+      "radius": 12,
+      "tier": 3,
+      "unlock": 30,
+      "desc": "Summon spectral soldiers for a short time."
+    },
+    "eagles": {
+      "name": "Summon Eagles",
+      "cost": 24,
+      "radius": 12,
+      "tier": 3,
+      "unlock": 30,
+      "desc": "Summon two great eagles for 30 seconds."
+    },
+    "balrog": {
+      "name": "Balrog",
+      "cost": 24,
+      "radius": 12,
+      "tier": 3,
+      "unlock": 30,
+      "desc": "Summon a Balrog for 40 seconds."
+    },
+    "earthquake": {
+      "name": "Earthquake",
+      "cost": 20,
+      "radius": 22,
+      "tier": 3,
+      "unlock": 30,
+      "desc": "Damage enemy buildings and troops in a large area."
+    }
+  },
+  "UPGRADES": {
+    "forgedBlades": {
+      "name": "Forged Blades",
+      "icon": "FB",
+      "cost": 600,
+      "time": 20,
+      "dmgMul": 1.3,
+      "desc": "Melee battalions deal 30% more damage."
+    },
+    "heavyArmor": {
+      "name": "Heavy Armor",
+      "icon": "HA",
+      "cost": 600,
+      "time": 20,
+      "armorMul": 0.75,
+      "desc": "Melee battalions take 25% less damage."
+    },
+    "fireArrows": {
+      "name": "Fire Arrows",
+      "icon": "FA",
+      "cost": 700,
+      "time": 20,
+      "dmgMul": 1.3,
+      "desc": "Ranged battalions deal 30% more projectile damage."
+    },
+    "rangedArmor": {
+      "name": "Ranger Armor",
+      "icon": "RA",
+      "cost": 500,
+      "time": 20,
+      "armorMul": 0.8,
+      "desc": "Ranged battalions take 20% less damage."
+    },
+    "garrison": {
+      "name": "Garrison Archers",
+      "icon": "AR",
+      "cost": 800,
+      "time": 25,
+      "desc": "The fortress fires a three-arrow volley every 2 seconds at nearby enemies."
+    },
+    "masonry": {
+      "name": "Reinforced Masonry",
+      "icon": "MS",
+      "cost": 700,
+      "time": 25,
+      "desc": "Fortress maximum health rises by 2000 and the fortress is repaired by 2000."
+    },
+    "banners": {
+      "name": "Banners of the King",
+      "icon": "BN",
+      "cost": 600,
+      "time": 20,
+      "hpMul": 1.1,
+      "desc": "Fortress income rises to 9 and new battalions spawn with 10% more health."
+    }
+  },
+  "DIFFICULTY": {
+    "easy": {
+      "income": 6,
+      "ramp": 0.5,
+      "firstWave": 150,
+      "waveCap": 6,
+      "aiStartRes": 350
+    },
+    "normal": {
+      "income": 9,
+      "ramp": 0.8,
+      "firstWave": 110,
+      "waveCap": 9,
+      "aiStartRes": 500
+    },
+    "hard": {
+      "income": 13,
+      "ramp": 1.2,
+      "firstWave": 80,
+      "waveCap": 12,
+      "aiStartRes": 800
+    }
+  },
+  "MAPS": {
+    "anduin": {
+      "key": "anduin",
+      "name": "Anduin Vale",
+      "seed": 1337,
+      "palette": {
+        "grass": 5993289,
+        "dry": 7632209,
+        "dirt": 8220496,
+        "enemy": 5263946,
+        "fog": 9083554,
+        "skyTop": "#5e7688",
+        "skyBottom": "#a4aaa0"
+      },
+      "trees": 110,
+      "rocks": 26,
+      "ruins": 10,
+      "campfires": 3,
+      "lairs": 3,
+      "heightScale": 1,
+      "clutter": 1
+    },
+    "misty": {
+      "key": "misty",
+      "name": "Misty Foothills",
+      "seed": 27182,
+      "palette": {
+        "grass": 6450783,
+        "dry": 7697771,
+        "dirt": 8024166,
+        "enemy": 5263690,
+        "fog": 9673634,
+        "skyTop": "#637080",
+        "skyBottom": "#a4aaa7"
+      },
+      "trees": 82,
+      "rocks": 54,
+      "ruins": 16,
+      "campfires": 3,
+      "lairs": 4,
+      "heightScale": 1.55,
+      "clutter": 0.85
+    },
+    "fangorn": {
+      "key": "fangorn",
+      "name": "Fangorn Edge",
+      "seed": 31415,
+      "palette": {
+        "grass": 4021310,
+        "dry": 5268802,
+        "dirt": 5984826,
+        "enemy": 4672578,
+        "fog": 8097150,
+        "skyTop": "#465f5a",
+        "skyBottom": "#8d9b88"
+      },
+      "trees": 185,
+      "rocks": 18,
+      "ruins": 7,
+      "campfires": 2,
+      "lairs": 4,
+      "heightScale": 0.9,
+      "forestBands": true,
+      "clutter": 1.35
+    },
+    "brown": {
+      "key": "brown",
+      "name": "Brown Lands",
+      "seed": 42424,
+      "palette": {
+        "grass": 7498566,
+        "dry": 8811851,
+        "dirt": 8940100,
+        "enemy": 5656128,
+        "fog": 10853500,
+        "skyTop": "#777c78",
+        "skyBottom": "#b3a072"
+      },
+      "trees": 42,
+      "rocks": 34,
+      "ruins": 8,
+      "campfires": 2,
+      "lairs": 2,
+      "heightScale": 0.75,
+      "clutter": 0.65
+    }
+  },
+  "VETERANCY": {
+    "thresholds": [
+      0,
+      300,
+      800,
+      1600,
+      2800
+    ],
+    "hpPerRank": 0.1,
+    "dmgPerRank": 0.1,
+    "heroCooldownPerRank": 0.05
+  },
+  "REPLENISHMENT": {
+    "outOfCombat": 15,
+    "passiveHealFrac": 0.02,
+    "passiveRestore": 30,
+    "passiveRestoreElite": 15,
+    "wellHeal": 12,
+    "wellRestore": 6,
+    "buildingRepairDelay": 20,
+    "buildingRepairFrac": 0.015,
+    "buildingRepairGoldPerHp": 0.025
+  },
+  "STANCES": {
+    "aggressive": {
+      "name": "Aggressive",
+      "icon": "A",
+      "aggro": 1,
+      "chase": true
+    },
+    "defensive": {
+      "name": "Defensive",
+      "icon": "D",
+      "aggro": 0.7,
+      "returnMul": 1.4
+    },
+    "hold": {
+      "name": "Hold Ground",
+      "icon": "H",
+      "aggro": 0
+    }
+  },
+  "TERROR": {
+    "units": [
+      "nazgul",
+      "mouthsauron",
+      "shelob",
+      "balrog",
+      "sauron"
+    ],
+    "radius": 20,
+    "duration": 3,
+    "immune": 30,
+    "cowerDamageMul": 0.75,
+    "cowerSpeedMul": 0.85,
+    "fleeSpeedMul": 2.25
+  },
+  "RING": {
+    "gollumReveal": 22,
+    "gollumPing": 25,
+    "gollumPingJitter": 15,
+    "wanderMin": 8,
+    "wanderMax": 15,
+    "pickupRadius": 4,
+    "droppedPulse": 2.4,
+    "baseMinDistance": 90
+  },
+  "MONSTER_KNOCKBACK": {
+    "units": [
+      "troll",
+      "cavetroll",
+      "ent",
+      "balrog"
+    ],
+    "radius": 4,
+    "min": 3,
+    "max": 5,
+    "duration": 0.45,
+    "knockdown": 1.1
+  },
+  "COMBAT_MODIFIERS": {
+    "spearVsMounted": 2.5,
+    "siegeVsBuilding": 2,
+    "stealthRevealTime": 3,
+    "cloudbreakDamageMul": 1.25,
+    "darknessEnemyDamageMul": 0.75,
+    "aiWaveDamageAt": 5,
+    "aiWaveDamageMul": 1.2,
+    "aiWaveArmorAt": 7,
+    "aiWaveArmorMul": 0.8
+  },
+  "TRAMPLE": {
+    "damagePerCavalry": 8,
+    "rehitDelay": 2.5,
+    "knockDown": 1.2,
+    "spearReflectMul": 2.5
+  },
+  "TOWERS": {
+    "fortress": {
+      "range": 50,
+      "damage": 9,
+      "height": 20,
+      "interval": 2,
+      "timerKey": "fortressVolleyTimer"
+    },
+    "tower": {
+      "range": 48,
+      "damage": 18,
+      "height": 10,
+      "interval": 2.5,
+      "timerKey": "towerVolleyTimer"
+    },
+    "wall": {
+      "range": 48,
+      "damage": 10.8,
+      "height": 8.5,
+      "interval": 2.5,
+      "timerKey": "wallTowerVolleyTimer"
+    }
+  },
+  "TOWER_UPGRADE": {
+    "cost": 250,
+    "time": 8
+  },
+  "GARRISON": {
+    "rangeBonus": 8,
+    "damageMul": 1.5,
+    "exitDistance": 9
+  },
+  "MOUNTED_HERO": {
+    "keys": [
+      "aragorn",
+      "boromir"
+    ],
+    "speedMul": 1.6,
+    "range": 6,
+    "toggleTime": 1
+  },
+  "CUSTOM_HERO": {
+    "key": "customhero",
+    "storageKey": "mert-custom-hero",
+    "cost": 900,
+    "buildTime": 12,
+    "statPoints": 10,
+    "hpPerPoint": 45,
+    "dmgPerPoint": 3,
+    "classes": {
+      "warrior": {
+        "name": "Warrior",
+        "icon": "WR",
+        "hp": 1200,
+        "dmg": 58,
+        "range": 6,
+        "attackInterval": 0.95,
+        "speed": 12,
+        "vision": 38,
+        "ranged": false,
+        "desc": "Custom melee hero with heavy armor and a keen blade."
+      },
+      "ranger": {
+        "name": "Ranger",
+        "icon": "RG",
+        "hp": 900,
+        "dmg": 26,
+        "range": 42,
+        "attackInterval": 1.45,
+        "speed": 14,
+        "vision": 50,
+        "ranged": true,
+        "desc": "Custom bow hero with speed and long sight."
+      },
+      "wizard": {
+        "name": "Wizard",
+        "icon": "WZ",
+        "hp": 860,
+        "dmg": 36,
+        "range": 30,
+        "attackInterval": 1.45,
+        "speed": 12,
+        "vision": 46,
+        "ranged": true,
+        "projectile": "bolt",
+        "desc": "Custom magic hero with a glowing staff."
+      }
+    },
+    "swatches": [
+      2376043,
+      8008994,
+      3235133,
+      6114698,
+      14210245,
+      1512732
+    ],
+    "glowSwatches": [
+      16766058,
+      12445695,
+      8317053,
+      16251903,
+      16742938,
+      13215999
+    ],
+    "defaultState": {
+      "name": "Wanderer",
+      "classKey": "warrior",
+      "primary": 2376043,
+      "secondary": 13225688,
+      "glow": 16766058,
+      "abilities": [
+        "bladeWhirl",
+        "mend"
+      ],
+      "stat": 5
+    },
+    "abilities": {
+      "bladeWhirl": {
+        "key": "bladeWhirl",
+        "name": "Blade Whirl",
+        "icon": "BW",
+        "cd": 30,
+        "hotkey": "F",
+        "dmg": 280,
+        "radius": 15
+      },
+      "rally": {
+        "key": "rally",
+        "name": "Rally",
+        "icon": "RY",
+        "cd": 45,
+        "hotkey": "F",
+        "radius": 24,
+        "duration": 12,
+        "dmgMul": 1.35
+      },
+      "mend": {
+        "key": "mend",
+        "name": "Mend",
+        "icon": "+",
+        "cd": 42,
+        "hotkey": "G",
+        "healFrac": 0.42,
+        "radius": 22
+      },
+      "stunBlast": {
+        "key": "stunBlast",
+        "name": "Stun Blast",
+        "icon": "SB",
+        "cd": 38,
+        "hotkey": "G",
+        "stun": 3.2,
+        "radius": 21
+      },
+      "piercingBolt": {
+        "key": "piercingBolt",
+        "name": "Piercing Bolt",
+        "icon": "PB",
+        "cd": 18,
+        "hotkey": "G",
+        "dmg": 230,
+        "range": 42
+      },
+      "bulwark": {
+        "key": "bulwark",
+        "name": "Bulwark",
+        "icon": "BK",
+        "cd": 58,
+        "hotkey": null,
+        "radius": 18,
+        "duration": 5,
+        "shield": 5
+      }
+    }
+  },
+  "FARM_EFFICIENCY": {
+    "radius": 40,
+    "neighborMul": 0.75,
+    "floor": 0.4
+  },
+  "AI_RULES": {
+    "budget": {
+      "construction": 0.4,
+      "troops": 0.45,
+      "tech": 0.15
+    },
+    "overflow": {
+      "construction": 1400,
+      "tech": 950
+    },
+    "gatherOffset": {
+      "x": -34,
+      "z": -34
+    },
+    "roadPoint": {
+      "x": 0,
+      "z": 0
+    },
+    "waveTimeout": 60,
+    "waveMinSize": 2,
+    "retreatHp": 0.3,
+    "retreatRecoverHp": 0.72,
+    "retreatJitter": 7,
+    "heroEnemyCount": 2,
+    "creepArmy": 4,
+    "defaultRaidSize": 2,
+    "raidWave": 3,
+    "creepRange": 80,
+    "techKeys": [
+      "forgedBlades",
+      "fireArrows",
+      "heavyArmor",
+      "rangedArmor"
+    ],
+    "fortressTechKeys": [
+      "garrison",
+      "masonry",
+      "banners"
+    ]
+  },
+  "HERO_REVIVAL": {
+    "baseCostMul": 0.6,
+    "deathCostMul": 0.2
+  },
+  "HERO_ABILITY_RANKS": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "START_RESOURCES": 1500,
+  "MAX_BATTALIONS": 16,
+  "MAP_HALF": 210,
+  "PLAYER_BASE": {
+    "x": -128,
+    "z": -128
+  },
+  "ENEMY_BASE": {
+    "x": 128,
+    "z": 128
+  },
+  "PP_PER_BATTALION": 2,
+  "PP_PER_BUILDING": 3
+}

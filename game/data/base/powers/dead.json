@@ -1,0 +1,17 @@
+{
+  "id": "dead",
+  "name": "Army of the Dead",
+  "tier": 3,
+  "cost_pp": 22,
+  "kind": "summon",
+  "radius": 12,
+  "damage": 0,
+  "heal_frac": 0.35,
+  "duration": 0,
+  "icon": "icons/dead.png",
+  "target": "point",
+  "requires_tier_spent": 2,
+  "unit": "soldier",
+  "count": 3,
+  "ghost": true
+}

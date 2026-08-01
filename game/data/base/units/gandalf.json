@@ -1,0 +1,29 @@
+{
+  "id": "gandalf",
+  "name": "Gandalf the White",
+  "faction": "gondor",
+  "cost": 1200,
+  "build_time": 15,
+  "size": 1,
+  "hp": 1300,
+  "dmg": 50,
+  "range": 30,
+  "attack_interval": 1.4,
+  "speed": 12,
+  "vision": 44,
+  "ranged": true,
+  "desc": "Wizard hero with devastating ranged magic.",
+  "icon": "icons/gandalf.png",
+  "mesh": "models/units/gandalf",
+  "presentation": "glb_or_obj",
+  "damage_type": "pierce",
+  "armor_type": "hero",
+  "hero": true,
+  "abilities": [
+    "wordofpower",
+    "istariLight",
+    "shieldbubble",
+    "wizardblast",
+    "calleagles"
+  ]
+}

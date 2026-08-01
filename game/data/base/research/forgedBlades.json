@@ -1,0 +1,13 @@
+{
+  "id": "forgedBlades",
+  "name": "Forged Blades",
+  "cost": 600,
+  "time": 20,
+  "icon": "icons/forgedblades.png",
+  "melee_dmg_mul": 1.3,
+  "ranged_dmg_mul": 1.0,
+  "melee_armor_mul": 1.0,
+  "ranged_armor_mul": 1.0,
+  "building_hp_mul": 1.0,
+  "replenish_mul": 1.0
+}

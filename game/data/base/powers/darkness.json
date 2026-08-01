@@ -1,0 +1,16 @@
+{
+  "id": "darkness",
+  "name": "Darkness",
+  "tier": 2,
+  "cost_pp": 12,
+  "kind": "weather",
+  "radius": 18,
+  "damage": 0,
+  "heal_frac": 0.35,
+  "duration": 30,
+  "icon": "icons/darkness.png",
+  "target": "point",
+  "requires_tier_spent": 1,
+  "weather": "darkness",
+  "enemy_dmg_mul": 0.75
+}

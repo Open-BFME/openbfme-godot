@@ -1,0 +1,21 @@
+{
+  "id": "orcarcher",
+  "name": "Orc Archers",
+  "faction": "mordor",
+  "cost": 200,
+  "build_time": 7,
+  "size": 5,
+  "hp": 350,
+  "dmg": 7,
+  "range": 36,
+  "attack_interval": 1.8,
+  "speed": 10,
+  "vision": 42,
+  "ranged": true,
+  "desc": "Crude archers that harass from behind the line.",
+  "icon": "icons/orcarcher.png",
+  "mesh": "models/units/orcarcher",
+  "presentation": "glb_or_obj",
+  "damage_type": "pierce",
+  "armor_type": "infantry_light"
+}

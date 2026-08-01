@@ -1,0 +1,67 @@
+# OPEN BFME - player-facing release notes
+#
+# One line per thing a PLAYTESTER would notice. Format:
+#
+#     SECTION|commit|text
+#
+# The commit is not decoration. tools/Build-PlayableBundle.ps1 resolves it
+# against the range the release actually covers and DROPS any line whose commit
+# is not in that range. That is what stops this file crediting a build with work
+# it does not contain: the worst case is a missing note, never an invented one.
+#
+# SECTION is one of:
+#
+#   NEW        something a player can do in this build that they could not do
+#              before. Only write this if the commit itself says the thing is
+#              reachable - a menu entry, a dropdown, a screen. "It exists in the
+#              code" is not this section.
+#   FIX        something that was visibly broken for a player and now is not.
+#   KNOWN      a known issue: something a player will hit, or work that landed
+#              but that nobody has confirmed is reachable. Goes here rather than
+#              under NEW so it is neither hidden nor claimed.
+#   REMOVED    something a player could do before and now cannot.
+#   KNOWN  real work that landed which nobody has confirmed the player can
+#              reach in a packaged build. This section exists so such work is
+#              neither promoted nor hidden. When in doubt, it goes here.
+#
+# Write for a playtester, not a developer. No pins, no liveness guards, no
+# capability probes - say what changes on screen.
+
+# ---------------------------------------------------------------- NEW ----
+
+# ---------------------------------------------------------------- FIX ----
+
+# ---------------------------------------------- UNCERTAIN (not confirmed) ----
+
+NEW|86a81a5|Added War of the Ring: attack a neighbouring region from the strategic map and fight the battle for it
+NEW|4e15bff|Added Angmar as a seventh playable faction in skirmish and multiplayer
+NEW|1fa3b50|Added multi-faction skirmish with alliances and per-AI difficulty
+NEW|0456675|Each faction now plays its own spellbook instead of one shared power tree
+NEW|ef5b3fe|Added a multiplayer lobby with chat, match settings and per-player faction picking
+NEW|0da0730|LAN and Radmin games now show up in a list instead of typing an address
+NEW|b0c27b5|Added 8-player matches and automatic port opening for the host
+NEW|e3a7a17|Added a first-run setup wizard
+NEW|f920f1e|Big battles no longer slow down as the army grows
+NEW|9fce940|Large armies draw more cheaply, so the frame rate holds up in big fights
+NEW|bacfebe|Restored the retail main menu shell, with War of the Ring in the SOLO PLAY panel
+FIX|1d822f8|Fixed packaged builds reporting no units, buildings or factions
+FIX|8f9a398|Fixed skirmish refusing to start with the six-faction content pack installed
+FIX|c0c3c96|Fixed that same check being too strict and blocking a launch that works
+FIX|f11ba20|Fixed matches between two different factions failing to load
+FIX|60948ba|Fixed lobby chat rejecting messages and a false content-mismatch warning
+FIX|3466399|Fixed Angmar having no announcer voice
+FIX|bacfebe|Fixed the version number bottom-left never changing between builds
+FIX|a1e7b2e|Fixed the War of the Ring map rendering at a quarter size in black
+FIX|a1e7b2e|Fixed the 3D map falling back to the flat map silently, with no reason given
+KNOWN|3c02f69|The 3D Middle-earth map may still fall back to the flat region view; it now tells you why
+KNOWN|0dce37e|The original AI scripts run but nothing registers them yet, so enemy behaviour is unchanged
+KNOWN|fa6fc3a|The AI can earn and spend power points in tests, but does not visibly use its spellbook in a match
+KNOWN|92917c4|Content now imports from Rise of the Witch-king, but the packs in this build predate that switch
+KNOWN|b95bee4|Creep lairs exist but no shipped map is confirmed to use them
+NEW|65c34f1|War of the Ring regions are now filled territories in the original game's own shapes, with their real names
+NEW|3007e73|Armies and build plots stand on the War of the Ring map as the original game's own 3D banners and foundations
+NEW|fb834f6|Added a War of the Ring setup screen: pick the scenario, review the rules, and set each seat's army and team before you play
+NEW|83b1959|The War of the Ring map now has a free camera - 34x zoom, orbit and tilt
+FIX|83b1959|Fixed War of the Ring map markers freezing in place instead of following the camera
+FIX|3007e73|Fixed army banners rendering as pale ghosts behind the territory colours
+FIX|3007e73|The War of the Ring screen now uses the whole window instead of a fixed small panel

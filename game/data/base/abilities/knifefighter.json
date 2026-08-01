@@ -1,0 +1,17 @@
+{
+  "id": "knifefighter",
+  "name": "Knife Fighter",
+  "kind": "nova_damage",
+  "cooldown": 25,
+  "req_rank": 1,
+  "damage": 180,
+  "radius": 7,
+  "range": 8,
+  "heal_frac": 0,
+  "duration": 0,
+  "dmg_mul": 1.0,
+  "knockback": 0,
+  "knockdown": 0,
+  "hotkey": "V",
+  "icon": "icons/knifefighter.png"
+}

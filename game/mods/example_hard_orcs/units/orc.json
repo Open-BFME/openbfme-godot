@@ -1,0 +1,6 @@
+{
+  "id": "orc",
+  "hp": 620,
+  "dmg": 12,
+  "desc": "Modded tougher orcs (example override)."
+}

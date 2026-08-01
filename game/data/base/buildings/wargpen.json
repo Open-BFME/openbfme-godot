@@ -1,0 +1,21 @@
+{
+  "id": "wargpen",
+  "name": "Warg Pen",
+  "faction": "mordor",
+  "cost": 450,
+  "build_time": 11,
+  "hp": 1400,
+  "radius": 10,
+  "vision": 28,
+  "desc": "Trains warg riders.",
+  "icon": "icons/wargpen.png",
+  "mesh": "models/buildings/wargpen",
+  "presentation": "glb_or_obj",
+  "trains": [
+    "warg"
+  ],
+  "research": [
+    "forgedBlades",
+    "heavyArmor"
+  ]
+}

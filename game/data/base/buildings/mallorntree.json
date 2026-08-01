@@ -1,0 +1,16 @@
+{
+  "id": "mallorntree",
+  "name": "Mallorn Tree",
+  "faction": "elves",
+  "cost": 300,
+  "build_time": 8,
+  "hp": 850,
+  "radius": 8,
+  "vision": 28,
+  "desc": "A golden tree that generates resources.",
+  "icon": "icons/mallorntree.png",
+  "mesh": "models/buildings/mallorntree",
+  "presentation": "glb_or_obj",
+  "economy": true,
+  "income": 6
+}

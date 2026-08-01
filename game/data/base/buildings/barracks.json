@@ -1,0 +1,22 @@
+{
+  "id": "barracks",
+  "name": "Barracks",
+  "faction": "gondor",
+  "cost": 400,
+  "build_time": 10,
+  "hp": 1600,
+  "radius": 9,
+  "vision": 28,
+  "desc": "Trains swordsmen and tower guards.",
+  "icon": "icons/barracks.png",
+  "mesh": "models/buildings/barracks",
+  "presentation": "glb_or_obj",
+  "trains": [
+    "soldier",
+    "towerguard"
+  ],
+  "research": [
+    "forgedBlades",
+    "heavyArmor"
+  ]
+}

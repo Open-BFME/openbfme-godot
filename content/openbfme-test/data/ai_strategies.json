@@ -1,0 +1,69 @@
+{
+  "schema": "openbfme.ai-strategies",
+  "schemaVersion": 0,
+  "rulesVersion": 1,
+  "scenario": {
+    "startingResources": 160,
+    "finiteResourceAmount": 240,
+    "harvestAmount": 40,
+    "harvestIntervalTicks": 2,
+    "startingArmy": 1,
+    "enemyFortressHealth": 420,
+    "attackIntervalTicks": 2,
+    "baseAttackDamage": 35,
+    "maximumProofTicks": 200
+  },
+  "difficulties": [
+    {
+      "id": "easy",
+      "displayName": "Easy",
+      "thinkIntervalTicks": 3,
+      "incomePermille": 750,
+      "attackPermille": 900
+    },
+    {
+      "id": "normal",
+      "displayName": "Normal",
+      "thinkIntervalTicks": 2,
+      "incomePermille": 1000,
+      "attackPermille": 1000
+    },
+    {
+      "id": "hard",
+      "displayName": "Hard",
+      "thinkIntervalTicks": 1,
+      "incomePermille": 1250,
+      "attackPermille": 1150
+    }
+  ],
+  "plans": [
+    {
+      "id": "measured_opening",
+      "displayName": "Measured Opening",
+      "steps": [
+        {
+          "action": "build",
+          "objectId": "legal.extractor",
+          "cost": 100,
+          "durationTicks": 2
+        },
+        {
+          "action": "train",
+          "objectId": "legal.striker",
+          "cost": 80,
+          "durationTicks": 2
+        },
+        {
+          "action": "train",
+          "objectId": "legal.striker",
+          "cost": 80,
+          "durationTicks": 2
+        },
+        {
+          "action": "attack",
+          "minimumArmy": 3
+        }
+      ]
+    }
+  ]
+}

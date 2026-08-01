@@ -1,0 +1,142 @@
+{
+  "schema": "openbfme.economy",
+  "schemaVersion": 0,
+  "rulesVersion": 2,
+  "currency": {
+    "id": "test.resource.supplies",
+    "displayName": "Supplies"
+  },
+  "rules": {
+    "maximumTrainQueue": 5,
+    "constructionHealthRamp": "linear-floor-minimum-one",
+    "buildingBlocksNavigationAt": "placement",
+    "queuedBattalionsCountTowardPopulation": true,
+    "spawnSearchMaximumRadiusCells": 12,
+    "spawnSearchOrder": [
+      "north",
+      "east",
+      "south",
+      "west"
+    ]
+  },
+  "farmEfficiency": {
+    "radiusSubcells": 12000,
+    "basePermille": 1000,
+    "penaltyPerNeighborPermille": 200,
+    "minimumPermille": 400
+  },
+  "sides": [
+    {
+      "team": 0,
+      "startingResources": 1600,
+      "populationCap": 6
+    },
+    {
+      "team": 1,
+      "startingResources": 0,
+      "populationCap": 6
+    }
+  ],
+  "buildings": [
+    {
+      "typeCode": 1,
+      "objectId": "test.object.fortress",
+      "role": "fortress",
+      "cost": 0,
+      "constructionTicks": 0,
+      "maximumHealth": 5000,
+      "footprint": {
+        "widthCells": 3,
+        "heightCells": 3
+      },
+      "buildMenuSlot": -1,
+      "income": {
+        "amount": 0,
+        "intervalTicks": 0
+      },
+      "trains": []
+    },
+    {
+      "typeCode": 2,
+      "objectId": "test.object.farm",
+      "role": "resource",
+      "cost": 300,
+      "constructionTicks": 60,
+      "maximumHealth": 1200,
+      "footprint": {
+        "widthCells": 3,
+        "heightCells": 3
+      },
+      "buildMenuSlot": 0,
+      "income": {
+        "amount": 100,
+        "intervalTicks": 90
+      },
+      "trains": []
+    },
+    {
+      "typeCode": 3,
+      "objectId": "test.object.barracks",
+      "role": "production",
+      "cost": 400,
+      "constructionTicks": 90,
+      "maximumHealth": 2000,
+      "footprint": {
+        "widthCells": 3,
+        "heightCells": 3
+      },
+      "buildMenuSlot": 1,
+      "income": {
+        "amount": 0,
+        "intervalTicks": 0
+      },
+      "trains": [
+        100
+      ]
+    },
+    {
+      "typeCode": 4,
+      "objectId": "test.object.archery",
+      "role": "production",
+      "cost": 400,
+      "constructionTicks": 90,
+      "maximumHealth": 1800,
+      "footprint": {
+        "widthCells": 3,
+        "heightCells": 3
+      },
+      "buildMenuSlot": 2,
+      "income": {
+        "amount": 0,
+        "intervalTicks": 0
+      },
+      "trains": [
+        101
+      ]
+    }
+  ],
+  "hordeBlueprints": [
+    {
+      "typeCode": 100,
+      "id": "test.horde.practice-blocks",
+      "displayName": "Practice Blocks",
+      "memberCount": 15,
+      "rangedCount": 0,
+      "cost": 200,
+      "productionTicks": 90,
+      "population": 1,
+      "trainMenuSlot": 0
+    },
+    {
+      "typeCode": 101,
+      "id": "test.horde.practice-pins",
+      "displayName": "Practice Pins",
+      "memberCount": 15,
+      "rangedCount": 15,
+      "cost": 250,
+      "productionTicks": 105,
+      "population": 1,
+      "trainMenuSlot": 0
+    }
+  ]
+}

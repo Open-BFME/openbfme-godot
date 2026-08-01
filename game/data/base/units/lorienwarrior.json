@@ -1,0 +1,21 @@
+{
+  "id": "lorienwarrior",
+  "name": "Lorien Warriors",
+  "faction": "elves",
+  "cost": 300,
+  "build_time": 8,
+  "size": 5,
+  "hp": 600,
+  "dmg": 15,
+  "range": 5.5,
+  "attack_interval": 1,
+  "speed": 10.5,
+  "vision": 36,
+  "ranged": false,
+  "desc": "Elegant gold-armored swordsmen.",
+  "icon": "icons/lorienwarrior.png",
+  "mesh": "models/units/lorienwarrior",
+  "presentation": "glb_or_obj",
+  "damage_type": "slash",
+  "armor_type": "infantry_heavy"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "dread",
+  "name": "Dread",
+  "kind": "buff_self",
+  "cooldown": 35,
+  "req_rank": 1,
+  "damage": 0,
+  "radius": 20,
+  "range": 8,
+  "heal_frac": 0,
+  "duration": 10,
+  "dmg_mul": 0.7,
+  "knockback": 0,
+  "knockdown": 0,
+  "hotkey": "F",
+  "icon": "icons/dread.png"
+}

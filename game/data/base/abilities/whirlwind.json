@@ -1,0 +1,17 @@
+{
+  "id": "whirlwind",
+  "name": "Whirlwind",
+  "kind": "fear_nova",
+  "cooldown": 50,
+  "req_rank": 1,
+  "damage": 0,
+  "radius": 20,
+  "range": 8,
+  "heal_frac": 0,
+  "duration": 3.5,
+  "dmg_mul": 1.0,
+  "knockback": 0,
+  "knockdown": 0,
+  "hotkey": "G",
+  "icon": "icons/whirlwind.png"
+}

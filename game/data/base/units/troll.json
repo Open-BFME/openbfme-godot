@@ -1,0 +1,22 @@
+{
+  "id": "troll",
+  "name": "Mountain Troll",
+  "faction": "mordor",
+  "cost": 600,
+  "build_time": 14,
+  "size": 1,
+  "hp": 1900,
+  "dmg": 95,
+  "range": 7.5,
+  "attack_interval": 1.9,
+  "speed": 8,
+  "vision": 34,
+  "ranged": false,
+  "desc": "Monster brute. Spears deal bonus damage to it.",
+  "icon": "icons/troll.png",
+  "mesh": "models/units/troll",
+  "presentation": "glb_or_obj",
+  "damage_type": "crush",
+  "armor_type": "monster",
+  "monster": true
+}

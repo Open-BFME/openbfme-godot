@@ -1,0 +1,21 @@
+{
+  "id": "archer",
+  "name": "Gondor Archers",
+  "faction": "gondor",
+  "cost": 300,
+  "build_time": 8,
+  "size": 5,
+  "hp": 380,
+  "dmg": 9,
+  "range": 40,
+  "attack_interval": 1.7,
+  "speed": 10,
+  "vision": 46,
+  "ranged": true,
+  "desc": "Disciplined bowmen who thin enemies from afar.",
+  "icon": "icons/archer.png",
+  "mesh": "models/units/archer",
+  "presentation": "glb_or_obj",
+  "damage_type": "pierce",
+  "armor_type": "infantry_light"
+}

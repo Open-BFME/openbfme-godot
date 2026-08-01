@@ -1,0 +1,16 @@
+{
+  "id": "gwell",
+  "name": "Bone Trough",
+  "faction": "goblins",
+  "cost": 200,
+  "build_time": 7,
+  "hp": 600,
+  "radius": 6,
+  "vision": 28,
+  "desc": "Heals nearby allies and restores lost soldiers out of combat.",
+  "icon": "icons/well.png",
+  "mesh": "models/buildings/gwell",
+  "presentation": "glb_or_obj",
+  "well": true,
+  "aura_radius": 26
+}

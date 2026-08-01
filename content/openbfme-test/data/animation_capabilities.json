@@ -1,0 +1,52 @@
+{
+  "schema": "openbfme.animation-capabilities",
+  "schemaVersion": 0,
+  "capabilities": [
+    {
+      "id": "test.animation.member",
+      "presentationMode": "primitive-procedural",
+      "states": {
+        "idle": {
+          "required": true,
+          "loop": true,
+          "fallback": "static"
+        },
+        "move": {
+          "required": true,
+          "loop": true,
+          "fallback": "translate-only"
+        },
+        "attack": {
+          "required": true,
+          "loop": false,
+          "fallback": "scale-pulse"
+        },
+        "death": {
+          "required": true,
+          "loop": false,
+          "fallback": "hide"
+        }
+      },
+      "rootMotion": "authoritative-simulation-only",
+      "events": []
+    },
+    {
+      "id": "test.animation.structure",
+      "presentationMode": "primitive-procedural",
+      "states": {
+        "idle": {
+          "required": true,
+          "loop": true,
+          "fallback": "static"
+        },
+        "death": {
+          "required": true,
+          "loop": false,
+          "fallback": "hide"
+        }
+      },
+      "rootMotion": "none",
+      "events": []
+    }
+  ]
+}

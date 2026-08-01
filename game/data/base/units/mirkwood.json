@@ -1,0 +1,21 @@
+{
+  "id": "mirkwood",
+  "name": "Mirkwood Sentinels",
+  "faction": "elves",
+  "cost": 500,
+  "build_time": 12,
+  "size": 3,
+  "hp": 450,
+  "dmg": 19,
+  "range": 50,
+  "attack_interval": 1.45,
+  "speed": 11,
+  "vision": 56,
+  "ranged": true,
+  "desc": "Elite woodland archers.",
+  "icon": "icons/mirkwood.png",
+  "mesh": "models/units/mirkwood",
+  "presentation": "glb_or_obj",
+  "damage_type": "pierce",
+  "armor_type": "infantry_light"
+}

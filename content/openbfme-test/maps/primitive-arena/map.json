@@ -1,0 +1,157 @@
+{
+  "schema": "openbfme.map",
+  "schemaVersion": 0,
+  "id": "test.map.primitive-arena",
+  "displayName": "Primitive Two-Side Arena",
+  "grid": {
+    "widthCells": 64,
+    "heightCells": 64,
+    "cellSizeSubcells": 1000,
+    "defaultTerrainCost": 10,
+    "neighborOrder": [
+      "north",
+      "east",
+      "south",
+      "west"
+    ]
+  },
+  "terrain": {
+    "source": "repository-authored-neutral-facts",
+    "base": "flat-buildable-ground",
+    "heightSubcells": 0,
+    "buildable": true
+  },
+  "staticBlockers": [
+    {
+      "id": "test.blocker.center-north",
+      "shape": "grid-rectangle",
+      "xCell": 32,
+      "yCell": 0,
+      "widthCells": 1,
+      "heightCells": 27,
+      "presentationShape": "box"
+    },
+    {
+      "id": "test.blocker.center-south",
+      "shape": "grid-rectangle",
+      "xCell": 32,
+      "yCell": 36,
+      "widthCells": 1,
+      "heightCells": 28,
+      "presentationShape": "box"
+    }
+  ],
+  "formation": {
+    "id": "test.formation.three-by-five",
+    "rows": 3,
+    "columns": 5,
+    "rowSpacingSubcells": 650,
+    "columnSpacingSubcells": 650,
+    "slotAssignment": "ascending-member-entity-id",
+    "reassignOnlyOn": [
+      "spawn",
+      "declared-formation-transition"
+    ]
+  },
+  "sides": [
+    {
+      "id": "test.side.blue",
+      "team": 0,
+      "teamColor": "#3b82f6",
+      "fortress": {
+        "entityId": 1,
+        "objectId": "test.object.fortress",
+        "position": {
+          "xSubcells": 4500,
+          "ySubcells": 31500
+        }
+      },
+      "horde": {
+        "entityId": 100,
+        "firstMemberEntityId": 1000,
+        "anchor": {
+          "xSubcells": 12500,
+          "ySubcells": 30500
+        },
+        "formationId": "test.formation.three-by-five",
+        "composition": [
+          {
+            "objectId": "test.object.member.melee",
+            "count": 10
+          },
+          {
+            "objectId": "test.object.member.ranged",
+            "count": 5
+          }
+        ]
+      }
+    },
+    {
+      "id": "test.side.red",
+      "team": 1,
+      "teamColor": "#ef4444",
+      "fortress": {
+        "entityId": 2,
+        "objectId": "test.object.fortress",
+        "position": {
+          "xSubcells": 59500,
+          "ySubcells": 31500
+        }
+      },
+      "horde": {
+        "entityId": 101,
+        "firstMemberEntityId": 1015,
+        "anchor": {
+          "xSubcells": 49500,
+          "ySubcells": 32500
+        },
+        "formationId": "test.formation.three-by-five",
+        "composition": [
+          {
+            "objectId": "test.object.member.melee",
+            "count": 12
+          },
+          {
+            "objectId": "test.object.member.ranged",
+            "count": 3
+          }
+        ]
+      }
+    }
+  ],
+  "scenario": {
+    "id": "test.scenario.stage1-proof",
+    "randomSeed": 104729,
+    "simulationTicks": 900,
+    "commands": [
+      {
+        "executeTick": 0,
+        "sequence": 0,
+        "hordeEntityId": 100,
+        "order": "attack-move",
+        "destination": {
+          "xSubcells": 59500,
+          "ySubcells": 31500
+        }
+      },
+      {
+        "executeTick": 0,
+        "sequence": 1,
+        "hordeEntityId": 101,
+        "order": "attack-move",
+        "destination": {
+          "xSubcells": 4500,
+          "ySubcells": 31500
+        }
+      }
+    ],
+    "requiredObservations": [
+      "both-hordes-request-one-anchor-path",
+      "members-retain-stable-slots",
+      "hordes-pass-central-obstruction",
+      "melee-and-projectile-damage-occurs",
+      "at-least-one-member-dies",
+      "repeat-runs-have-identical-state-hash"
+    ]
+  }
+}

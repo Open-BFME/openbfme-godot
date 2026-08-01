@@ -1,0 +1,22 @@
+{
+  "id": "cavetroll",
+  "name": "Cave Troll",
+  "faction": "goblins",
+  "cost": 600,
+  "build_time": 14,
+  "size": 1,
+  "hp": 2100,
+  "dmg": 100,
+  "range": 7.5,
+  "attack_interval": 1.9,
+  "speed": 8,
+  "vision": 34,
+  "ranged": false,
+  "desc": "Pale cave brute for smashing lines and buildings.",
+  "icon": "icons/cavetroll.png",
+  "mesh": "models/units/cavetroll",
+  "presentation": "glb_or_obj",
+  "damage_type": "crush",
+  "armor_type": "monster",
+  "monster": true
+}

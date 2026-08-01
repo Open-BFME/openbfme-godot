@@ -1,0 +1,658 @@
+{
+    "schema":  "openbfme.retail-archive-policy",
+    "schemaVersion":  1,
+    "game":  "bfme2",
+    "patch":  "1.06",
+    "package":  {
+                    "guid":  "original-BFME2",
+                    "name":  "Vanilla (1.06)",
+                    "version":  "1.0.0",
+                    "receiptSha256":  "2d5ae449bc15336281d9cc2e78bceb0adad238d30e597db0089b2719703921c0"
+                },
+    "language":  "EN",
+    "policySha256":  "98707c52862f378ec22a02ad0572cb131faa56fbfd34ff5f1f0845fd33931d47",
+    "archives":  [
+                     {
+                         "path":  "_patch101.big",
+                         "md5":  "7b49c9d5f61f6aa109631a25392dbaf5",
+                         "size":  718806,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "_patch103.big",
+                         "md5":  "d05d87de698df05ee6abf1c580714a9b",
+                         "size":  12865477,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "ambientstreams.big",
+                         "md5":  "76f8f580a465a7a48e9015ba741723dc",
+                         "size":  57258662,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/aptlevel0.big",
+                         "md5":  "92741354a22771997021a10cfe9ea967",
+                         "size":  2194,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/background.big",
+                         "md5":  "8f20b1555758281d06e895002e49a4cc",
+                         "size":  6031,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/bannerui.big",
+                         "md5":  "62ba59542a3944ce184911f4a71928fc",
+                         "size":  16261,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/cahappearance.big",
+                         "md5":  "9cf2863b89aaf70733eb5a4e0b32388a",
+                         "size":  1160064,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/cahclass.big",
+                         "md5":  "62e86c9a351b2bcf783309b9d082109e",
+                         "size":  1120352,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/cahmanager.big",
+                         "md5":  "5fd321ae4a1fd024a1c7c8b0b8c53e20",
+                         "size":  1410404,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/cahpowers.big",
+                         "md5":  "b747089e09bef2b5cd7bb97dac413644",
+                         "size":  4493594,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/campaignmenu.big",
+                         "md5":  "a50d7ec895a1c54f3e27f29861866ebc",
+                         "size":  2142964,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/campaignreview.big",
+                         "md5":  "5a2a4dc25d1cbaecc8867664a78a961b",
+                         "size":  1146004,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/connections.big",
+                         "md5":  "9294284b118d4747c1c483692f935b66",
+                         "size":  234524,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/createahero.big",
+                         "md5":  "75fa8f51a86e6e0e28cbfda6c93e290a",
+                         "size":  15361,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/disconnectscreen.big",
+                         "md5":  "40afc7c78efd0524fe3913b6a645d760",
+                         "size":  356604,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/gadgetcolorpicker.big",
+                         "md5":  "6cf04cc3972fea3094258d9c88e87160",
+                         "size":  8295,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/gadgettimer.big",
+                         "md5":  "cf9c08fcf4c4dab347b0bcb61b5d2fe6",
+                         "size":  78286,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/gamewindowgadgets.big",
+                         "md5":  "5b7ea9a603b0e28dbd3ee10da6515668",
+                         "size":  125360,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/guifx.big",
+                         "md5":  "ef5fd18ca90d726d97d738ebeb5d2438",
+                         "size":  2269836,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/guitest.big",
+                         "md5":  "03af49da2addf5378d74578a091714f0",
+                         "size":  8920,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/ingamechat.big",
+                         "md5":  "3ec9fc455504fc9e360598a313f20b5d",
+                         "size":  101396,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/ingamehelpbox.big",
+                         "md5":  "90259daed95154d12fd57665569d3b31",
+                         "size":  9847,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/ingameheroselect.big",
+                         "md5":  "2ad1262aacf22253ab32649056523bb6",
+                         "size":  2284020,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/ingamenotificationbox.big",
+                         "md5":  "0d9064dc623a7203d88b583a36a31875",
+                         "size":  297634,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/ingameplanningmode.big",
+                         "md5":  "2cabbce4bd194e0ece0ddf2986c8f928",
+                         "size":  1084356,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/ingameradialmenustage.big",
+                         "md5":  "b4ef1c033abded3a2830718e968be084",
+                         "size":  70732,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/ingamesidecommandbar.big",
+                         "md5":  "55128abcc9f4ef33e41ba506822ba761",
+                         "size":  17618,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/ingamespellbook.big",
+                         "md5":  "40d1514d2e5d989862aefb3fdf74f253",
+                         "size":  30599,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/lanlobby.big",
+                         "md5":  "d1119863dc58faca1189555356c216a1",
+                         "size":  1132092,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/lanopenplay.big",
+                         "md5":  "5b75e65f3e617ee8c69b562e80a8c106",
+                         "size":  618880,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/lanstrategic.big",
+                         "md5":  "41b8e8f9e89213a0a4a83bfd471b93eb",
+                         "size":  356028,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/libingameimagesmain.big",
+                         "md5":  "f297f723fe69113cacfa8608ae12791b",
+                         "size":  2113144,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/libingameui.big",
+                         "md5":  "5cdd0cb04e077e0dff483f55f2a1916a",
+                         "size":  100827,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/libprogressbar.big",
+                         "md5":  "1405162500f721f434b8b451c8fffd60",
+                         "size":  19960,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/livingworldui.big",
+                         "md5":  "62a443bb7911c97a87ac50d829d8e9cf",
+                         "size":  2947280,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/loadscreen.big",
+                         "md5":  "35af30ac170976ea8162dff4a7c2b9fc",
+                         "size":  26778,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/mainmenu.big",
+                         "md5":  "d1979ef3b302301b84cd6c39d2855e4c",
+                         "size":  4366652,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/menuexport.big",
+                         "md5":  "aa6aad778c2e2b7f0a17b5683ba32fcf",
+                         "size":  6496366,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/menuframeandbg.big",
+                         "md5":  "dca3cb7ebf773a32ebb974930d4d8990",
+                         "size":  4642,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/messenger.big",
+                         "md5":  "62e7f8633d8b4b2cb703877ed7cb2c50",
+                         "size":  4547988,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/mpgamesetup.big",
+                         "md5":  "0ac2ac770613544cd137c9ffdb740b88",
+                         "size":  1545476,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/objectives.big",
+                         "md5":  "866aeb64447caa2016a826e3a6094876",
+                         "size":  1099144,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/onlinehome.big",
+                         "md5":  "5b2e105364377ca4b6df4a1175523a4f",
+                         "size":  183700,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/onlinelogin.big",
+                         "md5":  "00984870a11cbe037e3a78bee4a67192",
+                         "size":  712736,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/onlineopenplay.big",
+                         "md5":  "d984dc8f96139ec23641809cfbdb1a18",
+                         "size":  305540,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/onlineprofile.big",
+                         "md5":  "5cd85dcd360dff06716830ca4578e8be",
+                         "size":  117272,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/onlinequickmatch.big",
+                         "md5":  "bff00e4f2324d37e96f106317683a1c1",
+                         "size":  94528,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/onlineshell.big",
+                         "md5":  "1b03220078f20b8c6a5a50add30466cd",
+                         "size":  1165488,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/onlinestrategic.big",
+                         "md5":  "c0b8eaf3f3959d3cfafc2304952910e1",
+                         "size":  550304,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/options.big",
+                         "md5":  "4a539ac5701c78a28350f19cea2ed434",
+                         "size":  2521574,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/palantir.big",
+                         "md5":  "565f2c8a0850c36f94dbf1ce4868dedd",
+                         "size":  2703910,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/palantirexport.big",
+                         "md5":  "feccd60f989ef7c7cc5cb8d88000b4d3",
+                         "size":  2076318,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/playerstatus.big",
+                         "md5":  "4e54875936b3f75588d4dc5eca096ee0",
+                         "size":  41687,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/playertribute.big",
+                         "md5":  "2f40491dfbc1502b26ac1e0cc7e47129",
+                         "size":  190704,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/quitmenu.big",
+                         "md5":  "6bd085e8d98e31d77461b11a8d9d112a",
+                         "size":  2172220,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/saveload.big",
+                         "md5":  "05eec2b26db797fb3e72a36ca281d46b",
+                         "size":  1151328,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/scorescreen.big",
+                         "md5":  "28157b2e746b2bc46ba659eacc598ccb",
+                         "size":  2235660,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/sidecommandbar.big",
+                         "md5":  "b55ef9763bfe2bdfba16bd9a4ff1643c",
+                         "size":  2826,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/skirmish.big",
+                         "md5":  "9992d2f4207314841c73c3e02d8b0a5a",
+                         "size":  1166184,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/skirmishopenplay.big",
+                         "md5":  "2b16e2ebd87f69eab67d1d1b5d95a1ab",
+                         "size":  7358,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/skirmishstrategic.big",
+                         "md5":  "63a89b3ae0b85052e94e9838a0855b2d",
+                         "size":  7402,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/spellstore.big",
+                         "md5":  "482f12e334a3ec6870030d72beca2b7c",
+                         "size":  2218700,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/stats.big",
+                         "md5":  "987a937236d8c8e44e927890e169123a",
+                         "size":  568904,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicarmyunitswapper.big",
+                         "md5":  "d6d26ed05836ea0d578a341b45d802f6",
+                         "size":  1120406,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicbattleprompt.big",
+                         "md5":  "07fe2e03a5f4df520f964f73fe3ec388",
+                         "size":  2235038,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicbattlepromptarmypanel.big",
+                         "md5":  "2f68ad456b270e93e8103cc2c80f0db9",
+                         "size":  1063748,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicbattlepromptplayerpage.big",
+                         "md5":  "d09f4734e81710a474ae3ff73f0dc878",
+                         "size":  1079670,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicchecklist.big",
+                         "md5":  "4b524ad96d3cc32cb1f34824daf3d638",
+                         "size":  1121322,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicconflictresults.big",
+                         "md5":  "f0b87339c6877d5b14e733dc8496cbc5",
+                         "size":  2174354,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicdetailsarmies.big",
+                         "md5":  "649ad1e11d0ea4f60c1cea52f89afe45",
+                         "size":  278238,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicdetailsarmyretinue.big",
+                         "md5":  "2328b6f38fbff65a6580e2a9fd607e91",
+                         "size":  1119202,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicdetailsbuildqueue.big",
+                         "md5":  "d5043fee2de58a5161c90a2c58291f72",
+                         "size":  1096986,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicdetailsregion.big",
+                         "md5":  "2a4c500cb9a7a713ee9a46c74820c785",
+                         "size":  143632,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicdetailsstructures.big",
+                         "md5":  "c66ec0ace000ccdcd5ee619131e5153d",
+                         "size":  544090,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicdetailsterritory.big",
+                         "md5":  "db22df2f3181ddedb16aaa20d399e299",
+                         "size":  143098,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicdetailstray.big",
+                         "md5":  "af0330f0ea56a1fa5f8e7cea211e97cb",
+                         "size":  286292,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicdynamicautoresolve.big",
+                         "md5":  "76c4c443dd093499d4c92910229c3bee",
+                         "size":  4403366,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicendturnbutton.big",
+                         "md5":  "e842e17283ac181412b6f66e3c75d583",
+                         "size":  1073532,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategichud.big",
+                         "md5":  "64f202b539fc186e62c2aada36e0bb17",
+                         "size":  21963,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicnextturnind.big",
+                         "md5":  "855433a95c299789189bf7e303f900ce",
+                         "size":  2114440,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicpalantir.big",
+                         "md5":  "47bacc347e65da67ec916e1484a4c6cf",
+                         "size":  424572,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicplayerstatus.big",
+                         "md5":  "2a2e7c9382516ad242823741520efc0d",
+                         "size":  2165262,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicregionaward.big",
+                         "md5":  "140d5346c55f9b000ebdb1a108d91c6c",
+                         "size":  2175934,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicstats.big",
+                         "md5":  "d738e53b4dbc09a84f310e3ce8ddbd62",
+                         "size":  163952,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/strategicveterancy.big",
+                         "md5":  "d79be19414171db22d3e64d98c5e7aa6",
+                         "size":  2171366,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/timeline.big",
+                         "md5":  "1037cb1e01faed1d75c3b03b5ed76d3a",
+                         "size":  8589436,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "apt/verticalscrollbar.big",
+                         "md5":  "15009d8e053fd98945d0fb201cb8edb2",
+                         "size":  16723,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "audio.big",
+                         "md5":  "02fe7ec5e78c4762942512005fa1a9a5",
+                         "size":  389964738,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "bases.big",
+                         "md5":  "3b2681a873da6370dd86623e302a7f68",
+                         "size":  2639561,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "data1.big",
+                         "md5":  "5874e35ecb8f1da190a063dee401106c",
+                         "size":  627173,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "ini.big",
+                         "md5":  "92351fdb635c04c10f93d2e3e5f3ee47",
+                         "size":  24293875,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "lang/english.big",
+                         "md5":  "2bc70c61f083860b38c0f45ae457e6b2",
+                         "size":  1632397,
+                         "language":  "EN"
+                     },
+                     {
+                         "path":  "lang/englishaudio.big",
+                         "md5":  "4d4f291d02dff10786c0a17eed26f6e4",
+                         "size":  517443862,
+                         "language":  "EN NL NO PL SV"
+                     },
+                     {
+                         "path":  "lang/englishpatch105.big",
+                         "md5":  "6a4c89cf2972273417dd2353ce7cf6b7",
+                         "size":  1037340,
+                         "language":  "EN"
+                     },
+                     {
+                         "path":  "libraries.big",
+                         "md5":  "d5e866512b9f4d4b74fa14f9628609a3",
+                         "size":  439746,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "lotrsec.big",
+                         "md5":  "ca2cbcc80f8b9dbef309adb8057aca03",
+                         "size":  787458,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "maps.big",
+                         "md5":  "fa624a31ded008f2826b22b180b999a2",
+                         "size":  56296638,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "music.big",
+                         "md5":  "1c557bb978fa390d258b570fa7b94730",
+                         "size":  392190008,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "shaders.big",
+                         "md5":  "90eccb69e1d7f561505d0e7a60aea363",
+                         "size":  1200292,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "terrain.big",
+                         "md5":  "f5cdfebe415b199a2b2b7393f80d11a3",
+                         "size":  356737592,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "textures0.big",
+                         "md5":  "45e7769ce02a5d8872a0ccfb38ac69f2",
+                         "size":  35923222,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "textures1.big",
+                         "md5":  "f21ca3f6ecb47057e0e3821fe9e90d6c",
+                         "size":  352128360,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "textures2.big",
+                         "md5":  "69c4a2f63b23592c2647ed7fe0f79dfc",
+                         "size":  490142126,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "textures3.big",
+                         "md5":  "4ce7fb8746737c108665f7b92ba9d155",
+                         "size":  245867627,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "textures4.big",
+                         "md5":  "c1533f870132919e83467119d9fb19da",
+                         "size":  121058389,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "w3d.big",
+                         "md5":  "4008063cfb1f8cc061b2373df3983b74",
+                         "size":  1050024230,
+                         "language":  "ALL"
+                     },
+                     {
+                         "path":  "window.big",
+                         "md5":  "75805d283d9c36202d4fd48ce48c26d5",
+                         "size":  646458,
+                         "language":  "ALL"
+                     }
+                 ]
+}

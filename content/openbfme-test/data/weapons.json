@@ -1,0 +1,44 @@
+{
+  "schema": "openbfme.weapons",
+  "schemaVersion": 0,
+  "damageTypes": [
+    "test-impact"
+  ],
+  "weapons": [
+    {
+      "id": "test.weapon.practice-baton",
+      "delivery": "direct",
+      "damageType": "test-impact",
+      "damage": 22,
+      "minimumRangeSubcells": 0,
+      "maximumRangeSubcells": 950,
+      "cooldownTicks": 8,
+      "windupTicks": 0,
+      "validTargetKinds": [
+        "member",
+        "structure"
+      ]
+    },
+    {
+      "id": "test.weapon.foam-sphere-launcher",
+      "delivery": "projectile",
+      "damageType": "test-impact",
+      "damage": 18,
+      "minimumRangeSubcells": 1200,
+      "maximumRangeSubcells": 6000,
+      "cooldownTicks": 12,
+      "windupTicks": 0,
+      "projectile": {
+        "speedSubcellsPerTick": 900,
+        "collisionRadiusSubcells": 80,
+        "tracking": "last-known-target-position",
+        "maximumLifetimeTicks": 24,
+        "presentationShape": "sphere"
+      },
+      "validTargetKinds": [
+        "member",
+        "structure"
+      ]
+    }
+  ]
+}

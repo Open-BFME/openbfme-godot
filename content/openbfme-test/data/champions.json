@@ -1,0 +1,122 @@
+{
+  "schema": "openbfme.champions",
+  "schemaVersion": 0,
+  "rulesVersion": 2,
+  "abilities": [
+    {
+      "code": 1,
+      "name": "Second Wind",
+      "target_mode": "self",
+      "activation_mode": "instant",
+      "rank_required": 1,
+      "cooldown_ticks": 30,
+      "effect": "self_heal",
+      "magnitude": 260,
+      "secondary_magnitude": 0,
+      "range_cells": 0
+    },
+    {
+      "code": 2,
+      "name": "Forward Burst",
+      "target_mode": "position",
+      "activation_mode": "instant",
+      "rank_required": 1,
+      "cooldown_ticks": 18,
+      "effect": "position_dash",
+      "magnitude": 0,
+      "secondary_magnitude": 4,
+      "range_cells": 4
+    },
+    {
+      "code": 3,
+      "name": "Reform Ranks",
+      "target_mode": "friendly_entity",
+      "activation_mode": "instant",
+      "rank_required": 1,
+      "cooldown_ticks": 24,
+      "effect": "replenish",
+      "magnitude": 2,
+      "secondary_magnitude": 0,
+      "range_cells": 6
+    },
+    {
+      "code": 4,
+      "name": "Impact Drive",
+      "target_mode": "hostile_entity",
+      "activation_mode": "instant",
+      "rank_required": 2,
+      "cooldown_ticks": 36,
+      "effect": "damage_knockback",
+      "magnitude": 180,
+      "secondary_magnitude": 3,
+      "range_cells": 3
+    },
+    {
+      "code": 5,
+      "name": "Guard Channel",
+      "target_mode": "self",
+      "activation_mode": "toggle",
+      "rank_required": 2,
+      "cooldown_ticks": 12,
+      "effect": "guard_toggle",
+      "magnitude": 300,
+      "secondary_magnitude": 250,
+      "range_cells": 0
+    }
+  ],
+  "progression": {
+    "rank_thresholds": [
+      0,
+      100,
+      300,
+      700,
+      1400
+    ],
+    "replenish_health_permille": 500,
+    "xp_damage_permille": 100,
+    "xp_per_member_defeat": 25,
+    "xp_per_champion_defeat": 150,
+    "replenish_delay_ticks": 30,
+    "replenish_interval_ticks": 12,
+    "replenish_members_per_interval": 1,
+    "stances": [
+      {
+        "code": "balanced",
+        "damage_permille": 1000,
+        "armor_permille": 1000,
+        "speed_permille": 1000
+      },
+      {
+        "code": "aggressive",
+        "damage_permille": 1250,
+        "armor_permille": 850,
+        "speed_permille": 1100
+      },
+      {
+        "code": "defensive",
+        "damage_permille": 850,
+        "armor_permille": 1250,
+        "speed_permille": 850
+      },
+      {
+        "code": "hold",
+        "damage_permille": 1000,
+        "armor_permille": 1400,
+        "speed_permille": 100
+      }
+    ]
+  },
+  "status": {
+    "fear_power_floor": 20,
+    "flee_steps_per_tick": 1,
+    "terror_power_bonus": 20,
+    "champion_fear_immune": true,
+    "rank_immunity_threshold": 4
+  },
+  "revival": {
+    "base_cost": 300,
+    "rank_cost": 100,
+    "death_cost": 200,
+    "revive_health_permille": 750
+  }
+}

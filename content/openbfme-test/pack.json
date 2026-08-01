@@ -1,0 +1,75 @@
+{
+  "schema": "openbfme.content-pack",
+  "schemaVersion": 0,
+  "id": "openbfme-test",
+  "version": "0.10.0",
+  "displayName": "OpenBFME Legal-Safe Primitive Test Pack",
+  "description": "Repository-authored primitive data for deterministic Stage 1 combat through Stage 9 sandbox proofs and the Stage 10 release gate.",
+  "contentHashAlgorithm": "sha256",
+  "dataPolicy": {
+    "mode": "data-only",
+    "executableScriptsAllowed": false,
+    "externalPathsAllowed": false,
+    "unknownFields": "reject"
+  },
+  "units": {
+    "authoritativePosition": "subcell",
+    "subcellsPerGridCell": 1000,
+    "time": "simulation-tick",
+    "angles": "integer-millidegrees"
+  },
+  "coordinateSystem": {
+    "handedness": "right",
+    "authoritativePlane": "x-y",
+    "presentationMapping": "authoritative-x-to-godot-x; authoritative-y-to-godot-z",
+    "origin": "north-west grid corner",
+    "positiveX": "east",
+    "positiveY": "south"
+  },
+  "limits": {
+    "maximumFiles": 48,
+    "maximumFileBytes": 131072,
+    "maximumTotalBytes": 1048576,
+    "maximumObjects": 96,
+    "maximumMapCells": 4096,
+    "maximumSpawnedMembers": 256
+  },
+  "files": {
+    "objects": "data/objects.json",
+    "weapons": "data/weapons.json",
+    "armor": "data/armor.json",
+    "locomotion": "data/locomotion.json",
+    "behaviors": "data/behaviors.json",
+    "animationCapabilities": "data/animation_capabilities.json",
+    "economy": "data/economy.json",
+    "defenses": "data/defenses.json",
+    "champions": "data/champions.json",
+    "powers": "data/powers.json",
+    "factionRosters": "data/faction_rosters.json",
+    "aiStrategies": "data/ai_strategies.json",
+    "stage8Maps": "data/stage8_maps.json",
+    "stage9RingRules": "data/stage9_ring_rules.json",
+    "entryMap": "maps/primitive-arena/map.json",
+    "stage2Map": "maps/primitive-economy/map.json",
+    "provenance": "provenance/manifest.json"
+  },
+  "requiredCapabilities": [
+    "stage1.fixed-tick",
+    "stage1.deterministic-pathing",
+    "stage1.horde-slots",
+    "stage1.melee-and-projectile-combat",
+    "stage1.snapshot-interpolation",
+    "stage2.integer-economy",
+    "stage2.transactional-placement",
+    "stage2.construction-and-production",
+    "stage3.dynamic-team-topology",
+    "stage3.towers-and-fog",
+    "stage4.data-driven-abilities",
+    "stage4.progression-status-and-revival",
+    "stage5.data-driven-spellbook-and-weather",
+    "stage6.factions-upgrades-and-damage-matrix",
+    "stage7.deterministic-finite-resource-ai",
+    "stage8.maps-save-roundtrip-and-formations",
+    "stage9.relic-objective-and-audio-events"
+  ]
+}

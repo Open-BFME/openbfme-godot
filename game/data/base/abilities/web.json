@@ -1,0 +1,17 @@
+{
+  "id": "web",
+  "name": "Web",
+  "kind": "nova_damage",
+  "cooldown": 35,
+  "req_rank": 1,
+  "damage": 0,
+  "radius": 14,
+  "range": 8,
+  "heal_frac": 0,
+  "duration": 0,
+  "dmg_mul": 1.0,
+  "knockback": 0,
+  "knockdown": 0,
+  "hotkey": "V",
+  "icon": "icons/web.png"
+}
