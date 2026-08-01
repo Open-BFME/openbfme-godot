@@ -13,7 +13,7 @@
   <img alt="Status: experimental alpha" src="https://img.shields.io/badge/status-experimental%20alpha-c58b31">
   <img alt="Godot 4.7" src="https://img.shields.io/badge/Godot-4.7-478cbf?logo=godotengine&logoColor=white">
   <img alt="RotWK 2.01" src="https://img.shields.io/badge/target-RotWK%202.01-40513b">
-  <img alt="License: GPL v3" src="https://img.shields.io/badge/license-GPLv3-663399">
+  <img alt="License: Unlicense" src="https://img.shields.io/badge/license-Unlicense-blue">
 </p>
 
 > **Not a finished game.** Not a download of BFME2/RotWK. You need a legal RotWK 2.01
@@ -93,6 +93,9 @@ proposing a public-facing change.
 
 ## License
 
-[GPL-3.0](LICENSE) for project code we can license. Tolkien / EA / Middle-earth
-names and game assets belong to their owners. Unofficial fan project â€” not
-affiliated with EA, Middle-earth Enterprises, or the Tolkien Estate.
+Project source is **[Unlicense](LICENSE)** — public domain; do whatever you want
+with this code. That does **not** cover EA / Tolkien / Middle-earth game assets
+or trademarks. You still need a legal game install for conversion, and you must
+not redistribute retail or converted retail content with this project.
+Unofficial fan project — not affiliated with EA, Middle-earth Enterprises, or
+the Tolkien Estate.
