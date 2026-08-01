@@ -37,6 +37,21 @@ client. The project is not affiliated with BFME Reforged or EA.
 Lockstep + ENet foundations and an in-game lobby exist and have headless gates.
 Not a hardened production service yet.
 
+## Can I use Codex to learn the codebase?
+
+Yes. Clone the repo and point Codex (or a similar agent) at the tree. Ask for
+entry points, how convert → pack → `run_game` works, gaps vs `STATUS.md`, and
+suggested fixes with a small verification command. Verify with real gates; do
+not commit `.private/` or retail content.
+
+## Where does OpenSAGE fit in?
+
+OpenSAGE inspired and informed a lot of SAGE format work here. We credit
+[OpenSAGE](https://github.com/OpenSAGE/OpenSAGE) and the
+[OpenSAGE BlenderPlugin](https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin) as
+research / external convert tools — not as a vendored engine. Details:
+[OPENSAGE_GAP_MATRIX.md](OPENSAGE_GAP_MATRIX.md), [THIRD_PARTY.md](THIRD_PARTY.md).
+
 ## How do I help?
 
 [CONTRIBUTING.md](../CONTRIBUTING.md). Small, tested changes. Never commit

@@ -55,11 +55,11 @@ formats. Default content baseline is **RotWK 2.01** (`importer` CLI
 | Path | Role |
 |---|---|
 | `game/` | Godot client (menu, skirmish, HUD, multiplayer foundations) |
-| `importer/` | Discover â†’ extract â†’ convert â†’ pack (fail-closed) |
+| `importer/` | Discover → extract → convert → pack (fail-closed) |
 | `engine/` | Deterministic sim library (.NET) |
 | `tools/` | Onboard, RotWK systems factory, gates, release tooling |
 | `contracts/` | Product / modding policy JSON |
-| `.private/` | **Local only** â€” retail inputs and converted packs (gitignored) |
+| `.private/` | **Local only** — retail inputs and converted packs (gitignored) |
 
 Development is **systems-first** against RotWK data (maps, convert, binding,
 packs, sim), not a permanent one-map freeze. Product ladder and non-goals:
@@ -73,6 +73,37 @@ packs, sim), not a permanent one-map freeze. Product ladder and non-goals:
   headless gates exist in-tree. Coverage is uneven.
 - Men/Fords remains the deepest **legacy** gate surface; it is not the product strategy.
 - Volatile evidence: [STATUS.md](STATUS.md).
+
+## Exploring with Codex (or similar)
+
+This tree is large and uneven. A practical way in:
+
+1. Clone the repo.
+2. Point [Codex](https://openai.com/codex/) (or another code agent) at the checkout.
+3. Ask for a map of entry points (`run_rotwk_*`, `game/`, `importer/`), current
+   gaps vs `STATUS.md` / `DIRECTION.md`, and concrete fix suggestions with a
+   focused test or command.
+
+Agents help orientation and drafts. Treat their claims as unproven until a
+human check and a real gate or play session agree. Never let a tool commit
+retail assets, secrets, or paths under `.private/`.
+
+## Credits and inspiration
+
+OpenBFME is an independent Godot reimplementation. SAGE format understanding
+and conversion tooling lean on work pioneered by the community, especially:
+
+- **[OpenSAGE](https://github.com/OpenSAGE/OpenSAGE)** — open SAGE engine research
+  and reference implementation. We use it as research / comparison (map cook
+  gaps, format notes), not as a vendored runtime. See
+  [docs/OPENSAGE_GAP_MATRIX.md](docs/OPENSAGE_GAP_MATRIX.md).
+- **[OpenSAGE BlenderPlugin](https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin)** —
+  pinned **external** W3D reader for our private Blender convert lane (LGPL;
+  not copied into this repo’s runtime). Toolchain ledger:
+  [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
+
+Those projects keep their own licenses. This repo’s source is Unlicense; we do
+not relicense OpenSAGE code by referencing it.
 
 ## Docs
 
