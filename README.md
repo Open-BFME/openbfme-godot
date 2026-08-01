@@ -55,11 +55,11 @@ formats. Default content baseline is **RotWK 2.01** (`importer` CLI
 | Path | Role |
 |---|---|
 | `game/` | Godot client (menu, skirmish, HUD, multiplayer foundations) |
-| `importer/` | Discover → extract → convert → pack (fail-closed) |
+| `importer/` | Discover -> extract -> convert -> pack (errors stop; no silent fakes) |
 | `engine/` | Deterministic sim library (.NET) |
 | `tools/` | Onboard, RotWK systems factory, gates, release tooling |
 | `contracts/` | Product / modding policy JSON |
-| `.private/` | **Local only** — retail inputs and converted packs (gitignored) |
+| `.private/` | **Local only** - retail inputs and converted packs (gitignored) |
 
 Development is **systems-first** against RotWK data (maps, convert, binding,
 packs, sim), not a permanent one-map freeze. Product ladder and non-goals:
@@ -93,26 +93,27 @@ retail assets, secrets, or paths under `.private/`.
 OpenBFME is an independent Godot reimplementation. SAGE format understanding
 and conversion tooling lean on work pioneered by the community, especially:
 
-- **[OpenSAGE](https://github.com/OpenSAGE/OpenSAGE)** — open SAGE engine research
+- **[OpenSAGE](https://github.com/OpenSAGE/OpenSAGE)** - open SAGE engine research
   and reference implementation. We use it as research / comparison (map cook
   gaps, format notes), not as a vendored runtime. See
   [docs/OPENSAGE_GAP_MATRIX.md](docs/OPENSAGE_GAP_MATRIX.md).
-- **[OpenSAGE BlenderPlugin](https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin)** —
+- **[OpenSAGE BlenderPlugin](https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin)** -
   pinned **external** W3D reader for our private Blender convert lane (LGPL;
-  not copied into this repo’s runtime). Toolchain ledger:
+  not copied into this repo's runtime). Toolchain ledger:
   [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
 
-Those projects keep their own licenses. This repo’s source is Unlicense; we do
+Those projects keep their own licenses. This repo's source is Unlicense; we do
 not relicense OpenSAGE code by referencing it.
 
 ## Docs
 
 | Doc | Use it for |
 |---|---|
-| [docs/ONBOARDING.md](docs/ONBOARDING.md) | Setup, env vars, convert, launch |
-| [docs/ROTWK_SYSTEMS_PATH.md](docs/ROTWK_SYSTEMS_PATH.md) | Operator commands for systems factory |
-| [docs/CONTENT_PIPELINE.md](docs/CONTENT_PIPELINE.md) | Import / packs / containment |
-| [docs/FAQ.md](docs/FAQ.md) | Legality, scope, common questions |
+| [docs/ONBOARDING.md](docs/ONBOARDING.md) | Setup, glossary, convert, launch |
+| [docs/MODDING.md](docs/MODDING.md) | Example pack from `game/mods/` |
+| [docs/ROTWK_SYSTEMS_PATH.md](docs/ROTWK_SYSTEMS_PATH.md) | Operator commands for systems tools |
+| [docs/CONTENT_PIPELINE.md](docs/CONTENT_PIPELINE.md) | Import / packs / private files |
+| [docs/FAQ.md](docs/FAQ.md) | Common questions (plain language) |
 | [docs/README.md](docs/README.md) | Full doc map |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute without leaking retail |
 
@@ -124,9 +125,9 @@ proposing a public-facing change.
 
 ## License
 
-Project source is **[Unlicense](LICENSE)** — public domain; do whatever you want
+Project source is **[Unlicense](LICENSE)** - public domain; do whatever you want
 with this code. That does **not** cover EA / Tolkien / Middle-earth game assets
 or trademarks. You still need a legal game install for conversion, and you must
 not redistribute retail or converted retail content with this project.
-Unofficial fan project — not affiliated with EA, Middle-earth Enterprises, or
+Unofficial fan project - not affiliated with EA, Middle-earth Enterprises, or
 the Tolkien Estate.

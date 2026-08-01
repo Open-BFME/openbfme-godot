@@ -1,80 +1,102 @@
 # Onboarding
 
-Windows-first path: clone source â†’ set env â†’ bootstrap tools â†’ convert from a
-game you own â†’ run gates or the skirmish shell.
+Get the source, set a few paths, convert content from a game you own, then
+launch. Windows first. This is an experimental alpha - first convert can take
+a long time.
 
-Experimental alpha. First convert can take a long time. Wrong install paths fail
-closed on purpose. See [STATUS.md](../STATUS.md) for known limits.
+If something is missing, the tools usually **stop with an error** instead of
+guessing. That is intentional (see [Glossary](#glossary)).
 
 ## Requirements
 
-- Windows 10/11, Git, PowerShell
-- **RotWK 2.01** with BFME2 base (layered install). BFME2-only is optional
-  comparison (`--game bfme2`), not the product target
-- Godot **4.7** (console build preferred for headless output)
-- Python 3.12 on PATH for first bootstrap
-- Disk for `.private/` (multi-faction sets are tens of GB)
-- .NET SDK from `global.json` only if you build `engine/`
+- Windows 10 or 11, Git, PowerShell
+- **Rise of the Witch-king 2.01** (needs BFME2 base underneath - the tools
+  layer them). Optional: BFME2 alone for comparison only
+- Godot **4.7** for Windows (console build preferred so you can see log text)
+- Python 3.12 on PATH (first run can install a private copy under `.private/`)
+- Lots of free disk for `.private/` (full multi-faction work is tens of GB)
 
-Converted output stays in ignored `.private/`. Never commit it.
+Everything converted stays in the ignored `.private/` folder. Do not commit it.
 
-## Environment
+## Glossary (words we use a lot)
+
+| Term | Plain meaning |
+|---|---|
+| **RotWK** | *Rise of the Witch-king* (the expansion). Our main target. |
+| **BFME2** | *Battle for Middle-earth II* base game. Required under RotWK. |
+| **Pack** | Converted game content the Godot client loads (factions, maps, assets). Lives under `.private/content-packs` after you convert. |
+| **Fail closed** | If required data is missing or invalid, **stop and report an error**. Do not invent fake art or silent placeholders for "parity" paths. |
+| **Gate** | Automated check script (headless). Green = that check passed. |
+| **Doctor** | Install / tool health check (`run_doctor.bat` or importer `doctor`). |
+| **Selection** | Which pack is "active" for launch (file `selection.json`). Only rewritten when you explicitly publish/select. |
+| **Layered install** | RotWK folder + BFME2 folder joined so the importer sees one catalog. |
+| **Systems factory** | Scripts under `tools/rotwk_*.py` that census, cook maps, convert factions, and prove packs. |
+
+## Environment variables
+
+Set these in Command Prompt before running tools (or put them in a `.bat` you keep outside the repo).
 
 | Variable | Purpose |
 |---|---|
-| `OPENBFME_GODOT` | Godot 4.7 exe (also `GODOT_CONSOLE` / `GODOT_EXE` / `GODOT`) |
-| `ROTWK_INSTALL` | RotWK root containing `game.dat` |
-| `BFME2_INSTALL` | BFME2 base when layering / Men wizard needs it |
-| `OPENBFME_CONTENT` | Packs root (default `.private\content-packs`) |
-| `OPENBFME_IMPORT_ROOT` | Importer workspace (default `.private\retail-work`) |
+| `OPENBFME_GODOT` | Full path to Godot 4.7 `.exe` (preferred). Also accepted: `GODOT_CONSOLE`, `GODOT_EXE`, `GODOT`. |
+| `ROTWK_INSTALL` | Folder that contains RotWK `game.dat`. |
+| `BFME2_INSTALL` | BFME2 install when layering / Men wizard needs it. |
+| `OPENBFME_CONTENT` | Where packs live (default: `.private\content-packs`). |
+| `OPENBFME_IMPORT_ROOT` | Importer workspace (default: `.private\retail-work`). |
 
-Godot resolution (`tools/resolve-godot.bat` / `.ps1`): env â†’ `.tools\godot\`
-(gitignored drop) â†’ `godot` on PATH â†’ fail closed.
+How Godot is found (`tools/resolve-godot.bat`):
 
-## Clone
+1. Those env vars  
+2. Else a local drop under `.tools\godot\` (gitignored)  
+3. Else `godot` on your PATH  
+4. Else error (fail closed)
+
+## 1. Clone
 
 ```bat
 git clone https://github.com/Open-BFME/openbfme-godot.git
 cd openbfme-godot
 ```
 
-## Path A â€” RotWK systems (recommended)
+## 2. Path A - RotWK (recommended)
 
-Matches the active product baseline and tools under `tools/rotwk_*.py`.
+Matches the product baseline and `tools/rotwk_*.py`.
 
 ```bat
 set OPENBFME_GODOT=C:\Path\To\Godot_v4.7-stable_win64_console.exe
 set ROTWK_INSTALL=C:\Path\To\RotWK
 
+:: Check tools without needing the game install
 powershell -File tools\gate-rotwk-systems.ps1 -SkipLiveRetail
+
+:: Full systems path (census, map cook plans, etc.)
 run_rotwk_systems.bat
 
-:: Factory / convert only (does not rewrite pack selection)
+:: Convert only - does NOT pick which pack the game launches
 run_rotwk_one_button.bat "%ROTWK_INSTALL%"
 
-:: Fresh checkout: cook multi-map pack, select it, launch
+:: First-time: convert multi-map pack, SELECT it, then launch
+:: (--publish writes .private\content-packs\selection.json)
 run_rotwk_one_button.bat "%ROTWK_INSTALL%" --multi-map --build --publish --launch
 ```
 
-Operator detail: [ROTWK_SYSTEMS_PATH.md](ROTWK_SYSTEMS_PATH.md).
+More operator flags: [ROTWK_SYSTEMS_PATH.md](ROTWK_SYSTEMS_PATH.md).
 
-`selection.json` rewrites **only** with explicit `--publish` / select authority.
+## 3. Path B - Men pack wizard (legacy tests)
 
-## Path B â€” Men pack wizard (legacy gates)
-
-Seeds the historical Men pack used by `retail_slice_runner` /
-`menu_skirmish_runner`.
+Builds the older "Men" pack used by classic headless tests
+(`retail_slice_runner`, `menu_skirmish_runner`).
 
 ```bat
 python tools\onboard.py --install "C:\Path\To\BFME2" --rotwk "C:\Path\To\RotWK" --godot "%OPENBFME_GODOT%" --yes
 ```
 
-Or interactively: `python tools\onboard.py`.
+Or interactive: `python tools\onboard.py`.
 
-Flags: `--skip-gates`, `--force-convert`. Exit `0` = setup + gates green,
-`1` = setup ok but gate failed, `2` = setup stop.
+Exit codes: `0` = setup + tests green, `1` = setup ok but a test failed,
+`2` = setup stopped early.
 
-## Launch
+## 4. Launch
 
 ```bat
 run_game.bat
@@ -82,7 +104,7 @@ run_retail_slice.bat
 run_retail_slice.bat --test
 ```
 
-## Manual Men convert (same as wizard)
+## Manual Men convert (same idea as the wizard)
 
 ```bat
 run_doctor.bat
@@ -92,21 +114,22 @@ set "PY=.private\retail-work\tools\python-3.12-env\Scripts\python.exe"
 %PY% tools\openbfme_import.py publish-faction-to-slice --install "C:\Path\To\BFME2" --faction men --select
 ```
 
-Other factions: `--faction elves|dwarves|isengard|mordor|wild`, or
-`--game rotwk --faction angmar`.
+Other factions: `--faction elves`, `dwarves`, `isengard`, `mordor`, `wild`,
+or `--game rotwk --faction angmar`.
 
-## Troubleshooting
+## If something breaks
 
 | Symptom | What to do |
 |---|---|
-| Doctor rejects install | Point at install root (`game.dat` / `lotrbfme2.exe`), not a partial copy |
-| Godot not found | Set `OPENBFME_GODOT` or drop binary under `.tools\godot\` |
-| Gate fails | Fail-closed is intentional; check [STATUS.md](../STATUS.md) |
-| Convert stopped mid-way | Rerun the same command; caches resume. Avoid deleting `.private` first |
-| Pre-publish scan | `powershell -File tools\export-scan.ps1` |
+| Doctor rejects install | Point at the **install root** (folder with `game.dat` or `lotrbfme2.exe`), not a random subfolder |
+| Godot not found | Set `OPENBFME_GODOT` or copy the exe under `.tools\godot\` |
+| Gate / test fails | Read the error; check [STATUS.md](../STATUS.md). Fail closed is normal when data is incomplete |
+| Convert stopped mid-way | Run the **same** command again (resumes). Avoid deleting `.private` as a first step |
+| Before you publish code | `powershell -File tools\export-scan.ps1` |
 
 ## Related
 
-- [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md)
-- [VERIFICATION.md](VERIFICATION.md)
-- [DIRECTION.md](../DIRECTION.md)
+- [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) - how import stays private  
+- [MODDING.md](MODDING.md) - simple pack example from the repo  
+- [FAQ.md](FAQ.md)  
+- [DIRECTION.md](../DIRECTION.md) - product goals  

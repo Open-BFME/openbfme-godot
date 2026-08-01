@@ -17,7 +17,7 @@ tree and selected-package digests belong in generated tool/provenance manifests 
 |---|---|---|---|
 | `middle-earth-rts` project assets | Repository-authored/legal-safe 3D, UI and audio donor material | Original or AI-generated for that project; provenance must be reviewed per asset | May support legal-safe development/fallback content; cannot prove retail parity or silently fill strict-retail gaps |
 | Generated OBJ meshes | Tools-authored stand-in geometry | Repository-authored output; generator/input provenance required | Legal-safe development lane only unless separately approved for release |
-| Generated WAV music beds | Adaptive explore/battle/victory stand-ins | Procedural output; generator not yet committed — see *Open provenance items* | Legal-safe development lane only; not retail audiovisual parity evidence |
+| Generated WAV music beds | Adaptive explore/battle/victory stand-ins | Procedural output; generator not yet committed - see *Open provenance items* | Legal-safe development lane only; not retail audiovisual parity evidence |
 | Procedural SFX (`tools/gen_sfx.py`) | 51 placeholder combat/UI/ambient sound effects | Repository-authored; synthesised from committed source, reproducible byte-for-byte | Shippable repository-authored lane; stands in for retail audio the player supplies locally |
 | User-owned BFME2 1.06 / RotWK 2.01 installation | Private compatibility extraction, conversion and oracle observation | Proprietary retail content; non-redistributable project lane | Inputs and all derived payloads remain below `.private`; never shipped, committed or transferred by a server |
 
@@ -34,13 +34,13 @@ forensics on the artifacts themselves; they are not a legal opinion.
 | Group | Files | Size | Status |
 |---|---|---|---|
 | `audio/sfx/*.wav` | 51 | 4.7 MB | **Regenerated.** Repository-authored, reproducible from `tools/gen_sfx.py` |
-| `audio/music/*.wav` | 3 | 0.2 MB | Procedural by inspection; generator not committed — open item |
+| `audio/music/*.wav` | 3 | 0.2 MB | Procedural by inspection; generator not committed - open item |
 | `icons/*.png` | 127 | 189.6 MB | Retail origin ruled out by forensics; positive attestation owed by the owner |
 | `models/{units,buildings}/*.glb` | 27 | 210.4 MB | Retail origin ruled out by forensics; positive attestation owed by the owner |
 | `models/units/*_texture_0.webp` | 15 | 2.1 MB | Byte-identical duplicates of textures already embedded in the sibling GLBs |
 | `models/*/*.obj` | 74 | 0.2 MB | Tools-authored stand-in geometry (existing ledger row) |
 
-### Procedural SFX — repository-authored, reproducible
+### Procedural SFX - repository-authored, reproducible
 
 The 51 files in `game/data/base/assets/audio/sfx` are synthesised entirely from code in
 `tools/gen_sfx.py`. Nothing is sampled, recorded, downloaded or model-generated. The
@@ -72,8 +72,8 @@ ledgered. Every one carried the FFmpeg writer tag `Lavf62.12.101` from a single 
 transcode with no generator anywhere in the repository, and two files retained upstream
 authoring metadata that survived the transcode:
 
-- `bow-release-02.wav` — `ICRD 2011-01-04`, `ITCH "Logic Express"`
-- `fire-crackle-02.wav` — `IART "PagDev"`, `ICRD 2021`, `IGNR "SFX"`, `INAM "Feuer"`, `IPRD "Soundeffekt"`
+- `bow-release-02.wav` - `ICRD 2011-01-04`, `ITCH "Logic Express"`
+- `fire-crackle-02.wav` - `IART "PagDev"`, `ICRD 2021`, `IGNR "SFX"`, `INAM "Feuer"`, `IPRD "Soundeffekt"`
 
 That metadata is positive evidence of third-party human-authored source recordings of
 unrecorded licence, acquired outside any recorded admission review. It rules out the
@@ -134,16 +134,16 @@ had to assert. The batch was therefore discarded rather than documented.
 | `trample-hooves-02.wav` | `c3212b0dc1dabc03b07127d91e627ac2b7a3b0e080161c0e4b370a01b9de91ba` | 22976 |
 | `trample-hooves-03.wav` | `e0229256c7d8e34dbd7dd7f1cd43b5781d0f9e9fe0ea70c0128cb3a09e0ad565` | 44144 |
 
-### GLB models — retail origin ruled out, source attestation outstanding
+### GLB models - retail origin ruled out, source attestation outstanding
 
 27 tracked GLBs (15 rigged units, 12 static buildings, 210.4 MB). Forensics on the
 artifacts:
 
 - Every file declares `asset.generator = "glTF-Transform v4.4.0"`; textures are carried
   as `EXT_texture_webp`. Retail BFME2 art is W3D and never passes through glTF.
-- All 15 unit files share a byte-identical 26-node skeleton — `Hips`, `Spine`, `Spine01`,
+- All 15 unit files share a byte-identical 26-node skeleton - `Hips`, `Spine`, `Spine01`,
   `Spine02`, `neck`, `Head`, `headfront`, `head_end`, `Left/Right{Shoulder,Arm,ForeArm,Hand}`,
-  `Left/Right{UpLeg,Leg,Foot,ToeBase}` — with the mesh named `char1` and the material
+  `Left/Right{UpLeg,Leg,Foot,ToeBase}` - with the mesh named `char1` and the material
   named `Material_1`. Retail W3D hierarchies are per-unit and use `B_`-prefixed bone
   names.
 - All 15 carry exactly five clips with identical names, including the auto-rig marker
@@ -158,7 +158,7 @@ prompts, or the output licence in force at generation time. **The owner must sup
 attestation** before these files can be treated as release-approved; see
 *Open provenance items*.
 
-### UI icons — retail origin ruled out, source attestation outstanding
+### UI icons - retail origin ruled out, source attestation outstanding
 
 127 tracked PNGs (189.6 MB), all 1024x1024, 8 bits per channel. Forensics:
 

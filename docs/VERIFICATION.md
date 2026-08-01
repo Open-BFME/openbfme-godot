@@ -148,7 +148,7 @@ The current GDScript `state_signature()` is not accepted as a network digest.
 Performance work begins with a fixed scenario, environment and metric. Retain an
 optimization only when the same benchmark improves without parity or determinism
 regression. Track frame-time tails, simulation tick debt, allocations, memory growth,
-conversion cold/warm/resume time and network recovery—not only averages.
+conversion cold/warm/resume time and network recovery-not only averages.
 
 M2 uses its identity-bound live-soak and restart requirements from the current
 milestone contract. Later scale gates qualify the maximum legal eight-player BFME2

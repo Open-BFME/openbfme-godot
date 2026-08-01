@@ -27,8 +27,8 @@ powershell -File tools\rotwk-systems.ps1 -RotwkInstall C:\Path\To\RotWK
 1. Bootstrap pinned importer Python env
 2. `doctor --game rotwk`
 3. `census-maps` / `census-factions`
-4. `tools/rotwk_map_cook_corpus.py` â€” map cook + conversion ledger
-5. `tools/rotwk_binding_factory.py` â€” binding burn-down
+4. `tools/rotwk_map_cook_corpus.py` - map cook + conversion ledger
+5. `tools/rotwk_binding_factory.py` - binding burn-down
 6. Faction plans (`import-faction --plan-only`) or `-ConvertFactions`
    (`rotwk_faction_convert_batch.py`; `publicationReady` stays false until pack proof)
 7. Pack proof: `tools/rotwk_faction_pack_proof.py` (no `selection.json` unless `--select`)

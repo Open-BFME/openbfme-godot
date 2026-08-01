@@ -5,10 +5,11 @@ Authoritative map for this repo. If it is not linked here or from the root
 
 ## Start
 
-1. [README](../README.md) â€” what the project is and quick start
-2. [Onboarding](ONBOARDING.md) â€” install, convert, launch
-3. [FAQ](FAQ.md) â€” legality and scope
-4. [Contributing](../CONTRIBUTING.md) â€” retail firewall and PR shape
+1. [README](../README.md) - what the project is and quick start
+2. [Onboarding](ONBOARDING.md) - install, convert, launch (+ glossary)
+3. [Modding](MODDING.md) - example pack from the repo
+4. [FAQ](FAQ.md) - legality and scope
+5. [Contributing](../CONTRIBUTING.md) - retail firewall and PR shape
 
 ## Product truth
 
@@ -27,7 +28,7 @@ Authoritative map for this repo. If it is not linked here or from the root
 | [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) | Import, packs, `.private` |
 | [ROTWK_SYSTEMS_PATH.md](ROTWK_SYSTEMS_PATH.md) | `run_rotwk_*` operator path |
 | [BFME2_PARITY.md](BFME2_PARITY.md) | Parity doctrine (RotWK-primary) |
-| [VERIFICATION.md](VERIFICATION.md) | Gates and fail-closed checks |
+| [VERIFICATION.md](VERIFICATION.md) | Automated checks (errors stop, no silent fakes) |
 | [OPENSAGE_GAP_MATRIX.md](OPENSAGE_GAP_MATRIX.md) | OpenSAGE comparison checklist |
 | [SIMULATION_PROTOCOL.md](SIMULATION_PROTOCOL.md) | Sim / network target notes |
 | [MODDING.md](MODDING.md) | Mod pack direction |

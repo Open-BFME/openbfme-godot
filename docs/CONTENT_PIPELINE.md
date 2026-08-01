@@ -149,11 +149,11 @@ Loose repository and user packs remain a separate development/modding lane descr
 `ModLoader.list_pack_roots` resolves the active content selection from exactly one
 source, in this order:
 
-1. **External override** — `OPENBFME_CONTENT` (developer/CI, ephemeral).
-2. **Repo workspace** — `<repo>/.private/content-packs/selection.json`, detected
+1. **External override** - `OPENBFME_CONTENT` (developer/CI, ephemeral).
+2. **Repo workspace** - `<repo>/.private/content-packs/selection.json`, detected
    automatically for non-exported runs when the durable cache settings are at their
    defaults (`openbfme/content/workspace_content_root` overrides the location).
-3. **Durable user cache** — `user://content-packs/selection.json`.
+3. **Durable user cache** - `user://content-packs/selection.json`.
 
 The workspace outranks the durable cache so an editor launch without env setup can
 never silently play a stale durable copy of the same ruleset. A workspace that exists

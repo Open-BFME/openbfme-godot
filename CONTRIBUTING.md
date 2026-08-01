@@ -17,7 +17,7 @@ Small, tested changes beat large rewrites. Public repo is source-only alpha.
 - Agent-only instruction dumps meant for private workflows
 
 Public fixtures must be project-authored. If retail or a secret lands in a
-commit, stop and report â€” do not â€œfix forwardâ€ while it remains in history.
+commit, stop and report - do not "fix forward" while it remains in history.
 
 ```bat
 powershell -File tools\export-scan.ps1

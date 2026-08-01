@@ -3,7 +3,7 @@
 Volatile. Prefer focused gate output over anything written here.
 
 **Product:** RotWK 2.01, systems-first (`DIRECTION.md`).
-**Repo:** public source â€” https://github.com/Open-BFME/openbfme-godot
+**Repo:** public source - https://github.com/Open-BFME/openbfme-godot
 **Not the strategy:** permanent Men/Fords vertical-slice freeze.
 
 ## Current surface (code)

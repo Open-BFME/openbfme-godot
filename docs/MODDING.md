@@ -1,164 +1,143 @@
-# OpenBFME modding contract
+# Modding
 
-> **Owner:** Content/mod API integration owner
-> **Owns:** Mod manifests, dependency/load order, override rules, simulation compatibility, presentation overrides, validation, and authoring boundaries.
-> **Does not own:** Retail extraction, authoritative simulation internals, public marketplace services, or legal approval for third-party content.
-> **Last verified commit:** `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
-> **Update trigger:** A pack category, manifest field, dependency rule, override rule, hash boundary, validation rule, or authoring workflow changes.
-> **Validation:** `python tools/check-product-contracts.py --check`; pack-level validation remains unimplemented and is required before community content can load.
+You can ship **project-authored** packs (JSON + assets). You cannot ship EA's
+retail files. For retail play you convert **your** install into a private pack
+under `.private/` (see [ONBOARDING.md](ONBOARDING.md)).
 
-## Status and lanes
+Two ideas, keep them separate:
 
-OpenBFME currently has a loose legacy pack loader for repository-authored and user
-content. The production split between simulation and presentation packs described
-below is an approved target and is **not yet fully implemented**. Do not claim
-deterministic multiplayer mod compatibility until the separate digest and handshake
-contracts pass.
+1. **Loose packs (works today)** - drop a folder with `pack.json` and overrides.
+   Good for local experiments. Not a multiplayer parity contract.
+2. **Production sim vs presentation packs (target)** - strict manifests and
+   digests so multiplayer stays fair. Policy lives in
+   `contracts/openbfme-modding-contract.json`; full loader is **not finished**.
 
-Three lanes must remain distinct:
+## Glossary
 
-| Lane | Purpose | Fallback behavior | Parity evidence |
-|---|---|---|---|
-| Loose legacy | Local development and legal-safe user mods | Priority-based definition overrides may be accepted | Never BFME2 parity evidence |
-| Strict private retail | Exact selected retail compatibility pack | Fail closed; no loose/base substitution | Eligible when oracle and gates pass |
-| Production mods | Versioned simulation and/or presentation packs | Manifest- and category-governed | Depends on declared profile, never silently retail parity |
+| Term | Meaning |
+|---|---|
+| **Pack** | A folder of content the game loads (units, maps, assets). |
+| **Priority** | Higher number wins when two packs define the same `id` (loose lane). |
+| **Simulation** | Rules that change who wins (HP, damage, pathing, AI). Must match in multiplayer. |
+| **Presentation** | Looks/sounds (meshes, UI art, music). Can differ between players later. |
+| **Fail closed** | Missing required data = error, not silent fake content. |
 
-Strict retail selection is controlled by the private content pipeline. A missing retail
-definition, asset or capability must not be supplied by `game/mods`, `user://mods`, a
-synthetic base pack or a presentation-only pack.
+## Quick start: the example mod in this repo
 
-## Current loose-pack behavior
+There is a real example under `game/mods/example_hard_orcs/`.
 
-The existing loader recognizes pack directories in repository/user content roots and
-an optional `OPENBFME_CONTENT` root. A loose pack has a `pack.json` plus data and assets;
-higher priority definitions may override lower priority definitions by ID.
-
-This surface remains supported for development while the production schema is built,
-but it has limitations:
-
-- priority alone is not a multiplayer compatibility contract;
-- pack category is not yet a complete security boundary;
-- loose overrides are not evidence of retail origin or parity; and
-- an absolute external root is operator-provided content, not a publishable dependency.
-
-New parity work must target the strict selected-pack contract rather than expanding
-implicit loose fallbacks.
-
-## Production pack categories
-
-### Simulation packs
-
-Simulation packs contain every value that can affect authoritative results, including:
-
-- factions, objects, hordes, heroes and modules;
-- weapons, armor, locomotion, economy, upgrades, powers and AI;
-- map dimensions, terrain gameplay facts, collision, navigation and scripts;
-- deterministic configuration and schema migrations; and
-- authoritative event timing, attachment origins, root motion, and deterministic callbacks.
-
-Server and clients must load identical ordered simulation dependencies and agree on one
-canonical simulation digest. A simulation pack cannot be hot-reloaded during a match.
-
-### Presentation packs
-
-Presentation packs may contain:
-
-- meshes, skeletons, animations and LODs;
-- textures, materials, shaders and visual effects;
-- UI layout/art, portraits and fonts;
-- music, speech and sound effects; and
-- localization that does not alter authoritative identifiers or rules.
-
-Presentation packs may differ between peers. They cannot provide or override a field
-used by simulation, navigation, targeting, visibility, collision, timing or command
-validation. HD packs therefore replace audiovisual content without forking gameplay.
-
-Presentation resources cannot drive simulation through animation notifies, root
-motion, bone-derived launch positions, effect callbacks, or scripts. Import rejects or
-strips that metadata; authoritative equivalents live in canonical simulation data.
-
-A pack that contains both categories is treated as a simulation pack for compatibility
-unless it is split into separately hashed manifests.
-
-## Manifest contract
-
-Every production mod manifest declares:
+**Layout:**
 
 ```text
-schema and schema version
-pack ID and semantic version
-engine/mod API compatibility
-category: simulation | presentation | mixed-map
-dependencies with version constraints
-conflicts and explicit load-order constraints
-content roots and safe relative file declarations
-canonical content digest
-author/license/provenance metadata
-redistribution policy
-code_plugins (an empty array in modding v1)
+game/mods/example_hard_orcs/
+  pack.json
+  units/orc.json
 ```
 
-Pack IDs and content object IDs are stable, case-normalized identifiers. Dependency
-resolution is deterministic and rejects missing, cyclic, ambiguous or incompatible
-graphs. Explicit dependency/load-order constraints take precedence over legacy numeric
-priority. The resolved order is included in a canonical compatibility lockfile. That
-lockfile also includes simulation protocol/schema and canonicalizer revisions, every
-ordered pack manifest/content digest, deterministic configuration, map-simulation
-digest, and the authoritative-plugin list, which is empty in modding v1.
+**`pack.json`** (from the repo):
 
-## Overrides
+```json
+{
+  "id": "example_hard_orcs",
+  "name": "Example: Harder Orcs",
+  "version": "1.0.0",
+  "priority": 50,
+  "author": "Open BFME"
+}
+```
 
-- An override names the exact object and permitted category fields it replaces.
-- Unknown objects, fields or schema versions fail with the source pack, object and field.
-- Simulation overrides require identical multiplayer digests.
-- Presentation overrides cannot change authoritative definitions.
-- Deletes are explicit tombstones and cannot be inferred from a missing file.
-- Asset paths are safe, normalized and contained below the owning pack root.
-- A mod cannot reach another pack by path traversal; cross-pack reuse uses a declared
-  dependency and stable asset reference.
-- Last-writer-wins behavior is retained only for the documented loose legacy lane.
+**`units/orc.json`** (overrides the unit id `orc`):
 
-## Maps and scenarios
+```json
+{
+  "id": "orc",
+  "hp": 620,
+  "dmg": 12,
+  "desc": "Modded tougher orcs (example override)."
+}
+```
 
-Map packages separate gameplay facts from presentation assets. Simulation map identity
-covers topology, passability, buildability, water/naval rules, collision, starts,
-waypoints, scripts, triggers and authoritative object placement. Presentation identity
-covers terrain materials, prop models, sky, water rendering, ambience and other visual
-or audio resources.
+How to try it:
 
-A custom map declares required simulation and presentation dependencies. Missing
-simulation dependencies reject the match. Missing optional presentation dependencies
-may use an explicit legal-safe presentation fallback only outside strict retail parity.
+1. Keep the example under `game/mods/` (already in the tree), or copy the folder
+   to Godot's `user://mods` on your machine.
+2. Launch with a content root that includes base data + this mod
+   (default game content discovery loads `game/mods` for loose packs).
+3. Higher `priority` packs override lower ones by the same object `id`.
 
-## Code plugins
+Optional: point at an external content root:
 
-Executable plugins are forbidden in modding v1. Packs containing native libraries,
-managed assemblies, Godot/importer scripts, or other executable resources are
-rejected. A future plugin protocol requires a separately reviewed contract and does
-not inherit trust from a content-pack dependency.
+```bat
+set OPENBFME_CONTENT=C:\Path\To\my_content_root
+```
 
-## Authoring and diagnostics
+`my_content_root` should contain one or more pack folders, each with `pack.json`.
 
-Authoring tools should provide:
+More notes: [game/mods/README.md](../game/mods/README.md).
 
-- schema validation with exact pack/object/field errors;
-- resolved dependency and override views;
-- simulation/presentation category audits;
-- canonical digest calculation;
-- provenance and redistribution warnings;
-- map fact versus presentation validation; and
-- safe-mode launch with the last-known-good pack set.
+## Make your own loose pack
 
-Mod discovery and dependency resolution may occur before launch. Authoring hot reload
-is permitted only for presentation state outside a match. Invalid content must never be
-silently ignored.
+```text
+my_mod/
+  pack.json
+  units/*.json
+  buildings/*.json
+  factions/*.json
+  abilities/*.json
+  maps/*.json
+  globals.json          optional
+  assets/...            optional meshes/icons
+```
 
-## Distribution
+Minimal `pack.json`:
 
-OpenBFME does not require Steam Workshop, a central account or a central mod service.
-Packs may be installed from local folders or community-hosted indexes. A future mod
-manager may provide dependency resolution, signatures, rollback and safe mode, but the
-manifest and digest contracts remain independent of any one distribution service.
+```json
+{
+  "id": "my_mod",
+  "priority": 50
+}
+```
 
-Retail-derived private packs are non-redistributable and are never mods for sharing.
-See `RELEASE_POLICY.md` and `THIRD_PARTY.md`.
+Unit JSON follows the same shape as files under `game/data/base/` (ids must
+match what you want to replace).
+
+**Do not** put retail `.big` / `.w3d` / `.dds` extracts into a public mod.
+Convert through the importer if you need retail-derived content, and keep that
+under `.private/`.
+
+## Production direction (not fully implemented)
+
+When the strict contract ships, packs declare category, version, dependencies,
+and digests. Simulation packs must match on every peer. Presentation packs may
+differ. See the machine-readable contract:
+
+```text
+contracts/openbfme-modding-contract.json
+```
+
+Snippet of the policy intent (from that file):
+
+```json
+"presentation_digest": {
+  "required_match": "not-required",
+  "purpose": "diagnostics, caching, provenance, and optional server policy",
+  "constraint": "A presentation mismatch cannot change authoritative state, commands, event timing, collision, projectile origins, or command acceptance."
+}
+```
+
+Until that loader is finished, treat multiplayer + custom packs as experimental
+and do not claim retail multiplayer parity for loose overrides.
+
+## Rules of the road
+
+- **Never** commit retail archives or converted retail packs to Git.
+- Loose overrides are for development; they are **not** proof of retail parity.
+- Prefer small, testable packs with clear `id`s.
+- When parity matters, use the private selected retail pack path, which fails
+  closed if something is missing.
+
+## Related
+
+- [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md)  
+- [ONBOARDING.md](ONBOARDING.md)  
+- [contracts/openbfme-modding-contract.json](../contracts/openbfme-modding-contract.json)  

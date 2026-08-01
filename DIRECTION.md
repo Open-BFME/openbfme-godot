@@ -6,7 +6,7 @@ Machine-readable policy: `contracts/rotwk-201-product-scope.json`.
 ## North star
 
 A modern, moddable RTS engine in Godot that reproduces **Rise of the Witch-king
-(RotWK) 2.01** through measured comparison with the original â€” skirmish first,
+(RotWK) 2.01** through measured comparison with the original - skirmish first,
 then shell / Create-a-Hero, campaigns, and War of the Ring.
 
 Content is converted locally from a user-owned RotWK install (BFME2 base as the
@@ -19,7 +19,7 @@ program.
 
 ## Development model: systems-first iterative
 
-Vertical-slice freeze (one map / one faction â€œcomplete before anything elseâ€) is
+Vertical-slice freeze (one map / one faction "complete before anything else") is
 **not** the active strategy.
 
 Work advances by **major systems**, in short iterations, against **RotWK data**:
@@ -31,54 +31,54 @@ Work advances by **major systems**, in short iterations, against **RotWK data**:
 5. Record evidence in `STATUS.md`; move to the next system.
 
 Progress metrics: reusable factories (cook, closure, bind, pack, sim, script/AI),
-coverage/gap burn-down, and â€œRotWK pack still bootsâ€ smoke â€” **not** â€œFords M2
-freeze percentage.â€
+coverage/gap burn-down, and "RotWK pack still boots" smoke - **not** "Fords M2
+freeze percentage."
 
 Lightweight play spikes (any RotWK map / factions, short session) every few
 systems are encouraged so systems stay grounded. They do **not** reimpose a
 single-map product freeze.
 
 Hand-authored profile/bindings work that once defined the Men/Fords vertical
-slice is historical technique, not the long-term content model. Prefer census â†’
-closure â†’ convert â†’ gap report over multi-day one-map JSON recipes.
+slice is historical technique, not the long-term content model. Prefer census ->
+closure -> convert -> gap report over multi-day one-map JSON recipes.
 
 ## System ladder
 
-Order of **system completion**, not â€œonly this map may exist in the tree.â€
+Order of **system completion**, not "only this map may exist in the tree."
 Later systems may already have partial code; partial presence does not mean the
 system is accepted.
 
-1. **RotWK content pipeline** â€” index, extract, convert, audit, publish, mount;
+1. **RotWK content pipeline** - index, extract, convert, audit, publish, mount;
    default edition RotWK; deterministic packs and provenance.
-2. **Map cook IR** â€” official maps to engine map facts (height, passability,
+2. **Map cook IR** - official maps to engine map facts (height, passability,
    water, objects, starts, setup, triggers, scripts packaging path); classify or
    decode remaining chunk families needed for skirmish.
-3. **Asset closure and conversion** â€” object/faction graphs to W3D, textures,
+3. **Asset closure and conversion** - object/faction graphs to W3D, textures,
    audio, particles; batch convert with explicit converter-gap accounting.
-4. **Object binding** â€” retail type â†’ model or logical class; unresolved types
+4. **Object binding** - retail type -> model or logical class; unresolved types
    are a burn-down list, never silent fake art in parity mode.
-5. **Navigation and buildability** â€” generated from cooked maps + footprints;
+5. **Navigation and buildability** - generated from cooked maps + footprints;
    multi-map, not single-map special cases.
-6. **Simulation core** â€” production, economy, combat, death, command points,
+6. **Simulation core** - production, economy, combat, death, command points,
    and related rules driven from pack data for RotWK factions (including Angmar).
-7. **Script and AI surface** â€” map/AI library packaging plus runtime opcode and
+7. **Script and AI surface** - map/AI library packaging plus runtime opcode and
    world coverage growth with measured gaps.
-8. **Module / behavior execution** â€” reduce opaque-deferred module surface for
+8. **Module / behavior execution** - reduce opaque-deferred module surface for
    behaviors that skirmish actually needs.
-9. **Skirmish shell** â€” faction/map selection, launch, end match on RotWK content.
-10. **Presentation and HUD/audio** â€” terrain materials, water, fog, props, retail
+9. **Skirmish shell** - faction/map selection, launch, end match on RotWK content.
+10. **Presentation and HUD/audio** - terrain materials, water, fog, props, retail
     UI/audio paths iterated as systems (not one-map art freezes).
-11. **Create-a-Hero, saves, replays, observers, custom maps** â€” product shell
+11. **Create-a-Hero, saves, replays, observers, custom maps** - product shell
     completeness.
-12. **Campaigns** â€” Good/Evil (and Angmar campaign content as shipped by RotWK)
+12. **Campaigns** - Good/Evil (and Angmar campaign content as shipped by RotWK)
     maps, mission scripts, objectives, cinematics.
-13. **War of the Ring** â€” strategic layer, territories, armies, strategicâ†”tactical
+13. **War of the Ring** - strategic layer, territories, armies, strategic->"tactical
     handoff, SP and MP as designed.
-14. **Multiplayer lockstep** â€” self-hosted local/listen/dedicated, up to eight
+14. **Multiplayer lockstep** - self-hosted local/listen/dedicated, up to eight
     players, after skirmish systems are stable enough.
-15. **Modern product layer** â€” accessibility, HD packs, mod management, safe mode,
+15. **Modern product layer** - accessibility, HD packs, mod management, safe mode,
     diagnostics, rollback updates without changing the parity profile.
-16. **One-button convert-and-play** â€” thin UX over green systems (last, not first).
+16. **One-button convert-and-play** - thin UX over green systems (last, not first).
 
 The active **iteration objective** (which system is in flight) lives in
 [docs/MILESTONE_CURRENT.md](docs/MILESTONE_CURRENT.md). Volatile evidence lives in
@@ -86,7 +86,7 @@ The active **iteration objective** (which system is in flight) lives in
 
 ## Meaning of parity
 
-â€œNear 1:1â€ means every included capability is discovered from the effective
+"Near 1:1" means every included capability is discovered from the effective
 **RotWK 2.01** source corpus and has the required source, conversion, runtime,
 simulation, presentation, oracle, and reliability evidence for the claim being
 made (skirmish-complete vs full-game-complete).
@@ -125,11 +125,11 @@ strategy and must not block RotWK systems work.
 ## Non-goals for the current phase
 
 - Treating BFME2 1.06 freeze as a prerequisite to RotWK work.
-- Requiring vertical-slice â€œcomplete and freezeâ€ before major systems.
+- Requiring vertical-slice "complete and freeze" before major systems.
 - Dual full-parity programs (finish BFME2, then re-do RotWK).
-- New synthetic Stage 1â€“10 product work as a substitute for retail systems.
+- New synthetic Stage 1-10 product work as a substitute for retail systems.
 - Declaring skirmish or full-game completion without identity-bound evidence.
-- One-button convert-and-play UX before systems 1â€“9 are real enough to support it.
+- One-button convert-and-play UX before systems 1-9 are real enough to support it.
 - Public-release automation beyond containment checks until release policy says so.
 
 ## Agent and contributor rule of thumb
