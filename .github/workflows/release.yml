@@ -258,7 +258,7 @@ jobs:
             "$(($_ | Get-FileHash -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
           } | Set-Content (Join-Path $dist "SHA256SUMS.txt") -Encoding ascii
 
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openbfme-${{ steps.identity.outputs.version }}-windows-unsigned
           path: |
@@ -320,7 +320,7 @@ jobs:
               Remove-Item -LiteralPath $rawSignature -Force
             }
           }
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openbfme-${{ needs.build.outputs.version }}-windows
           path: |
@@ -363,7 +363,7 @@ jobs:
             -RepositoryRoot $PWD `
             -ExpectedCommit "${{ github.sha }}" `
             -Receipt (Join-Path $env:RUNNER_TEMP "openbfme-vm-acceptance.json")
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openbfme-${{ needs.build.outputs.version }}-vm-acceptance
           path: ${{ runner.temp }}/openbfme-vm-acceptance.json
