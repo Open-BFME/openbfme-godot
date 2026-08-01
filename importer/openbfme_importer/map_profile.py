@@ -938,6 +938,7 @@ def build_category_map_profile(
     map_set: str = "skirmish",
     strict: bool = False,
     include_unregistered: bool = True,
+    target_limit: int | None = None,
     binder: Callable[
         [MapTarget, ParsedSageMap],
         tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None],
@@ -950,6 +951,8 @@ def build_category_map_profile(
             f"unknown map set {map_set!r}; expected one of "
             + ", ".join(sorted(MAP_SETS))
         )
+    if target_limit is not None and target_limit <= 0:
+        raise ValueError("target_limit must be greater than zero")
     categories = MAP_SETS[map_set]
     targets, rejections = discover_registry_map_targets(
         catalog, categories=categories
@@ -971,6 +974,8 @@ def build_category_map_profile(
             sorted(targets + extra_targets, key=lambda item: item.slug)
         )
         rejections = rejections + extra_rejections
+    if target_limit is not None:
+        targets = targets[:target_limit]
     label = map_set.replace("-", " ")
     return build_map_profile(
         catalog,

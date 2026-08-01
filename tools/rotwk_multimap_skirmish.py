@@ -331,6 +331,78 @@ def _parse_cli_json(text: str) -> dict[str, Any]:
     return last
 
 
+def profile_binding_inventory(profile: dict[str, Any]) -> dict[str, Any]:
+    """Summarize the exact model/structure rows handed to sage-map cooks."""
+    maps: dict[str, dict[str, Any]] = {}
+    for resource in profile.get("resources") or []:
+        if resource.get("converter") != "sage-map":
+            continue
+        output = str(resource.get("output") or "").replace("\\", "/").rstrip("/")
+        options = resource.get("options") or {}
+        bindings = options.get("objectBindings")
+        if not isinstance(bindings, dict):
+            continue
+        models = list(bindings.get("models") or [])
+        structures = list(bindings.get("structures") or [])
+        maps[output] = {
+            "modelCount": len(models),
+            "structureCount": len(structures),
+            "logicalCount": len(bindings.get("logical") or []),
+            "boundTypeNames": sorted(
+                str(row.get("typeName") or "")
+                for row in [*models, *structures]
+                if isinstance(row, dict) and row.get("typeName")
+            ),
+        }
+    return {
+        "maps": maps,
+        "mapCount": len(maps),
+        "modelCount": sum(row["modelCount"] for row in maps.values()),
+        "structureCount": sum(row["structureCount"] for row in maps.values()),
+        "logicalCount": sum(row["logicalCount"] for row in maps.values()),
+    }
+
+
+def verify_pack_binding_inventory(
+    pack_dir: Path, planned: dict[str, Any]
+) -> dict[str, Any]:
+    """Prove planned visual rows survived the sage-map cook into the pack."""
+    rows: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for output, expected in sorted((planned.get("maps") or {}).items()):
+        expected_names = set(expected.get("boundTypeNames") or [])
+        if not expected_names:
+            continue
+        path = pack_dir / output / "object-bindings.json"
+        actual_names: set[str] = set()
+        if path.is_file():
+            document = json.loads(path.read_text(encoding="utf-8"))
+            actual_names = {
+                str(row.get("typeName") or "")
+                for row in document.get("records") or []
+                if isinstance(row, dict) and row.get("status") == "bound"
+            }
+        absent = sorted(expected_names - actual_names)
+        if absent:
+            missing.extend(f"{output}:{name}" for name in absent)
+        rows.append(
+            {
+                "mapOutput": output,
+                "path": str(path),
+                "plannedBoundTypeCount": len(expected_names),
+                "cookedBoundTypeCount": len(actual_names),
+                "missingTypeNames": absent,
+            }
+        )
+    return {
+        "ok": bool(rows) and not missing,
+        "checkedMapCount": len(rows),
+        "missingCount": len(missing),
+        "missingSample": missing[:40],
+        "maps": rows,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install", required=True, type=Path)
@@ -349,6 +421,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--build", action="store_true")
     parser.add_argument("--publish", action="store_true")
+    parser.add_argument(
+        "--select",
+        action="store_true",
+        help="also activate the published pack; omitted by default",
+    )
+    parser.add_argument("--map-limit", type=int, default=None, metavar="N")
     parser.add_argument("--allow-incomplete", action="store_true")
     parser.add_argument("--python", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
@@ -356,6 +434,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.publish and not args.build:
         print("FAIL: --publish requires --build", file=sys.stderr)
+        return 2
+    if args.select and not args.publish:
+        print("FAIL: --select requires --publish", file=sys.stderr)
+        return 2
+    if args.map_limit is not None and args.map_limit <= 0:
+        print("FAIL: --map-limit must be greater than zero", file=sys.stderr)
         return 2
     if args.no_binder and not args.full_profile:
         print(
@@ -449,6 +533,8 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if assets is not None:
             gen_cmd.extend(["--effective-assets", str(assets)])
+        if args.map_limit is not None:
+            gen_cmd.extend(["--map-limit", str(args.map_limit)])
         gen = _run(gen_cmd, env=env)
         if gen.returncode != 0:
             print(gen.stdout, end="")
@@ -486,7 +572,19 @@ def main(argv: list[str] | None = None) -> int:
         }
         print(f"PROFILE {profile_path} maps={gen_payload['map_count']}", flush=True)
 
-    maps = list((profile.get("runtime_data") or {}).get("data/maps.json", {}).get("maps") or [])
+    maps = list(
+        (profile.get("runtime_data") or {})
+        .get("data/maps.json", {})
+        .get("maps")
+        or []
+    )
+    if args.map_limit is not None and len(maps) != args.map_limit:
+        print(
+            f"FAIL profile mapCount={len(maps)} != requested --map-limit={args.map_limit}",
+            file=sys.stderr,
+        )
+        return 4
+
     if not maps:
         print("FAIL profile has zero maps in data/maps.json", file=sys.stderr)
         return 4
@@ -561,6 +659,17 @@ def main(argv: list[str] | None = None) -> int:
         cat = str(row.get("category") or "unknown")
         categories[cat] = categories.get(cat, 0) + 1
 
+    binding_inventory = profile_binding_inventory(profile)
+    visual_binding_count = (
+        binding_inventory["modelCount"] + binding_inventory["structureCount"]
+    )
+    if args.full_profile and assets is not None and visual_binding_count == 0:
+        print(
+            "FAIL full-profile binder planned zero model/structure bindings",
+            file=sys.stderr,
+        )
+        return 4
+
     pack_meta = profile.get("pack") or {}
     pack_id = str(pack_meta.get("id") or "")
     map_catalog_rel = str((pack_meta.get("files") or {}).get("mapCatalog") or "")
@@ -583,6 +692,14 @@ def main(argv: list[str] | None = None) -> int:
         "resourceCount": gen_payload.get("resource_count"),
         "rejectedMapCount": 0,
         "unboundObjectTypeCount": gen_payload.get("unbound_object_type_count"),
+        "unboundObjectTypes": sorted(
+            {
+                str(name)
+                for row in (evidence.get("unboundObjectTypes") or {}).values()
+                for name in ((row or {}).get("typeNames") or [])
+            }
+        ),
+        "bindingInventory": binding_inventory,
         "categoryCounts": categories,
         "packId": pack_id,
         "entryMap": entry_map,
@@ -626,6 +743,8 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if not args.publish:
             build_cmd.append("--no-publish")
+        elif not args.select:
+            build_cmd.append("--no-select")
         if args.allow_incomplete:
             build_cmd.append("--allow-incomplete")
         built = _run(build_cmd, env=env)
@@ -675,8 +794,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(f"receipt pack maps.json missing: {candidate}")
             maps_json_path = candidate
             if args.publish:
-                # pipeline.publish_to_godot defaults select=True for build publish.
-                build_info["selectionExpected"] = True
+                build_info["selectionExpected"] = bool(args.select)
             build_info["buildPayloadKeys"] = sorted(build_payload.keys())
         except Exception as exc:
             build_info["receiptError"] = str(exc)[:500]
@@ -708,12 +826,21 @@ def main(argv: list[str] | None = None) -> int:
                 "pairsMatch": pairs_match,
                 "mode": "published_pack" if args.publish else "built_pack",
             }
+            binding_proof = verify_pack_binding_inventory(
+                Path(str(pack_dir)), binding_inventory
+            )
+            build_info["bindingProof"] = binding_proof
+            if assets is not None and not binding_proof["ok"]:
+                proof["catalogProof"]["ok"] = False
+                proof["catalogProof"]["reason"] = (
+                    "planned prop bindings did not survive the pack cook"
+                )
             if not pairs_match:
                 proof["catalogProof"]["ok"] = False
                 proof["catalogProof"]["reason"] = (
                     "pack maps.json (id,map) pairs do not match generated profile"
                 )
-            if args.publish and pairs_match:
+            if args.publish and args.select and pairs_match:
                 # Fail-closed: selection.json must exist and activePack must
                 # equal pack_id/<bundle-hash> for this published directory.
                 selection_path = ROOT / ".private" / "content-packs" / "selection.json"

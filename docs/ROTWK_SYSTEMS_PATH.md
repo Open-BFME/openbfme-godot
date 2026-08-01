@@ -40,6 +40,22 @@ OpenSAGE comparison checklist: [OPENSAGE_GAP_MATRIX.md](OPENSAGE_GAP_MATRIX.md).
 
 ## One-button
 
+Convert and pack-proof all seven factions, then cook and publish exactly ten
+skirmish maps with effective-assets prop/creep bindings:
+
+```powershell
+python tools/rotwk_full_content.py --install C:\Path\To\RotWK --bfme2-install C:\Path\To\BFME2
+```
+
+The command fails closed when the layered install, effective-assets identity,
+7/7 faction proof, fortress/citadel/expansion-pad closure, ten-map catalog, or
+cooked binding handoff is missing. It prints a `PLAYTEST` card with the
+published pack, map ids, factions, and remaining unbound retail types.
+Publication does not rewrite `selection.json`; add `--select` only when the
+new map pack should become active.
+
+The broader diagnostics/operator path remains:
+
 ```bat
 run_rotwk_one_button.bat C:\Path\To\RotWK
 run_rotwk_one_button.bat C:\Path\To\RotWK --launch
@@ -53,7 +69,7 @@ run_rotwk_one_button.bat C:\Path\To\RotWK --multi-map --build --publish --launch
 | `--launch` | `run_game.bat` after convert path |
 | `--multi-map` | `tools/rotwk_multimap_skirmish.py` profile/catalog |
 | `--build` | Cook multi-map pack |
-| `--publish` | Owner-only: rewrite `selection.json` |
+| `--publish` | Legacy wrapper: owner-only selection rewrite |
 | `--full-profile` | Terrain-closed profile via layered RotWK+BFME2 install |
 
 Without `--publish`, the game uses the already-selected pack.
@@ -71,4 +87,5 @@ RotWK `terrain.big` is thin; multiplayer terrain mostly lives in BFME2 base.
 - `tools/rotwk_faction_convert_batch.py`
 - `tools/rotwk_faction_pack_proof.py`
 - `tools/rotwk_multimap_skirmish.py`
+- `tools/rotwk_full_content.py`
 - `tools/rotwk_layered_install.py`

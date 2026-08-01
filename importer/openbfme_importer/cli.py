@@ -539,6 +539,13 @@ def build_parser() -> argparse.ArgumentParser:
             "shipped map cannot be parsed"
         ),
     )
+    map_profile.add_argument(
+        "--map-limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="deterministically include only the first N discovered maps",
+    )
 
     import_unit = sub.add_parser(
         "import-unit",
@@ -591,6 +598,11 @@ def build_parser() -> argparse.ArgumentParser:
                 "--no-publish",
                 action="store_true",
                 help="build without selecting the pack in Godot",
+            )
+            command.add_argument(
+                "--no-select",
+                action="store_true",
+                help="publish the pack without rewriting selection.json",
             )
             command.add_argument(
                 "--no-conversion-cache",
@@ -1536,6 +1548,7 @@ def main(argv: list[str] | None = None) -> int:
                     game=args.game,
                     map_set=map_set,
                     strict=bool(getattr(args, "strict", False)),
+                    target_limit=getattr(args, "map_limit", None),
                     **({"binder": binder} if binder is not None else {}),
                 )
                 generated_name = f"{args.game}-{map_set}-maps.generated.json"
@@ -1617,6 +1630,7 @@ def main(argv: list[str] | None = None) -> int:
                         pack,
                         args.godot_content_root,
                         allow_incomplete=bool(args.allow_incomplete),
+                        select=not bool(getattr(args, "no_select", False)),
                     )
                 )
             progress_complete(f"report={pack} pack build finished")
