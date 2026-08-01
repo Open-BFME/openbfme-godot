@@ -61,5 +61,4 @@ carriers only (Behavior, Body, Locomotor semantics, AI update).
 
 - `engine/OpenBfme.Sim/` — the library (this design).
 - `engine/OpenBfme.Sim.Tests/` — xunit suite; determinism gates live here.
-- `engine/OpenBfme.Stage1/` — legacy proof-stage artifact, scheduled for deletion by
-  PLAN Phase C; not referenced by the new solution.
+- `engine/OpenBfme.Stage1/` — **removed** (legacy proof-stage); history retains it if needed.

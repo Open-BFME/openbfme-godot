@@ -5,7 +5,7 @@ Owns: Enforceable repository-wide agent constraints and authority boundaries.
 Does not own: Product scope, current status, architecture, or task-specific acceptance.
 Last verified commit: `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
 Update trigger: A repeated, approved repository-wide failure needs a durable rule, or a stale rule can be deleted.
-Validation: Compare this file with `docs/AGENT_WORKFLOW.md` and validate the applicable task packet before work begins.
+Validation: Validate the applicable task packet against this file and `DIRECTION.md` before work begins.
 
 ## Product target and active objective
 
@@ -31,7 +31,7 @@ Content baseline for importer and packs is **RotWK** (see importer CLI default
 
 ## Required workflow
 
-Follow `docs/AGENT_WORKFLOW.md` for packets, locks, review, and integration.
+Follow this file and `docs/MILESTONE_CURRENT.md` for active systems work; packets/locks remain integration-owner controlled.
 Follow `docs/AGENT_REASONING_MANUAL.md` for how to orient, classify work, bound
 scope, fail closed, verify, and stop/escalate.
 

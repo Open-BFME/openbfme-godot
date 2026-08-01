@@ -174,7 +174,7 @@ FONT_SOURCES: tuple[dict[str, Any], ...] = (
         "bindingEvidence": (
             "exact embedded-family match on RotWK's own albertusmt.otf, plus"
             " the sealed men-hud-font-albertus-mt winner for the same family"
-            " (docs/RETAIL_HUD_APT_CONTRACT.md)"
+            " (docs/archive/RETAIL_HUD_RUNTIME.md)"
         ),
     },
     {

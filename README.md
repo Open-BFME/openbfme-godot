@@ -172,39 +172,33 @@ run_importer.bat "D:\Games\BFME2"
 run_retail_slice.bat
 ```
 
-Use your actual Godot and BFME2 paths. Read the
-[onboarding guide](docs/ONBOARDING.md) for the ten-minute walkthrough and the
-[getting-started guide](docs/GETTING_STARTED.md) for the full background before
-importing.
+Use your actual Godot and RotWK/BFME2 paths. Read the
+[onboarding guide](docs/ONBOARDING.md) before importing.
 
 ## Roadmap
 
-1. Finish and freeze Men versus Men on Fords of Isen II.
-2. Harden the full Men roster across the selected five-map set.
-3. Bring all six BFME2 factions (and the Angmar import) and official skirmish
-   systems to green runtime and original-game evidence.
-4. Harden the deterministic, self-hosted multiplayer foundations (lockstep +
-   lobby exist today) toward reliable play for up to eight players.
-5. Complete the skirmish shell, replays, observers, Create-a-Hero, and broader
-   map and modding tools.
-6. Add accessibility, HD presentation packs, safe updates, rollback, and a
-   polished installer without weakening compatibility checks.
+Product scope is **RotWK 2.01**, systems-first (not a single-map freeze). The
+ladder and non-goals live in [DIRECTION.md](DIRECTION.md). The active systems
+objective is [docs/MILESTONE_CURRENT.md](docs/MILESTONE_CURRENT.md).
 
-Campaigns and War of the Ring are in scope as ladder steps 6 and 7; they are
-late because they depend on the faction, hero and scripting work beneath them.
-The stable scope and non-goals live in [DIRECTION.md](DIRECTION.md).
+1. RotWK content pipeline, multi-map cook, and fail-closed convert.  
+2. Asset / binding / multi-faction pack completeness.  
+3. Simulation and AI driven from pack descriptors.  
+4. Skirmish shell across official maps and factions.  
+5. Campaigns and War of the Ring as later ladder steps.  
+6. Multiplayer, Create-a-Hero polish, installer and accessibility last.
 
 ## Find your way around
 
 | If you want to... | Start here |
 |---|---|
 | Understand the project in five minutes | [Documentation hub](docs/README.md) |
-| Set up a fresh machine in ten minutes | [Onboarding](docs/ONBOARDING.md) |
-| Install and run the developer build | [Getting started](docs/GETTING_STARTED.md) |
+| Set up a fresh machine | [Onboarding](docs/ONBOARDING.md) |
 | Check current passes and failures | [Status](STATUS.md) |
 | Understand the engine boundaries | [Architecture](docs/ARCHITECTURE.md) |
 | Learn how retail conversion stays private | [Content pipeline](docs/CONTENT_PIPELINE.md) |
-| Understand the parity standard | [BFME2 parity](docs/BFME2_PARITY.md) |
+| Run RotWK systems tooling | [RotWK systems path](docs/ROTWK_SYSTEMS_PATH.md) |
+| Understand the parity standard | [BFME2 parity](docs/BFME2_PARITY.md) (RotWK-primary) |
 | Read the modding direction | [Modding](docs/MODDING.md) |
 | Contribute safely | [Contributing](CONTRIBUTING.md) |
 | Understand the use of AI | [AI development](docs/AI_DEVELOPMENT.md) |

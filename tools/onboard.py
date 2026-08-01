@@ -831,7 +831,7 @@ def print_summary(ctx: WizardContext, outcomes: Sequence[GateOutcome]) -> bool:
         print("  - Headless smoke test:  run_retail_slice.bat --test")
         print("  - In-game settings persist under Godot user:// (user_settings)")
         print("  - Pack selection lives in .private/content-packs/selection.json")
-        print("  - Docs: docs/ONBOARDING.md and docs/GETTING_STARTED.md")
+        print("  - Docs: docs/ONBOARDING.md")
     else:
         print("RESULT: FAIL — one or more verification gates did not pass.")
         print("  Re-run with --skip-gates to finish setup only, or check")

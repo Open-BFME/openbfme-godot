@@ -10,7 +10,7 @@ happened: .private/orchestration/metrics.json reports pathLockViolations 2,
 canonicalPublicationIncidents 1, testWeakeningIncidents 1, and
 firstPassAccepted 0 of 13.
 
-Contract source: docs/AGENT_WORKFLOW.md (packet schema, lock rules,
+Contract source: AGENTS.md (packet schema, lock rules,
 reviewer counts, stop conditions).
 
 Usage:
@@ -49,7 +49,7 @@ VALID_LANES = {
     "platform", "gameplay", "content",
 }
 
-# docs/AGENT_WORKFLOW.md: objectives containing open-ended language stay draft.
+# AGENTS.md: objectives containing open-ended language stay draft.
 OPEN_ENDED = [
     "improve", "polish", "finish", "cleanup", "clean up", "better", "various",
     "etc", "and more", "as needed", "where appropriate", "general", "tidy",
@@ -68,7 +68,6 @@ TWO_REVIEWER_RISK = {"high"}
 OWNER_ONLY = [
     ".private/orchestration/",
     ".private/content-packs/selection.json",
-    "docs/AGENT_WORKFLOW.md",
     "AGENTS.md",
     "DIRECTION.md",
     "contracts/",
@@ -148,7 +147,7 @@ def parse_task_yaml(text):
     """Parse the flat scalar + block-list subset used by task.yaml.
 
     Deliberately not a general YAML parser. It handles exactly the schema in
-    docs/AGENT_WORKFLOW.md and raises on anything it does not understand,
+    AGENTS.md and raises on anything it does not understand,
     rather than silently mis-reading a packet contract.
     """
     data, current_key = {}, None
@@ -308,7 +307,7 @@ def check_contract(task, rep, strict_acceptance):
 def check_authority(task, repo, rep):
     """Packet-level authority checks.
 
-    These enforce rules already written in AGENTS.md and docs/AGENT_WORKFLOW.md.
+    These enforce rules already written in AGENTS.md and AGENTS.md.
     Measured against the 101 packets on disk: 38 declare an owner-only path in
     allowed_paths (53 correctly place them in forbidden_paths instead), and 5
     require a broad suite from a worker.
