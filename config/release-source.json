@@ -47,7 +47,7 @@
   ],
 
   "notes": {
-    "visibility": "Target may be private while preparing public source. Retail-derived bytes must never be uploaded regardless of visibility. Flip public only after export-scan is green, provenance items in docs/THIRD_PARTY.md are closed or excluded, and owner attests a sanitized publish path.",
+    "visibility": "Public source at this repository name. Retail-derived bytes must never be uploaded regardless of visibility. Provenance items in docs/THIRD_PARTY.md remain open for redistribution attestation of procedural assets.",
     "retired": "Ancalgonn/open-bfme-engine (retired) and Open-BFME/openbmfe-godot (typo, dead) must never be reintroduced as fallbacks.",
     "existingHistory": "Target main already has an auto-init commit (README only). A publish must reconcile with it, not assume an empty repo."
   }

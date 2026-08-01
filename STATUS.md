@@ -22,18 +22,18 @@ Sol pass 2: **`PORTABLE_ENOUGH`**.
 - `docs/ONBOARDING.md` documents the portable env contract.
 - `export-scan.ps1` **PASS**; offline RotWK systems gate **PASS**.
 
-Still required for a *visibility flip* / full public release (different bar):
+### Public visibility (2026-08-01)
 
 | Item | Status |
 |---|---|
-| Repo visibility | still **PRIVATE** |
-| Git history sanitization | **NOT done** |
-| THIRD_PARTY provenance (GLB/icons/music) | **OPEN** |
-| Clean-machine clone→convert→play | **NOT re-proved** |
-| Commit new resolvers (`?? tools/resolve-godot.*`) | **pending commit** |
+| Repo | **PUBLIC** — https://github.com/Open-BFME/openbfme-godot |
+| Published tip | single root `a1d207a` (noreply author; old history not on any remote branch) |
+| Remote branches | **main only** (backup/dependabot branches deleted) |
+| Sol leak audits | pass1 blocked→fixed; pass2 **LEAK_CLEAN**; pass3 remote verify by owner tooling (Sol sandbox no GitHub) |
+| THIRD_PARTY provenance (GLB/icons/music) | still **OPEN** (not retail; redistribution attestation incomplete) |
+| Clean-machine convert→play | optional follow-up |
 
-Do **not** flip repository visibility until history export + provenance +
-clean-machine smoke are owner-approved.
+**Note:** orphaned pre-rewrite commit SHAs may remain on GitHub object storage until GC; no branch/tag points at them.
 
 ## Evidence boundary
 
