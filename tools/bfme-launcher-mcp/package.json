@@ -12,7 +12,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "1.26.0"
+    "@modelcontextprotocol/sdk": "1.30.0"
   },
   "//overrides": [
     "Transitive security fixes pulled in under @modelcontextprotocol/sdk.",
