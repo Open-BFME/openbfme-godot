@@ -84,7 +84,14 @@ func _run() -> void:
 	var missing_definition := map_definition.duplicate(true)
 	missing_definition["roadMaterials"] = "missing-road-materials.json"
 	var missing_probe = map_data_script.new()
-	_check("missing_road_materials_fail_closed", not bool(missing_probe.load_from_pack(pack_root, missing_definition)) and String(missing_probe.error).contains("road materials"), String(missing_probe.error))
+	_check(
+		"missing_safe_road_materials_fall_back_to_geometry",
+		bool(missing_probe.load_from_pack(pack_root, missing_definition))
+			and int(missing_probe.road_segment_count) == int(map_data.road_segment_count)
+			and int(missing_probe.road_material_count) == 0
+			and String(missing_probe.road_materials_path) == "",
+		String(missing_probe.error)
+	)
 	var escaped_definition := map_definition.duplicate(true)
 	escaped_definition["roadMaterials"] = "../road-materials.json"
 	var escaped_probe = map_data_script.new()

@@ -2155,6 +2155,16 @@ func _validate_retail_command(
 	if runtime_object_id != "":
 		runtime_registration = (content_db.get_playable_unit_runtime(runtime_object_id).get("registration", {}) as Dictionary)
 	var runtime_strings: Dictionary = runtime_registration.get("stringBindings", {}) as Dictionary
+	# Command ids retail references but never localizes. RotWK's own
+	# data/ini/commandbutton.ini:3281 sets Faramir's DescriptLabel to
+	# CONTROLBAR:ToolTipFaramirMount and no retail .str file defines it (same
+	# for CONTROLBAR:SpecialAbilityShieldBubble at :2340). There is no text to
+	# resolve and never will be, so fail-closing here blocked the whole Men HUD
+	# — and with it every Men match, single-player and multiplayer. The
+	# importer records these ids explicitly; render blank and diagnose.
+	var runtime_source_null: Dictionary = {}
+	for source_null_value in (runtime_registration.get("sourceNullStringIds", []) as Array):
+		runtime_source_null[String(source_null_value)] = true
 	var fallback_label := String(spec.get("fallback_label", "")).strip_edges()
 	var fallback_tooltip := String(spec.get("fallback_tooltip", "")).strip_edges()
 	# Fail closed on missing localized strings: a non-empty id that resolves
@@ -2173,7 +2183,12 @@ func _validate_retail_command(
 	else:
 		label_text = String(runtime_strings.get(label_id, content_db.get_retail_string(label_id, _MISSING_RETAIL_STRING)))
 		if label_text == _MISSING_RETAIL_STRING:
-			return {"error": "Required localized string '%s' is missing." % label_id}
+			if not runtime_source_null.has(label_id):
+				return {"error": "Required localized string '%s' is missing." % label_id}
+			label_text = ""
+			retail_bind_diagnostics.append(
+				"retail-unlocalized-label: '%s' references '%s', which retail's own string table never defines" % [spec_name, label_id]
+			)
 	var tooltip_text := ""
 	if tooltip_id.strip_edges() == "":
 		if authored_fallback and fallback_tooltip != "":
@@ -2185,7 +2200,12 @@ func _validate_retail_command(
 	else:
 		tooltip_text = String(runtime_strings.get(tooltip_id, content_db.get_retail_string(tooltip_id, _MISSING_RETAIL_STRING)))
 		if tooltip_text == _MISSING_RETAIL_STRING:
-			return {"error": "Required localized string '%s' is missing." % tooltip_id}
+			if not runtime_source_null.has(tooltip_id):
+				return {"error": "Required localized string '%s' is missing." % tooltip_id}
+			tooltip_text = label_text
+			retail_bind_diagnostics.append(
+				"retail-unlocalized-tooltip: '%s' references '%s', which retail's own string table never defines" % [spec_name, tooltip_id]
+			)
 	if authored_fallback and (label_id.strip_edges() == "" or tooltip_id.strip_edges() == ""):
 		retail_bind_diagnostics.append(
 			"authored-fallback-not-retail: '%s' uses recorded English text ('%s') — no localized string exists in the selected pack" % [spec_name, label_text]

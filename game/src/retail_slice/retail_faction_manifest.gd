@@ -178,6 +178,7 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	var pack_roots: Dictionary = {}
 	var fortress_kind := ""
 	var excluded_structures: Dictionary = {}
+	var fortress_composite_object_ids: Dictionary = {}
 	var structure_construct_icons: Dictionary = {}
 	for object_id in structure_ids:
 		var document: Dictionary = structure_runtimes[object_id] as Dictionary
@@ -191,6 +192,13 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		# a producer component of the fortress below, when a unit's authored
 		# producer binding cross-checks against its recorded command sets.
 		if evidence != "authored-construct-command":
+			var composite_role := String(document.get("compositeRole", ""))
+			if composite_role != "":
+				if evidence != "engine-spawned-composite" or not composite_role.begins_with("fortress-composite-"):
+					return {"_error": "structure '%s' has invalid composite role '%s' for evidence '%s'" % [object_id, composite_role, evidence]}
+				if fortress_composite_object_ids.has(composite_role):
+					return {"_error": "faction '%s' declares duplicate fortress composite role '%s'" % [slug, composite_role]}
+				fortress_composite_object_ids[composite_role] = object_id
 			var deferred_auto_deposit: Variant = (
 				registration.get("gameplay", {}) as Dictionary
 			).get("autoDepositUpdates")
@@ -504,7 +512,15 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 				continue
 			var simulation := PlayableUnitAdapter.simulation_rule(unit_document)
 			if simulation.is_empty():
-				return {"_error": "unit '%s' has unresolved simulation evidence and cannot join the spawn roster" % unit_id, "excluded_units": production_exclusions.duplicate(true)}
+				# Skip this producer slot's candidate; try next unit for the same
+				# producer rather than failing the whole faction. Units with
+				# unresolved combat/formation evidence stay train-blocked via
+				# exclusions while other fieldable troops still spawn.
+				production_exclusions.append({
+					"object_id": unit_id,
+					"reason": "unresolved simulation evidence (missing combat/formation contract)",
+				})
+				continue
 			var unit_type := String(simulation.get("unit_type", ""))
 			if not seen_unit_types.has(unit_type):
 				seen_unit_types[unit_type] = true
@@ -771,6 +787,9 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		"seed_structure_kinds": ["fortress"],
 		"structure_object_ids": structure_object_ids,
 		"structure_source_object_ids": structure_source_object_ids,
+		# Exact policy roles survive conversion; presenters resolve citadel and
+		# pad art without guessing faction identity from object-name strings.
+		"fortress_composite_object_ids": fortress_composite_object_ids,
 		"structure_max_health": structure_max_health,
 		"structure_build_rules": structure_build_rules,
 		# Compiled armor.ini table per kind (fractions); kinds whose structure
@@ -1075,7 +1094,7 @@ static func _validate_structure_production_exit_updates(
 			or String(row.get("runtimeStatus", "")) != "deferred"
 			or typeof(row.get("sourceIni")) != TYPE_STRING
 			or String(row.get("sourceIni", "")) == ""
-			or typeof(row.get("line")) != TYPE_INT
+			or not _is_json_integral(row.get("line"))
 			or int(row.get("line", 0)) <= 0
 		):
 			return "structure '%s' has an invalid deferred QueueProductionExitUpdate row" % object_id
@@ -1143,7 +1162,7 @@ static func _validate_structure_production_exit_updates(
 						!= float(coordinate["z"])
 						or typeof(coord_field.get("sourceIni")) != TYPE_STRING
 						or String(coord_field.get("sourceIni", "")) == ""
-						or typeof(coord_field.get("line")) != TYPE_INT
+						or not _is_json_integral(coord_field.get("line"))
 						or int(coord_field.get("line", 0)) <= 0
 					)
 				)
@@ -1179,7 +1198,7 @@ static func _validate_structure_production_exit_updates(
 					)
 				)
 				or typeof(integer_field.get("authored")) != TYPE_STRING
-				or typeof(integer_field.get("value")) != TYPE_INT
+				or not _is_json_integral(integer_field.get("value"))
 				or not _queue_exit_authored_integer_matches(integer_field)
 				or int(integer_field["value"]) < 0
 				or int(integer_field["value"]) > 4294967295
@@ -1204,7 +1223,7 @@ static func _validate_structure_production_exit_updates(
 						String(integer_field["authored"]) == ""
 						or typeof(integer_field.get("sourceIni")) != TYPE_STRING
 						or String(integer_field.get("sourceIni", "")) == ""
-						or typeof(integer_field.get("line")) != TYPE_INT
+						or not _is_json_integral(integer_field.get("line"))
 						or int(integer_field.get("line", 0)) <= 0
 					)
 				)
@@ -1253,7 +1272,7 @@ static func _validate_structure_production_exit_updates(
 					)
 					or typeof(airborne.get("sourceIni")) != TYPE_STRING
 					or String(airborne.get("sourceIni", "")) == ""
-					or typeof(airborne.get("line")) != TYPE_INT
+					or not _is_json_integral(airborne.get("line"))
 					or int(airborne.get("line", 0)) <= 0
 				)
 			)
@@ -1284,7 +1303,7 @@ static func _validate_structure_production_exit_updates(
 				or String(deferred_row.get("authored", "")) == ""
 				or typeof(deferred_row.get("sourceIni")) != TYPE_STRING
 				or String(deferred_row.get("sourceIni", "")) == ""
-				or typeof(deferred_row.get("line")) != TYPE_INT
+				or not _is_json_integral(deferred_row.get("line"))
 				or int(deferred_row.get("line", 0)) <= 0
 				or typeof(deferred_row.get("reason")) != TYPE_STRING
 				or String(deferred_row.get("reason", ""))
@@ -1326,7 +1345,7 @@ static func _validate_structure_auto_deposit_updates(
 			)
 			or typeof(row.get("sourceIni")) != TYPE_STRING
 			or String(row.get("sourceIni", "")) == ""
-			or typeof(row.get("line")) != TYPE_INT
+			or not _is_json_integral(row.get("line"))
 			or int(row.get("line", 0)) <= 0
 		):
 			return "structure '%s' has an invalid AutoDepositUpdate row" % object_id
@@ -1337,7 +1356,7 @@ static func _validate_structure_auto_deposit_updates(
 		var timing_copy := timing.duplicate()
 		if (
 			String(timing_copy.get("unit", "")) != "milliseconds"
-			or typeof(timing_copy.get("simulationTicks")) != TYPE_INT
+			or not _is_json_integral(timing_copy.get("simulationTicks"))
 		):
 			return "structure '%s' has invalid AutoDepositUpdate timing" % object_id
 		timing_copy.erase("unit")
@@ -1384,7 +1403,7 @@ static func _validate_structure_auto_deposit_updates(
 				or String(boost.get("upgradeId", "")) == ""
 				or String(boost.get("upgradeType", "")) != "PLAYER"
 				or typeof(boost.get("upgradeAttestation")) != TYPE_DICTIONARY
-				or typeof(boost.get("boost")) != TYPE_INT
+				or not _is_json_integral(boost.get("boost"))
 				or String(boost.get("authored", "")) == ""
 				or String(boost.get("sourceIni", "")) == ""
 				or int(boost.get("line", 0)) <= 0
@@ -1490,7 +1509,7 @@ static func _valid_auto_deposit_integer(
 	if (
 		not _has_exact_dictionary_keys(field, expected_keys)
 		or typeof(field.get("authored")) != TYPE_STRING
-		or typeof(field.get("value")) != TYPE_INT
+		or not _is_json_integral(field.get("value"))
 	):
 		return false
 	var value := int(field["value"])
@@ -1512,7 +1531,7 @@ static func _valid_auto_deposit_integer(
 		String(field["authored"]) != ""
 		and typeof(field.get("sourceIni")) == TYPE_STRING
 		and String(field["sourceIni"]) != ""
-		and typeof(field.get("line")) == TYPE_INT
+		and _is_json_integral(field.get("line"))
 		and int(field["line"]) > 0
 	)
 
@@ -1551,6 +1570,27 @@ static func _valid_auto_deposit_bool(field_value: Variant) -> bool:
 	)
 
 
+
+static func _is_json_integral(value: Variant) -> bool:
+	## Godot JSON.parse_string yields TYPE_FLOAT for whole numbers. Structure
+	## contracts authored as integers must still validate after load.
+	if typeof(value) == TYPE_INT:
+		return true
+	if typeof(value) != TYPE_FLOAT:
+		return false
+	var number := float(value)
+	return is_finite(number) and number == floor(number)
+
+
+static func _json_integral(value: Variant, default_value: int = 0) -> int:
+	if typeof(value) == TYPE_INT:
+		return int(value)
+	if typeof(value) == TYPE_FLOAT:
+		var number := float(value)
+		if is_finite(number) and number == floor(number):
+			return int(number)
+	return default_value
+
 static func _has_exact_dictionary_keys(value: Dictionary, expected: Array) -> bool:
 	if value.size() != expected.size():
 		return false
@@ -1563,7 +1603,7 @@ static func _has_exact_dictionary_keys(value: Dictionary, expected: Array) -> bo
 static func _queue_exit_authored_integer_matches(field: Dictionary) -> bool:
 	var authored := String(field.get("authored", ""))
 	var value_value: Variant = field.get("value")
-	if typeof(value_value) != TYPE_INT:
+	if not _is_json_integral(value_value):
 		return false
 	var decimal_expression := RegEx.new()
 	if decimal_expression.compile("^[0-9]+$") != OK:
@@ -1589,12 +1629,14 @@ static func _queue_exit_authored_integer_matches(field: Dictionary) -> bool:
 		and resolved.has("value")
 		and typeof(resolved.get("name")) == TYPE_STRING
 		and String(resolved["name"]) == authored
-		and typeof(resolved.get("value")) == TYPE_INT
+		and _is_json_integral(resolved.get("value"))
 		and int(resolved["value"]) == int(value_value)
 	)
 
 
 static func _queue_exit_authored_coordinate(authored: String) -> Dictionary:
+	## Parse retail Coord3D authored forms. Mirrors the importer's known-typo
+	## repair for RotWK AngmarKennelExpansion (`X:70.0.0` → `X:70.0`).
 	var expression := RegEx.new()
 	var compile_error := expression.compile(
 		"(?i)^\\s*X\\s*:\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)\\s+"
@@ -1605,7 +1647,13 @@ static func _queue_exit_authored_coordinate(authored: String) -> Dictionary:
 		return {}
 	var matched := expression.search(authored)
 	if matched == null:
-		return {}
+		var repair := RegEx.new()
+		if repair.compile("(?i)(X|Y|Z)\\s*:\\s*([+-]?(?:\\d+\\.\\d+|\\d+|\\.\\d+))\\.0(?=\\s|$)") != OK:
+			return {}
+		var repaired := repair.sub(authored.strip_edges(), "$1:$2", true)
+		matched = expression.search(repaired)
+		if matched == null:
+			return {}
 	return {
 		"x": float(matched.get_string(1)),
 		"y": float(matched.get_string(2)),

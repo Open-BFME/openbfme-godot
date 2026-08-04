@@ -25,9 +25,9 @@
 			"provenance": {
 				"status": "fresh",
 				"rootModule": "openbfme_importer.w3d_decode_corpus",
-				"recordedFingerprintSha256": "a8a8f26a38c1252ed7ebbfb12aff5b0819be2a22aa170a6b755afc492c0b3cc1",
-				"currentFingerprintSha256": "a8a8f26a38c1252ed7ebbfb12aff5b0819be2a22aa170a6b755afc492c0b3cc1",
-				"recordedGitCommit": "3466399c3224131e637e0f11490b1c8b8b56d0d1",
+				"recordedFingerprintSha256": "cfb7180242b13c6990e8ffea1c7e3ac71fa31f57d2f20ceb1a51847ecc8aa66a",
+				"currentFingerprintSha256": "cfb7180242b13c6990e8ffea1c7e3ac71fa31f57d2f20ceb1a51847ecc8aa66a",
+				"recordedGitCommit": "5ff14243b4e9fdaaab2319efcb744e027e735b96",
 				"staleModules": []
 			}
 		}
@@ -753,7 +753,7 @@
 		"schema": "openbfme.measurement-provenance",
 		"schemaVersion": 0,
 		"rootModule": "openbfme_importer.w3d_chunk_backlog",
-		"moduleCount": 6,
+		"moduleCount": 7,
 		"modules": [
 			{
 				"module": "paths",
@@ -765,11 +765,11 @@
 			},
 			{
 				"module": "w3d_chunk_backlog",
-				"sha256": "11bf93266fbf4f907da59d34e6ad475ed107d45641ac17a28962cc2948fd7eb7"
+				"sha256": "23e9c93ad563d1305f4006a3ad1088fc8b81be99edfcc8b5fdbfbb88236f679c"
 			},
 			{
 				"module": "w3d_corpus",
-				"sha256": "126b08bb1293c86e5bd8e8ab273408a3ecc594c8d0704a088c9173f2b25bb0fa"
+				"sha256": "140777e8588f2dd26802e4abebf54a2115e3e94a1ed3da3f1b32658c017166da"
 			},
 			{
 				"module": "w3d_index",
@@ -777,11 +777,15 @@
 			},
 			{
 				"module": "w3d_metadata",
-				"sha256": "abee460bf7d23acb77ad3d89d3eae8f5bc1785c3987ddf4ddf8497f694cf08b0"
+				"sha256": "3562a779a28ade31fcaef46fc02f36dc38ced577a6e8723d543b009e1798ef46"
+			},
+			{
+				"module": "w3d_string_leaves",
+				"sha256": "3a6c064ee17ef3a8f1d84ffbb74f69420c9898c1a0e9b51c97dbf52c29267da0"
 			}
 		],
-		"fingerprintSha256": "a1cf03f4a7e43e479ba7bfbe5f368003a97bdcb8cb02a1c9790e75e12288cf3d",
-		"gitCommit": "3466399c3224131e637e0f11490b1c8b8b56d0d1",
+		"fingerprintSha256": "93e73af8391a1ae7f61b707fdcee9fde3854b31283e40d60412eaf65eb3f13f4",
+		"gitCommit": "5ff14243b4e9fdaaab2319efcb744e027e735b96",
 		"gitWorktreeClean": false
 	}
 }

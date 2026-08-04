@@ -161,8 +161,12 @@ func configure(map_data: RetailMapData) -> bool:
 		return _abort_configuration(error if error != "" else "source unresolved-prop diagnostics are incomplete")
 	# Road and water layers are per-map optional: Fords of Isen II authors both,
 	# other cooked maps may have no road network and (in principle) no water.
-	# When the map data declares the layer, every exact-source check applies;
-	# when it does not, the layer must have stayed exactly empty.
+	# Material-backed roads remain exact. Geometry without a material catalog is
+	# an intentional incomplete presentation: it boots with an empty render layer.
+	# Road material completeness is `road_material_source_driven` only — never
+	# treat geometry-only as textured-road parity. Overall `source_driven` means
+	# the battlefield is boot-ready from source layers (terrain exact, roads
+	# exact|vacuous|geometry-only empty, water/prop diagnostics consistent).
 	var roads_exact := (
 		road_material_source_driven
 		and road_material_count == map_data.road_material_count
@@ -184,11 +188,22 @@ func configure(map_data: RetailMapData) -> bool:
 		and road_triangle_count == 0
 		and road_mesh_instance_count == 0
 	)
+	var roads_geometry_only := (
+		map_data.road_type_count > 0
+		and map_data.road_segment_count > 0
+		and map_data.road_material_count == 0
+		and not road_material_source_driven
+		and road_material_count == 0
+		and road_source_edge_count == 0
+		and road_vertex_count == 0
+		and road_triangle_count == 0
+		and road_mesh_instance_count == 0
+	)
 	var map_declares_water := map_data.standing_water_count + map_data.river_count > 0
 	source_driven = (
 		terrain_material_source_driven
 		and terrain_exact_grid_ready
-		and (roads_exact or roads_vacuous)
+		and (roads_exact or roads_vacuous or roads_geometry_only)
 		and terrain_vertex_count == map_data.width * map_data.height
 		and terrain_triangle_count == (map_data.width - 1) * (map_data.height - 1) * 2
 		and impassable_vertex_count == map_data.impassable_count
@@ -364,9 +379,14 @@ func _build_roads(map_data: RetailMapData) -> bool:
 		if map_data.road_segment_count != 0 or map_data.road_material_count != 0 or map_data.road_control_point_count != 0:
 			return _fail_configuration("roadless source map retained nonzero road facts")
 		return true
+	if map_data.road_segment_count <= 0:
+		return _fail_configuration("Fords road topology contains unsupported or incomplete source facts")
+	if map_data.road_material_count == 0:
+		# Match RetailMapData's geometry-only boot contract: retain exact source
+		# geometry as diagnostics, but build no meshes and invent no road textures.
+		return true
 	if (
-		map_data.road_segment_count <= 0
-		or map_data.road_material_count != map_data.road_type_count
+		map_data.road_material_count != map_data.road_type_count
 		or map_data.road_modifier_flags_or != 0
 		or map_data.road_crossing_candidate_node_count != 0
 	):

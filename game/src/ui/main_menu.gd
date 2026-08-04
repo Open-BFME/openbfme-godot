@@ -2,6 +2,8 @@ extends Control
 ## Player-facing menu shell. Proof-stage breadth remains available, but it no
 ## longer competes with the vertical slice on the main page.
 
+signal skirmish_options_ready
+
 ## WHAT THIS FILE MAY PRELOAD, AND WHY THE LIST IS SHORT.
 ##
 ## `preload` resolves at COMPILE time, so every script named here is compiled
@@ -231,6 +233,8 @@ var current_page := PAGE_MAIN
 var _options_return_page := PAGE_MAIN
 var _skirmish_availability: Dictionary = {}
 var _skirmish_map_notes: Dictionary = {}
+## Mounted catalog map rows for the current sweep (cached so arm/build agree).
+var _skirmish_map_choice_rows: Array[Dictionary] = []
 var _nav_diamonds: Control
 var _slice_probe_instance = null
 var _shell_font: Font = null
@@ -326,13 +330,10 @@ func _ready() -> void:
 	# now stepped one unit of work per idle frame from `_process`, starting after
 	# the menu has been presented, so no single frame carries the whole cost.
 	#
-	# THE WORK IS NOT OPTIONAL AND IS NOT WEAKENED. `_ensure_skirmish_options()`
-	# still runs every remaining step, synchronously and in the identical order,
-	# and every reader of `_skirmish_availability` calls it first. A caller that
-	# arrives mid-sweep therefore forces the rest of it and gets complete answers.
-	# `_skirmish_options_ready` flips only when the LAST step has run, so nothing
-	# can observe a half-populated availability map, and no faction or map gate is
-	# skipped - they are answered on demand instead of ahead of demand.
+	# THE WORK IS NOT OPTIONAL AND IS NOT WEAKENED. The worker evaluates every
+	# faction and map into private result dictionaries. The menu publishes both
+	# complete tables together on the main thread; navigation awaits that publish,
+	# while synchronous launch readers fail closed with a loading reason.
 	_arm_skirmish_sweep()
 	# Start the slice's compile on the loader thread NOW, so it overlaps the few
 	# frames the shell needs to present itself and the loading screen needs to
@@ -341,6 +342,7 @@ func _ready() -> void:
 	# `_warm_lazy_script()` - this only changes WHEN the compile runs, never
 	# whether its result is checked.
 	_warm_lazy_script(LAZY_SLICE)
+	_warm_lazy_script(LAZY_FACTION_MANIFEST)
 	# The living-world search runs BEFORE the flyouts are built so the SOLO PLAY
 	# list is constructed with War of the Ring's real state, not a placeholder
 	# that a later refresh has to correct.
@@ -403,7 +405,14 @@ func _process(_delta: float) -> void:
 		return
 	if _menu_frames < SKIRMISH_SWEEP_FIRST_FRAME:
 		return
-	_step_skirmish_sweep()
+	var sweep_frame_started := Time.get_ticks_usec()
+	var sweep_did_main_thread_work := _step_skirmish_sweep()
+	if sweep_did_main_thread_work:
+		var elapsed := Time.get_ticks_usec() - sweep_frame_started
+		if elapsed > _skirmish_sweep_worst_frame_usec:
+			_skirmish_sweep_worst_frame_usec = elapsed
+			_skirmish_sweep_worst_frame_name = _skirmish_current_main_work_name
+	_update_skirmish_busy_label()
 	if _skirmish_options_ready:
 		# Nothing else in this menu needs a per-frame tick.
 		set_process(false)
@@ -695,6 +704,15 @@ func _apply_boot_settings() -> void:
 
 
 func _exit_tree() -> void:
+	# The worker is bound to this menu's validation helpers. Cancel between
+	# validations and join before the Node can be freed; no deferred callback can
+	# ever target a dead menu.
+	if _skirmish_worker_task_id >= 0:
+		_skirmish_worker_cancel_mutex.lock()
+		_skirmish_worker_cancelled = true
+		_skirmish_worker_cancel_mutex.unlock()
+		WorkerThreadPool.wait_for_task_completion(_skirmish_worker_task_id)
+		_skirmish_worker_task_id = -1
 	# The classification/map-resolution probe never enters the tree, so it
 	# cannot rely on automatic cleanup.
 	if _slice_probe_instance != null:
@@ -907,17 +925,48 @@ func _shell_flyout_is_open() -> bool:
 
 
 func _on_shell_flyout_item(item_id: String, bar_id: String) -> void:
-	_close_shell_flyouts()
 	match [bar_id, item_id]:
 		["solo", "skirmish"]:
+			if _skirmish_sweep_failed:
+				retry_skirmish_sweep()
+			if not _skirmish_options_ready:
+				await _wait_for_skirmish_options()
+			_close_shell_flyouts()
 			_show_page(PAGE_SOLO)
 		["solo", "wotr"]:
+			_close_shell_flyouts()
 			_on_wotr_pressed()
 		["options", "settings"]:
+			_close_shell_flyouts()
 			_on_options()
 		_:
 			# Every other retail row is listed but disabled, so it cannot emit.
 			push_warning("OpenBFME shell: unhandled flyout route %s/%s" % [bar_id, item_id])
+
+
+func _set_skirmish_busy_state(busy: bool) -> void:
+	if not solo_btn.has_meta("skirmish_idle_text"):
+		solo_btn.set_meta("skirmish_idle_text", solo_btn.text)
+	solo_btn.disabled = busy
+	if not busy:
+		solo_btn.text = String(solo_btn.get_meta("skirmish_idle_text"))
+	var flyout = _shell_flyouts.get("solo", null)
+	if flyout != null:
+		flyout.set_item_state(
+			"skirmish", not busy,
+			"Checking every faction and map in the mounted content packs" if busy
+			else String(SOLO_SKIRMISH_ITEM["tooltip"]))
+
+
+func _update_skirmish_busy_label() -> void:
+	if not _skirmish_busy_visible:
+		return
+	var percent := 0
+	if _skirmish_sweep_total_units > 0:
+		percent = int(round(100.0 * float(skirmish_sweep_completed_units()) / float(_skirmish_sweep_total_units)))
+	var spinner: String = String(["◐", "◓", "◑", "◒"][int(Time.get_ticks_msec() / 160) % 4])
+	solo_btn.text = "%s  %s %d%%" % [String(solo_btn.get_meta("skirmish_idle_text", "SOLO PLAY")), spinner, percent]
+	status.text = "Checking skirmish content… %d%%" % percent
 
 
 func _build_version_label() -> void:
@@ -953,19 +1002,32 @@ func _build_version_label() -> void:
 	center.add_child(label)
 
 
-## THE DEFERRED-BUT-NEVER-SKIPPED CONTRACT, in three variables.
+## THE DEFERRED-BUT-NEVER-SKIPPED CONTRACT.
 ##
 ## `_skirmish_options_ready` is the OUTWARD promise and flips only when the last
 ## step has run - `tests/boot_deferred_options_runner.gd` reads it directly, and a
 ## reader must never see `true` over a half-filled availability table.
-## `_skirmish_sweep_steps` is the remaining work, in the exact order the single
-## synchronous pass used to do it. `_skirmish_sweep_running` is the RECURSION
-## guard: the final build step reaches `_refresh_skirmish_launch_state()` through
-## the map-row selection, and that is itself a guarded reader.
+## `_skirmish_sweep_steps` contains main-thread Control finalization only.
+## `_skirmish_sweep_running` is the recursion guard for signals emitted while
+## those controls are populated.
 var _skirmish_options_ready := false
+var _skirmish_sweep_failed := false
 var _skirmish_sweep_running := false
 var _skirmish_sweep_armed := false
 var _skirmish_sweep_steps: Array[Dictionary] = []
+var _skirmish_worker_task_id := -1
+var _skirmish_worker_result_box: Dictionary = {}
+var _skirmish_worker_cancelled := false
+var _skirmish_worker_cancel_mutex := Mutex.new()
+var _skirmish_sweep_started_usec := 0
+var _skirmish_sweep_worst_frame_usec := 0
+var _skirmish_sweep_worst_frame_name := ""
+var _skirmish_current_main_work_name := ""
+var _skirmish_worker_compute_ms := 0
+var _skirmish_sweep_completed_units := 0
+var _skirmish_sweep_total_units := 0
+var _skirmish_busy_visible := false
+var _skirmish_finalize_map_index := 0
 ## Real cost of the stepped sweep, reported through `BootProfile.measure()`:
 ## the SUM of the steps is the work actually done, and the WORST single step is
 ## the longest frame a player could feel while the menu is already up. The gap
@@ -973,80 +1035,625 @@ var _skirmish_sweep_steps: Array[Dictionary] = []
 ## measured explicitly instead of being inferred.
 var _skirmish_sweep_total_ms := 0
 var _skirmish_sweep_worst_ms := 0
+var _skirmish_progress_mutex := Mutex.new()
+
+## Persisted availability table. Validating 7 factions plus a full terrain load
+## of every catalog map costs ~94 s cold and minutes under load, and it was paid
+## on EVERY launch even when nothing about the mounted content had changed. The
+## cache key is the exact content identity the sweep is a function of: the
+## selection.json bytes plus every mounted pack root's bundle sha. Any pack
+## republish, any selection edit, any added/removed pack changes the key and the
+## sweep runs again — there is no staleness window and no partial reuse.
+const SKIRMISH_CACHE_PATH := "user://skirmish_availability_cache.json"
+const SKIRMISH_CACHE_SCHEMA := "openbfme.skirmish-availability-cache"
+const SKIRMISH_CACHE_SCHEMA_VERSION := 0
+## BUMP THIS WHENEVER THE AVAILABILITY COMPUTATION CHANGES.
+## The cache key is a promise that "this content produced this table". That
+## promise is only true for a fixed algorithm: edit `_compute_faction_availability`,
+## `_compute_map_availability`, the map choice set, the faction list, or any
+## verdict wording, and every stored entry becomes a lie about content that did
+## not change. Incrementing this constant invalidates every persisted entry.
+const SKIRMISH_AVAILABILITY_ALGORITHM_VERSION := 1
+## The verdict `_compute_faction_availability` returns when the faction manifest
+## script could not be loaded at all. This is an ENVIRONMENTAL failure (a lazy
+## script compile that did not land), not evidence that a faction is genuinely
+## unplayable, so a sweep made entirely of it must never be persisted.
+const SKIRMISH_MANIFEST_UNAVAILABLE_VERDICT := "the faction manifest script is unavailable"
+var _skirmish_sweep_cache_hit := false
+var _skirmish_sweep_cache_key := ""
+var _skirmish_sweep_rejected_poisoned_cache := false
+
+
+func skirmish_sweep_cache_hit() -> bool:
+	return _skirmish_sweep_cache_hit
+
+
+func skirmish_sweep_cache_key() -> String:
+	return _skirmish_sweep_cache_key
+
+
+static func clear_skirmish_availability_cache() -> void:
+	if FileAccess.file_exists(SKIRMISH_CACHE_PATH):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SKIRMISH_CACHE_PATH))
+
+
+func skirmish_content_identity_facts_for_test() -> Dictionary:
+	## The exact facts this launch's key was computed from, so a runner can mutate
+	## one fact and prove the key is a function of it.
+	return _skirmish_content_identity_facts()
+
+
+func store_skirmish_sweep_cache_for_test(result: Dictionary) -> void:
+	_store_skirmish_sweep_cache(_skirmish_content_identity(), result)
+
+
+func _skirmish_content_identity() -> String:
+	## sha256 over selection.json's bytes and every mounted pack root, in load
+	## order. Returns "" when the identity cannot be established, which disables
+	## the cache entirely rather than keying it on partial evidence.
+	if _content_db == null:
+		return ""
+	var facts := _skirmish_content_identity_facts()
+	if facts.is_empty():
+		return ""
+	return compute_skirmish_content_identity(facts)
+
+
+func _skirmish_content_identity_facts() -> Dictionary:
+	## Gathers the observable content facts the key is a function of. Split out
+	## from the hashing so the key formula is a pure, directly testable function
+	## of stated facts. An empty Dictionary means the identity cannot be
+	## established and the cache must stay disabled.
+	##
+	## The facts are deliberately WIDER than "which bundle sha is mounted". A
+	## pack-id/bundle-sha pair is NOT a content digest: the identical pair exists
+	## under the repo workspace and under the durable user cache, and when
+	## OPENBFME_CONTENT is unset ModLoader picks between those two trees at
+	## runtime. Keying on the pair alone let a workspace run and a durable run
+	## share one cache entry. So the key also carries the RESOLVED selection
+	## source (its name, its absolute path and its bytes) and, per bundle, the
+	## sha256 of its pack.json plus the absolute prefix it was mounted from.
+	if _content_db == null:
+		return {}
+	var facts: Dictionary = {
+		"algorithm_version": SKIRMISH_AVAILABILITY_ALGORITHM_VERSION,
+		"selection_required": false,
+		"selection_source": String(ModLoader.active_content_source),
+		"selection_path": String(ModLoader.active_selection_path),
+		"selection_sha": "",
+		"bundles": [],
+	}
+	var content_root := OS.get_environment("OPENBFME_CONTENT").strip_edges()
+	facts["selection_required"] = content_root != ""
+	var selection_path := String(facts["selection_path"])
+	if selection_path != "" and FileAccess.file_exists(selection_path):
+		var selection_bytes := FileAccess.get_file_as_bytes(selection_path)
+		if selection_bytes.is_empty():
+			return {}
+		facts["selection_sha"] = selection_bytes.get_string_from_utf8().sha256_text()
+	elif content_root != "":
+		# An explicit override that resolved no readable selection document is
+		# partial evidence; refuse to key a cache on it, exactly as before.
+		var fallback := content_root.path_join("selection.json")
+		if not FileAccess.file_exists(fallback):
+			return {}
+		var fallback_bytes := FileAccess.get_file_as_bytes(fallback)
+		if fallback_bytes.is_empty():
+			return {}
+		facts["selection_path"] = fallback
+		facts["selection_sha"] = fallback_bytes.get_string_from_utf8().sha256_text()
+	var roots: Array = (_content_db.get("pack_roots") as Array)
+	if roots == null or roots.is_empty():
+		return {}
+	var bundles: Array = []
+	for root_value in roots:
+		# The pack root's final path component IS its bundle sha; the parent is
+		# the pack id. The prefix is everything above the pack id, which is what
+		# distinguishes the workspace tree from the durable user cache.
+		var root := String(root_value)
+		var pack_json_sha := ""
+		var pack_json_path := ModLoader.resolve_pack_path(root, "pack.json")
+		if pack_json_path != "" and FileAccess.file_exists(pack_json_path):
+			var pack_bytes := FileAccess.get_file_as_bytes(pack_json_path)
+			pack_json_sha = pack_bytes.get_string_from_utf8().sha256_text()
+		bundles.append({
+			"pack_id": root.get_base_dir().get_file(),
+			"bundle_sha": root.get_file(),
+			"prefix": ProjectSettings.globalize_path(root.get_base_dir().get_base_dir()),
+			"pack_json_sha": pack_json_sha,
+		})
+	facts["bundles"] = bundles
+	return facts
+
+
+static func compute_skirmish_content_identity(facts: Dictionary) -> String:
+	## Pure key formula over gathered content facts. Every fact below is part of
+	## the content identity; changing ANY of them must change the key.
+	var context := PackedStringArray()
+	context.append("algorithm:%d" % int(
+		facts.get("algorithm_version", SKIRMISH_AVAILABILITY_ALGORITHM_VERSION)))
+	if bool(facts.get("selection_required", false)) and String(facts.get("selection_sha", "")) == "":
+		return ""
+	context.append("source:%s" % String(facts.get("selection_source", "")))
+	context.append("selection-path:%s" % String(facts.get("selection_path", "")))
+	context.append("selection:%s" % String(facts.get("selection_sha", "")))
+	var bundles: Array = facts.get("bundles", []) as Array
+	if bundles == null or bundles.is_empty():
+		return ""
+	for bundle_value in bundles:
+		var bundle := bundle_value as Dictionary
+		context.append("pack:%s/%s@%s#%s" % [
+			String(bundle.get("pack_id", "")),
+			String(bundle.get("bundle_sha", "")),
+			String(bundle.get("prefix", "")),
+			String(bundle.get("pack_json_sha", "")),
+		])
+	return "\n".join(context).sha256_text()
+
+
+func _load_skirmish_sweep_cache(key: String) -> Dictionary:
+	if key == "" or not FileAccess.file_exists(SKIRMISH_CACHE_PATH):
+		return {}
+	var file := FileAccess.open(SKIRMISH_CACHE_PATH, FileAccess.READ)
+	if file == null:
+		return {}
+	var raw: Variant = JSON.parse_string(file.get_as_text())
+	file.close()
+	if typeof(raw) != TYPE_DICTIONARY:
+		return {}
+	var document := raw as Dictionary
+	if (
+		String(document.get("schema", "")) != SKIRMISH_CACHE_SCHEMA
+		or int(document.get("schemaVersion", -1)) != SKIRMISH_CACHE_SCHEMA_VERSION
+		or String(document.get("contentIdentity", "")) != key
+		or typeof(document.get("availability")) != TYPE_DICTIONARY
+		or typeof(document.get("map_notes")) != TYPE_DICTIONARY
+	):
+		return {}
+	# Re-key both tables into fresh String->String dictionaries so a cache hit is
+	# byte-identical to a computed table under var_to_bytes().
+	var availability: Dictionary = {}
+	for faction_value in RETAIL_FACTIONS:
+		var faction_id := String((faction_value as Dictionary)["id"])
+		if not (document["availability"] as Dictionary).has(faction_id):
+			return {}
+		availability[faction_id] = String((document["availability"] as Dictionary)[faction_id])
+	var notes: Dictionary = {}
+	for choice_value in _skirmish_map_choice_rows:
+		var map_id := String((choice_value as Dictionary)["id"])
+		if not (document["map_notes"] as Dictionary).has(map_id):
+			return {}
+		notes[map_id] = String((document["map_notes"] as Dictionary)[map_id])
+	if (document["availability"] as Dictionary).size() != availability.size():
+		return {}
+	if (document["map_notes"] as Dictionary).size() != notes.size():
+		return {}
+	if skirmish_sweep_is_environmental_failure({"availability": availability}):
+		# Revalidation path for entries an older build (or an older run) poisoned
+		# with an all-manifest-failure table. Drop the file so this launch and
+		# every later one recompute instead of serving the poisoned negative.
+		_skirmish_sweep_rejected_poisoned_cache = true
+		clear_skirmish_availability_cache()
+		return {}
+	return {"availability": availability, "map_notes": notes, "worker_ms": 0}
+
+
+func skirmish_sweep_rejected_poisoned_cache() -> bool:
+	return _skirmish_sweep_rejected_poisoned_cache
+
+
+func skirmish_sweep_is_environmental_failure(result: Dictionary) -> bool:
+	## True when a sweep resolved NOTHING: every faction verdict is the
+	## manifest-unavailable verdict. That is a transient/environmental failure of
+	## this process (the lazy faction-manifest script never compiled), not a
+	## finding about the mounted content, and persisting it would hand every
+	## later launch a durable "no faction is playable" answer that no content
+	## change can ever invalidate.
+	var availability: Dictionary = result.get("availability", {}) as Dictionary
+	if availability == null or availability.is_empty():
+		return true
+	var manifest_failure := lazy_script_failure(LAZY_FACTION_MANIFEST)
+	for verdict_value in availability.values():
+		var verdict := String(verdict_value)
+		if verdict == SKIRMISH_MANIFEST_UNAVAILABLE_VERDICT:
+			continue
+		if manifest_failure != "" and verdict == manifest_failure:
+			continue
+		return false
+	return true
+
+
+func _store_skirmish_sweep_cache(key: String, result: Dictionary) -> void:
+	if key == "" or _skirmish_sweep_failed:
+		return
+	if skirmish_sweep_is_environmental_failure(result):
+		# Fail-closed for THIS run, open for the next one: publish the failure to
+		# the player but leave no durable negative entry behind.
+		return
+	var file := FileAccess.open(SKIRMISH_CACHE_PATH, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(JSON.stringify({
+		"schema": SKIRMISH_CACHE_SCHEMA,
+		"schemaVersion": SKIRMISH_CACHE_SCHEMA_VERSION,
+		"contentIdentity": key,
+		"availability": result.get("availability", {}),
+		"map_notes": result.get("map_notes", {}),
+	}, "\t"))
+	file.close()
 
 
 func _arm_skirmish_sweep() -> void:
-	## Builds the step list. Splitting the sweep is a SCHEDULING change only: the
-	## steps below do exactly the work the one-pass version did, in the same order,
-	## against the same inputs. Nothing is sampled, skipped or approximated.
+	## Cache the exact map set once. The worker validates every faction and map;
+	## only Control construction is later chunked on the main thread.
 	if _skirmish_sweep_armed:
 		return
 	_skirmish_sweep_armed = true
-	# Steps carry their own name so a profiled run reports where the sweep's time
-	# actually went. Attributing this by inspection is how the wrong stage gets
-	# optimised; the per-step lines are what identified the slice compile as the
-	# single longest one.
-	var steps: Array[Dictionary] = [
-		{"name": "reset", "run": _sweep_step_reset},
-		{"name": "compile_slice", "run": _sweep_step_compile_slice},
-	]
-	# One step per faction: `_retail_faction_availability()` runs the slice's own
-	# roster classification, which is the expensive half of the sweep.
-	for faction in RETAIL_FACTIONS:
-		var faction_id := String(faction["id"])
-		steps.append({"name": "faction/" + faction_id, "run": _sweep_step_faction.bind(faction_id)})
-	steps.append({"name": "row_controls", "run": _sweep_step_row_controls})
-	# One step per map: `retail_map_availability()` asks the slice's real map
-	# resolver and reads bounded pack documents off disk.
-	for choice in RETAIL_MAP_CHOICES:
-		var map_id := String(choice["id"])
-		steps.append({"name": "map/" + map_id, "run": _sweep_step_map_note.bind(map_id)})
-	steps.append({"name": "build_map_rows", "run": _sweep_step_build_map_rows})
-	steps.append({"name": "rules_and_colors", "run": _sweep_step_rules_and_colors})
-	_skirmish_sweep_steps = steps
+	_skirmish_map_choices()
+	_skirmish_sweep_total_units = RETAIL_FACTIONS.size() + _skirmish_map_choice_rows.size()
 
 
-func _step_skirmish_sweep() -> void:
-	## ONE unit of work per idle frame, driven from `_process`. The menu is already
-	## up and taking input while this runs; each step is a bounded piece of the
-	## same sweep, so no single frame carries the whole 1.6-2.8 s.
+func _step_skirmish_sweep() -> bool:
+	## Expensive validation runs on WorkerThreadPool. This function only launches
+	## it and later executes one cheap Control-construction step per frame.
 	if _skirmish_options_ready or _skirmish_sweep_running:
-		return
+		return false
 	_arm_skirmish_sweep()
-	# WAIT RATHER THAN BLOCK. The stepped path has frames to spare, so while the
-	# loader thread still holds the slice there is no point calling into
-	# `load_threaded_get` and freezing the menu for what is left of a 3-4 s
-	# compile. `_ensure_skirmish_options()` below does NOT take this branch: a
-	# reader has asked for an answer and must get one, so it blocks and collects.
-	if _lazy_warm_is_pending(LAZY_SLICE):
-		return
+	var worker_was_active := _skirmish_worker_task_id >= 0
+	_poll_skirmish_worker()
+	# Reaping/publishing is its own frame. Do not compound that boundary with
+	# even the first cold Control mutation.
+	if worker_was_active and _skirmish_worker_task_id == -1:
+		return false
+	if _skirmish_worker_task_id == -1 and _skirmish_sweep_steps.is_empty():
+		_start_skirmish_worker()
+		# Enqueue bookkeeping is constant and contains no sweep validation or UI
+		# construction. The frame metric covers only main-thread work that scales
+		# with content: atomic publication and the chunked finalization steps.
+		return false
 	if not _skirmish_sweep_steps.is_empty():
 		_skirmish_sweep_running = true
 		_run_skirmish_sweep_step()
 		_skirmish_sweep_running = false
-	if _skirmish_sweep_steps.is_empty():
-		_finish_skirmish_sweep()
+		return true
+	return false
 
 
-func _ensure_skirmish_options() -> void:
-	## THE GUARANTEE. Any reader of `_skirmish_availability` or
-	## `_skirmish_map_notes` calls this first, and it runs EVERY remaining step
-	## synchronously before returning. A caller that arrives one frame after the
-	## menu appeared, or halfway through the stepped pass, gets the complete,
-	## identical answer - the fail-closed launch gate is never judged against a
-	## partially populated table.
-	if _skirmish_options_ready or _skirmish_sweep_running:
-		return
+func _ensure_skirmish_options() -> bool:
+	## Synchronous readers never drain work and never inspect staging data. Until
+	## the atomic publication they receive a fail-closed "still loading" verdict.
+	## Navigation awaits `_wait_for_skirmish_options()` so the setup is not judged
+	## or shown until this returns true.
+	if _skirmish_options_ready:
+		return true
 	_arm_skirmish_sweep()
-	_skirmish_sweep_running = true
-	while not _skirmish_sweep_steps.is_empty():
-		_run_skirmish_sweep_step()
-	_skirmish_sweep_running = false
-	_finish_skirmish_sweep()
+	if _skirmish_worker_task_id == -1:
+		_start_skirmish_worker()
+	return false
+
+
+func _wait_for_skirmish_options() -> void:
+	if _skirmish_options_ready:
+		return
+	_skirmish_busy_visible = true
+	_set_skirmish_busy_state(true)
+	_ensure_skirmish_options()
+	while not _skirmish_options_ready:
+		await get_tree().process_frame
+	_skirmish_busy_visible = false
+	_set_skirmish_busy_state(false)
+
+
+func _start_skirmish_worker() -> void:
+	if _skirmish_worker_task_id != -1 or _skirmish_options_ready:
+		return
+	# Collect threaded script loads only after they are complete. Calling
+	# load_threaded_get while pending is exactly the click freeze this fixes.
+	if _lazy_warm_is_pending(LAZY_SLICE) or _lazy_warm_is_pending(LAZY_FACTION_MANIFEST):
+		return
+	# Cache hit short-circuits the entire validation: no probe, no manifest
+	# resolution, no terrain load. The key already proves the mounted content is
+	# byte-for-byte what produced the stored table.
+	_skirmish_sweep_cache_key = _skirmish_content_identity()
+	var cached := _load_skirmish_sweep_cache(_skirmish_sweep_cache_key)
+	if not cached.is_empty():
+		_skirmish_sweep_cache_hit = true
+		_skirmish_progress_mutex.lock()
+		_skirmish_sweep_completed_units = _skirmish_sweep_total_units
+		_skirmish_progress_mutex.unlock()
+		_accept_skirmish_sweep_result(cached)
+		return
+	var slice_script = _slice_script()
+	var manifest_script = _faction_manifest_script()
+	var map_data_script = load("res://src/retail_slice/retail_map_data.gd")
+	var choices := _skirmish_map_choice_rows.duplicate(true)
+	# Warm every lazy ContentDB registry on the main thread, then give the worker
+	# private copies. No first-use cache write or live pack_meta/structure alias is
+	# allowed after dispatch.
+	var unit_snapshot := (_content_db.call("get_playable_unit_runtimes") as Dictionary).duplicate(true)
+	var structure_snapshot := (_content_db.call("get_playable_structure_runtimes") as Dictionary).duplicate(true)
+	var pack_index_snapshot := (_content_db.call("get_playable_unit_runtime_pack_index") as Dictionary).duplicate(true)
+	var maps_snapshot := (_content_db.get("bundle_maps") as Dictionary).duplicate(true)
+	var pack_meta_snapshot := (_content_db.get("pack_meta") as Array).duplicate(true)
+	var host_resolution: Dictionary = PackCapabilityScript.resolve_host_slice_pack(pack_meta_snapshot)
+	var host_root := String(host_resolution.get("root", ""))
+	var selected_root := _selected_faction_pack_root()
+	var men_gate_error := _men_pack_gate_error_from_snapshot(
+		pack_meta_snapshot, maps_snapshot, host_resolution
+	)
+	_skirmish_worker_cancel_mutex.lock()
+	_skirmish_worker_cancelled = false
+	_skirmish_worker_cancel_mutex.unlock()
+	_skirmish_sweep_started_usec = Time.get_ticks_usec()
+	_skirmish_worker_result_box = {}
+	_skirmish_worker_task_id = WorkerThreadPool.add_task(
+		_skirmish_worker_entry.bind(
+			slice_script, manifest_script, map_data_script, choices, host_root, selected_root,
+			unit_snapshot, structure_snapshot, pack_index_snapshot, maps_snapshot, men_gate_error,
+			lazy_script_failure(LAZY_SLICE), lazy_script_failure(LAZY_FACTION_MANIFEST),
+			_skirmish_worker_result_box
+		), false, "OpenBFME skirmish availability")
+
+
+func _skirmish_worker_entry(slice_script, manifest_script, map_data_script,
+		choices: Array, host_root: String, selected_root: String, unit_snapshot: Dictionary,
+		structure_snapshot: Dictionary, pack_index_snapshot: Dictionary, maps_snapshot: Dictionary,
+		men_gate_error: String, slice_failure: String, manifest_failure: String,
+		result_box: Dictionary) -> void:
+	# Wrapper is the finally-equivalent: an inner script error returns here, and
+	# the pooled thread has checks restored before its result is observed.
+	Thread.set_thread_safety_checks_enabled(false)
+	var result = _compute_skirmish_sweep_worker(
+		slice_script, manifest_script, map_data_script, choices, host_root, selected_root,
+		unit_snapshot, structure_snapshot, pack_index_snapshot, maps_snapshot,
+		men_gate_error, slice_failure, manifest_failure
+	)
+	Thread.set_thread_safety_checks_enabled(true)
+	# WorkerThreadPool discards task return values. This private box is read only
+	# after is_task_completed() establishes the handoff boundary.
+	result_box["result"] = result
+
+
+func _compute_skirmish_sweep_worker(slice_script, manifest_script, map_data_script,
+		choices: Array, host_root: String, selected_root: String, unit_snapshot: Dictionary,
+		structure_snapshot: Dictionary, pack_index_snapshot: Dictionary, maps_snapshot: Dictionary,
+		men_gate_error: String, slice_failure: String, manifest_failure: String) -> Dictionary:
+	## THREAD-SAFETY CONTRACT: this job creates and mutates only its private probe
+	## and result dictionaries. ContentDB/pack calls here are read-only snapshots,
+	## plus bounded file reads. Shared menu dictionaries and all Controls are only
+	## touched by `_accept_skirmish_sweep_result()` on the main thread.
+	# Godot's checker rejects even read-only Node/SceneTree calls from workers.
+	# This task only invokes ContentDB getters and reads immutable pack resources;
+	# every object it mutates (probe, map validator, result tables) is task-local.
+	var started := Time.get_ticks_msec()
+	var availability: Dictionary = {}
+	var notes: Dictionary = {}
+	var probe = slice_script.new() if slice_script != null else null
+	for faction_value in RETAIL_FACTIONS:
+		if _skirmish_worker_is_cancelled():
+			if probe != null:
+				probe.free()
+			return {}
+		var faction_id := String((faction_value as Dictionary)["id"])
+		availability[faction_id] = _compute_faction_availability(
+			faction_id, probe, manifest_script, unit_snapshot, structure_snapshot,
+			pack_index_snapshot, men_gate_error, slice_failure, manifest_failure)
+		_note_skirmish_worker_progress()
+		if _skirmish_worker_is_cancelled():
+			if probe != null:
+				probe.free()
+			return {}
+	for choice_value in choices:
+		if _skirmish_worker_is_cancelled():
+			if probe != null:
+				probe.free()
+			return {}
+		var map_id := String((choice_value as Dictionary)["id"])
+		notes[map_id] = _compute_map_availability(
+			map_id, probe, map_data_script, host_root, selected_root, maps_snapshot, slice_failure)
+		_note_skirmish_worker_progress()
+		if _skirmish_worker_is_cancelled():
+			if probe != null:
+				probe.free()
+			return {}
+	var result := {
+		"availability": availability,
+		"map_notes": notes,
+		"worker_ms": Time.get_ticks_msec() - started,
+	}
+	if probe != null:
+		probe.free()
+	return result
+
+
+func _compute_faction_availability(faction_id: String, probe, manifest_script,
+		unit_snapshot: Dictionary, structures: Dictionary, pack_index_snapshot: Dictionary,
+		men_gate_error: String, slice_failure: String, manifest_failure: String) -> String:
+	if manifest_script == null:
+		return manifest_failure if manifest_failure != "" else SKIRMISH_MANIFEST_UNAVAILABLE_VERDICT
+	if faction_id == manifest_script.DEFAULT_FACTION:
+		if men_gate_error != "":
+			return men_gate_error
+	var fieldable: Dictionary = {}
+	if probe != null:
+		if _skirmish_worker_is_cancelled():
+			return "validation-cancelled"
+		probe._classify_faction_units(
+			faction_id, unit_snapshot, structures, pack_index_snapshot
+		)
+		if _skirmish_worker_is_cancelled():
+			return "validation-cancelled"
+		fieldable = (probe.get("fieldable_unit_runtimes") as Dictionary).duplicate(true)
+	elif slice_failure != "":
+		return slice_failure
+	if faction_id == manifest_script.DEFAULT_FACTION and fieldable.is_empty() and structures.is_empty():
+		return ""
+	if _skirmish_worker_is_cancelled():
+		return "validation-cancelled"
+	var manifest: Dictionary = manifest_script.from_registries(faction_id, fieldable, structures)
+	return String(manifest.get("_error", ""))
+
+
+func _compute_map_availability(map_id: String, probe, map_data_script,
+		host_root: String, selected_root: String, maps_snapshot: Dictionary,
+		slice_failure: String) -> String:
+	if probe == null:
+		return "Open BFME map resolution is unavailable - %s" % slice_failure
+	if _skirmish_worker_is_cancelled():
+		return "validation-cancelled"
+	probe.selected_pack_root = host_root if host_root != "" else selected_root
+	var resolved: Dictionary = probe._resolve_slice_map_definition(map_id, maps_snapshot)
+	if _skirmish_worker_is_cancelled():
+		return "validation-cancelled"
+	if not resolved.is_empty():
+		var pack_root := String(resolved.get("_pack_root", ""))
+		if pack_root == "":
+			return "the resolved map does not identify its owning content pack"
+		if map_data_script == null:
+			return "the cooked map validator could not be loaded"
+		if _skirmish_worker_is_cancelled():
+			return "validation-cancelled"
+		var map_data = map_data_script.new()
+		var loaded := bool(map_data.load_from_pack(
+			pack_root, resolved, _skirmish_worker_is_cancelled
+		))
+		var validation_error := String(map_data.error)
+		# RefCounted validators created in a pooled task must drop their final
+		# reference on that same task; waiting for VM local cleanup leaked them.
+		map_data = null
+		if _skirmish_worker_is_cancelled():
+			return "validation-cancelled"
+		if not loaded:
+			return "cooked map data failed validation: %s" % validation_error
+		return ""
+	if map_id == SliceIds.MAP_ID:
+		if host_root == "":
+			return "no host pack with files.entryMap is mounted; Open BFME boots Fords from the host capability pack"
+		return "the host pack's files.entryMap is missing or invalid; Open BFME boots Fords only from the host capability pack"
+	var content_root := OS.get_environment("OPENBFME_CONTENT").strip_edges()
+	if content_root == "" or not DirAccess.dir_exists_absolute(content_root):
+		return "not registered in selection.json and OPENBFME_CONTENT is unset; Open BFME requires it for catalog maps"
+	return "not registered in the mounted map catalog (selection.json); cook/select a map pack that publishes this id"
+
+
+func _note_skirmish_worker_progress() -> void:
+	## Called from the pooled worker after EACH faction and EACH map, so the
+	## "Checking skirmish content… N%" label advances within the batch. Before
+	## this existed the counter was never incremented at all and a player
+	## watched a literal 0% for the whole sweep (~94 s cold, minutes under
+	## load). Mutex-guarded because the writer is the worker thread and the
+	## reader is `_update_skirmish_busy_label()` on the main thread.
+	_skirmish_progress_mutex.lock()
+	_skirmish_sweep_completed_units = mini(
+		_skirmish_sweep_completed_units + 1, _skirmish_sweep_total_units)
+	_skirmish_progress_mutex.unlock()
+
+
+func skirmish_sweep_completed_units() -> int:
+	_skirmish_progress_mutex.lock()
+	var value := _skirmish_sweep_completed_units
+	_skirmish_progress_mutex.unlock()
+	return value
+
+
+func _accept_skirmish_sweep_result(result: Dictionary) -> void:
+	var publication_started := Time.get_ticks_usec()
+	if _skirmish_options_ready:
+		return
+	_skirmish_worker_compute_ms = int(result.get("worker_ms", 0))
+	# Atomic publication: neither outward dictionary is written by the worker and
+	# both complete tables become visible in this one main-thread callback.
+	_skirmish_availability = result.get("availability", {}) as Dictionary
+	_skirmish_map_notes = result.get("map_notes", {}) as Dictionary
+	_skirmish_sweep_steps = []
+	for row in solo_flyout.row_army_opts.size():
+		_append_row_control_sweep_steps(row)
+	_skirmish_finalize_map_index = 0
+	_skirmish_sweep_steps.append({"name": "map_rows", "run": _sweep_step_build_next_map_row})
+	_skirmish_sweep_steps.append({"name": "select_map", "run": _select_first_available_map_row_without_refresh})
+	_skirmish_sweep_steps.append({"name": "rules", "run": _populate_rules_options})
+	_skirmish_sweep_steps.append({"name": "finish", "run": _finish_skirmish_sweep})
+	var publication_elapsed := Time.get_ticks_usec() - publication_started
+	if publication_elapsed > _skirmish_sweep_worst_frame_usec:
+		_skirmish_sweep_worst_frame_usec = publication_elapsed
+		_skirmish_sweep_worst_frame_name = "publish"
+
+
+func _poll_skirmish_worker() -> void:
+	if _skirmish_worker_task_id < 0 or not WorkerThreadPool.is_task_completed(_skirmish_worker_task_id):
+		return
+	var task_id := _skirmish_worker_task_id
+	WorkerThreadPool.wait_for_task_completion(task_id)
+	_skirmish_worker_task_id = -1
+	var result: Variant = _skirmish_worker_result_box.get("result")
+	_skirmish_worker_result_box = {}
+	if typeof(result) == TYPE_DICTIONARY and (result as Dictionary).has("availability") and (result as Dictionary).has("map_notes"):
+		_store_skirmish_sweep_cache(_skirmish_sweep_cache_key, result as Dictionary)
+		_accept_skirmish_sweep_result(result as Dictionary)
+		return
+	_publish_skirmish_worker_failure(
+		"availability worker completed without a result; choose SKIRMISH again to retry"
+	)
+
+
+func _publish_skirmish_worker_failure(reason: String) -> void:
+	_skirmish_sweep_failed = true
+	var availability: Dictionary = {}
+	var notes: Dictionary = {}
+	for faction_value in RETAIL_FACTIONS:
+		availability[String((faction_value as Dictionary)["id"])] = reason
+	for choice_value in _skirmish_map_choice_rows:
+		notes[String((choice_value as Dictionary)["id"])] = reason
+	_accept_skirmish_sweep_result({
+		"availability": availability,
+		"map_notes": notes,
+		"worker_ms": 0,
+	})
+
+
+func retry_skirmish_sweep() -> void:
+	if _skirmish_worker_task_id >= 0:
+		return
+	_skirmish_sweep_failed = false
+	_skirmish_options_ready = false
+	_skirmish_sweep_cache_hit = false
+	_skirmish_sweep_steps.clear()
+	_skirmish_progress_mutex.lock()
+	_skirmish_sweep_completed_units = 0
+	_skirmish_progress_mutex.unlock()
+	_skirmish_worker_compute_ms = 0
+	_skirmish_sweep_started_usec = 0
+	set_process(true)
+
+
+func start_dead_skirmish_worker_for_test() -> void:
+	if _skirmish_worker_task_id >= 0:
+		return
+	_skirmish_options_ready = false
+	_skirmish_sweep_steps.clear()
+	_skirmish_worker_result_box = {}
+	_skirmish_worker_task_id = WorkerThreadPool.add_task(
+		_dead_skirmish_worker_entry, false, "OpenBFME dead sweep fixture"
+	)
+	set_process(true)
+
+
+func _dead_skirmish_worker_entry() -> Variant:
+	Thread.set_thread_safety_checks_enabled(false)
+	Thread.set_thread_safety_checks_enabled(true)
+	return null
+
+
+func _skirmish_worker_is_cancelled() -> bool:
+	_skirmish_worker_cancel_mutex.lock()
+	var cancelled := _skirmish_worker_cancelled
+	_skirmish_worker_cancel_mutex.unlock()
+	return cancelled
 
 
 func _run_skirmish_sweep_step() -> void:
 	var step: Dictionary = _skirmish_sweep_steps.pop_front()
+	_skirmish_current_main_work_name = String(step["name"])
 	var started := Time.get_ticks_msec()
 	(step["run"] as Callable).call()
 	var cost := Time.get_ticks_msec() - started
@@ -1060,12 +1667,15 @@ func _finish_skirmish_sweep() -> void:
 	if _skirmish_options_ready:
 		return
 	_skirmish_options_ready = true
+	_skirmish_sweep_total_ms = int((Time.get_ticks_usec() - _skirmish_sweep_started_usec) / 1000)
+	_skirmish_sweep_worst_ms = int(ceil(float(_skirmish_sweep_worst_frame_usec) / 1000.0))
 	# Stable label on purpose: tests/boot_startup_runner.gd matches it exactly.
 	# `at_ms` is when the whole sweep finished; the two `measure()` lines below
 	# carry the numbers that mean something for a stepped stage.
 	BootProfile.mark("menu:skirmish_options")
 	BootProfile.measure("menu:skirmish_sweep_total", _skirmish_sweep_total_ms)
 	BootProfile.measure("menu:skirmish_sweep_worst_step", _skirmish_sweep_worst_ms)
+	skirmish_options_ready.emit()
 
 
 func skirmish_sweep_worst_step_ms() -> int:
@@ -1075,95 +1685,213 @@ func skirmish_sweep_worst_step_ms() -> int:
 	return _skirmish_sweep_worst_ms
 
 
-func _sweep_step_reset() -> void:
-	# Mirror the slice's leading fail-closed gate: when the men pack's bundle
-	# content is absent, reload once before judging faction availability.
-	if not (_content_db.get("bundle_objects") as Dictionary).has(SliceIds.SOLDIER_OBJECT_ID):
-		_content_db.call("reload")
-	_skirmish_availability.clear()
-	_skirmish_map_notes.clear()
+func skirmish_sweep_total_wall_ms() -> int:
+	return _skirmish_sweep_total_ms
 
 
-func _sweep_step_compile_slice() -> void:
-	## The sweep owns the ONLY `RetailVerticalSlice.new()` the shell makes, and
-	## that class's preload chain is 57 files / ~60,400 lines. Paying for it in a
-	## step of its own keeps the compile out of the first faction's frame, and
-	## makes a failure to compile it visible here rather than as a mystery inside
-	## a faction verdict. A failure is not fatal to the sweep: every faction and
-	## map then reports the named refusal `_slice_probe()` produces.
-	_slice_probe()
+func skirmish_sweep_worker_compute_ms() -> int:
+	return _skirmish_worker_compute_ms
 
 
-func _sweep_step_faction(faction_id: String) -> void:
-	_skirmish_availability[faction_id] = _retail_faction_availability(faction_id)
+func skirmish_sweep_worst_frame_name() -> String:
+	return _skirmish_sweep_worst_frame_name
 
 
-func _sweep_step_row_controls() -> void:
-	_populate_row_controls()
+func compute_skirmish_synchronous_baseline_for_test() -> Dictionary:
+	## Test-only oracle for the pre-change scheduling: identical validators and
+	## ordering, run serially on the caller thread, with no publication or Control
+	## mutation. The menu sweep runner compares its bytes with the worker result.
+	_arm_skirmish_sweep()
+	var started := Time.get_ticks_msec()
+	var worst := 0
+	var availability: Dictionary = {}
+	var notes: Dictionary = {}
+	var slice_script = _slice_script()
+	var manifest_script = _faction_manifest_script()
+	var map_data_script = load("res://src/retail_slice/retail_map_data.gd")
+	var probe = slice_script.new() if slice_script != null else null
+	var unit_snapshot := (_content_db.call("get_playable_unit_runtimes") as Dictionary).duplicate(true)
+	var structure_snapshot := (_content_db.call("get_playable_structure_runtimes") as Dictionary).duplicate(true)
+	var pack_index_snapshot := (_content_db.call("get_playable_unit_runtime_pack_index") as Dictionary).duplicate(true)
+	var maps_snapshot := (_content_db.get("bundle_maps") as Dictionary).duplicate(true)
+	var pack_meta_snapshot := (_content_db.get("pack_meta") as Array).duplicate(true)
+	var host_resolution: Dictionary = PackCapabilityScript.resolve_host_slice_pack(pack_meta_snapshot)
+	var host_root := String(host_resolution.get("root", ""))
+	var selected_root := _selected_faction_pack_root()
+	var men_gate_error := _men_pack_gate_error_from_snapshot(pack_meta_snapshot, maps_snapshot, host_resolution)
+	for faction_value in RETAIL_FACTIONS:
+		var step_started := Time.get_ticks_msec()
+		var faction_id := String((faction_value as Dictionary)["id"])
+		availability[faction_id] = _compute_faction_availability(
+			faction_id, probe, manifest_script, unit_snapshot, structure_snapshot,
+			pack_index_snapshot, men_gate_error,
+			lazy_script_failure(LAZY_SLICE), lazy_script_failure(LAZY_FACTION_MANIFEST))
+		worst = maxi(worst, Time.get_ticks_msec() - step_started)
+	for choice_value in _skirmish_map_choice_rows:
+		var step_started := Time.get_ticks_msec()
+		var map_id := String((choice_value as Dictionary)["id"])
+		notes[map_id] = _compute_map_availability(
+			map_id, probe, map_data_script, host_root, selected_root, maps_snapshot,
+			lazy_script_failure(LAZY_SLICE))
+		worst = maxi(worst, Time.get_ticks_msec() - step_started)
+	var result := {
+		"availability": availability,
+		"map_notes": notes,
+		"wall_ms": Time.get_ticks_msec() - started,
+		"worst_step_ms": worst,
+	}
+	if probe != null:
+		probe.free()
+	return result
 
 
-func _sweep_step_map_note(map_id: String) -> void:
-	_skirmish_map_notes[map_id] = retail_map_availability(map_id)
+func _populate_one_row_controls(row: int) -> void:
+	_populate_row_army(row)
+	_populate_row_difficulty(row)
+	_populate_row_team(row)
+	_populate_row_color(row)
+	_apply_row_controller(row)
 
 
-func _sweep_step_rules_and_colors() -> void:
-	_populate_rules_options()
-	_populate_color_options()
+func _append_row_control_sweep_steps(row: int) -> void:
+	## OptionButton theme/layout work is not constant-time as an entire dropdown.
+	## Build one item per frame so a cold glyph/theme cache cannot turn the first
+	## row into a visible hitch.
+	var army: OptionButton = solo_flyout.row_army_opts[row]
+	_skirmish_sweep_steps.append({"name": "row_army_clear/%d" % row, "run": _sweep_clear_option.bind(army)})
+	for faction_value in RETAIL_FACTIONS:
+		_skirmish_sweep_steps.append({
+			"name": "row_army_item/%d" % row,
+			"run": _sweep_add_army_item.bind(army, faction_value as Dictionary),
+		})
+	_skirmish_sweep_steps.append({
+		"name": "row_army_select/%d" % row, "run": _select_first_enabled.bind(army),
+	})
+	var difficulty: OptionButton = solo_flyout.row_difficulty_opts[row]
+	_skirmish_sweep_steps.append({"name": "row_difficulty_clear/%d" % row, "run": _sweep_clear_option.bind(difficulty)})
+	for tier_value in RETAIL_AI_DIFFICULTIES:
+		_skirmish_sweep_steps.append({
+			"name": "row_difficulty_item/%d" % row,
+			"run": _sweep_add_metadata_item.bind(difficulty, String(tier_value["name"]), String(tier_value["id"])),
+		})
+	_skirmish_sweep_steps.append({
+		"name": "row_difficulty_select/%d" % row,
+		"run": _select_option_by_metadata_value.bind(difficulty, RETAIL_AI_DEFAULT_DIFFICULTY),
+	})
+	var team: OptionButton = solo_flyout.team_dropdowns[row]
+	_skirmish_sweep_steps.append({"name": "row_team_clear/%d" % row, "run": _sweep_begin_team.bind(team)})
+	for number in range(1, solo_flyout.MAX_PLAYER_ROWS + 1):
+		_skirmish_sweep_steps.append({
+			"name": "row_team_item/%d" % row,
+			"run": _sweep_add_metadata_item.bind(team, str(number), number),
+		})
+	_skirmish_sweep_steps.append({"name": "row_team_select/%d" % row, "run": _sweep_finish_team.bind(team, row)})
+	var color: OptionButton = solo_flyout.color_dropdowns[row]
+	_skirmish_sweep_steps.append({"name": "row_color_clear/%d" % row, "run": _sweep_clear_option.bind(color)})
+	for entry_value in HOUSE_COLORS:
+		_skirmish_sweep_steps.append({
+			"name": "row_color_item/%d" % row,
+			"run": _sweep_add_metadata_item.bind(color, String(entry_value["name"]), entry_value["color"]),
+		})
+	_skirmish_sweep_steps.append({"name": "row_color_select/%d" % row, "run": _sweep_finish_color.bind(color, row)})
+	_skirmish_sweep_steps.append({"name": "row_controller/%d" % row, "run": _apply_row_controller.bind(row)})
 
 
-func _sweep_step_build_map_rows() -> void:
-	# Populate every known retail map the slice can boot (five-maps pack +
-	# host Fords entry). Maps the slice cannot resolve stay listed but are
-	# disabled with the honest reason the slice would refuse them. The verdicts
-	# themselves were computed by the `_sweep_step_map_note` steps above; this
-	# step only builds the rows from them, so it never re-reads a pack document.
-	for map_index in RETAIL_MAP_CHOICES.size():
-		var choice: Dictionary = RETAIL_MAP_CHOICES[map_index]
-		var map_id := String(choice["id"])
-		var note := String(_skirmish_map_notes.get(map_id, retail_map_availability(map_id)))
-		_skirmish_map_notes[map_id] = note
-		var available := note == ""
-		var map_doc := _content_db.call("get_bundle_map", map_id) as Dictionary
-		var players := int(map_doc.get("playerCount", 0))
-		var row := Button.new()
-		row.name = "MapRow%d" % map_index
-		row.toggle_mode = true
-		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		row.text = String(choice["name"]) + ("" if available else " (unavailable)")
-		# Retail's map list is a compact table of text rows, not ornate buttons.
-		row.custom_minimum_size = Vector2(0, 28)
-		for state in ["normal", "hover", "pressed", "disabled"]:
-			var row_box := StyleBoxFlat.new()
-			row_box.bg_color = Color(0.05, 0.16, 0.09, 0.72) if state != "pressed" else Color(0.16, 0.34, 0.14, 0.92)
-			if state == "hover":
-				row_box.bg_color = Color(0.10, 0.26, 0.11, 0.88)
-			if state == "disabled":
-				row_box.bg_color = Color(0.04, 0.10, 0.06, 0.55)
-			row_box.border_color = Color(0.30, 0.62, 0.28, 0.85) if state == "pressed" else Color(0.18, 0.42, 0.20, 0.6)
-			row_box.set_border_width_all(1)
-			row_box.content_margin_left = 12.0
-			row.add_theme_stylebox_override(state, row_box)
-		row.add_theme_font_size_override("font_size", 16)
-		row.disabled = not available
-		if not available:
-			row.tooltip_text = "Unavailable: %s" % note
-		row.set_meta("map_id", map_id)
-		row.set_meta("player_count", players)
-		var players_label := Label.new()
-		players_label.name = "Players"
-		players_label.text = str(players) if players > 0 else "?"
-		players_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_RIGHT)
-		players_label.offset_left = -48
-		players_label.offset_right = -16
-		players_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		players_label.add_theme_font_size_override("font_size", 15)
-		players_label.add_theme_color_override("font_color", Color("b7dc94"))
-		players_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(players_label)
-		row.pressed.connect(_on_map_row_pressed.bind(map_index))
-		solo_flyout.map_rows_host.add_child(row)
-		solo_flyout.map_rows.append({"button": row, "map_id": map_id, "players": players})
-	_select_first_available_map_row()
+func _sweep_add_army_item(option: OptionButton, faction: Dictionary) -> void:
+	var faction_id := String(faction["id"])
+	var note := String(_skirmish_availability.get(faction_id, ""))
+	option.add_item(String(faction["name"]) + (NOT_CONVERTED_SUFFIX if note != "" else ""))
+	var index := option.item_count - 1
+	option.set_item_metadata(index, faction_id)
+	option.set_item_disabled(index, note != "")
+	if note != "":
+		option.set_item_tooltip(index, "Not converted: %s" % note)
+
+
+func _sweep_clear_option(option: OptionButton) -> void:
+	option.clear()
+
+
+func _sweep_add_metadata_item(option: OptionButton, label: String, metadata: Variant) -> void:
+	option.add_item(label)
+	option.set_item_metadata(option.item_count - 1, metadata)
+
+
+func _sweep_begin_team(option: OptionButton) -> void:
+	option.clear()
+	option.disabled = false
+
+
+func _sweep_finish_team(option: OptionButton, row: int) -> void:
+	option.select(mini(row, option.item_count - 1))
+	option.tooltip_text = "Team/alliance: rows sharing a number fight as allies"
+
+
+func _sweep_finish_color(option: OptionButton, row: int) -> void:
+	option.select(row % HOUSE_COLORS.size())
+	_on_color_changed(row)
+
+
+func _sweep_step_build_next_map_row() -> void:
+	if _skirmish_finalize_map_index >= _skirmish_map_choice_rows.size():
+		return
+	var index := _skirmish_finalize_map_index
+	_skirmish_finalize_map_index += 1
+	_build_skirmish_map_row(index, _skirmish_map_choice_rows[index])
+	if _skirmish_finalize_map_index < _skirmish_map_choice_rows.size():
+		_skirmish_sweep_steps.push_front({
+			"name": "map_rows",
+			"run": _sweep_step_build_next_map_row,
+		})
+
+
+func _build_skirmish_map_row(map_index: int, choice: Dictionary) -> void:
+	var map_id := String(choice["id"])
+	# The worker populated every note before publishing. Missing is fail-closed
+	# rather than recomputed on the UI thread.
+	var note := String(_skirmish_map_notes.get(map_id, "availability result missing"))
+	var available := note == ""
+	var map_doc := _content_db.call("get_bundle_map", map_id) as Dictionary
+	if map_doc.is_empty() and map_id == SliceIds.MAP_ID:
+		map_doc = _skirmish_map_document(map_id)
+	var players := int(map_doc.get("playerCount", 0))
+	var row := Button.new()
+	row.name = "MapRow%d" % map_index
+	row.toggle_mode = true
+	row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	row.text = String(choice["name"]) + ("" if available else " (unavailable)")
+	row.custom_minimum_size = Vector2(0, 28)
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var row_box := StyleBoxFlat.new()
+		row_box.bg_color = Color(0.05, 0.16, 0.09, 0.72) if state != "pressed" else Color(0.16, 0.34, 0.14, 0.92)
+		if state == "hover":
+			row_box.bg_color = Color(0.10, 0.26, 0.11, 0.88)
+		if state == "disabled":
+			row_box.bg_color = Color(0.04, 0.10, 0.06, 0.55)
+		row_box.border_color = Color(0.30, 0.62, 0.28, 0.85) if state == "pressed" else Color(0.18, 0.42, 0.20, 0.6)
+		row_box.set_border_width_all(1)
+		row_box.content_margin_left = 12.0
+		row.add_theme_stylebox_override(state, row_box)
+	row.add_theme_font_size_override("font_size", 16)
+	row.disabled = not available
+	if not available:
+		row.tooltip_text = "Unavailable: %s" % note
+	row.set_meta("map_id", map_id)
+	row.set_meta("player_count", players)
+	var players_label := Label.new()
+	players_label.name = "Players"
+	players_label.text = str(players) if players > 0 else "?"
+	players_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER_RIGHT)
+	players_label.offset_left = -48
+	players_label.offset_right = -16
+	players_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	players_label.add_theme_font_size_override("font_size", 15)
+	players_label.add_theme_color_override("font_color", Color("b7dc94"))
+	players_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(players_label)
+	row.pressed.connect(_on_map_row_pressed.bind(map_index))
+	solo_flyout.map_rows_host.add_child(row)
+	solo_flyout.map_rows.append({"button": row, "map_id": map_id, "players": players})
 
 
 func _populate_rules_options() -> void:
@@ -1400,6 +2128,17 @@ func _select_first_available_map_row() -> void:
 	_on_map_row_pressed(-1)
 
 
+func _select_first_available_map_row_without_refresh() -> void:
+	## Availability finalization only selects the row. Preview image decoding and
+	## waypoint reads belong to page presentation and run after the busy wait,
+	## not inside the sweep's measured frames.
+	for index in solo_flyout.map_rows.size():
+		if not (solo_flyout.map_rows[index]["button"] as Button).disabled:
+			solo_flyout.set_selected_map_row(index)
+			return
+	solo_flyout.set_selected_map_row(-1)
+
+
 func _on_map_row_pressed(index: int) -> void:
 	solo_flyout.set_selected_map_row(index)
 	# The selected map's authored player count bounds how many rows the setup can
@@ -1503,6 +2242,49 @@ func _selected_faction_pack_root() -> String:
 	return String(member.get("_pack_root", ""))
 
 
+func _host_slice_pack_root() -> String:
+	## Same capability host the slice boots from. Must NOT use the soldier
+	## document's pack root: active RotWK Men can own the fighter while the
+	## BFME2 host pack alone declares files.entryMap / host surfaces.
+	var host_resolution: Dictionary = PackCapabilityScript.resolve_host_slice_pack(
+		_content_db.get("pack_meta") as Array
+	)
+	return String(host_resolution.get("root", ""))
+
+
+func _skirmish_map_choices() -> Array[Dictionary]:
+	## Prefer maps actually mounted in ContentDB (BFME2 + RotWK catalogs).
+	## Fall back to the historical hard-coded five only when no catalog maps
+	## are registered yet. Cached for one sweep so arm/build/display agree.
+	if not _skirmish_map_choice_rows.is_empty():
+		return _skirmish_map_choice_rows
+	var rows: Array = _content_db.call("list_catalog_maps") as Array
+	var choices: Array[Dictionary] = []
+	# Always surface the host entry map first when present (historical Fords).
+	var seen: Dictionary = {}
+	var host_entry := SliceIds.MAP_ID
+	if (_content_db.get("bundle_maps") as Dictionary).has(host_entry) or _host_slice_pack_root() != "":
+		choices.append({"id": host_entry, "name": RETAIL_MAP_NAME})
+		seen[host_entry] = true
+	for row_value in rows:
+		var row := row_value as Dictionary
+		if row == null:
+			continue
+		var map_id := String(row.get("id", ""))
+		if map_id == "" or seen.has(map_id):
+			continue
+		var display := String(row.get("name", map_id))
+		if display == "":
+			display = map_id
+		choices.append({"id": map_id, "name": display})
+		seen[map_id] = true
+	if choices.is_empty():
+		for fallback in RETAIL_MAP_CHOICES:
+			choices.append((fallback as Dictionary).duplicate())
+	_skirmish_map_choice_rows = choices
+	return _skirmish_map_choice_rows
+
+
 func _men_pack_gate_error() -> String:
 	## The first fail-closed checks retail_vertical_slice runs for the default
 	## Men manifest: soldier/horde/map bundle documents, the soldier animation
@@ -1536,8 +2318,31 @@ func _men_pack_gate_error() -> String:
 	return String(host_resolution.get("error", "no mounted content pack can host a match"))
 
 
+func _men_pack_gate_error_from_snapshot(
+	_pack_meta_snapshot: Array,
+	maps_snapshot: Dictionary,
+	host_resolution: Dictionary
+) -> String:
+	# Called on the main thread before dispatch. The returned string is the only
+	# Men gate state the worker consumes; pack_meta/maps are private snapshots.
+	var member := _content_db.call("get_bundle_object", SliceIds.SOLDIER_OBJECT_ID) as Dictionary
+	var horde := _content_db.call("get_bundle_object", SliceIds.SOLDIER_HORDE_ID) as Dictionary
+	var map_definition := maps_snapshot.get(SliceIds.MAP_ID, {}) as Dictionary
+	if member.is_empty() or horde.is_empty() or map_definition.is_empty():
+		return "the private bfme2-men-vslice pack is not selected (run run_importer.bat)"
+	var capability := _content_db.call(
+		"get_animation_capability", String(member.get("animationCapabilityId", ""))
+	) as Dictionary
+	if capability.is_empty():
+		return "the bfme2-men-vslice pack soldier animation capability is missing"
+	if String(host_resolution.get("root", "")) != "":
+		return ""
+	return String(host_resolution.get("error", "no mounted content pack can host a match"))
+
+
 func get_retail_faction_availability() -> Dictionary:
-	_ensure_skirmish_options()
+	if not _ensure_skirmish_options():
+		return {}
 	return _skirmish_availability.duplicate()
 
 
@@ -1551,13 +2356,14 @@ func retail_launch_error() -> String:
 	##
 	## Guarded: the availability sweep is deferred off boot, and a launch may
 	## never be judged against an unpopulated map.
-	_ensure_skirmish_options()
+	if not _ensure_skirmish_options():
+		return "Skirmish availability is still loading."
 	var host_error := _men_pack_gate_error()
 	if host_error != "":
 		return "The Open BFME host pack is unavailable: %s." % host_error
 	var map_id := _selected_skirmish_map()
 	if map_id == "":
-		return "No retail map is selectable. Ensure bfme2-five-maps is selected."
+		return "No retail map is selectable. Mount a skirmish map pack in selection.json (BFME2 or RotWK catalog) and ensure the host pack has files.entryMap for Fords."
 	var row_count: int = solo_flyout.row_army_opts.size()
 	for row in range(row_count):
 		var faction_id := _selected_skirmish_faction(solo_flyout.row_army_opts[row])
@@ -1612,20 +2418,28 @@ func _retail_faction_display_name(faction_id: String) -> String:
 
 
 func _retail_map_display_name(map_id: String) -> String:
+	for map_choice in _skirmish_map_choices():
+		if String(map_choice["id"]) == map_id:
+			return String(map_choice["name"])
 	for map_choice in RETAIL_MAP_CHOICES:
 		if String(map_choice["id"]) == map_id:
 			return String(map_choice["name"])
-	return map_id.trim_prefix("bfme2.map.").capitalize()
+	if map_id.begins_with("bfme2.map."):
+		return map_id.trim_prefix("bfme2.map.").capitalize()
+	if map_id.begins_with("rotwk.map."):
+		return map_id.trim_prefix("rotwk.map.").capitalize()
+	return map_id.capitalize()
 
 
 func _skirmish_map_document(map_id: String) -> Dictionary:
-	## For the Fords entry map the selected faction pack's files.entryMap is the
-	## document the slice boots; every other map resolves from registered
-	## content. Shared by the preview and the description panel.
+	## Host entry map (default Fords) comes from the capability host pack's
+	## files.entryMap — same root the slice boots. Every other map resolves from
+	## registered ContentDB catalog content.
 	if map_id == SliceIds.MAP_ID:
 		var probe = _slice_probe()
-		if probe != null:
-			var entry_doc: Dictionary = probe._resolve_pack_entry_map_definition(_selected_faction_pack_root(), map_id)
+		var host_root := _host_slice_pack_root()
+		if probe != null and host_root != "":
+			var entry_doc: Dictionary = probe._resolve_pack_entry_map_definition(host_root, map_id)
 			if not entry_doc.is_empty():
 				return entry_doc
 	return _content_db.call("get_bundle_map", map_id) as Dictionary
@@ -1670,7 +2484,10 @@ func _refresh_map_description() -> void:
 
 
 func _refresh_skirmish_launch_state(_index: int = 0) -> void:
-	_ensure_skirmish_options()
+	if not _ensure_skirmish_options():
+		solo_flyout.play_btn.disabled = true
+		solo_flyout.hint_label.text = "Checking skirmish content…"
+		return
 	var launch_error := retail_launch_error()
 	solo_flyout.play_btn.disabled = launch_error != ""
 	if launch_error != "":
@@ -1801,48 +2618,37 @@ func _selected_skirmish_map() -> String:
 
 func retail_map_availability(map_id: String) -> String:
 	## "" when the slice resolves and boots the map, else the honest reason it
-	## is disabled. The verdict is the slice's own resolution (registered
-	## content, selected-pack entry map, env-required five-maps catalog with
-	## schema-validated map documents) so the menu never offers a map the
-	## slice would refuse; the reason chain mirrors the same steps.
+	## is disabled. Host entry map (default Fords) uses the capability host pack
+	## root — same as retail_vertical_slice boot. Other maps use ContentDB
+	## registered catalog documents (BFME2 and/or RotWK).
 	var probe = _slice_probe()
 	if probe == null:
-		# Named, never vague: the map row disables and carries this sentence.
 		return "Open BFME map resolution is unavailable - %s" % lazy_script_failure(LAZY_SLICE)
-	probe.selected_pack_root = _selected_faction_pack_root()
+	var host_root := _host_slice_pack_root()
+	probe.selected_pack_root = host_root if host_root != "" else _selected_faction_pack_root()
 	var resolved: Dictionary = probe._resolve_slice_map_definition(map_id)
 	if not resolved.is_empty():
+		var pack_root := String(resolved.get("_pack_root", ""))
+		if pack_root == "":
+			return "the resolved map does not identify its owning content pack"
+		# Resolution alone is not a boot contract. Exercise the same bounded map
+		# loader the slice uses so malformed/half-cooked catalog rows are disabled
+		# here instead of dying after the player presses PLAY.
+		var map_data_script = load("res://src/retail_slice/retail_map_data.gd")
+		if map_data_script == null:
+			return "the cooked map validator could not be loaded"
+		var map_data = map_data_script.new()
+		if not bool(map_data.load_from_pack(pack_root, resolved)):
+			return "cooked map data failed validation: %s" % String(map_data.error)
 		return ""
 	if map_id == SliceIds.MAP_ID:
-		return "the selected pack's files.entryMap is missing or invalid; Open BFME boots Fords only from the selected pack"
-	if (_content_db.get("bundle_maps") as Dictionary).has(map_id):
-		return ""
+		if host_root == "":
+			return "no host pack with files.entryMap is mounted; Open BFME boots Fords from the host capability pack"
+		return "the host pack's files.entryMap is missing or invalid; Open BFME boots Fords only from the host capability pack"
 	var content_root := OS.get_environment("OPENBFME_CONTENT").strip_edges()
 	if content_root == "" or not DirAccess.dir_exists_absolute(content_root):
 		return "not registered in selection.json and OPENBFME_CONTENT is unset; Open BFME requires it for catalog maps"
-	var pack_root := ModLoader.resolve_pack_path(content_root, SliceIds.FIVE_MAPS_PACK_ID)
-	if pack_root == "" or not ModLoader.path_is_within(content_root, pack_root) or not DirAccess.dir_exists_absolute(pack_root):
-		return "not registered in selection.json and the %s pack is not present under OPENBFME_CONTENT" % SliceIds.FIVE_MAPS_PACK_ID
-	var catalog := _read_bounded_json(pack_root.path_join("data/maps.json"), SliceIds.MAP_CATALOG_MAX_BYTES)
-	if String(catalog.get("schema", "")) != "openbfme.map-catalog" or int(catalog.get("schemaVersion", -1)) != 0:
-		return "the %s catalog failed schema validation" % SliceIds.FIVE_MAPS_PACK_ID
-	var rows: Variant = catalog.get("maps", null)
-	if typeof(rows) != TYPE_ARRAY:
-		return "the %s catalog failed schema validation" % SliceIds.FIVE_MAPS_PACK_ID
-	for row_value in rows as Array:
-		var row := row_value as Dictionary
-		if row == null or String(row.get("id", "")) != map_id:
-			continue
-		var map_relative := String(row.get("map", ""))
-		if map_relative == "" or not ModLoader.is_safe_relative_path(map_relative):
-			return "its catalog row does not declare a safe map document path"
-		var map_doc := _read_bounded_json(pack_root.path_join(map_relative), SliceIds.MAP_DOCUMENT_MAX_BYTES)
-		if String(map_doc.get("schema", "")) != "openbfme.map" or int(map_doc.get("schemaVersion", -1)) != 0:
-			return "its map document is missing or failed schema validation"
-		if String(map_doc.get("id", "")) != map_id:
-			return "its map document id does not match the catalog row"
-		return "unresolvable by Open BFME"
-	return "not registered in selection.json and absent from the %s catalog" % SliceIds.FIVE_MAPS_PACK_ID
+	return "not registered in the mounted map catalog (selection.json); cook/select a map pack that publishes this id"
 
 
 func _read_bounded_json(path: String, maximum_bytes: int) -> Dictionary:
@@ -1926,7 +2732,8 @@ func _refresh_wotr_entry() -> void:
 ## and this function reports its refusal rather than working around it.
 func _start_wotr_session(chosen: Dictionary = {}) -> bool:
 	# Seat options are filtered by per-faction availability below.
-	_ensure_skirmish_options()
+	if not _ensure_skirmish_options():
+		return false
 	if _wotr_document.is_empty():
 		return false
 	var probe = WotrSessionScript.new()
@@ -2164,7 +2971,8 @@ func _open_wotr_setup() -> bool:
 		if probe_world != null and probe_world.load_from_dict(_wotr_document, ""):
 			probe = WotrSessionScript.new()
 			probe.world = probe_world
-	_ensure_skirmish_options()
+	if not _ensure_skirmish_options():
+		return false
 	wotr_setup_screen.pack_faction_availability = _skirmish_availability
 	wotr_setup_screen.configure(
 		_wotr_document, probe, pack_roots, _wotr_unavailable_reason)
@@ -2395,6 +3203,9 @@ func show_page(page: String) -> bool:
 	if page not in [PAGE_MAIN, PAGE_SOLO, PAGE_WOTR, PAGE_WOTR_SETUP, PAGE_OPTIONS,
 			PAGE_DEVELOPER, PAGE_STATS]:
 		return false
+	if page == PAGE_SOLO and not _skirmish_options_ready:
+		call_deferred("_open_skirmish_page_when_ready")
+		return true
 	# GAME SETUP OPENS EVEN WHEN THE CAMPAIGN CANNOT START, and draws the reason.
 	# The strategic page below refuses instead, because a strategic page with no
 	# map is a blank Middle-earth; a setup screen with no document is a setup
@@ -2417,10 +3228,17 @@ func show_page(page: String) -> bool:
 	return true
 
 
+func _open_skirmish_page_when_ready() -> void:
+	await _wait_for_skirmish_options()
+	_show_page(PAGE_SOLO)
+
+
 ## The WAR OF THE RING entry now lands on retail's GAME SETUP screen rather than
 ## dropping into a campaign that seated itself. The screen opens even when the
 ## campaign cannot start, because it is the surface that can SAY why.
 func _on_wotr_pressed() -> void:
+	if not _skirmish_options_ready:
+		await _wait_for_skirmish_options()
 	if not show_page(PAGE_WOTR_SETUP):
 		status.text = "War of the Ring is unavailable: %s" % _wotr_unavailable_reason
 
@@ -2456,6 +3274,9 @@ func _show_page(page: String) -> void:
 				solo_btn.grab_focus()
 		PAGE_SOLO:
 			_refresh_skirmish_launch_state()
+			_refresh_map_preview()
+			_refresh_map_description()
+			_refresh_start_row()
 			if solo_flyout.player_army_opt.visible:
 				solo_flyout.player_army_opt.grab_focus()
 		PAGE_WOTR:

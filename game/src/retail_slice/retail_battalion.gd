@@ -65,6 +65,8 @@ var member_health_fills: Dictionary = {}
 var member_health_ratios: Dictionary = {}
 var member_health_anchor_heights: Dictionary = {}
 var experience_level := 1
+var banner_carrier_visual: Node3D
+var banner_carrier_object_id := ""
 ## Presentation detail level published by the view-side distance LOD
 ## (src/view/member_render_batcher.gd). 0 = full detail. Above 0 the per-member
 ## selection rings and health bars stop drawing, because this battalion rewrites
@@ -134,6 +136,42 @@ func configure(
 	_configure_source_selection_decal(definition)
 	_build_markers()
 	set_action_state("idle", true)
+
+
+func sync_banner_carrier(spawned: bool, banner_object_id: String, offset_source: Vector2) -> void:
+	## Presentation-only projection of the authoritative horde contract. Missing
+	## converted retail art stays invisible; never substitute the kit fallback.
+	if not spawned or banner_object_id == "":
+		if banner_carrier_visual != null and is_instance_valid(banner_carrier_visual):
+			banner_carrier_visual.queue_free()
+		banner_carrier_visual = null
+		banner_carrier_object_id = ""
+		return
+	if (
+		banner_carrier_visual != null
+		and is_instance_valid(banner_carrier_visual)
+		and banner_carrier_object_id == banner_object_id
+	):
+		return
+	if banner_carrier_visual != null and is_instance_valid(banner_carrier_visual):
+		banner_carrier_visual.queue_free()
+	var asset_factory = load("res://src/view/asset_factory.gd")
+	var visual: Node3D = asset_factory.make_bundle_object_visual(
+		banner_object_id, team, _source_unit_scale
+	)
+	if visual == null or not bool(visual.get_meta("authored", false)):
+		if visual != null:
+			visual.queue_free()
+		banner_carrier_visual = null
+		banner_carrier_object_id = ""
+		return
+	visual.name = "BannerCarrier"
+	var scale_factor := _source_unit_scale if _source_unit_scale > 0.0 else 1.0
+	visual.position = Vector3(offset_source.x * scale_factor, 0.0, offset_source.y * scale_factor)
+	visual.rotation.y = PI * 0.5
+	add_child(visual)
+	banner_carrier_visual = visual
+	banner_carrier_object_id = banner_object_id
 
 
 func _build_clip_map(capability: Dictionary) -> void:

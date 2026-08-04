@@ -13,6 +13,9 @@ const MAX_DOCUMENT_BYTES := 8 * 1024 * 1024
 const MAX_TERRAIN_CELLS := 1_000_000
 const MAX_TERRAIN_BINARY_BYTES := MAX_TERRAIN_CELLS * 4
 const MAX_TERRAIN_TEXTURES := 256
+# Shared multi-map packs publish a union catalog. It may exceed one map's GPU
+# texture-table limit; only the current map's <=256 referenced rows are loaded.
+const MAX_SHARED_TERRAIN_MATERIALS := 4096
 const MAX_TERRAIN_TEXTURE_DIMENSION := 4096
 const MAX_TERRAIN_TEXTURE_BYTES := 16 * 1024 * 1024
 const MAX_TERRAIN_TEXTURE_TOTAL_BYTES := 128 * 1024 * 1024
@@ -114,6 +117,7 @@ var terrain_texture_height := 0
 var terrain_texture_array_dimension := 0
 var terrain_material_catalog: Array[Dictionary] = []
 var terrain_tile_indices := PackedInt32Array()
+var terrain_tile_escape_count := 0
 var terrain_blend_cells := PackedInt32Array()
 var terrain_three_way_blend_cells := PackedInt32Array()
 var terrain_cliff_cells := PackedInt32Array()
@@ -211,10 +215,17 @@ var _water_cells := PackedByteArray()
 var _ford_corridor_cells: Dictionary = {}
 
 
-func load_from_pack(selected_pack_root: String, map_definition: Dictionary) -> bool:
+func load_from_pack(
+	selected_pack_root: String,
+	map_definition: Dictionary,
+	cancel_check: Callable = Callable()
+) -> bool:
 	var profile_init := OS.get_environment("OPENBFME_PROFILE_INIT") == "1"
 	var profile_last_ms := Time.get_ticks_msec()
 	_reset()
+	_validation_cancel_check = cancel_check
+	if _validation_cancelled():
+		return false
 	pack_root = selected_pack_root
 	var source_path := String(map_definition.get("_source", ""))
 	if source_path == "" or not ModLoader.path_is_within(pack_root, source_path):
@@ -230,25 +241,79 @@ func load_from_pack(selected_pack_root: String, map_definition: Dictionary) -> b
 	source_sha256 = String(source_identity.get("sha256", ""))
 	source_bytes = int(source_identity.get("sourceBytes", 0))
 
-	# Roads are an optional cooked layer: maps whose cook emitted no road network
-	# declare no roads/roadMaterials documents at all. When the map definition
-	# does declare them, both documents must validate exactly as before.
-	var roads_declared := String(map_definition.get("roads", "")) != ""
-	var road_materials_declared := String(map_definition.get("roadMaterials", "")) != ""
-	if roads_declared != road_materials_declared:
-		return _fail("cooked map declares only half of its road layer")
+	# Roads are an optional cooked layer. When both roads + roadMaterials are
+	# declared, both documents must validate. Cooks that emit an empty roads
+	# document without materials (roadSummary status=empty) are treated as
+	# "no road layer" rather than half-layer failure — several RotWK/BFME2
+	# catalog maps ship exactly that shape.
+	var roads_raw: Variant = map_definition.get("roads", "")
+	var road_materials_raw: Variant = map_definition.get("roadMaterials", "")
+	# JSON null must not become the literal string "<null>" / non-empty path.
+	var roads_rel := "" if roads_raw == null else String(roads_raw).strip_edges()
+	var road_materials_rel := "" if road_materials_raw == null else String(road_materials_raw).strip_edges()
+	if roads_rel == "<null>" or roads_rel.to_lower() == "null":
+		roads_rel = ""
+	if road_materials_rel == "<null>" or road_materials_rel.to_lower() == "null":
+		road_materials_rel = ""
+	var roads_declared := roads_rel != ""
+	var road_materials_declared := road_materials_rel != ""
 	var terrain := _read_document(String(map_definition.get("terrain", "")), "terrain")
+	if _validation_cancelled():
+		return false
 	var objects := _read_document(String(map_definition.get("objects", "")), "objects")
-	var roads := _read_document(String(map_definition.get("roads", "")), "roads") if roads_declared else {}
-	var road_materials := _read_document(String(map_definition.get("roadMaterials", "")), "road materials") if road_materials_declared else {}
+	if _validation_cancelled():
+		return false
+	var roads := _read_document(roads_rel, "roads") if roads_declared else {}
+	if _validation_cancelled():
+		return false
+	var road_summary := _dictionary(map_definition.get("roadSummary", {}))
+	# Normalize an exact empty network before reading materials. Empty roads have
+	# no road IDs to materialize, so a stale roadMaterials pointer is irrelevant;
+	# non-empty roads still require and validate their complete material layer.
+	var roads_geometry_only := false
+	if roads_declared and _roads_document_is_empty_network(roads, road_summary, objects):
+		# Vacuous empty roads inventory — treat as no road layer.
+		roads_declared = false
+		road_materials_declared = false
+		roads = {}
+		road_summary = {}
+	elif roads_declared and not road_materials_declared:
+		# Incomplete cook: road geometry present without material catalog.
+		# Load geometry so the match boots; road textures stay absent (no fake art).
+		roads_geometry_only = true
+	elif road_materials_declared and not roads_declared:
+		return _fail("cooked map declares only half of its road layer")
+	var road_materials := {}
+	if road_materials_declared and not roads_geometry_only:
+		var resolved_road_materials := _resolve(road_materials_rel)
+		if resolved_road_materials == "":
+			return _fail("missing or unsafe road materials document")
+		if not FileAccess.file_exists(resolved_road_materials):
+			# A safe catalog pointer may name a file the cook omitted. Preserve the
+			# geometry-only boot fallback, but never use it to forgive an escaped,
+			# malformed, oversized, or otherwise invalid document.
+			road_materials_declared = false
+			roads_geometry_only = true
+		else:
+			road_materials = _read_document(road_materials_rel, "road materials")
+			if road_materials.is_empty():
+				return false
 	var object_bindings := _read_document(String(map_definition.get("objectBindings", "")), "object bindings")
+	if _validation_cancelled():
+		return false
 	var waypoints := _read_document(String(map_definition.get("waypoints", "")), "waypoints")
+	if _validation_cancelled():
+		return false
 	var water := _read_document(String(map_definition.get("water", "")), "water")
+	if _validation_cancelled():
+		return false
 	if profile_init:
 		print("RETAIL_MAP_DATA_PHASE name=documents delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
 		profile_last_ms = Time.get_ticks_msec()
-	if terrain.is_empty() or objects.is_empty() or object_bindings.is_empty() or waypoints.is_empty() or water.is_empty() or (roads_declared and (roads.is_empty() or road_materials.is_empty())):
+	if terrain.is_empty() or objects.is_empty() or object_bindings.is_empty() or waypoints.is_empty() or water.is_empty():
 		return false
+	if roads_declared and roads.is_empty():
+		return _fail("roads document missing or unreadable")
 	if String(terrain.get("schema", "")) != "openbfme.sage-terrain" or int(terrain.get("schemaVersion", -1)) != 0:
 		return _fail("unexpected cooked terrain schema")
 	if String(objects.get("schema", "")) != "openbfme.sage-map-objects" or int(objects.get("schemaVersion", -1)) != 0:
@@ -264,12 +329,16 @@ func load_from_pack(selected_pack_root: String, map_definition: Dictionary) -> b
 
 	if not _load_terrain(terrain, String(map_definition.get("terrainMaterials", ""))):
 		return false
+	if _validation_cancelled():
+		return false
 	if profile_init:
 		print("RETAIL_MAP_DATA_PHASE name=terrain delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
 		profile_last_ms = Time.get_ticks_msec()
 	if not _load_waypoints(waypoints):
 		return false
 	if not _load_water(water):
+		return false
+	if _validation_cancelled():
 		return false
 	if profile_init:
 		print("RETAIL_MAP_DATA_PHASE name=waypoints_water delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
@@ -278,26 +347,41 @@ func load_from_pack(selected_pack_root: String, map_definition: Dictionary) -> b
 	if object_bindings_path == "":
 		return _fail("object-binding document escaped the selected map")
 	if roads_declared:
-		roads_path = _resolve(String(map_definition.get("roads", "")))
+		roads_path = _resolve(roads_rel)
 		if roads_path == "":
 			return _fail("roads document escaped the selected map")
-		road_materials_path = _resolve(String(map_definition.get("roadMaterials", "")))
-		if road_materials_path == "":
-			return _fail("road-material document escaped the selected map")
-	if not _load_objects(objects, roads, object_bindings, _dictionary(map_definition.get("roadSummary", {}))):
+		if road_materials_declared and not roads_geometry_only:
+			road_materials_path = _resolve(road_materials_rel)
+			if road_materials_path == "":
+				return _fail("road-material document escaped the selected map")
+	if not _load_objects(objects, roads if roads_declared else {}, object_bindings, road_summary):
 		return false
-	if roads_declared and not _load_road_materials(road_materials):
+	if _validation_cancelled():
+		return false
+	if roads_declared and road_materials_declared and not roads_geometry_only and road_unresolved_control_point_count == 0 and not _load_road_materials(road_materials):
 		return false
 	if profile_init:
 		print("RETAIL_MAP_DATA_PHASE name=objects_roads delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
 		profile_last_ms = Time.get_ticks_msec()
 	_build_map_outline()
+	if _validation_cancelled():
+		return false
 	if not _build_navigation():
 		return false
 	if profile_init:
 		print("RETAIL_MAP_DATA_PHASE name=navigation delta_ms=%d" % (Time.get_ticks_msec() - profile_last_ms))
 	ready = true
 	return true
+
+
+var _validation_cancel_check := Callable()
+
+
+func _validation_cancelled() -> bool:
+	if _validation_cancel_check.is_valid() and bool(_validation_cancel_check.call()):
+		error = "validation-cancelled"
+		return true
+	return false
 
 
 func _load_terrain(terrain: Dictionary, terrain_materials_relative: String) -> bool:
@@ -413,7 +497,7 @@ func _load_terrain_material_catalog(relative: String, blend: Dictionary, blend_t
 			or int(manifest.get("textureCount", -1)) != texture_rows.size()
 			or materials.size() != texture_rows.size()
 			or materials.size() < terrain_texture_count
-			or materials.size() > MAX_TERRAIN_TEXTURES
+			or materials.size() > MAX_SHARED_TERRAIN_MATERIALS
 			or blend_textures.size() != terrain_texture_count
 		):
 			return _fail("terrain material catalog is incomplete")
@@ -535,7 +619,15 @@ func _load_terrain_source_layers(terrain: Dictionary, blend: Dictionary) -> bool
 	# every cliff cell reference must stay zero (checked below).
 	if blend_description_count <= 0 or blend_description_count > cell_count or cliff_mapping_count < 0 or cliff_mapping_count > cell_count:
 		return _fail("terrain description-table counts are invalid")
-	if int(blend.get("rawBlendCount", -1)) != blend_description_count + 1 or int(blend.get("rawCliffCount", -1)) != cliff_mapping_count + 1:
+	var raw_cliff_count := int(blend.get("rawCliffCount", -1))
+	var cliff_reserved_entry_valid := (
+		raw_cliff_count == cliff_mapping_count + 1
+		or (raw_cliff_count == 0 and cliff_mapping_count == 0)
+	)
+	# Blend descriptions always reserve source entry zero. Official Osgiliath's
+	# entirely absent cliff table has neither mappings nor a reserved entry;
+	# accept only that exact 0/0 cliff shape in addition to the normal invariant.
+	if int(blend.get("rawBlendCount", -1)) != blend_description_count + 1 or not cliff_reserved_entry_valid:
 		return _fail("terrain description-table reserved-entry counts are invalid")
 	var blend_description_bytes := _read_terrain_description_table(table_descriptors, "blendDescriptions", blend_description_count, BLEND_DESCRIPTION_RECORD_BYTES, "terrain blend descriptions")
 	var cliff_mapping_bytes := PackedByteArray()
@@ -545,11 +637,17 @@ func _load_terrain_source_layers(terrain: Dictionary, blend: Dictionary) -> bool
 		return false
 
 	terrain_tile_indices.resize(cell_count)
+	terrain_tile_escape_count = 0
 	var computed_max_tile := -1
 	for index in range(cell_count):
 		var tile_value := int(tile_bytes.decode_u16(index * 2))
-		if terrain_texture_index_for_tile_value(tile_value) < 0:
-			return _fail("terrain tile index escaped the material cell table")
+		if _terrain_texture_index_for_tile_value_strict(tile_value) < 0:
+			var on_non_rendered_fringe := index % width == width - 1 or index >= (height - 1) * width
+			if not on_non_rendered_fringe:
+				return _fail("terrain tile index escaped the material cell table on a rendered cell")
+			# Preserve source-exact fringe values. Last-row/last-column samples own
+			# no rendered quad, so presentation may resolve them through texture zero.
+			terrain_tile_escape_count += 1
 		terrain_tile_indices[index] = tile_value
 		computed_max_tile = maxi(computed_max_tile, tile_value)
 	if computed_max_tile != int(blend.get("maxTileValue", -1)):
@@ -569,7 +667,7 @@ func _load_terrain_source_layers(terrain: Dictionary, blend: Dictionary) -> bool
 		var two_sided_byte := int(blend_description_bytes[offset + 9])
 		var magic_one := int(blend_description_bytes.decode_u32(offset + 10))
 		var magic_two := int(blend_description_bytes.decode_u32(offset + 14))
-		var secondary_texture_index := terrain_texture_index_for_tile_value(secondary_tile)
+		var secondary_texture_index := _terrain_texture_index_for_tile_value_strict(secondary_tile)
 		if secondary_texture_index < 0 or direction not in [1, 2, 4, 8] or (source_flags & ~3) != 0 or two_sided_byte not in [0, 1]:
 			return _fail("terrain blend description contains an invalid source reference or flag")
 		if magic_one not in [0xFFFFFFFF, 24] or magic_two != 0x7ADA0000:
@@ -592,12 +690,13 @@ func _load_terrain_source_layers(terrain: Dictionary, blend: Dictionary) -> bool
 		var bottom_right := Vector2(cliff_mapping_bytes.decode_float(offset + 12), cliff_mapping_bytes.decode_float(offset + 16))
 		var top_right := Vector2(cliff_mapping_bytes.decode_float(offset + 20), cliff_mapping_bytes.decode_float(offset + 24))
 		var top_left := Vector2(cliff_mapping_bytes.decode_float(offset + 28), cliff_mapping_bytes.decode_float(offset + 32))
-		if terrain_texture_index_for_tile_value(texture_tile) < 0 or not _finite_vector2(bottom_left) or not _finite_vector2(bottom_right) or not _finite_vector2(top_right) or not _finite_vector2(top_left):
+		var texture_index := _terrain_texture_index_for_tile_value_strict(texture_tile)
+		if texture_index < 0 or not _finite_vector2(bottom_left) or not _finite_vector2(bottom_right) or not _finite_vector2(top_right) or not _finite_vector2(top_left):
 			return _fail("terrain cliff mapping contains an invalid source reference or coordinate")
 		terrain_cliff_mappings.append({
 			"source_index": index + 1,
 			"texture_tile": texture_tile,
-			"texture_index": terrain_texture_index_for_tile_value(texture_tile),
+			"texture_index": texture_index,
 			"bottom_left": bottom_left,
 			"bottom_right": bottom_right,
 			"top_right": top_right,
@@ -1076,9 +1175,20 @@ func _load_roads(document: Dictionary, source_roads: Dictionary, declared_summar
 		return _fail("cooked road summary disagrees with its exact records")
 	if diagnostics.size() != observed_unresolved:
 		return _fail("unresolved road diagnostics do not cover unresolved control points")
-	if observed_unresolved != 0:
-		return _fail("cooked roads contain unresolved or unpaired control points")
-	if not diagnostics.is_empty() or control_points.size() % 2 != 0 or segments.size() * 2 != control_points.size():
+	if observed_unresolved != 0 or control_points.size() % 2 != 0 or segments.size() * 2 != control_points.size():
+		# Incomplete cook (unpaired wires). Drop road presentation rather than
+		# refusing the entire map — match still boots; roads stay absent.
+		road_type_ids.clear()
+		road_control_points.clear()
+		road_segments.clear()
+		road_type_count = 0
+		road_control_point_count = 0
+		road_segment_count = 0
+		road_unresolved_control_point_count = observed_unresolved
+		roads_path = ""
+		road_materials_path = ""
+		return true
+	if not diagnostics.is_empty():
 		return _fail("cooked roads are not exact 2-to-4 control-point pairs")
 
 	for segment_index in range(segments.size()):
@@ -1495,8 +1605,12 @@ func _build_navigation() -> bool:
 		_ford_corridor_cells[ford_name] = empty_mask
 
 	for polygon_value in standing_water_polygons:
+		if _validation_cancelled():
+			return false
 		_rasterize_local_polygon(_water_cells, polygon_value as PackedVector3Array)
 	for river in river_strips:
+		if _validation_cancelled():
+			return false
 		var sections: Array = river.get("sections", [])
 		var river_name := String(river.get("name", ""))
 		for section_index in range(sections.size() - 1):
@@ -1510,6 +1624,8 @@ func _build_navigation() -> bool:
 				_ford_corridor_cells[river_name] = ford_mask
 
 	for ford_name in REQUIRED_FORD_NAMES:
+		if _validation_cancelled():
+			return false
 		var source_mask: PackedByteArray = _ford_corridor_cells[ford_name]
 		# Continuous river edges can fall between 10-unit grid samples. A fixed
 		# five-cell alignment margin reaches both banks; it only exempts cooked
@@ -1528,6 +1644,8 @@ func _build_navigation() -> bool:
 	navigation_water_blocked_count = 0
 	navigation_ford_corridor_count = 0
 	for grid_y in range(navigation_grid_min.y, navigation_grid_max.y + 1):
+		if grid_y % 16 == 0 and _validation_cancelled():
+			return false
 		for grid_x in range(navigation_grid_min.x, navigation_grid_max.x + 1):
 			var cell := Vector2i(grid_x, grid_y)
 			var water_blocked := water_mask_blocks and is_water_cell(cell) and not is_ford_corridor_cell(cell)
@@ -1574,6 +1692,8 @@ func _rasterize_local_polygon(mask: PackedByteArray, polygon: PackedVector3Array
 		clampi(ceili(maximum.y), navigation_grid_min.y, navigation_grid_max.y)
 	)
 	for grid_y in range(minimum_cell.y, maximum_cell.y + 1):
+		if grid_y % 16 == 0 and _validation_cancelled():
+			return
 		for grid_x in range(minimum_cell.x, maximum_cell.x + 1):
 			if Geometry2D.is_point_in_polygon(Vector2(grid_x, grid_y), grid_polygon):
 				mask[grid_y * width + grid_x] = 1
@@ -1584,6 +1704,8 @@ func _dilate_mask(source: PackedByteArray, radius: int) -> PackedByteArray:
 	result.resize(width * height)
 	result.fill(0)
 	for grid_y in range(navigation_grid_min.y, navigation_grid_max.y + 1):
+		if grid_y % 16 == 0 and _validation_cancelled():
+			return result
 		for grid_x in range(navigation_grid_min.x, navigation_grid_max.x + 1):
 			if source[grid_y * width + grid_x] == 0:
 				continue
@@ -1843,6 +1965,15 @@ func terrain_cliff_mapping_index_at(grid_x: int, grid_y: int) -> int:
 
 
 func terrain_texture_index_for_tile_value(tile_value: int) -> int:
+	var texture_index := _terrain_texture_index_for_tile_value_strict(tile_value)
+	if texture_index < 0 and tile_value >= 0:
+		# Load policy permits this only for non-quad-owning last-row/last-column
+		# base samples. Preserve their source values but render texture zero.
+		return 0
+	return texture_index
+
+
+func _terrain_texture_index_for_tile_value_strict(tile_value: int) -> int:
 	if tile_value < 0:
 		return -1
 	var source_cell := tile_value >> 2
@@ -2224,6 +2355,7 @@ func _reset() -> void:
 	terrain_texture_array_dimension = 0
 	terrain_material_catalog.clear()
 	terrain_tile_indices = PackedInt32Array()
+	terrain_tile_escape_count = 0
 	terrain_blend_cells = PackedInt32Array()
 	terrain_three_way_blend_cells = PackedInt32Array()
 	terrain_cliff_cells = PackedInt32Array()
@@ -2286,6 +2418,53 @@ func _reset() -> void:
 	_navigation_grid = null
 	_water_cells = PackedByteArray()
 	_ford_corridor_cells.clear()
+
+
+func _roads_document_is_empty_network(roads: Dictionary, declared_summary: Dictionary, objects: Dictionary) -> bool:
+	## True only for the exact schema-valid empty-road contract. A missing file,
+	## malformed inventory, contradictory summary, or source road control point
+	## must remain a hard failure rather than being erased as an optional layer.
+	if (
+		roads.is_empty()
+		or String(roads.get("schema", "")) != "openbfme.sage-roads"
+		or int(roads.get("schemaVersion", -1)) != 0
+		or String(roads.get("coordinateTransform", "")) != "godot=(sage.x,sage.z,-sage.y)"
+		or String(roads.get("pairingPolicy", "")) != "source-order-exact-wire-2-then-4-same-road-id"
+		or String(roads.get("curveReconstruction", "")) != "not-attempted"
+		or typeof(roads.get("roadIds", null)) != TYPE_ARRAY
+		or typeof(roads.get("controlPoints", null)) != TYPE_ARRAY
+		or typeof(roads.get("segments", null)) != TYPE_ARRAY
+		or typeof(roads.get("unresolvedDiagnostics", null)) != TYPE_ARRAY
+		or typeof(roads.get("summary", null)) != TYPE_DICTIONARY
+	):
+		return false
+	var summary := roads.get("summary", {}) as Dictionary
+	var exact_empty := (
+		not declared_summary.is_empty()
+		and declared_summary == summary
+		and String(summary.get("status", "")) == "empty"
+		and int(summary.get("roadIdCount", -1)) == 0
+		and int(summary.get("controlPointCount", -1)) == 0
+		and int(summary.get("pairedControlPointCount", -1)) == 0
+		and int(summary.get("unresolvedControlPointCount", -1)) == 0
+		and int(summary.get("segmentCount", -1)) == 0
+		and int(summary.get("unresolvedDiagnosticCount", -1)) == 0
+		and (roads.get("roadIds", []) as Array).is_empty()
+		and (roads.get("controlPoints", []) as Array).is_empty()
+		and (roads.get("segments", []) as Array).is_empty()
+		and (roads.get("unresolvedDiagnostics", []) as Array).is_empty()
+	)
+	if not exact_empty or typeof(objects.get("objects", null)) != TYPE_ARRAY:
+		return false
+	# The roads inventory is derived from nonzero object roadType wires. Refuse
+	# a contradictory "empty" inventory instead of routing those wires as props.
+	for object_value in objects.get("objects", []) as Array:
+		if typeof(object_value) != TYPE_DICTIONARY:
+			return false
+		var road_type: Variant = (object_value as Dictionary).get("roadType", null)
+		if not _exact_integer(road_type) or int(road_type) != 0:
+			return false
+	return true
 
 
 func _fail(message: String) -> bool:

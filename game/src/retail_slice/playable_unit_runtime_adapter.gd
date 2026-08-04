@@ -117,6 +117,10 @@ static func producer_bindings(document: Dictionary) -> Array[Dictionary]:
 			"slot": slot,
 			"roster_ordinal": roster_ordinal,
 			"prerequisites": (row.get("prerequisites", []) as Array).duplicate(),
+			# Optional ANY-of gate (converter prerequisiteAnyOf, from the
+			# button's NeededUpgradeAny). Absent on every pack built before the
+			# field existed, which is exactly the fail-closed ALL-of behavior.
+			"prerequisites_any_of": (row.get("prerequisiteAnyOf", []) as Array).duplicate(),
 			"command_set_transition": (row.get("commandSetTransition", []) as Array).duplicate(true),
 		})
 	return output

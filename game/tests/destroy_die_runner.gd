@@ -161,6 +161,13 @@ func _run() -> void:
 		not structure_weapon.entities.has(101)
 	)
 
+	_test_summon_rule_does_not_leak_to_non_summon_spawn()
+	_test_script_killed_summon_bookkeeping()
+	_test_script_killed_hero_releases_identity()
+	_test_combat_killed_faded_summon_keeps_corpse()
+	_test_team_transfer_and_delete_move_then_release_commitment()
+	_test_command_point_default_is_shared()
+
 	# ALL -TOPPLED remains compiler evidence only. These two retail carriers
 	# are cinematic/unmaterialized, so this runner deliberately does not
 	# manufacture an executable TOPPLED object.
@@ -178,6 +185,154 @@ func _run() -> void:
 
 	print("DESTROY_DIE_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+func _test_summon_rule_does_not_leak_to_non_summon_spawn() -> void:
+	var sim: RetailSliceSim = _make_sim([])
+	var spawned := _spawn_faded_summon(sim, 2)
+	var ordinary_id := sim.spawn_script_object(Sim.SOLDIER_OBJECT_ID, 0, Vector2(5.0, 0.0))
+	_check(
+		"summon_scoped_faded_rule_does_not_leak_to_non_summon_spawn",
+		spawned > 0 and ordinary_id > 0
+			and not (sim.entities[ordinary_id] as Dictionary).has("destroy_die")
+			and not sim._summon_despawn_ticks.has(ordinary_id)
+	)
+	sim.advance(3)
+	_check(
+		"non_summon_same_object_never_fades_at_summon_lifetime_tick",
+		sim.entities.has(ordinary_id)
+			and int((sim.entities[ordinary_id] as Dictionary).get("health", 0)) > 0
+	)
+
+
+func _test_script_killed_summon_bookkeeping() -> void:
+	var sim: RetailSliceSim = _make_sim([])
+	sim.base_loop_enabled = true
+	var summoned_id := _spawn_faded_summon(sim, 3)
+	var result := sim.script_kill_entity(summoned_id)
+	_check(
+		"script_killed_summon_erases_lifetime_and_releases_once",
+		bool(result.get("ok", false))
+			and not sim._summon_despawn_ticks.has(summoned_id)
+			and bool((sim.entities[summoned_id] as Dictionary).get("command_points_released", false))
+	)
+	var expiry_events_before := _event_count(sim, "power.summon_expired")
+	sim.advance(4)
+	_check(
+		"script_killed_summon_never_emits_bogus_expiry",
+		_event_count(sim, "power.summon_expired") == expiry_events_before
+	)
+
+
+func _test_script_killed_hero_releases_identity() -> void:
+	var sim: RetailSliceSim = _make_sim([])
+	var hero_id := 1
+	var hero_type := "FixtureProducedHero"
+	var hero: Dictionary = sim.entities[hero_id]
+	hero["category"] = "hero"
+	hero["unit_type"] = hero_type
+	sim._unit_production_rules[hero_type] = {"category": "hero"}
+	sim._completed_hero_identities["0:%s" % hero_type] = true
+	var result := sim.script_kill_entity(hero_id)
+	_check(
+		"script_killed_hero_releases_identity_and_is_retrainable",
+		bool(result.get("ok", false))
+			and not sim._completed_hero_identities.has("0:%s" % hero_type)
+			and not sim.hero_unavailable(0, hero_type)
+			and _event_count(sim, "hero.identity_released") == 1
+	)
+
+
+func _test_combat_killed_faded_summon_keeps_corpse() -> void:
+	var sim: RetailSliceSim = _make_sim([])
+	var summoned_id := _spawn_faded_summon(sim, 3)
+	sim._apply_member_damage(1, 0, summoned_id, 99999, "battalion", 0, 0)
+	var corpse: Dictionary = sim.entities.get(summoned_id, {}) as Dictionary
+	_check(
+		"combat_killed_faded_summon_uses_normal_corpse_path",
+		not corpse.is_empty()
+			and int(corpse.get("health", 1)) == 0
+			and int(corpse.get("corpse_expire_tick", -1)) == sim.tick_index + Sim.CORPSE_LIFETIME_TICKS
+			and not sim._summon_despawn_ticks.has(summoned_id)
+	)
+	var expiry_events_before := _event_count(sim, "power.summon_expired")
+	sim.advance(4)
+	_check(
+		"combat_killed_faded_summon_does_not_expire_again",
+		sim.entities.has(summoned_id)
+			and _event_count(sim, "power.summon_expired") == expiry_events_before
+	)
+
+
+func _test_team_transfer_and_delete_move_then_release_commitment() -> void:
+	var sim: RetailSliceSim = _make_sim([])
+	sim.base_loop_enabled = true
+	var entity_id := 1
+	var row: Dictionary = sim.entities[entity_id]
+	row["command_points"] = 25
+	sim.team_command_points[0] = 25
+	sim.team_command_points[1] = 0
+	sim._summon_despawn_ticks[entity_id] = sim.tick_index + 100
+	var moved := sim.set_entity_team(entity_id, 1)
+	_check(
+		"team_transfer_moves_command_point_commitment",
+		bool(moved.get("ok", false))
+			and int(sim.team_command_points.get(0, -1)) == 0
+			and int(sim.team_command_points.get(1, -1)) == 25
+	)
+	var deleted := sim.delete_entity(entity_id)
+	_check(
+		"delete_erases_summon_registry_and_releases_new_team_commitment",
+		bool(deleted.get("ok", false))
+			and not sim.entities.has(entity_id)
+			and not sim._summon_despawn_ticks.has(entity_id)
+			and int(sim.team_command_points.get(1, -1)) == 0
+	)
+
+
+func _test_command_point_default_is_shared() -> void:
+	var sim: RetailSliceSim = _make_sim([])
+	sim.base_loop_enabled = true
+	var entity_id := 1
+	var row: Dictionary = sim.entities[entity_id]
+	row.erase("command_points")
+	sim._rules["soldier_command_points"] = 17
+	sim.team_command_points[0] = 17
+	sim.team_command_points[1] = 0
+	var moved := sim.set_entity_team(entity_id, 1)
+	var deleted := sim.delete_entity(entity_id)
+	_check(
+		"team_transfer_and_release_share_command_point_default",
+		bool(moved.get("ok", false)) and bool(deleted.get("ok", false))
+			and int(sim.team_command_points.get(0, -1)) == 0
+			and int(sim.team_command_points.get(1, -1)) == 0
+	)
+
+
+func _spawn_faded_summon(sim: RetailSliceSim, lifetime_ticks: int) -> int:
+	var base_rule: Dictionary = (
+		(sim._rules.get("unit_rules", {}) as Dictionary).get(Sim.SOLDIER_OBJECT_ID, {}) as Dictionary
+	).duplicate(true)
+	base_rule["destroy_die"] = [{
+		"owner_role": "object", "death_types": "NONE",
+		"excluded_death_types": [], "included_death_types": ["FADED"],
+	}]
+	var spawned: Array = sim._spawn_summon_targets(0, Vector2.ZERO, [{
+		"object_id": Sim.SOLDIER_OBJECT_ID,
+		"count": 1,
+		"lifetime_ticks": lifetime_ticks,
+		"lifetime_death_type": "FADED",
+		"rule": base_rule,
+	}])
+	return int(spawned[0]) if not spawned.is_empty() else -1
+
+
+func _event_count(sim: RetailSliceSim, kind: String) -> int:
+	var count := 0
+	for event in sim.events:
+		if String((event as Dictionary).get("kind", "")) == kind:
+			count += 1
+	return count
 
 
 func _make_sim(

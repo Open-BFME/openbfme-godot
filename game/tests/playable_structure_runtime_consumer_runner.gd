@@ -187,6 +187,7 @@ func _run_faction_manifest_checks() -> void:
 	# Retail-shaped citadel: an engine-spawned fortress composite which carries
 	# the fortress command set (the porter construct button lives there).
 	var fixture_citadel := _fixture_document("FixtureCitadel", "fixturecitadel", "", 3000, true, false)
+	fixture_citadel["compositeRole"] = "fortress-composite-citadel"
 	var citadel_gameplay := (
 		(fixture_citadel.get("registration", {}) as Dictionary)
 		.get("gameplay", {}) as Dictionary
@@ -240,6 +241,11 @@ func _run_faction_manifest_checks() -> void:
 	var build_rule: Dictionary = (manifest.get("structure_build_rules", {}) as Dictionary).get("monsterpen", {}) as Dictionary
 	_check(int(build_rule.get("cost", -1)) == 300 and is_equal_approx(float(build_rule.get("seconds", 0.0)), 30.0), "build rules parse BuildCost/BuildTime scalars")
 	_check((manifest.get("producer_kind_registry", {}) as Dictionary) == {"FixtureFortress": "fortress", "FixtureMonsterPen": "monsterpen", "FixtureCitadel": "fortress"}, "producer registry maps source objects to kinds, folding the proven citadel into the fortress")
+	_check(
+		(manifest.get("fortress_composite_object_ids", {}) as Dictionary)
+		== {"fortress-composite-citadel": "FixtureCitadel"},
+		"manifest preserves exact fortress composite roles for presentation"
+	)
 	_check(
 		(manifest.get("structure_source_object_ids", {}) as Dictionary).get(
 			"fortress", []

@@ -583,24 +583,17 @@ func _initialize_content_and_match() -> void:
 	hud.set_command_build_seconds(command_build_seconds)
 	hud.apply_audio_values(audio_system.get_music_volume(), audio_system.get_voice_sfx_volume(), audio_system.is_muted())
 	audio_system.sync_events(simulation.events)
-	# Full-pack manifests seed fortresses only; constructable kinds stay on the
-	# builder bar. Tiny Men pack still seeds its full five-building starter.
-	var seed_kinds: Array = faction_manifest.get("seed_structure_kinds", faction_manifest.get("structure_kinds", [])) as Array
-	# One seeded structure set per rostered team, each counted from ITS OWN
-	# faction's tables (a cross-faction roster may seed a different kind count
-	# per team). The default same-faction roster keeps the historical
-	# team_count * seed_kinds total exactly (every team aliases the globals).
-	var expected_structure_count := 0
-	for team_id_value in simulation.team_ids():
-		var team_seed_kinds: Array = simulation.seed_structure_kinds_for_team(int(team_id_value))
-		if team_seed_kinds.is_empty():
-			team_seed_kinds = simulation.structure_kinds_for_team(int(team_id_value))
-		expected_structure_count += team_seed_kinds.size()
+	# Presentation must match simulation authority, not seed-kind tables alone.
+	# Full packs seed fortresses only, then CastleBehavior unpacks citadel/pads
+	# as additional authoritative structures. Map creep lairs are deliberately
+	# presented by battlefield lifecycle nodes, so only those are excluded.
+	var expected_structure_ids := _presentable_structure_ids()
+	var expected_structure_count := expected_structure_ids.size()
 	var men_faction_slice := String(faction_manifest.get("faction", FactionManifestScript.DEFAULT_FACTION)) == FactionManifestScript.DEFAULT_FACTION
 	ready_ok = (
 		battalion_nodes.size() == simulation.initial_battalion_count()
 		and _all_battalion_retail_visuals_loaded()
-		and structure_nodes.size() == expected_structure_count
+		and _structure_nodes_match_ids(expected_structure_ids)
 		and _all_structure_retail_visuals_loaded()
 		and map_preview_loaded
 		and map_art_loaded
@@ -620,11 +613,16 @@ func _initialize_content_and_match() -> void:
 			failed_capabilities.append("battalion_count=%d expected=%d" % [battalion_nodes.size(), simulation.initial_battalion_count()])
 		if not _all_battalion_retail_visuals_loaded():
 			failed_capabilities.append("battalion_retail_visuals")
-		if structure_nodes.size() != expected_structure_count:
-			failed_capabilities.append("structure_count=%d expected=%d" % [structure_nodes.size(), expected_structure_count])
+		if not _structure_nodes_match_ids(expected_structure_ids):
+			failed_capabilities.append(
+				"structure_ids=%s expected=%s"
+				% [str(_sorted_int_keys(structure_nodes)), str(expected_structure_ids)]
+			)
 		if not _all_structure_retail_visuals_loaded():
 			var structure_failures: Array[String] = []
 			for structure_id in simulation.structure_ids():
+				if int(simulation.structure(structure_id).get("team", -1)) == SimScript.CREEP_TEAM:
+					continue
 				var structure_node: RetailStructure = structure_nodes.get(structure_id)
 				if structure_node == null:
 					structure_failures.append("%d:missing-node" % structure_id)
@@ -1621,7 +1619,12 @@ func _playable_has_ranger() -> bool:
 	return false
 
 
-func _classify_faction_units(faction: String) -> void:
+func _classify_faction_units(
+	faction: String,
+	unit_runtimes_override: Dictionary = {},
+	structure_runtimes_override: Dictionary = {},
+	pack_index_override: Dictionary = {}
+) -> void:
 	## Roster composition for the selected faction: each converted playableUnit
 	## document is either fieldable (resolved simulation evidence, a supported
 	## category, a producer this faction slice loads) or excluded with the
@@ -1636,20 +1639,33 @@ func _classify_faction_units(faction: String) -> void:
 	if slug == FactionManifestScript.DEFAULT_FACTION:
 		# Mirror the manifest: Rohan allies may ship inside a Men pack, so Men
 		# scope includes Rohan documents whenever any are present.
-		var runtimes_for_scope: Dictionary = ContentDB.get_playable_unit_runtimes()
+		var runtimes_for_scope: Dictionary = (
+			unit_runtimes_override
+			if not unit_runtimes_override.is_empty()
+			else ContentDB.get_playable_unit_runtimes()
+		)
 		var has_rohan := false
 		for scope_id_value in runtimes_for_scope.keys():
 			if String(scope_id_value).to_lower().begins_with("rohan"):
 				has_rohan = true
 				break
 		if not has_rohan:
-			for scope_id_value in ContentDB.get_playable_structure_runtimes().keys():
+			var scope_structures := (
+				structure_runtimes_override
+				if not structure_runtimes_override.is_empty()
+				else ContentDB.get_playable_structure_runtimes()
+			)
+			for scope_id_value in scope_structures.keys():
 				if String(scope_id_value).to_lower().begins_with("rohan"):
 					has_rohan = true
 					break
 		if has_rohan and not prefixes.has("rohan"):
 			prefixes.append("rohan")
-	var structure_runtimes: Dictionary = ContentDB.get_playable_structure_runtimes()
+	var structure_runtimes: Dictionary = (
+		structure_runtimes_override
+		if not structure_runtimes_override.is_empty()
+		else ContentDB.get_playable_structure_runtimes()
+	)
 	var builder_candidates: Dictionary = {}
 	for structure_value in structure_runtimes.values():
 		var structure := structure_value as Dictionary
@@ -1672,9 +1688,9 @@ func _classify_faction_units(faction: String) -> void:
 	# same producer evidence.
 	var runtimes: Dictionary = FactionManifestScript.faction_scoped_unit_runtimes(
 		prefixes,
-		ContentDB.get_playable_unit_runtimes(),
+		unit_runtimes_override if not unit_runtimes_override.is_empty() else ContentDB.get_playable_unit_runtimes(),
 		structure_runtimes,
-		ContentDB.get_playable_unit_runtime_pack_index()
+		pack_index_override if not pack_index_override.is_empty() else ContentDB.get_playable_unit_runtime_pack_index()
 	)
 	var object_ids: Array[String] = []
 	for value in runtimes.keys():
@@ -2008,7 +2024,12 @@ func _resolve_slice_map_id() -> String:
 
 
 func _is_well_formed_slice_map_id(value: String) -> bool:
-	if value.length() < len("bfme2.map.a") or value.length() > 128 or not value.begins_with("bfme2.map."):
+	## Accept both BFME2 and RotWK cooked map identities. Edition prefixes are
+	## part of the id; they are not aliases of each other.
+	var has_bfme2 := value.begins_with("bfme2.map.")
+	var has_rotwk := value.begins_with("rotwk.map.")
+	var min_len := len("bfme2.map.a") if has_bfme2 else len("rotwk.map.a")
+	if value.length() < min_len or value.length() > 128 or not (has_bfme2 or has_rotwk):
 		return false
 	for index in range(value.length()):
 		var codepoint := value.unicode_at(index)
@@ -2017,7 +2038,7 @@ func _is_well_formed_slice_map_id(value: String) -> bool:
 	return not value.contains("..") and not value.ends_with(".") and not value.ends_with("-")
 
 
-func _resolve_slice_map_definition(resolved_map_id: String) -> Dictionary:
+func _resolve_slice_map_definition(resolved_map_id: String, registered_maps: Dictionary = {}) -> Dictionary:
 	## The default slice map is the selected faction pack's declared entry map;
 	## resolving it directly from that pack keeps the Fords boot byte-exact even
 	## when a supplemental map pack also registers the same map id. Other maps
@@ -2025,7 +2046,11 @@ func _resolve_slice_map_definition(resolved_map_id: String) -> Dictionary:
 	## catalog (the pack is not yet registered in selection.json).
 	if resolved_map_id == MAP_ID:
 		return _resolve_pack_entry_map_definition(selected_pack_root, resolved_map_id)
-	var registered := ContentDB.get_bundle_map(resolved_map_id)
+	var registered := (
+		registered_maps.get(resolved_map_id, {}) as Dictionary
+		if not registered_maps.is_empty()
+		else ContentDB.get_bundle_map(resolved_map_id)
+	)
 	if not registered.is_empty():
 		return registered
 	return _resolve_five_maps_catalog_definition(resolved_map_id)
@@ -2465,7 +2490,11 @@ func _spawn_structure(id: int) -> void:
 	# guest's Elven fortress as Elven). A team manifest without the kind
 	# records a provisional and keeps the local manifest's (wrong-model)
 	# fallback — fail closed, never a crash.
-	var structure_object_id := String((presentation_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
+	var structure_object_id := ""
+	if entity.has("castle_piece_of_fortress"):
+		structure_object_id = String(entity.get("object_id", ""))
+	else:
+		structure_object_id = String((presentation_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
 	if structure_object_id == "":
 		var local_fallback_id := String((faction_manifest.get("structure_object_ids", {}) as Dictionary).get(kind, ""))
 		if local_fallback_id != "" and String(presentation_manifest.get("faction", "")) != String(faction_manifest.get("faction", "")):
@@ -2476,11 +2505,11 @@ func _spawn_structure(id: int) -> void:
 		structure_object_id = String((_expansion_object_ids.get(kind, {}) as Dictionary).get("object_id", ""))
 	structure.configure(entity, structure_object_id, source_map_data.local_transform_scale)
 	var position := Vector2(entity["position"])
-	structure.position = Vector3(position.x, _presentation_height(position) - 0.35, position.y)
+	structure.position = Vector3(position.x, _presentation_height(position) - 0.35 + float(entity.get("elevation", 0.0)), position.y)
+	structure.rotation.y = -float(entity.get("facing_radians", 0.0))
 	add_child(structure)
 	_assign_geometry_light_layer(structure, OBJECT_LIGHT_LAYER)
 	structure_nodes[id] = structure
-
 
 func _on_structure_lifecycle_route_requested(request: Dictionary, structure: RetailStructure) -> void:
 	structure_lifecycle_route_sequence += 1
@@ -2539,6 +2568,27 @@ func _all_battalion_retail_visuals_loaded() -> bool:
 		):
 			return false
 	return true
+
+
+func _presentable_structure_ids() -> Array[int]:
+	var ids: Array[int] = []
+	for id in simulation.structure_ids():
+		if int(simulation.structure(id).get("team", -1)) != SimScript.CREEP_TEAM:
+			ids.append(id)
+	ids.sort()
+	return ids
+
+
+func _sorted_int_keys(values: Dictionary) -> Array[int]:
+	var ids: Array[int] = []
+	for key in values.keys():
+		ids.append(int(key))
+	ids.sort()
+	return ids
+
+
+func _structure_nodes_match_ids(expected_ids: Array[int]) -> bool:
+	return _sorted_int_keys(structure_nodes) == expected_ids
 
 
 func _all_structure_retail_visuals_loaded() -> bool:
@@ -2998,8 +3048,9 @@ func _report_ability_cast(unit_id: String, ability_id: String, result: Dictionar
 	if bool(result.get("ok", false)):
 		var affected := int(result.get("affected", 0))
 		var summoned: Array = result.get("summoned", [])
-		if not summoned.is_empty():
-			hud.set_feedback("%s summons %d unit%s." % [_ability_display_name(unit_id, ability_id), summoned.size(), "" if summoned.size() == 1 else "s"])
+		var summon_count := int(result.get("summon_count", summoned.size()))
+		if String(result.get("effect", "")) == "summon" or summon_count > 0:
+			hud.set_feedback("%s summons %d unit%s." % [_ability_display_name(unit_id, ability_id), summon_count, "" if summon_count == 1 else "s"])
 		else:
 			hud.set_feedback("%s affects %d." % [_ability_display_name(unit_id, ability_id), affected])
 	else:
@@ -3238,16 +3289,28 @@ func _sync_presentation() -> void:
 	if _profile_sync:
 		_profile_mark = Time.get_ticks_usec()
 	for id in simulation.entity_ids():
-		if int(simulation.entity(id).get("team", -1)) == SimScript.CREEP_TEAM:
+		var entity: Dictionary = simulation.entity(id)
+		if int(entity.get("team", -1)) == SimScript.CREEP_TEAM:
 			continue  # recorded provisional: creep guards have no battalion visual yet
+		if bool(entity.get("is_banner_carrier", false)):
+			# The authoritative carrier entity is presented by its owning horde's
+			# authored banner visual, not as a second synthetic battalion.
+			if battalion_nodes.has(id):
+				(battalion_nodes[id] as Node).queue_free()
+				battalion_nodes.erase(id)
+			continue
 		if not battalion_nodes.has(id):
 			_spawn_battalion(id, int(gameplay_rules.get("member_count", 15)))
-		var entity: Dictionary = simulation.entity(id)
 		var battalion: RetailBattalion = battalion_nodes[id]
 		var position := Vector2(entity["position"])
 		battalion.set_authoritative_position(Vector3(position.x, _presentation_height(position), position.y))
 		battalion.set_health(int(entity["health"]), int(entity["maximum_health"]))
 		battalion.set_experience_level(int(entity.get("level", 1)))
+		battalion.sync_banner_carrier(
+			bool(entity.get("banner_carrier_spawned", false)),
+			String(entity.get("banner_carrier_object_id", "")),
+			Vector2(entity.get("banner_carrier_offset_source", Vector2.ZERO))
+		)
 		battalion.set_production_exit_progress(float(entity.get("production_exit_progress", 1.0)))
 		battalion.set_selected(simulation.selected_ids.has(id))
 		var attack_target := _attack_target_node(entity)
@@ -3439,6 +3502,21 @@ func _member_attack_target_globals(entity: Dictionary) -> Array:
 	return result
 
 
+func hud_locked_units(production: Array, structure_kind: String, completed_upgrades: Array) -> Array[String]:
+	## The palantir's lock verdict for a producer's rows. It must be the sim's
+	## own gate — ALL-of list plus the authored ANY-of group (commandbutton.ini
+	## NeededUpgradeAny) — or the HUD offers train buttons queue_unit refuses.
+	var locked: Array[String] = []
+	for unit_type_value in production:
+		var unit_type := String(unit_type_value)
+		if simulation.hero_unavailable(local_team, unit_type):
+			locked.append(unit_type)
+			continue
+		if simulation.production_gate_unsatisfied(unit_type, structure_kind, completed_upgrades) != "":
+			locked.append(unit_type)
+	return locked
+
+
 func _refresh_hud() -> void:
 	if hud == null or simulation == null:
 		return
@@ -3471,16 +3549,7 @@ func _refresh_hud() -> void:
 			# Seconds for the queue button's live countdown (retail training timer).
 			queue_row["remaining_seconds"] = maxf(0.0, float(int(queue_row.get("duration_ticks", 0)) - int(queue_row.get("elapsed_ticks", 0))) * SimScript.TICK_SECONDS)
 		var completed_upgrades: Array = structure.get("completed_upgrades", [])
-		var locked_units: Array[String] = []
-		for unit_type_value in production:
-			var unit_type := String(unit_type_value)
-			if simulation.hero_unavailable(local_team, unit_type):
-				locked_units.append(unit_type)
-				continue
-			for required_upgrade_value in simulation.required_upgrades_for_unit(unit_type, String(structure.get("structure_kind", ""))):
-				if not completed_upgrades.has(String(required_upgrade_value)):
-					locked_units.append(unit_type)
-					break
+		var locked_units := hud_locked_units(production, String(structure.get("structure_kind", "")), completed_upgrades)
 		hud.set_production_state(
 			production,
 			can_train,
@@ -4293,7 +4362,10 @@ func _sync_expansion_pad_markers() -> void:
 		var pads := simulation.expansion_pad_states(fortress_id)
 		var markers: Array = _expansion_pad_markers.get(fortress_id, [])
 		while markers.size() < pads.size():
-			var marker := _make_pad_marker(String((pads[markers.size()] as Dictionary).get("pad_kind", "")))
+			var marker := _make_pad_marker(
+				fortress_id,
+				String((pads[markers.size()] as Dictionary).get("pad_kind", ""))
+			)
 			if marker == null:
 				break
 			add_child(marker)
@@ -4321,8 +4393,19 @@ func _sync_expansion_pad_markers() -> void:
 		_expansion_pad_markers[fortress_id] = markers
 
 
-func _make_pad_marker(pad_kind: String) -> Node3D:
-	var source_id := "MenFortressExpansionPadSide" if pad_kind == "side" else "MenFortressExpansionPadCorner"
+func _make_pad_marker(fortress_id: int, pad_kind: String) -> Node3D:
+	var fortress := simulation.structure(fortress_id)
+	var manifest := _presentation_manifest_for_team(int(fortress.get("team", -1)))
+	var composites := manifest.get("fortress_composite_object_ids", {}) as Dictionary
+	var role := "fortress-composite-side-pad" if pad_kind == "side" else "fortress-composite-corner-pad"
+	var source_id := String(composites.get(role, ""))
+	# Some retail factions author only one expansion plot visual. Reuse that
+	# faction's other proven plot role; never fall back to Men or fake geometry.
+	if source_id == "":
+		var alternate := "fortress-composite-corner-pad" if pad_kind == "side" else "fortress-composite-side-pad"
+		source_id = String(composites.get(alternate, ""))
+	if source_id == "":
+		return null
 	var definition := ContentDB.get_playable_structure_runtime(source_id)
 	if definition.is_empty():
 		return null
@@ -4560,6 +4643,50 @@ func _configure_simulation_expansions() -> void:
 		rules[kind] = rule
 	_expansion_object_ids = rules.duplicate(true)
 	simulation.configure_expansion_rules(rules)
+	# CastleBehavior BSE contracts from structure runtimes (fail-closed when absent).
+	var castle_by_source: Dictionary = {}
+	var all_structures: Dictionary = ContentDB.get_playable_structure_runtimes()
+	for object_id_value in all_structures.keys():
+		var object_id := String(object_id_value)
+		var document: Dictionary = all_structures[object_id_value] as Dictionary
+		if document.is_empty():
+			document = ContentDB.get_playable_structure_runtime(object_id)
+		var compiled: Dictionary = simulation._compiled_castle_behavior(document)
+		if compiled.is_empty():
+			var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+			if typeof(gameplay.get("castleBehavior")) == TYPE_DICTIONARY:
+				castle_by_source[object_id] = {"_error": "selected castleBehavior has an unresolved piece template or transform"}
+			continue
+		for piece_value in compiled.get("pieces", []) as Array:
+			_project_castle_piece_definition(piece_value as Dictionary)
+		castle_by_source[object_id] = compiled
+	simulation.configure_castle_behaviors(castle_by_source)
+
+
+func _project_castle_piece_definition(piece: Dictionary) -> void:
+	## Castle pieces are engine-spawned structure templates, so they are absent
+	## from the constructable-kind projection. Project their authored lifecycle
+	## directly; a missing document/visual stays absent instead of producing kit art.
+	var source_id := String(piece.get("source_object_id", ""))
+	var runtime_id := String(piece.get("object_id", ""))
+	if source_id == "" or runtime_id == "" or ContentDB.bundle_objects.has(runtime_id):
+		return
+	var document: Dictionary = ContentDB.get_playable_structure_runtime(source_id)
+	var registration := document.get("registration", {}) as Dictionary
+	var presentation := registration.get("presentation", {}) as Dictionary
+	var lifecycle := presentation.get("buildingLifecycle", {}) as Dictionary
+	if lifecycle.is_empty():
+		return
+	ContentDB.bundle_objects[runtime_id] = {
+		"id": runtime_id,
+		"kind": "structure",
+		"sourceObjectId": source_id,
+		"_pack_root": String(document.get("_pack_root", "")),
+		"presentation": {
+			"model": StructureScript._intact_visual_path(lifecycle),
+			"buildingLifecycle": lifecycle,
+		},
+	}
 
 
 func _install_map_scripts() -> void:
@@ -5607,6 +5734,8 @@ func reset_match() -> void:
 		return
 	_configure_simulation_spellbook()
 	simulation.setup(_match_configuration(), gameplay_rules)
+	# setup() clears castle/expansion configuration; re-apply pack contracts.
+	_configure_simulation_expansions()
 	# A fresh match starts unpaused with the spellbook closed (setup() also
 	# clears the orb clock-pause seam).
 	if hud != null and hud.has_method("close_powers_palette"):

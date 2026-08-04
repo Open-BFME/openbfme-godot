@@ -1270,6 +1270,13 @@ var _seed_structure_kinds: Array[String] = []
 var _structure_max_health: Dictionary = {}
 var _structure_build_rules: Dictionary = {}
 var _unit_prerequisites: Dictionary = {}
+## Optional ANY-of production gate per unit type: {unit_type: {producer_kind:
+## [upgrade_id, ...]}}. Authored by the button's `NeededUpgradeAny = Yes`
+## (commandbutton.ini:7513-7519); owning ANY ONE member satisfies the group,
+## while `_unit_prerequisites` stays the ALL-of set. Packs built before the
+## converter emitted `prerequisiteAnyOf` register no group at all, so their
+## gate keeps behaving exactly as it did (pure ALL-of).
+var _unit_prerequisite_any_groups: Dictionary = {}
 var _structure_upgrade_contracts: Dictionary = {}
 ## Doc-driven PLAYER research/economy bindings per structure kind (the
 ## compiled research and upgradeEffects blocks); stale packs keep them empty
@@ -1281,6 +1288,13 @@ var _compiled_research_kinds: Dictionary = {}
 ## Training). Eligibility always rides the compiled unit documents.
 var _unit_upgrade_commands: Dictionary = {}
 var _unit_level_upgrades: Dictionary = {}
+## Horde/member runtime id -> authored BannerCarriersAllowed contract.
+var _unit_banner_carriers: Dictionary = {}
+## Banner runtime object id (adapter slug) -> max(died, melee-free) respawn ticks.
+## Absent key means retail authored no DiedRespawnTime; never invent a timer.
+var _banner_respawn_ticks_by_object: Dictionary = {}
+## Structure source object id (e.g. MenFortress) -> castleBehavior pack contract.
+var _castle_behavior_by_source: Dictionary = {}
 var units_without_upgrade_commands: Array[String] = []
 var _next_dynamic_id: Dictionary = {PLAYER_TEAM: 10, ENEMY_TEAM: 110}
 var _next_dynamic_structure_id := 3000
@@ -1599,11 +1613,14 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	if not _configure_faction_manifest():
 		return
 	_unit_prerequisites.clear()
+	_unit_prerequisite_any_groups.clear()
 	_structure_upgrade_contracts.clear()
 	_structure_upgrade_effects.clear()
 	_compiled_research_kinds.clear()
 	_unit_upgrade_commands.clear()
 	_unit_level_upgrades.clear()
+	_unit_banner_carriers.clear()
+	_banner_respawn_ticks_by_object.clear()
 	units_without_upgrade_commands.clear()
 	_unit_experience_rules.clear()
 	_unit_module_contracts.clear()
@@ -1871,6 +1888,11 @@ func _compiled_weapon_upgrade_rules(document: Dictionary) -> Dictionary:
 						bonus.append(row)
 				effect["bonus_nuggets"] = bonus
 				effect["warhead_id"] = String(upgrade.get("warheadId", ""))
+			"production-legality":
+				# Compiler marker: WeaponSetUpgrade gates production legality
+				# without a damage delta. Eligible for the purchase surface;
+				# combat resolution treats it as a no-op effect.
+				effect["semantic"] = String(upgrade.get("semantic", ""))
 			_:
 				continue
 		effects[upgrade_id] = effect
@@ -1894,6 +1916,185 @@ func _compiled_level_up_rules(document: Dictionary) -> Dictionary:
 			"level_cap": int(row.get("levelCap", 2)),
 		}
 	return rules
+
+
+func _compiled_banner_carrier(document: Dictionary) -> Dictionary:
+	## Normalize the compiler's BannerCarriersAllowed contract. A malformed
+	## contract refuses registration; it never creates a placeholder flag.
+	var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+	var source: Variant = gameplay.get("bannerCarrier")
+	if typeof(source) != TYPE_DICTIONARY:
+		return {}
+	var contract := source as Dictionary
+	var allowed_value: Variant = contract.get("allowedObjectIds", [])
+	var positions_value: Variant = contract.get("positions", [])
+	var min_level_value: Variant = contract.get("minLevel")
+	if (
+		typeof(allowed_value) != TYPE_ARRAY
+		or typeof(positions_value) != TYPE_ARRAY
+		or typeof(min_level_value) not in [TYPE_INT, TYPE_FLOAT]
+		or int(min_level_value) < 0
+		or not is_equal_approx(float(min_level_value), float(int(min_level_value)))
+	):
+		return {}
+	var allowed: Array = allowed_value as Array
+	var positions: Array = positions_value as Array
+	if allowed.is_empty():
+		return {}
+	for value in allowed:
+		if String(value) == "":
+			return {}
+	var banner_document: Dictionary = {}
+	var db = _content_db_ref()
+	if db != null and db.has_method("get_playable_unit_runtime"):
+		banner_document = db.get_playable_unit_runtime(String(allowed[0]))
+	if banner_document.is_empty():
+		push_error("RetailSliceSim banner target '%s' has no converted playable-unit template" % String(allowed[0]))
+		return {}
+	var banner_simulation := ((banner_document.get("registration", {}) as Dictionary).get("simulation", {}) as Dictionary)
+	var resolved := banner_simulation.get("resolved", {}) as Dictionary
+	var member_health_value: Variant = resolved.get("memberHealth")
+	var banner_max_health := 0
+	if typeof(member_health_value) == TYPE_DICTIONARY:
+		banner_max_health = int((member_health_value as Dictionary).get("value", 0))
+	elif typeof(member_health_value) in [TYPE_INT, TYPE_FLOAT]:
+		banner_max_health = int(member_health_value)
+	if banner_max_health <= 0:
+		push_error("RetailSliceSim banner target '%s' has no authored member health" % String(allowed[0]))
+		return {}
+	var respawn_ticks := _compiled_banner_respawn_ticks(banner_document)
+	var offset := Vector2.ZERO
+	if not positions.is_empty():
+		if typeof(positions[0]) != TYPE_DICTIONARY:
+			return {}
+		var position: Dictionary = positions[0] as Dictionary
+		if typeof(position.get("x")) not in [TYPE_INT, TYPE_FLOAT] or typeof(position.get("y")) not in [TYPE_INT, TYPE_FLOAT]:
+			return {}
+		offset = Vector2(float(position["x"]), float(position["y"]))
+	return {
+		"object_id": PlayableUnitAdapter.runtime_object_id(String(allowed[0])),
+		"source_banner_object_id": String(allowed[0]),
+		"min_level": int(min_level_value),
+		"offset_source": offset,
+		"destroy_horde_on_death": bool(contract.get("destroyHordeOnBannerDeath", false)),
+		"banner_max_health": banner_max_health,
+		"respawn_ticks": respawn_ticks,
+	}
+
+
+func _compiled_banner_respawn_ticks(document: Dictionary) -> int:
+	## BannerCarrierUpdate DiedRespawnTime / MeleeFreeBannerReSpawnTime (ms).
+	## Returns -1 when retail authored no death respawn timer.
+	var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+	var update: Variant = gameplay.get("bannerCarrierUpdate")
+	if typeof(update) != TYPE_DICTIONARY:
+		return -1
+	var contract := update as Dictionary
+	var died: Variant = contract.get("diedRespawnTime")
+	if typeof(died) != TYPE_DICTIONARY:
+		return -1
+	var died_ms := int((died as Dictionary).get("milliseconds", -1))
+	if died_ms < 0:
+		return -1
+	var melee_ms := 0
+	var melee: Variant = contract.get("meleeFreeBannerRespawnTime")
+	if typeof(melee) == TYPE_DICTIONARY:
+		melee_ms = maxi(0, int((melee as Dictionary).get("milliseconds", 0)))
+	var delay_ms := maxi(died_ms, melee_ms)
+	# Match C# PackTemplateLoader: ceil ms -> ticks at TICK_SECONDS.
+	return maxi(0, int(ceili(float(delay_ms) / (TICK_SECONDS * 1000.0))))
+
+
+func _compiled_castle_behavior(document: Dictionary) -> Dictionary:
+	## Fail-closed copy of pack gameplay.castleBehavior (BSE pieces).
+	var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+	var source: Variant = gameplay.get("castleBehavior")
+	if typeof(source) != TYPE_DICTIONARY:
+		return {}
+	var contract := source as Dictionary
+	var pieces_value: Variant = contract.get("pieces")
+	if typeof(pieces_value) != TYPE_ARRAY:
+		return {}
+	var pieces := pieces_value as Array
+	if pieces.is_empty() or pieces.size() > 64:
+		return {}
+	var normalized: Array = []
+	for index in pieces.size():
+		var row_value: Variant = pieces[index]
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return {}
+		var row := row_value as Dictionary
+		if int(row.get("index", -1)) != index:
+			return {}
+		var object_id := String(row.get("objectId", ""))
+		var offset_value: Variant = row.get("offset")
+		if object_id == "" or typeof(offset_value) != TYPE_ARRAY or (offset_value as Array).size() != 3:
+			return {}
+		var offset_arr := offset_value as Array
+		if (
+			typeof(offset_arr[0]) not in [TYPE_INT, TYPE_FLOAT]
+			or typeof(offset_arr[1]) not in [TYPE_INT, TYPE_FLOAT]
+			or typeof(offset_arr[2]) not in [TYPE_INT, TYPE_FLOAT]
+		):
+			return {}
+		var angle := float(row.get("angleRadians", 0.0))
+		if typeof(row.get("angleRadians")) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(angle):
+			return {}
+		var target_document: Dictionary = {}
+		var db = _content_db_ref()
+		if db != null and db.has_method("get_playable_structure_runtime"):
+			target_document = db.get_playable_structure_runtime(object_id)
+		if target_document.is_empty():
+			push_error("RetailSliceSim CastleBehavior target '%s' has no converted structure template" % object_id)
+			return {}
+		var target_gameplay := ((target_document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+		var target_health := int((((target_gameplay.get("health", {}) as Dictionary).get("primary", {}) as Dictionary).get("maxHealth", {}) as Dictionary).get("value", 0))
+		if target_health <= 0:
+			push_error("RetailSliceSim CastleBehavior target '%s' has no authored maximum health" % object_id)
+			return {}
+		normalized.append({
+			"index": index,
+			"source_object_id": object_id,
+			"object_id": PlayableUnitAdapter._runtime_id(object_id),
+			"offset_source": Vector2(float(offset_arr[0]), float(offset_arr[1])),
+			"elevation_source": float(offset_arr[2]),
+			"angle_radians": angle,
+			"maximum_health": target_health,
+			"priority": int(row.get("priority", 0)),
+			"phase": int(row.get("phase", 0)),
+		})
+	return {
+		"faction": String(contract.get("faction", "")),
+		"castle_template_token": String(contract.get("castleTemplateToken", "")),
+		"pieces": normalized,
+	}
+
+
+func configure_castle_behaviors(by_source_object_id: Dictionary) -> void:
+	## Vertical-slice wiring: source structure object id -> castleBehavior contract.
+	_castle_behavior_by_source = by_source_object_id.duplicate(true)
+	# setup() has already seeded legacy expansion slots on first boot. Replace
+	# them with the selected pack's BSE contract before the first gameplay tick.
+	for structure_id in structure_ids():
+		var row: Dictionary = structures[structure_id]
+		if _castle_behavior_for_structure(row).is_empty():
+			continue
+		if String(row.get("structure_kind", "")) == "fortress":
+			expansion_pads.erase(structure_id)
+		_unpack_castle_behavior_for_structure(structure_id)
+		if String(row.get("structure_kind", "")) == "fortress":
+			_seed_expansion_pads_for(structure_id)
+
+
+func _retail_source_to_sim_offset(offset_source: Vector2) -> Vector2:
+	## Banner formation offsets and BSE piece XY are retail source units.
+	## Prefer the map transform scale; fall back to 0.1 (common SAGE->local).
+	var scale := float(_rules.get("source_map_transform_scale", 0.0))
+	if scale <= 0.0:
+		scale = float(_rules.get("source_unit_scale", 0.1))
+	if scale <= 0.0:
+		scale = 0.1
+	return offset_source * scale
 
 
 func _compiled_unit_upgrade_commands(document: Dictionary) -> Array:
@@ -2167,25 +2368,65 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		if not level_up_rules.is_empty():
 			for armor_id in armor_id_space:
 				_unit_level_upgrades[armor_id] = level_up_rules
+		var banner_rule := _compiled_banner_carrier(document_value as Dictionary)
+		var document_gameplay := (((document_value as Dictionary).get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+		if typeof(document_gameplay.get("bannerCarrier")) == TYPE_DICTIONARY and banner_rule.is_empty():
+			configuration_error = "Playable-unit runtime '%s' has an unresolved banner carrier target" % object_id
+			return
+		if not banner_rule.is_empty():
+			for armor_id in armor_id_space:
+				_unit_banner_carriers[armor_id] = banner_rule
+		# Banner unit documents carry BannerCarrierUpdate respawn timers.
+		var respawn_ticks := _compiled_banner_respawn_ticks(document_value as Dictionary)
+		if respawn_ticks >= 0:
+			var banner_runtime_id := PlayableUnitAdapter.runtime_unit_id(document_value as Dictionary)
+			var banner_member_id := PlayableUnitAdapter.runtime_member_id(document_value as Dictionary)
+			if banner_runtime_id != "":
+				_banner_respawn_ticks_by_object[banner_runtime_id] = respawn_ticks
+			if banner_member_id != "" and banner_member_id != banner_runtime_id:
+				_banner_respawn_ticks_by_object[banner_member_id] = respawn_ticks
+			# Also index the retail source name and adapter slug used by horde contracts.
+			var source_name := String((document_value as Dictionary).get("objectId", ""))
+			if source_name != "":
+				_banner_respawn_ticks_by_object[PlayableUnitAdapter.runtime_object_id(source_name)] = respawn_ticks
+				_banner_respawn_ticks_by_object[source_name] = respawn_ticks
 		var purchase_rows := _compiled_unit_upgrade_commands(document_value as Dictionary)
 		if purchase_rows.is_empty():
 			if not units_without_upgrade_commands.has(armor_member_id):
 				units_without_upgrade_commands.append(armor_member_id)
 		else:
+			# Keep the unit fieldable when a purchase row has no compiled effect
+			# yet (thrall composition swaps; forged-blade WeaponSetUpgrade not
+			# emitted into combat.upgrades). Fail-closed used to refuse the
+			# entire playable_unit_runtimes registry — one incomplete purchase
+			# killed match configure for the whole faction. Surface only the
+			# rows that already have weapon/armor/level effects; record gaps.
 			var armor_upgrade_ids: Dictionary = (armor_rule.get("upgrades", {}) as Dictionary)
+			var weapon_upgrade_ids: Dictionary = _unit_weapon_upgrades.get(armor_member_id, {}) as Dictionary
+			var level_upgrade_ids: Dictionary = _unit_level_upgrades.get(armor_member_id, {}) as Dictionary
+			var accepted_purchase_rows: Array = []
 			for row_value in purchase_rows:
 				var purchase := row_value as Dictionary
 				var purchase_id := String(purchase.get("upgrade_id", ""))
+				if purchase_id == "":
+					continue
 				if (
-					not _unit_weapon_upgrades.get(armor_member_id, {}).has(purchase_id)
-					and not armor_upgrade_ids.has(purchase_id)
-					and not _unit_level_upgrades.get(armor_member_id, {}).has(purchase_id)
+					weapon_upgrade_ids.has(purchase_id)
+					or armor_upgrade_ids.has(purchase_id)
+					or level_upgrade_ids.has(purchase_id)
 				):
-					configuration_error = "Playable-unit runtime '%s' authors purchase '%s' with no compiled weapon/armor/level effect" % [object_id, purchase_id]
-					return
+					accepted_purchase_rows.append(purchase)
+				else:
+					print(
+						"[RetailSliceSim] unit '%s' purchase '%s' has no compiled weapon/armor/level effect; deferred from purchase surface"
+						% [object_id, purchase_id]
+					)
 			var purchase_unit_type := String(PlayableUnitAdapter.simulation_rule(document_value as Dictionary).get("unit_type", ""))
-			if purchase_unit_type != "":
-				_unit_upgrade_commands[purchase_unit_type] = purchase_rows
+			if purchase_unit_type != "" and not accepted_purchase_rows.is_empty():
+				_unit_upgrade_commands[purchase_unit_type] = accepted_purchase_rows
+			elif purchase_unit_type != "" and accepted_purchase_rows.is_empty() and not purchase_rows.is_empty():
+				if not units_without_upgrade_commands.has(armor_member_id):
+					units_without_upgrade_commands.append(armor_member_id)
 		var simulation := PlayableUnitAdapter.simulation_rule(document_value as Dictionary)
 		if simulation.is_empty():
 			# The faction builder legitimately lacks combat evidence and costs
@@ -2286,21 +2527,30 @@ func _configure_playable_unit_runtime_contracts() -> void:
 		if not _production_unit_order.has(unit_type):
 			_production_unit_order.append(unit_type)
 		var prerequisites_by_producer: Dictionary = {}
+		var any_groups_by_producer: Dictionary = {}
 		for route in resolved_producers:
 			var producer_kind := String(route["producer_kind"])
 			var candidate: Array = (route.get("prerequisites", []) as Array).duplicate()
+			var candidate_any: Array = (route.get("prerequisites_any_of", []) as Array).duplicate()
 			if not prerequisites_by_producer.has(producer_kind):
 				prerequisites_by_producer[producer_kind] = candidate
+				any_groups_by_producer[producer_kind] = candidate_any
 				continue
 			# One authored route per producer level can list the same button with
 			# different prerequisites (base/L2/L3 command sets). The unit is
 			# trainable as soon as its cheapest authored variant's prerequisites
 			# hold, so the effective requirement is the minimum-cardinality set;
-			# ties keep deterministic document order.
+			# ties keep deterministic document order. An ANY-of group counts as
+			# one requirement, whatever its member count.
 			var existing: Array = prerequisites_by_producer[producer_kind]
-			if candidate.size() < existing.size():
+			var existing_any: Array = any_groups_by_producer.get(producer_kind, []) as Array
+			var candidate_size := candidate.size() + (1 if not candidate_any.is_empty() else 0)
+			var existing_size := existing.size() + (1 if not existing_any.is_empty() else 0)
+			if candidate_size < existing_size:
 				prerequisites_by_producer[producer_kind] = candidate
+				any_groups_by_producer[producer_kind] = candidate_any
 		_unit_prerequisites[unit_type] = prerequisites_by_producer
+		_unit_prerequisite_any_groups[unit_type] = any_groups_by_producer
 		# Hero SPECIAL_POWER abilities (converted doc rows) register per unit
 		# type; heroes without an abilities array simply carry none.
 		var ability_rows := PlayableUnitAdapter.ability_rules(document_value as Dictionary)
@@ -2363,12 +2613,15 @@ func _register_builder_production(document: Dictionary, configured_unit_rules: D
 	if not _production_unit_order.has(unit_type):
 		_production_unit_order.append(unit_type)
 	var prerequisites_by_producer: Dictionary = {}
+	var any_groups_by_producer: Dictionary = {}
 	for route_value in resolved_producers:
 		var route := route_value as Dictionary
 		var producer_kind := String(route["producer_kind"])
 		if not prerequisites_by_producer.has(producer_kind):
 			prerequisites_by_producer[producer_kind] = (route.get("prerequisites", []) as Array).duplicate()
+			any_groups_by_producer[producer_kind] = (route.get("prerequisites_any_of", []) as Array).duplicate()
 	_unit_prerequisites[unit_type] = prerequisites_by_producer
+	_unit_prerequisite_any_groups[unit_type] = any_groups_by_producer
 	return true
 
 
@@ -2971,11 +3224,17 @@ func _initialize_base_loop() -> void:
 			}
 			if bool((team_build_rules.get(kind, {}) as Dictionary).get("highlander_body", false)):
 				structures[structure_id]["highlander_body"] = true
+			if kind == "fortress":
+				var fortress_sources: Dictionary = structure_source_object_ids_for_team(team)
+				var fortress_aliases: Array = fortress_sources.get("fortress", []) as Array
+				if not fortress_aliases.is_empty():
+					structures[structure_id]["source_object_id"] = String(fortress_aliases[0])
 			_apply_structure_create_grants(
 				structures[structure_id] as Dictionary, true, true
 			)
 			_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
 			_initialize_structure_auto_deposit(structures[structure_id] as Dictionary)
+			_unpack_castle_behavior_for_structure(structure_id)
 	_seed_all_expansion_pads()
 	if build_plots_only:
 		_seed_all_build_plots()
@@ -3099,13 +3358,18 @@ func _add_battalion(
 	display_name: String,
 	object_id: String = SOLDIER_OBJECT_ID,
 	unit_type: String = SOLDIER_HORDE_ID,
-	command_points: int = -1
+	command_points: int = -1,
+	unit_rule_override: Dictionary = {}
 ) -> void:
 	var unit_rules_value: Variant = _rules.get("unit_rules", {})
 	var unit_rule: Dictionary = (
-		(unit_rules_value as Dictionary).get(object_id, {}) as Dictionary
-		if typeof(unit_rules_value) == TYPE_DICTIONARY
-		else {}
+		unit_rule_override
+		if not unit_rule_override.is_empty()
+		else (
+			(unit_rules_value as Dictionary).get(object_id, {}) as Dictionary
+			if typeof(unit_rules_value) == TYPE_DICTIONARY
+			else {}
+		)
 	)
 	if unit_rule.is_empty():
 		push_error("RetailSliceSim missing selected-pack unit rule for %s" % object_id)
@@ -3290,6 +3554,11 @@ func _add_battalion(
 		entities[id]["destroy_die"] = Array(
 			unit_rule["destroy_die"]
 		).duplicate(true)
+	if unit_rule.has("keep_object_die"):
+		entities[id]["keep_object_die"] = bool(unit_rule.get("keep_object_die", false))
+		entities[id]["keep_object_die_policy"] = (unit_rule.get("keep_object_die_policy", {}) as Dictionary).duplicate(true)
+	if unit_rule.has("summon_auras"):
+		entities[id]["summon_auras"] = Array(unit_rule["summon_auras"]).duplicate(true)
 	# Optional AIUpdateInterface field slice. Keep the keys absent unless the
 	# compiler authored the complete contract, so legacy/missing-field entity
 	# snapshots and hashes remain byte-identical.
@@ -3342,6 +3611,7 @@ func _add_battalion(
 				unit_rule.get("creation_experience_effects", {}) as Dictionary
 			)
 	_record_hero_rank_attainment(entities[id])
+	_refresh_banner_carrier_state(entities[id])
 
 
 func _recorded_damage_type(object_id: String, unit_rule: Dictionary) -> String:
@@ -3512,6 +3782,47 @@ func required_upgrades_for_unit(unit_type: String, producer_kind: String = "") -
 	if typeof(value) == TYPE_DICTIONARY:
 		return Array((value as Dictionary).get(producer_kind, [])).duplicate()
 	return [String(value)] if String(value) != "" else []
+
+
+func required_upgrade_any_group_for_unit(unit_type: String, producer_kind: String = "") -> Array:
+	## The authored ANY-of production gate: owning ANY ONE of these upgrades
+	## satisfies it. Empty for every unit whose button never set
+	## `NeededUpgradeAny` and for every pack built before the converter emitted
+	## the field, which leaves the gate pure ALL-of exactly as before.
+	var value: Variant = _unit_prerequisite_any_groups.get(unit_type, null)
+	if typeof(value) != TYPE_DICTIONARY:
+		return []
+	return Array((value as Dictionary).get(producer_kind, [])).duplicate()
+
+
+func unlock_upgrades_for_unit(unit_type: String, producer_kind: String = "") -> Array:
+	## Every upgrade id that participates in this unit's production gate, ALL-of
+	## and ANY-of together. For discovery/UI listing only -- it says nothing
+	## about how the gate combines them; use `production_gate_unsatisfied` to
+	## evaluate ownership.
+	var result: Array = required_upgrades_for_unit(unit_type, producer_kind)
+	for value in required_upgrade_any_group_for_unit(unit_type, producer_kind):
+		if not result.has(value):
+			result.append(value)
+	return result
+
+
+func production_gate_unsatisfied(
+	unit_type: String, producer_kind: String, completed_upgrades: Array
+) -> String:
+	## Returns the upgrade id the gate is still waiting on, or "" when it holds.
+	## The ALL-of set must be owned entirely; the ANY-of group (when authored)
+	## needs any single member. An absent group is never a gate.
+	for required_value in required_upgrades_for_unit(unit_type, producer_kind):
+		if not completed_upgrades.has(String(required_value)):
+			return String(required_value)
+	var any_group := required_upgrade_any_group_for_unit(unit_type, producer_kind)
+	if any_group.is_empty():
+		return ""
+	for candidate_value in any_group:
+		if completed_upgrades.has(String(candidate_value)):
+			return ""
+	return String(any_group[0])
 
 
 # Retail armory tech tree: upgrade.ini:1555-1593 (Upgrade_GondorForgedBlades,
@@ -4108,6 +4419,7 @@ func _step_battalion_upgrades() -> void:
 				int(row.get("level", 1)) + int(level_rule.get("levels_to_gain", 1))
 			)
 			row["level"] = next_level
+			_refresh_banner_carrier_state(row)
 			var applied: Dictionary = row.get("applied_upgrades", {})
 			applied[upgrade_id] = tick_index
 			row["applied_upgrades"] = applied
@@ -4251,6 +4563,11 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 			_spellbook_error = "spellbook CommandPointsUpgrade is malformed"
 			return false
 		var command_points_upgrade := command_points_upgrade_value as Dictionary
+		# Retail authors one CommandPointsUpgrade on the shared spellbook system
+		# object (Marketplace Grand Harvest → +100 CP). Every faction's compiled
+		# spellbook-runtime carries that same evidence. JSON may deliver the
+		# numeric fields as int or float — accept exact retail identity with
+		# integral-float tolerance only (not arbitrary amounts/objects).
 		var command_points_upgrade_keys := [
 			"triggeredBy", "commandPoints", "requiredObject",
 			"module", "sourceIni", "line",
@@ -4262,16 +4579,25 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 			if not command_points_upgrade.has(key):
 				_spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
 				return false
+		var command_points_value: Variant = command_points_upgrade.get("commandPoints")
+		var line_value: Variant = command_points_upgrade.get("line")
+		var command_points_ok := (
+			typeof(command_points_value) in [TYPE_INT, TYPE_FLOAT]
+			and is_equal_approx(float(command_points_value), 100.0)
+		)
+		var line_ok := (
+			typeof(line_value) in [TYPE_INT, TYPE_FLOAT]
+			and is_equal_approx(float(line_value), float(int(line_value)))
+			and int(line_value) > 0
+		)
 		if (
 			String(command_points_upgrade.get("triggeredBy", "")) != "Upgrade_MarketplaceUpgradeGrandHarvest"
-			or typeof(command_points_upgrade.get("commandPoints")) != TYPE_INT
-			or int(command_points_upgrade.get("commandPoints", 0)) != 100
+			or not command_points_ok
 			or String(command_points_upgrade.get("requiredObject", "")) != "NONE +GondorMarketPlace"
 			or String(command_points_upgrade.get("module", "")) != "CommandPointsUpgrade"
 			or typeof(command_points_upgrade.get("sourceIni")) != TYPE_STRING
 			or String(command_points_upgrade.get("sourceIni", "")).strip_edges() == ""
-			or typeof(command_points_upgrade.get("line")) != TYPE_INT
-			or int(command_points_upgrade.get("line", 0)) <= 0
+			or not line_ok
 		):
 			_spellbook_error = "spellbook CommandPointsUpgrade is unsupported"
 			return false
@@ -4536,6 +4862,7 @@ func _reset_spellbook_match_state() -> void:
 	_pending_power_effects.clear()
 	_active_groves.clear()
 	_summon_despawn_ticks.clear()
+	_summon_aura_source_ids.clear()
 
 
 ## Timed spellbook effect state (volley strikes, summon hatches, groves).
@@ -4543,6 +4870,10 @@ var _pending_power_effects: Array[Dictionary] = []
 var _active_groves: Array[Dictionary] = []
 ## entity_id → tick the summoned battalion fades (authored summon lifetime).
 var _summon_despawn_ticks: Dictionary = {}
+## entity_id -> true for live summoned battalions that carry converted auras.
+## This is intentionally independent from LifetimeUpdate: an aura summon may
+## be lifetime-less and must still refresh until the shared death boundary.
+var _summon_aura_source_ids: Dictionary = {}
 
 
 func _spellbook_effect_support(power_row: Dictionary, fields: Array, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
@@ -4585,28 +4916,74 @@ func _spellbook_effect_support(power_row: Dictionary, fields: Array, references:
 			var modifier_id := String(field_values.get("AttributeModifier", ""))
 			if modifier_id == "" or not modifier_leaves.has(modifier_id):
 				return {"ok": false, "reason": "attribute modifier '%s' is not a converted leaf" % modifier_id}
+			# Retail AttributeModifier leaves author repeated Modifier lines
+			# (DAMAGE_MULT, ARMOR, PRODUCTION, …). Collapsing by key kept only
+			# the last row and falsely rejected powers that still carried a
+			# resolved DAMAGE_MULT earlier in the list.
 			var modifier_fields: Dictionary = {}
+			var modifier_rows: Array = []
 			for field_value in Array((modifier_leaves[modifier_id] as Dictionary).get("fields", [])):
-				if typeof(field_value) == TYPE_DICTIONARY:
-					modifier_fields[String((field_value as Dictionary).get("key", ""))] = String((field_value as Dictionary).get("value", ""))
-			var modifier_text := String(modifier_fields.get("Modifier", ""))
+				if typeof(field_value) != TYPE_DICTIONARY:
+					continue
+				var field_row := field_value as Dictionary
+				var field_key := String(field_row.get("key", ""))
+				var field_text := String(field_row.get("value", ""))
+				if field_key == "Modifier":
+					modifier_rows.append(field_text)
+				elif field_key != "":
+					modifier_fields[field_key] = field_text
 			var damage_mult := 0.0
-			var modifier_parts := modifier_text.split(" ", false)
-			if modifier_parts.size() == 2 and modifier_parts[0] == "DAMAGE_MULT" and modifier_parts[1].ends_with("%"):
-				damage_mult = float(modifier_parts[1].trim_suffix("%")) / 100.0
+			var armor_mult := 0.0
+			var production_mult := 0.0
+			var invulnerable := false
+			for modifier_text_value in modifier_rows:
+				var modifier_parts := String(modifier_text_value).split(" ", false)
+				if modifier_parts.size() < 1:
+					continue
+				var kind := String(modifier_parts[0])
+				if kind == "DAMAGE_MULT" and modifier_parts.size() == 2 and modifier_parts[1].ends_with("%"):
+					damage_mult = float(modifier_parts[1].trim_suffix("%")) / 100.0
+				elif kind == "ARMOR" and modifier_parts.size() == 2 and modifier_parts[1].ends_with("%"):
+					armor_mult = float(modifier_parts[1].trim_suffix("%")) / 100.0
+				elif kind == "PRODUCTION" and modifier_parts.size() == 2 and modifier_parts[1].ends_with("%"):
+					production_mult = float(modifier_parts[1].trim_suffix("%")) / 100.0
+				elif kind == "INVULNERABLE":
+					invulnerable = true
 			var duration_ms := _spellbook_field_float(modifier_fields, "Duration", 0.0)
+			# Duration may be an unresolved define name on the leaf; power-level
+			# field_resolved already carries numeric AttributeModifierRange.
+			if duration_ms <= 0.0 and modifier_fields.has("Duration"):
+				var duration_text := String(modifier_fields.get("Duration", ""))
+				# Common retail define pattern: NAME_EFFECT_DURATION — resolve via
+				# power field table when the leaf only stores the define token.
+				if duration_text != "" and field_resolved.has(duration_text):
+					duration_ms = float(field_resolved.get(duration_text, 0.0))
 			var range_source := _spellbook_field_float(field_values, "AttributeModifierRange", 0.0)
-			if damage_mult <= 0.0 or duration_ms <= 0.0 or range_source <= 0.0:
+			if range_source <= 0.0 and field_resolved.has("AttributeModifierRange"):
+				range_source = float(field_resolved.get("AttributeModifierRange", 0.0))
+			var has_effect := damage_mult > 0.0 or armor_mult > 0.0 or production_mult > 0.0 or invulnerable
+			# Economy PRODUCTION auras (Industry / Dwarven Riches) are permanent
+			# while the model condition holds — no Duration row. Combat auras
+			# require a positive duration.
+			var duration_ok := duration_ms > 0.0 or production_mult > 0.0
+			if not has_effect or not duration_ok or range_source <= 0.0:
 				return {"ok": false, "reason": "attribute modifier leaf lacks a resolved damage mult, duration, or range"}
+			var duration_ticks := 0
+			if duration_ms > 0.0:
+				duration_ticks = maxi(1, roundi(duration_ms / 1000.0 / TICK_SECONDS))
 			return {"ok": true, "effect": {
 				"kind": "attribute_modifier",
-				"damage_mult": damage_mult,
-				"duration_ticks": maxi(1, roundi(duration_ms / 1000.0 / TICK_SECONDS)),
+				"damage_mult": damage_mult if damage_mult > 0.0 else 1.0,
+				"armor_mult": armor_mult if armor_mult > 0.0 else 1.0,
+				"production_mult": production_mult if production_mult > 0.0 else 1.0,
+				"invulnerable": invulnerable,
+				"duration_ticks": duration_ticks,
+				"permanent": duration_ticks == 0 and production_mult > 0.0,
 				"range_source": range_source,
 				"affects": String(field_values.get("AttributeModifierAffects", "")),
 			}}
 		"OCLSpecialPower":
-			return _spellbook_ocl_support(power_row, references, object_leaves, ocl_leaves, weapon_leaves)
+			return _spellbook_ocl_support(power_row, references, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves)
 		"ElvenWoodSpecialPower":
 			return _spellbook_grove_support(field_values, field_resolved, references, modifier_leaves, object_leaves, ocl_leaves)
 		"CloudBreakSpecialPower":
@@ -4622,7 +4999,7 @@ func _spellbook_field_float(fields: Dictionary, key: String, fallback: float) ->
 	return float(raw)
 
 
-func _spellbook_ocl_support(power_row: Dictionary, references: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
+func _spellbook_ocl_support(power_row: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
 	## OCL powers dispatch on the spawned objects' converted evidence:
 	## fire-weapon receptacles (volley/quake), summon eggs, or structures.
 	var ocl_ids: Array = references.get("objectCreationLists", []) as Array
@@ -4634,7 +5011,9 @@ func _spellbook_ocl_support(power_row: Dictionary, references: Dictionary, objec
 		return {"ok": false, "reason": "object-creation list '%s' is not a converted leaf" % ocl_id}
 	var spawns: Array = []
 	var missing: Array = []
-	for create_value in Array(ocl.get("createObjects", [])):
+	var creates: Array = ocl.get("createObjects", []) as Array
+	for create_index in range(creates.size()):
+		var create_value: Variant = creates[create_index]
 		if typeof(create_value) != TYPE_DICTIONARY:
 			continue
 		var create := create_value as Dictionary
@@ -4644,7 +5023,7 @@ func _spellbook_ocl_support(power_row: Dictionary, references: Dictionary, objec
 			if leaf.is_empty():
 				missing.append(object_name)
 			else:
-				spawns.append({"create": create, "leaf": leaf})
+				spawns.append({"create": create, "create_index": create_index, "leaf": leaf})
 	if not missing.is_empty():
 		return {"ok": false, "reason": "spawned object(s) %s are not converted leaves" % ", ".join(missing)}
 	if spawns.is_empty():
@@ -4652,12 +5031,55 @@ func _spellbook_ocl_support(power_row: Dictionary, references: Dictionary, objec
 	var first_leaf: Dictionary = (spawns[0] as Dictionary)["leaf"]
 	if not Array(first_leaf.get("fireWeapons", [])).is_empty():
 		return _spellbook_fire_weapon_support(spawns, weapon_leaves)
-	if typeof(first_leaf.get("hatch", null)) == TYPE_DICTIONARY:
-		return _spellbook_summon_support(spawns, object_leaves, ocl_leaves, weapon_leaves)
+	for spawn_value in spawns:
+		var hatch_leaf: Dictionary = (spawn_value as Dictionary).get("leaf", {}) as Dictionary
+		if typeof(hatch_leaf.get("hatch", null)) == TYPE_DICTIONARY:
+			var summon_verdict := _spellbook_summon_support(spawns, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves)
+			if bool(summon_verdict.get("ok", false)):
+				return summon_verdict
+			var preview := _spellbook_summon_literal_preview(spawns, object_leaves, ocl_leaves)
+			if bool(preview.get("ok", false)):
+				summon_verdict["effect"] = preview.get("effect", {})
+			return summon_verdict
 	var body_kinds: Array = first_leaf.get("bodyKinds", []) as Array
 	if body_kinds.has("StructureBody"):
 		return _spellbook_structure_summon_support(spawns[0], weapon_leaves)
-	return {"ok": false, "reason": "spawned object '%s' carries no fire-weapon, hatch, or structure evidence" % String(first_leaf.get("id", ""))}
+	# Direct summon OCLs (Ents, Eagles, Crebain/Cave Bats) create their live
+	# units without an egg. Dragon Strike is identified by the spawned leaf's
+	# authored-but-unconverted StrafeAreaUpdate, never by an unrelated OCL flag.
+	for spawn_value in spawns:
+		var leaf: Dictionary = (spawn_value as Dictionary).get("leaf", {}) as Dictionary
+		if Array(leaf.get("unconvertedBehaviors", [])).has("StrafeAreaUpdate"):
+			var preview := _spellbook_direct_summon_support(spawns, modifier_leaves, object_leaves, weapon_leaves)
+			var verdict := {"ok": false, "reason": "spawned object '%s' requires StrafeAreaUpdate attack-run runtime" % String(leaf.get("id", ""))}
+			if bool(preview.get("ok", false)):
+				verdict["effect"] = preview.get("effect", {})
+			return verdict
+	# A direct summoned unit may author a SlowDeath corpse-effect OCL. Only an
+	# actual egg is blocked here: its unconverted SlowDeath OCL creates the live
+	# summon payload. Scan every leaf so a later egg cannot evade the gate.
+	for spawn_value in spawns:
+		var leaf: Dictionary = (spawn_value as Dictionary).get("leaf", {}) as Dictionary
+		if _spellbook_has_unconverted_hatch_payload(leaf, object_leaves, ocl_leaves):
+			return {"ok": false, "reason": "spawned object '%s' has an unconverted SlowDeathBehavior hatch OCL" % String(leaf.get("id", ""))}
+	return _spellbook_direct_summon_support(spawns, modifier_leaves, object_leaves, weapon_leaves)
+
+
+func _spellbook_has_unconverted_hatch_payload(leaf: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary) -> bool:
+	if not Array(leaf.get("unconvertedBehaviors", [])).has("SlowDeathBehavior"):
+		return false
+	for ocl_id_value in Array(leaf.get("unconvertedSlowDeathOcls", [])):
+		var ocl: Dictionary = ocl_leaves.get(String(ocl_id_value), {}) as Dictionary
+		for create_value in Array(ocl.get("createObjects", [])):
+			if typeof(create_value) != TYPE_DICTIONARY:
+				continue
+			for object_id_value in Array((create_value as Dictionary).get("objects", [])):
+				var payload: Dictionary = object_leaves.get(String(object_id_value), {}) as Dictionary
+				if payload.is_empty():
+					continue
+				if payload.has("horde") or payload.has("weaponId") or int(payload.get("maxHealth", 0)) > 1:
+					return true
+	return false
 
 
 func _spellbook_fire_weapon_support(spawns: Array, weapon_leaves: Dictionary) -> Dictionary:
@@ -4755,54 +5177,202 @@ func _spellbook_structure_summon_support(spawn: Dictionary, weapon_leaves: Dicti
 	}}
 
 
-func _spellbook_summon_support(spawns: Array, object_leaves: Dictionary, ocl_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
+func _spellbook_direct_summon_support(spawns: Array, modifier_leaves: Dictionary, object_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
+	## Direct OCL summon: validate every authored object and apply the same
+	## Count/ObjectNames choice-pool semantics used by egg hatch OCLs. Choice
+	## groups remain declarative here; the shared logic RNG is touched per cast.
+	var groups_by_index: Dictionary = {}
+	for spawn_value in spawns:
+		var spawn := spawn_value as Dictionary
+		var create: Dictionary = spawn.get("create", {}) as Dictionary
+		var leaf: Dictionary = spawn.get("leaf", {}) as Dictionary
+		var create_index := int(spawn.get("create_index", -1))
+		var object_id := String(leaf.get("id", ""))
+		if not Array(create.get("objects", [])).has(object_id):
+			return {"ok": false, "reason": "direct summon object '%s' is absent from its CreateObject choice list" % String(leaf.get("id", ""))}
+		var verdict := _spellbook_summon_rule(leaf, modifier_leaves, object_leaves, weapon_leaves)
+		if not bool(verdict.get("ok", false)):
+			return {"ok": false, "reason": String(verdict.get("reason", "direct summon stats unresolved"))}
+		if not groups_by_index.has(create_index):
+			groups_by_index[create_index] = {
+				"block_index": create_index,
+				"pick_count": _spellbook_create_pick_count(create),
+				"choices": [],
+			}
+		var group: Dictionary = groups_by_index[create_index]
+		(group["choices"] as Array).append({
+				"object_id": object_id,
+				"rule": verdict["rule"],
+				"lifetime_ticks": int(verdict.get("lifetime_ticks", 0)),
+				"lifetime_death_type": String(verdict.get("lifetime_death_type", "")),
+			})
+	var target_groups: Array = []
+	var group_indices: Array = groups_by_index.keys()
+	group_indices.sort()
+	for group_index in group_indices:
+		target_groups.append(groups_by_index[group_index])
+	if target_groups.is_empty():
+		return {"ok": false, "reason": "direct summon OCL resolves to no live targets"}
+	return {"ok": true, "effect": {
+		"kind": "summon",
+		"hatch_delay_ticks": 0,
+		"target_groups": target_groups,
+	}}
+
+
+func _spellbook_create_pick_count(create: Dictionary, multiplier: int = 1) -> int:
+	var count := 1
+	for field_value in Array(create.get("fields", [])):
+		if (
+			typeof(field_value) == TYPE_DICTIONARY
+			and String((field_value as Dictionary).get("key", "")) == "Count"
+		):
+			count = maxi(1, int((field_value as Dictionary).get("resolved", 1)))
+	return count * maxi(1, multiplier)
+
+
+func _spellbook_create_enabled(create: Dictionary, owned_upgrades: Dictionary = {}) -> bool:
+	## CreateObject rows can be mutually exclusive presentation variants. The
+	## default spellbook cast owns no CE graphics upgrades, so a RequiredUpgrades
+	## row is not an additional summon while its ForbiddenUpgrades sibling is.
+	for field_value in Array(create.get("fields", [])):
+		if typeof(field_value) != TYPE_DICTIONARY:
+			continue
+		var field := field_value as Dictionary
+		var key := String(field.get("key", ""))
+		var upgrades := String(field.get("value", "")).split(" ", false)
+		if key == "RequiredUpgrades":
+			for upgrade in upgrades:
+				if not owned_upgrades.has(String(upgrade)):
+					return false
+		elif key == "ForbiddenUpgrades":
+			for upgrade in upgrades:
+				if owned_upgrades.has(String(upgrade)):
+					return false
+	return true
+
+
+func _spellbook_summon_support(spawns: Array, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
 	## Egg powers: the power OCL creates eggs; each egg hatches an OCL of
 	## summoned battalions. The full chain must convert: egg hatch, hatch OCL,
 	## target horde/member stats, member weapon, locomotion, summon lifetime.
-	var first_leaf: Dictionary = (spawns[0] as Dictionary)["leaf"]
-	var hatch: Dictionary = first_leaf.get("hatch", {}) as Dictionary
+	var hatch_spawn: Dictionary = {}
+	for spawn_value in spawns:
+		var candidate := spawn_value as Dictionary
+		if typeof((candidate.get("leaf", {}) as Dictionary).get("hatch", null)) == TYPE_DICTIONARY:
+			hatch_spawn = candidate
+			break
+	if hatch_spawn.is_empty():
+		return {"ok": false, "reason": "summon OCL has no converted hatch leaf"}
+	var hatch: Dictionary = (hatch_spawn.get("leaf", {}) as Dictionary).get("hatch", {}) as Dictionary
 	var hatch_ocl_id := String(hatch.get("ocl", ""))
 	var hatch_ocl: Dictionary = ocl_leaves.get(hatch_ocl_id, {}) as Dictionary
 	if hatch_ocl.is_empty():
 		return {"ok": false, "reason": "hatch OCL '%s' is not a converted leaf" % hatch_ocl_id}
 	var egg_count := 1
-	for field_value in Array(((spawns[0] as Dictionary)["create"] as Dictionary).get("fields", [])):
+	for field_value in Array((hatch_spawn.get("create", {}) as Dictionary).get("fields", [])):
 		if typeof(field_value) == TYPE_DICTIONARY and String((field_value as Dictionary).get("key", "")) == "Count":
 			egg_count = maxi(1, int((field_value as Dictionary).get("resolved", 1)))
 	var hatch_delay_ms := float(hatch.get("destructionDelayMs", 0.0))
-	var targets: Array = []
-	for create_value in Array(hatch_ocl.get("createObjects", [])):
+	var target_groups: Array = []
+	var hatch_creates: Array = hatch_ocl.get("createObjects", []) as Array
+	for create_index in range(hatch_creates.size()):
+		var create_value: Variant = hatch_creates[create_index]
 		if typeof(create_value) != TYPE_DICTIONARY:
 			continue
 		var create := create_value as Dictionary
-		var count := 1
-		for field_value in Array(create.get("fields", [])):
-			if typeof(field_value) == TYPE_DICTIONARY and String((field_value as Dictionary).get("key", "")) == "Count":
-				count = maxi(1, int((field_value as Dictionary).get("resolved", 1)))
+		if not _spellbook_create_enabled(create):
+			continue
+		if not _spellbook_create_enabled(create):
+			continue
+		var choices: Array = []
 		for object_name_value in Array(create.get("objects", [])):
 			var object_name := String(object_name_value)
 			var target_leaf: Dictionary = object_leaves.get(object_name, {}) as Dictionary
 			if target_leaf.is_empty():
 				return {"ok": false, "reason": "summon target '%s' is not a converted leaf" % object_name}
-			var verdict := _spellbook_summon_rule(target_leaf, object_leaves, weapon_leaves)
+			var verdict := _spellbook_summon_rule(target_leaf, modifier_leaves, object_leaves, weapon_leaves)
 			if not bool(verdict.get("ok", false)):
 				return {"ok": false, "reason": String(verdict.get("reason", "summon stats unresolved"))}
-			targets.append({
+			choices.append({
 				"object_id": object_name,
-				"count": count * egg_count,
 				"rule": verdict["rule"],
 				"lifetime_ticks": int(verdict.get("lifetime_ticks", 0)),
+				"lifetime_death_type": String(verdict.get("lifetime_death_type", "")),
 			})
-	if targets.is_empty():
+		if not choices.is_empty():
+			target_groups.append({
+				"block_index": create_index,
+				"pick_count": _spellbook_create_pick_count(create, egg_count),
+				"choices": choices,
+			})
+	if target_groups.is_empty():
 		return {"ok": false, "reason": "hatch OCL '%s' spawns no converted targets" % hatch_ocl_id}
 	return {"ok": true, "effect": {
 		"kind": "summon",
 		"hatch_delay_ticks": maxi(0, roundi(hatch_delay_ms / 1000.0 / TICK_SECONDS)),
-		"targets": targets,
+		"target_groups": target_groups,
 	}}
 
 
-func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
+func _spellbook_summon_literal_preview(spawns: Array, object_leaves: Dictionary, ocl_leaves: Dictionary) -> Dictionary:
+	## Preserve the exact hatch payload and LifetimeUpdate literals when a live
+	## summon remains unsupported for an orthogonal reason (for example, the
+	## Watcher's unresolved weapon runtime). This is inspection data only: the
+	## original failed verdict remains authoritative and cannot be cast.
+	var hatch_spawn: Dictionary = {}
+	for spawn_value in spawns:
+		var candidate := spawn_value as Dictionary
+		if typeof((candidate.get("leaf", {}) as Dictionary).get("hatch", null)) == TYPE_DICTIONARY:
+			hatch_spawn = candidate
+			break
+	if hatch_spawn.is_empty():
+		return {"ok": false}
+	var hatch: Dictionary = (hatch_spawn.get("leaf", {}) as Dictionary).get("hatch", {}) as Dictionary
+	var hatch_ocl: Dictionary = ocl_leaves.get(String(hatch.get("ocl", "")), {}) as Dictionary
+	if hatch_ocl.is_empty():
+		return {"ok": false}
+	var egg_count := _spellbook_create_pick_count(hatch_spawn.get("create", {}) as Dictionary)
+	var target_groups: Array = []
+	var hatch_creates: Array = hatch_ocl.get("createObjects", []) as Array
+	for create_index in range(hatch_creates.size()):
+		var create: Dictionary = hatch_creates[create_index] as Dictionary
+		if not _spellbook_create_enabled(create):
+			continue
+		var choices: Array = []
+		for object_name_value in Array(create.get("objects", [])):
+			var object_name := String(object_name_value)
+			var target_leaf: Dictionary = object_leaves.get(object_name, {}) as Dictionary
+			if target_leaf.is_empty():
+				return {"ok": false}
+			var lifetime: Dictionary = target_leaf.get("lifetime", {}) as Dictionary
+			if lifetime.is_empty():
+				var horde: Dictionary = target_leaf.get("horde", {}) as Dictionary
+				var member: Dictionary = object_leaves.get(String(horde.get("memberObject", "")), {}) as Dictionary
+				lifetime = member.get("lifetime", {}) as Dictionary
+			var lifetime_ms := float(lifetime.get("maxMs", 0.0))
+			choices.append({
+				"object_id": object_name,
+				"rule": {},
+				"lifetime_ticks": maxi(0, roundi(lifetime_ms / 1000.0 / TICK_SECONDS)),
+				"lifetime_death_type": String(lifetime.get("deathType", "")).to_upper(),
+			})
+		if not choices.is_empty():
+			target_groups.append({
+				"block_index": create_index,
+				"pick_count": _spellbook_create_pick_count(create, egg_count),
+				"choices": choices,
+			})
+	if target_groups.is_empty():
+		return {"ok": false}
+	return {"ok": true, "effect": {
+		"kind": "summon",
+		"hatch_delay_ticks": maxi(0, roundi(float(hatch.get("destructionDelayMs", 0.0)) / 1000.0 / TICK_SECONDS)),
+		"target_groups": target_groups,
+	}}
+
+
+func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
 	## Project one summon target into the sim's unit-rule shape; every value
 	## traces to the converted object/weapon/locomotor leaves.
 	var horde: Dictionary = target_leaf.get("horde", {}) as Dictionary
@@ -4822,27 +5392,34 @@ func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, 
 		return {"ok": false, "reason": "summoned member '%s' health is not converted" % member_id}
 	var locomotor: Dictionary = member.get("locomotor", {}) as Dictionary
 	var speed := float(locomotor.get("speed", 0.0))
-	if speed <= 0.0:
+	# Wyrm is intentionally stationary (WyrmLocomotor Speed = 0) but still has
+	# a fully authored locomotor and ranged fire-breath runtime.
+	if locomotor.is_empty() or speed < 0.0:
 		return {"ok": false, "reason": "summoned member '%s' locomotion is not converted" % member_id}
 	var weapon_id := String(member.get("weaponId", ""))
 	var weapon: Dictionary = weapon_leaves.get(weapon_id, {}) as Dictionary
-	if weapon_id == "" or weapon.is_empty():
+	var kind_of: Array = member.get("kindOf", []) as Array
+	var move_only := kind_of.has("MOVE_ONLY")
+	if (weapon_id == "" or weapon.is_empty()) and not move_only:
 		return {"ok": false, "reason": "summoned member '%s' weapon is not a converted leaf" % member_id}
-	var nuggets := _spellbook_weapon_damage_nuggets(weapon, weapon_leaves)
-	if nuggets.is_empty():
+	var nuggets := _spellbook_weapon_damage_nuggets(weapon, weapon_leaves) if not weapon.is_empty() else []
+	if nuggets.is_empty() and not move_only:
 		return {"ok": false, "reason": "summoned member weapon '%s' has no resolved damage" % weapon_id}
-	var attack_range := _spellbook_weapon_field(weapon, "AttackRange")
-	if attack_range <= 0.0:
+	var attack_range := _spellbook_weapon_field(weapon, "AttackRange") if not weapon.is_empty() else 0.0
+	if attack_range <= 0.0 and not move_only:
 		return {"ok": false, "reason": "summoned member weapon '%s' range is not converted" % weapon_id}
 	var lifetime_ms := 0.0
+	var lifetime_death_type := ""
 	var lifetime_row: Dictionary = target_leaf.get("lifetime", {}) as Dictionary
 	if not lifetime_row.is_empty():
 		lifetime_ms = float(lifetime_row.get("maxMs", 0.0))
+		lifetime_death_type = String(lifetime_row.get("deathType", ""))
 	if lifetime_ms <= 0.0:
 		var member_lifetime: Dictionary = member.get("lifetime", {}) as Dictionary
 		lifetime_ms = float(member_lifetime.get("maxMs", 0.0))
+		lifetime_death_type = String(member_lifetime.get("deathType", ""))
 	if lifetime_ms <= 0.0:
-		return {"ok": false, "reason": "summon lifetime is not converted"}
+		return {"ok": false, "reason": "summon target '%s' is missing converted LifetimeUpdate" % String(target_leaf.get("id", ""))}
 	var scale := _spellbook_world_scale()
 	var source_positions: Array[Vector2] = []
 	for rank_value in Array(horde.get("ranks", [])):
@@ -4861,13 +5438,12 @@ func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, 
 	var positions: Array[Vector3] = []
 	for position in source_positions:
 		positions.append(Vector3((position.y - center.y) * scale, 0.0, (position.x - center.x) * scale))
-	var damage_nugget: Dictionary = nuggets[0]
+	var damage_nugget: Dictionary = nuggets[0] if not nuggets.is_empty() else {}
 	var delay_ms := _spellbook_weapon_field(weapon, "DelayBetweenShots")
 	var clip_reload_ms := _spellbook_weapon_field(weapon, "ClipReloadTime")
 	var period_ms := delay_ms if delay_ms > 0.0 else clip_reload_ms
 	var pre_attack_ms := _spellbook_weapon_field(weapon, "PreAttackDelay")
 	var firing_ms := _spellbook_weapon_field(weapon, "FiringDuration")
-	var kind_of: Array = member.get("kindOf", []) as Array
 	var category := "infantry"
 	if kind_of.has("HERO"):
 		category = "hero"
@@ -4881,7 +5457,7 @@ func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, 
 		"horde_id": String(target_leaf.get("id", "")),
 		"member_count": member_count,
 		"member_health": member_health,
-		"member_damage": maxi(1, int(damage_nugget.get("damage", 0))),
+		"member_damage": 0 if move_only else maxi(1, int(damage_nugget.get("damage", 0))),
 		"category": category,
 		"speed": speed * scale,
 		"speed_source": speed,
@@ -4910,6 +5486,46 @@ func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, 
 		"damage_type": String(damage_nugget.get("damagetype", "")).to_lower(),
 		"provenance": {"source": "spellbook-summon", "object_id": String(target_leaf.get("id", ""))},
 	}
+	var aura_verdict := _spellbook_summon_aura_rules(member, modifier_leaves)
+	if not bool(aura_verdict.get("ok", false)):
+		return {"ok": false, "reason": String(aura_verdict.get("reason", "summon aura is not converted"))}
+	var summon_auras: Array = aura_verdict.get("auras", []) as Array
+	var summon_aura_skips: Array = aura_verdict.get("skipped_auras", []) as Array
+	if move_only and summon_auras.is_empty() and summon_aura_skips.is_empty():
+		return {"ok": false, "reason": "move-only summoned member '%s' has no converted aura payload" % member_id}
+	if not summon_auras.is_empty():
+		rule["summon_auras"] = summon_auras
+	if not summon_aura_skips.is_empty():
+		rule["summon_aura_skips"] = summon_aura_skips
+	# Carry authored lifecycle policy into the synthesized unit rule. FADED is a
+	# lifetime-only removal: combat death still follows the ordinary corpse rule.
+	var destroy_die: Array = []
+	for policy_value in Array(member.get("destroyDie", [])):
+		var policy := policy_value as Dictionary
+		destroy_die.append({
+			"owner_role": "object",
+			"death_types": String(policy.get("deathTypes", "ALL")).to_upper(),
+			"excluded_death_types": Array(policy.get("excludedDeathTypes", [])).duplicate(),
+			"included_death_types": Array(policy.get("includedDeathTypes", [])).duplicate(),
+		})
+	if lifetime_death_type.to_upper() == "FADED":
+		destroy_die.append({
+			"owner_role": "object",
+			"death_types": "NONE",
+			"excluded_death_types": [],
+			"included_death_types": ["FADED"],
+		})
+	if not destroy_die.is_empty():
+		rule["destroy_die"] = destroy_die
+	var keep_rows: Array = member.get("keepObjectDie", []) as Array
+	if not keep_rows.is_empty():
+		var keep := keep_rows[0] as Dictionary
+		rule["keep_object_die"] = true
+		rule["keep_object_die_policy"] = {
+			"death_types": String(keep.get("deathTypes", "ALL")).to_upper(),
+			"excluded_death_types": Array(keep.get("excludedDeathTypes", [])).duplicate(),
+			"included_death_types": Array(keep.get("includedDeathTypes", [])).duplicate(),
+		}
 	var permanent_locks: Array[String] = []
 	for lock_value in Array(member.get("permanentWeaponLocks", [])):
 		if typeof(lock_value) != TYPE_DICTIONARY:
@@ -4922,7 +5538,8 @@ func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, 
 			or String(lock_row.get("state", "")) != "LOCKED_PERMANENTLY"
 			or String(lock_row.get("module", "")) != "LockWeaponCreate"
 			or String(lock_row.get("sourceIni", "")).strip_edges() == ""
-			or typeof(lock_line) != TYPE_INT
+			or typeof(lock_line) not in [TYPE_INT, TYPE_FLOAT]
+			or not is_equal_approx(float(lock_line), float(int(lock_line)))
 			or int(lock_line) <= 0
 			or permanent_locks.has(slot)
 			or slot != String(rule.get("default_weapon_slot", ""))
@@ -4946,15 +5563,25 @@ func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, 
 		if (
 			String(grant.get("module", "")) != "ExperienceLevelCreate"
 			or grant.get("mpOnly") != false
-			or typeof(grant_rank) != TYPE_INT
+			or typeof(grant_rank) not in [TYPE_INT, TYPE_FLOAT]
+			or not is_equal_approx(float(grant_rank), float(int(grant_rank)))
 			or int(grant_rank) < 1
 			or String(grant.get("sourceIni", "")).strip_edges() == ""
-			or typeof(grant_line) != TYPE_INT
+			or typeof(grant_line) not in [TYPE_INT, TYPE_FLOAT]
+			or not is_equal_approx(float(grant_line), float(int(grant_line)))
 			or int(grant_line) <= 0
 		):
 			return {"ok": false, "reason": "summoned member '%s' ExperienceLevelCreate evidence is unsupported" % member_id}
+		# JSON numbers enter Godot as floats; the shared adapter deliberately
+		# expects source line metadata as an integer. Normalize only the proven
+		# integral creation line at this boundary.
+		var experience_contract: Dictionary = (creation_leaf.get("experience", {}) as Dictionary).duplicate(true)
+		var normalized_grant: Dictionary = (experience_contract.get("experienceLevelCreate", {}) as Dictionary).duplicate(true)
+		if not normalized_grant.is_empty():
+			normalized_grant["line"] = int(normalized_grant.get("line", 0))
+			experience_contract["experienceLevelCreate"] = normalized_grant
 		var creation_experience_rule := PlayableUnitAdapter.experience_rule_from_contract(
-			creation_leaf.get("experience")
+			experience_contract
 		)
 		if (
 			creation_experience_rule.is_empty()
@@ -4975,7 +5602,102 @@ func _spellbook_summon_rule(target_leaf: Dictionary, object_leaves: Dictionary, 
 			return {"ok": false, "reason": "summoned member '%s' creation experience effects are unsupported" % member_id}
 		rule["creation_experience_rank"] = int(grant_rank)
 		rule["creation_experience_effects"] = creation_effects.duplicate(true)
-	return {"ok": true, "rule": rule, "lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / TICK_SECONDS))}
+	return {
+		"ok": true,
+		"rule": rule,
+		"lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / TICK_SECONDS)),
+		"lifetime_death_type": lifetime_death_type.to_upper(),
+	}
+
+
+func _spellbook_summon_aura_rules(member: Dictionary, modifier_leaves: Dictionary) -> Dictionary:
+	var source_auras: Array = member.get("auras", []) as Array
+	if source_auras.is_empty() and typeof(member.get("aura", null)) == TYPE_DICTIONARY:
+		source_auras.append(member.get("aura", {}))
+	var compiled: Array = []
+	var skipped: Array = []
+	for aura_value in source_auras:
+		var verdict := _spellbook_one_summon_aura_rule(
+			member, aura_value as Dictionary, modifier_leaves
+		)
+		if not bool(verdict.get("ok", false)):
+			return verdict
+		if bool(verdict.get("skip", false)):
+			skipped.append({
+				"modifier": String((aura_value as Dictionary).get("modifier", "")),
+				"reason": String(verdict.get("reason", "summon-aura-skipped")),
+			})
+			continue
+		compiled.append(verdict.get("aura", {}))
+	return {"ok": true, "auras": compiled, "skipped_auras": skipped}
+
+
+func _spellbook_one_summon_aura_rule(member: Dictionary, aura: Dictionary, modifier_leaves: Dictionary) -> Dictionary:
+	var modifier_id := String(aura.get("modifier", ""))
+	var modifier: Dictionary = modifier_leaves.get(modifier_id, {}) as Dictionary
+	if modifier.is_empty():
+		return {"ok": false, "reason": "summon aura modifier '%s' is not a converted leaf" % modifier_id}
+	var modifiers: Array = []
+	var duration_ms := 0.0
+	var category := ""
+	for field_value in Array(modifier.get("fields", [])):
+		if typeof(field_value) != TYPE_DICTIONARY:
+			continue
+		var field := field_value as Dictionary
+		var key := String(field.get("key", ""))
+		var value := String(field.get("value", ""))
+		if key == "Category":
+			category = value
+		elif key == "Duration" and value.is_valid_float():
+			duration_ms = float(value)
+		elif key == "Modifier":
+			var parts := value.replace("\t", " ").split(" ", false)
+			if parts.size() != 2 or not String(parts[1]).ends_with("%"):
+				return {"ok": false, "reason": "summon aura modifier '%s' has an unsupported modifier row" % modifier_id}
+			var kind := String(parts[0])
+			if kind not in ["ARMOR", "DAMAGE_MULT", "EXPERIENCE"]:
+				return {"ok": false, "reason": "summon aura modifier '%s' requires unsupported '%s' runtime" % [modifier_id, kind]}
+			var percent_text := String(parts[1]).trim_suffix("%")
+			if not percent_text.is_valid_float():
+				return {"ok": false, "reason": "summon aura modifier '%s' has a non-numeric percent" % modifier_id}
+			modifiers.append({"kind": kind, "value": float(percent_text) / 100.0})
+		elif key == "ModelCondition" and value.strip_edges() != "":
+			modifiers.append({"kind": "MODEL_CONDITION", "value": value.strip_edges()})
+	var range_source := float(aura.get("range", 0.0))
+	var refresh_ms := float(aura.get("refreshDelayMs", 0.0))
+	var filter := String(aura.get("objectFilter", ""))
+	if category not in ["LEADERSHIP", "SPELL", "DEBUFF"] or modifiers.is_empty() or duration_ms <= 0.0 or range_source <= 0.0 or refresh_ms <= 0.0 or filter == "":
+		return {"ok": false, "reason": "summon aura '%s' is incomplete (category=%s modifiers=%d duration_ms=%.1f range=%.1f refresh_ms=%.1f filter=%s)" % [modifier_id, category, modifiers.size(), duration_ms, range_source, refresh_ms, "present" if filter != "" else "missing"]}
+	var starts_active := String(aura.get("startsActive", "Yes")).to_lower() != "no"
+	var enabled_on_create := starts_active
+	if not enabled_on_create:
+		var creation_rank := int((member.get("experienceLevelCreate", {}) as Dictionary).get("rank", 0))
+		for trigger_value in Array(aura.get("triggeredBy", [])):
+			var trigger := String(trigger_value)
+			if trigger.begins_with("Upgrade_ObjectLevel"):
+				var level_text := trigger.trim_prefix("Upgrade_ObjectLevel")
+				if level_text.is_valid_int() and creation_rank >= int(level_text):
+					enabled_on_create = true
+					break
+	if not enabled_on_create:
+		return {
+			"ok": true,
+			"skip": true,
+			"reason": "upgrade-gated-aura-inert-at-summon-creation:%s" % modifier_id,
+		}
+	return {"ok": true, "aura": {
+		"id": modifier_id,
+		"category": category,
+		"modifiers": modifiers,
+		"duration_ticks": maxi(1, roundi(duration_ms / (TICK_SECONDS * 1000.0))),
+		"refresh_ticks": maxi(1, roundi(refresh_ms / (TICK_SECONDS * 1000.0))),
+		"range_source": range_source,
+		"filter": filter,
+		"target_enemy": String(aura.get("targetEnemy", "")).to_lower() == "yes" if aura.has("targetEnemy") else null,
+		"target_allies": String(aura.get("targetAllies", "")).to_lower() == "yes" if aura.has("targetAllies") else null,
+		"starts_active": starts_active,
+		"triggered_by": Array(aura.get("triggeredBy", [])).duplicate(),
+	}}
 
 
 func _spellbook_grove_chain(references: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary) -> Dictionary:
@@ -5515,7 +6237,9 @@ func _cast_spellbook_attribute_modifier(team: int, effect: Dictionary, point: Ve
 		# Aura-style filters (GENERIC_BUFF_RECIPIENT_OBJECT_FILTER) exclude the
 		# HORDE container but include its members; evaluate member kinds so the
 		# battalion-as-container distinction does not reject infantry hordes.
-		if not _spellbook_member_affects(row, String(effect.get("affects", ""))):
+		if not _spellbook_member_affects(
+			row, String(effect.get("affects", "")), true
+		):
 			continue
 		row["rally_until_tick"] = tick_index + duration_ticks
 		row["rally_damage_mult"] = damage_mult
@@ -5548,15 +6272,68 @@ func _cast_spellbook_fire_weapon(team: int, effect: Dictionary, point: Vector2) 
 
 func _cast_spellbook_summon(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
 	## Summon eggs hatch after the authored destruction delay into battalions
-	## whose stats and summon lifetime all come from the converted leaves.
+	## whose stats and summon lifetime all come from the converted leaves. Pool
+	## choices are made now, once per cast; configuration consumes no RNG bytes.
+	var targets: Array = effect.get("targets", []) as Array
+	if effect.has("target_groups"):
+		targets = _spellbook_resolve_summon_targets(
+			Array(effect.get("target_groups", []))
+		)
+	if targets.is_empty():
+		return {"ok": false, "reason": "no-summon-targets"}
 	_pending_power_effects.append({
 		"kind": "summon",
 		"fire_tick": tick_index + int(effect.get("hatch_delay_ticks", 0)),
 		"team": team,
 		"point": point,
-		"targets": (effect.get("targets", []) as Array).duplicate(true),
+		"targets": targets,
 	})
-	return {"ok": true, "reason": "", "battalions": 0}
+	var queued_count := _terminal_visible_summon_count(targets)
+	return {"ok": true, "reason": "", "battalions": 0, "summon_count": queued_count}
+
+
+func _terminal_visible_summon_count(targets: Array) -> int:
+	## The effect compiler has already followed converted egg/hatch chains, so
+	## these rows are the terminal battalions/entities that will materialize.
+	## Never count intermediary OCL payload rows or horde members as HUD units.
+	var count := 0
+	for target_value in targets:
+		if typeof(target_value) != TYPE_DICTIONARY:
+			continue
+		var target := target_value as Dictionary
+		if (target.get("rule", {}) as Dictionary).is_empty():
+			continue
+		count += maxi(1, int(target.get("count", 1)))
+	return count
+
+
+func _spellbook_resolve_summon_targets(target_groups: Array) -> Array:
+	var resolved: Array = []
+	for group_value in target_groups:
+		if typeof(group_value) != TYPE_DICTIONARY:
+			continue
+		var group := group_value as Dictionary
+		var choices: Array = group.get("choices", []) as Array
+		if choices.is_empty():
+			continue
+		var counts: Dictionary = {}
+		for _pick in range(maxi(0, int(group.get("pick_count", 0)))):
+			var choice_index := 0
+			if choices.size() > 1:
+				choice_index = logic_random_int(0, choices.size() - 1)
+			var choice := choices[choice_index] as Dictionary
+			var object_id := String(choice.get("object_id", ""))
+			counts[object_id] = int(counts.get(object_id, 0)) + 1
+		for choice_value in choices:
+			var choice := choice_value as Dictionary
+			var object_id := String(choice.get("object_id", ""))
+			var count := int(counts.get(object_id, 0))
+			if count <= 0:
+				continue
+			var target := choice.duplicate(true)
+			target["count"] = count
+			resolved.append(target)
+	return resolved
 
 
 func _cast_spellbook_structure_summon(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
@@ -5728,21 +6505,15 @@ func _apply_area_damage_to_battalion(id: int, amount: float, damage_type: String
 		aggregate += int(value)
 	row["health"] = aggregate
 	row["last_damage_tick"] = tick_index
-	var death_policy := _apply_playable_unit_death_policy(
-		row, "NORMAL", defeated_members
-	)
 	if aggregate <= 0:
-		row["state"] = "death"
-		row["target_id"] = 0
-		_clear_pending_route(row, true)
-		selected_ids.erase(id)
-		if base_loop_enabled:
-			var row_team := int(row.get("team", -1))
-			team_command_points[row_team] = maxi(0, command_points_for_team(row_team) - int(row.get("command_points", 0)))
-		prune_control_groups()
+		var death_policy := _bookkeep_battalion_death(
+			id, row, "NORMAL", defeated_members
+		)
 		_emit_event("battalion.defeated", 0, id)
 		if bool(death_policy.get("destroy_object", false)):
 			entities.erase(id)
+	else:
+		_apply_playable_unit_death_policy(row, "NORMAL", defeated_members)
 
 
 func _apply_area_damage_to_structure(structure_id: int, amount: float, damage_type: String) -> void:
@@ -5771,10 +6542,6 @@ func _spawn_summon_targets(team: int, point: Vector2, targets: Array) -> Array:
 	## rule and place its battalions with the authored summon lifetime. Used by
 	## BOTH the spellbook OCL powers and the hero egg-chain abilities so the two
 	## lanes cannot drift apart.
-	var unit_rules_value: Variant = _rules.get("unit_rules", {})
-	if typeof(unit_rules_value) != TYPE_DICTIONARY:
-		return []
-	var unit_rules := unit_rules_value as Dictionary
 	var spawned: Array = []
 	for target_value in targets:
 		var target := target_value as Dictionary
@@ -5782,26 +6549,27 @@ func _spawn_summon_targets(team: int, point: Vector2, targets: Array) -> Array:
 		var object_id := String(target.get("object_id", ""))
 		if rule.is_empty():
 			continue
-		unit_rules[object_id] = rule
-		# Doc-authored weapon damage type feeds the armor-scalar table the same
-		# way playable-unit documents feed it (no inferred types).
-		var summon_damage_type := String(rule.get("damage_type", ""))
-		if summon_damage_type != "":
-			_unit_damage_types[object_id] = summon_damage_type
 		var count := int(target.get("count", 1))
 		for index in range(count):
 			var angle := TAU * float(index) / float(maxi(1, count))
 			var spawn_point := point + Vector2(cos(angle), sin(angle)) * (1.0 if count <= 1 else 2.0)
 			var entity_id := int(_next_dynamic_id.get(team, 1000))
 			_next_dynamic_id[team] = entity_id + 1
-			_add_battalion(entity_id, team, spawn_point, String(rule.get("horde_id", object_id)), object_id, object_id, 0)
+			_add_battalion(
+				entity_id, team, spawn_point, String(rule.get("horde_id", object_id)),
+				object_id, object_id, 0, rule
+			)
 			if not entities.has(entity_id):
 				continue
 			var lifetime_ticks := int(target.get("lifetime_ticks", 0))
 			if lifetime_ticks > 0:
 				_summon_despawn_ticks[entity_id] = tick_index + lifetime_ticks
+				entities[entity_id]["summon_lifetime_death_type"] = String(
+					target.get("lifetime_death_type", "")
+				).to_upper()
+			if not Array((entities[entity_id] as Dictionary).get("summon_auras", [])).is_empty():
+				_summon_aura_source_ids[entity_id] = true
 			spawned.append(entity_id)
-	_rules["unit_rules"] = unit_rules
 	return spawned
 
 
@@ -5860,6 +6628,9 @@ func _step_summon_despawns() -> void:
 		# The authored summon lifetime ends: the battalion fades (no kill
 		# credit — there is no attacker).
 		var row: Dictionary = entities[entity_id]
+		var death_type := String(
+			row.get("summon_lifetime_death_type", "")
+		).to_upper()
 		var health_values: Array = row.get("member_health", [])
 		var defeated_members: Array[int] = []
 		for index in health_values.size():
@@ -5868,23 +6639,94 @@ func _step_summon_despawns() -> void:
 				health_values[index] = 0
 		row["member_health"] = health_values
 		row["health"] = 0
-		var death_policy := _apply_playable_unit_death_policy(
-			row, "NORMAL", defeated_members
+		# Remove the lifetime registry first so a combat-dead summon can never be
+		# processed again as an expiry (duplicate OCL/event/CP release).
+		_summon_despawn_ticks.erase(entity_id)
+		var death_policy := _bookkeep_battalion_death(
+			entity_id, row, death_type, defeated_members
 		)
-		row["state"] = "death"
-		row["target_id"] = 0
-		_clear_pending_route(row, true)
-		selected_ids.erase(entity_id)
-		if base_loop_enabled:
-			var row_team := int(row.get("team", -1))
-			team_command_points[row_team] = maxi(0, command_points_for_team(row_team) - int(row.get("command_points", 0)))
-		prune_control_groups()
 		_emit_event("power.summon_expired", 0, entity_id, {"team": int(row.get("team", -1))})
+		# Honor the converted unit death policy. The authored death type begins its
+		# matching path here; an immediate-destroy verdict removes now, while a retained
+		# corpse is cleaned by the ordinary corpse scheduler.
 		if bool(death_policy.get("destroy_object", false)):
 			entities.erase(entity_id)
 		expired.append(entity_id)
 	for entity_id in expired:
 		_summon_despawn_ticks.erase(entity_id)
+
+
+func _step_summon_auras() -> void:
+	## Moving scout summons (Crebain/Cave Bats) carry GenericDebuff as part of
+	## their payload. Refresh the converted timed modifier on enemy battalions;
+	## its authored duration naturally lets the debuff trail the moving aura by
+	## up to one refresh window after separation or expiry.
+	if _summon_aura_source_ids.is_empty():
+		return
+	var source_ids: Array = _summon_aura_source_ids.keys()
+	source_ids.sort()
+	for source_id_value in source_ids:
+		var source_id := int(source_id_value)
+		if not entities.has(source_id):
+			_summon_aura_source_ids.erase(source_id)
+			continue
+		var source: Dictionary = entities[source_id]
+		if int(source.get("health", 0)) <= 0:
+			continue
+		for aura_value in Array(source.get("summon_auras", [])):
+			_refresh_one_summon_aura(source_id, source, aura_value as Dictionary)
+
+
+func _refresh_one_summon_aura(source_id: int, source: Dictionary, aura: Dictionary) -> void:
+	if aura.is_empty():
+		return
+	var refresh_ticks := int(aura.get("refresh_ticks", 1))
+	if tick_index % maxi(1, refresh_ticks) != 0:
+		return
+	var source_team := int(source.get("team", -1))
+	var origin := Vector2(source.get("position", Vector2.ZERO))
+	var radius := float(aura.get("range_source", 0.0)) * _spellbook_world_scale()
+	for target_id in _spatial_gather_sorted(origin, radius):
+		if not entities.has(target_id):
+			continue
+		var target: Dictionary = entities[target_id]
+		var same_team := int(target.get("team", -1)) == source_team
+		if int(target.get("health", 0)) <= 0:
+			continue
+		if Vector2(target.get("position", Vector2.ZERO)).distance_to(origin) > radius:
+			continue
+		if not _summon_aura_allows_relation(aura, same_team):
+			continue
+		if not _spellbook_member_affects(
+			target, String(aura.get("filter", "")), same_team
+		):
+			continue
+		_set_timed_modifier(
+			target,
+			"summon-aura:%d:%s" % [source_id, String(aura.get("id", ""))],
+			Array(aura.get("modifiers", [])),
+			tick_index + int(aura.get("duration_ticks", 1))
+		)
+
+
+func _summon_aura_allows_relation(aura: Dictionary, same_team: bool) -> bool:
+	var target_enemy: Variant = aura.get("target_enemy", null)
+	var target_allies: Variant = aura.get("target_allies", null)
+	# Selected packs predating targetEnemy/targetAllies still carry the authored
+	# AttributeModifier category and relation tokens. Resolve each missing side
+	# from that evidence; an explicitly authored flag overrides only its side.
+	var category := String(aura.get("category", "")).to_upper()
+	var filter_terms := String(aura.get("filter", "")).to_upper().replace("\t", " ").split(" ", false)
+	var authored_enemy := category == "DEBUFF" or filter_terms.has("ENEMIES")
+	var authored_ally := not authored_enemy
+	if filter_terms.has("ALLIES"):
+		authored_ally = true
+	# A positive explicit side is exclusive when the opposite side is omitted.
+	# An explicit false only disables its own side; the omitted side may still
+	# use legacy category/filter evidence.
+	var allow_enemy := bool(target_enemy) if target_enemy != null else (false if target_allies == true else authored_enemy)
+	var allow_ally := bool(target_allies) if target_allies != null else (false if target_enemy == true else authored_ally)
+	return allow_ally if same_team else allow_enemy
 
 
 func _step_grove_auras() -> void:
@@ -5908,14 +6750,18 @@ func _step_grove_auras() -> void:
 				continue
 			if Vector2(row.get("position", Vector2.ZERO)).distance_to(point) > range_sim:
 				continue
-			if not _spellbook_member_affects(row, String(grove.get("filter", ""))):
+			if not _spellbook_member_affects(
+				row, String(grove.get("filter", "")), true
+			):
 				continue
 			row["grove_armor_until"] = tick_index + int(grove.get("buff_duration_ticks", 1))
 			row["grove_armor_mult"] = float(grove.get("armor_mult", 1.0))
 	_active_groves = living
 
 
-func _spellbook_member_affects(row: Dictionary, filter_text: String) -> bool:
+func _spellbook_member_affects(
+	row: Dictionary, filter_text: String, same_team: Variant = null
+) -> bool:
 	## Aura filters (GENERIC_BUFF_RECIPIENT_OBJECT_FILTER) exclude the HORDE
 	## container kind but include its infantry/cavalry members; the sim's
 	## battalion is both, so the container distinction drops out of the kind
@@ -5927,7 +6773,13 @@ func _spellbook_member_affects(row: Dictionary, filter_text: String) -> bool:
 		var term := String(term_value)
 		if term == "" or term == "NONE":
 			continue
-		if term == "ENEMIES" or term == "ALLIES":
+		if term == "ALLIES":
+			if same_team != null and not bool(same_team):
+				return false
+			continue
+		if term == "ENEMIES":
+			if same_team != null and bool(same_team):
+				return false
 			continue
 		if term.begins_with("-"):
 			if kinds.has(term.trim_prefix("-")):
@@ -6008,19 +6860,15 @@ func _step_structure_weapons() -> void:
 		var defeated_members: Array[int] = []
 		if prior_member_health > 0 and int(health_values[member_index]) == 0:
 			defeated_members.append(member_index)
-		var death_policy := _apply_playable_unit_death_policy(
-			target, "NORMAL", defeated_members
-		)
 		if aggregate <= 0:
-			target["state"] = "death"
-			target["target_id"] = 0
-			_clear_pending_route(target, true)
-			selected_ids.erase(best_id)
-			prune_control_groups()
+			var death_policy := _bookkeep_battalion_death(
+				best_id, target, "NORMAL", defeated_members
+			)
 			_emit_event("battalion.defeated", structure_id, best_id)
 			if bool(death_policy.get("destroy_object", false)):
 				entities.erase(best_id)
 		else:
+			_apply_playable_unit_death_policy(target, "NORMAL", defeated_members)
 			_emit_event("power.structure_weapon_hit", structure_id, best_id, {"amount": amount})
 		attack["cooldown"] = tick_index + int(attack.get("period_ticks", 1)) + int(attack.get("pre_attack_ticks", 0))
 
@@ -6090,15 +6938,168 @@ func _seed_expansion_pads_for(fortress_id: int) -> void:
 		return
 	var center := Vector2(fortress.get("position", Vector2.ZERO))
 	var pads: Array = []
-	for pad_kind in EXPANSION_PAD_LAYOUT.keys():
-		for slot in range((EXPANSION_PAD_LAYOUT[pad_kind] as Array).size()):
+	var castle := _castle_behavior_for_structure(fortress)
+	if not castle.is_empty():
+		_unpack_castle_behavior_for_structure(fortress_id)
+		pads = (fortress.get("castle_expansion_pads", []) as Array).duplicate(true)
+	else:
+		for pad_kind in EXPANSION_PAD_LAYOUT.keys():
+			for slot in range((EXPANSION_PAD_LAYOUT[pad_kind] as Array).size()):
+				pads.append({
+					"slot": slot,
+					"pad_kind": pad_kind,
+					"position": center + (EXPANSION_PAD_LAYOUT[pad_kind] as Array)[slot],
+					"expansion_structure_id": 0,
+				})
+	expansion_pads[fortress_id] = pads
+
+
+func _unpack_castle_behavior_for_structure(structure_id: int) -> bool:
+	## CastleBehavior executes once for every structure that carries the selected
+	## pack contract. Every BSE row becomes an authoritative structure object;
+	## no pad/citadel is inferred and no missing template gets substituted.
+	if not structures.has(structure_id):
+		return false
+	var owner: Dictionary = structures[structure_id]
+	if bool(owner.get("castle_behavior_unpacked", false)):
+		return true
+	var castle := _castle_behavior_for_structure(owner)
+	if castle.is_empty():
+		return false
+	if castle.has("_error"):
+		var message := "CastleBehavior for '%s' failed closed: %s" % [String(owner.get("structure_kind", "structure")), String(castle.get("_error", "invalid selected contract"))]
+		owner["castle_behavior_error"] = message
+		configuration_error = message
+		push_error(message)
+		return false
+	var child_ids: Array[int] = []
+	var pads: Array = []
+	var side_slot := 0
+	var corner_slot := 0
+	for piece_value in castle.get("pieces", []) as Array:
+		var piece: Dictionary = piece_value
+		var source_object_id := String(piece.get("source_object_id", ""))
+		var object_id := String(piece.get("object_id", ""))
+		var maximum_health := int(piece.get("maximum_health", 0))
+		if source_object_id == "" or object_id == "" or maximum_health <= 0:
+			push_error("RetailSliceSim refused incomplete CastleBehavior piece %s" % str(piece))
+			return false
+		var offset: Vector2 = piece.get("offset_source", Vector2.ZERO)
+		var at := Vector2(owner.get("position", Vector2.ZERO)) + _retail_source_to_sim_offset(offset)
+		var child_id := _spawn_castle_piece_structure(
+			structure_id,
+			owner,
+			source_object_id,
+			object_id,
+			at,
+			float(piece.get("elevation_source", 0.0)),
+			float(piece.get("angle_radians", 0.0)),
+			maximum_health,
+			int(piece.get("index", -1))
+		)
+		if child_id == 0:
+			return false
+		child_ids.append(child_id)
+		var folded := source_object_id.to_lower()
+		if folded.contains("expansionpad"):
+			var pad_kind := "corner" if folded.contains("corner") else "side"
+			var slot := corner_slot if pad_kind == "corner" else side_slot
+			if pad_kind == "corner":
+				corner_slot += 1
+			else:
+				side_slot += 1
 			pads.append({
 				"slot": slot,
 				"pad_kind": pad_kind,
-				"position": center + (EXPANSION_PAD_LAYOUT[pad_kind] as Array)[slot],
+				"position": at,
+				"angle_radians": float(piece.get("angle_radians", 0.0)),
+				"source_object_id": source_object_id,
+				"castle_piece_structure_id": child_id,
 				"expansion_structure_id": 0,
+				"castle_piece_index": int(piece.get("index", -1)),
 			})
-	expansion_pads[fortress_id] = pads
+	owner["castle_behavior_unpacked"] = true
+	owner["castle_template_token"] = String(castle.get("castle_template_token", ""))
+	owner["castle_piece_structure_ids"] = child_ids
+	owner["castle_expansion_pads"] = pads
+	_emit_event("structure.castle_unpacked", 0, structure_id, {
+		"team": int(owner.get("team", -1)),
+		"token": String(castle.get("castle_template_token", "")),
+		"piece_count": child_ids.size(),
+		"pad_count": pads.size(),
+	})
+	return true
+
+
+func _castle_behavior_for_structure(structure: Dictionary) -> Dictionary:
+	var direct: Variant = structure.get("castle_behavior", {})
+	if typeof(direct) == TYPE_DICTIONARY and not (direct as Dictionary).is_empty():
+		return direct as Dictionary
+	var team := int(structure.get("team", -1))
+	var kind := String(structure.get("structure_kind", ""))
+	var manifest_source := ""
+	var manifest_sources: Variant = structure_source_object_ids_for_team(team).get(kind, [])
+	if typeof(manifest_sources) == TYPE_ARRAY and not (manifest_sources as Array).is_empty():
+		manifest_source = String((manifest_sources as Array)[0])
+	elif typeof(manifest_sources) in [TYPE_STRING, TYPE_STRING_NAME]:
+		manifest_source = String(manifest_sources)
+	for key in [
+		manifest_source,
+		String(structure.get("source_object_id", "")),
+		String(structure.get("object_id", "")),
+		String(structure.get("name", "")),
+	]:
+		if key != "" and _castle_behavior_by_source.has(key):
+			return (_castle_behavior_by_source[key] as Dictionary).duplicate(true)
+		# Case-insensitive source map
+		for source_key in _castle_behavior_by_source.keys():
+			if String(source_key).to_lower() == key.to_lower():
+				return (_castle_behavior_by_source[source_key] as Dictionary).duplicate(true)
+	return {}
+
+
+func _spawn_castle_piece_structure(
+	fortress_id: int,
+	fortress: Dictionary,
+	source_object_id: String,
+	object_id: String,
+	at: Vector2,
+	elevation_source: float,
+	angle_radians: float,
+	maximum_health: int,
+	piece_index: int
+) -> int:
+	var structure_id := _next_dynamic_structure_id
+	_next_dynamic_structure_id += 1
+	var team := int(fortress.get("team", -1))
+	structures[structure_id] = {
+		"id": structure_id,
+		"team": team,
+		"kind": "structure",
+		"structure_kind": "castle_piece",
+		"name": source_object_id,
+		"source_object_id": source_object_id,
+		"object_id": object_id,
+		"position": at,
+		"elevation": float(fortress.get("elevation", 0.0)) + _retail_source_to_sim_offset(Vector2(elevation_source, 0.0)).x,
+		"facing_radians": angle_radians + float(fortress.get("facing_radians", 0.0)),
+		"rally": at + Vector2(2.0, 0.0),
+		"health": maximum_health,
+		"maximum_health": maximum_health,
+		"construction_progress": 1.0,
+		"level": 1,
+		"completed_upgrades": [],
+		"upgrade_queue": [],
+		"production": [],
+		"queue": [],
+		"damage_remainders": {},
+		"income_per_payout": 0,
+		"castle_piece_of_fortress": fortress_id,
+		"castle_piece_index": piece_index,
+	}
+	_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
+	_initialize_structure_auto_deposit(structures[structure_id] as Dictionary)
+	return structure_id
 
 
 func _seed_all_expansion_pads() -> void:
@@ -6446,6 +7447,11 @@ func unpack_base(team: int, base_name: String, free: bool) -> Dictionary:
 	)
 	if bool(fortress_build_rule.get("highlander_body", false)):
 		structures[structure_id]["highlander_body"] = true
+	# Prefer faction fortress source id so castleBehavior BSE contracts resolve.
+	var fortress_sources: Dictionary = structure_source_object_ids_for_team(team)
+	var fortress_aliases: Array = fortress_sources.get("fortress", []) as Array
+	if not fortress_aliases.is_empty():
+		structures[structure_id]["source_object_id"] = String(fortress_aliases[0])
 	_apply_structure_create_grants(
 		structures[structure_id] as Dictionary, true, true
 	)
@@ -7812,18 +8818,27 @@ func script_set_health_percent(entity_id: int, percent: float) -> Dictionary:
 	var clamped := clampf(percent, 0.0, 100.0)
 	var new_health := int(round(maximum * clamped / 100.0))
 	row["health"] = new_health
+	var defeated_members: Array[int] = []
 	if row.has("member_health") and row["member_health"] is Array:
 		var members: Array = row["member_health"]
 		if not members.is_empty():
 			var each := int(new_health / members.size())
 			var rebuilt: Array = []
-			for _i in members.size():
+			for member_index in members.size():
+				if int(members[member_index]) > 0 and each <= 0:
+					defeated_members.append(member_index)
 				rebuilt.append(each)
 			row["member_health"] = rebuilt
 	entities[entity_id] = row
 	if new_health <= 0:
-		row["state"] = "dead"
-		entities[entity_id] = row
+		var death_policy := _bookkeep_battalion_death(
+			entity_id, row, "NORMAL", defeated_members
+		)
+		if bool(row.get("is_banner_carrier", false)):
+			_on_banner_carrier_defeated(row)
+		_emit_event("battalion.defeated", 0, entity_id, {"reason": "script-kill"})
+		if bool(death_policy.get("destroy_object", false)) or bool(row.get("is_banner_carrier", false)):
+			entities.erase(entity_id)
 	return {"ok": true, "reason": ""}
 
 
@@ -7928,6 +8943,13 @@ func set_entity_team(entity_id: int, new_team: int) -> Dictionary:
 	if not _script_owner_exists(new_team):
 		return {"ok": false, "reason": "team %d unavailable" % new_team}
 	var row := entities[entity_id] as Dictionary
+	var old_team := int(row.get("team", -1))
+	if old_team == new_team:
+		return {"ok": true, "reason": ""}
+	if base_loop_enabled and not bool(row.get("command_points_released", false)):
+		var commitment := _entity_command_point_commitment(row)
+		team_command_points[old_team] = maxi(0, command_points_for_team(old_team) - commitment)
+		team_command_points[new_team] = command_points_for_team(new_team) + commitment
 	row["team"] = new_team
 	entities[entity_id] = row
 	return {"ok": true, "reason": ""}
@@ -7939,7 +8961,13 @@ func delete_entity(entity_id: int) -> Dictionary:
 	if not entities.has(entity_id):
 		return {"ok": false, "reason": "entity %d missing" % entity_id}
 	exit_entity_container(entity_id)
+	var row := entities[entity_id] as Dictionary
+	_summon_despawn_ticks.erase(entity_id)
+	_summon_aura_source_ids.erase(entity_id)
+	selected_ids.erase(entity_id)
+	_release_command_points_once(row)
 	entities.erase(entity_id)
+	prune_control_groups()
 	return {"ok": true, "reason": ""}
 
 
@@ -8929,11 +9957,13 @@ func queue_unit(team: int, producer: int, unit_type: String = SOLDIER_HORDE_ID) 
 		return {"ok": false, "reason": "unsupported-unit"}
 	if String(production_rule.get("category", "")) == "hero" and hero_unavailable(team, unit_type):
 		return {"ok": false, "reason": "hero-unavailable"}
-	var required_upgrades := required_upgrades_for_unit(unit_type, String(building.get("structure_kind", "")))
-	for required_upgrade_value in required_upgrades:
-		var required_upgrade := String(required_upgrade_value)
-		if not Array(building.get("completed_upgrades", [])).has(required_upgrade):
-			return {"ok": false, "reason": "missing-upgrade", "required_upgrade": required_upgrade}
+	var missing_production_upgrade := production_gate_unsatisfied(
+		unit_type,
+		String(building.get("structure_kind", "")),
+		Array(building.get("completed_upgrades", [])),
+	)
+	if missing_production_upgrade != "":
+		return {"ok": false, "reason": "missing-upgrade", "required_upgrade": missing_production_upgrade}
 	var queue: Array = building.get("queue", [])
 	if queue.size() >= maxi(1, int(_rules.get("maximum_queue", 5))):
 		return {"ok": false, "reason": "queue-full"}
@@ -9408,6 +10438,7 @@ func tick() -> void:
 	_step_pending_power_effects()
 	_step_grove_auras()
 	_step_summon_despawns()
+	_step_summon_auras()
 	_step_structure_weapons()
 	if ai_enabled and tick_index % AI_CONTROLLER_BASE_INTERVAL == 0:
 		_update_ai_controllers()
@@ -9417,6 +10448,7 @@ func tick() -> void:
 		_step_creeps()
 	for id in entity_ids():
 		_step_entity(id)
+	_step_banner_carriers()
 	_step_battalion_separation()
 	_step_construction()
 	_step_hero_regeneration()
@@ -9938,6 +10970,226 @@ func _attach_experience_state(row: Dictionary) -> void:
 			_apply_experience_level_effects(row, level_row)
 
 
+func _refresh_banner_carrier_state(row: Dictionary) -> void:
+	## Retail BannerCarriersAllowed: once the horde reaches minLevel, keep one
+	## linked banner entity (or re-spawn after authored BannerCarrierUpdate
+	## timers). Presentation reads banner_carrier_spawned / object_id / offset.
+	var rule: Dictionary = _unit_banner_carriers.get(String(row.get("unit_type", "")), {}) as Dictionary
+	if rule.is_empty():
+		rule = _unit_banner_carriers.get(String(row.get("object_id", "")), {}) as Dictionary
+	if rule.is_empty():
+		return
+	row["banner_carrier_object_id"] = String(rule.get("object_id", ""))
+	row["banner_carrier_offset_source"] = rule.get("offset_source", Vector2.ZERO)
+	row["banner_carrier_destroy_horde_on_death"] = bool(rule.get("destroy_horde_on_death", false))
+	if int(row.get("level", 1)) < int(rule.get("min_level", 2)):
+		return
+	var banner_id := int(row.get("banner_entity_id", 0))
+	if banner_id != 0 and entities.has(banner_id) and int((entities[banner_id] as Dictionary).get("health", 0)) > 0:
+		_sync_banner_entity_transform(row, banner_id, rule)
+		row["banner_carrier_spawned"] = true
+		return
+	var respawn_remaining := int(row.get("banner_respawn_ticks_remaining", -1))
+	if respawn_remaining > 0:
+		return
+	_spawn_banner_carrier_entity(row, rule)
+
+
+func _spawn_banner_carrier_entity(parent: Dictionary, rule: Dictionary) -> void:
+	var team := int(parent.get("team", -1))
+	if team < 0:
+		return
+	if not _next_dynamic_id.has(team):
+		_next_dynamic_id[team] = 900000 + team * 1000
+	var banner_object_id := String(rule.get("object_id", ""))
+	var banner_max_health := int(rule.get("banner_max_health", 0))
+	if banner_object_id == "" or banner_max_health <= 0:
+		parent["banner_carrier_spawned"] = false
+		parent["banner_carrier_error"] = "selected banner template is incomplete"
+		return
+	var entity_id := int(_next_dynamic_id[team])
+	_next_dynamic_id[team] = entity_id + 1
+	var offset_source: Vector2 = rule.get("offset_source", Vector2.ZERO)
+	var at := Vector2(parent.get("position", Vector2.ZERO)) + _retail_source_to_sim_offset(offset_source)
+	var unit_rules_value: Variant = _rules.get("unit_rules", {})
+	var has_rule := (
+		typeof(unit_rules_value) == TYPE_DICTIONARY
+		and not ((unit_rules_value as Dictionary).get(banner_object_id, {}) as Dictionary).is_empty()
+	)
+	if has_rule:
+		_add_battalion(
+			entity_id,
+			team,
+			at,
+			banner_object_id,
+			banner_object_id,
+			banner_object_id,
+			0
+		)
+	else:
+		# Banner runtimes may be non-producible (no UNIT_BUILD rule). Spawn a
+		# minimal 1-member entity so death/respawn still execute fail-closed.
+		entities[entity_id] = {
+			"id": entity_id,
+			"team": team,
+			"name": banner_object_id,
+			"object_id": banner_object_id,
+			"unit_type": banner_object_id,
+			"position": at,
+			"facing": Vector2(parent.get("facing", Vector2.RIGHT)),
+			"destination": at,
+			"route": [],
+			"route_cells": [],
+			"state": "idle",
+			"target_id": 0,
+			"target_kind": "battalion",
+			"health": banner_max_health,
+			"maximum_health": banner_max_health,
+			"member_maximum_health": banner_max_health,
+			"member_health": [banner_max_health],
+			"damage": 0,
+			"member_damage": 0,
+			"speed": 0.0,
+			"speed_source": 0.0,
+			"current_speed": 0.0,
+			"command_points": 0,
+			"level": 1,
+			"order_kind": "",
+			"is_builder": false,
+			"formation_positions": [Vector3.ZERO],
+			"formation_positions_base": [Vector3.ZERO],
+			"timed_modifiers": {},
+			"applied_upgrades": {},
+		}
+	if not entities.has(entity_id):
+		return
+	var banner: Dictionary = entities[entity_id]
+	banner["is_banner_carrier"] = true
+	banner["banner_parent_entity_id"] = int(parent.get("id", 0))
+	banner["command_points"] = 0
+	banner["banner_carrier_object_id"] = banner_object_id
+	# Linked carriers are not free-command battalions.
+	banner["ignores_select_all"] = true
+	_spatial_sync(banner)
+	parent["banner_entity_id"] = entity_id
+	parent["banner_carrier_spawned"] = true
+	parent["banner_respawn_ticks_remaining"] = -1
+	parent.erase("banner_respawn_armed_tick")
+	_emit_event("battalion.banner_spawned", int(parent.get("id", 0)), entity_id, {
+		"team": team,
+		"banner_object_id": banner_object_id,
+		"parent_unit_type": String(parent.get("unit_type", "")),
+	})
+
+
+func _sync_banner_entity_transform(parent: Dictionary, banner_id: int, rule: Dictionary) -> void:
+	if not entities.has(banner_id):
+		return
+	var banner: Dictionary = entities[banner_id]
+	var offset_source: Vector2 = rule.get("offset_source", Vector2.ZERO)
+	banner["position"] = Vector2(parent.get("position", Vector2.ZERO)) + _retail_source_to_sim_offset(offset_source)
+	banner["destination"] = banner["position"]
+	banner["facing"] = Vector2(parent.get("facing", banner.get("facing", Vector2.RIGHT)))
+	banner["team"] = int(parent.get("team", banner.get("team", -1)))
+	_spatial_sync(banner)
+
+
+func _step_banner_carriers() -> void:
+	## Follow parents, count respawn timers, re-spawn when due.
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if bool(row.get("is_banner_carrier", false)):
+			var parent_id := int(row.get("banner_parent_entity_id", 0))
+			if int(row.get("health", 0)) <= 0:
+				_on_banner_carrier_defeated(row)
+				entities.erase(id)
+				continue
+			if parent_id == 0 or not entities.has(parent_id) or int((entities[parent_id] as Dictionary).get("health", 0)) <= 0:
+				entities.erase(id)
+				continue
+			if parent_id != 0 and entities.has(parent_id):
+				var parent: Dictionary = entities[parent_id]
+				var rule: Dictionary = _unit_banner_carriers.get(String(parent.get("unit_type", "")), {}) as Dictionary
+				if rule.is_empty():
+					rule = _unit_banner_carriers.get(String(parent.get("object_id", "")), {}) as Dictionary
+				if not rule.is_empty():
+					_sync_banner_entity_transform(parent, id, rule)
+			continue
+		var remaining := int(row.get("banner_respawn_ticks_remaining", -1))
+		if remaining < 0:
+			# Keep living banner glued even when not a banner carrier itself.
+			if int(row.get("banner_entity_id", 0)) != 0:
+				_refresh_banner_carrier_state(row)
+			continue
+		if remaining > 0:
+			if int(row.get("banner_respawn_armed_tick", -1)) == tick_index:
+				continue
+			row["banner_respawn_ticks_remaining"] = remaining - 1
+			if int(row["banner_respawn_ticks_remaining"]) > 0:
+				continue
+		# remaining hit 0 — attempt respawn if level still qualifies.
+		_refresh_banner_carrier_state(row)
+
+
+func _on_banner_carrier_defeated(banner: Dictionary) -> void:
+	## Mirror C# BannerCarrierModule: destroy horde when authored, else arm
+	## authored respawn ticks (never invent a default timer).
+	var parent_id := int(banner.get("banner_parent_entity_id", 0))
+	if parent_id == 0 or not entities.has(parent_id):
+		return
+	var parent: Dictionary = entities[parent_id]
+	if int(parent.get("banner_entity_id", 0)) == int(banner.get("id", 0)):
+		parent["banner_entity_id"] = 0
+	parent["banner_carrier_spawned"] = false
+	if bool(parent.get("banner_carrier_destroy_horde_on_death", false)):
+		# Lethal destroy of the owning horde (retail thrall-style contracts).
+		parent["health"] = 0
+		var member_health: Array = parent.get("member_health", []) as Array
+		var defeated_members: Array[int] = []
+		for member_index in member_health.size():
+			if int(member_health[member_index]) > 0:
+				defeated_members.append(member_index)
+			member_health[member_index] = 0
+		parent["member_health"] = member_health
+		var death_policy := _bookkeep_battalion_death(
+			parent_id, parent, "NORMAL", defeated_members
+		)
+		_emit_event("battalion.defeated", int(banner.get("id", 0)), parent_id, {
+			"object_id": String(parent.get("object_id", "")),
+			"team": int(parent.get("team", -1)),
+			"category": String(parent.get("category", "")),
+			"reason": "banner-carrier-destroy-horde-on-death",
+		})
+		if bool(death_policy.get("destroy_object", false)):
+			entities.erase(parent_id)
+		return
+	var banner_object_id := String(banner.get("object_id", parent.get("banner_carrier_object_id", "")))
+	var rule: Dictionary = _unit_banner_carriers.get(String(parent.get("unit_type", "")), {}) as Dictionary
+	if rule.is_empty():
+		rule = _unit_banner_carriers.get(String(parent.get("object_id", "")), {}) as Dictionary
+	var respawn_ticks := int(rule.get("respawn_ticks", -1))
+	if _banner_respawn_ticks_by_object.has(banner_object_id):
+		respawn_ticks = int(_banner_respawn_ticks_by_object[banner_object_id])
+	# Fall back through retail source name on the rule.
+	if respawn_ticks < 0 and not rule.is_empty():
+		var source_name := String(rule.get("source_banner_object_id", ""))
+		if source_name != "" and _banner_respawn_ticks_by_object.has(source_name):
+			respawn_ticks = int(_banner_respawn_ticks_by_object[source_name])
+		var rule_oid := String(rule.get("object_id", ""))
+		if respawn_ticks < 0 and rule_oid != "" and _banner_respawn_ticks_by_object.has(rule_oid):
+			respawn_ticks = int(_banner_respawn_ticks_by_object[rule_oid])
+	if respawn_ticks >= 0:
+		parent["banner_respawn_ticks_remaining"] = respawn_ticks
+		parent["banner_respawn_armed_tick"] = tick_index
+		_emit_event("battalion.banner_respawn_armed", parent_id, int(banner.get("id", 0)), {
+			"respawn_ticks": respawn_ticks,
+			"banner_object_id": banner_object_id,
+		})
+	else:
+		parent["banner_respawn_ticks_remaining"] = -1
+		parent.erase("banner_respawn_armed_tick")
+
+
 func _record_hero_rank_attainment(row: Dictionary) -> void:
 	if String(row.get("category", "")) != "hero":
 		return
@@ -10128,6 +11380,7 @@ func _award_experience(row: Dictionary, amount: int) -> void:
 		_apply_experience_level_effects(row, next_row)
 	if level != int(row.get("level", 1)):
 		row["level"] = level
+		_refresh_banner_carrier_state(row)
 		_record_hero_rank_attainment(row)
 		_emit_event("battalion.level_up", int(row.get("id", 0)), 0, {
 			"team": int(row.get("team", -1)),
@@ -10770,8 +12023,12 @@ func _apply_ability_summon_chain(team: int, effect: Dictionary, point: Vector2) 
 	for weapon_value in Array(leaves.get("weapons", [])):
 		if typeof(weapon_value) == TYPE_DICTIONARY:
 			weapon_leaves[String((weapon_value as Dictionary).get("id", ""))] = weapon_value
+	var modifier_leaves: Dictionary = {}
+	for modifier_value in Array(leaves.get("attributeModifiers", [])):
+		if typeof(modifier_value) == TYPE_DICTIONARY:
+			modifier_leaves[String((modifier_value as Dictionary).get("id", ""))] = modifier_value
 	var support := _spellbook_ocl_support(
-		{}, {"objectCreationLists": [ocl_id]}, object_leaves, ocl_leaves, weapon_leaves
+		{}, {"objectCreationLists": [ocl_id]}, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves
 	)
 	if not bool(support.get("ok", false)):
 		return {"ok": false, "reason": "summon-chain-unconverted:%s" % String(support.get("reason", ""))}
@@ -10780,24 +12037,20 @@ func _apply_ability_summon_chain(team: int, effect: Dictionary, point: Vector2) 
 		# Fire-weapon receptacles and structure spawns are other powers' shapes;
 		# a hero summon button never presents them.
 		return {"ok": false, "reason": "summon-chain-unsupported-kind:%s" % String(resolved.get("kind", ""))}
-	var targets: Array = Array(resolved.get("targets", []))
-	if targets.is_empty():
-		return {"ok": false, "reason": "summon-chain-has-no-targets"}
-	# The egg's authored SlowDeathBehavior DestructionDelay is the summon's
-	# rise time (4000ms for the Army of the Dead). Schedule through the same
-	# pending-effect queue the spellbook summons use so both lanes hatch on the
-	# authored beat instead of popping in instantly.
-	var pending := 0
-	for target_value in targets:
-		pending += maxi(1, int((target_value as Dictionary).get("count", 1)))
-	_pending_power_effects.append({
-		"kind": "summon",
-		"fire_tick": tick_index + int(resolved.get("hatch_delay_ticks", 0)),
-		"team": team,
-		"point": point,
-		"targets": targets.duplicate(true),
-	})
-	return {"ok": true, "reason": "", "effect": "summon", "affected": pending, "summoned": []}
+	# Resolve declarative choice groups and schedule through the exact spellbook
+	# cast path. This keeps hero and spellbook summons on one RNG/timing contract.
+	var cast := _cast_spellbook_summon(team, resolved, point)
+	if not bool(cast.get("ok", false)):
+		return {"ok": false, "reason": "summon-chain-%s" % String(cast.get("reason", "cast-failed"))}
+	var pending := int(cast.get("summon_count", 0))
+	return {
+		"ok": true,
+		"reason": "",
+		"effect": "summon",
+		"affected": pending,
+		"summon_count": pending,
+		"summoned": [],
+	}
 
 
 func _summon_unit_type_for(source_object_id: String) -> String:
@@ -11599,6 +12852,10 @@ func _step_production() -> void:
 
 func _step_entity(id: int) -> void:
 	var row: Dictionary = entities[id]
+	# The carrier is a real damageable simulation entity, but its movement and
+	# presentation are owned by its horde; it never runs independent orders/AI.
+	if bool(row.get("is_banner_carrier", false)):
+		return
 	if int(row["health"]) <= 0:
 		row["state"] = "death"
 		_clear_pending_route(row, true)
@@ -11996,6 +13253,7 @@ func _issue_construct_for_team(team: int, ids: Array[int], structure_kind: Strin
 		return {"ok": false, "reason": last_route_rejection if last_route_rejection != "" else "route-rejected"}
 	_apply_structure_inherit_upgrades(structures[structure_id] as Dictionary)
 	_initialize_structure_auto_deposit(structures[structure_id] as Dictionary)
+	_unpack_castle_behavior_for_structure(structure_id)
 	if build_plots_only and build_plot_index >= 0:
 		(build_plots[team] as Array)[build_plot_index]["occupant_structure_id"] = structure_id
 	_emit_event("construction.started", builder_id, structure_id, {"team": team, "structure_kind": structure_kind, "cost": cost, "build_ticks": build_ticks, "object_id": String(builder.get("object_id", ""))})
@@ -13008,9 +14266,15 @@ func _apply_member_damage(
 	var defeated_members: Array[int] = []
 	if prior_health > 0 and int(health_values[target_member]) == 0:
 		defeated_members.append(target_member)
-	var death_policy := _apply_playable_unit_death_policy(
-		target, death_type, defeated_members
-	)
+	var death_policy: Dictionary = {}
+	if int(target["health"]) == 0:
+		death_policy = _bookkeep_battalion_death(
+			target_id, target, death_type, defeated_members, attacker_id
+		)
+	else:
+		death_policy = _apply_playable_unit_death_policy(
+			target, death_type, defeated_members
+		)
 	if not defeated_members.is_empty():
 		_emit_event("battalion.member_defeated", attacker_id, target_id, {"member_index": target_member, "object_id": String(target.get("object_id", ""))})
 		# Veterancy: the kill pays the victim's authored ExperienceAward at the
@@ -13035,32 +14299,72 @@ func _apply_member_damage(
 			_stamp_order_sequence([target_id])
 			_emit_music("battle")
 	if int(target["health"]) == 0:
-		target["state"] = "death"
-		target["target_id"] = 0
-		_clear_pending_route(target, true)
-		selected_ids.erase(target_id)
-		# A produced hero's death releases its identity: the fortress may train
-		# it again (retail hero revival at the fortress). Spawn-roster heroes
-		# were never completed identities, so this only affects produced ones.
-		var defeated_identity := "%d:%s" % [int(target.get("team", -1)), String(target.get("unit_type", ""))]
-		if _completed_hero_identities.has(defeated_identity):
-			_completed_hero_identities.erase(defeated_identity)
-			_emit_event("hero.identity_released", target_id, 0, {"unit_type": String(target.get("unit_type", ""))})
-		if base_loop_enabled:
-			var target_team := int(target.get("team", -1))
-			team_command_points[target_team] = maxi(0, command_points_for_team(target_team) - int(target.get("command_points", _rules.get("soldier_command_points", 60))))
-		prune_control_groups()
-		if entities.has(attacker_id):
-			award_power_kill(int((entities[attacker_id] as Dictionary).get("team", -1)))
+		# Banner carriers notify the owning horde before ordinary kill bookkeeping.
+		if bool(target.get("is_banner_carrier", false)):
+			_on_banner_carrier_defeated(target)
 		_emit_event("battalion.defeated", attacker_id, target_id, {
 			"object_id": String(target.get("object_id", "")),
 			"team": int(target.get("team", -1)),
 			"category": String(target.get("category", "")),
 		})
-		if bool(death_policy.get("destroy_object", false)):
+		if bool(death_policy.get("destroy_object", false)) or bool(target.get("is_banner_carrier", false)):
 			# SAGE DestroyDie::onDie calls destroyObject in the death callback;
 			# it does not enter the ordinary readable-corpse lifetime.
+			# Banner carriers are presentation/sim attachments without corpses.
 			entities.erase(target_id)
+
+
+func _bookkeep_battalion_death(
+	entity_id: int, row: Dictionary, death_type: String, defeated_members: Array[int],
+	attacker_id: int = 0
+) -> Dictionary:
+	## Shared authoritative bookkeeping for every battalion lethal path. Callers
+	## retain path-specific kill credit/events, but lifetime, corpse policy,
+	## selection, routing, and command-point release cannot drift apart.
+	_summon_despawn_ticks.erase(entity_id)
+	_summon_aura_source_ids.erase(entity_id)
+	# A produced hero's death releases its identity on every lethal path, not
+	# only ordinary member combat. Spawn-roster heroes were never registered.
+	var defeated_identity := "%d:%s" % [
+		int(row.get("team", -1)), String(row.get("unit_type", ""))
+	]
+	if _completed_hero_identities.has(defeated_identity):
+		_completed_hero_identities.erase(defeated_identity)
+		_emit_event(
+			"hero.identity_released", entity_id, 0,
+			{"unit_type": String(row.get("unit_type", ""))}
+		)
+	if entities.has(attacker_id) and not bool(row.get("is_banner_carrier", false)):
+		award_power_kill(int((entities[attacker_id] as Dictionary).get("team", -1)))
+	var death_policy := _apply_playable_unit_death_policy(
+		row, death_type, defeated_members
+	)
+	row["state"] = "death"
+	row["target_id"] = 0
+	_clear_pending_route(row, true)
+	selected_ids.erase(entity_id)
+	_release_command_points_once(row)
+	prune_control_groups()
+	return death_policy
+
+
+func _release_command_points_once(row: Dictionary) -> void:
+	if not base_loop_enabled or bool(row.get("command_points_released", false)):
+		return
+	row["command_points_released"] = true
+	var row_team := int(row.get("team", -1))
+	team_command_points[row_team] = maxi(
+		0,
+		command_points_for_team(row_team)
+		- _entity_command_point_commitment(row)
+	)
+
+
+func _entity_command_point_commitment(row: Dictionary) -> int:
+	return maxi(
+		0,
+		int(row.get("command_points", _rules.get("soldier_command_points", 60)))
+	)
 
 
 func _apply_playable_unit_death_policy(
@@ -13287,34 +14591,40 @@ func _keep_object_die_matches(row: Dictionary, death_type: String) -> bool:
 	var policy: Dictionary = row.get("keep_object_die_policy", {}) as Dictionary
 	if policy.is_empty():
 		return true
-	if String(policy.get("death_types", "ALL")) != "ALL":
-		return false
 	var death_folded := death_type.strip_edges().to_upper()
-	for excluded_value in policy.get("excluded_death_types", []) as Array:
-		if String(excluded_value).to_upper() == death_folded:
-			return false
-	return true
+	var mode := String(policy.get("death_types", "ALL")).to_upper()
+	if mode == "ALL":
+		for excluded_value in policy.get("excluded_death_types", []) as Array:
+			if String(excluded_value).to_upper() == death_folded:
+				return false
+		return true
+	if mode == "NONE":
+		for included_value in policy.get("included_death_types", []) as Array:
+			if String(included_value).to_upper() == death_folded:
+				return true
+	return false
 
 
 func _destroy_die_matches(
-	row: Dictionary, owner_role: String, _death_type: String
+	row: Dictionary, owner_role: String, death_type: String
 ) -> bool:
 	for policy_value in row.get("destroy_die", []) as Array:
 		if typeof(policy_value) != TYPE_DICTIONARY:
 			continue
 		var policy := policy_value as Dictionary
-		if (
-			String(policy.get("owner_role", "")) != owner_role
-			or String(policy.get("death_types", "")) != "ALL"
-		):
+		if String(policy.get("owner_role", "")) != owner_role:
 			continue
+		var mode := String(policy.get("death_types", "")).to_upper()
+		var death_folded := death_type.strip_edges().to_upper()
 		var excluded: Array = policy.get("excluded_death_types", []) as Array
-		# No materialized retail playable-unit carrier proves an exclusion
-		# mask. In particular, ALL -TOPPLED exists only on two cinematic
-		# carriers. Refuse such a row even if a hand-authored rule bypasses the
-		# adapter instead of manufacturing runtime evidence.
-		if excluded.is_empty():
+		if mode == "ALL" and not excluded.any(
+			func(value: Variant) -> bool: return String(value).to_upper() == death_folded
+		):
 			return true
+		if mode == "NONE":
+			for included_value in policy.get("included_death_types", []) as Array:
+				if String(included_value).to_upper() == death_folded:
+					return true
 	return false
 
 
@@ -14517,7 +15827,7 @@ func _is_commandable(id: int) -> bool:
 func _is_commandable_for_team(id: int, team: int) -> bool:
 	# Knocked-down battalions are incapacitated: orders bounce off until the
 	# battalion stands back up (retail sprawled infantry take no commands).
-	return entities.has(id) and int((entities[id] as Dictionary)["team"]) == team and int((entities[id] as Dictionary)["health"]) > 0 and int((entities[id] as Dictionary).get("knockdown_ticks", 0)) <= 0 and winner == -1
+	return entities.has(id) and not bool((entities[id] as Dictionary).get("is_banner_carrier", false)) and int((entities[id] as Dictionary)["team"]) == team and int((entities[id] as Dictionary)["health"]) > 0 and int((entities[id] as Dictionary).get("knockdown_ticks", 0)) <= 0 and winner == -1
 
 
 func _is_melee_attacker(row: Dictionary) -> bool:
@@ -14978,7 +16288,7 @@ func _state_hash_static_keys() -> Array[String]:
 		"unit_weapon_upgrades", "structure_armor", "spawn_roster", "structure_kinds",
 		"seed_structure_kinds", "structure_max_health", "structure_build_rules",
 		"unit_prerequisites", "structure_upgrade_contracts", "structure_upgrade_effects",
-		"compiled_research_kinds", "unit_upgrade_commands", "unit_level_upgrades",
+		"compiled_research_kinds", "unit_upgrade_commands", "unit_level_upgrades", "unit_banner_carriers",
 		"spellbook_ready", "spellbook_document", "spellbook_powers", "spellbook_order",
 		"spellbook_sciences", "spellbook_intrinsic", "science_to_power",
 		"expansion_build_rules", "unit_ability_rules", "unit_experience_rules",
@@ -15023,6 +16333,7 @@ func _authoritative_state() -> Dictionary:
 		"compiled_research_kinds": _compiled_research_kinds,
 		"unit_upgrade_commands": _unit_upgrade_commands,
 		"unit_level_upgrades": _unit_level_upgrades,
+		"unit_banner_carriers": _unit_banner_carriers,
 		"next_dynamic_id": _next_dynamic_id,
 		"next_dynamic_structure_id": _next_dynamic_structure_id,
 		"next_order_sequence": _next_order_sequence,
@@ -15066,6 +16377,15 @@ func _authoritative_state() -> Dictionary:
 	# here would re-mint the pin for every scenario that never touches bases.
 	if not unpackable_bases.is_empty():
 		state["unpackable_bases"] = unpackable_bases
+	if not _summon_aura_source_ids.is_empty():
+		state["summon_aura_source_ids"] = _summon_aura_source_ids
+	# These selected-pack contracts are absent in legacy/default scenarios. Keep
+	# them out of the byte stream unless configured so unrelated state pins remain
+	# stable, while selected retail matches still hash and snapshot the contracts.
+	if not _banner_respawn_ticks_by_object.is_empty():
+		state["banner_respawn_ticks_by_object"] = _banner_respawn_ticks_by_object
+	if not _castle_behavior_by_source.is_empty():
+		state["castle_behavior_by_source"] = _castle_behavior_by_source
 	# Same discipline for the script unit references: a match whose scripts
 	# never bind one contributes zero bytes (see the store's block comment).
 	if not script_unit_references.is_empty():
@@ -15193,6 +16513,9 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_compiled_research_kinds = state["compiled_research_kinds"]
 	_unit_upgrade_commands = state["unit_upgrade_commands"]
 	_unit_level_upgrades = state["unit_level_upgrades"]
+	_unit_banner_carriers = state.get("unit_banner_carriers", {})
+	_banner_respawn_ticks_by_object = state.get("banner_respawn_ticks_by_object", {})
+	_castle_behavior_by_source = state.get("castle_behavior_by_source", {})
 	_next_dynamic_id = state["next_dynamic_id"]
 	_next_dynamic_structure_id = int(state["next_dynamic_structure_id"])
 	_next_order_sequence = int(state["next_order_sequence"])
@@ -15223,6 +16546,7 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_pending_power_effects = state["pending_power_effects"]
 	_active_groves = state["active_groves"]
 	_summon_despawn_ticks = state["summon_despawn_ticks"]
+	_summon_aura_source_ids = state.get("summon_aura_source_ids", {})
 	expansion_pads = state["expansion_pads"]
 	_expansion_build_rules = state["expansion_build_rules"]
 	_next_expansion_structure_id = int(state["next_expansion_structure_id"])

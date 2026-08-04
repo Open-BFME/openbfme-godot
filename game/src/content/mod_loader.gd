@@ -21,6 +21,11 @@ var diagnostics: Array[String] = []
 ## "external" (OPENBFME_CONTENT), "workspace" (repo .private/content-packs),
 ## "durable" (user:// cache), or "" when no selection is active.
 var active_content_source := ""
+## Absolute path of the selection document (or explicit bundle root) that the
+## winning source above was resolved FROM. Two sources can select the same pack
+## id and bundle sha from different trees, so consumers that key a cache on
+## content identity need the path, not just the source name.
+var active_selection_path := ""
 
 # Boot-path memoization. _link_status performs a DirAccess.open per call, and
 # boot-time asset resolution calls it for every path segment of every resolved
@@ -102,12 +107,14 @@ func list_pack_roots() -> Array[String]:
 	# Developer/CI override. This remains ephemeral; normal installs use the
 	var external := OS.get_environment("OPENBFME_CONTENT")
 	var external_selected := ""
+	active_selection_path = ""
 	if external != "":
 		if DirAccess.dir_exists_absolute(external):
 			if is_valid_pack_root(external):
 				# An explicit immutable bundle root is a complete selection, not
 				# a supplement directory. It must suppress the durable user pack.
 				external_selected = external
+				active_selection_path = _absolute_path(external)
 				roots.append(external_selected)
 			else:
 				# A private workspace mirrors the normal immutable cache layout:
@@ -119,6 +126,7 @@ func list_pack_roots() -> Array[String]:
 				if FileAccess.file_exists(external_selection):
 					external_selected = selected_user_pack_root(external, external_selection)
 					if external_selected != "":
+						active_selection_path = _absolute_path(external_selection)
 						roots.append(external_selected)
 						roots.append_array(selected_pack_supplements(external, external_selection))
 						# Explicit selection is a complete load set (active + named
@@ -155,6 +163,7 @@ func list_pack_roots() -> Array[String]:
 				if workspace_selected != "":
 					active_selected = workspace_selected
 					active_content_source = "workspace"
+					active_selection_path = _absolute_path(workspace_selection)
 					roots.append(workspace_selected)
 					roots.append_array(selected_pack_supplements(workspace, workspace_selection))
 				else:
@@ -165,6 +174,7 @@ func list_pack_roots() -> Array[String]:
 		if selected != "":
 			active_selected = selected
 			active_content_source = "durable"
+			active_selection_path = _absolute_path(user_pack_selection_path())
 			# LOUD ON PURPOSE. This is the durable pack in the user data
 			# directory, reached only because OPENBFME_CONTENT named nothing
 			# usable. It can be months old while the repository's real pack has

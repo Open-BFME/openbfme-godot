@@ -233,8 +233,20 @@ func reload() -> void:
 	# work actually done, which is what a budget should be asserted against.
 	BootProfile.measure("ContentDB.reload", Time.get_ticks_msec() - _profile_db_started_ms)
 	Events.content_reloaded.emit()
-	print("[ContentDB] packs=%d units=%d buildings=%d factions=%d powers=%d research=%d maps=%d" % [
+	# `factions`/`units`/`buildings` are the LEGACY demo registries (the bundled
+	# demo directory), not the retail content census: they read like a content
+	# count and are not one. The playable* counters below come from the real
+	# runtime registries the game actually fields.
+	print("[ContentDB] legacy-demo: packs=%d units=%d buildings=%d factions=%d powers=%d research=%d maps=%d" % [
 		pack_meta.size(), units.size(), buildings.size(), factions.size(), powers.size(), research.size(), maps.size()
+	])
+	var playable_factions := get_playable_faction_ids()
+	print("[ContentDB] playable: factions=%d (%s) units=%d structures=%d skipped_units=%d" % [
+		playable_factions.size(),
+		", ".join(playable_factions),
+		playable_unit_runtimes.size(),
+		playable_structure_runtimes.size(),
+		skipped_playable_unit_documents.size(),
 	])
 
 func _load_pack(root: String) -> void:
@@ -656,6 +668,7 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 		var object_id := String(object_id_value)
 		var document := pending[object_id] as Dictionary
 		var production: Array = (document.get("registration", {}) as Dictionary).get("production", [])
+		var hero_displaced: Array[String] = []
 		var hero_collision := false
 		for route_value in production:
 			var route := route_value as Dictionary
@@ -663,12 +676,30 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 				continue
 			var ordinal_key := "%s:%d" % [String(route.get("producerObjectId", "")).to_lower(), int(route.get("rosterOrdinal", 0))]
 			if hero_ordinals.has(ordinal_key) and String(hero_ordinals[ordinal_key]).to_lower() != object_id.to_lower():
+				# Later-loaded packs (active selection loads last) replace the
+				# earlier hero at this producer ordinal rather than skipping the
+				# active roster. Same-pack / same-id reloads keep first-wins.
+				var existing_id := String(hero_ordinals[ordinal_key])
+				var existing_doc: Dictionary = playable_unit_runtimes.get(existing_id, {}) as Dictionary
+				var existing_root := String(existing_doc.get("_pack_root", ""))
+				var pending_root := String(document.get("_pack_root", ""))
+				if existing_root != "" and pending_root != "" and existing_root != pending_root:
+					if not hero_displaced.has(existing_id):
+						hero_displaced.append(existing_id)
+					hero_ordinals[ordinal_key] = object_id
+					continue
 				hero_collision = true
 				break
 			hero_ordinals[ordinal_key] = object_id
 		if hero_collision:
 			skipped.append("%s:hero-ordinal-collision" % object_id)
 			continue
+		for displaced_id in hero_displaced:
+			if playable_unit_runtimes.has(displaced_id):
+				playable_unit_runtimes.erase(displaced_id)
+			var displaced_folded := displaced_id.to_lower()
+			if playable_unit_runtime_pack_index.has(displaced_folded):
+				playable_unit_runtime_pack_index.erase(displaced_folded)
 		var projection := _playable_unit_projection(document)
 		if projection.is_empty():
 			skipped.append("%s:empty-projection" % object_id)
@@ -732,6 +763,36 @@ func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
 
 func get_skipped_playable_unit_documents() -> Array[String]:
 	return skipped_playable_unit_documents.duplicate()
+
+
+func get_playable_faction_ids() -> Array[String]:
+	## Faction slugs with at least one admitted playableUnit.* AND one
+	## playableStructure.* runtime document, resolved through the manifest's
+	## object-id prefixes. This is the real playable-content census; the legacy
+	## `factions` dictionary counts a bundled demo directory instead.
+	var prefixes: Dictionary = load(
+		"res://src/retail_slice/retail_faction_manifest.gd"
+	).FACTION_OBJECT_PREFIXES
+	var result: Array[String] = []
+	for faction_value in prefixes.keys():
+		var faction_id := String(faction_value)
+		var faction_prefixes: Array = prefixes[faction_value] as Array
+		if (
+			_registry_has_prefix(playable_unit_runtimes, faction_prefixes)
+			and _registry_has_prefix(playable_structure_runtimes, faction_prefixes)
+		):
+			result.append(faction_id)
+	result.sort()
+	return result
+
+
+func _registry_has_prefix(registry: Dictionary, prefixes: Array) -> bool:
+	for object_id_value in registry.keys():
+		var object_id := String(object_id_value).to_lower()
+		for prefix_value in prefixes:
+			if object_id.begins_with(String(prefix_value).to_lower()):
+				return true
+	return false
 
 
 func get_playable_unit_runtime_pack_index() -> Dictionary:
@@ -919,11 +980,15 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 			String(route.get("producerObjectId", "")) == ""
 			or String(route.get("commandSetId", "")) == ""
 			or String(route.get("commandId", "")) == ""
-			or surface not in ["command-socket", "hero-roster"]
+			or surface not in ["command-socket", "hero-roster", "banner-carrier"]
 			or (surface == "command-socket" and (slot < 1 or roster_ordinal != 0))
 			or (surface == "hero-roster" and (roster_ordinal < 1 or slot != 0))
+			# Engine banner surface: horde-spawned carriers have no retail
+			# command slot/ordinal; producer is the banner object itself.
+			or (surface == "banner-carrier" and (slot != 0 or roster_ordinal != 0))
 			or (category == "hero" and surface == "command-socket" and not _has_authored_command_socket_evidence(route))
 			or (category != "hero" and surface == "hero-roster")
+			or (surface == "banner-carrier" and category == "hero")
 		):
 			return false
 	if typeof(registration.composition) != TYPE_DICTIONARY or typeof(registration.gameplay) != TYPE_DICTIONARY:
@@ -1050,6 +1115,22 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 		if typeof(string_bindings_value) != TYPE_DICTIONARY:
 			return false
 		var string_bindings := string_bindings_value as Dictionary
+		# Command-referenced ids retail itself never localizes (RotWK added
+		# CONTROLBAR:ConstructBlackRiderHorde to commandbutton.ini and never
+		# added the string to lotr.str). The compiler records them explicitly;
+		# treating their absence as a broken pack deleted the whole unit from
+		# the roster and left a dead barracks button.
+		var source_null_string_ids: Dictionary = {}
+		if registration.has("sourceNullStringIds"):
+			var source_null_value: Variant = registration.get("sourceNullStringIds")
+			if typeof(source_null_value) != TYPE_ARRAY:
+				return false
+			for source_null_id_value in source_null_value as Array:
+				if typeof(source_null_id_value) != TYPE_STRING or String(source_null_id_value).strip_edges() == "":
+					return false
+				if string_bindings.has(String(source_null_id_value)):
+					return false
+				source_null_string_ids[String(source_null_id_value)] = true
 		var required_string_ids: Dictionary = {}
 		for command_value in (registration.ui as Dictionary).get("commands", []):
 			if typeof(command_value) != TYPE_DICTIONARY:
@@ -1064,6 +1145,8 @@ func _validate_playable_unit_runtime(root: String, document: Dictionary) -> bool
 		# non-empty text; additional bound ids are valid pack content.
 		for required_id_value in required_string_ids.keys():
 			var required_id := String(required_id_value)
+			if source_null_string_ids.has(required_id):
+				continue
 			if typeof(string_bindings.get(required_id)) != TYPE_STRING or String(string_bindings.get(required_id, "")).strip_edges() == "":
 				return false
 		for string_id_value in string_bindings.keys():
