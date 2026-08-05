@@ -48,10 +48,67 @@ func _run() -> void:
 	_finish()
 
 
-func _test_control_group_contract() -> void:
+## The sim seeds its opening roster ONLY from selected-pack unit rules and
+## fail-closes (`missing selected-pack unit rule`) on anything it was not given
+## — `_rules` starts empty and nothing in the sim ever populates it, so a
+## no-argument `setup()` spawns zero battalions and every entity assertion here
+## reads an empty roster. Deterministic contract runners therefore own their
+## stats, exactly like tests/retail_formation_movement_runner.gd:56.
+func _make_sim():
 	var simulation = SimScript.new()
-	simulation.setup()
+	simulation.setup({}, _harness_rules())
 	simulation.ai_enabled = false
+	return simulation
+
+
+func _harness_rules() -> Dictionary:
+	return {
+		"unit_rules": {
+			SimScript.SOLDIER_OBJECT_ID: _unit_rule(SimScript.SOLDIER_HORDE_ID),
+			SimScript.ARCHER_OBJECT_ID: _unit_rule(SimScript.ARCHER_OBJECT_ID),
+			SimScript.TOWER_GUARD_OBJECT_ID: _unit_rule(SimScript.TOWER_GUARD_OBJECT_ID),
+			SimScript.KNIGHT_OBJECT_ID: _unit_rule(SimScript.KNIGHT_OBJECT_ID),
+		},
+	}
+
+
+func _unit_rule(horde_id: String) -> Dictionary:
+	return {
+		"horde_id": horde_id,
+		"speed": 10.0,
+		"speed_source": 100.0,
+		# Unauthored ramp on purpose: the sim then falls back to 10x the row's
+		# own max speed per second, so a test that overrides `speed` (the
+		# arrival case sets 1000) still runs at its cap from tick one. A fixed
+		# acceleration would silently pin those rows to a slow ramp instead.
+		"acceleration": 0.0,
+		"acceleration_source": 0.0,
+		"turn_rate_degrees_per_second": 3600.0,
+		"braking": 0.0,
+		"braking_source": 0.0,
+		"attack_range": 1.15,
+		"attack_range_source": 11.5,
+		"minimum_attack_range": 0.0,
+		"minimum_attack_range_source": 0.0,
+		"vision_range": 40.0,
+		"vision_range_source": 400.0,
+		"delay_between_shots_ms": 600.0,
+		"pre_attack_delay_ms": 200.0,
+		"firing_duration_ms": 200.0,
+		"attack_period_ticks": 10,
+		"pre_attack_ticks": 2,
+		"firing_duration_ticks": 2,
+		"member_damage": 10,
+		"member_health": 200,
+		"member_count": 1,
+		"formation_positions": [Vector3.ZERO],
+		"provenance": {},
+		"is_builder": false,
+	}
+
+
+func _test_control_group_contract() -> void:
+	var simulation = _make_sim()
 	var reset_rows: Array[Dictionary] = simulation.control_groups_snapshot()
 	_check("control_groups_reset_one_through_nine", reset_rows.size() == 9 and int(reset_rows[0]["group"]) == 1 and int(reset_rows[8]["group"]) == 9 and Array(reset_rows[0]["entity_ids"]).is_empty() and Array(reset_rows[8]["entity_ids"]).is_empty())
 	var assigned: Dictionary = simulation.assign_control_group(1, [2, 101, 2, 999, 1])
@@ -74,9 +131,7 @@ func _test_control_group_contract() -> void:
 
 
 func _test_pending_route_snapshot_and_rejection() -> void:
-	var simulation = SimScript.new()
-	simulation.setup()
-	simulation.ai_enabled = false
+	var simulation = _make_sim()
 	simulation.route_provider = DeterministicRouteProvider.new()
 	var destination := Vector2(-20.0, 6.0)
 	_check("multi_battalion_move_is_accepted", simulation.issue_move([2, 1, 2], destination) == 2)
@@ -99,9 +154,7 @@ func _test_pending_route_snapshot_and_rejection() -> void:
 
 
 func _test_attack_rejection_is_transactional() -> void:
-	var simulation = SimScript.new()
-	simulation.setup()
-	simulation.ai_enabled = false
+	var simulation = _make_sim()
 	simulation.route_provider = DeterministicRouteProvider.new()
 	_check("attack_rejection_setup_move", simulation.issue_move([1], Vector2(-20.0, -8.0)) == 1)
 	var enemy: Dictionary = simulation.entity(101)
@@ -118,16 +171,21 @@ func _test_attack_rejection_is_transactional() -> void:
 
 
 func _test_arrival_clears_pending_route() -> void:
-	var simulation = SimScript.new()
-	simulation.setup()
-	simulation.ai_enabled = false
+	var simulation = _make_sim()
 	simulation.route_provider = DeterministicRouteProvider.new()
 	var destination := Vector2(-34.0, -10.0)
 	var player: Dictionary = simulation.entity(1)
 	player["speed"] = 1000.0
 	_check("arrival_setup_move", simulation.issue_move([1], destination) == 1 and not Array(player["route"]).is_empty())
-	simulation.tick()
-	simulation.tick()
+	# Drain the route instead of pinning a tick count: this contract is about the
+	# bookkeeping AT arrival, not about how many ticks the ramp takes. The route
+	# stepper consumes at most one waypoint per tick and brakes into the final
+	# one, so the two-leg test route is several ticks long; the bound just keeps
+	# a stalled route from hanging the runner.
+	var arrival_ticks := 0
+	while not Array(player["route"]).is_empty() and arrival_ticks < 16:
+		simulation.tick()
+		arrival_ticks += 1
 	var snapshot_row := _snapshot_entity(simulation.state_snapshot(), 1)
 	_check("arrival_reaches_exact_destination", Vector2(player["position"]).is_equal_approx(destination) and Vector2(player["destination"]).is_equal_approx(destination))
 	_check("arrival_clears_all_pending_route_metadata", Array(player["route"]).is_empty() and Array(player["route_cells"]).is_empty() and String(player["route_ford"]).is_empty() and Array(snapshot_row.get("route", [])).is_empty() and Array(snapshot_row.get("route_cells", [])).is_empty())
@@ -135,11 +193,9 @@ func _test_arrival_clears_pending_route() -> void:
 
 
 func _test_deterministic_replay_signature() -> void:
-	var first = SimScript.new()
-	var second = SimScript.new()
+	var first = _make_sim()
+	var second = _make_sim()
 	for simulation in [first, second]:
-		simulation.setup()
-		simulation.ai_enabled = false
 		simulation.route_provider = DeterministicRouteProvider.new()
 		var group_ids: Array[int] = [2, 1]
 		var move_ids: Array[int] = [1, 2]

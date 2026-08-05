@@ -5,6 +5,7 @@ extends Node3D
 ## phase scenes are instantiated lazily and share the intact body's transform.
 
 const ShadowDecalScript = preload("res://src/retail_slice/retail_shadow_decal.gd")
+const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
 const UnitAdapterScript = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const LIFECYCLE_SCHEMA := "openbfme.building-lifecycle-presentation"
 const LIFECYCLE_SCHEMA_VERSION := 0
@@ -53,7 +54,12 @@ var construction_ratio := 1.0
 var presentation_mode := "unconfigured"
 var retail_visual_loaded := false
 var retail_mesh_path := ""
+## World-unit footprint radius used for mouse picking and for the selection
+## ring. Resolved from the compiled retail Geometry block when the selected pack
+## carries one, otherwise from the intact body's own horizontal bounds. Never a
+## flat constant: see RetailSelectionPick for why that broke picking.
 var pick_radius := 4.0
+var selection_radius_source := "unresolved"
 
 # Deterministic public lifecycle state used by the focused gate and diagnostics.
 var current_lifecycle_phase := ""
@@ -138,6 +144,7 @@ func _enter_tree() -> void:
 func configure(entity: Dictionary, bundle_object_id: String = "", source_unit_scale: float = 0.0) -> void:
 	_prepare_identity(entity, bundle_object_id)
 	_source_unit_scale = source_unit_scale if is_finite(source_unit_scale) and source_unit_scale > 0.0 else 0.0
+	_seed_selection_radius()
 	_build_visual_root()
 	_configure_selected_pack_contract(bundle_object_id)
 	_build_markers()
@@ -155,6 +162,7 @@ func configure_fixture(
 	## pretending fixture geometry is retail content or bypassing production
 	## containment checks.
 	_prepare_identity(entity, "fixture.%s" % String(entity.get("structure_kind", "unknown")))
+	_seed_selection_radius()
 	_fixture_mode = true
 	_fixture_visuals = fixture_visuals.duplicate()
 	_build_visual_root()
@@ -1136,7 +1144,61 @@ func _prepare_identity(entity: Dictionary, bundle_object_id: String) -> void:
 	structure_kind = String(entity.get("structure_kind", entity.get("kind", "fortress")))
 	_bundle_object_id = bundle_object_id
 	name = "RetailStructure_%d_%s" % [entity_id, structure_kind]
-	pick_radius = 7.0 if structure_kind == "fortress" else 4.5
+
+
+func _seed_selection_radius() -> void:
+	## Conservative starting footprint before the body's bounds are known. It is
+	## expressed in retail SOURCE units and projected through the map transform
+	## scale, so it shrinks with the battlefield instead of staying a flat
+	## world-unit circle that swallowed most of the screen.
+	var source_radius := (
+		SelectionPick.DEFAULT_FORTRESS_SOURCE_RADIUS
+		if structure_kind == "fortress"
+		else SelectionPick.DEFAULT_STRUCTURE_SOURCE_RADIUS
+	)
+	var compiled := _compiled_geometry_source_radius()
+	if compiled > 0.0:
+		source_radius = compiled
+		selection_radius_source = "compiled-retail-geometry"
+	else:
+		selection_radius_source = "source-unit-default"
+	var projected := SelectionPick.world_radius_from_source(source_radius, _source_unit_scale)
+	if projected > 0.0:
+		pick_radius = projected
+	else:
+		# No map transform scale (fixture seams): keep a bounded circle rather
+		# than the legacy 4.5/7.0 world-unit constants.
+		pick_radius = 1.6 if structure_kind == "fortress" else 1.1
+		selection_radius_source = "unscaled-default"
+
+
+func _compiled_geometry_source_radius() -> float:
+	## Retail Geometry projected by the importer into the selected pack's
+	## playable-structure document, when that pack carries it. Packs published
+	## before the projection landed simply have no row and fall through to the
+	## body-bounds measurement below.
+	if _bundle_object_id == "" or not ContentDB.has_method("get_playable_structure_runtime"):
+		return 0.0
+	var document: Variant = ContentDB.get_playable_structure_runtime(_bundle_object_id)
+	if typeof(document) != TYPE_DICTIONARY:
+		return 0.0
+	var registration: Dictionary = (document as Dictionary).get("registration", {}) as Dictionary
+	var gameplay: Dictionary = registration.get("gameplay", {}) as Dictionary
+	var geometry: Variant = gameplay.get("geometry", {})
+	if typeof(geometry) != TYPE_DICTIONARY:
+		return 0.0
+	return SelectionPick.source_footprint_radius(geometry as Dictionary)
+
+
+func _apply_visual_bounds_selection_radius(bounds: AABB, uniform_scale: float) -> void:
+	## Fallback for packs without compiled geometry: measure the intact body.
+	if selection_radius_source == "compiled-retail-geometry":
+		return
+	var measured := SelectionPick.world_radius_from_visual_bounds(bounds, uniform_scale)
+	if measured <= 0.0:
+		return
+	pick_radius = measured
+	selection_radius_source = "intact-body-bounds"
 
 
 func _build_visual_root() -> void:
@@ -1434,6 +1496,7 @@ func _configure_bounded_workshop_evidence(evidence: Array) -> void:
 	_model_host.position.y = shared_vertical_offset
 	intact.visible = false
 	_target_height = maxf(DEFAULT_TARGET_HEIGHT, intact_aabb.size.y * shared_uniform_scale)
+	_apply_visual_bounds_selection_radius(intact_aabb, shared_uniform_scale)
 	retail_visual_loaded = true
 	presentation_mode = "bounded-workshop-model-state-evidence"
 	_update_lifecycle_metadata()
@@ -1512,6 +1575,7 @@ func _configure_contract(presentation: Dictionary, lifecycle: Dictionary) -> voi
 	_model_host.scale = Vector3.ONE * shared_uniform_scale
 	_model_host.position.y = shared_vertical_offset
 	intact_visual.visible = false
+	_apply_visual_bounds_selection_radius(intact_aabb, shared_uniform_scale)
 	retail_visual_loaded = true
 	presentation_mode = "private-imported-lifecycle" if not _fixture_mode else "legal-safe-lifecycle-fixture"
 	_update_lifecycle_metadata()

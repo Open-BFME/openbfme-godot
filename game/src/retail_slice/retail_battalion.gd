@@ -26,10 +26,16 @@ const SOURCE_HEALTH_HEIGHT_OFFSET := 10.0
 const ArcherProjectileControllerScript = preload("res://src/retail_slice/retail_archer_projectile_controller.gd")
 const SelectionDecalScript = preload("res://src/retail_slice/retail_selection_decal.gd")
 const PackCapability = preload("res://src/content/pack_capability.gd")
+const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
 
 var entity_id := 0
 var team := 0
 var object_id := DEFAULT_OBJECT_ID
+## World-unit footprint radius used for mouse picking: the horde's own
+## formation spread plus one member's retail Geometry body. Never a flat
+## constant -- see RetailSelectionPick.
+var pick_radius := SelectionPick.MINIMUM_SELECTION_RADIUS
+var selection_radius_source := "unresolved"
 var retail_model_filename := ""
 var current_state := "idle"
 var current_clip := ""
@@ -133,6 +139,7 @@ func configure(
 	name = "RetailBattalion_%d" % id
 	_build_clip_map(capability)
 	_build_members(expected_members, formation_positions)
+	_resolve_selection_radius()
 	_configure_source_selection_decal(definition)
 	_build_markers()
 	set_action_state("idle", true)
@@ -274,6 +281,87 @@ func _build_members(expected_members: int, formation_positions: Array) -> void:
 			team_color_status = String(visual.get_meta("team_color_status", ""))
 		member_animation_players[member_index] = []
 		_collect_animation_players(visual, member_index)
+
+
+func _resolve_selection_radius() -> void:
+	## Retail selects a horde by clicking one of its members, so the pickable
+	## footprint is the formation spread plus a single member's authored
+	## Geometry body -- not a fixed world-unit circle.
+	var member_source_radius := _member_source_geometry_radius()
+	var member_radius := SelectionPick.world_radius_from_source(member_source_radius, _source_unit_scale)
+	if member_radius <= 0.0:
+		member_radius = SelectionPick.MINIMUM_SELECTION_RADIUS
+		selection_radius_source = "unscaled-member-default"
+	_member_selection_radius = member_radius
+	pick_radius = maxf(SelectionPick.MINIMUM_SELECTION_RADIUS, _member_spread() + member_radius)
+	if selection_radius_source == "unresolved":
+		selection_radius_source = (
+			"formation-spread-and-compiled-geometry"
+			if _member_geometry_is_compiled
+			else "formation-spread-and-source-default"
+		)
+
+
+var _member_geometry_is_compiled := false
+var _member_selection_radius := SelectionPick.MINIMUM_SELECTION_RADIUS
+
+
+func _member_spread() -> float:
+	## Furthest live member from the battalion origin, in world units. Members
+	## are re-laid-out every frame by the formation controller, so the authored
+	## slots alone would under-report a marching or engaged horde.
+	var spread := 0.0
+	for visual_value in member_visuals.values():
+		if visual_value == null or not is_instance_valid(visual_value):
+			continue
+		var visual := visual_value as Node3D
+		spread = maxf(spread, Vector2(visual.position.x, visual.position.z).length())
+	if spread > 0.0:
+		return spread
+	for slot_value in member_formation_slots.values():
+		if typeof(slot_value) != TYPE_VECTOR3:
+			continue
+		var slot := slot_value as Vector3
+		spread = maxf(spread, Vector2(slot.x, slot.z).length())
+	return spread
+
+
+func selection_radius() -> float:
+	## Live picking footprint. Recomputed on demand (a click, not a frame) so a
+	## spread-out horde stays clickable across its whole silhouette.
+	pick_radius = maxf(
+		SelectionPick.MINIMUM_SELECTION_RADIUS, _member_spread() + _member_selection_radius
+	)
+	return pick_radius
+
+
+func _member_source_geometry_radius() -> float:
+	## Compiled retail Geometry from the selected pack's playable-unit document
+	## when present; otherwise the retail infantry default (MajorRadius 8.0).
+	_member_geometry_is_compiled = false
+	if not ContentDB.has_method("get_playable_unit_runtime"):
+		return SelectionPick.DEFAULT_MEMBER_SOURCE_RADIUS
+	# Playable-unit runtimes are keyed by the retail objectId; the battalion
+	# carries the bundle slug, whose definition records its retail source.
+	var definition: Dictionary = ContentDB.get_bundle_object(object_id)
+	var source_object_id := String(definition.get("sourceObjectId", ""))
+	for candidate in [source_object_id, object_id]:
+		var id := String(candidate)
+		if id == "":
+			continue
+		var document: Variant = ContentDB.get_playable_unit_runtime(id)
+		if typeof(document) != TYPE_DICTIONARY:
+			continue
+		var registration: Dictionary = (document as Dictionary).get("registration", {}) as Dictionary
+		var gameplay: Dictionary = registration.get("gameplay", {}) as Dictionary
+		var geometry: Variant = gameplay.get("geometry", {})
+		if typeof(geometry) != TYPE_DICTIONARY:
+			continue
+		var resolved := SelectionPick.source_footprint_radius(geometry as Dictionary)
+		if resolved > 0.0:
+			_member_geometry_is_compiled = true
+			return resolved
+	return SelectionPick.DEFAULT_MEMBER_SOURCE_RADIUS
 
 
 func _build_member_overlay(member_index: int, member_position: Vector3) -> void:

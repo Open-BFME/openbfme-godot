@@ -4,6 +4,7 @@ extends RefCounted
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const ParitySystems = preload("res://src/retail_slice/retail_slice_parity.gd")
 const CommandScript = preload("res://src/retail_slice/retail_command.gd")
+const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
 
 const MAX_RETAINED_EVENT_HISTORY := 2048
 const MAX_RETAINED_EVENTS_PER_KIND := 32
@@ -66,6 +67,26 @@ const FORMATION_ORDER: Array[String] = ["Line", "Block"]
 ## Line keeps authored formation slots. Block pulls members tighter (retail
 ## shield-wall / block feel) without inventing new combat numbers.
 const FORMATION_SPACING := {"Line": 1.0, "Block": 0.55}
+## Retail authors its "block" formation as a SEPARATE object with its own
+## RankInfo, not as a scalar squeeze. Comparing the authored pair
+## GondorFighterHorde (menhordes.ini:109-111) against its AlternateFormation
+## GondorFighterHordeBlock (menhordes.ini:350-352):
+##
+##   depth   (retail X): 50/30/10 -> 34/22/10, pitch 20 -> 12  = 0.60
+##   lateral (retail Y): 0,+-20,+-40 -> 0,+-10,+-20, pitch 20 -> 10 = 0.50
+##
+## The runtime adapter swaps axes (playable_unit_runtime_adapter.gd:377): retail
+## Y becomes sim x, retail X becomes sim z, so "lateral" scales x and "depth"
+## scales z. Gated on retail_formation_movement; the isotropic 0.55 above stays
+## the default until the owner re-mints the pin.
+##
+## Stored as plain floats, NOT as a Vector2: Vector2 components are 32-bit, and
+## routing the legacy 0.55 through one would round it to 0.550000011920929 and
+## move the pinned state hash on a run that never opted in.
+const FORMATION_SPACING_RETAIL := {
+	"Line": {"lateral": 1.0, "depth": 1.0},
+	"Block": {"lateral": 0.5, "depth": 0.6},
+}
 const STRUCTURE_KINDS: Array[String] = ["fortress", "farm", "barracks", "archery_range", "stable"]
 const STRUCTURE_MAX_HEALTH: Dictionary = {
 	"fortress": 7500,
@@ -994,6 +1015,7 @@ func _seed_team_manifest_tables() -> void:
 			var team_research: Dictionary = {}
 			var source := _manifest_upgrade_source(manifest)
 			_compile_structure_upgrade_chains(source, team_contracts)
+			_compile_structure_castle_upgrades(source, team_contracts)
 			_compile_structure_research_contracts(source, team_contracts, team_effects, team_research)
 			_team_structure_upgrade_contracts[team] = team_contracts
 			_team_structure_upgrade_effects[team] = team_effects
@@ -1272,10 +1294,19 @@ var _structure_build_rules: Dictionary = {}
 var _unit_prerequisites: Dictionary = {}
 ## Optional ANY-of production gate per unit type: {unit_type: {producer_kind:
 ## [upgrade_id, ...]}}. Authored by the button's `NeededUpgradeAny = Yes`
-## (commandbutton.ini:7513-7519); owning ANY ONE member satisfies the group,
-## while `_unit_prerequisites` stays the ALL-of set. Packs built before the
-## converter emitted `prerequisiteAnyOf` register no group at all, so their
-## gate keeps behaving exactly as it did (pure ALL-of).
+## (PURE RETAIL 2.01 commandbutton.ini:6327, Command_ConstructGondorRangerHorde);
+## owning ANY ONE member satisfies the group, while `_unit_prerequisites` stays
+## the ALL-of set. Packs built before the converter emitted `prerequisiteAnyOf`
+## register no group at all, so their gate keeps behaving exactly as it did
+## (pure ALL-of).
+##
+## CITATION REBASED 2026-08-04. The old reference (`:7513-7519`) was a line in
+## the fan-patched (Unofficial 2.02) tree, which authors 44 `NeededUpgradeAny`
+## buttons. Retail authors NINE, and every one of them names exactly ONE
+## `NeededUpgrade` token - so on retail data an ANY-of group is always a
+## single-element set and is behaviourally identical to the ALL-of gate. This
+## consumer is still correct and still required (the flag is genuinely
+## authored), but do not look for a multi-token retail example: there is none.
 var _unit_prerequisite_any_groups: Dictionary = {}
 var _structure_upgrade_contracts: Dictionary = {}
 ## Doc-driven PLAYER research/economy bindings per structure kind (the
@@ -1317,6 +1348,31 @@ var _state_hash_static_digest := PackedByteArray()
 ## keeps every legacy runner byte-identical). Placements arrive with the map
 ## configuration and stay inert until the rule enables seeding.
 var creep_lairs_enabled := false
+## Retail horde movement semantics (opt-in gameplay rule
+## "retail_formation_movement"; default off keeps every legacy runner and the
+## owner-signed 3000-tick behaviour pin byte-identical).
+##
+## When enabled the sim honours three things the retail data authors and this
+## sim previously ignored outright:
+##
+##   1. Turn rate. locomotor.ini authors TurnTime per horde locomotor
+##      (NormalMeleeHordeLocomotor TurnTime=2000 -> 180 deg/s;
+##      NormalCavalryHordeLocomotor TurnTime=1000 -> 360 deg/s). The importer
+##      already lands it on the row as turn_rate_degrees_per_second; without
+##      this flag the sim throws it away and snaps facing in one tick.
+##   2. Wheel vs reform. locomotor.ini:717
+##      "MaxTurnWithoutReform = 45 ; Try to turn beyond this angle, and we will
+##      reform instead of wheel". Inside the threshold the horde wheels (turns
+##      while advancing); beyond it the horde reforms - it pivots about its own
+##      centre without translating, which is also what TurnWhileMoving = No on
+##      the same melee locomotors demands.
+##   3. Group cohesion. locomotor.ini:713 "WaitForFormation = Yes ; When moving
+##      into formations, these guys stop & wait for others." A multi-battalion
+##      move order caps every member of the group at the slowest authored speed
+##      so the group arrives together instead of scattering by class.
+##
+## See .private/scratch/opus17-formation-extraction.md for the full citation set.
+var retail_formation_movement := false
 var _creep_lair_placements: Array = []
 var _next_creep_guard_id := 70001
 var _next_creep_structure_id := 60001
@@ -1339,6 +1395,7 @@ func setup(map_configuration: Dictionary = {}, gameplay_rules: Dictionary = {}) 
 	_event_digest = 0x811C9DC5
 	entities.clear()
 	structures.clear()
+	_structure_footprint_radius_cache.clear()
 	# MATCH-SCOPED base-loop state resets WITH the structures it pointed at.
 	# Stale expansion-pad keys would both survive a reset AND block re-seeding
 	# (_seed_expansion_pads_for early-returns on an existing key), leaving
@@ -1625,6 +1682,7 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	_unit_experience_rules.clear()
 	_unit_module_contracts.clear()
 	_structure_module_contracts.clear()
+	_castle_upgrade_grants.clear()
 	_experience_unauthored_victims.clear()
 	_configure_ranger_runtime_contract()
 	_configure_trebuchet_runtime_contract()
@@ -1644,6 +1702,10 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	# menu) resolves false, so the default match — and the pinned battle
 	# signature — stays byte-identical.
 	creep_lairs_enabled = bool(_rules.get("enable_creep_lairs", false))
+	# Retail turn-rate / wheel-vs-reform / group-cohesion opt-in. Absent (every
+	# legacy runner and the untouched menu) resolves false, so the pinned
+	# behaviour signature stays byte-identical.
+	retail_formation_movement = bool(_rules.get("retail_formation_movement", false))
 	command_point_cap = maxi(60, int(_rules.get("command_point_cap", 200)))
 	var starting_resources := maxi(0, int(_rules.get("starting_resources", 1200 if base_loop_enabled else 0)))
 	team_resources = _seed_team_map(starting_resources)
@@ -2746,6 +2808,7 @@ func _global_upgrade_source() -> Dictionary:
 		"structure_upgrade_chains": _rules.get("structure_upgrade_chains", manifest.get("structure_upgrade_chains", {})),
 		"structure_research": _rules.get("structure_research", manifest.get("structure_research", {})),
 		"structure_upgrade_effects": _rules.get("structure_upgrade_effects", manifest.get("structure_upgrade_effects", {})),
+		"structure_castle_upgrades": _rules.get("structure_castle_upgrades", manifest.get("structure_castle_upgrades", {})),
 	}
 
 
@@ -2757,11 +2820,93 @@ func _manifest_upgrade_source(manifest: Dictionary) -> Dictionary:
 		"structure_upgrade_chains": manifest.get("structure_upgrade_chains", {}),
 		"structure_research": manifest.get("structure_research", {}),
 		"structure_upgrade_effects": manifest.get("structure_upgrade_effects", {}),
+		"structure_castle_upgrades": manifest.get("structure_castle_upgrades", {}),
 	}
 
 
 func _configure_structure_upgrade_chains() -> void:
 	_compile_structure_upgrade_chains(_global_upgrade_source(), _structure_upgrade_contracts)
+	_compile_structure_castle_upgrades(_global_upgrade_source(), _structure_upgrade_contracts)
+
+
+func _compile_structure_castle_upgrades(source: Dictionary, contracts: Dictionary) -> void:
+	## Retail's fortress improvement surface (the OBJECT_UPGRADE buttons in the
+	## fortress command set's upgrades page — commandset.ini
+	## MordorFortressCommandSet slots 8-13 DoomPyres/LavaMoat/FireArrows/
+	## MagmaCauldrons/MorgulSorcery/GorgorothSpire, and the same shape for every
+	## other faction).
+	##
+	## Unlike a level chain these do NOT swap the command set or raise the
+	## building's level: the button buys a *Trigger* OBJECT upgrade and the
+	## fortress's own CastleUpgrade module hands out the real one (see
+	## `_castle_upgrade_grants`). They therefore ride their own contract branch:
+	## no from/to command set, no level gain, one purchase each.
+	##
+	## Source rows are {kind: {"upgrades": [{upgradeId, grantsUpgradeId, cost,
+	## buildTimeSeconds, slot, commandId, labelId, tooltipId, buttonImageId,
+	## neededUpgradeIds?, requiresUpgradeId?}]}}. Malformed rows fail closed.
+	if configuration_error != "":
+		return
+	var value: Variant = source.get("structure_castle_upgrades", {})
+	if typeof(value) != TYPE_DICTIONARY:
+		configuration_error = "Structure castle upgrades are not a dictionary"
+		return
+	var kinds: Array[String] = []
+	for kind_value in (value as Dictionary).keys():
+		kinds.append(String(kind_value))
+	kinds.sort()
+	for kind in kinds:
+		var surface_value: Variant = (value as Dictionary).get(kind)
+		if typeof(surface_value) != TYPE_DICTIONARY:
+			configuration_error = "Structure castle upgrade surface for '%s' is not a dictionary" % kind
+			return
+		var rows: Array = (surface_value as Dictionary).get("upgrades", []) as Array
+		if rows.is_empty():
+			configuration_error = "Structure castle upgrade surface for '%s' is malformed" % kind
+			return
+		for row_value in rows:
+			if typeof(row_value) != TYPE_DICTIONARY:
+				configuration_error = "Structure castle upgrade surface for '%s' has a malformed row" % kind
+				return
+			var row := row_value as Dictionary
+			var upgrade_id := String(row.get("upgradeId", ""))
+			var granted_id := String(row.get("grantsUpgradeId", ""))
+			var cost := int(row.get("cost", -1))
+			var build_seconds := float(row.get("buildTimeSeconds", 0.0))
+			# Zero build time is authored evidence (see the research surface's
+			# RotWK BuildTime 0 note); the duration clamps to >= 1 tick below.
+			if upgrade_id == "" or granted_id == "" or cost < 0 or build_seconds < 0.0:
+				configuration_error = "Structure castle upgrade '%s' on '%s' is malformed" % [upgrade_id, kind]
+				return
+			var needed: Array[String] = []
+			for needed_value in Array(row.get("neededUpgradeIds", [])):
+				needed.append(String(needed_value))
+			var contract := {
+				"structure_kind": kind,
+				"cost": cost,
+				"duration_ticks": maxi(1, roundi(build_seconds / TICK_SECONDS)),
+				"level_cap": 99,
+				"levels_to_gain": 0,
+				"to_level": 0,
+				"cancelable": bool(row.get("cancelable", false)),
+				"from_command_set": "",
+				"to_command_set": "",
+				"requires_upgrade_id": String(row.get("requiresUpgradeId", "")),
+				"health_add": 0,
+				"production_multiplier": 1.0,
+				"castle_upgrade": true,
+				"grants_upgrade_id": granted_id,
+				"command_id": String(row.get("commandId", "")),
+				"slot": int(row.get("slot", 0)),
+				"label_id": String(row.get("labelId", "")),
+				"tooltip_id": String(row.get("tooltipId", "")),
+				"image_id": String(row.get("buttonImageId", "")),
+				"lacks_prerequisite_label_id": String(row.get("lacksPrerequisiteLabelId", "")),
+				"needed_upgrade_ids": needed,
+				"needed_upgrade_any": bool(row.get("neededUpgradeAny", false)),
+			}
+			if not _register_structure_upgrade_contract(contracts, upgrade_id, contract):
+				return
 
 
 func _compile_structure_upgrade_chains(source: Dictionary, contracts: Dictionary) -> void:
@@ -3178,6 +3323,9 @@ func _team_structure_base(team: int) -> int:
 
 func _initialize_base_loop() -> void:
 	structures.clear()
+	# Same contract as _restore_authoritative_state: ids are about to be reused
+	# by a new match, so the id-keyed footprint memo must not survive.
+	_structure_footprint_radius_cache.clear()
 	var layout := _home_layout if not _home_layout.is_empty() else _derive_home_layout()
 	for team in _roster_team_ids():
 		var team_layout: Dictionary = layout.get(team, layout.get(str(team), {}))
@@ -4172,6 +4320,28 @@ func structure_upgrade_commands(structure_id: int) -> Array[Dictionary]:
 			continue
 		if completed.has(upgrade_id):
 			continue
+		if bool(contract.get("castle_upgrade", false)):
+			# Fortress improvements ride the fortress's upgrades page on EVERY
+			# command set it can be on (they never swap it), so no from-set match
+			# applies — exactly like compiled research, but bought per building.
+			result.append({
+				"upgrade_id": upgrade_id,
+				"command_id": String(contract.get("command_id", "")),
+				"cost": int(contract.get("cost", 0)),
+				"duration_ticks": int(contract.get("duration_ticks", 1)),
+				"to_level": 0,
+				"cancelable": bool(contract.get("cancelable", false)),
+				"slot": int(contract.get("slot", 0)),
+				"label_id": String(contract.get("label_id", "")),
+				"tooltip_id": String(contract.get("tooltip_id", "")),
+				"image_id": String(contract.get("image_id", "")),
+				"castle_upgrade": true,
+				"grants_upgrade_id": String(contract.get("grants_upgrade_id", "")),
+				"lacks_prerequisite_label_id": String(contract.get("lacks_prerequisite_label_id", "")),
+				"needed_upgrade_ids": Array(contract.get("needed_upgrade_ids", [])).duplicate(),
+				"gate_satisfied": _research_gate_unsatisfied(int(building.get("team", -1)), building, contract) == "",
+			})
+			continue
 		var from_set := String(contract.get("from_command_set", ""))
 		if current_set == "":
 			# Before any purchase the building sits on its base command set: the
@@ -4684,7 +4854,28 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 				science_id = candidate
 				break
 		var science_row: Dictionary = _spellbook_sciences.get(science_id, {}) as Dictionary
-		var reload_ms := float((power.get("reloadTimeMs", {}) as Dictionary).get("value", 0.0))
+		var reload_row: Dictionary = power.get("reloadTimeMs", {}) as Dictionary
+		var reload_ms := float(reload_row.get("value", 0.0))
+		# Retail authors `ReloadTime = 0` DELIBERATELY on the one-shot passive
+		# spells (specialpower.ini:1341-1346 SpellBookScavenger,
+		# :1492-1498 SpellBookFueltheFires): they have no recharge at all. A
+		# resolved-zero reload is therefore authored truth, not a conversion
+		# gap, and must not be reported as one — the effect resolver owns the
+		# real verdict for those powers. An ABSENT reloadTimeMs stays locked.
+		#
+		# TODO (one-shot gate, unreachable today): retail keeps these from being
+		# recast by marking the BUTTON, not the power - commandbutton.ini:9364-9371
+		# Command_SpellBookScavenger and :9457-9465 Command_SpellBookFueltheFires
+		# both author `Options = NONPRESSABLE`. This sim reads reload time only, so
+		# a resolved-zero reload would let a once-per-match spell fire every frame.
+		# No gate is implemented because both powers are BLOCKED at the effect
+		# resolver (no supply-dock economy, no kill-bounty economy), so nothing can
+		# cast them. Any future power that resolves with an authored-zero reload
+		# MUST carry a once-per-match gate keyed off NONPRESSABLE before it ships.
+		var reload_authored_zero := (
+			reload_ms == 0.0
+			and String(reload_row.get("expression", "")).strip_edges() == "0"
+		)
 		var row := {
 			"id": power_id,
 			"module": String(effect_definition.get("module", "")),
@@ -4696,7 +4887,7 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 			"needs_target_pos": Array(cast.get("options", [])).has("NEED_TARGET_POS"),
 			"radius_cursor_source": float((power.get("radiusCursorRadius", {}) as Dictionary).get("value", 0.0)),
 			"reload_ms": reload_ms,
-			"reload_ticks": maxi(1, roundi(reload_ms / 1000.0 / TICK_SECONDS)),
+			"reload_ticks": 0 if reload_authored_zero else maxi(1, roundi(reload_ms / 1000.0 / TICK_SECONDS)),
 			"sound_id": String(power.get("initiateSoundId", "")),
 			"fx_lists": Array(references.get("fxLists", [])),
 			"ocls": Array(references.get("objectCreationLists", [])),
@@ -4704,7 +4895,7 @@ func configure_spellbook_runtime(document: Dictionary) -> bool:
 		if science_id == "":
 			row["castable"] = false
 			row["locked_reason"] = "power has no purchasable tree science in the document"
-		elif reload_ms <= 0.0:
+		elif reload_ms <= 0.0 and not reload_authored_zero:
 			row["castable"] = false
 			row["locked_reason"] = "reloadTimeMs did not resolve to a positive value"
 		else:
@@ -4861,6 +5052,8 @@ func _reset_spellbook_match_state() -> void:
 	_staged_purchases = _seed_team_map([])
 	_pending_power_effects.clear()
 	_active_groves.clear()
+	_field_pings.clear()
+	_weather_effects.clear()
 	_summon_despawn_ticks.clear()
 	_summon_aura_source_ids.clear()
 
@@ -4868,6 +5061,12 @@ func _reset_spellbook_match_state() -> void:
 ## Timed spellbook effect state (volley strikes, summon hatches, groves).
 var _pending_power_effects: Array[Dictionary] = []
 var _active_groves: Array[Dictionary] = []
+## Live "ping" field effects: retail's PalantirVisionPing / FarSeeingPing /
+## FrozenLandPing family — an IMMOBILE, UNATTACKABLE, weaponless object dropped
+## at the cast point whose whole job is a bounded VisionRange reveal and/or an
+## AttributeModifierAuraUpdate, removed by its authored LifetimeUpdate.
+## EMPTY-IS-ABSENT in the serialized state (see _serialize_state).
+var _field_pings: Array[Dictionary] = []
 ## entity_id → tick the summoned battalion fades (authored summon lifetime).
 var _summon_despawn_ticks: Dictionary = {}
 ## entity_id -> true for live summoned battalions that carry converted auras.
@@ -4914,6 +5113,17 @@ func _spellbook_effect_support(power_row: Dictionary, fields: Array, references:
 			return {"ok": true, "effect": {"kind": "heal", "amount": amount, "as_percent": as_percent, "radius_source": radius, "affects": String(field_values.get("HealAffects", ""))}}
 		"SpecialPowerModule":
 			var modifier_id := String(field_values.get("AttributeModifier", ""))
+			if not field_values.has("AttributeModifier"):
+				# Retail sometimes ships a SpecialPowerModule whose whole payload is
+				# COMMENTED OUT upstream and re-homed on another object. Fuel the Fires
+				# is the case in this corpus: object/system/system.ini:369-378 comments
+				# out AttributeModifier/Range/Affects with the note "Done in science
+				# check on the lumber mill", and the live bonus is
+				# SupplyCenterDockUpdate BonusScience = SCIENCE_FueltheFires /
+				# BonusScienceMultiplier = 200% on Object LumberMill
+				# (object/civilian/civilianbuildings.ini:18831-18836). The sim has no
+				# worker/supply-dock economy for that multiplier to act on.
+				return {"ok": false, "reason": "SpecialPowerModule authors no AttributeModifier: the payload is commented out on the module and re-homed on a SupplyCenterDockUpdate BonusScience, which the sim does not model"}
 			if modifier_id == "" or not modifier_leaves.has(modifier_id):
 				return {"ok": false, "reason": "attribute modifier '%s' is not a converted leaf" % modifier_id}
 			# Retail AttributeModifier leaves author repeated Modifier lines
@@ -4936,19 +5146,62 @@ func _spellbook_effect_support(power_row: Dictionary, fields: Array, references:
 			var armor_mult := 0.0
 			var production_mult := 0.0
 			var invulnerable := false
+			var unsupported_rows: Array = []
+			# WHICH ROWS THE LEAF ACTUALLY AUTHORED. The three multipliers below
+			# all default to the neutral 1.0 when their row is absent, so a
+			# consumer reading only the numbers cannot tell an AUTHORED 100% from
+			# a row that was never written. That distinction is not academic: the
+			# spellbook matrix classifies a power as "castable but inert" when its
+			# damage and armor multipliers are neutral and its production
+			# multiplier is not, and "neutral" meant "absent OR authored-100%".
+			# The grove-aura lane already publishes exactly this table for the
+			# same reason (see the `authored_rows` key on the grove_aura effect).
+			var authored_rows: Dictionary = {
+				"DAMAGE_MULT": false, "ARMOR": false, "PRODUCTION": false
+			}
 			for modifier_text_value in modifier_rows:
-				var modifier_parts := String(modifier_text_value).split(" ", false)
-				if modifier_parts.size() < 1:
+				var parsed := _parse_modifier_row(String(modifier_text_value))
+				# Fail-closed on an UNREADABLE row (see _parse_modifier_row). An
+				# unconsumed KIND still falls through: this probe only asks whether the
+				# leaf carries an effect the sim can apply, and `has_effect` below is
+				# the verdict for that.
+				if not parsed.get("ok", false):
+					return {"ok": false, "reason": "attribute modifier '%s': %s" % [
+						modifier_id, String(parsed.get("reason", "")),
+					]}
+				if not bool(parsed.get("supported", false)):
+					# READ but not modelled — named and counted, never a silent drop and
+					# never a shape error that takes the readable rows beside it down
+					# with it. angmar/SpellBookSnowbind is exactly this case: its
+					# `INVULNERABLE 0% SLASH PIERCE …` damage-type scope list has no
+					# runtime here, while the `PRODUCTION 1%` row on the same leaf is
+					# perfectly readable and used to be lost with it.
+					unsupported_rows.append({
+						"row": String(modifier_text_value),
+						"shape": String(parsed.get("shape", "")),
+						"reason": String(parsed.get("reason", "")),
+					})
 					continue
-				var kind := String(modifier_parts[0])
-				if kind == "DAMAGE_MULT" and modifier_parts.size() == 2 and modifier_parts[1].ends_with("%"):
-					damage_mult = float(modifier_parts[1].trim_suffix("%")) / 100.0
-				elif kind == "ARMOR" and modifier_parts.size() == 2 and modifier_parts[1].ends_with("%"):
-					armor_mult = float(modifier_parts[1].trim_suffix("%")) / 100.0
-				elif kind == "PRODUCTION" and modifier_parts.size() == 2 and modifier_parts[1].ends_with("%"):
-					production_mult = float(modifier_parts[1].trim_suffix("%")) / 100.0
-				elif kind == "INVULNERABLE":
-					invulnerable = true
+				var kind := String(parsed.get("kind", ""))
+				# Only the percent shape is a multiplier; KIND_PLAIN is an absolute
+				# magnitude (HEALTH 400) and must not be read as one.
+				if String(parsed.get("shape", "")) != "percent":
+					unsupported_rows.append({
+						"row": String(modifier_text_value),
+						"shape": String(parsed.get("shape", "")),
+						"reason": "absolute-magnitude '%s' row has no multiplier runtime here" % kind,
+					})
+					continue
+				var percent := float(parsed.get("value", 0.0))
+				if kind == "DAMAGE_MULT":
+					damage_mult = percent
+					authored_rows["DAMAGE_MULT"] = true
+				elif kind == "ARMOR":
+					armor_mult = percent
+					authored_rows["ARMOR"] = true
+				elif kind == "PRODUCTION":
+					production_mult = percent
+					authored_rows["PRODUCTION"] = true
 			var duration_ms := _spellbook_field_float(modifier_fields, "Duration", 0.0)
 			# Duration may be an unresolved define name on the leaf; power-level
 			# field_resolved already carries numeric AttributeModifierRange.
@@ -4961,6 +5214,12 @@ func _spellbook_effect_support(power_row: Dictionary, fields: Array, references:
 			var range_source := _spellbook_field_float(field_values, "AttributeModifierRange", 0.0)
 			if range_source <= 0.0 and field_resolved.has("AttributeModifierRange"):
 				range_source = float(field_resolved.get("AttributeModifierRange", 0.0))
+			# `invulnerable` can no longer be set from a row: retail authors ZERO bare
+			# `INVULNERABLE` flags (census in _parse_modifier_row) — every authored
+			# INVULNERABLE carries `0%` plus a damage-type scope list, which is
+			# read-but-not-supported above. The field is kept (always false) so the
+			# effect shape and its consumers do not move; blanket invulnerability was
+			# never actually authored in this corpus.
 			var has_effect := damage_mult > 0.0 or armor_mult > 0.0 or production_mult > 0.0 or invulnerable
 			# Economy PRODUCTION auras (Industry / Dwarven Riches) are permanent
 			# while the model condition holds — no Duration row. Combat auras
@@ -4981,11 +5240,55 @@ func _spellbook_effect_support(power_row: Dictionary, fields: Array, references:
 				"permanent": duration_ticks == 0 and production_mult > 0.0,
 				"range_source": range_source,
 				"affects": String(field_values.get("AttributeModifierAffects", "")),
+				# Which of the three multiplier rows the leaf actually authored, so
+				# an authored-neutral 100% is distinguishable from an absent row.
+				"authored_rows": authored_rows,
+				# Named residual rows carried onto the effect so the runner and the
+				# report can COUNT them instead of losing them.
+				"unsupported_modifier_rows": unsupported_rows,
 			}}
 		"OCLSpecialPower":
-			return _spellbook_ocl_support(power_row, references, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves)
+			return _spellbook_ocl_support(
+				power_row, references, modifier_leaves, object_leaves, ocl_leaves, weapon_leaves,
+				String(field_values.get("CreateLocation", "")),
+				String(field_values.get("NearestSecondaryObjectFilter", ""))
+			)
+		"DarknessSpecialPower":
+			return _spellbook_weather_modifier_support(field_values, field_resolved, modifier_leaves)
+		"FreezingRainSpecialPower":
+			return _spellbook_weather_anticategory_support(field_values, field_resolved)
+		"UntamedAllegianceSpecialPower":
+			return _spellbook_untamed_allegiance_support(field_values, field_resolved)
+		"DevastateSpecialPower":
+			# Retail's Devastation squeezes resources out of the map's TREE objects
+			# (TreeValueMultiplier 50%, TreeValueTotalCap 1500 -
+			# object/system/system.ini:241-252) and fires DevastationEntWeapon, whose
+			# only damage nugget is filtered to `NONE +RohanGenericEnt +RohanTreeBerd
+			# ENEMIES` (weapon.ini DevastationEntWeapon). The sim models neither trees
+			# as harvestable objects nor Ent units, so BOTH halves have no target.
+			return {"ok": false, "reason": "DevastateSpecialPower has no target in the sim: its resource half converts TREE objects (TreeValueMultiplier %s, TreeValueTotalCap %d), which the sim does not model, and its damage half (FireWeapon '%s') is filtered to Ents only" % [
+				String(field_values.get("TreeValueMultiplier", "")),
+				int(field_resolved.get("TreeValueTotalCap", 0)),
+				String(field_values.get("FireWeapon", "")),
+			]}
+		"ScavengerSpecialPower":
+			# BountyPercent scales the per-kill BountyValue award. The sim has no
+			# kill-bounty economy at all (resources come from structure payouts and
+			# AutoDepositUpdate), so there is nothing for the percent to scale.
+			return {"ok": false, "reason": "ScavengerSpecialPower scales kill bounty (BountyPercent %s) but the sim has no BountyValue kill-award economy to scale" % String(field_values.get("BountyPercent", ""))}
 		"ElvenWoodSpecialPower":
-			return _spellbook_grove_support(field_values, field_resolved, references, modifier_leaves, object_leaves, ocl_leaves)
+			return _spellbook_grove_support(field_values, field_resolved, references, modifier_leaves, object_leaves, ocl_leaves, "ElvenGroveObject")
+		"TaintSpecialPower":
+			# Retail's TaintSpecialPower and ElvenWoodSpecialPower are the SAME
+			# module shape with a different planted object: `TaintObject/TaintRadius/
+			# TaintFX/TaintOCL` against `ElvenGroveObject/ElvenWoodRadius/
+			# ElvenWoodFX/ElvenWoodOCL` (data/ini/object/system/system.ini:31-38 vs
+			# :829-837). TaintLand and ElvenGrove are byte-identical objects apart
+			# from Side and the RequiredConditions cell type
+			# (object/evilfaction/structures/taintland.ini:3-46 vs
+			# object/goodfaction/structures/elven/grove.ini:3-47), so one resolver
+			# serves both.
+			return _spellbook_grove_support(field_values, field_resolved, references, modifier_leaves, object_leaves, ocl_leaves, "TaintObject")
 		"CloudBreakSpecialPower":
 			return _spellbook_cloudbreak_support(field_values, field_resolved)
 		_:
@@ -4999,7 +5302,117 @@ func _spellbook_field_float(fields: Dictionary, key: String, fallback: float) ->
 	return float(raw)
 
 
-func _spellbook_ocl_support(power_row: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary, weapon_leaves: Dictionary) -> Dictionary:
+func _parse_modifier_row(value: String) -> Dictionary:
+	## THE one reader of an AttributeModifier leaf's `Modifier =` row. Every
+	## resolver that used to split the text itself is routed through here.
+	##
+	## Retail authors these rows TAB-separated as often as space-separated
+	## (attributemodifier.ini:74 `Modifier = ARMOR<TAB>50%` against :75
+	## `Modifier = DAMAGE_MULT 150%`) and the converter preserves the tab
+	## verbatim, so a space-only split silently dropped every tabbed row. That
+	## is exactly what kept Elven Wood reading as "modifier is not converted",
+	## and duplicating the normalization at four call sites is how one of them
+	## kept missing it.
+	##
+	## SHAPES ARE A CENSUS, NOT A GUESS. Round 18 counted every `Modifier =` row
+	## in the PURE RETAIL oracle tree
+	## (.private/retail-work/editions/rotwk/cache/effective-assets, all .ini/.inc,
+	## comments stripped): 894 rows total, and they fall into exactly three
+	## authored shapes —
+	##
+	##   KIND_PCT   386  `ARMOR<TAB>50%`, `DAMAGE_MULT 150%`
+	##                     -> shape "percent", value = n / 100.0
+	##   KIND_PLAIN 363  `HEALTH 400`, `CRUSHABLE_LEVEL 3`, and the far commoner
+	##                   `ARMOR <DEFINE_TOKEN>` / `HEALTH <DEFINE_TOKEN>` form
+	##                     -> shape "plain", value = n (NOT divided); an
+	##                        unresolved define token is unreadable, ok=false
+	##   MULTI      145  `INVULNERABLE 0% SLASH PIERCE …` (a damage-type scope
+	##                   list), `ARMOR <TOKEN> CRUSH`, `DAMAGE_MULT
+	##                   #MULTIPLY( X 0.60 )`, `PRODUCTION <TOKEN> %` (the
+	##                   percent sign detached by whitespace)
+	##                     -> shape "percent_scoped"/"plain_scoped"/"expression",
+	##                        ok=true, supported=false, with a NAMED reason
+	##
+	##   BARE_FLAG    0  ZERO rows in the corpus are a single bare token. The old
+	##                   `parts.size() == 1 -> flag row` branch was dead code
+	##                   invented from the *appearance* of `INVULNERABLE`, whose
+	##                   real authored form always carries `0%` plus a scope list
+	##                   (attributemodifier.ini:909, :1079). It is deleted: one
+	##                   token is now unreadable and fails closed.
+	##
+	## THREE-WAY VERDICT, because two different mistakes are possible:
+	##   ok=false                -> UNREADABLE. Fail closed at the call site: a
+	##                              row nobody can read is a buff that would go
+	##                              missing in silence.
+	##   ok=true, supported=false -> READ, but its runtime is not modelled. The
+	##                              caller may explicitly not-support it by name
+	##                              (`reason`) and carry on with the rows it can
+	##                              apply. A shape error here used to lock whole
+	##                              powers (angmar/SpellBookSnowbind lost its
+	##                              readable `PRODUCTION 1%` because the
+	##                              INVULNERABLE row beside it was called a shape
+	##                              error).
+	##   ok=true, supported=true  -> a plain scalar the generic consumers apply.
+	##
+	## `flag` is retained on every result (always false) so callers written
+	## against the old contract keep compiling; nothing sets it any more.
+	var parts_raw := value.replace("\t", " ").split(" ", false)
+	var parts: Array[String] = []
+	for part_value in parts_raw:
+		parts.append(String(part_value))
+	if parts.is_empty():
+		return {"ok": false, "reason": "modifier row is empty"}
+	var kind: String = parts[0]
+	var rest: Array[String] = parts.slice(1)
+	if rest.size() >= 2 and rest[rest.size() - 1] == "%":
+		# `PRODUCTION ROHAN_FARM_LVL2_PRODUCTION  %` (attributemodifier.ini:1406):
+		# retail lets the percent sign drift off its magnitude. Reattach it before
+		# anything else so the row is judged on its real shape.
+		rest = rest.slice(0, rest.size() - 1)
+		rest[rest.size() - 1] = rest[rest.size() - 1] + "%"
+	if rest.is_empty():
+		return {"ok": false, "reason": "modifier row '%s' is a single token with no magnitude; retail authors none (census: 0 of 894)" % value}
+	var head: String = rest[0]
+	var scope: Array = rest.slice(1)
+	if head.begins_with("#"):
+		# `DAMAGE_MULT #MULTIPLY( CREATE_A_HERO_ATTRIBUTE_MULTIPLIER 0.60 )`.
+		# The pack ships the expression verbatim; the sim has no INI expression
+		# evaluator, so this is read-but-not-supported rather than a shape error.
+		return {
+			"ok": true, "supported": false, "flag": false, "shape": "expression",
+			"kind": kind, "value": 0.0, "scope": rest,
+			"reason": "modifier row '%s' is an authored INI expression; the pack ships it unevaluated and the sim has no expression evaluator" % value,
+		}
+	var magnitude := 0.0
+	var shape := ""
+	if head.ends_with("%"):
+		var percent_text: String = head.trim_suffix("%")
+		if not percent_text.is_valid_float():
+			return {"ok": false, "reason": "modifier row '%s' has a non-numeric percent" % value}
+		magnitude = float(percent_text) / 100.0
+		shape = "percent"
+	elif head.is_valid_float():
+		# KIND_PLAIN carries an ABSOLUTE magnitude (HEALTH 400), not a percent.
+		# Callers must read `shape` before treating `value` as a multiplier.
+		magnitude = float(head)
+		shape = "plain"
+	else:
+		return {"ok": false, "reason": "modifier row '%s' magnitude '%s' is an unresolved define token" % [value, head]}
+	if scope.is_empty():
+		return {
+			"ok": true, "supported": true, "flag": false, "shape": shape,
+			"kind": kind, "value": magnitude, "scope": [],
+		}
+	return {
+		"ok": true, "supported": false, "flag": false, "shape": shape + "_scoped",
+		"kind": kind, "value": magnitude, "scope": scope,
+		"reason": "modifier row '%s' scopes %s to the damage-type list %s; the sim applies modifiers globally and does not model per-damage-type scoping" % [
+			value, kind, " ".join(scope),
+		],
+	}
+
+
+func _spellbook_ocl_support(power_row: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary, weapon_leaves: Dictionary, create_location: String = "", secondary_object_filter: String = "") -> Dictionary:
 	## OCL powers dispatch on the spawned objects' converted evidence:
 	## fire-weapon receptacles (volley/quake), summon eggs, or structures.
 	var ocl_ids: Array = references.get("objectCreationLists", []) as Array
@@ -5031,6 +5444,18 @@ func _spellbook_ocl_support(power_row: Dictionary, references: Dictionary, modif
 	var first_leaf: Dictionary = (spawns[0] as Dictionary)["leaf"]
 	if not Array(first_leaf.get("fireWeapons", [])).is_empty():
 		return _spellbook_fire_weapon_support(spawns, weapon_leaves)
+	# Reveal/field "ping" objects are not units and must not be routed through the
+	# summon resolver, which rejected them for the irrelevant reason that an
+	# IMMOBILE object authors no locomotor. Returns {} for anything else.
+	var ping_verdict := _spellbook_field_ping_support(spawns, modifier_leaves)
+	if not ping_verdict.is_empty():
+		return ping_verdict
+	# Shape detectors that own a MORE PRECISE reason than the generic summon or
+	# structure paths would produce. Each names the single authored module that
+	# carries the whole power, so a future converter change can be aimed at it.
+	var shaped := _spellbook_ocl_named_gap(spawns, object_leaves, ocl_leaves, create_location, secondary_object_filter)
+	if not shaped.is_empty():
+		return shaped
 	for spawn_value in spawns:
 		var hatch_leaf: Dictionary = (spawn_value as Dictionary).get("leaf", {}) as Dictionary
 		if typeof(hatch_leaf.get("hatch", null)) == TYPE_DICTIONARY:
@@ -5082,8 +5507,223 @@ func _spellbook_has_unconverted_hatch_payload(leaf: Dictionary, object_leaves: D
 	return false
 
 
+func _spellbook_hatch_payload_leaves(leaf: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary) -> Array:
+	## One hatch level down: the objects an egg's CreateObjectDie OCL creates.
+	## Several powers park their entire runtime behind the egg (Avalanche's
+	## FloodUpdate wave, the Citadel's CastleBehavior), so a named-gap scan that
+	## only looked at the power OCL's direct spawns would miss them.
+	var payload: Array = []
+	var hatch_value: Variant = leaf.get("hatch", null)
+	if typeof(hatch_value) != TYPE_DICTIONARY:
+		return payload
+	var ocl: Dictionary = ocl_leaves.get(String((hatch_value as Dictionary).get("ocl", "")), {}) as Dictionary
+	for create_value in Array(ocl.get("createObjects", [])):
+		if typeof(create_value) != TYPE_DICTIONARY:
+			continue
+		for object_id_value in Array((create_value as Dictionary).get("objects", [])):
+			var child: Dictionary = object_leaves.get(String(object_id_value), {}) as Dictionary
+			if not child.is_empty():
+				payload.append(child)
+	return payload
+
+
+func _spellbook_ocl_named_gap(spawns: Array, object_leaves: Dictionary, ocl_leaves: Dictionary, create_location: String, secondary_object_filter: String) -> Dictionary:
+	## Precise fail-closed verdicts for OCL powers whose blocker is a single
+	## authored module, reported BEFORE the generic summon/structure resolvers
+	## produce an incidental (and misleading) reason such as "locomotion is not
+	## converted" for an object that is deliberately IMMOBILE.
+	## Returns {} when no named shape matches.
+	var chain: Array = []
+	for spawn_value in spawns:
+		var spawn_leaf: Dictionary = (spawn_value as Dictionary).get("leaf", {}) as Dictionary
+		if spawn_leaf.is_empty():
+			continue
+		chain.append(spawn_leaf)
+		chain.append_array(_spellbook_hatch_payload_leaves(spawn_leaf, object_leaves, ocl_leaves))
+	for leaf_value in chain:
+		var leaf: Dictionary = leaf_value as Dictionary
+		var unconverted: Array = leaf.get("unconvertedBehaviors", []) as Array
+		if unconverted.has("FloodUpdate"):
+			# Avalanche / Flood: the spawned object is an IMMOBILE INERT NO_COLLIDE
+			# marker with an ImmortalBody, maxHealth 1 and a DeletionUpdate. Every
+			# gameplay value of the power - the sweep path, its damage, the units it
+			# throws - lives in FloodUpdate, which the compiler does not emit.
+			return {"ok": false, "reason": "spawned object '%s' carries the whole power in FloodUpdate (wave path, damage and throw), which is not converted; the converted leaf is an immortal maxHealth-1 marker with only a %d ms DeletionUpdate" % [
+				String(leaf.get("id", "")),
+				int((leaf.get("deletion", {}) as Dictionary).get("maxMs", 0)),
+			]}
+		if unconverted.has("CastleBehavior"):
+			# Citadel: the summoned object is a castle FOUNDATION. Its value is the
+			# plot layout CastleBehavior declares (which expansion sites exist, what
+			# may be built on them); without it the leaf is an UNATTACKABLE,
+			# maxHealth-1 immortal marker with nothing to build on.
+			return {"ok": false, "reason": "summoned object '%s' is a castle foundation whose CastleBehavior (plot layout and expansion sites) is not converted; the leaf converts to an UNATTACKABLE immortal maxHealth-%d marker with no plots" % [
+				String(leaf.get("id", "")), int(leaf.get("maxHealth", 0)),
+			]}
+	if create_location == "USE_SECONDARY_OBJECT_LOCATION":
+		# Bombard / Evil Bombard. The payload IS fully converted (20 seeds,
+		# SpreadFormation, each seed hatching a projectile that fires
+		# BombardProjectileWeapon at +600 ms for 400 SIEGE over radius 100), but the
+		# barrage FOOTPRINT is the power, and where the seeds are laid out is not
+		# determinable: CreateLocation names the secondary object while the same
+		# CreateObject block also authors OrientInSecondaryDirection, so "at the
+		# keep" and "at the cast point, oriented away from the keep" both read
+		# consistently. The OpenSAGE oracle does not settle it either -
+		# OCLSpecialPower.cs:35 throws NotImplementedException for this enum.
+		# Guessing would move every impact, so the power stays locked.
+		# TWO further runtime blockers ride the same payload, both verified against
+		# the converted dwarves pack's BombardPhaseInitialWeapon /
+		# BombardProjectileWeapon leaves:
+		#   - the fear half is a LuaEventNugget (`LuaEvent = BeUncontrollablyAfraid`,
+		#     Radius 200, SendToEnemies/SendToNeutral Yes) - retail routes it through
+		#     the Lua event bus, which this sim does not have at all;
+		#   - the impact half carries a MetaImpactNugget (ShockWaveAmount 75.0,
+		#     ShockWaveTaperOff 1.0, ShockWaveRadius 50) - physics knockback with no
+		#     model here.
+		# So even a settled spread origin would leave the power partly unmodelled;
+		# recording only the footprint ambiguity understated the gap.
+		return {"ok": false, "reason": "OCLSpecialPower CreateLocation = USE_SECONDARY_OBJECT_LOCATION (NearestSecondaryObjectFilter '%s') is not modelled: the spread origin of the seed formation - caster keep or cast point - is not determinable from the converted pack, and the barrage footprint is the whole power. Two further halves have no runtime here either: the LuaEventNugget fear pulse (LuaEvent BeUncontrollablyAfraid, radius 200) needs retail's Lua event bus, and the MetaImpactNugget shockwave (amount 75.0, taper 1.0, radius 50) needs physics knockback" % secondary_object_filter}
+	return {}
+
+
+## --- Weather-based global spells (Darkness, Freezing Rain) -------------------
+## Retail models these as a WEATHER change plus a global, range-less effect that
+## holds for WeatherDuration. Neither power authors an AttributeModifierRange or
+## a NEED_TARGET_POS cast option: the scope is the whole map. The sim therefore
+## keeps a live window rather than doing a one-shot sweep, and re-applies it on
+## the shared aura cadence so units that appear during the window are covered
+## exactly as they are in retail (AttributeModifierWeatherBased = Yes).
+## EMPTY-IS-ABSENT in the serialized state (see _serialize_state).
+var _weather_effects: Array[Dictionary] = []
+
+
+func _spellbook_weather_modifier_support(field_values: Dictionary, field_resolved: Dictionary, modifier_leaves: Dictionary) -> Dictionary:
+	## RECORDED, redundant-but-unconsumed: SpellBookDarkness also authors a
+	## SpecialPower-LEVEL filter (specialpower.ini:1446-1455 `ObjectFilter = ANY
+	## -STRUCTURE -DwarvenZerker -NoldorWarrior -GondorKnightsofDol
+	## -WildBabyDrake -IsengardFanatic -MordorBlackRider`). The converter does not
+	## carry it onto the power row, and it changes nothing: the MODULE filter read
+	## below (AttributeModifierAffects) is strictly narrower - it is ALLIES-only,
+	## admits only +INFANTRY +CAVALRY +MONSTER (so -STRUCTURE is already implied),
+	## and repeats every one of those unit exclusions. Noted here so the absence
+	## reads as verified-inert rather than overlooked.
+	if String(field_values.get("AttributeModifierWeatherBased", "")) != "Yes":
+		return {"ok": false, "reason": "weather power does not author AttributeModifierWeatherBased = Yes"}
+	var weather_ms := float(field_resolved.get("WeatherDuration", 0.0))
+	if weather_ms <= 0.0:
+		return {"ok": false, "reason": "WeatherDuration did not resolve in the document"}
+	var modifier_id := String(field_values.get("AttributeModifier", ""))
+	var modifier: Dictionary = modifier_leaves.get(modifier_id, {}) as Dictionary
+	if modifier.is_empty():
+		return {"ok": false, "reason": "weather attribute modifier '%s' is not a converted leaf" % modifier_id}
+	var modifiers: Array = []
+	var category := ""
+	var leaf_duration_ms := 0.0
+	for field_value in Array(modifier.get("fields", [])):
+		if typeof(field_value) != TYPE_DICTIONARY:
+			continue
+		var field := field_value as Dictionary
+		var key := String(field.get("key", ""))
+		var value := String(field.get("value", ""))
+		if key == "Category":
+			category = value
+		elif key == "Duration" and value.is_valid_float():
+			leaf_duration_ms = float(value)
+		elif key == "Modifier":
+			var parsed := _parse_modifier_row(value)
+			if not parsed.get("ok", false):
+				return {"ok": false, "reason": "weather modifier '%s' has an unreadable modifier row: %s" % [modifier_id, String(parsed.get("reason", ""))]}
+			var kind := String(parsed.get("kind", ""))
+			# STRICT lane: a weather modifier is a whole-army buff and every authored
+			# row of it has to land, so a read-but-not-modelled row still locks the
+			# power — under its own name, not as a shape error.
+			if not bool(parsed.get("supported", false)):
+				return {"ok": false, "reason": "weather modifier '%s' has a row with no runtime: %s" % [modifier_id, String(parsed.get("reason", ""))]}
+			if String(parsed.get("shape", "")) != "percent" or kind not in ["ARMOR", "DAMAGE_MULT", "EXPERIENCE"]:
+				return {"ok": false, "reason": "weather modifier '%s' requires unsupported '%s' runtime" % [modifier_id, kind]}
+			modifiers.append({"kind": kind, "value": float(parsed.get("value", 0.0))})
+	if modifiers.is_empty():
+		return {"ok": false, "reason": "weather modifier '%s' carries no converted stat rows" % modifier_id}
+	# The authored leaf is INFINITE (Duration = 0): the weather window is what
+	# bounds it. A positive leaf duration would be a different, shorter contract
+	# than the one implemented here, so it fails closed rather than being
+	# silently widened to the weather window.
+	if leaf_duration_ms > 0.0:
+		return {"ok": false, "reason": "weather modifier '%s' authors its own Duration %.0f ms; only the infinite (Duration = 0) weather-bounded form is modelled" % [modifier_id, leaf_duration_ms]}
+	return {"ok": true, "effect": {
+		"kind": "weather_modifier",
+		"modifier_id": modifier_id,
+		"category": category,
+		"modifiers": modifiers,
+		"duration_ticks": maxi(1, roundi(weather_ms / 1000.0 / TICK_SECONDS)),
+		"weather": String(field_values.get("ChangeWeather", "")),
+		"affects": String(field_values.get("AttributeModifierAffects", "")),
+	}}
+
+
+func _spellbook_weather_anticategory_support(field_values: Dictionary, field_resolved: Dictionary) -> Dictionary:
+	if String(field_values.get("AttributeModifierWeatherBased", "")) != "Yes":
+		return {"ok": false, "reason": "weather power does not author AttributeModifierWeatherBased = Yes"}
+	var weather_ms := float(field_resolved.get("WeatherDuration", 0.0))
+	if weather_ms <= 0.0:
+		return {"ok": false, "reason": "WeatherDuration did not resolve in the document"}
+	var anti_category := String(field_values.get("AntiCategory", ""))
+	if anti_category != "LEADERSHIP":
+		# LEADERSHIP is the one modifier category the sim can suppress
+		# (leadership_suppressed_until_tick, shared with Horn of Gondor).
+		return {"ok": false, "reason": "AntiCategory '%s' has no suppression runtime in the sim" % anti_category}
+	var affects := String(field_values.get("AttributeModifierAffects", ""))
+	if affects == "":
+		return {"ok": false, "reason": "AttributeModifierAffects is absent from the document"}
+	# The burn-rate half of Freezing Rain (BurnRateModifier / BurnDecayModifier)
+	# acts on retail's FireLogicSystem, which the sim does not model. It is
+	# carried as evidence on the effect and named, never silently dropped.
+	var unconverted: Array = []
+	if field_resolved.has("BurnRateModifier") or field_resolved.has("BurnDecayModifier"):
+		unconverted.append("FireLogicSystem burn rate/decay")
+	return {"ok": true, "effect": {
+		"kind": "weather_anticategory",
+		"anti_category": anti_category,
+		"duration_ticks": maxi(1, roundi(weather_ms / 1000.0 / TICK_SECONDS)),
+		"weather": String(field_values.get("ChangeWeather", "")),
+		"affects": affects,
+		"burn_rate_modifier": float(field_resolved.get("BurnRateModifier", 0.0)),
+		"burn_decay_modifier": float(field_resolved.get("BurnDecayModifier", 0.0)),
+		"unconverted_behaviors": unconverted,
+	}}
+
+
+func _spellbook_untamed_allegiance_support(field_values: Dictionary, field_resolved: Dictionary) -> Dictionary:
+	## Lair conversion. The authored payload is exactly three things: TargetEnemy,
+	## an object filter naming every creep lair and slaved creep, and a radius.
+	## There is no AttributeModifier and no duration - the allegiance is
+	## permanent, which is why the module carries neither.
+	var range_source := float(field_resolved.get("AttributeModifierRange", 0.0))
+	if range_source <= 0.0:
+		return {"ok": false, "reason": "AttributeModifierRange did not resolve in the document"}
+	var filter := String(field_values.get("AttributeModifierAffects", ""))
+	if filter == "" or filter.ends_with("_OBJECTFILTER") or filter.ends_with("_OBJECT_FILTER"):
+		return {"ok": false, "reason": "creep object filter '%s' did not resolve to its member list in the document" % filter}
+	var lair_types: Array = []
+	for term_value in filter.split(" ", false):
+		var term := String(term_value)
+		if term.begins_with("+") and term.contains("Lair"):
+			lair_types.append(term.trim_prefix("+"))
+	if lair_types.is_empty():
+		return {"ok": false, "reason": "resolved creep filter names no lair objects"}
+	lair_types.sort()
+	return {"ok": true, "effect": {
+		"kind": "creep_allegiance",
+		"range_source": range_source,
+		"filter": filter,
+		"lair_types": lair_types,
+		"target_enemy": String(field_values.get("TargetEnemy", "")) == "Yes",
+	}}
+
+
 func _spellbook_fire_weapon_support(spawns: Array, weapon_leaves: Dictionary) -> Dictionary:
 	var strikes: Array = []
+	var seen_weapons: Array = []
 	for spawn_value in spawns:
 		var spawn := spawn_value as Dictionary
 		for fw_value in Array((spawn["leaf"] as Dictionary).get("fireWeapons", [])):
@@ -5092,6 +5732,8 @@ func _spellbook_fire_weapon_support(spawns: Array, weapon_leaves: Dictionary) ->
 			var weapon: Dictionary = weapon_leaves.get(weapon_id, {}) as Dictionary
 			if weapon.is_empty():
 				return {"ok": false, "reason": "fire-weapon '%s' is not a converted leaf" % weapon_id}
+			if not seen_weapons.has(weapon_id):
+				seen_weapons.append(weapon_id)
 			var nuggets := _spellbook_weapon_damage_nuggets(weapon, weapon_leaves)
 			if nuggets.is_empty():
 				# Warning-shot phase: an authored fire entry with no damage.
@@ -5107,7 +5749,21 @@ func _spellbook_fire_weapon_support(spawns: Array, weapon_leaves: Dictionary) ->
 					"affects": String(weapon.get("radiusDamageAffects", "ENEMIES")),
 				})
 	if strikes.is_empty():
-		return {"ok": false, "reason": "fire-weapon chain carries no resolved damage nuggets"}
+		# Undermine is this case: DwarvenUndermineSpawnWeapon has no DamageNugget
+		# at all, only a MetaImpactNugget whose payload is an instant-death filter
+		# plus a shock wave, and whose ShockWaveRadius is still the unresolved
+		# define SPELL_UNDERMINE_SPAWN_DAMAGE_RADIUS in the pack. Naming the nugget
+		# kinds points the fix at the compiler rather than at "no damage".
+		var nugget_kinds: Array = []
+		for weapon_id_value in seen_weapons:
+			var seen_weapon: Dictionary = weapon_leaves.get(String(weapon_id_value), {}) as Dictionary
+			for nugget_value in Array(seen_weapon.get("nuggets", [])):
+				var nugget_kind := String((nugget_value as Dictionary).get("kind", ""))
+				if nugget_kind != "" and not nugget_kinds.has(nugget_kind):
+					nugget_kinds.append(nugget_kind)
+		if nugget_kinds.is_empty():
+			return {"ok": false, "reason": "fire-weapon chain (%s) carries no resolved damage nuggets" % ", ".join(seen_weapons)}
+		return {"ok": false, "reason": "fire-weapon chain (%s) authors no DamageNugget; its only payload is %s, which has no sim runtime" % [", ".join(seen_weapons), ", ".join(nugget_kinds)]}
 	return {"ok": true, "effect": {"kind": "fire_weapon", "strikes": strikes}}
 
 
@@ -5150,7 +5806,19 @@ func _spellbook_structure_summon_support(spawn: Dictionary, weapon_leaves: Dicti
 	var attack_range := _spellbook_weapon_field(weapon, "AttackRange")
 	if health <= 0:
 		return {"ok": false, "reason": "summoned structure health is not converted"}
-	if weapon_id == "" or weapon.is_empty() or nuggets.is_empty() or attack_range <= 0.0:
+	if weapon_id == "":
+		# The Barricade is this case. It is SPAWNS_ARE_THE_WEAPONS: the structure
+		# itself never shoots, its garrison does, and that garrison is the
+		# unconverted SpawnBehavior (barricade.ini:175-184 - SpawnNumber 4,
+		# InitialBurst 4, SpawnTemplateName MordorArcherBarricade_Slaved,
+		# SpawnedRequireSpawner Yes). Summoning a silent 3000 HP wall would ship
+		# half a power as if it were whole.
+		var kind_of: Array = leaf.get("kindOf", []) as Array
+		var unconverted: Array = leaf.get("unconvertedBehaviors", []) as Array
+		if kind_of.has("SPAWNS_ARE_THE_WEAPONS") and unconverted.has("SpawnBehavior"):
+			return {"ok": false, "reason": "summoned structure '%s' is SPAWNS_ARE_THE_WEAPONS: its entire combat payload is the unconverted SpawnBehavior garrison and the leaf authors no weapon of its own" % String(leaf.get("id", ""))}
+		return {"ok": false, "reason": "summoned structure '%s' authors no weapon" % String(leaf.get("id", ""))}
+	if weapon.is_empty() or nuggets.is_empty() or attack_range <= 0.0:
 		return {"ok": false, "reason": "summoned structure weapon '%s' is not fully converted" % weapon_id}
 	var build_ms := 0.0
 	for field_value in Array((spawn["create"] as Dictionary).get("fields", [])):
@@ -5400,8 +6068,22 @@ func _spellbook_summon_rule(target_leaf: Dictionary, modifier_leaves: Dictionary
 	var weapon: Dictionary = weapon_leaves.get(weapon_id, {}) as Dictionary
 	var kind_of: Array = member.get("kindOf", []) as Array
 	var move_only := kind_of.has("MOVE_ONLY")
-	if (weapon_id == "" or weapon.is_empty()) and not move_only:
-		return {"ok": false, "reason": "summoned member '%s' weapon is not a converted leaf" % member_id}
+	if weapon_id == "" and not move_only:
+		# Distinct from "the weapon leaf did not convert": the object authors NO
+		# WeaponSet at all. The Watcher is this case - its attack runtime is
+		# GrabPassengerSpecialPower + SpecialAbilityUpdate + TransportContain
+		# (grab-and-devour), none of which the compiler emits, so reporting a
+		# missing weapon leaf would aim a fix at the wrong module.
+		var attack_behaviors: Array = []
+		for behavior_value in Array(member.get("unconvertedBehaviors", [])):
+			var behavior := String(behavior_value)
+			if behavior in ["GrabPassengerSpecialPower", "SpecialAbilityUpdate", "TransportContain", "AutoPickUpUpdate"]:
+				attack_behaviors.append(behavior)
+		if attack_behaviors.is_empty():
+			return {"ok": false, "reason": "summoned member '%s' authors no weapon and no unconverted attack runtime" % member_id}
+		return {"ok": false, "reason": "summoned member '%s' authors no weapon: its attack runtime is %s, which is not converted" % [member_id, ", ".join(attack_behaviors)]}
+	if weapon.is_empty() and not move_only:
+		return {"ok": false, "reason": "summoned member '%s' weapon '%s' is not a converted leaf" % [member_id, weapon_id]}
 	var nuggets := _spellbook_weapon_damage_nuggets(weapon, weapon_leaves) if not weapon.is_empty() else []
 	if nuggets.is_empty() and not move_only:
 		return {"ok": false, "reason": "summoned member weapon '%s' has no resolved damage" % weapon_id}
@@ -5632,7 +6314,13 @@ func _spellbook_summon_aura_rules(member: Dictionary, modifier_leaves: Dictionar
 	return {"ok": true, "auras": compiled, "skipped_auras": skipped}
 
 
-func _spellbook_one_summon_aura_rule(member: Dictionary, aura: Dictionary, modifier_leaves: Dictionary) -> Dictionary:
+func _spellbook_one_summon_aura_rule(member: Dictionary, aura: Dictionary, modifier_leaves: Dictionary, allow_marker_modifiers: bool = false) -> Dictionary:
+	## allow_marker_modifiers: retail authors at least one ModifierList whose stat
+	## rows are all commented out and only its Duration survives — PalantirVision
+	## (attributemodifier.ini:1139-1146). On a summon that is evidence of an
+	## unconverted payload and stays fail-closed; on a reveal ping it is the
+	## authored truth (the aura genuinely changes no stat), so the ping lane opts
+	## in and the row is kept as a zero-modifier marker.
 	var modifier_id := String(aura.get("modifier", ""))
 	var modifier: Dictionary = modifier_leaves.get(modifier_id, {}) as Dictionary
 	if modifier.is_empty():
@@ -5651,22 +6339,24 @@ func _spellbook_one_summon_aura_rule(member: Dictionary, aura: Dictionary, modif
 		elif key == "Duration" and value.is_valid_float():
 			duration_ms = float(value)
 		elif key == "Modifier":
-			var parts := value.replace("\t", " ").split(" ", false)
-			if parts.size() != 2 or not String(parts[1]).ends_with("%"):
-				return {"ok": false, "reason": "summon aura modifier '%s' has an unsupported modifier row" % modifier_id}
-			var kind := String(parts[0])
-			if kind not in ["ARMOR", "DAMAGE_MULT", "EXPERIENCE"]:
+			var parsed := _parse_modifier_row(value)
+			if not parsed.get("ok", false):
+				return {"ok": false, "reason": "summon aura modifier '%s' has an unreadable modifier row: %s" % [modifier_id, String(parsed.get("reason", ""))]}
+			var kind := String(parsed.get("kind", ""))
+			# STRICT lane, same reasoning as the weather modifier above: a summon's
+			# aura is the whole reason the summon is worth casting.
+			if not bool(parsed.get("supported", false)):
+				return {"ok": false, "reason": "summon aura modifier '%s' has a row with no runtime: %s" % [modifier_id, String(parsed.get("reason", ""))]}
+			if String(parsed.get("shape", "")) != "percent" or kind not in ["ARMOR", "DAMAGE_MULT", "EXPERIENCE"]:
 				return {"ok": false, "reason": "summon aura modifier '%s' requires unsupported '%s' runtime" % [modifier_id, kind]}
-			var percent_text := String(parts[1]).trim_suffix("%")
-			if not percent_text.is_valid_float():
-				return {"ok": false, "reason": "summon aura modifier '%s' has a non-numeric percent" % modifier_id}
-			modifiers.append({"kind": kind, "value": float(percent_text) / 100.0})
+			modifiers.append({"kind": kind, "value": float(parsed.get("value", 0.0))})
 		elif key == "ModelCondition" and value.strip_edges() != "":
 			modifiers.append({"kind": "MODEL_CONDITION", "value": value.strip_edges()})
 	var range_source := float(aura.get("range", 0.0))
 	var refresh_ms := float(aura.get("refreshDelayMs", 0.0))
 	var filter := String(aura.get("objectFilter", ""))
-	if category not in ["LEADERSHIP", "SPELL", "DEBUFF"] or modifiers.is_empty() or duration_ms <= 0.0 or range_source <= 0.0 or refresh_ms <= 0.0 or filter == "":
+	var modifiers_missing := modifiers.is_empty() and not allow_marker_modifiers
+	if category not in ["LEADERSHIP", "SPELL", "DEBUFF"] or modifiers_missing or duration_ms <= 0.0 or range_source <= 0.0 or refresh_ms <= 0.0 or filter == "":
 		return {"ok": false, "reason": "summon aura '%s' is incomplete (category=%s modifiers=%d duration_ms=%.1f range=%.1f refresh_ms=%.1f filter=%s)" % [modifier_id, category, modifiers.size(), duration_ms, range_source, refresh_ms, "present" if filter != "" else "missing"]}
 	var starts_active := String(aura.get("startsActive", "Yes")).to_lower() != "no"
 	var enabled_on_create := starts_active
@@ -5770,51 +6460,199 @@ func _spellbook_grove_chain(references: Dictionary, object_leaves: Dictionary, o
 	}
 
 
-func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary = {}) -> Dictionary:
-	## Elven Wood: the converted ElvenGrove leaf carries the taint aura —
-	## modifier leaf, refresh, range, filter, and the grove lifetime.
-	var grove_id := String(field_values.get("ElvenGroveObject", ""))
+func _spellbook_grove_support(field_values: Dictionary, field_resolved: Dictionary, references: Dictionary, modifier_leaves: Dictionary, object_leaves: Dictionary, ocl_leaves: Dictionary = {}, object_field: String = "ElvenGroveObject") -> Dictionary:
+	## Terrain-taint family (Elven Wood, Taint, Isengard Taint): the converted
+	## grove/taint-land leaf carries the whole effect — modifier leaf, refresh,
+	## range, filter, the authored terrain cell type, and the object lifetime.
+	var grove_id := String(field_values.get(object_field, ""))
 	var grove: Dictionary = object_leaves.get(grove_id, {}) as Dictionary
 	if grove.is_empty():
-		return {"ok": false, "reason": "ElvenGrove object '%s' is not a converted leaf" % grove_id}
+		return {"ok": false, "reason": "terrain-taint object '%s' is not a converted leaf" % grove_id}
 	var aura: Dictionary = grove.get("aura", {}) as Dictionary
 	var deletion: Dictionary = grove.get("deletion", {}) as Dictionary
 	if aura.is_empty() or deletion.is_empty():
-		return {"ok": false, "reason": "ElvenGrove aura or lifetime is not converted"}
+		return {"ok": false, "reason": "terrain-taint object '%s' aura or lifetime is not converted" % grove_id}
 	var modifier_id := String(aura.get("modifier", ""))
 	var modifier: Dictionary = modifier_leaves.get(modifier_id, {}) as Dictionary
 	if modifier.is_empty():
 		return {"ok": false, "reason": "grove aura modifier '%s' is not a converted leaf" % modifier_id}
-	var armor_mult := 0.0
+	# ROW ABSENT is not ROW UNREADABLE. A modifier list that never authors a
+	# DAMAGE_MULT row means the neutral 1.0 (BFME2 `ModifierList
+	# GenericArmorLeadership` is `ARMOR 50%` and nothing else,
+	# attributemodifier.ini:159-166, and it is what the BFME2 ElvenGrove actually
+	# binds: grove.ini:31 `BonusName = GenericArmorLeadership`). A row that IS
+	# authored and cannot be read is still fail-closed, because that is the case
+	# where half an authored buff goes missing in silence.
+	var armor_mult := 1.0
+	var damage_mult := 1.0
+	var saw_armor := false
+	var saw_damage := false
 	var buff_duration_ms := 0.0
+	# READABLE BUT UNMATCHED KIND. A row this resolver parses cleanly and whose
+	# shape is a plain percent, but whose KIND is neither ARMOR nor DAMAGE_MULT
+	# (retail authors e.g. `EXPERIENCE 150%` on buff leaves), used to fall
+	# straight through the `match` below and vanish. That is the same silent drop
+	# the SpecialPowerModule lane was fixed for in round 18 — it just took a
+	# different route to it, so the fix did not reach here. Named and counted on
+	# the effect instead, in the SAME shape that lane uses.
+	var unsupported_rows: Array = []
 	for field_value in Array(modifier.get("fields", [])):
 		if typeof(field_value) != TYPE_DICTIONARY:
 			continue
 		var field_row := field_value as Dictionary
 		if String(field_row.get("key", "")) == "Modifier":
-			var parts := String(field_row.get("value", "")).split(" ", false)
-			if parts.size() == 2 and parts[0] == "ARMOR" and parts[1].ends_with("%"):
-				armor_mult = float(parts[1].trim_suffix("%")) / 100.0
+			# FAIL-CLOSED, not `continue`: a row this resolver cannot read is a row
+			# whose buff would silently go missing, and the grove would still plant.
+			var parsed := _parse_modifier_row(String(field_row.get("value", "")))
+			if (
+				not parsed.get("ok", false)
+				or not bool(parsed.get("supported", false))
+				or String(parsed.get("shape", "")) != "percent"
+			):
+				return {"ok": false, "reason": "grove aura modifier '%s' has an unsupported modifier row '%s' (%s)" % [
+					modifier_id, String(field_row.get("value", "")),
+					String(parsed.get("reason", "shape is not a plain percent")),
+				]}
+			var percent := float(parsed.get("value", 0.0))
+			match String(parsed.get("kind", "")):
+				"ARMOR":
+					armor_mult = percent
+					saw_armor = true
+				"DAMAGE_MULT":
+					damage_mult = percent
+					saw_damage = true
+				_:
+					unsupported_rows.append({
+						"row": String(field_row.get("value", "")),
+						"shape": String(parsed.get("shape", "")),
+						"reason": "kind '%s' has no grove-aura runtime here" % String(parsed.get("kind", "")),
+					})
 		elif String(field_row.get("key", "")) == "Duration":
 			buff_duration_ms = float(field_row.get("resolved", field_row.get("value", 0.0)))
 	var aura_range := float(aura.get("range", 0.0))
 	var lifetime_ms := float(deletion.get("maxMs", 0.0))
 	var filter := String(aura.get("objectFilter", ""))
-	if armor_mult <= 0.0 or buff_duration_ms <= 0.0 or aura_range <= 0.0 or lifetime_ms <= 0.0:
-		return {"ok": false, "reason": "grove aura modifier, range, or lifetime is not converted"}
+	# AT LEAST ONE stat row is required, not both. Round 16 required both and it
+	# was wrong twice over: it locked men/SpellBookElvenWoodMP, whose authored
+	# leaf (GenericArmorLeadership) legitimately carries only ARMOR 50%, and it
+	# conflated "absent" with "unreadable" — the case the round-16 note was
+	# actually written about (a row that IS authored and cannot be parsed) is
+	# still fail-closed, in the loop above. A leaf with NO readable stat row at
+	# all still fails here: that is a grove with nothing to apply.
+	if not (saw_armor or saw_damage) or armor_mult <= 0.0 or damage_mult <= 0.0 or buff_duration_ms <= 0.0 or aura_range <= 0.0 or lifetime_ms <= 0.0:
+		return {"ok": false, "reason": "grove aura modifier '%s' carries no readable stat row (ARMOR seen=%s %.3f, DAMAGE_MULT seen=%s %.3f), range, or lifetime is not converted" % [
+			modifier_id, saw_armor, armor_mult, saw_damage, damage_mult,
+		]}
 	if filter == "" or (not filter.contains("ANY") and not filter.contains("+")):
 		return {"ok": false, "reason": "grove aura object filter is not converted"}
 	return {"ok": true, "effect": {
 		"kind": "grove_aura",
 		"armor_mult": armor_mult,
+		# Usually authored alongside ARMOR on the same modifier leaf (RotWK
+		# GenericBuff: ARMOR 50% + DAMAGE_MULT 150%). When the leaf authors no
+		# DAMAGE_MULT row at all (BFME2 GenericArmorLeadership) this stays at the
+		# neutral 1.0, which is what "absent" means — a row that is present and
+		# unreadable never reaches here.
+		"damage_mult": damage_mult,
+		# Which rows the leaf actually authored, so a consumer can tell an
+		# authored-neutral 1.0 from a defaulted one.
+		"authored_rows": {"ARMOR": saw_armor, "DAMAGE_MULT": saw_damage},
+		# Named residual rows carried onto the effect so the runner and the report
+		# can COUNT them instead of losing them — same key and same shape as the
+		# SpecialPowerModule lane's.
+		"unsupported_modifier_rows": unsupported_rows,
 		"buff_duration_ticks": maxi(1, roundi(buff_duration_ms / 1000.0 / TICK_SECONDS)),
 		"range_source": aura_range,
 		"lifetime_ticks": maxi(1, roundi(lifetime_ms / 1000.0 / TICK_SECONDS)),
 		"filter": filter,
 		"modifier": modifier_id,
+		"terrain_object_id": grove_id,
+		# Retail's RequiredConditions cell type (TAINT / ELVEN_WOOD). Presentation
+		# reads this to pick the ground decal; "" when the leaf does not author it.
+		"terrain_condition": String(aura.get("requiredConditions", "")),
 		# Presentation-only: the authored tree chain behind the grove. Absent
 		# when the chain does not fully convert, and then no geometry is placed.
 		"trees": _spellbook_grove_chain(references, object_leaves, ocl_leaves),
+	}}
+
+
+func _spellbook_field_ping_support(spawns: Array, modifier_leaves: Dictionary) -> Dictionary:
+	## Reveal/field family (Farsight, Palantir Vision, Frozen Land, and the
+	## Enshrouding Mist gap). Retail spawns a "ping": an object that is not a unit
+	## at all — IMMOBILE, UNATTACKABLE, no weapon, no hatch — whose entire runtime
+	## is a bounded VisionRange reveal plus optional AttributeModifierAuraUpdate
+	## rows, ended by its authored LifetimeUpdate
+	## (data/ini/object/system/system.ini:1905-1955, :1997-2062;
+	## FrozenLandPing lifetime FROZEN_LAND_EFFECT_DURATION = gamedata.ini:3595).
+	##
+	## Returns {} when the spawn is not this shape, so the caller falls through to
+	## the summon/structure resolvers unchanged.
+	if spawns.is_empty():
+		return {}
+	var leaf: Dictionary = (spawns[0] as Dictionary).get("leaf", {}) as Dictionary
+	if leaf.is_empty():
+		return {}
+	var kind_of: Array = leaf.get("kindOf", []) as Array
+	var lifetime: Dictionary = leaf.get("lifetime", {}) as Dictionary
+	var auras: Array = leaf.get("auras", []) as Array
+	if auras.is_empty() and typeof(leaf.get("aura", null)) == TYPE_DICTIONARY:
+		auras = [leaf.get("aura", {})]
+	var vision_range := float(leaf.get("visionRange", 0.0))
+	var is_ping := (
+		kind_of.has("IMMOBILE")
+		and kind_of.has("UNATTACKABLE")
+		and (leaf.get("locomotor", {}) as Dictionary).is_empty()
+		and Array(leaf.get("fireWeapons", [])).is_empty()
+		and String(leaf.get("weaponId", "")) == ""
+		and typeof(leaf.get("hatch", null)) != TYPE_DICTIONARY
+		and (leaf.get("horde", {}) as Dictionary).is_empty()
+		and float(lifetime.get("maxMs", 0.0)) > 0.0
+		and (vision_range > 0.0 or not auras.is_empty())
+	)
+	if not is_ping:
+		return {}
+	var object_id := String(leaf.get("id", ""))
+	var unconverted: Array = Array(leaf.get("unconvertedBehaviors", [])).duplicate()
+	if unconverted.has("InvisibilityUpdate"):
+		# Enshrouding Mist. The mist's headline effect IS the camouflage broadcast
+		# (system.ini:2020-2029: InvisibilityNugget CAMOUFLAGE, DetectionRange
+		# ELVEN_MIST_CAMOUFLAGE_DETECTION_RANGE, Broadcast Yes, BroadcastRange
+		# ENSHROUDING_MIST_EFFECT_RADIUS, BroadcastObjectFilter
+		# ELVEN_MIST_OBJECT_FILTER). None of those values reach the pack, so the
+		# power cannot be built from converted evidence — it stays fail-closed
+		# rather than shipping only its secondary debuff aura.
+		return {"ok": false, "reason": "ping '%s' InvisibilityUpdate camouflage broadcast is not converted (nugget type, detection range, broadcast range and filter are absent from the pack)" % object_id}
+	var compiled_auras: Array = []
+	var effect_auras := 0
+	for aura_value in auras:
+		var verdict := _spellbook_one_summon_aura_rule(
+			leaf, aura_value as Dictionary, modifier_leaves, true
+		)
+		if not bool(verdict.get("ok", false)):
+			return {"ok": false, "reason": "ping '%s' aura is not converted: %s" % [object_id, String(verdict.get("reason", ""))]}
+		if bool(verdict.get("skip", false)):
+			continue
+		var aura: Dictionary = verdict.get("aura", {}) as Dictionary
+		compiled_auras.append(aura)
+		if not Array(aura.get("modifiers", [])).is_empty():
+			effect_auras += 1
+	var reveal_source := vision_range
+	if reveal_source <= 0.0 and effect_auras == 0:
+		return {"ok": false, "reason": "ping '%s' has neither a converted VisionRange reveal nor a stat-bearing aura" % object_id}
+	var radius_source := reveal_source
+	for aura_value in compiled_auras:
+		radius_source = maxf(radius_source, float((aura_value as Dictionary).get("range_source", 0.0)))
+	return {"ok": true, "effect": {
+		"kind": "field_ping",
+		"object_id": object_id,
+		"lifetime_ticks": maxi(1, roundi(float(lifetime.get("maxMs", 0.0)) / 1000.0 / TICK_SECONDS)),
+		"reveal_radius_source": reveal_source,
+		"radius_source": radius_source,
+		"auras": compiled_auras,
+		# Named residual gaps carried onto the effect so the runner and the report
+		# can count them instead of losing them (StealthDetectorUpdate on the
+		# Palantir/Farsight base object: this reveal does NOT unmask stealth).
+		"unconverted_behaviors": unconverted,
 	}}
 
 
@@ -6089,8 +6927,16 @@ func cast_power(team: int, power_id: String, point: Vector2) -> Dictionary:
 			result = _cast_spellbook_structure_summon(team, effect, point)
 		"grove_aura":
 			result = _cast_spellbook_grove(team, effect, point)
+		"field_ping":
+			result = _cast_spellbook_field_ping(team, power_id, effect, point)
 		"cloudbreak_stun":
 			result = _cast_spellbook_cloudbreak(team, effect, point)
+		"weather_modifier":
+			result = _cast_spellbook_weather_modifier(team, power_id, effect)
+		"weather_anticategory":
+			result = _cast_spellbook_weather_anticategory(team, power_id, effect)
+		"creep_allegiance":
+			result = _cast_spellbook_creep_allegiance(team, effect, point)
 	if not bool(result.get("ok", false)):
 		return result
 	(_power_cooldown_until[team] as Dictionary)[power_id] = tick_index + int(row.get("reload_ticks", 1))
@@ -6165,10 +7011,30 @@ func _spellbook_affects(row: Dictionary, filter_text: String) -> bool:
 				included = true
 		elif term == "ANY":
 			included = true
+		elif term == "ALL":
+			# `ALL` is the universal set ONLY when the filter authors no including
+			# kind term of its own — retail's `ALL ENEMIES` (Freezing Rain) is a
+			# relation-only filter and means everyone. Every OTHER `ALL` in this
+			# corpus sits beside kind terms, where the filter reads conjunctively;
+			# a blanket include there would silently widen it to the whole board.
+			if not _spellbook_filter_has_kind_terms(filter_text):
+				included = true
 		elif kinds.has(term):
 			included = true
 	return included
 
+
+func _spellbook_filter_has_kind_terms(filter_text: String) -> bool:
+	## True when the filter names at least one INCLUDING object-kind term.
+	## Relation words, NONE, the universal words, and `-` exclusions do not
+	## count: `ALL -WildBabyDrake ENEMIES` is still a relation-only filter with
+	## one carve-out, so `ALL` there is still universal.
+	for term_value in filter_text.split(" ", false):
+		var term := String(term_value)
+		if term in ["", "NONE", "ANY", "ALL", "ALLIES", "ENEMIES"] or term.begins_with("-"):
+			continue
+		return true
+	return false
 
 func _cast_spellbook_heal(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
 	var radius := float(effect.get("radius_source", 0.0)) * _spellbook_world_scale()
@@ -6229,6 +7095,27 @@ func _cast_spellbook_attribute_modifier(team: int, effect: Dictionary, point: Ve
 	var range_sim := float(effect.get("range_source", 0.0)) * _spellbook_world_scale()
 	var duration_ticks := int(effect.get("duration_ticks", 1))
 	var damage_mult := float(effect.get("damage_mult", 1.0))
+	# DOES THIS PAYLOAD ACTUALLY CARRY A COMBAT BUFF? `damage_mult` defaults to a
+	# neutral 1.0 when the leaf authors no DAMAGE_MULT row, so a PRODUCTION-only
+	# power (Industry, Dwarven Riches, Blight, Snowbind) reached the writes below
+	# with 1.0 and STOMPED whatever rally the target already had.
+	#
+	# MEASURED, and it is a real cancel rather than a no-op: in the spellbook
+	# matrix, casting mordor/SpellBookIndustry moved an ally from
+	# rally_until_tick 3601 / rally_damage_mult 1.5 to 3001 / 1.0 — a live 150%
+	# rally buff ended early by a power whose entire authored payload is an
+	# economy multiplier (.private/scratch/opus29-spellbook-A.out.log).
+	#
+	# `authored_rows` is what makes this checkable rather than guessable: it
+	# distinguishes a leaf that authored DAMAGE_MULT 100% (a deliberate neutral
+	# buff, which still refreshes a window) from one that authored no DAMAGE_MULT
+	# row at all. Only the latter is skipped.
+	var authored_rows: Dictionary = effect.get("authored_rows", {}) as Dictionary
+	# Absent table = an effect compiled before authored_rows existed; fall back to
+	# the old unconditional behaviour rather than silently dropping a real buff.
+	var carries_rally: bool = (
+		not authored_rows.has("DAMAGE_MULT") or bool(authored_rows.get("DAMAGE_MULT", false))
+	)
 	var rallied := 0
 	for id in living_ids(team):
 		var row: Dictionary = entities[id]
@@ -6241,8 +7128,13 @@ func _cast_spellbook_attribute_modifier(team: int, effect: Dictionary, point: Ve
 			row, String(effect.get("affects", "")), true
 		):
 			continue
-		row["rally_until_tick"] = tick_index + duration_ticks
-		row["rally_damage_mult"] = damage_mult
+		if carries_rally:
+			row["rally_until_tick"] = tick_index + duration_ticks
+			row["rally_damage_mult"] = damage_mult
+		# Counted either way: the filter matched, so the cast found its targets
+		# and succeeds. A production-only power stays castable-but-inert, which is
+		# exactly what the spellbook matrix documents it as — it simply no longer
+		# cancels an unrelated buff on its way to doing nothing.
 		rallied += 1
 	if rallied == 0:
 		return {"ok": false, "reason": "no-allies-in-range"}
@@ -6387,20 +7279,134 @@ func _cast_spellbook_grove(team: int, effect: Dictionary, point: Vector2) -> Dic
 		"point": point,
 		"range_sim": float(effect.get("range_source", 0.0)) * _spellbook_world_scale(),
 		"armor_mult": float(effect.get("armor_mult", 1.0)),
+		"damage_mult": float(effect.get("damage_mult", 1.0)),
 		"buff_duration_ticks": int(effect.get("buff_duration_ticks", 1)),
 		"despawn_tick": tick_index + int(effect.get("lifetime_ticks", 1)),
 		"filter": String(effect.get("filter", "")),
+		"terrain_condition": String(effect.get("terrain_condition", "")),
+		# The AUTHORED leaf id, so the accumulator key below is per-modifier-list.
+		"modifier": String(effect.get("modifier", "")),
 	})
 	var grove_trees: Dictionary = effect.get("trees", {}) as Dictionary
 	_emit_event("power.grove", 0, 0, {
 		"team": team,
 		"point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)],
 		"lifetime_ticks": int(effect.get("lifetime_ticks", 0)),
+		# Retail's terrain cell type (TAINT / ELVEN_WOOD) the ground is painted
+		# with for the object's lifetime; "" when the leaf does not author one.
+		"terrain_condition": String(effect.get("terrain_condition", "")),
+		"terrain_object_id": String(effect.get("terrain_object_id", "")),
+		"radius_source": float(effect.get("range_source", 0.0)),
 		# The presenter plants the authored tree object; an empty block means
 		# the chain did not convert and nothing is drawn.
 		"trees": grove_trees.duplicate(true),
 	})
 	return {"ok": true, "reason": "", "battalions": 0}
+
+
+func _cast_spellbook_field_ping(team: int, power_id: String, effect: Dictionary, point: Vector2) -> Dictionary:
+	## Drop the authored ping at the cast point. It has no body the sim can shoot
+	## and never moves, so it lives in its own registry rather than as an entity:
+	## a bounded reveal region plus the authored auras, expiring on the leaf's
+	## LifetimeUpdate. Deterministic — no RNG, no wall clock.
+	var scale := _spellbook_world_scale()
+	var reveal_source := float(effect.get("reveal_radius_source", 0.0))
+	_field_pings.append({
+		"team": team,
+		"power_id": power_id,
+		"object_id": String(effect.get("object_id", "")),
+		"point": point,
+		"reveal_radius_source": reveal_source,
+		"reveal_radius_sim": reveal_source * scale,
+		"expire_tick": tick_index + int(effect.get("lifetime_ticks", 1)),
+		"auras": (effect.get("auras", []) as Array).duplicate(true),
+	})
+	_emit_event("power.field_ping", 0, 0, {
+		"team": team,
+		"power_id": power_id,
+		"object_id": String(effect.get("object_id", "")),
+		"point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)],
+		"reveal_radius_source": reveal_source,
+		"reveal_radius": snappedf(reveal_source * scale, 0.001),
+		"lifetime_ticks": int(effect.get("lifetime_ticks", 0)),
+		"auras": (effect.get("auras", []) as Array).size(),
+	})
+	return {"ok": true, "reason": "", "battalions": 0}
+
+
+func team_revealed_regions(team: int) -> Array:
+	## Per-team shroud-reveal registry the presentation consumes. The sim has no
+	## fog-of-war model of its own, so this is the whole reveal contract: every
+	## live ping owned by `team` that authors a VisionRange, in cast order, with
+	## the tick it lapses. Presentation work still outstanding: drawing the
+	## reveal (no fog layer exists to lift) and StealthDetectorUpdate unmasking,
+	## which is a converter gap named on the effect.
+	var regions: Array = []
+	for ping in _field_pings:
+		if int(ping.get("team", -1)) != team:
+			continue
+		if float(ping.get("reveal_radius_source", 0.0)) <= 0.0:
+			continue
+		regions.append({
+			"point": Vector2(ping.get("point", Vector2.ZERO)),
+			"radius_sim": float(ping.get("reveal_radius_sim", 0.0)),
+			"radius_source": float(ping.get("reveal_radius_source", 0.0)),
+			"expire_tick": int(ping.get("expire_tick", -1)),
+			"power_id": String(ping.get("power_id", "")),
+			"object_id": String(ping.get("object_id", "")),
+		})
+	return regions
+
+
+func field_ping_count() -> int:
+	return _field_pings.size()
+
+
+func _step_field_pings() -> void:
+	## Expire lapsed pings, then refresh each live ping's authored auras on its
+	## own cadence. Iteration follows cast order and the spatial gather is
+	## already sorted, so the pass is lockstep-deterministic.
+	if _field_pings.is_empty():
+		return
+	var living: Array[Dictionary] = []
+	for ping in _field_pings:
+		if tick_index >= int(ping.get("expire_tick", -1)):
+			continue
+		living.append(ping)
+		var team := int(ping.get("team", -1))
+		var origin := Vector2(ping.get("point", Vector2.ZERO))
+		for aura_value in Array(ping.get("auras", [])):
+			var aura := aura_value as Dictionary
+			if Array(aura.get("modifiers", [])).is_empty():
+				# Authored marker aura (PalantirVision): no stat rows in retail,
+				# so nothing is applied. Kept on the effect as evidence, not
+				# silently invented into a buff.
+				continue
+			if tick_index % maxi(1, int(aura.get("refresh_ticks", 1))) != 0:
+				continue
+			var radius := float(aura.get("range_source", 0.0)) * _spellbook_world_scale()
+			for target_id in _spatial_gather_sorted(origin, radius):
+				if not entities.has(target_id):
+					continue
+				var target: Dictionary = entities[target_id]
+				if int(target.get("health", 0)) <= 0:
+					continue
+				var same_team := int(target.get("team", -1)) == team
+				if Vector2(target.get("position", Vector2.ZERO)).distance_to(origin) > radius:
+					continue
+				if not _summon_aura_allows_relation(aura, same_team):
+					continue
+				if not _spellbook_member_affects(
+					target, String(aura.get("filter", "")), same_team
+				):
+					continue
+				_set_timed_modifier(
+					target,
+					"field-ping:%s:%s" % [String(ping.get("object_id", "")), String(aura.get("id", ""))],
+					Array(aura.get("modifiers", [])),
+					tick_index + int(aura.get("duration_ticks", 1))
+				)
+	_field_pings = living
 
 
 func _cast_spellbook_cloudbreak(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
@@ -6420,6 +7426,224 @@ func _cast_spellbook_cloudbreak(team: int, effect: Dictionary, point: Vector2) -
 		stunned += 1
 	_emit_event("power.cloudbreak", 0, 0, {"team": team, "weather": String(effect.get("weather", "")), "stunned": stunned, "duration_ticks": duration_ticks})
 	return {"ok": true, "reason": "", "battalions": stunned}
+
+
+func _cast_spellbook_weather_modifier(team: int, power_id: String, effect: Dictionary) -> Dictionary:
+	## Darkness. Global, no cast point: the whole map is under the weather for
+	## WeatherDuration, and every unit the authored filter accepts carries the
+	## modifier leaf's rows for exactly that window.
+	var expire_tick := tick_index + int(effect.get("duration_ticks", 1))
+	var entry := {
+		"kind": "weather_modifier",
+		"team": team,
+		"power_id": power_id,
+		"modifier_id": String(effect.get("modifier_id", "")),
+		"modifiers": (effect.get("modifiers", []) as Array).duplicate(true),
+		"affects": String(effect.get("affects", "")),
+		"weather": String(effect.get("weather", "")),
+		"expire_tick": expire_tick,
+	}
+	_weather_effects.append(entry)
+	var affected := _apply_weather_modifier(entry)
+	_emit_event("power.weather", 0, 0, {
+		"team": team,
+		"power_id": power_id,
+		"kind": "weather_modifier",
+		"weather": String(effect.get("weather", "")),
+		"modifier_id": String(effect.get("modifier_id", "")),
+		"duration_ticks": int(effect.get("duration_ticks", 0)),
+		"expire_tick": expire_tick,
+		"affected": affected,
+	})
+	return {"ok": true, "reason": "", "battalions": affected}
+
+
+func _cast_spellbook_weather_anticategory(team: int, power_id: String, effect: Dictionary) -> Dictionary:
+	## Freezing Rain. Global anti-LEADERSHIP: every enemy the authored filter
+	## accepts loses its leadership grants for the weather window, reusing the
+	## same suppression field the Horn of Gondor strip writes.
+	var expire_tick := tick_index + int(effect.get("duration_ticks", 1))
+	var entry := {
+		"kind": "weather_anticategory",
+		"team": team,
+		"power_id": power_id,
+		"anti_category": String(effect.get("anti_category", "")),
+		"affects": String(effect.get("affects", "")),
+		"weather": String(effect.get("weather", "")),
+		"expire_tick": expire_tick,
+	}
+	_weather_effects.append(entry)
+	var affected := _apply_weather_anticategory(entry)
+	_emit_event("power.weather", 0, 0, {
+		"team": team,
+		"power_id": power_id,
+		"kind": "weather_anticategory",
+		"weather": String(effect.get("weather", "")),
+		"anti_category": String(effect.get("anti_category", "")),
+		"duration_ticks": int(effect.get("duration_ticks", 0)),
+		"expire_tick": expire_tick,
+		"affected": affected,
+		# Named, not dropped: the fire half of the power has no sim model.
+		"unconverted_behaviors": (effect.get("unconverted_behaviors", []) as Array).duplicate(),
+	})
+	return {"ok": true, "reason": "", "battalions": affected}
+
+
+func _apply_weather_modifier(entry: Dictionary) -> int:
+	var team := int(entry.get("team", -1))
+	var affects := String(entry.get("affects", ""))
+	var key := "weather:%s" % String(entry.get("modifier_id", ""))
+	var expire_tick := int(entry.get("expire_tick", -1))
+	var modifiers: Array = entry.get("modifiers", []) as Array
+	var affected := 0
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		if not _spellbook_member_affects(row, affects, int(row.get("team", -1)) == team):
+			continue
+		_set_timed_modifier(row, key, modifiers, expire_tick)
+		affected += 1
+	return affected
+
+
+func _apply_weather_anticategory(entry: Dictionary) -> int:
+	var team := int(entry.get("team", -1))
+	var affects := String(entry.get("affects", ""))
+	var expire_tick := int(entry.get("expire_tick", -1))
+	var affected := 0
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if int(row.get("health", 0)) <= 0:
+			continue
+		if not _spellbook_member_affects(row, affects, int(row.get("team", -1)) == team):
+			continue
+		# EXTEND, never clobber: a second, shorter cast must not cut a longer
+		# suppression short. Retail stacks these as overlapping windows.
+		row["leadership_suppressed_until_tick"] = maxi(
+			expire_tick, int(row.get("leadership_suppressed_until_tick", -1))
+		)
+		affected += 1
+	return affected
+
+
+func _step_weather_effects() -> void:
+	## Expire lapsed weather windows, then re-apply the live ones on the shared
+	## aura cadence so units created or converted mid-window are covered - which
+	## is what AttributeModifierWeatherBased = Yes means. Deterministic:
+	## ascending entity order, fixed cadence, no RNG and no wall clock.
+	if _weather_effects.is_empty():
+		return
+	var living: Array[Dictionary] = []
+	for entry in _weather_effects:
+		if tick_index >= int(entry.get("expire_tick", -1)):
+			continue
+		living.append(entry)
+		if tick_index % ABILITY_AURA_INTERVAL_TICKS != 0:
+			continue
+		match String(entry.get("kind", "")):
+			"weather_modifier":
+				_apply_weather_modifier(entry)
+			"weather_anticategory":
+				_apply_weather_anticategory(entry)
+	_weather_effects = living
+
+
+func active_weather_effects() -> Array:
+	## Presentation contract for the weather lane. The sim has no sky/weather
+	## renderer, so this registry (and the power.weather event) is the whole
+	## contract until one exists: retail's ChangeWeather cell (CLOUDY / RAINY),
+	## the owning team and the tick the window lapses, in cast order.
+	var rows: Array = []
+	for entry in _weather_effects:
+		rows.append({
+			"team": int(entry.get("team", -1)),
+			"power_id": String(entry.get("power_id", "")),
+			"kind": String(entry.get("kind", "")),
+			"weather": String(entry.get("weather", "")),
+			"expire_tick": int(entry.get("expire_tick", -1)),
+		})
+	return rows
+
+
+func _cast_spellbook_creep_allegiance(team: int, effect: Dictionary, point: Vector2) -> Dictionary:
+	## Untamed Allegiance. Every creep lair the authored filter names, inside the
+	## authored radius of the cast point, changes owner to the caster - and its
+	## slaved guards go with it (SpawnBehavior SpawnedRequireSpawner = Yes).
+	##
+	## What is deliberately NOT done: the defected lair does not keep producing.
+	## Retail replaces its spawn template with the *_FromDefectedLair hordes
+	## (system.ini ProductionSpeedBonus Type row names them), and those objects
+	## are not in the converted pack - so inventing continued production would be
+	## inventing units. The lair is marked defected and its respawn clock is
+	## stopped; the gap is carried on the event as defected_production_unconverted.
+	##
+	## NAMED GAP - opponent-owned lairs. The sweep below walks CREEP_TEAM only, so
+	## it steals lairs that are still wild. Retail authors `TargetEnemy = Yes` with
+	## an ENEMIES-relative CREEP_OBJECTFILTER, which ALSO matches a lair an
+	## opponent already defected to themselves with their own Untamed Allegiance -
+	## i.e. retail lets the spell be counter-cast to take a lair back, and this
+	## does not. Carried on the event as opponent_owned_lairs_unconverted so the
+	## narrower sweep is a recorded limit, not a silent one.
+	var radius := float(effect.get("range_source", 0.0)) * _spellbook_world_scale()
+	var filter := String(effect.get("filter", ""))
+	var converted_lairs: Array[int] = []
+	var converted_guards: Array[int] = []
+	for lair_id in structure_ids(CREEP_TEAM):
+		var lair: Dictionary = structures[lair_id]
+		if String(lair.get("structure_kind", "")) != "creep_lair":
+			continue
+		if int(lair.get("health", 0)) <= 0:
+			continue
+		if Vector2(lair.get("position", Vector2.ZERO)).distance_to(point) > radius:
+			continue
+		# The sim stores each lair's RETAIL type name (CaveTrollLair,
+		# MoriarGoblinLairSnow, ...), which is exactly what the resolved
+		# CREEP_OBJECTFILTER lists, so the authored filter is applied verbatim.
+		if not Array(effect.get("lair_types", [])).has(String(lair.get("creep_type_name", ""))):
+			continue
+		lair["team"] = team
+		lair["creep_defected_team"] = team
+		lair["creep_defected_tick"] = tick_index
+		lair["creep_next_respawn_tick"] = 0
+		for guard_value in (lair.get("creep_guard_ids", []) as Array).duplicate():
+			var guard_id := int(guard_value)
+			if not entities.has(guard_id):
+				continue
+			var guard: Dictionary = entities[guard_id]
+			if int(guard.get("health", 0)) <= 0:
+				continue
+			guard["team"] = team
+			guard["target_id"] = 0
+			guard["target_kind"] = "battalion"
+			guard["order_kind"] = ""
+			guard["creep_defected_team"] = team
+			guard.erase("creep_lair_id")
+			guard.erase("creep_home")
+			guard.erase("creep_guard_max_range")
+			guard.erase("creep_guard_wander_range")
+			guard.erase("creep_returning")
+			_clear_member_targets(guard)
+			_clear_pending_route(guard, false)
+			guard["state"] = "idle"
+			converted_guards.append(guard_id)
+		lair["creep_guard_ids"] = []
+		converted_lairs.append(lair_id)
+	if converted_lairs.is_empty():
+		return {"ok": false, "reason": "no-valid-targets"}
+	_emit_event("power.creep_allegiance", 0, 0, {
+		"team": team,
+		"point": [snappedf(point.x, 0.001), snappedf(point.y, 0.001)],
+		"radius_source": float(effect.get("range_source", 0.0)),
+		"lairs": converted_lairs,
+		"guards": converted_guards,
+		"filter_matches": Array(effect.get("lair_types", [])).size(),
+		"defected_production_unconverted": true,
+		# See the NAMED GAP note on this function: the sweep is CREEP_TEAM-only,
+		# while retail's ENEMIES filter would also steal an opponent-defected lair.
+		"opponent_owned_lairs_unconverted": true,
+	})
+	return {"ok": true, "reason": "", "battalions": converted_guards.size(), "structures": converted_lairs.size()}
 
 
 func _step_pending_power_effects() -> void:
@@ -6754,8 +7978,29 @@ func _step_grove_auras() -> void:
 				row, String(grove.get("filter", "")), true
 			):
 				continue
-			row["grove_armor_until"] = tick_index + int(grove.get("buff_duration_ticks", 1))
-			row["grove_armor_mult"] = float(grove.get("armor_mult", 1.0))
+			# The taint buff is an ordinary timed modifier, not a private pair of row
+			# fields. Retail authors it as a ModifierList exactly like Darkness, and
+			# attributemodifier.ini notes that same-kind rows from different lists ADD;
+			# the private fields multiplied instead and bypassed ABILITY_ARMOR_CAP, so
+			# taint + Darkness composed wrongly and could reach total immunity.
+			#
+			# KEYED BY THE AUTHORED LEAF ID, not a hardcoded "GenericBuff". The
+			# grove/taint family binds different ModifierLists per edition and per
+			# faction — RotWK ElvenGrove binds GenericBuff, BFME2 ElvenGrove binds
+			# GenericArmorLeadership (grove.ini:31), TaintLand binds its own — and a
+			# single hardcoded key made two different authored lists collide in one
+			# accumulator slot, so the second overwrote the first instead of stacking
+			# beside it. Same rule as the summon-aura and weather lanes, which are
+			# already keyed by their authored id.
+			_set_timed_modifier(
+				row,
+				"taint:%s" % String(grove.get("modifier", "")),
+				[
+					{"kind": "ARMOR", "value": float(grove.get("armor_mult", 0.0))},
+					{"kind": "DAMAGE_MULT", "value": float(grove.get("damage_mult", 1.0))},
+				],
+				tick_index + int(grove.get("buff_duration_ticks", 1)),
+			)
 	_active_groves = living
 
 
@@ -6789,17 +8034,18 @@ func _spellbook_member_affects(
 				included = true
 		elif term == "ANY":
 			included = true
+		elif term == "ALL":
+			# `ALL` is the universal set ONLY when the filter authors no including
+			# kind term of its own — retail's `ALL ENEMIES` (Freezing Rain) is a
+			# relation-only filter and means everyone. Every OTHER `ALL` in this
+			# corpus sits beside kind terms, where the filter reads conjunctively;
+			# a blanket include there would silently widen it to the whole board.
+			if not _spellbook_filter_has_kind_terms(filter_text):
+				included = true
 		elif kinds.has(term):
 			included = true
 	return included
 
-
-func _grove_armor_factor(target: Dictionary) -> float:
-	## Elven Wood taint: the authored ARMOR 50% modifier rides the row while
-	## the battalion stands in a living grove (refresh window from the leaf).
-	if tick_index < int(target.get("grove_armor_until", -1)):
-		return float(target.get("grove_armor_mult", 1.0))
-	return 1.0
 
 
 func _step_structure_weapons() -> void:
@@ -10218,10 +11464,38 @@ func issue_move(ids: Array[int], destination: Vector2, ack_kind: String = "order
 		row["order_kind"] = "move"
 		accepted_ids.append(id)
 	if not accepted_ids.is_empty():
+		_apply_group_speed_cap(accepted_ids)
 		_stamp_order_sequence(accepted_ids)
 		last_route_rejection = ""
 		_emit_event(ack_kind, accepted_ids[0], 0, _voice_event_identity(accepted_ids[0]))
 	return accepted_ids.size()
+
+
+func _apply_group_speed_cap(accepted_ids: Array[int]) -> void:
+	## WaitForFormation (locomotor.ini:713, on the melee / charge-melee / ranged
+	## horde locomotors): "When moving into formations, these guys stop & wait for
+	## others." Retail's observable consequence is that a mixed selection advances
+	## at the pace of its slowest member and arrives roughly together, rather than
+	## the cavalry landing a lap ahead of the pikes.
+	##
+	## The cap is the minimum AUTHORED speed across the group, so per-row stance,
+	## formation, and ability multipliers still apply on top of it in _step_route.
+	## A single-battalion order caps at its own speed, i.e. no change.
+	##
+	## Deterministic: min over the accepted set is order-independent, and the
+	## accepted set is already built in caller-supplied id order.
+	if not retail_formation_movement:
+		# Leave the key absent entirely so the row - and therefore the state hash
+		# - stays byte-identical for every run that has not opted in.
+		return
+	var slowest := INF
+	for id in accepted_ids:
+		var row: Dictionary = entities[id]
+		slowest = minf(slowest, maxf(0.0, float(row.get("speed", 0.0))))
+	if slowest == INF:
+		return
+	for id in accepted_ids:
+		(entities[id] as Dictionary)["group_speed_cap"] = slowest
 
 
 func issue_attack(ids: Array[int], target_id: int, team: int = PLAYER_TEAM) -> int:
@@ -10252,6 +11526,10 @@ func issue_attack(ids: Array[int], target_id: int, team: int = PLAYER_TEAM) -> i
 		row["order_kind"] = "attack"
 		accepted_ids.append(id)
 	if not accepted_ids.is_empty():
+		# A group attack coheres exactly like a group move; refreshing here also
+		# stops a cap left over from an earlier escort order throttling the
+		# charge.
+		_apply_group_speed_cap(accepted_ids)
 		_stamp_order_sequence(accepted_ids)
 		last_route_rejection = ""
 		var ack := _voice_event_identity(accepted_ids[0])
@@ -10379,14 +11657,22 @@ func _apply_formation_mode(row: Dictionary) -> void:
 	var base: Array = row.get("formation_positions_base", row.get("formation_positions", [])) as Array
 	if base.is_empty():
 		return
-	var scale := float(FORMATION_SPACING.get(String(row.get("formation_mode", "Line")), 1.0))
+	var mode := String(row.get("formation_mode", "Line"))
+	var isotropic := float(FORMATION_SPACING.get(mode, 1.0))
+	# x = lateral, z = depth (see FORMATION_SPACING_RETAIL).
+	var lateral_scale := isotropic
+	var depth_scale := isotropic
+	if retail_formation_movement:
+		var authored: Dictionary = FORMATION_SPACING_RETAIL.get(mode, {}) as Dictionary
+		lateral_scale = float(authored.get("lateral", 1.0))
+		depth_scale = float(authored.get("depth", 1.0))
 	var scaled: Array = []
 	for slot_value in base:
 		if typeof(slot_value) != TYPE_VECTOR3:
 			scaled.append(Vector3.ZERO)
 			continue
 		var slot: Vector3 = slot_value
-		scaled.append(Vector3(slot.x * scale, slot.y, slot.z * scale))
+		scaled.append(Vector3(slot.x * lateral_scale, slot.y, slot.z * depth_scale))
 	row["formation_positions"] = scaled
 
 
@@ -10437,6 +11723,8 @@ func tick() -> void:
 		_step_production()
 	_step_pending_power_effects()
 	_step_grove_auras()
+	_step_field_pings()
+	_step_weather_effects()
 	_step_summon_despawns()
 	_step_summon_auras()
 	_step_structure_weapons()
@@ -10449,6 +11737,7 @@ func tick() -> void:
 	for id in entity_ids():
 		_step_entity(id)
 	_step_banner_carriers()
+	_step_structure_eviction()
 	_step_battalion_separation()
 	_step_construction()
 	_step_hero_regeneration()
@@ -10747,6 +12036,24 @@ var _experience_unauthored_victims: Dictionary = {}
 var _unit_module_contracts: Dictionary = {}
 ## structure object_id / structure_kind -> projected moduleContracts.
 var _structure_module_contracts: Dictionary = {}
+## Retail's CastleUpgrade indirection, projected from the fortress documents'
+## own moduleContracts rows.
+##
+## A fortress improvement button (Command_PurchaseUpgradeMordorFortressLavaMoat,
+## Command_PurchaseUpgradeAngmarFortressIceWalls, ...) does NOT buy the upgrade
+## it names. It buys a *Trigger* upgrade (Upgrade_AngmarFortressIceWallsTrigger,
+## upgrade.ini), and a CastleUpgrade behavior on the fortress converts that
+## trigger into the real upgrade and hands it to the castle
+## (angmarfortress.ini:1282-1286 "Behavior = CastleUpgrade
+## ModuleTag_PassOutAngmarStoneworkUpgrade / TriggeredBy =
+## Upgrade_AngmarFortressIceWallsTrigger / Upgrade = Upgrade_AngmarFortressIceWalls
+## / WallUpgradeRadius = ..."). Every downstream module — AttributeModifierUpgrade,
+## SubObjectsUpgrade, WeaponSetUpgrade — is triggered by the REAL upgrade, so
+## without this hop a purchased fortress improvement does nothing at all.
+##
+## trigger upgrade id (folded) -> Array[{upgrade_id, wall_upgrade_radius,
+## source_object_id, tag}].
+var _castle_upgrade_grants: Dictionary = {}
 ## Match-scoped objective history: team -> authored hero unit type -> peak
 ## rank reached. A value of -1 records that the hero existed but had no
 ## authored ExperienceLevel chain, so historical negative answers refuse
@@ -10874,9 +12181,97 @@ func _configure_playable_structure_module_contracts() -> void:
 		if contracts.is_empty():
 			continue
 		register_structure_module_contracts(String(object_id_value), contracts)
+		register_castle_upgrade_grants(String(document.get("objectId", object_id_value)), contracts)
 		var slug := String(document.get("slug", ""))
 		if slug != "":
 			register_structure_module_contracts(slug, contracts)
+
+
+func register_castle_upgrade_grants(source_object_id: String, contracts: Array) -> void:
+	## Index every CastleUpgrade row (retail's trigger -> real upgrade hop) from
+	## one structure's projected moduleContracts. Rows missing either half are
+	## skipped: a half-recorded contract must never invent an upgrade id.
+	for contract_value in contracts:
+		if typeof(contract_value) != TYPE_DICTIONARY:
+			continue
+		var contract: Dictionary = contract_value
+		if String(contract.get("module", "")).to_lower() != "castleupgrade":
+			continue
+		var fields: Dictionary = contract.get("fields", {}) as Dictionary
+		var trigger := _castle_upgrade_field(fields, "TriggeredBy")
+		var granted := _castle_upgrade_field(fields, "Upgrade")
+		if trigger == "" or granted == "":
+			continue
+		var radius_text := _castle_upgrade_field(fields, "WallUpgradeRadius")
+		var rows: Array = _castle_upgrade_grants.get(trigger.to_lower(), []) as Array
+		var already_recorded := false
+		for existing_value in rows:
+			if String((existing_value as Dictionary).get("upgrade_id", "")) == granted:
+				already_recorded = true
+				break
+		if already_recorded:
+			continue
+		rows.append({
+			"upgrade_id": granted,
+			"wall_upgrade_radius": radius_text,
+			"source_object_id": source_object_id,
+			"tag": String(contract.get("tag", "")),
+		})
+		_castle_upgrade_grants[trigger.to_lower()] = rows
+
+
+static func _castle_upgrade_field(fields: Dictionary, key: String) -> String:
+	## Opaque-authored moduleContracts record {authored, sourceIni, line} per
+	## field; typed rows add "value". Either shape resolves to the authored id.
+	var raw: Variant = fields.get(key, fields.get(key.to_lower(), null))
+	if typeof(raw) == TYPE_DICTIONARY:
+		var row := raw as Dictionary
+		var authored := String(row.get("authored", ""))
+		if authored != "":
+			return authored.strip_edges()
+		return String(row.get("value", "")).strip_edges()
+	if typeof(raw) in [TYPE_STRING, TYPE_STRING_NAME]:
+		return String(raw).strip_edges()
+	return ""
+
+
+func castle_upgrade_grants_for(trigger_upgrade_id: String) -> Array:
+	## The real upgrade(s) a bought trigger hands out. Empty when the selected
+	## packs record no CastleUpgrade module for that trigger.
+	return (_castle_upgrade_grants.get(trigger_upgrade_id.to_lower(), []) as Array).duplicate(true)
+
+
+func _apply_castle_upgrade_grants(building: Dictionary, trigger_upgrade_id: String) -> void:
+	## Retail's CastleUpgrade pass-out: the fortress takes the real upgrade, and
+	## so does every castle piece it owns (retail scopes wall improvements by
+	## WallUpgradeRadius; the castle pieces ARE the fortress's own walls, so the
+	## owning-fortress set is that radius exactly and needs no distance guess).
+	var grants := castle_upgrade_grants_for(trigger_upgrade_id)
+	if grants.is_empty():
+		return
+	var structure_id := int(building.get("id", 0))
+	var recipients: Array[int] = [structure_id]
+	for piece_id_value in building.get("castle_piece_structure_ids", []) as Array:
+		recipients.append(int(piece_id_value))
+	for grant_value in grants:
+		var granted := String((grant_value as Dictionary).get("upgrade_id", ""))
+		if granted == "":
+			continue
+		for recipient_id in recipients:
+			if not structures.has(recipient_id):
+				continue
+			var recipient: Dictionary = structures[recipient_id]
+			var owned: Array = recipient.get("completed_upgrades", [])
+			if owned.has(granted):
+				continue
+			owned.append(granted)
+			recipient["completed_upgrades"] = owned
+		_emit_event("upgrade.castle_granted", structure_id, 0, {
+			"team": int(building.get("team", -1)),
+			"trigger_upgrade_id": trigger_upgrade_id,
+			"upgrade_id": granted,
+			"recipient_count": recipients.size(),
+		})
 
 
 func _content_db_ref():
@@ -12323,7 +13718,11 @@ func _apply_ability_leadership_strip(hero_row: Dictionary, effect: Dictionary) -
 		for key in stripped:
 			table.erase(key)
 		target["timed_modifiers"] = table
-		target["leadership_suppressed_until_tick"] = tick_index + duration_ticks
+		# Same EXTEND contract as the weather anti-category lane.
+		target["leadership_suppressed_until_tick"] = maxi(
+			tick_index + duration_ticks,
+			int(target.get("leadership_suppressed_until_tick", -1)),
+		)
 		affected += 1
 	if affected == 0:
 		return {"ok": false, "reason": "no-enemies-in-radius"}
@@ -12363,6 +13762,36 @@ func _timed_modifier_active(row: Dictionary, kind: String) -> bool:
 
 
 func _ability_outgoing_multiplier(row: Dictionary) -> float:
+	## COVERAGE, DECIDED AND RECORDED 2026-08-04 (round 18) — do not "fix" this
+	## silently in either direction.
+	##
+	## This multiplier is consulted at exactly ONE site: the per-member melee/
+	## ranged swing in _step_attacks. It therefore does NOT ride
+	##   - upgrade-gated bonus nuggets (fire-arrow flame components),
+	##   - hero cleave splash,
+	##   - trample,
+	##   - ability/power direct damage.
+	## That is consistent with SpellBookDarkness and every hero leadership aura,
+	## which enter through the same accumulator, and it is narrower than the
+	## Rallying Call `rally_factor`, which rides inside _apply_damage and so
+	## scales everything.
+	##
+	## What retail means: attributemodifier.ini authors DAMAGE_MULT with the
+	## comment "Multiplicitive. Damage multiplied by this, will compound in
+	## multiple bonuses", i.e. the object's damage OUTPUT — all of it. So the
+	## correct model is the wide one, and this narrow model is a known gap.
+	## OpenSAGE is NOT an oracle here: its AttributeModifier.Apply
+	## (Logic/ModifierList.cs:39-52) implements only Production and Health and
+	## drops DAMAGE_MULT on the floor, so it cannot arbitrate the scope.
+	##
+	## NOT widened in this round, deliberately: moving it into _apply_damage
+	## moves every hero-leadership damage number in the game (leadership auras
+	## write DAMAGE_MULT into this same table and are live throughout the pinned
+	## slice scenarios), so it needs its own failing-first evidence and a
+	## conscious pin re-mint rather than riding along with a parser fix. Round 16
+	## reached the current narrow coverage as a side effect of moving taint off
+	## its private row fields; this comment is the record that the narrowing was
+	## noticed and accepted, not that it was chosen as correct.
 	return _timed_modifier_product(row, "DAMAGE_MULT")
 
 
@@ -12752,6 +14181,11 @@ func _step_structure_upgrades() -> void:
 		if not completed.has(upgrade_id):
 			completed.append(upgrade_id)
 		building["completed_upgrades"] = completed
+		# Retail's CastleUpgrade hop: a fortress improvement button buys the
+		# *Trigger* upgrade, and the fortress's own CastleUpgrade module hands
+		# the real upgrade to the castle. Without this the purchase completes
+		# and nothing downstream ever fires.
+		_apply_castle_upgrade_grants(building, upgrade_id)
 		if bool(contract.get("team_tech", false)):
 			var team := int(building.get("team", -1))
 			var owned: Dictionary = team_upgrades.get(team, {}) as Dictionary
@@ -12766,7 +14200,11 @@ func _step_structure_upgrades() -> void:
 			int(contract.get("level_cap", 1)),
 			int(building.get("level", 1)) + int(contract.get("levels_to_gain", 0))
 		)
-		building["command_set"] = String(contract.get("to_command_set", ""))
+		if not bool(contract.get("castle_upgrade", false)):
+			# A fortress improvement never swaps the command set (retail keeps
+			# the fortress on its own set and only flips model/weapon state), so
+			# it must not blank the building's live set on completion.
+			building["command_set"] = String(contract.get("to_command_set", ""))
 		# Per-level authored effects ride the completed upgrade: health additions
 		# raise the building's pool, PRODUCTION factors compound into its
 		# build-speed multiplier (SAGE level modifiers are permanent).
@@ -12784,7 +14222,7 @@ func _step_structure_upgrades() -> void:
 			"team": int(building.get("team", -1)),
 			"upgrade_id": upgrade_id,
 			"level": int(building["level"]),
-			"command_set": String(building["command_set"]),
+			"command_set": String(building.get("command_set", "")),
 			"health_add": health_add,
 			"production_multiplier": float(building.get("production_multiplier", 1.0)),
 		})
@@ -13028,10 +14466,29 @@ func _step_entity(id: int) -> void:
 			row["state"] = "idle"
 			return
 		var target_position := _target_position(target_id, target_kind)
-		# Retail/OpenSAGE range is center-to-center: Weapon.cs:54-58 compares the
-		# attacker's Translation against the target position without adding either
-		# object's bounding radius.
-		var distance := Vector2(row["position"]).distance_to(target_position)
+		# SURFACE-TO-SURFACE against a structure; centre-to-centre otherwise.
+		#
+		# This used to be centre-to-centre unconditionally, copied from a partial
+		# open-source reimplementation that compares raw translation distance
+		# against AttackRange with no bounding-radius expansion. The original
+		# engine instead asks its partition manager for a bounding-sphere-to-
+		# bounding-sphere distance, i.e. the GAP between the two footprints.
+		#
+		# MEASURED consequence of the simplification, in the live slice: a melee
+		# horde ordered onto the enemy fortress ended in state `attack` at d=0.24
+		# and then d=0.00 — standing ON the fortress centre — because a 0.305
+		# AttackRange against a 1.96-radius footprint is only satisfiable at the
+		# centre. Melee is supposed to stand at the wall and swing. Bracketed
+		# from both sides by _test_structure_surface_range in
+		# game/tests/banner_castle_sim_runner.gd.
+		#
+		# See _target_footprint_radius for why the attacker's own radius is NOT
+		# subtracted (it is a horde centre, not a soldier).
+		var distance := maxf(
+			0.0,
+			Vector2(row["position"]).distance_to(target_position)
+			- _target_footprint_radius(target_id, target_kind)
+		)
 		var selected_weapon_mode := _weapon_mode_for_distance(row, distance)
 		if selected_weapon_mode == "unsupported-close":
 			row["state"] = "idle"
@@ -13436,7 +14893,34 @@ func _nearest_auto_target(row: Dictionary) -> Dictionary:
 			# holes.ini NOT_AUTOACQUIRABLE: an exposed rebuild hole is only ever
 			# destroyed by an explicit attack order, never by idle acquisition.
 			continue
-		var distance := origin.distance_to(Vector2((structures[candidate] as Dictionary).get("position", Vector2.ZERO)))
+		# SURFACE-TO-SURFACE, the same semantic the RANGE gate uses. Round 20
+		# made firing at a structure subtract the target's authored bounding
+		# circle (SAGE getDistanceSquared(..., FROM_BOUNDINGSPHERE_2D); see
+		# _target_footprint_radius and the range test in _step_attacks) but left
+		# ACQUISITION centre-to-centre. The two halves then disagreed, and the
+		# disagreement was not academic:
+		#
+		#   A HoldGround melee horde standing at a fortress wall clamps `limit`
+		#   to its own AttackRange (~0.305 sim units, see the HoldGround branch
+		#   above). The Men fortress footprint is 1.9604. Centre-to-centre, that
+		#   horde is ~2.0 units from the fortress centre — SIX TIMES its
+		#   acquisition limit — so it never acquired a building it was already
+		#   in weapon range of and could hit the instant it was ordered to.
+		#
+		#   The same subtraction also decides ties. `distance <= best_distance`
+		#   lets a structure win an equal-distance comparison against a
+		#   battalion; measured centre-to-centre a structure's distance is
+		#   inflated by its whole footprint, so a structure lost every tie it
+		#   should have won.
+		#
+		# Only the CANDIDATE's radius is subtracted, never the acquirer's, for
+		# exactly the reason spelled out at _target_footprint_radius: this sim's
+		# unit position is the horde centre, not a soldier bounding sphere.
+		var distance := maxf(
+			0.0,
+			origin.distance_to(Vector2((structures[candidate] as Dictionary).get("position", Vector2.ZERO)))
+			- _target_footprint_radius(candidate, "structure")
+		)
 		if distance <= best_distance:
 			best_distance = distance
 			best_id = candidate
@@ -13830,11 +15314,417 @@ const STRUCTURE_BLOCK_RADIUS := {
 }
 
 
-func _deflect_around_structures(position: Vector2, attack_target_id: int) -> Vector2:
+## Source-object-id -> authored footprint radius in retail SOURCE units. Pack
+## documents never change inside a match, so this is a pure memo of a read-only
+## lookup: identical on every lockstep peer, order-independent, never part of the
+## hashed state.
+var _structure_footprint_source_cache: Dictionary = {}
+## Structure id -> resolved footprint radius in SIM units. Same memo contract as
+## the table above (pure function of read-only inputs, never hashed), one level
+## further down so the per-tick attack path allocates no key string at all.
+## Cleared wherever the structure table is replaced wholesale.
+var _structure_footprint_radius_cache: Dictionary = {}
+## Source object ids whose missing geometry has already been reported, so the
+## fallback warning fires once per id instead of once per call.
+var _footprint_fallback_reported: Dictionary = {}
+
+
+func _structure_footprint_radius(structure_row: Dictionary) -> float:
+	## The structure's BOUNDING-CIRCLE radius in sim units — SAGE's
+	## `FROM_BOUNDINGSPHERE_2D` radius, not the movement block radius.
+	##
+	## THE TWO RADII ARE DIFFERENT NUMBERS AND BOTH ARE CORRECT.
+	## STRUCTURE_BLOCK_RADIUS is a MOVEMENT footprint: placement radius plus a
+	## step of walkway, so units path politely around finished buildings (a
+	## fortress is 4.6). This is the AUTHORED Geometry block: MenFortress is
+	## `Geometry = BOX / GeometryMajorRadius = 64` plus four AdditionalGeometry
+	## plot pieces of radius 10 at GeometryOffset 64/-64
+	## (object/goodfaction/structures/men/fortress.ini:1254-1265), which the
+	## importer projects into a union `footprint.radius` of 74 source units —
+	## 1.9604 sim at the Fords of Isen II transform 0.02649232738129. Using the
+	## movement radius here would hand every weapon in the game 2.6 extra units of
+	## reach against a fortress.
+	##
+	## RESOLUTION ORDER: an explicit row value (fixtures, and any future seeding
+	## that wants to pin a footprint) -> the selected pack's compiled geometry via
+	## ContentDB -> a fallback, see COMBAT_FALLBACK_STRUCTURE_SOURCE_RADIUS.
+	##
+	## Returns 0.0 (no expansion, i.e. the old centre-to-centre behaviour) when
+	## the map carries no source transform, so a fixture that never set one is
+	## never handed a 74-SIM-unit disc.
+	##
+	## MEMOISED PER STRUCTURE ID. This is on the per-tick attack path — the range
+	## gate calls it for every attacker against every structure target, every
+	## tick — and the resolution underneath it built a formatted string key on
+	## every call. The inputs (the row's authored value, its source object id,
+	## its kind, and the map transform) are all fixed for a structure's lifetime,
+	## so the result is cached against the integer structure id, which allocates
+	## nothing. Cleared by setup() and by _restore_authoritative_state(), the two
+	## places the structure table is replaced wholesale.
+	if structure_row.is_empty():
+		return 0.0
+	var structure_id := int(structure_row.get("id", 0))
+	if structure_id != 0 and _structure_footprint_radius_cache.has(structure_id):
+		return float(_structure_footprint_radius_cache[structure_id])
+	var scale := float(_rules.get("source_map_transform_scale", 0.0))
+	if not is_finite(scale) or scale <= 0.0:
+		return 0.0
+	var source_radius := float(structure_row.get("footprint_radius_source", 0.0))
+	if not is_finite(source_radius) or source_radius <= 0.0:
+		source_radius = _resolved_footprint_source_radius(
+			String(structure_row.get("source_object_id", "")),
+			String(structure_row.get("structure_kind", "")),
+		)
+	if not is_finite(source_radius) or source_radius <= 0.0:
+		return 0.0
+	var radius := source_radius * scale
+	if structure_id != 0:
+		_structure_footprint_radius_cache[structure_id] = radius
+	return radius
+
+
+## Source-unit footprint used when a structure document carries no compiled
+## geometry at all. NON-FORTRESS ONLY; a fortress keeps
+## SelectionPick.DEFAULT_FORTRESS_SOURCE_RADIUS (64.0), which is MenFortress's
+## authored GeometryMajorRadius verbatim.
+##
+## WHY IT IS NOT 50.0 ANY MORE. The selection round published 50.0 "roughly a
+## Gondor barracks", and for SELECTION that direction is forgiving: an oversized
+## pick radius makes a building easier to click. On the COMBAT path the same
+## number is a gift of free weapon reach and free acquisition range against
+## exactly the structures whose real size is unknown. Censused across every
+## playable-structure document in every pack on disk
+## (.private/scratch/opus29-footprint-census.txt, 196 documents that carry
+## geometry): the median authored radius is 48, the 10th percentile is 15, and
+## 104 of the 196 are BELOW 50. A 50.0 fallback over-expands most of them.
+##
+## 5.0 IS A FLOOR WITH A DERIVATION, not a smaller guess. The fallback must
+## never exceed a structure's true footprint, or it hands out reach the geometry
+## does not support; the greatest value that satisfies that for every structure
+## the packs ship is the SMALLEST authored radius, and that is 5.0 — the
+## fortress expansion pads (Dwarven/Isengard/Men/Mordor/Wild
+## FortressExpansionPad{Corner,Side}, same census). Erring small degrades toward
+## the pre-round-20 centre-to-centre behaviour, which is the safe direction.
+##
+## HOW OFTEN IT FIRES, measured rather than assumed: 6 of the 182 structure
+## documents in the current workspace selection carry no geometry — MenWallGate,
+## DwarvenCastleWallGate, Isengard/Mordor/Wild LumberMill. The stale
+## bfme2-men-vslice supplemental has 22 more, all superseded by rotwk-men-vslice.
+const COMBAT_FALLBACK_STRUCTURE_SOURCE_RADIUS := 5.0
+
+
+func _resolved_footprint_source_radius(source_object_id: String, structure_kind: String) -> float:
+	## MEMO KEY IS THE EXACT ID, not a lowered one. ContentDB's registry lookup
+	## is an exact Dictionary hit (see get_playable_structure_runtime), so a
+	## lowered memo key answered for a DIFFERENT string than the one the lookup
+	## would have used: two ids differing only in case shared one memo entry
+	## while resolving differently — one hitting the document, one missing it and
+	## taking the fallback. Keying on the same string the lookup uses makes the
+	## memo incapable of disagreeing with the thing it memoises.
+	var key := "%s|%s" % [source_object_id, structure_kind]
+	if _structure_footprint_source_cache.has(key):
+		return float(_structure_footprint_source_cache[key])
+	var resolved := 0.0
+	if source_object_id != "":
+		var db = _content_db_ref()
+		if db != null and db.has_method("get_playable_structure_runtime"):
+			var document: Variant = db.get_playable_structure_runtime(source_object_id)
+			if typeof(document) == TYPE_DICTIONARY:
+				var gameplay: Dictionary = (
+					((document as Dictionary).get("registration", {}) as Dictionary)
+					.get("gameplay", {}) as Dictionary
+				)
+				var geometry: Variant = gameplay.get("geometry", {})
+				if typeof(geometry) == TYPE_DICTIONARY:
+					resolved = SelectionPick.source_footprint_radius(geometry as Dictionary)
+	if not is_finite(resolved) or resolved <= 0.0:
+		# NAMED, ONCE PER OBJECT ID. The fallback used to fire in total silence,
+		# so a pack shipped without geometry looked exactly like a pack with it.
+		# Once per id (not per call) keeps a per-tick path from flooding the log.
+		if source_object_id != "" and not _footprint_fallback_reported.has(source_object_id):
+			_footprint_fallback_reported[source_object_id] = true
+			push_warning(
+				"structure footprint: '%s' (kind=%s) carries no compiled geometry; using the %s source-unit fallback"
+				% [
+					source_object_id,
+					structure_kind,
+					"fortress" if structure_kind == "fortress" else "non-fortress",
+				]
+			)
+		resolved = (
+			SelectionPick.DEFAULT_FORTRESS_SOURCE_RADIUS
+			if structure_kind == "fortress"
+			else COMBAT_FALLBACK_STRUCTURE_SOURCE_RADIUS
+		)
+	_structure_footprint_source_cache[key] = resolved
+	return resolved
+
+
+func _target_footprint_radius(target_id: int, target_kind: String) -> float:
+	## The radius to subtract from a centre-to-centre distance before comparing it
+	## with a weapon range.
+	##
+	## STRUCTURES ONLY, DELIBERATELY. Real SAGE subtracts BOTH objects' bounding
+	## radii, and every horde member in the selected pack authors
+	## `GeometryMajorRadius = 8.0` (measured across every
+	## data/playable-units/*.json in the men pack). It is not applied here, for a
+	## reason that is about this sim's model rather than about SAGE:
+	##
+	##   The sim's authoritative unit position is the HORDE CENTRE, and the range
+	##   gate is horde-centre to horde-centre. SAGE's bounding-sphere test is
+	##   between two individual SOLDIER objects. Subtracting 2 x 8 source units
+	##   from a horde-centre distance applies a soldier-scale correction to a
+	##   horde-scale measurement — it would move every engagement 0.42 sim units
+	##   earlier without matching anything retail does. `_step_member_attacks`
+	##   (this file) never range-tests a member at all; members exist in the
+	##   combat path only through `_member_world_position`, and only to assign
+	##   victims. Doing this properly means moving the gate itself down to the
+	##   member level, which is its own change with its own failing-first evidence
+	##   and its own re-derivation of the member-combat suite's 98 authored
+	##   expectations.
+	##
+	## A structure has no such gap: it is a single object, its authoritative
+	## position IS its centre, and its authored Geometry IS the bounding circle
+	## SAGE measures from. The correction applies exactly.
+	if target_kind != "structure":
+		return 0.0
+	return _structure_footprint_radius(structures.get(target_id, {}) as Dictionary)
+
+
+## Hysteresis width added to a castle member's own block radius when deciding
+## whether the walking line crosses it. The corridor is recomputed every tick
+## from the unit's current position, so a zero-width test would let a member
+## flip to BLOCKING while the unit is still inside its disc — it would close on
+## top of the unit rather than behind it.
+##
+## OWN CONSTANT, WITH ITS OWN DERIVATION. Round 18 wrote this as an alias of
+## BATTALION_SEPARATION_PUSH, which made the two move together for no reason:
+## the separation push is a per-tick displacement between two battalions, this
+## is a geometric tolerance on a segment/disc test. They are numerically equal
+## by coincidence, and the alias hid the actual bound.
+##
+## DERIVED from the one castle the pack ships (MenFortress on Fords of Isen II,
+## measured in .private/scratch/opus24-probe1.out.log): every castle piece
+## carries the default 2.8 STRUCTURE_BLOCK_RADIUS; attacking the fortress centre
+## from outside puts the furthest corner pad 2.398 off the walking line, and
+## attacking an east corner pad from the east puts the two west pads 3.392 off
+## it (recomputed to full precision this round: 3.391 and the corner spacing
+## 4.796 — see _test_castle_corridor_is_bounded). The margin must therefore
+## satisfy
+##     2.398 - 2.8 < margin < 3.391 - 2.8   i.e.   (negative) < margin < 0.591
+## — the lower bound is already met by any non-negative value because 2.398 is
+## inside the bare radius, so the binding constraint is the upper one. It must
+## also exceed one tick of travel or the hysteresis buys nothing.
+##
+## ONE TICK OF TRAVEL, RECONCILED (round 21). This file carried two different
+## answers to that question — "~0.03" here and "0.55" at the transit budget in
+## _deflect_around_structures — and neither was right. 0.55 was the castle
+## fixture's mis-scaled step; 0.03 is a factor of ten under the real figure, and
+## reads like a per-tick value derived from an already-per-tick speed. The
+## measured answer, from every playable-unit document in the workspace selection
+## (159 rows with a resolved speed): median 55 source units/second = 0.1457 sim
+## per tick, ceiling 115 source = 0.3047 sim per tick. Both derivations now cite
+## this same census.
+##
+## 0.35 still holds, and now for a stated reason: it clears the 0.3047 ceiling
+## (so the corridor cannot close on a unit mid-step even at the game's top
+## authored speed) while sitting 0.24 under the 0.591 geometric ceiling above.
+const CASTLE_CORRIDOR_MARGIN := 0.35
+
+
+func _point_segment_distance(point: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var length_squared := ab.length_squared()
+	if length_squared <= 0.000001:
+		return point.distance_to(a)
+	var t := clampf((point - a).dot(ab) / length_squared, 0.0, 1.0)
+	return point.distance_to(a + ab * t)
+
+
+func _castle_footprint_pass_through(position: Vector2, attack_target_id: int, attack_target_kind: String) -> Dictionary:
+	## The set of structure ids a battalion standing at `position` and attacking
+	## `attack_target_id` may walk through: the target itself, plus exactly those
+	## members of the target's castle whose footprint the WALKING LINE from the
+	## unit to the target actually crosses.
+	##
+	## BOUNDED, not blanket. Round 17 opened the ENTIRE castle group on any
+	## attack order onto any member of it, which made a far-side attack dissolve
+	## the near wall as well and left the group open for as long as the order
+	## lasted. This model opens only what is in the way, is recomputed every tick
+	## from the unit's current position, and closes behind it.
+	##
+	## WHY THE WHOLE CASTLE, NOT JUST THE TARGET. CastleBehavior authors its
+	## pieces INSIDE the fortress footprint, not around it: MenFortressCitadel
+	## sits on the fortress origin (offset_source 0,0) and the six expansion
+	## pads within 64 source units of it. At the Fords of Isen II transform
+	## (0.02649232738129) that is a citadel exactly on the fortress centre and
+	## pads 1.64-2.40 sim units out — measured live, every enemy castle piece in
+	## .private/scratch/opus24-probe1.out.log. Each piece carries the default
+	## 2.8 STRUCTURE_BLOCK_RADIUS, so exempting only the ordered target left the
+	## fortress ringed by a ~5.2-unit wall of its own sub-structures. Retail melee
+	## ranges are ~11.5 source units = 0.305 sim, and the MOVEMENT ring is 5.2, so
+	## no melee horde could ever reach a fortress or a pad — that gap is far wider
+	## than the 1.9604 footprint the range gate now subtracts (round 20), so the
+	## corridor is still required: they parked on the ring at distance 4.4-5.1 in state
+	## `run` and only ranged units ever landed a blow
+	## (.private/scratch/opus09-live1.out.log:35,52 — 17,521 ticks to kill a
+	## fortress, all of it archer damage).
+	##
+	## THE RULE: a member is passable only if the segment [unit -> target centre]
+	## comes within `member block radius + CASTLE_CORRIDOR_MARGIN` of that
+	## member's centre — i.e. the walking line actually crosses its footprint.
+	## The target itself is always passable (that is the order). Everything
+	## outside the group deflects normally, and a battalion with no STRUCTURE
+	## attack target (every plain move order, friendly castles included) gets an
+	## empty set on the first line, so that path stays byte-identical.
+	##
+	## MEASURED against the one castle the pack ships (MenFortress on Fords of
+	## Isen II, .private/scratch/opus24-probe1.out.log: fortress radius 4.6 at
+	## the origin, citadel radius 2.8 exactly on it, two side pads 1.643 out and
+	## four corner pads 2.398 out, all radius 2.8):
+	##   attacking the fortress centre from outside  -> every piece is on the
+	##     line (0.000-2.398 <= 2.8 + 0.35), so the whole group opens, which is
+	##     correct: they genuinely overlap the target.
+	##   attacking the EAST corner pad from the east -> the two WEST pads sit
+	##     3.391 and 4.796 off the line, above the 3.15 threshold, and stay
+	##     BLOCKING. Under round 17 they opened too.
+	## Those numbers are the bound: 2.398 passes, 3.391 does not.
+	##
+	## CORRECTION (round 19): round 18 reported BOTH west pads at "3.392". They
+	## are not equidistant and neither figure was exact. At the retail transform
+	## 0.02649232738129 a 64-source pad offset is 1.6955090 sim units, so a corner
+	## pad sits 2.3978 out along its diagonal. With the attacker on the
+	## fortress->east-corner ray, the SW pad's nearest point on the SEGMENT is the
+	## east pad endpoint at 2 * 1.6955090 = 3.3910179; the NW pad lies on the
+	## infinite line but on the far side of the fortress, so the segment clamps to
+	## the same endpoint and it measures 3.3910179 * sqrt(2) = 4.7956. Both are
+	## now asserted to 0.001 in _test_castle_corridor_is_bounded instead of being
+	## quoted from a report.
+	##
+	## ID-ALIAS GUARD: battalion ids and structure ids come from the same counter
+	## space but are separate tables, so a battalion target whose id happens to
+	## match a structure id would have opened that structure. The caller passes
+	## the row's `target_kind` and anything but "structure" returns empty.
+	var passable: Dictionary = {}
+	if attack_target_kind != "structure" or attack_target_id == 0 or not structures.has(attack_target_id):
+		return passable
+	passable[attack_target_id] = true
+	var target_row: Dictionary = structures[attack_target_id]
+	var target_center := Vector2(target_row.get("position", Vector2.ZERO))
+	# Three ways into the same group: the castle owner itself, one of its
+	# CastleBehavior pieces, or an expansion raised on one of its pads.
+	var castle_id := int(target_row.get("castle_piece_of_fortress", 0))
+	if castle_id == 0:
+		castle_id = int(target_row.get("expansion_of_fortress", 0))
+	if castle_id == 0 and (
+		target_row.has("castle_piece_structure_ids")
+		or String(target_row.get("structure_kind", "")) == "fortress"
+	):
+		castle_id = attack_target_id
+	if castle_id == 0 or not structures.has(castle_id):
+		return passable
+	var members: Array[int] = [castle_id]
+	for piece_value in (structures[castle_id] as Dictionary).get("castle_piece_structure_ids", []) as Array:
+		members.append(int(piece_value))
+	for pad_value in expansion_pads.get(castle_id, []) as Array:
+		var expansion_structure_id := int((pad_value as Dictionary).get("expansion_structure_id", 0))
+		if expansion_structure_id != 0:
+			members.append(expansion_structure_id)
+	for member_id in members:
+		if passable.has(member_id) or not structures.has(member_id):
+			continue
+		var member_row: Dictionary = structures[member_id]
+		var member_radius := float(STRUCTURE_BLOCK_RADIUS.get(
+			String(member_row.get("structure_kind", "")), 2.8
+		))
+		var member_center := Vector2(member_row.get("position", Vector2.ZERO))
+		if _point_segment_distance(member_center, position, target_center) <= member_radius + CASTLE_CORRIDOR_MARGIN:
+			passable[member_id] = true
+	return passable
+
+
+## The furthest a footprint may move a unit in one tick. Deflection used to
+## SNAP: a unit sitting on a fortress centre was projected 4.6 units in a single
+## step, which is a teleport, and a unit sitting EXACTLY on the centre was
+## skipped entirely by the `distance > 0.001` guard and stayed clipped forever.
+## Both are reachable now that an attack order can put a melee horde inside a
+## castle footprint and then end (stop, retarget, target death), at which point
+## the exemption disappears and the unit has to be evicted. Bounding the
+## displacement makes that eviction a walk, not a jump; the unit keeps being
+## pushed every tick until it is clear.
+const STRUCTURE_EVICTION_STEP := BATTALION_SEPARATION_PUSH
+
+
+func _deflect_around_structures(
+	position: Vector2,
+	row: Dictionary,
+	travel_step: Vector2 = Vector2.ZERO,
+	structure_id_list: Array[int] = []
+) -> Vector2:
 	# Battalions slide around building footprints instead of clipping through
-	# them. The battalion's own attack target is exempt so melee can close in.
-	for structure_id in structure_ids():
-		if structure_id == attack_target_id:
+	# them. The battalion's own attack target — and, when that target is part of
+	# a castle, the members of that castle the walking line actually crosses —
+	# is exempt so melee can close in. See _castle_footprint_pass_through.
+	#
+	# `travel_step` is the displacement this tick ALREADY applied to `position`
+	# by _step_route. A non-zero value selects the TANGENTIAL SLIDE below; the
+	# stationary eviction pass passes zero and keeps the radial push.
+	#
+	# `structure_id_list` lets a caller that deflects many entities in one pass
+	# hoist the sorted id list out of its own loop (structure_ids() allocates and
+	# SORTS on every call). Empty means "read it here".
+	var attack_target_id := int(row.get("target_id", 0))
+	var attack_target_kind := String(row.get("target_kind", "battalion"))
+	var passable := _castle_footprint_pass_through(
+		position,
+		attack_target_id,
+		attack_target_kind,
+	)
+	var ids: Array[int] = structure_id_list if not structure_id_list.is_empty() else structure_ids()
+	# TOTAL push bound. Round 18 clamped each structure's push to
+	# STRUCTURE_EVICTION_STEP separately, so N overlapping discs could compound
+	# into an N * step jump in one tick — and overlapping discs are the NORMAL
+	# case inside a castle, where the citadel sits exactly on the fortress centre
+	# and six pads sit 1.64-2.40 out with 2.8 radii. A unit on the fortress
+	# origin is inside four of them at once. The budget below is spent across all
+	# of them, so eviction is one step per tick however many footprints claim it.
+	#
+	# The budget bounds the OUTWARD (radial) component only. A tangential slide
+	# is not displacement the sim is inventing — it is the unit's own travel
+	# step redirected along the disc — and charging it to the eviction budget
+	# left a unit that walked in at full speed unable to recover its clearance in
+	# the same tick.
+	#
+	# A TRANSIT step raises the budget to its own length. STRUCTURE_EVICTION_STEP
+	# exists so a unit that is already deep inside a footprint WALKS out instead
+	# of teleporting; it was never meant to stop a moving unit from undoing the
+	# penetration it just created. Recovering at most exactly what this tick
+	# moved is still not a teleport.
+	#
+	# RE-DERIVED FROM A CORRECTED MEASUREMENT (round 21). Round 19 justified this
+	# with "a slice melee steps 0.55 per tick at the retail transform". That
+	# number was WRONG, and wrong by 3.8x: it came from banner_castle_sim_runner's
+	# castle fixture, which swapped the map transform to retail but left its unit
+	# rules at the 0.1 scale they were authored for (see _rescale_unit_rules
+	# there, fixed in the same round). The AUTHORED ceiling, censused across every
+	# playable-unit document in every pack in the workspace selection (159 rows
+	# with a resolved speed): the fastest unit in the game authors 115 source
+	# units/second — Rivendell Lancers, Haradrim Riders, Warg riders, Knights of
+	# Dol Amroth — which at 0.02649232738129 and TICK_SECONDS 0.1 is 0.3047 sim
+	# units per tick. The median is 55 source = 0.1457. NOT ONE authored base
+	# speed exceeds STRUCTURE_EVICTION_STEP (0.35).
+	#
+	# SO WHY KEEP IT. Because `travel_step` is not a base speed: _step_route
+	# composes it as base * stance speedMultiplier * formation speed_multiplier *
+	# ability SPEED modifiers (see the max_speed line there). A mounted or
+	# leadership-boosted lancer at any multiplier above 1.149 clears 0.35, and
+	# those multipliers are authored data, not a hypothetical. The rule is
+	# therefore inert for every unit at base speed and binding exactly where a
+	# boosted one would otherwise be left clipped inside a wall it walked into.
+	# Deleting it would trade a measured no-op for an unmeasured regression.
+	var push_budget := maxf(STRUCTURE_EVICTION_STEP, travel_step.length())
+	for structure_id in ids:
+		if not structures.has(structure_id):
 			continue
 		var structure_row: Dictionary = structures[structure_id]
 		if int(structure_row.get("health", 0)) <= 0:
@@ -13844,12 +15734,336 @@ func _deflect_around_structures(position: Vector2, attack_target_id: int) -> Vec
 		if float(structure_row.get("construction_progress", 1.0)) < 1.0:
 			continue
 		var radius := float(STRUCTURE_BLOCK_RADIUS.get(String(structure_row.get("structure_kind", "")), 2.8))
+		if passable.has(structure_id):
+			# THE TARGET'S OWN FOOTPRINT STILL STOPS THE ATTACKER AT ITS WALL.
+			#
+			# The corridor exists because the MOVEMENT block radius is an inflated
+			# walkway ring (a fortress is 4.6 against an authored footprint of
+			# 1.9604) and a castle's pieces are authored INSIDE it, so leaving it
+			# up walled melee out of every fortress it was ordered onto. But
+			# opening it completely let the attacker walk to the target's CENTRE —
+			# measured d=0.24 then d=0.00 in the live slice
+			# (.private/scratch/opus24-probe2.out.log).
+			#
+			# Now that the range gate is surface-to-surface the wall is reachable
+			# and standing off it is correct, so the target reasserts its OWN
+			# authored footprint. `minf` keeps this a strict relaxation of the
+			# ordinary rule: the corridor can never block harder than the plain
+			# movement disc would have (relevant for wall towers, whose 98-source
+			# geometry projects wider than their 2.2 block radius).
+			#
+			# CROSSED CASTLE MEMBERS STAY FULLY OPEN. Only the ordered target is
+			# re-blocked. A pad or citadel the walking line happens to cross is
+			# not what the unit is trying to hit, and re-blocking those would put
+			# the fortress's own 1.96 disc between an attacker and a pad standing
+			# 1.64 from the fortress centre — unreachable from outside.
+			if structure_id != attack_target_id or attack_target_kind != "structure":
+				continue
+			radius = minf(radius, _structure_footprint_radius(structure_row))
+			if radius <= 0.0:
+				continue
 		var center := Vector2(structure_row.get("position", Vector2.ZERO))
 		var offset := position - center
 		var distance := offset.length()
-		if distance < radius and distance > 0.001:
-			position = center + offset / distance * radius
+		if distance >= radius:
+			continue
+		var direction := offset / distance if distance > 0.001 else _eviction_fallback_direction(row)
+		# Bounded: keep walking out, one step per tick, instead of teleporting to
+		# the ring. Ordinary deflection never reaches the clamp — a unit moving at
+		# slice speeds penetrates far less than one step per tick — so it only
+		# bites on the eviction case it exists for.
+		var applied := minf(radius - distance, push_budget)
+		push_budget -= applied
+		var seated_radius := distance + applied
+		position = center + direction * seated_radius
+		if travel_step.length_squared() > 0.000001:
+			position = _tangential_slide_point(center, seated_radius, direction, travel_step)
+		if push_budget <= 0.0:
+			break
 	return position
+
+
+func _tangential_slide_point(
+	center: Vector2, radius: float, radial_direction: Vector2, travel_step: Vector2
+) -> Vector2:
+	## TANGENTIAL SLIDE. The radial push alone deadlocks whenever a blocking
+	## structure's centre sits on the line of travel: the push
+	## `center + offset/|offset| * radius` is then exactly ANTI-PARALLEL to the
+	## step, so every tick moves the unit forward by one step and shoves it back
+	## onto the same ring point. Measured on the seeded fixture: an attacker at
+	## (80, 200) ordered onto a fortress at (100, 200) with a barracks at
+	## (90, 200) parks at (87.2, 200.0) — exactly barracks + (-2.8, 0) — with its
+	## route still length 1 after 600 ticks. _step_route's 3-tick stall escape
+	## never fires because the attack state re-assigns the route every tick,
+	## which resets route_stall_ticks before it can reach the threshold.
+	##
+	## The fix walks the unit AROUND the disc instead of standing it off:
+	## project the step onto the tangent at the unit's current bearing and
+	## re-seat the result on the ring, so the unit keeps its clearance while
+	## making angular progress toward the far side.
+	##
+	## DETERMINISTIC SIDE CHOICE. Which way round is decided by the sign of the
+	## 2-D cross product of the OBSTACLE OFFSET (centre -> unit) with the travel
+	## direction. Off-axis that sign is the side the unit is already drifting
+	## toward, so the slide never fights the approach. ON-AXIS — the deadlock
+	## case — the cross product is zero and a fixed fallback side takes over.
+	##
+	## WHY A FIXED FALLBACK IS THE RIGHT ANSWER, stated correctly. An earlier
+	## version of this comment justified it as "any position-derived tie-break
+	## would make two lockstep peers disagree". That is wrong on its face:
+	## position IS replicated state, every peer holds the same value, and a
+	## position-derived choice would replicate fine. The real reason is
+	## NUMERICAL: near the axis the cross product is a difference of two nearly
+	## equal products, so its SIGN is the least trustworthy bit in the whole
+	## computation — it is exactly the quantity that a fused multiply-add
+	## contracts differently on different CPUs, and that ordinary rounding flips
+	## from tick to tick on a single CPU. A fixed side is stable under both.
+	##
+	## THE NEAR-ZERO BAND IS PART OF THE FIX, not padding. Snapping only the
+	## exact 0.0 left a band around the axis where |cross| is nonzero but its
+	## sign is FMA-dependent: two peers on different microarchitectures compute
+	## the same inputs, contract `x1*y2 - y1*x2` differently, and pick opposite
+	## sides — the unit walks round the disc clockwise on one peer and
+	## counter-clockwise on the other, and the sim desyncs. The lockstep runners
+	## cannot catch this: both peers in those tests are the SAME binary on the
+	## SAME machine, so they always contract identically and always agree. The
+	## band is therefore a hazard that only a heterogeneous match exposes, which
+	## is why it is closed by construction rather than by test.
+	##
+	## 1e-6 is the same tolerance this file already uses for "this vector is
+	## degenerate" (`length_squared() <= 0.000001`, both in this function and in
+	## _deflect_around_structures), so the geometry has one epsilon, not two.
+	## Inside the band the fixed side (+1, counter-clockwise in the sim's X/Z
+	## frame) applies; it is a pure function of the two vectors, so every peer
+	## computes it identically.
+	var cross := radial_direction.cross(travel_step)
+	var side := signf(cross) if absf(cross) > 0.000001 else 1.0
+	var tangent := Vector2(-radial_direction.y, radial_direction.x) * side
+	var slid := center + radial_direction * radius + tangent * travel_step.length()
+	var seated := slid - center
+	if seated.length_squared() <= 0.000001:
+		return center + radial_direction * radius
+	return center + seated.normalized() * radius
+
+
+func _step_structure_eviction() -> void:
+	## Standing still is exactly when a footprint has to reassert itself.
+	##
+	## The castle pass-through ends with the ORDER, not with the route, and
+	## `_step_entity` only reaches `_step_route` while a unit is moving: an
+	## attacking, idle, stopped, or freshly-untargeted battalion never touches the
+	## deflection at all. A melee horde that walked inside a castle to attack it
+	## and then stopped, retargeted, or outlived its target therefore sat clipped
+	## inside the wall for the rest of the match. This pass runs every tick for
+	## every living battalion and pushes it back out at
+	## STRUCTURE_EVICTION_STEP per tick.
+	##
+	## It consults the SAME pass-through set as movement, so a battalion whose
+	## order still opens a corridor is not fought against while it is attacking —
+	## only once the order ends does the set empty and the walk-out begin.
+	##
+	## Deterministic: ascending entity id, fixed step, no wall clock, no RNG.
+	##
+	## HOISTED. structure_ids() allocates a new array and SORTS it on every call;
+	## calling it once per entity made this pass O(entities * structures) with a
+	## sort inside the entity loop. Structures are neither added nor removed by
+	## this pass (it only moves entities), so the id list is stable for its whole
+	## duration and _deflect_around_structures re-checks structures.has() anyway.
+	var ids: Array[int] = structure_ids()
+	if ids.is_empty():
+		return
+	for id in entity_ids():
+		var row: Dictionary = entities[id]
+		if int(row.get("health", 0)) <= 0 or bool(row.get("flying", false)):
+			continue
+		if bool(row.get("is_banner_carrier", false)):
+			# A BANNER CARRIER HAS NO POSITION OF ITS OWN. It is glued to its
+			# parent horde by _sync_banner_entity_transform, which runs in
+			# _step_banner_carriers — the pass IMMEDIATELY BEFORE this one, in
+			# the same tick (see the tick order at _step_banner_carriers /
+			# _step_structure_eviction). Evicting it therefore fights a value
+			# that is not the eviction pass's to own: the nudge is overwritten
+			# by the next tick's glue, and in the window between the two the
+			# authoritative banner position is wrong for the spatial index and
+			# for presentation.
+			#
+			# It is not hypothetical. A horde parked against its own castle wall
+			# — the ordinary defensive posture — puts its banner inside a
+			# structure footprint, so this pass nudged it EVERY TICK for as long
+			# as the horde stood there, and every one of those nudges was
+			# discarded by the following tick's glue.
+			#
+			# The parent horde is still evicted normally; the banner follows it
+			# out because it follows it everywhere.
+			continue
+		if not (row.get("route", []) as Array).is_empty():
+			continue  # already deflected this tick inside _step_route
+		if int(row.get("production_exit_start_tick", -1)) >= 0:
+			# THE DOORWAY IS INSIDE THE FOOTPRINT, BY CONTRACT. QueueProductionExit
+			# creates a horde at production_origin + PRODUCTION_DOOR_INSET_RADIUS
+			# (0.9) along the exit direction and walks it out to
+			# PRODUCTION_EXIT_RADIUS (4.25) — see _step_production. A producer's
+			# block radius is 2.6-3.0, so the authored create point is 1.7-2.1
+			# units INSIDE its own disc and _step_production_exit owns the unit's
+			# position for the whole animation (it lerps origin -> destination
+			# every tick and leaves route empty with state "run"). Round 18's pass
+			# therefore fought the doorway on every single unit the game produced.
+			#
+			# MEASURED, and measured PRECISELY — the effect is real but bounded,
+			# and overstating it would be as wrong as missing it. In the
+			# retail_state_pin fixture the produced horde's AUTHORITATIVE
+			# end-of-tick position is exactly STRUCTURE_EVICTION_STEP (0.35) off
+			# the authored lerp for the whole time it is inside the producer's
+			# disc, and then the two reconverge byte for byte
+			# (.private/scratch/opus26-pin-positions-{new,revert-prodexit}.json.tick*):
+			#   t=211  penetration 1.7851 vs 1.4351   (0.3500 apart)
+			#   t=214  penetration 1.2681 vs 0.9181   (0.3500 apart)
+			#   t=217  penetration 0.5030 vs 0.1530   (0.3500 apart)
+			#   t=220  identical, and identical at every later sample
+			# It does NOT accumulate, because the next tick's lerp overwrites the
+			# nudge — which is exactly why neither pinned hash moves. What it does
+			# corrupt is the end-of-tick state everything else reads inside that
+			# window: the spatial index, presentation, and any query against the
+			# authoritative position while a unit is emerging.
+			#
+			# The exit is a bounded, self-terminating animation that ends OUTSIDE
+			# the footprint; eviction resumes the tick it completes.
+			continue
+		if _is_engaged_in_range(row):
+			# A unit that is attacking something it can actually hit must not be
+			# shoved out of its own weapon range. The castle corridor only exempts
+			# STRUCTURE targets in the target's own castle group, so a melee horde
+			# fighting an enemy BATTALION that happens to stand on a footprint —
+			# defenders backed against their own barracks, a fight spilling onto a
+			# wall — was evicted out of contact and had to walk back in, every tick.
+			continue
+		var position := Vector2(row.get("position", Vector2.ZERO))
+		# An IDLE battalion is not executing its order, whatever `target_id` still
+		# says, so it gets no corridor. Measured need: the live slice parks a unit
+		# with attack_range 0.0 in state `idle` at d=0.00 on the enemy fortress
+		# CENTRE while still holding it as a target
+		# (.private/scratch/opus25-probe1.out.log:`3:idle:t2001:d0.00`) — the
+		# weapon-mode gate returns "unsupported-close", drops the route and idles,
+		# but never clears the target, so a permanent corridor kept a unit clipped
+		# inside the wall for the whole match. Gating on state, not on target,
+		# is what makes "the exemption ends with the order" actually true.
+		var executing := String(row.get("state", "")) in ["run", "attack"]
+		var evicted := _deflect_around_structures(
+			position,
+			row if executing else {"facing": row.get("facing", Vector2.ZERO)},
+			Vector2.ZERO,
+			ids
+		)
+		if evicted == position:
+			continue
+		row["position"] = evicted
+		_spatial_sync(row)
+
+
+func _is_engaged_in_range(row: Dictionary) -> bool:
+	## True when this battalion is in the attack state against a LIVING target it
+	## is currently within weapon range of — of ANY kind, battalion or structure.
+	## It must use EXACTLY the test _step_attacks uses to enter the state, or a
+	## unit that is legitimately engaged gets evicted out of its own weapon range
+	## every tick: surface-to-surface against a structure (the target's authored
+	## bounding circle subtracted), centre-to-centre against a battalion. See the
+	## citation block at that range test.
+	if String(row.get("state", "")) != "attack":
+		return false
+	var target_id := int(row.get("target_id", 0))
+	if target_id == 0:
+		return false
+	var target_kind := String(row.get("target_kind", "battalion"))
+	var target_row: Dictionary = (
+		structures.get(target_id, {}) if target_kind == "structure" else entities.get(target_id, {})
+	)
+	if target_row.is_empty() or int(target_row.get("health", 0)) <= 0:
+		return false
+	var attack_range := float(row.get("attack_range", 0.0))
+	if attack_range <= 0.0:
+		return false
+	var distance := maxf(
+		0.0,
+		Vector2(row.get("position", Vector2.ZERO)).distance_to(
+			Vector2(target_row.get("position", Vector2.ZERO))
+		) - _target_footprint_radius(target_id, target_kind)
+	)
+	return distance <= attack_range
+
+
+func _eviction_fallback_direction(row: Dictionary) -> Vector2:
+	## A unit standing EXACTLY on a footprint centre has no radial direction to
+	## be pushed along, and the old code left it there permanently (the
+	## `distance > 0.001` guard skipped it). Push it along its own facing, which
+	## is deterministic state already replicated in lockstep; a zero facing falls
+	## back to a fixed axis so the result never depends on iteration order, wall
+	## clock, or RNG.
+	var facing := Vector2(row.get("facing", Vector2.ZERO))
+	if facing.length_squared() > 0.000001:
+		return facing.normalized()
+	return Vector2.RIGHT
+
+
+## Fallback turn rate when a pack predates locomotor extraction.
+## NormalMeleeHordeLocomotor authors TurnTime = 2000 (locomotor.ini:709), and
+## OpenSAGE's shared SAGE core converts that as 360 / (TurnTime / 1000)
+## (LocomotorTemplate.cs:94) -> 180 deg/s.
+const RETAIL_FALLBACK_TURN_RATE_DEGREES := 180.0
+## MaxTurnWithoutReform. Infantry/ranged horde locomotors author 45
+## (locomotor.ini:717, :765, :805); every cavalry-class horde locomotor authors
+## 100 (:849, :871, :893) so horse hordes wheel through far wider turns.
+const RETAIL_MAX_TURN_WITHOUT_REFORM_DEGREES := 45.0
+const RETAIL_CAVALRY_MAX_TURN_WITHOUT_REFORM_DEGREES := 100.0
+
+
+func _retail_reform_threshold_degrees(row: Dictionary) -> float:
+	## Per-row override first so a pack that later extracts MaxTurnWithoutReform
+	## wins without touching this code; otherwise the authored class default.
+	var authored := float(row.get("max_turn_without_reform_degrees", 0.0))
+	if authored > 0.0:
+		return authored
+	if String(row.get("category", "")) == "cavalry":
+		return RETAIL_CAVALRY_MAX_TURN_WITHOUT_REFORM_DEGREES
+	return RETAIL_MAX_TURN_WITHOUT_REFORM_DEGREES
+
+
+func _retail_turn_rate_degrees(row: Dictionary) -> float:
+	var authored := float(row.get("turn_rate_degrees_per_second", 0.0))
+	if authored > 0.0:
+		return authored
+	return RETAIL_FALLBACK_TURN_RATE_DEGREES
+
+
+func _step_retail_heading(row: Dictionary, movement_direction: Vector2, braking: float) -> bool:
+	## Rotate the horde's facing toward the direction of travel at the authored
+	## TurnTime-derived rate, and answer whether the horde is REFORMING.
+	##
+	## The authored locomotor field MaxTurnWithoutReform splits turning in two.
+	##
+	## Inside the arc the horde WHEELS - it keeps advancing while it turns. That
+	## is why every member class is authored a slightly faster MEMBER speed than
+	## its HORDE speed: members on the outside of a wheel have further to travel
+	## and must catch up.
+	##
+	## Beyond the arc it REFORMS - the horde stops, pivots about its own centre,
+	## and members re-take their slots against the new heading. Melee horde
+	## locomotors also author no turning while moving, so a reform is stationary
+	## by construction.
+	##
+	## Deterministic: fixed TICK_SECONDS step, no wall clock, no RNG draw.
+	var facing_now := Vector2(row.get("facing", movement_direction))
+	if facing_now.length_squared() <= 0.000001:
+		facing_now = movement_direction
+	var delta_angle := wrapf(movement_direction.angle() - facing_now.angle(), -PI, PI)
+	var turn_step := deg_to_rad(_retail_turn_rate_degrees(row)) * TICK_SECONDS
+	row["facing"] = facing_now.rotated(clampf(delta_angle, -turn_step, turn_step))
+	if absf(delta_angle) <= deg_to_rad(_retail_reform_threshold_degrees(row)):
+		return false
+	# Reform: bleed speed off the authored braking ramp rather than snapping to a
+	# standing start, and hold position while the pivot completes.
+	row["current_speed"] = maxf(0.0, float(row.get("current_speed", 0.0)) - braking * TICK_SECONDS)
+	row["route_stall_ticks"] = 0
+	return true
 
 
 func _step_route(row: Dictionary) -> void:
@@ -13861,7 +16075,15 @@ func _step_route(row: Dictionary) -> void:
 		return
 	var position := Vector2(row["position"])
 	var waypoint := Vector2(route[0])
-	var max_speed := float(row["speed"]) * float(_stance_state(row).get("speedMultiplier", 1.0)) * float(_formation_effects(row).get("speed_multiplier", 1.0)) * _ability_speed_multiplier(row)
+	var base_speed := float(row["speed"])
+	if retail_formation_movement:
+		# WaitForFormation (locomotor.ini:713) - a group order advances at the
+		# slowest authored speed in the group so the selection arrives together
+		# instead of stringing out by unit class.
+		var group_cap := float(row.get("group_speed_cap", 0.0))
+		if group_cap > 0.0:
+			base_speed = minf(base_speed, group_cap)
+	var max_speed := base_speed * float(_stance_state(row).get("speedMultiplier", 1.0)) * float(_formation_effects(row).get("speed_multiplier", 1.0)) * _ability_speed_multiplier(row)
 	# Fall back to a snappy ramp (10x max speed per second) when accel/brake
 	# were not authored, so missing fields never pin units at zero velocity.
 	var acceleration := float(row.get("acceleration", 0.0))
@@ -13883,16 +16105,28 @@ func _step_route(row: Dictionary) -> void:
 	var step_distance := current_speed * TICK_SECONDS
 	var movement_direction := position.direction_to(waypoint)
 	if movement_direction.length_squared() > 0.000001:
-		row["facing"] = movement_direction
+		if retail_formation_movement:
+			if _step_retail_heading(row, movement_direction, braking):
+				# Reforming: the horde pivots about its own centre and does not
+				# translate this tick.
+				return
+		else:
+			row["facing"] = movement_direction
 	var pre_move_gap := position.distance_to(waypoint)
+	var travel_step := Vector2.ZERO
 	if pre_move_gap <= maxf(step_distance, 0.001):
+		travel_step = waypoint - position
 		position = waypoint
 		route.pop_front()
 	else:
-		position += position.direction_to(waypoint) * step_distance
+		travel_step = position.direction_to(waypoint) * step_distance
+		position += travel_step
 	if not bool(row.get("flying", false)):
-		# Flyers pass straight over building footprints.
-		position = _deflect_around_structures(position, int(row.get("target_id", 0)))
+		# Flyers pass straight over building footprints. The step that produced
+		# this position is threaded in so a footprint the unit is walking THROUGH
+		# slides it tangentially around the disc rather than standing it off
+		# radially — see _tangential_slide_point for the deadlock that fixes.
+		position = _deflect_around_structures(position, row, travel_step)
 	# Grid routes ignore structure footprints, so a waypoint can sit inside a
 	# blocked disc; deflection then pins the unit on the ring making zero
 	# progress. Only a sustained stall pops the waypoint — a single flat tick
@@ -14113,7 +16347,6 @@ func _member_body_damage_factor(
 		* float(_stance_state(target).get("incomingDamageMultiplier", 1.0))
 		* float(_formation_effects(target).get("incoming_damage_multiplier", 1.0))
 		* _ability_incoming_multiplier(target)
-		* _grove_armor_factor(target)
 	)
 
 
@@ -15869,6 +18102,9 @@ func _stamp_order_sequence(ids: Array[int]) -> int:
 
 
 func _clear_pending_route(row: Dictionary, settle_destination: bool) -> void:
+	if retail_formation_movement and row.has("group_speed_cap"):
+		# The group cohesion cap belongs to one order, not to the unit.
+		row["group_speed_cap"] = 0.0
 	row["route"] = []
 	row["route_cells"] = []
 	row["route_ford"] = ""
@@ -16379,6 +18615,15 @@ func _authoritative_state() -> Dictionary:
 		state["unpackable_bases"] = unpackable_bases
 	if not _summon_aura_source_ids.is_empty():
 		state["summon_aura_source_ids"] = _summon_aura_source_ids
+	# EMPTY-IS-ABSENT, same contract as above: a match in which nobody casts a
+	# reveal/field ping must contribute nothing, so the frozen cross-platform pin
+	# stays valid for every scenario that never touches this lane.
+	if not _field_pings.is_empty():
+		state["field_pings"] = _field_pings
+	# Same EMPTY-IS-ABSENT contract for the weather lane: a match in which
+	# nobody casts Darkness or Freezing Rain contributes zero bytes.
+	if not _weather_effects.is_empty():
+		state["weather_effects"] = _weather_effects
 	# These selected-pack contracts are absent in legacy/default scenarios. Keep
 	# them out of the byte stream unless configured so unrelated state pins remain
 	# stable, while selected retail matches still hash and snapshot the contracts.
@@ -16482,6 +18727,9 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	ai_enabled = bool(state["ai_enabled"])
 	entities = state["entities"]
 	structures = state["structures"]
+	# The structure table was just replaced wholesale; the id-keyed footprint
+	# memo describes the old one.
+	_structure_footprint_radius_cache.clear()
 	team_resources = state["team_resources"]
 	team_command_points = state["team_command_points"]
 	command_point_cap = int(state["command_point_cap"])
@@ -16547,6 +18795,16 @@ func _restore_authoritative_state(state: Dictionary) -> void:
 	_active_groves = state["active_groves"]
 	_summon_despawn_ticks = state["summon_despawn_ticks"]
 	_summon_aura_source_ids = state.get("summon_aura_source_ids", {})
+	var adopted_pings: Array[Dictionary] = []
+	for ping_value in Array(state.get("field_pings", [])):
+		if typeof(ping_value) == TYPE_DICTIONARY:
+			adopted_pings.append(ping_value as Dictionary)
+	_field_pings = adopted_pings
+	var adopted_weather: Array[Dictionary] = []
+	for weather_value in Array(state.get("weather_effects", [])):
+		if typeof(weather_value) == TYPE_DICTIONARY:
+			adopted_weather.append(weather_value as Dictionary)
+	_weather_effects = adopted_weather
 	expansion_pads = state["expansion_pads"]
 	_expansion_build_rules = state["expansion_build_rules"]
 	_next_expansion_structure_id = int(state["next_expansion_structure_id"])

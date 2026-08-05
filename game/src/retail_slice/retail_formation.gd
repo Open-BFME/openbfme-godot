@@ -16,8 +16,29 @@ extends RefCounted
 ## Update cost is budgeted from the start: steering runs at full rate near the
 ## camera, reduced cadence at distance, and not at all off-screen.
 
-const CATCH_UP_FACTOR := 1.35
-const COMBAT_CATCH_UP_FACTOR := 1.9
+## Members outrun their own horde by exactly the margin retail authors for them.
+##
+## gamedata.ini pairs a HORDE speed with a faster MEMBER speed for every unit
+## class, and states the reason on all 36 member lines: "A little faster so when
+## the formation wheels the unit can catch up." (gamedata.ini:7795-7930.)
+## GondorFighterHorde runs NORMAL_FOOT_MED_HORDE_SPEED = 50 with
+## NORMAL_FOOT_MED_MEMBER_SPEED = 55 (:7902-7903) -> 1.10, which is also the
+## single most common ratio in the shipping data (13 of 36 classes). The full
+## authored range is 1.042 (NORMAL_MOUNTED_VERYFAST) to 1.154
+## (NORMAL_ISENGARD_FAST) - so the previous 1.35 let members outrun their horde
+## by nearly triple the authored ceiling, and they snapped into slots instead of
+## trailing and catching up.
+##
+## Per-unit member speeds are not in any pack yet (the importer extracts only the
+## horde's LocomotorSet Speed), so this is the authored median rather than a
+## per-unit lookup. See .private/scratch/opus17-formation-extraction.md #12.
+const CATCH_UP_FACTOR := 1.1
+## Combat has no authored member-speed margin of its own; retail instead controls
+## who leaves the block at all via RanksToReleaseWhenAttacking (melee hordes
+## release rank 1 only, menhordes.ini:113). Until that lands end to end this stays
+## a presentation allowance, trimmed toward the authored margin rather than left
+## at 1.9. See extraction doc #6.
+const COMBAT_CATCH_UP_FACTOR := 1.35
 const ARRIVE_RADIUS := 1.1
 const SETTLE_DISTANCE := 0.14
 const SEPARATION_RADIUS := 0.42
