@@ -5,6 +5,7 @@ import hashlib, json
 from pathlib import Path
 from typing import Mapping, Sequence
 from .faction_import import coverage_digest_payload
+from .livingworld import LIVING_WORLD_PACK_PATH
 from .playable_structure_pack_compiler import validate_structure_visual_recipe
 from .playable_unit_import import FACTIONS as _FACTION_ROWS, extend_profile_with_unit
 from .retail_fords_completion_profile import (
@@ -150,7 +151,7 @@ def compose_faction_profile(base: Mapping[str, object], report_root: Path, facti
                 alias_of = recipe_object_id
                 deltas.append({"faction": faction, "family": family, "objectId": object_id, "aliasOf": alias_of})
                 continue
-            if family == "playable-unit": target, delta = extend_profile_with_unit(target, recipe)
+            if family in {"playable-unit", "banner-carrier"}: target, delta = extend_profile_with_unit(target, recipe)
             elif family == "structure":
                 runtime = _load(root / "runtime.json", "structure runtime")
                 if runtime.get("runtimeSha256") != row.get("runtimeSha256"): raise ValueError(f"coverage/runtime identity mismatch: {faction}/{object_id}")
@@ -209,6 +210,19 @@ def compose_faction_profile(base: Mapping[str, object], report_root: Path, facti
         added_resource_ids |= selection_resource_ids
         added_paths.add(MEN_SELECTION_RUNTIME_PATH)
         added_file_keys.add(MEN_SELECTION_PACK_KEY)
+        # The selected RotWK Men pack is the host pack for global strategic
+        # data.  Preserve a generated Living World document only there; every
+        # supplemental faction remains lean and never duplicates ownership.
+        living_world_key = "livingWorld"
+        has_living_world_data = LIVING_WORLD_PACK_PATH in runtime_data
+        has_living_world_file = files.get(living_world_key) == LIVING_WORLD_PACK_PATH
+        if has_living_world_data != has_living_world_file:
+            raise ValueError(
+                "RotWK Men Living World document and pack registration must coexist"
+            )
+        if ordered == ["men"] and has_living_world_data:
+            added_paths.add(LIVING_WORLD_PACK_PATH)
+            added_file_keys.add(living_world_key)
         missing_owned = added_resource_ids - {
             str(row.get("id", "")).casefold() for row in resources if isinstance(row, Mapping)
         }

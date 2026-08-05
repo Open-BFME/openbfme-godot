@@ -59,6 +59,11 @@ MEN_PACK_ID = "bfme2-men-vslice"
 # only converted coverage, so the publish step remains sound; surface the gap
 # loudly but do not hard-stop the wizard on it.
 IMPORT_FACTION_KNOWN_GAP_EXIT = 6
+# publish-faction-to-slice refuses a knowingly short or stale publication with
+# this code (see openbfme_importer.publish_gate). It is deliberately distinct
+# from 3 (pack audit invalid) and 6 (a conversion reporting its own gaps) so a
+# wizard can explain the refusal instead of printing a raw failure.
+PUBLISH_GATE_EXIT = 7
 
 GATES: tuple[dict[str, str], ...] = (
     {
@@ -724,10 +729,17 @@ def step_content(ctx: WizardContext) -> None:
         state_root=ctx.state_root,
     )
     if exit_code == IMPORT_FACTION_KNOWN_GAP_EXIT:
+        # Historically this warning said "continuing" and meant it: publish
+        # would happily ship the short slice. It no longer will - the coverage
+        # gate reads this same report and refuses with exit 7. Say so here,
+        # where the operator can still act, rather than letting the next step
+        # fail with a code they have no context for.
         print(
             "  WARNING: conversion reported known converter gaps "
-            f"(gap count: {report.get('converter_gap_count', '?')}); "
-            "continuing — publish composes converted coverage only"
+            f"(gap count: {report.get('converter_gap_count', '?')}). "
+            "The publish step reads this same coverage report and will REFUSE "
+            "to ship a knowingly short slice (exit 7). Continuing so the "
+            "refusal, and its reason list, is what you see next."
         )
     elif exit_code != 0:
         raise OnboardError(
@@ -752,6 +764,20 @@ def step_content(ctx: WizardContext) -> None:
         ],
         state_root=ctx.state_root,
     )
+    if exit_code == PUBLISH_GATE_EXIT:
+        raise OnboardError(
+            "publish-faction-to-slice REFUSED to publish (exit 7). This is a "
+            "deliberate fail-closed gate, not a crash: the cook it was asked "
+            "to ship is either incomplete, not described by the coverage "
+            "report on disk, or drops playable units the installed slice "
+            "already has. The reason list was printed above.\n"
+            "  Fix it by re-running the conversion:\n"
+            "    openbfme-import import-faction --faction men --convert\n"
+            "  Only if you understand the consequence, the refusal can be "
+            "overridden with --allow-incomplete-coverage / "
+            "--allow-stale-coverage / --allow-fewer-playable-units.\n"
+            f"  Detail: {report.get('error') or report.get('raw_output') or report}"
+        )
     if exit_code != 0 or not report.get("valid", False):
         raise OnboardError(
             f"publish-faction-to-slice failed (exit {exit_code}): "

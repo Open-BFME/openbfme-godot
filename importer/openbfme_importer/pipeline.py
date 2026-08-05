@@ -20,6 +20,8 @@ from typing import Any, Mapping
 from .big import COPY_CHUNK, sha256_file
 from .catalog import CatalogEntry, InstallCatalog, KNOWN_SLICE_ARCHIVE_SHA256
 from .game import retail_game, workspace_root
+from .effective_assets_identity import verify_effective_assets
+from .effective_assets_catalog import EffectiveAssetsCatalog
 from .paths import ensure_external_to_repo, repo_root_from_module, safe_relative_parts
 from .profile import (
     ResolvedProfile,
@@ -51,6 +53,7 @@ from .tools import (
 from .util import read_json, write_json_atomic
 from .version import __version__
 from .w3d_metadata import scan_w3d_metadata
+from .w3d_glb_validation import validate_w3d_glb_semantics
 from .w3d_secondary_skin import (
     W3DSecondarySkinError,
     strip_proven_redundant_secondary_skin_streams,
@@ -2652,11 +2655,63 @@ class ImportPipeline:
         game: str = "bfme2",
         conversion_cache_enabled: bool = True,
         conversion_jobs: int | None = None,
+        source_override_root: Path | None = None,
     ) -> None:
         self.catalog = catalog
         self.state_root = ensure_external_to_repo(state_root, repo_root_from_module())
         self.game = retail_game(game)
         self.workspace_root = workspace_root(self.state_root, self.game.id)
+        self._source_override_root: Path | None = None
+        # True when this is a RotWK pipeline that must bind the canonical
+        # oracle tree but could not at construction time because the tree does
+        # not exist yet. `extract-all-assets` and `import-faction` BUILD that
+        # tree, and both construct a pipeline first, so binding eagerly here is
+        # a chicken-and-egg that fails those commands outright (it broke
+        # test_game_editions). The requirement is therefore deferred to the
+        # point of USE - `source_override_root` below - where a RotWK cook that
+        # has no sealed oracle still fails closed rather than silently falling
+        # back to the raw catalog.
+        self._rotwk_autobind_pending = False
+        if source_override_root is not None:
+            explicit_root = Path(source_override_root).expanduser().resolve()
+            verify_effective_assets(
+                explicit_root,
+                game=self.game.id,
+                catalog=None if self.game.id == "rotwk" else catalog,
+                consumer="import-pipeline-explicit-source-override",
+            )
+            self._source_override_root = explicit_root
+        elif self.game.id == "rotwk":
+            # CANONICAL TREE REBOUND 2026-08-04 (owner decision): PURE RETAIL
+            # 2.01 = <workspace>/cache/effective-assets, which is what
+            # `extract-all-assets --game rotwk` actually produces.
+            #
+            # This used to hard-require `cache/layered-effective-assets`, which
+            # is NOT pure retail - its catalog carries `__patch202.big` and 530
+            # of its INI files carry Unofficial-2.02 three-way merge markers
+            # (`;,;` / `;;,;;`). That tree is quarantined: never an oracle,
+            # never deleted. The layered bind also broke
+            # test_game_editions.test_rotwk_catalog_and_effective_tree_do_not_touch_bfme2_paths,
+            # which constructs an ImportPipeline straight after
+            # extract-all-assets and therefore only ever has the pure tree.
+            #
+            # The sealed-manifest verification is unchanged: the tree's edition
+            # and manifest identity are still checked here, and the catalog is
+            # still retained only for retail reachability/archive attestation.
+            effective_root = self.workspace_root / "cache" / "effective-assets"
+            if not effective_root.is_dir():
+                self._rotwk_autobind_pending = True
+            else:
+                verify_effective_assets(
+                    effective_root,
+                    game="rotwk",
+                    catalog=None,
+                    consumer="import-pipeline-source-override",
+                )
+                self._source_override_root = effective_root.resolve()
+                self.catalog = EffectiveAssetsCatalog(
+                    effective_root, base_catalog=self.catalog
+                )
         self.sources_root = self.workspace_root / "cache" / "sources"
         self.packs_root = self.workspace_root / "packs"
         self.reports_root = self.workspace_root / "reports"
@@ -2693,6 +2748,42 @@ class ImportPipeline:
             "true",
             "yes",
         }
+
+    @property
+    def source_override_root(self) -> Path | None:
+        """The sealed oracle tree whose bytes win over raw catalog extraction.
+
+        Deferred fail-closed bind. A RotWK pipeline constructed before its
+        canonical PURE-RETAIL ``cache/effective-assets`` tree exists (which is
+        exactly what ``extract-all-assets`` and ``import-faction`` do - they
+        BUILD that tree) records the requirement instead of raising, and it is
+        enforced here, the first time anything actually asks for the oracle.
+        A cook therefore still refuses to run without a sealed tree; only the
+        commands whose job is to produce it are allowed to construct without
+        one. Never returns ``None`` for RotWK with the tree absent: that would
+        be a silent fallback to the raw catalog, which is precisely the failure
+        mode this bind exists to prevent.
+        """
+
+        if self._rotwk_autobind_pending:
+            effective_root = self.workspace_root / "cache" / "effective-assets"
+            if not effective_root.is_dir():
+                raise FileNotFoundError(
+                    "canonical RotWK pure-retail effective-assets tree is missing: "
+                    f"{effective_root} (run extract-all-assets --game rotwk first)"
+                )
+            verify_effective_assets(
+                effective_root,
+                game="rotwk",
+                catalog=None,
+                consumer="import-pipeline-source-override",
+            )
+            self._source_override_root = effective_root.resolve()
+            self.catalog = EffectiveAssetsCatalog(
+                effective_root, base_catalog=self.catalog
+            )
+            self._rotwk_autobind_pending = False
+        return self._source_override_root
 
     @property
     def conversion_cache_stats(self) -> dict[str, Any]:
@@ -3266,12 +3357,46 @@ class ImportPipeline:
 
         result: dict[tuple[str, str], dict[str, Any]] = {}
         for archive_name in sorted(by_archive, key=str.casefold):
-            archive = self.catalog.open_archive_for(by_archive[archive_name][0])
+            archive_entries = by_archive[archive_name]
+            override_by_key: dict[str, Path] = {}
+            if self.source_override_root is not None:
+                for catalog_entry in archive_entries:
+                    override = self.source_override_root.joinpath(
+                        *PurePosixPath(catalog_entry.name).parts
+                    )
+                    if override.is_file():
+                        override_by_key[catalog_entry.name.casefold()] = override
+
+            # A layered source is already a sealed, verified extraction.  Do not
+            # copy it over the catalog extraction cache: doing so corrupts the
+            # warm cache because catalog metadata still describes the archive
+            # member's original size and hash.  Select it directly and extract
+            # only entries which the layered oracle does not provide.
+            for catalog_entry in archive_entries:
+                override = override_by_key.get(catalog_entry.name.casefold())
+                if override is None:
+                    continue
+                source_sha256 = sha256_file(override)
+                result[(archive_name.casefold(), catalog_entry.name.casefold())] = {
+                    "catalog": catalog_entry,
+                    "source_path": override,
+                    "source_sha256": source_sha256,
+                    "cache_key": _source_cache_key(catalog_entry, source_sha256),
+                }
+
+            extraction_entries = [
+                item
+                for item in archive_entries
+                if item.name.casefold() not in override_by_key
+            ]
+            if not extraction_entries:
+                continue
+            archive = self.catalog.open_archive_for(extraction_entries[0])
             archive_slug = hashlib.sha256(archive_name.casefold().encode()).hexdigest()[
                 :12
             ]
             archive_output = self.sources_root / archive_slug
-            wanted = [self.catalog.as_entry(item) for item in by_archive[archive_name]]
+            wanted = [self.catalog.as_entry(item) for item in extraction_entries]
             extracted = archive.extract(
                 wanted,
                 archive_output,
@@ -3280,15 +3405,17 @@ class ImportPipeline:
                 overwrite=force,
             )
             catalog_by_key = {
-                item.name.casefold(): item for item in by_archive[archive_name]
+                item.name.casefold(): item for item in extraction_entries
             }
             for item in extracted:
                 catalog_entry = catalog_by_key[item.entry.key]
+                source_path = item.output
+                source_sha256 = item.sha256
                 result[(archive_name.casefold(), item.entry.key)] = {
                     "catalog": catalog_entry,
-                    "source_path": item.output,
-                    "source_sha256": item.sha256,
-                    "cache_key": _source_cache_key(catalog_entry, item.sha256),
+                    "source_path": source_path,
+                    "source_sha256": source_sha256,
+                    "cache_key": _source_cache_key(catalog_entry, source_sha256),
                 }
         return result
 
@@ -3773,7 +3900,31 @@ class ImportPipeline:
         # install). Hash them concurrently - this is pure read bandwidth on
         # the user's install drive - and memoize per (path, size, mtime) so a
         # multi-faction cook in one process attests each archive once.
-        paths = [self.catalog.install_root / Path(relative) for relative in selected]
+        paths_by_relative: dict[str, Path] = {}
+        virtual_attestations: dict[str, tuple[int, str]] = {}
+        archive_rows = {
+            archive.relative_path.casefold(): archive
+            for archive in self.catalog.archives
+        }
+        catalog_archive_sha256 = getattr(self.catalog, "archive_sha256", None)
+        for relative in selected:
+            path = self.catalog.install_root / Path(relative)
+            if path.is_file():
+                paths_by_relative[relative] = path
+                continue
+            archive_row = archive_rows.get(relative.casefold())
+            if archive_row is None or not callable(catalog_archive_sha256):
+                # Preserve the ordinary physical-archive error with its exact
+                # missing path when no authenticated virtual archive exists.
+                path.stat()
+            digest = catalog_archive_sha256(relative)
+            if not isinstance(digest, str) or len(digest) != 64:
+                raise RuntimeError(
+                    f"catalog virtual archive digest is invalid: {relative}"
+                )
+            virtual_attestations[relative.casefold()] = (archive_row.size, digest)
+
+        paths = list(paths_by_relative.values())
         stats = {path: path.stat() for path in paths}
         pending = [
             path
@@ -3787,11 +3938,17 @@ class ImportPipeline:
             ] = digest
 
         reports: list[dict[str, Any]] = []
-        for relative, archive_path in zip(selected, paths):
-            stat = stats[archive_path]
-            actual = self._archive_attest_cache[
-                (str(archive_path).casefold(), stat.st_size, stat.st_mtime_ns)
-            ]
+        for relative in selected:
+            virtual = virtual_attestations.get(relative.casefold())
+            if virtual is not None:
+                archive_size, actual = virtual
+            else:
+                archive_path = paths_by_relative[relative]
+                stat = stats[archive_path]
+                archive_size = stat.st_size
+                actual = self._archive_attest_cache[
+                    (str(archive_path).casefold(), stat.st_size, stat.st_mtime_ns)
+                ]
             expected = KNOWN_SLICE_ARCHIVE_SHA256.get(relative.casefold())
             if resolved.profile.id == "men-fords-v0":
                 if expected is None:
@@ -3804,7 +3961,7 @@ class ImportPipeline:
                     )
             report: dict[str, Any] = {
                 "relative_path": relative,
-                "size": stat.st_size,
+                "size": archive_size,
                 "sha256": actual,
             }
             if expected is not None:
@@ -3975,8 +4132,26 @@ class ImportPipeline:
         if selection_path.is_file():
             try:
                 prior = read_json(selection_path)
-            except (OSError, ValueError, TypeError, KeyError):
-                prior = {}
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                raise RuntimeError(
+                    "--select refuses to overwrite malformed selection.json; "
+                    "repair or remove it explicitly before publishing"
+                ) from exc
+            if (
+                not isinstance(prior, dict)
+                or prior.get("schema") != "openbfme.pack-selection"
+                or prior.get("schemaVersion") != 0
+                or not isinstance(prior.get("activePack"), str)
+            ):
+                raise RuntimeError(
+                    "--select refuses to overwrite invalid selection.json schema"
+                )
+            prior_active = str(prior.get("activePack", "")).strip().replace("\\", "/")
+            if prior_active and prior_active != relative.as_posix():
+                raise RuntimeError(
+                    "--select refuses to replace a different activePack; publish "
+                    "without --select and use update-selection-entry for supplements"
+                )
             prior_supplements = prior.get("supplementalPacks")
             if isinstance(prior_supplements, list):
                 kept: list[str] = []
@@ -6003,7 +6178,10 @@ class ImportPipeline:
             )
         if "OPENBFME_W3D_OK" not in combined_log:
             raise RuntimeError("W3D adapter did not emit its success marker")
-        if not target.is_file() or target.stat().st_size < 1024:
+        pivot_only_model = bool(prepared.get("proven_pivot_only_model", False))
+        if not target.is_file() or (
+            not pivot_only_model and target.stat().st_size < 1024
+        ):
             raise RuntimeError(
                 f"W3D adapter did not create a substantial GLB: {target}"
             )
@@ -6029,6 +6207,23 @@ class ImportPipeline:
                 and prepared["animation_names"][0] == prepared["model_name"]
             ),
         )
+        if pivot_only_model:
+            # Pivot carriers intentionally export hierarchy/skin data without
+            # a mesh and can be smaller than the ordinary-art size floor.  Do
+            # not accept them on size alone: independently parse the GLB and
+            # prove the adapter's exact zero-geometry and hierarchy counts.
+            adapter_metrics = metrics["metrics"]
+            validate_w3d_glb_semantics(
+                target,
+                {
+                    "mesh_count": 0,
+                    "vertex_count": 0,
+                    "triangle_count": 0,
+                    "skin_count": adapter_metrics["skeletonCount"],
+                    "joint_count": adapter_metrics["boneCount"],
+                    "animation_count": adapter_metrics["animationCount"],
+                },
+            )
         validated_texture_overrides = _validate_w3d_texture_override_glb(
             target,
             prepared["copied"],

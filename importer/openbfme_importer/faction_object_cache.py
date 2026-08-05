@@ -25,10 +25,21 @@ _CACHE_EXCLUDED_ARTIFACTS = frozenset({"visual-closure"})
 _LOCK = threading.Lock()
 # Compiler modules whose bytes are mixed into cook-salt identity.
 _COMPILER_SALT_MODULES = (
+    # Unit/structure descriptors call the shared armor and weapon-upgrade
+    # compiler. Its source bytes must invalidate cached converted rows; without
+    # this, a fixed upgrade contract can keep returning a stale converter gap.
+    "armor_compiler.py",
     "playable_unit_compiler.py",
     "playable_unit_pack_compiler.py",
     "playable_unit_import.py",
     "playable_structure_compiler.py",
+    # The fortress CastleUpgrade harvester feeds
+    # `registration.gameplay.castleUpgrades` straight into structure
+    # descriptors, so its source bytes must invalidate cached converted rows
+    # for exactly the reason `armor_compiler.py` above must: otherwise a fix to
+    # the trigger->upgrade harvest keeps returning stale descriptors that were
+    # compiled before it. Added 2026-08-04 with the surface itself.
+    "castle_behavior.py",
     "playable_structure_pack_compiler.py",
     "playable_structure_lifecycle_evidence.py",
     "spellbook_compiler.py",
@@ -86,6 +97,7 @@ def documents_fingerprint(documents: Mapping[str, bytes]) -> str:
 def policy_roots_fingerprint(
     *,
     spawned: Sequence[str] = (),
+    spawned_roles: Mapping[str, str] | None = None,
     wall_templates: Sequence[str] = (),
     source_null_sets: Sequence[str] = (),
 ) -> str:
@@ -93,6 +105,12 @@ def policy_roots_fingerprint(
 
     payload = {
         "spawned": sorted({s.casefold() for s in spawned}),
+        "spawned_roles": {
+            str(key).casefold(): str(value)
+            for key, value in sorted(
+                (spawned_roles or {}).items(), key=lambda item: str(item[0]).casefold()
+            )
+        },
         "wall_templates": sorted({s.casefold() for s in wall_templates}),
         "source_null_sets": sorted({s.casefold() for s in source_null_sets}),
     }

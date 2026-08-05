@@ -40,6 +40,7 @@ from .pipeline import (
     update_selection_entry,
 )
 from .playable_unit_import import import_playable_unit
+from . import publish_gate
 from .faction_census import (
     census_playable_faction,
     discover_playable_factions,
@@ -58,6 +59,15 @@ from .map_profile import (
     make_effective_assets_binder,
 )
 from .map_census import census_multiplayer_maps
+from .music_import import (
+    AUDIO_SETTINGS_INI_PATH,
+    MISC_AUDIO_INI_PATH,
+    MUSIC_INI_PATH,
+    MUSIC_SCRIPT_LIBRARY_PATH,
+    build_music_document,
+    compose_music_profile,
+)
+from .sage_scripts import map_scripts_document
 from .profile import ImportProfile, profile_path, resolve_profile
 from .retail_visual_closure import (
     build_retail_visual_closure,
@@ -70,6 +80,14 @@ from .version import __version__
 
 
 PROFILES_ROOT = Path(__file__).resolve().parents[1] / "profiles"
+
+
+def _faction_slice_pack_id(game: str, factions: list[str]) -> str:
+    """Edition-qualified deterministic id for a composed faction pack."""
+
+    if not factions:
+        raise ValueError("faction slice pack id requires at least one faction")
+    return f"{game}-{'-'.join(factions)}-vslice"
 
 
 def _conversion_failure_report(pack_root: Path) -> dict[str, Any]:
@@ -134,6 +152,36 @@ def _conversion_failure_report(pack_root: Path) -> dict[str, Any]:
     }
 
 
+# The gate rules live in `publish_gate` so `build`, `import-unit` and
+# `publish-faction-to-slice` can all call the same code, and so
+# `playable_unit_import` can reach them without importing `cli`. These aliases
+# keep the historical private names working for existing callers and tests.
+PUBLISH_GATE_EXIT = publish_gate.PUBLISH_GATE_EXIT
+_coverage_publish_blockers = publish_gate.coverage_publish_blockers
+_coverage_binding_blockers = publish_gate.coverage_binding_blockers
+_pack_playable_unit_count = publish_gate.pack_playable_unit_count
+_pack_playable_unit_ids = publish_gate.pack_playable_unit_ids
+_incumbent_playable_unit_count = publish_gate.incumbent_playable_unit_count
+_incumbent_playable_unit_ids = publish_gate.incumbent_playable_unit_ids
+_playable_unit_regression_blocker = publish_gate.playable_unit_regression_blocker
+
+
+def _refuse(headline: str, blockers: list[str], override_flag: str) -> int:
+    """Print a gate refusal in the one shape every command uses, and return 7."""
+
+    print(f"REFUSING TO PUBLISH: {headline}", file=sys.stderr)
+    for reason in blockers:
+        print(f"  - {reason}", file=sys.stderr)
+    print(f"  Pass {override_flag} to publish anyway.", file=sys.stderr)
+    return PUBLISH_GATE_EXIT
+
+
+def _warn_override(override_flag: str, blockers: list[str]) -> None:
+    print(f"WARNING: publishing anyway ({override_flag}):", file=sys.stderr)
+    for reason in blockers:
+        print(f"  - {reason}", file=sys.stderr)
+
+
 def _render(value: Any, as_json: bool) -> None:
     if as_json:
         print(json.dumps(value, indent=2, sort_keys=True))
@@ -154,6 +202,30 @@ def _state_root(args: argparse.Namespace) -> Path:
 
 def _catalog_path(args: argparse.Namespace) -> Path:
     return _state_root(args) / "catalog" / f"{args.game}.json"
+
+
+def _catalog_install_root(args: argparse.Namespace) -> Path:
+    """Return the exact install tree that owns the edition catalog.
+
+    RotWK is an expansion, so an expansion-only catalog legitimately omits
+    base-game art.  Once the canonical layered install exists, a command given
+    its matching raw RotWK root must keep the layered catalog rather than
+    silently replacing it with an expansion-only one.
+    """
+
+    requested = Path(args.install).expanduser().resolve()
+    if args.game != "rotwk":
+        return requested
+    layered = _state_root(args) / "editions" / "rotwk" / "layered-install"
+    layer_rotwk = layered / "layer-0-rotwk"
+    layer_bfme2 = layered / "layer-1-bfme2"
+    if not (layer_rotwk / "game.dat").is_file() or not (
+        layer_bfme2 / "game.dat"
+    ).is_file():
+        return requested
+    if requested == layered.resolve() or requested == layer_rotwk.resolve():
+        return layered.resolve()
+    return requested
 
 
 def _workspace_root(args: argparse.Namespace) -> Path:
@@ -180,7 +252,7 @@ def _add_game_argument(command: argparse.ArgumentParser) -> None:
 
 def _load_or_build_catalog(args: argparse.Namespace) -> InstallCatalog:
     path = _catalog_path(args)
-    install = Path(args.install).expanduser().resolve()
+    install = _catalog_install_root(args)
     source_policy = (
         ArchivePolicy.load(DEFAULT_BFME2_ARCHIVE_POLICY)
         if args.game == "bfme2"
@@ -365,6 +437,30 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         required=True,
         help="target SAGE Object name (repeat for multiple targets)",
+    )
+
+    cah_system = sub.add_parser(
+        "compile-cah-system",
+        help=(
+            "compile the Create-a-Hero class system (classes, subclasses, "
+            "attribute ladders and point budgets) from effective assets"
+        ),
+    )
+    cah_system.add_argument(
+        "--assets-root",
+        type=Path,
+        required=True,
+        help="read-only effective-assets root produced by extract-all-assets",
+    )
+    _add_game_argument(cah_system)
+    cah_system.add_argument(
+        "--runtime-out",
+        type=Path,
+        default=None,
+        help=(
+            "also write the Godot-facing openbfme.cah-system-runtime document "
+            "here (defaults to alongside the descriptor)"
+        ),
     )
 
     road_closure = sub.add_parser(
@@ -575,6 +671,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_unit.add_argument("--conversion-jobs", type=int, default=None, metavar="N")
     import_unit.add_argument(
+        "--allow-fewer-playable-units",
+        action="store_true",
+        help=(
+            "OVERRIDE: publish even though the rebuilt pack drops "
+            "playable-unit ids the already-published bundle ships. Without "
+            "this the command refuses (exit 7)"
+        ),
+    )
+    import_unit.add_argument(
         "--godot-content-root",
         type=Path,
         default=default_godot_content_root(),
@@ -594,6 +699,16 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--force", action="store_true")
         if name == "build":
             command.add_argument("--allow-incomplete", action="store_true")
+            command.add_argument(
+                "--allow-fewer-playable-units",
+                action="store_true",
+                help=(
+                    "OVERRIDE: publish even though this build drops "
+                    "playable-unit ids the richest already-published bundle of "
+                    "the same pack id ships. Without this the command refuses "
+                    "(exit 7)"
+                ),
+            )
             command.add_argument(
                 "--no-publish",
                 action="store_true",
@@ -676,6 +791,38 @@ def build_parser() -> argparse.ArgumentParser:
     publish_faction.add_argument("--force", action="store_true")
     publish_faction.add_argument("--allow-incomplete", action="store_true")
     publish_faction.add_argument(
+        "--allow-incomplete-coverage",
+        action="store_true",
+        help=(
+            "OVERRIDE: cook and publish even though a faction's converted "
+            "coverage report records converter gaps. Without this the command "
+            "refuses (exit 7) rather than shipping a known-short slice — the "
+            "failure mode that produced a 20-of-24-unit Men bundle twice"
+        ),
+    )
+    publish_faction.add_argument(
+        "--allow-stale-coverage",
+        action="store_true",
+        help=(
+            "OVERRIDE: publish even though the coverage report does not "
+            "describe the content being cooked — its catalog identity or its "
+            "compiler identity token disagrees with the tree on disk. Without "
+            "this the command refuses (exit 7) rather than shipping "
+            "descriptors from a compiler the tree has moved past, the failure "
+            "that made 20 units unbuildable across six faction packs"
+        ),
+    )
+    publish_faction.add_argument(
+        "--allow-fewer-playable-units",
+        action="store_true",
+        help=(
+            "OVERRIDE: publish even though this cook drops playable-unit ids "
+            "the richest already-published bundle of the same pack id ships. "
+            "Checked by name, so a swap at constant count refuses too. "
+            "Without this the command refuses (exit 7)"
+        ),
+    )
+    publish_faction.add_argument(
         "--no-publish",
         action="store_true",
         help="cook the pack without copying it into the Godot content root",
@@ -715,6 +862,46 @@ def build_parser() -> argparse.ArgumentParser:
             "developer cook: PNG level 6, soft tool re-attest, light pack "
             "audit (size-only). Sets OPENBFME_DEV=1 for the process."
         ),
+    )
+
+    publish_music = sub.add_parser(
+        "publish-music-pack",
+        help=(
+            "extract the authored per-faction music binding (music.ini + the "
+            "Music_MusicScripts_Single library) and cook it into a standalone "
+            "music pack; selection.json is left untouched"
+        ),
+    )
+    publish_music.add_argument("--install", required=True)
+    _add_game_argument(publish_music)
+    publish_music.add_argument("--reindex", action="store_true")
+    publish_music.add_argument("--force", action="store_true")
+    publish_music.add_argument(
+        "--pack-id",
+        default=None,
+        help="pack id to publish (default: <game>-music-vslice)",
+    )
+    publish_music.add_argument(
+        "--profile-output",
+        type=Path,
+        default=None,
+        help="where to write the generated profile (default: workspace/profiles)",
+    )
+    publish_music.add_argument(
+        "--no-publish",
+        action="store_true",
+        help="cook the pack without publishing it to the Godot content root",
+    )
+    publish_music.add_argument(
+        "--godot-content-root",
+        type=Path,
+        default=default_godot_content_root(),
+        help="private Godot content-packs directory",
+    )
+    publish_music.add_argument(
+        "--dev",
+        action="store_true",
+        help="developer cook: light pack audit (size-only)",
     )
 
     update_selection = sub.add_parser(
@@ -797,6 +984,14 @@ def main(argv: list[str] | None = None) -> int:
     # --state-root left those helpers pointing at the checkout's own .private,
     # and a missing pinned ffmpeg silently fell through to whatever is on PATH
     # — which then fails the pinned-hash attest on every audio conversion.
+    # Scoped to this invocation. A bare `os.environ[...] = ...` here outlives
+    # the call for every in-process caller (the test suite is the one that
+    # notices): one CLI run against a temporary --state-root silently
+    # repointed `default_state_root()` for everything that ran afterwards.
+    # Restored in the `finally` below alongside the dev-mode overrides.
+    state_root_env_prior: dict[str, str | None] = {
+        "OPENBFME_IMPORT_ROOT": os.environ.get("OPENBFME_IMPORT_ROOT")
+    }
     os.environ["OPENBFME_IMPORT_ROOT"] = str(
         Path(args.state_root).expanduser().resolve()
     )
@@ -920,6 +1115,58 @@ def main(argv: list[str] | None = None) -> int:
             _render(value, args.json)
             return 0
 
+        if args.command == "compile-cah-system":
+            from .cah_system_compiler import (
+                REQUIRED_DOCUMENTS,
+                build_cah_system_runtime,
+                compile_cah_system_descriptor,
+            )
+
+            assets_root = ensure_external_to_repo(
+                args.assets_root, repo_root_from_module()
+            )
+            # Read only what the compiler declares it needs, plus the .inc files
+            # the system file includes. Sweeping data/ini wholesale would pull in
+            # tens of megabytes for a table that reaches seven documents.
+            documents: dict[str, bytes] = {}
+            ini_root = assets_root / "data" / "ini"
+            for path in sorted(ini_root.glob("createahero*.in[ci]")):
+                documents[path.relative_to(assets_root).as_posix()] = path.read_bytes()
+            for relative in REQUIRED_DOCUMENTS:
+                candidate = assets_root / relative
+                if candidate.is_file():
+                    documents[relative] = candidate.read_bytes()
+            descriptor = compile_cah_system_descriptor(documents)
+            runtime = build_cah_system_runtime(descriptor)
+
+            reports = _state_root(args) / "reports"
+            descriptor_path = reports / f"{args.game}-cah-system-descriptor.json"
+            runtime_path = (
+                args.runtime_out
+                if args.runtime_out is not None
+                else reports / f"{args.game}-cah-system-runtime.json"
+            )
+            write_json_atomic(descriptor_path, descriptor)
+            write_json_atomic(runtime_path, runtime)
+            _render(
+                {
+                    "ready": True,
+                    "game": args.game,
+                    "descriptor": str(descriptor_path),
+                    "runtime": str(runtime_path),
+                    "descriptor_sha256": descriptor["descriptorSha256"],
+                    "class_count": len(descriptor["classes"]),
+                    "sub_class_count": sum(
+                        len(row["subClasses"]) for row in descriptor["classes"]
+                    ),
+                    "attribute_group_count": len(descriptor["attributeGroups"]),
+                    "build_cost": descriptor["system"]["buildCost"],
+                    "build_cost_expression": descriptor["system"]["buildCostExpression"],
+                },
+                args.json,
+            )
+            return 0
+
         if args.command == "visual-closure":
             assets_root = ensure_external_to_repo(
                 args.assets_root, repo_root_from_module()
@@ -1023,6 +1270,13 @@ def main(argv: list[str] | None = None) -> int:
             if not manifest_path.is_file():
                 progress_emit("extract-assets", "extracting effective asset tree")
                 pipeline.extract_all_assets(force=False)
+                # The pipeline was constructed BEFORE this tree existed, so its
+                # RotWK oracle bind was deferred (see
+                # ImportPipeline.source_override_root). Resolve it now, while
+                # the ordering is obvious, rather than leaving the first
+                # downstream `pipeline.catalog` read to decide whether this run
+                # cooks from the sealed oracle or from the raw catalog.
+                _ = pipeline.source_override_root
             else:
                 progress_emit(
                     "extract-assets",
@@ -1103,17 +1357,31 @@ def main(argv: list[str] | None = None) -> int:
             canonical_profile = args.base_profile or (
                 _workspace_root(args) / "profiles" / "men-fords-v1.generated.json"
             )
-            value = import_playable_unit(
-                catalog,
-                _state_root(args),
-                args.object,
-                faction=args.faction,
-                canonical_profile=canonical_profile,
-                content_root=args.godot_content_root,
-                publish=not args.plan_only,
-                bootstrap_selection=args.bootstrap_selection,
-                conversion_jobs=args.conversion_jobs,
-            )
+            # import-unit rebuilds and republishes the whole host pack when the
+            # profile delta is an update, so it can regress the roster exactly
+            # like the faction publish lane can. The gate lives inside
+            # import_playable_unit (the publication happens there, below this
+            # frame) and reaches this handler as PublishGateError.
+            try:
+                value = import_playable_unit(
+                    catalog,
+                    _state_root(args),
+                    args.object,
+                    faction=args.faction,
+                    canonical_profile=canonical_profile,
+                    content_root=args.godot_content_root,
+                    publish=not args.plan_only,
+                    bootstrap_selection=args.bootstrap_selection,
+                    conversion_jobs=args.conversion_jobs,
+                    allow_fewer_playable_units=args.allow_fewer_playable_units,
+                )
+            except publish_gate.PublishGateError as gate_error:
+                return _refuse(
+                    "this unit import drops playable units the slice already "
+                    "ships.",
+                    gate_error.blockers,
+                    gate_error.override_flag,
+                )
             _render(value, args.json)
             return 0
         if args.command == "publish-faction-to-slice":
@@ -1140,6 +1408,80 @@ def main(argv: list[str] | None = None) -> int:
                         f"faction coverage missing at {coverage_path}; "
                         f"run: openbfme-import import-faction --faction {faction} --convert"
                     )
+            # Fail closed BEFORE the expensive cook: a coverage report that
+            # records converter gaps must not become a published bundle.
+            coverage_blockers = _coverage_publish_blockers(coverage_root, factions)
+            if coverage_blockers:
+                if not args.allow_incomplete_coverage:
+                    return _refuse(
+                        "converted coverage is incomplete.",
+                        coverage_blockers,
+                        "--allow-incomplete-coverage",
+                    )
+                _warn_override("--allow-incomplete-coverage", coverage_blockers)
+            # Second pre-cook gate: a *clean* report still has to be a report
+            # about the tree being cooked right now. Bound against the same
+            # catalog object `import-faction` records, plus the compiler
+            # identity token, which is the binding that catches a report whose
+            # descriptors came from a compiler the tree has since moved past.
+            #
+            # It must be bound to the catalog the COOK resolves against, NOT
+            # the outer catalog loaded from the install. For RotWK those are
+            # different objects: the cook resolves an EffectiveAssetsCatalog
+            # view over the sealed oracle tree, and `import-faction` stamps THAT
+            # identity into the coverage report. Comparing the outer install
+            # catalog here made the check unsatisfiable for every RotWK
+            # publish - it reported a "stale coverage" mismatch on a report that
+            # had just been generated minutes earlier, and the only way past it
+            # was `--allow-stale-coverage`, which disables the very check that
+            # exists to catch genuinely stale reports. The music publish path a
+            # few hundred lines below already documents this exact trap
+            # ("Bind to the catalog the COOK resolves against, which may be an
+            # effective-assets view over the one loaded above"); this path had
+            # not been given the same treatment.
+            #
+            # The pipeline is constructed here, above the gate, purely to
+            # resolve that identity. It is cheap - it loads and wraps the
+            # catalog and touches no content - so the gates still fail closed
+            # before any expensive cook work.
+            pipeline = ImportPipeline(
+                catalog,
+                _state_root(args),
+                game=args.game,
+                conversion_cache_enabled=not args.no_conversion_cache,
+                conversion_jobs=args.conversion_jobs,
+            )
+            # Force the deferred RotWK oracle bind (ImportPipeline
+            # .source_override_root) so `pipeline.catalog` is the effective
+            # view before its identity is read, rather than depending on which
+            # attribute happens to be touched first.
+            #
+            # A MISSING oracle tree must not be reported as a coverage-binding
+            # failure: those are different problems with different fixes, and
+            # this gate's job is to compare identities, not to police the tree's
+            # existence. The cook a few lines below asks for the same oracle and
+            # fails with its own explicit "run extract-all-assets" message, so
+            # nothing is swallowed - the run still stops, with the accurate
+            # error rather than a misleading "stale coverage" one. With no
+            # effective view to speak of, the outer catalog is the only defined
+            # identity, so comparing against it here is exact, not a guess.
+            try:
+                _ = pipeline.source_override_root
+                cook_catalog = pipeline.catalog
+            except FileNotFoundError:
+                cook_catalog = catalog
+            binding_blockers = _coverage_binding_blockers(
+                coverage_root, factions, catalog_identity=cook_catalog.identity_sha256()
+            )
+            if binding_blockers:
+                if not args.allow_stale_coverage:
+                    return _refuse(
+                        "converted coverage does not describe the content "
+                        "being cooked.",
+                        binding_blockers,
+                        "--allow-stale-coverage",
+                    )
+                _warn_override("--allow-stale-coverage", binding_blockers)
             faction_slug = "-".join(factions)
             base_profile_path = Path(
                 args.base_profile
@@ -1168,20 +1510,22 @@ def main(argv: list[str] | None = None) -> int:
             composed, receipt = compose_faction_profile(
                 base, coverage_root, factions, game=args.game
             )
-            # Keep the host pack id stable so the vertical slice host pack
-            # assertion (bfme2-men-vslice) continues to pass for Men.
+            # `pipeline` / `cook_catalog` were already built above so the
+            # coverage-binding gate could read the cook's real catalog identity.
             pack = composed.get("pack")
-            if isinstance(pack, dict) and factions == ["men"]:
-                pack["id"] = "bfme2-men-vslice"
-                composed["title"] = "BFME2 Men full faction vertical slice"
-            elif isinstance(pack, dict) and len(factions) > 1:
-                # compose_faction_profile only owns the pack id for a
-                # single-faction publish; a multi-faction pack would otherwise
-                # inherit the base profile's (Men) id and stray-bundle under it.
-                pack["id"] = f"{args.game}-{faction_slug}-vslice"
-                composed["title"] = (
-                    f"{args.game.upper()} {', '.join(factions)} faction slice"
-                )
+            if isinstance(pack, dict):
+                # The base profile is the historical BFME2 Men host, but its
+                # identity must never leak into a RotWK Men publication.
+                # Single- and multi-faction products are both edition-qualified.
+                pack["id"] = _faction_slice_pack_id(args.game, factions)
+                if factions == ["men"]:
+                    composed["title"] = (
+                        f"{args.game.upper()} Men full faction vertical slice"
+                    )
+                elif len(factions) > 1:
+                    composed["title"] = (
+                        f"{args.game.upper()} {', '.join(factions)} faction slice"
+                    )
             # Freshly composed profiles bind to the catalog they were composed
             # against; inherited m3 markers otherwise fail the build's source
             # catalog identity check with no stamping path.
@@ -1193,7 +1537,7 @@ def main(argv: list[str] | None = None) -> int:
                 # composed from the BFME2 men slice and carries that game's
                 # catalog identity, but this cook resolves everything against
                 # the expansion catalog it was invoked with.
-                pack["sourceCatalogIdentitySha256"] = catalog.identity_sha256()
+                pack["sourceCatalogIdentitySha256"] = cook_catalog.identity_sha256()
             write_json_atomic(profile_output, composed)
             receipt_path = profile_output.with_suffix(".receipt.json")
             write_json_atomic(receipt_path, receipt)
@@ -1203,14 +1547,9 @@ def main(argv: list[str] | None = None) -> int:
                 "compose",
                 f"profile={profile_output.name} objects={len(receipt.get('objects', []))}",
             )
-            pipeline = ImportPipeline(
-                catalog,
-                _state_root(args),
-                game=args.game,
-                conversion_cache_enabled=not args.no_conversion_cache,
-                conversion_jobs=args.conversion_jobs,
+            resolved = resolve_profile(
+                ImportProfile.load(profile_output), cook_catalog
             )
-            resolved = resolve_profile(ImportProfile.load(profile_output), catalog)
             pack_root = pipeline.build(
                 resolved,
                 force=args.force,
@@ -1234,6 +1573,33 @@ def main(argv: list[str] | None = None) -> int:
                 value["bundle_sha256"] = bundle_digest(pack_root)
             value["conversion_cache"] = pipeline.conversion_cache_stats
             value.update(_conversion_failure_report(pack_root))
+            value["playable_unit_count"] = _pack_playable_unit_count(pack_root)
+            # Post-cook half of the gate: even a clean-looking cook must not
+            # drop playable-unit *names* the published bundle already ships.
+            try:
+                # Only when this cook actually publishes: --no-publish leaves
+                # the installed slice untouched, so there is nothing to regress.
+                regression = (
+                    None
+                    if args.no_publish
+                    else publish_gate.enforce_playable_unit_gate(
+                        pack_root,
+                        args.godot_content_root,
+                        pack["id"] if isinstance(pack, dict) else "",
+                        allow_fewer=args.allow_fewer_playable_units,
+                    )
+                )
+            except publish_gate.PublishGateError as gate_error:
+                value["playable_unit_regression"] = gate_error.blockers[0]
+                _render(value, args.json)
+                return _refuse(
+                    "this cook drops playable units the slice already ships.",
+                    gate_error.blockers,
+                    gate_error.override_flag,
+                )
+            if regression is not None:
+                value["playable_unit_regression"] = regression
+                _warn_override("--allow-fewer-playable-units", [regression])
             if not args.no_publish:
                 if args.select:
                     progress_emit("publish", "selecting pack for Godot vertical slice")
@@ -1283,6 +1649,113 @@ def main(argv: list[str] | None = None) -> int:
             progress_complete(
                 f"faction={faction_slug} pack={pack_root} slice path ready"
             )
+            _render(value, args.json)
+            return 0 if value.get("valid", False) else 3
+        if args.command == "publish-music-pack":
+            # Everything this pack ships is derived from two INIs and the
+            # music-script library map, all read through the same install
+            # catalog every other pack resolves against.
+            def _catalog_bytes(virtual_path: str, maximum: int) -> bytes:
+                entry = catalog.resolve_exact(virtual_path)
+                if entry is None:
+                    raise FileNotFoundError(
+                        f"{virtual_path} is missing from the {args.game} catalog"
+                    )
+                return catalog.open_archive_for(entry).read_entry(
+                    catalog.as_entry(entry), max_bytes=maximum
+                )
+
+            pack_id = args.pack_id or f"{args.game}-music-vslice"
+            music_ini = _catalog_bytes(MUSIC_INI_PATH, 8 * 1024 * 1024)
+            misc_audio_ini = _catalog_bytes(MISC_AUDIO_INI_PATH, 8 * 1024 * 1024)
+            script_library = _catalog_bytes(
+                MUSIC_SCRIPT_LIBRARY_PATH, 32 * 1024 * 1024
+            )
+            # Read only to prove the library path this command hard-codes is
+            # the one audiosettings.ini actually names; a retail edition that
+            # moved it must fail loudly instead of silently binding nothing.
+            audio_settings = _catalog_bytes(AUDIO_SETTINGS_INI_PATH, 4 * 1024 * 1024)
+            declared_library = (
+                MUSIC_SCRIPT_LIBRARY_PATH.rsplit("/", 1)[-1].encode("ascii")
+                in audio_settings.replace(b"\\", b"/").lower()
+            )
+            if not declared_library:
+                raise ValueError(
+                    "audiosettings.ini does not name "
+                    f"{MUSIC_SCRIPT_LIBRARY_PATH}; refusing to bind music "
+                    "scripts this edition does not declare"
+                )
+            document = build_music_document(
+                music_ini=music_ini,
+                misc_audio_ini=misc_audio_ini,
+                script_document=map_scripts_document(
+                    script_library, container="map"
+                ),
+                provenance={
+                    "game": args.game,
+                    "catalogIdentitySha256": catalog.identity_sha256(),
+                    "musicIni": MUSIC_INI_PATH,
+                    "miscAudioIni": MISC_AUDIO_INI_PATH,
+                    "audioSettingsIni": AUDIO_SETTINGS_INI_PATH,
+                    "musicScriptLibrary": MUSIC_SCRIPT_LIBRARY_PATH,
+                },
+            )
+            profile_output = Path(
+                args.profile_output
+                or (_workspace_root(args) / "profiles" / f"{pack_id}.generated.json")
+            ).expanduser()
+            pipeline = ImportPipeline(catalog, _state_root(args), game=args.game)
+            composed = compose_music_profile(
+                document,
+                pack_id=pack_id,
+                game=args.game,
+                # Bind to the catalog the COOK resolves against, which may be
+                # an effective-assets view over the one loaded above; stamping
+                # the outer catalog fails the build's own identity check.
+                catalog_identity=pipeline.catalog.identity_sha256(),
+            )
+            write_json_atomic(profile_output, composed)
+            ImportProfile.load(profile_output)
+            pack_root = pipeline.build(
+                resolve_profile(ImportProfile.load(profile_output), pipeline.catalog),
+                force=args.force,
+            )
+            light_audit = bool(args.dev) or os.environ.get(
+                "OPENBFME_DEV", ""
+            ).strip().casefold() in {"1", "true", "yes"}
+            value = audit_pack(pack_root, light=light_audit)
+            value["pack"] = str(pack_root)
+            value["profile"] = str(profile_output)
+            value["pack_id"] = pack_id
+            value["music_factions"] = sorted(document["factions"])
+            value["music_tracks"] = len(document["tracks"])
+            value["music_playlists"] = len(document["playlists"])
+            if light_audit:
+                value["bundle_sha256"] = "dev-skipped"
+                value["dev_mode"] = True
+            else:
+                value["bundle_sha256"] = bundle_digest(pack_root)
+            if not args.no_publish:
+                # Supplemental content only: this pack declares `music` and no
+                # faction/object rows, so it never needs to be the active pack.
+                # selection.json is untouched here on purpose - retarget it
+                # with `update-selection-entry` once the bundle is published.
+                publication = pipeline.publish_to_godot(
+                    pack_root,
+                    args.godot_content_root,
+                    select=False,
+                    verified_digest=(
+                        value["bundle_sha256"]
+                        if not light_audit and value.get("valid", False)
+                        else None
+                    ),
+                )
+                value.update(publication)
+                value["selectionUpdateCommand"] = (
+                    "openbfme-import update-selection-entry "
+                    f"--pack-id {publication['pack_id']} "
+                    f"--bundle-sha256 {publication['bundle_sha256']}"
+                )
             _render(value, args.json)
             return 0 if value.get("valid", False) else 3
         if args.command == "index":
@@ -1623,6 +2096,45 @@ def main(argv: list[str] | None = None) -> int:
             # command path; do not reference an undefined pack_root here
             # (prior UnboundLocalError after a successful audit).
             value.update(_conversion_failure_report(pack))
+            value["playable_unit_count"] = _pack_playable_unit_count(pack)
+            # `build` publishes AND (unless --no-select) activates the pack, so
+            # it was the widest of the three bypass routes around the publish
+            # gates. It now runs the same roster-regression gate.
+            #
+            # It deliberately does NOT run the coverage or binding gates. Those
+            # two read `<faction>-coverage.json`, an artefact only the faction
+            # import lane produces; `build` cooks from an arbitrary profile
+            # that may name no faction at all (map packs, leaf profiles), so
+            # there is no report to bind against and demanding one would refuse
+            # every legitimate map-pack build. The roster gate needs no such
+            # artefact - it compares the cook against what is already on disk.
+            # Only when this build actually publishes. A --no-publish proof
+            # build (tools/gate-retail.ps1 runs two of them) cooks into the
+            # private pack root and ships nothing, so there is no publication
+            # to refuse and blocking it would break the gate.
+            build_pack_id = getattr(resolved, "pack_id", "") or ""
+            try:
+                build_regression = (
+                    None
+                    if args.no_publish
+                    else publish_gate.enforce_playable_unit_gate(
+                        pack,
+                        args.godot_content_root,
+                        build_pack_id,
+                        allow_fewer=args.allow_fewer_playable_units,
+                    )
+                )
+            except publish_gate.PublishGateError as gate_error:
+                value["playable_unit_regression"] = gate_error.blockers[0]
+                _render(value, args.json)
+                return _refuse(
+                    "this build drops playable units the slice already ships.",
+                    gate_error.blockers,
+                    gate_error.override_flag,
+                )
+            if build_regression is not None:
+                value["playable_unit_regression"] = build_regression
+                _warn_override("--allow-fewer-playable-units", [build_regression])
             if not args.no_publish:
                 progress_emit("assemble", "publishing pack to Godot content root")
                 value.update(
@@ -1660,4 +2172,5 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if dev_env_prior is not None:
             _restore_env(dev_env_prior)
+        _restore_env(state_root_env_prior)
     return 0

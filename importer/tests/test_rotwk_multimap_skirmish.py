@@ -105,3 +105,13 @@ def test_cli_exposes_map_limit_and_publish_without_select() -> None:
         ["build", "--install", "retail", "--no-select"]
     )
     assert build_args.no_select is True
+
+
+def test_default_assets_ignore_legacy_layered_overlay(tmp_path: Path) -> None:
+    mod = _load_tool()
+    stale = tmp_path / "editions" / "rotwk" / "cache" / "layered-effective-assets"
+    canonical = tmp_path / "editions" / "rotwk" / "cache" / "effective-assets"
+    stale.mkdir(parents=True)
+    canonical.mkdir()
+
+    assert mod._default_effective_assets(tmp_path, "rotwk") == canonical

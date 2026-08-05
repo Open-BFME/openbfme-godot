@@ -12,7 +12,8 @@ cook/audit receipt exists (see ``tools/rotwk_faction_pack_proof.py``).
 
 Does not rewrite selection.json.
 
-Requires an effective-assets tree (layered for RotWK).
+Requires the canonical manifest-sealed effective-assets tree (extracted from
+the layered indexed install for RotWK).
 """
 
 from __future__ import annotations
@@ -37,6 +38,10 @@ from openbfme_importer.catalog import (  # noqa: E402
     catalog_provenance_reason,
 )
 from openbfme_importer.conversion_ledger import ConversionLedger  # noqa: E402
+from openbfme_importer.effective_assets_identity import (  # noqa: E402
+    verify_effective_assets,
+)
+from openbfme_importer.effective_assets_catalog import EffectiveAssetsCatalog  # noqa: E402
 from openbfme_importer.faction_import import convert_faction_import  # noqa: E402
 from openbfme_importer.game import workspace_root  # noqa: E402
 from openbfme_importer.paths import (  # noqa: E402
@@ -77,16 +82,32 @@ def _load_catalog(state_root: Path, game: str, install: Path) -> InstallCatalog:
 
 
 def _effective_assets(state_root: Path, game: str) -> Path:
-    for rel in (
-        ("editions", game, "cache", "layered-effective-assets"),
-        ("editions", game, "cache", "effective-assets"),
-        ("cache", "layered-effective-assets"),
-        ("cache", "effective-assets"),
-    ):
+    """Return the owner-selected canonical asset oracle for this edition.
+
+    REBOUND 2026-08-04 (owner decision): the RotWK oracle is PURE RETAIL 2.01,
+    ``editions/rotwk/cache/effective-assets``. It was
+    ``layered-effective-assets``, which carries Unofficial-2.02 three-way merge
+    markers in 530 INI files (the pure tree has zero) and therefore sells
+    fan-patched values - expansion pads at cost 0, 44 ``NeededUpgradeAny`` rows
+    where retail authors 9, and rebalanced damage/duration defines. The layered
+    tree is quarantined: never read as an oracle, never deleted.
+    """
+
+    candidates = [
+        (
+            "editions",
+            "rotwk",
+            "cache",
+            "effective-assets",
+        )
+        if game == "rotwk"
+        else ("cache", "effective-assets")
+    ]
+    for rel in candidates:
         path = state_root.joinpath(*rel)
         if path.is_dir():
             return path
-    raise SystemExit("effective-assets tree missing; extract assets first")
+    raise SystemExit(f"canonical {game} effective-assets tree missing")
 
 
 def _discover_factions(catalog: InstallCatalog) -> list[str]:
@@ -125,6 +146,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--install", required=True, type=Path)
     parser.add_argument("--game", choices=("rotwk", "bfme2"), default="rotwk")
     parser.add_argument("--state-root", type=Path, default=None)
+    parser.add_argument(
+        "--assets-root",
+        type=Path,
+        default=None,
+        help=(
+            "exact manifest-sealed effective-assets tree (the canonical "
+            "edition cache is used when omitted)"
+        ),
+    )
     parser.add_argument("--faction", action="append", default=None)
     parser.add_argument(
         "--convert-jobs",
@@ -197,7 +227,38 @@ def main(argv: list[str] | None = None) -> int:
             print(f"LAYERED_INSTALL {install}", flush=True)
 
     catalog = _load_catalog(state_root, args.game, install)
-    assets = _effective_assets(state_root, args.game)
+    assets = (
+        Path(args.assets_root).expanduser().resolve()
+        if args.assets_root is not None
+        else _effective_assets(state_root, args.game)
+    )
+    canonical_assets = _effective_assets(state_root, args.game).resolve()
+    if assets.resolve() != canonical_assets:
+        print(
+            "FAIL: --assets-root disagrees with the canonical tree ImportPipeline "
+            f"will cook from: supplied={assets} canonical={canonical_assets}",
+            file=sys.stderr,
+        )
+        return 2
+    if not assets.is_dir():
+        print(f"FAIL: effective-assets tree missing: {assets}", file=sys.stderr)
+        return 2
+    try:
+        verify_effective_assets(
+            assets,
+            game=args.game,
+            # The owner-selected RotWK oracle is sealed to its recorded
+            # base+expansion layered catalog. The current synthetic install
+            # catalog is a different identity, so verify the sealed edition
+            # manifest without falsely rebinding it to that live catalog.
+            catalog=None if args.game == "rotwk" else catalog,
+            consumer="rotwk-faction-convert-batch",
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"FAIL: effective-assets identity: {exc}", file=sys.stderr)
+        return 2
+    if args.game == "rotwk":
+        catalog = EffectiveAssetsCatalog(assets, base_catalog=catalog)
     factions = args.faction or _discover_factions(catalog)
 
     run_id = uuid.uuid4().hex

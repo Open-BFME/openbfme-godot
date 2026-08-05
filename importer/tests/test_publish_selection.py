@@ -86,6 +86,41 @@ class PublishWithoutSelectTests(unittest.TestCase):
             )
             self.assertEqual(publication["active_pack"], publication["pack_relative"])
 
+    def test_publish_with_select_refuses_to_replace_different_active_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "source"
+            make_audited_pack(source)
+            content = root / "content"
+            before = _write_selection(
+                content,
+                {
+                    "schema": "openbfme.pack-selection",
+                    "schemaVersion": 0,
+                    "activePack": f"other-pack/{HEX_A}",
+                    "supplementalPacks": [f"test-generic-pack/{HEX_B_OLD}"],
+                },
+            )
+            pipeline = ImportPipeline(None, root / "state")
+            with self.assertRaisesRegex(RuntimeError, "different activePack"):
+                pipeline.publish_to_godot(source, content, select=True)
+            self.assertEqual((content / "selection.json").read_bytes(), before)
+
+    def test_publish_with_select_refuses_corrupt_selection_without_rewriting(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "source"
+            make_audited_pack(source)
+            content = root / "content"
+            content.mkdir(parents=True)
+            selection_path = content / "selection.json"
+            before = b'{"schema":"openbfme.pack-selection","activePack":'
+            selection_path.write_bytes(before)
+            pipeline = ImportPipeline(None, root / "state")
+            with self.assertRaisesRegex(RuntimeError, "malformed selection.json"):
+                pipeline.publish_to_godot(source, content, select=True)
+            self.assertEqual(selection_path.read_bytes(), before)
+
     def test_publish_faction_cli_defaults_to_no_select(self) -> None:
         args = cli.build_parser().parse_args(
             [

@@ -5,6 +5,7 @@ from unittest import mock
 import pytest
 
 from openbfme_importer.faction_import import (
+    _convert_one_plan_object,
     build_faction_conversion,
     build_faction_import_plan,
     convert_faction_import,
@@ -19,6 +20,39 @@ def _fixture() -> tuple[dict[str, bytes], dict[str, object]]:
     graph["summary"] = {"unresolvedCount": 0}
     graph["inputSetSha256"] = "1" * 64
     return documents, graph
+
+
+def test_engine_managed_extension_gap_becomes_named_exclusion_at_convert_boundary() -> None:
+    row, artifacts = _convert_one_plan_object(
+        {
+            "id": "FixtureAlternateForm",
+            "family": "hero-extension",
+            "status": "converter-gap",
+            "reason": (
+                "Object FixtureAlternateForm is not targeted by an authored "
+                "UNIT_BUILD command"
+            ),
+        },
+        documents={},
+        prepared=None,  # early exclusion returns before compiler inputs are read
+        faction_graph={},
+        effective_root=Path("."),
+        catalog=None,
+        spawned=(),
+        wall_templates=(),
+        source_null_sets=(),
+        object_cache=None,
+        documents_fp="",
+        catalog_identity_sha256="",
+        assets_fp="",
+        graph_input_set_sha256="",
+        plan_aggregate_sha256="",
+        policy_fp="",
+        compiler_token="",
+    )
+    assert row["status"] == "excluded"
+    assert "engine-managed reachable extension" in row["reason"]
+    assert artifacts == {}
 
 
 def test_plan_accounts_for_each_object_once_and_is_deterministic() -> None:
@@ -140,7 +174,10 @@ def test_conversion_admits_rotwk_data_driven_catalog() -> None:
     # thread game="rotwk" into census + conversion (never the bfme2 curations).
     catalog = mock.Mock()
     catalog.source_policy = None
+    catalog.resolve_exact.return_value = None
     sentinel = {"admitted": True}
+    catalog_documents = {"data/ini/commandset.ini": b"catalog"}
+    layered_documents = {"data/ini/commandset.ini": b"layered"}
 
     with mock.patch(
         "openbfme_importer.faction_import._faction_spec",
@@ -150,14 +187,14 @@ def test_conversion_admits_rotwk_data_driven_catalog() -> None:
         return_value={"graph": True},
     ) as census, mock.patch(
         "openbfme_importer.faction_import.spellbook_source_documents",
-        return_value={},
-    ), mock.patch(
+        side_effect=[catalog_documents, layered_documents],
+    ) as source_documents, mock.patch(
         "openbfme_importer.faction_import.build_faction_conversion",
         return_value=sentinel,
     ) as build:
         result = convert_faction_import(
             catalog,
-            Path("unused"),
+            Path("layered-effective-assets"),
             "FactionAngmar",
             game="rotwk",
         )
@@ -165,6 +202,8 @@ def test_conversion_admits_rotwk_data_driven_catalog() -> None:
     assert result is sentinel
     assert census.call_args.kwargs["game"] == "rotwk"
     assert build.call_args.kwargs["game"] == "rotwk"
+    assert source_documents.call_args.kwargs["catalog"] is None
+    assert build.call_args.args[1] is layered_documents
 
 
 def test_census_resolved_but_unparseable_object_is_a_parser_gap() -> None:
@@ -380,7 +419,7 @@ def test_conversion_records_per_object_failures_and_continues() -> None:
     assert coverage["summary"]["conversionComplete"] is False
 
 
-def test_conversion_excludes_accounted_support_families() -> None:
+def test_conversion_converts_banner_and_fails_closed_for_bare_spellbook() -> None:
     documents, graph = _fixture()
     objects_path = "data/ini/object/units/test_units.ini"
     documents[objects_path] = (
@@ -406,8 +445,8 @@ End
         )
 
     banner = next(r for r in coverage["objects"] if r["id"] == "TestBanner")
-    assert banner["status"] == "excluded"
-    assert "parent horde" in banner["reason"]
+    assert banner["status"] == "converted"
+    assert banner["family"] == "banner-carrier"
     # The spellbook lane converts the faction spell book now; a bare
     # SPELL_BOOK object with no authored store content fails closed instead.
     spellbook = next(r for r in coverage["objects"] if r["id"] == "TestSpellBook")
@@ -559,7 +598,7 @@ End
     return documents, graph
 
 
-def test_plan_routes_structures_and_excludes_banner_members() -> None:
+def test_plan_routes_structures_and_banner_members_for_conversion() -> None:
     documents, graph = _construct_fixture()
 
     plan = build_faction_import_plan(graph, documents, catalog_identity_sha256="2" * 64)
@@ -572,16 +611,77 @@ def test_plan_routes_structures_and_excludes_banner_members() -> None:
     assert len(keep["descriptorSha256"]) == 64
     for banner_id in ("ConstructBanner", "ReskinBanner"):
         banner = rows[banner_id]
-        assert banner["status"] == "excluded"
-        assert banner["family"] == "banner-member"
-        assert "parent horde" in banner["reason"]
+        assert banner["status"] == "descriptor-ready"
+        assert banner["family"] == "banner-carrier"
     summary = plan["summary"]
     assert summary["objectCount"] == 6
-    assert summary["descriptorReadyCount"] == 3
-    assert summary["excludedCount"] == 2
+    assert summary["descriptorReadyCount"] == 5
+    assert summary["excludedCount"] == 0
     assert summary["converterGapCount"] == 1
     assert summary["unsupportedFamilies"] == ["structure"]
     assert summary["descriptorCoverageComplete"] is False
+
+
+def test_plan_expands_nested_horde_banner_child_from_layered_documents() -> None:
+    documents, graph = _construct_fixture()
+    documents["data/ini/object/units/test_units.ini"] += b"""
+Object NestedBannerHorde
+  KindOf = HORDE INFANTRY
+  Behavior = HordeContain ModuleTag_HordeContain
+    InitialPayload = HeroEight 1
+    BannerCarriersAllowed = NestedBannerChild
+  End
+End
+
+ChildObject NestedBannerChild ConstructBanner
+End
+"""
+    graph["definitions"]["objects"].append(
+        {"id": "NestedBannerHorde", "edges": []}
+    )
+
+    plan = build_faction_import_plan(
+        graph, documents, catalog_identity_sha256="2" * 64
+    )
+
+    rows = {row["id"]: row for row in plan["objects"]}
+    assert rows["NestedBannerChild"]["family"] == "banner-carrier"
+    assert rows["NestedBannerChild"]["status"] == "descriptor-ready"
+
+
+def test_plan_expands_layered_command_object_missing_from_sealed_graph() -> None:
+    documents, graph = _construct_fixture()
+    graph["definitions"]["commandButtons"] = [
+        {"id": value}
+        for value in (
+            "Command_BuildInfantry",
+            "Command_BuildRanged",
+            "Command_BuildCavalry",
+            "Command_BuildHero",
+            "Command_BuildSiege",
+            "Command_BuildMonster",
+            "Command_BuildNaval",
+            "Command_BuildChildHorde",
+            "Command_BuildInfantryAlternate",
+            "Command_PurchaseLevel2",
+        )
+    ]
+    graph["definitions"]["objects"] = [
+        row
+        for row in graph["definitions"]["objects"]
+        if row["id"] != "ConstructKeep"
+    ]
+    graph["definitions"]["objects"].append(
+        {"id": "ConstructPorter", "edges": []}
+    )
+
+    plan = build_faction_import_plan(
+        graph, documents, catalog_identity_sha256="2" * 64
+    )
+
+    rows = {row["id"]: row for row in plan["objects"]}
+    assert rows["ConstructKeep"]["family"] == "structure"
+    assert rows["ConstructKeep"]["status"] == "descriptor-ready"
 
 
 def test_plan_routes_spellbook_through_the_spellbook_lane() -> None:

@@ -39,10 +39,6 @@ def ensure_layered_rotwk_install(
     Does not invent assets. Requires real game.dat at both installs.
     """
     state = Path(state_root).expanduser().resolve()
-    existing = layered_rotwk_install(state)
-    if existing is not None:
-        return existing
-
     rotwk = Path(rotwk_install).expanduser().resolve()
     if not (rotwk / "game.dat").is_file():
         raise FileNotFoundError(f"RotWK game.dat missing: {rotwk}")
@@ -67,6 +63,18 @@ def ensure_layered_rotwk_install(
         raise FileNotFoundError(
             "BFME2 game.dat not found; layered RotWK terrain cook requires the base install"
         )
+
+    existing = layered_rotwk_install(state)
+    if existing is not None:
+        actual_rotwk = (existing / "layer-0-rotwk").resolve()
+        actual_bfme2 = (existing / "layer-1-bfme2").resolve()
+        if actual_rotwk != rotwk or actual_bfme2 != bfme2:
+            raise RuntimeError(
+                "existing layered install does not match requested sources: "
+                f"rotwk={actual_rotwk} expected={rotwk}; "
+                f"bfme2={actual_bfme2} expected={bfme2}"
+            )
+        return existing
 
     root = state / "editions" / "rotwk" / "layered-install"
     root.mkdir(parents=True, exist_ok=True)

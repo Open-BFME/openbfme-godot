@@ -37,6 +37,9 @@ from openbfme_importer.catalog import (  # noqa: E402
     catalog_provenance_reason,
 )
 from openbfme_importer.conversion_ledger import ConversionLedger  # noqa: E402
+from openbfme_importer.effective_assets_identity import (  # noqa: E402
+    verify_effective_assets,
+)
 from openbfme_importer.map_census import (  # noqa: E402
     MAPCACHE_VIRTUAL_PATH,
     MAX_MAPCACHE_BYTES,
@@ -108,12 +111,21 @@ def _map_slug(virtual_path: str) -> str:
 
 
 def _default_effective_assets(state_root: Path, game: str) -> Path:
-    candidates = [
-        state_root / "editions" / game / "cache" / "layered-effective-assets",
-        state_root / "editions" / game / "cache" / "effective-assets",
-        state_root / "cache" / "layered-effective-assets",
-        state_root / "cache" / "effective-assets",
-    ]
+    # CANONICAL TREE REBOUND 2026-08-04 (owner decision): PURE RETAIL 2.01 =
+    # editions/rotwk/cache/effective-assets. It used to be
+    # `layered-effective-assets`, which is NOT pure retail: 530 of its INI files
+    # carry Unofficial-2.02 three-way merge markers (`;,;` / `;;,;;`), including
+    # `gamedata.ini:24  #define SPECIALPOWER_DEVASTATION_ENT_DAMAGE 300 ;;,;; 800 ; balance`
+    # and `gamedata.ini:20 ... ; RotWK originally 180000`. The pure tree carries
+    # ZERO such markers. The layered tree is quarantined - never read as oracle,
+    # never deleted (it is the only surviving copy).
+    # Both trees are manifest-sealed; the identity verification below is
+    # unchanged and still runs against whichever tree is selected.
+    candidates = (
+        [state_root / "editions" / "rotwk" / "cache" / "effective-assets"]
+        if game == "rotwk"
+        else [state_root / "cache" / "effective-assets"]
+    )
     for path in candidates:
         if path.is_dir():
             return path
@@ -156,7 +168,25 @@ def main(argv: list[str] | None = None) -> int:
         if args.effective_assets
         else _default_effective_assets(state_root, args.game)
     )
-    manifest = load_effective_assets_manifest(assets)
+    canonical_assets = _default_effective_assets(state_root, args.game).resolve()
+    if assets.resolve() != canonical_assets:
+        print(
+            "FAIL: --effective-assets disagrees with the canonical pure-retail tree: "
+            f"supplied={assets} canonical={canonical_assets}",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        verify_effective_assets(
+            assets,
+            game=args.game,
+            catalog=None,
+            consumer="rotwk-binding-factory",
+        )
+        manifest = load_effective_assets_manifest(assets)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"FAIL: effective-assets identity: {exc}", file=sys.stderr)
+        return 2
 
     run_id = uuid.uuid4().hex
     reports = state_root / "reports"

@@ -33,24 +33,27 @@ def test_unknown_faction_fails_closed() -> None:
         implicit_object_roots("FactionRohan")
 
 
-def test_rotwk_angmar_curates_only_the_fortress_composite_roots() -> None:
+def test_rotwk_angmar_curates_fortress_roots_and_shared_retail_nulls() -> None:
     # Angmar's fortress composite mirrors the BFME2 factions: the map-placed
     # camp unpacks into an engine-spawned citadel (the porter/hero producer
     # CommandSet carrier) and expansion pads no CommandSet reaches.  Nothing
-    # else is curated for RotWK.
+    # RotWK also shares the two retail-authored/missing mapped-image textures
+    # and shell music roots used by every supported faction.
     assert implicit_object_roots("FactionAngmar", game="rotwk") == (
         ("AngmarFortressCenterGeneric", "fortress-composite-center"),
         ("AngmarFortressCitadel", "fortress-composite-citadel"),
         ("AngmarFortressExpansionPadCorner", "fortress-composite-corner-pad"),
         ("AngmarFortressExpansionPadSide", "fortress-composite-side-pad"),
     )
-    assert source_null_mapped_image_textures("FactionAngmar", game="rotwk") == ()
+    assert source_null_mapped_image_textures("FactionAngmar", game="rotwk")
     assert source_null_command_sets("FactionAngmar", game="rotwk") == ()
-    assert music_roots("FactionAngmar", game="rotwk") == ()
+    assert music_roots("FactionAngmar", game="rotwk")
 
 
-def test_rotwk_faction_without_curated_roots_keeps_empty_roots() -> None:
-    assert implicit_object_roots("FactionMordor", game="rotwk") == ()
+def test_rotwk_base_faction_reuses_its_fortress_composite_roots() -> None:
+    assert implicit_object_roots("FactionMordor", game="rotwk") == (
+        IMPLICIT_OBJECT_ROOTS["factionmordor"]
+    )
 
 
 @pytest.mark.parametrize("value", ("", None, 7))

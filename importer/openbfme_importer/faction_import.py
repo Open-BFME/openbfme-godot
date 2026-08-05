@@ -13,6 +13,10 @@ import time
 from typing import Callable, Mapping
 
 from .catalog import InstallCatalog
+from .castle_behavior import (
+    CastleBehaviorCompilerError,
+    compile_castle_behavior_contract,
+)
 from .faction_census import census_playable_faction, resolve_playable_faction
 from .faction_object_cache import (
     FactionObjectCache,
@@ -45,9 +49,16 @@ from .playable_unit_import import _resolved_media, _resolved_strings
 from .playable_unit_compiler import (
     PlayableUnitCompilerError,
     PlayableUnitCompilerInputs,
+    _block_values,
+    _banner_field_assignments,
+    _command_slots,
+    _effective_values,
+    _first,
     compile_playable_unit_descriptor,
     playable_object_kind_of,
     prepare_playable_unit_compiler,
+    _ancestry,
+    _tokens,
 )
 from .playable_unit_pack_compiler import (
     PlayableUnitPackCompilerError,
@@ -243,20 +254,80 @@ def _resolved_structure_images(
 
 
 _EXCLUDED_FAMILY_REASONS = {
-    "banner-member": "banner members convert inside their parent horde recipes",
     "projectile": "projectiles convert inside their firing unit recipes",
     "object-inheritance": "inheritance-only base objects are not standalone content",
     "create-a-hero": "create-a-hero slots are engine-managed by the CAH editor flow",
 }
 
 # Plan-time exclusions are the families whose content is accounted for inside
-# another row's descriptor.  Spell book rows compile through the spellbook
-# lane; retail-object-parser rows stay explicit converter gaps until their
-# owning lane lands.
+# another row's descriptor.  Banner carriers are no longer excluded: they
+# convert as playable-unit descriptors for sim spawn at BannerCarrierMinLevel.
+# Spell book rows compile through the spellbook lane; retail-object-parser rows
+# stay explicit converter gaps until their owning lane lands.
 _PLAN_EXCLUDED_FAMILY_REASONS = {
     key: _EXCLUDED_FAMILY_REASONS[key]
-    for key in ("banner-member", "projectile", "object-inheritance", "create-a-hero")
+    for key in ("projectile", "object-inheritance", "create-a-hero")
 }
+
+
+def _expand_layered_command_objects(
+    object_ids: list[str],
+    prepared: PlayableUnitCompilerInputs,
+    census_command_button_ids: frozenset[str],
+) -> None:
+    """Reconcile a sealed census root set with layered CommandSet overrides.
+
+    The census is an attested input, but an expansion layer can replace an
+    inherited CommandSet slot (for example RotWK enabling MordorTavern).  Walk
+    only from census-reachable objects and add exact Object targets from their
+    effective layered command buttons.  This preserves the bounded faction
+    closure while preventing a newly active producer from being omitted from
+    the published slice.
+    """
+
+    pending = list(object_ids)
+    seen = {value.casefold() for value in object_ids}
+    while pending:
+        source_id = pending.pop()
+        source = prepared.objects.get(source_id.casefold())
+        if source is None:
+            continue
+        try:
+            lineage = _ancestry(prepared.objects, source)
+        except PlayableUnitCompilerError:
+            continue
+        command_set_ids = {
+            value.casefold(): value
+            for value in (
+                _first((row.value,))
+                for row in _effective_values(lineage, "CommandSet")
+            )
+            if value
+        }
+        for command_set_id in command_set_ids.values():
+            command_set = prepared.command_sets.get(command_set_id.casefold())
+            if command_set is None:
+                continue
+            for _, command_id in _command_slots(command_set):
+                # Census already accounted for commands active in the sealed
+                # base graph. Only commands newly activated by the layered
+                # CommandSet can extend this closure.
+                if command_id.casefold() in census_command_button_ids:
+                    continue
+                button = prepared.command_buttons.get(command_id.casefold())
+                if button is None:
+                    continue
+                for raw_target in _block_values(button, "Object"):
+                    target_id = _first((raw_target,))
+                    if not target_id:
+                        continue
+                    folded = target_id.casefold()
+                    target = prepared.objects.get(folded)
+                    if target is None or folded in seen:
+                        continue
+                    object_ids.append(target.name)
+                    pending.append(target.name)
+                    seen.add(folded)
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -358,6 +429,45 @@ def build_faction_import_plan(
         prepared = prepare_playable_unit_compiler(documents)
     except PlayableUnitCompilerError as exc:
         preparation_error = str(exc)
+    # The catalog census can name a base banner while the sealed layered
+    # oracle overrides BannerCarriersAllowed to a layered ChildObject. Expand
+    # that exact dependency edge before classifying rows so the carrier is
+    # converted and packaged with its horde instead of quarantining the horde.
+    layered_banner_targets: set[str] = set()
+    if prepared is not None:
+        raw_buttons = definitions.get("commandButtons", [])
+        census_command_button_ids = frozenset(
+            str(row["id"]).casefold()
+            for row in raw_buttons
+            if isinstance(row, Mapping)
+            and isinstance(row.get("id"), str)
+            and row["id"]
+        ) if isinstance(raw_buttons, list) else frozenset()
+        # Legacy/unit-test graphs without a button ledger cannot distinguish
+        # a layered activation from unrelated authored commands, so preserve
+        # their explicit object boundary.
+        if census_command_button_ids:
+            _expand_layered_command_objects(
+                object_ids, prepared, census_command_button_ids
+            )
+        pending_ids = list(object_ids)
+        seen_ids = {value.casefold() for value in object_ids}
+        while pending_ids:
+            source_id = pending_ids.pop()
+            target = prepared.objects.get(source_id.casefold())
+            if target is None:
+                continue
+            for assignment in _banner_field_assignments(
+                _ancestry(prepared.objects, target), "BannerCarriersAllowed"
+            ):
+                for token in _tokens(assignment.value):
+                    folded = token.casefold()
+                    layered_banner_targets.add(folded)
+                    if folded not in seen_ids and folded in prepared.objects:
+                        canonical = prepared.objects[folded].name
+                        object_ids.append(canonical)
+                        pending_ids.append(canonical)
+                        seen_ids.add(folded)
     roots = faction_graph.get("roots", [])
     if not isinstance(roots, list):
         raise ValueError("faction graph roots are invalid")
@@ -369,6 +479,14 @@ def build_faction_import_plan(
         and isinstance(row.get("id"), str)
         and row["id"]
     )
+    engine_spawned_roles: dict[str, str] = {}
+    if engine_spawned_roots:
+        policy_roles = dict(implicit_object_roots(player_template, game=game))
+        engine_spawned_roles = {
+            object_id.casefold(): policy_roles[object_id]
+            for object_id in engine_spawned_roots
+            if object_id in policy_roles
+        }
     wall_template_roots = _wall_template_roots(faction_graph)
     source_null_sets = _source_null_command_set_ids(faction_graph)
     horde_banner_targets = {
@@ -381,6 +499,7 @@ def build_faction_import_plan(
         and isinstance(edge.get("targetId"), str)
         and edge["targetId"]
     }
+    horde_banner_targets.update(layered_banner_targets)
     objects: list[dict[str, object]] = []
     for object_id in sorted(object_ids, key=lambda value: (value.casefold(), value)):
         if prepared is None:
@@ -403,7 +522,7 @@ def build_faction_import_plan(
             if object_id.casefold() in prepared.objects:
                 family = "object-inheritance"
             else:
-                graph_row = graph_rows[object_id.casefold()]
+                graph_row = graph_rows.get(object_id.casefold(), {})
                 source = graph_row.get("source")
                 source_path = (
                     str(source.get("virtualPath", ""))
@@ -449,6 +568,7 @@ def build_faction_import_plan(
                     documents,
                     prepared=prepared,
                     engine_spawned_roots=engine_spawned_roots,
+                    engine_spawned_roles=engine_spawned_roles,
                     wall_template_roots=wall_template_roots,
                     source_null_command_sets=source_null_sets,
                     game=game,
@@ -520,14 +640,35 @@ def build_faction_import_plan(
                 faction_graph=faction_graph,
                 prepared=prepared,
                 game=game,
+                engine_spawned_banner_carrier=(
+                    object_id.casefold() in horde_banner_targets
+                ),
             )
         except PlayableUnitCompilerError as exc:
+            reason = str(exc)
             if family == "banner-member" or object_id.casefold() in horde_banner_targets:
-                # Banner carriers — including ObjectReskin banners without a
-                # BANNER KindOf — are accounted for inside their parent horde
-                # recipes, never as standalone converter gaps.
+                # Banner carriers (BANNER KindOf or ObjectReskin banner targets)
+                # must convert as standalone units for level-gated horde spawn.
+                # Fail as converter-gap when the descriptor cannot be built —
+                # never silently exclude them from the convert set.
                 family = "banner-member"
-            if family in _PLAN_EXCLUDED_FAMILY_REASONS:
+            if (
+                family in {"unit-extension", "horde-extension", "hero-extension"}
+                and "UNIT_BUILD" in reason
+            ):
+                objects.append(
+                    {
+                        "id": object_id,
+                        "family": family,
+                        "kindOf": list(kinds),
+                        "status": "excluded",
+                        "reason": (
+                            "engine-managed reachable extension has no independent "
+                            "UNIT_BUILD production surface"
+                        ),
+                    }
+                )
+            elif family in _PLAN_EXCLUDED_FAMILY_REASONS:
                 objects.append(
                     {
                         "id": object_id,
@@ -544,14 +685,17 @@ def build_faction_import_plan(
                         "family": family,
                         "kindOf": list(kinds),
                         "status": "converter-gap",
-                        "reason": str(exc),
+                        "reason": reason,
                     }
                 )
         else:
+            out_family = "playable-unit"
+            if family == "banner-member" or object_id.casefold() in horde_banner_targets:
+                out_family = "banner-carrier"
             objects.append(
                 {
                     "id": object_id,
-                    "family": "playable-unit",
+                    "family": out_family,
                     "category": descriptor["category"],
                     "kindOf": list(kinds),
                     "status": "descriptor-ready",
@@ -771,9 +915,11 @@ def _convert_one_plan_object(
     documents: Mapping[str, bytes],
     prepared: PlayableUnitCompilerInputs,
     faction_graph: Mapping[str, object],
+    faction: str = "",
     effective_root: Path,
     catalog: InstallCatalog | None,
     spawned: tuple[str, ...],
+    spawned_roles: Mapping[str, str] | None = None,
     wall_templates: tuple[str, ...],
     source_null_sets: tuple[str, ...],
     object_cache: FactionObjectCache | None,
@@ -796,6 +942,24 @@ def _convert_one_plan_object(
     status = str(plan_row["status"])
     row: dict[str, object] = {"id": object_id, "family": family}
     artifacts: dict[str, Mapping[str, object]] = {}
+
+    plan_reason = str(plan_row.get("reason", ""))
+    if (
+        status == "converter-gap"
+        and family in {"unit-extension", "horde-extension", "hero-extension"}
+        and "UNIT_BUILD" in plan_reason
+    ):
+        row.update(
+            {
+                "status": "excluded",
+                "reason": (
+                    "engine-managed reachable extension has no independent "
+                    "UNIT_BUILD production surface"
+                ),
+                "convertElapsedMs": int((_time.perf_counter() - started) * 1000),
+            }
+        )
+        return row, artifacts
 
     plan_descriptor = plan_row.get("descriptorSha256")
     cache_key = object_cache_key(
@@ -833,6 +997,7 @@ def _convert_one_plan_object(
                 documents,
                 prepared=prepared,
                 engine_spawned_roots=spawned,
+                engine_spawned_roles=spawned_roles,
                 wall_template_roots=wall_templates,
                 source_null_command_sets=source_null_sets,
                 game=game,
@@ -861,11 +1026,16 @@ def _convert_one_plan_object(
                     }
                 )
             else:
+                closure_kwargs = (
+                    {
+                        "catalog": catalog,
+                        "catalog_identity_sha256": catalog_identity_sha256,
+                    }
+                    if catalog is not None
+                    else {}
+                )
                 closure = build_retail_visual_closure(
-                    effective_root,
-                    [object_id],
-                    catalog=catalog,
-                    catalog_identity_sha256=catalog_identity_sha256,
+                    effective_root, [object_id], **closure_kwargs
                 )
                 images, image_gaps = _resolved_structure_images(
                     faction_graph, descriptor
@@ -885,7 +1055,36 @@ def _convert_one_plan_object(
                 runtime = compose_structure_runtime_document(
                     descriptor, recipe, evidence
                 )
+                castle_contract = (
+                    compile_castle_behavior_contract(evidence, faction, effective_root)
+                    if evidence.get("schema")
+                    == "openbfme.playable-structure-lifecycle-evidence"
+                    else None
+                )
+                if castle_contract is not None:
+                    registration = runtime.get("registration")
+                    gameplay = (
+                        registration.get("gameplay")
+                        if isinstance(registration, dict)
+                        else None
+                    )
+                    if not isinstance(gameplay, dict):
+                        raise CastleBehaviorCompilerError(
+                            "structure runtime gameplay registration is malformed"
+                        )
+                    gameplay["castleBehavior"] = castle_contract
+                    runtime.pop("runtimeSha256", None)
+                    runtime["runtimeSha256"] = hashlib.sha256(
+                        json.dumps(
+                            runtime,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            ensure_ascii=False,
+                            allow_nan=False,
+                        ).encode("utf-8")
+                    ).hexdigest()
         except (
+            CastleBehaviorCompilerError,
             PlayableStructureCompilerError,
             PlayableStructurePackCompilerError,
             PackRecipeCatalogIdentityError,
@@ -949,9 +1148,38 @@ def _convert_one_plan_object(
                     "spell book descriptor identity disagrees with "
                     f"{object_id}"
                 )
-            images, audio = _resolved_spellbook_media(faction_graph, draft)
+            layered_media_sources: tuple[bytes, ...] = ()
+            layered_virtual_paths: tuple[str, ...] = ()
+            layered_audio_source: bytes | None = None
+            if (
+                faction_graph.get("spellbookDefinitionAuthority")
+                == "layered-effective-assets"
+                and catalog is not None
+            ):
+                mapped_root = effective_root / "data" / "ini" / "mappedimages"
+                layered_media_sources = tuple(
+                    path.read_bytes()
+                    for path in sorted(mapped_root.rglob("*.ini"))
+                    if path.is_file()
+                )
+                layered_virtual_paths = tuple(entry.name for entry in catalog.entries)
+                # Spellbook Initiate/FX audio roots live in soundeffects.ini.
+                # Do not concatenate unrelated voice/music namespaces here:
+                # the layered tree retains duplicate voice definitions which
+                # are irrelevant to this exact closure and correctly rejected
+                # by the shared parser.
+                layered_audio_source = (
+                    effective_root / "data/ini/soundeffects.ini"
+                ).read_bytes()
+            images, audio = _resolved_spellbook_media(
+                faction_graph,
+                draft,
+                fallback_mapped_image_sources=layered_media_sources,
+                fallback_virtual_paths=layered_virtual_paths,
+                fallback_audio_source=layered_audio_source,
+            )
             strings = (
-                _resolved_spellbook_strings(catalog, draft)
+                _resolved_spellbook_strings(catalog, draft, graph=faction_graph)
                 if catalog is not None
                 else None
             )
@@ -1017,6 +1245,7 @@ def _convert_one_plan_object(
                 }
             )
     elif status == "descriptor-ready":
+        engine_spawned_banner_carrier = str(row.get("family", "")) == "banner-carrier"
         try:
             draft = compile_playable_unit_descriptor(
                 object_id,
@@ -1024,10 +1253,33 @@ def _convert_one_plan_object(
                 faction_graph=faction_graph,
                 prepared=prepared,
                 game=game,
+                engine_spawned_banner_carrier=engine_spawned_banner_carrier,
             )
-            images, audio = _resolved_media(faction_graph, draft)
+            gameplay = draft.get("gameplay")
+            banner = (
+                gameplay.get("bannerCarrier")
+                if isinstance(gameplay, Mapping)
+                else None
+            )
+            if isinstance(banner, Mapping):
+                known_objects = set(prepared.objects)
+                missing_banners = [
+                    str(target)
+                    for target in banner.get("allowedObjectIds", [])
+                    if str(target).casefold() not in known_objects
+                ]
+                if missing_banners:
+                    raise PlayableUnitCompilerError(
+                        f"unit {object_id} banner carrier target is outside the "
+                        f"faction census: {missing_banners[0]}"
+                    )
+            images, audio = _resolved_media(
+                faction_graph, draft, effective_root=effective_root
+            )
             strings = (
-                _resolved_strings(catalog, draft) if catalog is not None else None
+                _resolved_strings(catalog, draft, graph=faction_graph)
+                if catalog is not None
+                else None
             )
             descriptor = compile_playable_unit_descriptor(
                 object_id,
@@ -1038,6 +1290,7 @@ def _convert_one_plan_object(
                 resolved_strings=strings,
                 prepared=prepared,
                 game=game,
+                engine_spawned_banner_carrier=engine_spawned_banner_carrier,
             )
             composition = descriptor["composition"]
             assert isinstance(composition, Mapping)
@@ -1045,11 +1298,18 @@ def _convert_one_plan_object(
             targets.update(
                 str(member["objectId"]) for member in composition["members"]
             )
+            closure_kwargs = (
+                {
+                    "catalog": catalog,
+                    "catalog_identity_sha256": catalog_identity_sha256,
+                }
+                if catalog is not None
+                else {}
+            )
             closure = build_retail_visual_closure(
                 effective_root,
                 sorted(targets, key=str.casefold),
-                catalog=catalog,
-                catalog_identity_sha256=catalog_identity_sha256,
+                **closure_kwargs,
             )
             recipe = compile_playable_unit_pack_recipe(
                 descriptor,
@@ -1071,7 +1331,23 @@ def _convert_one_plan_object(
             PackRecipeCatalogIdentityError,
             ValueError,
         ) as exc:
-            row.update({"status": "converter-gap", "reason": str(exc)})
+            reason = str(exc)
+            if (
+                str(row.get("family", ""))
+                in {"unit-extension", "horde-extension", "hero-extension"}
+                and "UNIT_BUILD" in reason
+            ):
+                row.update(
+                    {
+                        "status": "excluded",
+                        "reason": (
+                            "engine-managed reachable extension has no independent "
+                            "UNIT_BUILD production surface"
+                        ),
+                    }
+                )
+            else:
+                row.update({"status": "converter-gap", "reason": reason})
         else:
             artifacts = {
                 "descriptor": descriptor,
@@ -1157,9 +1433,12 @@ def build_faction_conversion(
     target = plan["target"]
     assert isinstance(target, Mapping)
     template = str(target["playerTemplate"])
-    spawned = tuple(
-        object_id for object_id, _reason in implicit_object_roots(template, game=game)
-    )
+    faction = str(target["faction"])
+    spawned_policy = implicit_object_roots(template, game=game)
+    spawned = tuple(object_id for object_id, _reason in spawned_policy)
+    spawned_roles = {
+        object_id.casefold(): reason for object_id, reason in spawned_policy
+    }
     wall_templates = _wall_template_roots(faction_graph)
     source_null_sets = _source_null_command_set_ids(faction_graph)
 
@@ -1170,6 +1449,7 @@ def build_faction_conversion(
     plan_aggregate = str(plan.get("aggregateSha256") or "")
     policy_fp = policy_roots_fingerprint(
         spawned=spawned,
+        spawned_roles=spawned_roles,
         wall_templates=wall_templates,
         source_null_sets=source_null_sets,
     )
@@ -1187,10 +1467,23 @@ def build_faction_conversion(
         shared = os.environ.get("OPENBFME_SHARED_CACHE", "").strip()
         if state_root is not None:
             object_cache = FactionObjectCache(default_cache_root(Path(state_root)))
-        elif shared or import_root:
+        elif shared:
             object_cache = FactionObjectCache(
-                default_cache_root(Path(import_root or "."))
+                default_cache_root(Path(shared))
             )
+        elif import_root:
+            # OPENBFME_IMPORT_ROOT is also exported by the repository-wide
+            # pytest gate.  Do not let that ambient setting make synthetic or
+            # mocked conversions consume durable retail cache entries.  The
+            # implicit cache is valid only for an effective-assets tree owned
+            # by that import root; CLI production calls pass state_root
+            # explicitly and therefore take the branch above.
+            resolved_import_root = Path(import_root).expanduser().resolve()
+            resolved_effective_root = effective_root.expanduser().resolve()
+            if resolved_effective_root.is_relative_to(resolved_import_root):
+                object_cache = FactionObjectCache(
+                    default_cache_root(resolved_import_root)
+                )
 
     try:
         workers = int(
@@ -1232,9 +1525,11 @@ def build_faction_conversion(
                 documents=documents,
                 prepared=prepared,
                 faction_graph=faction_graph,
+                faction=faction,
                 effective_root=effective_root,
                 catalog=catalog,
                 spawned=spawned,
+                spawned_roles=spawned_roles,
                 wall_templates=wall_templates,
                 source_null_sets=source_null_sets,
                 object_cache=object_cache,
@@ -1357,7 +1652,13 @@ def build_faction_conversion(
         "schema": COVERAGE_SCHEMA,
         "schemaVersion": COVERAGE_SCHEMA_VERSION,
         "target": dict(target),
-        "inputs": dict(plan["inputs"]),
+        # The compiler token is recorded on the *coverage* report and not on
+        # the plan: the plan describes what retail authors, which no compiler
+        # change can move, while coverage describes descriptors this compiler
+        # emitted. Publication binds against it so a clean-but-stale report
+        # cannot authorise a cook - six faction packs shipped 20 dead unit
+        # buttons behind exactly such a report (see publish_gate).
+        "inputs": {**dict(plan["inputs"]), "compilerIdentityToken": compiler_token},
         "planAggregateSha256": plan["aggregateSha256"],
         "objects": rows,
         "summary": {
@@ -1448,9 +1749,177 @@ def convert_faction_import(
         music_roots=music_roots(spec[1], game=game),
     )
     progress_emit("faction-convert", f"convert faction objects: {faction}")
+    # The owner-selected RotWK oracle is the layered effective tree itself.
+    # Passing the synthetic install catalog here used to replace those bytes
+    # with catalog winners, so an explicit layered assets root still emitted
+    # non-layered leaves (AngmarOrcWarriors_Summoned source line 1796). Keep
+    # the catalog for census identity/visual archive access, but do not let it
+    # override the canonical INI document view.
+    layered_authority = (
+        game_id == "rotwk"
+        and effective_root.name.casefold() == "layered-effective-assets"
+    )
+    documents = spellbook_source_documents(effective_root, catalog=catalog)
+    if layered_authority:
+        # The sealed layered tree contains the owner-selected gameplay oracle.
+        # Its command sets, command buttons, player templates and system
+        # objects are one coherent definition graph; mixing any catalog copy
+        # back in leaves ordinary retail references unresolved (for example
+        # MenSentryTowerCommandSet and SpellBookArrowVolleyDamagerEgg). Census
+        # identity still comes from the installed catalog, while compilation
+        # consumes the sealed layered document view in full.
+        layered_documents = spellbook_source_documents(
+            effective_root, catalog=None
+        )
+        documents = layered_documents
+        graph["layeredDocumentAuthority"] = "layered-effective-assets"
+
+        # Census discovers reachability through the installed catalog, but a
+        # fully layered command surface may reference additional MappedImage
+        # definitions. Bind those definitions from the same layered oracle to
+        # the installed texture archive instead of misclassifying the images
+        # as absent (the HeroUI atlases are present in retail).
+        from .faction_census import _effective_entries
+        from .mapped_image import (
+            MappedImageRecord,
+            _parse_mapped_images,
+            resolve_mapped_image_texture_paths_partial,
+        )
+
+        layered_mapped_images: dict[str, list[MappedImageRecord]] = {}
+        for path, source in sorted(documents.items(), key=lambda item: item[0].casefold()):
+            normalized = path.replace("\\", "/").casefold()
+            if not normalized.startswith("data/ini/mappedimages/"):
+                continue
+            for record in _parse_mapped_images(source, reject_duplicate_ids=False):
+                key = record.id.casefold()
+                layered_mapped_images.setdefault(key, []).append(record)
+        if layered_mapped_images:
+            resolved_leaves = graph.get("resolvedLeaves")
+            existing_rows = (
+                resolved_leaves.get("mappedImages", [])
+                if isinstance(resolved_leaves, dict)
+                else []
+            )
+            existing_resolved_keys = {
+                str(row.get("id", "")).casefold()
+                for row in existing_rows
+                if isinstance(row, dict)
+                and isinstance(row.get("compiledTextureVirtualPath"), str)
+            }
+            records: tuple[MappedImageRecord, ...] = tuple(
+                candidates[0]
+                for key, candidates in sorted(layered_mapped_images.items())
+                if key not in existing_resolved_keys
+                and len(
+                    {
+                        repr(candidate.neutral())
+                        for candidate in candidates
+                    }
+                )
+                == 1
+            )
+            rebound_keys = {record.id.casefold() for record in records}
+            texture_paths, _missing_textures = (
+                resolve_mapped_image_texture_paths_partial(
+                    records,
+                    [entry.name for entry in _effective_entries(catalog).values()],
+                )
+            )
+            paths_by_texture = {
+                key.casefold(): value for key, value in texture_paths.items()
+            }
+            rows: list[dict[str, object]] = [
+                dict(row)
+                for row in existing_rows
+                if isinstance(row, dict)
+                and str(row.get("id", "")).casefold() not in rebound_keys
+            ]
+            for record in sorted(records, key=lambda item: item.id.casefold()):
+                row = record.neutral()
+                texture_path = paths_by_texture.get(record.texture.casefold())
+                if texture_path is not None:
+                    row["compiledTextureVirtualPath"] = texture_path
+                else:
+                    row["compiledTextureResolution"] = "missing"
+                rows.append(row)
+            if isinstance(resolved_leaves, dict):
+                resolved_leaves["mappedImages"] = sorted(
+                    rows, key=lambda row: str(row.get("id", "")).casefold()
+                )
+                graph["mappedImageDefinitionAuthority"] = (
+                    "layered-effective-assets"
+                )
+
+        # The layered command surface also contains expansion/community rows
+        # whose label ids are absent from retail lotr.str. Record the exact ids
+        # as source-null presentation leaves so unit conversion can preserve
+        # the authored command without inventing replacement text.
+        from .sage_cst import parse_sage_document
+        from .sage_string import MAX_STRING_BYTES, parse_string_catalog
+
+        string_entry = catalog.resolve_exact("data/lotr.str")
+        if string_entry is not None:
+            string_source = catalog.open_archive_for(string_entry).read_entry(
+                catalog.as_entry(string_entry), max_bytes=MAX_STRING_BYTES
+            )
+            string_catalog = parse_string_catalog(
+                string_source, duplicate_policy="first-wins", strict=False
+            )
+            missing_layered_text_ids: set[str] = set()
+            for path, source in documents.items():
+                if path.replace("\\", "/").casefold() != "data/ini/commandbutton.ini":
+                    continue
+                for block in parse_sage_document(source, path).objects:
+                    if block.kind.casefold() != "commandbutton":
+                        continue
+                    for assignment in block.assignments:
+                        if assignment.key.casefold() not in {
+                            "textlabel",
+                            "descriptlabel",
+                        }:
+                            continue
+                        identifier = assignment.value.split(None, 1)[0].strip()
+                        if identifier and string_catalog.record(identifier) is None:
+                            missing_layered_text_ids.add(identifier)
+            if missing_layered_text_ids:
+                graph["layeredSourceNullTextIds"] = sorted(
+                    missing_layered_text_ids, key=str.casefold
+                )
+
+        # The census still supplies retail reachability/identity from the
+        # installed faction, but definition digests for those reachable rows
+        # must bind to the same layered gameplay documents the compiler reads.
+        from .spellbook_compiler import _gameplay_digest, _unique_blocks
+
+        definitions = graph.get("definitions", {})
+        if isinstance(definitions, dict):
+            for family, kind, path in (
+                ("sciences", "Science", "data/ini/science.ini"),
+                ("specialPowers", "SpecialPower", "data/ini/specialpower.ini"),
+                ("upgrades", "Upgrade", "data/ini/upgrade.ini"),
+            ):
+                source = documents.get(path)
+                if source is None:
+                    continue
+                blocks = _unique_blocks(source, kind, path)
+                # Layered prerequisite chains can reach shared definitions
+                # which the non-layered faction census did not enumerate.
+                # Bind the definition ledger to the complete layered source;
+                # command/store reachability remains the installed surface.
+                definitions[family] = [
+                    {
+                        "id": block.name,
+                        "definitionSha256": _gameplay_digest(block),
+                    }
+                    for block in sorted(
+                        blocks.values(), key=lambda item: item.name.casefold()
+                    )
+                ]
+            graph["spellbookDefinitionAuthority"] = "layered-effective-assets"
     return build_faction_conversion(
         graph,
-        spellbook_source_documents(effective_root, catalog=catalog),
+        documents,
         effective_root,
         catalog_identity_sha256=catalog.identity_sha256(),
         artifact_writer=artifact_writer,

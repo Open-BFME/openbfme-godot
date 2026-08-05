@@ -10,6 +10,7 @@ import pytest
 
 from openbfme_importer.faction_import import build_faction_conversion
 from openbfme_importer.faction_object_cache import (
+    _COMPILER_SALT_MODULES,
     CACHE_SCHEMA,
     FactionObjectCache,
     documents_fingerprint,
@@ -29,6 +30,10 @@ def test_documents_fingerprint_is_order_independent() -> None:
     b = {"a.ini": b"one", "b.ini": b"two"}
     assert documents_fingerprint(a) == documents_fingerprint(b)
     assert documents_fingerprint(a) != documents_fingerprint({"a.ini": b"changed"})
+
+
+def test_compiler_salt_covers_shared_armor_upgrade_compiler() -> None:
+    assert "armor_compiler.py" in _COMPILER_SALT_MODULES
 
 
 def test_object_cache_key_changes_with_inputs() -> None:
@@ -100,6 +105,11 @@ def test_policy_roots_fingerprint_is_order_independent() -> None:
     )
     assert a == b
     assert a != policy_roots_fingerprint(spawned=("A",), wall_templates=("W",))
+    assert a != policy_roots_fingerprint(
+        spawned=("A", "B"),
+        spawned_roles={"A": "fortress-composite-citadel"},
+        wall_templates=("W",),
+    )
 
 
 def test_faction_object_cache_roundtrip(tmp_path: Path) -> None:

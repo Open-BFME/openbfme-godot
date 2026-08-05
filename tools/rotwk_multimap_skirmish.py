@@ -41,7 +41,14 @@ from openbfme_importer.catalog import (  # noqa: E402
 from openbfme_importer.map_census import (  # noqa: E402
     MAPCACHE_VIRTUAL_PATH,
     MAX_MAPCACHE_BYTES,
+    load_map_display_names,
     parse_mapcache_bytes,
+    resolve_map_display_name,
+)
+from openbfme_importer.map_profile import (  # noqa: E402
+    SKIRMISH_CATEGORY,
+    WOTR_BATTLE_CATEGORY,
+    classify_map_directory,
 )
 from openbfme_importer.paths import (  # noqa: E402
     ensure_external_to_repo,
@@ -64,10 +71,11 @@ EXPECTED_OFFICIAL_MP_MAPS = {
 
 
 def _default_effective_assets(state_root: Path, game: str) -> Path | None:
+    # The layered install is the archive source; conversion must consume the
+    # one manifest-sealed canonical extraction.  Never revive an old overlay
+    # directory whose catalog identity may belong to another patch edition.
     for rel in (
-        ("editions", game, "cache", "layered-effective-assets"),
         ("editions", game, "cache", "effective-assets"),
-        ("cache", "layered-effective-assets"),
         ("cache", "effective-assets"),
     ):
         path = state_root.joinpath(*rel)
@@ -117,14 +125,61 @@ def _map_slug(virtual_path: str) -> str:
     return "-".join(words) if words else Path(virtual_path).stem.casefold()
 
 
-def _display_name(virtual_path: str) -> str:
+def _derived_display_name(virtual_path: str) -> str:
+    """Last-resort readable name when the install authors none.
+
+    Drops the retail ``map <kind>`` directory bookkeeping, because those tokens
+    ("mp", "wor", "wor ang") are not part of any authored name and reading
+    "Wor Ang Barrow Downs" in a map list is a defect, not disambiguation.
+    """
     parts = virtual_path.replace("\\", "/").split("/")
     folder = parts[-2] if len(parts) >= 2 else Path(virtual_path).stem
     words = [w for w in folder.split() if w]
     if words and words[0].casefold() == "map":
         words = words[1:]
-    # Keep kind token in the display name for disambiguation.
+    while words and words[0].casefold() in _DIRECTORY_KIND_TOKENS:
+        words = words[1:]
     return " ".join(w.capitalize() for w in words) if words else folder
+
+
+#: Retail ``maps/map <kind> <name>`` directory tokens. ``mp`` is the skirmish
+#: lobby corpus; ``wor``/``wor ang`` are War of the Ring living-world battle
+#: maps, which share the multiplayer registry flags but are NOT skirmish
+#: offerings and must never be mixed into a skirmish map list.
+_DIRECTORY_KIND_TOKENS = {"mp", "wor", "ang", "good", "evil"}
+
+
+def _registry_category(virtual_path: str) -> str:
+    """Classify one official-multiplayer registry row by its retail directory.
+
+    ``isMultiplayer = yes`` covers BOTH the skirmish corpus and the WOTR battle
+    maps, so the flag alone cannot define a skirmish list.  The shipped
+    directory kind is the authored fact and the only one that separates them.
+    """
+    parts = virtual_path.replace("\\", "/").split("/")
+    folder = parts[-2] if len(parts) >= 2 else Path(virtual_path).stem
+    words = [w for w in folder.casefold().split() if w]
+    if words and words[0] == "map":
+        words = words[1:]
+    if words and words[0] == "mp":
+        return SKIRMISH_CATEGORY
+    if words and words[0] == "wor":
+        return WOTR_BATTLE_CATEGORY
+    return classify_map_directory(folder)
+
+
+def _map_art_entries(
+    catalog: InstallCatalog, virtual_path: str
+) -> tuple[str | None, str | None]:
+    """Resolve the optional ``_art.tga`` / ``_pic.tga`` companions of one map."""
+    normalized = virtual_path.replace("\\", "/")
+    stem = normalized[: -len(".map")] if normalized.casefold().endswith(".map") else normalized
+    found: list[str | None] = []
+    for suffix in ("_art.tga", "_pic.tga"):
+        companion = f"{stem}{suffix}"
+        entry = catalog.resolve_exact(companion)
+        found.append(entry.name if entry is not None else None)
+    return found[0], found[1]
 
 
 def build_registry_skirmish_catalog(
@@ -146,11 +201,21 @@ def build_registry_skirmish_catalog(
     maps: list[dict[str, Any]] = []
     rejections: list[dict[str, Any]] = []
     resources: list[dict[str, Any]] = []
+    # Authored names come from retail's own string table; the derived fallback
+    # is recorded per map so a pack can never quietly ship a made-up name.
+    display_names = load_map_display_names(catalog)
+    derived_name_slugs: list[str] = []
 
     for record in selected:
         virtual = str(record["virtualPath"])
         slug = _map_slug(virtual)
-        display = _display_name(virtual)
+        category = _registry_category(virtual)
+        display = resolve_map_display_name(
+            display_names, str(record.get("displayNameKey") or "")
+        )
+        if not display:
+            display = _derived_display_name(virtual)
+            derived_name_slugs.append(slug)
         if catalog.resolve_exact(virtual) is None:
             rejections.append(
                 {
@@ -190,23 +255,57 @@ def build_registry_skirmish_catalog(
                 "options": {
                     "id": map_id,
                     "displayName": display,
+                    "category": category,
                     "profile": "multiplayer",
                 },
             }
         )
-        maps.append(
-            {
-                "id": map_id,
-                "displayName": display,
-                "category": "skirmish",
-                "map": f"{output_root}/map.json",
-                "playerCount": player_count,
-                "registryPlayerCount": int(record.get("numPlayers") or 0) or None,
-                "routingGraphStatus": "source-waypoint-edges-present-runtime-pending",
-                "navigationMeshStatus": "not-generated-or-validated-by-map-profile",
-                "terrainMaterialsStatus": "pending-bfme2-base-or-layered-assets",
-            }
-        )
+        row: dict[str, Any] = {
+            "id": map_id,
+            "displayName": display,
+            "category": category,
+            "map": f"{output_root}/map.json",
+            "playerCount": player_count,
+            "registryPlayerCount": int(record.get("numPlayers") or 0) or None,
+            "routingGraphStatus": "source-waypoint-edges-present-runtime-pending",
+            "navigationMeshStatus": "not-generated-or-validated-by-map-profile",
+            "terrainMaterialsStatus": "pending-bfme2-base-or-layered-assets",
+        }
+        # Retail ships ``<map>_pic.tga`` (lobby/minimap preview) and
+        # ``<map>_art.tga`` (loading plate) beside the binary. This lane used to
+        # cook neither, so every published row carried an empty preview/art and
+        # the slice refused the match on a missing-capability check. Both stay
+        # OPTIONAL: an absent companion is recorded, never substituted.
+        art_entry, preview_entry = _map_art_entries(catalog, virtual)
+        if art_entry is not None:
+            art_output = f"assets/ui/maps/{slug}-art.png"
+            row["art"] = art_output
+            resources.append(
+                {
+                    "id": f"map-{slug}-art",
+                    "kind": "ui",
+                    "converter": "texture",
+                    "patterns": [art_entry],
+                    "output": art_output,
+                    "limit": 1,
+                    "expected_count": 1,
+                }
+            )
+        if preview_entry is not None:
+            preview_output = f"assets/ui/maps/{slug}-preview.png"
+            row["preview"] = preview_output
+            resources.append(
+                {
+                    "id": f"map-{slug}-preview",
+                    "kind": "ui",
+                    "converter": "texture",
+                    "patterns": [preview_entry],
+                    "output": preview_output,
+                    "limit": 1,
+                    "expected_count": 1,
+                }
+            )
+        maps.append(row)
 
     if not maps:
         raise SystemExit("registry skirmish catalog resolved zero convertible maps")
@@ -264,7 +363,19 @@ def build_registry_skirmish_catalog(
                 "redistributable": False,
             },
             "files": {
-                "entryMap": str(maps[0]["map"]),
+                # The entry map is the pack's default match, so it must be a
+                # skirmish map even when the catalog also carries WOTR battle
+                # maps (both are official-multiplayer registry rows).
+                "entryMap": str(
+                    next(
+                        (
+                            row["map"]
+                            for row in maps
+                            if row["category"] == SKIRMISH_CATEGORY
+                        ),
+                        maps[0]["map"],
+                    )
+                ),
                 "mapCatalog": "data/maps.json",
             },
         },
@@ -283,6 +394,21 @@ def build_registry_skirmish_catalog(
             "mapCount": len(maps),
             "selectedOfficialMapCount": len(selected),
             "rejectedMaps": rejections,
+            "categoryCounts": {
+                name: sum(1 for row in maps if row["category"] == name)
+                for name in sorted({str(row["category"]) for row in maps})
+            },
+            "displayNameSource": {
+                "authoredTable": "data/lotr.str",
+                "authoredKeyField": "mapcache displayName",
+                "authoredCount": len(maps) - len(derived_name_slugs),
+                "derivedFromDirectoryCount": len(derived_name_slugs),
+                "derivedFromDirectorySlugs": sorted(derived_name_slugs),
+            },
+            "mapArtCounts": {
+                "withPreview": sum(1 for row in maps if row.get("preview")),
+                "withArt": sum(1 for row in maps if row.get("art")),
+            },
             "terrainNote": (
                 "RotWK install terrain.big is thin; full terrain material cook "
                 "requires BFME2 base / layered effective-assets closure."
@@ -329,6 +455,157 @@ def _parse_cli_json(text: str) -> dict[str, Any]:
     if last is None:
         raise ValueError("no JSON object found in CLI output")
     return last
+
+
+def repair_pack_catalog(
+    catalog: InstallCatalog, pack_dir: Path, *, apply: bool
+) -> dict[str, Any]:
+    """Re-derive ``category`` and ``displayName`` for an already-cooked pack.
+
+    A pack cooked before this lane classified maps carries every official
+    multiplayer row as ``category: skirmish`` - including the WOTR battle maps -
+    and a display name title-cased from the retail directory ("Wor Ang Barrow
+    Downs").  Both are pure metadata, so they can be corrected in place without
+    recooking a single map.
+
+    Maps are matched by the SHA-256 of their retail source bytes, which each
+    cooked ``map.json`` already records.  That is an exact binding; slugs are
+    not, because this lane's slug rule has changed over time.  A cooked map the
+    registry cannot account for is REPORTED and left untouched, never guessed.
+
+    Map art is re-bound only when the converted PNG is ALREADY in the pack: a
+    pack can carry cooked ``assets/ui/maps/<slug>-art.png`` that its catalog
+    never referenced, and pointing a row at a file that demonstrably exists is
+    bookkeeping, not a cook.  A row with no such file on disk keeps its empty
+    art and is reported; converting ``_art.tga`` / ``_pic.tga`` needs the normal
+    build path.
+    """
+
+    catalog_path = pack_dir / "data" / "maps.json"
+    if not catalog_path.is_file():
+        raise SystemExit(f"pack has no map catalog to repair: {catalog_path}")
+    document = json.loads(catalog_path.read_text(encoding="utf-8"))
+
+    registry = parse_mapcache_bytes(
+        _read_virtual(catalog, MAPCACHE_VIRTUAL_PATH, max_bytes=MAX_MAPCACHE_BYTES)
+    )
+    display_names = load_map_display_names(catalog)
+    by_source_sha: dict[str, dict[str, str]] = {}
+    for record in registry:
+        virtual = str(record["virtualPath"])
+        if catalog.resolve_exact(virtual) is None:
+            continue
+        try:
+            payload = _read_virtual(catalog, virtual, max_bytes=MAX_SOURCE_BYTES)
+        except (OSError, ValueError):
+            continue
+        name = resolve_map_display_name(
+            display_names, str(record.get("displayNameKey") or "")
+        )
+        by_source_sha[hashlib.sha256(payload).hexdigest()] = {
+            "displayName": name or _derived_display_name(virtual),
+            "category": _registry_category(virtual),
+            "displayNameSource": "authored" if name else "derived-from-directory",
+        }
+
+    def _slug_of(row: Any) -> str:
+        relative = str(row.get("map") or "").replace("\\", "/")
+        return relative.split("/")[1] if "/" in relative else ""
+
+    def _stripped(slug: str) -> str:
+        head, _, tail = slug.partition("-")
+        return tail if tail and head in _DIRECTORY_KIND_TOKENS else ""
+
+    # ``map mp harlindon`` and ``map wor harlindon`` are DIFFERENT maps that both
+    # strip to "harlindon". Binding either to a bare ``harlindon-art.png`` would
+    # give one of them the other's art, so the kind-stripped fallback is only
+    # allowed when exactly one row claims that name.
+    stripped_claims: dict[str, int] = {}
+    for existing in document.get("maps") or []:
+        name = _stripped(_slug_of(existing))
+        if name:
+            stripped_claims[name] = stripped_claims.get(name, 0) + 1
+
+    changes: list[dict[str, Any]] = []
+    unmatched: list[str] = []
+    without_art: list[str] = []
+    ambiguous_art: list[str] = []
+    for row in document.get("maps") or []:
+        map_relative = str(row.get("map") or "")
+        map_path = pack_dir / map_relative
+        if not map_path.is_file():
+            unmatched.append(f"{row.get('id')}:cooked-map-document-missing")
+            continue
+        cooked = json.loads(map_path.read_text(encoding="utf-8"))
+        source_sha = str((cooked.get("source") or {}).get("sha256") or "")
+        truth = by_source_sha.get(source_sha)
+        if truth is None:
+            unmatched.append(f"{row.get('id')}:no-registry-row-for-source-sha")
+            continue
+        after = {
+            "displayName": truth["displayName"],
+            "category": truth["category"],
+        }
+        # Re-bind art the pack already carries. The cooked slug is normally the
+        # map directory, but a pack whose map ids were re-slugged after the art
+        # cook stores it under the kind-stripped name; both are checked and a
+        # path is only written when the file is really there.
+        slug = _slug_of(row)
+        candidates = [slug]
+        stripped = _stripped(slug)
+        if stripped:
+            if stripped_claims.get(stripped, 0) == 1:
+                candidates.append(stripped)
+            elif (pack_dir / f"assets/ui/maps/{stripped}-art.png").is_file():
+                ambiguous_art.append(f"{row.get('id')}:{stripped}")
+        found_art = False
+        for kind, field in (("art", "art"), ("preview", "preview")):
+            if str(row.get(field) or ""):
+                continue
+            for candidate in candidates:
+                relative = f"assets/ui/maps/{candidate}-{kind}.png"
+                if (pack_dir / relative).is_file():
+                    after[field] = relative
+                    found_art = True
+                    break
+        if not found_art and not str(row.get("art") or ""):
+            without_art.append(str(row.get("id") or ""))
+        before = {key: row.get(key) for key in after}
+        if before == after:
+            continue
+        changes.append({"id": row.get("id"), "before": before, "after": after})
+        if not apply:
+            continue
+        row.update(after)
+        cooked.update(after)
+        write_json_atomic(map_path, cooked)
+
+    if apply and changes:
+        write_json_atomic(catalog_path, document)
+
+    categories: dict[str, int] = {}
+    for row in document.get("maps") or []:
+        key = str(row.get("category") or "unknown")
+        categories[key] = categories.get(key, 0) + 1
+    return {
+        "schema": "openbfme.rotwk-multimap-catalog-repair",
+        "schemaVersion": 0,
+        "pack": str(pack_dir),
+        "applied": bool(apply),
+        "mapCount": len(document.get("maps") or []),
+        "changedCount": len(changes),
+        "unmatched": unmatched,
+        "categoryCounts": categories,
+        "mapsStillWithoutArt": sorted(without_art),
+        # Cooked art whose slug two maps could both claim; left unbound on
+        # purpose rather than handed to whichever row was seen first.
+        "ambiguousArtLeftUnbound": sorted(ambiguous_art),
+        "artNote": (
+            "art already cooked into the pack is re-bound; a row still without "
+            "art needs a texture cook via the normal build path"
+        ),
+        "changes": changes,
+    }
 
 
 def profile_binding_inventory(profile: dict[str, Any]) -> dict[str, Any]:
@@ -405,7 +682,10 @@ def verify_pack_binding_inventory(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--install", required=True, type=Path)
+    # Required for every generating path. --repair-catalog reads the already
+    # extracted layered tree and the pack on disk, so it needs no operator
+    # install and does not ask for one.
+    parser.add_argument("--install", type=Path, default=None)
     parser.add_argument("--game", choices=("rotwk", "bfme2"), default="rotwk")
     parser.add_argument("--state-root", type=Path, default=None)
     parser.add_argument("--effective-assets", type=Path, default=None)
@@ -425,6 +705,22 @@ def main(argv: list[str] | None = None) -> int:
         "--select",
         action="store_true",
         help="also activate the published pack; omitted by default",
+    )
+    parser.add_argument(
+        "--repair-catalog",
+        type=Path,
+        default=None,
+        metavar="PACK_DIR",
+        help=(
+            "re-derive category/displayName for an already-cooked pack from the "
+            "retail registry and string table; reports without writing unless "
+            "--apply is given. Never touches map art (that needs a cook)."
+        ),
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="with --repair-catalog, write the corrected metadata",
     )
     parser.add_argument("--map-limit", type=int, default=None, metavar="N")
     parser.add_argument("--allow-incomplete", action="store_true")
@@ -449,10 +745,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    operator_install = args.install.expanduser().resolve()
-    if not (operator_install / "game.dat").is_file():
-        print(f"FAIL: no game.dat at {operator_install}", file=sys.stderr)
-        return 2
+    if args.install is None:
+        if args.repair_catalog is None:
+            print("FAIL: --install is required", file=sys.stderr)
+            return 2
+        operator_install = None
+    else:
+        operator_install = args.install.expanduser().resolve()
+        if not (operator_install / "game.dat").is_file():
+            print(f"FAIL: no game.dat at {operator_install}", file=sys.stderr)
+            return 2
 
     state_root = args.state_root
     if state_root is None:
@@ -466,7 +768,9 @@ def main(argv: list[str] | None = None) -> int:
     # multiplayer map textures that only live in the BFME2 base resolve.
     content_install = operator_install
     layered_used = False
-    if args.game == "rotwk" and args.full_profile:
+    # The catalog repair reads the same registry, string table and map bytes the
+    # cook did, so it needs the same layered tree.
+    if args.game == "rotwk" and (args.full_profile or args.repair_catalog is not None):
         sys.path.insert(0, str(ROOT / "tools"))
         from rotwk_layered_install import (  # type: ignore
             ensure_layered_rotwk_install,
@@ -480,11 +784,33 @@ def main(argv: list[str] | None = None) -> int:
                     state_root, rotwk_install=operator_install
                 )
             except Exception as exc:
-                print(f"FAIL layered install required for --full-profile: {exc}", file=sys.stderr)
+                print(f"FAIL layered install required: {exc}", file=sys.stderr)
                 return 2
         content_install = layered
         layered_used = True
         print(f"LAYERED_INSTALL {content_install}", flush=True)
+
+    if args.repair_catalog is not None:
+        pack_dir = args.repair_catalog.expanduser().resolve()
+        if not (pack_dir / "pack.json").is_file():
+            print(f"FAIL: no pack.json at {pack_dir}", file=sys.stderr)
+            return 2
+        report = repair_pack_catalog(
+            _load_catalog(state_root, args.game, content_install),
+            pack_dir,
+            apply=bool(args.apply),
+        )
+        if args.output is not None:
+            write_json_atomic(args.output.expanduser().resolve(), report)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        print(
+            "CATALOG_REPAIR "
+            f"applied={report['applied']} maps={report['mapCount']} "
+            f"changed={report['changedCount']} unmatched={len(report['unmatched'])} "
+            f"categories={report['categoryCounts']}",
+            flush=True,
+        )
+        return 0 if not report["unmatched"] else 5
 
     python = args.python
     if python is None:
@@ -528,8 +854,11 @@ def main(argv: list[str] | None = None) -> int:
             args.game,
             "--install",
             str(install),
+            # Official RotWK multiplayer corpus is 72 maps: skirmish (mp) +
+            # wotr-battle (wor). map-set "skirmish" alone only admits the ~22 mp
+            # targets and under-cooks terrain materials for the full goal pack.
             "--map-set",
-            "skirmish",
+            "playable",
         ]
         if assets is not None:
             gen_cmd.extend(["--effective-assets", str(assets)])

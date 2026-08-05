@@ -123,6 +123,22 @@ def test_pack_id_is_derived_per_faction(tmp_path: Path) -> None:
         assert target["pack"]["id"] == f"bfme2-{faction}-vslice"
 
 
+def test_banner_carrier_composes_through_playable_unit_lane(tmp_path: Path) -> None:
+    _faction_coverage(tmp_path, "men")
+    coverage_path = tmp_path / "men-coverage.json"
+    coverage = json.loads(coverage_path.read_text())
+    coverage["objects"][0]["family"] = "banner-carrier"
+    coverage["aggregateSha256"] = _digest(
+        {key: value for key, value in coverage.items() if key != "aggregateSha256"}
+    )
+    _write_json(coverage_path, coverage)
+
+    target, receipt = compose_faction_profile(_base(), tmp_path, ["men"])
+
+    assert [row["id"] for row in target["resources"]] == ["unit-elvenarcher"]
+    assert receipt["objects"][0]["family"] == "banner-carrier"
+
+
 def test_rejects_unknown_faction(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unknown faction"):
         compose_faction_profile(_base(), tmp_path, ["mirkwood"])
@@ -182,6 +198,36 @@ def test_rotwk_lean_pack_retains_universal_selection_decal_contract(tmp_path: Pa
     assert "data/host-only.json" not in target["runtime_data"]
     assert target["pack"]["files"]["menSelectionDecal"] == "effects/men-selection-decal.json"
     assert "hostOnly" not in target["pack"]["files"]
+
+
+def test_rotwk_men_host_retains_living_world_without_duplicating_supplements(
+    tmp_path: Path,
+) -> None:
+    base = _base_with_selection_contract()
+    living_world = {"schema": "openbfme.living-world", "schemaVersion": 1}
+    base["runtime_data"]["data/living-world.json"] = living_world
+    base["pack"]["files"]["livingWorld"] = "data/living-world.json"
+
+    _faction_coverage(tmp_path, "men")
+    men, _ = compose_faction_profile(base, tmp_path, ["men"], game="rotwk")
+    assert men["runtime_data"]["data/living-world.json"] == living_world
+    assert men["pack"]["files"]["livingWorld"] == "data/living-world.json"
+
+    _faction_coverage(tmp_path, "angmar")
+    angmar, _ = compose_faction_profile(base, tmp_path, ["angmar"], game="rotwk")
+    assert "data/living-world.json" not in angmar["runtime_data"]
+    assert "livingWorld" not in angmar["pack"]["files"]
+
+
+def test_rotwk_living_world_registration_is_atomic(tmp_path: Path) -> None:
+    base = _base_with_selection_contract()
+    base["runtime_data"]["data/living-world.json"] = {
+        "schema": "openbfme.living-world",
+        "schemaVersion": 1,
+    }
+    _faction_coverage(tmp_path, "men")
+    with pytest.raises(ValueError, match="document and pack registration must coexist"):
+        compose_faction_profile(base, tmp_path, ["men"], game="rotwk")
 
 
 def test_rotwk_lean_pack_fails_closed_without_selection_decal_contract(tmp_path: Path) -> None:

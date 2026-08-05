@@ -49,6 +49,13 @@ DEFAULT_CONTENT = Path(
         str(REPO_ROOT / ".private" / "content-packs"),
     )
 )
+
+# publish-faction-to-slice / build / import-unit refuse a knowingly short,
+# stale, or roster-regressing publication with this code (see
+# openbfme_importer.publish_gate). Surfaced as REFUSED, not FAILED.
+PUBLISH_GATE_EXIT = 7
+
+
 def _default_godot() -> Path | None:
     """Portable Godot guess; override with OPENBFME_GODOT. None if unresolved."""
 
@@ -1887,6 +1894,27 @@ class ImportGui(tk.Tk):
                         self._set_status_pill("ok", "SUCCESS")
                         self._finish_stages(True)
                         self._show_success_bar(True)
+                    elif code == PUBLISH_GATE_EXIT:
+                        # Exit 7 is a deliberate refusal, not a crash. Showing
+                        # it as a generic FAILED sends people hunting for a bug
+                        # that is not there; the pipeline worked and declined
+                        # to ship something short, stale, or regressive.
+                        self._append_log(
+                            f"⛔ refused · exit {code} · {_fmt_duration(elapsed)} — "
+                            "a publish gate blocked this, see Errors for the "
+                            "reason list",
+                            "error",
+                        )
+                        self.hero_stage.set("Refused")
+                        self.hero_detail.set(
+                            "A publish gate refused this cook: it is "
+                            "incomplete, not described by the coverage report "
+                            "on disk, or drops units the slice already has. "
+                            "Re-run the convert step, then publish again."
+                        )
+                        self._set_status_pill("failed", "REFUSED")
+                        self._finish_stages(False)
+                        self._show_success_bar(False)
                     else:
                         self._append_log(
                             f"✗ failed · exit {code} · {_fmt_duration(elapsed)}", "error"

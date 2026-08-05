@@ -1575,10 +1575,15 @@ def _census_playable_faction(
     archive_rows = []
     for relative in used_archives:
         info = archive_by_name[relative.casefold()]
+        archive_sha256 = getattr(catalog, "archive_sha256", None)
         archive_rows.append(
             {
                 "relativePath": info.relative_path,
-                "sha256": sha256_file(catalog.install_root / Path(info.relative_path)),
+                "sha256": (
+                    archive_sha256(info.relative_path)
+                    if callable(archive_sha256)
+                    else sha256_file(catalog.install_root / Path(info.relative_path))
+                ),
                 "directorySha256": info.directory_sha256,
             }
         )

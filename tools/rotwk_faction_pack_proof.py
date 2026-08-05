@@ -133,6 +133,12 @@ def _artifact_proof(coverage_root: Path, faction: str, coverage: dict[str, Any])
     }
 
 
+def _pack_incomplete_args(*, allow_incomplete_pack: bool) -> list[str]:
+    """Translate only the explicit pack-build waiver to the downstream CLI."""
+
+    return ["--allow-incomplete"] if allow_incomplete_pack else []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install", required=True, type=Path)
@@ -165,7 +171,45 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-incomplete",
         action="store_true",
-        help="forward to publish-faction-to-slice",
+        help=(
+            "allow honest residual converter-gap objects in coverage only; "
+            "still pack converted objects. Does NOT waive pack-build failures."
+        ),
+    )
+    parser.add_argument(
+        "--allow-incomplete-pack",
+        action="store_true",
+        help=(
+            "forward --allow-incomplete to publish-faction-to-slice (waives "
+            "missing required pack resources). Prefer fixing converters instead."
+        ),
+    )
+    # The two overrides below were previously unreachable through this batch
+    # tool: `--allow-incomplete` waives only THIS tool's own pre-check and
+    # forwards nothing, while `--allow-incomplete-pack` forwards the unrelated
+    # pack-BUILD waiver. So a run that needed either downstream gate had no
+    # option but `--allow-incomplete-pack`, which waives the wrong thing.
+    # They are deliberately separate, separately named, and off by default.
+    parser.add_argument(
+        "--allow-incomplete-coverage",
+        action="store_true",
+        help=(
+            "forward --allow-incomplete-coverage to publish-faction-to-slice: "
+            "publish a faction whose coverage records honest residual CONVERTER "
+            "gaps. Every waived gap must be named, with its retail cause, in the "
+            "change that uses this."
+        ),
+    )
+    parser.add_argument(
+        "--allow-fewer-playable-units",
+        action="store_true",
+        help=(
+            "forward --allow-fewer-playable-units to publish-faction-to-slice: "
+            "publish a cook whose playable-unit roster drops ids the incumbent "
+            "bundle carries. This is a REGRESSION guard, so the only legitimate "
+            "use is a baseline change that provably removes non-retail content; "
+            "list every dropped id and its citation in the change that uses it."
+        ),
     )
     parser.add_argument(
         "--publish",
@@ -297,9 +341,17 @@ def main(argv: list[str] | None = None) -> int:
                     f"sample={artifacts['missingSample'][:3]}"
                 )
             if not row["conversionComplete"] or row["converterGapCount"] > 0:
-                raise RuntimeError(
-                    "refuse pack proof on incomplete convert "
-                    f"(complete={row['conversionComplete']} gaps={row['converterGapCount']})"
+                if not args.allow_incomplete:
+                    raise RuntimeError(
+                        "refuse pack proof on incomplete convert "
+                        f"(complete={row['conversionComplete']} "
+                        f"gaps={row['converterGapCount']}; pass --allow-incomplete)"
+                    )
+                print(
+                    f"WARN {faction}: incomplete convert allowed "
+                    f"(complete={row['conversionComplete']} "
+                    f"gaps={row['converterGapCount']})",
+                    flush=True,
                 )
 
             if args.artifacts_only:
@@ -353,8 +405,18 @@ def main(argv: list[str] | None = None) -> int:
                     "--profile-output",
                     str(profile_output),
                 ]
-                if args.allow_incomplete:
-                    cmd.append("--allow-incomplete")
+                # Coverage residual gaps (allowed above) must not waive pack-build
+                # resource failures. Only --allow-incomplete-pack forwards the
+                # pipeline incomplete flag to publish-faction-to-slice.
+                cmd.extend(
+                    _pack_incomplete_args(
+                        allow_incomplete_pack=args.allow_incomplete_pack
+                    )
+                )
+                if args.allow_incomplete_coverage:
+                    cmd.append("--allow-incomplete-coverage")
+                if args.allow_fewer_playable_units:
+                    cmd.append("--allow-fewer-playable-units")
                 if not args.publish:
                     cmd.append("--no-publish")
                 if args.select:
@@ -378,6 +440,15 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 cli_result = _parse_cli_json(proc.stdout)
                 valid = bool(cli_result.get("valid"))
+                conversion_failures = cli_result.get("conversion_failures")
+                # None means the pack has no provenance/manifest yet; treat as
+                # unknown and fail closed. Zero is the only success path.
+                if conversion_failures is None or int(conversion_failures) > 0:
+                    raise RuntimeError(
+                        "pack cook reported conversion_failures="
+                        f"{conversion_failures!r} (coverage residual gaps must "
+                        "not publish packs with pack-build resource failures)"
+                    )
                 publication_ready = valid and bool(
                     cli_result.get("pack") or cli_result.get("bundle_sha256")
                 )
@@ -401,6 +472,7 @@ def main(argv: list[str] | None = None) -> int:
                     "composeReceipt": cli_result.get("receipt"),
                     "bundleSha256": cli_result.get("bundle_sha256"),
                     "auditValid": valid,
+                    "conversionFailures": conversion_failures,
                     "composedObjects": cli_result.get("composed_objects"),
                     "publishedPack": cli_result.get("published_pack"),
                     "selectionTouched": bool(args.select),
@@ -412,12 +484,15 @@ def main(argv: list[str] | None = None) -> int:
                 row["publicationReady"] = publication_ready
                 row["pack"] = cli_result.get("pack")
                 row["bundleSha256"] = cli_result.get("bundle_sha256")
+                row["publishedPack"] = cli_result.get("published_pack")
+                row["conversionFailures"] = conversion_failures
                 row["status"] = "publication-ready" if publication_ready else "pack-invalid"
                 if not publication_ready:
                     raise RuntimeError("pack audit invalid / missing pack receipt")
                 print(
                     f"PUBLICATION_READY {faction} pack={cli_result.get('pack')} "
-                    f"bundle={cli_result.get('bundle_sha256')}",
+                    f"bundle={cli_result.get('bundle_sha256')} "
+                    f"published={cli_result.get('published_pack')}",
                     flush=True,
                 )
         except Exception as exc:
