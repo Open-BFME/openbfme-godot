@@ -224,6 +224,7 @@ func reload() -> void:
 	bundle_maps.clear()
 	catalog_map_ids.clear()
 	retail_ui_images.clear()
+	interface_art_gaps.clear()
 	retail_strings.clear()
 	retail_audio_events.clear()
 	retail_audio_multisounds.clear()
@@ -285,6 +286,7 @@ func _load_pack(root: String) -> void:
 	_load_dir_into(ModLoader.resolve_pack_path(root, "research"), research, root)
 	_load_dir_into(ModLoader.resolve_pack_path(root, "maps"), maps, root)
 	_profile_db("  legacy_dirs", dirs_mark)
+	_load_interface_art_index(root, meta)
 	_load_bundle_v0(root, meta)
 	var gpath := ModLoader.resolve_pack_path(root, "globals.json")
 	if FileAccess.file_exists(gpath):
@@ -642,7 +644,7 @@ func _register_spellbook_visual_bindings(root: String, document: Dictionary) -> 
 			continue
 		if bundle_objects.has(object_id):
 			continue
-		bundle_objects[object_id] = {
+		var entry := {
 			"id": object_id,
 			"kind": "member",
 			"displayName": object_id,
@@ -652,9 +654,62 @@ func _register_spellbook_visual_bindings(root: String, document: Dictionary) -> 
 			"_spellbookEffectObject": true,
 			"_spellbookVisualStatus": status,
 		}
+		# The importer now stages the core-state clips a summon's own skeleton
+		# can play. Without a capability the presenter has no clip for any
+		# state and every summoned Ent, Balrog and Hobbit renders in its bind
+		# pose — the T-pose this table used to guarantee.
+		var capability := _spellbook_animation_capability(root, object_id, row)
+		if not capability.is_empty():
+			entry["animationCapabilityId"] = String(capability["id"])
+			animation_capabilities[String(capability["id"])] = capability
+			var capability_key := String(capability["id"])
+			if not animation_capability_pack_index.has(capability_key):
+				animation_capability_pack_index[capability_key] = []
+			(animation_capability_pack_index[capability_key] as Array).append(capability)
+		bundle_objects[object_id] = entry
 		if not bundle_object_pack_index.has(object_id):
 			bundle_object_pack_index[object_id] = []
 		(bundle_object_pack_index[object_id] as Array).append(bundle_objects[object_id])
+
+
+func _spellbook_animation_capability(
+	root: String, object_id: String, row: Dictionary
+) -> Dictionary:
+	## Project `visualBindings.objects[].animationStates` onto the same
+	## capability shape `_playable_unit_projection` emits, so the battalion
+	## presenter needs to learn nothing new about summons.
+	##
+	## The importer binds a clip only when the closure proves it is rigged to a
+	## skeleton the chosen model binds, so an empty list here means retail
+	## authored nothing this mesh can play — not that the lane failed. Such an
+	## object stays a static mesh rather than borrowing another rig's motion.
+	var raw_states: Variant = row.get("animationStates", [])
+	if typeof(raw_states) != TYPE_ARRAY or (raw_states as Array).is_empty():
+		return {}
+	var states: Dictionary = {}
+	for state_value in raw_states as Array:
+		if typeof(state_value) != TYPE_DICTIONARY:
+			continue
+		var state_row := state_value as Dictionary
+		var semantic := String(state_row.get("semanticState", ""))
+		var identifier := String(state_row.get("identifier", ""))
+		if semantic == "" or identifier == "" or states.has(semantic):
+			continue
+		states[semantic] = {
+			"clips": [identifier],
+			"mode": "loop" if semantic in ["idle", "move"] else "once",
+			"useWeaponTiming": false,
+		}
+	if states.is_empty():
+		return {}
+	return {
+		"id": "spellbook-visual:" + object_id.to_lower(),
+		"states": states,
+		"unresolvedAnimationTracks": 0,
+		"source": "openbfme.spellbook-runtime",
+		"_source": ModLoader.resolve_pack_path(root, String(row.get("model", ""))),
+		"_pack_root": root,
+	}
 
 
 func _load_playable_unit_runtimes(root: String, declared: Dictionary) -> bool:
@@ -2055,6 +2110,79 @@ static func _parse_json_document(path: String) -> Dictionary:
 		return {"_parse_error": json.get_error_message(), "_parse_path": path}
 	var raw: Variant = json.data
 	return raw as Dictionary if typeof(raw) == TYPE_DICTIONARY else {}
+
+
+## Bulk interface-art index emitted by the importer's interface-art lane
+## (`importer/openbfme_importer/interface_art_lane.py`). It maps a retail
+## MappedImage id to the pack-relative PNG the lane cropped out of the retail
+## atlas, so command-button and portrait ids resolve for EVERY retail image the
+## pack ships, not only for the ids a playable-unit/structure descriptor bound.
+##
+## Rows land in `retail_ui_images`, which is what `resolve_retail_ui_image_path`
+## and therefore the whole HUD icon path already reads. This runs before
+## `_load_bundle_v0`, so a pack's curated `uiManifest` still wins inside its own
+## pack, and a later-mounted pack still wins overall (packs override by id).
+const INTERFACE_ART_INDEX_RELATIVE := "data/interface-art/index.json"
+const INTERFACE_ART_INDEX_SCHEMA := "openbfme.interface-art-index"
+const MAX_INTERFACE_ART_IMAGES_PER_PACK := 8192
+
+var interface_art_gaps: Dictionary = {}
+
+
+func _load_interface_art_index(root: String, meta: Dictionary) -> void:
+	var relative := INTERFACE_ART_INDEX_RELATIVE
+	var files: Variant = meta.get("files", {})
+	if typeof(files) == TYPE_DICTIONARY:
+		var declared := String((files as Dictionary).get("interfaceArt", ""))
+		if declared != "":
+			relative = declared
+	if not ModLoader.is_safe_relative_path(relative):
+		return
+	var path := ModLoader.resolve_pack_path(root, relative)
+	if not FileAccess.file_exists(path):
+		return
+	var document := _read_declared_document(root, relative)
+	if String(document.get("schema", "")) != INTERFACE_ART_INDEX_SCHEMA:
+		push_warning("[ContentDB] interface-art index has an unexpected schema: %s" % path)
+		return
+	var images: Variant = document.get("images", {})
+	if typeof(images) != TYPE_DICTIONARY:
+		return
+	var loaded := 0
+	for key_value in (images as Dictionary).keys():
+		var id := String(key_value)
+		var relative_png := String((images as Dictionary).get(key_value, ""))
+		if id == "" or relative_png == "" or not ModLoader.is_safe_relative_path(relative_png):
+			continue
+		if loaded >= MAX_INTERFACE_ART_IMAGES_PER_PACK:
+			# Loud, never silent (rulebook P7): a truncated index is a bug.
+			push_warning("[ContentDB] interface-art index exceeds %d images, truncated: %s" % [MAX_INTERFACE_ART_IMAGES_PER_PACK, path])
+			break
+		retail_ui_images[id.to_lower()] = {
+			"id": id,
+			"path": relative_png,
+			"_pack_root": root,
+			"_source": path,
+			"_origin": "interface-art",
+		}
+		loaded += 1
+	# Retail-source gaps the lane provably could not ship, kept by name so a
+	# missing icon can be told apart from a converter failure at runtime.
+	var gaps: Variant = document.get("gaps", [])
+	if typeof(gaps) == TYPE_ARRAY:
+		for gap_value in gaps as Array:
+			if typeof(gap_value) != TYPE_DICTIONARY:
+				continue
+			var gap_id := String((gap_value as Dictionary).get("id", ""))
+			if gap_id != "":
+				interface_art_gaps[gap_id.to_lower()] = String((gap_value as Dictionary).get("reason", "unknown"))
+	if loaded > 0:
+		print("[ContentDB] interface-art: %d images from %s" % [loaded, path])
+
+
+func interface_art_gap_reason(id: String) -> String:
+	## Empty when the id is not a known retail-source gap.
+	return String(interface_art_gaps.get(id.to_lower(), ""))
 
 
 func _load_retail_ui_manifest(root: String, relative: String) -> void:
