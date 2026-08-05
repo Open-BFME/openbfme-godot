@@ -42,8 +42,16 @@ func _run() -> void:
 		return
 	var menu := packed.instantiate()
 	root.add_child(menu)
-	await process_frame
-	await process_frame
+	# The skirmish list is built off the boot path, a few budgeted frames after
+	# the menu presents itself (measured ~11 frames / ~65 ms). Two frames is not
+	# a wait for it, it is a race with it - and the checks below are about the
+	# list's CONTENTS, so they have to be asked after it exists.
+	var ready_frames := 0
+	while not bool(menu.get("_skirmish_options_ready")) and ready_frames < 1200:
+		ready_frames += 1
+		await process_frame
+	_check("skirmish_list_built_off_the_boot_path", bool(menu.get("_skirmish_options_ready")),
+		"frames=%d" % ready_frames)
 	_check("menu_ready_with_theme", menu.theme != null)
 	var content_db := root.get_node_or_null("ContentDB")
 	var game_state := root.get_node_or_null("GameState")
@@ -121,8 +129,10 @@ func _run() -> void:
 			players_match = false
 	_check("map_list_player_counts_from_pack", players_match, str(expected_players))
 	# Mirrors ContentDB.LOBBY_MAP_CATEGORIES: campaign, cinematic, tutorial,
-	# shell and system maps are cooked and catalogued but never lobby offerings.
-	var lobby_categories := ["skirmish", "wotr-battle"]
+	# shell and system maps are cooked and catalogued but never lobby offerings,
+	# and neither are the WOTR battle maps -- retail flags those isMultiplayer
+	# too, but they are strategic-layer battles, not skirmish offerings.
+	var lobby_categories := ["skirmish"]
 	var lobby_only := true
 	for value in lobby_catalog_rows:
 		var category := String((value as Dictionary).get("category", ""))

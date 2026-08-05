@@ -250,6 +250,30 @@ func _ready() -> void:
 	_ensure_children()
 	if not resized.is_connected(_relayout):
 		resized.connect(_relayout)
+	_apply_submenu_music()
+
+
+## Same binding, and the same citation, as `wotr_screen.gd`: retail's
+## `miscaudio.ini` MiscAudio line 43 declares `FullScreenSubMenuMusic =
+## Shell2Music` for "a full-screen submenu of the main menu (e.g. set up
+## skirmish)", which is precisely what this setup page is. The screen names the
+## state; the installed music pack decides the track.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED:
+		_apply_submenu_music()
+
+
+func _apply_submenu_music() -> void:
+	if not is_inside_tree():
+		return
+	var shell_audio: Node = get_node_or_null("/root/GameAudio")
+	if shell_audio == null or not shell_audio.has_method("set_music_state"):
+		return
+	if is_visible_in_tree():
+		shell_audio.call("set_music_state", "submenu")
+		return
+	if shell_audio.has_method("music_state") and String(shell_audio.call("music_state")) == "submenu":
+		shell_audio.call("set_music_state", "shell")
 
 
 ## Build the map preview, IDEMPOTENTLY, and never rely on `_ready` having run.
@@ -1973,9 +1997,9 @@ func _draw_table_cell(id: String, rect: Rect2, value: String) -> void:
 ##
 ## ROUND TWO SHOWED THE OS ACCOUNT NAME, and the reasoning ("a real fact about
 ## who is sitting there") was wrong in the only way that matters: the fact it
-## surfaced was the DEVELOPER'S first name, and every capture of this screen
-## therefore shipped `Jonathan` in seat one. The adversarial read filed it under
-## developer surfaces, disqualifying, twice.
+## surfaced was whoever happened to be logged in, so every capture of this
+## screen shipped a real person's name in seat one. The adversarial read filed
+## it under developer surfaces, disqualifying, twice.
 ##
 ## There is no profile system in Open BFME, so there is no name to show. This
 ## shows the NEUTRAL DEFAULT retail itself falls back to for an unnamed seat -

@@ -1272,6 +1272,46 @@ func _ready() -> void:
 		build()
 	report_map_availability()
 	set_process(true)
+	_apply_submenu_music()
+
+
+## WAR OF THE RING HAD NO SOUND AT ALL, and this is the music half of that.
+##
+## The strategic layer never instantiates the tactical slice (see
+## `wotr_handoff.gd` and `wotr_battle.gd`, which document that as deliberate), so
+## `RetailSliceAudio` - the object that owns every in-match sound - is never
+## constructed on this path and nothing here was ever asked to play anything.
+##
+## RETAIL DECLARES WHAT A SCREEN LIKE THIS HEARS, and it is not a choice made
+## here: `miscaudio.ini`'s MiscAudio block, line 43, reads
+## `FullScreenSubMenuMusic = Shell2Music  ; Music played while a full-screen
+## submenu of the main menu is up (e.g. set up skirmish)`. This screen is exactly
+## that - a full-screen page of the shell - so it asks for that state by NAME and
+## hands the shell state back when it closes. Which track answers, and whether it
+## loops, is read from the installed music pack.
+##
+## STILL SILENT AFTER THIS, and named rather than faked: the strategic layer has
+## no UI click / order-confirm SFX, because the declared audio-event router lives
+## inside RetailSliceAudio and there is no shell-side router yet.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED:
+		_apply_submenu_music()
+
+
+func _apply_submenu_music() -> void:
+	if not is_inside_tree():
+		return
+	var shell_audio: Node = get_node_or_null("/root/GameAudio")
+	if shell_audio == null or not shell_audio.has_method("set_music_state"):
+		return
+	if is_visible_in_tree():
+		shell_audio.call("set_music_state", "submenu")
+		return
+	# Only THIS screen's own submenu state is handed back. If something else
+	# already took the music - a match starting, another submenu opening - the
+	# close must not yank it back to the shell theme.
+	if shell_audio.has_method("music_state") and String(shell_audio.call("music_state")) == "submenu":
+		shell_audio.call("set_music_state", "shell")
 
 
 ## THE CLOCK. Advances `_pulse` and repaints THE PULSE LAYER AND NOTHING ELSE.

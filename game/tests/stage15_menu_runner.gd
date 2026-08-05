@@ -58,11 +58,46 @@ func _run() -> void:
 			break
 		previous_left = cap.get_global_rect().position.x
 	_check("retail_bar_present_in_retail_order", bar_ok)
+	# MY HEROES is ENABLED now. It used to be a disabled cap whose tooltip said
+	# "not implemented"; Create-a-Hero landed, so the assertion below is inverted
+	# on purpose. The button must open its screen, and when no pack carries the
+	# class table the screen must FAIL CLOSED WITH AN EXPLANATION rather than
+	# open empty or refuse to open at all.
+	var my_heroes_btn := menu.get_node("Center/MyHeroes") as Button
 	_check(
-		"my_heroes_is_disabled_and_says_why",
-		(menu.get_node("Center/MyHeroes") as Button).disabled
-			and (menu.get_node("Center/MyHeroes") as Button).tooltip_text.contains("not implemented")
+		"my_heroes_is_enabled_and_carries_a_tooltip",
+		not my_heroes_btn.disabled and my_heroes_btn.tooltip_text.strip_edges() != "",
+		"disabled=%s tooltip=%s" % [my_heroes_btn.disabled, my_heroes_btn.tooltip_text]
 	)
+	my_heroes_btn.pressed.emit()
+	await process_frame
+	_check(
+		"my_heroes_press_opens_its_page",
+		String(menu.get_current_page()) == "my_heroes"
+			and menu.my_heroes_screen != null
+			and menu.my_heroes_screen.visible
+	)
+	if menu.my_heroes_screen != null:
+		# Drive the no-pack case directly so the explainer is proven without
+		# depending on what happens to be mounted on this machine.
+		menu.my_heroes_screen.configure({})
+		await process_frame
+		var explainer := String(menu.my_heroes_screen.status_label.text)
+		_check(
+			"my_heroes_without_a_pack_names_the_missing_content_and_the_fix",
+			not menu.my_heroes_screen.system_available()
+				and explainer.contains("Create-a-Hero class table")
+				and explainer.contains("compile-cah-system")
+				and explainer.contains("cah.system"),
+			explainer
+		)
+		_check(
+			"my_heroes_refuses_creation_without_a_pack",
+			not menu.my_heroes_screen.create_hero("Probe").is_empty()
+		)
+		menu.my_heroes_screen.back_button.pressed.emit()
+		await process_frame
+	_check("my_heroes_back_returns_to_main", String(menu.get_current_page()) == "main")
 	_check(
 		"every_bar_cap_carries_a_hover_tooltip",
 		_all_have_tooltips(menu, bar_order)

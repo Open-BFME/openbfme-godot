@@ -155,8 +155,13 @@ static var art_reason := "load_art() has not run"
 ## hand-built and the screen records why.
 ##
 ## IT MUST BE THE **ROTWK** ROOT: `.private/retail-work/editions/rotwk/cache/
-## layered-effective-assets`. The edition-neutral `.private/retail-work/cache/
-## effective-assets` is BFME2's layer and every rectangle in `ART_PIECES` would
+## effective-assets`. (This pointer named `layered-effective-assets` until
+## 2026-08-04. The six sheets are byte-identical in both RotWK roots — the
+## layered tree overrides data/ini, not art — but every other oracle in the
+## repo now cites the pure tree, so naming the layered one here was a
+## trip-hazard rather than a difference.) The edition-neutral
+## `.private/retail-work/cache/effective-assets` is BFME2's layer and every
+## rectangle in `ART_PIECES` would
 ## be wrong on it - BFME2's `apt_MenuExport_*` sheets are the GREEN menu set at
 ## different sizes, its `apt_MainMenu_1` is a pre-order advertisement for the
 ## Collector's Edition, and it ships no `apt_MenuExport_3` at all. That last
@@ -203,7 +208,7 @@ static func load_art(roots: Array) -> Dictionary:
 		"retail's thorn-border shell sheets (apt_MenuExport_*, apt_MainMenu_1, "
 		+ "apt_MpGameSetup_1, sfe_menuelvish1) were not found, so the chrome is "
 		+ "the hand-built fallback. Point OPENBFME_SHELL_ART at the ROTWK "
-		+ "effective-assets root (editions/rotwk/cache/layered-effective-assets); "
+		+ "effective-assets root (editions/rotwk/cache/effective-assets); "
 		+ "the edition-neutral root is BFME2's green menu set and is rejected on "
 		+ "purpose. Looked at: %s") % (
 		"; ".join(tried) if not tried.is_empty() else "no root was offered")

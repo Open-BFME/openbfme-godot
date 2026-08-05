@@ -248,9 +248,16 @@ func _section_cycles(game_state: Node, content_db: Node, menu_scene: PackedScene
 		"stale=%d" % (game_state.get("retail_team_setup") as Array).size())
 	var menu2 = menu_scene.instantiate()
 	root.add_child(menu2)
-	await process_frame
-	await process_frame
-	_check("cycle2_menu_ready", menu2.theme != null)
+	# Wait for the skirmish list, not for two frames. The army dropdowns are
+	# populated off the boot path; selecting a faction in an empty dropdown
+	# silently keeps the default, which is how this cycle came to record a
+	# faction nobody had chosen.
+	var cycle2_ready_frames := 0
+	while not bool(menu2.get("_skirmish_options_ready")) and cycle2_ready_frames < 1200:
+		cycle2_ready_frames += 1
+		await process_frame
+	_check("cycle2_menu_ready", menu2.theme != null and bool(menu2.get("_skirmish_options_ready")),
+		"frames=%d" % cycle2_ready_frames)
 	var setup2 = menu2.get_node("Center/SoloFlyout")
 	_check("cycle2_fresh_menu_defaults_two_rows", int(setup2.player_row_count) == 2)
 	# Angmar when converted, else cycle 1's row-1 faction: either way the
