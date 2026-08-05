@@ -7,7 +7,10 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from importer.tests.test_playable_unit_compiler import _documents
+from importer.tests.test_playable_unit_compiler import (
+    _documents,
+    _weapon_audio_documents,
+)
 from openbfme_importer.playable_unit_compiler import compile_playable_unit_descriptor
 from openbfme_importer.playable_unit_pack_compiler import (
     PlayableUnitPackCompilerError,
@@ -83,8 +86,12 @@ def test_turn_clip_cannot_replace_missing_walk_clip() -> None:
         compile_playable_unit_pack_recipe(descriptor, closure)
 
 
-def _descriptor(target: str) -> dict[str, object]:
-    first = compile_playable_unit_descriptor(target, _documents())
+def _descriptor(
+    target: str, documents: dict[str, bytes] | None = None
+) -> dict[str, object]:
+    if documents is None:
+        documents = _documents()
+    first = compile_playable_unit_descriptor(target, documents)
     presentation = first["presentation"]
     image_ids = set(presentation["ui"]["portraitImageIds"])
     for command in presentation["ui"]["commands"]:
@@ -104,7 +111,7 @@ def _descriptor(target: str) -> dict[str, object]:
     }
     descriptor = compile_playable_unit_descriptor(
         target,
-        _documents(),
+        documents,
         resolved_images={
             identifier: {
                 "id": identifier,
@@ -2267,3 +2274,22 @@ def test_ability_button_string_must_be_bound_or_retail_null() -> None:
         PlayableUnitPackCompilerError, match="localized string bindings"
     ):
         validate_playable_unit_pack_recipe(recipe)
+
+
+def test_weapon_audio_routes_ship_sample_bindings() -> None:
+    ## The `weapon` owner (Weapon -> FireFX/ProjectileDetonationFX -> FXList
+    ## -> Sound) must ship: its AudioEvents become required audio bindings so
+    ## the runtime can play the authored swing/impact instead of the class
+    ## fallback.
+    descriptor = _descriptor("Swordsman", _weapon_audio_documents())
+    recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
+    validate_playable_unit_pack_recipe(recipe)
+    runtime = recipe["runtimeRegistration"]
+    weapon_routes = runtime["audioRoutes"]["weapon"]
+    assert {row["id"] for row in weapon_routes["FireFX"]} == {"ImpactSwordFx"}
+    assert {row["id"] for row in weapon_routes["ProjectileDetonationFX"]} == {
+        "ImpactArrowFx"
+    }
+    for event_id in ("ImpactSwordFx", "ImpactArrowFx"):
+        assert runtime["audioBindings"][event_id]
+        assert runtime["audioResolution"][event_id] == "samples"

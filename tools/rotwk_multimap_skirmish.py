@@ -97,9 +97,19 @@ def _load_catalog(state_root: Path, game: str, install: Path) -> InstallCatalog:
         if reason is not None:
             raise SystemExit(f"catalog-game-mismatch: {reason}")
         if Path(catalog.install_root).resolve() != install.resolve():
-            catalog = InstallCatalog.build(install, source_policy=source_policy)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            catalog.save(path)
+            # Never silently rebuild-and-overwrite a live cached catalog over an
+            # install-root mismatch: doing exactly that once replaced the layered
+            # RotWK catalog with a BFME2-rooted one, with no prompt and no
+            # backup. Refuse and name both roots; the operator decides.
+            raise SystemExit(
+                "catalog-install-mismatch: cached catalog "
+                f"{path} was built from install root "
+                f"{Path(catalog.install_root).resolve()}, but this run targets "
+                f"{install.resolve()}. Refusing to overwrite the cached "
+                "catalog. Use the state root that owns this catalog, pass a "
+                "dedicated --state-root for the other install, or delete the "
+                "cached file deliberately."
+            )
         return catalog
     catalog = InstallCatalog.build(install, source_policy=source_policy)
     path.parent.mkdir(parents=True, exist_ok=True)

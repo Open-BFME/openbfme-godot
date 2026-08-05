@@ -2,15 +2,96 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 from openbfme_importer import cli
+from openbfme_importer.catalog import InstallCatalog
+
+from importer.tests.test_big import make_big
+from importer.tests.test_map_census import _encoded_path
+from importer.tests.test_sage_map import _synthetic_map
 
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "tools" / "rotwk_multimap_skirmish.py"
+
+
+def _encoded_display_key(key: str) -> str:
+    """Escape one string-table key exactly as retail's mapcache does.
+
+    Retail writes the ``displayName`` field as UTF-16LE bytes with every
+    non-literal byte escaped ``_XX``; escaping every byte is a valid instance
+    of that encoding and round-trips through the census decoder.
+    """
+
+    return "".join(f"_{byte:02X}" for byte in key.encode("utf-16-le"))
+
+
+def _mapcache_record(
+    path: str, *, players: int = 1, display_key: str = ""
+) -> str:
+    lines = [f"MapCache {_encoded_path(path)}"]
+    if display_key:
+        lines.append(f"  displayName = {_encoded_display_key(display_key)}")
+    lines.extend(
+        [
+            "  isMultiplayer = Yes",
+            "  isOfficial = Yes",
+            "  isScenarioMP = No",
+            f"  numPlayers = {players}",
+            "End",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _string_table(names: dict[str, str]) -> bytes:
+    blocks = [f'{key}\n "{value}"\nEND' for key, value in names.items()]
+    return ("\n\n".join(blocks) + "\n").encode("cp1252")
+
+
+def _native_emission_catalog(root: Path) -> InstallCatalog:
+    """An install whose registry authors names the directories get wrong."""
+
+    source, _ = _synthetic_map()
+    directories = {
+        # Directory derivation would say "Fall Back 4p"; retail authors
+        # "Stonewain Valley". This is the exact defect class the emission lane
+        # must never reintroduce.
+        "map mp fall back 4p": "Map:MAPMPFallBack4p",
+        # Two DIFFERENT maps that both strip to "harlindon".
+        "map mp harlindon": "Map:MAPMPHarlindon",
+        "map wor harlindon": "Map:MAPWORHarlindon",
+        # Ships no displayName key at all: the derived fallback must be
+        # recorded in planning evidence, never silent.
+        "map mp bravo ridge": "",
+    }
+    entries: dict[str, bytes] = {
+        "data/lotr.str": _string_table(
+            {
+                "Map:MAPMPFallBack4p": "Stonewain Valley",
+                "Map:MAPMPHarlindon": "Harlindon",
+                "Map:MAPWORHarlindon": "Harlindon",
+            }
+        ),
+    }
+    records = []
+    for directory, display_key in directories.items():
+        base = f"maps/{directory}/{directory}"
+        entries[f"{base}.map"] = source
+        entries[f"{base}_art.tga"] = b"art"
+        entries[f"{base}_pic.tga"] = b"preview"
+        records.append(
+            _mapcache_record(f"{base}.map", display_key=display_key)
+        )
+    entries["maps/mapcache.ini"] = ("\n".join(records) + "\n").encode("cp1252")
+    make_big(root / "maps.big", entries)
+    return InstallCatalog.build(root)
 
 
 def _load_tool():
@@ -105,6 +186,228 @@ def test_cli_exposes_map_limit_and_publish_without_select() -> None:
         ["build", "--install", "retail", "--no-select"]
     )
     assert build_args.no_select is True
+
+
+def test_registry_catalog_natively_emits_names_categories_and_art(
+    tmp_path: Path,
+) -> None:
+    """A fresh registry-catalog cook needs no post-hoc --repair-catalog.
+
+    Pins the three fields the shipped goal-official-72 pack got wrong at once:
+    category (skirmish vs wotr-battle), authored displayName (never the
+    title-cased directory), and bound preview/art resources.
+    """
+
+    mod = _load_tool()
+    catalog = _native_emission_catalog(tmp_path)
+    profile = mod.build_registry_skirmish_catalog(catalog, game="bfme2")
+
+    rows = {
+        str(row["id"]): row
+        for row in profile["runtime_data"]["data/maps.json"]["maps"]
+    }
+    # Slugs keep the retail kind token; this is what makes the two Harlindons
+    # collision-free, and also what MOVES ids relative to older packs.
+    assert sorted(rows) == [
+        "bfme2.map.mp-bravo-ridge",
+        "bfme2.map.mp-fall-back-4p",
+        "bfme2.map.mp-harlindon",
+        "bfme2.map.wor-harlindon",
+    ]
+
+    # Authored names win; the directory derivation is a recorded last resort.
+    assert rows["bfme2.map.mp-fall-back-4p"]["displayName"] == "Stonewain Valley"
+    assert rows["bfme2.map.mp-harlindon"]["displayName"] == "Harlindon"
+    assert rows["bfme2.map.wor-harlindon"]["displayName"] == "Harlindon"
+    assert rows["bfme2.map.mp-bravo-ridge"]["displayName"] == "Bravo Ridge"
+
+    # Real category classification: wor rows are never skirmish.
+    assert rows["bfme2.map.mp-fall-back-4p"]["category"] == "skirmish"
+    assert rows["bfme2.map.wor-harlindon"]["category"] == "wotr-battle"
+    evidence = profile["planning_evidence"]
+    assert evidence["categoryCounts"] == {"skirmish": 3, "wotr-battle": 1}
+
+    # Every row binds its art and preview, and the conversions are declared.
+    for row in rows.values():
+        slug = str(row["id"]).rsplit(".", 1)[-1]
+        assert row["art"] == f"assets/ui/maps/{slug}-art.png"
+        assert row["preview"] == f"assets/ui/maps/{slug}-preview.png"
+    resource_ids = {str(item["id"]) for item in profile["resources"]}
+    assert "map-mp-fall-back-4p-art" in resource_ids
+    assert "map-wor-harlindon-preview" in resource_ids
+    assert evidence["mapArtCounts"] == {"withPreview": 4, "withArt": 4}
+
+    # Name provenance is evidence, not trust.
+    assert evidence["displayNameSource"]["derivedFromDirectoryCount"] == 1
+    assert evidence["displayNameSource"]["derivedFromDirectorySlugs"] == [
+        "mp-bravo-ridge"
+    ]
+    assert evidence["displayNameSource"]["authoredCount"] == 3
+
+    # The pack's entry map must be a skirmish row even though the catalog also
+    # carries WOTR battle maps.
+    entry_map = profile["pack"]["files"]["entryMap"]
+    entry_rows = [row for row in rows.values() if row["map"] == entry_map]
+    assert entry_rows and entry_rows[0]["category"] == "skirmish"
+
+
+def test_repair_leaves_ambiguous_kind_stripped_art_unbound(tmp_path: Path) -> None:
+    """``map mp harlindon`` and ``map wor harlindon`` both strip to "harlindon".
+
+    A bare ``harlindon-art.png`` in the pack must bind to NEITHER: both rows
+    are reported under ambiguousArtLeftUnbound instead of one map silently
+    showing the other's art.
+    """
+
+    mod = _load_tool()
+    install = tmp_path / "install"
+    install.mkdir()
+    payloads = {
+        "maps/map mp harlindon/map mp harlindon.map": b"payload-mp-harlindon",
+        "maps/map wor harlindon/map wor harlindon.map": b"payload-wor-harlindon",
+    }
+    entries: dict[str, bytes] = dict(payloads)
+    entries["data/lotr.str"] = _string_table(
+        {"Map:MAPMPHarlindon": "Harlindon", "Map:MAPWORHarlindon": "Harlindon"}
+    )
+    entries["maps/mapcache.ini"] = (
+        "\n".join(
+            _mapcache_record(path, display_key=key)
+            for path, key in (
+                (
+                    "maps/map mp harlindon/map mp harlindon.map",
+                    "Map:MAPMPHarlindon",
+                ),
+                (
+                    "maps/map wor harlindon/map wor harlindon.map",
+                    "Map:MAPWORHarlindon",
+                ),
+            )
+        )
+        + "\n"
+    ).encode("cp1252")
+    make_big(install / "maps.big", entries)
+    catalog = InstallCatalog.build(install)
+
+    pack = tmp_path / "pack"
+    for slug, path in (
+        ("mp-harlindon", "maps/map mp harlindon/map mp harlindon.map"),
+        ("wor-harlindon", "maps/map wor harlindon/map wor harlindon.map"),
+    ):
+        cooked_dir = pack / "maps" / slug
+        cooked_dir.mkdir(parents=True)
+        (cooked_dir / "map.json").write_text(
+            json.dumps(
+                {
+                    "id": f"rotwk.map.{slug}",
+                    "displayName": "stale",
+                    "category": "skirmish",
+                    "source": {
+                        "sha256": hashlib.sha256(payloads[path]).hexdigest()
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+    art_dir = pack / "assets" / "ui" / "maps"
+    art_dir.mkdir(parents=True)
+    (art_dir / "harlindon-art.png").write_bytes(b"png")
+    (pack / "data").mkdir()
+    (pack / "data" / "maps.json").write_text(
+        json.dumps(
+            {
+                "schema": "openbfme.map-catalog",
+                "schemaVersion": 0,
+                "maps": [
+                    {
+                        "id": "rotwk.map.mp-harlindon",
+                        "displayName": "stale",
+                        "category": "skirmish",
+                        "map": "maps/mp-harlindon/map.json",
+                    },
+                    {
+                        "id": "rotwk.map.wor-harlindon",
+                        "displayName": "stale",
+                        "category": "skirmish",
+                        "map": "maps/wor-harlindon/map.json",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = mod.repair_pack_catalog(catalog, pack, apply=True)
+
+    assert report["unmatched"] == []
+    assert report["categoryCounts"] == {"skirmish": 1, "wotr-battle": 1}
+    assert report["ambiguousArtLeftUnbound"] == [
+        "rotwk.map.mp-harlindon:harlindon",
+        "rotwk.map.wor-harlindon:harlindon",
+    ]
+    repaired = json.loads(
+        (pack / "data" / "maps.json").read_text(encoding="utf-8")
+    )
+    for row in repaired["maps"]:
+        assert row["displayName"] == "Harlindon"
+        assert not row.get("art")
+        assert not row.get("preview")
+
+
+def test_map_slug_keeps_kind_tokens_which_moves_ids_vs_shipped_pack() -> None:
+    """The registry lane's slugs deliberately keep the retail kind token.
+
+    That is collision-free but produces DIFFERENT map ids than the shipped
+    goal-official-72 pack (``rotwk.map.adorn-river``); any recook through this
+    lane is an id migration and must be decided, not discovered.
+    """
+
+    mod = _load_tool()
+    assert (
+        mod._map_slug("maps/map mp adorn river/map mp adorn river.map")
+        == "mp-adorn-river"
+    )
+    assert (
+        mod._map_slug("maps/map wor ang barrow downs/map wor ang barrow downs.map")
+        == "wor-ang-barrow-downs"
+    )
+    assert mod._map_slug("maps/map mp harlindon/map mp harlindon.map") == "mp-harlindon"
+    assert (
+        mod._map_slug("maps/map wor harlindon/map wor harlindon.map")
+        == "wor-harlindon"
+    )
+
+
+def test_load_catalog_refuses_to_overwrite_on_install_root_mismatch(
+    tmp_path: Path,
+) -> None:
+    """A cached catalog built from another install is an error, not a rebuild.
+
+    Silently rebuilding once destroyed the layered RotWK catalog with a
+    BFME2-rooted one - no prompt, no backup.  The mismatch must refuse and
+    name both roots, leaving the cached bytes untouched.
+    """
+
+    mod = _load_tool()
+    owning_install = tmp_path / "owning-install"
+    owning_install.mkdir()
+    make_big(owning_install / "maps.big", {"maps/mapcache.ini": b"x"})
+    other_install = tmp_path / "other-install"
+    other_install.mkdir()
+    state_root = tmp_path / "state"
+    catalog_path = state_root / "catalog" / "rotwk.json"
+    catalog_path.parent.mkdir(parents=True)
+    InstallCatalog.build(owning_install).save(catalog_path)
+    before = catalog_path.read_bytes()
+
+    with pytest.raises(SystemExit) as failure:
+        mod._load_catalog(state_root, "rotwk", other_install)
+
+    message = str(failure.value)
+    assert "catalog-install-mismatch" in message
+    assert str(owning_install.resolve()) in message
+    assert str(other_install.resolve()) in message
+    assert catalog_path.read_bytes() == before
 
 
 def test_default_assets_ignore_legacy_layered_overlay(tmp_path: Path) -> None:

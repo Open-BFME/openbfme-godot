@@ -437,6 +437,19 @@ def main(argv: list[str] | None = None) -> int:
             state_root, convert_exit=convert_exit
         )
         fortress = _fortress_proof(state_root)
+        # The Men host publish fails closed without the compiled Create-a-Hero
+        # system table (publish-faction-to-slice ships it as cah.system), so
+        # compile it from the same effective-assets oracle before pack proof.
+        cah_cmd = [
+            str(python),
+            str(ROOT / "tools" / "openbfme_import.py"),
+            "compile-cah-system",
+            "--game",
+            "rotwk",
+            "--assets-root",
+            str(assets),
+        ]
+        _run("compile Create-a-Hero system table", cah_cmd, env)
         proof_cmd = [
             str(python),
             str(ROOT / "tools" / "rotwk_faction_pack_proof.py"),

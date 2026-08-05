@@ -43,11 +43,32 @@ PINNED_UNAFFECTED_DIGESTS = {
     # NULL UI-string ids). Both are `[]` for these fixtures. Nothing in the
     # death routing this module guards moved, which is exactly what this pin
     # exists to say.
+    #
+    # Re-pinned again 2026-08-05, same procedure and same verdict. The weapon
+    # audio lane added a third `audioRoutes` owner (`weapon`) beside `container`
+    # and `primaryMember`, so every playable-unit descriptor digest moves; this
+    # pin is one of the things that exists to catch exactly that and make it be
+    # stated rather than absorbed.
+    #
+    # Evidence, not assertion: both recipe bodies were dumped from an exported
+    # HEAD tree and from the working tree and diffed
+    # (`.private/scratch/opus35-deathpin-HEAD.json` vs `-WORKING.json`, dumper
+    # `opus35-deathpin-dump.py`). The ENTIRE diff, for both fixtures, is:
+    #
+    #     "audioRoutes": { ... "primaryMember": {...},
+    #    +                     "weapon": {}
+    #                    }
+    #
+    # plus the two digests that field necessarily moves. `weapon` is `{}` here
+    # because these synthetic fixtures author no Weapon block — the empty owner
+    # is the honest answer, not a gap. Nothing in `coreAnimations`, the death
+    # swap routing, the auxiliary static/hierarchy routing or the experience
+    # contract changed by one byte.
     ("InfantryHorde", False): (
-        "156559fff53600900b31a96224662cd29229979f50af8426948399d69225e9d9"
+        "ee66bf03da4e5092749572093c13aa1f71a2e592fe9752180cc520f10d7bc474"
     ),
     ("SiegeUnit", True): (
-        "cf14aedd267050b445746f44e63702d0eed50b40f70921797153c48a35ceda53"
+        "6467e4d1193ccb08a72abbf5c0ee00d915fc2d9c54ed8924ac80b24b1bd48e07"
     ),
 }
 

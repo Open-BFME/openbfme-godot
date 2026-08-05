@@ -33,6 +33,41 @@ def _scanned(
     }
 
 
+def _animation_leaf(
+    object_id: str,
+    identifier: str,
+    path: str,
+    conditions: list[str],
+    *,
+    scope: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "targetObject": object_id,
+        "identifier": identifier,
+        "kind": "animation",
+        "usage": "animation",
+        "status": "resolved",
+        "conditions": list(conditions),
+        "physicalVirtualPaths": [path],
+        "provenance": {
+            "definingObject": object_id,
+            "virtualPath": "data/ini/object/x.ini",
+            "line": 10,
+            # Retail scope paths carry the state's own condition tokens, e.g.
+            # "AnimationState FIRING_OR_PREATTACK_B MOVING WEAPONSET_TOGGLE_1";
+            # the semantic classifier reads them, so the fixture must too.
+            "scopePath": list(
+                scope
+                or [
+                    "W3DHordeModelDraw ModuleTag_01",
+                    " ".join(["AnimationState", *conditions]).strip(),
+                    "Animation clip",
+                ]
+            ),
+        },
+    }
+
+
 def _closure(
     object_id: str,
     *,
@@ -43,6 +78,7 @@ def _closure(
     conditions: list[str] | None = None,
     status: str = "resolved",
     extra_models: list[tuple[str, str]] | None = None,
+    animations: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     exact: list[dict[str, object]] = [
         {
@@ -79,6 +115,7 @@ def _closure(
                 },
             }
         )
+    exact.extend(animations or [])
     body: dict[str, object] = {
         "schema": "openbfme.retail-visual-closure",
         "schemaVersion": 1,
@@ -204,6 +241,8 @@ def test_summoned_member_converts_and_horde_binds_to_it() -> None:
         "hordeMemberCount": 1,
         "authoredInvisibleCount": 1,
         "unconvertedCount": 0,
+        # This closure authors no animation leaves, so nothing animates.
+        "animatedModelCount": 0,
     }
 
 
@@ -232,6 +271,186 @@ def test_embedded_animation_model_converts_as_self_animated_bundle() -> None:
     assert model["converter"] == "w3d-bundle"
     assert model["options"]["animations"] == ["ptelvnwood01.w3d"]
     assert bindings["objects"]["ElvenWoodTree"]["status"] == "model"
+
+
+def _summon_closure_with_external_animations() -> dict[str, object]:
+    """A summoned unit rigged the way retail rigs one: SKN + external SKL + clips.
+
+    The skeleton the animations are qualified against (``GUHBTSHF_SKL``) is NOT
+    the model file's own basename family (``guhbtshfa_skn``) -- retail shares one
+    skeleton across several skinned variants. Binding by filename similarity
+    therefore misses every clip; binding by the scanned hierarchy identity finds
+    all of them. RohanHobbit_Summoned is the real case this fixture transcribes.
+    """
+
+    return _closure(
+        "RohanHobbit_Summoned",
+        model_identifier="GUHbtShfA_SKN",
+        model_path="art/w3d/gu/guhbtshfa_skn.w3d",
+        scanned=[
+            _scanned(
+                "art/w3d/gu/guhbtshfa_skn.w3d",
+                model_hierarchies=["GUHBTSHF_SKL"],
+            ),
+            _scanned("art/w3d/gu/guhbtshf_skl.w3d", hierarchy_ids=["GUHBTSHF_SKL"]),
+            _scanned(
+                "art/w3d/gu/guhbtshfs_idlb.w3d",
+                animation_ids=["GUHBTSHFS_IDLB", "GUHBTSHF_SKL.GUHBTSHFS_IDLB"],
+                channels=48,
+            ),
+            _scanned(
+                "art/w3d/gu/guhbtshfs_runb.w3d",
+                animation_ids=["GUHBTSHFS_RUNB", "GUHBTSHF_SKL.GUHBTSHFS_RUNB"],
+                channels=28,
+            ),
+            _scanned(
+                "art/w3d/gu/guhbtshfs_atka.w3d",
+                animation_ids=["GUHBTSHFS_ATKA", "GUHBTSHF_SKL.GUHBTSHFS_ATKA"],
+                channels=28,
+            ),
+            _scanned(
+                "art/w3d/gu/guhbtshfs_diea.w3d",
+                animation_ids=["GUHBTSHFS_DIEA", "GUHBTSHF_SKL.GUHBTSHFS_DIEA"],
+                channels=28,
+            ),
+            # A clip rigged to a DIFFERENT skeleton must never be bound here.
+            _scanned(
+                "art/w3d/ru/rurohrm_diea.w3d",
+                animation_ids=["RUROHRM_DIEA", "RUROHRM_SKL.RUROHRM_DIEA"],
+                channels=28,
+            ),
+        ],
+        textures=["art/textures/guhbtshf.tga"],
+        animations=[
+            _animation_leaf(
+                "RohanHobbit_Summoned",
+                "GUHBTSHF_SKL.GUHBTSHFS_IDLB",
+                "art/w3d/gu/guhbtshfs_idlb.w3d",
+                [],
+                scope=["W3DHordeModelDraw ModuleTag_01", "IdleAnimationState"],
+            ),
+            _animation_leaf(
+                "RohanHobbit_Summoned",
+                "GUHBTSHF_SKL.GUHBTSHFS_RUNB",
+                "art/w3d/gu/guhbtshfs_runb.w3d",
+                ["MOVING"],
+            ),
+            _animation_leaf(
+                "RohanHobbit_Summoned",
+                "GUHBTSHF_SKL.GUHBTSHFS_ATKA",
+                "art/w3d/gu/guhbtshfs_atka.w3d",
+                ["FIRING_OR_PREATTACK_A"],
+            ),
+            _animation_leaf(
+                "RohanHobbit_Summoned",
+                "GUHBTSHF_SKL.GUHBTSHFS_DIEA",
+                "art/w3d/gu/guhbtshfs_diea.w3d",
+                ["DYING"],
+            ),
+            _animation_leaf(
+                "RohanHobbit_Summoned",
+                "RUROHRM_SKL.RUROHRM_DIEA",
+                "art/w3d/ru/rurohrm_diea.w3d",
+                ["DYING"],
+            ),
+        ],
+    )
+
+
+def test_summoned_unit_binds_its_authored_animation_states() -> None:
+    """Summons reached the runtime as static meshes -- the T-pose the owner sees.
+
+    ``content_db.gd`` says it outright where it registers these rows: a
+    spellbook visual binding carries no animation capability, so every summoned
+    Rohirrim, Ranger and Hobbit presented in its bind pose. The closure has
+    always resolved the clips (102 animation leaves for RohanRohirrim_Summoned
+    against the pure-retail tree); this lane simply discarded them.
+    """
+
+    descriptor = _descriptor(_model_leaf("RohanHobbit_Summoned", "GUHbtShfA_SKN"))
+    closures = {"RohanHobbit_Summoned": _summon_closure_with_external_animations()}
+    resources, bindings = spellbook_visual_recipe_parts(
+        descriptor, "menspellbook", closures
+    )
+    validate_spellbook_visual_bindings(bindings)
+
+    model = next(row for row in resources if row["kind"] == "model")
+    # A model plus external clips is the w3d-bundle contract; hierarchical
+    # would refuse the animations outright.
+    assert model["converter"] == "w3d-bundle"
+    assert model["options"]["animations"] == [
+        "guhbtshfs_atka.w3d",
+        "guhbtshfs_diea.w3d",
+        "guhbtshfs_idlb.w3d",
+        "guhbtshfs_runb.w3d",
+    ]
+    # The clip rigged to RUROHRM_SKL belongs to another skeleton and is not
+    # staged; binding it would deform the mesh, which is worse than no clip.
+    assert "art/w3d/ru/rurohrm_diea.w3d" not in model["patterns"]
+    assert "art/w3d/gu/guhbtshf_skl.w3d" in model["patterns"]
+    assert model["expected_count"] == len(model["patterns"])
+
+    row = bindings["objects"]["RohanHobbit_Summoned"]
+    assert row["status"] == "model"
+    states = {
+        entry["semanticState"]: entry for entry in row["animationStates"]
+    }
+    assert sorted(states) == ["attack", "death", "idle", "move"]
+    assert states["move"]["identifier"] == "GUHBTSHF_SKL.GUHBTSHFS_RUNB"
+    assert states["move"]["sourceW3d"] == "art/w3d/gu/guhbtshfs_runb.w3d"
+    assert states["move"]["conditions"] == ["MOVING"]
+    # The unbound clip is recorded with its reason, never dropped in silence --
+    # that silence is what hid this gap in the first place.
+    assert row["animationSummary"]["boundCount"] == 4
+    assert row["animationSummary"]["unboundSkeletonCount"] == 1
+    assert bindings["summary"]["animatedModelCount"] == 1
+
+
+def test_summon_without_matching_clips_stays_a_static_model() -> None:
+    """No clip on the model's skeleton means no animation, and it says so."""
+
+    descriptor = _descriptor(_model_leaf("GondorRanger_Summoned", "Cine_GryRng"))
+    closures = {
+        "GondorRanger_Summoned": _closure(
+            "GondorRanger_Summoned",
+            model_identifier="Cine_GryRng",
+            model_path="art/w3d/ci/cine_gryrng.w3d",
+            scanned=[
+                _scanned(
+                    "art/w3d/ci/cine_gryrng.w3d",
+                    model_hierarchies=["CINE_GRYRNG_SKL"],
+                ),
+                _scanned(
+                    "art/w3d/ci/cine_gryrng_skl.w3d",
+                    hierarchy_ids=["CINE_GRYRNG_SKL"],
+                ),
+                _scanned(
+                    "art/w3d/gu/gurngr_wlka.w3d",
+                    animation_ids=["GURNGR_SKL.GURNGR_WLKA"],
+                    channels=28,
+                ),
+            ],
+            textures=["art/textures/gryrng.tga"],
+            animations=[
+                _animation_leaf(
+                    "GondorRanger_Summoned",
+                    "GURNGR_SKL.GURNGR_WLKA",
+                    "art/w3d/gu/gurngr_wlka.w3d",
+                    ["MOVING"],
+                )
+            ],
+        )
+    }
+    _, bindings = spellbook_visual_recipe_parts(descriptor, "menspellbook", closures)
+    row = bindings["objects"]["GondorRanger_Summoned"]
+    assert row["status"] == "model"
+    assert "animationStates" not in row
+    assert row["animationSummary"] == {
+        "boundCount": 0,
+        "unboundSkeletonCount": 1,
+        "nonCoreCount": 0,
+    }
+    assert bindings["summary"]["animatedModelCount"] == 0
 
 
 def test_static_placeholder_model_converts_without_a_rig() -> None:

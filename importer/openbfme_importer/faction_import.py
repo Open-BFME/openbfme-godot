@@ -1701,6 +1701,37 @@ def build_faction_conversion(
     return coverage
 
 
+def load_retail_string_catalog(catalog: InstallCatalog):
+    """Parse the ``data/lotr.str`` this catalog resolves, or ``None``.
+
+    This is the ONE retail string loader on the import path: unit conversion
+    (``convert_faction_import`` above) and the faction-slice compose strings
+    lane (``faction_slice_profile``) both consume it, so the tier the compiler
+    records ``sourceNullStringIds`` evidence against and the tier the published
+    strings document resolves against can never drift apart. The catalog's own
+    layering decides which table wins (a RotWK layered install replaces the
+    BFME2 table wholesale), which is exactly the tier policy
+    ``game/tests/hud_string_completeness_runner.gd`` pins.
+
+    Parsed with ``first-wins`` / ``strict=False``: RotWK 2.01 retail ships
+    lotr.str with a bounded lexical typo (a label containing a space), and the
+    census parse records malformed rows as evidence instead of failing the
+    whole catalog.
+    """
+
+    from .sage_string import MAX_STRING_BYTES, parse_string_catalog
+
+    string_entry = catalog.resolve_exact("data/lotr.str")
+    if string_entry is None:
+        return None
+    string_source = catalog.open_archive_for(string_entry).read_entry(
+        catalog.as_entry(string_entry), max_bytes=MAX_STRING_BYTES
+    )
+    return parse_string_catalog(
+        string_source, duplicate_policy="first-wins", strict=False
+    )
+
+
 def convert_faction_import(
     catalog: InstallCatalog,
     effective_root: Path,
@@ -1856,16 +1887,9 @@ def convert_faction_import(
         # as source-null presentation leaves so unit conversion can preserve
         # the authored command without inventing replacement text.
         from .sage_cst import parse_sage_document
-        from .sage_string import MAX_STRING_BYTES, parse_string_catalog
 
-        string_entry = catalog.resolve_exact("data/lotr.str")
-        if string_entry is not None:
-            string_source = catalog.open_archive_for(string_entry).read_entry(
-                catalog.as_entry(string_entry), max_bytes=MAX_STRING_BYTES
-            )
-            string_catalog = parse_string_catalog(
-                string_source, duplicate_policy="first-wins", strict=False
-            )
+        string_catalog = load_retail_string_catalog(catalog)
+        if string_catalog is not None:
             missing_layered_text_ids: set[str] = set()
             for path, source in documents.items():
                 if path.replace("\\", "/").casefold() != "data/ini/commandbutton.ini":
@@ -1939,5 +1963,6 @@ __all__ = [
     "build_faction_import_plan",
     "convert_faction_import",
     "coverage_digest_payload",
+    "load_retail_string_catalog",
     "plan_faction_import",
 ]

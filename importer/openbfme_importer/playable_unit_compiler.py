@@ -23,6 +23,7 @@ from .module_contracts import (
     compile_all_module_contracts,
     validate_module_contracts,
 )
+from .retail_men_damage_effects import parse_fx_lists
 from .sage_cst import (
     SageAssignment,
     SageBlock,
@@ -1251,6 +1252,7 @@ def _simulation_contract(
     game: str = "bfme2",
     destroy_die_policies: Sequence[Mapping[str, object]] = (),
     module_contracts: Sequence[Mapping[str, object]] = (),
+    slow_death_fades: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     resolved: dict[str, object] = {}
     required = {
@@ -1516,6 +1518,8 @@ def _simulation_contract(
         resolved["permanentWeaponLocks"] = permanent_weapon_locks
     if destroy_die_policies:
         resolved["destroyDie"] = [dict(row) for row in destroy_die_policies]
+    if slow_death_fades:
+        resolved["slowDeaths"] = [dict(row) for row in slow_death_fades]
     if module_contracts:
         resolved["moduleContracts"] = [dict(row) for row in module_contracts]
     # Alternate weapon-mode profiles (WEAPONSET_TOGGLE_* / MOUNTED): the
@@ -2753,6 +2757,293 @@ def _audio_routes(
     }
 
 
+# ---------------------------------------------------------------------------
+# Weapon audio chain.
+#
+# Retail does NOT author a melee swing / weapon-fire sound on the Object: it
+# authors it on the WEAPON, as ``Weapon BoromirSword / FireFX =
+# FX_GondorSwordHit`` (pure retail weapon.ini:5616-5624) resolved through
+# ``FXList FX_GondorSwordHit / Sound / Name = ImpactSword01``
+# (fxlist.ini:7584-7586).  This section joins the object's WeaponSet weapons
+# to that chain and emits the result as the ``weapon`` owner in
+# ``presentation.audioRoutes``, keeping the weapon hop AND the fxlist hop
+# provenance per row.  Every unresolvable link is RECORDED in
+# ``presentation.weaponAudioGaps`` with its reason instead of being dropped.
+# ---------------------------------------------------------------------------
+
+FX_LIST_PATH = "data/ini/fxlist.ini"
+
+_WEAPON_AUDIO_FX_FIELDS = (
+    ("FireFX", "firefx"),
+    ("ProjectileDetonationFX", "projectiledetonationfx"),
+)
+_AUDIO_NULL_SENTINELS = frozenset({"none", "null"})
+_FX_INDEX_ERROR_KEY = "__parse_error__"
+
+
+def _fx_list_sound_index(
+    documents: Mapping[str, bytes],
+    *,
+    cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None]
+    | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> tuple[dict[str, list[dict[str, object]]] | None, str | None]:
+    """Index fxlist.ini Sound names: fx key -> rows ``{id, fxListId, line}``.
+
+    Returns ``(index, error)``.  ``index`` is None when fxlist.ini is absent
+    from this compilation view or unparseable; ``error`` carries the parse
+    failure text so the caller can record the exact reason.
+    """
+
+    payload = documents.get(FX_LIST_PATH)
+    if payload is None:
+        return None, None
+    cache_key = ("fxlist-sound-index", FX_LIST_PATH)
+    lock = cache_lock or threading.Lock()
+    if cache is not None:
+        with lock:
+            if cache_key in cache:
+                cached = cache[cache_key]
+                if cached is not None and _FX_INDEX_ERROR_KEY in cached:
+                    return None, str(cached[_FX_INDEX_ERROR_KEY][0]["reason"])
+                return cached, None
+    try:
+        records = parse_fx_lists(payload)
+    except ValueError as exc:
+        failure: dict[str, list[dict[str, object]]] = {
+            _FX_INDEX_ERROR_KEY: [{"reason": str(exc)}]
+        }
+        if cache is not None:
+            with lock:
+                cache.setdefault(cache_key, failure)
+        return None, str(exc)
+    index: dict[str, list[dict[str, object]]] = {}
+    for key, record in records.items():
+        rows: list[dict[str, object]] = []
+        for section in record["sections"]:
+            if str(section["kind"]).casefold() != "sound":
+                continue
+            for item in section["assignments"]:
+                if str(item["field"]).casefold() != "name":
+                    continue
+                tokens = _tokens(str(item["value"]))
+                if not tokens or tokens[0].casefold() in _AUDIO_NULL_SENTINELS:
+                    continue
+                rows.append(
+                    {
+                        "id": tokens[0],
+                        "fxListId": str(record["fxListId"]),
+                        "line": int(item["sourceSpan"]["startLine"]),
+                    }
+                )
+        index[key] = rows
+    if cache is not None:
+        with lock:
+            cache.setdefault(cache_key, index)
+            cached = cache[cache_key]
+            if cached is not None and _FX_INDEX_ERROR_KEY in cached:
+                return None, str(cached[_FX_INDEX_ERROR_KEY][0]["reason"])
+            return cached, None
+    return index, None
+
+
+def _weapon_audio_routes(
+    target_lineage: Sequence[SageObject],
+    member_lineage: Sequence[SageObject],
+    documents: Mapping[str, bytes],
+    *,
+    named_definition_cache: dict[
+        tuple[str, str], dict[str, list[dict[str, object]]] | None
+    ]
+    | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> tuple[dict[str, list[dict[str, object]]], list[dict[str, object]]]:
+    """Resolve the weapon -> FireFX/ProjectileDetonationFX -> Sound chain.
+
+    Walks every effective WeaponSet block on the container and primary-member
+    lineages, resolves each authored weapon slot through weapon.ini and
+    fxlist.ini, and returns ``(routes, gaps)``: ``routes`` maps the weapon FX
+    field (``FireFX`` / ``ProjectileDetonationFX``) to fully-resolved sound
+    rows carrying both hops' provenance; ``gaps`` records every reference the
+    chain could not resolve (missing weapon definition, fxlist.ini absent
+    from the view, missing FXList, or an FXList that authors no Sound) with
+    its reason — fail closed by recording, never by inventing a leaf.
+    """
+
+    fx_index, fx_error = _fx_list_sound_index(
+        documents, cache=named_definition_cache, cache_lock=cache_lock
+    )
+    same_object = (
+        target_lineage[-1].name.casefold() == member_lineage[-1].name.casefold()
+    )
+    owners: list[tuple[str, Sequence[SageObject]]] = [
+        ("object" if same_object else "container", target_lineage)
+    ]
+    if not same_object:
+        owners.append(("primaryMember", member_lineage))
+    routes: dict[str, list[dict[str, object]]] = {}
+    gaps: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    def _record(bucket: list[dict[str, object]], row: dict[str, object]) -> None:
+        key = _digest(row)
+        if key not in seen:
+            seen.add(key)
+            bucket.append(row)
+
+    for role, lineage in owners:
+        for block in _effective_top_blocks(lineage):
+            if (block.header_key or block.kind).casefold() != "weaponset":
+                continue
+            condition_values = [
+                assignment.value.strip()
+                for assignment in block.assignments
+                if assignment.key.casefold() in {"condition", "conditions"}
+            ]
+            default_set = all(
+                _is_default_set_condition(value) for value in condition_values
+            )
+            condition_tokens = sorted(
+                {
+                    token
+                    for value in condition_values
+                    for token in _tokens(value)
+                },
+                key=str.casefold,
+            )
+            for assignment in block.assignments:
+                if assignment.key.casefold() != "weapon":
+                    continue
+                tokens = _tokens(assignment.value)
+                if not tokens:
+                    continue
+                weapon_id = tokens[-1]
+                if weapon_id.casefold() in _AUDIO_NULL_SENTINELS:
+                    continue
+                slot_tokens = {
+                    token.upper()
+                    for token in tokens[:-1]
+                    if token.casefold() in _WEAPON_SLOT_NAMES
+                }
+                slot = (
+                    next(iter(slot_tokens)) if len(slot_tokens) == 1 else None
+                )
+                base: dict[str, object] = {
+                    "ownerRole": role,
+                    "weaponId": weapon_id,
+                    **({"weaponSlot": slot} if slot is not None else {}),
+                    "defaultSet": default_set,
+                    **(
+                        {"weaponSetConditions": condition_tokens}
+                        if not default_set
+                        else {}
+                    ),
+                }
+                definition = _named_definition_values(
+                    documents,
+                    "Weapon",
+                    weapon_id,
+                    cache=named_definition_cache,
+                    cache_lock=cache_lock,
+                )
+                if definition is None:
+                    _record(
+                        gaps,
+                        {
+                            **base,
+                            "reason": "weapon-definition-missing-or-ambiguous",
+                            "sourceIni": assignment.source_virtual_path,
+                            "line": assignment.line,
+                        },
+                    )
+                    continue
+                for field_name, folded in _WEAPON_AUDIO_FX_FIELDS:
+                    for fx_row in definition.get(folded, ()):
+                        fx_tokens = _tokens(str(fx_row.get("expression", "")))
+                        if (
+                            not fx_tokens
+                            or fx_tokens[0].casefold() in _AUDIO_NULL_SENTINELS
+                        ):
+                            continue
+                        fx_id = fx_tokens[0]
+                        hop: dict[str, object] = {
+                            "field": field_name,
+                            "fxListId": fx_id,
+                            "sourceIni": str(fx_row.get("sourceIni", "")),
+                            "line": int(fx_row.get("line", 0)),
+                        }
+                        if fx_index is None:
+                            reason = (
+                                "fxlist-unparseable"
+                                if fx_error
+                                else "fxlist-document-not-in-view"
+                            )
+                            gap = {**base, **hop, "reason": reason}
+                            if fx_error:
+                                gap["detail"] = fx_error
+                            _record(gaps, gap)
+                            continue
+                        sound_rows = fx_index.get(fx_id.casefold())
+                        if sound_rows is None:
+                            _record(
+                                gaps,
+                                {
+                                    **base,
+                                    **hop,
+                                    "reason": "fxlist-definition-missing",
+                                },
+                            )
+                            continue
+                        if not sound_rows:
+                            _record(
+                                gaps,
+                                {
+                                    **base,
+                                    **hop,
+                                    "reason": "fxlist-authors-no-sound",
+                                },
+                            )
+                            continue
+                        for sound in sound_rows:
+                            _record(
+                                routes.setdefault(field_name, []),
+                                {
+                                    "id": str(sound["id"]),
+                                    **base,
+                                    "fxListId": str(sound["fxListId"]),
+                                    "sourceIni": hop["sourceIni"],
+                                    "line": hop["line"],
+                                    "fxSourceIni": FX_LIST_PATH,
+                                    "fxLine": int(sound["line"]),
+                                },
+                            )
+    for rows in routes.values():
+        rows.sort(
+            key=lambda row: (
+                str(row["id"]).casefold(),
+                str(row["weaponId"]).casefold(),
+                str(row["ownerRole"]),
+                str(row.get("weaponSlot", "")),
+                int(row["line"]),
+                int(row["fxLine"]),
+            )
+        )
+    gaps.sort(
+        key=lambda row: (
+            str(row["reason"]),
+            str(row["weaponId"]).casefold(),
+            str(row.get("field", "")),
+            str(row.get("fxListId", "")).casefold(),
+            str(row["ownerRole"]),
+            int(row.get("line", 0)),
+        )
+    )
+    return (
+        {key: routes[key] for key in sorted(routes, key=str.casefold)},
+        gaps,
+    )
+
+
 def _runtime_module_evidence(
     target_lineage: Sequence[SageObject],
     member_lineage: Sequence[SageObject],
@@ -2817,6 +3108,69 @@ def _behavior_module_identities(
         if (block.header_key or "").casefold() == "behavior"
         and block.kind.casefold() == folded
     )
+
+
+def _slow_death_fade_rows(
+    lineage: Sequence[SageObject],
+    owner_role: str,
+    constants: Mapping[str, int | float],
+) -> list[dict[str, object]]:
+    """Record every SlowDeathBehavior destruction-delay evidence row.
+
+    Retail authors the per-object FADED fade window as ``DestructionDelay``
+    on a ``DeathTypes = NONE +FADED`` SlowDeathBehavior (pure retail range
+    1000..10000 ms; e.g. object/goodfaction/units/elven/gwaihir.ini:453-460
+    authors 2500).  That value used to be dropped silently, handing the
+    simulation an effective 0 instead of the authored fade.  Rows are
+    EVIDENCE, not consumption: the module stays unconsumed in the runtime
+    module evidence, and the authored milliseconds are carried verbatim.  A
+    module with no authored delay is recorded as
+    ``destructionDelayAuthored: False`` rather than defaulted to 0; an
+    authored delay outside the supported define grammar is recorded with its
+    raw expression instead of a guessed number.
+    """
+
+    rows: list[dict[str, object]] = []
+    for block in _effective_top_blocks(lineage):
+        if (
+            (block.header_key or "").casefold() != "behavior"
+            or not block.kind.casefold().endswith("slowdeathbehavior")
+        ):
+            continue
+        row: dict[str, object] = {
+            "ownerRole": owner_role,
+            "module": block.kind,
+            "moduleTag": block.instance_tag or "",
+        }
+        death_type_values = list(block.values("DeathTypes"))
+        if death_type_values:
+            row["deathTypes"] = [
+                token for value in death_type_values for token in _tokens(value)
+            ]
+        delay_values = list(block.values("DestructionDelay"))
+        if not delay_values:
+            row["destructionDelayAuthored"] = False
+        else:
+            row["destructionDelayAuthored"] = True
+            resolved = (
+                _resolved_expression(delay_values[0], constants)
+                if len(delay_values) == 1
+                else None
+            )
+            if resolved is None and len(delay_values) == 1:
+                resolved = _resolved_multiplicative_expression(
+                    delay_values[0], constants
+                )
+            if resolved is not None:
+                row["destructionDelayMs"] = resolved
+            else:
+                row["destructionDelayUnresolvedExpression"] = " ".join(
+                    value.strip() for value in delay_values
+                )
+        row["sourceIni"] = block.source_virtual_path
+        row["line"] = block.line
+        rows.append(row)
+    return rows
 
 
 def _destroy_die_policies(
@@ -6941,6 +7295,13 @@ def compile_playable_unit_descriptor(
         if audio_edges_by_object is not None
         else None
     )
+    weapon_audio_routes, weapon_audio_gaps = _weapon_audio_routes(
+        target_lineage,
+        member_lineage,
+        documents,
+        named_definition_cache=prepared.named_definition_cache,
+        cache_lock=prepared.cache_lock,
+    )
     target_kinds = _kind_of(target_lineage)
     member_kinds = _kind_of(member_lineage)
     category = _category(
@@ -6973,6 +7334,7 @@ def compile_playable_unit_descriptor(
             )
         )
     destroy_die_policies: list[dict[str, object]] = []
+    slow_death_fades: list[dict[str, object]] = []
     if target_lineage[-1].name.casefold() == member_lineage[-1].name.casefold():
         object_policies, consumed_destroy_die = _destroy_die_policies(
             target_lineage, "object"
@@ -6980,6 +7342,11 @@ def compile_playable_unit_descriptor(
         destroy_die_policies.extend(object_policies)
         consumed_container_modules = (
             consumed_container_modules | consumed_destroy_die
+        )
+        slow_death_fades.extend(
+            _slow_death_fade_rows(
+                target_lineage, "object", prepared.numeric_defines
+            )
         )
     else:
         container_policies, consumed_container_destroy_die = (
@@ -6992,6 +7359,16 @@ def compile_playable_unit_descriptor(
         destroy_die_policies.extend(member_policies)
         consumed_container_modules = (
             consumed_container_modules | consumed_container_destroy_die
+        )
+        slow_death_fades.extend(
+            _slow_death_fade_rows(
+                target_lineage, "container", prepared.numeric_defines
+            )
+        )
+        slow_death_fades.extend(
+            _slow_death_fade_rows(
+                member_lineage, "primaryMember", prepared.numeric_defines
+            )
         )
     try:
         module_contracts = compile_all_module_contracts(
@@ -7103,6 +7480,7 @@ def compile_playable_unit_descriptor(
         game=game,
         destroy_die_policies=destroy_die_policies,
         module_contracts=module_contracts,
+        slow_death_fades=slow_death_fades,
     )
     combined_kinds = tuple(sorted(set(target_kinds) | set(member_kinds)))
     capabilities, unsupported_capabilities, traits = _capability_contract(
@@ -7325,7 +7703,13 @@ def compile_playable_unit_descriptor(
             "audioRoutes": {
                 "container": _audio_routes(target_lineage, container_audio_edges),
                 "primaryMember": _audio_routes(member_lineage, member_audio_edges),
+                "weapon": weapon_audio_routes,
             },
+            **(
+                {"weaponAudioGaps": weapon_audio_gaps}
+                if weapon_audio_gaps
+                else {}
+            ),
             "resolvedAudio": {
                 key: list(value)
                 for key, value in sorted(
@@ -7840,6 +8224,29 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
                 raise PlayableUnitCompilerError(
                     "playable-unit audio route row is invalid"
                 )
+    weapon_routes = audio_routes.get("weapon")
+    if not isinstance(weapon_routes, Mapping):
+        raise PlayableUnitCompilerError(
+            "playable-unit weapon audio routes are invalid"
+        )
+    for rows in weapon_routes.values():
+        if not isinstance(rows, list) or any(
+            not isinstance(row, Mapping)
+            or not isinstance(row.get("id"), str)
+            or not row.get("id")
+            or not isinstance(row.get("weaponId"), str)
+            or not row.get("weaponId")
+            or not isinstance(row.get("fxListId"), str)
+            or not row.get("fxListId")
+            or not isinstance(row.get("sourceIni"), str)
+            or not isinstance(row.get("line"), int)
+            or not isinstance(row.get("fxSourceIni"), str)
+            or not isinstance(row.get("fxLine"), int)
+            for row in rows
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit weapon audio route row is invalid"
+            )
     for field, expected_type in (
         ("visualRoots", list),
         ("convertedVisuals", Mapping),

@@ -38,6 +38,7 @@ unconvertible evidence
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from pathlib import Path, PurePosixPath
 
 from .playable_unit_pack_compiler import (
@@ -53,8 +54,15 @@ from .playable_unit_pack_compiler import (
     _rows,
     _safe_path,
     _slug,
+    _state,
 )
 from .retail_visual_closure import build_retail_visual_closure
+
+# The semantic states the battalion presenter actually plays.  Retail authors
+# far more (emotion, stunned, transition, weapon-toggle poses); staging every
+# one of the ~100 clips a summoned unit inherits would multiply pack size for
+# frames nothing requests.  Non-core clips are counted, not converted.
+_CORE_ANIMATION_STATES = ("idle", "move", "attack", "death")
 
 
 class SpellbookVisualIngressError(ValueError):
@@ -322,8 +330,22 @@ def spellbook_visual_recipe_parts(
         except PlayableUnitPackCompilerError as exc:
             objects[object_id] = {"status": "unconverted", "reason": str(exc)}
             continue
+        animation_rows, animation_summary = (
+            ([], {"boundCount": 0, "unboundSkeletonCount": 0, "nonCoreCount": 0})
+            if embedded
+            # A self-animated model already carries its clips; mixing bound and
+            # embedded animations is exactly what the unit lane refuses.
+            else _animation_bindings(object_id, closure, model_path, scanned)
+        )
+        animation_paths = sorted(
+            {str(binding["sourceW3d"]) for binding in animation_rows},
+            key=lambda item: (item.casefold(), item),
+        )
+        if animation_paths:
+            hierarchies.extend(_hierarchy_dependencies(animation_paths, scanned))
         patterns = sorted(
-            {model_path, *hierarchies}, key=lambda item: (item.casefold(), item)
+            {model_path, *animation_paths, *hierarchies},
+            key=lambda item: (item.casefold(), item),
         )
         textures, texture_reason = _object_textures(closure, patterns)
         if texture_reason:
@@ -336,13 +358,23 @@ def spellbook_visual_recipe_parts(
             continue
         converter = (
             "w3d-bundle"
-            if embedded
+            if embedded or animation_paths
             else "w3d-hierarchical"
             if has_hierarchy
             else "w3d-static"
         )
         texture_paths.update(textures)
-        model_rows.append((object_id, model_path, tuple(patterns), converter))
+        model_rows.append(
+            (
+                object_id,
+                model_path,
+                tuple(patterns),
+                converter,
+                tuple(animation_paths),
+                tuple(animation_rows),
+                dict(animation_summary),
+            )
+        )
 
     for object_id, reason in sorted(failures.items()):
         objects.setdefault(object_id, {"status": "unconverted", "reason": reason})
@@ -366,7 +398,15 @@ def spellbook_visual_recipe_parts(
             }
         )
 
-    for object_id, model_path, patterns, converter in model_rows:
+    for (
+        object_id,
+        model_path,
+        patterns,
+        converter,
+        animation_paths,
+        animation_rows,
+        animation_summary,
+    ) in model_rows:
         object_slug = _slug(object_id)
         resource_id = _resource_id("spellbook", slug, "visual", object_slug)
         output = f"assets/models/spellbook/{slug}/{object_slug}.glb"
@@ -375,7 +415,14 @@ def spellbook_visual_recipe_parts(
             "inputResourceIds": list(texture_ids),
         }
         if converter == "w3d-bundle":
-            options["animations"] = [PurePosixPath(model_path).name]
+            options["animations"] = (
+                sorted(
+                    {PurePosixPath(path).name for path in animation_paths},
+                    key=lambda item: (item.casefold(), item),
+                )
+                if animation_paths
+                else [PurePosixPath(model_path).name]
+            )
         resources.append(
             {
                 "id": resource_id,
@@ -395,6 +442,8 @@ def spellbook_visual_recipe_parts(
             "model": output,
             "sourceW3d": model_path,
             "converter": converter,
+            **({"animationStates": [dict(row) for row in animation_rows]} if animation_rows else {}),
+            "animationSummary": dict(animation_summary),
         }
 
     # Objects retail authors with `Model = None` keep their authored absence.
@@ -435,6 +484,19 @@ def spellbook_visual_recipe_parts(
             "model": bound["model"],
             "sourceW3d": bound["sourceW3d"],
             "converter": bound["converter"],
+            # A horde container presents its member's art, so it presents its
+            # member's clips too; otherwise the container renders the bind pose
+            # while the members animate.
+            **(
+                {"animationStates": deepcopy(bound["animationStates"])}
+                if "animationStates" in bound
+                else {}
+            ),
+            **(
+                {"animationSummary": deepcopy(bound["animationSummary"])}
+                if "animationSummary" in bound
+                else {}
+            ),
         }
 
     bindings: dict[str, object] = {
@@ -454,9 +516,143 @@ def spellbook_visual_recipe_parts(
             "unconvertedCount": sum(
                 1 for row in objects.values() if row.get("status") == "unconverted"
             ),
+            # How many summons stopped being static bind-pose meshes.
+            "animatedModelCount": sum(
+                1
+                for row in objects.values()
+                if row.get("status") == "model" and row.get("animationStates")
+            ),
         },
     }
     return resources, bindings
+
+
+def _scanned_row(scanned: Sequence[Mapping[str, object]], path: str) -> Mapping[str, object] | None:
+    folded = path.casefold()
+    for row in scanned:
+        if str(row.get("virtualPath", "")).casefold() == folded:
+            return row
+    return None
+
+
+def _model_skeletons(
+    scanned: Sequence[Mapping[str, object]], model_path: str
+) -> frozenset[str]:
+    """Hierarchy identities the model binds to, upper-cased.
+
+    A skinned W3D names its skeleton in ``modelHierarchyIdentifiers``; a
+    self-rigged one names its own in ``headerIds.hierarchyIds``.  This is the
+    identity retail actually rigs against, and it is NOT recoverable from the
+    filename: retail shares one ``GUHBTSHF_SKL`` across ``guhbtshfa_skn`` and
+    ``guhbtshfs_*``, so a filename-family rule silently loses every clip.
+    """
+
+    row = _scanned_row(scanned, model_path)
+    if row is None:
+        return frozenset()
+    found: set[str] = set()
+    raw = row.get("modelHierarchyIdentifiers")
+    if isinstance(raw, list):
+        found.update(str(value).upper() for value in raw if isinstance(value, str))
+    headers = row.get("headerIds")
+    if isinstance(headers, Mapping):
+        for key in ("hierarchyIds", "modelIds"):
+            values = headers.get(key)
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                if isinstance(value, str) and value and "." not in value:
+                    found.add(value.upper())
+    return frozenset(found)
+
+
+def _animation_skeletons(
+    scanned: Sequence[Mapping[str, object]], animation_path: str
+) -> frozenset[str]:
+    """Skeletons a clip W3D is qualified against (``<SKL>.<CLIP>`` header ids)."""
+
+    row = _scanned_row(scanned, animation_path)
+    if row is None:
+        return frozenset()
+    headers = row.get("headerIds")
+    if not isinstance(headers, Mapping):
+        return frozenset()
+    values = headers.get("animationIds")
+    if not isinstance(values, list):
+        return frozenset()
+    return frozenset(
+        str(value).split(".", 1)[0].upper()
+        for value in values
+        if isinstance(value, str) and "." in value
+    )
+
+
+def _animation_bindings(
+    object_id: str,
+    closure: Mapping[str, object],
+    model_path: str,
+    scanned: Sequence[Mapping[str, object]],
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """Core-state clips this object's chosen model can actually play.
+
+    A clip is bound only when the closure's own scanned evidence says it is
+    rigged to a skeleton the chosen model binds.  Anything else is counted and
+    left out: playing a clip authored for another skeleton does not animate the
+    mesh, it deforms it, which is a worse outcome than the bind pose.
+    """
+
+    model_skeletons = _model_skeletons(scanned, model_path)
+    bound: list[dict[str, object]] = []
+    seen_states: set[str] = set()
+    unbound_skeleton = 0
+    non_core = 0
+    for row in _rows(closure.get("exactLeaves"), "spellbook visual leaves"):
+        if row.get("kind") != "animation" or row.get("status") != "resolved":
+            continue
+        try:
+            semantic = _state(row)
+        except PlayableUnitPackCompilerError:
+            continue
+        if semantic not in _CORE_ANIMATION_STATES:
+            non_core += 1
+            continue
+        for path in _paths(row, f"spellbook animation {object_id}"):
+            animation_row = _scanned_row(scanned, path)
+            if animation_row is None:
+                continue
+            byte_length = animation_row.get("byteLength")
+            if (
+                isinstance(byte_length, bool)
+                or not isinstance(byte_length, int)
+                or byte_length <= 0
+            ):
+                # Retail ships zero-byte W3D placeholders for some authored
+                # AnimationName clips; they cannot produce a keyed action.
+                continue
+            if not (_animation_skeletons(scanned, path) & model_skeletons):
+                unbound_skeleton += 1
+                continue
+            if semantic in seen_states:
+                # One clip per core state keeps the staged set bounded; the
+                # presenter asks for a state, not a variant.
+                continue
+            seen_states.add(semantic)
+            bound.append(
+                {
+                    "identifier": str(row.get("identifier", "")),
+                    "conditions": [
+                        str(item) for item in (row.get("conditions") or [])
+                    ],
+                    "semanticState": str(semantic),
+                    "sourceW3d": path,
+                }
+            )
+    bound.sort(key=lambda item: str(item["semanticState"]))
+    return bound, {
+        "boundCount": len(bound),
+        "unboundSkeletonCount": unbound_skeleton,
+        "nonCoreCount": non_core,
+    }
 
 
 def _object_textures(

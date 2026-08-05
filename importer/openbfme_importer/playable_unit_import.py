@@ -55,6 +55,10 @@ _REQUIRED_DOCUMENTS = (
     "data/ini/playertemplate.ini",
     "data/ini/locomotor.ini",
     "data/ini/weapon.ini",
+    # Weapon FireFX/ProjectileDetonationFX -> FXList -> Sound is the retail
+    # weapon audio chain; without fxlist.ini every melee swing falls back to
+    # a hardcoded class clip.
+    "data/ini/fxlist.ini",
     "data/ini/armor.ini",
     "data/ini/upgrade.ini",
     # Hero ability level gates chain through authored ExperienceLevel grants.

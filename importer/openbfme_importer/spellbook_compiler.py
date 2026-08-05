@@ -925,9 +925,13 @@ class _LeafResolver:
             elif kind == "deletionupdate":
                 self._project_deletion(leaf, block)
             elif kind == "slowdeathbehavior":
-                # Only hatch-bearing SlowDeath modules belong to this leaf
-                # contract. If their OCL shape cannot be projected (Watcher
-                # authors two staged OCL rows), retain the named gap.
+                # Every SlowDeath module records its destruction-delay
+                # evidence row (the authored FADED fade window used to be
+                # dropped silently -- the named compiler gap pinned in
+                # goal_spellbook_matrix_runner.gd). Hatch-bearing modules
+                # additionally keep the hatch contract below.
+                if not self._project_slow_death(leaf, block):
+                    unconverted.add(block.kind)
                 if block.values("OCL") and not self._project_hatch(
                     leaf, block, label
                 ):
@@ -957,6 +961,12 @@ class _LeafResolver:
             elif kind == "experiencelevelcreate":
                 # Projected above as authoritative creation-rank evidence.
                 pass
+            elif kind == "invisibilityupdate":
+                if not self._project_invisibility(leaf, block):
+                    unconverted.add(block.kind)
+            elif kind == "stealthdetectorupdate":
+                if not self._project_stealth_detector(leaf, block):
+                    unconverted.add(block.kind)
             else:
                 unconverted.add(block.kind)
         if unconverted:
@@ -1185,6 +1195,201 @@ class _LeafResolver:
         if delay is not None:
             row["destructionDelayMs"] = delay
         leaf["hatch"] = row
+        return True
+
+    def _project_slow_death(
+        self, leaf: dict[str, object], block: SageBlock
+    ) -> bool:
+        """Record one SlowDeathBehavior destruction-delay evidence row.
+
+        Retail authors the FADED fade window as ``DestructionDelay`` on a
+        ``DeathTypes = NONE +FADED`` module (pure retail examples:
+        object/goodfaction/generic/tombombadil.ini:541-548 = 1000 ms,
+        object/goodfaction/units/elven/gwaihir.ini:453-460 = 2500 ms,
+        object/goodfaction/units/ents/entsinfantry.ini:387-394 = 10000 ms).
+        The row keeps the authored milliseconds verbatim; a module with no
+        authored delay is recorded as ``destructionDelayAuthored: False``
+        rather than defaulted to 0.  Returns False (named unconverted) only
+        when an authored delay cannot be resolved.
+        """
+
+        row: dict[str, object] = {
+            "module": block.kind,
+            "moduleTag": block.instance_tag or "",
+        }
+        death_type_values = list(block.values("DeathTypes"))
+        if death_type_values:
+            row["deathTypes"] = [
+                token for value in death_type_values for token in _tokens(value)
+            ]
+        delay_values = block.values("DestructionDelay")
+        if delay_values:
+            delay, _ = self._block_numeric(block, "DestructionDelay")
+            if delay is None:
+                # Authored but unresolvable (macro outside the supported
+                # grammar, or duplicate rows): keep the module named instead
+                # of shipping a wrong or invented window.
+                return False
+            row["destructionDelayAuthored"] = True
+            row["destructionDelayMs"] = delay
+        else:
+            row["destructionDelayAuthored"] = False
+        row["sourceIni"] = block.source_virtual_path
+        row["line"] = block.line
+        rows = leaf.setdefault("slowDeaths", [])
+        assert isinstance(rows, list)
+        rows.append(row)
+        return True
+
+    # InvisibilityUpdate fields this projector converts. Everything else a
+    # module authors is preserved by NAME in ``unconvertedFields`` -- evidence
+    # is never silently dropped, and a consumer can gate on the list being
+    # empty (the Enshrouding Mist broadcast dummy at
+    # object/system/system.ini:2018-2028 authors exactly this subset).
+    _INVISIBILITY_MODULE_FIELDS = frozenset(
+        {"updateperiod", "broadcast", "broadcastrange",
+         "broadcastobjectfilter", "startsactive"}
+    )
+    _INVISIBILITY_NUGGET_FIELDS = frozenset(
+        {"invisibilitytype", "detectionrange"}
+    )
+
+    def _project_invisibility(
+        self, leaf: dict[str, object], block: SageBlock
+    ) -> bool:
+        """Convert one InvisibilityUpdate camouflage/broadcast module.
+
+        Emits nugget ``InvisibilityType``/``DetectionRange`` plus the module
+        ``UpdatePeriod``/``Broadcast``/``BroadcastRange``/
+        ``BroadcastObjectFilter``/``StartsActive`` contract, resolving
+        gamedata defines (ELVEN_MIST_CAMOUFLAGE_DETECTION_RANGE = 100.0 at
+        gamedata.ini:144, ENSHROUDING_MIST_EFFECT_RADIUS = 150 at
+        gamedata.ini:22, ELVEN_MIST_OBJECT_FILTER at gamedata.ini:145).
+        Atomic per module: a missing/ambiguous nugget or an authored numeric
+        field that cannot resolve keeps the module named in
+        ``unconvertedBehaviors``.
+        """
+
+        nuggets = [
+            nested
+            for nested in block.blocks
+            if nested.kind.casefold() == "invisibilitynugget"
+        ]
+        if len(nuggets) != 1:
+            return False
+        nugget = nuggets[0]
+        invisibility_type = next(iter(nugget.values("InvisibilityType")), None)
+        if invisibility_type is None:
+            return False
+        row: dict[str, object] = {
+            "invisibilityType": invisibility_type.strip(),
+        }
+        if nugget.values("DetectionRange"):
+            detection, _ = self._block_numeric(nugget, "DetectionRange")
+            if detection is None:
+                return False
+            row["detectionRange"] = detection
+        for source_name, output_name in (
+            ("UpdatePeriod", "updatePeriodMs"),
+            ("BroadcastRange", "broadcastRange"),
+        ):
+            if block.values(source_name):
+                value, _ = self._block_numeric(block, source_name)
+                if value is None:
+                    return False
+                row[output_name] = value
+        for source_name, output_name in (
+            ("Broadcast", "broadcast"),
+            ("StartsActive", "startsActive"),
+        ):
+            value = next(iter(block.values(source_name)), None)
+            if value is not None:
+                row[output_name] = value.strip()
+        object_filter = next(
+            iter(block.values("BroadcastObjectFilter")), None
+        )
+        if object_filter is not None:
+            row["broadcastObjectFilter"] = self._text_define(
+                object_filter.strip()
+            )
+        unconverted_fields = sorted(
+            {
+                assignment.key
+                for assignment in block.assignments
+                if assignment.key.casefold()
+                not in self._INVISIBILITY_MODULE_FIELDS
+            }
+            | {
+                assignment.key
+                for assignment in nugget.assignments
+                if assignment.key.casefold()
+                not in self._INVISIBILITY_NUGGET_FIELDS
+            },
+            key=str.casefold,
+        )
+        if unconverted_fields:
+            row["unconvertedFields"] = unconverted_fields
+        row["sourceIni"] = block.source_virtual_path
+        row["line"] = block.line
+        rows = leaf.setdefault("invisibilityUpdates", [])
+        assert isinstance(rows, list)
+        rows.append(row)
+        return True
+
+    _STEALTH_DETECTOR_FIELDS = frozenset(
+        {
+            "detectionrate",
+            "detectionrange",
+            "startsactive",
+            "initiallydisabled",
+            "canceloneringeffect",
+            "candetectwhilegarrisoned",
+            "candetectwhilecontained",
+            "requiredupgrade",
+        }
+    )
+
+    def _project_stealth_detector(
+        self, leaf: dict[str, object], block: SageBlock
+    ) -> bool:
+        """Convert one StealthDetectorUpdate module (DetectionRate et al)."""
+
+        row: dict[str, object] = {}
+        for source_name, output_name in (
+            ("DetectionRate", "detectionRateMs"),
+            ("DetectionRange", "detectionRange"),
+        ):
+            if block.values(source_name):
+                value, _ = self._block_numeric(block, source_name)
+                if value is None:
+                    return False
+                row[output_name] = value
+        for source_name, output_name in (
+            ("StartsActive", "startsActive"),
+            ("InitiallyDisabled", "initiallyDisabled"),
+            ("CancelOneRingEffect", "cancelOneRingEffect"),
+            ("CanDetectWhileGarrisoned", "canDetectWhileGarrisoned"),
+            ("CanDetectWhileContained", "canDetectWhileContained"),
+            ("RequiredUpgrade", "requiredUpgrade"),
+        ):
+            value = next(iter(block.values(source_name)), None)
+            if value is not None:
+                row[output_name] = value.strip()
+        unconverted_fields = sorted(
+            {
+                assignment.key
+                for assignment in block.assignments
+                if assignment.key.casefold() not in self._STEALTH_DETECTOR_FIELDS
+            },
+            key=str.casefold,
+        )
+        if unconverted_fields:
+            row["unconvertedFields"] = unconverted_fields
+        row["sourceIni"] = block.source_virtual_path
+        row["line"] = block.line
+        rows = leaf.setdefault("stealthDetection", [])
+        assert isinstance(rows, list)
+        rows.append(row)
         return True
 
     def _project_horde(

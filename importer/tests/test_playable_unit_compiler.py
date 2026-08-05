@@ -1271,6 +1271,223 @@ def _combat_hero_documents(
     )
 
 
+def _weapon_audio_documents() -> dict[str, bytes]:
+    ## Mirrors the retail chain `Weapon BoromirSword / FireFX =
+    ## FX_GondorSwordHit` (weapon.ini:5616-5624) -> `FXList FX_GondorSwordHit
+    ## / Sound / Name = ImpactSword01` (fxlist.ini:7584-7586).
+    command_row, button_row = _combat_command("Swordsman", 8, "Swordsman")
+    documents = _combat_documents(
+        _combat_object(
+            "Swordsman",
+            "INFANTRY",
+            "  WeaponSet\n"
+            "    Conditions = None\n"
+            "    Weapon = PRIMARY SwordsmanSword\n"
+            "    Weapon = SECONDARY SwordsmanBow\n"
+            "  End\n",
+        ),
+        "Weapon SwordsmanSword\n"
+        "  MeleeWeapon = Yes\n"
+        "  AttackRange = 20.0\n"
+        "  DelayBetweenShots = 1000\n"
+        "  FireFX = FX_SwordHit\n"
+        "  DamageNugget\n"
+        "    Damage = 40\n"
+        "    DamageType = SLASH\n"
+        "  End\n"
+        "End\n"
+        "Weapon SwordsmanBow\n"
+        "  AttackRange = 300.0\n"
+        "  FireFX = FX_BowRelease\n"
+        "  ProjectileDetonationFX = FX_ArrowHit\n"
+        "  DamageNugget\n"
+        "    Damage = 30\n"
+        "    DamageType = PIERCE\n"
+        "  End\n"
+        "End\n",
+        command_row,
+        button_row,
+    )
+    documents["data/ini/fxlist.ini"] = (
+        b"FXList FX_SwordHit\n"
+        b"  Sound\n"
+        b"    Name = ImpactSwordFx\n"
+        b"  End\n"
+        b"End\n"
+        b"FXList FX_ArrowHit\n"
+        b"  Sound\n"
+        b"    Name = ImpactArrowFx\n"
+        b"  End\n"
+        b"End\n"
+        b"FXList FX_BowRelease\n"
+        b"  ParticleSystem\n"
+        b"    Name = BowFlare\n"
+        b"  End\n"
+        b"End\n"
+    )
+    return documents
+
+
+def test_weapon_fire_fx_sound_chain_is_emitted_as_weapon_audio_routes() -> None:
+    documents = _weapon_audio_documents()
+
+    descriptor = compile_playable_unit_descriptor("Swordsman", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    routes = descriptor["presentation"]["audioRoutes"]["weapon"]
+    (sword_row,) = [
+        row for row in routes["FireFX"] if row["weaponId"] == "SwordsmanSword"
+    ]
+    assert sword_row["id"] == "ImpactSwordFx"
+    assert sword_row["ownerRole"] == "object"
+    assert sword_row["weaponSlot"] == "PRIMARY"
+    assert sword_row["defaultSet"] is True
+    assert sword_row["fxListId"] == "FX_SwordHit"
+    assert sword_row["sourceIni"] == "data/ini/weapon.ini"
+    assert isinstance(sword_row["line"], int) and sword_row["line"] > 0
+    assert sword_row["fxSourceIni"] == "data/ini/fxlist.ini"
+    assert isinstance(sword_row["fxLine"], int) and sword_row["fxLine"] > 0
+    (arrow_row,) = routes["ProjectileDetonationFX"]
+    assert arrow_row["id"] == "ImpactArrowFx"
+    assert arrow_row["weaponId"] == "SwordsmanBow"
+    assert arrow_row["weaponSlot"] == "SECONDARY"
+    # FX_BowRelease authors no Sound: recorded as an authored-silent gap, not
+    # dropped and not invented.
+    gaps = descriptor["presentation"]["weaponAudioGaps"]
+    (bow_gap,) = [
+        row for row in gaps if row.get("fxListId") == "FX_BowRelease"
+    ]
+    assert bow_gap["reason"] == "fxlist-authors-no-sound"
+    assert bow_gap["weaponId"] == "SwordsmanBow"
+
+
+def test_weapon_audio_without_fxlist_document_records_the_gap() -> None:
+    documents = _weapon_audio_documents()
+    del documents["data/ini/fxlist.ini"]
+
+    descriptor = compile_playable_unit_descriptor("Swordsman", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    assert descriptor["presentation"]["audioRoutes"]["weapon"] == {}
+    gaps = descriptor["presentation"]["weaponAudioGaps"]
+    assert gaps and all(
+        row["reason"] == "fxlist-document-not-in-view" for row in gaps
+    )
+    assert {row["fxListId"] for row in gaps} == {
+        "FX_SwordHit",
+        "FX_BowRelease",
+        "FX_ArrowHit",
+    }
+
+
+def test_weapon_audio_missing_definitions_record_gaps() -> None:
+    documents = _weapon_audio_documents()
+    units_path = "data/ini/object/units/test_units.ini"
+    documents[units_path] = documents[units_path].replace(
+        b"    Weapon = SECONDARY SwordsmanBow\n",
+        b"    Weapon = SECONDARY SwordsmanBow\n"
+        b"    Weapon = TERTIARY GhostWeapon\n",
+        1,
+    )
+    documents["data/ini/weapon.ini"] += (
+        b"Weapon GhostWeapon\n"
+        b"  AttackRange = 10.0\n"
+        b"  FireFX = FX_NeverAuthored\n"
+        b"  DamageNugget\n"
+        b"    Damage = 1\n"
+        b"    DamageType = SLASH\n"
+        b"  End\n"
+        b"End\n"
+    )
+
+    descriptor = compile_playable_unit_descriptor("Swordsman", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    gaps = descriptor["presentation"]["weaponAudioGaps"]
+    (missing_fx,) = [
+        row for row in gaps if row.get("fxListId") == "FX_NeverAuthored"
+    ]
+    assert missing_fx["reason"] == "fxlist-definition-missing"
+    assert missing_fx["weaponId"] == "GhostWeapon"
+    # The resolved chains still emit alongside the recorded gap.
+    routes = descriptor["presentation"]["audioRoutes"]["weapon"]
+    assert {row["id"] for row in routes["FireFX"]} == {"ImpactSwordFx"}
+
+
+def test_weapon_audio_route_rows_fail_validation_when_tampered() -> None:
+    descriptor = compile_playable_unit_descriptor(
+        "Swordsman", _weapon_audio_documents()
+    )
+    tampered = deepcopy(descriptor)
+    tampered["presentation"]["audioRoutes"]["weapon"]["FireFX"][0].pop(
+        "weaponId"
+    )
+    tampered.pop("descriptorSha256")
+    tampered["descriptorSha256"] = hashlib.sha256(
+        json.dumps(
+            tampered,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(PlayableUnitCompilerError, match="weapon audio route"):
+        validate_playable_unit_descriptor(tampered)
+
+
+def test_slow_death_destruction_delay_is_recorded_per_object() -> None:
+    ## Retail authors the per-object FADED fade window as SlowDeathBehavior
+    ## DestructionDelay (pure retail range 1000..10000 ms, e.g.
+    ## gwaihir.ini:453-460 = 2500). It used to be dropped silently, so the
+    ## simulation saw 0 and erased the row in the same tick. A module with no
+    ## authored delay stays recorded as absent, never defaulted to 0.
+    documents = _documents()
+    units_path = "data/ini/object/units/test_units.ini"
+    documents[units_path] = documents[units_path].decode().replace(
+        "Object MonsterUnit\n",
+        "Object MonsterUnit\n"
+        "  Behavior = SlowDeathBehavior ModuleTag_FadeDeath\n"
+        "    DeathTypes = NONE +FADED\n"
+        "    DestructionDelay = MONSTER_FADE_DELAY\n"
+        "  End\n"
+        "  Behavior = SlowDeathBehavior ModuleTag_Corpse\n"
+        "    DeathTypes = ALL -FADED\n"
+        "  End\n",
+        1,
+    ).encode()
+    documents["data/ini/gamedata.ini"] += b"#define MONSTER_FADE_DELAY 2500\n"
+
+    descriptor = compile_playable_unit_descriptor("MonsterUnit", documents)
+
+    validate_playable_unit_descriptor(descriptor)
+    fade, corpse = descriptor["gameplay"]["simulation"]["resolved"]["slowDeaths"]
+    assert fade["ownerRole"] == "object"
+    assert fade["module"] == "SlowDeathBehavior"
+    assert fade["moduleTag"] == "ModuleTag_FadeDeath"
+    assert fade["deathTypes"] == ["NONE", "+FADED"]
+    assert fade["destructionDelayAuthored"] is True
+    assert fade["destructionDelayMs"] == 2500
+    assert fade["sourceIni"] == units_path
+    assert isinstance(fade["line"], int) and fade["line"] > 0
+    assert corpse["moduleTag"] == "ModuleTag_Corpse"
+    assert corpse["deathTypes"] == ["ALL", "-FADED"]
+    assert corpse["destructionDelayAuthored"] is False
+    assert "destructionDelayMs" not in corpse
+    # Evidence only: recording the authored window does NOT claim the shared
+    # runtime adapter consumes the module.
+    evidence = [
+        row
+        for row in descriptor["runtimeModuleEvidence"]
+        if row["kind"] == "SlowDeathBehavior"
+    ]
+    assert evidence and all(row["consumed"] is False for row in evidence)
+
+
+def test_unauthored_slow_death_emits_no_rows() -> None:
+    descriptor = compile_playable_unit_descriptor("MonsterUnit", _documents())
+    assert "slowDeaths" not in descriptor["gameplay"]["simulation"]["resolved"]
+
+
 def test_hero_multi_nugget_damage_resolves_base_total() -> None:
     documents = _combat_hero_documents(
         "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY HeroNuggetSword\n  End\n",

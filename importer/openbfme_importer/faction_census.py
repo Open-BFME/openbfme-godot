@@ -46,6 +46,14 @@ SPECIAL_POWER_PATH = "data/ini/specialpower.ini"
 # (and other sides) still reach CAH abilities through shared command surfaces.
 CREATE_A_HERO_SPECIAL_POWER_PATH = "data/ini/createaherospecialpowers.ini"
 FX_LIST_PATH = "data/ini/fxlist.ini"
+# Weapon FireFX/ProjectileDetonationFX -> FXList -> Sound is where retail
+# authors every melee swing and projectile impact sound; routing it here is
+# what lets the playable-unit lane bind those AudioEvents per unit.
+WEAPON_PATH = "data/ini/weapon.ini"
+# Living-world autoresolve armies carry `Weapon = AutoResolve_*` slots whose
+# definitions live in a sibling document, not weapon.ini. Indexing it keeps
+# those references resolved facts instead of false "missing" claims.
+AUTORESOLVE_WEAPON_PATH = "data/ini/livingworldautoresolveweapon.ini"
 EVA_PATH = "data/ini/eva.ini"
 MUSIC_PATH = "data/ini/music.ini"
 MAPPED_IMAGE_PREFIX = "data/ini/mappedimages/"
@@ -55,6 +63,7 @@ MAX_MAPPED_IMAGE_DOCUMENTS = 4_096
 MAX_TOTAL_MAPPED_IMAGE_BYTES = 128 * 1024 * 1024
 MAX_FX_LISTS = 4_096
 MAX_EVA_EVENTS = 4_096
+MAX_WEAPONS = 8_192
 
 _IMPLICIT_MEN_ROOTS = (
     ("MenFortressCenterGeneric", "fortress-composite-center"),
@@ -320,6 +329,71 @@ def _fx_list_sound_names(source: bytes) -> dict[str, tuple[str, tuple[str, ...]]
             dict.fromkeys(sorted(values, key=lambda item: (item.casefold(), item)))
         )
         result[key] = (authored_names[key], deduped)
+    return result
+
+
+# Both retail weapon families: weapon.ini `Weapon <name>` and the
+# living-world `AutoResolveWeapon <name>` blocks (abstract autoresolve damage
+# tables; they author no FireFX, but indexing them keeps `Weapon =
+# AutoResolve_*` object slots resolved facts instead of false missing claims).
+_WEAPON_HEADER = re.compile(
+    r"^(?:AutoResolve)?Weapon\s+([A-Za-z0-9_+.-]+)\s*$", re.IGNORECASE
+)
+_WEAPON_AUDIO_FX_FIELDS = {
+    "firefx": "FireFX",
+    "projectiledetonationfx": "ProjectileDetonationFX",
+}
+_WEAPON_VALUE_SENTINELS = frozenset({"none", "null"})
+
+
+def _weapon_fire_fx_names(
+    source: bytes,
+) -> dict[str, tuple[str, tuple[tuple[str, str], ...]]]:
+    """Index authored FireFX/ProjectileDetonationFX references per Weapon.
+
+    Retail authors weapon audio OFF the object, on the weapon: ``Weapon
+    BoromirSword / FireFX = FX_GondorSwordHit`` (pure retail
+    weapon.ini:5616-5624).  The census only needs the FX-list names so the
+    weapon -> FXList -> Sound chain can route its audio definitions; weapon
+    semantics stay unresolved here.
+    """
+
+    weapons: dict[str, list[tuple[str, str]]] = {}
+    authored_names: dict[str, str] = {}
+    current: str | None = None
+    section_stack: list[str] = []
+    for line in _ini_lines(source):
+        header = _WEAPON_HEADER.fullmatch(line)
+        if header is not None and current is None:
+            current = header.group(1)
+            authored_names.setdefault(current.casefold(), current)
+            weapons.setdefault(current.casefold(), [])
+            if len(weapons) > MAX_WEAPONS:
+                raise ValueError("Weapon document count exceeds limit")
+            continue
+        if current is None:
+            continue
+        if line.casefold() == "end":
+            if section_stack:
+                section_stack.pop()
+            else:
+                current = None
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            field = _WEAPON_AUDIO_FX_FIELDS.get(key.strip().casefold())
+            if field is not None:
+                identifier = _first_identifier(value.strip())
+                if (
+                    identifier
+                    and identifier.casefold() not in _WEAPON_VALUE_SENTINELS
+                ):
+                    weapons[current.casefold()].append((field, identifier))
+            continue
+        section_stack.append(line.split()[0].casefold())
+    result: dict[str, tuple[str, tuple[tuple[str, str], ...]]] = {}
+    for key, values in weapons.items():
+        result[key] = (authored_names[key], tuple(dict.fromkeys(values)))
     return result
 
 
@@ -788,6 +862,21 @@ def _census_playable_faction(
     else:
         special_power_source = special_power_doc.source
     fx_list_doc = _read_document(catalog, FX_LIST_PATH)
+    # weapon.ini is optional at census level (mirrors the Create-a-Hero power
+    # document): absent means no weapon audio chain is claimed, present means
+    # every command-reachable object's WeaponSet weapons route their
+    # FireFX/ProjectileDetonationFX sounds.
+    weapon_doc = (
+        _read_document(catalog, WEAPON_PATH)
+        if catalog.resolve_exact(WEAPON_PATH) is not None
+        else None
+    )
+    autoresolve_weapon_doc = (
+        _read_document(catalog, AUTORESOLVE_WEAPON_PATH)
+        if weapon_doc is not None
+        and catalog.resolve_exact(AUTORESOLVE_WEAPON_PATH) is not None
+        else None
+    )
     eva_doc = _read_document(catalog, EVA_PATH)
     music_doc = _read_document(catalog, MUSIC_PATH)
     mapped_image_docs = _mapped_image_documents(catalog)
@@ -801,6 +890,18 @@ def _census_playable_faction(
         sound_effects_doc.source + b"\n" + voice_doc.source + b"\n" + music_doc.source
     )
     fx_list_sounds = _fx_list_sound_names(fx_list_doc.source)
+    weapon_fire_fx = (
+        _weapon_fire_fx_names(
+            weapon_doc.source
+            + (
+                b"\n" + autoresolve_weapon_doc.source
+                if autoresolve_weapon_doc is not None
+                else b""
+            )
+        )
+        if weapon_doc is not None
+        else {}
+    )
     eva_events = _eva_event_side_sounds(eva_doc.source)
     string_catalog = parse_string_catalog(
         string_catalog_doc.source, duplicate_policy="first-wins", strict=False
@@ -863,6 +964,7 @@ def _census_playable_faction(
     missing_audio_definitions: set[str] = set()
     missing_eva_events: set[str] = set()
     missing_fx_lists: set[str] = set()
+    missing_weapon_definitions: set[str] = set()
     spellbook_object_keys: set[str] = set()
     spellbook_fx_lists: set[str] = set()
     sciences: set[str] = set()
@@ -997,6 +1099,7 @@ def _census_playable_faction(
             definition = candidates[0]
             block = definition.block
             edge_rows: list[dict[str, str]] = []
+            weapon_edge_keys: set[tuple[str, str]] = set()
             if block.parent:
                 edge_rows.append(
                     {
@@ -1188,6 +1291,67 @@ def _census_playable_faction(
                                         supplier.block.name
                                     )
                                 edge_rows.append(sound_edge)
+                if folded == "weapon" and weapon_doc is not None:
+                    # WeaponSet slot rows ("Weapon = PRIMARY BoromirSword"):
+                    # the weapon name is the LAST identifier token. Route its
+                    # authored FireFX/ProjectileDetonationFX FXList sounds so
+                    # weapon audio events become resolvable pack leaves.
+                    weapon_tokens = re.findall(r"[A-Za-z0-9_+.-]+", value)
+                    weapon_token = weapon_tokens[-1] if weapon_tokens else None
+                    if (
+                        weapon_token
+                        and weapon_token.casefold()
+                        not in _WEAPON_VALUE_SENTINELS
+                    ):
+                        weapon_record = weapon_fire_fx.get(
+                            weapon_token.casefold()
+                        )
+                        if weapon_record is None:
+                            missing_weapon_definitions.add(weapon_token)
+                        else:
+                            for fx_field, fx_target in weapon_record[1]:
+                                fx_record = fx_list_sounds.get(
+                                    fx_target.casefold()
+                                )
+                                if fx_record is None:
+                                    missing_fx_lists.add(fx_target)
+                                    continue
+                                for sound_token in fx_record[1]:
+                                    audio_id = audio_definition_names.get(
+                                        sound_token.casefold()
+                                    )
+                                    if audio_id is not None:
+                                        audio_roots.add(audio_id)
+                                        target_id = audio_id
+                                        resolution = "resolved"
+                                    else:
+                                        target_id = sound_token
+                                        resolution = "unresolved"
+                                        missing_audio_definitions.add(
+                                            sound_token
+                                        )
+                                    edge_field = (
+                                        f"Weapon:{weapon_record[0]}:{fx_field}"
+                                    )
+                                    if (edge_field, target_id.casefold()) in (
+                                        weapon_edge_keys
+                                    ):
+                                        continue
+                                    weapon_edge_keys.add(
+                                        (edge_field, target_id.casefold())
+                                    )
+                                    sound_edge = {
+                                        "field": edge_field,
+                                        "targetKind": "audio-definition",
+                                        "targetId": target_id,
+                                        "resolution": resolution,
+                                        "fxListId": fx_record[0],
+                                    }
+                                    if inherited:
+                                        sound_edge["sourceObjectId"] = (
+                                            supplier.block.name
+                                        )
+                                    edge_rows.append(sound_edge)
             edge_rows.sort(
                 key=lambda item: (
                     item["field"].casefold(),
@@ -1559,6 +1723,12 @@ def _census_playable_faction(
         science_doc,
         special_power_doc,
         fx_list_doc,
+        *((weapon_doc,) if weapon_doc is not None else ()),
+        *(
+            (autoresolve_weapon_doc,)
+            if autoresolve_weapon_doc is not None
+            else ()
+        ),
         eva_doc,
         music_doc,
         *mapped_image_docs,
@@ -1673,6 +1843,9 @@ def _census_playable_faction(
         "missingSpecialPowers": list(gameplay_closure.missing_special_powers),
         "ambiguousSpecialPowers": list(gameplay_closure.ambiguous_special_powers),
         "missingFxLists": sorted(missing_fx_lists, key=str.casefold),
+        "missingWeaponDefinitions": sorted(
+            missing_weapon_definitions, key=str.casefold
+        ),
     }
     if unresolved_mapped_image_textures:
         unresolved["missingMappedImageTextures"] = sorted(
@@ -1805,7 +1978,7 @@ def _census_playable_faction(
         },
         "limitations": [
             "Command-reachable upgrade, science, and special-power definitions are resolved as typed identifier edges plus payload-free assignment digests.",
-            "This census does not yet resolve W3D, animation, material, FX-list bodies, weapon/projectile, construction, damage, or destruction leaves.",
+            "This census does not yet resolve W3D, animation, material, FX-list bodies, weapon/projectile, construction, damage, or destruction leaves; the sole weapon exception is the Weapon FireFX/ProjectileDetonationFX -> FXList -> Sound audio chain, routed as typed audio-definition edges.",
             "Mapped-image, localization, and audio leaves cover the current command-reachable object/button graph, not every future runtime state.",
             "Authored SelectPortrait references with no MappedImage definition are preserved as explicit source-null images; required ButtonImage gaps remain unresolved.",
             "Caller-declared source-null policy covers only retail-authored references absent from every effective archive (placeholder button atlas textures, the Isengard side-pad CommandSet); every other missing leaf remains unresolved.",

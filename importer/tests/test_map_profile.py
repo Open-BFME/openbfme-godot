@@ -174,6 +174,48 @@ def _skirmish_catalog(root: Path, *, drop_preview_for: str = "") -> InstallCatal
     return InstallCatalog.build(root)
 
 
+def _encoded_display_key(key: str) -> str:
+    """Escape a string-table key the way retail's mapcache displayName does."""
+
+    return "".join(f"_{byte:02X}" for byte in key.encode("utf-16-le"))
+
+
+def _authored_names_catalog(root: Path) -> InstallCatalog:
+    """An install whose registry authors a name the directory gets wrong."""
+
+    source, _ = _synthetic_map()
+    entries: dict[str, bytes] = {
+        "data/ini/terrain.ini": b"Terrain TestGrass\n Texture = testgrass.tga\nEnd\n",
+        "art/terrain/testgrass.tga": b"synthetic-tga",
+        "libraries/ai_initialize/ai_initialize.map": source,
+        "libraries/ai_mp_inherit_management/ai_mp_inherit_management.map": source,
+        "data/lotr.str": b'Map:MAPMPFallBack4p\n "Stonewain Valley"\nEND\n',
+    }
+    records = []
+    for directory, display_key in (
+        ("map mp fall back 4p", "Map:MAPMPFallBack4p"),
+        # No displayName key: the derived fallback must be recorded, not silent.
+        ("map mp bravo ridge", ""),
+    ):
+        base = f"maps/{directory}/{directory}"
+        entries[f"{base}.map"] = source
+        entries[f"{base}_art.tga"] = b"art"
+        entries[f"{base}_pic.tga"] = b"preview"
+        record = _mapcache_record(f"{base}.map", players=1)
+        if display_key:
+            head, tail = record.split("\n", 1)
+            record = "\n".join(
+                [head, f"  displayName = {_encoded_display_key(display_key)}", tail]
+            )
+        records.append(record)
+    entries["maps/mapcache.ini"] = ("\n".join(records) + "\n").encode("cp1252")
+    make_big(root / "maps.big", entries)
+    return InstallCatalog.build(root)
+
+
+class FiveMapWrapperIdentityTests(unittest.TestCase):
+    # This test was previously nested (dead) inside a module-level helper and
+    # never collected; restored to an actual TestCase.
     def test_five_map_wrapper_keeps_its_historical_identity(self) -> None:
         # Carried over from the phase0 lane through the map-profile rewrite: the
         # legacy five-map pack's identity is depended on by existing generated
@@ -340,6 +382,46 @@ class SkirmishMapDiscoveryTests(unittest.TestCase):
                 for row in profile["runtime_data"]["data/maps.json"]["maps"]
             ],
             ["rotwk.map.alpha-vale", "rotwk.map.bravo-ridge-ii"],
+        )
+
+    def test_authored_display_names_win_and_provenance_is_recorded(self) -> None:
+        # Retail authors "Stonewain Valley" for the directory ``map mp fall
+        # back 4p``; title-casing the directory is not merely ugly, it is
+        # WRONG, and a fresh cook that reintroduces it must fail this test.
+        with tempfile.TemporaryDirectory() as raw:
+            catalog = _authored_names_catalog(Path(raw))
+            targets, _ = discover_registry_map_targets(catalog)
+            profile = build_skirmish_map_profile(catalog)
+
+        self.assertEqual(
+            [(target.slug, target.display_name, target.display_name_source) for target in targets],
+            [
+                ("bravo-ridge", "Bravo Ridge", "derived-from-directory"),
+                ("fall-back-4p", "Stonewain Valley", "authored"),
+            ],
+        )
+        rows = profile["runtime_data"]["data/maps.json"]["maps"]
+        self.assertEqual(
+            [row["displayName"] for row in rows],
+            ["Bravo Ridge", "Stonewain Valley"],
+        )
+        # The catalog can never quietly ship a directory-derived name: the
+        # planning evidence names every one, and the official corpus gate
+        # asserts the count is zero.
+        source = profile["planning_evidence"]["displayNameSource"]
+        self.assertEqual(source["authoredCount"], 1)
+        self.assertEqual(source["derivedFromDirectoryCount"], 1)
+        self.assertEqual(source["derivedFromDirectorySlugs"], ["bravo-ridge"])
+
+    def test_profile_without_string_table_records_every_derived_name(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            profile = build_skirmish_map_profile(_skirmish_catalog(Path(raw)))
+
+        source = profile["planning_evidence"]["displayNameSource"]
+        self.assertEqual(source["authoredCount"], 0)
+        self.assertEqual(source["derivedFromDirectoryCount"], 2)
+        self.assertEqual(
+            source["derivedFromDirectorySlugs"], ["alpha-vale", "bravo-ridge-ii"]
         )
 
     def test_registry_player_count_disagreement_rejects_the_map(self) -> None:

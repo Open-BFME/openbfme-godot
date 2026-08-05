@@ -758,6 +758,189 @@ def test_grantable_science_qualifier_is_preserved() -> None:
     assert row["isGrantableQualifierSciences"] == ["SCIENCE_ELVES"]
 
 
+def _leaf(draft: dict[str, object], object_id: str) -> dict[str, object]:
+    return next(
+        row for row in draft["leaves"]["objects"] if row["id"] == object_id
+    )
+
+
+def test_invisibility_broadcast_camouflage_is_projected() -> None:
+    ## Retail authors the Enshrouding Mist camouflage broadcast at
+    ## object/system/system.ini:2018-2028 (InvisibilityNugget InvisibilityType /
+    ## DetectionRange, module UpdatePeriod / Broadcast / BroadcastRange /
+    ## BroadcastObjectFilter / StartsActive), with the ranges and filter as
+    ## gamedata defines (gamedata.ini:22,144,145). This mirrors that shape.
+    documents = _documents()
+    documents["data/ini/gamedata.ini"] += (
+        b"#define TEST_MIST_DETECTION_RANGE 100.0\n"
+        b"#define TEST_MIST_EFFECT_RADIUS 150\n"
+        b"#define TEST_MIST_OBJECT_FILTER ANY +HORDE +HERO ALLIES\n"
+    )
+    documents["data/ini/object/system/test_system.ini"] = documents[
+        "data/ini/object/system/test_system.ini"
+    ].replace(
+        b"Object TestHealPing\n",
+        b"Object TestHealPing\n"
+        b"  Behavior = InvisibilityUpdate ModuleTag_BroadcastCamouflage\n"
+        b"    InvisibilityNugget\n"
+        b"      InvisibilityType = CAMOUFLAGE\n"
+        b"      DetectionRange = TEST_MIST_DETECTION_RANGE\n"
+        b"    End\n"
+        b"    UpdatePeriod = 1000\n"
+        b"    Broadcast = Yes\n"
+        b"    BroadcastRange = TEST_MIST_EFFECT_RADIUS\n"
+        b"    BroadcastObjectFilter = TEST_MIST_OBJECT_FILTER\n"
+        b"    StartsActive = Yes\n"
+        b"  End\n"
+        b"  Behavior = StealthDetectorUpdate ModuleTag_MistDetector\n"
+        b"    DetectionRate = 500\n"
+        b"  End\n",
+        1,
+    )
+    draft = compile_spellbook_descriptor(_graph(documents), documents)
+    ping = _leaf(draft, "TestHealPing")
+    assert "InvisibilityUpdate" not in ping.get("unconvertedBehaviors", [])
+    assert "StealthDetectorUpdate" not in ping.get("unconvertedBehaviors", [])
+    (invisibility,) = ping["invisibilityUpdates"]
+    assert invisibility["invisibilityType"] == "CAMOUFLAGE"
+    assert invisibility["detectionRange"] == 100.0
+    assert invisibility["updatePeriodMs"] == 1000
+    assert invisibility["broadcast"] == "Yes"
+    assert invisibility["broadcastRange"] == 150
+    assert invisibility["broadcastObjectFilter"] == "ANY +HORDE +HERO ALLIES"
+    assert invisibility["startsActive"] == "Yes"
+    assert invisibility["sourceIni"] == "data/ini/object/system/test_system.ini"
+    assert isinstance(invisibility["line"], int) and invisibility["line"] > 0
+    assert "unconvertedFields" not in invisibility
+    (detector,) = ping["stealthDetection"]
+    assert detector["detectionRateMs"] == 500
+    assert detector["sourceIni"] == "data/ini/object/system/test_system.ini"
+    assert isinstance(detector["line"], int) and detector["line"] > 0
+
+
+def test_invisibility_records_unsupported_fields_by_name() -> None:
+    ## A unit-style stealth module (retail authors ForbiddenConditions and
+    ## stealth enter/exit FX on e.g. Haldir) converts its measured subset and
+    ## names every other authored field instead of dropping it.
+    documents = _documents()
+    documents["data/ini/object/system/test_system.ini"] = documents[
+        "data/ini/object/system/test_system.ini"
+    ].replace(
+        b"Object TestHealPing\n",
+        b"Object TestHealPing\n"
+        b"  Behavior = InvisibilityUpdate ModuleTag_Stealth\n"
+        b"    InvisibilityNugget\n"
+        b"      InvisibilityType = CAMOUFLAGE\n"
+        b"      ForbiddenConditions = ATTACKING MOVING\n"
+        b"    End\n"
+        b"    UpdatePeriod = 2000\n"
+        b"    StartsActive = Yes\n"
+        b"    BecomeStealthedFX = FX_TestHealBuff\n"
+        b"  End\n",
+        1,
+    )
+    draft = compile_spellbook_descriptor(_graph(documents), documents)
+    ping = _leaf(draft, "TestHealPing")
+    assert "InvisibilityUpdate" not in ping.get("unconvertedBehaviors", [])
+    (invisibility,) = ping["invisibilityUpdates"]
+    assert invisibility["invisibilityType"] == "CAMOUFLAGE"
+    assert invisibility["updatePeriodMs"] == 2000
+    assert invisibility["unconvertedFields"] == [
+        "BecomeStealthedFX",
+        "ForbiddenConditions",
+    ]
+
+
+def test_invisibility_without_a_nugget_stays_named_unconverted() -> None:
+    documents = _documents()
+    documents["data/ini/object/system/test_system.ini"] = documents[
+        "data/ini/object/system/test_system.ini"
+    ].replace(
+        b"Object TestHealPing\n",
+        b"Object TestHealPing\n"
+        b"  Behavior = InvisibilityUpdate ModuleTag_Broken\n"
+        b"    UpdatePeriod = 1000\n"
+        b"  End\n",
+        1,
+    )
+    draft = compile_spellbook_descriptor(_graph(documents), documents)
+    ping = _leaf(draft, "TestHealPing")
+    assert "InvisibilityUpdate" in ping.get("unconvertedBehaviors", [])
+    assert "invisibilityUpdates" not in ping
+
+
+def test_slow_death_destruction_delay_is_emitted_per_module() -> None:
+    ## Retail authors the FADED fade window on SlowDeathBehavior
+    ## DestructionDelay (e.g. gwaihir.ini:453-460 `DeathTypes = NONE +FADED`,
+    ## `DestructionDelay = 2500`); dropping it silently is exactly the named
+    ## compiler gap pinned in goal_spellbook_matrix_runner.gd. A module with no
+    ## authored delay stays recorded as absent, never defaulted to 0.
+    documents = _documents()
+    documents["data/ini/object/system/test_system.ini"] = documents[
+        "data/ini/object/system/test_system.ini"
+    ].replace(
+        b"  Behavior = ExperienceLevelCreate ModuleTag_LevelBonus\n",
+        b"  Behavior = SlowDeathBehavior ModuleTag_FadeDeath\n"
+        b"    DeathTypes = NONE +FADED\n"
+        b"    DestructionDelay = 2500\n"
+        b"  End\n"
+        b"  Behavior = SlowDeathBehavior ModuleTag_RealDeath\n"
+        b"    DeathTypes = ALL -FADED\n"
+        b"  End\n"
+        b"  Behavior = ExperienceLevelCreate ModuleTag_LevelBonus\n",
+        1,
+    )
+    draft = compile_spellbook_descriptor(_graph(documents), documents)
+    horde = _leaf(draft, "TestSummonedHorde")
+    assert "SlowDeathBehavior" not in horde.get("unconvertedBehaviors", [])
+    fade, real = horde["slowDeaths"]
+    assert fade["module"] == "SlowDeathBehavior"
+    assert fade["moduleTag"] == "ModuleTag_FadeDeath"
+    assert fade["deathTypes"] == ["NONE", "+FADED"]
+    assert fade["destructionDelayAuthored"] is True
+    assert fade["destructionDelayMs"] == 2500
+    assert fade["sourceIni"] == "data/ini/object/system/test_system.ini"
+    assert isinstance(fade["line"], int) and fade["line"] > 0
+    assert real["moduleTag"] == "ModuleTag_RealDeath"
+    assert real["deathTypes"] == ["ALL", "-FADED"]
+    assert real["destructionDelayAuthored"] is False
+    assert "destructionDelayMs" not in real
+
+
+def test_hatch_slow_death_also_records_its_fade_row() -> None:
+    ## Hatch-bearing SlowDeath modules keep their `hatch` contract AND now
+    ## record the same destruction-delay evidence row every other module gets.
+    documents = _documents()
+    documents["data/ini/objectcreationlist.ini"] += (
+        b"\nObjectCreationList OCL_TestHatch\n"
+        b"  CreateObject\n"
+        b"    ObjectNames = TestSummonedMember\n"
+        b"    Count = 1\n"
+        b"  End\n"
+        b"End\n"
+    )
+    documents["data/ini/object/system/test_system.ini"] = documents[
+        "data/ini/object/system/test_system.ini"
+    ].replace(
+        b"  Behavior = ExperienceLevelCreate ModuleTag_LevelBonus\n",
+        b"  Behavior = SlowDeathBehavior ModuleTag_HatchDeath\n"
+        b"    DeathTypes = ALL\n"
+        b"    DestructionDelay = 4000\n"
+        b"    OCL = MIDPOINT OCL_TestHatch\n"
+        b"  End\n"
+        b"  Behavior = ExperienceLevelCreate ModuleTag_LevelBonus\n",
+        1,
+    )
+    draft = compile_spellbook_descriptor(_graph(documents), documents)
+    horde = _leaf(draft, "TestSummonedHorde")
+    assert horde["hatch"]["destructionDelayMs"] == 4000
+    (row,) = horde["slowDeaths"]
+    assert row["moduleTag"] == "ModuleTag_HatchDeath"
+    assert row["deathTypes"] == ["ALL"]
+    assert row["destructionDelayAuthored"] is True
+    assert row["destructionDelayMs"] == 4000
+
+
 def test_object_aura_preserves_explicit_target_polarity() -> None:
     documents = _documents()
     path = "data/ini/object/system/test_system.ini"
@@ -1512,6 +1695,14 @@ def test_effect_geometry_rides_the_recipe_and_the_runtime_document() -> None:
         "model": model["output"],
         "sourceW3d": "art/w3d/tt/testmember_skn.w3d",
         "converter": "w3d-hierarchical",
+        # The container inherits its member's animation verdict. This fixture
+        # authors no animation leaves, so the verdict is "nothing to bind" --
+        # recorded rather than left unsaid.
+        "animationSummary": {
+            "boundCount": 0,
+            "nonCoreCount": 0,
+            "unboundSkeletonCount": 0,
+        },
     }
     assert objects["TestHealPing"]["status"] == "authored-invisible"
 

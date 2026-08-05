@@ -134,6 +134,15 @@ def classify_map_directory(directory: str) -> str:
     return SYSTEM_CATEGORY
 
 
+#: Where a target's ``display_name`` came from.  ``authored`` is retail's own
+#: ``data/lotr.str`` string table (or a hand-authored constant); a name that had
+#: to be title-cased from the retail directory is recorded so a pack can never
+#: quietly ship an invented name ("Fall Back 4p" for retail's "Stonewain
+#: Valley") without the planning evidence saying so.
+DISPLAY_NAME_AUTHORED = "authored"
+DISPLAY_NAME_DERIVED = "derived-from-directory"
+
+
 @dataclass(frozen=True, slots=True)
 class MapTarget:
     slug: str
@@ -143,6 +152,7 @@ class MapTarget:
     #: registry; ``None`` for hand-authored targets.
     registry_player_count: int | None = None
     category: str = SKIRMISH_CATEGORY
+    display_name_source: str = DISPLAY_NAME_AUTHORED
 
 
 #: Historic alias: the five-map development set predates registry discovery.
@@ -356,6 +366,9 @@ def discover_registry_map_targets(
                 virtual_path,
                 int(record["playerCount"]),
                 category=category,
+                display_name_source=(
+                    DISPLAY_NAME_AUTHORED if authored_name else DISPLAY_NAME_DERIVED
+                ),
             )
         )
     targets.sort(key=lambda target: target.slug)
@@ -420,7 +433,16 @@ def discover_catalog_only_map_targets(
             )
         seen_slugs[slug] = name
         targets.append(
-            MapTarget(slug, _display_name(directory), name, None, category=category)
+            MapTarget(
+                slug,
+                _display_name(directory),
+                name,
+                None,
+                category=category,
+                # No registry row means no ``displayName`` key to resolve, so an
+                # unregistered payload's name is always a derivation and says so.
+                display_name_source=DISPLAY_NAME_DERIVED,
+            )
         )
     targets.sort(key=lambda target: target.slug)
     return tuple(targets), tuple(rejections)
@@ -548,6 +570,7 @@ def build_map_profile(
     global_terrain_paths: list[str] = [terrain_entry.name]
     global_texture_keys: set[str] = set()
     unbound_types: dict[str, list[str]] = {}
+    derived_name_slugs: list[str] = []
     build_rejections: list[dict[str, Any]] = list(rejections)
     terrain_materials_output = f"{terrain_output}/terrain-materials.json"
     prop_binding_evidence: dict[str, Any] = {}
@@ -796,6 +819,8 @@ def build_map_profile(
         if target.registry_player_count is not None:
             row["registryPlayerCount"] = int(target.registry_player_count)
             row["registryPlayerCountAgrees"] = bool(registry_agrees)
+        if target.display_name_source == DISPLAY_NAME_DERIVED:
+            derived_name_slugs.append(target.slug)
         map_catalog.append(row)
 
     if not map_catalog:
@@ -859,6 +884,17 @@ def build_map_profile(
             if category in category_counts
         ],
         "rejectedMaps": build_rejections,
+        # Authored names come from retail's own string table; a derived fallback
+        # is recorded per map so a fresh cook can never quietly reintroduce
+        # directory-derived names ("Fall Back 4p" for retail's "Stonewain
+        # Valley") without this evidence saying so.
+        "displayNameSource": {
+            "authoredTable": "data/lotr.str",
+            "authoredKeyField": "mapcache displayName",
+            "authoredCount": len(map_catalog) - len(derived_name_slugs),
+            "derivedFromDirectoryCount": len(derived_name_slugs),
+            "derivedFromDirectorySlugs": sorted(derived_name_slugs),
+        },
         "unboundObjectTypes": {
             slug: {"count": len(types), "typeNames": types}
             for slug, types in sorted(unbound_types.items())

@@ -1,9 +1,10 @@
 """Compose coverage-approved faction artifacts into an import profile."""
 from __future__ import annotations
 from copy import deepcopy
-import hashlib, json
+import hashlib, json, re
 from pathlib import Path
 from typing import Mapping, Sequence
+from .cah_system_compiler import CahSystemCompilerError, validate_cah_system_runtime
 from .faction_import import coverage_digest_payload
 from .livingworld import LIVING_WORLD_PACK_PATH
 from .playable_structure_pack_compiler import validate_structure_visual_recipe
@@ -28,6 +29,113 @@ _KNOWN_FACTIONS = frozenset(row[0] for row in _FACTION_ROWS) | _ROTWK_FACTIONS
 # every existing bfme2 composition keeps its byte-identical id.
 _GAME_PACK_PREFIX = {"bfme2": "bfme2", "rotwk": "rotwk"}
 from .spellbook_pack_compiler import validate_spellbook_pack_recipe
+
+# --- pack strings lane -----------------------------------------------------
+# Every CONTROLBAR: id a shipped runtime document references is HUD text the
+# control bar will try to draw.  The gate
+# (game/tests/hud_string_completeness_runner.gd) scrapes the published pack's
+# JSON text with exactly this regex, so "reference" here MUST mean the same
+# thing: any quoted CONTROLBAR: string value anywhere in a runtime document.
+STRINGS_RUNTIME_PATH = "data/strings.json"
+STRINGS_PACK_KEY = "strings"
+_CONTROLBAR_REFERENCE = re.compile(r'"(CONTROLBAR:[^"]+)"')
+
+# The Create-a-Hero class table.  Compiled by cah_system_compiler from the
+# effective-assets oracle; published only by the RotWK Men host pack (the
+# established owner of global strategic documents -- see the livingWorld
+# handling in compose_faction_profile).
+CAH_SYSTEM_RUNTIME_PATH = "data/cah/system.json"
+CAH_SYSTEM_PACK_KEY = "cah.system"
+
+
+def _referenced_controlbar_ids(runtime_data: Mapping[str, object]) -> set[str]:
+    """Every CONTROLBAR: id the composed runtime documents reference.
+
+    Scans the canonical JSON serialization of each document, matching the HUD
+    completeness gate's own scrape (`"(CONTROLBAR:[^"]+)"` over file text).
+    The strings document itself is excluded: its keys are answers, not
+    questions, and they enter the composed document through the merge lane.
+    """
+
+    references: set[str] = set()
+    for path, document in runtime_data.items():
+        if str(path) == STRINGS_RUNTIME_PATH:
+            continue
+        text = json.dumps(
+            document, sort_keys=True, ensure_ascii=False, allow_nan=False
+        )
+        references.update(_CONTROLBAR_REFERENCE.findall(text))
+    return references
+
+
+def _build_strings_document(
+    references: set[str],
+    string_catalog,
+    existing: Mapping[str, object] | None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Resolve referenced ids against the retail table into a pack document.
+
+    Returns ``(document, stats)``.  Every referenced id lands in exactly one
+    bucket: a resolved row in ``strings`` (retail has the text -- shipped
+    verbatim, including retail's own empty rows) or ``sourceNullStringIds``
+    (the LAYERED retail table has NO row: the compiler's retail-absent
+    evidence, which the gate derives its unfixable set from).  Rows an
+    existing base document carries for ids this scan did not reference are
+    kept, never dropped -- the BFME2 census-selected rows stay authoritative
+    for their ids.
+    """
+
+    resolved: dict[str, str] = {}
+    source_null: set[str] = set()
+    for identifier in sorted(references, key=lambda item: (item.casefold(), item)):
+        record = string_catalog.record(identifier)
+        if record is None:
+            source_null.add(identifier)
+        else:
+            # Key under the retail table's own spelling so two referenced
+            # casings of one id collapse to the single retail row.
+            resolved[record.identifier] = record.value
+    resolved_count = len(resolved)
+    carried_count = 0
+    if existing is not None:
+        rows = existing.get("strings")
+        if isinstance(rows, Mapping):
+            folded = {key.casefold() for key in resolved}
+            for key in sorted(rows, key=lambda item: (str(item).casefold(), str(item))):
+                value = rows[key]
+                if (
+                    isinstance(key, str)
+                    and isinstance(value, str)
+                    and key.casefold() not in folded
+                ):
+                    resolved[key] = value
+                    folded.add(key.casefold())
+                    carried_count += 1
+    document: dict[str, object] = {
+        "schema": "openbfme.localized-strings",
+        "schemaVersion": 0,
+        "locale": "en",
+        # Matches the BFME2 leaf-profile precedent: this is a referenced-id
+        # selection, never the whole retail table.
+        "complete": False,
+        "strings": dict(
+            sorted(resolved.items(), key=lambda item: (item[0].casefold(), item[0]))
+        ),
+    }
+    if source_null:
+        document["sourceNullStringIds"] = sorted(
+            source_null, key=lambda item: (item.casefold(), item)
+        )
+    stats = {
+        "runtimePath": STRINGS_RUNTIME_PATH,
+        "packFileKey": STRINGS_PACK_KEY,
+        "referencedCount": len(references),
+        "resolvedCount": resolved_count,
+        "carriedCount": carried_count,
+        "sourceNullCount": len(source_null),
+    }
+    return document, stats
+
 
 def _bytes(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
@@ -115,8 +223,28 @@ def _add_spellbook(profile: Mapping[str, object], recipe: Mapping[str, object], 
     data[runtime_path] = deepcopy(dict(runtime)); files[file_key] = runtime_path
     return target, {"objectId": object_id, "runtimePath": runtime_path, "packFileKey": file_key, "resourceIds": sorted(added, key=str.casefold)}
 
-def compose_faction_profile(base: Mapping[str, object], report_root: Path, factions: Sequence[str], *, game: str = "bfme2") -> tuple[dict[str, object], dict[str, object]]:
-    """Add only artifacts bound to converted rows in digested coverage reports."""
+def compose_faction_profile(
+    base: Mapping[str, object],
+    report_root: Path,
+    factions: Sequence[str],
+    *,
+    game: str = "bfme2",
+    string_catalog=None,
+    cah_runtime: Mapping[str, object] | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Add only artifacts bound to converted rows in digested coverage reports.
+
+    ``string_catalog`` is the parsed retail string table this cook resolves
+    against (``faction_import.load_retail_string_catalog``).  When supplied,
+    the composed pack ships a ``data/strings.json`` covering every CONTROLBAR:
+    id its own runtime documents reference, with retail-absent ids recorded as
+    ``sourceNullStringIds`` evidence.  When ``None`` the lane is skipped -- a
+    legacy shape kept for direct callers; the publish CLI always supplies it.
+
+    ``cah_runtime`` is a validated ``openbfme.cah-system-runtime`` document.
+    Only the RotWK Men host compose may carry it (the same single-owner rule
+    as livingWorld); an invalid or misaddressed document refuses the compose.
+    """
     game_key = str(game).strip().casefold()
     game_prefix = _GAME_PACK_PREFIX.get(game_key)
     if game_prefix is None: raise ValueError(f"unsupported compose game: {game!r}")
@@ -236,6 +364,60 @@ def compose_faction_profile(base: Mapping[str, object], report_root: Path, facti
         pack["files"] = {k: v for k, v in files.items() if str(k) in added_file_keys}
         if len(target["runtime_data"]) != len(added_paths) or len(pack["files"]) != len(added_file_keys):
             raise ValueError("lean expansion pack lost owned runtime documents")
+    runtime_data = target.get("runtime_data")
+    files = pack.get("files")
+    if not isinstance(runtime_data, dict) or not isinstance(files, dict):
+        raise ValueError("target profile is not extensible for pack documents")
+    strings_receipt: dict[str, object] | None = None
+    cah_receipt: dict[str, object] | None = None
+    # --- Create-a-Hero system table ----------------------------------------
+    # Registered BEFORE the strings scan so any CONTROLBAR: id the table
+    # carries is covered by the strings document like every other reference.
+    # Both lanes run after the lean expansion filter: their documents are pack
+    # emissions of THIS compose and must survive it by construction, not by
+    # being smuggled into the added-path allowlists.
+    if cah_runtime is not None:
+        # Single-owner rule, same shape as livingWorld above: the RotWK Men
+        # host pack owns global strategic documents. Publishing the table from
+        # a supplemental faction would create two mounted owners whose
+        # last-wins resolution depends on mount order.
+        if game_key != "rotwk" or ordered != ["men"]:
+            raise ValueError(
+                "cah.system is owned by the RotWK Men host pack; refusing to "
+                f"publish it from game={game_key!r} factions={ordered!r}"
+            )
+        try:
+            validate_cah_system_runtime(cah_runtime)
+        except CahSystemCompilerError as exc:
+            raise ValueError(f"cah system runtime document is invalid: {exc}") from exc
+        existing_cah = runtime_data.get(CAH_SYSTEM_RUNTIME_PATH)
+        if existing_cah is not None and existing_cah != dict(cah_runtime):
+            raise ValueError(f"cah runtime path collision: {CAH_SYSTEM_RUNTIME_PATH}")
+        cah_owner = files.get(CAH_SYSTEM_PACK_KEY)
+        if cah_owner is not None and str(cah_owner) != CAH_SYSTEM_RUNTIME_PATH:
+            raise ValueError(f"cah.system pack registration has a foreign owner: {cah_owner}")
+        runtime_data[CAH_SYSTEM_RUNTIME_PATH] = deepcopy(dict(cah_runtime))
+        files[CAH_SYSTEM_PACK_KEY] = CAH_SYSTEM_RUNTIME_PATH
+        cah_receipt = {
+            "runtimePath": CAH_SYSTEM_RUNTIME_PATH,
+            "packFileKey": CAH_SYSTEM_PACK_KEY,
+            "runtimeSha256": cah_runtime["runtimeSha256"],
+        }
+    # --- pack strings lane -------------------------------------------------
+    if string_catalog is not None:
+        existing_strings = runtime_data.get(STRINGS_RUNTIME_PATH)
+        if existing_strings is not None and not isinstance(existing_strings, Mapping):
+            raise ValueError("existing pack strings document is invalid")
+        strings_owner = files.get(STRINGS_PACK_KEY)
+        if strings_owner is not None and str(strings_owner) != STRINGS_RUNTIME_PATH:
+            raise ValueError(f"strings pack registration has a foreign owner: {strings_owner}")
+        strings_document, strings_receipt = _build_strings_document(
+            _referenced_controlbar_ids(runtime_data),
+            string_catalog,
+            existing_strings,
+        )
+        runtime_data[STRINGS_RUNTIME_PATH] = strings_document
+        files[STRINGS_PACK_KEY] = STRINGS_RUNTIME_PATH
     # Bind the composed pack to its faction's vertical-slice id rather than
     # inheriting the base profile's (Men) id, so a non-Men publish lands under
     # bfme2-<faction>-vslice/ instead of stray-bundling under bfme2-men-vslice/.
@@ -244,6 +426,17 @@ def compose_faction_profile(base: Mapping[str, object], report_root: Path, facti
     if len(ordered) == 1: pack["id"] = f"{game_prefix}-{ordered[0]}-vslice"
     pack.update({"vertical_slice_complete": False, "full_faction_complete": False, "asset_conversion_complete": False, "factionImportCoverage": receipts})
     target["id"] = "faction-slice-" + hashlib.sha256(_bytes(receipts)).hexdigest()[:16]
-    return target, {"factions": receipts, "objects": deltas}
+    receipt: dict[str, object] = {"factions": receipts, "objects": deltas}
+    if strings_receipt is not None:
+        receipt["strings"] = strings_receipt
+    if cah_receipt is not None:
+        receipt["cahSystem"] = cah_receipt
+    return target, receipt
 
-__all__ = ["compose_faction_profile"]
+__all__ = [
+    "CAH_SYSTEM_PACK_KEY",
+    "CAH_SYSTEM_RUNTIME_PATH",
+    "STRINGS_PACK_KEY",
+    "STRINGS_RUNTIME_PATH",
+    "compose_faction_profile",
+]
