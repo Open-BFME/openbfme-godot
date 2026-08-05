@@ -3,23 +3,30 @@ namespace OpenBFME.Launcher;
 public sealed record LauncherOptions(
     string Channel,
     Uri? ManifestUri,
+    bool ManifestUriExplicit,
     string InstallRoot,
     bool NoUpdate,
     bool VerifyOnly,
     bool Headless,
     string? ImportGame,
-    string? RetailPath)
+    string? RetailPath,
+    bool DiscoverRelease,
+    bool ProvisionBfme2,
+    bool ProvisionRotwk,
+    string? RetailInstallRoot)
 {
     /// <summary>Flags that take exactly one value.</summary>
     private static readonly HashSet<string> ValueFlags = new(StringComparer.Ordinal)
     {
-        "--channel", "--manifest-url", "--install-root", "--bfme2-path", "--rotwk-path"
+        "--channel", "--manifest-url", "--install-root", "--bfme2-path", "--rotwk-path",
+        "--retail-install-root"
     };
 
     /// <summary>Flags that take no value.</summary>
     private static readonly HashSet<string> SwitchFlags = new(StringComparer.Ordinal)
     {
-        "--import-bfme2", "--import-rotwk", "--no-update", "--verify-only", "--headless"
+        "--import-bfme2", "--import-rotwk", "--no-update", "--verify-only", "--headless",
+        "--discover-release", "--provision-bfme2", "--provision-rotwk"
     };
 
     public static LauncherOptions Parse(IEnumerable<string> arguments)
@@ -67,7 +74,10 @@ public sealed record LauncherOptions(
 
         // Every channel gets a feed. Previously only "stable" had a default manifest
         // URL, so "Check for update" silently did nothing on the playtest channel —
-        // which is exactly the channel playtesters are on.
+        // which is exactly the channel playtesters are on. The default is still the
+        // "latest" asset URL; GitHubReleaseFeed upgrades that to a pre-release scan
+        // when the channel is playtest/nightly or when latest 404s.
+        var manifestExplicit = Array.IndexOf(args, "--manifest-url") >= 0;
         var manifestText = Value("--manifest-url", ReleaseSource.LatestManifestUri.AbsoluteUri);
         Uri? manifestUri = null;
         if (manifestText.Length > 0)
@@ -89,9 +99,17 @@ public sealed record LauncherOptions(
         var root = Path.GetFullPath(Value(
             "--install-root",
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenBFME")));
-        return new LauncherOptions(channel, manifestUri, root, Has("--no-update"),
+        var retailInstallRootText = Value("--retail-install-root", "");
+        string? retailInstallRoot = retailInstallRootText.Length == 0
+            ? null
+            : Path.GetFullPath(retailInstallRootText);
+        return new LauncherOptions(channel, manifestUri, manifestExplicit, root, Has("--no-update"),
             Has("--verify-only"), Has("--headless"), game,
-            retail.Length == 0 ? null : Path.GetFullPath(retail));
+            retail.Length == 0 ? null : Path.GetFullPath(retail),
+            Has("--discover-release"),
+            Has("--provision-bfme2"),
+            Has("--provision-rotwk"),
+            retailInstallRoot);
     }
 }
 

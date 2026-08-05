@@ -4,6 +4,13 @@ The `windows release` workflow in `.github/workflows/release.yml` is the
 authoritative distributable-build path. It produces code-only Windows packages.
 It never packages a retail BFME II install or a converted retail content pack.
 
+Operator cadence (playtest weekly tags, stable cuts, prerequisites): see
+[RELEASE_CYCLE.md](RELEASE_CYCLE.md). Helper script:
+`tools/release/Start-PlaytestRelease.ps1`.
+
+Linux: the launcher is WPF win-x64; run the **self-contained** build under Wine
+(see [LAUNCHER_LINUX_WINE.md](LAUNCHER_LINUX_WINE.md)).
+
 ## Release assets
 
 A published GitHub Release contains exactly these five assets:

@@ -66,15 +66,38 @@ internal static class LauncherSelfUpdate
         };
         start.Environment[RelaunchGuardVariable] = "1";
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        Process child;
         try
         {
-            if (Process.Start(start) is null)
-                throw new InvalidOperationException("No process was created.");
+            child = Process.Start(start)
+                ?? throw new InvalidOperationException("No process was created.");
         }
         catch (Exception error)
         {
             return Degrade($"The installed launcher update {state.CurrentVersion} could not be started", error);
         }
+
+        // Parent used to Shutdown(0) the moment Process.Start returned. If the child
+        // died instantly (missing runtime, AV quarantine, broken single-file host) the
+        // player saw a flash and no repair UI. Require the child to stay alive briefly.
+        try
+        {
+            if (child.WaitForExit(2000))
+            {
+                return Degrade(
+                    $"The installed launcher update {state.CurrentVersion} exited immediately " +
+                    $"(code {child.ExitCode})",
+                    new InvalidOperationException(
+                        "Updated launcher process terminated during handoff."));
+            }
+        }
+        catch (Exception error)
+        {
+            return Degrade(
+                $"The installed launcher update {state.CurrentVersion} could not be supervised",
+                error);
+        }
+
         return new SelfUpdateOutcome(true, null);
     }
 

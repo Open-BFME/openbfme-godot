@@ -1,10 +1,35 @@
+using System.IO;
+
 namespace OpenBFME.Launcher;
 
 public partial class App : System.Windows.Application
 {
+    public App()
+    {
+        // Process-level nets: the WPF shell had none, so any uncaught UI/async fault
+        // killed the WinExe with no console and no repair surface. Handled exceptions
+        // keep the window alive so the player can still Browse / Check for update.
+        DispatcherUnhandledException += (_, e) =>
+        {
+            ReportKeepAlive(e.Exception, "ui");
+            e.Handled = true;
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            if (e.ExceptionObject is Exception ex)
+                ReportKeepAlive(ex, "domain");
+        };
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            ReportKeepAlive(e.Exception, "task");
+            e.SetObserved();
+        };
+    }
+
     protected override async void OnStartup(System.Windows.StartupEventArgs e)
     {
         base.OnStartup(e);
+        LifecycleLog.Write("app", $"startup args=[{string.Join(' ', e.Args)}]");
 
         LauncherOptions options;
         try { options = LauncherOptions.Parse(e.Args); }
@@ -39,36 +64,85 @@ public partial class App : System.Windows.Application
         {
             try
             {
-                new MainWindow().Show();
+                // Explicit main window + lifetime. Relying on "first Show() becomes main"
+                // has failed players when a transient child/dialog raced shutdown.
+                ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose;
+                var window = new MainWindow();
+                MainWindow = window;
+                window.Show();
+                // Activate without repositioning — MainWindow already centered on primary.
+                window.Activate();
+                LifecycleLog.Write("app",
+                    $"main window shown left={window.Left:0} top={window.Top:0} " +
+                    $"primaryWork={System.Windows.SystemParameters.WorkArea}");
             }
             catch (Exception error)
             {
-                // The window could not even be constructed (bad arguments, unreadable
-                // embedded release target). Report it instead of dying on an unhandled
-                // exception with a stack trace no playtester can act on.
+                LifecycleLog.Write("app", $"main window failed: {error}");
                 Fail(error.Message, 2, headless: false);
             }
             return;
         }
 
+        // WinExe has no console by default; attach or allocate one so CI and the
+        // clean-folder acceptance path can actually see progress and errors.
+        EnsureHeadlessConsole();
+
         ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
 
-        // Headless runs are used by CI and by the clean-VM acceptance job, where a
-        // wedged job costs an hour of runner time. Ctrl+C must actually stop the work,
-        // including any importer child process.
         using var cancellation = new CancellationTokenSource();
         Console.CancelKeyPress += (_, args) =>
         {
             args.Cancel = true;
             Console.Error.WriteLine("Cancellation requested; stopping…");
-            // ReSharper disable once AccessToDisposedClosure — the handler cannot outlive
-            // the await below, which completes before the using scope ends.
             try { cancellation.Cancel(); } catch (ObjectDisposedException) { }
         };
 
         try
         {
             var service = new LauncherService(options);
+
+            if (options.DiscoverRelease || options.Channel != "stable")
+            {
+                try
+                {
+                    var (uri, candidate) = await service.ResolveManifestAsync(cancellation.Token);
+                    if (candidate is not null)
+                        Console.Error.WriteLine(
+                            $"Release candidate: {candidate.Tag} " +
+                            $"(prerelease={candidate.PreRelease}, source={candidate.Source})");
+                    else
+                        Console.Error.WriteLine($"Manifest: {uri}");
+                }
+                catch (Exception error) when (options.NoUpdate)
+                {
+                    Console.Error.WriteLine(error.Message);
+                }
+            }
+
+            if (options.ProvisionBfme2 || options.ProvisionRotwk)
+            {
+                // Headless has no dialog, but the notice still has to be said once.
+                service.DownloadDisclosure.ShowOnce(Console.Error.WriteLine);
+            }
+
+            if (options.ProvisionBfme2)
+            {
+                var result = await service.ProvisionRetailAsync(
+                    "bfme2", null, cancellation.Token);
+                Console.Error.WriteLine(
+                    $"Provisioned BFME II at {result.InstallPath} " +
+                    $"({result.FilesInstalled} new, {result.FilesSkipped} skipped).");
+            }
+            if (options.ProvisionRotwk)
+            {
+                var result = await service.ProvisionRetailAsync(
+                    "rotwk", null, cancellation.Token);
+                Console.Error.WriteLine(
+                    $"Provisioned RotWK at {result.InstallPath} " +
+                    $"({result.FilesInstalled} new, {result.FilesSkipped} skipped).");
+            }
+
             if (options.ImportGame is not null && options.RetailPath is not null)
             {
                 var rejection = RetailDiscovery.ExplainRejection(options.RetailPath);
@@ -84,10 +158,11 @@ public partial class App : System.Windows.Application
                     cancellation.Token);
                 if (exit != 0) throw new InvalidOperationException($"Importer exited with code {exit}.");
             }
-            else if (!options.NoUpdate && options.ManifestUri is not null)
+            else if (!options.NoUpdate)
             {
+                var (manifestUri, _) = await service.ResolveManifestAsync(cancellation.Token);
                 var manifest = await service.Installer.FetchManifestAsync(
-                    options.ManifestUri, cancellation.Token);
+                    manifestUri, cancellation.Token);
                 await service.Installer.InstallAsync(
                     manifest, options.InstallRoot, null, cancellation.Token,
                     expectedChannel: options.Channel);
@@ -105,7 +180,7 @@ public partial class App : System.Windows.Application
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
             Console.Error.WriteLine("Cancelled.");
-            Shutdown(130); // conventional exit code for SIGINT
+            Shutdown(130);
         }
         catch (Exception error)
         {
@@ -114,16 +189,35 @@ public partial class App : System.Windows.Application
         }
     }
 
-    /// <summary>
-    /// Report a startup failure everywhere the user might be looking, then exit non-zero.
-    /// A GUI launch has no console attached, so stderr alone would be invisible; a
-    /// headless run has no desktop, so a modal dialog would hang the job forever.
-    /// </summary>
-    /// <summary>
-    /// Report something the player needs to know about but that does not stop the run.
-    /// Same reasoning as <see cref="Fail"/> about where the message has to appear, minus
-    /// the exit — a headless job must not be blocked by a modal nobody can dismiss.
-    /// </summary>
+    private static void ReportKeepAlive(Exception error, string origin)
+    {
+        try
+        {
+            LifecycleLog.Write(origin, error.ToString());
+            Console.Error.WriteLine($"[{origin}] {error}");
+
+            // Only modal if a dispatcher still exists and the main window is up.
+            // Never Show dialogs during hard domain teardown — that can re-crash.
+            if (Current?.MainWindow is { IsLoaded: true } &&
+                Current.Dispatcher is { HasShutdownStarted: false } dispatcher)
+            {
+                dispatcher.BeginInvoke(() =>
+                {
+                    try
+                    {
+                        System.Windows.MessageBox.Show(
+                            error.Message,
+                            "OpenBFME launcher",
+                            System.Windows.MessageBoxButton.OK,
+                            System.Windows.MessageBoxImage.Error);
+                    }
+                    catch { /* ignore */ }
+                });
+            }
+        }
+        catch { /* never throw from the handler */ }
+    }
+
     private static void Warn(string message, bool headless)
     {
         Console.Error.WriteLine(message);
@@ -141,5 +235,19 @@ public partial class App : System.Windows.Application
                 message, "OpenBFME launcher",
                 System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
         Shutdown(exitCode);
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AttachConsole(int dwProcessId);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AllocConsole();
+
+    private const int AttachParentProcess = -1;
+
+    private static void EnsureHeadlessConsole()
+    {
+        if (!AttachConsole(AttachParentProcess))
+            AllocConsole();
     }
 }

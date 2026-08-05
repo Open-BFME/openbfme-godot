@@ -185,6 +185,73 @@ already embedded in the sibling `.glb`, verified by comparison of the extracted
 No runtime reference resolves to them: `content_db.gd` tries `.glb` before `.webp`, so the
 GLB always wins. They are removal candidates pending owner confirmation.
 
+## Launcher chrome provenance (`launcher/OpenBFME.Launcher/Assets`)
+
+The Windows launcher ships three brand images. None is retail EA art; none is loaded from
+a retail install. Because the launcher is the artifact players download first, each one
+gets a row here.
+
+| Asset | Source / creator | Date | Licence | Evidence |
+|---|---|---|---|---|
+| `Assets/openbfme-banner.png` → `docs/assets/openbfme-readme-banner.png` | OpenAI `gpt-image` 2.0, via the OpenAI Media Service API | 2026-07-22 | Per OpenAI terms in force at generation; owner holds the account | **Signed C2PA manifest embedded in the file** (below) |
+| `Assets/openbfme-mark.png` | Not recorded — image generation during the 2026-08-02 launcher branding pass | 2026-08-02 (file mtime) | Unestablished | No authoring metadata; see *Open provenance items* |
+| `Assets/launcher-hero-bg.png` | Not recorded — image generation during the 2026-08-02 launcher branding pass | 2026-08-02 (file mtime) | Unestablished | No authoring metadata; see *Open provenance items* |
+
+### Banner — signed generator attestation
+
+`docs/assets/openbfme-readme-banner.png` (2172x724, RGB) carries a `caBX` chunk: a 29 KB
+C2PA (Content Credentials) manifest, cryptographically signed. Unlike every other
+generated asset in this ledger, its origin is asserted by the generator itself rather than
+inferred from forensics. Read it back with:
+
+```text
+python -c "import struct;d=open('docs/assets/openbfme-readme-banner.png','rb').read();i=8
+while i<len(d):
+    n=struct.unpack('>I',d[i:i+4])[0];t=d[i+4:i+8]
+    if t==b'caBX': open('banner.c2pa','wb').write(d[i+8:i+8+n]); break
+    i+=12+n"
+```
+
+The manifest states:
+
+- **Claim generator** `OpenAI Media Service API`; **software agent** `gpt-image` version
+  `2.0`.
+- **Action** `c2pa.created`, `when` `2026-07-22T00:00:00Z`, with
+  `digitalSourceType` = `trainedAlgorithmicMedia` (IPTC) — i.e. model-generated, not a
+  photograph or a scan of existing art. Also records `c2pa.converted` and
+  `c2pa.watermarked.unbound`.
+- **Signature** by `OpenAI OpCo, LLC` / `OpenAI Media Service`, chaining to
+  `SSL.com C2PA ICA R1 2025` under `SSL.com C2PA RSA Root CA 2025`, timestamped
+  `2026-07-22T03:11:18Z` by the OpenAI TSA, with OCSP responses stapled.
+
+This settles origin: the image is not derived from EA/New Line material, it was produced
+by a model on a date that predates its commit (`a1d207a`), and the licence question
+reduces to the OpenAI terms the owner accepted — a question about the owner's account, not
+about the file.
+
+The launcher no longer ships a second copy. The former
+`launcher/OpenBFME.Launcher/Assets/openbfme-banner.png` was byte-identical to the tracked
+README asset (SHA-256 `18548cee41932831df90b8267c682ef7e1d8c7322fd34fbcdd92a47cdbcc9ed1`,
+2.38 MB); the `.csproj` now links `docs/assets/openbfme-readme-banner.png` as the WPF
+resource `Assets\openbfme-banner.png`, so the pack URI is unchanged, the duplicate is
+gone, and the two cannot drift apart.
+
+### Mark and hero — no embedded attestation
+
+`openbfme-mark.png` (1024x1024) and `launcher-hero-bg.png` (1280x720) are both 8-bit RGB
+with no alpha channel and carry `sRGB`/`gAMA`/`pHYs` and nothing else: no `tEXt`, `iTXt`,
+`zTXt`, `eXIf`, and no C2PA `caBX`. That writer signature matches the 73-file group among
+the shipped UI icons already described above, and it is what a re-encode produces — a
+re-encode also strips any Content Credentials the original may have carried, so the absence
+of C2PA here is not evidence of a different origin.
+
+What the artifacts support: not retail-derived (no retail asset in BFME II or RotWK has
+these dimensions or this encoding lineage, and both are original compositions for this
+project). What they cannot supply: which service generated them, under which account, and
+under which terms. No generator is committed under `tools/` and no build step reproduces
+them. **Owner attestation outstanding** — same standard already applied to the GLBs and
+icons.
+
 ## Open provenance items
 
 Items below block treating the affected files as release-approved. Each needs an owner
@@ -209,6 +276,16 @@ decision; none can be resolved from the artifacts alone.
    189.6 MB to about 14.9 MB, and 128 px to about 4.2 MB, both with headroom over the
    largest display size. This is a presentation change and is not applied here.
 5. **Duplicate WEBP removal.** 2.1 MB of unreferenced byte-identical texture copies.
+6. **Launcher mark and hero attestation.** `Assets/openbfme-mark.png` and
+   `Assets/launcher-hero-bg.png` carry no authoring metadata and no C2PA manifest. Which
+   tool or service produced them, on whose account, and under what output terms? The
+   banner alongside them answers this from its own signed manifest; these two cannot.
+   Cheapest resolution is to regenerate them through a route that preserves Content
+   Credentials, as the banner already does, and record the result in the table above.
+7. **Banner licence confirmation.** The banner's generator and date are cryptographically
+   settled. What is not recorded here is the owner's confirmation that the OpenAI terms in
+   force on 2026-07-22 permit redistribution of the output in a public repository. One
+   sentence from the owner closes this.
 
 ## Importer toolchain
 

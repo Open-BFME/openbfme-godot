@@ -103,6 +103,28 @@ public static class RetailDiscovery
             }
         }
 
+        // Prefer an install the OpenBFME launcher itself provisioned via the
+        // All-in-One workshop path, then fall back to classic retail locations.
+        if (environment is null)
+        {
+            try
+            {
+                var openRoot = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "OpenBFME");
+                var provisioned = AllInOneRetailProvisioner.DefaultInstallPath(openRoot, game);
+                if (IsRetailInstall(provisioned))
+                    return Path.GetFullPath(provisioned);
+            }
+            catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException or IOException or UnauthorizedAccessException)
+            {
+                // Fall through to candidate scan.
+            }
+
+            var fromRegistry = TryReadAllInOneRegistry(game);
+            if (fromRegistry is not null) return fromRegistry;
+        }
+
         foreach (var candidate in Candidates(game, environment))
             if (IsRetailInstall(candidate))
             {
@@ -113,6 +135,35 @@ public static class RetailDiscovery
                 }
             }
         return null;
+    }
+
+    /// <summary>
+    /// Read the install path the All-in-One Launcher writes into HKLM, when present.
+    /// Soft-fails: missing registry or access denied just means "not found here".
+    /// </summary>
+    public static string? TryReadAllInOneRegistry(string game)
+    {
+        // Keys mirror BfmeFoundationProject.BfmeKit.Data.BfmeDefaults.
+        var relative = game switch
+        {
+            "bfme2" => @"SOFTWARE\WOW6432Node\Electronic Arts\Electronic Arts\The Battle for Middle-earth II",
+            "rotwk" => @"SOFTWARE\WOW6432Node\Electronic Arts\Electronic Arts\The Lord of the Rings, The Rise of the Witch-king",
+            _ => null
+        };
+        if (relative is null) return null;
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(relative, writable: false);
+            var value = key?.GetValue("InstallPath") as string
+                        ?? key?.GetValue("Install Dir") as string;
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var full = Path.GetFullPath(value.Trim());
+            return IsRetailInstall(full) ? full : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
+        {
+            return null;
+        }
     }
 
     /// <summary>True when <paramref name="directory"/> looks like a real retail install.</summary>

@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <!-- WPF is Windows-only. TFM stays net10.0-windows; OS floor is declared in app.manifest. -->
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
@@ -8,8 +9,17 @@
     <AssemblyName>OpenBFME.Launcher</AssemblyName>
     <RootNamespace>OpenBFME.Launcher</RootNamespace>
     <ApplicationIcon />
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <Authors>OpenBFME contributors</Authors>
     <Description>Code-only launcher and local importer front end for OpenBFME.</Description>
+    <!-- Playtest/release zips must be self-contained win-x64. Framework-dependent
+         bin/Release builds need the .NET 10 Desktop runtime and exit with no UI on a
+         clean Windows box. Prefer: dotnet publish -r win-x64 -p:SelfContained=true -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <SelfContained Condition="'$(SelfContained)' == '' and '$(RuntimeIdentifier)' != ''">true</SelfContained>
+    <PublishSingleFile Condition="'$(PublishSingleFile)' == '' and '$(RuntimeIdentifier)' != ''">true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
   <!--
@@ -22,8 +32,37 @@
                       LogicalName="OpenBFME.Launcher.release-source.json" />
   </ItemGroup>
 
+  <!--
+    Pinned SHA-256 digests for the optional third-party retail download. Embedded so
+    the running launcher cannot be pointed at a substituted manifest on disk. Shipped
+    empty on purpose: an empty manifest makes the download path refuse to run rather
+    than install bytes it cannot verify. See RetailPayloadManifest.cs.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="retail-payload-manifest.json"
+                      LogicalName="OpenBFME.Launcher.retail-payload-manifest.json" />
+  </ItemGroup>
+
+  <!--
+    Brand chrome: README banner + generated hero/mark (code-only, no retail).
+    The banner is LINKED from docs/assets rather than copied into Assets/. The two
+    files were byte-identical, so a second copy was 2.38 MB of repository duplication
+    that could silently drift from the one the README shows. Link keeps the pack URI
+    "Assets/openbfme-banner.png" unchanged for MainWindow.xaml.
+  -->
+  <ItemGroup>
+    <Resource Include="$(MSBuildThisFileDirectory)..\..\docs\assets\openbfme-readme-banner.png"
+              Link="Assets\openbfme-banner.png" />
+    <Resource Include="Assets\openbfme-mark.png" />
+    <Resource Include="Assets\launcher-hero-bg.png" />
+  </ItemGroup>
+
   <Target Name="VerifyEmbeddedReleaseSource" BeforeTargets="BeforeBuild">
     <Error Condition="!Exists('$(MSBuildThisFileDirectory)..\..\config\release-source.json')"
            Text="config/release-source.json is missing. The launcher must not be built without an embedded release target; see ReleaseSource.cs." />
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)retail-payload-manifest.json')"
+           Text="retail-payload-manifest.json is missing. The launcher must not be built without the pinned retail payload manifest; the download path verifies every file against it. See RetailPayloadManifest.cs." />
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)..\..\docs\assets\openbfme-readme-banner.png')"
+           Text="docs/assets/openbfme-readme-banner.png is missing. The launcher banner is linked from the tracked README asset; see docs/THIRD_PARTY.md for its provenance entry." />
   </Target>
 </Project>
