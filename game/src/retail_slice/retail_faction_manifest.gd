@@ -166,6 +166,7 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 	var structure_armor: Dictionary = {}
 	var structure_upgrade_chains: Dictionary = {}
 	var structure_research: Dictionary = {}
+	var structure_castle_upgrades: Dictionary = {}
 	var structure_upgrade_effects: Dictionary = {}
 	var structure_create_grants: Dictionary = {}
 	var structure_inherit_upgrades: Dictionary = {}
@@ -235,6 +236,24 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 				deferred_structure_inherit_upgrades[object_id] = (
 					deferred_inherit as Array
 				).duplicate(true)
+			# Retail authors the fortress improvement buttons (and the
+			# CastleUpgrade modules that make them do anything) on the CITADEL
+			# composite, not on the constructable fortress object. The citadel
+			# is excluded from the base-structure roster, so harvest its castle
+			# upgrade surface here and file it under the fortress kind the
+			# runtime actually selects.
+			var composite_castle: Variant = (
+				registration.get("gameplay", {}) as Dictionary
+			).get("castleUpgrades")
+			if composite_castle != null and composite_role == "fortress-composite-citadel":
+				var composite_castle_error := _validate_structure_castle_upgrades(
+					object_id, composite_castle
+				)
+				if composite_castle_error != "":
+					return {"_error": composite_castle_error}
+				structure_castle_upgrades["fortress"] = (
+					composite_castle as Dictionary
+				).duplicate(true)
 			excluded_structures[object_id.to_lower()] = {
 				"object_id": object_id,
 				"evidence": evidence,
@@ -298,6 +317,14 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 			if research_error != "":
 				return {"_error": research_error}
 			structure_research[kind] = (research as Dictionary).duplicate(true)
+		var castle_upgrades: Variant = (registration.get("gameplay", {}) as Dictionary).get("castleUpgrades")
+		if castle_upgrades != null:
+			# Doc-driven fortress improvement sales (the OBJECT_UPGRADE buttons
+			# whose real upgrade a CastleUpgrade module hands out).
+			var castle_error := _validate_structure_castle_upgrades(object_id, castle_upgrades)
+			if castle_error != "":
+				return {"_error": castle_error}
+			structure_castle_upgrades[kind] = (castle_upgrades as Dictionary).duplicate(true)
 		var upgrade_effects: Variant = (registration.get("gameplay", {}) as Dictionary).get("upgradeEffects")
 		if upgrade_effects != null:
 			var effects_error := _validate_structure_upgrade_effects(object_id, upgrade_effects)
@@ -802,6 +829,10 @@ static func from_registries(faction: String, unit_runtimes: Dictionary, structur
 		# Authored PLAYER research sales per kind (the structure docs' compiled
 		# research surface); kinds without one are simply absent.
 		"structure_research": structure_research,
+		# Authored fortress improvement sales per kind (the OBJECT_UPGRADE
+		# buttons whose real upgrade retail's CastleUpgrade module hands out);
+		# kinds without one are simply absent.
+		"structure_castle_upgrades": structure_castle_upgrades,
 		# Authored per-structure effect bindings keyed by technology id
 		# (discounts, refunds, income bonuses); kinds without one are absent.
 		"structure_upgrade_effects": structure_upgrade_effects,
@@ -963,6 +994,40 @@ static func _validate_structure_research(object_id: String, research_value: Vari
 			or int(row.get("slot", 0)) < 1
 		):
 			return "structure '%s' research row '%s' is malformed" % [object_id, upgrade_id]
+		seen_upgrades[upgrade_id.to_lower()] = true
+	return ""
+
+
+static func _validate_structure_castle_upgrades(object_id: String, castle_value: Variant) -> String:
+	## Fail-closed shape check for one structure document's compiled fortress
+	## improvement surface; "" when valid. Each row is an OBJECT_UPGRADE button
+	## that buys a Trigger upgrade whose real upgrade a CastleUpgrade module
+	## hands out, so BOTH ids must be present and distinct — a row that named
+	## only one of them would silently buy nothing (the shipped gap).
+	if typeof(castle_value) != TYPE_DICTIONARY:
+		return "structure '%s' castle upgrade surface is not a dictionary" % object_id
+	var surface := castle_value as Dictionary
+	var upgrades_value: Variant = surface.get("upgrades")
+	if typeof(upgrades_value) != TYPE_ARRAY or (upgrades_value as Array).is_empty():
+		return "structure '%s' castle upgrade surface is malformed" % object_id
+	var seen_upgrades: Dictionary = {}
+	for row_value in upgrades_value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			return "structure '%s' castle upgrade surface has a malformed row" % object_id
+		var row := row_value as Dictionary
+		var upgrade_id := String(row.get("upgradeId", ""))
+		var granted_id := String(row.get("grantsUpgradeId", ""))
+		if (
+			upgrade_id == ""
+			or granted_id == ""
+			or upgrade_id.to_lower() == granted_id.to_lower()
+			or seen_upgrades.has(upgrade_id.to_lower())
+			or int(row.get("cost", -1)) < 0
+			or float(row.get("buildTimeSeconds", -1.0)) < 0.0
+			or String(row.get("commandId", "")) == ""
+			or int(row.get("slot", 0)) < 1
+		):
+			return "structure '%s' castle upgrade row '%s' is malformed" % [object_id, upgrade_id]
 		seen_upgrades[upgrade_id.to_lower()] = true
 	return ""
 

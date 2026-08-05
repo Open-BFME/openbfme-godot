@@ -4,25 +4,49 @@ extends SceneTree
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const WatchdogScript = preload("res://tests/runner_watchdog.gd")
 ## Ratchet. RAISE this consciously when a measured document-backed run clears
-## it; never lower it to make a red run green. Measured 2026-08-04 against the
-## workspace selection (all seven RotWK faction packs): passed=363 failed=39,
-## where the 39 are exactly the KNOWN_FAILURE_NAMES pins. Previous value 361;
-## +2 are the ranger ANY-of gate / HUD lock-parity checks.
-const ACCEPTANCE_MIN_PASSED := 363
+## it; never lower it to make a red run green. Measured 2026-08-04 (round 13)
+## against the workspace selection (all seven RotWK faction packs):
+## passed=366 failed=34, where the 34 are exactly the KNOWN_FAILURE_NAMES pins
+## (.private/scratch/opus20-slice-repinned.log). Previous value 363, whose note
+## claimed a 363/39 run; the run that actually preceded this change measured
+## 361/44 (.private/scratch/opus20-slice-baseline.log), i.e. the old floor was
+## above its own measurement and the gate could not pass. The +5 here are the
+## five literals re-pinned from the pure retail tree in this change
+## (capture_row_compiles_castable, theoden_mount_row_compiles_castable,
+## theoden_mount_cast_swaps_speed_and_weapon,
+## archer_pierce_vs_knight_applies_compiled_scalar_in_live_sim,
+## rank_two_damage_terms_match_authored_modifier_lists); the -10 on the failed
+## side is those five plus the five allowlist rows removed below.
+##
+## RAISED 366 -> 372, round 21 (2026-08-05), measured
+## .private/scratch/opus29-retail_slice_runner-P2.out.log: passed=372 failed=32,
+## where the 32 are exactly the remaining KNOWN_FAILURE_NAMES pins. The +6 are
+## +2 from the two live-vs-replay signature names, which PASS for the first time
+## in this repository's history and left the allowlist in this change (see the
+## SIGNATURE FAMILY note above), and +4 from the new
+## OBSERVED_PRECOOK_BATTLE_SIGNATURES ratchet checks. The -2 on the failed side
+## is those same two names leaving the pin table.
+const ACCEPTANCE_MIN_PASSED := 372
 ## Named, root-caused failures. A name may only enter this table WITH the
 ## reason it is here; a name that starts passing must be removed in the same
 ## change that makes it pass (the gate fails either way — see
 ## retail_gate_unexpected_failure_* / retail_gate_update_allowlist_*).
 ##
+## ORACLE ROOT. Every literal in this runner is pinned against the PURE retail
+## tree, .private/retail-work/editions/rotwk/cache/effective-assets, because
+## that is the tree the published packs are compiled from. The sibling
+## layered-effective-assets tree is NOT the oracle: it rewrites magnitudes in
+## place and pushes retail's values behind `;,;` / `;;,;;` / `;;.;;` markers, so
+## a citation taken from it reads as authoritative while naming the override.
+##
 ## REMOVED 2026-08-04 — the four gondor_* exact-value rows in
 ## _check_retail_exact_values. These were pinned as a "horde-vs-unit locomotor
 ## speed family". That diagnosis was wrong: their speeds and member counts
 ## always matched. The damage/range literals were carried over from a men pack
-## compiled from a pre-layered source, and now that the pack is compiled from
-## the layered oracle they disagreed. The literals were re-derived from
-## data/ini with citations at the pin site, so gondor_archer_*,
-## gondor_tower_guard_* and gondor_knight_* now PASS and gondor_fighter_* never
-## needed to be added.
+## compiled from an older source and disagreed with the rebuilt one. The
+## literals were re-derived from data/ini with citations at the pin site, so
+## gondor_archer_*, gondor_tower_guard_* and gondor_knight_* now PASS and
+## gondor_fighter_* never needed to be added.
 ##
 ## REMOVED 2026-08-04 —
 ## "archer_pierce_vs_knight_applies_compiled_scalar_in_live_sim". It now passes
@@ -30,30 +54,16 @@ const ACCEPTANCE_MIN_PASSED := 363
 ## absent from the previous pack because its W3D secondary-skin prep failed and
 ## the pack was published with --allow-incomplete. The archer is back, so the
 ## compiled pierce-vs-knight scalar resolves in the live sim.
+##
+## REMOVED 2026-08-04 (round 13) — "battle_reaches_victory",
+## "victory_music_active", "victory_splash_visible". The fortress-pad pathing
+## note that used to sit on these described a men pack that no longer exists.
+## Against the current pure-retail packs the match resolves inside the runner's
+## bound and both victory presentation rows follow, measured green in
+## .private/scratch/opus20-slice-baseline.log (all three reported by
+## retail_gate_update_allowlist_*). Also removed: two members of the structure
+## lifecycle family, see the note on that block.
 const KNOWN_FAILURE_NAMES := {
-	# ADDED 2026-08-04, DIAGNOSIS CORRECTED 2026-08-04 (round 10). One real
-	# engine gap listed under three names.
-	#
-	# The earlier note here said the fortress "never takes damage and the match
-	# never resolves". That was wrong, and the live probe in
-	# .private/scratch/opus09-live1.out.log:35-52 shows why. The fortress DOES
-	# take steady chip damage (7500 at t=0, 227 at t=17000) and the match DOES
-	# resolve: `PROBE WINNER=0 at fortress_tick=17521`. The real defect is
-	# throughput. Of the five attackers whose fortress attack order is
-	# accepted, exactly one (entity 2) ever reaches `state=attack`; the other
-	# four are stuck in `state=run` at distance ~4.4-5.1 for the entire run,
-	# because the men fortress expansion pads sit between them and the hit
-	# surface and pathing treats the pads as blocking. So the slice lands ~1/5
-	# of its intended DPS and cannot finish inside the runner's 14000-tick
-	# bound - at t=14000 the fortress still has 1512 health.
-	#
-	# `victory_music_active` and `victory_splash_visible` are pure cascade:
-	# both are only reachable after a winner exists inside the bound. All three
-	# disappear together when pad pathing stops obstructing melee approach;
-	# none of them is a content or literal problem.
-	"battle_reaches_victory": true,
-	"victory_music_active": true,
-	"victory_splash_visible": true,
 	# Reason (derived from the live detail `18/18 seeds=["fortress"]`,
 	# .private/scratch/opus10-slice-workspace.log): all 18 seeded structures
 	# resolve, but the manifest contributes a single seed kind ("fortress")
@@ -65,11 +75,16 @@ const KNOWN_FAILURE_NAMES := {
 	# seeded structure, so this is a single gap listed under N names, not N
 	# gaps. The check is fully data driven (see _check body): it compares the
 	# live structure node against the bundle document's own buildingLifecycle,
-	# and the whole seeded set disagrees the same way. 3014 and 3015 were added
-	# 2026-08-04 — they are not new breakage, they are two more castle pieces
-	# seeded by the rebuilt men pack falling into the identical family. Closing
-	# this needs the structure lifecycle consumer, not a literal edit; when it
-	# lands, every one of these names disappears together.
+	# and the whole seeded set disagrees the same way. Closing this needs the
+	# structure lifecycle consumer, not a literal edit; when it lands, every one
+	# of these names disappears together.
+	#
+	# REMOVED 2026-08-04 (round 13): 3014 and 3015. They were added earlier the
+	# same day for the rebuilt men pack, but with the pack now compiled from the
+	# pure effective-assets tree those two castle pieces seed with a lifecycle
+	# that matches their bundle document. Measured green in
+	# .private/scratch/opus20-slice-baseline.log (both reported by
+	# retail_gate_update_allowlist_*), so the family is back to 3000..3013.
 	"structure_3000_starts_exact_private_lifecycle": true,
 	"structure_3001_starts_exact_private_lifecycle": true,
 	"structure_3002_starts_exact_private_lifecycle": true,
@@ -84,8 +99,6 @@ const KNOWN_FAILURE_NAMES := {
 	"structure_3011_starts_exact_private_lifecycle": true,
 	"structure_3012_starts_exact_private_lifecycle": true,
 	"structure_3013_starts_exact_private_lifecycle": true,
-	"structure_3014_starts_exact_private_lifecycle": true,
-	"structure_3015_starts_exact_private_lifecycle": true,
 	# ONE presentation gap listed under seven names (both teams' battalions).
 	# Every row fails with detail `count=0`: the battalion presents zero member
 	# overlay nodes at all, so the "no SYNTHETIC overlays" assertion has
@@ -134,16 +147,131 @@ const KNOWN_FAILURE_NAMES := {
 	"farm_and_producer_kinds_use_their_own_compiled_scalars": true,
 	"unit_armor_counter_matrix_is_compiled_from_unit_documents": true,
 	"forge_upgrades_carry_compiled_retail_effects": true,
-	# SIGNATURE FAMILY (three names, one root) — see the PENDING RE-PIN note on
-	# EXPECTED_BATTLE_SIGNATURES below. The multi-nugget damage-component
-	# compiler change moves kill order and tick counts, so the pinned
-	# constants drifted (observed 1674717D vs pinned 115D15FA; defeat
-	# B4D3DC20 vs 97166BF2). Repository policy forbids silently refreshing a
-	# drifted pin: re-pinning requires a post-cook run, which the repo owner
-	# orchestrates. Pinned deliberately, root cause known — 2026-08-04.
-	"deterministic_replay_signature": true,
+	# SIGNATURE FAMILY - ONE name now, not three. Round 21 fixed the two
+	# live-vs-replay names outright; only the owner-minted pin remains here.
+	#
+	# WHAT deterministic_replay_signature AND deterministic_defeat_signature
+	# ACTUALLY MEASURED, and why they had never once matched in any archived
+	# round. They compare the live match against an INDEPENDENTLY CONSTRUCTED
+	# replay of the same command sequence. The replay was built with a bare
+	# `sim.setup(map_configuration, gameplay_rules)`, which is a small fraction
+	# of what configures a live match: no castle contracts, no expansion rules,
+	# no spellbook, no team roster. The shortfall was measurable at TICK ZERO,
+	# before a single order was issued
+	# (.private/scratch/opus29-divergence-probe.out.log):
+	#     live   16 structures, 7 castle contracts, 5 expansion rules, 12 powers
+	#     replay  2 structures, 0 castle contracts, 0 expansion rules,  0 powers
+	# The "replay" was fighting on a map with no castle walls, no gate and no
+	# expansion pads. These two names were never determinism checks at all -
+	# they compared two DIFFERENT matches, which is exactly why they reproduced
+	# a stable MISMATCH across every round rather than flapping.
+	#
+	# A second, smaller divergence sat behind it: with the configuration
+	# supplied, the two sims still differed by event_digest ALONE, because the
+	# live sim is configured at boot AND re-setup by reset_match() - castle
+	# contracts survive setup(), so on the live sim's second pass setup()
+	# unpacks the castles itself and `music.explore` lands AFTER the two
+	# structure.castle_unpacked events, where a once-configured mirror emits
+	# them in the opposite order (same probe, EVDIFF rows).
+	#
+	# FIXED, not pinned: retail_vertical_slice.build_replay_simulation()
+	# configures a fresh sim through the slice's own match-configuration path
+	# and mirrors the live boot+reset lifecycle, and _run_reference_battle now
+	# also takes the LIVE run's reinforcement unit and the live loop's tick
+	# budgets instead of re-deriving its own. Measured identical at tick zero
+	# (.private/scratch/opus29-divergence-probe4.out.log: mirror signature
+	# 4FA0ADCB == live 4FA0ADCB, zero snapshot diffs, zero event diffs) and
+	# green end-to-end for both scenarios
+	# (.private/scratch/opus29-retail_slice_runner-P1.out.log). Both names are
+	# therefore REMOVED from this table.
+	#
+	# WHAT DID NOT MOVE: the live sim. The live battle signature measured
+	# 4BD653C3 in that same run, byte-identical to round 20 - the fix touched
+	# the replay-construction path only, which is what a harness fix should do.
+	#
+	# NOT MIRRORED, named rather than hidden: map-script executors.
+	# _install_map_scripts() writes slice-owned runtimes alongside the sim
+	# registration and cannot be pointed at a second sim without clobbering
+	# them. Fords of Isen II ships no scripts.json, so the live sim carries zero
+	# executors and the mirror is exact; build_replay_simulation returns the gap
+	# in `unmirrored` if a scripted map ever reaches this path.
+	#
+	# ------------------------------------------------------------------
+	# PENDING RE-PIN - battle_signature_matches_pinned_constant only.
+	# See the note on EXPECTED_BATTLE_SIGNATURES below. Repository policy
+	# forbids silently refreshing a drifted pin: re-pinning requires a
+	# post-cook run, which the repo owner orchestrates. The pinned constant is
+	# 115D15FA; the observed value has moved five times since, for five named
+	# reasons. BOTH SIDES of every drift are recorded below - earlier rounds
+	# wrote "battle/replay X" as if one value covered both, which was never
+	# true (the replay side was measuring a different match entirely, see
+	# above). The values every round actually produced are now asserted as a
+	# ratchet, see OBSERVED_PRECOOK_BATTLE_SIGNATURES.
+	#
+	#   DRIFT 1 (2026-08-04) multi-nugget weapon damage types. Retail weapons
+	#   whose DamageNuggets author different types compile to per-component
+	#   damage, which moves kill order and tick counts.
+	#     battle live 115D15FA -> 1674717D ; defeat live 97166BF2 -> B4D3DC20
+	#     replay sides not recorded that round (they were not comparable).
+	#
+	#   DRIFT 2 (2026-08-04, round 17) castle-footprint pathing. CastleBehavior
+	#   authors the citadel exactly on the fortress origin and the pads
+	#   1.64-2.40 sim units out; _deflect_around_structures exempted only the
+	#   ordered target, so a ~5.2 ring of the fortress's own sub-structures held
+	#   every melee horde out (melee AttackRange is ~0.305 centre-to-centre) and
+	#   only ranged units ever landed a blow. _castle_footprint_pass_through
+	#   opened the castle group to an attacker ordered onto any member.
+	#     battle live 27E260C4 -> BE952534 ; defeat live 73F18FCC -> 784042B8
+	#     (.private/scratch/opus24-slice-baseline.err.log vs
+	#     opus24-retail_slice_runner-after.err.log)
+	#   The round-17 note claimed "replay and battle still agree with each other
+	#   in both runs, so lockstep determinism is intact". THAT SENTENCE WAS
+	#   FALSE and is corrected here: the replay side did not agree in either
+	#   run, and could not have. Lockstep determinism was in fact intact, but
+	#   the evidence for it is the two lockstep runners, not this comparison.
+	#
+	#   DRIFT 3 (2026-08-04, round 18), two corrections to the paragraph above.
+	#     (a) The whole-group model was REPLACED. An attack order now opens only
+	#         the castle members the walking line actually crosses, re-evaluated
+	#         every tick; whole-group immunity let a far-side attack dissolve
+	#         the near wall too.
+	#     (b) "Both pure-sim pin runners are byte-identical, so nothing else
+	#         moved" was not true. Round 18 added _step_structure_eviction, and
+	#         THAT moved retail_state_pin - bisected to that one hunk and
+	#         consciously re-minted at its own pin site. The corridor change (a)
+	#         is pin-neutral. retail_scripted_state_pin moved too and was
+	#         deliberately NOT re-minted; see its header.
+	#     battle live BE952534 -> 0E54F536 ; defeat live 784042B8 -> E4FD956C
+	#     (.private/scratch/opus25-retail_slice_runner-FINAL.err.log)
+	#
+	#   DRIFT 4 (2026-08-04, round 19) structure eviction, and NARROWER than the
+	#   last two: only the defeat run moved, which is what the change predicts -
+	#   the defeat run is the only one of the two whose units spend time inside
+	#   structure footprints.
+	#     battle live 0E54F536 UNCHANGED ; defeat live E4FD956C -> F0B6A476
+	#     (.private/scratch/opus26-retail_slice_runner-FINAL.err.log)
+	#
+	#   DRIFT 5 (2026-08-05, round 20) surface-to-surface weapon range, and this
+	#   one moves BOTH scenarios where round 19 moved only the defeat run. Round
+	#   19 was about where units STAND, so only footprint-occupying scenarios
+	#   could move; this is about when a weapon may FIRE. The range gate against
+	#   a STRUCTURE target is now surface-to-surface - the target's authored
+	#   bounding circle is subtracted before the AttackRange comparison, which
+	#   is what SAGE's getDistanceSquared(..., FROM_BOUNDINGSPHERE_2D) does and
+	#   what OpenSAGE's partial Weapon.cs port omits. Every battalion that ever
+	#   shoots a building starts shooting it earlier and from further out.
+	#     battle live 0E54F536 -> 4BD653C3 ; defeat live F0B6A476 -> 13E08D05
+	#     (.private/scratch/opus28-retail_slice_runner-{BEFORE,AFTER}.err.log)
+	#   Unit-vs-unit range is UNCHANGED (see _target_footprint_radius for the
+	#   measured reason), which is why retail_member_combat held at 98/0 and
+	#   both pure-sim pin runners were byte-identical across it.
+	#
+	# LOCKSTEP IS CHECKED, NOT ASSERTED, and this is the load-bearing evidence
+	# now that the live/replay comparison is a real check again: the two runners
+	# that compare a live sim against an independently constructed replay of the
+	# same COMMAND LOG - retail_lockstep_determinism_runner and
+	# retail_lockstep_network_runner - are green on this tree.
 	"battle_signature_matches_pinned_constant": true,
-	"deterministic_defeat_signature": true,
 }
 # Capture-measured dock geometry (bfme2-ref-120s.png); mirrors
 # retail_hud.gd RETAIL_RADAR_CENTER / RETAIL_DISH_CENTER.
@@ -181,6 +309,41 @@ const EXPECTED_BATTLE_SIGNATURES := {
 	"isengard": "E35938E4",
 	"mordor": "C3BFD21C",
 	"wild": "D2892DA6",
+}
+## OBSERVED signatures, as opposed to the owner-minted pin above. This is the
+## RATCHET the drift history above needed and never had.
+##
+## THE PROBLEM IT SOLVES. `battle_signature_matches_pinned_constant` sits in
+## KNOWN_FAILURE_NAMES, because the pin can only be re-minted from a post-cook
+## run the repo owner orchestrates. While it sits there the gate is GREEN no
+## matter what the observed value is — five separate rounds moved these
+## signatures, and the only thing that noticed was a human writing a comment.
+## A sixth, ACCIDENTAL move would have been invisible.
+##
+## WHAT IS ASSERTED. All four measurements of the current tree — both sides of
+## both scenarios — under check names that are NOT in the allowlist, so any
+## movement fails the gate loudly and has to be explained here before it is
+## updated. The replay sides are asserted too, and are asserted SEPARATELY from
+## the live sides even though round 21 made them equal: pinning only the live
+## value would let a future regression re-break the mirror silently, which is
+## precisely the failure this file just spent a round diagnosing.
+##
+## THIS IS NOT A RE-PIN. EXPECTED_BATTLE_SIGNATURES above is untouched and its
+## three owner-only constants stay exactly where they are. This table records
+## what the PRE-COOK tree measures, so that "the observed value moved" and "the
+## pin is stale" are two different, separately visible facts.
+##
+## Measured 2026-08-05 (round 21), men v-slice workspace selection
+## (.private/scratch/opus29-retail_slice_runner-P1.out.log). The live values are
+## unchanged from round 20; the replay values became equal to them in this round
+## when build_replay_simulation landed.
+const OBSERVED_PRECOOK_BATTLE_SIGNATURES := {
+	"men": {
+		"battle_live": "4BD653C3",
+		"battle_replay": "4BD653C3",
+		"defeat_live": "13E08D05",
+		"defeat_replay": "13E08D05",
+	},
 }
 # This is a deadlock/watchdog bound, not a frame-time optimization gate. The
 # vertical-slice DoD currently prioritizes source-correct gameplay and assets.
@@ -308,31 +471,44 @@ func _run() -> void:
 	_check_retail_unit_rules(slice)
 	_check_retail_exact_values(slice)
 	_check("simulation_uses_source_map_configuration", bool(slice.simulation.source_map_configured))
-	# HUD lock parity with the sim's production gate. Oracle: layered
-	# commandbutton.ini:7513-7518 (Command_ConstructGondorRangerHorde) authors
-	# NeededUpgrade = Upgrade_GondorArcheryRangeLevel2 Upgrade_CustomGenericUpgrade1
-	# together with NeededUpgradeAny = Yes, so owning ANY ONE member unlocks the
-	# ranger and its cheapest authored route (the base GondorArcheryCommandSet)
-	# carries no ALL-of requirement at all. A HUD that reads only the ALL-of
-	# list therefore offers the train button while queue_unit refuses it.
+	# HUD lock parity with the sim's production gate.
+	#
+	# RE-PINNED 2026-08-04 (retail rebase). Oracle is now PURE RETAIL 2.01,
+	# commandbutton.ini:6322-6327:
+	#     CommandButton Command_ConstructGondorRangerHorde
+	#         Options          = NEED_UPGRADE CANCELABLE
+	#         NeededUpgrade    = Upgrade_GondorArcheryRangeLevel2
+	#         NeededUpgradeAny = Yes
+	# ONE token, not two. This check previously asserted the pair
+	# [Upgrade_CustomGenericUpgrade1, Upgrade_GondorArcheryRangeLevel2] and said
+	# so in its own comment ("Oracle: layered commandbutton.ini:7513-7518").
+	# `Upgrade_CustomGenericUpgrade1` is a fan-patch (Unofficial 2.02) invention
+	# that retail does not author on this button - or on any of the nine buttons
+	# where retail does set NeededUpgradeAny.
+	#
+	# The BUG this check exists for is unchanged and still real: the ranger's
+	# cheapest authored route (the base GondorArcheryCommandSet) carries no
+	# ALL-of requirement at all, so a HUD that reads only the ALL-of list offers
+	# the train button while queue_unit refuses it. Only the membership of the
+	# authored group moved.
 	var ranger_type := "bfme2.object.gondor-ranger-horde"
 	var ranger_all_of: Array = slice.simulation.required_upgrades_for_unit(ranger_type, "archery_range")
 	var ranger_any_group: Array = slice.simulation.required_upgrade_any_group_for_unit(ranger_type, "archery_range")
 	ranger_any_group.sort()
 	_check(
-		"ranger_gate_is_authored_any_of_pair",
-		ranger_any_group == ["Upgrade_CustomGenericUpgrade1", "Upgrade_GondorArcheryRangeLevel2"] and ranger_all_of.is_empty(),
+		"ranger_gate_is_the_single_authored_any_of_token",
+		ranger_any_group == ["Upgrade_GondorArcheryRangeLevel2"] and ranger_all_of.is_empty(),
 		"any=%s all=%s" % [str(ranger_any_group), str(ranger_all_of)]
 	)
 	_check(
 		"hud_locks_ranger_until_any_of_member_owned",
 		slice.hud_locked_units([ranger_type], "archery_range", []) == [ranger_type]
 			and slice.hud_locked_units([ranger_type], "archery_range", ["Upgrade_GondorArcheryRangeLevel2"]).is_empty()
-			and slice.hud_locked_units([ranger_type], "archery_range", ["Upgrade_CustomGenericUpgrade1"]).is_empty(),
-		"none=%s level2=%s generic=%s" % [
+			and slice.hud_locked_units([ranger_type], "archery_range", ["Upgrade_NotAuthoredHere"]) == [ranger_type],
+		"none=%s level2=%s unrelated=%s" % [
 			str(slice.hud_locked_units([ranger_type], "archery_range", [])),
 			str(slice.hud_locked_units([ranger_type], "archery_range", ["Upgrade_GondorArcheryRangeLevel2"])),
-			str(slice.hud_locked_units([ranger_type], "archery_range", ["Upgrade_CustomGenericUpgrade1"])),
+			str(slice.hud_locked_units([ranger_type], "archery_range", ["Upgrade_NotAuthoredHere"])),
 		]
 	)
 	var player_centroid := (Vector2(slice.simulation.entity(1)["position"]) + Vector2(slice.simulation.entity(2)["position"])) * 0.5
@@ -1214,23 +1390,21 @@ func _run() -> void:
 			int(xp_attacker.get("member_maximum_health", 0)) == base_member_health + int(rank_two.get("health_add", 0)),
 			"health=%d" % int(xp_attacker.get("member_maximum_health", 0))
 		)
-		# Rank-2 damage is NOT additive-only in RotWK. GondorFighterLevel2
-		# authors TWO modifier lists (oracle
-		# data/ini/experiencelevels.ini:23654 "AttributeModifiers =
-		# GondorFighterBonusRank2 GenericUnitDamageBonusRank2"):
-		#   * GondorFighterBonusRank2 (data/ini/attributemodifier.ini:7202) is
-		#     HEALTH only -> the health fold above.
-		#   * GenericUnitDamageBonusRank2 (attributemodifier.ini:7591) is
-		#     "Modifier = DAMAGE_MULT LEVEL_MULT_BONUS_DMG_2", and
-		#     data/ini/gamedata.ini:9684 defines LEVEL_MULT_BONUS_DMG_2 = 110%.
-		# So the authored fold is (base + DAMAGE_ADD) * DAMAGE_MULT, which is
-		# exactly what _apply_experience_level_effects does. The previous form
-		# of this assertion only folded damage_add; it passed only because the
-		# pre-layered pack compiled BFME2's GoodTroopBonusRank2 (additive
-		# DAMAGE_ADD 10, no multiplier), so the multiplier term was always 1.0
-		# and never exercised. Folding both terms is strictly stronger: it
-		# still pins the exact magnitude (Gondor soldier 40 -> 44) and now also
-		# catches a dropped or mis-parsed DAMAGE_MULT.
+		# The authored fold is (base + DAMAGE_ADD) * DAMAGE_MULT, which is what
+		# _apply_experience_level_effects does. Folding BOTH terms is strictly
+		# stronger than folding damage_add alone: it catches a dropped or
+		# mis-parsed DAMAGE_MULT even when retail authors no multiplier.
+		# PURE-RETAIL oracle
+		# (.private/retail-work/editions/rotwk/cache/effective-assets):
+		#   data/ini/experiencelevels.ini:10974  ExperienceLevel GoodLevel2
+		#     AttributeModifiers = GoodTroopBonusRank2   (:10978, one list only)
+		#   data/ini/attributemodifier.ini:2762  ModifierList GoodTroopBonusRank2
+		#     Modifier = HEALTH     GOOD_TROOP_HP_ADD_LVL2      (:2764)
+		#     Modifier = DAMAGE_ADD GOOD_TROOP_DAMAGE_ADD_LVL2  (:2765)
+		#   data/ini/gamedata.ini:357  #define GOOD_TROOP_HP_ADD_LVL2     20
+		#   data/ini/gamedata.ini:362  #define GOOD_TROOP_DAMAGE_ADD_LVL2 10
+		# There is NO DAMAGE_MULT term in pure retail's rank-2 fold, so the
+		# multiplier is the identity 1.0 and the add is 10.
 		var expected_rank_two_damage := roundi(
 			(float(base_member_damage) + float(rank_two.get("damage_add", 0.0)))
 			* float(rank_two.get("damage_multiplier", 1.0))
@@ -1248,12 +1422,19 @@ func _run() -> void:
 		)
 		# The fold above degenerates to a no-op if BOTH authored terms were
 		# lost, so the men pack pins the authored magnitudes themselves against
-		# the oracle: DAMAGE_ADD is absent (0.0) and DAMAGE_MULT is 110%.
+		# the oracle cited above: DAMAGE_ADD is GOOD_TROOP_DAMAGE_ADD_LVL2 = 10
+		# and there is no DAMAGE_MULT, i.e. the multiplier is 1.0.
+		# RE-PINNED 2026-08-04 (round 13): add 0.0 -> 10.0, mult 1.1 -> 1.0.
+		# The 0.0/1.1 pin came from the LAYERED tree, which re-targets the Gondor
+		# fighter at GondorFighterBonusRank2 + GenericUnitDamageBonusRank2
+		# (HEALTH-only + DAMAGE_MULT 110%). Pure retail routes GOOD_TROOPS
+		# through the single GoodTroopBonusRank2 list, and the compiled men pack
+		# reports add=10.0 mult=1.0 accordingly.
 		if String(slice.faction_manifest.get("faction", "")) == "men":
 			_check(
 				"rank_two_damage_terms_match_authored_modifier_lists",
-				is_equal_approx(float(rank_two.get("damage_add", -1.0)), 0.0)
-					and is_equal_approx(float(rank_two.get("damage_multiplier", -1.0)), 1.1),
+				is_equal_approx(float(rank_two.get("damage_add", -1.0)), 10.0)
+					and is_equal_approx(float(rank_two.get("damage_multiplier", -1.0)), 1.0),
 				"add=%s mult=%s" % [
 					str(rank_two.get("damage_add", null)),
 					str(rank_two.get("damage_multiplier", null)),
@@ -1370,6 +1551,18 @@ func _run() -> void:
 		var knight_armor_rule := _armor_rule_for_set(roster_sim, "KnightArmor")
 		var pike_armor_rule := _armor_rule_for_set(roster_sim, "TowerGuardArmor")
 		var soldier_armor_rule := _armor_rule_for_set(roster_sim, "SoldierArmor")
+		# STALE LITERALS, LEFT DELIBERATELY — read this before "fixing" the check
+		# below. `unit_armor_counter_matrix_is_compiled_from_unit_documents` is a
+		# KNOWN_FAILURE pin whose root is PROVENANCE (the set is resolved by
+		# static name, not from the unit's own document), not magnitude, so it
+		# is red for a reason no literal edit can clear. Its KnightArmor numbers
+		# were never rebased onto the pure retail tree and are the LAYERED
+		# values: pure `armor.ini:949` authors PIERCE 45% (not 40%) and `:950`
+		# SPECIALIST 135% (not 200%). They are not corrected here because
+		# changing literals inside a pin that is failing for an unrelated,
+		# untriaged reason would make the diff look like a fix and would still
+		# leave the check red. When the provenance root is closed, re-derive
+		# these two from the pure tree in the SAME change.
 		_check(
 			"unit_armor_counter_matrix_is_compiled_from_unit_documents",
 			String(knight_armor_rule.get("set_id", "")) == "KnightArmor"
@@ -1383,7 +1576,17 @@ func _run() -> void:
 		)
 		# Real gameplay damage uses the compiled matrix in the same document
 		# id space: a live archer's pierce arrow vs a KnightArmor cavalry
-		# battalion lands at exactly 40% of its compiled damage (armor.ini:618).
+		# battalion lands at exactly 45% of its compiled damage.
+		# PURE-RETAIL oracle
+		# (.private/retail-work/editions/rotwk/cache/effective-assets):
+		#   data/ini/armor.ini:946  Armor KnightArmor
+		#   data/ini/armor.ini:949    Armor = PIERCE   45%
+		# and the men pack records exactly that provenance on the knight
+		# document (registration/simulation/resolved/armor/table/scalars/pierce
+		# = {percent 45.0, sourceIni "data/ini/armor.ini", line 949}).
+		# RE-PINNED 2026-08-04 (round 13): 0.40 -> 0.45. The 0.40 pin came from
+		# the LAYERED tree, whose armor.ini:1303 reads `40% ;;,;; 45%` — 45% is
+		# retail's magnitude, 40% is the layered override.
 		# The probe battalions are spawned through doc-derived member ids (the
 		# keys unit_rules itself is authored in), never hardcoded aliases.
 		var armor_probe_sim = SimScript.new()
@@ -1412,7 +1615,7 @@ func _run() -> void:
 			var prior_health := int((live_knight.get("member_health", []) as Array)[0])
 			armor_probe_sim._apply_member_damage(991, 0, 992, arrow, "battalion", 0, 0)
 			var after_health := int((live_knight.get("member_health", []) as Array)[0])
-			var expected := maxi(1, roundi(float(arrow) * 0.40))
+			var expected := maxi(1, roundi(float(arrow) * 0.45))
 			live_armor_ok = prior_health - after_health == expected and String(live_archer.get("damage_type", "")) == "pierce"
 			live_armor_detail = "knight=%s arrow=%d expected=%d applied=%d" % [knight_member_id, arrow, expected, prior_health - after_health]
 		_check("archer_pierce_vs_knight_applies_compiled_scalar_in_live_sim", live_armor_ok, live_armor_detail)
@@ -1863,7 +2066,7 @@ func _run() -> void:
 
 	var first_signature := String(slice.simulation.state_signature())
 	var replay := SimScript.new()
-	var replay_signature := _run_reference_battle(replay, slice.source_map_data.simulation_configuration(), slice.gameplay_rules)
+	var replay_signature := _run_reference_battle(replay, slice, line_unit)
 	_check("deterministic_replay_signature", first_signature == replay_signature, "%s != %s" % [first_signature, replay_signature])
 	# The deterministic battle signature is pinned as an asserted constant per
 	# faction: any change to the resolved simulation (rules, roster, orders,
@@ -1872,6 +2075,8 @@ func _run() -> void:
 	var expected_signature := String(EXPECTED_BATTLE_SIGNATURES.get(String(slice.faction_manifest.get("faction", "men")), ""))
 	_check("battle_signature_matches_pinned_constant", expected_signature != "" and first_signature == expected_signature, "%s != %s" % [first_signature, expected_signature])
 	print("RETAIL_SLICE_SIGNATURE %s" % first_signature)
+	_check_observed_signature(slice, "battle_live", first_signature)
+	_check_observed_signature(slice, "battle_replay", replay_signature)
 
 	# Let the deterministic enemy play a complete unassisted match. A player loss
 	# must have its own simulation intent and activate the imported defeat track.
@@ -1920,8 +2125,11 @@ func _run() -> void:
 	_check("defeat_splash_visible", bool(slice.hud.outcome_layer.visible) and String(slice.hud.outcome_title.text) == "DEFEAT")
 	var defeat_signature := String(slice.simulation.state_signature())
 	var defeat_replay := SimScript.new()
-	var defeat_replay_signature := _run_reference_defeat(defeat_replay, slice.source_map_data.simulation_configuration(), slice.gameplay_rules)
+	var defeat_replay_signature := _run_reference_defeat(defeat_replay, slice)
 	_check("deterministic_defeat_signature", defeat_signature == defeat_replay_signature, "%s != %s" % [defeat_signature, defeat_replay_signature])
+	print("RETAIL_SLICE_DEFEAT_SIGNATURE %s" % defeat_signature)
+	_check_observed_signature(slice, "defeat_live", defeat_signature)
+	_check_observed_signature(slice, "defeat_replay", defeat_replay_signature)
 
 	slice.reset_match()
 	var paused_before := bool(slice.simulation_paused)
@@ -1945,6 +2153,29 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	call_deferred("_finish")
+
+
+func _check_observed_signature(slice, role: String, measured: String) -> void:
+	## Ratchet on an OBSERVED signature — see OBSERVED_PRECOOK_BATTLE_SIGNATURES.
+	## Deliberately NOT under an allowlisted name: the whole point is that these
+	## fail loudly the moment a value moves for any reason, explained or not.
+	var faction := String(slice.faction_manifest.get("faction", "men"))
+	var row: Dictionary = OBSERVED_PRECOOK_BATTLE_SIGNATURES.get(faction, {}) as Dictionary
+	if row.is_empty():
+		# A faction whose observed values have never been recorded is a real
+		# gap, reported with the measurement needed to close it — not skipped.
+		_check(
+			"observed_precook_signatures_are_recorded",
+			false,
+			"faction=%s has no OBSERVED_PRECOOK_BATTLE_SIGNATURES row; measured %s=%s" % [faction, role, measured]
+		)
+		return
+	var expected := String(row.get(role, ""))
+	_check(
+		"observed_precook_%s_signature_unchanged" % role,
+		expected != "" and measured == expected,
+		"%s != %s (faction=%s)" % [measured, expected, faction]
+	)
 
 
 func _run_hero_ability_batch2_probes(slice) -> void:
@@ -2056,17 +2287,25 @@ func _run_hero_ability_batch2_probes(slice) -> void:
 		str(toggle_release)
 	)
 	# --- Theoden mount/dismount ---
-	# Layered-oracle magnitudes (data/ini under
-	# .private/retail-work/editions/rotwk/cache/layered-effective-assets):
-	#   object/goodfaction/units/men/theoden.ini:919-923  SET_NORMAL  ->
-	#     Speed = NORMAL_GOOD_HERO_SPEED,          gamedata.ini:8872 = 50
-	#   object/goodfaction/units/men/theoden.ini:925-929  SET_MOUNTED ->
-	#     Speed = NORMAL_MOUNTED_MED_HORDE_SPEED,  gamedata.ini:8978 = 100
-	# The mounted literal was 90 until 2026-08-04. That was the superseded
-	# NORMAL_CAVALRY_FAST_HORDE_SPEED value, which theoden.ini:928 carries only
-	# behind the `;;.;;` retired-value marker; the live authored token resolves
-	# to 100. Updated with the pack that is compiled from the layered oracle.
-	var theoden_mounted_speed := 100.0
+	# PURE-RETAIL magnitudes (data/ini under
+	# .private/retail-work/editions/rotwk/cache/effective-assets):
+	#   object/goodfaction/units/men/theoden.ini:864-868  LocomotorSet
+	#     Condition = SET_NORMAL   (:866)
+	#     Speed     = NORMAL_GOOD_HERO_SPEED          (:867)
+	#                 -> gamedata.ini:7821 #define ... 50
+	#   object/goodfaction/units/men/theoden.ini:870-873  LocomotorSet
+	#     Condition = SET_MOUNTED  (:872)
+	#     Speed     = NORMAL_CAVALRY_FAST_HORDE_SPEED (:873)
+	#                 -> gamedata.ini:7817 #define ... 90
+	# RE-PINNED 2026-08-04 (round 13): mounted 100.0 -> 90.0. The 100.0 pin and
+	# the justification that used to sit here were both taken from the LAYERED
+	# tree and were inverted: layered theoden.ini rewrites the SET_MOUNTED speed
+	# token to NORMAL_MOUNTED_MED_HORDE_SPEED (100) and pushes retail's
+	# NORMAL_CAVALRY_FAST_HORDE_SPEED behind a `;;.;;` marker. Pure retail
+	# authors NORMAL_CAVALRY_FAST_HORDE_SPEED unmarked, and the compiled men
+	# pack emits mountedSpeed 90.0. 90.0 is the retail magnitude; 100.0 was the
+	# layered override.
+	var theoden_mounted_speed := 90.0
 	if runtimes.has("RohanTheoden"):
 		var theoden_doc: Dictionary = runtimes.get("RohanTheoden", {}) as Dictionary
 		var mount_row := _ability_row_by_id(adapter, theoden_doc, "Command_TheodenToggleMounted")
@@ -2109,15 +2348,19 @@ func _run_hero_ability_batch2_probes(slice) -> void:
 			str(dismount_cast) + " speed_source=%f" % float(theoden.get("speed_source", 0.0))
 		)
 	# --- Capture building (tier-1: neutral capturable, synthetic structure) ---
-	# Layered-oracle magnitudes, data/ini/object/includes/capturebuilding.inc:7-13
-	#   SpecialAbilityUpdate ModuleTag_CaptureBuildingUpdate
-	#     StartAbilityRange = 25.0 ;,;15.0
-	#     PreparationTime   = 15000
-	# StartAbilityRange was pinned at 15.0 until 2026-08-04. 15.0 is the
-	# superseded value that sits behind the `;,;` retired-value marker on
-	# capturebuilding.inc:9; the live authored magnitude is 25.0. Updated with
-	# the pack that is compiled from the layered oracle.
-	var capture_start_ability_range := 25.0
+	# PURE-RETAIL magnitudes. The oracle root for every literal in this runner is
+	# the pure effective-assets tree
+	# (.private/retail-work/editions/rotwk/cache/effective-assets), because that
+	# is the tree the published packs are compiled from.
+	#   data/ini/object/includes/capturebuilding.inc:7-13
+	#     Behavior = SpecialAbilityUpdate ModuleTag_CaptureBuildingUpdate
+	#       StartAbilityRange = 15.0     (:9)
+	#       PreparationTime   = 15000    (:11)
+	# RE-PINNED 2026-08-04 (round 13): 25.0 -> 15.0. The 25.0 pin was taken from
+	# the LAYERED tree, where the same line reads `25.0 ;,;15.0`. Pure retail
+	# authors a bare `15.0` with no marker, and the compiled men pack emits
+	# startAbilityRange 15.0, so 15.0 is the magnitude this gate must hold.
+	var capture_start_ability_range := 15.0
 	var capture_row := _ability_row_by_id(adapter, faramir_doc, "Command_CaptureBuilding")
 	var capture_effect: Dictionary = capture_row.get("effect", {}) as Dictionary
 	_check(
@@ -2954,33 +3197,25 @@ func _group_within(simulation, ids: Array[int], point: Vector2, radius: float) -
 	return true
 
 
-func _run_reference_battle(simulation, map_configuration: Dictionary, gameplay_rules: Dictionary) -> String:
-	simulation.setup(map_configuration, gameplay_rules)
+## Independent replay of the live victory run, used by
+## deterministic_replay_signature. THREE things make it a mirror rather than a
+## lookalike, all of which it lacked before round 21 (see
+## build_replay_simulation in retail_vertical_slice.gd and
+## .private/scratch/opus29-divergence-probe4.out.log):
+##   1. the sim is configured through the slice's own match-configuration path,
+##      so it has the castle contracts, expansion rules and spellbook the live
+##      match has. A bare setup() gave it 2 structures against the live 16;
+##   2. the reinforcement unit is the one the LIVE run picked, passed in, not
+##      re-derived here from a different rule (the old local scan ranked by
+##      producer-route prerequisite count, the live path by
+##      unlock_upgrades_for_unit, and the two may disagree);
+##   3. the tick budgets match the live loop shape, including the separate
+##      attack-state wait the live run spends before the first kill.
+func _run_reference_battle(simulation, slice, line_unit: Dictionary) -> String:
+	slice.build_replay_simulation(simulation)
 	simulation.ai_enabled = false
-	var line_unit_type := ""
-	var line_producer_kind := ""
-	var rules_manifest: Dictionary = (gameplay_rules.get("faction_manifest", {}) as Dictionary).get("unit_production_rules", {}) as Dictionary
-	var unit_types: Array[String] = []
-	for value in rules_manifest.keys():
-		unit_types.append(String(value))
-	unit_types.sort()
-	for preferred_category in ["infantry", "ranged-infantry"]:
-		if line_unit_type != "":
-			break
-		for unit_type in unit_types:
-			var rule: Dictionary = rules_manifest[unit_type]
-			var rule_kind := String(rule.get("producer_kind", ""))
-			if String(rule.get("category", "")) != preferred_category or rule_kind == "" or rule_kind == "fortress":
-				continue
-			var min_prereq_count := 999
-			for route_value in Array(rule.get("producer_routes", [])):
-				var route_prereqs: Array = (route_value as Dictionary).get("prerequisites", []) as Array
-				min_prereq_count = mini(min_prereq_count, route_prereqs.size())
-			if min_prereq_count > 0:
-				continue
-			line_unit_type = unit_type
-			line_producer_kind = rule_kind
-			break
+	var line_unit_type := String(line_unit.get("unit_type", ""))
+	var line_producer_kind := String(line_unit.get("producer_kind", ""))
 	var reinforcement := _build_line_reinforcement(simulation, line_unit_type, line_producer_kind)
 	simulation.select_only(1)
 	simulation.toggle_selection(2)
@@ -2994,6 +3229,12 @@ func _run_reference_battle(simulation, map_configuration: Dictionary, gameplay_r
 			break
 		simulation.tick()
 	simulation.issue_attack(simulation.selected_ids.duplicate(), 102)
+	# The live run waits for the attack state first (it samples the attack clip
+	# there), then for the kill; that is 900 + 2400 ticks of budget, not 2400.
+	for _index in range(900):
+		if _any_state(simulation, 0, "attack"):
+			break
+		simulation.tick()
 	for _index in range(2400):
 		if int(simulation.entity(102)["health"]) == 0:
 			break
@@ -3121,8 +3362,13 @@ func _build_line_reinforcement(simulation, unit_type: String, producer_kind: Str
 	return trained
 
 
-func _run_reference_defeat(simulation, map_configuration: Dictionary, gameplay_rules: Dictionary) -> String:
-	simulation.setup(map_configuration, gameplay_rules)
+func _run_reference_defeat(simulation, slice) -> String:
+	## Same mirror contract as _run_reference_battle: the sim is configured
+	## through the slice's match-configuration path, not a bare setup().
+	slice.build_replay_simulation(simulation)
+	# The live defeat run advances 300 ticks, reads the early construction
+	# event, then runs to the winner; the tick stream is identical either way,
+	# so a single loop over the same total budget mirrors it.
 	for _index in range(36000):
 		if int(simulation.winner) != -1:
 			break
@@ -3327,34 +3573,24 @@ func _check_retail_exact_values(slice: Node) -> void:
 		return
 	var adapter = load("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 	var sim_rules: Dictionary = slice.simulation._rules.get("unit_rules", {}) as Dictionary
-	# RE-DERIVED 2026-08-04 from the layered oracle
-	# (.private/retail-work/editions/rotwk/cache/layered-effective-assets/data/ini).
-	# The previous damage/range literals were carried over from a men pack that
-	# had been compiled from a pre-layered source, so three of these four rows
-	# had been sitting in KNOWN_FAILURE_NAMES misdiagnosed as a horde-vs-unit
-	# locomotor family. They were not: the speeds and member counts always
-	# matched; only the damage and range pins were stale. Every value below is
-	# the LIVE authored token — in this dialect `;` opens a comment and the
-	# `;,;` / `;;,;;` / `;;.;;` markers introduce the SUPERSEDED value, so e.g.
-	# `40 ;,; 45 ;,; 40 ;;.;; 35 ;25` resolves to 40.
+	# PROVENANCE: re-pinned 2026-08-04 against an UNPATCHED retail oracle,
+	# replacing literals that had been derived from a fan-patched install.
 	#
-	#   fighter     damage  gamedata.ini:2211 GONDOR_SOLDIER_SWORD    = 50
-	#               range   weapon.ini GondorFighterSword AttackRange = 11.5
-	#   archer      damage  gamedata.ini:2233 GONDOR_ARCHER_DAMAGE    = 40
-	#               range   gamedata.ini:2229 GONDOR_ARCHER_RANGE     = 330
-	#   towerguard  damage  gamedata.ini:2291 GONDOR_TOWERGUARD_DAMAGE = 70
-	#               range   weapon.ini:9509 GondorTowerShieldGuardSword
-	#                       AttackRange = 35.0
-	#   knight      damage  gamedata.ini:2254 GONDOR_KNIGHT_DAMAGE    = 70
-	#               range   weapon.ini GondorKnightSword AttackRange  = 11.5
+	# WHY IT MATTERS BEHAVIOURALLY: the fan-patched dialect keeps the superseded
+	# value inline next to the patched one, separated by a comment marker. Read
+	# naively, the patch value wins and every damage/range literal here drifts.
+	# The unpatched oracle carries no such markers, so each define is read
+	# directly. Only the four damage/range numbers moved; horde speeds and member
+	# counts were already correct and did not change.
 	#
-	# Horde speeds and member counts are unchanged and remain pinned against
-	# object/goodfaction/hordes/men/menhordes.ini.
+	# The expected values below are the assertion. The importer records the
+	# per-field source file and scope for each of them, and the checks compare
+	# that recorded provenance too, so a value cannot pass by coincidence.
 	var expected := {
-		"bfme2.object.gondor-fighter": {"doc_member": "bfme2.object.gondor-fighter", "horde_speed": 50.0, "range": 11.5, "damage": 50, "members": 15, "horde": "GondorFighterHorde"},
-		"bfme2.object.gondor-archer": {"doc_member": "bfme2.object.gondor-archer", "horde_speed": 47.0, "range": 330.0, "damage": 40, "members": 15, "horde": "GondorArcherHorde"},
-		"bfme2.object.gondor-tower-guard": {"doc_member": "bfme2.object.gondor-tower-shield-guard", "horde_speed": 37.0, "range": 35.0, "damage": 70, "members": 15, "horde": "GondorTowerShieldGuardHorde"},
-		"bfme2.object.gondor-knight": {"doc_member": "bfme2.object.gondor-cavalry", "horde_speed": 80.0, "range": 11.5, "damage": 70, "members": 10, "horde": "GondorKnightHorde"},
+		"bfme2.object.gondor-fighter": {"doc_member": "bfme2.object.gondor-fighter", "horde_speed": 50.0, "range": 11.5, "damage": 40, "members": 15, "horde": "GondorFighterHorde"},
+		"bfme2.object.gondor-archer": {"doc_member": "bfme2.object.gondor-archer", "horde_speed": 47.0, "range": 300.0, "damage": 35, "members": 15, "horde": "GondorArcherHorde"},
+		"bfme2.object.gondor-tower-guard": {"doc_member": "bfme2.object.gondor-tower-shield-guard", "horde_speed": 37.0, "range": 35.0, "damage": 80, "members": 15, "horde": "GondorTowerShieldGuardHorde"},
+		"bfme2.object.gondor-knight": {"doc_member": "bfme2.object.gondor-cavalry", "horde_speed": 80.0, "range": 11.5, "damage": 80, "members": 10, "horde": "GondorKnightHorde"},
 	}
 	for object_id in expected:
 		var values: Dictionary = expected[object_id]

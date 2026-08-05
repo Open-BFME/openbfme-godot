@@ -11,6 +11,7 @@ const OrderIndicatorScript = preload("res://src/retail_slice/retail_order_indica
 const AttackTargetIndicatorScript = preload("res://src/retail_slice/retail_attack_target_indicator.gd")
 const AudioScript = preload("res://src/retail_slice/retail_slice_audio.gd")
 const MapDataScript = preload("res://src/retail_slice/retail_map_data.gd")
+const SelectionPick = preload("res://src/retail_slice/retail_selection_pick.gd")
 const BattlefieldScript = preload("res://src/retail_slice/retail_fords_battlefield.gd")
 const HudScript = preload("res://src/retail_slice/retail_hud.gd")
 const LinearFogScript = preload("res://src/retail_slice/fords_linear_fog.gd")
@@ -197,6 +198,12 @@ var source_driven_terrain := false
 var crossing_count := 0
 var map_preview_loaded := false
 var map_art_loaded := false
+## Named, non-fatal map-art degradations for this match. A map whose catalog row
+## declares NO preview/art path has nothing to load, so the match runs with a
+## placeholder instead of refusing to launch; a map that DOES declare a path and
+## whose texture will not load is still a hard capability failure, because that
+## is a broken pack rather than a legitimately art-less map.
+var map_art_degradations: Array[String] = []
 var equipment_proof_loaded := false
 var simulation_paused := false
 var accumulator := 0.0
@@ -453,12 +460,26 @@ func _initialize_content_and_match() -> void:
 	attack_target_indicator.configure(hud.retail_action_texture("attack_move"))
 
 	var asset_factory = load("res://src/view/asset_factory.gd")
+	# A catalog row may legitimately declare no preview/art: the retail corpus
+	# ships maps without a thumbnail, and a map pack cooked before the map-art
+	# lane existed publishes empty strings. Absent art degrades to a placeholder
+	# with a named warning; DECLARED-but-unloadable art stays a hard failure.
+	var preview_declared := String(map_definition.get("preview", "")).strip_edges() != ""
+	var art_declared := String(map_definition.get("art", "")).strip_edges() != ""
 	var preview_path := ContentDB.resolve_asset(String(map_definition.get("preview", "")), map_pack_root)
 	var art_path := ContentDB.resolve_asset(String(map_definition.get("art", "")), map_pack_root)
-	_preview_texture = asset_factory.load_texture_asset(preview_path)
-	_source_art_texture = asset_factory.load_texture_asset(art_path)
-	map_preview_loaded = _preview_texture != null
-	map_art_loaded = _source_art_texture != null
+	_preview_texture = asset_factory.load_texture_asset(preview_path) if preview_declared else null
+	_source_art_texture = asset_factory.load_texture_asset(art_path) if art_declared else null
+	map_art_degradations.clear()
+	if not preview_declared:
+		map_art_degradations.append("map_preview (no preview published by this map pack; minimap falls back to cooked terrain)")
+	if not art_declared:
+		map_art_degradations.append("map_art (no loading art published by this map pack; loading screen falls back to the default plate)")
+	map_preview_loaded = _preview_texture != null or not preview_declared
+	map_art_loaded = _source_art_texture != null or not art_declared
+	if not map_art_degradations.is_empty():
+		push_warning("Map art degraded for %s: %s" % [map_id, ", ".join(map_art_degradations)])
+		print("[RetailSlice] map-art-degraded map=%s missing=%s" % [map_id, ", ".join(map_art_degradations)])
 	_update_loading_overlay_identity(map_definition)
 	await _mark_initialization_phase("map_art")
 
@@ -635,10 +656,12 @@ func _initialize_content_and_match() -> void:
 			failed_capabilities.append(
 				"structure_retail_visuals[%s]" % ", ".join(structure_failures)
 			)
+		# Reached only when the row DECLARED the asset and it would not load —
+		# an absent declaration already degraded to a placeholder above.
 		if not map_preview_loaded:
-			failed_capabilities.append("map_preview")
+			failed_capabilities.append("map_preview (declared '%s' but no texture loaded)" % preview_path)
 		if not map_art_loaded:
-			failed_capabilities.append("map_art")
+			failed_capabilities.append("map_art (declared '%s' but no texture loaded)" % art_path)
 		if not equipment_proof_loaded and men_faction_slice and not _men_uses_full_pack_manifest():
 			failed_capabilities.append("equipment_proof")
 		if not source_map_data.ready:
@@ -2996,7 +3019,7 @@ func _finish_box_selection(release_position: Vector2, additive: bool) -> void:
 func _select_same_type_on_screen(point: Vector2) -> void:
 	# Retail double-click: select every on-screen battalion of the same type
 	# from the LOCAL seat's own army.
-	var anchor_id := _closest_battalion(point, local_team, 6.0)
+	var anchor_id := _closest_battalion(point, local_team)
 	if anchor_id == 0:
 		return
 	var anchor_type := String(simulation.entity(anchor_id).get("object_id", ""))
@@ -3128,7 +3151,7 @@ func _handle_left_click(point: Vector2, additive: bool) -> void:
 		hud.set_feedback("Build plot selected: choose an expansion.")
 		_sync_presentation()
 		return
-	var player_id := _closest_battalion(point, local_team, 6.0)
+	var player_id := _closest_battalion(point, local_team)
 	# A porter parks on the producer it just raised; whichever of the two is
 	# closer to the click wins, so the building is selectable without making
 	# the porter unselectable anywhere near friendly structures.
@@ -3175,7 +3198,7 @@ func _handle_right_click(point: Vector2) -> void:
 		return
 	# Hostility is from the LOCAL seat's perspective: the host attacks team 1,
 	# a lockstep guest attacks team 0 — never a hardcoded enemy team 1.
-	var enemy_id := _closest_hostile_battalion(point, 6.0)
+	var enemy_id := _closest_hostile_battalion(point)
 	if enemy_id == 0:
 		enemy_id = _closest_hostile_structure(point)
 	if enemy_id != 0:
@@ -3200,66 +3223,129 @@ func _screen_to_world(screen_position: Vector2) -> Variant:
 	return Plane(Vector3.UP, 0.35).intersects_ray(origin, direction)
 
 
-func _closest_battalion(point: Vector2, team: int, maximum_distance: float) -> int:
-	var result := 0
-	var best_distance := maximum_distance
-	for id in simulation.living_ids(team):
-		var distance := point.distance_to(Vector2(simulation.entity(id)["position"]))
-		if distance <= best_distance:
-			best_distance = distance
-			result = id
-	return result
+## Retail hit-tests a click against the object's authored Geometry footprint.
+## The presentation node owns the resolved world-unit radius (compiled retail
+## Geometry when the pack carries it, otherwise the model's own bounds); these
+## scans only assemble candidates and defer the test to RetailSelectionPick.
+## Economy land-claim rings, rally points and aura radii are separate systems
+## and are deliberately untouched here.
+func _battalion_pick_candidates(ids: Array) -> Array:
+	var candidates: Array = []
+	for id_value in ids:
+		var id := int(id_value)
+		var entity: Dictionary = simulation.entity(id)
+		if entity.is_empty():
+			continue
+		candidates.append({
+			"id": id,
+			"position": Vector2(entity["position"]),
+			"radius": _battalion_pick_radius(id),
+		})
+	return candidates
+
+
+func _battalion_pick_radius(id: int) -> float:
+	var node: Variant = battalion_nodes.get(id, null)
+	if node != null and is_instance_valid(node):
+		# Members are re-laid-out every frame, so the horde measures itself at
+		# click time rather than trusting a spawn-frame snapshot.
+		var live := float(node.selection_radius())
+		if live > 0.0:
+			return live
+	# No presentation node yet (spawn frame, headless seams): fall back to the
+	# retail member body projected through the map transform scale.
+	return maxf(
+		SelectionPick.MINIMUM_SELECTION_RADIUS,
+		SelectionPick.world_radius_from_source(
+			SelectionPick.DEFAULT_MEMBER_SOURCE_RADIUS, _source_pick_scale()
+		)
+	)
+
+
+func _structure_pick_candidates(ids: Array) -> Array:
+	var candidates: Array = []
+	for id_value in ids:
+		var id := int(id_value)
+		var row: Dictionary = simulation.structure(id)
+		if row.is_empty():
+			continue
+		candidates.append({
+			"id": id,
+			"position": Vector2(row["position"]),
+			"radius": _structure_pick_radius(id, String(row.get("structure_kind", ""))),
+		})
+	return candidates
+
+
+func _structure_pick_radius(id: int, structure_kind: String) -> float:
+	var node: Variant = structure_nodes.get(id, null)
+	if node != null and is_instance_valid(node) and float(node.pick_radius) > 0.0:
+		return float(node.pick_radius)
+	var source_radius := (
+		SelectionPick.DEFAULT_FORTRESS_SOURCE_RADIUS
+		if structure_kind == "fortress"
+		else SelectionPick.DEFAULT_STRUCTURE_SOURCE_RADIUS
+	)
+	return maxf(
+		SelectionPick.MINIMUM_SELECTION_RADIUS,
+		SelectionPick.world_radius_from_source(source_radius, _source_pick_scale())
+	)
+
+
+func _source_pick_scale() -> float:
+	## Retail source units to battlefield world units for the loaded map.
+	if source_map_data == null:
+		return 0.0
+	return float(source_map_data.local_transform_scale)
+
+
+func _closest_battalion(point: Vector2, team: int) -> int:
+	return SelectionPick.closest_hit(point, _battalion_pick_candidates(simulation.living_ids(team)))
 
 
 func _closest_structure(point: Vector2, team: int) -> int:
-	var result := 0
-	var best_distance := 9.0
-	for id in simulation.living_structure_ids(team):
-		var row: Dictionary = simulation.structure(id)
-		var radius := 8.0 if String(row.get("structure_kind", "")) == "fortress" else 5.5
-		var distance := point.distance_to(Vector2(row["position"]))
-		if distance <= radius and distance <= best_distance:
-			best_distance = distance
-			result = id
-	return result
+	return SelectionPick.closest_hit(point, _structure_pick_candidates(simulation.living_structure_ids(team)))
 
 
-func _closest_hostile_battalion(point: Vector2, maximum_distance: float) -> int:
-	## Closest living battalion hostile to the LOCAL seat (2-team default:
-	## identical to the historical fixed enemy scan for team 0).
-	var result := 0
-	var best_distance := maximum_distance
-	for id in simulation._hostile_living_ids(local_team):
-		var distance := point.distance_to(Vector2(simulation.entity(id)["position"]))
-		if distance <= best_distance:
-			best_distance = distance
-			result = id
-	return result
+func _closest_hostile_battalion(point: Vector2) -> int:
+	## Closest living battalion hostile to the LOCAL seat. Attack orders carry a
+	## small extra margin; selection does not.
+	return SelectionPick.closest_hit(
+		point,
+		_battalion_pick_candidates(simulation._hostile_living_ids(local_team)),
+		SelectionPick.ORDER_MARGIN
+	)
 
 
 func _closest_hostile_structure(point: Vector2) -> int:
 	## Closest living structure hostile to the LOCAL seat.
-	var result := 0
-	var best_distance := 9.0
-	for id in simulation._hostile_living_structure_ids(local_team):
-		var row: Dictionary = simulation.structure(id)
-		var radius := 8.0 if String(row.get("structure_kind", "")) == "fortress" else 5.5
-		var distance := point.distance_to(Vector2(row["position"]))
-		if distance <= radius and distance <= best_distance:
-			best_distance = distance
-			result = id
-	return result
+	return SelectionPick.closest_hit(
+		point,
+		_structure_pick_candidates(simulation._hostile_living_structure_ids(local_team)),
+		SelectionPick.ORDER_MARGIN
+	)
 
 
 ## The player's free fortress build plots, nearest-first within pick range.
 ## Returns {"fortress_id", "pad_index", "pad_kind", "position"} or {}.
 var _selected_expansion_pad: Dictionary = {}
-const EXPANSION_PAD_PICK_RADIUS := 2.2
+## Retail build plots are small plates on the fortress apron. Expressed in
+## SOURCE units and projected through the map transform scale: as a flat 2.2
+## world-unit circle this ran before the structure scan and swallowed clicks
+## meant for the fortress itself.
+const EXPANSION_PAD_PICK_SOURCE_RADIUS := 40.0
+
+
+func _expansion_pad_pick_radius() -> float:
+	var projected := SelectionPick.world_radius_from_source(
+		EXPANSION_PAD_PICK_SOURCE_RADIUS, _source_pick_scale()
+	)
+	return projected if projected > 0.0 else SelectionPick.MINIMUM_SELECTION_RADIUS
 
 
 func _closest_expansion_pad(point: Vector2) -> Dictionary:
 	var best: Dictionary = {}
-	var best_distance := EXPANSION_PAD_PICK_RADIUS
+	var best_distance := _expansion_pad_pick_radius()
 	for fortress_id_value in simulation.expansion_pads.keys():
 		var fortress_id := int(fortress_id_value)
 		var fortress: Dictionary = simulation.structure(fortress_id)
@@ -3721,13 +3807,17 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 			if not (rule.get("pad_kinds", []) as Array).has(pad_kind):
 				continue
 			var command := hud.retail_expansion_command(kind)
-			if command.is_empty() or command.get("texture") == null:
+			# Iconless doc-honest commands (unconverted art) keep their socket as
+			# text — an expansion whose icon did not bind must not vanish from
+			# the plot's command set, the same contract the train sockets use.
+			if command.is_empty():
 				continue
 			var pad_cost := int(rule.get("cost", 0))
 			entries.append({
 				"command_kind": "expansion",
 				"id": kind,
 				"icon": command.get("texture"),
+				"text": String(command.get("label", "")) if command.get("texture") == null else "",
 				"enabled": simulation.resources_for_team(local_team) >= pad_cost,
 				"label": String(command.get("label", "")),
 				"tooltip": String(command.get("tooltip", "")),
@@ -3805,13 +3895,14 @@ func _sync_radial_commands(structure: Dictionary, production: Array, locked_unit
 			for kind_value in simulation.expansion_commands_for(selected_structure_id):
 				var kind := String(kind_value)
 				var command := hud.retail_expansion_command(kind)
-				if command.is_empty() or command.get("texture") == null:
+				if command.is_empty():
 					continue
 				var cost := int(simulation._expansion_build_rules.get(kind, {}).get("cost", 0))
 				entries.append({
 					"command_kind": "expansion",
 					"id": kind,
 					"icon": command.get("texture"),
+					"text": String(command.get("label", "")) if command.get("texture") == null else "",
 					"enabled": simulation.resources_for_team(local_team) >= cost,
 					"label": String(command.get("label", "")),
 					"tooltip": String(command.get("tooltip", "")),
@@ -4573,38 +4664,148 @@ func _close_options_overlay(applied: bool) -> void:
 		hud.set_feedback("Settings applied." if applied else "Settings closed.")
 
 
-func _configure_simulation_spellbook() -> void:
+func _configure_simulation_spellbook(sim = null) -> void:
 	## The spellbook tree (costs, prerequisite groups, purchase slots, reloads)
 	## comes from the selected pack's openbfme.spellbook-runtime document; the
 	## sim fails closed (empty tree) when the pack carries none.
-	if simulation == null:
+	## `sim` defaults to the live match simulation — see
+	## _configure_simulation_expansions for why it is a parameter.
+	if sim == null:
+		sim = simulation
+	if sim == null:
 		return
-	simulation.configure_spellbook_runtime(_faction_spellbook_document())
+	sim.configure_spellbook_runtime(_faction_spellbook_document())
 
 
 ## Fortress expansion pad rules, built from the playable-structure expansion
 ## documents in the selected/faction packs. Every number is doc-sourced; kinds
 ## without a complete document drop out fail-closed.
-const EXPANSION_DOC_IDS := {
-	"arrow_tower_expansion": "MenArrowTowerExpansion",
-	"trebuchet_expansion": "MenTrebuchetExpansion",
-	"trebuchet_side_expansion": "MenTrebuchetSideExpansion",
-	"garrison_dormitory": "MenGarrisonTowerExpansion",
+##
+## An "expansion document" is discovered, never listed: any playableStructure
+## document whose authored construct routes are built BY a fortress expansion
+## pad (retail's *FortressExpansionPad{Corner,Side} objects, commandset.ini
+## <Faction>FortressExpansionPad{Corner,Side}CommandSet) is that faction's pad
+## menu. The previous hardcoded four-entry Men table left every other faction's
+## fortress plots empty — Angmar's stone thrower / battle tower / kennel / wall
+## hub, Mordor's wall catapult / barricade / gate watchers, and so on had no
+## runtime surface at all.
+const EXPANSION_PAD_BUILDER_MARKER := "fortressexpansionpad"
+## Retail slug -> the kind name this runtime has always used for it. Only needed
+## where the historical Men name differs from the slug-derived one, so the Men
+## surface (and every pinned Men signature) stays exactly where it was.
+const EXPANSION_KIND_OVERRIDES := {
+	"menarrowtowerexpansion": "arrow_tower_expansion",
+	"mentrebuchetexpansion": "trebuchet_expansion",
+	"mentrebuchetsideexpansion": "trebuchet_side_expansion",
+	"mengarrisontowerexpansion": "garrison_dormitory",
 }
 var _expansion_object_ids: Dictionary = {}
 
 
-func _configure_simulation_expansions() -> void:
-	if simulation == null:
+## {expansion_kind: playableStructure document} for every pad-built expansion in
+## the faction's own packs. Pure lookup — safe to call before the simulation
+## exists (the HUD needs it at bind time, the sim at configure time).
+func _expansion_documents() -> Dictionary:
+	var allowed_roots: Dictionary = {}
+	for root_value in faction_manifest.get("faction_pack_roots", []) as Array:
+		allowed_roots[String(root_value)] = true
+	var found: Dictionary = {}
+	var all_structures: Dictionary = ContentDB.get_playable_structure_runtimes()
+	var object_ids: Array = all_structures.keys()
+	# Deterministic: the same pack always yields the same kind ordering.
+	object_ids.sort()
+	for object_id_value in object_ids:
+		var document: Dictionary = all_structures[object_id_value] as Dictionary
+		if not allowed_roots.is_empty() and not allowed_roots.has(String(document.get("_pack_root", ""))):
+			continue
+		var registration: Dictionary = document.get("registration", {}) as Dictionary
+		var built_by_pad := false
+		for route_value in (registration.get("production", {}) as Dictionary).get("routes", []) as Array:
+			var builder := String((route_value as Dictionary).get("builderObjectId", "")).to_lower()
+			if builder.contains(EXPANSION_PAD_BUILDER_MARKER):
+				built_by_pad = true
+				break
+		if not built_by_pad:
+			continue
+		var source_id := String(document.get("objectId", object_id_value))
+		var kind := _expansion_kind_for(source_id)
+		if kind == "" or found.has(kind):
+			continue
+		found[kind] = document
+	return found
+
+
+## Kind name for an expansion document: the historical Men override when one
+## exists, otherwise the retail object id with its faction prefix stripped
+## (AngmarBattleTowerExpansion -> battletowerexpansion), which is exactly the
+## kind the faction manifest already assigns that document.
+func _expansion_kind_for(source_object_id: String) -> String:
+	var folded := source_object_id.to_lower()
+	if EXPANSION_KIND_OVERRIDES.has(folded):
+		return String(EXPANSION_KIND_OVERRIDES[folded])
+	var faction := String(faction_manifest.get("faction", ""))
+	for prefix_value in FactionManifestScript.FACTION_OBJECT_PREFIXES.get(faction, [faction]) as Array:
+		var prefix := String(prefix_value)
+		if prefix != "" and folded.begins_with(prefix):
+			folded = folded.substr(prefix.length())
+			break
+	if folded == "":
+		return ""
+	if FactionManifestScript.STRUCTURE_KIND_ALIASES.has(folded):
+		return String(FactionManifestScript.STRUCTURE_KIND_ALIASES[folded])
+	return folded
+
+
+## Doc-driven pad command presentation for the HUD ({kind: spec}). The icon is
+## the expansion's own authored construct-button crop when its document binds
+## one; otherwise the shared host UI-manifest image id the route names.
+func _expansion_command_specs() -> Dictionary:
+	var specs: Dictionary = {}
+	for kind_value in _expansion_documents().keys():
+		var kind := String(kind_value)
+		var document: Dictionary = _expansion_documents()[kind]
+		var registration: Dictionary = document.get("registration", {}) as Dictionary
+		var image_id := ""
+		for route_value in (registration.get("production", {}) as Dictionary).get("routes", []) as Array:
+			var route: Dictionary = route_value
+			if String(route.get("builderObjectId", "")).to_lower().contains(EXPANSION_PAD_BUILDER_MARKER):
+				image_id = String(route.get("buttonImageId", ""))
+				if image_id != "":
+					break
+		if image_id == "":
+			continue
+		var source_id := String(document.get("objectId", ""))
+		var presentation: Dictionary = registration.get("presentation", {}) as Dictionary
+		var doc_bound := (presentation.get("imageBindings", {}) as Dictionary).has(image_id)
+		var kind_label := kind.replace("_", " ").capitalize()
+		specs[kind] = {
+			"button_name": "Build_%s" % kind,
+			"image_id": image_id,
+			"label_id": "",
+			"tooltip_id": "",
+			"fallback_label": kind_label,
+			"fallback_tooltip": "Construct %s" % kind_label,
+			"structure_object_id": source_id if doc_bound else "",
+		}
+	return specs
+
+
+func _configure_simulation_expansions(sim = null) -> void:
+	## `sim` defaults to the live match simulation. It is a parameter so an
+	## independently constructed sim (the deterministic-replay mirror the gate
+	## builds) can be given the SAME expansion/castle configuration; a replay
+	## that skipped this step was never a mirror of the live match at all.
+	if sim == null:
+		sim = simulation
+	if sim == null:
 		return
 	var rules: Dictionary = {}
-	for kind_value in EXPANSION_DOC_IDS.keys():
+	var documents := _expansion_documents()
+	for kind_value in documents.keys():
 		var kind := String(kind_value)
-		var source_id := String(EXPANSION_DOC_IDS[kind])
+		var definition: Dictionary = documents[kind]
+		var source_id := String(definition.get("objectId", ""))
 		var runtime_id := PlayableUnitAdapter._runtime_id(source_id)
-		var definition := ContentDB.get_playable_structure_runtime(source_id)
-		if definition.is_empty():
-			continue
 		var registration := definition.get("registration", {}) as Dictionary
 		var gameplay := registration.get("gameplay", {}) as Dictionary
 		var scalar_fields := gameplay.get("scalarFields", {}) as Dictionary
@@ -4623,8 +4824,11 @@ func _configure_simulation_expansions() -> void:
 				pad_kinds.append("side")
 			elif builder.contains("padcorner") and not pad_kinds.has("corner"):
 				pad_kinds.append("corner")
-		if cost <= 0 or seconds <= 0.0 or health <= 0 or pad_kinds.is_empty():
+		if cost < 0 or seconds <= 0.0 or health <= 0 or pad_kinds.is_empty():
 			# Incomplete doc: the kind is unavailable, never approximated.
+			# A zero BuildCost is authored data, not a gap: the packs record
+			# BuildCost 0 for every fortress expansion, and rejecting it emptied
+			# every faction's pad menu (including Men's).
 			continue
 		var rule := {
 			"cost": cost,
@@ -4642,7 +4846,7 @@ func _configure_simulation_expansions() -> void:
 			rule["highlander_body"] = true
 		rules[kind] = rule
 	_expansion_object_ids = rules.duplicate(true)
-	simulation.configure_expansion_rules(rules)
+	sim.configure_expansion_rules(rules)
 	# CastleBehavior BSE contracts from structure runtimes (fail-closed when absent).
 	var castle_by_source: Dictionary = {}
 	var all_structures: Dictionary = ContentDB.get_playable_structure_runtimes()
@@ -4651,7 +4855,7 @@ func _configure_simulation_expansions() -> void:
 		var document: Dictionary = all_structures[object_id_value] as Dictionary
 		if document.is_empty():
 			document = ContentDB.get_playable_structure_runtime(object_id)
-		var compiled: Dictionary = simulation._compiled_castle_behavior(document)
+		var compiled: Dictionary = sim._compiled_castle_behavior(document)
 		if compiled.is_empty():
 			var gameplay := ((document.get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
 			if typeof(gameplay.get("castleBehavior")) == TYPE_DICTIONARY:
@@ -4660,7 +4864,7 @@ func _configure_simulation_expansions() -> void:
 		for piece_value in compiled.get("pieces", []) as Array:
 			_project_castle_piece_definition(piece_value as Dictionary)
 		castle_by_source[object_id] = compiled
-	simulation.configure_castle_behaviors(castle_by_source)
+	sim.configure_castle_behaviors(castle_by_source)
 
 
 func _project_castle_piece_definition(piece: Dictionary) -> void:
@@ -5729,6 +5933,55 @@ func _godot_position(value: Variant) -> Vector3:
 	return Vector3(float(row[0]), float(row[1]), float(row[2]))
 
 
+func build_replay_simulation(sim) -> Dictionary:
+	## Configure an INDEPENDENTLY CONSTRUCTED simulation with exactly the match
+	## configuration the live one is carrying, so that a replay of the live
+	## command sequence is comparable to the live run at all.
+	##
+	## WHY THIS EXISTS (round 21 diagnosis). The gate's replay mirror used to be
+	## a bare `sim.setup(map_configuration, gameplay_rules)`. That is only a
+	## fraction of what a live match is configured with, and the shortfall was
+	## measurable at TICK ZERO, before a single order was issued
+	## (.private/scratch/opus29-divergence-probe.out.log):
+	##   live   16 structures, 7 castle contracts, 5 expansion rules, 12 powers
+	##   bare    2 structures, 0 castle contracts, 0 expansion rules,  0 powers
+	## The bare mirror was fighting on a map with no castle walls, no gate, no
+	## expansion pads and no spellbook. `deterministic_replay_signature` was
+	## therefore never a determinism check — it compared two DIFFERENT matches,
+	## which is why it had never matched in any archived round.
+	##
+	## THE DOUBLE PASS IS THE POINT, not a wart. The live sim is configured at
+	## boot AND then re-setup by reset_match(); `_castle_behavior_by_source`
+	## survives setup(), so on the second pass setup() unpacks the castles
+	## ITSELF and `music.explore` lands after the two structure.castle_unpacked
+	## events. A once-configured mirror emits them in the opposite order and
+	## diverges by event_digest alone (same probe log, EVDIFF rows). Mirroring
+	## the live lifecycle — boot, then reset — reproduces the ordering because
+	## it is the same lifecycle.
+	##
+	## NOT MIRRORED: map-script executors. _install_map_scripts() writes
+	## slice-owned runtimes (script_runtimes) alongside the sim registration and
+	## cannot be pointed at a second sim without clobbering them. Fords of Isen
+	## II ships no scripts.json, so the live sim carries zero executors and the
+	## mirror is exact; `unmirrored` names the gap loudly if a scripted map ever
+	## reaches this path, instead of failing as a mystery signature.
+	if sim == null or simulation == null:
+		return {"ok": false, "unmirrored": ["simulation is null"]}
+	var unmirrored: Array[String] = []
+	if simulation._script_executors.size() > 0:
+		unmirrored.append("map_script_executors=%d" % simulation._script_executors.size())
+	# Boot pass (mirrors _initialize_content_and_match).
+	_configure_simulation_team_roster(sim)
+	_configure_simulation_spellbook(sim)
+	sim.setup(_match_configuration(), gameplay_rules)
+	_configure_simulation_expansions(sim)
+	# reset_match pass — the live sim has been through one too.
+	_configure_simulation_spellbook(sim)
+	sim.setup(_match_configuration(), gameplay_rules)
+	_configure_simulation_expansions(sim)
+	return {"ok": unmirrored.is_empty(), "unmirrored": unmirrored}
+
+
 func reset_match() -> void:
 	if simulation == null:
 		return
@@ -6058,6 +6311,10 @@ func _build_hud() -> void:
 		faction_manifest.get("structure_training_summaries", {}) as Dictionary,
 		faction_manifest.get("structure_construct_icons", {}) as Dictionary
 	)
+	# Fortress pad commands must also be registered before the retail bind pass
+	# validates command art, or a faction's plots stay empty.
+	if hud.has_method("configure_manifest_expansion_commands"):
+		hud.configure_manifest_expansion_commands(_expansion_command_specs())
 	var spellbook_runtime: Dictionary = _faction_spellbook_document()
 	if not spellbook_runtime.is_empty() and hud.has_method("configure_spellbook_runtime"):
 		hud.configure_spellbook_runtime(spellbook_runtime)
@@ -6273,7 +6530,7 @@ func _update_hover_cursor() -> void:
 		var world: Variant = _screen_to_world(get_viewport().get_mouse_position())
 		if world != null:
 			var point := Vector2((world as Vector3).x, (world as Vector3).z)
-			var enemy_id := _closest_battalion(point, 1, 6.0)
+			var enemy_id := _closest_battalion(point, 1)
 			if enemy_id == 0:
 				enemy_id = _closest_structure(point, 1)
 			if enemy_id != 0:

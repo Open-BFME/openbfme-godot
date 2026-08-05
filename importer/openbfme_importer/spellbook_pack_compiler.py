@@ -262,8 +262,23 @@ def compile_spellbook_pack_recipe(
     strings = presentation.get("resolvedStrings")
     if not isinstance(strings, Mapping):
         raise SpellbookPackCompilerError("spellbook descriptor strings are invalid")
+    source_null_strings = presentation.get("sourceNullStringIds", [])
+    if (
+        not isinstance(source_null_strings, list)
+        or any(not isinstance(value, str) or not value for value in source_null_strings)
+        or len({value.casefold() for value in source_null_strings})
+        != len(source_null_strings)
+        or any(value not in string_ids for value in source_null_strings)
+        or any(value in strings for value in source_null_strings)
+    ):
+        raise SpellbookPackCompilerError(
+            "spellbook descriptor source-null strings are invalid"
+        )
+    source_null_string_ids = set(source_null_strings)
     missing_strings = [
-        identifier for identifier in string_ids if identifier not in strings
+        identifier
+        for identifier in string_ids
+        if identifier not in strings and identifier not in source_null_string_ids
     ]
     if missing_strings:
         raise SpellbookPackCompilerError(
@@ -306,8 +321,13 @@ def compile_spellbook_pack_recipe(
             "imageBindings": image_bindings,
             "imageBindingMetadata": image_metadata,
             "stringBindings": {
-                key: strings[key] for key in sorted(string_ids, key=str.casefold)
+                key: strings[key]
+                for key in sorted(string_ids, key=str.casefold)
+                if key in strings
             },
+            "sourceNullStringIds": sorted(
+                source_null_string_ids, key=str.casefold
+            ),
             "audioBindings": audio_bindings,
             "audioResolution": audio_resolution,
             **({"fxBindings": fx_bindings} if fx_bindings is not None else {}),
@@ -350,6 +370,18 @@ def validate_spellbook_pack_recipe(value: Mapping[str, object]) -> None:
             raise SpellbookPackCompilerError(
                 f"spellbook runtime {bindings} are invalid"
             )
+    source_null_strings = runtime.get("sourceNullStringIds")
+    string_bindings = runtime.get("stringBindings")
+    if (
+        not isinstance(source_null_strings, list)
+        or any(not isinstance(value, str) or not value for value in source_null_strings)
+        or len({value.casefold() for value in source_null_strings})
+        != len(source_null_strings)
+        or any(value in string_bindings for value in source_null_strings)
+    ):
+        raise SpellbookPackCompilerError(
+            "spellbook runtime source-null strings are invalid"
+        )
     try:
         validate_spellbook_visual_bindings(runtime.get("visualBindings"))
     except SpellbookVisualIngressError as exc:
@@ -407,6 +439,9 @@ def compose_spellbook_runtime_document(
                 "imageBindings": deepcopy(dict(registration["imageBindings"])),  # type: ignore[arg-type]
                 "imageBindingMetadata": deepcopy(dict(registration["imageBindingMetadata"])),  # type: ignore[arg-type]
                 "stringBindings": deepcopy(dict(registration["stringBindings"])),  # type: ignore[arg-type]
+                "sourceNullStringIds": deepcopy(
+                    list(registration["sourceNullStringIds"])  # type: ignore[arg-type]
+                ),
                 "audioBindings": deepcopy(dict(registration["audioBindings"])),  # type: ignore[arg-type]
                 "audioResolution": deepcopy(dict(registration["audioResolution"])),  # type: ignore[arg-type]
                 # Present only when the FX ingress lane ran; the runtime treats

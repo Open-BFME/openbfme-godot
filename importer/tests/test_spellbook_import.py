@@ -742,6 +742,49 @@ def test_descriptor_resolves_tree_costs_prerequisites_and_effect_leaves() -> Non
     assert descriptor["descriptorSha256"] == _compile()["descriptorSha256"]
 
 
+def test_grantable_science_qualifier_is_preserved() -> None:
+    documents = _documents()
+    documents["data/ini/science.ini"] = documents["data/ini/science.ini"].replace(
+        b"IsGrantable = Yes\nEnd\n\nScience SCIENCE_TestVolley",
+        b"IsGrantable = Yes SCIENCE_ELVES\nEnd\n\nScience SCIENCE_TestVolley",
+        1,
+    )
+    graph = _graph(documents)
+    draft = compile_spellbook_descriptor(graph, documents)
+    row = next(
+        item for item in draft["sciences"] if item["id"] == "SCIENCE_TestHeal"
+    )
+    assert row["isGrantable"] is True
+    assert row["isGrantableQualifierSciences"] == ["SCIENCE_ELVES"]
+
+
+def test_object_aura_preserves_explicit_target_polarity() -> None:
+    documents = _documents()
+    path = "data/ini/object/system/test_system.ini"
+    documents[path] = documents[path].replace(
+        b"  KindOf = NO_COLLIDE IMMOBILE INERT\nEnd\n",
+        b"""  KindOf = NO_COLLIDE IMMOBILE INERT
+  Behavior = AttributeModifierAuraUpdate ModuleTag_EnemyAura
+    BonusName = TestRallyModifier
+    RefreshDelay = 1000
+    Range = 200
+    TargetEnemy = Yes
+    TargetAllies = No
+    ObjectFilter = ANY +INFANTRY
+  End
+End
+""",
+        1,
+    )
+    descriptor = compile_spellbook_descriptor(_graph(documents), documents)
+    ping = {
+        row["id"]: row for row in descriptor["leaves"]["objects"]
+    }["TestHealPing"]
+
+    assert ping["aura"]["targetEnemy"] == "Yes"
+    assert ping["aura"]["targetAllies"] == "No"
+
+
 def test_command_points_upgrade_rejects_nonretail_points() -> None:
     documents, graph = _fixture()
     path = "data/ini/object/system/test_system.ini"
@@ -914,6 +957,26 @@ def test_lane_fails_closed_when_tree_disagrees_with_census() -> None:
     ):
         compile_spellbook_descriptor(graph, documents)
 
+
+def test_layered_authority_uses_its_command_surface_over_stale_census_sets() -> None:
+    documents, graph = _fixture()
+    graph["spellbookDefinitionAuthority"] = "layered-effective-assets"
+    graph["dependencies"]["spellbookSciences"] = ["SCIENCE_TestHeal"]
+    graph["dependencies"]["spellbookSpecialPowers"] = ["SpellBookTestHeal"]
+    compile_spellbook_descriptor(graph, documents)
+
+    documents, graph = _fixture()
+    graph["spellbookDefinitionAuthority"] = "layered-effective-assets"
+    graph["dependencies"]["spellbookSciences"].append("SCIENCE_DroppedByLayer")
+    compile_spellbook_descriptor(graph, documents)
+
+    documents, graph = _fixture()
+    graph["spellbookDefinitionAuthority"] = "layered-effective-assets"
+    graph["dependencies"]["spellbookSpecialPowers"].append(
+        "SpellBookDroppedByLayer"
+    )
+    compile_spellbook_descriptor(graph, documents)
+
     documents, graph = _fixture()
     graph["dependencies"]["spellbookSpecialPowers"] = ["SpellBookTestHeal"]
 
@@ -930,8 +993,25 @@ def test_media_resolution_fails_closed_on_unresolved_image_or_audio() -> None:
     broken["resolvedLeaves"]["mappedImages"][0]["compiledTextureResolution"] = "missing"
     del broken["resolvedLeaves"]["mappedImages"][0]["compiledTextureVirtualPath"]
 
-    with pytest.raises(ValueError, match="required spellbook mapped image is unresolved"):
-        _resolved_spellbook_media(broken, draft)
+    fallback_image = b"""
+MappedImage SBTest_Heal
+  Texture = testicons_001.tga
+  TextureWidth = 256
+  TextureHeight = 128
+  Coords = Left:0 Top:0 Right:32 Bottom:32
+End
+"""
+    with pytest.raises(
+        ValueError, match="mapped image census leaf is unresolved"
+    ):
+        _resolved_spellbook_media(
+            broken,
+            draft,
+            fallback_mapped_image_sources=(fallback_image,),
+            fallback_virtual_paths=(
+                "art/compiledtextures/te/testicons_001.tga",
+            ),
+        )
 
     broken = deepcopy(graph)
     broken["resolvedLeaves"]["audio"]["events"] = [
@@ -944,12 +1024,114 @@ def test_media_resolution_fails_closed_on_unresolved_image_or_audio() -> None:
         _resolved_spellbook_media(broken, draft)
 
 
+def test_audio_fallback_only_applies_when_root_definition_is_absent() -> None:
+    documents, graph = _fixture()
+    draft = compile_spellbook_descriptor(graph, documents)
+    broken = deepcopy(graph)
+    broken["resolvedLeaves"]["audio"]["samplePaths"] = [
+        row
+        for row in broken["resolvedLeaves"]["audio"]["samplePaths"]
+        if row["id"] != "testvolley_s1"
+    ]
+    fallback = b"""
+AudioEvent TestVolleySound
+  Sounds = testvolley_s1
+End
+"""
+    with pytest.raises(ValueError, match="audio dependency is unresolved"):
+        _resolved_spellbook_media(
+            broken,
+            draft,
+            fallback_audio_source=fallback,
+            fallback_virtual_paths=("data/audio/sounds/testvolley_s1.wav",),
+        )
+
+
+def test_fxlist_preserves_authored_particle_absent_from_shipped_definitions() -> None:
+    documents = _documents()
+    documents["data/ini/fxlist.ini"] = documents["data/ini/fxlist.ini"].replace(
+        b"Name = TestHealParticles",
+        b"Name = RetailAbsentFxParticle",
+        1,
+    )
+    descriptor = _compile_with(documents, _graph(documents))
+
+    fx_lists = {row["id"]: row for row in descriptor["leaves"]["fxLists"]}
+    particle = fx_lists["FX_TestHealBuff"]["nuggets"][0]
+    assert particle["unresolvedParticleSystem"] == {
+        "id": "RetailAbsentFxParticle",
+        "definitionFamily": "unknown-legacy-family-not-in-view",
+        "reason": "authored FXList particle has no shipped definition",
+    }
+    validate_spellbook_descriptor(descriptor)
+
+
+def test_mapped_image_fallback_only_applies_when_definition_is_absent() -> None:
+    documents, graph = _fixture()
+    draft = compile_spellbook_descriptor(graph, documents)
+    missing = deepcopy(graph)
+    missing["resolvedLeaves"]["mappedImages"] = [
+        row
+        for row in missing["resolvedLeaves"]["mappedImages"]
+        if row["id"] != "SBTest_Heal"
+    ]
+    fallback = b"""
+MappedImage SBTest_Heal
+  Texture = testicons_001.tga
+  TextureWidth = 256
+  TextureHeight = 128
+  Coords = Left:0 Top:0 Right:32 Bottom:32
+End
+"""
+    images, _audio = _resolved_spellbook_media(
+        missing,
+        draft,
+        fallback_mapped_image_sources=(fallback,),
+        fallback_virtual_paths=("art/compiledtextures/te/testicons_001.tga",),
+    )
+    assert images["SBTest_Heal"]["compiledTextureVirtualPath"] == (
+        "art/compiledtextures/te/testicons_001.tga"
+    )
+
+
 def test_string_resolution_fails_closed_on_missing_record() -> None:
     documents, graph = _fixture()
     draft = compile_spellbook_descriptor(graph, documents)
 
     with pytest.raises(ValueError, match="required localized string is unresolved"):
         _resolved_spellbook_strings(_FakeCatalog(b""), draft)
+
+
+def test_layered_source_null_spellbook_string_is_recorded_not_invented() -> None:
+    documents, graph = _fixture()
+    draft = compile_spellbook_descriptor(graph, documents)
+    layered = deepcopy(graph)
+    layered["layeredDocumentAuthority"] = "layered-effective-assets"
+    layered["layeredSourceNullTextIds"] = []
+
+    resolved = _resolved_spellbook_strings(_FakeCatalog(b""), draft, graph=layered)
+    assert resolved == {}
+    assert layered["layeredSourceNullTextIds"]
+    images, audio = _resolved_spellbook_media(layered, draft)
+
+    descriptor = compile_spellbook_descriptor(
+        layered,
+        documents,
+        resolved_images=images,
+        resolved_audio=audio,
+        resolved_strings=resolved,
+    )
+    source_null_ids = descriptor["presentation"]["sourceNullStringIds"]
+    assert source_null_ids == sorted(
+        draft["requirements"]["strings"], key=str.casefold
+    )
+    recipe = compile_spellbook_pack_recipe(descriptor)
+    assert recipe["runtimeRegistration"]["stringBindings"] == {}
+    assert recipe["runtimeRegistration"]["sourceNullStringIds"] == source_null_ids
+    runtime = compose_spellbook_runtime_document(descriptor, recipe)
+    assert runtime["registration"]["presentation"]["sourceNullStringIds"] == (
+        source_null_ids
+    )
 
 
 def test_pack_recipe_fails_closed_on_unresolved_media() -> None:

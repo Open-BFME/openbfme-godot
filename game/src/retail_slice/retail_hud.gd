@@ -67,7 +67,23 @@ const RETAIL_PALANTIR_FRAME_DISPLAY_SIZE := Vector2(540, 360)
 const RETAIL_PALANTIR_AUTHORED_SIZE := Vector2(384, 256)
 const RETAIL_PALANTIR_DISPLAY_SIZE := Vector2(880, 360)
 # Regions are the exact APT atlas rectangles selected by Palantir DAT image IDs.
-const RETAIL_RADAR_PARCHMENT_REGION := Rect2(4, 4, 214, 214)
+#
+# REMOVED - `RETAIL_RADAR_PARCHMENT_REGION := Rect2(4, 4, 214, 214)`.
+# That rectangle crops the big brown sphere in the TOP-LEFT of
+# `apt-palantir-1-d9888d52cd89.png`, and that atlas is the SPELL / SUMMON-POWER
+# sheet: starbursts, sparkle sprites and power-button badges. The sphere is the
+# palantir ORB globe (the static MinLOD frame behind `GlobeSwirlRender`), and it
+# was being stretched across the whole radar disc as if it were the map. That is
+# the "the radar has a palantir icon over it" the owner reported: a leather ball
+# where the battlefield should be.
+#
+# There is no authored radar-fill bitmap to swap in. Every palantir FRAME atlas
+# (`apt-palantirexport-11/14/17/20`) is a ring with a fully transparent
+# interior - retail composites the LIVE MAP inside the bezel rather than
+# shipping a backing image. So the radar's backdrop is now the map's own
+# converted preview art, bound in `configure_minimap` where that texture is
+# actually known, and a map that publishes no preview falls back to the
+# synthetic schematic instead of borrowing a spell sprite.
 const RETAIL_EMPTY_SOCKET_REGION := Rect2(558, 23, 56, 53)
 const RETAIL_ORB_REGIONS := {
 	"options": Rect2(701, 133, 36, 36),
@@ -479,6 +495,20 @@ var _radial_buttons: Array[Button] = []
 var _radial_fingerprint := "<unset>"
 ## Validated fortress expansion command presentation (icon/label/tooltip).
 var _retail_expansion_validated: Dictionary = {}
+## Doc-driven fortress expansion command specs discovered from the selected
+## faction's playableStructure documents ({kind: spec}). EXPANSION_COMMAND_SPECS
+## (the Men/Gondor localized table) still wins for the kinds it covers, so the
+## Men surface is byte-identical; every other faction's pads get their own
+## authored commands here instead of an empty plot menu. Registered before
+## bind_retail_train_commands so the validation pass sees them.
+var _manifest_expansion_specs: Dictionary = {}
+
+
+func configure_manifest_expansion_commands(specs: Dictionary) -> void:
+	## `specs` is {expansion_kind: {image_id, structure_object_id,
+	## fallback_label, fallback_tooltip, button_name}} projected by the slice
+	## from each expansion document's own authored construct route.
+	_manifest_expansion_specs = specs.duplicate(true)
 const EVENT_FEED_SECONDS := 6.0
 const EVENT_FEED_MAX_LINES := 8
 const EVENT_FEED_GOLD := Color("e9d84e")
@@ -1024,6 +1054,13 @@ func build() -> void:
 func configure_minimap(simulation: RefCounted, map_data: RefCounted, camera_value: Camera3D = null, preview: Texture2D = null) -> void:
 	minimap.configure(simulation, map_data, preview)
 	minimap.world_camera = camera_value
+	# THE RADAR'S BACKDROP IS THE MAP, not a palantir sprite. Retail leaves the
+	# bezel's interior transparent and composites the battlefield inside it, so
+	# the closest converted equivalent is this map's own published preview art.
+	# A map that publishes none binds nothing, and the minimap's synthetic
+	# schematic draws instead - the slice already reports that as a named map-art
+	# degradation (`map_preview (no preview published by this map pack ...)`).
+	minimap.bind_retail_parchment(preview)
 
 
 func set_resources(resources: int, command_points: int, command_cap: int) -> void:
@@ -2013,6 +2050,34 @@ func bind_retail_train_commands(content_db, expected_pack_root: String, private_
 			validation_errors.append(error)
 		else:
 			expansion_validated[kind] = validation
+	# Doc-driven pad commands for every faction the localized Men table does not
+	# cover. A broken faction icon demotes to the recorded honest text (the same
+	# contract as the construct sockets above) instead of aborting the bind — an
+	# unbindable icon must never silently empty a fortress plot.
+	for kind_value in _manifest_expansion_specs.keys():
+		var expansion_kind := String(kind_value)
+		if expansion_validated.has(expansion_kind) or EXPANSION_COMMAND_SPECS.has(expansion_kind):
+			continue
+		var doc_spec: Dictionary = (_manifest_expansion_specs[expansion_kind] as Dictionary).duplicate()
+		doc_spec["action_id"] = "expansion_%s" % expansion_kind
+		doc_spec["authored_fallback"] = true
+		var doc_validation := _validate_retail_command(content_db, expected_pack_root, doc_spec, Vector2i(64, 64))
+		var doc_error := String(doc_validation.get("error", ""))
+		if doc_error == "":
+			expansion_validated[expansion_kind] = doc_validation
+			continue
+		retail_bind_diagnostics.append(
+			"expansion-art-missing-recorded: '%s' is text-only with recorded English text — icon validation failed: %s" % [String(doc_spec["action_id"]), doc_error]
+		)
+		expansion_validated[expansion_kind] = {
+			"texture": null,
+			"label": String(doc_spec.get("fallback_label", expansion_kind)),
+			"tooltip": String(doc_spec.get("fallback_tooltip", "")),
+			"path": "",
+			"source_size": Vector2i.ZERO,
+			"aspect_ratio": 1.0,
+			"text_only": true,
+		}
 	var portrait_validated: Dictionary = {}
 	for spec_value in _retail_portrait_specs:
 		var spec: Dictionary = spec_value
@@ -3412,7 +3477,6 @@ func _bind_retail_bottom_left_art(content_db, expected_pack_root: String) -> voi
 			retail_tooltip.set_retail_font(ui_font)
 	if retail_side_command_bar != null:
 		retail_side_command_bar.bind_socket_texture(_atlas_region(_retail_palantir_atlas, RETAIL_EMPTY_SOCKET_REGION))
-	minimap.bind_retail_parchment(_atlas_region(_retail_palantir_atlas, RETAIL_RADAR_PARCHMENT_REGION))
 	for id in orb_buttons.keys():
 		var orb := orb_buttons[id] as Button
 		orb.icon = _atlas_region(_retail_palantir_atlas, RETAIL_ORB_REGIONS[id])

@@ -157,10 +157,15 @@ def _merged_defines(
     documents: Mapping[str, bytes], prepared: PlayableUnitCompilerInputs
 ) -> dict[str, int | float]:
     constants = dict(prepared.numeric_defines)
-    for path in (SCIENCE_PATH, SPECIAL_POWER_PATH):
-        for key, value in _numeric_defines(
-            _required_document(documents, path), path
-        ).items():
+    for path, source in sorted(
+        documents.items(), key=lambda item: (item[0].casefold(), item[0])
+    ):
+        normalized = path.replace("\\", "/").casefold()
+        if not normalized.startswith("data/ini/") or not normalized.endswith(
+            (".ini", ".inc")
+        ):
+            continue
+        for key, value in _numeric_defines(source, path).items():
             previous = constants.setdefault(key, value)
             if previous != value:
                 raise SpellbookCompilerError(
@@ -915,17 +920,36 @@ class _LeafResolver:
                 continue
             kind = block.kind.casefold()
             if kind == "lifetimeupdate":
-                self._project_lifetime(leaf, block)
+                if not self._project_lifetime(leaf, block):
+                    unconverted.add(block.kind)
             elif kind == "deletionupdate":
                 self._project_deletion(leaf, block)
             elif kind == "slowdeathbehavior":
-                self._project_hatch(leaf, block, label)
+                # Only hatch-bearing SlowDeath modules belong to this leaf
+                # contract. If their OCL shape cannot be projected (Watcher
+                # authors two staged OCL rows), retain the named gap.
+                if block.values("OCL") and not self._project_hatch(
+                    leaf, block, label
+                ):
+                    slow_death_ocls = leaf.setdefault(
+                        "unconvertedSlowDeathOcls", []
+                    )
+                    assert isinstance(slow_death_ocls, list)
+                    for value in block.values("OCL"):
+                        tokens = _tokens(value)
+                        if tokens:
+                            slow_death_ocls.append(tokens[-1])
+                    unconverted.add(block.kind)
             elif kind in ("hordecontain", "horsehordecontain", "aodhordecontain"):
                 self._project_horde(leaf, block, label)
             elif kind == "fireweaponupdate":
                 self._project_fire_weapons(leaf, block, label)
             elif kind == "attributemodifierauraupdate":
-                self._project_aura(leaf, block, label)
+                if not self._project_aura(leaf, block, label):
+                    unconverted.add(block.kind)
+            elif kind in ("destroydie", "keepobjectdie"):
+                if not self._project_death_policy(leaf, block):
+                    unconverted.add(block.kind)
             elif kind == "lockweaponcreate":
                 # Projected above with the default WeaponSet so the lock and
                 # the slot it protects are validated as one atomic contract.
@@ -1100,11 +1124,13 @@ class _LeafResolver:
             return None, None
         return self._resolve_numeric(values[0].strip()), values[0].strip()
 
-    def _project_lifetime(self, leaf: dict[str, object], block: SageBlock) -> None:
+    def _project_lifetime(self, leaf: dict[str, object], block: SageBlock) -> bool:
         minimum, _ = self._block_numeric(block, "MinLifetime")
         maximum, _ = self._block_numeric(block, "MaxLifetime")
-        if minimum is None and maximum is None:
-            return
+        # LifetimeUpdate is atomic. Mixed resolved/unresolved bounds must stay
+        # named as unconverted instead of emitting a misleading partial row.
+        if minimum is None or maximum is None:
+            return False
         row: dict[str, object] = {}
         if minimum is not None:
             row["minMs"] = minimum
@@ -1114,6 +1140,7 @@ class _LeafResolver:
         if death_type is not None:
             row["deathType"] = death_type.strip()
         leaf["lifetime"] = row
+        return True
 
     def _project_deletion(self, leaf: dict[str, object], block: SageBlock) -> None:
         minimum, _ = self._block_numeric(block, "MinLifetime")
@@ -1129,15 +1156,26 @@ class _LeafResolver:
 
     def _project_hatch(
         self, leaf: dict[str, object], block: SageBlock, label: str
-    ) -> None:
+    ) -> bool:
         ocl_values = block.values("OCL")
-        if len(ocl_values) != 1:
-            return
-        tokens = _tokens(ocl_values[0])
-        if not tokens:
+        token_rows = [_tokens(value) for value in ocl_values]
+        if any(not tokens for tokens in token_rows):
             raise SpellbookCompilerError(
                 f"{label} SlowDeathBehavior has an invalid OCL"
             )
+        if len(token_rows) == 1:
+            tokens = token_rows[0]
+        else:
+            midpoint_rows = [
+                tokens
+                for tokens in token_rows
+                if tokens[0].casefold() == "midpoint"
+            ]
+            if len(midpoint_rows) != 1:
+                return False
+            tokens = midpoint_rows[0]
+        if not tokens:
+            return False
         hatch_ocl = tokens[-1]
         delay, _ = self._block_numeric(block, "DestructionDelay")
         row: dict[str, object] = {
@@ -1147,6 +1185,7 @@ class _LeafResolver:
         if delay is not None:
             row["destructionDelayMs"] = delay
         leaf["hatch"] = row
+        return True
 
     def _project_horde(
         self, leaf: dict[str, object], block: SageBlock, label: str
@@ -1214,7 +1253,7 @@ class _LeafResolver:
 
     def _project_aura(
         self, leaf: dict[str, object], block: SageBlock, label: str
-    ) -> None:
+    ) -> bool:
         names = block.values("BonusName")
         if len(names) != 1:
             raise SpellbookCompilerError(
@@ -1232,10 +1271,66 @@ class _LeafResolver:
         object_filter = next(iter(block.values("ObjectFilter")), None)
         if object_filter is not None:
             row["objectFilter"] = self._text_define(object_filter.strip())
+        for field, output in (
+            ("TargetEnemy", "targetEnemy"),
+            ("TargetAllies", "targetAllies"),
+        ):
+            value = next(iter(block.values(field)), None)
+            if value is not None:
+                row[output] = value.strip()
         required = next(iter(block.values("RequiredConditions")), None)
         if required is not None:
             row["requiredConditions"] = required.strip()
-        leaf["aura"] = row
+        starts_active = next(iter(block.values("StartsActive")), None)
+        triggered_by = list(block.values("TriggeredBy"))
+        if starts_active is not None:
+            row["startsActive"] = starts_active.strip()
+        if triggered_by:
+            row["triggeredBy"] = [
+                token for value in triggered_by for token in _tokens(value)
+            ]
+        # A disabled aura with no authored activation edge cannot safely be
+        # treated as always-on. Keep the module named in unconvertedBehaviors.
+        if (
+            starts_active is not None
+            and starts_active.strip().casefold() == "no"
+            and not row.get("triggeredBy")
+        ):
+            return False
+        auras = leaf.setdefault("auras", [])
+        assert isinstance(auras, list)
+        auras.append(row)
+        # Keep the historical singular shape only for genuinely single-aura
+        # leaves. It is removed as soon as a second module is projected so no
+        # consumer can silently discard the first one.
+        if len(auras) == 1:
+            leaf["aura"] = row
+        else:
+            leaf.pop("aura", None)
+        return True
+
+    @staticmethod
+    def _project_death_policy(leaf: dict[str, object], block: SageBlock) -> bool:
+        values = list(block.values("DeathTypes"))
+        tokens = _tokens(values[-1]) if values else ["ALL"]
+        if not tokens or tokens[0].upper() not in {"ALL", "NONE"}:
+            return False
+        row = {
+            "deathTypes": tokens[0].upper(),
+            "excludedDeathTypes": sorted(
+                (token[1:].upper() for token in tokens[1:] if token.startswith("-")),
+                key=str.casefold,
+            ),
+            "includedDeathTypes": sorted(
+                (token[1:].upper() for token in tokens[1:] if token.startswith("+")),
+                key=str.casefold,
+            ),
+        }
+        key = "destroyDie" if block.kind.casefold() == "destroydie" else "keepObjectDie"
+        rows = leaf.setdefault(key, [])
+        assert isinstance(rows, list)
+        rows.append(row)
+        return True
 
     def _text_define(self, expression: str) -> str:
         return str(self._text_defines.get(expression.casefold(), expression))
@@ -1354,8 +1449,21 @@ class _LeafResolver:
                 raise SpellbookCompilerError(
                     f"{label} ParticleSystem nugget has an invalid Name"
                 )
-            self.particle_reference(identifier, f"{label} ParticleSystem")
-            row["particleSystemId"] = self.particles[identifier.casefold()]["id"]
+            try:
+                self.particle_reference(identifier, f"{label} ParticleSystem")
+            except SpellbookCompilerError:
+                # Retail FXLists can name presentation-only particles absent
+                # from both shipped particle families (RotWK's
+                # AODsummonLightShafts). Preserve that authored reference and
+                # its checked family boundary instead of rejecting the whole
+                # gameplay spellbook leaf.
+                row["unresolvedParticleSystem"] = {
+                    "id": identifier,
+                    "definitionFamily": self._particle_family(identifier),
+                    "reason": "authored FXList particle has no shipped definition",
+                }
+            else:
+                row["particleSystemId"] = self.particles[identifier.casefold()]["id"]
         elif folded == _FX_SOUND_SECTION:
             names = _fx_field_values(section, "Name")
             if len(names) != 1:
@@ -1984,18 +2092,28 @@ def compile_spellbook_descriptor(
         )
         label = f"Science {block.name}"
         grantable = _one_value(block, "IsGrantable", label)
-        if grantable is None or grantable.strip().casefold() not in {"yes", "no"}:
+        grantable_tokens = _tokens(grantable or "")
+        if (
+            not grantable_tokens
+            or grantable_tokens[0].casefold() not in {"yes", "no"}
+            or any(
+                not token.casefold().startswith("science_")
+                for token in grantable_tokens[1:]
+            )
+        ):
             raise SpellbookCompilerError(f"{label} has an invalid IsGrantable")
         row: dict[str, object] = {
             "id": block.name,
             "definitionSha256": digest,
-            "isGrantable": grantable.strip().casefold() == "yes",
+            "isGrantable": grantable_tokens[0].casefold() == "yes",
             "pointCost": _required_scalar(
                 block, "SciencePurchasePointCost", constants, label
             ),
             "prerequisiteGroups": [list(group) for group in groups],
             "prerequisites": flat,
         }
+        if len(grantable_tokens) > 1:
+            row["isGrantableQualifierSciences"] = list(grantable_tokens[1:])
         mp_cost = _optional_scalar(
             block, "SciencePurchasePointCostMP", constants, label
         )
@@ -2046,9 +2164,17 @@ def compile_spellbook_descriptor(
         referenced_science_ids[key] = block.name
         pending.extend(token for group in row["prerequisiteGroups"] for token in group)
 
-    if {item.casefold() for item in expected_sciences} != set(tree_science_ids):
+    layered_authority = (
+        faction_graph.get("spellbookDefinitionAuthority")
+        == "layered-effective-assets"
+    )
+    expected_science_keys = {item.casefold() for item in expected_sciences}
+    actual_science_keys = set(tree_science_ids)
+    if not layered_authority and expected_science_keys != actual_science_keys:
         raise SpellbookCompilerError(
-            "spell store science set disagrees with census spellbookSciences"
+            "spell store science set disagrees with census spellbookSciences: "
+            f"missing={sorted(expected_science_keys - actual_science_keys)} "
+            f"store_only={sorted(actual_science_keys - expected_science_keys)}"
         )
 
     power_rows: list[dict[str, object]] = []
@@ -2144,7 +2270,9 @@ def compile_spellbook_descriptor(
         power_rows.append(row)
         tree_power_ids[key] = block.name
 
-    if {item.casefold() for item in expected_powers} != set(tree_power_ids):
+    expected_power_keys = {item.casefold() for item in expected_powers}
+    actual_power_keys = set(tree_power_ids)
+    if not layered_authority and expected_power_keys != actual_power_keys:
         raise SpellbookCompilerError(
             "spell book power set disagrees with census spellbookSpecialPowers"
         )
@@ -2268,6 +2396,18 @@ def compile_spellbook_descriptor(
                     key=lambda item: item[0].casefold(),
                 )
             },
+            "sourceNullStringIds": sorted(
+                {
+                    str(value).strip()
+                    for value in faction_graph.get("layeredSourceNullTextIds", [])
+                    if isinstance(value, str)
+                    and str(value).strip() in text_ids
+                },
+                key=str.casefold,
+            )
+            if faction_graph.get("layeredDocumentAuthority")
+            == "layered-effective-assets"
+            else [],
             "resolvedAudio": {
                 key: list(value)
                 for key, value in sorted(

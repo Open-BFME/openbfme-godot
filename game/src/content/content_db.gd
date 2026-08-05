@@ -47,6 +47,15 @@ var retail_unit_rules: Dictionary = {}
 var ranger_runtime: Dictionary = {}
 var trebuchet_runtime: Dictionary = {}
 var spellbook_runtime: Dictionary = {}
+## The Create-a-Hero class table (`openbfme.cah-system-runtime`): the seven
+## classes, their subclasses, the five attribute ladders and the point budgets,
+## compiled by the importer out of retail's createaherosystem.ini.
+##
+## EMPTY IS A NORMAL STATE, not a failure. No pack has to carry this document,
+## and until one does the MY HEROES screen has nothing to build a hero out of
+## and says so by name. Nothing else in the game reads it, so an absent table
+## costs exactly the Create-a-Hero feature and nothing else.
+var cah_system_runtime: Dictionary = {}
 ## Effect-object presentation rows registered from every admitted spellbook
 ## runtime document's `presentation.visualBindings`: object id -> the binding
 ## row the importer emitted (status / model / sourceW3d / memberObjectId).
@@ -93,6 +102,11 @@ var retail_audio_multisounds: Dictionary = {}
 var retail_audio_samples: Dictionary = {}
 var globals: Dictionary = {}
 var damage_matrix: Dictionary = {}
+## Authored per-faction music binding (`openbfme.music`), contributed by any
+## pack that declares a `music` file. Music is edition-wide rather than
+## per-faction content - every faction selects out of the same track closure -
+## so it ships as its own supplemental pack and the LAST declaring pack wins.
+var music_document: Dictionary = {}
 var pack_meta: Array = []
 var pack_roots: Array[String] = []
 var asset_roots: Array[String] = []
@@ -216,6 +230,7 @@ func reload() -> void:
 	retail_audio_samples.clear()
 	globals.clear()
 	damage_matrix.clear()
+	music_document.clear()
 	pack_meta.clear()
 	pack_roots.clear()
 	asset_roots.clear()
@@ -325,6 +340,7 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	_load_ranger_runtime(root, String(declared.get("rangerRuntime", "")))
 	_load_trebuchet_runtime(root, String(declared.get("trebuchetRuntime", "")))
 	_load_spellbook_runtimes(root, declared)
+	_load_cah_system_runtime(root, declared)
 	_profile_db("  rules+runtimes+spellbook", pack_mark)
 	_load_playable_unit_runtimes(root, declared)
 	_profile_db("  playable_units", pack_mark)
@@ -335,6 +351,7 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 	_load_retail_strings(root, String(declared.get("strings", "")))
 	_profile_db("  capabilities+ui+strings", pack_mark)
 	_load_retail_audio_manifest(root, String(declared.get("audioEvents", "")))
+	_load_music_document(root, String(declared.get("music", "")))
 	_profile_db("  audio_manifest", pack_mark)
 	for key in ["entryMap", "stage2Map"]:
 		var relative := String(declared.get(key, ""))
@@ -346,6 +363,24 @@ func _load_bundle_v0(root: String, meta: Dictionary) -> void:
 				map_doc["_pack_root"] = root
 				bundle_maps[map_id] = map_doc
 	_load_map_catalog(root, String(declared.get("mapCatalog", "")))
+
+
+func _load_music_document(root: String, relative: String) -> bool:
+	## A malformed or foreign-schema music document is IGNORED, never merged:
+	## half a music binding would resolve some factions and silently mute
+	## others, which is worse than the honest "no music pack is installed".
+	if relative == "":
+		return false
+	var document := _read_declared_document(root, relative)
+	if String(document.get("schema", "")) != "openbfme.music" or int(document.get("schemaVersion", -1)) != 0:
+		return false
+	for key in ["factions", "playlists", "tracks"]:
+		if typeof(document.get(key, null)) != TYPE_DICTIONARY:
+			return false
+	document["_source"] = ModLoader.resolve_pack_path(root, relative)
+	document["_pack_root"] = root
+	music_document = document
+	return true
 
 
 func _load_map_catalog(root: String, relative: String) -> bool:
@@ -537,6 +572,36 @@ func _load_spellbook_runtimes(root: String, declared: Dictionary) -> void:
 		_register_spellbook_visual_bindings(root, document)
 		spellbook_runtime = document
 		# Last valid wins across packs (matches other registry overwrite policy).
+
+
+func _load_cah_system_runtime(root: String, declared: Dictionary) -> void:
+	## Packs declare the Create-a-Hero class table as `cah.system`.
+	##
+	## Last valid wins across packs, matching every other registry here. A
+	## document whose schema or version does not match EXACTLY is skipped rather
+	## than adapted: the table is the only source of the attribute arithmetic,
+	## and a half-understood table would produce heroes with quietly wrong
+	## numbers instead of no heroes at all.
+	var relative := String(declared.get("cah.system", declared.get("cahSystem", "")))
+	if relative == "" or not ModLoader.is_safe_relative_path(relative):
+		return
+	var document := _read_declared_document_bounded(root, relative, MAX_PLAYABLE_UNIT_RUNTIME_BYTES)
+	if document.is_empty():
+		return
+	if (
+		String(document.get("schema", "")) != "openbfme.cah-system-runtime"
+		or int(document.get("schemaVersion", -1)) != 0
+	):
+		return
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	if (registration.get("classes", []) as Array).is_empty():
+		return
+	if (registration.get("attributeGroups", []) as Array).is_empty():
+		return
+	document["_source"] = ModLoader.resolve_pack_path(root, relative)
+	document["_pack_root"] = root
+	document["_pack_file_key"] = "cah.system"
+	cah_system_runtime = document
 
 
 func _register_spellbook_visual_bindings(root: String, document: Dictionary) -> void:
@@ -2210,10 +2275,20 @@ func get_bundle_map(id: String) -> Dictionary:
 	return bundle_maps.get(id, {})
 
 
-## Retail map categories a lobby may offer. Campaign, cinematic, tutorial,
-## shell and system maps are cooked and catalogued, but they are not skirmish
-## offerings and must never be mixed into the map list.
-const LOBBY_MAP_CATEGORIES: Array[String] = ["skirmish", "wotr-battle"]
+## Retail map categories the SKIRMISH lobby may offer. Campaign, cinematic,
+## tutorial, shell and system maps are cooked and catalogued, but they are not
+## skirmish offerings and must never be mixed into the map list.
+##
+## `wotr-battle` is excluded on purpose. Retail's `map wor ...` maps carry
+## `isMultiplayer = yes` in the registry, so a corpus defined by that flag alone
+## sweeps 50 War of the Ring living-world battle maps into a skirmish list.
+## Those maps are picked by the strategic layer when a WOTR territory is
+## attacked, never from the skirmish map list; a caller that wants them asks for
+## the category by name.
+const LOBBY_MAP_CATEGORIES: Array[String] = ["skirmish"]
+## Every category a lobby-shaped surface may ask for, skirmish plus the WOTR
+## battle maps the strategic layer resolves.
+const PLAYABLE_MAP_CATEGORIES: Array[String] = ["skirmish", "wotr-battle"]
 
 
 func list_catalog_maps(categories: Array = LOBBY_MAP_CATEGORIES) -> Array[Dictionary]:

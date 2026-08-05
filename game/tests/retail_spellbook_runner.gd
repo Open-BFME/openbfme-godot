@@ -640,6 +640,17 @@ func _lone_tower_checks(doc: Dictionary) -> void:
 	_check("lone_tower_fires_converted_bow", int(sim.entity(101).get("health", 0)) < enemy_health_before, "health=%d was=%d" % [int(sim.entity(101).get("health", 0)), enemy_health_before])
 
 
+func _taint_entry(row: Dictionary) -> Dictionary:
+	## The one key the terrain-taint aura writes into the shared table.
+	return Dictionary(row.get("timed_modifiers", {})).get("taint:GenericBuff", {}) as Dictionary
+
+
+func _modifier_value(entry: Dictionary, kind: String) -> float:
+	for modifier_value in Array(entry.get("modifiers", [])):
+		if String((modifier_value as Dictionary).get("kind", "")) == kind:
+			return float((modifier_value as Dictionary).get("value", 0.0))
+	return 0.0
+
 func _elven_wood_checks(doc: Dictionary) -> void:
 	var sim = _effect_sim(doc)
 	sim.purchase_power(0, "SpellBookHeal")
@@ -651,15 +662,23 @@ func _elven_wood_checks(doc: Dictionary) -> void:
 	_check("elven_wood_cast_registers_grove", bool(cast.get("ok", false)) and not _last_power_event(sim, "power.grove").is_empty(), str(cast))
 	sim.tick()
 	var buffed: Dictionary = sim.entity(1)
+	# The taint buff rides the SHARED timed-modifier table under its own key, so
+	# it composes with Darkness and respects ABILITY_ARMOR_CAP like every other
+	# ModifierList. It is no longer a private pair of row fields.
+	var taint: Dictionary = _taint_entry(buffed)
 	_check(
 		"grove_aura_applies_converted_armor_modifier",
-		int(buffed.get("grove_armor_until", -1)) == sim.tick_index + 30 and float(buffed.get("grove_armor_mult", 1.0)) == 0.5 and sim._grove_armor_factor(buffed) == 0.5,
-		"until=%d mult=%s" % [int(buffed.get("grove_armor_until", -1)), str(buffed.get("grove_armor_mult", 0.0))]
+		int(taint.get("expires_tick", -1)) == sim.tick_index + 30
+			and is_equal_approx(_modifier_value(taint, "ARMOR"), 0.5)
+			and is_equal_approx(_modifier_value(taint, "DAMAGE_MULT"), 1.5)
+			and is_equal_approx(sim._ability_incoming_multiplier(buffed), 0.5)
+			and is_equal_approx(sim._ability_outgoing_multiplier(buffed), 1.5),
+		"taint=%s incoming=%s outgoing=%s" % [taint, sim._ability_incoming_multiplier(buffed), sim._ability_outgoing_multiplier(buffed)]
 	)
 	var hero_check := true
 	for id in sim.living_ids(0):
 		var row: Dictionary = sim.entity(id)
-		if String(row.get("category", "")) == "hero" and int(row.get("grove_armor_until", -1)) >= sim.tick_index:
+		if String(row.get("category", "")) == "hero" and not _taint_entry(row).is_empty():
 			hero_check = false
 	_check("grove_aura_excludes_heroes_per_filter", hero_check)
 	for _i in range(3000):
@@ -668,7 +687,9 @@ func _elven_wood_checks(doc: Dictionary) -> void:
 	for _i in range(35):
 		sim.tick()
 	var after: Dictionary = sim.entity(1)
-	_check("grove_aura_expires_with_authored_lifetime", sim._grove_armor_factor(after) == 1.0)
+	_check("grove_aura_expires_with_authored_lifetime",
+		_taint_entry(after).is_empty() and is_equal_approx(sim._ability_incoming_multiplier(after), 1.0),
+		"taint=%s incoming=%s" % [_taint_entry(after), sim._ability_incoming_multiplier(after)])
 
 
 func _cloud_break_checks(doc: Dictionary) -> void:

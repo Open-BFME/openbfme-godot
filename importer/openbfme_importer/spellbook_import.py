@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from .catalog import InstallCatalog
 from .faction_census import census_playable_faction
@@ -21,9 +21,18 @@ from .faction_policy import (
     source_null_command_sets,
     source_null_mapped_image_textures,
 )
+from .mapped_image import (
+    resolve_mapped_image_texture_paths,
+    resolve_mapped_images,
+)
 from .playable_unit_compiler import prepare_playable_unit_compiler
 from .playable_unit_import import FACTIONS, _REQUIRED_DOCUMENTS, _source_documents
 from .sage_string import MAX_STRING_BYTES, parse_string_catalog
+from .sage_audio import (
+    parse_sage_audio_definitions,
+    resolve_audio_sample_paths,
+    resolve_sage_audio_closure,
+)
 from .spellbook_compiler import compile_spellbook_descriptor
 from .spellbook_pack_compiler import (
     compile_spellbook_pack_recipe,
@@ -60,7 +69,7 @@ _MAX_CATALOG_DOCUMENT_BYTES = 8_000_000
 
 
 def _catalog_winner_documents(catalog: InstallCatalog) -> dict[str, bytes]:
-    """Load Object + identity-critical top-level INIs from catalog winners.
+    """Load the complete selected ``data/ini`` INI/INC view from catalog winners.
 
     Matches faction census document authority (highest-precedence archive per
     virtual path). Disk effective-assets may hold multi-layer concatenations
@@ -69,8 +78,7 @@ def _catalog_winner_documents(catalog: InstallCatalog) -> dict[str, bytes]:
     """
 
     documents: dict[str, bytes] = {}
-    # Object tree winners first (same selection rule as faction_census).
-    object_winners: dict[str, object] = {}
+    winners: dict[str, object] = {}
     for entry in sorted(
         catalog.entries,
         key=lambda item: (
@@ -81,12 +89,12 @@ def _catalog_winner_documents(catalog: InstallCatalog) -> dict[str, bytes]:
     ):
         name = entry.name.replace("\\", "/")
         folded = name.casefold()
-        if not folded.startswith("data/ini/object/"):
+        if not folded.startswith("data/ini/"):
             continue
         if not folded.endswith((".ini", ".inc")):
             continue
-        object_winners.setdefault(folded, entry)
-    for entry in object_winners.values():
+        winners.setdefault(folded, entry)
+    for entry in winners.values():
         name = entry.name.replace("\\", "/")
         archive = catalog.open_archive_for(entry)
         documents[name] = archive.read_entry(
@@ -142,6 +150,16 @@ def spellbook_source_documents(
                     f"effective retail source is missing: {relative}"
                 )
             documents[relative] = path.read_bytes()
+    # Numeric #defines are legal in sibling top-level .ini/.inc files (for
+    # example createaherogamedata.inc), not just gamedata.ini. Carry the full
+    # selected view so production conversion sees the same constants as tests.
+    ini_root = effective_root / "data" / "ini"
+    if ini_root.is_dir():
+        for path in sorted(ini_root.rglob("*")):
+            if path.is_file() and path.suffix.casefold() in {".inc", ".ini"}:
+                key = path.relative_to(effective_root).as_posix()
+                if key not in documents:
+                    documents[key] = path.read_bytes()
     # RotWK 2.01 top-level inis pull data/ini/mod/*.inc patch fragments via
     # authored #include directives; the include expansion fails closed on a
     # missing target, so the fragments must ride the document view when the
@@ -171,7 +189,12 @@ def _requirement_ids(descriptor: Mapping[str, object], family: str) -> list[str]
 
 
 def _resolved_spellbook_media(
-    graph: Mapping[str, object], descriptor: Mapping[str, object]
+    graph: Mapping[str, object],
+    descriptor: Mapping[str, object],
+    *,
+    fallback_mapped_image_sources: Iterable[bytes] = (),
+    fallback_virtual_paths: Iterable[str] = (),
+    fallback_audio_source: bytes | None = None,
 ) -> tuple[dict[str, Mapping[str, object]], dict[str, list[str]]]:
     """Resolve spellbook button art and audio ids through the census leaves."""
 
@@ -187,14 +210,39 @@ def _resolved_spellbook_media(
         for row in mapped_rows
         if isinstance(row, Mapping) and isinstance(row.get("id"), str)
     }
-    images: dict[str, Mapping[str, object]] = {}
-    for identifier in sorted(
+    requested_images = sorted(
         _requirement_ids(descriptor, "mappedImages"), key=str.casefold
-    ):
+    )
+    absent_images: list[str] = []
+    images: dict[str, Mapping[str, object]] = {}
+    for identifier in requested_images:
         row = images_by_id.get(identifier.casefold())
-        if row is None or not isinstance(row.get("compiledTextureVirtualPath"), str):
-            raise ValueError(f"required spellbook mapped image is unresolved: {identifier}")
+        if row is None:
+            absent_images.append(identifier)
+            continue
+        if not isinstance(row.get("compiledTextureVirtualPath"), str):
+            raise ValueError(
+                f"required spellbook mapped image census leaf is unresolved: {identifier}"
+            )
         images[identifier] = deepcopy(row)
+
+    # A layered effective tree can author a UI definition which the synthetic
+    # install catalog does not contain (RotWK's SBEvil_AngmarBlizzard is the
+    # first such leaf). The definition follows the explicit layered authority;
+    # its compiled atlas must still resolve exactly in an installed archive.
+    if absent_images:
+        fallback_sources = tuple(fallback_mapped_image_sources)
+        virtual_paths = tuple(fallback_virtual_paths)
+        if not fallback_sources or not virtual_paths:
+            raise ValueError(
+                f"required spellbook mapped image is unresolved: {absent_images[0]}"
+            )
+        records = resolve_mapped_images(fallback_sources, absent_images)
+        texture_paths = resolve_mapped_image_texture_paths(records, virtual_paths)
+        for record in records:
+            row = record.neutral()
+            row["compiledTextureVirtualPath"] = texture_paths[record.texture]
+            images[record.id] = row
 
     events = {
         str(row["id"]).casefold(): row
@@ -244,12 +292,38 @@ def _resolved_spellbook_media(
 
     resolved_audio: dict[str, list[str]] = {}
     for identifier in sorted(_requirement_ids(descriptor, "audio"), key=str.casefold):
-        resolved_audio[identifier] = sorted(resolve_audio(identifier), key=str.casefold)
+        key = identifier.casefold()
+        definition_absent = (
+            key not in samples
+            and key not in source_null_samples
+            and key not in events
+            and key not in multisounds
+        )
+        if not definition_absent:
+            resolved_audio[identifier] = sorted(
+                resolve_audio(identifier), key=str.casefold
+            )
+        else:
+            if fallback_audio_source is None:
+                raise ValueError(f"audio dependency is unresolved: {identifier}")
+            closure = resolve_sage_audio_closure(
+                parse_sage_audio_definitions(fallback_audio_source),
+                (identifier,),
+            )
+            sample_paths = resolve_audio_sample_paths(
+                closure.sample_ids, fallback_virtual_paths
+            )
+            resolved_audio[identifier] = sorted(
+                sample_paths.values(), key=str.casefold
+            )
     return images, resolved_audio
 
 
 def _resolved_spellbook_strings(
-    catalog: InstallCatalog, descriptor: Mapping[str, object]
+    catalog: InstallCatalog,
+    descriptor: Mapping[str, object],
+    *,
+    graph: Mapping[str, object] | None = None,
 ) -> dict[str, str]:
     """Resolve spellbook label ids through the install string catalog."""
 
@@ -266,9 +340,25 @@ def _resolved_spellbook_strings(
         string_source, duplicate_policy="first-wins", strict=False
     )
     resolved: dict[str, str] = {}
+    source_null_ids = {
+        str(value).casefold()
+        for value in (graph or {}).get("layeredSourceNullTextIds", [])
+        if isinstance(value, str) and value
+    }
+    layered_authority = (
+        (graph or {}).get("layeredDocumentAuthority")
+        == "layered-effective-assets"
+    )
     for identifier in sorted(_requirement_ids(descriptor, "strings"), key=str.casefold):
         record = string_catalog.record(identifier)
         if record is None or not record.value:
+            if identifier.casefold() in source_null_ids or layered_authority:
+                if layered_authority and isinstance(graph, dict):
+                    missing = graph.setdefault("layeredSourceNullTextIds", [])
+                    if isinstance(missing, list) and identifier not in missing:
+                        missing.append(identifier)
+                        missing.sort(key=str.casefold)
+                continue
             raise ValueError(f"required localized string is unresolved: {identifier}")
         resolved[identifier] = record.value
     return resolved
@@ -308,7 +398,7 @@ def compile_spellbook_lane(
     prepared = prepare_playable_unit_compiler(documents)
     draft = compile_spellbook_descriptor(graph, documents, prepared=prepared)
     images, audio = _resolved_spellbook_media(graph, draft)
-    strings = _resolved_spellbook_strings(catalog, draft)
+    strings = _resolved_spellbook_strings(catalog, draft, graph=graph)
     descriptor = compile_spellbook_descriptor(
         graph,
         documents,

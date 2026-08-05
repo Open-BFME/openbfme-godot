@@ -139,7 +139,28 @@ func _run() -> void:
 	if selected_bind_error == "":
 		_check("selected_pack_complete_retail_hud", selected_hud.retail_presentation_bound)
 		_check_complete_binding("selected_pack", selected_hud, content_db, selected_pack_root)
-		_check("selected_pack_retail_parchment_radar", selected_hud.minimap.private_parity_mode and selected_hud.minimap.retail_parchment != null)
+		# THE RADAR IS NOT PAINTED FROM THE SPELL ATLAS ANY MORE.
+		#
+		# This used to assert `private_parity_mode and retail_parchment != null`
+		# straight after the control-bar art pass, which locked in the bug the
+		# owner reported: `_bind_retail_bottom_left_art` cropped the palantir ORB
+		# globe out of `apt-palantir-1` (the summon-power sprite sheet) and
+		# stretched it over the whole radar disc. Every palantir FRAME atlas has a
+		# transparent ring interior - retail composites the live map there - so
+		# there is no radar-fill bitmap for the art pass to bind, and it must now
+		# bind NOTHING. The backdrop is bound in `configure_minimap` from the
+		# map's own preview art instead, which is what the second half asserts.
+		_check("selected_pack_radar_not_bound_to_spell_atlas", selected_hud.minimap.retail_parchment == null)
+		var radar_probe := PlaceholderTexture2D.new()
+		radar_probe.size = Vector2(64, 64)
+		selected_hud.configure_minimap(null, null, null, radar_probe)
+		_check(
+			"selected_pack_radar_backdrop_is_the_map_preview",
+			selected_hud.minimap.private_parity_mode
+				and selected_hud.minimap.retail_parchment == radar_probe
+		)
+		selected_hud.configure_minimap(null, null, null, null)
+		_check("selected_pack_radar_without_preview_stays_schematic", not selected_hud.minimap.private_parity_mode)
 		_check("selected_pack_three_retail_orb_buttons", selected_hud.orb_buttons.size() == 3 and (selected_hud.orb_buttons["options"] as Button).icon != null and (selected_hud.orb_buttons["powers"] as Button).icon != null and (selected_hud.orb_buttons["score"] as Button).icon != null)
 		_check("selected_pack_six_retail_empty_sockets", selected_hud.command_grid.find_children("RetailEmptySocket*", "TextureRect", false, false).size() == 6)
 		(selected_hud.orb_buttons["powers"] as Button).pressed.emit()
