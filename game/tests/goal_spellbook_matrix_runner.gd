@@ -261,13 +261,15 @@ const TERRAIN_REVEAL_EXPECTATIONS := {
 	# object/system/system.ini:1951-1953 ChildObject FarSeeingPing
 	#   PalantirVisionBase, VisionRange = 250 — the reveal radius, and this ping
 	#   authors NO aura at all. Lifetime comes from the parent at :1905-1935
-	#   (LifetimeUpdate 90000), which also carries the StealthDetectorUpdate that
-	#   does not convert (named residual gap, pinned below).
+	#   (LifetimeUpdate 90000), which also carries a StealthDetectorUpdate. The
+	#   2026-08-05 cook converts that module into leaf data (no residual marker),
+	#   so unconverted_behaviors is now empty; runtime stealth-unmasking is
+	#   tracked in the parity graph, not by this pin.
 	"elves/SpellBookFarsight": {
 		"kind": "field_ping", "cost": 5, "cooldown_tier": 6, "cursor_radius": 300.0,
 		"object_id": "FarSeeingPing", "lifetime_ms": 90000,
 		"reveal_radius_source": 250.0,
-		"unconverted_behaviors": ["StealthDetectorUpdate"], "auras": [],
+		"unconverted_behaviors": [], "auras": [],
 	},
 	# specialpower.ini:1103-1110 SpellBookPalantirVision: RadiusCursorRadius
 	#   300.0, ReloadTime SPELL_RECHARGE_TIME_TIER_1.
@@ -281,11 +283,13 @@ const TERRAIN_REVEAL_EXPECTATIONS := {
 	#   -BASE_FOUNDATION -HERO; lifetime 90000 from PalantirVisionBase.
 	# The aura's modifier list is authored with every stat row commented out
 	# (attributemodifier.ini:1139-1146), so ZERO modifiers is the retail fact.
+	# StealthDetectorUpdate converts to leaf data as of the 2026-08-05 cook (see
+	# the Farsight note above), so no residual marker remains on this ping.
 	"isengard/SpellBookPalantirVision": {
 		"kind": "field_ping", "cost": 5, "cooldown_tier": 1, "cursor_radius": 300.0,
 		"object_id": "PalantirVisionPing", "lifetime_ms": 90000,
 		"reveal_radius_source": 300.0,
-		"unconverted_behaviors": ["StealthDetectorUpdate"],
+		"unconverted_behaviors": [],
 		"auras": [{
 			"id": "PalantirVision", "category": "SPELL",
 			"range_source": 200.0, "refresh_ms": 1000, "duration_ms": 30000,
@@ -305,17 +309,20 @@ const REVEAL_COST_ONLY_EXPECTATIONS := {
 	"mordor/SpellBookEyeofSauron": {"cost": 5, "cooldown_tier": 1, "cursor_radius": 75.0},
 }
 # Named, counted fail-closed powers in the terrain/reveal batch. Enshrouding
-# Mist's headline effect is the camouflage broadcast, and none of
-# InvisibilityUpdate's authored values (nugget type, ELVEN_MIST_CAMOUFLAGE_
+# Mist's headline effect is the camouflage broadcast. The 2026-08-05 cook
+# CONVERTS all of InvisibilityUpdate's authored values into the leaf's
+# invisibilityUpdates rows (nugget type CAMOUFLAGE, ELVEN_MIST_CAMOUFLAGE_
 # DETECTION_RANGE = gamedata.ini:144, BroadcastRange
 # ENSHROUDING_MIST_EFFECT_RADIUS = gamedata.ini:22, BroadcastObjectFilter
-# ELVEN_MIST_OBJECT_FILTER = gamedata.ini:145) survive conversion —
-# object/system/system.ini:2020-2029 against the pack leaf, whose
-# unconvertedBehaviors carries "InvisibilityUpdate". Shipping only its secondary
-# GenericDebuff aura would greenwash a power whose point is concealment, so it
-# stays locked until the compiler emits the nugget.
+# ELVEN_MIST_OBJECT_FILTER = gamedata.ini:145; source cited on the rows), but
+# the sim does not CONSUME invisibilityUpdates yet, so the power stays
+# fail-closed — data-in-pack without runtime consumption is stage 2 of 4, and
+# unlocking it would greenwash a power whose point is concealment behind its
+# secondary GenericDebuff aura. The sim lock now keys on the presence of
+# unconsumed invisibilityUpdates data, so implementing consumption is the only
+# way to unlock this row.
 const TERRAIN_REVEAL_BLOCKED := {
-	"elves/SpellBookEnshroudingMist": "ping 'EnshroudingMistPing' InvisibilityUpdate camouflage broadcast is not converted (nugget type, detection range, broadcast range and filter are absent from the pack)",
+	"elves/SpellBookEnshroudingMist": "ping 'EnshroudingMistPing' camouflage broadcast is converted but not consumed: the sim does not yet apply invisibilityUpdates (CAMOUFLAGE nugget, detection range, broadcast range and filter ship in the pack unread)",
 }
 ## Zero as of 2026-08-04: all seven faction packs are now cooked from the same
 ## PURE RETAIL 2.01 oracle (editions/rotwk/cache/effective-assets), so every

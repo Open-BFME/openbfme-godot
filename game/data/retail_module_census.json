@@ -178,6 +178,7 @@
 			"status": "consumed",
 			"consumedBy": [
 				"m3_pack_expansion.py",
+				"playable_unit_compiler.py",
 				"spellbook_compiler.py"
 			],
 			"refusedBy": [],
@@ -2783,7 +2784,8 @@
 			"classificationNote": "stealth/detection runtime system",
 			"status": "consumed",
 			"consumedBy": [
-				"playable_unit_compiler.py"
+				"playable_unit_compiler.py",
+				"spellbook_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -2812,7 +2814,8 @@
 			"classificationNote": "stealth/detection runtime system",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"spellbook_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],

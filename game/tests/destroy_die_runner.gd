@@ -167,6 +167,7 @@ func _run() -> void:
 	_test_combat_killed_faded_summon_keeps_corpse()
 	_test_team_transfer_and_delete_move_then_release_commitment()
 	_test_command_point_default_is_shared()
+	_test_authored_fade_delay_replaces_the_zero_window()
 
 	# ALL -TOPPLED remains compiler evidence only. These two retail carriers
 	# are cinematic/unmaterialized, so this runner deliberately does not
@@ -185,6 +186,84 @@ func _run() -> void:
 
 	print("DESTROY_DIE_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+func _test_authored_fade_delay_replaces_the_zero_window() -> void:
+	## A matched DestroyDie used to erase the object on the same tick, so the
+	## authored fade window was effectively 0. Retail authors it as
+	## SlowDeathBehavior DestructionDelay on a `DeathTypes = NONE +FADED`
+	## module; the compiler now carries those milliseconds and this is the join.
+	var authored := [{
+		"ownerRole": "object",
+		"module": "SlowDeathBehavior",
+		"moduleTag": "ModuleTag_Fade",
+		"deathTypes": ["NONE", "+FADED"],
+		"destructionDelayAuthored": true,
+		"destructionDelayMs": 2500,
+	}]
+	var projected := Adapter._resolved_slow_death_fades(authored)
+	_check(
+		"authored_faded_fade_window_projects",
+		projected.size() == 1
+			and String(projected[0].get("death_types", "")) == "NONE"
+			and (projected[0].get("included_death_types", []) as Array) == ["FADED"]
+			and is_equal_approx(float(projected[0].get("destruction_delay_ms", 0.0)), 2500.0)
+	)
+	# No authored delay is an absence, never a 0: the row must not project at
+	# all, so packs that predate the emission keep their existing behaviour.
+	_check(
+		"unauthored_fade_window_projects_nothing",
+		Adapter._resolved_slow_death_fades([{
+			"ownerRole": "object",
+			"module": "SlowDeathBehavior",
+			"deathTypes": ["NONE", "+FADED"],
+			"destructionDelayAuthored": false,
+		}]).is_empty()
+	)
+	# An unresolved define expression is recorded by the compiler but is not a
+	# number, so it must not become an executable window either.
+	_check(
+		"unresolved_fade_expression_projects_nothing",
+		Adapter._resolved_slow_death_fades([{
+			"ownerRole": "object",
+			"module": "SlowDeathBehavior",
+			"deathTypes": ["NONE", "+FADED"],
+			"destructionDelayAuthored": true,
+			"destructionDelayUnresolvedExpression": "SOME_UNKNOWN_DEFINE",
+		}]).is_empty()
+	)
+	# `ALL` slow deaths describe a multi-phase death sequence this simulation
+	# does not run; claiming a window for it would advertise absent behaviour.
+	_check(
+		"all_death_type_slow_death_stays_evidence_only",
+		Adapter._resolved_slow_death_fades([{
+			"ownerRole": "object",
+			"module": "SlowDeathBehavior",
+			"deathTypes": ["ALL"],
+			"destructionDelayAuthored": true,
+			"destructionDelayMs": 4000,
+		}]).is_empty()
+	)
+
+	var sim: RetailSliceSim = _make_sim([])
+	var row: Dictionary = (sim.entities[101] as Dictionary).duplicate(true)
+	_check(
+		"entity_without_fade_rows_keeps_immediate_removal",
+		sim._slow_death_fade_ticks(row, "FADED") == 0
+	)
+	row["slow_death_fades"] = projected
+	var expected_ticks := maxi(1, roundi(2500.0 / 1000.0 / Sim.TICK_SECONDS))
+	_check(
+		"authored_fade_window_becomes_ticks",
+		sim._slow_death_fade_ticks(row, "FADED") == expected_ticks
+			and expected_ticks > 0
+	)
+	# The window belongs to the death type retail authored it for. A NORMAL
+	# death must not inherit the FADED fade.
+	_check(
+		"fade_window_is_scoped_to_its_authored_death_type",
+		sim._slow_death_fade_ticks(row, "NORMAL") == 0
+	)
 
 
 func _test_summon_rule_does_not_leak_to_non_summon_spawn() -> void:

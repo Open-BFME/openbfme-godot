@@ -3702,6 +3702,10 @@ func _add_battalion(
 		entities[id]["destroy_die"] = Array(
 			unit_rule["destroy_die"]
 		).duplicate(true)
+	if unit_rule.has("slow_death_fades"):
+		entities[id]["slow_death_fades"] = Array(
+			unit_rule["slow_death_fades"]
+		).duplicate(true)
 	if unit_rule.has("keep_object_die"):
 		entities[id]["keep_object_die"] = bool(unit_rule.get("keep_object_die", false))
 		entities[id]["keep_object_die_policy"] = (unit_rule.get("keep_object_die_policy", {}) as Dictionary).duplicate(true)
@@ -6613,15 +6617,19 @@ func _spellbook_field_ping_support(spawns: Array, modifier_leaves: Dictionary) -
 		return {}
 	var object_id := String(leaf.get("id", ""))
 	var unconverted: Array = Array(leaf.get("unconvertedBehaviors", [])).duplicate()
-	if unconverted.has("InvisibilityUpdate"):
+	if unconverted.has("InvisibilityUpdate") or not Array(leaf.get("invisibilityUpdates", [])).is_empty():
 		# Enshrouding Mist. The mist's headline effect IS the camouflage broadcast
 		# (system.ini:2020-2029: InvisibilityNugget CAMOUFLAGE, DetectionRange
 		# ELVEN_MIST_CAMOUFLAGE_DETECTION_RANGE, Broadcast Yes, BroadcastRange
 		# ENSHROUDING_MIST_EFFECT_RADIUS, BroadcastObjectFilter
-		# ELVEN_MIST_OBJECT_FILTER). None of those values reach the pack, so the
-		# power cannot be built from converted evidence — it stays fail-closed
-		# rather than shipping only its secondary debuff aura.
-		return {"ok": false, "reason": "ping '%s' InvisibilityUpdate camouflage broadcast is not converted (nugget type, detection range, broadcast range and filter are absent from the pack)" % object_id}
+		# ELVEN_MIST_OBJECT_FILTER). The 2026-08-05 cook converts all of it into
+		# the leaf's invisibilityUpdates rows, but NOTHING in this sim consumes
+		# that data yet, so the lock keys on the data's presence rather than the
+		# old unconverted marker: unlocking on marker disappearance alone would
+		# ship a "concealment" power whose only live effect is its secondary
+		# debuff aura. Unlock by consuming invisibilityUpdates, not by editing
+		# this check.
+		return {"ok": false, "reason": "ping '%s' camouflage broadcast is converted but not consumed: the sim does not yet apply invisibilityUpdates (CAMOUFLAGE nugget, detection range, broadcast range and filter ship in the pack unread)" % object_id}
 	var compiled_auras: Array = []
 	var effect_auras := 0
 	for aura_value in auras:
@@ -16627,13 +16635,52 @@ func _apply_playable_unit_death_policy(
 	if _keep_object_die_matches(row, death_type):
 		destroy_object = false
 	if int(row.get("health", 0)) <= 0:
+		# A matched DestroyDie used to erase the object on the SAME tick, which
+		# handed the simulation an effective fade window of 0. Retail authors
+		# that window as SlowDeathBehavior DestructionDelay on a
+		# `DeathTypes = NONE +FADED` module (pure-retail range 1000..10000 ms).
+		# When the pack carries the authored delay for THIS death type, the
+		# object stays until it elapses; with no authored delay the immediate
+		# removal is unchanged, so a pack that predates the emission behaves
+		# exactly as before.
+		var fade_ticks := _slow_death_fade_ticks(row, death_type) if destroy_object else 0
 		row["corpse_expire_tick"] = (
-			tick_index if destroy_object else tick_index + CORPSE_LIFETIME_TICKS
+			tick_index + fade_ticks if destroy_object else tick_index + CORPSE_LIFETIME_TICKS
 		)
 		_consume_create_object_die(row, death_type)
 	return {
 		"destroy_object": destroy_object,
 	}
+
+
+func _slow_death_fade_ticks(row: Dictionary, death_type: String) -> int:
+	## Authored DestructionDelay for this death type, in ticks, or 0.
+	##
+	## Fail-closed by construction: the adapter only projects rows whose delay
+	## retail actually authored and whose expression resolved to a number, so an
+	## absent or unresolvable delay reaches here as no row at all and the
+	## removal stays immediate. The longest matching authored window wins when
+	## an object stacks several modules on one death type.
+	var rows: Array = row.get("slow_death_fades", []) as Array
+	if rows.is_empty():
+		return 0
+	var death_folded := death_type.strip_edges().to_upper()
+	if death_folded == "":
+		death_folded = "NORMAL"
+	var delay_ms := 0.0
+	for policy_value in rows:
+		if typeof(policy_value) != TYPE_DICTIONARY:
+			continue
+		var policy := policy_value as Dictionary
+		if String(policy.get("death_types", "")).to_upper() != "NONE":
+			continue
+		for included_value in policy.get("included_death_types", []) as Array:
+			if String(included_value).to_upper() == death_folded:
+				delay_ms = maxf(delay_ms, float(policy.get("destruction_delay_ms", 0.0)))
+				break
+	if delay_ms <= 0.0:
+		return 0
+	return maxi(1, roundi(delay_ms / 1000.0 / TICK_SECONDS))
 
 
 func _create_object_die_matches(row: Dictionary, death_type: String) -> bool:

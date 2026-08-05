@@ -6,8 +6,9 @@ Machine-readable policy: `contracts/rotwk-201-product-scope.json`.
 ## North star
 
 A modern, moddable RTS engine in Godot that reproduces **Rise of the Witch-king
-(RotWK) 2.01** through measured comparison with the original - skirmish first,
-then shell / Create-a-Hero, campaigns, and War of the Ring.
+(RotWK) 2.01** through measured comparison with the original - skirmish and its
+complete retail shell/HUD first, then Create-a-Hero, campaigns, and War of the
+Ring.
 
 Content is converted locally from a user-owned RotWK install (BFME2 base as the
 importer catalog layers it). Retail and converted packs stay under `.private`.
@@ -86,22 +87,45 @@ The active **iteration objective** (which system is in flight) lives in
 
 ## Meaning of parity
 
-"Near 1:1" means every included capability is discovered from the effective
+"1:1 parity profile" means every included capability is discovered from the effective
 **RotWK 2.01** source corpus and has the required source, conversion, runtime,
 simulation, presentation, oracle, and reliability evidence for the claim being
 made (skirmish-complete vs full-game-complete).
 
 INI presence and converted-asset counts are not parity. Unknown, ambiguous,
-unsupported, substituted, or unclassified requirements fail closed.
+unsupported, substituted, or unclassified requirements fail closed. The retail
+profile does not permit "tasteful" simulation, rules, UI, audio, or visual
+improvements as parity; those belong to separately named post-parity profiles.
 
 Angmar and other RotWK-only content are in the skirmish denominator when
 claiming RotWK skirmish completeness. BFME2-only evidence cannot substitute.
+
+### Map claim boundary
+
+Keep two map claims mechanically separate:
+
+1. **Retail skirmish parity** covers the 22 maps exposed by RotWK 2.01 as
+   skirmish maps and requires retail gameplay, presentation, visual, audio, and
+   reliability evidence.
+2. **Expanded 72-map skirmish** adds the 50 official War of the Ring battle
+   maps through an explicit OpenBFME adaptation contract. Those maps must be
+   labelled adaptations in the shell and reports; they cannot count as 1:1
+   retail skirmish behavior because retail did not expose them in that mode.
+
+Full campaigns, the strategic War of the Ring layer, and Create-a-Hero remain
+separate later claims. Their partial implementation cannot raise the retail
+skirmish-complete result.
 
 ## Permanent product constraints
 
 - Eight players maximum.
 - Godot owns presentation, input, UI, audio, and desktop integration.
 - Pure C# owns deterministic authoritative simulation (target architecture).
+- The current GDScript simulation is the executable parity/reference
+  implementation during the showcase wave. Do not begin a broad C# rewrite
+  until canonical command/state traces and per-tick digest replay form an
+  executable boundary. A later C# authority must match those traces before it
+  replaces any accepted behavior.
 - Production simulation targets 30 Hz; presentation remains render-rate independent.
 - Multiplayer is server-refereed deterministic lockstep and self-hostable.
 - No Steam, ranked-service, or mandatory-account dependency.

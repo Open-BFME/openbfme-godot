@@ -1131,18 +1131,23 @@ func _route_weapon_swing(object_id: String, sequence: int) -> Dictionary:
 	## the legacy ranged/melee split.
 	var weapon_sfx: Dictionary = playable_unit_weapon_sfx.get(object_id, {})
 	var category := String(playable_unit_categories.get(object_id, ""))
+	# HIGHEST priority: the unit's own authored weapon FireFX sound, converted
+	# by the importer as the `weapon` audioRoutes owner (Weapon BoromirSword /
+	# FireFX = FX_GondorSwordHit -> FXList Sound Name = ImpactSword01). This
+	# closes the old "every melee unit swings with the same clip" gap for any
+	# pack that carries the chain.
+	if String(weapon_sfx.get("weapon", "")) != "":
+		return route_audio_event(String(weapon_sfx["weapon"]), sequence)
 	if category == "siege" and String(weapon_sfx.get("fire", "")) != "":
 		return route_audio_event(String(weapon_sfx["fire"]), sequence)
 	if category == "monster" and String(weapon_sfx.get("swing", "")) != "":
 		return route_audio_event(String(weapon_sfx["swing"]), sequence)
-	# NAMED GAP - this is the one that still sounds generic, and it is an
-	# IMPORTER gap, not a runtime one. Retail does not author a melee swing on
-	# the Object at all: it authors it on the WEAPON, as
-	# `Weapon BoromirSword / FireFX = FX_GondorSwordHit` (weapon.ini), and
-	# `FXList FX_GondorSwordHit / Sound / Name = ImpactSword01` (fxlist.ini).
-	# No converted pack carries the weapon -> FXList -> Sound chain, so there is
-	# no per-unit swing event to route and this class default is all there is.
-	# It is COUNTED rather than hidden, so the gap has a number.
+	# REMAINING NAMED GAP - a unit reaching this point has NO bound weapon
+	# FireFX sound in its pack: either the weapon's FXList genuinely authors
+	# no Sound (recorded by the importer in presentation.weaponAudioGaps as
+	# `fxlist-authors-no-sound`) or the loaded pack predates the weapon-chain
+	# emission. The class default is COUNTED rather than hidden, so the gap
+	# keeps a number.
 	var fallback_id := "ArrowDrawBow" if _is_ranged_object(object_id) else "SwordShingClean1ForHordes"
 	generic_weapon_swing_fallbacks[object_id] = int(generic_weapon_swing_fallbacks.get(object_id, 0)) + 1
 	return route_audio_event(fallback_id, sequence)
@@ -1403,6 +1408,32 @@ func _weapon_sfx_for_document(document: Dictionary, category: String, bindings: 
 	## (Treebeard: TrollTreeSwingLight, ImpactEntGenericPunch/Kick).
 	var registration: Dictionary = document.get("registration", {}) as Dictionary
 	var routes: Dictionary = registration.get("audioRoutes", {}) as Dictionary
+	## FIRST: the converted weapon chain (`weapon` owner) — retail authors the
+	## swing/fire sound on the WEAPON (`Weapon BoromirSword / FireFX =
+	## FX_GondorSwordHit` -> `FXList FX_GondorSwordHit / Sound / Name =
+	## ImpactSword01`). Prefer the default-set PRIMARY FireFX row; only rows
+	## the pack actually BINDS are eligible, so this can never name a leaf the
+	## pack cannot play. ProjectileDetonationFX is the projectile IMPACT, not
+	## the swing, and never routes here.
+	var weapon_owner: Dictionary = routes.get("weapon", {}) as Dictionary
+	if not weapon_owner.is_empty():
+		var best_id := ""
+		var best_rank := 99
+		for row_value in Array(weapon_owner.get("FireFX", [])):
+			if typeof(row_value) != TYPE_DICTIONARY:
+				continue
+			var row := row_value as Dictionary
+			var event_id := String(row.get("id", ""))
+			if event_id == "" or not bindings.has(event_id):
+				continue
+			var rank := 0 if bool(row.get("defaultSet", false)) else 2
+			if String(row.get("weaponSlot", "")) != "PRIMARY":
+				rank += 1
+			if rank < best_rank:
+				best_rank = rank
+				best_id = event_id
+		if best_id != "":
+			return {"weapon": best_id}
 	match category:
 		"siege":
 			for owner_value in routes.values():

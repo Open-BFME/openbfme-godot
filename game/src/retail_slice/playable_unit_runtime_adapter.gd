@@ -220,6 +220,8 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 			row["permanentWeaponLocks"] = resolved["permanentWeaponLocks"]
 		if resolved.has("destroyDie"):
 			row["destroyDie"] = resolved["destroyDie"]
+		if resolved.has("slowDeaths"):
+			row["slowDeaths"] = resolved["slowDeaths"]
 		if _resolved_value(resolved.get("highlanderBody")) == true:
 			row["highlanderBody"] = true
 		var auto_acquire := _resolved_dictionary(
@@ -281,6 +283,10 @@ static func simulation_rule(document: Dictionary) -> Dictionary:
 			return {}
 		if not destroy_die.is_empty():
 			output["destroy_die"] = destroy_die
+	if row.has("slowDeaths"):
+		var slow_death_fades := _resolved_slow_death_fades(row.get("slowDeaths"))
+		if not slow_death_fades.is_empty():
+			output["slow_death_fades"] = slow_death_fades
 	if row.has("permanentWeaponLocks"):
 		var permanent_locks := _normalized_permanent_weapon_locks(
 			row.get("permanentWeaponLocks")
@@ -967,6 +973,60 @@ static func _resolved_destroy_die(value: Variant) -> Array[Dictionary]:
 			"owner_role": role,
 			"death_types": "ALL",
 			"excluded_death_types": excluded,
+		})
+	return output
+
+
+static func _resolved_slow_death_fades(value: Variant) -> Array[Dictionary]:
+	## Retail authors the fade window as `DestructionDelay` on a
+	## `DeathTypes = NONE +FADED` SlowDeathBehavior. The compiler carries the
+	## authored milliseconds verbatim; this projects the ones the simulation can
+	## execute and drops nothing silently -- a row with no authored delay, or an
+	## unresolved define expression, is simply not executable and is left out.
+	##
+	## Only the NONE +<type> shape is projected. `ALL` slow deaths describe a
+	## multi-phase death sequence (sink, flingers, OCL spawns) this simulation
+	## does not run; advertising a delay for it would claim behaviour we do not
+	## have.
+	if typeof(value) != TYPE_ARRAY:
+		return []
+	var output: Array[Dictionary] = []
+	for row_value in value as Array:
+		if typeof(row_value) != TYPE_DICTIONARY:
+			continue
+		var policy := row_value as Dictionary
+		if policy.get("destructionDelayAuthored") != true:
+			continue
+		var delay_value: Variant = policy.get("destructionDelayMs")
+		if typeof(delay_value) not in [TYPE_INT, TYPE_FLOAT]:
+			continue
+		var delay_ms := float(delay_value)
+		if not is_finite(delay_ms) or delay_ms <= 0.0:
+			continue
+		var tokens_value: Variant = policy.get("deathTypes", [])
+		if typeof(tokens_value) != TYPE_ARRAY:
+			continue
+		var included: Array[String] = []
+		var mode := ""
+		for token_value in tokens_value as Array:
+			var token := String(token_value).strip_edges().to_upper()
+			if token == "NONE":
+				mode = "NONE"
+			elif token.begins_with("+"):
+				var name := token.substr(1)
+				if name != "" and not included.has(name):
+					included.append(name)
+			else:
+				# ALL, bare types and -exclusions are not this lane's shape.
+				mode = ""
+				break
+		if mode != "NONE" or included.is_empty():
+			continue
+		output.append({
+			"owner_role": String(policy.get("ownerRole", "object")),
+			"death_types": "NONE",
+			"included_death_types": included,
+			"destruction_delay_ms": delay_ms,
 		})
 	return output
 
