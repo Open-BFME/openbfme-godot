@@ -710,7 +710,13 @@ def compile_structure_visual_recipe(
             if own_hierarchies or external_hierarchies
             else "w3d-static"
         )
-        resource_id = _resource_id("structure", slug, PurePosixPath(model_path).stem)
+        # Resource ids must distinguish every emitted GLB, not just the W3D
+        # stem. Bib and lifecycle bodies often share a retail stem (trees and
+        # props that reuse the same model file name for multiple roles); using
+        # only the stem collides their ids and rejects an otherwise exact
+        # default-visual recipe. The output path already carries the role
+        # (phase slug or ``bib-``) so its stem is unique within one recipe.
+        resource_id = _resource_id("structure", slug, PurePosixPath(output).stem)
         options: dict[str, object] = {"model": PurePosixPath(model_path).name}
         if animations:
             options["animations"] = [
@@ -1578,22 +1584,17 @@ def _phase_animation(
                 phase_model_source=phase_model_source,
                 embedded_clip_ids=embedded_clip_ids,
             )
-        if len(manual) == 0:
-            # Retail authors MANUAL construction (e.g. IsengardTavern
-            # MBTavern_ASKL.MBTavern_ABLD) but the construction W3D may not
-            # have landed in the bundled clip set for this convert pass. Keep
-            # the structure convertible with an explicit none-mode phase
-            # rather than inventing a clip or failing the whole faction.
-            notes.append(
-                {
-                    "kind": "animation-clip",
-                    "phase": phase,
-                    "reason": "construction-manual-clip-unbundled",
-                    "phaseModelSource": phase_model_source,
-                }
-            )
-            return {"clip": None, "mode": "none"}
         if len(manual) != 1:
+            # `found 0` used to be the symptom of a real converter defect:
+            # embedded-shape build-up clips (``GBWell_A.GBWell_A``, motion in
+            # the model's own compressed channels) were never registered as
+            # bundled, blocking 33 structures across all 7 factions. That was
+            # fixed at the source in `clip_ids`; the IsengardTavern case this
+            # branch once tolerated now converts with
+            # `mbtavern_abld / manual-progress`, and no cooked faction pack
+            # records an unbundled MANUAL construction clip. A silent
+            # none-mode phase here would only re-hide that class of defect:
+            # a structure that never animates its build-up, shipped as exact.
             raise PlayableStructurePackCompilerError(
                 "structure construction phase requires exactly one bundled "
                 f"MANUAL animation clip, found {len(manual)}"
@@ -1729,17 +1730,21 @@ def _floor_draw_bib(
             )
     outputs = {str(state["output"]) for state in visible}
     if len(outputs) != 1:
+        # Reaching here means the structure authors floor draws AND bib models
+        # (the presence-disagreement shapes returned above) yet leaves no
+        # single visible bib to present. Retail does not author that: across
+        # the pure RotWK 2.01 tree, 0 of 182 objects carrying W3DFloorDraw
+        # models have every model StartHidden = Yes, and this branch fires on
+        # 0 converted structures in every cooked faction pack. Fail closed —
+        # a note here would hand the presenter a bib-less floor draw and call
+        # the convert exact.
         evidence_outputs = outputs or {
             str(state["output"]) for state in candidates
         }
-        notes.append(
-            {
-                "kind": "floor-draw-bib",
-                "reason": "bib-visual-absent-or-ambiguous-after-filter",
-                "outputs": sorted(evidence_outputs),
-            }
+        raise PlayableStructurePackCompilerError(
+            "structure floor draw bib visual is absent or ambiguous: "
+            + ", ".join(sorted(evidence_outputs))
         )
-        return None
     selected = visible[0]
     hide_conditions: set[str] = set()
     start_hidden = True
@@ -2380,6 +2385,8 @@ def compose_structure_runtime_document(
             "unsupportedVisualReferences": deepcopy(visual_recipe["exclusions"]),
         },
     }
+    if "compositeRole" in descriptor:
+        document["compositeRole"] = descriptor["compositeRole"]
     document["runtimeSha256"] = _digest(document)
     return document
 

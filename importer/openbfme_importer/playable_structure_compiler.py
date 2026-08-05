@@ -21,8 +21,14 @@ from .module_contracts import (
     compile_all_module_contracts,
     validate_module_contracts,
 )
+from .castle_behavior import (
+    CastleBehaviorCompilerError,
+    harvest_castle_upgrade_behaviors,
+)
 from .playable_unit_compiler import (
     ATTRIBUTE_MODIFIER_PATH,
+    COMMAND_BUTTON_PATH,
+    COMMAND_SET_PATH,
     EXPERIENCE_LEVELS_PATH,
     UPGRADE_PATH,
     PlayableUnitCompilerError,
@@ -36,6 +42,7 @@ from .playable_unit_compiler import (
     _effective_values,
     _experience_level_rows,
     _first,
+    _geometry_contract,
     _kind_of,
     _level_modifier_leaf,
     _named_blocks,
@@ -67,6 +74,33 @@ _HEALTH_FIELDS = ("MaxHealth", "MaxHealthDamaged", "MaxHealthReallyDamaged")
 class PlayableStructureCompilerError(ValueError):
     """The requested structure descriptor cannot be derived without guessing."""
 
+
+
+
+def _is_upgrade_or_science_token(token: str) -> bool:
+    """Does this CommandButton token name an Upgrade or a Science?
+
+    NOT `startswith("Upgrade_")`. Pure RotWK 2.01 authors four upgrades with no
+    underscore after "Upgrade", and all four are the Angmar structure-level
+    upgrades that gate Angmar's tier-2/tier-3 units:
+
+        upgrade.ini:  Upgrade UpgradeAngmarBarracksLevel2
+                      Upgrade UpgradeAngmarBarracksLevel3
+                      Upgrade UpgradeAngmarDenLevel2
+                      Upgrade UpgradeAngmarDenLevel3
+
+    (501 other ids DO use the `Upgrade_` form, which is why the underscore
+    looked safe to require.) Requiring it discarded those tokens silently, so
+    the affected buttons compiled with an EMPTY prerequisite set and the units
+    shipped buildable with nothing owned - a gameplay defect with no diagnostic.
+
+    Widening to the `Upgrade` prefix is safe against the fields these call sites
+    read: the non-upgrade tokens that appear in `Options` are flags like
+    `NEED_UPGRADE`, `CANCELABLE` and `NOT_QUEUEABLE`, none of which start with
+    "Upgrade".
+    """
+
+    return token.startswith("Upgrade") or token.startswith("SCIENCE_")
 
 def _canonical_bytes(value: object) -> bytes:
     return json.dumps(
@@ -172,7 +206,7 @@ def _construct_routes(
                     for field in ("NeededUpgrade", "Upgrade", "Options")
                     for value in _block_values(button, field)
                     for token in _tokens(value)
-                    if token.startswith(("Upgrade_", "SCIENCE_"))
+                    if _is_upgrade_or_science_token(token)
                 },
                 key=str.casefold,
             )
@@ -267,7 +301,7 @@ def _wall_upgrade_routes(
                     token
                     for value in _block_values(button, "Upgrade")
                     for token in _tokens(value)
-                    if token.startswith("Upgrade_")
+                    if _is_upgrade_or_science_token(token)
                 },
                 key=str.casefold,
             )
@@ -277,7 +311,7 @@ def _wall_upgrade_routes(
                     for field in ("NeededUpgrade", "Options")
                     for value in _block_values(button, field)
                     for token in _tokens(value)
-                    if token.startswith(("Upgrade_", "SCIENCE_"))
+                    if _is_upgrade_or_science_token(token)
                 },
                 key=str.casefold,
             )
@@ -1414,6 +1448,232 @@ def _percent_value(
     return float(_numeric_value(match.group(1), defines, context))
 
 
+def _purchase_button_fields(
+    button: IniBlock,
+    *,
+    include_needed_upgrade_any: bool,
+) -> dict[str, object]:
+    """Project the shared authored purchase-button presentation fields."""
+
+    needed = [
+        token
+        for value in button.values("NeededUpgrade")
+        for token in _tokens(value)
+        if token.casefold() not in {"none", "null"}
+    ]
+    options = {
+        token.casefold()
+        for value in button.values("Options")
+        for token in _tokens(value)
+    }
+    fields: dict[str, object] = {
+        "cancelable": "cancelable" in options,
+    }
+    if needed:
+        fields["neededUpgradeIds"] = needed
+    needed_any_values = tuple(button.values("NeededUpgradeAny"))
+    if include_needed_upgrade_any:
+        fields["neededUpgradeAny"] = any(
+            value.strip().casefold() in {"yes", "true", "1"}
+            for value in needed_any_values
+        )
+    elif needed_any_values:
+        fields["neededUpgradeAny"] = any(
+            value.strip().casefold() in {"yes", "true", "1"}
+            for value in needed_any_values
+        )
+    for field, output_key in (
+        ("TextLabel", "labelId"),
+        ("DescriptLabel", "tooltipId"),
+        ("ButtonImage", "buttonImageId"),
+        ("LacksPrerequisiteLabel", "lacksPrerequisiteLabelId"),
+    ):
+        for value in button.values(field):
+            text = value.strip()
+            if text and text.casefold() not in {"none", "null"}:
+                fields[output_key] = text
+                break
+    return fields
+
+
+def _castle_upgrade_surface(
+    target_id: str,
+    lineage: Sequence[SageObject],
+    trained: Sequence[Mapping[str, object]],
+    documents: Mapping[str, bytes],
+    command_buttons: Mapping[str, object],
+    defines: Mapping[str, int | float],
+) -> dict[str, object] | None:
+    """Compile the fortress trigger-purchase surface from authored evidence."""
+
+    label = f"structure {target_id}"
+    try:
+        behavior_rows = harvest_castle_upgrade_behaviors(lineage)
+    except CastleBehaviorCompilerError as error:
+        raise PlayableStructureCompilerError(str(error)) from error
+    if not behavior_rows:
+        return None
+
+    behavior_by_trigger = {
+        trigger.casefold(): (trigger, grant, radius)
+        for trigger, (grant, radius) in behavior_rows.items()
+    }
+    rows: list[dict[str, object]] = []
+    non_purchasable: list[dict[str, object]] = []
+    sold_triggers: set[str] = set()
+    command_surface_seen = False
+    for trained_row in trained:
+        set_id = str(trained_row.get("id", ""))
+        for slot_row in trained_row.get("slots", []):
+            if not isinstance(slot_row, Mapping):
+                continue
+            command_id = str(slot_row.get("commandId", ""))
+            button = command_buttons.get(command_id.casefold())
+            if button is None:
+                raise PlayableStructureCompilerError(
+                    f"{label} command set {set_id} references the missing "
+                    f"CommandButton {command_id}"
+                )
+            commands = {value.strip().casefold() for value in button.values("Command")}
+            if commands != {_WALL_UPGRADE_COMMAND}:
+                continue
+            command_surface_seen = True
+            upgrades = [
+                token
+                for value in button.values("Upgrade")
+                for token in _tokens(value)
+                if token.casefold() not in {"none", "null"}
+            ]
+            if len(upgrades) != 1:
+                # A multi-upgrade object button is an authored surface for a
+                # different mechanic; it has no single castle trigger to bind.
+                continue
+            upgrade_id = upgrades[0]
+            folded = upgrade_id.casefold()
+            if folded in sold_triggers:
+                # The same improvement rides every per-level / _ForMP variant of
+                # the fortress command set, so one trigger is legitimately
+                # reachable from several sets. Emit it once - the runtime
+                # validator rejects the whole surface on a duplicate
+                # `upgradeId` - but only when the button and slot agree
+                # everywhere, mirroring the conflict check `_research_surface`
+                # already makes. A genuine disagreement is a data question, not
+                # something to silently pick a winner for.
+                previous = next(
+                    row for row in rows if str(row["upgradeId"]).casefold() == folded
+                )
+                if previous["commandId"] != command_id or previous["slot"] != int(
+                    slot_row.get("slot", 0)
+                ):
+                    raise PlayableStructureCompilerError(
+                        f"{label} castle upgrade {upgrade_id} authors conflicting "
+                        "buttons or slots across command sets"
+                    )
+                continue
+            behavior = behavior_by_trigger.get(folded)
+            if behavior is None:
+                marker: dict[str, object] = {
+                    "upgradeId": upgrade_id,
+                    "commandId": command_id,
+                    "slot": int(slot_row.get("slot", 0)),
+                    "reason": (
+                        "OBJECT_UPGRADE button has no CastleUpgrade trigger module"
+                    ),
+                }
+                marker.update(
+                    _purchase_button_fields(
+                        button, include_needed_upgrade_any=False
+                    )
+                )
+                non_purchasable.append(marker)
+                continue
+
+            trigger_id, granted_id, _wall_upgrade_radius = behavior
+            upgrade_source = _optional_document(documents, UPGRADE_PATH)
+            if upgrade_source is None:
+                raise PlayableStructureCompilerError(
+                    f"{label} authors castle upgrades but {UPGRADE_PATH} is not in "
+                    "the effective INI view"
+                )
+            upgrade_blocks = _named_blocks(upgrade_source, "Upgrade")
+            upgrade_block = upgrade_blocks.get(folded)
+            if upgrade_block is None:
+                raise PlayableStructureCompilerError(
+                    f"{label} castle upgrade {trigger_id} has no "
+                    f"{UPGRADE_PATH} block"
+                )
+            upgrade_type = _first(upgrade_block.values("Type"))
+            if upgrade_type is None or upgrade_type.strip().casefold() != "object":
+                raise PlayableStructureCompilerError(
+                    f"{label} castle upgrade {trigger_id} is not an OBJECT upgrade"
+                )
+            cost_expression = _first(upgrade_block.values("BuildCost"))
+            time_expression = _first(upgrade_block.values("BuildTime"))
+            if cost_expression is None or time_expression is None:
+                raise PlayableStructureCompilerError(
+                    f"{label} castle upgrade {trigger_id} lacks authored "
+                    "BuildCost/BuildTime"
+                )
+            entry: dict[str, object] = {
+                "upgradeId": trigger_id,
+                "grantsUpgradeId": granted_id,
+                "cost": _numeric_value(
+                    cost_expression, defines, f"{label} castle upgrade {trigger_id}"
+                ),
+                "buildTimeSeconds": _numeric_value(
+                    time_expression, defines, f"{label} castle upgrade {trigger_id}"
+                ),
+                "slot": int(slot_row.get("slot", 0)),
+                "commandId": command_id,
+            }
+            entry.update(
+                _purchase_button_fields(
+                    button, include_needed_upgrade_any=False
+                )
+            )
+            rows.append(entry)
+            sold_triggers.add(folded)
+
+    for folded in sorted(behavior_by_trigger):
+        if folded in sold_triggers:
+            continue
+        trigger_id, granted_id, _wall_upgrade_radius = behavior_by_trigger[folded]
+        non_purchasable.append(
+            {
+                "upgradeId": trigger_id,
+                "grantsUpgradeId": granted_id,
+                "reason": (
+                    "CastleUpgrade trigger has no selling OBJECT_UPGRADE button"
+                ),
+            }
+        )
+
+    rows.sort(key=lambda row: str(row["upgradeId"]).casefold())
+    non_purchasable.sort(
+        key=lambda row: (
+            str(row["upgradeId"]).casefold(),
+            str(row.get("commandId", "")).casefold(),
+            int(row.get("slot", 0)),
+        )
+    )
+    source_paths = {
+        item.source_virtual_path
+        for item in lineage
+    }
+    if rows:
+        source_paths.update({UPGRADE_PATH, COMMAND_SET_PATH, COMMAND_BUTTON_PATH})
+    elif command_surface_seen:
+        source_paths.update({COMMAND_SET_PATH, COMMAND_BUTTON_PATH})
+    result: dict[str, object] = {
+        "sourceIni": sorted(source_paths, key=str.casefold),
+    }
+    if rows:
+        result["upgrades"] = rows
+    if non_purchasable:
+        result["nonPurchasable"] = non_purchasable
+    return result
+
+
 def _research_surface(
     target_id: str,
     lineage: Sequence[SageObject],
@@ -1464,41 +1724,17 @@ def _research_surface(
                         "buttons across command sets"
                     )
                 continue
-            needed = [
-                token
-                for value in button.values("NeededUpgrade")
-                for token in _tokens(value)
-                if token.casefold() not in {"none", "null"}
-            ]
-            options = {
-                token.casefold()
-                for value in button.values("Options")
-                for token in _tokens(value)
-            }
             entry: dict[str, object] = {
                 "upgradeId": upgrade_id,
                 "commandId": command_id,
                 "commandSetId": set_id,
                 "slot": slot,
-                "cancelable": "cancelable" in options,
-                "neededUpgradeAny": any(
-                    value.strip().casefold() in {"yes", "true", "1"}
-                    for value in button.values("NeededUpgradeAny")
-                ),
             }
-            if needed:
-                entry["neededUpgradeIds"] = needed
-            for field, output_key in (
-                ("TextLabel", "labelId"),
-                ("DescriptLabel", "tooltipId"),
-                ("ButtonImage", "buttonImageId"),
-                ("LacksPrerequisiteLabel", "lacksPrerequisiteLabelId"),
-            ):
-                for value in button.values(field):
-                    text = value.strip()
-                    if text and text.casefold() not in {"none", "null"}:
-                        entry[output_key] = text
-                        break
+            entry.update(
+                _purchase_button_fields(
+                    button, include_needed_upgrade_any=True
+                )
+            )
             entries[upgrade_id.casefold()] = entry
     if not entries:
         return None
@@ -1630,6 +1866,10 @@ def _upgrade_effects(
                 if token.casefold() not in {"none", "null"}
             ]
             percent_raw = _first_raw(block, "Percentage")
+            starts_active = any(
+                value.strip().casefold() in {"yes", "true", "1"}
+                for value in block.values("StartsActive")
+            )
             if not applied:
                 # Retail also authors CostModifierUpgrade variants this
                 # runtime does not apply as an upgrade-purchase discount:
@@ -1654,6 +1894,30 @@ def _upgrade_effects(
                             "reason": (
                                 "authored CostModifierUpgrade variant is not "
                                 "a supported structure upgrade effect"
+                            ),
+                        }
+                    )
+                continue
+            if not triggers and starts_active and percent_raw is not None:
+                # Some retail factories author an always-active purchase
+                # discount over an explicit upgrade list (MordorTavern).
+                # It is not triggered by one PLAYER upgrade, so the current
+                # per-upgrade effect model cannot apply it faithfully. Keep
+                # the exact binding as declared unsupported instead of
+                # rejecting the whole producer structure.
+                for token in sorted(
+                    {t for t in applied if t.casefold() in player_upgrades},
+                    key=str.casefold,
+                ):
+                    unsupported.append(
+                        {
+                            "upgradeId": token,
+                            "module": block.kind,
+                            "sourceIni": block.source_virtual_path,
+                            "line": int(block.line),
+                            "reason": (
+                                "authored always-active CostModifierUpgrade "
+                                "is not a supported per-upgrade effect"
                             ),
                         }
                     )
@@ -2213,6 +2477,7 @@ def compile_playable_structure_descriptor(
     *,
     prepared: PlayableUnitCompilerInputs | None = None,
     engine_spawned_roots: Iterable[str] = (),
+    engine_spawned_roles: Mapping[str, str] | None = None,
     wall_template_roots: Iterable[str] = (),
     source_null_command_sets: Iterable[str] = (),
     game: str = "bfme2",
@@ -2233,6 +2498,9 @@ def compile_playable_structure_descriptor(
             f"effective Object is missing: {target_id}"
         )
     lineage = _ancestry(prepared.objects, target)
+    # SAGE selection/collision volume. Retail hit-tests a click against this
+    # footprint; without it a runtime has nothing but a guessed radius.
+    geometry_contract = _geometry_contract(lineage, prepared.numeric_defines)
     kinds = _kind_of(lineage)
     if not STRUCTURE_KIND_TOKENS & set(kinds):
         raise PlayableStructureCompilerError(
@@ -2246,6 +2514,14 @@ def compile_playable_structure_descriptor(
         target_id, prepared.objects, prepared.command_sets, prepared.command_buttons
     )
     spawned_keys = {value.casefold() for value in engine_spawned_roots}
+    spawned_roles = {
+        str(key).casefold(): str(value)
+        for key, value in (engine_spawned_roles or {}).items()
+    }
+    if set(spawned_roles) - spawned_keys:
+        raise PlayableStructureCompilerError(
+            "engine-spawned composite roles name undeclared roots"
+        )
     wall_keys = {value.casefold() for value in wall_template_roots}
     if production:
         production_evidence = "authored-construct-command"
@@ -2308,6 +2584,14 @@ def compile_playable_structure_descriptor(
         prepared.command_buttons,
         prepared.numeric_defines,
     )
+    castle_upgrade_surface = _castle_upgrade_surface(
+        target.name,
+        lineage,
+        trained,
+        documents,
+        prepared.command_buttons,
+        prepared.numeric_defines,
+    )
     # The purchasable surface ("research") and the recorded non-purchasable
     # feature-toggle markers ride separate keys: downstream registration
     # validates "research" as a sales surface (non-empty purchasable rows),
@@ -2322,6 +2606,17 @@ def compile_playable_structure_descriptor(
             non_purchasable_research = {
                 "upgrades": marker_rows,
                 "sourceIni": research_surface["sourceIni"],
+            }
+    castle_upgrades: dict[str, object] | None = None
+    non_purchasable_castle_upgrades: dict[str, object] | None = None
+    if castle_upgrade_surface is not None:
+        marker_rows = castle_upgrade_surface.pop("nonPurchasable", None)
+        if "upgrades" in castle_upgrade_surface:
+            castle_upgrades = castle_upgrade_surface
+        if marker_rows:
+            non_purchasable_castle_upgrades = {
+                "upgrades": marker_rows,
+                "sourceIni": castle_upgrade_surface["sourceIni"],
             }
     upgrade_effects = _upgrade_effects(
         target.name,
@@ -2376,6 +2671,11 @@ def compile_playable_structure_descriptor(
         | (
             {str(path) for path in research_surface.get("sourceIni", [])}
             if research_surface is not None
+            else set()
+        )
+        | (
+            {str(path) for path in castle_upgrade_surface.get("sourceIni", [])}
+            if castle_upgrade_surface is not None
             else set()
         )
         | (
@@ -2459,6 +2759,20 @@ def compile_playable_structure_descriptor(
                 else {}
             ),
             **(
+                {"castleUpgrades": castle_upgrades}
+                if castle_upgrades is not None
+                else {}
+            ),
+            **(
+                {
+                    "nonPurchasableCastleUpgrades": (
+                        non_purchasable_castle_upgrades
+                    )
+                }
+                if non_purchasable_castle_upgrades is not None
+                else {}
+            ),
+            **(
                 {"upgradeEffects": upgrade_effects}
                 if upgrade_effects is not None
                 else {}
@@ -2489,6 +2803,11 @@ def compile_playable_structure_descriptor(
                 if module_contracts
                 else {}
             ),
+            **(
+                {"geometry": geometry_contract}
+                if geometry_contract is not None
+                else {}
+            ),
             "scalarFields": _resolved_scalar_fields(
                 scalars,
                 frozenset(
@@ -2515,6 +2834,14 @@ def compile_playable_structure_descriptor(
         "runtimeModuleEvidence": _module_evidence(lineage),
         "sourceDocuments": source_documents,
     }
+    if production_evidence == "engine-spawned-composite":
+        role = spawned_roles.get(target.name.casefold())
+        if role is not None:
+            if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", role) is None:
+                raise PlayableStructureCompilerError(
+                    f"engine-spawned composite role is invalid: {role!r}"
+                )
+            descriptor["compositeRole"] = role
     descriptor["descriptorSha256"] = _digest(descriptor)
     return descriptor
 
@@ -2570,6 +2897,15 @@ def validate_playable_structure_descriptor(value: Mapping[str, object]) -> None:
     if not authored and routes:
         raise PlayableStructureCompilerError(
             "structure descriptor claims non-authored evidence with routes"
+        )
+    role = value.get("compositeRole")
+    if role is not None and (
+        evidence != "engine-spawned-composite"
+        or not isinstance(role, str)
+        or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", role) is None
+    ):
+        raise PlayableStructureCompilerError(
+            "structure descriptor composite role is invalid"
         )
     gameplay = value.get("gameplay")
     if not isinstance(gameplay, Mapping):

@@ -12,6 +12,7 @@ from openbfme_importer.playable_unit_compiler import (
     _apply_nugget_damage_types,
     _default_set_target,
     _numeric_defines,
+    _object_index,
     _permanent_weapon_locks,
     compile_playable_unit_descriptor,
     playable_object_kind_of,
@@ -348,6 +349,145 @@ def test_discovers_upgraded_command_set_prerequisite() -> None:
     assert production["commandSetTransition"][0]["triggeredBy"] == [
         "Upgrade_FactoryLevel2"
     ]
+
+
+def _ranged_button_documents(*, any_flag: bool) -> dict[str, bytes]:
+    """RangedHorde's UNIT_BUILD button gated by two NeededUpgrade tokens.
+
+    Mirrors commandbutton.ini:7513-7519 (Command_ConstructGondorRangerHorde),
+    which names two NeededUpgrade tokens and sets NeededUpgradeAny = Yes.
+    """
+
+    documents = _documents()
+    extra = "  NeededUpgrade = Upgrade_RangedGateA Upgrade_RangedGateB\n"
+    if any_flag:
+        extra += "  NeededUpgradeAny = Yes\n"
+    documents["data/ini/commandbutton.ini"] = documents[
+        "data/ini/commandbutton.ini"
+    ].replace(
+        b"CommandButton Command_BuildRanged\n  Command = UNIT_BUILD\n",
+        b"CommandButton Command_BuildRanged\n  Command = UNIT_BUILD\n"
+        + extra.encode("utf-8"),
+    )
+    return documents
+
+
+def _angmar_style_button_documents() -> dict[str, bytes]:
+    """A gate whose upgrade id has NO underscore after "Upgrade".
+
+    This is not a contrived shape. Pure RotWK 2.01 authors exactly FOUR
+    upgrades whose id lacks that underscore, and all four are the Angmar
+    structure-level upgrades that gate Angmar's tier-2/tier-3 units:
+    `UpgradeAngmarBarracksLevel2`, `UpgradeAngmarBarracksLevel3`,
+    `UpgradeAngmarDenLevel2`, `UpgradeAngmarDenLevel3` (501 other ids do use the
+    `Upgrade_` form). e.g. commandbutton.ini:15133-15137
+
+        CommandButton Command_ConstructAngmarDarkDunedainHorde
+            Options          = NEED_UPGRADE CANCELABLE
+            NeededUpgrade    = UpgradeAngmarBarracksLevel2
+            NeededUpgradeAny = Yes
+    """
+
+    documents = _documents()
+    extra = (
+        "  Options = NEED_UPGRADE CANCELABLE\n"
+        "  NeededUpgrade = UpgradeAngmarBarracksLevel2\n"
+        "  NeededUpgradeAny = Yes\n"
+    )
+    documents["data/ini/commandbutton.ini"] = documents[
+        "data/ini/commandbutton.ini"
+    ].replace(
+        b"CommandButton Command_BuildRanged\n  Command = UNIT_BUILD\n",
+        b"CommandButton Command_BuildRanged\n  Command = UNIT_BUILD\n"
+        + extra.encode("utf-8"),
+    )
+    return documents
+
+
+def test_upgrade_token_without_underscore_still_gates_production() -> None:
+    """Regression: the `Upgrade_` prefix filter silently ungated 4 Angmar units.
+
+    The token filter required `Upgrade_`, so `UpgradeAngmarBarracksLevel2` was
+    discarded. The consequence was NOT a missing ANY-of group only - the base
+    command set's `prerequisites` also came out empty, so the units shipped
+    buildable from a level-1 structure with nothing owned.
+    """
+
+    result = compile_playable_unit_descriptor(
+        "RangedHorde", _angmar_style_button_documents()
+    )
+
+    validate_playable_unit_descriptor(result)
+    production = result["production"][0]
+    assert production["prerequisiteAnyOf"] == ["UpgradeAngmarBarracksLevel2"]
+
+
+def test_needed_upgrade_any_compiles_to_an_any_of_production_gate() -> None:
+    result = compile_playable_unit_descriptor(
+        "RangedHorde", _ranged_button_documents(any_flag=True)
+    )
+
+    validate_playable_unit_descriptor(result)
+    production = result["production"][0]
+    # The commandSetTransition requirement stays ALL-of; only the button's
+    # NeededUpgrade set becomes the ANY-of group.
+    assert production["prerequisites"] == ["Upgrade_FactoryLevel2"]
+    assert production["prerequisiteAnyOf"] == [
+        "Upgrade_RangedGateA",
+        "Upgrade_RangedGateB",
+    ]
+
+
+def test_any_of_group_may_contain_the_command_set_transition_upgrade() -> None:
+    """The ANY-of group legitimately OVERLAPS the ALL-of set.
+
+    This is the real retail shape, not a contrived one.
+    commandbutton.ini:7513-7519 authors
+    `NeededUpgrade = Upgrade_GondorArcheryRangeLevel2 Upgrade_CustomGenericUpgrade1`
+    with `NeededUpgradeAny = Yes`, while
+    object/goodfaction/structures/men/archerrange.ini:418 makes that SAME
+    `Upgrade_GondorArcheryRangeLevel2` the CommandSetUpgrade trigger. So the
+    token is both an ALL-of requirement (the producer must sit on the upgraded
+    CommandSet at all) and a member of the ANY-of group. Requiring the two sets
+    to be disjoint rejected six real retail units — GondorRanger(Horde),
+    GondorTowerShieldGuard(Horde) and RohanRohirrim(Horde) — and silently
+    dropped them from the published pack.
+    """
+
+    documents = _documents()
+    documents["data/ini/commandbutton.ini"] = documents[
+        "data/ini/commandbutton.ini"
+    ].replace(
+        b"CommandButton Command_BuildRanged\n  Command = UNIT_BUILD\n",
+        b"CommandButton Command_BuildRanged\n  Command = UNIT_BUILD\n"
+        b"  NeededUpgrade = Upgrade_FactoryLevel2 Upgrade_RangedGateB\n"
+        b"  NeededUpgradeAny = Yes\n",
+    )
+
+    result = compile_playable_unit_descriptor("RangedHorde", documents)
+
+    validate_playable_unit_descriptor(result)
+    production = result["production"][0]
+    assert production["prerequisites"] == ["Upgrade_FactoryLevel2"]
+    assert production["prerequisiteAnyOf"] == [
+        "Upgrade_FactoryLevel2",
+        "Upgrade_RangedGateB",
+    ]
+
+
+def test_without_needed_upgrade_any_the_gate_stays_all_of() -> None:
+    result = compile_playable_unit_descriptor(
+        "RangedHorde", _ranged_button_documents(any_flag=False)
+    )
+
+    validate_playable_unit_descriptor(result)
+    production = result["production"][0]
+    assert production["prerequisites"] == [
+        "Upgrade_FactoryLevel2",
+        "Upgrade_RangedGateA",
+        "Upgrade_RangedGateB",
+    ]
+    assert "prerequisiteAnyOf" not in production
 
 
 def test_symbolic_count_and_module_override_are_effective_not_concatenated() -> None:
@@ -733,6 +873,35 @@ def test_rejects_unreachable_unit_instead_of_inventing_producer() -> None:
         match="not targeted by an authored UNIT_BUILD command",
     ):
         compile_playable_unit_descriptor("UnreachableUnit", documents)
+
+
+def test_authored_banner_dependency_uses_engine_spawn_surface() -> None:
+    documents = _documents()
+    documents["data/ini/object/units/test_units.ini"] += _object(
+        "BannerDireSnowTroll", "INFANTRY", "BannerDireSnowTrollModel"
+    ).encode("utf-8")
+
+    descriptor = compile_playable_unit_descriptor(
+        "BannerDireSnowTroll",
+        documents,
+        engine_spawned_banner_carrier=True,
+    )
+
+    assert descriptor["production"][0]["surface"] == "banner-carrier"
+    assert descriptor["production"][0]["sourceField"] == "BannerCarriersAllowed"
+    assert descriptor["production"][0]["evidence"] == "banner-carriers-allowed-edge"
+
+
+def test_banner_name_without_kindof_or_edge_does_not_invent_producer() -> None:
+    documents = _documents()
+    documents["data/ini/object/units/test_units.ini"] += _object(
+        "SuspiciousBanner", "INFANTRY", "SuspiciousBannerModel"
+    ).encode("utf-8")
+    with pytest.raises(
+        PlayableUnitCompilerError,
+        match="not targeted by an authored UNIT_BUILD command",
+    ):
+        compile_playable_unit_descriptor("SuspiciousBanner", documents)
 
 
 def test_validation_rejects_descriptor_mutation() -> None:
@@ -2019,6 +2188,23 @@ def test_negated_condition_default_weapon_set_resolves_member_weapon() -> None:
         "required-upgrade"
     ]
     assert "combat.weapon" not in simulation["missing"]
+
+
+def test_default_weapon_set_ignores_explicit_none_slot() -> None:
+    documents = {
+        "data/ini/object/test.ini": b"""
+Object EmptyWeaponObject
+  WeaponSet
+    Conditions = None
+    Weapon = PRIMARY None
+  End
+End
+"""
+    }
+    object_index = _object_index(documents)
+    ancestry = _ancestry(object_index, object_index["emptyweaponobject"])
+
+    assert _default_set_target(ancestry, "WeaponSet", "Weapon") is None
 
 
 def test_warhead_nugget_damage_resolves_from_projectile_warhead() -> None:

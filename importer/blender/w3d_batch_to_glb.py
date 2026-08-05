@@ -128,6 +128,7 @@ FAILURE_PHASES = frozenset(
         "scene-validation",
         "animation-import",
         "post-animation-validation",
+        "animation-sidecar-mesh-strip",
         "attachment-restoration",
         "render-revalidation",
         "animation-export-preparation",

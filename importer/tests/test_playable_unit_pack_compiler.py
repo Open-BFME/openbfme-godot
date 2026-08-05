@@ -13,10 +13,74 @@ from openbfme_importer.playable_unit_pack_compiler import (
     PlayableUnitPackCompilerError,
     _ability_animation_key,
     _ability_animations,
+    _state,
     compile_playable_unit_pack_recipe,
     validate_playable_unit_pack_recipe,
 )
 from openbfme_importer.profile import ImportProfile
+
+
+def test_user_form_only_animation_state_is_idle() -> None:
+    row = {
+        "conditions": ["USER_3"],
+        "provenance": {
+            "scopePath": [
+                "W3DScriptedModelDraw ModuleTag_01",
+                "AnimationState USER_3",
+                "Animation IdleB",
+            ]
+        },
+    }
+
+    assert _state(row) == "idle"
+    assert _state({**row, "conditions": ["USER_3", "SPECIAL_WEAPON_ONE"]}) != "idle"
+
+
+def test_high_speed_turn_animation_is_not_core_move_state() -> None:
+    row = {
+        "conditions": ["TURN_RIGHT_HIGH_SPEED"],
+        "provenance": {
+            "scopePath": [
+                "W3DHordeModelDraw ModuleTag_01",
+                "AnimationState TURN_RIGHT_HIGH_SPEED",
+                "Animation MTurnRight",
+            ]
+        },
+    }
+    assert _state(row) is None
+
+
+def test_moving_turn_animation_keeps_move_classification() -> None:
+    row = {
+        "conditions": ["MOVING", "TURN_LEFT"],
+        "provenance": {
+            "scopePath": [
+                "W3DHordeModelDraw ModuleTag_01",
+                "AnimationState MOVING TURN_LEFT",
+                "Animation MMoveTurnLeft",
+            ]
+        },
+    }
+    assert _state(row) == "move"
+
+
+def test_turn_clip_cannot_replace_missing_walk_clip() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    closure["exactLeaves"] = [
+        row
+        for row in closure["exactLeaves"]
+        if not (
+            row.get("kind") == "animation"
+            and "MOVING" in row.get("conditions", [])
+        )
+    ]
+    turn = deepcopy(next(row for row in closure["exactLeaves"] if row.get("kind") == "animation"))
+    turn["conditions"] = ["TURN_RIGHT_HIGH_SPEED"]
+    closure["exactLeaves"].append(turn)
+    _rehash_closure(closure)
+    with pytest.raises(PlayableUnitPackCompilerError, match="move"):
+        compile_playable_unit_pack_recipe(descriptor, closure)
 
 
 def _descriptor(target: str) -> dict[str, object]:
@@ -1413,6 +1477,50 @@ def test_semantic_visual_state_is_preserved_explicitly(
     assert rows[0]["runtimeSupport"] == "required-unimplemented"
 
 
+@pytest.mark.parametrize(
+    ("object_id", "condition"),
+    [
+        ("DwarvenBanner", "USER_4"),
+        ("DwarvenPhalanxBanner", "USER_6"),
+        ("MenofDaleBanner", "USER_3"),
+    ],
+)
+def test_dwarven_morph_banner_uses_authored_carrier_form_as_default(
+    object_id: str, condition: str
+) -> None:
+    descriptor = _descriptor("InfantryMember")
+    descriptor["composition"]["primaryMemberObjectId"] = object_id
+    descriptor["composition"]["containerObjectId"] = object_id
+    for member in descriptor["composition"]["members"]:
+        member["objectId"] = object_id
+    _rehash_descriptor(descriptor)
+    closure = _closure(descriptor)
+    model = next(row for row in closure["exactLeaves"] if row["kind"] == "model")
+    model["conditions"] = [condition]
+    hidden = _leaf(
+        object_id,
+        "None",
+        "model",
+        "unused",
+        [],
+        "DefaultModelConditionState",
+    )
+    hidden.pop("physicalVirtualPaths")
+    hidden["status"] = "semantic"
+    hidden["reason"] = "sage-none-model"
+    closure["semanticLeaves"].append(hidden)
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+    defaults = [
+        row
+        for row in recipe["runtimeRegistration"]["visual"]["components"]
+        if row["default"]
+    ]
+    assert len(defaults) == 1
+    assert defaults[0]["conditions"] == [condition]
+
+
 def test_rehashed_malformed_semantic_registration_is_rejected() -> None:
     descriptor = _descriptor("HeroUnit")
     closure = _closure(descriptor)
@@ -1567,6 +1675,123 @@ def test_retail_absent_animation_variant_is_an_explicit_exclusion() -> None:
     assert row["runtimeExclusionReason"] == "retail-absent-animation-state-covered"
     assert row["semanticState"] == "death"
     validate_playable_unit_pack_recipe(recipe)
+
+
+def test_retail_absent_default_extra_mesh_is_explicit_when_primary_is_resolved() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    primary = next(row for row in closure["exactLeaves"] if row["kind"] == "model")
+    missing = deepcopy(primary)
+    missing.update(
+        {
+            "identifier": "HEROUNIT_MISSING_EXTRA",
+            "kind": "extra-mesh",
+            "usage": "extra-mesh",
+            "status": "missing",
+            "reason": "missing W3D extra-mesh reference",
+        }
+    )
+    missing.pop("physicalVirtualPaths", None)
+    missing.pop("evidence", None)
+    closure["unresolved"]["references"].append(missing)
+    closure["summary"]["ready"] = False
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+
+    row = next(
+        row
+        for row in recipe["runtimeRegistration"]["visual"]["unsupportedVisualReferences"]
+        if row["identifier"] == "HEROUNIT_MISSING_EXTRA"
+    )
+    assert row["runtimeSupport"] == "excluded-retail-absent-extra-mesh"
+    assert row["runtimeExclusionReason"] == (
+        "retail-absent-extra-mesh-default-covered"
+    )
+    validate_playable_unit_pack_recipe(recipe)
+
+
+def test_retail_absent_extra_mesh_without_resolved_draw_fails_closed() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    primary = next(row for row in closure["exactLeaves"] if row["kind"] == "model")
+    closure["exactLeaves"].remove(primary)
+    missing = deepcopy(primary)
+    missing.update(
+        {
+            "kind": "extra-mesh",
+            "usage": "extra-mesh",
+            "status": "missing",
+            "reason": "missing W3D extra-mesh reference",
+        }
+    )
+    missing.pop("physicalVirtualPaths", None)
+    missing.pop("evidence", None)
+    closure["unresolved"]["references"].append(missing)
+    closure["summary"]["ready"] = False
+    _rehash_closure(closure)
+
+    with pytest.raises(PlayableUnitPackCompilerError, match="not conversion-ready"):
+        compile_playable_unit_pack_recipe(descriptor, closure)
+
+
+def test_retail_absent_random_texture_is_explicit_when_default_is_resolved() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    primary = next(row for row in closure["exactLeaves"] if row["kind"] == "model")
+    missing = deepcopy(primary)
+    missing.update(
+        {
+            "identifier": "IUWargSntryA.tga",
+            "kind": "texture",
+            "usage": "random-texture",
+            "status": "missing",
+            "reason": "no exact catalog candidate",
+        }
+    )
+    missing.pop("physicalVirtualPaths", None)
+    missing.pop("evidence", None)
+    closure["unresolved"]["references"].append(missing)
+    closure["summary"]["ready"] = False
+    _rehash_closure(closure)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, closure)
+
+    row = next(
+        row
+        for row in recipe["runtimeRegistration"]["visual"]["unsupportedVisualReferences"]
+        if row["identifier"] == "IUWargSntryA.tga"
+    )
+    assert row["runtimeSupport"] == "excluded-retail-absent-random-texture"
+    assert row["runtimeExclusionReason"] == (
+        "retail-absent-random-texture-default-covered"
+    )
+    validate_playable_unit_pack_recipe(recipe)
+
+
+def test_retail_absent_random_texture_without_same_draw_default_fails() -> None:
+    descriptor = _descriptor("HeroUnit")
+    closure = _closure(descriptor)
+    primary = next(row for row in closure["exactLeaves"] if row["kind"] == "model")
+    missing = deepcopy(primary)
+    missing.update(
+        {
+            "identifier": "UnrelatedVariant.tga",
+            "kind": "texture",
+            "usage": "random-texture",
+            "status": "missing",
+            "reason": "no exact catalog candidate",
+            "targetObject": "UnrelatedObject",
+        }
+    )
+    missing.pop("physicalVirtualPaths", None)
+    missing.pop("evidence", None)
+    closure["unresolved"]["references"].append(missing)
+    closure["summary"]["ready"] = False
+    _rehash_closure(closure)
+
+    with pytest.raises(PlayableUnitPackCompilerError, match="not conversion-ready"):
+        compile_playable_unit_pack_recipe(descriptor, closure)
 
 
 def test_retail_absent_animation_gap_combines_with_non_core_gaps() -> None:
@@ -1951,3 +2176,94 @@ def test_donor_source_retention_never_lands_under_assets() -> None:
         output = str(row.get("output", ""))
         if PurePosixPath(output).suffix.casefold() == ".w3d":
             assert not output.startswith("assets/"), output
+
+
+def test_retail_unlocalized_command_string_is_recorded_not_a_broken_pack() -> None:
+    # Oracle: RotWK layered data/ini/commandbutton.ini authors
+    # Command_ConstructMordorBlackRiderHorde with
+    # DescriptLabel = CONTROLBAR:ConstructBlackRiderHorde, and no retail .str
+    # file defines that id. The resolved-strings table is therefore legitimately
+    # narrower than the command-referenced set. Before this contract existed the
+    # runtime read the hole as a broken document and dropped
+    # MordorBlackRiderHorde from the roster entirely, leaving a dead fortress
+    # button.
+    descriptor = _descriptor("InfantryHorde")
+    unlocalized = "CONTROLBAR:ToolTipInfantryHorde"
+    descriptor["presentation"]["resolvedStrings"].pop(unlocalized)
+    descriptor["presentation"]["sourceNullStringIds"] = [unlocalized]
+    _rehash_descriptor(descriptor)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
+    validate_playable_unit_pack_recipe(recipe)
+    runtime = recipe["runtimeRegistration"]
+    assert runtime["sourceNullStringIds"] == [unlocalized]
+    assert unlocalized not in runtime["stringBindings"]
+    assert "CONTROLBAR:InfantryHorde" in runtime["stringBindings"]
+
+
+def test_command_string_that_is_neither_bound_nor_retail_null_fails_closed() -> None:
+    # The exemption above must not become a hole: an id that is simply absent,
+    # with no retail-unlocalized evidence, is still a broken pack.
+    descriptor = _descriptor("InfantryHorde")
+    descriptor["presentation"]["resolvedStrings"].pop("CONTROLBAR:ToolTipInfantryHorde")
+    _rehash_descriptor(descriptor)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
+    with pytest.raises(PlayableUnitPackCompilerError, match="localized string bindings"):
+        validate_playable_unit_pack_recipe(recipe)
+
+
+def test_retail_null_string_may_not_also_be_bound() -> None:
+    # Claiming an id is both resolved AND retail-unlocalized is a contradiction;
+    # the descriptor gate rejects it before a recipe can be built from it.
+    from openbfme_importer.playable_unit_compiler import PlayableUnitCompilerError
+
+    descriptor = _descriptor("InfantryHorde")
+    descriptor["presentation"]["sourceNullStringIds"] = ["CONTROLBAR:InfantryHorde"]
+    _rehash_descriptor(descriptor)
+
+    with pytest.raises(PlayableUnitCompilerError, match="source-null strings"):
+        compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
+
+
+def test_zero_string_unit_still_needs_full_command_string_coverage() -> None:
+    # Hole: the union check was guarded by `bool(string_bindings)`, so a unit
+    # whose every command string failed to resolve -- the WORST case, a fully
+    # text-dead button set -- skipped the gate entirely and shipped.
+    descriptor = _descriptor("InfantryHorde")
+    descriptor["presentation"]["resolvedStrings"].clear()
+    _rehash_descriptor(descriptor)
+
+    recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
+    assert recipe["runtimeRegistration"]["stringBindings"] == {}
+    with pytest.raises(
+        PlayableUnitPackCompilerError, match="localized string bindings"
+    ):
+        validate_playable_unit_pack_recipe(recipe)
+
+
+def test_ability_button_string_must_be_bound_or_retail_null() -> None:
+    # Hole: ability button label/tooltip ids were admitted as legal members of
+    # sourceNullStringIds but were never themselves required to be covered by
+    # the bound-or-retail-null union, so a hero ability could ship with a blank
+    # tooltip and a green pack.
+    from openbfme_importer.playable_unit_pack_compiler import _digest
+
+    descriptor = _descriptor("InfantryHorde")
+    recipe = compile_playable_unit_pack_recipe(descriptor, _closure(descriptor))
+    recipe["runtimeRegistration"]["abilities"] = [
+        {
+            "button": {
+                "labelIds": ["CONTROLBAR:UnboundAbilityLabel"],
+                "tooltipIds": [],
+            }
+        }
+    ]
+    unsigned = dict(recipe)
+    unsigned.pop("recipeSha256")
+    recipe["recipeSha256"] = _digest(unsigned)
+
+    with pytest.raises(
+        PlayableUnitPackCompilerError, match="localized string bindings"
+    ):
+        validate_playable_unit_pack_recipe(recipe)

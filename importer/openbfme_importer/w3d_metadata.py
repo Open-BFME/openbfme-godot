@@ -20,6 +20,7 @@ from typing import Iterable
 
 from .paths import safe_relative_parts
 from .w3d_index import W3DFileHeaders, W3DIdentifierTrim, trim_w3d_identifier
+from .w3d_string_leaves import is_w3d_string_leaf
 
 
 MAX_W3D_METADATA_BYTES = 512 * 1024 * 1024
@@ -1120,7 +1121,13 @@ class _Scanner:
             # payloads instead of recursively interpreting arbitrary bytes.
             opaque_emitter = chunk_id == 0x00000500 and not has_subchunks
             known_container = chunk_id in _CONTAINER_CHUNKS and not opaque_emitter
-            scan_children = known_container or has_subchunks
+            # String leaves carry a NUL-terminated string, never sub-chunks.
+            # Retail authors the 0x80000000 bit on them inconsistently, so the
+            # bit is meaningless there: honouring it reads the string body
+            # ("FPS=" -> chunk 0x3D535046) as a chunk header.  See
+            # ``w3d_string_leaves`` for the shared rule.
+            string_leaf = is_w3d_string_leaf(chunk_id)
+            scan_children = (known_container or has_subchunks) and not string_leaf
             if chunk_id in _METADATA_CHUNKS:
                 classification = "metadata"
             elif chunk_id in _UNSUPPORTED_CHUNKS or opaque_emitter:

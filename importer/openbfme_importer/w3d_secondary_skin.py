@@ -23,6 +23,8 @@ import math
 import struct
 from typing import Iterable, TypeAlias
 
+from .w3d_string_leaves import is_w3d_string_leaf
+
 
 SECONDARY_SKIN_SCHEMA = "openbfme.w3d-secondary-skin-proof"
 SECONDARY_SKIN_SCHEMA_VERSION = 0
@@ -66,8 +68,14 @@ W3D_CHUNK_HLOD_LOD_ARRAY = 0x00000702
 W3D_CHUNK_HLOD_SUB_OBJECT = 0x00000704
 W3D_CHUNK_HLOD_AGGREGATE_ARRAY = 0x00000705
 W3D_CHUNK_HLOD_PROXY_ARRAY = 0x00000706
+W3D_CHUNK_VERTEX_MATERIAL_NAME = 0x0000002C
+W3D_CHUNK_VERTEX_MAPPER_ARGS0 = 0x0000002E
+W3D_CHUNK_VERTEX_MAPPER_ARGS1 = 0x0000002F
 W3D_CHUNK_VERTICES_2 = 0x00000C00
 W3D_CHUNK_VERTEX_NORMALS_2 = 0x00000C01
+
+# String-leaf handling (the retail 0x80000000 flag is meaningless on them) lives
+# in ``w3d_string_leaves`` so every W3D walker shares one definition.
 
 W3D_GEOMETRY_TYPE_SKIN = 0x00020000
 W3D_VERTEX_CHANNEL_LOCATION = 0x01
@@ -903,7 +911,7 @@ def _secondary_locations(
     for chunk in chunks:
         if chunk.kind in {W3D_CHUNK_VERTICES_2, W3D_CHUNK_VERTEX_NORMALS_2}:
             result.append((parent_kind, chunk.kind))
-        if chunk.container:
+        if chunk.container and not is_w3d_string_leaf(chunk.kind):
             children = _chunks(
                 source,
                 chunk.payload_start,

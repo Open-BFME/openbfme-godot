@@ -704,5 +704,104 @@ class W3DTrimmedFileHeadersTests(unittest.TestCase):
             metadata.trimmed_file_headers()
 
 
+class W3DStringLeafChunkTests(unittest.TestCase):
+    """Retail authors the 0x80000000 bit on string leaves inconsistently.
+
+    Byte-for-byte the same fixture shape as
+    ``tests/test_w3d_secondary_skin.RETAIL_MAPPER_ARGS0_PAYLOAD``: RotWK
+    ``art/w3d/gu/guarcher_skn.w3d`` (GondorArcherHorde) writes
+    VERTEX_MAPPER_ARGS0 with raw header size 0x800000AF -- the "has
+    sub-chunks" bit over a 175-byte NUL-terminated string -- and leaves the
+    bit clear on the VERTEX_MAPPER_ARGS1 sibling holding the same shape of
+    payload.  Walking into the flagged one reads the literal "FPS=" as chunk
+    id 0x3D535046.
+    """
+
+    RETAIL_MAPPER_ARGS0_PAYLOAD = (
+        b"FPS=15.0;Theframespersecond\r\n"
+        b"Log2Width=2;So0=width1\r\n1=width2\r\n2=width4."
+        b"Thedefaultmeansanimateusingatexturedividedupintoquarters.\r\n"
+        b"Last=;GridWidth*GridWidth;Thelastframetouse\x00"
+    )
+    RETAIL_MAPPER_ARGS1_PAYLOAD = (
+        b"FPS=30.0;Theframespersecond\r\n"
+        b"Log2Width=2;So0=width1\r\n1=width2\r\n2=width4."
+        b"Thedefaultmeansanimateusingatexturedividedupintoquarters.\r\n"
+        b"Last=GridWidth*GridWidth;Thelastframetouse\x00"
+    )
+
+    def _retail_source(self) -> bytes:
+        vertex_material = _chunk(
+            0x2B,
+            _chunk(0x2C, b"Material #25\x00")
+            + _chunk(0x2D, b"\x00" * 32)
+            # Retail sets the container bit on this string leaf.
+            + _chunk(0x2E, self.RETAIL_MAPPER_ARGS0_PAYLOAD, children=True)
+            + _chunk(0x2F, self.RETAIL_MAPPER_ARGS1_PAYLOAD),
+            children=True,
+        )
+        mesh = _chunk(
+            0x00000000,
+            _chunk(0x1F, _mesh_header("GUARCHER", "GUARCHER_SKN"))
+            + _chunk(0x2A, vertex_material, children=True),
+            children=True,
+        )
+        return mesh
+
+    def test_retail_payload_matches_the_pinned_header_shape(self) -> None:
+        self.assertEqual(len(self.RETAIL_MAPPER_ARGS0_PAYLOAD), 175)
+        self.assertTrue(self.RETAIL_MAPPER_ARGS0_PAYLOAD.startswith(b"FPS="))
+        self.assertTrue(self.RETAIL_MAPPER_ARGS0_PAYLOAD.endswith(b"\x00"))
+        header = struct.unpack_from(
+            "<II", _chunk(0x2E, self.RETAIL_MAPPER_ARGS0_PAYLOAD, children=True)
+        )
+        self.assertEqual(header, (0x2E, 0x800000AF))
+        # The sibling carries the same payload shape with the flag clear.
+        sibling = struct.unpack_from(
+            "<II", _chunk(0x2F, self.RETAIL_MAPPER_ARGS1_PAYLOAD)
+        )
+        self.assertEqual(sibling[1] & 0x80000000, 0)
+
+    def test_flagged_string_leaf_is_not_walked_as_a_container(self) -> None:
+        metadata = scan_w3d_metadata(self._retail_source(), "art/w3d/gu/guarcher.w3d")
+
+        self.assertEqual(
+            [warning.code for warning in metadata.warnings],
+            [],
+            msg=[warning.message for warning in metadata.warnings],
+        )
+
+        by_id = {chunk.chunk_id: chunk for chunk in metadata.chunks}
+        args0 = by_id[0x2E]
+        self.assertTrue(args0.has_subchunks_flag)
+        self.assertFalse(args0.scanned_as_container)
+        self.assertNotEqual(args0.classification, "container")
+        self.assertEqual(args0.declared_payload_size, 175)
+        self.assertEqual(args0.available_payload_size, 175)
+
+        args1 = by_id[0x2F]
+        self.assertFalse(args1.has_subchunks_flag)
+        self.assertFalse(args1.scanned_as_container)
+        self.assertNotEqual(args1.classification, "container")
+
+        # The meaningless header bit must not leak into the report: the
+        # flagged chunk and its unflagged sibling classify identically.  Both
+        # are "metadata" rather than plain "known-data" because the scanner
+        # does extract their string as a material record.
+        self.assertEqual(args0.classification, args1.classification)
+        self.assertEqual(args0.classification, "metadata")
+
+        name = by_id[0x2C]
+        self.assertFalse(name.scanned_as_container)
+        self.assertNotEqual(name.classification, "container")
+
+        self.assertNotIn(
+            0x3D535046, {chunk.chunk_id for chunk in metadata.chunks}
+        )
+        self.assertEqual(
+            [chunk.chunk_id for chunk in metadata.chunks if chunk.depth > 3], []
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

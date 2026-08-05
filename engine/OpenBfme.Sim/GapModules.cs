@@ -310,3 +310,288 @@ public sealed class AttributeModifierAuraModule : ModuleBase
         }
     }
 }
+
+/// <summary>
+/// Experience / rank state for battalions (retail experiencelevels.ini ladder).
+/// Level starts at 1. GrantExperience applies awards; when RequiredExperience
+/// thresholds for the next rank are met, Level increases up to LevelCap.
+/// Design data: LevelCap (default 10), RequiredExperience:N keys for level N+1
+/// thresholds (optional; GrantLevels can force ranks without XP tables).
+/// </summary>
+public sealed class ExperienceLevelModule : ModuleBase
+{
+    public const string TypeName = "ExperienceLevel";
+
+    private readonly long _levelCap;
+    private readonly SortedDictionary<int, long> _requiredForLevel = new();
+
+    public int Level { get; private set; }
+    public long Experience { get; private set; }
+
+    public ExperienceLevelModule(ModuleSpec spec) : base(spec)
+    {
+        _levelCap = Math.Max(1, spec.GetLong("LevelCap", 10));
+        Level = (int)Math.Clamp(spec.GetLong("InitialLevel", 1), 1, _levelCap);
+        foreach (var pair in spec.Data)
+        {
+            if (pair.Key.StartsWith("RequiredExperience:", StringComparison.Ordinal)
+                && int.TryParse(pair.Key.AsSpan("RequiredExperience:".Length), out var lvl)
+                && lvl > 1)
+            {
+                _requiredForLevel[lvl] = Math.Max(0, pair.Value);
+            }
+        }
+    }
+
+    public void GrantExperience(long amount)
+    {
+        if (amount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(amount));
+        }
+        Experience += amount;
+        while (Level < _levelCap)
+        {
+            var next = _requiredForLevel.FirstOrDefault(pair => pair.Key > Level);
+            if (next.Key == 0 || Experience < next.Value)
+            {
+                break;
+            }
+            Level = next.Key;
+        }
+    }
+
+    /// <summary>Force-apply LevelsToGain from LevelUpUpgrade (Basic Training).</summary>
+    public void GrantLevels(int levelsToGain)
+    {
+        if (levelsToGain < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(levelsToGain));
+        }
+        Level = (int)Math.Min(_levelCap, Level + levelsToGain);
+    }
+
+    public override void WriteState(CanonicalWriter writer)
+    {
+        writer.WriteInt(Level);
+        writer.WriteLong(Experience);
+    }
+
+    public override void ReadState(CanonicalReader reader)
+    {
+        Level = reader.ReadInt();
+        Experience = reader.ReadLong();
+    }
+}
+
+/// <summary>
+/// Retail horde BannerCarriersAllowed + BannerCarrierMinLevel: when the horde's
+/// ExperienceLevel reaches MinLevel (default 2), spawn the first allowed banner
+/// object at the authored exact fixed-point Pos X/Y offset. If that object
+/// dies, the horde is destroyed only when retail authored the corresponding
+/// HordeContain flag. Replacement is likewise enabled only when the banner's
+/// retail BannerCarrierUpdate authored a respawn timer.
+/// Design: MinLevel (default 2), OffsetXRaw, OffsetYRaw,
+/// DestroyHordeOnBannerDeath, optional RespawnTicks, string BannerTemplate.
+/// </summary>
+public sealed class BannerCarrierModule : ModuleBase
+{
+    public const string TypeName = "BannerCarrier";
+
+    private readonly int _minLevel;
+    private readonly Fixed64 _offsetX;
+    private readonly Fixed64 _offsetY;
+    private readonly string _bannerTemplate;
+    private readonly bool _destroyHordeOnBannerDeath;
+    private readonly bool _hasAuthoredRespawn;
+    private readonly int _respawnTicks;
+    private bool _spawned;
+    private int _bannerObjectId;
+    private int _respawnTicksRemaining = -1;
+
+    public BannerCarrierModule(ModuleSpec spec) : base(spec)
+    {
+        _minLevel = (int)Math.Max(0, spec.GetLong("MinLevel", 2));
+        // The loader converts authored decimal JSON directly to Q32.32. Do not
+        // quantize through invented milli-units: source coordinates are not
+        // contractually limited to three decimal places.
+        _offsetX = Fixed64.FromRaw(spec.GetLong("OffsetXRaw", 0));
+        _offsetY = Fixed64.FromRaw(spec.GetLong("OffsetYRaw", 0));
+        _bannerTemplate = spec.GetString("BannerTemplate", "");
+        _destroyHordeOnBannerDeath = spec.GetLong("DestroyHordeOnBannerDeath", 0) != 0;
+        _hasAuthoredRespawn = spec.Data.ContainsKey("RespawnTicks");
+        _respawnTicks = (int)Math.Clamp(spec.GetLong("RespawnTicks", 0), 0, int.MaxValue);
+        if (string.IsNullOrEmpty(_bannerTemplate))
+        {
+            throw new ArgumentException("BannerCarrier requires BannerTemplate string data");
+        }
+    }
+
+    public bool HasSpawned => _spawned;
+    public int BannerObjectId => _bannerObjectId;
+    public bool HasLivingBanner => _bannerObjectId != 0;
+    public int RespawnTicksRemaining => _respawnTicksRemaining;
+
+    public override void OnUpdate(SimWorld world, GameObject self)
+    {
+        if (self.IsDead || self.IsDying)
+        {
+            return;
+        }
+        if (_bannerObjectId != 0)
+        {
+            if (world.Objects.TryGetValue(_bannerObjectId, out var existing)
+                && !existing.IsDead && !existing.IsDying)
+            {
+                return;
+            }
+            _bannerObjectId = 0;
+            if (_destroyHordeOnBannerDeath)
+            {
+                world.HandleDeath(self);
+                return;
+            }
+            if (!_hasAuthoredRespawn)
+            {
+                return;
+            }
+            _respawnTicksRemaining = _respawnTicks;
+        }
+        if (_spawned)
+        {
+            if (!_hasAuthoredRespawn || _respawnTicksRemaining < 0)
+            {
+                return;
+            }
+            if (_respawnTicksRemaining > 0)
+            {
+                _respawnTicksRemaining--;
+                if (_respawnTicksRemaining > 0)
+                {
+                    return;
+                }
+            }
+        }
+        var level = self.FindModule<ExperienceLevelModule>()?.Level ?? 1;
+        if (level < _minLevel)
+        {
+            return;
+        }
+        var position = new FixedVector2(
+            self.Position.X + _offsetX,
+            self.Position.Y + _offsetY);
+        var banner = world.SpawnObject(_bannerTemplate, self.Team, position);
+        _bannerObjectId = banner.Id;
+        _spawned = true;
+        _respawnTicksRemaining = -1;
+    }
+
+    public override void WriteState(CanonicalWriter writer)
+    {
+        writer.WriteBool(_spawned);
+        writer.WriteInt(_bannerObjectId);
+        writer.WriteInt(_respawnTicksRemaining);
+    }
+
+    public override void ReadState(CanonicalReader reader)
+    {
+        _spawned = reader.ReadBool();
+        _bannerObjectId = reader.ReadInt();
+        _respawnTicksRemaining = reader.ReadInt();
+    }
+}
+
+/// <summary>
+/// CastleBehavior-shaped fortress unpack: on first update, spawn engine
+/// every BSE piece at its authored offset and relative angle. Design string
+/// keys PieceTemplate:N and exact Q32.32 OffsetXRaw:N / OffsetYRaw:N /
+/// OffsetZRaw:N / AngleRadiansRaw:N. Legacy CitadelTemplate/PadTemplate keys
+/// remain readable for old fixtures, but retail contracts use PieceTemplate.
+/// </summary>
+public sealed class CastleBehaviorModule : ModuleBase
+{
+    public const string TypeName = "CastleBehavior";
+
+    private readonly List<(
+        string Template,
+        Fixed64 Ox,
+        Fixed64 Oy,
+        Fixed64 Oz,
+        Fixed64 Angle)> _pieces = new();
+    private bool _unpacked;
+
+    public CastleBehaviorModule(ModuleSpec spec) : base(spec)
+    {
+        var authoredCount = spec.GetLong("PieceCount", -1);
+        if (authoredCount > 64)
+        {
+            throw new ArgumentException("CastleBehavior PieceCount exceeds 64");
+        }
+        var limit = authoredCount >= 0 ? (int)authoredCount : 64;
+        for (var i = 0; i < limit; i++)
+        {
+            var template = spec.GetString($"PieceTemplate:{i}", "");
+            if (string.IsNullOrEmpty(template))
+            {
+                template = spec.GetString($"PadTemplate:{i}", "");
+            }
+            if (string.IsNullOrEmpty(template))
+            {
+                if (authoredCount >= 0)
+                {
+                    throw new ArgumentException(
+                        $"CastleBehavior piece {i} is missing its template");
+                }
+                continue;
+            }
+            var ox = Fixed64.FromRaw(spec.GetLong($"OffsetXRaw:{i}", 0));
+            var oy = Fixed64.FromRaw(spec.GetLong($"OffsetYRaw:{i}", 0));
+            var oz = Fixed64.FromRaw(spec.GetLong($"OffsetZRaw:{i}", 0));
+            var angle = Fixed64.FromRaw(spec.GetLong($"AngleRadiansRaw:{i}", 0));
+            _pieces.Add((template, ox, oy, oz, angle));
+        }
+        var legacyCitadel = spec.GetString("CitadelTemplate", "");
+        if (!string.IsNullOrEmpty(legacyCitadel))
+        {
+            _pieces.Add((legacyCitadel, Fixed64.Zero, Fixed64.Zero,
+                Fixed64.Zero, Fixed64.Zero));
+        }
+        if (_pieces.Count == 0)
+        {
+            throw new ArgumentException("CastleBehavior requires at least one BSE piece");
+        }
+    }
+
+    public bool HasUnpacked => _unpacked;
+
+    public override void OnUpdate(SimWorld world, GameObject self)
+    {
+        if (_unpacked || self.IsDead || self.IsDying)
+        {
+            return;
+        }
+        foreach (var (template, ox, oy, oz, angle) in _pieces)
+        {
+            var position = new FixedVector2(
+                self.Position.X + ox,
+                self.Position.Y + oy);
+            world.SpawnObject(
+                template,
+                self.Team,
+                position,
+                self.Elevation + oz,
+                self.HeadingRadians + angle);
+        }
+        _unpacked = true;
+    }
+
+    public override void WriteState(CanonicalWriter writer)
+    {
+        writer.WriteBool(_unpacked);
+    }
+
+    public override void ReadState(CanonicalReader reader)
+    {
+        _unpacked = reader.ReadBool();
+    }
+}

@@ -32,6 +32,31 @@ HLOD_LOD_ARRAY_HEADER = 0x00000703
 HLOD_SUB_OBJECT = 0x00000704
 VERTICES_2 = 0x00000C00
 NORMALS_2 = 0x00000C01
+VERTEX_MATERIALS = 0x0000002A
+VERTEX_MATERIAL = 0x0000002B
+VERTEX_MATERIAL_NAME = 0x0000002C
+VERTEX_MATERIAL_INFO = 0x0000002D
+VERTEX_MAPPER_ARGS0 = 0x0000002E
+VERTEX_MAPPER_ARGS1 = 0x0000002F
+
+# Byte-for-byte from retail RotWK art/w3d/gu/guarcher_skn.w3d (the model behind
+# GondorArcherHorde). Its VERTEX_MAPPER_ARGS0 header is raw size 0x800000AF:
+# a 175-byte NUL-terminated argument string that nonetheless carries the
+# 0x80000000 "has sub-chunks" bit. Its ARGS1 sibling holds the same shape of
+# payload without the bit. Descending into the string reads "FPS=" as chunk id
+# 0x3D535046 and the parse aborts.
+RETAIL_MAPPER_ARGS0_PAYLOAD = (
+    b"FPS=15.0;Theframespersecond\r\n"
+    b"Log2Width=2;So0=width1\r\n1=width2\r\n2=width4."
+    b"Thedefaultmeansanimateusingatexturedividedupintoquarters.\r\n"
+    b"Last=;GridWidth*GridWidth;Thelastframetouse\x00"
+)
+RETAIL_MAPPER_ARGS1_PAYLOAD = (
+    b"FPS=30.0;Theframespersecond\r\n"
+    b"Log2Width=2;So0=width1\r\n1=width2\r\n2=width4."
+    b"Thedefaultmeansanimateusingatexturedividedupintoquarters.\r\n"
+    b"Last=GridWidth*GridWidth;Thelastframetouse\x00"
+)
 
 
 def _fixed(value: str, size: int) -> bytes:
@@ -148,6 +173,7 @@ def _target_mesh(
     include_normals_2: bool = True,
     duplicate_vertices_2: bool = False,
     attributes: int = 0x00020000,
+    extra_children: bytes = b"",
 ) -> bytes:
     vertex_count = len(primary_vertices)
 
@@ -175,7 +201,26 @@ def _target_mesh(
             _chunk(0x00000022, b"\x00" * (vertex_count * 4)),
         )
     )
-    return _chunk(MESH, b"".join(children), container=True)
+    return _chunk(MESH, b"".join(children) + extra_children, container=True)
+
+
+def _retail_vertex_materials() -> bytes:
+    """Reproduce the retail VERTEX_MATERIALS subtree of guarcher_skn.w3d."""
+
+    material = _chunk(
+        VERTEX_MATERIAL,
+        b"".join(
+            (
+                _chunk(VERTEX_MATERIAL_NAME, b"Material #25\x00"),
+                _chunk(VERTEX_MATERIAL_INFO, b"\x00" * 32),
+                # Retail sets the container bit on this string leaf.
+                _chunk(VERTEX_MAPPER_ARGS0, RETAIL_MAPPER_ARGS0_PAYLOAD, container=True),
+                _chunk(VERTEX_MAPPER_ARGS1, RETAIL_MAPPER_ARGS1_PAYLOAD),
+            )
+        ),
+        container=True,
+    )
+    return _chunk(VERTEX_MATERIALS, material, container=True)
 
 
 def _plain_mesh() -> bytes:
@@ -326,6 +371,36 @@ class W3DSecondarySkinSuccessTests(unittest.TestCase):
             item for item in before_children if item[0] not in {VERTICES_2, NORMALS_2}
         ]
         self.assertEqual(_mesh_child_bytes(output, 1), retained_before)
+
+    def test_retail_mapper_args_string_leaf_is_not_walked_as_a_container(
+        self,
+    ) -> None:
+        # Regression: RotWK guarcher_skn.w3d (GondorArcherHorde) authors
+        # VERTEX_MAPPER_ARGS0 as a NUL-terminated string with the 0x80000000
+        # "has sub-chunks" bit set. Recursing into it read the literal "FPS="
+        # as chunk 0x3D535046 and failed the whole secondary-skin proof, which
+        # dropped the unit from the men pack.
+        model = _model(_target_mesh(extra_children=_retail_vertex_materials()))
+        hierarchy = _hierarchy()
+
+        result = strip_proven_redundant_secondary_skin_streams(model, hierarchy)
+        output = result.model_bytes()
+
+        # Both mapper-arg chunks survive verbatim, header bits included.
+        self.assertIn(
+            _chunk(VERTEX_MAPPER_ARGS0, RETAIL_MAPPER_ARGS0_PAYLOAD, container=True),
+            output,
+        )
+        self.assertIn(
+            _chunk(VERTEX_MAPPER_ARGS1, RETAIL_MAPPER_ARGS1_PAYLOAD), output
+        )
+        # ...and the secondary streams were still found and removed.
+        self.assertEqual(result.proof.transformed_mesh_count, 1)
+        self.assertEqual(result.proof.removed_chunk_count, 2)
+        kinds = [kind for kind, _ in _mesh_child_bytes(output, 1)]
+        self.assertNotIn(VERTICES_2, kinds)
+        self.assertNotIn(NORMALS_2, kinds)
+        self.assertIn(VERTEX_MATERIALS, kinds)
 
     def test_output_and_payload_free_proof_are_deterministic_and_immutable(
         self,

@@ -225,6 +225,52 @@ def test_asset_only_glb_cannot_claim_geometry(tmp_path: Path) -> None:
         validate_w3d_glb_semantics(output, {"meshes": 1, "vertices": 3, "triangles": 1})
 
 
+def test_explicit_zero_geometry_contract_accepts_pivot_only_hierarchy(
+    tmp_path: Path,
+) -> None:
+    inverse_bind = struct.pack("<16f", *([1.0] * 16))
+    document: dict[str, object] = {
+        "asset": {"version": "2.0"},
+        "buffers": [{"byteLength": len(inverse_bind)}],
+        "bufferViews": [{"buffer": 0, "byteLength": len(inverse_bind)}],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 1, "type": "MAT4"}
+        ],
+        "nodes": [{}, {"children": [0]}],
+        "skins": [{"joints": [0], "inverseBindMatrices": 0}],
+        "scenes": [{"nodes": [1]}],
+        "scene": 0,
+    }
+
+    summary = _validate(
+        tmp_path,
+        document,
+        inverse_bind,
+        {
+            "mesh_count": 0,
+            "vertex_count": 0,
+            "triangle_count": 0,
+            "skin_count": 1,
+            "joint_count": 1,
+            "animation_count": 0,
+        },
+    )
+
+    assert summary.mesh_count == 0
+    assert summary.skin_count == 1
+    assert summary.joint_count == 1
+
+
+def test_partial_zero_geometry_contract_still_rejects_asset_only_glb(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "asset-only.glb"
+    output.write_bytes(_glb({"asset": {"version": "2.0"}}, None))
+
+    with pytest.raises(W3DGLBValidationError, match="renderable TRIANGLES"):
+        validate_w3d_glb_semantics(output, {"mesh_count": 0})
+
+
 def test_rejects_malformed_container_length(tmp_path: Path) -> None:
     document, payload = _valid_document_and_bin()
     malformed = bytearray(_glb(document, payload))

@@ -1505,3 +1505,27 @@ def test_recipe_without_ui_binding_request_stays_legacy_shaped() -> None:
     assert "imageBindings" not in recipe
     assert "imageBindingMetadata" not in recipe
     assert "imageBindingGaps" not in recipe
+
+def test_resource_ids_distinguish_bib_and_body_when_stems_match() -> None:
+    """Bib and body may share a retail W3D stem; resource ids must still be unique.
+
+    Map prop lifecycle fallback previously rejected trees whose bib and intact
+    model shared a stem because both resources were keyed only on that stem.
+    """
+
+    recipe = compile_structure_visual_recipe(_TARGET, _closure())
+    identifiers = [str(row["id"]) for row in recipe["resources"]]
+    assert len({item.casefold() for item in identifiers}) == len(identifiers)
+    model_ids = {
+        str(row["id"])
+        for row in recipe["resources"]
+        if row.get("kind") == "model"
+    }
+    bib_ids = {str(row["resourceId"]) for row in recipe["bibStates"]}
+    body_ids = {str(row["resourceId"]) for row in recipe["lifecycleStates"]}
+    assert bib_ids
+    assert body_ids
+    assert bib_ids.isdisjoint(body_ids)
+    assert model_ids == bib_ids | body_ids
+    for bib_id in bib_ids:
+        assert "-bib-" in bib_id

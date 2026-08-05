@@ -1376,6 +1376,7 @@ class W3DBatchRunnerTests(unittest.TestCase):
             "scene-validation",
             "animation-import",
             "post-animation-validation",
+            "animation-sidecar-mesh-strip",
             "attachment-restoration",
             "render-revalidation",
             "animation-export-preparation",

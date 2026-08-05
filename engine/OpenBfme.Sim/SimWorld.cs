@@ -66,7 +66,12 @@ public sealed class SimWorld
 
     public void AddTeamResources(int team, long amount) => _teamResources[ValidateTeam(team)] += amount;
 
-    public GameObject SpawnObject(string templateName, int team, FixedVector2 position)
+    public GameObject SpawnObject(
+        string templateName,
+        int team,
+        FixedVector2 position,
+        Fixed64 elevation = default,
+        Fixed64 headingRadians = default)
     {
         ValidateTeam(team);
         if (!_config.Templates.TryGetValue(templateName, out var template))
@@ -85,7 +90,8 @@ public sealed class SimWorld
                 _moduleGaps[spec.TypeName] = _moduleGaps.TryGetValue(spec.TypeName, out var count) ? count + 1 : 1;
             }
         }
-        var gameObject = new GameObject(_nextObjectId++, templateName, team, position, modules);
+        var gameObject = new GameObject(
+            _nextObjectId++, templateName, team, position, modules, elevation, headingRadians);
         if (_inUpdateSweep)
         {
             // Spawns requested by modules mid-sweep (production, death rubble)
@@ -433,6 +439,8 @@ public sealed class SimWorld
         var templateName = reader.ReadString();
         var team = reader.ReadInt();
         var position = reader.ReadVector();
+        var elevation = Fixed64.FromRaw(reader.ReadLong());
+        var headingRadians = Fixed64.FromRaw(reader.ReadLong());
         var isDead = reader.ReadBool();
         var isDying = reader.ReadBool();
         var isUnderConstruction = reader.ReadBool();
@@ -452,7 +460,8 @@ public sealed class SimWorld
                 _moduleGaps[spec.TypeName] = _moduleGaps.TryGetValue(spec.TypeName, out var count) ? count + 1 : 1;
             }
         }
-        var gameObject = new GameObject(id, templateName, team, position, modules);
+        var gameObject = new GameObject(
+            id, templateName, team, position, modules, elevation, headingRadians);
         foreach (var module in modules)
         {
             module.ReadState(reader);

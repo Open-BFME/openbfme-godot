@@ -25,6 +25,7 @@ import struct
 from typing import Iterable
 
 from .w3d_metadata import W3DMetadata, scan_w3d_metadata
+from .w3d_string_leaves import is_w3d_string_leaf
 
 
 NO_MOTION_SCHEMA = "openbfme.w3d-no-motion-proof"
@@ -97,6 +98,9 @@ _KNOWN_CONTAINERS = frozenset(
         0x00000900,
     }
 )
+
+# String-leaf handling (the retail 0x80000000 flag is meaningless on them) lives
+# in ``w3d_string_leaves`` so every W3D walker shares one definition.
 
 
 class W3DNoMotionError(ValueError):
@@ -428,7 +432,9 @@ def _parse_region(
         if chunk_end > end:
             raise W3DNoMotionError(f"W3D chunk 0x{kind:08X} exceeds its owner boundary")
         flagged = bool(raw_size & _CONTAINER_FLAG)
-        is_container = flagged or kind in _KNOWN_CONTAINERS
+        is_container = (
+            flagged or kind in _KNOWN_CONTAINERS
+        ) and not is_w3d_string_leaf(kind)
         counter[0] += 1
         children = (
             _parse_region(

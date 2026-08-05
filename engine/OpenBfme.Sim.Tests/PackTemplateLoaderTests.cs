@@ -38,6 +38,82 @@ public class PackTemplateLoaderTests
         }
         """;
 
+    private const string BannerRow = """
+        {
+          "id": "test.object.fighter-banner",
+          "sourceTypeName": "RetailFighterBanner",
+          "kind": "member",
+          "simulation": { "health": 80, "speed": 50 },
+          "gameplay": {
+            "bannerCarrierUpdate": {
+              "diedRespawnTime": { "milliseconds": 10000, "sourceIni": "banner.ini", "line": 10 },
+              "meleeFreeBannerRespawnTime": { "milliseconds": 20000, "sourceIni": "banner.ini", "line": 11 }
+            }
+          }
+        }
+        """;
+
+    private const string RankedBannerBattalionRow = """
+        {
+          "id": "test.object.ranked-horde",
+          "sourceTypeName": "RetailRankedHorde",
+          "kind": "battalion",
+          "memberCount": 15,
+          "gameplay": {
+            "bannerCarrier": {
+              "allowedObjectIds": ["RetailFighterBanner"],
+              "positions": [{ "unitType": "RetailFighter", "x": 70.125, "y": -0.25 }],
+              "minLevel": 2,
+              "minLevelDefaulted": true,
+              "destroyHordeOnBannerDeath": false
+            }
+          },
+          "experience": {
+            "status": "compiled",
+            "initialRank": 1,
+            "maxLevel": 3,
+            "levels": [
+              { "rank": 1, "requiredExperience": 1 },
+              { "rank": 2, "requiredExperience": 50 },
+              { "rank": 3, "requiredExperience": 100 }
+            ]
+          }
+        }
+        """;
+
+    private const string CastlePieceRow = """
+        {
+          "id": "test.object.retail-pad",
+          "sourceTypeName": "RetailPad",
+          "kind": "structure",
+          "simulation": { "health": 500 }
+        }
+        """;
+
+    private const string FortressRow = """
+        {
+          "id": "test.object.fortress",
+          "kind": "structure",
+          "simulation": { "health": 5000 },
+          "gameplay": {
+            "castleBehavior": {
+              "faction": "Dwarves",
+              "castleTemplateToken": "Fortress_Dwarven",
+              "pieces": [{
+                "index": 0,
+                "objectId": "RetailPad",
+                "offset": [94.800048828125, -61.75, 0.5],
+                "offsetRawQ32": [407163109376, -265214230528, 2147483648],
+                "angleRadians": 0.7853981852531433,
+                "angleRadiansRawQ32": 3373259520,
+                "priority": 40,
+                "phase": 1
+              }]
+            }
+          }
+        }
+        """;
+
     [Fact]
     public void UnitRowMapsToActiveBodyAndMover()
     {
@@ -71,6 +147,65 @@ public class PackTemplateLoaderTests
     }
 
     [Fact]
+    public void RetailCastlePiecesMapExactTransformAndExecuteInSimulation()
+    {
+        var result = PackTemplateLoader.LoadFromObjectsDocument(
+            Document(FortressRow, CastlePieceRow));
+
+        Assert.Empty(result.Report.SkippedRows);
+        var fortressTemplate = result.Templates.Single(
+            template => template.Name == "test.object.fortress");
+        var castleSpec = Assert.Single(
+            fortressTemplate.Modules,
+            module => module.TypeName == CastleBehaviorModule.TypeName);
+        Assert.Equal(1, castleSpec.GetLong("PieceCount", -1));
+        Assert.Equal("test.object.retail-pad", castleSpec.GetString("PieceTemplate:0", ""));
+        Assert.Equal(
+            Fixed64.FromFraction(6212816, 65536).Raw,
+            castleSpec.GetLong("OffsetXRaw:0", 0));
+        Assert.Equal(
+            Fixed64.FromFraction(-247, 4).Raw,
+            castleSpec.GetLong("OffsetYRaw:0", 0));
+        Assert.Equal(
+            Fixed64.FromFraction(1, 2).Raw,
+            castleSpec.GetLong("OffsetZRaw:0", 0));
+        Assert.Equal(
+            3373259520,
+            castleSpec.GetLong("AngleRadiansRaw:0", 0));
+
+        var world = new SimWorld(
+            new SimConfig(result.Templates, 19, 2), ModuleRegistry.CreateDefault());
+        world.SpawnObject(
+            fortressTemplate.Name,
+            0,
+            FixedVector2.Zero,
+            Fixed64.FromInt(2),
+            Fixed64.FromFraction(1, 8));
+        world.Tick();
+        var pad = Assert.Single(
+            world.Objects.Values,
+            value => value.TemplateName == "test.object.retail-pad");
+        Assert.Equal(Fixed64.FromFraction(6212816, 65536), pad.Position.X);
+        Assert.Equal(Fixed64.FromFraction(-247, 4), pad.Position.Y);
+        Assert.Equal(Fixed64.FromFraction(5, 2), pad.Elevation);
+        Assert.Equal(
+            Fixed64.FromFraction(1, 8)
+                + Fixed64.FromRaw(3373259520),
+            pad.HeadingRadians);
+    }
+
+    [Fact]
+    public void RetailCastleMissingPieceTargetSkipsFortressFailClosed()
+    {
+        var result = PackTemplateLoader.LoadFromObjectsDocument(Document(FortressRow));
+
+        Assert.Empty(result.Templates);
+        var skipped = Assert.Single(result.Report.SkippedRows);
+        Assert.Equal(RowSkipReason.InvalidGameplayField, skipped.Reason);
+        Assert.Contains("target", skipped.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BattalionRowMapsMemberCountAndCommandPoints()
     {
         var result = PackTemplateLoader.LoadFromObjectsDocument(Document(BattalionRow));
@@ -83,6 +218,78 @@ public class PackTemplateLoaderTests
         Assert.Equal("test.object.fighter", body.GetString("MemberObjectId", ""));
         // No health field -> module default, spelled out in the report.
         Assert.Contains(result.Report.Notes, note => note.StartsWith("test.object.fighter-horde:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GameplayBannerAndExperienceMapToExecutableModuleSpecs()
+    {
+        var result = PackTemplateLoader.LoadFromObjectsDocument(
+            Document(RankedBannerBattalionRow, BannerRow));
+
+        Assert.Equal(2, result.Templates.Count);
+        var horde = result.Templates.Single(template => template.Name == "test.object.ranked-horde");
+        var experience = Assert.Single(horde.Modules, module => module.TypeName == ExperienceLevelModule.TypeName);
+        Assert.Equal(3, experience.GetLong("LevelCap", -1));
+        Assert.Equal(1, experience.GetLong("InitialLevel", -1));
+        Assert.Equal(50, experience.GetLong("RequiredExperience:2", -1));
+
+        var banner = Assert.Single(horde.Modules, module => module.TypeName == BannerCarrierModule.TypeName);
+        Assert.Equal("test.object.fighter-banner", banner.GetString("BannerTemplate", ""));
+        Assert.Equal(2, banner.GetLong("MinLevel", -1));
+        Assert.Equal(Fixed64.FromFraction(561, 8).Raw, banner.GetLong("OffsetXRaw", 0));
+        Assert.Equal(Fixed64.FromFraction(-1, 4).Raw, banner.GetLong("OffsetYRaw", 0));
+        Assert.Equal(0, banner.GetLong("DestroyHordeOnBannerDeath", -1));
+        Assert.Equal(600, banner.GetLong("RespawnTicks", -1));
+        Assert.Empty(result.Report.SkippedRows);
+
+        var world = new SimWorld(new SimConfig(result.Templates, 17, 2), ModuleRegistry.CreateDefault());
+        var objectInstance = world.SpawnObject(horde.Name, 0, FixedVector2.Zero);
+        objectInstance.FindModule<ExperienceLevelModule>()!.GrantExperience(50);
+        world.Tick();
+        var spawned = Assert.Single(world.Objects.Values, value => value.TemplateName == "test.object.fighter-banner");
+        Assert.Equal(Fixed64.FromFraction(561, 8), spawned.Position.X);
+        Assert.Equal(Fixed64.FromFraction(-1, 4), spawned.Position.Y);
+    }
+
+    [Fact]
+    public void BannerTargetMissingFromPackSkipsHordeFailClosed()
+    {
+        var result = PackTemplateLoader.LoadFromObjectsDocument(Document(RankedBannerBattalionRow));
+
+        Assert.Empty(result.Templates);
+        var skipped = Assert.Single(result.Report.SkippedRows);
+        Assert.Equal(RowSkipReason.InvalidGameplayField, skipped.Reason);
+        Assert.Contains("target", skipped.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DestroyHordeFlagMapsOnlyFromAuthoredBoolean()
+    {
+        var authoredDestroy = RankedBannerBattalionRow.Replace(
+            "\"destroyHordeOnBannerDeath\": false",
+            "\"destroyHordeOnBannerDeath\": true",
+            StringComparison.Ordinal);
+        var result = PackTemplateLoader.LoadFromObjectsDocument(Document(authoredDestroy, BannerRow));
+
+        var horde = result.Templates.Single(template => template.Name == "test.object.ranked-horde");
+        var banner = Assert.Single(horde.Modules, module => module.TypeName == BannerCarrierModule.TypeName);
+        Assert.Equal(1, banner.GetLong("DestroyHordeOnBannerDeath", 0));
+    }
+
+    [Fact]
+    public void MalformedAuthoredBannerRespawnSkipsBannerAndDependentHordeFailClosed()
+    {
+        var malformedBanner = BannerRow.Replace(
+            "\"milliseconds\": 10000",
+            "\"milliseconds\": \"ten seconds\"",
+            StringComparison.Ordinal);
+        var result = PackTemplateLoader.LoadFromObjectsDocument(
+            Document(RankedBannerBattalionRow, malformedBanner));
+
+        Assert.Empty(result.Templates);
+        Assert.Equal(2, result.Report.SkippedRows.Count);
+        Assert.All(result.Report.SkippedRows,
+            skipped => Assert.Equal(RowSkipReason.InvalidGameplayField, skipped.Reason));
     }
 
     [Fact]

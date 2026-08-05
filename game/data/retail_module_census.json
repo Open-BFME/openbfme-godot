@@ -29,12 +29,15 @@
 			"m3_pack_expansion",
 			"pipeline"
 		],
-		"consumerFileCount": 57,
+		"consumerFileCount": 64,
 		"consumerFiles": [
 			"armor_compiler",
 			"big",
 			"bootstrap",
+			"castle_behavior",
 			"catalog",
+			"effective_assets_catalog",
+			"effective_assets_identity",
 			"faction_census",
 			"faction_import",
 			"faction_object_cache",
@@ -44,6 +47,7 @@
 			"m3_pack_expansion",
 			"mapped_image",
 			"module_contracts",
+			"pack_recipe_catalog_identity",
 			"paths",
 			"pipeline",
 			"playable_structure_compiler",
@@ -54,6 +58,7 @@
 			"playable_unit_pack_compiler",
 			"profile",
 			"progress",
+			"publish_gate",
 			"retail_ability_fx_ingress",
 			"retail_building_lifecycle",
 			"retail_hud_apt_convert",
@@ -84,10 +89,12 @@
 			"util",
 			"version",
 			"visual_leaf",
+			"w3d_glb_validation",
 			"w3d_index",
 			"w3d_metadata",
 			"w3d_no_motion",
-			"w3d_secondary_skin"
+			"w3d_secondary_skin",
+			"w3d_string_leaves"
 		]
 	},
 	"members": [
@@ -335,7 +342,8 @@
 			"classificationNote": "death-event runtime behaviour",
 			"status": "consumed",
 			"consumedBy": [
-				"playable_unit_compiler.py"
+				"playable_unit_compiler.py",
+				"spellbook_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -404,6 +412,7 @@
 			"classificationNote": "visual sub-object/model-condition toggle per upgrade",
 			"status": "consumed",
 			"consumedBy": [
+				"armor_compiler.py",
 				"playable_structure_compiler.py"
 			],
 			"refusedBy": [],
@@ -679,7 +688,8 @@
 			"classificationNote": "death-event runtime behaviour",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"spellbook_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -1731,6 +1741,8 @@
 			"classificationNote": "structure lifecycle runtime (build/collapse/rebuild/topple)",
 			"status": "consumed",
 			"consumedBy": [
+				"castle_behavior.py",
+				"faction_import.py",
 				"retail_building_lifecycle.py"
 			],
 			"refusedBy": [],
@@ -2185,7 +2197,8 @@
 			"classificationNote": "spawn/slave runtime system",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],
@@ -2743,6 +2756,7 @@
 			"classificationNote": "upgrade trigger with world side effects at runtime",
 			"status": "consumed",
 			"consumedBy": [
+				"castle_behavior.py",
 				"module_contracts.py"
 			],
 			"refusedBy": [],
@@ -3403,7 +3417,8 @@
 			"classificationNote": "container/garrison/transport runtime system",
 			"status": "consumed",
 			"consumedBy": [
-				"module_contracts.py"
+				"module_contracts.py",
+				"playable_unit_compiler.py"
 			],
 			"refusedBy": [],
 			"refusalReasons": [],

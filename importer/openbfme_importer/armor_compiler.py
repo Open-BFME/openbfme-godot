@@ -21,6 +21,7 @@ import re
 import threading
 
 from .playable_unit_compiler import (
+    PlayableUnitCompilerError,
     _base_weapon_damage,
     _default_set_block,
     _digest,
@@ -28,6 +29,7 @@ from .playable_unit_compiler import (
     _named_definition_values,
     _resolved_definition_field,
     _resolved_multiplicative_expression,
+    _resolve_integer_expression,
     _tokens,
     _weapon_damage_nuggets,
 )
@@ -97,9 +99,7 @@ def _armor_row_types(game: str) -> frozenset[str]:
 
     types = _ARMOR_ROW_TYPES_BY_GAME.get(game.casefold().strip())
     if types is None:
-        raise ArmorCompilerError(
-            f"armor compilation does not support game: {game!r}"
-        )
+        raise ArmorCompilerError(f"armor compilation does not support game: {game!r}")
     return types
 
 
@@ -109,6 +109,20 @@ def _percent(token: str, *, context: str) -> float:
         raise ArmorCompilerError(f"{context} is not a percentage: {token!r}")
     try:
         value = float(text[:-1])
+    except ValueError as exc:
+        raise ArmorCompilerError(f"{context} is not a percentage: {token!r}") from exc
+    if value < 0.0:
+        raise ArmorCompilerError(f"{context} is a negative percentage: {token!r}")
+    return value
+
+
+def _armor_percent(token: str, *, context: str) -> float:
+    """Parse retail Armor rows, including RotWK's bare percent magnitudes."""
+    text = token.strip()
+    if text.endswith("%"):
+        return _percent(text, context=context)
+    try:
+        value = float(text)
     except ValueError as exc:
         raise ArmorCompilerError(f"{context} is not a percentage: {token!r}") from exc
     if value < 0.0:
@@ -163,9 +177,7 @@ def compile_armor_table(
                 f"armor set '{set_id}' references unknown damage type "
                 f"'{parts[0]}' at {row.get('sourceIni')}:{row.get('line')}"
             )
-        percent = _percent(
-            parts[1], context=f"armor set '{set_id}' row {damage_type}"
-        )
+        percent = _armor_percent(parts[1], context=f"armor set '{set_id}' row {damage_type}")
         key = damage_type.casefold()
         entry = {
             "percent": percent,
@@ -261,6 +273,39 @@ def _armor_set_blocks(lineage: Sequence[SageObject]):
     return base, upgraded
 
 
+# ArmorSet Conditions tokens that name an engine object *state*, not an
+# upgrade flag. SAGE swaps to these sets on the state alone; there is no
+# ArmorUpgrade behavior to bind them to, so an ArmorSet carrying one that no
+# ArmorUpgrade already claimed is kept as a conditional set instead of being
+# dropped as an unmatched upgrade set.
+#
+# A set that mixes MOUNTED with PLAYER_UPGRADE* takes that same branch -- it is
+# NOT kept upgrade-gated here. It only remains an upgrade when an ArmorUpgrade
+# behavior bound it earlier (``used_sets``); otherwise it becomes a conditional
+# set whose ``conditions`` still carry the upgrade tokens verbatim while
+# ``stateConditions`` names only the state, leaving the runtime to re-gate.
+# RohanBanner authors no ArmorUpgrade at all, so all three of its mixed sets
+# (object/goodfaction/units/men/rohanbanner.ini:687, :692 and :697) compile to
+# conditional sets, while its plain PLAYER_UPGRADE foot set (:671-675) is the
+# one that stays excluded.
+#
+# Census of the RotWK layered oracle (data/ini), 2062 ArmorSet blocks: MOUNTED
+# appears on 18 of them -- 14 on MOUNTED alone (e.g.
+# object/goodfaction/units/men/theoden.ini:692-696 -> HeroArmorMounted), 3
+# alongside an upgrade flag (the rohanbanner.ini sets above: MOUNTED
+# PLAYER_UPGRADE, MOUNTED PLAYER_UPGRADE_2, and MOUNTED PLAYER_UPGRADE_2
+# PLAYER_UPGRADE) and 1 alongside a hero-class flag
+# (object/createahero/createaheroarmorupgrades.inc:36 -- CREATE_A_HERO_01
+# MOUNTED). MOUNTED is not the only non-upgrade token in the oracle:
+# CREATE_A_HERO_01..07 (8 sets), AS_TOWER (2, e.g.
+# object/civilian/gondorbuildings.ini:1823) and ALTERNATE_FORMATION (1,
+# object/cinematic/cinematicobjects.ini:21434) also occur. They are held out of
+# this set deliberately -- no compiled faction object has produced one on an
+# unmatched set, and admitting a token without that evidence would silently
+# promote an upgrade-gated set to always-on.
+_STATE_CONDITIONS = frozenset({"mounted"})
+
+
 def _armor_row(block) -> object:
     rows = [row for row in block.assignments if row.key.casefold() == "armor"]
     if len(rows) != 1:
@@ -315,6 +360,7 @@ def compile_armor_contract(
             ),
             "upgrades": [],
             "excludedUpgradeSets": [],
+            "conditionalSets": [],
         }
     resolved_base = _armor_row(base)
     if resolved_base is None:
@@ -339,11 +385,16 @@ def compile_armor_contract(
             }
         ),
         "upgrades": [],
+        "danglingUpgrades": [],
         "excludedUpgradeSets": [],
+        "conditionalSets": [],
     }
     _, upgraded_sets = _armor_set_blocks(base_lineage)
     used_sets: set[int] = set()
     upgrades: list[dict[str, object]] = []
+    # Authored ArmorUpgrades whose flag no ArmorSet declares: inert in the
+    # engine, so recorded rather than raised. See the block below.
+    dangling: list[dict[str, object]] = []
     for lineage in lineages:
         for behavior in _behavior_blocks(lineage, "ArmorUpgrade"):
             trigger = _behavior_assignment(behavior, "TriggeredBy")
@@ -371,11 +422,50 @@ def compile_armor_contract(
                     match = (index, block)
                     break
             if match is None:
-                raise ArmorCompilerError(
-                    f"ArmorUpgrade '{upgrade_id}' at "
-                    f"{behavior.source_virtual_path}:{behavior.line} has no "
-                    f"ArmorSet gated by '{flag}'"
+                # A dangling ArmorUpgrade is an engine NO-OP, not a
+                # contradiction, so it must not fail the object.
+                #
+                # `ArmorUpgrade` only sets a bit; armor selection then picks the
+                # best-fitting declared ArmorSet for the active flags. With no
+                # set declaring this flag the base `Conditions = None` set keeps
+                # winning and the armor never changes. (SAGE shared core:
+                # ActiveBody.SetArmorSetFlag / ValidateArmorAndDamageFX ->
+                # BitArrayMatchFinder.FindBest. Confirmed against OpenSAGE; no
+                # code copied.)
+                #
+                # Pure RotWK 2.01 really does author one, on the SAME object as
+                # a `Conditions = None` set:
+                #   object/goodfaction/units/elven/elvenrivendelllancerbanner.ini
+                #     :421-424  ArmorSet / Conditions = None / Armor = NoArmor
+                #     :690-693  ArmorUpgrade / TriggeredBy =
+                #               Upgrade_ElvenHeavyArmor /
+                #               ArmorSetFlag = PLAYER_UPGRADE
+                # Raising here made both Rivendell banner units converter gaps,
+                # which left the elves pack shipping a `bannerCarrier` contract
+                # naming a unit it did not contain - and that aborted the entire
+                # elves faction at runtime. Failing closed on a no-op cost more
+                # than it protected.
+                #
+                # RECORDED, never dropped: the row rides `danglingUpgrades` so
+                # the authored-but-inert upgrade stays visible.
+                dangling.append(
+                    {
+                        "upgradeId": upgrade_id,
+                        "armorSetFlag": flag,
+                        "reason": (
+                            f"no ArmorSet declares '{flag}', so this "
+                            "ArmorUpgrade grants nothing (SAGE selects the "
+                            "best-fitting declared set; the base set keeps "
+                            "winning)"
+                        ),
+                        "behavior": {
+                            "kind": "ArmorUpgrade",
+                            "sourceIni": behavior.source_virtual_path,
+                            "line": behavior.line,
+                        },
+                    }
                 )
+                continue
             index, block = match
             used_sets.add(index)
             resolved = _armor_row(block)
@@ -408,26 +498,65 @@ def compile_armor_contract(
             if flag_semantic is not None:
                 entry["armorSetFlagSemantic"] = flag_semantic
             upgrades.append(entry)
-    excluded = [
-        {
-            "setId": (
-                resolved[1]
-                if (resolved := _armor_row(block)) is not None
-                else None
-            ),
-            "reason": "upgrade-gated ArmorSet has no matching ArmorUpgrade behavior",
-            "conditions": sorted(positive_tokens),
-            "sourceIni": block.source_virtual_path,
-            "line": block.line,
-        }
-        for index, (block, positive_tokens) in enumerate(upgraded_sets)
-        if index not in used_sets
-    ]
+    excluded: list[dict[str, object]] = []
+    conditional: list[dict[str, object]] = []
+    for index, (block, positive_tokens) in enumerate(upgraded_sets):
+        if index in used_sets:
+            continue
+        resolved_conditional = _armor_row(block)
+        set_id = (
+            resolved_conditional[1] if resolved_conditional is not None else None
+        )
+        conditions = sorted(positive_tokens)
+        if positive_tokens & _STATE_CONDITIONS:
+            # Engine object-state conditions (mount state today) are not
+            # upgrade flags: SAGE swaps the set on the state itself, with no
+            # ArmorUpgrade behavior to bind. Dropping them as "unmatched"
+            # silently gave every mounted hero its foot armor.
+            if resolved_conditional is None:
+                raise ArmorCompilerError(
+                    f"state-conditioned ArmorSet at {block.source_virtual_path}:"
+                    f"{block.line} has no unique Armor row"
+                )
+            conditional.append(
+                {
+                    "setId": set_id,
+                    "conditions": conditions,
+                    "stateConditions": sorted(positive_tokens & _STATE_CONDITIONS),
+                    "table": compile_armor_table(
+                        documents,
+                        set_id,
+                        named_definition_cache=named_definition_cache,
+                        cache_lock=cache_lock,
+                        game=game,
+                    ),
+                    "sourceIni": block.source_virtual_path,
+                    "line": block.line,
+                }
+            )
+            continue
+        excluded.append(
+            {
+                "setId": set_id,
+                "reason": (
+                    "upgrade-gated ArmorSet has no matching ArmorUpgrade behavior"
+                ),
+                "conditions": conditions,
+                "sourceIni": block.source_virtual_path,
+                "line": block.line,
+            }
+        )
     contract["upgrades"] = sorted(
         upgrades, key=lambda row: str(row["upgradeId"]).casefold()
     )
+    contract["danglingUpgrades"] = sorted(
+        dangling, key=lambda row: str(row["upgradeId"]).casefold()
+    )
     contract["excludedUpgradeSets"] = sorted(
         excluded, key=lambda row: str(row.get("setId") or "").casefold()
+    )
+    contract["conditionalSets"] = sorted(
+        conditional, key=lambda row: str(row.get("setId") or "").casefold()
     )
     return contract
 
@@ -532,9 +661,7 @@ def _damage_scalars(
         parts = str(row.get("expression", "")).split(None, 1)
         if not parts:
             continue
-        percent = _damage_scalar_percent(
-            parts[0], constants, context="DamageScalar"
-        )
+        percent = _damage_scalar_percent(parts[0], constants, context="DamageScalar")
         scalars.append(
             {
                 "percent": percent,
@@ -715,6 +842,79 @@ def _weapon_damage_contract(
     return contract
 
 
+def _horde_coordination_weapon_contract(
+    documents: Mapping[str, bytes],
+    weapon_id: str,
+    constants: Mapping[str, int | float],
+    *,
+    named_definition_cache: dict | None = None,
+    cache_lock: "threading.Lock | None" = None,
+) -> dict[str, object] | None:
+    """Evidence for a range-only horde coordination WeaponSet target.
+
+    HordeAttackNugget delegates actual damage to battalion members. A weapon
+    carrying only that nugget is therefore not an unresolved damage weapon;
+    its authored targeting range is still preserved explicitly.
+    """
+
+    horde_nuggets = _weapon_damage_nuggets(
+        documents,
+        weapon_id,
+        nugget_kind="hordeattacknugget",
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if (
+        not horde_nuggets
+        or _weapon_damage_nuggets(
+            documents,
+            weapon_id,
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        or _weapon_projectile_nuggets(documents, weapon_id)
+    ):
+        return None
+    weapon = _named_definition_values(
+        documents,
+        "Weapon",
+        weapon_id,
+        cache=named_definition_cache,
+        cache_lock=cache_lock,
+    )
+    if weapon is None:
+        return None
+    def _range_expression(
+        expression: str, values: Mapping[str, int | float]
+    ) -> int | float | None:
+        try:
+            return _resolve_integer_expression(
+                expression,
+                {
+                    key: int(value)
+                    for key, value in values.items()
+                    if isinstance(value, int) and not isinstance(value, bool)
+                },
+            )
+        except (PlayableUnitCompilerError, ValueError):
+            return None
+
+    attack_range = _resolved_definition_field(
+        weapon, "AttackRange", constants, resolve=_range_expression
+    )
+    if attack_range is None:
+        return None
+    return {
+        "kind": "production-legality",
+        "weaponId": weapon_id,
+        "coordinationAttackRange": attack_range,
+        "semantic": (
+            "HordeAttackNugget WeaponSet changes battalion targeting range; "
+            "member weapons remain authoritative for damage"
+        ),
+    }
+
+
 def _base_warhead_targets(
     documents: Mapping[str, bytes], weapon_id: str
 ) -> tuple[str, ...]:
@@ -820,15 +1020,17 @@ def compile_weapon_upgrades(
 ) -> list[dict[str, object]]:
     """Compile each WeaponSetUpgrade behavior's authored damage effect.
 
-    Three retail patterns resolve: a weapon swap (the PLAYER_UPGRADE WeaponSet
-    names a different weapon, e.g. Gondor forged blades), an upgrade-gated
-    projectile warhead on the unchanged weapon (e.g. fire arrows), and
-    upgrade-gated DamageNuggets on the unchanged weapon or its warhead (e.g.
-    tower-guard forged blades, whose swapped WeaponSet is commented out in the
-    retail source).  ``base_weapon_ids`` carries every weapon the unit's
-    non-upgrade sets can wield, combat (primary) weapon first; the combat
-    weapon's effect drives when it resolves, otherwise exactly one alternate
-    may resolve.  Anything else fails closed rather than guessing.
+    Three retail damage patterns resolve: a weapon swap (the PLAYER_UPGRADE
+    WeaponSet names a different weapon, e.g. Gondor forged blades), an
+    upgrade-gated projectile warhead on the unchanged weapon (e.g. fire
+    arrows), and upgrade-gated DamageNuggets on the unchanged weapon or its
+    warhead (e.g. tower-guard forged blades, whose swapped WeaponSet is
+    commented out in the retail source).  The trigger can be authored by
+    WeaponSetUpgrade or by a dummy StatusBitsUpgrade.  ``base_weapon_ids``
+    carries every weapon the unit's non-upgrade sets can wield, combat
+    (primary) weapon first; the combat weapon's effect drives when it resolves,
+    otherwise exactly one alternate may resolve.  Anything else fails closed
+    rather than guessing.
     """
 
     upgrades: list[dict[str, object]] = []
@@ -869,14 +1071,22 @@ def compile_weapon_upgrades(
                 upgraded_weapon_id.casefold() != candidate.casefold()
                 for candidate in base_weapon_ids
             ):
-                contract = _weapon_damage_contract(
+                contract = _horde_coordination_weapon_contract(
                     documents,
                     upgraded_weapon_id,
                     constants,
                     named_definition_cache=named_definition_cache,
                     cache_lock=cache_lock,
                 )
-                entry["kind"] = "weapon-swap"
+                if contract is None:
+                    contract = _weapon_damage_contract(
+                        documents,
+                        upgraded_weapon_id,
+                        constants,
+                        named_definition_cache=named_definition_cache,
+                        cache_lock=cache_lock,
+                    )
+                    entry["kind"] = "weapon-swap"
                 entry.update(contract)
                 entry["sourceIni"] = weapon_row.source_virtual_path
                 entry["line"] = weapon_row.line
@@ -939,6 +1149,40 @@ def compile_weapon_upgrades(
                     # weapons under both None and PLAYER_UPGRADE (NoldorWarrior
                     # silverthorn bows). Record the no-damage marker rather than
                     # inventing a warhead or failing closed on dead damage path.
+                    duplicate_player_weapon = upgraded_weapon_id is not None and any(
+                        upgraded_weapon_id.casefold() == candidate.casefold()
+                        for candidate in base_weapon_ids
+                    )
+                    # RotWK's live Noldor override comments out every
+                    # PLAYER_UPGRADE WeaponSet and equips Silverthorn bows in
+                    # the default set, but leaves the triggered upgrade shell.
+                    # This exact authored shape is a default-equipped legality
+                    # marker, not an unknown damage effect. Keep the rule named
+                    # and narrow so generic empty upgrades still fail closed.
+                    default_equipped_noldor_silverthorn = (
+                        upgraded_weapon_id is None
+                        and upgrade_id.casefold()
+                        == "upgrade_elvensilverthornarrows"
+                        and any(
+                            "silverthorn" in candidate.casefold()
+                            and "bow" in candidate.casefold()
+                            for candidate in base_weapon_ids
+                        )
+                        and all(
+                            "silverthorn" in candidate.casefold()
+                            for candidate in base_weapon_ids
+                            if "bow" in candidate.casefold()
+                        )
+                    )
+                    if not (
+                        duplicate_player_weapon
+                        or default_equipped_noldor_silverthorn
+                    ):
+                        details = "; ".join(failures)
+                        raise ArmorCompilerError(
+                            f"WeaponSetUpgrade '{upgrade_id}' has no unique "
+                            f"upgrade-gated weapon effect: {details}"
+                        )
                     entry.update(
                         {
                             "kind": "production-legality",
@@ -962,9 +1206,17 @@ def compile_weapon_upgrades(
     # StatusBitsUpgrade "dummy" while the damage rides upgrade-gated
     # DamageNuggets on the unchanged base weapon (RohanRohirrim forged
     # blades: "Just a dummy upgrade module to allow this unit to be
-    # upgraded").  Those resolve through the same gated-nugget contract;
-    # a StatusBitsUpgrade with no gated weapon effect is a production
-    # legality marker and stays out — never an invented effect.
+    # upgraded").  Those resolve through the same gated-nugget contract. Other
+    # units pair the dummy with a distinct PLAYER_UPGRADE primary WeaponSet;
+    # that authored weapon contract is the effect. A StatusBitsUpgrade with
+    # neither proof stays out — never an invented effect or legality marker.
+    armor_upgrade_ids = {
+        _tokens(trigger.value)[-1].casefold()
+        for lineage in lineages
+        for behavior in _behavior_blocks(lineage, "ArmorUpgrade")
+        if (trigger := _behavior_assignment(behavior, "TriggeredBy")) is not None
+        and _tokens(trigger.value)
+    }
     for lineage in lineages:
         for behavior in _behavior_blocks(lineage, "StatusBitsUpgrade"):
             trigger = _behavior_assignment(behavior, "TriggeredBy")
@@ -992,8 +1244,10 @@ def compile_weapon_upgrades(
                 except ArmorCompilerError:
                     continue
             chosen: dict[str, object] | None = None
-            if resolved_effects and base_weapon_ids and (
-                resolved_effects[0][0].casefold() == base_weapon_ids[0].casefold()
+            if (
+                resolved_effects
+                and base_weapon_ids
+                and (resolved_effects[0][0].casefold() == base_weapon_ids[0].casefold())
             ):
                 # The combat weapon's effect drives when it resolves.
                 chosen = resolved_effects[0][1]
@@ -1003,8 +1257,6 @@ def compile_weapon_upgrades(
                 }
                 if len(unique_effects) == 1:
                     chosen = next(iter(unique_effects.values()))
-            if chosen is None:
-                continue
             entry = {
                 "upgradeId": upgrade_id,
                 "behavior": {
@@ -1013,10 +1265,110 @@ def compile_weapon_upgrades(
                     "line": behavior.line,
                 },
             }
-            entry.update(chosen)
+            if chosen is None:
+                upgraded_weapon_id, weapon_row = _player_upgrade_weapon_target(lineage)
+                if (
+                    upgraded_weapon_id is None
+                    and upgrade_id.casefold() not in armor_upgrade_ids
+                ):
+                    # Horde production-legality modules can own the purchase
+                    # trigger while the payload member owns the WeaponSet swap
+                    # (MordorBlackOrc). Only join a candidate lineage that also
+                    # authors the same TriggeredBy upgrade (StatusBitsUpgrade,
+                    # WeaponSetUpgrade, or SubObjectsUpgrade). Never steal an
+                    # ArmorUpgrade-only trigger, and never join an unrelated
+                    # PLAYER_UPGRADE weapon merely because it is unique.
+                    cross_lineage_targets: dict[str, tuple[str, object]] = {}
+                    for candidate_lineage in lineages:
+                        if candidate_lineage is lineage:
+                            continue
+                        if not _lineage_authors_weapon_upgrade_trigger(
+                            candidate_lineage, upgrade_id
+                        ):
+                            continue
+                        candidate_weapon_id, candidate_row = (
+                            _player_upgrade_weapon_target(candidate_lineage)
+                        )
+                        if candidate_weapon_id is None or any(
+                            candidate_weapon_id.casefold() == base_id.casefold()
+                            for base_id in base_weapon_ids
+                        ):
+                            continue
+                        key = candidate_weapon_id.casefold()
+                        if key in cross_lineage_targets:
+                            # Multiple candidate lineages for the same weapon —
+                            # ambiguous identity; do not join.
+                            cross_lineage_targets.clear()
+                            break
+                        cross_lineage_targets[key] = (
+                            candidate_weapon_id,
+                            candidate_row,
+                        )
+                    if len(cross_lineage_targets) == 1:
+                        upgraded_weapon_id, weapon_row = next(
+                            iter(cross_lineage_targets.values())
+                        )
+                if (
+                    not base_weapon_ids
+                    or upgraded_weapon_id is None
+                    or any(
+                        upgraded_weapon_id.casefold() == candidate.casefold()
+                        for candidate in base_weapon_ids
+                    )
+                ):
+                    continue
+                contract = _horde_coordination_weapon_contract(
+                    documents,
+                    upgraded_weapon_id,
+                    constants,
+                    named_definition_cache=named_definition_cache,
+                    cache_lock=cache_lock,
+                )
+                if contract is None:
+                    contract = _weapon_damage_contract(
+                        documents,
+                        upgraded_weapon_id,
+                        constants,
+                        named_definition_cache=named_definition_cache,
+                        cache_lock=cache_lock,
+                    )
+                    entry["kind"] = "weapon-swap"
+                entry.update(contract)
+                entry["sourceIni"] = weapon_row.source_virtual_path
+                entry["line"] = weapon_row.line
+            else:
+                entry.update(chosen)
             by_upgrade_id[upgrade_id.casefold()] = entry
             upgrades.append(entry)
     return sorted(upgrades, key=lambda row: str(row["upgradeId"]).casefold())
+
+
+def _lineage_authors_weapon_upgrade_trigger(
+    lineage: Sequence[SageObject],
+    upgrade_id: str,
+) -> bool:
+    """True when a lineage authors a weapon-related module for ``upgrade_id``.
+
+    Retail horde purchases may live on the container (StatusBitsUpgrade
+    legality) while the payload member authors SubObjectsUpgrade and the
+    PLAYER_UPGRADE WeaponSet. ArmorUpgrade-only triggers are excluded so a
+    heavy-armor purchase never becomes a forged-blade weapon swap.
+    """
+
+    wanted = upgrade_id.casefold()
+    for behavior_kind in (
+        "StatusBitsUpgrade",
+        "WeaponSetUpgrade",
+        "SubObjectsUpgrade",
+    ):
+        for behavior in _behavior_blocks(lineage, behavior_kind):
+            trigger = _behavior_assignment(behavior, "TriggeredBy")
+            if trigger is None:
+                continue
+            tokens = _tokens(trigger.value)
+            if tokens and tokens[-1].casefold() == wanted:
+                return True
+    return False
 
 
 def _gated_nugget_rows(
@@ -1098,9 +1450,7 @@ def _gated_nugget_effect(
         entry: dict[str, object] = {
             "kind": "warhead-upgrade",
             "warheadId": warhead_id,
-            "nuggets": [
-                _nugget_contract(nugget, constants) for nugget in nugget_rows
-            ],
+            "nuggets": [_nugget_contract(nugget, constants) for nugget in nugget_rows],
             "sourceIni": warhead_row["sourceIni"],
             "line": warhead_row["line"],
         }

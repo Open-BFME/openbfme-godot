@@ -661,6 +661,7 @@ class W3dBatchExecutionTests(unittest.TestCase):
             "shader-material-validation",
             "render-proof",
             "post-animation-validation",
+            "animation-sidecar-mesh-strip",
             "attachment-restoration",
             "render-revalidation",
             "animation-export-preparation",

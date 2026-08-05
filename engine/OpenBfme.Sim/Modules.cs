@@ -144,6 +144,9 @@ public sealed class ModuleRegistry
         registry.Register(HordeContainModule.TypeName, spec => new HordeContainModule(spec));
         registry.Register(BezierProjectileModule.TypeName, spec => new BezierProjectileModule(spec));
         registry.Register(AttributeModifierAuraModule.TypeName, spec => new AttributeModifierAuraModule(spec));
+        registry.Register(ExperienceLevelModule.TypeName, spec => new ExperienceLevelModule(spec));
+        registry.Register(BannerCarrierModule.TypeName, spec => new BannerCarrierModule(spec));
+        registry.Register(CastleBehaviorModule.TypeName, spec => new CastleBehaviorModule(spec));
         return registry;
     }
 }

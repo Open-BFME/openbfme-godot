@@ -17,6 +17,7 @@ import pytest
 
 from openbfme_importer import sage_cst
 from openbfme_importer.catalog import CatalogEntry
+from openbfme_importer.paths import default_state_root
 from openbfme_importer.module_census import (
     MODULE_CARRIER_KEYS,
     MODULE_CLASS_MEANINGS,
@@ -38,7 +39,8 @@ ROOT = Path(__file__).resolve().parents[2]
 CENSUS_PATH = ROOT / "game" / "data" / "retail_module_census.json"
 REPORT_TOOL = ROOT / "tools" / "module-coverage-report.py"
 
-_RETAIL_CATALOGS = census_catalog_paths()
+_RETAIL_STATE_ROOT = default_state_root()
+_RETAIL_CATALOGS = census_catalog_paths(_RETAIL_STATE_ROOT)
 _RETAIL_AVAILABLE = all(path.is_file() for path in _RETAIL_CATALOGS.values())
 
 
@@ -498,8 +500,11 @@ def test_coverage_report_fails_on_totals_mismatch(tmp_path: Path) -> None:
     reason="retail catalogs are not available in this workspace",
 )
 def test_retail_regeneration_is_byte_identical_to_committed_census() -> None:
-    first = census_json_bytes(generate_retail_module_census())
-    second = census_json_bytes(generate_retail_module_census())
+    # Regenerate from the state root whose catalogs the skip guard actually
+    # probed at import time. Re-resolving it here instead would let any
+    # earlier in-process CLI run decide which corpus this assertion measures.
+    first = census_json_bytes(generate_retail_module_census(_RETAIL_STATE_ROOT))
+    second = census_json_bytes(generate_retail_module_census(_RETAIL_STATE_ROOT))
     assert first == second
     assert first == CENSUS_PATH.read_bytes()
 

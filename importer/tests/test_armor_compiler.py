@@ -55,6 +55,11 @@ Armor TestFrostArmor
   Armor = DEFAULT        100%
   Armor = FROST          75%
 End
+
+Armor TestBarePercentArmor
+  Armor = DEFAULT        100
+  Armor = SIEGE          50
+End
 """
 
 WEAPON_INI = b"""
@@ -186,6 +191,12 @@ def test_armor_table_resolves_authored_damage_scalar() -> None:
     assert "flankedPenalty" not in table
 
 
+def test_armor_table_accepts_retail_bare_percent_magnitudes() -> None:
+    table = compile_armor_table(_documents(b""), "TestBarePercentArmor")
+    assert table["default"]["percent"] == 100.0
+    assert table["scalars"]["siege"]["percent"] == 50.0
+
+
 def test_armor_table_fails_closed_on_unknown_set() -> None:
     with pytest.raises(ArmorCompilerError, match="no unique authored definition"):
         compile_armor_table(_documents(b""), "MissingArmor")
@@ -226,9 +237,7 @@ def test_frost_rejected_under_bfme2() -> None:
 def test_unknown_damage_type_rejected_under_both_games() -> None:
     for game in ("bfme2", "rotwk"):
         with pytest.raises(ArmorCompilerError, match="unknown damage type"):
-            compile_armor_table(
-                _documents(b""), "TestUnknownTypeArmor", game=game
-            )
+            compile_armor_table(_documents(b""), "TestUnknownTypeArmor", game=game)
 
 
 def test_unknown_game_fails_closed() -> None:
@@ -322,7 +331,36 @@ def test_armor_contract_fails_closed_on_missing_referenced_set() -> None:
         compile_armor_contract(documents, lineage)
 
 
-def test_armor_contract_fails_closed_on_upgrade_without_set() -> None:
+def test_armor_contract_records_a_dangling_upgrade_as_an_engine_no_op() -> None:
+    """RE-PINNED 2026-08-04. A dangling ArmorUpgrade must NOT fail the object.
+
+    This test used to assert the opposite (fail closed). That was over-strict,
+    and it cost two real units: pure RotWK 2.01 authors, on the SAME object,
+
+        object/goodfaction/units/elven/elvenrivendelllancerbanner.ini:421-424
+            ArmorSet
+                Conditions      = None
+                Armor           = NoArmor
+        object/goodfaction/units/elven/elvenrivendelllancerbanner.ini:690-693
+            Behavior = ArmorUpgrade ArmorUpgradeModuleTag
+                TriggeredBy   = Upgrade_ElvenHeavyArmor
+                ArmorSetFlag  = PLAYER_UPGRADE
+
+    - an upgrade whose flag no ArmorSet declares. Failing closed made
+    ElvenRivendellArcherBanner and ElvenRivendellLancerBanner converter gaps,
+    which left the elves pack shipping a `bannerCarrier` contract naming a unit
+    it did not contain, which aborted the whole faction at runtime.
+
+    The engine treats it as a NO-OP, not a contradiction. `ArmorUpgrade` only
+    sets a bit (`ActiveBody.SetArmorSetFlag`), and armor selection then runs
+    `BitArrayMatchFinder.FindBest` over the declared sets
+    (`ActiveBody.ValidateArmorAndDamageFX`): with no set declaring the flag the
+    base `Conditions = None` set keeps winning, so the armor never changes.
+    (Semantic confirmed against the OpenSAGE shared core; no code copied.)
+
+    So it is RECORDED, not raised - loudly enough to stay visible.
+    """
+
     payload = _object_document(
         "  KindOf = INFANTRY\n"
         "  ArmorSet\n"
@@ -335,8 +373,144 @@ def test_armor_contract_fails_closed_on_upgrade_without_set() -> None:
     )
     documents = _documents(payload)
     lineage, _ = _lineage(documents)
-    with pytest.raises(ArmorCompilerError, match="no ArmorSet gated"):
-        compile_armor_contract(documents, lineage)
+
+    contract = compile_armor_contract(documents, lineage)
+
+    assert contract["setId"] == "TestArmor"
+    assert [row["upgradeId"] for row in contract["upgrades"]] == []
+    recorded = contract["danglingUpgrades"]
+    assert [row["upgradeId"] for row in recorded] == ["Upgrade_TestHeavyArmor"]
+    assert recorded[0]["armorSetFlag"] == "PLAYER_UPGRADE"
+    assert "no ArmorSet" in recorded[0]["reason"]
+
+
+def test_armor_contract_records_dangling_upgrade_with_flag_authored_explicitly() -> (
+    None
+):
+    """ADVERSARIAL, added 2026-08-04 (round 13). The RETAIL shape, exactly.
+
+    The test above omits `ArmorSetFlag` entirely, so it drives the DEFAULT
+    branch in `armor_compiler._armor_contract` (`flag_row is None` ->
+    "PLAYER_UPGRADE" plus an `armorSetFlagSemantic` note). But the real object
+    it cites as its justification does NOT omit the row - pure RotWK 2.01
+    authors it explicitly:
+
+        object/goodfaction/units/elven/elvenrivendelllancerbanner.ini:690-693
+            Behavior = ArmorUpgrade ArmorUpgradeModuleTag
+                TriggeredBy   = Upgrade_ElvenHeavyArmor
+                ArmorSetFlag  = PLAYER_UPGRADE
+
+    So the retail shape took a DIFFERENT code path than the one under test, and
+    nothing pinned it. This case closes that hole: an explicitly authored flag
+    that no ArmorSet declares must still be RECORDED as an engine no-op, must
+    still leave `upgrades` empty, and must NOT carry the defaulted-flag semantic
+    note (nothing was defaulted).
+    """
+
+    payload = _object_document(
+        "  KindOf = INFANTRY\n"
+        "  ArmorSet\n"
+        "    Conditions = None\n"
+        "    Armor = TestArmor\n"
+        "  End\n"
+        "  Behavior = ArmorUpgrade ArmorUpgradeModuleTag\n"
+        "    TriggeredBy = Upgrade_TestHeavyArmor\n"
+        "    ArmorSetFlag = PLAYER_UPGRADE\n"
+        "  End\n"
+    )
+    documents = _documents(payload)
+    lineage, _ = _lineage(documents)
+
+    contract = compile_armor_contract(documents, lineage)
+
+    assert contract["setId"] == "TestArmor"
+    assert contract["upgrades"] == []
+    recorded = contract["danglingUpgrades"]
+    assert [row["upgradeId"] for row in recorded] == ["Upgrade_TestHeavyArmor"]
+    assert recorded[0]["armorSetFlag"] == "PLAYER_UPGRADE"
+    assert "no ArmorSet" in recorded[0]["reason"]
+    # The flag was authored, so the "we defaulted it" note must be absent. A
+    # dangling row never carries it at all, which is why this is asserted on the
+    # matched case below as well.
+    assert "armorSetFlagSemantic" not in recorded[0]
+
+
+def test_armor_contract_treats_an_empty_armor_set_flag_as_the_default() -> None:
+    """ADVERSARIAL, added 2026-08-04 (round 13). Malformed input records, never raises.
+
+    `ArmorSetFlag =` with no token on the right-hand side is malformed INI. The
+    compiler's flag resolution
+    (`armor_compiler._armor_contract`, the `flag = ... if flag_row is not None
+    and _tokens(flag_row.value) else "PLAYER_UPGRADE"` expression) folds it into
+    the SAME "PLAYER_UPGRADE" default as an absent row - deliberately, not by
+    accident:
+
+    * Raising here is the failure mode this module already paid for once. The
+      dangling-upgrade test above documents how failing closed on an inert
+      authored row turned two Rivendell banner units into converter gaps and
+      aborted the entire elves faction at runtime. An empty token is strictly
+      less harmful than a dangling one: SAGE's own tokeniser yields no flag, so
+      the engine sets no bit and the base set keeps winning - the identical
+      no-op.
+    * The result is therefore RECORDED and stays visible, exactly like the
+      dangling case, rather than being dropped or raised.
+
+    One asymmetry is pinned here on purpose so it cannot drift silently:
+    `armorSetFlagSemantic` is attached only when the row is ABSENT
+    (`flag_row is None`), so an empty-but-present row resolves to
+    "PLAYER_UPGRADE" WITHOUT that note. If the compiler ever starts annotating
+    malformed rows too, this assertion is the thing that says so.
+    """
+
+    matched_payload = _object_document(
+        "  KindOf = INFANTRY\n"
+        "  ArmorSet\n"
+        "    Conditions = None\n"
+        "    Armor = TestArmor\n"
+        "  End\n"
+        "  ArmorSet\n"
+        "    Conditions = PLAYER_UPGRADE\n"
+        "    Armor = TestHeavyArmor\n"
+        "  End\n"
+        "  Behavior = ArmorUpgrade ArmorUpgradeModuleTag\n"
+        "    TriggeredBy = Upgrade_TestHeavyArmor\n"
+        "    ArmorSetFlag =\n"
+        "  End\n"
+    )
+    documents = _documents(matched_payload)
+    lineage, _ = _lineage(documents)
+
+    contract = compile_armor_contract(documents, lineage)
+
+    assert contract["danglingUpgrades"] == []
+    upgrade = contract["upgrades"][0]
+    assert upgrade["armorSetFlag"] == "PLAYER_UPGRADE"
+    assert upgrade["setId"] == "TestHeavyArmor"
+    # Present-but-empty is NOT the same provenance as absent: no semantic note.
+    assert "armorSetFlagSemantic" not in upgrade
+
+    # And with no set declaring the defaulted flag it degrades to the recorded
+    # no-op rather than raising.
+    dangling_payload = _object_document(
+        "  KindOf = INFANTRY\n"
+        "  ArmorSet\n"
+        "    Conditions = None\n"
+        "    Armor = TestArmor\n"
+        "  End\n"
+        "  Behavior = ArmorUpgrade ArmorUpgradeModuleTag\n"
+        "    TriggeredBy = Upgrade_TestHeavyArmor\n"
+        "    ArmorSetFlag =\n"
+        "  End\n"
+    )
+    documents = _documents(dangling_payload)
+    lineage, _ = _lineage(documents)
+
+    contract = compile_armor_contract(documents, lineage)
+
+    assert contract["upgrades"] == []
+    recorded = contract["danglingUpgrades"]
+    assert [row["upgradeId"] for row in recorded] == ["Upgrade_TestHeavyArmor"]
+    assert recorded[0]["armorSetFlag"] == "PLAYER_UPGRADE"
 
 
 def test_armor_contract_records_unmatched_upgrade_sets() -> None:
@@ -357,6 +531,119 @@ def test_armor_contract_records_unmatched_upgrade_sets() -> None:
     assert contract["upgrades"] == []
     assert len(contract["excludedUpgradeSets"]) == 1
     assert contract["excludedUpgradeSets"][0]["setId"] == "TestHeavyArmor"
+
+
+def test_armor_contract_keeps_mount_state_sets_out_of_the_upgrade_gate() -> None:
+    # Oracle: RotWK layered
+    # data/ini/object/goodfaction/units/men/theoden.ini:687-696 authors a base
+    # ArmorSet (Conditions = None -> HeroArmor) and a mount-state ArmorSet
+    # (Conditions = MOUNTED -> HeroArmorMounted) with NO ArmorUpgrade behavior.
+    # MOUNTED is an engine mount state, not an upgrade flag, so the mounted set
+    # must be carried as a conditional set -- not dropped as "upgrade-gated
+    # ArmorSet has no matching ArmorUpgrade behavior", which left mounted
+    # Theoden wearing foot armor.
+    payload = _object_document(
+        "  KindOf = INFANTRY\n"
+        "  ArmorSet\n"
+        "    Conditions = None\n"
+        "    Armor = TestArmor\n"
+        "  End\n"
+        "  ArmorSet\n"
+        "    Conditions = MOUNTED\n"
+        "    Armor = TestHeavyArmor\n"
+        "  End\n"
+    )
+    documents = _documents(payload)
+    lineage, _ = _lineage(documents)
+    contract = compile_armor_contract(documents, lineage)
+    assert contract["setId"] == "TestArmor"
+    assert contract["upgrades"] == []
+    assert contract["excludedUpgradeSets"] == []
+    assert len(contract["conditionalSets"]) == 1
+    conditional = contract["conditionalSets"][0]
+    assert conditional["setId"] == "TestHeavyArmor"
+    assert conditional["conditions"] == ["mounted"]
+    assert conditional["table"]["damageScalar"]["percent"] == 120.0
+    assert conditional["sourceIni"] == "data/ini/object/test.ini"
+    assert conditional["line"] > 0
+
+
+def test_armor_contract_mount_state_set_still_matches_its_own_upgrade() -> None:
+    # Oracle: RotWK layered
+    # data/ini/object/goodfaction/units/men/rohanbanner.ini:686-700 authors
+    # ArmorSets conditioned on MOUNTED *and* PLAYER_UPGRADE together. Those are
+    # genuinely upgrade-gated, so the ArmorUpgrade behavior must still bind
+    # them and they must not also appear as unconditioned conditional sets.
+    payload = _object_document(
+        "  KindOf = INFANTRY\n"
+        "  ArmorSet\n"
+        "    Conditions = None\n"
+        "    Armor = TestArmor\n"
+        "  End\n"
+        "  ArmorSet\n"
+        "    Conditions = MOUNTED PLAYER_UPGRADE\n"
+        "    Armor = TestHeavyArmor\n"
+        "  End\n"
+        "  Behavior = ArmorUpgrade ArmorUpgradeModuleTag\n"
+        "    TriggeredBy = Upgrade_TestHeavyArmor\n"
+        "    ArmorSetFlag = PLAYER_UPGRADE\n"
+        "  End\n"
+    )
+    documents = _documents(payload)
+    lineage, _ = _lineage(documents)
+    contract = compile_armor_contract(documents, lineage)
+    assert len(contract["upgrades"]) == 1
+    assert contract["upgrades"][0]["setId"] == "TestHeavyArmor"
+    assert contract["excludedUpgradeSets"] == []
+    assert contract["conditionalSets"] == []
+
+
+def test_armor_contract_mixed_mount_upgrade_set_is_conditional_without_armor_upgrade() -> None:
+    # Oracle: RotWK layered
+    # data/ini/object/goodfaction/units/men/rohanbanner.ini authors a base set
+    # (:665 Conditions = None), a foot upgrade set (:671-675 PLAYER_UPGRADE ->
+    # ArcherEliteHeavyArmor), a mount-state set (:682-686 MOUNTED) and three
+    # MIXED sets (:687 MOUNTED PLAYER_UPGRADE, :692 MOUNTED PLAYER_UPGRADE_2,
+    # :697 MOUNTED PLAYER_UPGRADE_2 PLAYER_UPGRADE) -- and NO ArmorUpgrade
+    # behavior anywhere in the file. So a mixed MOUNTED+PLAYER_UPGRADE set does
+    # NOT "stay upgrade-gated": with nothing to bind it, it takes the state
+    # branch and becomes a conditional set that keeps its upgrade tokens in
+    # `conditions` while `stateConditions` names only the state. Only the plain
+    # PLAYER_UPGRADE foot set is excluded. This pins the branch the
+    # _STATE_CONDITIONS comment used to misdescribe.
+    payload = _object_document(
+        "  KindOf = INFANTRY\n"
+        "  ArmorSet\n"
+        "    Conditions = None\n"
+        "    Armor = TestArmor\n"
+        "  End\n"
+        "  ArmorSet\n"
+        "    Conditions = PLAYER_UPGRADE\n"
+        "    Armor = TestHeavyArmor\n"
+        "  End\n"
+        "  ArmorSet\n"
+        "    Conditions = MOUNTED\n"
+        "    Armor = TestFrostArmor\n"
+        "  End\n"
+        "  ArmorSet\n"
+        "    Conditions = MOUNTED PLAYER_UPGRADE\n"
+        "    Armor = TestBarePercentArmor\n"
+        "  End\n"
+    )
+    documents = _documents(payload)
+    lineage, _ = _lineage(documents)
+    contract = compile_armor_contract(documents, lineage, game="rotwk")
+    assert contract["setId"] == "TestArmor"
+    # No ArmorUpgrade behavior exists, so nothing is upgrade-gated at all.
+    assert contract["upgrades"] == []
+    assert [row["setId"] for row in contract["excludedUpgradeSets"]] == [
+        "TestHeavyArmor"
+    ]
+    conditional = {row["setId"]: row for row in contract["conditionalSets"]}
+    assert set(conditional) == {"TestFrostArmor", "TestBarePercentArmor"}
+    mixed = conditional["TestBarePercentArmor"]
+    assert mixed["conditions"] == ["mounted", "player_upgrade"]
+    assert mixed["stateConditions"] == ["mounted"]
 
 
 def _weapon_object(weapon_block: str, behavior: str) -> bytes:
@@ -411,10 +698,7 @@ def test_weapon_upgrade_compiles_weapon_swap() -> None:
 
 def test_weapon_upgrade_compiles_warhead_upgrade() -> None:
     payload = _weapon_object(
-        "  WeaponSet\n"
-        "    Conditions = None\n"
-        "    Weapon = PRIMARY TestBow\n"
-        "  End\n",
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY TestBow\n  End\n",
         "  Behavior = WeaponSetUpgrade ModuleTag_FireArrows\n"
         "    TriggeredBy = Upgrade_TestFireArrows\n"
         "  End\n",
@@ -432,7 +716,9 @@ def test_weapon_upgrade_compiles_warhead_upgrade() -> None:
     assert upgrade["kind"] == "warhead-upgrade"
     assert upgrade["warheadId"] == "TestBowFireWarhead"
     assert upgrade["replacesWarheadId"] == "TestBowWarhead"
-    nuggets = [(row["damage"]["value"], row.get("damageType")) for row in upgrade["nuggets"]]
+    nuggets = [
+        (row["damage"]["value"], row.get("damageType")) for row in upgrade["nuggets"]
+    ]
     assert nuggets == [(1, "FLAME"), (32, "FLAME"), (25, "PIERCE")]
     bonus = upgrade["nuggets"][1]
     assert bonus["damage"]["expression"] == "TEST_FIRE_BONUS_DAMAGE"
@@ -443,10 +729,7 @@ def test_weapon_upgrade_compiles_warhead_upgrade() -> None:
 
 def test_weapon_upgrade_compiles_nugget_upgrade() -> None:
     payload = _weapon_object(
-        "  WeaponSet\n"
-        "    Conditions = None\n"
-        "    Weapon = PRIMARY TestPike\n"
-        "  End\n",
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY TestPike\n  End\n",
         "  Behavior = WeaponSetUpgrade WeaponSetUpgradeModuleTag\n"
         "    TriggeredBy = Upgrade_TestForgedBlades\n"
         "  End\n",
@@ -474,10 +757,7 @@ def test_weapon_upgrade_compiles_nugget_upgrade() -> None:
 
 def test_weapon_upgrade_deduplicates_repeated_behaviors() -> None:
     payload = _weapon_object(
-        "  WeaponSet\n"
-        "    Conditions = None\n"
-        "    Weapon = PRIMARY TestPike\n"
-        "  End\n",
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY TestPike\n  End\n",
         "  Behavior = WeaponSetUpgrade ModuleTag_One\n"
         "    TriggeredBy = Upgrade_TestForgedBlades\n"
         "  End\n"
@@ -524,10 +804,7 @@ def test_weapon_upgrade_fails_closed_on_unresolvable_swap() -> None:
 
 def test_weapon_upgrade_fails_closed_without_any_effect() -> None:
     payload = _weapon_object(
-        "  WeaponSet\n"
-        "    Conditions = None\n"
-        "    Weapon = PRIMARY TestSword\n"
-        "  End\n",
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY TestSword\n  End\n",
         "  Behavior = WeaponSetUpgrade WeaponSetUpgradeModuleTag\n"
         "    TriggeredBy = Upgrade_TestFireArrows\n"
         "  End\n",
@@ -543,6 +820,123 @@ def test_weapon_upgrade_fails_closed_without_any_effect() -> None:
         )
 
 
+def test_weapon_upgrade_emits_legality_only_with_duplicate_player_weapon() -> None:
+    payload = _weapon_object(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY TestSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = PLAYER_UPGRADE\n"
+        "    Weapon = PRIMARY TestSword\n"
+        "  End\n",
+        "  Behavior = WeaponSetUpgrade WeaponSetUpgradeModuleTag\n"
+        "    TriggeredBy = Upgrade_TestProductionLegality\n"
+        "  End\n",
+    )
+    documents = _documents(payload)
+    lineage, prepared = _lineage(documents)
+    upgrades = compile_weapon_upgrades(
+        documents,
+        [lineage],
+        base_weapon_targets(lineage),
+        prepared.numeric_defines,
+    )
+
+    assert len(upgrades) == 1
+    assert upgrades[0]["kind"] == "production-legality"
+    assert upgrades[0]["upgradeId"] == "Upgrade_TestProductionLegality"
+
+
+def test_noldor_default_silverthorn_shell_is_production_legality_only() -> None:
+    payload = _weapon_object(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY NoldorWarriorSilverthornBow\n"
+        "    Weapon = TERTIARY NoldorWarriorSilverthornBowBombard\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = WEAPONSET_TOGGLE_1\n"
+        "    Weapon = PRIMARY NoldorWarriorSword\n"
+        "  End\n",
+        "  Behavior = WeaponSetUpgrade ModuleTag_Silverthorn\n"
+        "    TriggeredBy = Upgrade_ElvenSilverthornArrows\n"
+        "  End\n",
+    )
+    documents = _documents(payload)
+    lineage, prepared = _lineage(documents)
+    upgrades = compile_weapon_upgrades(
+        documents,
+        [lineage],
+        base_weapon_targets(lineage),
+        prepared.numeric_defines,
+    )
+
+    assert len(upgrades) == 1
+    assert upgrades[0]["kind"] == "production-legality"
+    assert upgrades[0]["upgradeId"] == "Upgrade_ElvenSilverthornArrows"
+
+
+def test_named_silverthorn_upgrade_without_default_silverthorn_still_fails() -> None:
+    payload = _weapon_object(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY TestBow\n  End\n",
+        "  Behavior = WeaponSetUpgrade ModuleTag_Silverthorn\n"
+        "    TriggeredBy = Upgrade_ElvenSilverthornArrows\n"
+        "  End\n",
+    )
+    documents = _documents(payload)
+    lineage, prepared = _lineage(documents)
+    with pytest.raises(ArmorCompilerError, match="no unique upgrade-gated"):
+        compile_weapon_upgrades(
+            documents,
+            [lineage],
+            base_weapon_targets(lineage),
+            prepared.numeric_defines,
+        )
+
+
+def test_horde_coordination_weapon_swap_preserves_range_without_damage() -> None:
+    payload = _weapon_object(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY TestHordeRangeFinder\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = PLAYER_UPGRADE\n"
+        "    Weapon = PRIMARY TestHordeRangeFinderUpgraded\n"
+        "  End\n",
+        "  Behavior = WeaponSetUpgrade WeaponSetUpgradeModuleTag\n"
+        "    TriggeredBy = Upgrade_TestRange\n"
+        "  End\n",
+    )
+    documents = _documents(payload)
+    documents["data/ini/weapon.ini"] += b"""
+Weapon TestHordeRangeFinder
+  AttackRange = 300
+  HordeAttackNugget
+  End
+End
+Weapon TestHordeRangeFinderUpgraded
+  AttackRange = 400
+  HordeAttackNugget
+  End
+End
+"""
+    lineage, prepared = _lineage(documents)
+    upgrades = compile_weapon_upgrades(
+        documents,
+        [lineage],
+        base_weapon_targets(lineage),
+        prepared.numeric_defines,
+    )
+
+    assert len(upgrades) == 1
+    assert upgrades[0]["kind"] == "production-legality"
+    assert upgrades[0]["weaponId"] == "TestHordeRangeFinderUpgraded"
+    assert upgrades[0]["coordinationAttackRange"]["value"] == 400
+    assert "member weapons remain authoritative" in upgrades[0]["semantic"]
+
+
 # --- Descriptor integration -------------------------------------------------
 
 
@@ -553,8 +947,7 @@ def _integration_documents() -> dict[str, bytes]:
     objects_path = "data/ini/object/units/test_units.ini"
     objects = documents[objects_path].decode("utf-8")
     objects = objects.replace(
-        "Object InfantryMember\n"
-        "  KindOf = PRELOAD SELECTABLE INFANTRY\n",
+        "Object InfantryMember\n  KindOf = PRELOAD SELECTABLE INFANTRY\n",
         "Object InfantryMember\n"
         "  KindOf = PRELOAD SELECTABLE INFANTRY\n"
         "  ArmorSet\n"
@@ -631,8 +1024,7 @@ def test_structure_descriptor_carries_compiled_armor() -> None:
     objects_path = "data/ini/object/units/test_units.ini"
     objects = documents[objects_path].decode("utf-8")
     objects = objects.replace(
-        "Object TestKeep\n"
-        "  CommandSet = TestKeepCommandSet\n",
+        "Object TestKeep\n  CommandSet = TestKeepCommandSet\n",
         "Object TestKeep\n"
         "  CommandSet = TestKeepCommandSet\n"
         "  ArmorSet\n"
@@ -675,10 +1067,7 @@ def test_status_bits_dummy_upgrade_resolves_gated_nugget_effect() -> None:
     # "dummy" while the damage rides an upgrade-gated DamageNugget on the
     # unchanged base weapon.
     payload = _weapon_object(
-        "  WeaponSet\n"
-        "    Conditions = None\n"
-        "    Weapon = PRIMARY TestPike\n"
-        "  End\n",
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY TestPike\n  End\n",
         "  Behavior = StatusBitsUpgrade ModuleTag_ForgedBlades\n"
         "    TriggeredBy = Upgrade_TestForgedBlades\n"
         "  End\n",
@@ -700,12 +1089,206 @@ def test_status_bits_dummy_upgrade_resolves_gated_nugget_effect() -> None:
     assert upgrade["nuggets"][0]["damage"]["value"] == 115
 
 
+def test_status_bits_dummy_upgrade_resolves_player_upgrade_weapon_swap() -> None:
+    # MordorBlackOrc/WildMarauderSword pattern: the purchase is represented by
+    # a dummy status behavior while PLAYER_UPGRADE selects a distinct weapon.
+    payload = _weapon_object(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY TestSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = PLAYER_UPGRADE\n"
+        "    Weapon = PRIMARY TestSwordUpgraded\n"
+        "  End\n",
+        "  Behavior = StatusBitsUpgrade ModuleTag_ForgedBlades\n"
+        "    TriggeredBy = Upgrade_TestForgedBlades\n"
+        "  End\n",
+    )
+    documents = _documents(payload)
+    lineage, prepared = _lineage(documents)
+    upgrades = compile_weapon_upgrades(
+        documents,
+        [lineage],
+        base_weapon_targets(lineage),
+        prepared.numeric_defines,
+    )
+
+    assert len(upgrades) == 1
+    upgrade = upgrades[0]
+    assert upgrade["upgradeId"] == "Upgrade_TestForgedBlades"
+    assert upgrade["behavior"]["kind"] == "StatusBitsUpgrade"
+    assert upgrade["kind"] == "weapon-swap"
+    assert upgrade["weaponId"] == "TestSwordUpgraded"
+    assert upgrade["damage"]["value"] == 90
+    assert upgrade["damage"]["expression"] == "TEST_UPGRADED_SWORD_DAMAGE"
+    assert upgrade["damageType"] == "SLASH"
+    assert [(row["percent"], row["filter"]) for row in upgrade["damageScalars"]] == [
+        (200.0, "ANY +INFANTRY -HERO"),
+        (150.0, "ANY +HERO"),
+    ]
+    assert upgrade["sourceIni"] == "data/ini/object/test.ini"
+    assert upgrade["line"] > 0
+
+
+def test_status_bits_horde_trigger_joins_member_weapon_swap_only() -> None:
+    # Retail Mordor Black Orc pattern: horde owns the purchase StatusBitsUpgrade
+    # while the member authors SubObjectsUpgrade for the same upgrade id plus
+    # the PLAYER_UPGRADE weapon set.
+    payload = (
+        "Object TestMember\n"
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY TestSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = PLAYER_UPGRADE\n"
+        "    Weapon = PRIMARY TestSwordUpgraded\n"
+        "  End\n"
+        "  Behavior = ArmorUpgrade ModuleTag_HeavyArmor\n"
+        "    TriggeredBy = Upgrade_TestHeavyArmor\n"
+        "  End\n"
+        "  Behavior = SubObjectsUpgrade ModuleTag_ForgedBladesSubObjects\n"
+        "    TriggeredBy = Upgrade_TestForgedBlades\n"
+        "  End\n"
+        "End\n"
+        "Object TestHorde\n"
+        "  Behavior = StatusBitsUpgrade ModuleTag_HeavyArmorLegality\n"
+        "    TriggeredBy = Upgrade_TestHeavyArmor\n"
+        "  End\n"
+        "  Behavior = StatusBitsUpgrade ModuleTag_ForgedBladesLegality\n"
+        "    TriggeredBy = Upgrade_TestForgedBlades\n"
+        "  End\n"
+        "End\n"
+    ).encode("cp1252")
+    documents = _documents(payload)
+    member_lineage, prepared = _lineage(documents, "TestMember")
+    horde_lineage, _ = _lineage(documents, "TestHorde")
+    upgrades = compile_weapon_upgrades(
+        documents,
+        [member_lineage, horde_lineage],
+        base_weapon_targets(member_lineage),
+        prepared.numeric_defines,
+    )
+
+    assert len(upgrades) == 1
+    assert upgrades[0]["upgradeId"] == "Upgrade_TestForgedBlades"
+    assert upgrades[0]["kind"] == "weapon-swap"
+    assert upgrades[0]["weaponId"] == "TestSwordUpgraded"
+    assert upgrades[0]["damage"]["value"] == 90
+
+
+def test_status_bits_horde_trigger_joins_member_coordination_weapon() -> None:
+    payload = (
+        "Object TestMember\n"
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY TestSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = PLAYER_UPGRADE\n"
+        "    Weapon = PRIMARY TestHordeRangeFinderUpgraded\n"
+        "  End\n"
+        "  Behavior = SubObjectsUpgrade ModuleTag_RangeSubObjects\n"
+        "    TriggeredBy = Upgrade_TestRange\n"
+        "  End\n"
+        "End\n"
+        "Object TestHorde\n"
+        "  Behavior = StatusBitsUpgrade ModuleTag_RangeLegality\n"
+        "    TriggeredBy = Upgrade_TestRange\n"
+        "  End\n"
+        "End\n"
+    ).encode("cp1252")
+    documents = _documents(payload)
+    documents["data/ini/weapon.ini"] += b"""
+Weapon TestHordeRangeFinderUpgraded
+  AttackRange = 400
+  HordeAttackNugget
+  End
+End
+"""
+    member_lineage, prepared = _lineage(documents, "TestMember")
+    horde_lineage, _ = _lineage(documents, "TestHorde")
+    upgrades = compile_weapon_upgrades(
+        documents,
+        [member_lineage, horde_lineage],
+        base_weapon_targets(member_lineage),
+        prepared.numeric_defines,
+    )
+
+    assert len(upgrades) == 1
+    assert upgrades[0]["upgradeId"] == "Upgrade_TestRange"
+    assert upgrades[0]["kind"] == "production-legality"
+    assert upgrades[0]["weaponId"] == "TestHordeRangeFinderUpgraded"
+    assert upgrades[0]["coordinationAttackRange"]["value"] == 400
+
+
+def test_status_bits_unrelated_horde_trigger_does_not_join_member_weapon() -> None:
+    # Adversarial: uniqueness of a PLAYER_UPGRADE weapon is not identity of an
+    # upgrade relationship. An unrelated StatusBitsUpgrade must stay out.
+    payload = (
+        "Object TestMember\n"
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY TestSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = PLAYER_UPGRADE\n"
+        "    Weapon = PRIMARY TestSwordUpgraded\n"
+        "  End\n"
+        "  Behavior = SubObjectsUpgrade ModuleTag_ForgedBladesSubObjects\n"
+        "    TriggeredBy = Upgrade_TestForgedBlades\n"
+        "  End\n"
+        "End\n"
+        "Object TestHorde\n"
+        "  Behavior = StatusBitsUpgrade ModuleTag_Unrelated\n"
+        "    TriggeredBy = Upgrade_CompletelyUnrelated\n"
+        "  End\n"
+        "End\n"
+    ).encode("cp1252")
+    documents = _documents(payload)
+    member_lineage, prepared = _lineage(documents, "TestMember")
+    horde_lineage, _ = _lineage(documents, "TestHorde")
+    upgrades = compile_weapon_upgrades(
+        documents,
+        [member_lineage, horde_lineage],
+        base_weapon_targets(member_lineage),
+        prepared.numeric_defines,
+    )
+
+    assert upgrades == []
+
+
 def test_status_bits_legality_marker_stays_out_of_weapon_upgrades() -> None:
     # A StatusBitsUpgrade whose upgrade gates no weapon nugget is a production
     # legality marker, never an invented effect.
     payload = _weapon_object(
+        "  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY TestSword\n  End\n",
+        "  Behavior = StatusBitsUpgrade ModuleTag_Legality\n"
+        "    TriggeredBy = Upgrade_TestProductionLegality\n"
+        "  End\n",
+    )
+    documents = _documents(payload)
+    lineage, prepared = _lineage(documents)
+    upgrades = compile_weapon_upgrades(
+        documents,
+        [lineage],
+        base_weapon_targets(lineage),
+        prepared.numeric_defines,
+    )
+    assert upgrades == []
+
+
+def test_status_bits_same_player_upgrade_weapon_is_not_a_swap() -> None:
+    # A PLAYER_UPGRADE condition alone does not prove a damage effect: the
+    # selected primary must differ from every authored base weapon.
+    payload = _weapon_object(
         "  WeaponSet\n"
         "    Conditions = None\n"
+        "    Weapon = PRIMARY TestSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = PLAYER_UPGRADE\n"
         "    Weapon = PRIMARY TestSword\n"
         "  End\n",
         "  Behavior = StatusBitsUpgrade ModuleTag_Legality\n"
@@ -720,4 +1303,31 @@ def test_status_bits_legality_marker_stays_out_of_weapon_upgrades() -> None:
         base_weapon_targets(lineage),
         prepared.numeric_defines,
     )
+
     assert upgrades == []
+
+
+def test_status_bits_weapon_swap_fails_closed_without_authored_damage() -> None:
+    payload = _weapon_object(
+        "  WeaponSet\n"
+        "    Conditions = None\n"
+        "    Weapon = PRIMARY TestSword\n"
+        "  End\n"
+        "  WeaponSet\n"
+        "    Conditions = PLAYER_UPGRADE\n"
+        "    Weapon = PRIMARY TestBrokenUpgradedWeapon\n"
+        "  End\n",
+        "  Behavior = StatusBitsUpgrade ModuleTag_ForgedBlades\n"
+        "    TriggeredBy = Upgrade_TestForgedBlades\n"
+        "  End\n",
+    )
+    documents = _documents(payload)
+    lineage, prepared = _lineage(documents)
+
+    with pytest.raises(ArmorCompilerError, match="no resolvable authored damage"):
+        compile_weapon_upgrades(
+            documents,
+            [lineage],
+            base_weapon_targets(lineage),
+            prepared.numeric_defines,
+        )

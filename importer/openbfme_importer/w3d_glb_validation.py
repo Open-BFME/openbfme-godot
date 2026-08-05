@@ -461,6 +461,8 @@ def _validate_meshes(
     buffers: tuple[_Buffer, ...],
     views: tuple[_BufferView, ...],
     material_count: int,
+    *,
+    allow_empty_geometry: bool = False,
 ) -> tuple[int, int, int]:
     meshes = _array(document, "meshes")
     primitive_count = vertex_count = triangle_count = 0
@@ -525,7 +527,10 @@ def _validate_meshes(
             primitive_count += 1
             vertex_count += position.count
             triangle_count += primitive_triangles
-    if not meshes or not primitive_count or not vertex_count or not triangle_count:
+    if (
+        not allow_empty_geometry
+        and (not meshes or not primitive_count or not vertex_count or not triangle_count)
+    ):
         raise _fail("GLB contains no renderable TRIANGLES geometry")
     return primitive_count, vertex_count, triangle_count
 
@@ -834,6 +839,14 @@ def validate_w3d_glb_semantics(
     """
 
     expected = _normalized_expected_counts(expected_counts)
+    # A retail attachment-pivot carrier is the one honest W3D shape with no
+    # renderable geometry.  Permit it only when the caller explicitly proves
+    # all three geometry aggregates are exactly zero; a partial/implicit zero
+    # contract must continue to fail closed like ordinary art.
+    allow_empty_geometry = all(
+        expected.get(key) == 0
+        for key in ("mesh_count", "vertex_count", "triangle_count")
+    )
     if not isinstance(path, Path):
         raise _fail("GLB path is invalid")
     try:
@@ -859,6 +872,7 @@ def validate_w3d_glb_semantics(
                 buffers,
                 views,
                 material_count,
+                allow_empty_geometry=allow_empty_geometry,
             )
             nodes, skinned_mesh_nodes, _reachable = _validate_nodes_and_scenes(
                 document, len(meshes)

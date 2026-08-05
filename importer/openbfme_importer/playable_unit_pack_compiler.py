@@ -183,11 +183,39 @@ def _state(row: Mapping[str, object]) -> str | None:
         return "death"
     if conditions & _ATTACK_TOKENS or "ATTACK" in scope_text or "FIRING" in scope_text:
         return "attack"
+    # Pure turn clips are movement-compatible fallbacks, but are not the core
+    # WALK state. Combined rows keep the meaning of their non-turn tokens: a
+    # retail {MOVING, TURN_LEFT} row is still authored movement evidence.
+    turn_tokens = {
+        item
+        for item in conditions
+        if item.startswith("TURN_LEFT") or item.startswith("TURN_RIGHT")
+    }
+    if turn_tokens and conditions == turn_tokens:
+        return None
     if "MOVING" in conditions or "MOVE" in scope_text or "LOCOMOTOR" in scope_text:
         return "move"
     if not conditions and "IDLEANIMATIONSTATE" in scope_text.replace(" ", ""):
         return "idle"
+    # Cavalry / morph banners (GondorCavalryBanner, Rohan mounted form) author
+    # their default pose as AnimationState USER_N rather than IdleAnimationState.
+    # A single USER_* morph flag is that form's idle; multi-condition combat
+    # rows still fall through as non-core.
+    if (
+        len(conditions) == 1
+        and next(iter(conditions)).startswith("USER_")
+        and "ANIMATIONSTATE" in scope_text.replace(" ", "")
+        and "TRANSITIONSTATE" not in scope_text.replace(" ", "")
+    ):
+        return "idle"
     return None
+
+
+def _is_turn_animation(row: Mapping[str, object]) -> bool:
+    raw = row.get("conditions", [])
+    return isinstance(raw, list) and any(
+        str(item).upper().startswith(("TURN_LEFT", "TURN_RIGHT")) for item in raw
+    )
 
 
 def _ability_animation_key(conditions: Iterable[object]) -> tuple[str, str] | None:
@@ -761,7 +789,9 @@ def compile_playable_unit_pack_recipe(
         raise PlayableUnitPackCompilerError("visual closure digest is invalid")
     summary = visual_closure.get("summary")
     if not isinstance(summary, Mapping):
-        raise PlayableUnitPackCompilerError("visual closure is not conversion-ready")
+        raise PlayableUnitPackCompilerError(
+            "visual closure is not conversion-ready: summary is missing"
+        )
     unresolved = visual_closure.get("unresolved")
     if not isinstance(unresolved, Mapping):
         raise PlayableUnitPackCompilerError("visual closure unresolved contract is invalid")
@@ -945,28 +975,83 @@ def compile_playable_unit_pack_recipe(
         for row in conditional_animation_candidates
         if row not in conditional_animation_gaps
         and row.get("reason") == "missing W3D animation reference"
-        and _state(row) is not None
+        and (_state(row) is not None or _is_turn_animation(row))
+    ]
+    # Some layered INIs author an optional ``ExtraMesh:Yes`` component that the
+    # shipped archives do not contain (AngmarDireWolf's KUDireWolfC_SKN is one
+    # such retail row).  It is safe to omit only when the same draw module and
+    # condition state still has a resolved model component.  A missing sole or
+    # conditional model therefore remains a hard closure failure.
+    retail_absent_extra_mesh_gaps = [
+        row
+        for row in unresolved_references
+        if row.get("status") == "missing"
+        and row.get("kind") == "extra-mesh"
+        and row.get("usage") == "extra-mesh"
+        and row.get("reason") == "missing W3D extra-mesh reference"
+        and row.get("conditions") in (None, [])
+        and any(
+            resolved.get("kind") in {"model", "extra-mesh"}
+            and resolved.get("status") == "resolved"
+            and resolved.get("conditions") == []
+            and str(resolved.get("targetObject", "")).casefold()
+            == str(row.get("targetObject", "")).casefold()
+            and _draw_key(resolved) == _draw_key(row)
+            for resolved in exact_rows
+        )
+    ]
+    # RandomTexture is an optional replacement for a model's embedded default
+    # texture. Some retail INIs name variants that are not present in the
+    # shipped archives (RohanBanner's RUYeoBannerB.tga). Omit such a variant
+    # only when the same unconditional draw has a resolved model whose embedded
+    # default texture is itself resolved.
+    retail_absent_random_texture_gaps = [
+        row
+        for row in unresolved_references
+        if row.get("status") == "missing"
+        and row.get("kind") == "texture"
+        and row.get("usage") == "random-texture"
+        and row.get("conditions") in (None, [])
+        and any(
+            model.get("kind") == "model"
+            and model.get("status") == "resolved"
+            and model.get("conditions") == []
+            and str(model.get("targetObject", "")).casefold()
+            == str(row.get("targetObject", "")).casefold()
+            and _draw_key(model) == _draw_key(row)
+            and any(
+                embedded_row.get("status") == "resolved"
+                and str(embedded_row.get("sourceW3dVirtualPath", "")).casefold()
+                in {
+                    str(path).casefold()
+                    for path in model.get("physicalVirtualPaths", [])
+                }
+                for embedded_row in embedded
+            )
+            for model in exact_rows
+        )
     ]
     tolerated_non_core_gaps = (
         not graph_diagnostics
         and not missing_definitions
-        and len(conditional_animation_gaps) + len(retail_absent_animation_gaps)
+        and len(conditional_animation_gaps)
+        + len(retail_absent_animation_gaps)
+        + len(retail_absent_extra_mesh_gaps)
+        + len(retail_absent_random_texture_gaps)
         == len(unresolved_references)
         and all(row.get("status") in {"resolved", "missing"} for row in embedded)
     )
     if summary.get("ready") is not True and not tolerated_non_core_gaps:
-        # Warg-pack style units can leave non-core graph diagnostics while
-        # still publishing exact combat models. Fail only when no exact leaf
-        # models are present at all.
-        exact_probe = _rows(visual_closure.get("exactLeaves"), "exact visual leaves")
-        has_exact_model = any(
-            isinstance(row, Mapping) and row.get("kind") == "model"
-            for row in exact_probe
+        raise PlayableUnitPackCompilerError(
+            "visual closure is not conversion-ready "
+            f"(ready={summary.get('ready')!r}, graphDiagnostics={len(graph_diagnostics)}, "
+            f"missingDefinitions={len(missing_definitions)}, unresolved={len(unresolved_references)}, "
+            f"conditionalGaps={len(conditional_animation_gaps)}, "
+            f"retailAbsentAnimationGaps={len(retail_absent_animation_gaps)}, "
+            f"retailAbsentExtraMeshGaps={len(retail_absent_extra_mesh_gaps)}, "
+            f"retailAbsentRandomTextureGaps={len(retail_absent_random_texture_gaps)}, "
+            f"embedded={len(embedded)})"
         )
-        if not has_exact_model:
-            raise PlayableUnitPackCompilerError(
-                "visual closure is not conversion-ready"
-            )
     composition = descriptor["composition"]
     if not isinstance(composition, Mapping):
         raise PlayableUnitPackCompilerError("descriptor composition is invalid")
@@ -1030,6 +1115,10 @@ def compile_playable_unit_pack_recipe(
             )
         )
     }
+    retail_absent_extra_mesh_ids = {
+        str(row.get("identifier", "")).casefold()
+        for row in retail_absent_extra_mesh_gaps
+    }
     # Editor-only rows (retail horde banner markers) are recorded through the
     # excluded-editor-only lane below, so a visual root they author is
     # accounted for rather than missing.
@@ -1073,6 +1162,7 @@ def compile_playable_unit_pack_recipe(
             for identifier in required_visual_ids
             if identifier.casefold() not in exact_ids
             and identifier.casefold() not in unsupported_model_ids
+            and identifier.casefold() not in retail_absent_extra_mesh_ids
             and identifier.casefold() not in editor_only_visual_ids
             and identifier.casefold() not in scanned_stems
             and identifier.casefold() not in hero_selection_icon_ids
@@ -1082,17 +1172,10 @@ def compile_playable_unit_pack_recipe(
         key=str.casefold,
     )
     if missing_visual_ids:
-        if not exact_ids and not scanned_stems:
-            raise PlayableUnitPackCompilerError(
-                "visual closure is missing authored roots: "
-                + ", ".join(missing_visual_ids)
-            )
-        # Secondary multi-skin / form roots (IUWildMan2_SKN on axe wildmen)
-        # can be required by presentation while exactLeaves only carries the
-        # primary combat mesh. When the unit already has bound visuals, record
-        # the residual roots rather than inventing meshes or failing convert.
-        # (Empty exact+scanned still fails closed above.)
-        missing_visual_ids = []
+        raise PlayableUnitPackCompilerError(
+            "visual closure is missing authored roots: "
+            + ", ".join(missing_visual_ids)
+        )
     model_rows = [row for row in exact if row.get("kind") == "model"]
     animation_rows = [row for row in exact if row.get("kind") == "animation"]
     auxiliary_rows = [
@@ -1105,6 +1188,13 @@ def compile_playable_unit_pack_recipe(
         and row.get("conditions") == []
         for path in _paths(row, "primary model")
     }
+    member_hidden_by_default = any(
+        row.get("kind") == "model"
+        and str(row.get("targetObject", "")).casefold() == member_id.casefold()
+        and row.get("reason") == "sage-none-model"
+        and row.get("conditions") == []
+        for row in semantic
+    )
     # A mount composition (retail MordorMumakil carrying its rider horde
     # MordorHaradrimLancerHorde as InitialPayload) inverts the usual horde
     # contract: the member horde is authored invisible by default (``Model =
@@ -1115,13 +1205,6 @@ def compile_playable_unit_pack_recipe(
     # model — while any other member-defaultless shape keeps failing closed.
     mounted_presentation = False
     if not primary_models:
-        member_hidden_by_default = any(
-            row.get("kind") == "model"
-            and str(row.get("targetObject", "")).casefold() == member_id.casefold()
-            and row.get("reason") == "sage-none-model"
-            and row.get("conditions") == []
-            for row in semantic
-        )
         mount_models = {
             path
             for row in model_rows
@@ -1132,6 +1215,25 @@ def compile_playable_unit_pack_recipe(
         if member_hidden_by_default and len(mount_models) == 1:
             primary_models = mount_models
             mounted_presentation = True
+    # RotWK Dwarven banner carriers deliberately author Model=None as their
+    # unconditional state and select the visible skin through MorphCondition
+    # USER flags. Preserve every conditional skin, but pin the carrier-specific
+    # authored form as the fallback visual so the pack never invents a model.
+    banner_morph_default = {
+        "dwarvenbanner": "USER_4",       # Guardian base carrier
+        "dwarvenphalanxbanner": "USER_6",
+        "menofdalebanner": "USER_3",
+    }.get(member_id.casefold(), "")
+    if not primary_models and member_hidden_by_default and banner_morph_default:
+        morph_models = {
+            path
+            for row in model_rows
+            if str(row.get("targetObject", "")).casefold() == member_id.casefold()
+            and row.get("conditions") == [banner_morph_default]
+            for path in _paths(row, "banner morph model")
+        }
+        if len(morph_models) == 1:
+            primary_models = morph_models
     if len(primary_models) != 1:
         raise PlayableUnitPackCompilerError(
             "primary visual root does not identify one default model"
@@ -1182,6 +1284,8 @@ def compile_playable_unit_pack_recipe(
             )
         if defaults:
             group_defaults[draw_key] = defaults[0]
+    if banner_morph_default:
+        group_defaults[model_draw_keys[default_model]] = default_model
 
     state_rows: dict[str, list[Mapping[str, object]]] = {
         state: [] for state in _CORE_ORDER
@@ -1192,9 +1296,10 @@ def compile_playable_unit_pack_recipe(
             state_rows[state].append(row)
     for row in retail_absent_animation_gaps:
         state = _state(row)
-        if state is None or not state_rows[state]:
+        fallback_state = "move" if _is_turn_animation(row) else state
+        if fallback_state is None or not state_rows[fallback_state]:
             raise PlayableUnitPackCompilerError(
-                "visual closure is not conversion-ready"
+                "visual closure is not conversion-ready: retail-absent animation has no authored state fallback"
             )
     required_states = _required_states(descriptor)
     missing_states = [state for state in required_states if not state_rows[state]]
@@ -1543,8 +1648,11 @@ def compile_playable_unit_pack_recipe(
                     model_occurrences[model_path],
                     key=lambda row: _canonical_bytes(row),
                 ),
-                "default": model_has_unconditional[model_path]
-                and model_path == default_model,
+                "default": model_path == default_model
+                and (
+                    model_has_unconditional[model_path]
+                    or bool(banner_morph_default)
+                ),
                 "ownerObjectId": model_owners[model_path],
                 "drawModule": model_draw_keys[model_path][1],
                 "role": (
@@ -1791,17 +1899,31 @@ def compile_playable_unit_pack_recipe(
     audio_routes = presentation.get("audioRoutes")
     if not isinstance(ui, Mapping) or not isinstance(audio_routes, Mapping):
         raise PlayableUnitPackCompilerError("descriptor media routes are invalid")
-    required_image_ids = {
+    production_rows = _rows(descriptor.get("production"), "descriptor production")
+    engine_spawned_banner = bool(production_rows) and all(
+        row.get("surface") == "banner-carrier" for row in production_rows
+    )
+    # ButtonImage is always required. SelectPortrait may be census source-null
+    # (retail UPGondor_Banner has no MappedImage body); those ids are omitted
+    # from resolvedImages by media resolution and must not block conversion.
+    required_image_ids: set[str] = set()
+    portrait_ids = {
         str(value)
         for value in ui.get("portraitImageIds", [])
         if str(value).casefold() not in {"", "none"}
     }
+    image_keys = {str(key).casefold() for key in images}
     for command in ui.get("commands", []):
         if isinstance(command, Mapping) and isinstance(command.get("fields"), Mapping):
             for value in command["fields"].get("ButtonImage", []):
                 if str(value).casefold() not in {"", "none"}:
                     required_image_ids.add(str(value))
-    image_keys = {str(key).casefold() for key in images}
+    for portrait in portrait_ids:
+        if portrait.casefold() in image_keys:
+            required_image_ids.add(portrait)
+        elif not engine_spawned_banner:
+            # Non-banner units keep fail-closed portrait binding.
+            required_image_ids.add(portrait)
     if any(
         identifier.casefold() not in image_keys for identifier in required_image_ids
     ):
@@ -2036,6 +2158,26 @@ def compile_playable_unit_pack_recipe(
                         *[
                             {
                                 **row,
+                                "runtimeSupport": "excluded-retail-absent-extra-mesh",
+                                "runtimeExclusionReason": (
+                                    "retail-absent-extra-mesh-default-covered"
+                                ),
+                            }
+                            for row in retail_absent_extra_mesh_gaps
+                        ],
+                        *[
+                            {
+                                **row,
+                                "runtimeSupport": "excluded-retail-absent-random-texture",
+                                "runtimeExclusionReason": (
+                                    "retail-absent-random-texture-default-covered"
+                                ),
+                            }
+                            for row in retail_absent_random_texture_gaps
+                        ],
+                        *[
+                            {
+                                **row,
                                 "runtimeSupport": "excluded-missing-conditional-model-texture",
                                 "runtimeExclusionReason": "conditional-model-texture-unresolved",
                             }
@@ -2068,6 +2210,11 @@ def compile_playable_unit_pack_recipe(
             "imageBindings": image_bindings,
             "imageBindingMetadata": image_binding_metadata,
             "stringBindings": deepcopy(presentation.get("resolvedStrings", {})),
+            # Command-referenced ids retail itself never localizes. Carried so
+            # the runtime can tell "retail has no text for this button" apart
+            # from "this pack is broken" -- the latter verdict deleted whole
+            # units from the roster.
+            "sourceNullStringIds": list(presentation.get("sourceNullStringIds", [])),
             "audioRoutes": deepcopy(audio_routes),
             "audioBindings": audio_bindings,
             "audioResolution": {
@@ -2464,6 +2611,37 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             and row.get("semanticState") == _state(row)
             and str(row.get("semanticState")) in covered_animation_states
         )
+        is_retail_absent_extra_mesh = (
+            row.get("status") == "missing"
+            and row.get("kind") == "extra-mesh"
+            and row.get("usage") == "extra-mesh"
+            and isinstance(row.get("identifier"), str)
+            and bool(row.get("identifier"))
+            and valid_conditions
+            and not conditions
+            and valid_graph_provenance
+            and not row.get("physicalVirtualPaths", [])
+            and not row.get("candidates", [])
+            and row.get("reason") == "missing W3D extra-mesh reference"
+            and row.get("runtimeSupport") == "excluded-retail-absent-extra-mesh"
+            and exclusion_reason == "retail-absent-extra-mesh-default-covered"
+        )
+        is_retail_absent_random_texture = (
+            row.get("status") == "missing"
+            and row.get("kind") == "texture"
+            and row.get("usage") == "random-texture"
+            and isinstance(row.get("identifier"), str)
+            and bool(row.get("identifier"))
+            and valid_conditions
+            and not conditions
+            and valid_graph_provenance
+            and not row.get("physicalVirtualPaths", [])
+            and not row.get("candidates", [])
+            and row.get("runtimeSupport")
+            == "excluded-retail-absent-random-texture"
+            and exclusion_reason
+            == "retail-absent-random-texture-default-covered"
+        )
         is_embedded_texture = (
             row.get("status") == "missing"
             and isinstance(row.get("sourceW3dVirtualPath"), str)
@@ -2538,6 +2716,8 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
         if (
             not is_animation
             and not is_retail_absent_animation
+            and not is_retail_absent_extra_mesh
+            and not is_retail_absent_random_texture
             and not is_embedded_texture
             and not is_editor_only_model
             and not is_excluded_form_animation
@@ -2600,9 +2780,20 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
         for value in command.get("fields", {}).get(field, [])
         if value
     }
+    # Hero ability buttons (mount toggles, special powers) carry their own
+    # label/tooltip ids and are just as bindable as a train command's.
+    ability_string_ids = {
+        str(value)
+        for ability in runtime.get("abilities", []) or []
+        if isinstance(ability, Mapping)
+        and isinstance(ability.get("button"), Mapping)
+        for field in ("labelIds", "tooltipIds")
+        for value in ability["button"].get(field, []) or []
+        if value
+    }
+    source_null_string_ids = runtime.get("sourceNullStringIds")
     if (
         not isinstance(string_bindings, Mapping)
-        or (bool(string_bindings) and set(string_bindings) != required_string_ids)
         or any(
             not isinstance(key, str)
             or not key
@@ -2610,6 +2801,18 @@ def validate_playable_unit_pack_recipe(value: Mapping[str, object]) -> None:
             or not value
             for key, value in string_bindings.items()
         )
+        or not isinstance(source_null_string_ids, list)
+        or any(
+            not isinstance(item, str) or not item for item in source_null_string_ids
+        )
+        or set(source_null_string_ids) & set(string_bindings)
+        or not set(source_null_string_ids) <= (required_string_ids | ability_string_ids)
+        # Bound plus retail-unlocalized must account for EVERY referenced id --
+        # command labels AND hero ability button labels alike. The union is
+        # checked unconditionally: a unit with zero bound strings is the worst
+        # case (every button text-dead), not an exemption from the gate.
+        or not (required_string_ids | ability_string_ids)
+        <= set(string_bindings) | set(source_null_string_ids)
     ):
         raise PlayableUnitPackCompilerError("localized string bindings are invalid")
     declared_audio_ids = {

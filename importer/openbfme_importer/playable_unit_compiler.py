@@ -72,6 +72,33 @@ class PlayableUnitCompilerInputs:
     )
 
 
+
+
+def _is_upgrade_or_science_token(token: str) -> bool:
+    """Does this CommandButton token name an Upgrade or a Science?
+
+    NOT `startswith("Upgrade_")`. Pure RotWK 2.01 authors four upgrades with no
+    underscore after "Upgrade", and all four are the Angmar structure-level
+    upgrades that gate Angmar's tier-2/tier-3 units:
+
+        upgrade.ini:  Upgrade UpgradeAngmarBarracksLevel2
+                      Upgrade UpgradeAngmarBarracksLevel3
+                      Upgrade UpgradeAngmarDenLevel2
+                      Upgrade UpgradeAngmarDenLevel3
+
+    (501 other ids DO use the `Upgrade_` form, which is why the underscore
+    looked safe to require.) Requiring it discarded those tokens silently, so
+    the affected buttons compiled with an EMPTY prerequisite set and the units
+    shipped buildable with nothing owned - a gameplay defect with no diagnostic.
+
+    Widening to the `Upgrade` prefix is safe against the fields these call sites
+    read: the non-upgrade tokens that appear in `Options` are flags like
+    `NEED_UPGRADE`, `CANCELABLE` and `NOT_QUEUEABLE`, none of which start with
+    "Upgrade".
+    """
+
+    return token.startswith("Upgrade") or token.startswith("SCIENCE_")
+
 def _canonical_bytes(value: object) -> bytes:
     return json.dumps(
         value,
@@ -420,12 +447,20 @@ def _evaluated_define_body(
 
 
 def _numeric_defines(documents: Mapping[str, bytes]) -> dict[str, int | float]:
-    """Numeric GameData constants, including evaluated define expressions."""
+    """Numeric constants from the effective INI/include document set.
+
+    Retail object modules consume constants declared outside ``gamedata.ini``
+    (notably ``createaherogamedata.inc``), so the complete effective define set
+    is the conversion authority.
+    """
 
     bodies: dict[str, str] = {}
     occurrences: list[tuple[str, str, str]] = []
     for path, payload in documents.items():
-        if path.replace("\\", "/").casefold() != "data/ini/gamedata.ini":
+        normalized = path.replace("\\", "/").casefold()
+        if not normalized.startswith("data/ini/") or not normalized.endswith(
+            (".ini", ".inc")
+        ):
             continue
         for match in _DEFINE_LINE_PATTERN.finditer(payload):
             name = match.group(1).decode("ascii")
@@ -612,9 +647,14 @@ def _default_set_target(
             continue
         tokens = _tokens(assignment.value)
         if tokens:
-            candidates.append(tokens[-1])
+            target = tokens[-1]
+            # SAGE uses ``None`` as an explicit empty weapon slot. It is not a
+            # Weapon definition and must not become a converter dependency.
+            if target.casefold() in {"none", "null"}:
+                continue
+            candidates.append(target)
             if any(token.casefold() == "primary" for token in tokens[:-1]):
-                primary_candidates.append(tokens[-1])
+                primary_candidates.append(target)
     if primary_candidates:
         candidates = primary_candidates
     unique = {value.casefold(): value for value in candidates}
@@ -2086,16 +2126,72 @@ def _producer_bindings(
                 continue
             button = command["button"]
             assert isinstance(button, IniBlock)
-            direct_requirements = sorted(
+            # The ANY/ALL split is NOT uniform across one production row.
+            #
+            # CITATIONS REBASED 2026-08-04 to the PURE RotWK 2.01 tree
+            # (.../editions/rotwk/cache/effective-assets/data/ini). The earlier
+            # line numbers here (7513-7519 / 7488 / 8336) and the "TWO
+            # NeededUpgrade tokens" claim came from the fan-patched (Unofficial
+            # 2.02) layered tree and are NOT retail.
+            #
+            # Pure retail authors `NeededUpgradeAny` on exactly NINE buttons in
+            # commandbutton.ini -- the layered tree has 44:
+            #   :6327 Command_ConstructGondorRangerHorde
+            #   :6765 Command_ConstructArnorRangerHorde
+            #   :7138 Command_ConstructRohanRohirrimHorde
+            #   :11571 Command_PurchaseTechnologyGondorFireArrows
+            #   :11724 Command_PurchaseTechnologyArnorFireArrows
+            #   :15137 Command_ConstructAngmarDarkDunedainHorde
+            #   :15153 Command_ConstructAngmarDarkRangerHorde
+            #   :15182 Command_ConstructAngmarSnowTrollHorde
+            #   :15197 Command_ConstructAngmarHillTrollHorde
+            # Every one of those nine names exactly ONE `NeededUpgrade` token,
+            # so on pure retail the emitted group is a single-member set and the
+            # ANY-of gate is behaviourally identical to the ALL-of gate. The
+            # multi-token ANY-of groups only exist in the fan patch. This code
+            # stays because it is data-driven and correct either way; do not
+            # "verify" it against a multi-token retail example, because there
+            # is none.
+            #
+            # The commandSetTransition `TriggeredBy` requirements are a
+            # different authority (the producer must sit on the upgraded
+            # CommandSet at all) and stay ALL-of regardless.
+            # `prerequisites` therefore keeps exactly the ALL-of set and the
+            # ANY-of group rides beside it in `prerequisiteAnyOf`; a row that
+            # never authors the flag emits no group at all, so every consumer
+            # that ignores the new key keeps the historical ALL-of behavior.
+            needed_upgrade_any = any(
+                value.strip().casefold() in {"yes", "true", "1"}
+                for value in _block_values(button, "NeededUpgradeAny")
+            )
+            needed_requirements = sorted(
                 {
                     token
-                    for field in ("NeededUpgrade", "Upgrade", "Options")
-                    for value in _block_values(button, field)
+                    for value in _block_values(button, "NeededUpgrade")
                     for token in _tokens(value)
-                    if token.startswith(("Upgrade_", "SCIENCE_"))
+                    if _is_upgrade_or_science_token(token)
                 },
                 key=str.casefold,
             )
+            other_requirements = sorted(
+                {
+                    token
+                    for field in ("Upgrade", "Options")
+                    for value in _block_values(button, field)
+                    for token in _tokens(value)
+                    if _is_upgrade_or_science_token(token)
+                },
+                key=str.casefold,
+            )
+            any_of_requirements: list[str] = []
+            if needed_upgrade_any and needed_requirements:
+                any_of_requirements = needed_requirements
+                direct_requirements = other_requirements
+            else:
+                direct_requirements = sorted(
+                    set(needed_requirements + other_requirements),
+                    key=str.casefold,
+                )
             transition_requirements = sorted(
                 {
                     value
@@ -2114,6 +2210,11 @@ def _producer_bindings(
                     "prerequisites": sorted(
                         set(direct_requirements + transition_requirements),
                         key=str.casefold,
+                    ),
+                    **(
+                        {"prerequisiteAnyOf": any_of_requirements}
+                        if any_of_requirements
+                        else {}
                     ),
                     "commandSetTransition": transitions,
                     "source": {
@@ -2378,6 +2479,172 @@ def _capability_contract(
         for module in special_modules
     ]
     return capabilities, unsupported, traits
+
+
+_GEOMETRY_PIECE_FIELDS = {
+    "geometrymajorradius": "majorRadius",
+    "geometryminorradius": "minorRadius",
+    "geometryheight": "height",
+}
+
+
+def _geometry_offset(token: str) -> dict[str, float] | None:
+    """Parse a SAGE ``GeometryOffset = X:-22 Y:-30 Z:0`` triple.
+
+    SAGE geometry is authored in the object's own source frame with Z up, so X
+    and Y are the ground-plane axes the selection footprint is measured on.
+    """
+
+    offset: dict[str, float] = {}
+    for part in token.replace(",", " ").split():
+        axis, _, raw = part.partition(":")
+        folded = axis.strip().casefold()
+        if folded not in {"x", "y", "z"} or not raw.strip():
+            continue
+        try:
+            offset[folded] = float(raw.strip())
+        except ValueError:
+            return None
+    if not offset:
+        return None
+    return {axis: offset.get(axis, 0.0) for axis in ("x", "y", "z")}
+
+
+def _geometry_number(
+    token: str, defines: Mapping[str, int | float]
+) -> dict[str, object]:
+    """Authored geometry scalar with its resolved numeric value when known.
+
+    Unresolvable symbols keep an expression-only row: the footprint union below
+    then ignores that piece rather than inventing a size for it.
+    """
+
+    text = token.strip().rstrip("%")
+    row: dict[str, object] = {"authored": text}
+    try:
+        row["value"] = float(text) if "." in text else int(text)
+        return row
+    except ValueError:
+        resolved = defines.get(text.casefold())
+        if resolved is not None:
+            row["value"] = resolved
+    return row
+
+
+def _geometry_contract(
+    ancestry: Sequence[SageObject], defines: Mapping[str, int | float]
+) -> dict[str, object] | None:
+    """Project an Object's authored SAGE Geometry block.
+
+    SAGE uses this volume for collision AND for mouse picking: the click is
+    hit-tested against the footprint, never against a flat world-unit radius.
+    The primary ``Geometry`` plus every ``AdditionalGeometry`` piece (each with
+    its own ``GeometryOffset``) are retained verbatim, and ``footprint`` carries
+    their union so a runtime can pick without re-deriving the geometry algebra.
+
+    Geometry is not inherited piecemeal in SAGE: the most-derived ancestor that
+    authors ``Geometry`` replaces the block wholesale, which is what the owner
+    scan below reproduces.
+    """
+
+    owner: SageObject | None = None
+    for item in ancestry:
+        if any(row.key.casefold() == "geometry" for row in item.assignments):
+            owner = item
+    if owner is None:
+        return None
+    pieces: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    is_small: bool | None = None
+    for row in owner.assignments:
+        key = row.key.casefold()
+        if key in {"geometry", "additionalgeometry"}:
+            if key == "geometry":
+                # A second primary block restarts the volume.
+                pieces = []
+            shape = row.value.strip().split()[0].upper() if row.value.strip() else ""
+            current = {
+                "role": "primary" if key == "geometry" else "additional",
+                "shape": shape,
+                "line": row.line,
+                "sourceIni": row.source_virtual_path,
+            }
+            pieces.append(current)
+            continue
+        if key == "geometryissmall":
+            is_small = row.value.strip().casefold() in {"yes", "true", "1"}
+            continue
+        if current is None:
+            continue
+        if key == "geometryname":
+            current["name"] = row.value.strip()
+        elif key in _GEOMETRY_PIECE_FIELDS:
+            current[_GEOMETRY_PIECE_FIELDS[key]] = _geometry_number(row.value, defines)
+        elif key == "geometryoffset":
+            offset = _geometry_offset(row.value)
+            if offset is not None:
+                current["offset"] = offset
+    if not pieces:
+        return None
+    contract: dict[str, object] = {
+        "objectId": owner.name,
+        "sourceIni": owner.source_virtual_path,
+        "pieces": pieces,
+    }
+    if is_small is not None:
+        contract["isSmall"] = is_small
+    primary = pieces[0]
+    for field in ("shape", "majorRadius", "minorRadius", "height"):
+        if field in primary:
+            contract[field] = primary[field]
+    footprint = _geometry_footprint(pieces)
+    if footprint is not None:
+        contract["footprint"] = footprint
+    return contract
+
+
+def _geometry_footprint(
+    pieces: Sequence[Mapping[str, object]],
+) -> dict[str, float] | None:
+    """Union ground-plane half-extents of every geometry piece, source units.
+
+    ``radius`` is the larger half-extent rather than the half-diagonal: a
+    selection circle sized to the half-diagonal bulges well past the silhouette
+    corners, which is the over-picking this whole projection exists to end.
+    """
+
+    half_x = 0.0
+    half_y = 0.0
+    measured = False
+    for piece in pieces:
+        major = _geometry_piece_value(piece, "majorRadius")
+        minor = _geometry_piece_value(piece, "minorRadius")
+        if major is None and minor is None:
+            continue
+        span_x = abs(major if major is not None else minor or 0.0)
+        span_y = abs(minor if minor is not None else major or 0.0)
+        offset = piece.get("offset")
+        offset_x = float(offset["x"]) if isinstance(offset, Mapping) else 0.0
+        offset_y = float(offset["y"]) if isinstance(offset, Mapping) else 0.0
+        half_x = max(half_x, abs(offset_x) + span_x)
+        half_y = max(half_y, abs(offset_y) + span_y)
+        measured = True
+    if not measured:
+        return None
+    return {
+        "majorRadius": half_x,
+        "minorRadius": half_y,
+        "radius": max(half_x, half_y),
+    }
+
+
+def _geometry_piece_value(
+    piece: Mapping[str, object], field: str
+) -> float | None:
+    row = piece.get(field)
+    if not isinstance(row, Mapping) or "value" not in row:
+        return None
+    return float(row["value"])
 
 
 def _scalar_fields(ancestry: Sequence[SageObject]) -> dict[str, dict[str, object]]:
@@ -3808,6 +4075,43 @@ def _weapon_nugget_summary(
     return {"found": found, "kinds": kinds, "warheads": warheads}
 
 
+def _weapon_ocl_nugget_names(
+    documents: Mapping[str, bytes],
+    weapon_id: str,
+    *,
+    cache: dict[tuple[str, str], dict[str, list[dict[str, object]]] | None] | None,
+    cache_lock: threading.Lock | None,
+) -> list[str] | None:
+    """The ObjectCreationList ids one weapon's WeaponOCLNuggets name.
+
+    ``None`` when the weapon authors no WeaponOCLNugget at all, or when any
+    nugget's ``WeaponOCLName`` is missing/ambiguous (fail-closed: the caller
+    then treats the weapon as a plain damage weapon).
+    """
+
+    nuggets = _weapon_damage_nuggets(
+        documents,
+        weapon_id,
+        nugget_kind="weaponoclnugget",
+        cache=cache,
+        cache_lock=cache_lock,
+    )
+    if not nuggets:
+        return None
+    names: list[str] = []
+    for nugget in nuggets:
+        fields = nugget["fields"]
+        assert isinstance(fields, Mapping)
+        rows = fields.get("weaponoclname") or ()
+        if len(rows) != 1:
+            return None
+        tokens = _tokens(str(rows[0]["expression"]))
+        if len(tokens) != 1 or tokens[0].casefold() in {"none", "null"}:
+            return None
+        names.append(tokens[0])
+    return names
+
+
 def _weapon_knockback_fields(
     documents: Mapping[str, bytes],
     weapon_ids: Sequence[str],
@@ -5157,19 +5461,22 @@ def _hero_ability_effect(
             effect["affects"] = affects
         return effect
 
-    if ocl_modules:
-        block = ocl_modules[0]
-        ocl_tokens = _module_tokens(block, "OCL")
-        if len(ocl_tokens) != 1:
-            raise PlayableUnitCompilerError(f"{label} has an ambiguous OCL reference")
+    def summon_effect(ocl_id: str) -> dict[str, object]:
+        """Compile one ability ObjectCreationList into a summon effect.
+
+        Shared by the OCLSpecialPower module lane and the OCL-only
+        SpecialWeapon lane below, so both produce the identical shape and both
+        walk the SAME leaf closure (`_summon_leaf_closure`).
+        """
+
         if ocl_source is None:
             raise PlayableUnitCompilerError(
                 f"{label} requires {OBJECT_CREATION_LIST_PATH} in the effective INI view"
             )
-        entries = _ocl_create_object_entries(ocl_source, ocl_tokens[0])
+        entries = _ocl_create_object_entries(ocl_source, ocl_id)
         if entries is None:
             raise PlayableUnitCompilerError(
-                f"{label} references a missing ObjectCreationList: {ocl_tokens[0]}"
+                f"{label} references a missing ObjectCreationList: {ocl_id}"
             )
         summon_objects: list[dict[str, object]] = []
         for entry in entries:
@@ -5187,19 +5494,19 @@ def _hero_ability_effect(
                     resolved = _resolved_expression(str(field["value"]), constants)
                     if resolved is None or int(resolved) < 1:
                         raise PlayableUnitCompilerError(
-                            f"{label} ObjectCreationList {ocl_tokens[0]} has an "
+                            f"{label} ObjectCreationList {ocl_id} has an "
                             "unresolvable Count"
                         )
                     count = int(resolved)
             if not names:
                 raise PlayableUnitCompilerError(
-                    f"{label} ObjectCreationList {ocl_tokens[0]} has no ObjectNames"
+                    f"{label} ObjectCreationList {ocl_id} has no ObjectNames"
                 )
             for name in names:
                 target = objects.get(name.casefold())
                 if target is None:
                     raise PlayableUnitCompilerError(
-                        f"{label} ObjectCreationList {ocl_tokens[0]} references a "
+                        f"{label} ObjectCreationList {ocl_id} references a "
                         f"missing Object: {name}"
                     )
                 summon_objects.append(
@@ -5210,17 +5517,23 @@ def _hero_ability_effect(
                         "line": int(entry["line"]),
                     }
                 )
-        effect = {
+        resolved_effect: dict[str, object] = {
             "kind": "summon",
-            "oclId": ocl_tokens[0],
+            "oclId": ocl_id,
             "objects": summon_objects,
             "sourceIni": OBJECT_CREATION_LIST_PATH,
         }
-        summon_leaves = _summon_leaf_closure(
-            ocl_tokens[0], objects, documents, constants
-        )
+        summon_leaves = _summon_leaf_closure(ocl_id, objects, documents, constants)
         if summon_leaves is not None:
-            effect["leaves"] = summon_leaves
+            resolved_effect["leaves"] = summon_leaves
+        return resolved_effect
+
+    if ocl_modules:
+        block = ocl_modules[0]
+        ocl_tokens = _module_tokens(block, "OCL")
+        if len(ocl_tokens) != 1:
+            raise PlayableUnitCompilerError(f"{label} has an ambiguous OCL reference")
+        effect = summon_effect(ocl_tokens[0])
         create_location = _first(block.values("CreateLocation"))
         if create_location is not None:
             effect["createLocation"] = create_location
@@ -5233,6 +5546,33 @@ def _hero_ability_effect(
             raise PlayableUnitCompilerError(
                 f"{label} has an ambiguous SpecialWeapon reference"
             )
+        # Aragorn's Army of the Dead: aragorn.ini:854-866 fires the ability
+        # through WeaponFireSpecialAbilityUpdate, and weapon.ini:7806-7810
+        # gives that weapon a single WeaponOCLNugget and nothing else.  Such a
+        # weapon has no damage payload at all -- it IS a summon, and it names
+        # the same egg OCL the OCLSpecialPower lane already resolves.  The rule
+        # is deliberately narrow: a weapon that also damages, or one whose OCL
+        # does not resolve, falls through to the damage lane below and keeps
+        # failing exactly as it did.
+        ocl_names = _weapon_ocl_nugget_names(
+            documents,
+            weapon_tokens[0],
+            cache=named_definition_cache,
+            cache_lock=cache_lock,
+        )
+        if ocl_names is not None:
+            summary = _weapon_nugget_summary(documents, weapon_tokens[0])
+            kinds = summary["kinds"]
+            assert isinstance(kinds, Mapping)
+            if set(kinds) == {"weaponoclnugget"} and len(ocl_names) == 1:
+                effect = summon_effect(ocl_names[0])
+                effect["weaponId"] = weapon_tokens[0]
+                start_range = _resolved_expression(
+                    (block.values("StartAbilityRange") or ("",))[-1], constants
+                )
+                if start_range is not None:
+                    effect["startAbilityRange"] = start_range
+                return effect
         leaf = _ability_weapon_leaf(
             documents,
             weapon_tokens[0],
@@ -6038,6 +6378,175 @@ def _upgrade_purchase_commands(
     return rows
 
 
+_BANNER_POSITION_RE = re.compile(
+    r"UnitType\s*:\s*(?P<unit>[A-Za-z0-9_+'.-]+)\s*"
+    r"Pos\s*:\s*X\s*:\s*(?P<x>[+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*"
+    r"Y\s*:\s*(?P<y>[+-]?(?:\d+(?:\.\d*)?|\.\d+))",
+    re.IGNORECASE,
+)
+
+
+_HORDE_CONTAIN_KINDS = frozenset(
+    {
+        "hordecontain",
+        "horsehordecontain",
+        "transportcontain",  # defensive; banner fields rarely appear here
+    }
+)
+
+
+def _banner_field_assignments(
+    target_lineage: Sequence[SageObject], key: str
+) -> tuple[SageAssignment, ...]:
+    """Collect banner fields from Object assignments and HordeContain modules.
+
+    Retail authors ``BannerCarriersAllowed`` / ``BannerCarrierPosition`` on the
+    HordeContain Behavior block (not as free Object key/values). Object-level
+    rows still win when present so ObjectReskin overrides stay source-backed.
+    """
+
+    object_rows = _effective_values(target_lineage, key)
+    if object_rows:
+        return object_rows
+    folded = key.casefold()
+    selected: tuple[SageAssignment, ...] = ()
+    for block in _effective_top_blocks(target_lineage):
+        if (block.header_key or "").casefold() != "behavior":
+            continue
+        if block.kind.casefold() not in _HORDE_CONTAIN_KINDS:
+            continue
+        values = tuple(
+            row for row in block.assignments if row.key.casefold() == folded
+        )
+        if values:
+            selected = values
+    return selected
+
+
+def _banner_carrier_contract(
+    target: SageObject,
+    target_lineage: Sequence[SageObject],
+) -> dict[str, object] | None:
+    """Compile retail horde banner-carrier fields for RotWK/BFME2 sim.
+
+    Retail hordes author ``BannerCarriersAllowed`` (banner object ids) and
+    optional ``BannerCarrierPosition`` / ``BannerCarrierMinLevel`` on the
+    HordeContain module. When ``BannerCarrierMinLevel`` is omitted, standard
+    skirmish hordes unlock the carrier at level 2 (the common RotWK/BFME2
+    rank-up rule); thrall-style authors set min level to 0 explicitly.
+    """
+
+    label = f"unit {target.name}"
+    allowed: list[str] = []
+    for row in _banner_field_assignments(target_lineage, "BannerCarriersAllowed"):
+        for token in _tokens(row.value):
+            if token.casefold() in {"none", "null", ""}:
+                continue
+            if token not in allowed:
+                allowed.append(token)
+    if not allowed:
+        return None
+
+    positions: list[dict[str, object]] = []
+    for row in _banner_field_assignments(target_lineage, "BannerCarrierPosition"):
+        match = _BANNER_POSITION_RE.search(row.value)
+        if match is None:
+            raise PlayableUnitCompilerError(
+                f"{label} BannerCarrierPosition is not parseable: {row.value!r}"
+            )
+        positions.append(
+            {
+                "unitType": match.group("unit"),
+                "x": float(match.group("x")),
+                "y": float(match.group("y")),
+                "sourceIni": row.source_virtual_path,
+                "line": int(row.line),
+            }
+        )
+
+    min_level = 2
+    min_level_authored = False
+    for row in _banner_field_assignments(target_lineage, "BannerCarrierMinLevel"):
+        raw = row.value.strip()
+        if not re.fullmatch(r"[0-9]+", raw):
+            raise PlayableUnitCompilerError(
+                f"{label} BannerCarrierMinLevel is invalid: {row.value!r}"
+            )
+        min_level = int(raw)
+        min_level_authored = True
+
+    destroy_on_death = False
+    for row in _banner_field_assignments(
+        target_lineage, "BannerCarrierDestroyHordeOnDeath"
+    ):
+        token = (row.value or "").strip().casefold()
+        if token in {"yes", "true", "1"}:
+            destroy_on_death = True
+        elif token in {"no", "false", "0"}:
+            destroy_on_death = False
+        else:
+            raise PlayableUnitCompilerError(
+                f"{label} BannerCarrierDestroyHordeOnDeath is invalid: {row.value!r}"
+            )
+
+    return {
+        "allowedObjectIds": allowed,
+        "positions": positions,
+        "minLevel": min_level,
+        "minLevelDefaulted": not min_level_authored,
+        "destroyHordeOnBannerDeath": destroy_on_death,
+    }
+
+
+def _banner_carrier_update_contract(
+    target: SageObject,
+    target_lineage: Sequence[SageObject],
+) -> dict[str, object] | None:
+    """Compile only the retail-authored banner replacement timers.
+
+    A banner may be replaced by its horde only when its own
+    ``BannerCarrierUpdate`` authors ``DiedRespawnTime``.  The companion melee
+    timer is retained as a second lower bound.  Missing fields are not given
+    engine defaults: absence means no executable respawn contract.
+    """
+
+    selected: SageBlock | None = None
+    for block in _effective_top_blocks(target_lineage):
+        if (
+            (block.header_key or "").casefold() == "behavior"
+            and block.kind.casefold() == "bannercarrierupdate"
+        ):
+            selected = block
+    if selected is None:
+        return None
+
+    fields: dict[str, dict[str, object]] = {}
+    for assignment in selected.assignments:
+        folded = assignment.key.casefold()
+        if folded not in {"diedrespawntime", "meleefreebannerrespawntime"}:
+            continue
+        raw = assignment.value.strip()
+        if re.fullmatch(r"[0-9]+", raw) is None:
+            raise PlayableUnitCompilerError(
+                f"unit {target.name} {assignment.key} is invalid: "
+                f"{assignment.value!r}"
+            )
+        fields[folded] = {
+            "milliseconds": int(raw),
+            "sourceIni": assignment.source_virtual_path,
+            "line": int(assignment.line),
+        }
+
+    died = fields.get("diedrespawntime")
+    if died is None:
+        return None
+    result: dict[str, object] = {"diedRespawnTime": died}
+    melee = fields.get("meleefreebannerrespawntime")
+    if melee is not None:
+        result["meleeFreeBannerRespawnTime"] = melee
+    return result
+
+
 def _level_up_upgrades(
     target: SageObject,
     target_lineage: Sequence[SageObject],
@@ -6113,6 +6622,7 @@ def compile_playable_unit_descriptor(
     faction_graph: Mapping[str, object] | None = None,
     prepared: PlayableUnitCompilerInputs | None = None,
     game: str = "bfme2",
+    engine_spawned_banner_carrier: bool = False,
 ) -> dict[str, object]:
     """Compile one source-backed descriptor or fail on an unresolved core edge."""
 
@@ -6319,6 +6829,30 @@ def compile_playable_unit_descriptor(
         )
     elif direct_producers:
         producers = direct_producers
+    elif "BANNER" in {
+        kind.upper()
+        for kind in _kind_of(_ancestry(objects, target))
+    } or engine_spawned_banner_carrier:
+        # Banner carriers are not UNIT_BUILD targets. Hordes spawn them via
+        # BannerCarriersAllowed when the battalion reaches min level. Keep a
+        # single engine surface so descriptors remain production-accounted.
+        producers = (
+            {
+                "producerObjectId": target.name,
+                "commandSetId": "__engine__/BannerCarriersAllowed",
+                "commandId": f"__engine__/BANNER_CARRIER/{target.name}",
+                "surface": "banner-carrier",
+                "prerequisites": [],
+                "commandSetTransition": [],
+                "sourceField": "BannerCarriersAllowed",
+                "evidence": (
+                    "kindof-banner"
+                    if "BANNER" in {kind.upper() for kind in _kind_of(_ancestry(objects, target))}
+                    else "banner-carriers-allowed-edge"
+                ),
+                "ui": {},
+            },
+        )
     else:
         assert direct_error is not None
         containers = _horde_containers(target.name, objects)
@@ -6372,6 +6906,8 @@ def compile_playable_unit_descriptor(
         target, target_lineage
     )
     consumed_container_modules = consumed_container_modules | consumed_level_up_modules
+    banner_carrier = _banner_carrier_contract(target, target_lineage)
+    banner_carrier_update = _banner_carrier_update_contract(target, target_lineage)
     upgrade_commands = _upgrade_purchase_commands(
         target,
         target_lineage,
@@ -6381,6 +6917,10 @@ def compile_playable_unit_descriptor(
         prepared.numeric_defines,
     )
     member_lineage = _ancestry(objects, primary_member)
+    # SAGE picks a horde by hit-testing one member's authored Geometry, so the
+    # member's block is the footprint a runtime needs (the container Object has
+    # none of its own).
+    member_geometry = _geometry_contract(member_lineage, prepared.numeric_defines)
     container_audio_edges = (
         frozenset().union(
             *(
@@ -6678,6 +7218,38 @@ def compile_playable_unit_descriptor(
         )
     for values in semantic_scopes.values():
         values.sort(key=lambda row: _canonical_bytes(row))
+    ui_binding = _ui_binding(
+        producers,
+        command_buttons,
+        target_lineage,
+        member_lineage,
+        command_audio,
+        _mapped_image_size_index(faction_graph),
+    )
+    # Localization ids this unit's own command buttons reference. Retail
+    # authors some of these with no record in data/lotr.str at all (the RotWK
+    # patch added CONTROLBAR:ConstructBlackRiderHorde to commandbutton.ini and
+    # never added the string), so a resolved-strings table is legitimately
+    # narrower than the required set. Record the difference the same way
+    # spellbook_compiler.py:2400 does instead of leaving a hole that reads as a
+    # broken pack: ContentDB used to reject the whole unit document for it,
+    # which is how MordorBlackRiderHorde vanished from the mordor roster.
+    _required_ui_string_ids = {
+        str(value)
+        for command in ui_binding.get("commands", [])
+        if isinstance(command, Mapping)
+        for field in ("TextLabel", "DescriptLabel")
+        for value in command.get("fields", {}).get(field, [])
+        if value
+    }
+    _source_null_string_ids = sorted(
+        {
+            str(value).strip()
+            for value in (faction_graph or {}).get("layeredSourceNullTextIds", [])
+            if isinstance(value, str) and str(value).strip() in _required_ui_string_ids
+        },
+        key=str.casefold,
+    )
     descriptor: dict[str, object] = {
         "schema": SCHEMA,
         "schemaVersion": SCHEMA_VERSION,
@@ -6702,6 +7274,11 @@ def compile_playable_unit_descriptor(
             "references": visual_refs,
             "simulation": simulation,
             **(
+                {"geometry": member_geometry}
+                if member_geometry is not None
+                else {}
+            ),
+            **(
                 {"upgradeCommands": upgrade_commands}
                 if upgrade_commands
                 else {}
@@ -6709,6 +7286,16 @@ def compile_playable_unit_descriptor(
             **(
                 {"levelUpgrades": level_upgrades}
                 if level_upgrades
+                else {}
+            ),
+            **(
+                {"bannerCarrier": banner_carrier}
+                if banner_carrier is not None
+                else {}
+            ),
+            **(
+                {"bannerCarrierUpdate": banner_carrier_update}
+                if banner_carrier_update is not None
                 else {}
             ),
         },
@@ -6721,14 +7308,8 @@ def compile_playable_unit_descriptor(
                 )
             },
             "unresolvedVisualRoots": unresolved_visuals,
-            "ui": _ui_binding(
-                producers,
-                command_buttons,
-                target_lineage,
-                member_lineage,
-                command_audio,
-                _mapped_image_size_index(faction_graph),
-            ),
+            "ui": ui_binding,
+            "sourceNullStringIds": _source_null_string_ids,
             "resolvedImages": {
                 key: deepcopy(value)
                 for key, value in sorted(
@@ -6773,6 +7354,31 @@ def compile_playable_unit_descriptor(
     # Every playable unit carries its experience economy contract (compiled
     # chain, or the recorded reason there is none).
     descriptor["experience"] = experience
+    # Widen the retail-unlocalized record to ability buttons. Hero mount and
+    # special-power buttons carry their label/tooltip ids under
+    # abilities[].button, not under presentation.ui.commands -- and that is
+    # exactly where the two ids that blocked every Men match live
+    # (CONTROLBAR:ToolTipFaramirMount on GondorFaramir,
+    # CONTROLBAR:SpecialAbilityShieldBubble on GondorGandalf).
+    for ability_row in descriptor.get("abilities", []) or []:
+        if not isinstance(ability_row, Mapping):
+            continue
+        button = ability_row.get("button")
+        if not isinstance(button, Mapping):
+            continue
+        for field in ("labelIds", "tooltipIds"):
+            for value in button.get(field, []) or []:
+                if isinstance(value, str) and value:
+                    _required_ui_string_ids.add(value)
+    descriptor["presentation"]["sourceNullStringIds"] = sorted(
+        {
+            str(value).strip()
+            for value in (faction_graph or {}).get("layeredSourceNullTextIds", [])
+            if isinstance(value, str) and str(value).strip() in _required_ui_string_ids
+        }
+        - set(descriptor["presentation"]["resolvedStrings"]),
+        key=str.casefold,
+    )
     descriptor["descriptorSha256"] = _digest(descriptor)
     return descriptor
 
@@ -6829,7 +7435,7 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
                     f"playable-unit production {field} is invalid"
                 )
         surface = row.get("surface")
-        if surface not in {"command-socket", "hero-roster"}:
+        if surface not in {"command-socket", "hero-roster", "banner-carrier"}:
             raise PlayableUnitCompilerError(
                 "playable-unit production surface is invalid"
             )
@@ -6841,8 +7447,10 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             and not isinstance(roster_ordinal, bool)
             and roster_ordinal > 0
         )
-        if (surface == "command-socket" and (not valid_slot or valid_ordinal)) or (
-            surface == "hero-roster" and (not valid_ordinal or valid_slot)
+        if (
+            (surface == "command-socket" and (not valid_slot or valid_ordinal))
+            or (surface == "hero-roster" and (not valid_ordinal or valid_slot))
+            or (surface == "banner-carrier" and (valid_slot or valid_ordinal))
         ):
             raise PlayableUnitCompilerError(
                 "playable-unit production route disagrees with its surface"
@@ -6854,6 +7462,33 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             raise PlayableUnitCompilerError(
                 "playable-unit production prerequisites are invalid"
             )
+        if "prerequisiteAnyOf" in row:
+            # Optional ANY-of gate (commandbutton.ini:7513-7519
+            # NeededUpgradeAny): when present it must be a non-empty list of
+            # non-empty upgrade ids.
+            #
+            # It may OVERLAP `prerequisites`, and an earlier disjointness rule
+            # here was wrong. The overlap is the normal retail shape:
+            # commandbutton.ini:7517 lists
+            # `Upgrade_GondorArcheryRangeLevel2 Upgrade_CustomGenericUpgrade1`
+            # under NeededUpgradeAny, while
+            # object/goodfaction/structures/men/archerrange.ini:418 makes that
+            # same Level2 upgrade the CommandSetUpgrade trigger — so the token
+            # is simultaneously an ALL-of requirement (the producer must sit on
+            # the upgraded CommandSet at all) and a member of the ANY-of group.
+            # That is not two semantics for one token; the ALL-of requirement
+            # simply subsumes that member of the group. Demanding disjointness
+            # rejected GondorRanger(Horde), GondorTowerShieldGuard(Horde) and
+            # RohanRohirrim(Horde) and silently shrank the published pack.
+            any_of = row.get("prerequisiteAnyOf")
+            if (
+                not isinstance(any_of, list)
+                or not any_of
+                or any(not isinstance(item, str) or not item for item in any_of)
+            ):
+                raise PlayableUnitCompilerError(
+                    "playable-unit production any-of prerequisites are invalid"
+                )
         ui = row.get("ui")
         if not isinstance(ui, Mapping) or any(
             not isinstance(items, list)
@@ -6949,6 +7584,93 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             ):
                 raise PlayableUnitCompilerError(
                     "playable-unit gameplay reference row is invalid"
+                )
+    banner_carrier = gameplay.get("bannerCarrier")
+    if banner_carrier is not None:
+        allowed = (
+            banner_carrier.get("allowedObjectIds")
+            if isinstance(banner_carrier, Mapping)
+            else None
+        )
+        positions = (
+            banner_carrier.get("positions")
+            if isinstance(banner_carrier, Mapping)
+            else None
+        )
+        min_level = (
+            banner_carrier.get("minLevel")
+            if isinstance(banner_carrier, Mapping)
+            else None
+        )
+        if (
+            not isinstance(banner_carrier, Mapping)
+            or not isinstance(allowed, list)
+            or not allowed
+            or any(not isinstance(item, str) or not item for item in allowed)
+            or len({item.casefold() for item in allowed}) != len(allowed)
+            or not isinstance(positions, list)
+            or not isinstance(min_level, int)
+            or isinstance(min_level, bool)
+            or min_level < 0
+            or not isinstance(banner_carrier.get("minLevelDefaulted"), bool)
+            or not isinstance(
+                banner_carrier.get("destroyHordeOnBannerDeath"), bool
+            )
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit banner carrier contract is invalid"
+            )
+        for position in positions:
+            if (
+                not isinstance(position, Mapping)
+                or not isinstance(position.get("unitType"), str)
+                or not position.get("unitType")
+                or not isinstance(position.get("x"), (int, float))
+                or isinstance(position.get("x"), bool)
+                or not math.isfinite(float(position["x"]))
+                or not isinstance(position.get("y"), (int, float))
+                or isinstance(position.get("y"), bool)
+                or not math.isfinite(float(position["y"]))
+                or not isinstance(position.get("sourceIni"), str)
+                or not position.get("sourceIni")
+                or not isinstance(position.get("line"), int)
+                or isinstance(position.get("line"), bool)
+                or int(position["line"]) <= 0
+            ):
+                raise PlayableUnitCompilerError(
+                    "playable-unit banner carrier position is invalid"
+                )
+    banner_update = gameplay.get("bannerCarrierUpdate")
+    if banner_update is not None:
+        if not isinstance(banner_update, Mapping):
+            raise PlayableUnitCompilerError(
+                "playable-unit banner carrier update contract is invalid"
+            )
+        allowed_fields = {
+            "diedRespawnTime",
+            "meleeFreeBannerRespawnTime",
+        }
+        if (
+            set(banner_update) - allowed_fields
+            or "diedRespawnTime" not in banner_update
+        ):
+            raise PlayableUnitCompilerError(
+                "playable-unit banner carrier update contract is invalid"
+            )
+        for field, timer in banner_update.items():
+            if (
+                not isinstance(timer, Mapping)
+                or not isinstance(timer.get("milliseconds"), int)
+                or isinstance(timer.get("milliseconds"), bool)
+                or int(timer["milliseconds"]) < 0
+                or not isinstance(timer.get("sourceIni"), str)
+                or not timer.get("sourceIni")
+                or not isinstance(timer.get("line"), int)
+                or isinstance(timer.get("line"), bool)
+                or int(timer["line"]) <= 0
+            ):
+                raise PlayableUnitCompilerError(
+                    f"playable-unit banner carrier update {field} is invalid"
                 )
     simulation = gameplay.get("simulation")
     resolved_simulation = (
@@ -7089,7 +7811,14 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
         raise PlayableUnitCompilerError(
             "playable-unit UI commands disagree with production routes"
         )
-    if not portraits and not any(command.get("fields") for command in commands):
+    engine_spawned_banner = all(
+        row.get("surface") == "banner-carrier" for row in production
+    )
+    if (
+        not engine_spawned_banner
+        and not portraits
+        and not any(command.get("fields") for command in commands)
+    ):
         raise PlayableUnitCompilerError(
             "playable-unit UI has no authored image/text binding"
         )
@@ -7198,6 +7927,19 @@ def validate_playable_unit_descriptor(value: Mapping[str, object]) -> None:
             or not text
         ):
             raise PlayableUnitCompilerError("playable-unit resolved strings are invalid")
+    source_null_string_ids = presentation.get("sourceNullStringIds")
+    if (
+        not isinstance(source_null_string_ids, list)
+        or any(
+            not isinstance(item, str) or not item for item in source_null_string_ids
+        )
+        or len({item.casefold() for item in source_null_string_ids})
+        != len(source_null_string_ids)
+        or any(item in presentation["resolvedStrings"] for item in source_null_string_ids)
+    ):
+        raise PlayableUnitCompilerError(
+            "playable-unit source-null strings are invalid"
+        )
     runtime_modules = value.get("runtimeModules")
     module_evidence = value.get("runtimeModuleEvidence")
     special = value.get("specialCapabilities")

@@ -12,7 +12,8 @@ namespace OpenBfme.Sim.Tests;
 /// </summary>
 public class CrossPlatformPinTests
 {
-    public const string PinnedHash = "f1b7c86cedf7989f81e0838e07cd5660cbe5baddd9602d1ff43489f7d1dfa41e";
+    // Re-pinned when authoritative object transforms gained elevation + heading.
+    public const string PinnedHash = "413a50d76536bf951af1e7bc41bcb5a7e10dbfbce7b3bc834268dddf63a4c0f9";
 
     private static string ComputeScenarioHash()
     {

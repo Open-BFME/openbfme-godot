@@ -34,11 +34,20 @@ PINNED_UNAFFECTED_DIGESTS = {
     # auxiliary static/hierarchy routing baseline (not death-swap routing).
     # Baseline includes the compiled experience contract (status "unavailable"
     # for these fixtures) added with the experiencelevels.ini pipeline.
+    #
+    # Re-pinned 2026-08-04. The recipe bodies were diffed field by field
+    # against the previous pin: the only deltas are three empty additive
+    # contract fields — `armor.conditionalSets` (armor_compiler.py, conditional
+    # ArmorSet resolution) on the container and its primary member, and
+    # `presentation.sourceNullStringIds` (playable_unit_compiler.py, layered
+    # NULL UI-string ids). Both are `[]` for these fixtures. Nothing in the
+    # death routing this module guards moved, which is exactly what this pin
+    # exists to say.
     ("InfantryHorde", False): (
-        "a82c192813d9c0f301d20138ce58ac0420245e6300e8e8adeb3b0c9448532c93"
+        "156559fff53600900b31a96224662cd29229979f50af8426948399d69225e9d9"
     ),
     ("SiegeUnit", True): (
-        "0da2ebdcf911bc53c2a80fa3a9b66c6bc40bd5c26a55da8d7a33d007bc04b839"
+        "cf14aedd267050b445746f44e63702d0eed50b40f70921797153c48a35ceda53"
     ),
 }
 

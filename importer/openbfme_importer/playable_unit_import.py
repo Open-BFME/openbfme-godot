@@ -27,6 +27,7 @@ from .playable_unit_compiler import (
 )
 from .playable_unit_pack_compiler import compile_playable_unit_pack_recipe
 from .profile import ImportProfile, resolve_profile
+from .publish_gate import enforce_playable_unit_gate
 from .retail_visual_closure import build_retail_visual_closure
 from .sage_string import MAX_STRING_BYTES, parse_string_catalog
 from .util import read_json, write_json_atomic
@@ -197,9 +198,86 @@ def _required_string_ids(descriptor: Mapping[str, object]) -> set[str]:
     return result
 
 
+def _source_null_mapped_image_ids(graph: Mapping[str, object]) -> frozenset[str]:
+    """Casefolded SelectPortrait ids retail authors without a MappedImage body."""
+
+    dependencies = graph.get("dependencies")
+    if not isinstance(dependencies, Mapping):
+        return frozenset()
+    rows = dependencies.get("sourceNullMappedImages")
+    if not isinstance(rows, list):
+        return frozenset()
+    return frozenset(
+        str(item).casefold() for item in rows if isinstance(item, str) and item
+    )
+
+
+def _rebind_compiled_texture_path(
+    row: Mapping[str, object],
+    *,
+    effective_root: Path | None,
+) -> Mapping[str, object] | None:
+    """Fill a census leaf whose DDS path is on disk but absent from the catalog.
+
+    Faction census resolves MappedImage textures against the install catalog
+    entry list. Layered RotWK extracts can materialize
+    ``art/compiledtextures/<ab>/<stem>.dds`` under the effective tree while an
+    older or incomplete catalog omits that leaf, leaving
+    ``compiledTextureResolution: missing``. Convert rebinds against the sealed
+    effective tree with the same authored-extension-then-DDS convention used by
+    ``mapped_image.resolve_mapped_image_texture_paths_partial``.
+    """
+
+    if isinstance(row.get("compiledTextureVirtualPath"), str) and row[
+        "compiledTextureVirtualPath"
+    ]:
+        return row
+    texture = row.get("texture")
+    if not isinstance(texture, str) or not texture or effective_root is None:
+        return None
+    basename = texture.replace("\\", "/").rsplit("/", 1)[-1]
+    stem = basename.rsplit(".", 1)[0]
+    if len(stem) < 2:
+        return None
+    prefix = stem[:2].casefold()
+    candidates = (
+        f"art/compiledtextures/{prefix}/{basename}",
+        f"art/compiledtextures/{prefix}/{stem}.dds",
+    )
+    for relative in candidates:
+        physical = effective_root.joinpath(*relative.split("/"))
+        if physical.is_file():
+            rebound = deepcopy(dict(row))
+            rebound["compiledTextureVirtualPath"] = relative
+            rebound.pop("compiledTextureResolution", None)
+            return rebound
+    # Casefold directory/file search for platforms with mixed archive casing.
+    texture_root = effective_root / "art" / "compiledtextures" / prefix
+    if texture_root.is_dir():
+        wanted = {basename.casefold(), f"{stem}.dds".casefold()}
+        matches = sorted(
+            (
+                child
+                for child in texture_root.iterdir()
+                if child.is_file() and child.name.casefold() in wanted
+            ),
+            key=lambda item: item.name.casefold(),
+        )
+        if len(matches) == 1:
+            rebound = deepcopy(dict(row))
+            rebound["compiledTextureVirtualPath"] = (
+                f"art/compiledtextures/{prefix}/{matches[0].name}"
+            )
+            rebound.pop("compiledTextureResolution", None)
+            return rebound
+    return None
+
+
 def _resolved_media(
     graph: Mapping[str, object],
     descriptor: Mapping[str, object],
+    *,
+    effective_root: Path | None = None,
 ) -> tuple[dict[str, Mapping[str, object]], dict[str, list[str]]]:
     leaves = graph.get("resolvedLeaves")
     if not isinstance(leaves, Mapping):
@@ -213,9 +291,19 @@ def _resolved_media(
         for row in mapped_rows
         if isinstance(row, Mapping) and isinstance(row.get("id"), str)
     }
+    source_null_images = _source_null_mapped_image_ids(graph)
     images: dict[str, Mapping[str, object]] = {}
     for identifier in sorted(_required_image_ids(descriptor), key=str.casefold):
-        row = images_by_id.get(identifier.casefold())
+        key = identifier.casefold()
+        if key in source_null_images:
+            # Retail SelectPortrait with no MappedImage definition — census
+            # already recorded the source-null; convert must not invent art.
+            continue
+        row = images_by_id.get(key)
+        if row is not None and not isinstance(
+            row.get("compiledTextureVirtualPath"), str
+        ):
+            row = _rebind_compiled_texture_path(row, effective_root=effective_root)
         if row is None or not isinstance(row.get("compiledTextureVirtualPath"), str):
             raise ValueError(f"required mapped image is unresolved: {identifier}")
         images[identifier] = deepcopy(row)
@@ -288,7 +376,10 @@ def _census_missing_audio_samples(graph: Mapping[str, object]) -> frozenset[str]
 
 
 def _resolved_strings(
-    catalog: InstallCatalog, descriptor: Mapping[str, object]
+    catalog: InstallCatalog,
+    descriptor: Mapping[str, object],
+    *,
+    graph: Mapping[str, object] | None = None,
 ) -> dict[str, str]:
     string_entry = catalog.resolve_exact("data/lotr.str")
     if string_entry is None:
@@ -305,9 +396,49 @@ def _resolved_strings(
         string_source, duplicate_policy="first-wins", strict=False
     )
     resolved_strings: dict[str, str] = {}
+    source_null_ids = {
+        str(value).casefold()
+        for value in (graph or {}).get("layeredSourceNullTextIds", [])
+        if isinstance(value, str) and value
+    }
+    layered_authority = (
+        (graph or {}).get("layeredDocumentAuthority")
+        == "layered-effective-assets"
+    )
     for identifier in sorted(_required_string_ids(descriptor), key=str.casefold):
         record = string_catalog.record(identifier)
-        if record is None or not record.value:
+        if record is not None and not record.value:
+            # PRESENT-but-EMPTY is never a retail-null exemption. Retail
+            # declining to localize an id shows up as NO ROW; an existing row
+            # with no value means our read of the table lost the text. Folding
+            # the two together laundered real data holes into sanctioned
+            # exemptions that could never be detected again.
+            raise ValueError(
+                "required localized string is present but empty in "
+                f"data/lotr.str: {identifier}"
+            )
+        if record is None:
+            # TIER POLICY (must match game/tests/hud_string_completeness_runner.gd):
+            # an id is "retail-absent" when the LAYERED effective string table
+            # has no row for it -- not when it is missing from every mounted
+            # tier. Retail's own file-level layering replaces BFME2's
+            # data/lotr.str wholesale with RotWK's, so a row that exists only
+            # in the BFME2 table is unreachable at runtime in a layered
+            # install. Only layered authority establishes that absence, so
+            # previously recorded evidence alone may not sanction a hole: it
+            # may have been recorded against a different tier's table.
+            if layered_authority:
+                if isinstance(graph, dict):
+                    missing = graph.setdefault("layeredSourceNullTextIds", [])
+                    if isinstance(missing, list) and identifier not in missing:
+                        missing.append(identifier)
+                        missing.sort(key=str.casefold)
+                continue
+            if identifier.casefold() in source_null_ids:
+                raise ValueError(
+                    "retail-null string evidence is not tier-authoritative "
+                    f"(no layered document authority): {identifier}"
+                )
             raise ValueError(f"required localized string is unresolved: {identifier}")
         resolved_strings[identifier] = record.value
     return resolved_strings
@@ -324,8 +455,10 @@ def compile_unit_recipe(
 
     documents = _source_documents(effective_root)
     graph, draft = _select_faction_graph(catalog, documents, object_id, faction)
-    images, audio = _resolved_media(graph, draft)
-    strings = _resolved_strings(catalog, draft)
+    if effective_root.name.casefold() == "layered-effective-assets":
+        graph["layeredDocumentAuthority"] = "layered-effective-assets"
+    images, audio = _resolved_media(graph, draft, effective_root=effective_root)
+    strings = _resolved_strings(catalog, draft, graph=graph)
     descriptor = compile_playable_unit_descriptor(
         object_id,
         documents,
@@ -583,6 +716,7 @@ def import_playable_unit(
     publish: bool = True,
     bootstrap_selection: bool = False,
     conversion_jobs: int | None = None,
+    allow_fewer_playable_units: bool = False,
 ) -> dict[str, object]:
     """Execute the complete private importer path for one playable unit."""
 
@@ -636,6 +770,16 @@ def import_playable_unit(
         publication = {"planned": True}
     elif bool(delta["update"]):
         pack_root = pipeline.build(resolved, force=False)
+        # Same fail-closed roster gate the faction publish lane runs. This is
+        # the rebuild branch: it replaces the whole published bundle, so a
+        # profile delta that quietly drops units would ship as a regression.
+        # Raises PublishGateError, which cli maps to exit 7.
+        enforce_playable_unit_gate(
+            pack_root,
+            content_root,
+            resolved.pack_id,
+            allow_fewer=allow_fewer_playable_units,
+        )
         publication = pipeline.publish_to_godot(pack_root, content_root)
     else:
         command = [

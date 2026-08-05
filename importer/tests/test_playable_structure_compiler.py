@@ -816,8 +816,27 @@ def test_queue_production_exit_update_resigned_duplicate_sources_refused(
         validate_playable_structure_descriptor(descriptor)
 
 
-def test_queue_production_exit_update_rejects_retail_malformed_coord_token() -> None:
-    """RotWK AngmarKennelExpansion authors X:70.0.0 and stays fail-closed."""
+def test_queue_production_exit_update_repairs_the_retail_authored_coord_typo() -> None:
+    """RotWK AngmarKennelExpansion authors ``X:70.0.0`` and must still compile.
+
+    RE-PINNED 2026-08-04 (retail rebase). This test previously asserted the
+    OPPOSITE - that the token fails closed - while the compiler had already
+    been taught to repair it (`_queue_exit_coord_values`, "Known RotWK typo").
+    Both halves of that contradiction were committed together in the public
+    snapshot a1d207a, so this test has been red on `main` ever since; it was
+    invisible because `tools/gate-retail.ps1` runs `unittest discover`, which
+    cannot collect this module's module-level test functions.
+
+    The repair is the CORRECT half. Pure RotWK 2.01 really does author the
+    extra ``.0``:
+
+        object/evilfaction/structures/angmar/angmarkennelexpansion.ini:246
+            NaturalRallyPoint  = X:70.0.0 Y:0.0 Z:0.0
+
+    Failing closed there would make the Angmar faction uncompilable. So the
+    typo is accepted with the authored text preserved verbatim, and the
+    repaired value must be exactly 70.0 - never a guess, never a default.
+    """
 
     documents = _structure_documents()
     path = "data/ini/object/units/test_units.ini"
@@ -826,6 +845,34 @@ def test_queue_production_exit_update_rejects_retail_malformed_coord_token() -> 
         b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
     UnitCreatePoint = X:0.0 Y:0.0 Z:0.0
     NaturalRallyPoint = X:70.0.0 Y:0.0 Z:0.0
+  End
+  Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
+        1,
+    )
+    descriptor = compile_playable_structure_descriptor("TestKeep", documents)
+    exit_rows = [
+        row
+        for row in descriptor["gameplay"]["productionExitUpdates"]
+        if row.get("module") == "QueueProductionExitUpdate"
+    ]
+    assert len(exit_rows) == 1
+    rally = exit_rows[0]["naturalRallyPoint"]
+    # The authored text is retained verbatim - the repair must never rewrite
+    # the record of what retail actually said.
+    assert rally["authored"] == "X:70.0.0 Y:0.0 Z:0.0"
+    assert rally["value"] == {"x": 70.0, "y": 0.0, "z": 0.0}
+
+
+def test_queue_production_exit_update_still_rejects_a_genuinely_malformed_coord() -> None:
+    """The typo repair must not become a general "parse anything" fallback."""
+
+    documents = _structure_documents()
+    path = "data/ini/object/units/test_units.ini"
+    documents[path] = documents[path].replace(
+        b"  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        b"""  Behavior = QueueProductionExitUpdate ModuleTag_Exit
+    UnitCreatePoint = X:0.0 Y:0.0 Z:0.0
+    NaturalRallyPoint = X:seventy Y:0.0 Z:0.0
   End
   Behavior = StructureCollapseUpdate ModuleTag_Collapse""",
         1,
@@ -1103,10 +1150,24 @@ def test_engine_spawned_composite_requires_declared_policy() -> None:
         compile_playable_structure_descriptor("TestCitadel", documents)
 
     descriptor = compile_playable_structure_descriptor(
-        "TestCitadel", documents, engine_spawned_roots=("TestCitadel",)
+        "TestCitadel",
+        documents,
+        engine_spawned_roots=("TestCitadel",),
+        engine_spawned_roles={"testcitadel": "fortress-composite-citadel"},
     )
     assert descriptor["production"]["evidence"] == "engine-spawned-composite"
     assert descriptor["production"]["routes"] == []
+    assert descriptor["compositeRole"] == "fortress-composite-citadel"
+
+    with pytest.raises(
+        PlayableStructureCompilerError, match="undeclared roots"
+    ):
+        compile_playable_structure_descriptor(
+            "TestCitadel",
+            documents,
+            engine_spawned_roots=("TestCitadel",),
+            engine_spawned_roles={"other": "fortress-composite-citadel"},
+        )
 
 
 def test_foundation_construct_command_is_an_authored_route() -> None:
@@ -1894,6 +1955,43 @@ def test_cost_modifier_with_apply_list_missing_trigger_still_fails() -> None:
         compile_playable_structure_descriptor("UpgradeableKeep", documents)
 
 
+def test_starts_active_cost_modifier_with_apply_list_is_declared_unsupported() -> None:
+    documents = _upgradeable_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    documents[objects_path] = (
+        documents[objects_path]
+        .decode("utf-8")
+        .replace(
+            "Object UpgradeableKeep\n",
+            "Object UpgradeableKeep\n"
+            "  Behavior = CostModifierUpgrade ModuleTag_ActiveDiscount\n"
+            "    StartsActive = Yes\n"
+            "    ApplyToTheseUpgrades = Upgrade_KeepResearch\n"
+            "    Percentage = -10%\n"
+            "  End\n",
+            1,
+        )
+        .encode("utf-8")
+    )
+    documents["data/ini/upgrade.ini"] += b"""
+Upgrade Upgrade_KeepResearch
+  Type = PLAYER
+  BuildCost = 100
+  BuildTime = 10
+End
+"""
+
+    descriptor = compile_playable_structure_descriptor("UpgradeableKeep", documents)
+
+    validate_playable_structure_descriptor(descriptor)
+    unsupported = descriptor["gameplay"]["upgradeEffects"]["unsupportedEffects"]
+    assert any(
+        row["upgradeId"] == "Upgrade_KeepResearch"
+        and "always-active" in row["reason"]
+        for row in unsupported
+    )
+
+
 def test_upgrade_chain_unresolvable_cost_fails_closed() -> None:
     documents = _upgradeable_documents()
     documents["data/ini/upgrade.ini"] = (
@@ -2105,3 +2203,243 @@ End
         PlayableStructureCompilerError, match="auto-deposit boost"
     ):
         validate_playable_structure_descriptor(descriptor)
+def _castle_upgrade_documents(
+    *,
+    include_button: bool = True,
+    include_unmatched_button: bool = False,
+    upgrade_type: str = "OBJECT",
+    build_cost: str | None = "500",
+    build_time: str | None = "30.0",
+    second_upgrade: bool = False,
+) -> dict[str, bytes]:
+    documents = _structure_documents()
+    objects_path = "data/ini/object/units/test_units.ini"
+    object_source = documents[objects_path].decode("utf-8")
+    castle_behavior = """
+  Behavior = CastleUpgrade ModuleTag_TestCastleWalls
+    TriggeredBy = Upgrade_TestIceWallsTrigger
+    Upgrade = Upgrade_TestIceWalls
+    WallUpgradeRadius = 400
+  End
+"""
+    if second_upgrade:
+        castle_behavior += """
+  Behavior = CastleUpgrade ModuleTag_TestCastleAlpha
+    TriggeredBy = Upgrade_AlphaWallsTrigger
+    Upgrade = Upgrade_AlphaWalls
+    WallUpgradeRadius = 400
+  End
+"""
+    object_source = object_source.replace(
+        "  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        castle_behavior + "  Behavior = StructureCollapseUpdate ModuleTag_Collapse",
+        1,
+    )
+    documents[objects_path] = object_source.encode("utf-8")
+
+    command_set = """
+  12 = Command_PurchaseUpgradeTestIceWalls
+""" if include_button else ""
+    if second_upgrade:
+        command_set += """
+  11 = Command_PurchaseUpgradeAlphaWalls
+"""
+    if include_unmatched_button:
+        command_set += """
+  13 = Command_PurchaseUpgradeUnmatched
+"""
+    documents["data/ini/commandset.ini"] = (
+        documents["data/ini/commandset.ini"].decode("utf-8")
+        + f"""
+CommandSet TestKeepCastleCommandSet
+  1 = Command_BuildInfantry
+{command_set}End
+"""
+    ).encode("utf-8")
+    documents[objects_path] = documents[objects_path].replace(
+        b"  CommandSet = TestKeepCommandSet\n",
+        b"  CommandSet = TestKeepCastleCommandSet\n",
+        1,
+    )
+
+    command_buttons = """
+CommandButton Command_PurchaseUpgradeTestIceWalls
+  Command = OBJECT_UPGRADE
+  Upgrade = Upgrade_TestIceWallsTrigger
+  Options = CANCELABLE
+  NeededUpgrade = Upgrade_StoneWork
+  TextLabel = CONTROLBAR:TestIceWalls
+  DescriptLabel = CONTROLBAR:ToolTipTestIceWalls
+  ButtonImage = UCCommon_UpgradeStructureNew
+End
+""" if include_button else ""
+    if second_upgrade:
+        command_buttons += """
+CommandButton Command_PurchaseUpgradeAlphaWalls
+  Command = OBJECT_UPGRADE
+  Upgrade = Upgrade_AlphaWallsTrigger
+  TextLabel = CONTROLBAR:AlphaWalls
+End
+"""
+    if include_unmatched_button:
+        command_buttons += """
+CommandButton Command_PurchaseUpgradeUnmatched
+  Command = OBJECT_UPGRADE
+  Upgrade = Upgrade_NotACastleTrigger
+End
+"""
+    documents["data/ini/commandbutton.ini"] = (
+        documents["data/ini/commandbutton.ini"].decode("utf-8")
+        + command_buttons
+    ).encode("utf-8")
+
+    upgrade_block = [
+        "Upgrade Upgrade_TestIceWallsTrigger",
+        f"  Type = {upgrade_type}",
+    ]
+    if build_cost is not None:
+        upgrade_block.append(f"  BuildCost = {build_cost}")
+    if build_time is not None:
+        upgrade_block.append(f"  BuildTime = {build_time}")
+    upgrade_block.append("End")
+    if second_upgrade:
+        upgrade_block.extend(
+            [
+                "Upgrade Upgrade_AlphaWallsTrigger",
+                "  Type = OBJECT",
+                "  BuildCost = 250",
+                "  BuildTime = 15.0",
+                "End",
+            ]
+        )
+    documents["data/ini/upgrade.ini"] = (
+        "\n".join(upgrade_block) + "\n"
+    ).encode("utf-8")
+    return documents
+
+
+def _castle_upgrade_documents_duplicate_slots() -> dict[str, bytes]:
+    """Same castle trigger sold from two different slots of one command set.
+
+    Retail legitimately reaches one fortress improvement from several command
+    sets (the per-level and `_ForMP` variants), so the compiler must emit the
+    trigger ONCE - the runtime validator rejects the whole `castleUpgrades`
+    surface the moment it sees a duplicate `upgradeId`
+    (retail_faction_manifest.gd `_validate_structure_castle_upgrades`). Where
+    the authored slot or button DISAGREES between sets, that is a data
+    question and must fail closed rather than having a winner picked silently.
+    """
+
+    documents = _castle_upgrade_documents()
+    source = documents["data/ini/commandset.ini"].decode("utf-8")
+    documents["data/ini/commandset.ini"] = source.replace(
+        "  12 = Command_PurchaseUpgradeTestIceWalls" + "\n",
+        "  12 = Command_PurchaseUpgradeTestIceWalls" + "\n"
+        + "  9 = Command_PurchaseUpgradeTestIceWalls" + "\n",
+        1,
+    ).encode("utf-8")
+    return documents
+
+
+def test_castle_upgrade_conflicting_slots_fail_closed() -> None:
+    with pytest.raises(PlayableStructureCompilerError) as error:
+        compile_playable_structure_descriptor(
+            "TestKeep", _castle_upgrade_documents_duplicate_slots()
+        )
+
+    assert "Upgrade_TestIceWallsTrigger" in str(error.value)
+    assert "conflicting" in str(error.value)
+
+
+def test_castle_upgrade_button_emits_trigger_grant_and_authored_purchase_fields() -> None:
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep", _castle_upgrade_documents()
+    )
+
+    row = descriptor["gameplay"]["castleUpgrades"]["upgrades"][0]
+    assert row == {
+        "upgradeId": "Upgrade_TestIceWallsTrigger",
+        "grantsUpgradeId": "Upgrade_TestIceWalls",
+        "cost": 500,
+        "buildTimeSeconds": 30.0,
+        "slot": 12,
+        "commandId": "Command_PurchaseUpgradeTestIceWalls",
+        "labelId": "CONTROLBAR:TestIceWalls",
+        "tooltipId": "CONTROLBAR:ToolTipTestIceWalls",
+        "buttonImageId": "UCCommon_UpgradeStructureNew",
+        "neededUpgradeIds": ["Upgrade_StoneWork"],
+        "cancelable": True,
+    }
+
+
+@pytest.mark.parametrize("missing_field", ["BuildCost", "BuildTime"])
+def test_castle_upgrade_missing_authored_cost_or_time_fails_closed(
+    missing_field: str,
+) -> None:
+    kwargs = {"build_cost": "500", "build_time": "30.0"}
+    kwargs["build_cost" if missing_field == "BuildCost" else "build_time"] = None
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="Upgrade_TestIceWallsTrigger",
+    ):
+        compile_playable_structure_descriptor(
+            "TestKeep", _castle_upgrade_documents(**kwargs)
+        )
+
+
+def test_castle_upgrade_non_object_trigger_fails_closed() -> None:
+    with pytest.raises(
+        PlayableStructureCompilerError,
+        match="Upgrade_TestIceWallsTrigger",
+    ):
+        compile_playable_structure_descriptor(
+            "TestKeep", _castle_upgrade_documents(upgrade_type="PLAYER")
+        )
+
+
+def test_castle_upgrade_without_selling_button_is_recorded() -> None:
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep", _castle_upgrade_documents(include_button=False)
+    )
+
+    gameplay = descriptor["gameplay"]
+    assert "castleUpgrades" not in gameplay
+    markers = gameplay["nonPurchasableCastleUpgrades"]["upgrades"]
+    assert markers == [
+        {
+            "upgradeId": "Upgrade_TestIceWallsTrigger",
+            "grantsUpgradeId": "Upgrade_TestIceWalls",
+            "reason": "CastleUpgrade trigger has no selling OBJECT_UPGRADE button",
+        }
+    ]
+
+
+def test_object_upgrade_without_castle_trigger_is_recorded_and_not_compiled() -> None:
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep", _castle_upgrade_documents(include_unmatched_button=True)
+    )
+
+    gameplay = descriptor["gameplay"]
+    assert [
+        row["upgradeId"] for row in gameplay["castleUpgrades"]["upgrades"]
+    ] == ["Upgrade_TestIceWallsTrigger"]
+    assert [
+        row["upgradeId"]
+        for row in gameplay["nonPurchasableCastleUpgrades"]["upgrades"]
+    ] == ["Upgrade_NotACastleTrigger"]
+
+
+def test_structure_without_castle_upgrade_module_omits_castle_surface() -> None:
+    descriptor = compile_playable_structure_descriptor("TestKeep", _structure_documents())
+
+    assert "castleUpgrades" not in descriptor["gameplay"]
+
+
+def test_castle_upgrade_rows_sort_by_casefolded_trigger_id() -> None:
+    descriptor = compile_playable_structure_descriptor(
+        "TestKeep", _castle_upgrade_documents(second_upgrade=True)
+    )
+
+    assert [
+        row["upgradeId"] for row in descriptor["gameplay"]["castleUpgrades"]["upgrades"]
+    ] == ["Upgrade_AlphaWallsTrigger", "Upgrade_TestIceWallsTrigger"]

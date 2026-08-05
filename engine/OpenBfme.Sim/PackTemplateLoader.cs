@@ -67,12 +67,15 @@ public static class PackTemplateLoader
             var skipped = new List<SkippedRow>();
             var unmapped = new SortedDictionary<string, int>(StringComparer.Ordinal);
             var notes = new List<string>();
+            var templateIds = IndexTemplateIds(rows);
+            var bannerRespawnTicks = IndexBannerRespawnTicks(rows);
 
             var index = -1;
             foreach (var row in rows.EnumerateArray())
             {
                 index++;
-                LoadRow(row, index, templates, seenIds, skipped, unmapped, notes);
+                LoadRow(row, index, templates, seenIds, skipped, unmapped, notes,
+                    templateIds, bannerRespawnTicks);
             }
 
             var report = new LoadReport(templates.Count, skipped, unmapped, notes);
@@ -87,7 +90,9 @@ public static class PackTemplateLoader
         HashSet<string> seenIds,
         List<SkippedRow> skipped,
         SortedDictionary<string, int> unmapped,
-        List<string> notes)
+        List<string> notes,
+        IReadOnlyDictionary<string, string> templateIds,
+        IReadOnlyDictionary<string, long?> bannerRespawnTicks)
     {
         if (row.ValueKind != JsonValueKind.Object)
         {
@@ -122,6 +127,9 @@ public static class PackTemplateLoader
         var bodyData = new SortedDictionary<string, long>(StringComparer.Ordinal);
         var bodyStrings = new SortedDictionary<string, string>(StringComparer.Ordinal);
         Fixed64? speedPerTick = null;
+        ModuleSpec? experienceSpec = null;
+        ModuleSpec? bannerCarrierSpec = null;
+        ModuleSpec? castleBehaviorSpec = null;
         var invalid = false;
 
         foreach (var property in row.EnumerateObject())
@@ -151,6 +159,8 @@ public static class PackTemplateLoader
                         CountUnmapped(unmapped, "memberObjectId");
                     }
                     break;
+                case "sourceTypeName":
+                    break; // consumed by the document-wide source-id index
                 case "memberCount":
                     invalid |= !TryMapPositiveLong(property.Value, "memberCount", "MemberCount", bodyData, id, index, skipped);
                     break;
@@ -195,6 +205,14 @@ public static class PackTemplateLoader
                         }
                     }
                     break;
+                case "gameplay":
+                    invalid |= !TryMapGameplay(property.Value, id, index, templateIds, bannerRespawnTicks,
+                        out bannerCarrierSpec, out castleBehaviorSpec, skipped, unmapped);
+                    break;
+                case "experience":
+                    invalid |= !TryMapExperience(property.Value, id, index,
+                        out experienceSpec, skipped);
+                    break;
                 default:
                     // presentation, animationCapabilityId, sourceTypeName, formations, ...
                     CountUnmapped(unmapped, property.Name);
@@ -226,7 +244,396 @@ public static class PackTemplateLoader
                 ["SpeedPerTickRaw"] = speed.Raw,
             }));
         }
+        if (experienceSpec is not null)
+        {
+            modules.Add(experienceSpec);
+        }
+        if (bannerCarrierSpec is not null)
+        {
+            modules.Add(bannerCarrierSpec);
+        }
+        if (castleBehaviorSpec is not null)
+        {
+            modules.Add(castleBehaviorSpec);
+        }
         templates.Add(new ObjectTemplate(id, modules));
+    }
+
+    private static IReadOnlyDictionary<string, string> IndexTemplateIds(JsonElement rows)
+    {
+        var result = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows.EnumerateArray())
+        {
+            if (row.ValueKind != JsonValueKind.Object
+                || !row.TryGetProperty("id", out var idValue)
+                || idValue.ValueKind != JsonValueKind.String
+                || string.IsNullOrEmpty(idValue.GetString()))
+            {
+                continue;
+            }
+            var id = idValue.GetString()!;
+            Add(id, id);
+            if (row.TryGetProperty("sourceTypeName", out var source)
+                && source.ValueKind == JsonValueKind.String
+                && !string.IsNullOrEmpty(source.GetString()))
+            {
+                Add(source.GetString()!, id);
+            }
+        }
+        return result;
+
+        void Add(string source, string id)
+        {
+            if (ambiguous.Contains(source)) return;
+            if (result.TryGetValue(source, out var prior) && prior != id)
+            {
+                result.Remove(source);
+                ambiguous.Add(source);
+            }
+            else
+            {
+                result[source] = id;
+            }
+        }
+    }
+
+    private static IReadOnlyDictionary<string, long?> IndexBannerRespawnTicks(JsonElement rows)
+    {
+        var result = new SortedDictionary<string, long?>(StringComparer.Ordinal);
+        foreach (var row in rows.EnumerateArray())
+        {
+            if (row.ValueKind != JsonValueKind.Object
+                || !row.TryGetProperty("id", out var idValue)
+                || idValue.ValueKind != JsonValueKind.String
+                || string.IsNullOrEmpty(idValue.GetString())
+                || !row.TryGetProperty("gameplay", out var gameplay)
+                || gameplay.ValueKind != JsonValueKind.Object
+                || !gameplay.TryGetProperty("bannerCarrierUpdate", out var contract))
+            {
+                continue;
+            }
+            result[idValue.GetString()!] = TryReadBannerRespawnTicks(contract, out var ticks)
+                ? ticks
+                : null;
+        }
+        return result;
+    }
+
+    private static bool TryMapGameplay(
+        JsonElement gameplay,
+        string id,
+        int index,
+        IReadOnlyDictionary<string, string> templateIds,
+        IReadOnlyDictionary<string, long?> bannerRespawnTicks,
+        out ModuleSpec? bannerSpec,
+        out ModuleSpec? castleSpec,
+        List<SkippedRow> skipped,
+        SortedDictionary<string, int> unmapped)
+    {
+        bannerSpec = null;
+        castleSpec = null;
+        if (gameplay.ValueKind != JsonValueKind.Object)
+        {
+            skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                "'gameplay' is not an object"));
+            return false;
+        }
+        foreach (var property in gameplay.EnumerateObject())
+        {
+            if (property.Name == "bannerCarrierUpdate")
+            {
+                if (!TryReadBannerRespawnTicks(property.Value, out _))
+                {
+                    skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                        "'gameplay.bannerCarrierUpdate' has invalid authored respawn timers"));
+                    return false;
+                }
+                continue;
+            }
+            if (property.Name == "castleBehavior")
+            {
+                if (!TryMapCastleBehavior(
+                    property.Value, id, index, templateIds, out castleSpec, skipped))
+                {
+                    return false;
+                }
+                continue;
+            }
+            if (property.Name != "bannerCarrier")
+            {
+                CountUnmapped(unmapped, "gameplay." + property.Name);
+                continue;
+            }
+            var contract = property.Value;
+            if (contract.ValueKind != JsonValueKind.Object
+                || !contract.TryGetProperty("allowedObjectIds", out var allowed)
+                || allowed.ValueKind != JsonValueKind.Array)
+            {
+                skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                    "'gameplay.bannerCarrier.allowedObjectIds' is not an array"));
+                return false;
+            }
+            string? bannerTemplate = null;
+            foreach (var candidate in allowed.EnumerateArray())
+            {
+                if (candidate.ValueKind != JsonValueKind.String
+                    || string.IsNullOrEmpty(candidate.GetString())
+                    || !templateIds.TryGetValue(candidate.GetString()!, out var resolved))
+                {
+                    skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                        "banner carrier target is missing, ambiguous, or not a string"));
+                    return false;
+                }
+                bannerTemplate ??= resolved;
+            }
+            if (bannerTemplate is null)
+            {
+                skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                    "banner carrier target list is empty"));
+                return false;
+            }
+            if (!contract.TryGetProperty("minLevel", out var minLevel)
+                || !TryReadInteger(minLevel, out var min) || min < 0 || min > int.MaxValue)
+            {
+                skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                    "'gameplay.bannerCarrier.minLevel' is not a non-negative integer"));
+                return false;
+            }
+            var data = new SortedDictionary<string, long>(StringComparer.Ordinal)
+            {
+                ["MinLevel"] = min,
+            };
+            if (!contract.TryGetProperty("destroyHordeOnBannerDeath", out var destroy)
+                || destroy.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            {
+                skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                    "'gameplay.bannerCarrier.destroyHordeOnBannerDeath' is not a boolean"));
+                return false;
+            }
+            data["DestroyHordeOnBannerDeath"] = destroy.GetBoolean() ? 1 : 0;
+            if (bannerRespawnTicks.TryGetValue(bannerTemplate, out var respawnTicks))
+            {
+                if (!respawnTicks.HasValue)
+                {
+                    skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                        "banner carrier target has an invalid authored respawn contract"));
+                    return false;
+                }
+                data["RespawnTicks"] = respawnTicks.Value;
+            }
+            if (contract.TryGetProperty("positions", out var positions))
+            {
+                if (positions.ValueKind != JsonValueKind.Array)
+                {
+                    skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                        "'gameplay.bannerCarrier.positions' is not an array"));
+                    return false;
+                }
+                using var enumerator = positions.EnumerateArray();
+                if (enumerator.MoveNext())
+                {
+                    var position = enumerator.Current;
+                    if (position.ValueKind != JsonValueKind.Object
+                        || !position.TryGetProperty("x", out var x)
+                        || !position.TryGetProperty("y", out var y)
+                        || !TryReadFraction(x, out var xn, out var xd)
+                        || !TryReadFraction(y, out var yn, out var yd))
+                    {
+                        skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                            "first banner carrier position has invalid exact coordinates"));
+                        return false;
+                    }
+                    data["OffsetXRaw"] = Fixed64.FromFraction(xn, xd).Raw;
+                    data["OffsetYRaw"] = Fixed64.FromFraction(yn, yd).Raw;
+                }
+            }
+            bannerSpec = new ModuleSpec(BannerCarrierModule.TypeName, data,
+                new Dictionary<string, string> { ["BannerTemplate"] = bannerTemplate });
+        }
+        return true;
+    }
+
+    private static bool TryMapCastleBehavior(
+        JsonElement contract,
+        string id,
+        int index,
+        IReadOnlyDictionary<string, string> templateIds,
+        out ModuleSpec? spec,
+        List<SkippedRow> skipped)
+    {
+        spec = null;
+        if (contract.ValueKind != JsonValueKind.Object
+            || !contract.TryGetProperty("pieces", out var pieces)
+            || pieces.ValueKind != JsonValueKind.Array)
+        {
+            skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                "'gameplay.castleBehavior.pieces' is not an array"));
+            return false;
+        }
+        var count = pieces.GetArrayLength();
+        if (count is < 1 or > 64)
+        {
+            skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                "'gameplay.castleBehavior.pieces' must contain 1..64 rows"));
+            return false;
+        }
+        var data = new SortedDictionary<string, long>(StringComparer.Ordinal)
+        {
+            ["PieceCount"] = count,
+        };
+        var strings = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var expectedIndex = 0;
+        foreach (var piece in pieces.EnumerateArray())
+        {
+            if (piece.ValueKind != JsonValueKind.Object
+                || !piece.TryGetProperty("index", out var pieceIndex)
+                || !TryReadInteger(pieceIndex, out var authoredIndex)
+                || authoredIndex != expectedIndex
+                || !piece.TryGetProperty("objectId", out var objectId)
+                || objectId.ValueKind != JsonValueKind.String
+                || string.IsNullOrEmpty(objectId.GetString())
+                || !templateIds.TryGetValue(objectId.GetString()!, out var resolved)
+                || !piece.TryGetProperty("offset", out var offset)
+                || offset.ValueKind != JsonValueKind.Array
+                || offset.GetArrayLength() != 3
+                || !piece.TryGetProperty("angleRadians", out var angle)
+                || !piece.TryGetProperty("offsetRawQ32", out var offsetRaw)
+                || offsetRaw.ValueKind != JsonValueKind.Array
+                || offsetRaw.GetArrayLength() != 3
+                || !piece.TryGetProperty("angleRadiansRawQ32", out var angleRaw))
+            {
+                skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                    $"castle piece {expectedIndex} identity or target is invalid"));
+                return false;
+            }
+            var coordinates = offset.EnumerateArray().ToArray();
+            var rawCoordinates = offsetRaw.EnumerateArray().ToArray();
+            if (!TryReadFraction(coordinates[0], out var xn, out var xd)
+                || !TryReadFraction(coordinates[1], out var yn, out var yd)
+                || !TryReadFraction(coordinates[2], out var zn, out var zd)
+                || !TryReadFraction(angle, out var an, out var ad)
+                || !TryReadInteger(rawCoordinates[0], out var xRaw)
+                || !TryReadInteger(rawCoordinates[1], out var yRaw)
+                || !TryReadInteger(rawCoordinates[2], out var zRaw)
+                || !TryReadInteger(angleRaw, out var authoredAngleRaw))
+            {
+                skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                    $"castle piece {expectedIndex} has invalid exact transform values"));
+                return false;
+            }
+            strings[$"PieceTemplate:{expectedIndex}"] = resolved;
+            data[$"OffsetXRaw:{expectedIndex}"] = xRaw;
+            data[$"OffsetYRaw:{expectedIndex}"] = yRaw;
+            data[$"OffsetZRaw:{expectedIndex}"] = zRaw;
+            data[$"AngleRadiansRaw:{expectedIndex}"] = authoredAngleRaw;
+            expectedIndex++;
+        }
+        spec = new ModuleSpec(CastleBehaviorModule.TypeName, data, strings);
+        return true;
+    }
+
+    private static bool TryReadBannerRespawnTicks(JsonElement contract, out long ticks)
+    {
+        ticks = 0;
+        if (contract.ValueKind != JsonValueKind.Object
+            || !TryReadTimer(contract, "diedRespawnTime", required: true, out var diedMs)
+            || !TryReadTimer(contract, "meleeFreeBannerRespawnTime", required: false, out var meleeMs))
+        {
+            return false;
+        }
+        var delayMs = Math.Max(diedMs, meleeMs);
+        if (delayMs > (long)int.MaxValue * 1000 / TicksPerSecond)
+        {
+            return false;
+        }
+        ticks = checked((delayMs * TicksPerSecond + 999) / 1000);
+        return true;
+
+        static bool TryReadTimer(JsonElement owner, string name, bool required, out long milliseconds)
+        {
+            milliseconds = 0;
+            if (!owner.TryGetProperty(name, out var timer))
+            {
+                return !required;
+            }
+            return timer.ValueKind == JsonValueKind.Object
+                && timer.TryGetProperty("milliseconds", out var value)
+                && TryReadInteger(value, out milliseconds)
+                && milliseconds >= 0;
+        }
+    }
+
+    private static bool TryMapExperience(
+        JsonElement experience,
+        string id,
+        int index,
+        out ModuleSpec? spec,
+        List<SkippedRow> skipped)
+    {
+        spec = null;
+        if (experience.ValueKind != JsonValueKind.Object
+            || !experience.TryGetProperty("status", out var status)
+            || status.ValueKind != JsonValueKind.String)
+        {
+            skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                "'experience' has no string status"));
+            return false;
+        }
+        if (status.GetString() is "unauthored" or "unavailable") return true;
+        if (status.GetString() != "compiled"
+            || !experience.TryGetProperty("maxLevel", out var capValue)
+            || !TryReadInteger(capValue, out var cap) || cap < 1 || cap > int.MaxValue
+            || !experience.TryGetProperty("initialRank", out var initialValue)
+            || !TryReadInteger(initialValue, out var initial) || initial < 1 || initial > cap
+            || !experience.TryGetProperty("levels", out var levels)
+            || levels.ValueKind != JsonValueKind.Array)
+        {
+            skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                "compiled experience header is invalid"));
+            return false;
+        }
+        var data = new SortedDictionary<string, long>(StringComparer.Ordinal)
+        {
+            ["LevelCap"] = cap,
+            ["InitialLevel"] = initial,
+        };
+        var priorRank = 0L;
+        foreach (var level in levels.EnumerateArray())
+        {
+            if (level.ValueKind != JsonValueKind.Object
+                || !level.TryGetProperty("rank", out var rankValue)
+                || !TryReadInteger(rankValue, out var rank) || rank <= priorRank || rank > cap
+                || !level.TryGetProperty("requiredExperience", out var requiredValue)
+                || !TryReadInteger(requiredValue, out var required) || required < 0)
+            {
+                skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                    "compiled experience level row is invalid"));
+                return false;
+            }
+            data[$"RequiredExperience:{rank}"] = required;
+            priorRank = rank;
+        }
+        if (priorRank != cap)
+        {
+            skipped.Add(new SkippedRow(index, id, RowSkipReason.InvalidGameplayField,
+                "compiled experience levels do not reach maxLevel"));
+            return false;
+        }
+        spec = new ModuleSpec(ExperienceLevelModule.TypeName, data);
+        return true;
+    }
+
+    private static bool TryReadInteger(JsonElement element, out long value)
+    {
+        if (TryReadFraction(element, out var numerator, out var denominator)
+            && denominator == 1)
+        {
+            value = numerator;
+            return true;
+        }
+        value = 0;
+        return false;
     }
 
     private static bool TryMapPositiveLong(
@@ -354,6 +761,7 @@ public enum RowSkipReason
     MissingKind,
     UnknownKind,
     InvalidNumericField,
+    InvalidGameplayField,
 }
 
 public sealed record SkippedRow(int Index, string Id, RowSkipReason Reason, string Detail);

@@ -283,6 +283,53 @@ def test_unresolved_required_media_fails_closed() -> None:
         _resolved_media(graph, descriptor)
 
 
+def test_source_null_select_portrait_is_skipped() -> None:
+    """Retail authors UPGondor_Banner without a MappedImage body."""
+    descriptor = {
+        "presentation": {
+            "ui": {"portraitImageIds": ["UPGondor_Banner"], "commands": []},
+            "audioRoutes": {"container": {}, "primaryMember": {}},
+        }
+    }
+    graph = {
+        "resolvedLeaves": {"mappedImages": [], "audio": {}},
+        "dependencies": {"sourceNullMappedImages": ["UPGondor_Banner"]},
+    }
+    images, audio = _resolved_media(graph, descriptor)
+    assert images == {}
+    assert audio == {}
+
+
+def test_compiled_texture_rebinds_from_effective_root(tmp_path) -> None:
+    """Census may omit a DDS path that the sealed effective tree still holds."""
+    texture_dir = tmp_path / "art" / "compiledtextures" / "hi"
+    texture_dir.mkdir(parents=True)
+    (texture_dir / "higaladriel.dds").write_bytes(b"DDS-fake")
+    descriptor = {
+        "presentation": {
+            "ui": {"portraitImageIds": ["HIGaladriel"], "commands": []},
+            "audioRoutes": {"container": {}, "primaryMember": {}},
+        }
+    }
+    graph = {
+        "resolvedLeaves": {
+            "mappedImages": [
+                {
+                    "id": "HIGaladriel",
+                    "texture": "HIGaladriel.tga",
+                    "compiledTextureResolution": "missing",
+                    "coords": {"left": 0, "top": 0, "right": 63, "bottom": 63},
+                }
+            ],
+            "audio": {},
+        }
+    }
+    images, _ = _resolved_media(graph, descriptor, effective_root=tmp_path)
+    path = images["HIGaladriel"]["compiledTextureVirtualPath"]
+    assert path.casefold() == "art/compiledtextures/hi/higaladriel.dds"
+    assert path.endswith("HIGaladriel.dds") or path.endswith("higaladriel.dds")
+
+
 def test_unresolved_authored_audio_route_fails_closed() -> None:
     descriptor = {
         "presentation": {
@@ -362,3 +409,92 @@ def test_batch_entrypoint_has_no_unit_specific_registration() -> None:
     assert "--bootstrap-selection" in text
     assert "ranger" not in text.casefold()
     assert "trebuchet" not in text.casefold()
+
+
+class _StubStringCatalog:
+    """Minimal InstallCatalog stand-in exposing only the lotr.str read path."""
+
+    def __init__(self, source: bytes) -> None:
+        self._source = source
+
+    def resolve_exact(self, virtual_path: str) -> object | None:
+        assert virtual_path == "data/lotr.str"
+        return "data/lotr.str"
+
+    def as_entry(self, entry: object) -> object:
+        return entry
+
+    def open_archive_for(self, entry: object) -> "_StubStringCatalog":
+        return self
+
+    def read_entry(self, entry: object, *, max_bytes: int | None = None) -> bytes:
+        return self._source
+
+
+_STRING_SOURCE = (
+    b'CONTROLBAR:PresentAndFilled\r\n"Filled"\r\nEND\r\n\r\n'
+    b'CONTROLBAR:PresentButEmpty\r\n""\r\nEND\r\n'
+)
+
+
+def _string_descriptor(*identifiers: str) -> dict[str, object]:
+    return {
+        "presentation": {
+            "ui": {
+                "portraitImageIds": [],
+                "commands": [
+                    {"fields": {"TextLabel": list(identifiers)}, "audioRoutes": []}
+                ],
+            },
+            "audioRoutes": {"container": {}, "primaryMember": {}},
+        }
+    }
+
+
+def test_present_but_empty_retail_string_is_not_a_retail_null_exemption() -> None:
+    # A row that EXISTS with an empty value is a data hole in our read of the
+    # table, not retail declining to localize the id. Sanctioning it silently
+    # turned a broken parse into a permanent exemption.
+    from openbfme_importer.playable_unit_import import _resolved_strings
+
+    catalog = _StubStringCatalog(_STRING_SOURCE)
+    graph: dict[str, object] = {
+        "layeredDocumentAuthority": "layered-effective-assets"
+    }
+    with pytest.raises(ValueError, match="present but empty.*CONTROLBAR:PresentButEmpty"):
+        _resolved_strings(
+            catalog, _string_descriptor("CONTROLBAR:PresentButEmpty"), graph=graph
+        )
+
+
+def test_absent_string_without_layered_tier_authority_fails_closed() -> None:
+    # Recorded retail-null evidence is only meaningful against the tier it was
+    # recorded on. Without layered authority we are not reading that tier, so
+    # the evidence may not sanction the hole.
+    from openbfme_importer.playable_unit_import import _resolved_strings
+
+    catalog = _StubStringCatalog(_STRING_SOURCE)
+    graph: dict[str, object] = {
+        "layeredSourceNullTextIds": ["CONTROLBAR:NotInTableAtAll"]
+    }
+    with pytest.raises(ValueError, match="CONTROLBAR:NotInTableAtAll"):
+        _resolved_strings(
+            catalog, _string_descriptor("CONTROLBAR:NotInTableAtAll"), graph=graph
+        )
+
+
+def test_layered_authority_records_genuinely_absent_string() -> None:
+    """Positive control: true absence under layered authority stays exempt."""
+    from openbfme_importer.playable_unit_import import _resolved_strings
+
+    catalog = _StubStringCatalog(_STRING_SOURCE)
+    graph: dict[str, object] = {
+        "layeredDocumentAuthority": "layered-effective-assets"
+    }
+    resolved = _resolved_strings(
+        catalog,
+        _string_descriptor("CONTROLBAR:PresentAndFilled", "CONTROLBAR:NotInTableAtAll"),
+        graph=graph,
+    )
+    assert resolved == {"CONTROLBAR:PresentAndFilled": "Filled"}
+    assert graph["layeredSourceNullTextIds"] == ["CONTROLBAR:NotInTableAtAll"]

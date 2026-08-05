@@ -6,22 +6,42 @@ public sealed class GameObject
     public string TemplateName { get; }
     public int Team { get; }
     public FixedVector2 Position { get; private set; }
+    /// <summary>Authoritative vertical placement in world units.</summary>
+    public Fixed64 Elevation { get; private set; }
+    /// <summary>Authoritative counter-clockwise facing in radians.</summary>
+    public Fixed64 HeadingRadians { get; private set; }
     public bool IsDead { get; private set; }
     /// <summary>Death claimed by a module (SlowDeath): still in the world, no longer operational.</summary>
     public bool IsDying { get; private set; }
     public bool IsUnderConstruction { get; private set; }
     public IReadOnlyList<ModuleBase> Modules { get; }
 
-    internal GameObject(int id, string templateName, int team, FixedVector2 position, IReadOnlyList<ModuleBase> modules)
+    internal GameObject(
+        int id,
+        string templateName,
+        int team,
+        FixedVector2 position,
+        IReadOnlyList<ModuleBase> modules,
+        Fixed64 elevation = default,
+        Fixed64 headingRadians = default)
     {
         Id = id;
         TemplateName = templateName;
         Team = team;
         Position = position;
+        Elevation = elevation;
+        HeadingRadians = headingRadians;
         Modules = modules;
     }
 
     public void SetPosition(FixedVector2 position) => Position = position;
+
+    public void SetTransform(FixedVector2 position, Fixed64 elevation, Fixed64 headingRadians)
+    {
+        Position = position;
+        Elevation = elevation;
+        HeadingRadians = headingRadians;
+    }
 
     public void MarkDead() => IsDead = true;
 
@@ -47,6 +67,8 @@ public sealed class GameObject
         writer.WriteString(TemplateName);
         writer.WriteInt(Team);
         writer.WriteVector(Position);
+        writer.WriteLong(Elevation.Raw);
+        writer.WriteLong(HeadingRadians.Raw);
         writer.WriteBool(IsDead);
         writer.WriteBool(IsDying);
         writer.WriteBool(IsUnderConstruction);

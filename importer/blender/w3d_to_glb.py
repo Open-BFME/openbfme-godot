@@ -89,6 +89,7 @@ _W3D_CONVERSION_FAILURE_PHASES = frozenset(
         "scene-validation",
         "animation-import",
         "post-animation-validation",
+        "animation-sidecar-mesh-strip",
         "attachment-restoration",
         "render-revalidation",
         "generated-image-validation",
@@ -3149,6 +3150,39 @@ def capture_render_attachment_proof(mesh_objects: list[Any]) -> list[dict[str, A
     return proof
 
 
+def strip_animation_sidecar_meshes(
+    proof: list[dict[str, Any]], mesh_objects: list[Any]
+) -> dict[str, Any]:
+    """Remove meshes animation W3Ds inject that were not in the model import.
+
+    Retail death/fly clips sometimes embed corpse or prop meshes (for example
+    ``GOBLINCORPSE01`` inside ``mugblnswrd_flyb.w3d``). Those are not part of
+    the unit's pre-animation render inventory; leaving them breaks attachment
+    restoration and revalidation. Strip them with explicit report evidence.
+    """
+
+    proof_ids = {
+        record["object_identity"]
+        for record in proof
+        if isinstance(record, dict) and "object_identity" in record
+    }
+    removed = 0
+    for item in list(mesh_objects):
+        if item.type != "MESH":
+            continue
+        if _runtime_identity(item) in proof_ids:
+            continue
+        bpy.data.objects.remove(item, do_unlink=True)
+        removed += 1
+    for mesh in list(bpy.data.meshes):
+        if mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+    return {
+        "count": removed,
+        "reason": "not-in-pre-animation-render-inventory",
+    }
+
+
 def restore_render_attachments(
     proof: list[dict[str, Any]], mesh_objects: list[Any], scene_objects: list[Any]
 ) -> None:
@@ -4572,6 +4606,20 @@ def _convert_w3d_job_impl(
     phase_checkpoint.set("action-validation")
     assert_non_animated_scene_has_no_actions(args.asset_kind)
 
+    phase_checkpoint.set("animation-sidecar-mesh-strip")
+    mesh_objects = [item for item in bpy.data.objects if item.type == "MESH"]
+    # Only strip when we have a pre-animation proof (skeletal animated jobs).
+    # An empty proof would incorrectly treat every mesh as a sidecar.
+    if rig is not None and render_attachment_proof:
+        animation_sidecar_meshes = strip_animation_sidecar_meshes(
+            render_attachment_proof,
+            mesh_objects,
+        )
+    else:
+        animation_sidecar_meshes = {
+            "count": 0,
+            "reason": "not-in-pre-animation-render-inventory",
+        }
     phase_checkpoint.set("attachment-restoration")
     mesh_objects = [item for item in bpy.data.objects if item.type == "MESH"]
     if rig is not None:
@@ -4743,6 +4791,7 @@ def _convert_w3d_job_impl(
         "opaque_material_normalization": opaque_material_normalization,
         "root_rigid_bake": root_rigid_bake,
         "filtered_non_render_geometry": filtered_geometry,
+        "animation_sidecar_meshes_removed": animation_sidecar_meshes,
         "excluded_optional_meshes": optional_mesh_exclusions,
         "remaining_non_render_geometry": 0,
         "remaining_ambiguous_box_geometry": 0,
