@@ -1507,8 +1507,53 @@ def main(argv: list[str] | None = None) -> int:
             base = json.loads(base_profile_path.read_text(encoding="utf-8"))
             if not isinstance(base, dict):
                 raise ValueError(f"base profile root is not an object: {base_profile_path}")
+            # Pack strings lane: the composed pack ships a data/strings.json
+            # covering every CONTROLBAR: id its own runtime documents
+            # reference, resolved against the SAME table the unit compiler
+            # records sourceNullStringIds evidence from. A publish that cannot
+            # see the retail table must refuse rather than ship a pack whose
+            # HUD text silently never resolves.
+            from .faction_import import load_retail_string_catalog
+
+            string_catalog = load_retail_string_catalog(cook_catalog)
+            if string_catalog is None:
+                raise ValueError(
+                    "data/lotr.str is unresolved by the cook catalog; the pack "
+                    "strings document cannot be composed"
+                )
+            # The RotWK Men host pack owns the Create-a-Hero system table
+            # (same single-owner rule as livingWorld). Fail closed: a Men host
+            # publish without the compiled table would ship a slice whose MY
+            # HEROES screen can never answer, so name the missing artifact and
+            # the command that produces it instead of cooking without it.
+            cah_runtime = None
+            if args.game == "rotwk" and factions == ["men"]:
+                cah_runtime_path = (
+                    _state_root(args)
+                    / "reports"
+                    / f"{args.game}-cah-system-runtime.json"
+                )
+                if not cah_runtime_path.is_file():
+                    raise FileNotFoundError(
+                        f"CaH system runtime missing at {cah_runtime_path}; "
+                        f"run: openbfme-import compile-cah-system --game {args.game} "
+                        "--assets-root <effective-assets> first (the RotWK Men "
+                        "host pack owns cah.system and must ship it)"
+                    )
+                cah_runtime = json.loads(
+                    cah_runtime_path.read_text(encoding="utf-8")
+                )
+                if not isinstance(cah_runtime, dict):
+                    raise ValueError(
+                        f"CaH system runtime root is not an object: {cah_runtime_path}"
+                    )
             composed, receipt = compose_faction_profile(
-                base, coverage_root, factions, game=args.game
+                base,
+                coverage_root,
+                factions,
+                game=args.game,
+                string_catalog=string_catalog,
+                cah_runtime=cah_runtime,
             )
             # `pipeline` / `cook_catalog` were already built above so the
             # coverage-binding gate could read the cook's real catalog identity.
@@ -2174,3 +2219,11 @@ def main(argv: list[str] | None = None) -> int:
             _restore_env(dev_env_prior)
         _restore_env(state_root_env_prior)
     return 0
+
+
+if __name__ == "__main__":
+    # Without this hook, `python -m openbfme_importer.cli <args>` imports the
+    # module, runs nothing, and exits 0 — a silent no-op that masked seven
+    # dropped selection.json updates on 2026-08-05. Pinned by
+    # tests/test_cli_module_entrypoint.py.
+    raise SystemExit(main())
