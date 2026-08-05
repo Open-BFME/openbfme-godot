@@ -28,6 +28,10 @@ from .retail_animated_prop_profile import build_retail_animated_prop_plan
 from .retail_hierarchical_profile import build_retail_hierarchical_prop_plan
 from .retail_visual_closure import build_retail_visual_closure
 from .retail_visual_profile import build_retail_static_prop_plan
+from .playable_structure_pack_compiler import (
+    PlayableStructurePackCompilerError,
+    compile_structure_visual_recipe,
+)
 
 
 MAP_PROP_BINDING_SCHEMA = "openbfme.map-prop-binding-evidence"
@@ -221,6 +225,29 @@ def _merge_stage_resources(
     return added
 
 
+def _default_lifecycle_visual_binding(
+    target: str, recipe: Mapping[str, Any]
+) -> dict[str, str]:
+    defaults = [
+        state
+        for state in recipe.get("lifecycleStates", [])
+        if isinstance(state, Mapping)
+        and "intact" in state.get("phases", [])
+        and [] in state.get("sourceConditionSets", [])
+    ]
+    if len(defaults) != 1:
+        raise PlayableStructurePackCompilerError(
+            f"expected one default intact model, found {len(defaults)}"
+        )
+    default = defaults[0]
+    return {
+        "typeName": target,
+        "sourceVirtualModel": str(default["sourceW3d"]),
+        "glb": str(default["output"]),
+        "matchMethod": "exact-type-name",
+    }
+
+
 def build_map_prop_binding_plan(
     parsed: Any,
     *,
@@ -256,7 +283,7 @@ def build_map_prop_binding_plan(
         "policy": {
             "selection": "map-recorded-placement-types-only",
             "substitutesAllowed": False,
-            "stages": ["static", "hierarchical", "animated"],
+            "stages": ["static", "hierarchical", "animated", "lifecycle-visual"],
             "logicalRule": "sage-logical-namespace-prefix",
         },
         "placementTypeCount": len(targets) + len(pseudo) + len(unsafe),
@@ -311,6 +338,37 @@ def build_map_prop_binding_plan(
             "declaredResourceCount": len(fragment["resources"]),
             "addedResourceCount": len(added),
         }
+
+    # Multi-state retail objects (lairs, signal fires, flags, and similar
+    # neutral structures) are intentionally rejected by the ordinary prop
+    # planners. For map visibility, reuse the generic structure recipe only
+    # when it proves one unambiguous default/intact model. This emits a normal
+    # renderable binding: lifecycle gameplay remains unwired and is never
+    # claimed by the map pack.
+    already_bound = {str(row["typeName"]) for row in model_rows}
+    lifecycle_rows: list[dict[str, Any]] = []
+    lifecycle_rejections: list[dict[str, str]] = []
+    for target in targets:
+        if target in already_bound:
+            continue
+        try:
+            recipe = compile_structure_visual_recipe(target, closure)
+            binding = _default_lifecycle_visual_binding(target, recipe)
+            _merge_stage_resources(
+                resources, owners, list(recipe.get("resources", []))
+            )
+            lifecycle_rows.append(binding)
+        except (PlayableStructurePackCompilerError, ValueError, KeyError) as exc:
+            lifecycle_rejections.append(
+                {"typeName": target, "reason": str(exc)[:300]}
+            )
+    model_rows.extend(lifecycle_rows)
+    stage_evidence["lifecycle-visual"] = {
+        "bindingRowCount": len(lifecycle_rows),
+        "rejectionCount": len(lifecycle_rejections),
+        "rejections": lifecycle_rejections,
+        "claim": "default-retail-visual-only-lifecycle-gameplay-unwired",
+    }
 
     bound = {str(row["typeName"]) for row in model_rows}
     # A target the static planner rejected for exactly one reason -- it has no

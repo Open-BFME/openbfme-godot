@@ -26,7 +26,9 @@ from .catalog import CatalogEntry, InstallCatalog
 from .map_census import (
     MAPCACHE_VIRTUAL_PATH,
     MAX_MAPCACHE_BYTES,
+    load_map_display_names,
     parse_mapcache_bytes,
+    resolve_map_display_name,
 )
 from .sage_map import (
     MAX_SOURCE_BYTES,
@@ -294,6 +296,11 @@ def discover_registry_map_targets(
         catalog, MAPCACHE_VIRTUAL_PATH, "map registry", MAX_MAPCACHE_BYTES
     )
     prefix = (directory_prefix or "").casefold().strip()
+    # Retail authors every map's readable name in ``data/lotr.str`` and points
+    # each registry row at it. Title-casing the directory instead produces
+    # "Fall Back 4p" for a map retail calls "Stonewain Valley", so the authored
+    # string wins wherever the registry supplies a key.
+    display_names = load_map_display_names(catalog)
     targets: list[MapTarget] = []
     rejections: list[dict[str, Any]] = []
     seen_slugs: dict[str, str] = {}
@@ -339,10 +346,13 @@ def discover_registry_map_targets(
             )
             continue
         seen_slugs[slug] = virtual_path
+        authored_name = resolve_map_display_name(
+            display_names, str(record.get("displayNameKey") or "")
+        )
         targets.append(
             MapTarget(
                 slug,
-                _display_name(directory),
+                authored_name or _display_name(directory),
                 virtual_path,
                 int(record["playerCount"]),
                 category=category,

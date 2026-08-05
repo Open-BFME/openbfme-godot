@@ -4,6 +4,7 @@ import unittest
 
 from openbfme_importer.map_prop_bindings import (
     NO_AUTHORED_MODEL_CLASSIFICATION,
+    _default_lifecycle_visual_binding,
     _merge_stage_resources,
     partition_placement_types,
     pseudo_type_classification,
@@ -156,6 +157,43 @@ class ClassificationConstantTests(unittest.TestCase):
                 NO_AUTHORED_MODEL_CLASSIFICATION,
             )
         )
+
+
+class LifecycleVisualBindingTests(unittest.TestCase):
+    def test_unique_default_intact_model_becomes_visible_binding(self) -> None:
+        row = _default_lifecycle_visual_binding(
+            "WargLair",
+            {
+                "lifecycleStates": [
+                    {
+                        "phases": ["intact"],
+                        "sourceConditionSets": [[]],
+                        "sourceW3d": "art/w3d/nbwargpit_skn.w3d",
+                        "output": "assets/models/structures/warglair/intact.glb",
+                    },
+                    {
+                        "phases": ["rubble"],
+                        "sourceConditionSets": [["RUBBLE"]],
+                        "sourceW3d": "art/w3d/nbwargpit_d.w3d",
+                        "output": "assets/models/structures/warglair/rubble.glb",
+                    },
+                ]
+            },
+        )
+        self.assertEqual(row["typeName"], "WargLair")
+        self.assertEqual(row["matchMethod"], "exact-type-name")
+
+    def test_ambiguous_default_stays_fail_closed(self) -> None:
+        state = {
+            "phases": ["intact"],
+            "sourceConditionSets": [[]],
+            "sourceW3d": "art/w3d/a.w3d",
+            "output": "assets/models/a.glb",
+        }
+        with self.assertRaisesRegex(Exception, "expected one default intact"):
+            _default_lifecycle_visual_binding(
+                "Ambiguous", {"lifecycleStates": [state, dict(state)]}
+            )
 
 
 if __name__ == "__main__":

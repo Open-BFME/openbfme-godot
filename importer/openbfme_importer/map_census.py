@@ -55,6 +55,39 @@ def _decode_mapcache_path(value: str) -> str:
     return normalized
 
 
+def _decode_mapcache_display_name(value: str) -> str:
+    """Decode one ``displayName`` field into its authored string-table key.
+
+    Retail escapes this field as UTF-16LE bytes: printable ASCII stays literal
+    and every other byte (including each UTF-16 high byte) is written ``_XX``.
+    The decoded value is a lookup key such as ``$Map:MAPMPAdornRiver``, never a
+    localized string - the readable name lives in ``data/lotr.str`` under the
+    ``Map:<label>`` block.  Returns "" when the field cannot be decoded, because
+    a display name is a presentation nicety and must never reject a map.
+    """
+
+    raw = value.strip().strip('"')
+    if not raw:
+        return ""
+    out = bytearray()
+    index = 0
+    while index < len(raw):
+        match = _MAPCACHE_ESCAPE.match(raw, index)
+        if match is not None:
+            out.append(int(match.group(1), 16))
+            index = match.end()
+            continue
+        code = ord(raw[index])
+        if code > 0xFF:
+            return ""
+        out.append(code)
+        index += 1
+    try:
+        return bytes(out).decode("utf-16-le").rstrip("\x00").strip()
+    except (UnicodeDecodeError, ValueError):
+        return ""
+
+
 def _mapcache_bool(value: str, field: str) -> bool:
     folded = value.strip().casefold()
     if folded == "yes":
@@ -120,6 +153,12 @@ def parse_mapcache_bytes(source: bytes) -> list[dict[str, Any]]:
                         current_fields["isscenariomp"], "isScenarioMP"
                     ),
                     "playerCount": player_count,
+                    # Authored string-table key ("$Map:MAPMPAdornRiver"), or ""
+                    # when the record ships none. Optional by design: the map
+                    # corpus is defined by membership, not by presentation.
+                    "displayNameKey": _decode_mapcache_display_name(
+                        current_fields.get("displayname", "")
+                    ),
                 }
             )
             current_path = None
@@ -144,6 +183,53 @@ def parse_mapcache_bytes(source: bytes) -> list[dict[str, Any]]:
     if len(paths) != len(set(paths)):
         raise ValueError("mapcache contains duplicate virtual paths")
     return records
+
+
+#: Retail's authored string table.  Map ``displayName`` keys resolve here.
+STRING_TABLE_VIRTUAL_PATH = "data/lotr.str"
+MAX_STRING_TABLE_BYTES = 8 * 1024 * 1024
+
+
+def load_map_display_names(catalog: InstallCatalog) -> dict[str, str]:
+    """Return ``{casefolded 'map:<label>': authored name}`` from ``lotr.str``.
+
+    This is the ONLY authored source of a map's readable name.  Deriving one by
+    title-casing the retail directory produces "Mp Adorn River" and "Wor Ang
+    Barrow Downs" - the retail kind tokens are directory bookkeeping, not part
+    of any authored name ("Adorn River", "Barrow-downs").
+
+    Returns an empty table rather than raising when the install ships no string
+    table: a caller that cannot resolve a name falls back to its own derivation
+    and says so, instead of failing a map cook over presentation text.
+    """
+
+    from .living_world_strings import parse_str
+
+    entry = catalog.resolve_exact(STRING_TABLE_VIRTUAL_PATH)
+    if entry is None:
+        return {}
+    archive = catalog.open_archive_for(entry)
+    try:
+        payload = archive.read_entry(
+            catalog.as_entry(entry), max_bytes=MAX_STRING_TABLE_BYTES
+        )
+    except (OSError, ValueError):
+        return {}
+    table, _defects = parse_str(payload.decode("cp1252", errors="replace"))
+    return {
+        key.casefold(): value
+        for key, value in table.items()
+        if key.casefold().startswith("map:")
+    }
+
+
+def resolve_map_display_name(display_names: dict[str, str], key: str) -> str:
+    """Resolve one mapcache ``displayName`` key against the authored table."""
+
+    lookup = key.strip().lstrip("$").casefold()
+    if not lookup:
+        return ""
+    return display_names.get(lookup, "")
 
 
 def _archive_info(catalog: InstallCatalog, relative: str) -> Any:

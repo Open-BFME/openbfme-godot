@@ -225,8 +225,43 @@ class FordsWaterReflectionOraclePrivateIntegrationTests(unittest.TestCase):
             allow_nan=False,
         ).encode("utf-8")
         self.assertEqual(declared, hashlib.sha256(canonical).hexdigest())
+        # The aggregate is a hash over retail-derived INPUTS as much as over
+        # this module's logic, so pin the inputs first: when the aggregate
+        # moves again, this says whether the oracle changed or its corpus did.
+        evidence = self.contract["sourceEvidence"]
         self.assertEqual(
-            "c8e5df5a1e8f19817e639300bd977bfbf7ab5eeda8b63eedc634baa4c8d0b22a",
+            {
+                "objects": (
+                    "444345868d58689968f883d7c9b0b2fc"
+                    "15e9abd16098c51602d9a2cc0e53555f"
+                ),
+                "water": (
+                    "f5e4a23772544a7002b59b3231f6f018"
+                    "c41db0f84c94c40fee379f96299716b7"
+                ),
+            },
+            {
+                name: row["sha256"]
+                for name, row in evidence["cooked"].items()
+            },
+        )
+        self.assertEqual(
+            "8ca034dbf551e5162778a54a849afd02022ef5b368e39474a89b3c1a28f6803f",
+            evidence["effectiveManifest"]["sha256"],
+        )
+        # Re-pinned 2026-08-04. The previous literal
+        # (c8e5df5a1e8f19817e639300bd977bfbf7ab5eeda8b63eedc634baa4c8d0b22a)
+        # was minted 2026-07-19. Neither
+        # `retail_fords_water_reflection_oracle.py` nor this test changed a
+        # byte between that commit and this one — but the effective-assets
+        # manifest was resealed 2026-07-25 and the strict Fords map cook was
+        # regenerated 2026-07-30, so the corpus underneath the pin moved and
+        # the oracle faithfully rehashed it. Every semantic assertion in this
+        # class (reflection plane, the four standing-water areas and their
+        # heights, the skydome mesh/texture/DDS headers, world-sky separation,
+        # the four renderer blockers, the summary block) still holds exactly.
+        self.assertEqual(
+            "f8f268ed9d1cf9217a4ffb5c80b8e594c1491261b23c74f54f8616d082a3cc62",
             declared,
         )
         with tempfile.TemporaryDirectory() as raw:
