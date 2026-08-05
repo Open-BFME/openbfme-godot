@@ -232,9 +232,20 @@ func _run() -> void:
 	_check("theoden_base_form_routes_unmounted_select", _routing_log_has(audio.routing_log, "TheodenVoiceSelectMS", true))
 	_check("theoden_mounted_form_routes_mounted_select", _routing_log_has(audio.routing_log, "TheodenVoiceSelectMountedMS", true))
 
-	# #23: every fallen horde member lands its own class bodyfall; a machine
-	# never borrows the human leaf (its authored die is its death voice).
+	# #23: every fallen horde member lands ITS OWN AUTHORED bodyfall, and a
+	# machine never borrows the human leaf (its authored die is its death voice).
+	#
+	# THIS ASSERTION CHANGED, deliberately. It used to require the Gondor Archer
+	# to land `BodyFallSoldier` twice - a leaf the archer does not author and the
+	# runtime was substituting for every infantry, cavalry and hero in the game.
+	# Retail binds the archer's death thud explicitly:
+	# `data/ini/object/goodfaction/units/men/gondorarcher.ini:653-654` reads
+	# `AnimationSound = Sound:BodyFallGeneric1  Animation:GUArcher_SKL.GUArcher_DIEA`
+	# (and DIEB), and gondorfighter.ini:796-799 does the same for the Fighter.
+	# `BodyFallGeneric1` is what the packs already ship for both, so that is what
+	# the runtime now routes and what this gate now asserts.
 	audio._next_event_index = 0
+	var bodyfall_authored_before := _routing_log_count(audio.routing_log, "BodyFallGeneric1", true)
 	var bodyfall_soldier_before := _routing_log_count(audio.routing_log, "BodyFallSoldier", true)
 	var trebuchet_die_before := _routing_log_count(audio.routing_log, "TrebuchetDie", true)
 	audio.sync_events([
@@ -243,9 +254,12 @@ func _run() -> void:
 		{"sequence": 28, "kind": "battalion.member_defeated", "entity_id": 1, "target_id": 11, "object_id": "bfme2.object.gondor-trebuchet", "member_index": 0},
 		{"sequence": 29, "kind": "battalion.defeated", "entity_id": 1, "target_id": 11, "object_id": "bfme2.object.gondor-trebuchet"},
 	])
+	var bodyfall_authored_delta := _routing_log_count(audio.routing_log, "BodyFallGeneric1", true) - bodyfall_authored_before
 	var bodyfall_soldier_delta := _routing_log_count(audio.routing_log, "BodyFallSoldier", true) - bodyfall_soldier_before
-	_check("archer_members_land_per_member_bodyfalls", bodyfall_soldier_delta == 2, str(bodyfall_soldier_delta))
-	_check("trebuchet_never_plays_human_bodyfall", bodyfall_soldier_delta == 2, str(bodyfall_soldier_delta))
+	_check("archer_members_land_their_authored_bodyfall", bodyfall_authored_delta == 2, str(bodyfall_authored_delta))
+	# The substituted human leaf must not be reached by EITHER unit now: the
+	# archer authors its own, and the trebuchet authors none at all.
+	_check("no_unit_borrows_the_substituted_human_bodyfall", bodyfall_soldier_delta == 0, str(bodyfall_soldier_delta))
 	_check("trebuchet_defeat_routes_authored_die", _routing_log_count(audio.routing_log, "TrebuchetDie", true) - trebuchet_die_before == 1, str(_routing_log_count(audio.routing_log, "TrebuchetDie", true) - trebuchet_die_before))
 
 	# S3: structure lifecycle audio comes from the structure doc's converted

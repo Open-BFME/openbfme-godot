@@ -416,6 +416,15 @@ class _Budget:
 def strip_sage_comments(raw: str) -> str:
     """Strip ``;`` and ``//`` comments occurring outside quoted strings."""
 
+    # Community layered INIs use ``;,;`` as an unconditional old-value
+    # separator. A few shipped rows place the marker after a malformed quoted
+    # token (ElvenBanner's ``ModelState:\"USER_2 ;,; ...``). Treat the marker as
+    # the boundary even inside that broken quote and close only the retained
+    # token; ordinary semicolons inside well-formed quotes remain literal.
+    merge_index = raw.find(";,;")
+    merge_truncated = merge_index >= 0
+    if merge_truncated:
+        raw = raw[:merge_index].rstrip()
     quote: str | None = None
     escaped = False
     index = 0
@@ -435,7 +444,10 @@ def strip_sage_comments(raw: str) -> str:
         elif character == "/" and index + 1 < len(raw) and raw[index + 1] == "/":
             return raw[:index].rstrip()
         index += 1
-    return raw.rstrip()
+    value = raw.rstrip()
+    if quote is not None and merge_truncated:
+        value += quote
+    return value
 
 
 def normalize_virtual_path(

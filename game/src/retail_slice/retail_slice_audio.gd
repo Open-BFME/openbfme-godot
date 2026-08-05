@@ -8,6 +8,7 @@ const OBSERVABILITY_LOG_TRIM_COUNT := 512
 
 const UserSettingsScript = preload("res://src/ui/user_settings.gd")
 const PlayableUnitAdapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
+const MusicDirectorScript = preload("res://src/core/music_director.gd")
 
 const SOLDIER_OBJECT_ID := "bfme2.object.gondor-fighter"
 const ARCHER_OBJECT_ID := "bfme2.object.gondor-archer"
@@ -104,6 +105,12 @@ var music_playlist_paths: Dictionary = {}
 # playing for current_music_state. Focused verification may opt into the bounded
 # transition history; production retains current state/index instead.
 var current_music_track_index := -1
+## Non-empty once a music pack has bound this player's faction: state -> the
+## authored slot/playlist that answered it. Runners assert on this instead of
+## on audible playback.
+var music_faction_slots: Dictionary = {}
+var music_director: RefCounted = null
+var music_diagnostics: Array[String] = []
 var music_transition_log: Array[Dictionary] = []
 var _music_active_index := -1
 var _music_last_index := -1
@@ -127,6 +134,13 @@ var playable_unit_weapon_sfx: Dictionary = {}
 ## object_id -> authored bodyfall event id for siege/monster units (their own
 ## class — a machine or monster never borrows the human BodyFallSoldier).
 var playable_unit_bodyfall: Dictionary = {}
+## object id -> the unit's OWN authored `SoundImpact` AudioEvent id.
+var playable_unit_impact: Dictionary = {}
+## object id -> how many times that unit had to use the CLASS weapon-swing
+## default because no converted pack carries its weapon's FXList sound. This is
+## the measured size of the "everything swings the same" gap; see
+## `_route_weapon_swing`.
+var generic_weapon_swing_fallbacks: Dictionary = {}
 ## Per-structure-kind converted audio contract projected by the slice from the
 ## faction's playable-structure documents (select/damage/collapse/EVA ids and
 ## the damaged-state health fractions). Kinds absent here keep legacy routing.
@@ -166,11 +180,25 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	structure_audio_contract = faction_structure_audio.duplicate(true)
 	faction_side = player_faction_side
 	_ensure_players()
+	# THE MUSIC HANDOFF. The shell playlist plays on the GameAudio autoload,
+	# which survives the scene change into a match, so the menu theme would
+	# otherwise keep playing underneath this object's per-faction ladder. Taking
+	# the handoff here - at the one place the in-match audio object is armed -
+	# keeps it out of every launch call site. Only a PLAYING configure claims it;
+	# an analysis configure (enable_playback = false, what the runners use) must
+	# not silence a menu it was never going to speak over.
+	if playback_enabled:
+		var shell_audio: Node = _autoload("GameAudio")
+		if shell_audio != null and shell_audio.has_method("stop_music"):
+			shell_audio.call("stop_music")
 	_reset_music_playback()
 	music_streams.clear()
 	music_playlists.clear()
 	music_playlist_paths.clear()
 	music_transition_log.clear()
+	music_faction_slots.clear()
+	music_diagnostics.clear()
+	music_director = null
 	voice_streams = {"select": [], "attack": []}
 	audio_event_routes.clear()
 	roster_voice_routes.clear()
@@ -179,6 +207,8 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	playable_unit_categories.clear()
 	playable_unit_weapon_sfx.clear()
 	playable_unit_bodyfall.clear()
+	playable_unit_impact.clear()
+	generic_weapon_swing_fallbacks.clear()
 	route_failures.clear()
 	missing_required_events.clear()
 	intent_log.clear()
@@ -356,6 +386,83 @@ func _load_music() -> void:
 		music_playlists[state] = streams
 		music_playlist_paths[state] = paths
 		music_streams[state] = streams[0]
+	_apply_faction_music()
+
+
+func _autoload(singleton_name: String) -> Node:
+	var loop := Engine.get_main_loop()
+	if loop == null or not (loop is SceneTree):
+		return null
+	var tree := loop as SceneTree
+	if tree.root == null:
+		return null
+	return tree.root.get_node_or_null(NodePath(singleton_name))
+
+
+func _apply_faction_music() -> void:
+	## Replace the filename-convention playlists above with the ones RETAIL
+	## authors for this player's faction, when a music pack is installed.
+	##
+	## The convention scan is a fallback, not a contract: it buckets whatever
+	## `<state>*.mp3` leaves a faction pack happens to ship. The music pack
+	## carries the real binding - the side token -> Multisound table extracted
+	## from music.ini plus the Music_MusicScripts_Single library - so when it is
+	## present it WINS, per state, and only for states it can actually answer.
+	## A state the document does not bind keeps the fallback rather than going
+	## silent.
+	music_faction_slots.clear()
+	music_director = null
+	if faction_side == "":
+		return
+	# Looked up as a node, NOT as the `ContentDB` global: this script is
+	# preloaded by headless --script runners, which compile it before autoloads
+	# are registered, and a compile-time global reference there fails the whole
+	# dependent-script chain (observed: stage15_menu_runner.gd).
+	var content_db: Node = _autoload("ContentDB")
+	if content_db == null:
+		return
+	var document: Dictionary = content_db.get("music_document")
+	if document == null or document.is_empty():
+		return
+	var director := MusicDirectorScript.new()
+	# The director joins pack faction id -> side; this call site already holds
+	# the resolved side, so bind it to itself and skip the second lookup.
+	if not director.configure(document, {faction_side.to_lower(): faction_side}):
+		music_diagnostics.append_array(director.diagnostics)
+		return
+	music_director = director
+	for state in MUSIC_STATES:
+		var slot := director.slot_for_state(state)
+		if slot == "":
+			continue
+		var paths: Array[String] = director.track_paths_for(faction_side.to_lower(), slot)
+		if paths.is_empty():
+			music_diagnostics.append(
+				"music: %s/%s resolved no authored track" % [faction_side, slot]
+			)
+			continue
+		var streams: Array[AudioStream] = []
+		var loaded: Array[String] = []
+		for path in paths:
+			var stream := _load_stream(path)
+			if stream != null:
+				streams.append(stream)
+				loaded.append(path)
+		if streams.is_empty():
+			music_diagnostics.append(
+				"music: %s/%s bound %d tracks but none loaded" % [faction_side, slot, paths.size()]
+			)
+			continue
+		music_playlists[state] = streams
+		music_playlist_paths[state] = loaded
+		music_streams[state] = streams[0]
+		music_faction_slots[state] = {
+			"slot": slot,
+			"playlist": director.playlist_id_for(faction_side.to_lower(), slot),
+			"tracks": loaded.size(),
+			"shuffle": director.shuffles(faction_side.to_lower(), slot),
+			"loop": director.loops(faction_side.to_lower(), slot),
+		}
 
 
 func _scan_music_files(music_dir: String) -> Dictionary:
@@ -967,12 +1074,27 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "combat.swing":
 		_play_routed(_route_weapon_swing(_object_id_for_event(event, entity_id), sequence), sfx_player)
 	elif kind == "combat.hit":
-		# Cheap impact layer: mounted/large targets answer with the authored
-		# horse-impact leaf. Infantry has no converted generic impact event in
-		# the pack registries, so it fails closed to silence rather than
-		# borrowing another class's sound.
+		# THE IMPACT LAYER IS PER-UNIT AUTHORED, not per-class guessed. Retail
+		# writes `SoundImpact = <AudioEvent>` on the Object itself (e.g.
+		# `data/ini/object/goodfaction/units/men/gondorfighter.ini` -
+		# `SoundImpact = ImpactHorse`), the importer already carries that field
+		# into every playable-unit document's `registration.audioRoutes`, and
+		# `_load_playable_unit_audio_routes` now indexes it. So a hit answers
+		# with the leaf THAT unit declares.
+		#
+		# The previous rule fired one hardcoded `ImpactHorse` for cavalry /
+		# monster / siege and left every infantry and hero hit silent, which is
+		# a large part of what "the fighting sounds generic" was: an authored
+		# per-unit field was shipped in the packs and never read.
+		#
+		# Units with no authored SoundImpact keep the old class rule, and
+		# infantry without one still fails closed to silence rather than
+		# borrowing another unit's leaf.
 		var hit_object_id := String(event.get("target_object_id", ""))
-		if _is_cavalry_object(hit_object_id) or String(playable_unit_categories.get(hit_object_id, "")) in ["monster", "siege"]:
+		var authored_impact := String(playable_unit_impact.get(hit_object_id, ""))
+		if authored_impact != "":
+			_play_routed(route_audio_event(authored_impact, sequence), sfx_player)
+		elif _is_cavalry_object(hit_object_id) or String(playable_unit_categories.get(hit_object_id, "")) in ["monster", "siege"]:
 			_play_routed(route_audio_event("ImpactHorse", sequence), sfx_player)
 	elif kind == "combat.hit_structure":
 		_consume_structure_damage(event, sequence)
@@ -1013,14 +1135,25 @@ func _route_weapon_swing(object_id: String, sequence: int) -> Dictionary:
 		return route_audio_event(String(weapon_sfx["fire"]), sequence)
 	if category == "monster" and String(weapon_sfx.get("swing", "")) != "":
 		return route_audio_event(String(weapon_sfx["swing"]), sequence)
-	return route_audio_event("ArrowDrawBow" if _is_ranged_object(object_id) else "SwordShingClean1ForHordes", sequence)
+	# NAMED GAP - this is the one that still sounds generic, and it is an
+	# IMPORTER gap, not a runtime one. Retail does not author a melee swing on
+	# the Object at all: it authors it on the WEAPON, as
+	# `Weapon BoromirSword / FireFX = FX_GondorSwordHit` (weapon.ini), and
+	# `FXList FX_GondorSwordHit / Sound / Name = ImpactSword01` (fxlist.ini).
+	# No converted pack carries the weapon -> FXList -> Sound chain, so there is
+	# no per-unit swing event to route and this class default is all there is.
+	# It is COUNTED rather than hidden, so the gap has a number.
+	var fallback_id := "ArrowDrawBow" if _is_ranged_object(object_id) else "SwordShingClean1ForHordes"
+	generic_weapon_swing_fallbacks[object_id] = int(generic_weapon_swing_fallbacks.get(object_id, 0)) + 1
+	return route_audio_event(fallback_id, sequence)
 
 
 func _route_bodyfall(object_id: String, sequence: int) -> Dictionary:
-	## Class bodyfall per object: authored doc class for siege/monster (never
-	## the human leaf), horse impact for cavalry, generic soldier bodyfall for
-	## infantry/heroes. A siege/monster unit with no authored bodyfall fails
-	## closed — its authored die sound already plays as the death voice.
+	## THE UNIT'S OWN authored bodyfall first, for every category — see
+	## `_bodyfall_id_for_document`. Only a unit that binds none at all reaches
+	## the class rule below (horse impact for cavalry, the generic soldier leaf
+	## for infantry/heroes), and siege/monster still fails closed rather than
+	## borrowing a human thud.
 	var doc_bodyfall := String(playable_unit_bodyfall.get(object_id, ""))
 	if doc_bodyfall != "":
 		return route_audio_event(doc_bodyfall, sequence)
@@ -1204,23 +1337,61 @@ func _load_playable_unit_audio_routes() -> void:
 			playable_unit_weapon_sfx[object_id] = weapon_sfx
 			if unit_id != object_id:
 				playable_unit_weapon_sfx[unit_id] = weapon_sfx
-		var bodyfall_id := _bodyfall_for_document(category, bindings)
+		var bodyfall_id := _bodyfall_id_for_document(bindings)
 		if bodyfall_id != "":
 			playable_unit_bodyfall[object_id] = bodyfall_id
 			if unit_id != object_id:
 				playable_unit_bodyfall[unit_id] = bodyfall_id
+		var impact_id := _impact_id_for_document(document, bindings)
+		if impact_id != "":
+			playable_unit_impact[object_id] = impact_id
+			if unit_id != object_id:
+				playable_unit_impact[unit_id] = impact_id
 
 
-func _bodyfall_for_document(category: String, bindings: Dictionary) -> String:
-	## Authored bodyfall class for siege/monster units (trebuchet has none —
-	## its authored die sound is its death voice; ents/trolls bind bodyfalls).
-	if category not in ["siege", "monster"]:
-		return ""
+func _bodyfall_id_for_document(bindings: Dictionary) -> String:
+	## THE UNIT'S OWN AUTHORED BODYFALL, for every category.
+	##
+	## This used to answer only for siege and monster, which meant every
+	## infantry, cavalry and hero death played one hardcoded `BodyFallSoldier`
+	## - a leaf most of them do not even bind. Gondor Fighters author
+	## `BodyFallGeneric1`; Boromir authors `BodyFallGenericNoArmor`. Both were
+	## already shipped in the packs and neither was ever played.
+	##
+	## NAMED LIMITATION, not a silent one. Retail binds each bodyfall to a
+	## SPECIFIC animation (`AnimationSound = Sound:BodyFallGenericNoArmor
+	## Animation:GUBoromir_SKL.GUBoromir_DTHA`), but the importer drops the
+	## `Animation:` attribute, so a unit that binds several bodyfalls cannot be
+	## told apart here. The pick is therefore deterministic (lowest id) rather
+	## than animation-correct, and closing it is an importer emission change.
 	var ids: Array = bindings.keys()
 	ids.sort_custom(func(a: Variant, b: Variant) -> bool: return String(a).to_lower() < String(b).to_lower())
 	for event_id_value in ids:
 		if String(event_id_value).to_lower().contains("bodyfall"):
 			return String(event_id_value)
+	return ""
+
+
+func _impact_id_for_document(document: Dictionary, bindings: Dictionary) -> String:
+	## The object's own `SoundImpact` AudioEvent, straight off the converted
+	## `registration.audioRoutes` (retail authors it on the Object block, e.g.
+	## `SoundImpact = ImpactHorse` in gondorfighter.ini). Only accepted when the
+	## same document also BINDS the event to real samples, so this can never
+	## name a leaf the pack cannot play.
+	var registration: Dictionary = document.get("registration", {}) as Dictionary
+	var routes: Dictionary = registration.get("audioRoutes", {}) as Dictionary
+	for owner_value in routes.values():
+		if typeof(owner_value) != TYPE_DICTIONARY:
+			continue
+		for field_value in (owner_value as Dictionary).keys():
+			if String(field_value).to_lower() != "soundimpact":
+				continue
+			for row_value in Array((owner_value as Dictionary)[field_value]):
+				if typeof(row_value) != TYPE_DICTIONARY:
+					continue
+				var event_id := String((row_value as Dictionary).get("id", ""))
+				if event_id != "" and bindings.has(event_id):
+					return event_id
 	return ""
 
 
@@ -1473,7 +1644,22 @@ func _set_music(state: String) -> void:
 		_music_active_index = -1
 		current_music_track_index = -1
 		return
-	_transition_music(state, 0, "state-change")
+	_transition_music(state, _music_entry_index(state), "state-change")
+
+
+func _music_entry_index(state: String) -> int:
+	## Retail's faction playlists are authored `Control = PLAY_ONE`, i.e. "start
+	## one of these", so entering a state picks a leaf rather than always
+	## replaying the first. Only authored playlists get this: the
+	## filename-convention fallback keeps its deterministic index-0 entry, which
+	## is what every existing runner asserts.
+	var binding: Variant = music_faction_slots.get(state, null)
+	if typeof(binding) != TYPE_DICTIONARY or not bool((binding as Dictionary).get("shuffle", false)):
+		return 0
+	var playlist: Array = music_playlists.get(state, [])
+	if playlist.size() <= 1:
+		return 0
+	return _music_rng.randi_range(0, playlist.size() - 1)
 
 
 func _transition_music(state: String, target_index: int, reason: String) -> void:

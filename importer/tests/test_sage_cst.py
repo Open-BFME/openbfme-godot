@@ -250,6 +250,12 @@ End
             strip_sage_comments(r'Value = "a\";//b" ; tail'),
             r'Value = "a\";//b"',
         )
+        self.assertEqual(
+            strip_sage_comments(
+                'MorphCondition = UnitType:RohanElvenWarrior ModelState:"USER_2 ;,; old'
+            ),
+            'MorphCondition = UnitType:RohanElvenWarrior ModelState:"USER_2"',
+        )
 
     def test_cp1252_values_and_empty_assignments_are_preserved(self) -> None:
         source = "Object Café\n  DisplayName = Café\n  Empty =\nEnd\n".encode("cp1252")

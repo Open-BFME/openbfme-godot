@@ -153,14 +153,22 @@ def _references(values: Iterable[str], context: str) -> tuple[WeightedAudioRefer
 def _unique_blocks(blocks: tuple[IniBlock, ...], kind: str) -> tuple[IniBlock, ...]:
     if len(blocks) > MAX_AUDIO_DEFINITIONS:
         raise ValueError(f"{kind} definition count exceeds limit")
-    seen: set[str] = set()
+    seen: dict[str, int] = {}
+    unique: list[IniBlock] = []
     for block in blocks:
         _identifier(block.name, kind)
         key = block.name.casefold()
-        if key in seen:
-            raise ValueError(f"duplicate {kind} definition: {block.name!r}")
-        seen.add(key)
-    return blocks
+        previous_index = seen.get(key)
+        if previous_index is None:
+            seen[key] = len(unique)
+            unique.append(block)
+        else:
+            # SAGE's ordered definition namespace is last-wins. Layered
+            # voice.ini uses this intentionally (Merry's second Retreat row
+            # removes PlayPercent). Replace atomically; never merge fields from
+            # two definitions into a shape retail did not author.
+            unique[previous_index] = block
+    return tuple(unique)
 
 
 def parse_sage_audio_definitions(source: bytes) -> SageAudioDefinitions:
@@ -182,7 +190,12 @@ def parse_sage_audio_definitions(source: bytes) -> SageAudioDefinitions:
 
     events: list[AudioEventDefinition] = []
     for block in event_blocks:
-        sound_values = block.values("Sounds")
+        # AudioEvent scalar assignments are ordered/last-wins. The layered
+        # GoblinBuilder row contains an earlier malformed Sounds assignment
+        # followed by its valid effective value; do not concatenate both into
+        # a sample list the engine never authors.
+        authored_sound_values = block.values("Sounds")
+        sound_values = authored_sound_values[-1:]
         sounds = _references(sound_values, f"AudioEvent {block.name} Sounds")
         parameters = tuple(
             (field, value)

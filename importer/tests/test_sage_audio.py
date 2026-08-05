@@ -142,11 +142,14 @@ End
         with self.assertRaisesRegex(ValueError, "relative path traversal"):
             resolve_audio_sample_paths(["voice"], ["../data/audio/voice.wav"])
 
-    def test_rejects_duplicate_ambiguous_and_missing_definitions(self) -> None:
-        with self.assertRaisesRegex(ValueError, "duplicate AudioEvent definition"):
-            parse_sage_audio_definitions(
-                SOURCE + b"AudioEvent SOLDIERSELECT\n Sounds = other\nEnd\n"
-            )
+    def test_last_definition_wins_ambiguous_kinds_and_missing_still_fail(self) -> None:
+        replaced = parse_sage_audio_definitions(
+            SOURCE + b"AudioEvent SOLDIERSELECT\n Sounds = other\nEnd\n"
+        )
+        selected = next(
+            row for row in replaced.events if row.id.casefold() == "soldierselect"
+        )
+        self.assertEqual(tuple(item.id for item in selected.sounds), ("other",))
         with self.assertRaisesRegex(ValueError, "ambiguous audio definition kind"):
             parse_sage_audio_definitions(
                 b"AudioEvent Same\n Sounds = a\nEnd\n"
@@ -155,6 +158,27 @@ End
         definitions = parse_sage_audio_definitions(SOURCE)
         with self.assertRaisesRegex(ValueError, "unresolved audio definition"):
             resolve_sage_audio_closure(definitions, ["Missing"])
+
+    def test_identical_duplicate_audio_definition_is_deduplicated(self) -> None:
+        source = (
+            b"AudioEvent Same\n Sounds = a\n Volume = 100\nEnd\n"
+            b"AudioEvent Same\n Sounds = a\n Volume = 100\nEnd\n"
+        )
+        definitions = parse_sage_audio_definitions(source)
+        self.assertEqual(len(definitions.events), 1)
+        self.assertEqual(definitions.events[0].id, "Same")
+
+    def test_audio_event_last_sounds_assignment_wins(self) -> None:
+        definitions = parse_sage_audio_definitions(
+            b"AudioEvent Move\n"
+            b" Sounds = Sounds = malformed\n"
+            b" Sounds = effective_a effective_b\n"
+            b"End\n"
+        )
+        self.assertEqual(
+            tuple(item.id for item in definitions.events[0].sounds),
+            ("effective_a", "effective_b"),
+        )
 
     def test_rejects_malformed_references_and_cycles(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsafe AudioEvent.*reference"):
@@ -226,11 +250,11 @@ End
                 b"Multisound Same\n Subsounds = Other\nEnd\n"
                 b"MusicTrack SAME\n Filename = same.mp3\nEnd\n"
             )
-        with self.assertRaisesRegex(ValueError, "duplicate MusicTrack definition"):
-            parse_sage_audio_definitions(
-                b"MusicTrack A\n Filename = a.mp3\nEnd\n"
-                b"MusicTrack a\n Filename = b.mp3\nEnd\n"
-            )
+        tracks = parse_sage_audio_definitions(
+            b"MusicTrack A\n Filename = a.mp3\nEnd\n"
+            b"MusicTrack a\n Filename = b.mp3\nEnd\n"
+        )
+        self.assertEqual(tracks.tracks[0].filename, "b.mp3")
         with self.assertRaisesRegex(ValueError, "multiple Filename values"):
             parse_sage_audio_definitions(
                 b"MusicTrack A\n Filename = a.mp3\n Filename = b.mp3\nEnd\n"
