@@ -156,15 +156,15 @@ func _draw_source_geometry(arena: Rect2) -> void:
 	var outline := PackedVector2Array()
 	for point in source_map_data.map_outline:
 		outline.append(_world_to_canvas(point, arena))
-	if outline.size() >= 3:
-		draw_colored_polygon(outline, land_color)
+	var outline_fill := _sanitized_radar_polygon(outline)
+	if not outline_fill.is_empty():
+		draw_colored_polygon(outline_fill, land_color)
 	for polygon_value in source_map_data.standing_water_polygons:
 		var source_polygon: PackedVector3Array = polygon_value
 		var polygon := PackedVector2Array()
 		for point in source_polygon:
 			polygon.append(_world_to_canvas(Vector2(point.x, point.z), arena))
-		if polygon.size() >= 3:
-			draw_colored_polygon(polygon, ink_color)
+		_draw_radar_water_polygon(polygon, ink_color)
 	for river in source_map_data.river_strips:
 		var sections: Array = river.get("sections", [])
 		for index in range(sections.size() - 1):
@@ -176,7 +176,7 @@ func _draw_source_geometry(arena: Rect2) -> void:
 				_world_to_canvas(Vector2(second[1].x, second[1].z), arena),
 				_world_to_canvas(Vector2(first[1].x, first[1].z), arena),
 			])
-			draw_colored_polygon(strip, ink_color)
+			_draw_radar_water_polygon(strip, ink_color)
 	for gate in source_map_data.ford_gates:
 		var edge_a := _world_to_canvas(Vector2(gate.get("edge_a", Vector2.ZERO)), arena)
 		var edge_b := _world_to_canvas(Vector2(gate.get("edge_b", Vector2.ZERO)), arena)
@@ -184,6 +184,53 @@ func _draw_source_geometry(arena: Rect2) -> void:
 	if outline.size() >= 3:
 		for index in range(outline.size()):
 			draw_line(outline[index], outline[(index + 1) % outline.size()], parchment_ink if private_parity_mode else Color("779257"), 1.0, true)
+
+
+func _draw_radar_water_polygon(polygon: PackedVector2Array, ink_color: Color) -> void:
+	## Water shapes projected to radar scale can collapse (points merge, runs
+	## go collinear) or self-intersect (river strips whose section orientation
+	## flips form bowtie quads). Handing those to draw_colored_polygon fails
+	## triangulation inside the renderer and spams an error EVERY redraw, so
+	## fills are pre-validated; a shape that cannot fill still reads as an ink
+	## outline instead of vanishing.
+	var filled := _sanitized_radar_polygon(polygon)
+	if not filled.is_empty():
+		draw_colored_polygon(filled, ink_color)
+	elif polygon.size() >= 2:
+		var closed := polygon.duplicate()
+		closed.append(polygon[0])
+		draw_polyline(closed, ink_color, 1.0, true)
+
+
+static func _sanitized_radar_polygon(polygon: PackedVector2Array) -> PackedVector2Array:
+	## Returns a fill-safe copy (consecutive duplicates and the redundant
+	## closing point removed), or an EMPTY array when the polygon cannot be
+	## triangulated (fewer than 3 distinct points, collinear, self-crossing).
+	## Callers must not fill an empty result. Pinned by
+	## game/tests/minimap_geometry_guard_runner.gd.
+	if polygon.size() < 3:
+		return PackedVector2Array()
+	var cleaned := PackedVector2Array()
+	for point in polygon:
+		if cleaned.is_empty() or not cleaned[cleaned.size() - 1].is_equal_approx(point):
+			cleaned.append(point)
+	while cleaned.size() >= 2 and cleaned[0].is_equal_approx(cleaned[cleaned.size() - 1]):
+		cleaned.remove_at(cleaned.size() - 1)
+	if cleaned.size() < 3:
+		return PackedVector2Array()
+	# Godot's ear-clipper ACCEPTS exactly-collinear rings (a zero-area fill
+	# that renders nothing), so triangulability alone is not enough — reject
+	# zero-area shapes too and let the caller's outline fallback draw them.
+	var doubled_area := 0.0
+	for index in range(cleaned.size()):
+		var current := cleaned[index]
+		var next := cleaned[(index + 1) % cleaned.size()]
+		doubled_area += current.x * next.y - next.x * current.y
+	if absf(doubled_area) <= 0.001:
+		return PackedVector2Array()
+	if Geometry2D.triangulate_polygon(cleaned).is_empty():
+		return PackedVector2Array()
+	return cleaned
 
 
 func _world_to_canvas(world: Vector2, arena: Rect2) -> Vector2:
